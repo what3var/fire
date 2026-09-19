@@ -12,26 +12,28 @@ For full details see:
 
 ## Table of Contents
 
-- #variables--types
-- [units
-- #type--unit-coercion
-- [ownership--lifetime
-- #classes
+- [Variables & Types](#variables--types)
+- [Units](#units)
+- [Type & Unit Coercion](#type--unit-coercion)
+- [Ownership & Lifetime](#ownership--lifetime)
+- [Classes](#classes)
 - [Properties](#properties)
-erloading
-- [lambdas
-- #arrays
-- [Pointers & Unsafe](#pointers--unsafeme
-- #interfaces--foreach
-- [Generics](#genericsoverloads--optional-parameters
-- #with-statement
-- #extension-classes
-- [switch-statement
-- [enums
-- #readonly
-- #external-apis
-- [Preprocessor Directives](#preprocessoring
-- #actors
+- [Operator Overloading](#operator-overloading)
+- [Lambdas](#lambdas)
+- [Arrays](#arrays)
+- [Pointers & Unsafe](#pointers--unsafe)
+- [Exceptions & Resume](#exceptions--resume)
+- [Interfaces & Foreach](#interfaces--foreach)
+- [Generics](#generics)
+- [Method overloads & Optional parameters](#method-overloads--optional-parameters)
+- [With statement](#with-statement)
+- [Extension classes](#extension-classes)
+- [Switch statement](#switch-statement)
+- [Enums](#enums)
+- [Readonly](#readonly)
+- [External APIs](#external-apis)
+- [Preprocessor Directives](#preprocessor)
+- [Actors](#actors)
 
 ---
 
