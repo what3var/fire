@@ -1,10 +1,8 @@
 I originally just wanted to control an old 3D printer.
 
-Then I needed a scripting language as GCode is a mess imho.
+Then I needed a scripting language, because GCode is a pain in the ass if you ask me.
 
-So I tried vibe coding.
-
-Now it's on fire. 😒
+So I tried vibe coding. Now everything's on fire. 😒
 
 🥁 Drum roll pleeeeeease...
 
@@ -14,21 +12,11 @@ Now it's on fire. 😒
 
 Fire started with a simple question:
 
-> What would happen if a modern scripting language was reviewed by a German engineer?
+> What would happen if a modern scripting language was developed and then reviewed by an ~~German~~ alcoholic engineer?
 
-The answer is: **units are part of the language**, distances are not added together just because they're both numbers, and if you try to add kilograms to meters, someone is going to complain. 🇩🇪
+The answer is: **units** are **part of the language**, **exceptions** are **a matter of opinion** (resumable), **ownership** is **clearly defined**, but line endings are **not**. 🇩🇪
 
-At the same time, we have a hard time letting go of old habits. That's why Fire supports both classic C-style semicolons and BASIC-style newline statement endings.
-
-```fire
-var x = 10;
-var y = 20;
-
-var sum = x + y
-print(sum)
-```
-
-After all, why choose exactly *one* decades-old tradition when you can have both?
+Why settle for just *one* decades-old tradition when you can have several?
 
 ---
 
@@ -45,13 +33,12 @@ Fire is an object-oriented scripting language featuring:
 - ♻️ resumable exceptions
 - 🔧 ownership-based memory management
 
-The goal was never to be the smallest language.
+[All features](docs/FEATURES.md)
+[The spec](docs/SPEC.md)
 
-Nor the most academic.
+The goal was never to be small or particularly academic.
 
-The goal was simply:
-
-> "What kind of language would I actually enjoy using?"
+The goal was to create a scripting language with genuinely interesting features while shamelessly copying the best parts of C#. At the same time, garbage collection was replaced with an experimental ownership model that clearly defines object lifetimes and guarantees a predictable memory footprint.
 
 ---
 
@@ -61,7 +48,7 @@ The goal was simply:
 
 Units are part of the language.
 
-Meters are meters. Kilograms are kilograms. And if someone tries to add them together, Fire politely but firmly objects.
+Meters are meters. Kilograms are kilograms. And if someone tries to add both together, Fire will file a polite but firmly worded complaint.
 
 ```fire
 var length = 500mm
@@ -70,11 +57,11 @@ var distance = 2m
 print(length + distance)
 ```
 
-Fire understands that both values describe the same physical dimension and performs conversions automatically.
+Fire understands that both values describe the same physical dimension and performs any necessary conversions automatically.
 
 Invalid combinations don't silently produce nonsense.
 
-They produce exceptions.
+They produce an exception.
 
 ```fire
 var weight = 5kg
@@ -84,7 +71,9 @@ print(weight + length)   // nope 😐
 print(weight + length!)  // But I want to!
 ```
 
-Fire tries to prevent mistakes. *tries*.
+Fire tries to prevent nonsense.
+
+*Tries.*
 
 ---
 
@@ -108,11 +97,13 @@ var a = 1
 var b = 2
 ```
 
-C and BASIC spent decades arguing over who was right.
+C and BASIC spent decades fighting over who was right.
 
 Fire says:
 
 > Both.
+
+Because why settle for exactly *one* decades-old tradition when you can have both?
 
 ---
 
@@ -120,7 +111,9 @@ Fire says:
 
 Of course we love precision.
 
-We also like being able to go home early.
+The same way we love clear definitions.
+
+But we also enjoy going home early.
 
 That's why Fire brings back an old friend:
 
@@ -136,9 +129,7 @@ Surprise 🎉
 
 Yes, that's actually `with`.
 
-Other languages removed it, hid it, or only talk about it behind closed doors.
-
-And then they do things like this:
+Other languages removed it, hid it, or only speak about it behind closed doors. Then they do things like this:
 
 ```csharp
 invoice.customer.address.city = "Berlin";
@@ -158,17 +149,17 @@ with invoice.customer.address {
 
 Fire says:
 
-> If we already know which object we're working on for the next ten lines, why should we type its name ten times?
+> If we already know which object we're going to work on for the next ten lines, why should we type its name ten times?
 
 ---
 
-### 🔧 Property Comes With Responsibilities
+### 🔧 Property Comes With Responsibility
 
-We're happy to share.
+We like sharing.
 
 But we're not communists.
 
-Every object in Fire has exactly one owner.
+That's why every object in Fire has exactly one owner.
 
 And if ownership changes, let's do it properly:
 
@@ -176,11 +167,11 @@ And if ownership changes, let's do it properly:
 bag.TakeTo(what3var)
 ```
 
-Give me my bag back!
+Now give me my bag back!
 
-Ownership controls lifetime, cleanup, and responsibilities within the object graph.
+Ownership controls lifetime, cleanup, and responsibilities inside the object graph.
 
-Because somebody ought to know who currently owns the thing.
+Because somebody has to keep track of who currently owns the thing.
 
 ---
 
@@ -188,7 +179,7 @@ Because somebody ought to know who currently owns the thing.
 
 Even when things are on fire, we like to stay in control.
 
-Who else is going to supervise whether the building burns down correctly? You?
+Who else is supposed to supervise whether the building is burning down correctly? You?
 
 Control requires power.
 
@@ -208,7 +199,7 @@ Why immediately give up when an error occurs if you can inspect it, modify it, a
 
 Most programming languages treat exceptions like emergencies.
 
-Fire treats them like a special permit application.
+Fire treats them like an application for a special permit.
 
 ---
 
@@ -243,15 +234,13 @@ Fire combines ideas from:
 - C++
 - C#
 - Python
-- Actor systems
+- actor systems
 - traditional scripting languages
 
-...while adding concepts such as units, ownership, resumable exceptions, and controlled concurrency.
+...while adding a few ideas of its own, such as units, ownership, resumable exceptions, and controlled concurrency.
 
-The result isn't a language that tries to follow every trend.
+The result isn't a language trying to follow every trend.
 
-It's a language that unapologetically follows its own ideas.
+It's a language that relentlessly follows its own ideas.
 
----
-
-> 🔥 Fire: German engineering, BASIC nostalgia, and controlled madness in a scripting language.
+And those of its slightly insane designer.

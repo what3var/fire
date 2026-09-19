@@ -1,10 +1,8 @@
 Ich wollte eigentlich nur einen alten 3D-Drucker steuern.
 
-Dann brauchte ich eine Skriptsprache.
+Dann brauchte ich eine Skriptsprache, da GCode mMn ein Krampf ist.
 
-Also habe ich mich am Vibe Coding versucht.
-
-Jetzt brennt's. 😒
+Also habe ich mich am Vibe Coding versucht. Jetzt brennt alles. 😒
 
 🥁 Trommelwirbel füüüüüürr...
 
@@ -14,21 +12,11 @@ Jetzt brennt's. 😒
 
 Fire entstand aus einer einfachen Frage:
 
-> Was würde passieren, wenn man eine moderne Skriptsprache entwickelt, diese aber konsequent von einem deutschen Ingenieur prüfen lässt?
+> Was würde passieren, wenn man eine moderne Skriptsprache entwickelt, diese aber konsequent von einem ~~deutschen~~alkoholabhängigen Ingenieur prüfen lässt?
 
-Die Antwort lautet: **Einheiten sind Teil der Sprache**, Entfernungen werden nicht einfach addiert, nur weil beide Zahlen sind, und wer versucht, Kilogramm mit Metern zu verrechnen, bekommt Ärger. 🇩🇪
+Die Antwort lautet: **Einheiten** sind **Teil der Sprache**, **Ausnahmen** sind **ansichtssache** (resumable), **Besitz** ist **klar definiert**, **nicht** aber die Zeilenenden. 🇩🇪
 
-Natürlich können wir uns gleichzeitig nur schwer von alten Gewohnheiten trennen. Deshalb erlaubt Fire sowohl klassische C-artige Statement-Enden mit `;` als auch BASIC-artige Zeilenumbrüche als Trenner.
-
-```fire
-var x = 10;
-var y = 20;
-
-var sum = x + y
-print(sum)
-```
-
-Denn warum sollte man sich für genau *eine* jahrzehntealte Tradition entscheiden, wenn man einfach beide haben kann?
+Warum sollte man sich nur für *eine* jahrzehntealte Tradition entscheiden, wenn man auch mehr haben kann?
 
 ---
 
@@ -45,11 +33,12 @@ Fire ist eine objektorientierte Skriptsprache mit:
 - ♻️ resumable Exceptions
 - 🔧 Ownership-basierter Speicherverwaltung
 
+[Alle Features](docs/FEATURES.md)
+[Die Specs](docs/SPEC.md)
+
 Das Ziel war nie, möglichst klein oder besonders akademisch zu sein.
 
-Das Ziel war:
-
-> "Was wäre eine Sprache, die ich selbst gerne benutzen würde?"
+Das Ziel war, eine Sprache zu entwickeln, die gerade als Skriptsprache interessante Features bereithält, und das Beste aus C# kopiert. Gleichzeitig wurde die Garbage Collection durch ein experimentelles Ownership-Modell ersetzt, dass die Lebenszeit von Objekten klar definiert und einen vorhersehbaren Speicher-Fußabdruck garantiert.
 
 ---
 
@@ -198,7 +187,7 @@ catch (e) {
 }
 ```
 
-Ein `resume` für (beinahe) jeden Fall!
+Ein `resume` für (beinahe) alle Fälle!
 
 Warum bei einem Fehler sofort aufgeben, wenn man ihn stattdessen inspizieren, verändern und anschließend genau dort weitermachen kann, wo es geknallt hat?
 
@@ -242,12 +231,8 @@ Fire kombiniert Ideen aus:
 - Actor-Systemen
 - klassischen Skriptsprachen
 
-... und ergänzt sie um einige eigene Konzepte wie Units, Ownership, resumierbare Exceptions und kontrollierte Parallelität.
+... und ergänzt sie um einige eigene Konzepte wie Units, Ownership, resumable Exceptions und kontrollierte Parallelität.
 
 Das Ergebnis ist keine Sprache, die versucht, jeden Trend mitzunehmen.
 
-Es ist eine Sprache, die konsequent ihre eigenen Ideen verfolgt.
-
----
-
-> 🔥 Fire: Deutsche Ingenieurskunst, BASIC-Nostalgie und kontrollierter Wahnsinn in einer Skriptsprache.
+Es ist eine Sprache, die konsequent ihre eigenen Ideen verfolgt. Und die ihres wahnsinnigen Designers.
