@@ -773,7 +773,7 @@ print(sum)
 print(list[1])
 list[1] = 99
 print(list[1])
-print(list.Get(1))
+print(list[1])
 """;
 
 try
@@ -1632,7 +1632,7 @@ Console.WriteLine("=== Bytecode-Test: Extension-Klasse für Prelude-Klasse 'List
 string extendListSample = """
 class extends List {
     Peek() {
-        return this.Get(this.count - 1)
+        return this[this.count - 1]
     }
 }
 
@@ -4588,6 +4588,129 @@ try
     var natives = NativeRegistry.CreateDefault();
     var resolveResult = Resolver.Resolve(program, natives.Names, activeUsings: activeUsings);
     var compiled = Compiler.Compile(program, resolveResult, natives, activeUsings);
+    var globalScope2 = new Scope(null, isGlobal: true);
+    var vm = new VM(compiled.TopLevel, globalScope2, natives, compiled.Classes);
+    vm.Run();
+    if (vm.UnhandledException != null)
+        Console.WriteLine($"FEHLER: unerwartete unbehandelte Exception: {new UncaughtScriptException(vm.UnhandledException).Message}");
+}
+catch (System.Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== ParseMultiple: lokale #using-Sichtbarkeit pro Datei ===");
+
+// Absichtlich derselbe einfache Klassenname 'Helper' in ZWEI verschiedenen
+// Namespaces - mit programmweiten (statt lokalen) Usings wäre das
+// zweideutig: 'new Helper()' in fileB müsste eigentlich LibB.Helper
+// treffen, würde bei global geteilten Usings aber leicht (je nach
+// Reihenfolge) fälschlich LibA.Helper treffen.
+string fileA = """
+    namespace LibA {
+        class Helper {
+            int value
+        }
+    }
+
+    #using LibA
+
+    class UserOfA {
+        int result
+
+        public construct() {
+            var h = new Helper()
+            h.value = 11
+            this.result = h.value
+        }
+    }
+    """;
+
+string fileB = """
+    namespace LibB {
+        class Helper {
+            int otherValue
+        }
+    }
+
+    #using LibB
+
+    class UserOfB {
+        int result
+
+        public construct() {
+            var h = new Helper()
+            h.otherValue = 22
+            this.result = h.otherValue
+        }
+    }
+    """;
+
+string mainFile = """
+    var a = new UserOfA()
+    var b = new UserOfB()
+    print("UserOfA.result (ueber lokales #using LibA in fileA) = " + a.result)
+    print("UserOfB.result (ueber lokales #using LibB in fileB) = " + b.result)
+    """;
+
+try
+{
+    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, fileA, fileB, mainFile });
+    var natives = NativeRegistry.CreateDefault();
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    var globalScope2 = new Scope(null, isGlobal: true);
+    var vm = new VM(compiled.TopLevel, globalScope2, natives, compiled.Classes);
+    vm.Run();
+    if (vm.UnhandledException != null)
+        Console.WriteLine($"FEHLER: unerwartete unbehandelte Exception: {new UncaughtScriptException(vm.UnhandledException).Message}");
+}
+catch (System.Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== '++'/'--' auf Variable, Feld, Index (Praefix und Postfix) ===");
+
+string incDecScript = """
+    class Counter {
+        int value
+
+        public construct() {
+            this.value = 10
+        }
+    }
+
+    var x = 5
+    print("x++ = " + x++)
+    print("x danach = " + x)
+    print("++x = " + ++x)
+    print("x danach = " + x)
+    print("--x = " + --x)
+    print("x danach = " + x)
+
+    var c = new Counter()
+    print("c.value++ = " + c.value++)
+    print("c.value danach = " + c.value)
+    print("++c.value = " + ++c.value)
+    print("c.value danach = " + c.value)
+
+    var arr = new int[3]
+    arr[0] = 100
+    print("arr[0]++ = " + arr[0]++)
+    print("arr[0] danach = " + arr[0])
+    print("++arr[1] = " + ++arr[1])
+    print("arr[1] danach = " + arr[1])
+    """;
+
+try
+{
+    var program = Parser.ParseWithPrelude(incDecScript);
+    var natives = NativeRegistry.CreateDefault();
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
     var globalScope2 = new Scope(null, isGlobal: true);
     var vm = new VM(compiled.TopLevel, globalScope2, natives, compiled.Classes);
     vm.Run();

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 using fire.Lexing;
 
 namespace fire.Editor
@@ -738,9 +739,14 @@ namespace fire.Editor
             var result = new List<string>();
             for (int i = 0; i < _tokens.Count - 1; i++)
             {
+                //Debug.WriteLine($"Offset i: {OffsetOf(_tokens[i])} Offset i+1: {OffsetOf(_tokens[i + 1])} Offset Cursor: {offset}");
                 if (OffsetOf(_tokens[i]) >= offset) break;
                 if (_tokens[i].Type == TokenType.Var && _tokens[i + 1].Type == TokenType.Identifier)
-                    result.Add(_tokens[i + 1].Lexeme);
+                    if (OffsetOf(_tokens[i + 1]) < offset)
+                    {
+                        //Debug.WriteLine(_tokens[i + 1].Lexeme);
+                        result.Add(_tokens[i + 1].Lexeme);
+                    }
             }
             return result;
         }

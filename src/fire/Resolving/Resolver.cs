@@ -108,7 +108,14 @@ namespace fire.Resolving
         /// Namespace-Verweis schon an dieser Stelle als "unbekannte Klasse"
         /// abgelehnt, bevor der Compiler ihn je sehen könnte.</summary>
         private readonly Dictionary<string, List<(string Namespace, string Qualified)>> _bySimpleName = new();
-        private IReadOnlyList<string> _activeUsings = Array.Empty<string>();
+
+        /// <summary>Die `#using`-Namen für TOP-LEVEL-Code (außerhalb jeder
+        /// Klasse) - innerhalb einer Klasse gelten stattdessen deren EIGENE,
+        /// gestempelte `Ast.ClassDecl.Usings` (siehe CurrentUsings/Parser.
+        /// StampUsings) statt einer einzigen, programmweiten Liste - wichtig
+        /// bei mehreren kombinierten Quelldateien (Parser.ParseMultiple),
+        /// wo `#using` bewusst nur lokal für die eigene Datei gelten soll.</summary>
+        private IReadOnlyList<string> _topLevelUsings = Array.Empty<string>();
 
         private void BuildNamespaceIndex()
         {
@@ -134,6 +141,11 @@ namespace fire.Resolving
             }
         }
 
+        /// <summary>Die für die AKTUELL aufgelöste Stelle geltenden
+        /// `#using`-Namen - siehe Compiler.CurrentUsings für dieselbe Idee
+        /// auf der Compiler-Seite.</summary>
+        private IReadOnlyList<string> CurrentUsings => _currentClass?.Usings ?? _topLevelUsings;
+
         /// <summary>Löst `name` auf seinen vollqualifizierten Namen auf, WENN
         /// nötig - siehe Bytecode.Compiler.NamespaceResolver.Resolve für die
         /// genaue Regel (exakter Treffer > Geschwister im eigenen Namespace >
@@ -148,8 +160,9 @@ namespace fire.Resolving
                 foreach (var (ns, full) in candidates)
                     if (ns == currentNs) return full;
 
+            var activeUsings = CurrentUsings;
             foreach (var (ns, full) in candidates)
-                if (_activeUsings.Contains(ns)) return full;
+                if (activeUsings.Contains(ns)) return full;
 
             return name;
         }
@@ -231,7 +244,7 @@ namespace fire.Resolving
             IReadOnlyList<string>? activeUsings = null)
         {
             var resolver = new Resolver(nativeNames, tryableNativeNames);
-            resolver._activeUsings = activeUsings ?? Array.Empty<string>();
+            resolver._topLevelUsings = activeUsings ?? Array.Empty<string>();
             resolver.CollectClasses(program);
             resolver.BuildNamespaceIndex();
             resolver.CollectExterns(program);
@@ -1099,6 +1112,16 @@ namespace fire.Resolving
                 case AssignExpr asg:
                     ResolveExpr(asg.Value);
                     ResolveAssignTarget(asg.Target);
+                    break;
+
+                case IncDecExpr incDec:
+                    // Braucht sowohl Lese- als auch Schreibzugriff auf
+                    // dasselbe Ziel - ResolveAssignTarget deckt beides ab
+                    // (füllt für IdentifierExpr z.B. _refs genauso wie ein
+                    // normales Lesen es täte, siehe dort), zusätzlich noch
+                    // die readonly-/unsafe-Prüfungen, die für Zuweisungen
+                    // ohnehin gelten und für '++'/'--' genauso gelten müssen.
+                    ResolveAssignTarget(incDec.Target);
                     break;
 
                 case NewExpr ne:

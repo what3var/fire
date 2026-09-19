@@ -556,8 +556,12 @@ namespace fire.Lexing
             char c = Advance();
             switch (c)
             {
-                case '+': return Tok(TokenType.Plus, "+", line, col, newlineBefore);
-                case '-': return Tok(TokenType.Minus, "-", line, col, newlineBefore);
+                case '+':
+                    if (Match('+')) return Tok(TokenType.PlusPlus, "++", line, col, newlineBefore);
+                    return Tok(TokenType.Plus, "+", line, col, newlineBefore);
+                case '-':
+                    if (Match('-')) return Tok(TokenType.MinusMinus, "--", line, col, newlineBefore);
+                    return Tok(TokenType.Minus, "-", line, col, newlineBefore);
                 case '*': return Tok(TokenType.Star, "*", line, col, newlineBefore);
                 case '%': return Tok(TokenType.Percent, "%", line, col, newlineBefore);
                 case '.': return Tok(TokenType.Dot, ".", line, col, newlineBefore);

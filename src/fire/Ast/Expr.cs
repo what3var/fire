@@ -141,4 +141,13 @@ namespace fire.Ast
     public sealed record MemberExpr(int Line, Expr Target, string Name) : Expr(Line);
     public sealed record IndexExpr(int Line, Expr Target, Expr Index) : Expr(Line);
     public sealed record AssignExpr(int Line, Expr Target, Expr Value) : Expr(Line);
+
+    /// <summary>`++x`/`--x` (IsPrefix=true, Ergebnis ist der NEUE Wert) bzw.
+    /// `x++`/`x--` (IsPrefix=false, Ergebnis ist der ALTE Wert vor der
+    /// Änderung) - SPEC "Inkrement/Dekrement". `Target` ist wie bei
+    /// AssignExpr ein zuweisbarer Ausdruck (Variable/Feld/Index/
+    /// Dereferenzierung, siehe Resolver.ResolveAssignTarget, hier
+    /// wiederverwendet - `++`/`--` brauchen ja ohnehin sowohl Lese- als
+    /// auch Schreibzugriff auf dasselbe Ziel).</summary>
+    public sealed record IncDecExpr(int Line, Expr Target, bool IsIncrement, bool IsPrefix) : Expr(Line);
 }

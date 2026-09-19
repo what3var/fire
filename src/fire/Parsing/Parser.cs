@@ -164,6 +164,78 @@ namespace fire.Parsing
             return FlattenNamespaces(MergeClassExtensions(combined), usings);
         }
 
+        /// <summary>Wie ParseWithPrelude, aber für BELIEBIG VIELE Quelltext-
+        /// Stücke (Prelude + mehrere Code-Dateien) statt nur Prelude + EINEM
+        /// Nutzer-Quelltext - mit der wichtigen Erweiterung, dass `#using`
+        /// NUR LOKAL für Deklarationen aus GENAU DEM Quelltext-Stück gilt,
+        /// das die Direktive selbst enthält (SPEC "Mehrere Quelldateien") -
+        /// anders als bei Parse/ParseWithPrelude, wo eine `#using`-Direktive
+        /// bewusst programmweit wirkt (dort gibt es ja nur EIN sinnvolles
+        /// "der ganze Rest des Programms"). Bei mehreren, potenziell von
+        /// verschiedenen Autoren stammenden Dateien wäre eine programmweite
+        /// Wirkung dagegen überraschend - Datei B sollte nicht plötzlich
+        /// einen Namespace unqualifiziert sehen, nur weil Datei A ihn
+        /// per `#using` importiert hat.
+        ///
+        /// `sources` in der Reihenfolge, in der sie kombiniert werden sollen
+        /// (üblich: Prelude zuerst, dann Bibliotheks-/Hilfsdateien, das
+        /// eigentliche Hauptskript zuletzt - die Reihenfolge selbst hat für
+        /// Klassenauflösung keine Bedeutung, siehe Parse/ParseWithPrelude-
+        /// Kommentar, nur für `#include`-Pfadauflösung falls `basePath`
+        /// genutzt wird). Jede Datei teilt sich mit den anderen EINE
+        /// gemeinsame `#include`-"bereits eingefügt"-Menge (wie bei
+        /// ParseWithPrelude), landet ein `#include`-Ziel also nur EIN
+        /// einziges Mal im kombinierten Programm, unabhängig davon, aus
+        /// welcher der `sources` heraus es zuerst erreicht wird.</summary>
+        public static List<Stmt> ParseMultiple(IReadOnlyList<string> sources, string? basePath = null)
+        {
+            basePath ??= Directory.GetCurrentDirectory();
+            var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var combined = new List<Stmt>();
+
+            foreach (var source in sources)
+            {
+                var (stmts, usings) = ParseRaw(source, basePath, alreadyIncluded);
+                StampUsings(stmts, usings);
+                combined.AddRange(stmts);
+            }
+
+            // Platzhalter-Liste hier - wird von FlattenNamespaces NICHT
+            // benutzt, solange JEDE ClassDecl bereits ihr eigenes, gestempeltes
+            // Usings-Feld trägt (siehe StampUsings/FlattenNamespaceStmt), was
+            // durch die Schleife oben für ALLE Klassen aus `sources` garantiert
+            // ist. Nur als Fallback für den (hier nicht vorkommenden) Fall
+            // gedacht, dass FlattenNamespaces auf eine ClassDecl OHNE Stempel
+            // träfe.
+            return FlattenNamespaces(MergeClassExtensions(combined), Array.Empty<string>());
+        }
+
+        /// <summary>Setzt `ClassDecl.Usings` auf `usings`, für JEDE Klasse in
+        /// `stmts` - rekursiv auch für Klassen, die in einem `namespace`-Block
+        /// verschachtelt sind (siehe ParseMultiple). Läuft VOR jedem
+        /// Zusammenführen/Flatten - der Stempel bleibt danach automatisch
+        /// erhalten, weil sowohl MergeClassExtensions als auch
+        /// FlattenNamespaces eine ClassDecl per `with { ... }` kopieren
+        /// (das übernimmt jedes nicht explizit geänderte Feld 1:1 aus dem
+        /// Original), nicht neu erzeugen.</summary>
+        private static void StampUsings(List<Stmt> stmts, IReadOnlyList<string> usings)
+        {
+            for (int i = 0; i < stmts.Count; i++)
+            {
+                switch (stmts[i])
+                {
+                    case ClassDecl cd:
+                        stmts[i] = cd with { Usings = usings };
+                        break;
+                    case NamespaceDecl nsDecl:
+                        var members = nsDecl.Members.ToList();
+                        StampUsings(members, usings);
+                        stmts[i] = nsDecl with { Members = members };
+                        break;
+                }
+            }
+        }
+
         private static (List<Stmt> Statements, List<string> Usings) ParseRaw(string source, string basePath, HashSet<string> alreadyIncluded)
         {
             string preprocessed = Preprocessor.Process(source, basePath, alreadyIncluded);
@@ -312,10 +384,21 @@ namespace fire.Parsing
                     break;
 
                 case ClassDecl cd:
+                    // cd.Usings ist bereits gesetzt (gestempelt), wenn diese
+                    // Klasse aus ParseMultiple stammt (siehe dort - JEDE
+                    // Quelldatei stempelt ihre eigenen #using-Namen direkt
+                    // auf jede ihrer ClassDecls, BEVOR irgendein Zusammen-
+                    // führen/Flatten passiert) - dann gelten AUSSCHLIESSLICH
+                    // DIESE, nicht das hier übergebene `activeUsings` (das
+                    // wäre bei ParseMultiple ohnehin nur ein Platzhalter).
+                    // Kommt die Klasse dagegen aus dem einfachen Parse/
+                    // ParseWithPrelude-Pfad (kein Stempel gesetzt, `Usings`
+                    // ist `null`), gilt wie bisher die eine, globale Liste.
+                    var effectiveUsings = cd.Usings ?? activeUsings;
                     var newBaseNames = cd.BaseNames
-                        .Select(b => QualifyNamespaceReference(b, currentNs, byNamespace, activeUsings))
+                        .Select(b => QualifyNamespaceReference(b, currentNs, byNamespace, effectiveUsings))
                         .ToList();
-                    result.Add(cd with { Name = QualifyDeclName(cd.Name, currentNs), BaseNames = newBaseNames });
+                    result.Add(cd with { Name = QualifyDeclName(cd.Name, currentNs), BaseNames = newBaseNames, Usings = effectiveUsings });
                     break;
 
                 case InterfaceDecl id:
@@ -2140,6 +2223,21 @@ namespace fire.Parsing
         /// bewusste Reihenfolge relativ zu `^`), NICHT direkt ParsePostfix().</summary>
         private Expr ParseUnary()
         {
+            if (Check(TokenType.PlusPlus) || Check(TokenType.MinusMinus))
+            {
+                var opTok = Advance();
+                bool isIncrement = opTok.Type == TokenType.PlusPlus;
+                // Bewusst ParsePostfix() statt rekursiv ParseUnary() - das
+                // Operanden-Ziel von Präfix '++'/'--' MUSS ein zuweisbarer
+                // Ausdruck sein (Variable/Feld/Index), nie ein weiterer
+                // unärer Ausdruck (`++!x`/`++-x` wären sinnlos, da deren
+                // Ergebnis kein gültiges Zuweisungsziel ist) - ParsePostfix
+                // deckt genau Bezeichner/Member-/Index-Zugriffsketten ab,
+                // dieselbe Ebene, die auch AssignExpr.Target zulässt.
+                var target = ParsePostfix();
+                return new IncDecExpr(opTok.Line, target, isIncrement, IsPrefix: true);
+            }
+
             if (Check(TokenType.Minus) || Check(TokenType.Bang) || Check(TokenType.Tilde)
                 || Check(TokenType.Star) || Check(TokenType.Amp))
             {
@@ -2158,7 +2256,11 @@ namespace fire.Parsing
         }
 
         /// <summary>Postfix-Kette: Aufruf, Member-Zugriff, Index, sowie die
-        /// Coercion-Suffixe ':' (Einheit) und '!' (Typ) in beliebiger Reihenfolge.</summary>
+        /// Coercion-Suffixe ':' (Einheit) und '!' (Typ) in beliebiger Reihenfolge,
+        /// zuletzt optional '++'/'--' (siehe Ast.IncDecExpr) - bewusst NICHT
+        /// Teil der Schleife oben (kann selbst nicht weiter Ziel eines '.'/
+        /// '['/... sein, `x++.feld` wäre sinnlos, da `x++` ein reiner Wert
+        /// ist, kein Objekt).</summary>
         private Expr ParsePostfix()
         {
             var expr = ParsePrimary();
@@ -2205,6 +2307,11 @@ namespace fire.Parsing
                 {
                     break;
                 }
+            }
+            if (LineContinues() && (Check(TokenType.PlusPlus) || Check(TokenType.MinusMinus)))
+            {
+                var opTok = Advance();
+                expr = new IncDecExpr(opTok.Line, expr, opTok.Type == TokenType.PlusPlus, IsPrefix: false);
             }
             return expr;
         }

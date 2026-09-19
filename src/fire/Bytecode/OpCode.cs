@@ -14,6 +14,22 @@ namespace fire.Bytecode
         Pop,                //                       : pop
         Dup,                //                       : push Peek()
         Swap,               //                       : vertauscht die obersten zwei Werte
+        RotateUnderTop,     //                       : [A,B,C] (unten->oben) -> [B,A,C] - vertauscht die
+                            //                         beiden Werte UNTER dem obersten, lässt ihn selbst
+                            //                         unangetastet (siehe Compiler.CompileIncDec für
+                            //                         `++`/`--` auf einem Feld-/Index-Ziel: obj/Index
+                            //                         müssen für Lesen UND Schreiben erhalten bleiben,
+                            //                         während der alte Wert für das Postfix-Ergebnis
+                            //                         separat aufgehoben wird - mit Swap allein (nur
+                            //                         die ABSOLUTEN obersten zwei) nicht erreichbar,
+                            //                         ohne den Zielausdruck ein zweites Mal auszuwerten)
+        IncDecIndex,        // arr,idx -> wert        : `++`/`--` auf einem Index-Ziel (arr[i]++ usw.) -
+                            //                         Lesen+Rechnen+Schreiben ATOMAR in der VM statt über
+                            //                         Stack-Umsortierung, da hier ZWEI "Adress"-Teile
+                            //                         (Array UND Index) erhalten bleiben müssen - mit
+                            //                         RotateUnderTop (nur 3 Werte) allein nicht sauber
+                            //                         lösbar. Operanden: 1 Byte isIncrement, 1 Byte
+                            //                         isPrefix (siehe Compiler.CompileIncDec)
 
         LoadLocal,          // u16 depth, u16 slot  : push GetAncestor(depth).GetSlot(slot)
         StoreLocal,         // u16 depth, u16 slot  : GetAncestor(depth).SetSlot(slot, Peek())

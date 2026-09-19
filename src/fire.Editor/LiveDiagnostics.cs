@@ -48,9 +48,9 @@ namespace fire.Editor
             try
             {
                 var natives = NativeRegistry.CreateDefault();
-                var program = Parser.ParseWithPrelude(source);
-                var resolveResult = Resolver.Resolve(program, natives.Names);
-                Compiler.Compile(program, resolveResult, natives);
+                var program = Parser.ParseWithPrelude(source, out var activeUsings);
+                var resolveResult = Resolver.Resolve(program, natives.Names, activeUsings: activeUsings);
+                Compiler.Compile(program, resolveResult, natives, activeUsings);
             }
             catch (ParseException ex)
             {

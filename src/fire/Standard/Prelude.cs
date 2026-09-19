@@ -107,15 +107,11 @@ namespace fire.Standard
                     this.count = this.count + 1
                 }
 
-                Get(int index) {
+                operator[](int index) {
                     return this.items[index]
                 }
 
-                GetIndex(int index) {
-                    return this.items[index]
-                }
-
-                SetIndex(int index, class value) {
+                operator[](int index, class value) {
                     this.items[index] = value
                 }
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Windows;
@@ -282,16 +283,23 @@ namespace fire.Editor
         {
             var index = ScriptSymbolIndex.Build(source);
             var items = CompletionEngine.GetSuggestions(source, offset, index);
-
+            
             if (items.Count == 0)
             {
                 if (closeIfEmpty) CompletionPopup.IsOpen = false;
                 return;
             }
 
+            items.OrderByDescending(i => i.Score);
+
+            Debug.WriteLine(items[0].Display + " (Score: " + items[0].Score + ")");
             _completionItems = items;
             CompletionList.ItemsSource = items.Select(i => i.Display).ToList();
-            CompletionList.SelectedIndex = 0;
+            
+            if (items[0].Score > 0.6f)
+                CompletionList.SelectedIndex = 0;
+            else
+                CompletionList.SelectedIndex = -1;
 
             PositionCompletionPopup();
             CompletionPopup.IsOpen = true;

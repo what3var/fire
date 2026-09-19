@@ -173,8 +173,21 @@ namespace fire.Bytecode
         /// längst gesetzt).</summary>
         private NamespaceResolver? _nsResolver;
 
+        /// <summary>Die `#using`-Namen, die für TOP-LEVEL-Code gelten (also
+        /// AUSSERHALB jeder Klasse, inkl. einer dort direkt definierten
+        /// Lambda - siehe CompileLambda) - anders als bei Klassen (deren
+        /// EIGENE, gestempelte `Ast.ClassDecl.Usings` gelten, siehe
+        /// CurrentUsings) gibt es für Top-Level-Code keine "eigene Datei"
+        /// mehr, sobald mehrere Quelltext-Stücke zu einem Programm
+        /// zusammengeführt wurden (siehe Parser.ParseMultiple) - hier gilt
+        /// deshalb schlicht das, was `Compile()` als `activeUsings`
+        /// übergeben bekam (bei ParseMultiple typischerweise die Usings des
+        /// HAUPT-Skripts, das die auszuführenden Top-Level-Anweisungen
+        /// enthält).</summary>
+        private IReadOnlyList<string> _topLevelUsings = Array.Empty<string>();
+
         private Compiler(ResolveResult resolveResult, NativeRegistry natives)
-            : this(resolveResult.References, natives, null, resolveResult.NoShadowGlobals ? 0 : resolveResult.GlobalSlotCount, null)
+            : this(resolveResult.References, natives, null, resolveResult.NoShadowGlobals ? 0 : resolveResult.GlobalSlotCount, null, Array.Empty<string>())
         {
         }
 
@@ -182,14 +195,21 @@ namespace fire.Bytecode
         /// in einen eigenen Chunk (FunctionProto): teilt sich die Resolver-
         /// Referenzen und die Native-Registry mit dem äußeren Compiler, baut aber
         /// einen eigenen, frischen Chunk.</summary>
-        private Compiler(IReadOnlyDictionary<Expr, ResolvedRef> refs, NativeRegistry natives, RuntimeClass? enclosingClass, int globalSlotCount, NamespaceResolver? nsResolver)
+        private Compiler(IReadOnlyDictionary<Expr, ResolvedRef> refs, NativeRegistry natives, RuntimeClass? enclosingClass, int globalSlotCount, NamespaceResolver? nsResolver, IReadOnlyList<string> topLevelUsings)
         {
             _refs = refs;
             _natives = natives;
             _enclosingClass = enclosingClass;
             _globalSlotCount = globalSlotCount;
             _nsResolver = nsResolver;
+            _topLevelUsings = topLevelUsings;
         }
+
+        /// <summary>Die für die AKTUELL kompilierte Stelle geltenden
+        /// `#using`-Namen - innerhalb einer Klasse deren EIGENE, gestempelte
+        /// Usings (`_enclosingClass.Decl.Usings`, siehe Parser.StampUsings),
+        /// außerhalb jeder Klasse `_topLevelUsings` (siehe dort).</summary>
+        private IReadOnlyList<string> CurrentUsings => _enclosingClass?.Decl.Usings ?? _topLevelUsings;
 
         /// <summary>Der Namespace, in dem GERADE kompiliert wird - deduziert aus
         /// dem Präfix von `_enclosingClass`s bereits vollqualifiziertem Namen
@@ -211,7 +231,7 @@ namespace fire.Bytecode
         /// - überall dort genutzt, wo ein vom Nutzer geschriebener Klassen-/
         /// Typname als String-Konstante in den Bytecode wandert (siehe
         /// NewExpr/IsOfExpr/CatchClause-Kompilierung).</summary>
-        private string ResolveTypeName(string name) => _nsResolver?.Resolve(name, CurrentNamespace) ?? name;
+        private string ResolveTypeName(string name) => _nsResolver?.Resolve(name, CurrentNamespace, CurrentUsings) ?? name;
 
         public static CompiledProgram Compile(
             IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives,
@@ -253,12 +273,10 @@ namespace fire.Bytecode
         private sealed class NamespaceResolver
         {
             private readonly Dictionary<string, List<(string Namespace, string Qualified)>> _bySimpleName = new();
-            private readonly IReadOnlyList<string> _activeUsings;
             private readonly HashSet<string> _allNames;
 
-            public NamespaceResolver(IEnumerable<string> allClassNames, IReadOnlyList<string> activeUsings)
+            public NamespaceResolver(IEnumerable<string> allClassNames)
             {
-                _activeUsings = activeUsings;
                 _allNames = new HashSet<string>(allClassNames);
                 foreach (var full in _allNames)
                 {
@@ -275,8 +293,15 @@ namespace fire.Bytecode
             /// <summary>Löst `name` auf, WENN nötig. `currentNamespace` ist der
             /// Namespace, in dessen Klasse diese Referenz textuell steht (siehe
             /// Compiler.CurrentNamespace), `null` außerhalb jeder Klasse oder
-            /// wenn diese selbst nicht namespaciert ist.</summary>
-            public string Resolve(string name, string? currentNamespace)
+            /// wenn diese selbst nicht namespaciert ist. `activeUsings` sind die
+            /// für GENAU DIESE Referenz geltenden `#using`-Namen - bei einer
+            /// Referenz innerhalb einer Klasse deren EIGENE, gestempelte Usings
+            /// (`Ast.ClassDecl.Usings`, siehe Parser.StampUsings/ParseMultiple),
+            /// bei Top-Level-Code die des jeweiligen Quelltext-Stücks (siehe
+            /// Compiler._topLevelUsings) - NICHT eine einzige, programmweite
+            /// Liste, damit `#using` in einer kombinierten Mehrdatei-Quelle
+            /// (ParseMultiple) wirklich nur lokal für ihre eigene Datei gilt.</summary>
+            public string Resolve(string name, string? currentNamespace, IReadOnlyList<string> activeUsings)
             {
                 // Schon ein exakt bekannter Name (inkl. bereits vom Nutzer
                 // vollqualifiziert geschrieben, oder ein nicht-namespacierter
@@ -291,7 +316,7 @@ namespace fire.Bytecode
                         if (ns == currentNamespace) return full;
 
                 foreach (var (ns, full) in candidates)
-                    if (_activeUsings.Contains(ns)) return full;
+                    if (activeUsings.Contains(ns)) return full;
 
                 // Uneindeutig (mehrere Namespaces, keiner davon aktiv/
                 // Geschwister) ODER schlicht kein Kandidat aktiv - unverändert
@@ -304,8 +329,9 @@ namespace fire.Bytecode
         // -----------------------------------------------------------
         // Klassen (Vorab-Pass: Name -> RuntimeClass, analog zum Resolver)
         // -----------------------------------------------------------
-        private Dictionary<string, RuntimeClass> CompileClasses(IReadOnlyList<Stmt> program, IReadOnlyList<string> activeUsings)
+        private Dictionary<string, RuntimeClass> CompileClasses(IReadOnlyList<Stmt> program, IReadOnlyList<string> topLevelUsings)
         {
+            _topLevelUsings = topLevelUsings;
             var classes = new Dictionary<string, RuntimeClass>();
             foreach (var stmt in program)
                 if (stmt is ClassDecl cd)
@@ -343,7 +369,7 @@ namespace fire.Bytecode
             // Körper-Kompilierung unten (CompileClassBody, u.a. `new X()`
             // INNERHALB von Methoden) braucht ihn ja schon WÄHREND dieser
             // Methode noch läuft, nicht erst danach.
-            _nsResolver = new NamespaceResolver(classes.Keys, activeUsings);
+            _nsResolver = new NamespaceResolver(classes.Keys);
 
             foreach (var rc in classes.Values)
                 CompileClassBody(rc);
@@ -423,7 +449,7 @@ namespace fire.Bytecode
             for (int i = 0; i < parms.Count; i++)
             {
                 if (parms[i].DefaultValue == null) continue;
-                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver);
+                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver, _topLevelUsings);
                 inner.CompileExpr(parms[i].DefaultValue!);
                 inner._chunk.EmitOp(OpCode.Return);
                 defaults[i] = new FunctionProto(inner._chunk, 0);
@@ -433,7 +459,7 @@ namespace fire.Bytecode
 
         private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver, _topLevelUsings);
             inner._chunk.OwnerClass = rc;
             if (initializer != null)
             {
@@ -497,7 +523,7 @@ namespace fire.Bytecode
         /// kollidieren.</summary>
         private void CompileFireStmt(FireStmt fs)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _nsResolver);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _nsResolver, _topLevelUsings);
             int slot = _globalSlotCount;
             foreach (var capture in fs.TakingCaptures)
                 inner._chunk.MarkLocalName(0, slot++, capture.VarName);
@@ -547,7 +573,7 @@ namespace fire.Bytecode
         /// HandleDeliveredThreadException), nicht hier an dieser Stelle.</summary>
         private void CompileCatchThreadsDecl(CatchThreadsDecl decl)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _nsResolver);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _nsResolver, _topLevelUsings);
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -569,7 +595,7 @@ namespace fire.Bytecode
         /// keine "Art" von terminate) und mit dem anderen Register-Opcode.</summary>
         private void CompileCatchTerminateDecl(CatchTerminateDecl decl)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _nsResolver);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _nsResolver, _topLevelUsings);
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -585,7 +611,7 @@ namespace fire.Bytecode
 
         private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver, _topLevelUsings);
             inner._chunk.OwnerClass = rc;
             for (int i = 0; i < parms.Count; i++)
                 inner._chunk.MarkLocalName(0, i, parms[i].Name);
@@ -605,7 +631,7 @@ namespace fire.Bytecode
         /// einheitlich über denselben Mechanismus.</summary>
         private FunctionProto CompileConstructorProto(RuntimeClass rc, ConstructorDecl? ctor)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver, _topLevelUsings);
             inner._chunk.OwnerClass = rc;
 
             if (ctor != null)
@@ -1202,6 +1228,10 @@ namespace fire.Bytecode
                     CompileAssign(a);
                     break;
 
+                case IncDecExpr incDec:
+                    CompileIncDec(incDec);
+                    break;
+
                 case ThisExpr:
                     _chunk.EmitOp(OpCode.LoadThis);
                     break;
@@ -1371,7 +1401,7 @@ namespace fire.Bytecode
         /// 'on'-Target kann sich pro Auswertung unterscheiden.</summary>
         private void CompileLambda(LambdaExpr lambda)
         {
-            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _nsResolver);
+            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _nsResolver, _topLevelUsings);
             inner._chunk.OwnerClass = _enclosingClass;
             for (int i = 0; i < lambda.Params.Count; i++)
                 inner._chunk.MarkLocalName(0, i, lambda.Params[i].Name);
@@ -1606,6 +1636,110 @@ namespace fire.Bytecode
                     throw new NotSupportedException(
                         $"Zuweisung an '{ext.Name}' ist nicht möglich - das ist eine extern deklarierte Funktion.");
             }
+        }
+
+        /// <summary>`++x`/`--x`/`x++`/`x--` (siehe Ast.IncDecExpr-Doku).
+        /// Vier Zielarten, je eigene Strategie:
+        /// - IdentifierExpr/Dereference/MemberExpr (EINE "Adresse" - Slot,
+        ///   Pointer bzw. Objektinstanz): per Dup+Lesen+Rechnen+Schreiben
+        ///   direkt im Bytecode, für Postfix zusätzlich RotateUnderTop, um
+        ///   den alten Wert unter der Adresse aufzuheben, während sowohl
+        ///   Adresse als auch neuer Wert für den Schreib-Opcode oben bleiben
+        ///   (siehe OpCode.RotateUnderTop-Doku) - OHNE die Zieladresse ein
+        ///   zweites Mal auszuwerten.
+        /// - IndexExpr (ZWEI "Adress"-Teile - Array UND Index): ein eigener
+        ///   Opcode (IncDecIndex) übernimmt Lesen+Rechnen+Schreiben ATOMAR
+        ///   in der VM - mit reinem Stack-Umsortieren (nur RotateUnderTop,
+        ///   das ja nur 3 Werte kennt) wäre das für VIER zu erhaltende Werte
+        ///   (Array, Index, alter Wert, neuer Wert) nicht sauber lösbar
+        ///   gewesen, ohne Array/Index ein zweites Mal auszuwerten.</summary>
+        private void CompileIncDec(IncDecExpr e)
+        {
+            var addSubOp = e.IsIncrement ? OpCode.Add : OpCode.Sub;
+
+            if (e.Target is IndexExpr ix)
+            {
+                CompileExpr(ix.Target);
+                CompileExpr(ix.Index);
+                _chunk.EmitOp(OpCode.IncDecIndex);
+                _chunk.EmitByte(e.IsIncrement ? (byte)1 : (byte)0);
+                _chunk.EmitByte(e.IsPrefix ? (byte)1 : (byte)0);
+                return;
+            }
+
+            if (e.Target is MemberExpr me)
+            {
+                CompileExpr(me.Target);           // [obj]
+                _chunk.EmitOp(OpCode.Dup);         // [obj, obj]
+                _chunk.EmitOp(OpCode.GetField);
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name))); // [obj, oldVal]
+                if (!e.IsPrefix) _chunk.EmitOp(OpCode.Dup); // Postfix: [obj, oldVal, oldVal]
+                EmitLoadConst(Value.MakeInt(1));
+                _chunk.EmitOp(addSubOp);           // Prefix: [obj, newVal] / Postfix: [obj, oldVal, newVal]
+                if (!e.IsPrefix) _chunk.EmitOp(OpCode.RotateUnderTop); // [oldVal, obj, newVal]
+                _chunk.EmitOp(OpCode.SetField);
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name))); // [...,newVal]
+                if (!e.IsPrefix) _chunk.EmitOp(OpCode.Pop); // [oldVal]
+                return;
+            }
+
+            if (e.Target is UnaryExpr { Op: UnaryOp.Dereference } deref)
+            {
+                CompileExpr(deref.Operand);        // [ptr]
+                _chunk.EmitOp(OpCode.Dup);          // [ptr, ptr]
+                _chunk.EmitOp(OpCode.PtrRead);       // [ptr, oldVal]
+                if (!e.IsPrefix) _chunk.EmitOp(OpCode.Dup); // Postfix: [ptr, oldVal, oldVal]
+                EmitLoadConst(Value.MakeInt(1));
+                _chunk.EmitOp(addSubOp);
+                if (!e.IsPrefix) _chunk.EmitOp(OpCode.RotateUnderTop); // [oldVal, ptr, newVal]
+                _chunk.EmitOp(OpCode.PtrWrite);       // [...,newVal]
+                if (!e.IsPrefix) _chunk.EmitOp(OpCode.Pop); // [oldVal]
+                return;
+            }
+
+            if (e.Target is not IdentifierExpr id)
+                throw new NotSupportedException("Ungültiges Ziel für '++'/'--' im Bytecode-Compiler.");
+
+            var refKind = _refs[id];
+            void EmitLoad()
+            {
+                switch (refKind)
+                {
+                    case ResolvedRef.Local local:
+                        _chunk.EmitOp(OpCode.LoadLocal);
+                        _chunk.EmitU16(local.Depth);
+                        _chunk.EmitU16(local.Slot);
+                        break;
+                    case ResolvedRef.Global global:
+                        _chunk.EmitOp(OpCode.LoadGlobal);
+                        _chunk.EmitU16(global.Slot);
+                        break;
+                    default:
+                        throw new NotSupportedException($"'++'/'--' auf '{id.Name}' ist nicht möglich.");
+                }
+            }
+            void EmitStore()
+            {
+                switch (refKind)
+                {
+                    case ResolvedRef.Local local:
+                        _chunk.EmitOp(OpCode.StoreLocal);
+                        _chunk.EmitU16(local.Depth);
+                        _chunk.EmitU16(local.Slot);
+                        break;
+                    case ResolvedRef.Global global:
+                        _chunk.EmitOp(OpCode.StoreGlobal);
+                        _chunk.EmitU16(global.Slot);
+                        break;
+                }
+            }
+
+            EmitLoad();                              // [oldVal]
+            if (!e.IsPrefix) _chunk.EmitOp(OpCode.Dup); // Postfix: [oldVal, oldVal]
+            EmitLoadConst(Value.MakeInt(1));
+            _chunk.EmitOp(addSubOp);                  // Prefix: [newVal] / Postfix: [oldVal, newVal]
+            EmitStore();                              // Store* lässt den Wert (Peek statt Pop) auf dem Stack
+            if (!e.IsPrefix) _chunk.EmitOp(OpCode.Pop); // [oldVal]
         }
 
         private void CompileUnary(UnaryExpr u)

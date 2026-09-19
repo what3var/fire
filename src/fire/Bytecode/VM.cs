@@ -827,6 +827,57 @@ namespace fire.Bytecode
                     break;
                 }
 
+                case OpCode.RotateUnderTop:
+                {
+                    var c = Pop(); // oben
+                    var b = Pop();
+                    var a = Pop(); // unten
+                    Push(b);
+                    Push(a);
+                    Push(c);
+                    break;
+                }
+
+                case OpCode.IncDecIndex:
+                {
+                    bool isIncrement = ReadByte() != 0;
+                    bool isPrefix = ReadByte() != 0;
+                    var indexVal = Pop();
+                    var target = Pop();
+                    long idx = indexVal.AsInt();
+
+                    if (target.Kind == ValueKind.Array)
+                    {
+                        var arr = target.AsArray();
+                        if (!arr.TryGet(idx, out var oldVal))
+                        {
+                            ThrowIndexOutOfBounds(idx, arr.Length);
+                            break;
+                        }
+                        var newVal = isIncrement ? Value.Add(oldVal, Value.MakeInt(1)) : Value.Subtract(oldVal, Value.MakeInt(1));
+                        arr.TrySet(idx, newVal);
+                        Push(isPrefix ? newVal : oldVal);
+                    }
+                    else if (target.Kind == ValueKind.Buffer)
+                    {
+                        var buf = target.AsBuffer();
+                        if (!buf.TryGet(idx, out byte oldByte))
+                        {
+                            ThrowIndexOutOfBounds(idx, buf.Length);
+                            break;
+                        }
+                        byte newByte = (byte)(isIncrement ? oldByte + 1 : oldByte - 1);
+                        buf.TrySet(idx, newByte);
+                        Push(Value.MakeInt(isPrefix ? newByte : oldByte, width: NumericWidth.W8));
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException(
+                            $"'++'/'--' auf einem Index-Ziel erwartet ein Array oder einen Byte-Puffer, nicht {target.Kind}.");
+                    }
+                    break;
+                }
+
                 case OpCode.LoadLocal:
                 {
                     int depth = ReadU16(); int slot = ReadU16();
