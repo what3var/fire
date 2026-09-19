@@ -1,6 +1,6 @@
 using System;
 
-namespace ScriptLang.Terminal
+namespace fire.Terminal
 {
     /// <summary>
     /// Verwaltet "Konsolen" (TerminalCanvas-Instanzen) über aufsteigende,
@@ -14,11 +14,11 @@ namespace ScriptLang.Terminal
     ///
     /// Bekommt die zu verwendende Schrift-Implementierung per Konstruktor
     /// injiziert (`defaultFont`, z.B. eine GdiGlyphFont-Instanz aus
-    /// ScriptLang.Terminal.Windows) statt sie selbst zu kennen - DAS ist
+    /// fire.Terminal.Windows) statt sie selbst zu kennen - DAS ist
     /// die einzige Stelle, an der dieser sonst plattformunabhängige Manager
     /// überhaupt von einer konkreten IGlyphFont-Implementierung erfährt,
     /// und das passiert einmalig bei der Komposition (siehe
-    /// ScriptLang.Terminal.Windows), nicht hier im Kern.
+    /// fire.Terminal.Windows), nicht hier im Kern.
     /// </summary>
     public sealed class ConsoleManager
     {

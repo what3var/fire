@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
-using ScriptLang.Terminal;
+using fire.Terminal;
 
-namespace ScriptLang.Terminal.Windows
+namespace fire.Terminal.Windows
 {
     /// <summary>IGlyphFont-Implementierung, die Glyphen einer INSTALLIERTEN
     /// Monospace-Systemschrift (z.B. "Consolas", "Cascadia Mono") per GDI+

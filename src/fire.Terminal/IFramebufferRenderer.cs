@@ -1,6 +1,6 @@
 using System;
 
-namespace ScriptLang.Terminal
+namespace fire.Terminal
 {
     /// <summary>Abstraktion über das tatsächliche Zeichnen eines
     /// Framebuffers in einem Fenster - SDL (siehe Sdl.SdlFramebufferRenderer)

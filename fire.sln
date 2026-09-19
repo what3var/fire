@@ -1,6 +1,6 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.11.12202.211 insiders
+VisualStudioVersion = 18.11.12202.211
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire", "src\fire\fire.csproj", "{AA91B1F0-A14A-462E-84C8-44D9DB01D116}"
 EndProject
@@ -14,7 +14,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Terminal.Windows", "sr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Terminal.Bridge", "src\fire.Terminal.Bridge\fire.Terminal.Bridge.csproj", "{DAED3D53-A708-4CA3-AD09-EFCC61AAA9CE}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Terminal.Bridge.Test", "src\fire.Terminal.Bridge.Test\fire.Terminal.Bridge.Test.csproj", "{84FE2CA5-E3AE-4D02-A62E-E8A09F3C32CA}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Runtime", "src\fire.Runtime\fire.Runtime.csproj", "{84FE2CA5-E3AE-4D02-A62E-E8A09F3C32CA}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -53,5 +53,8 @@ Global
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {1FBEC386-7958-48B4-A4E7-130D10D34ADE}
 	EndGlobalSection
 EndGlobal

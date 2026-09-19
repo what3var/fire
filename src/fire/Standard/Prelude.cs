@@ -1,9 +1,9 @@
 namespace fire.Standard
 {
     /// <summary>
-    /// Ein Stück ScriptLang-Quelltext, das vor jedes Programm gesetzt wird und
+    /// Ein Stück fire-Quelltext, das vor jedes Programm gesetzt wird und
     /// die "eingebauten" Typen IndexOutOfBoundsException/AccessDeniedException/
-    /// IEnumerable/IEnumerator/List definiert - bewusst in ScriptLang selbst
+    /// IEnumerable/IEnumerator/List definiert - bewusst in fire selbst
     /// geschrieben statt als native C#-Implementierung, da die Sprache dafür
     /// inzwischen genug Substanz hat (Klassen, Arrays, Interfaces) und das
     /// konsistent mit allem anderen bleibt. `IndexOutOfBoundsException`/

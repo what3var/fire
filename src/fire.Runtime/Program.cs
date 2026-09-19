@@ -1,14 +1,14 @@
-using ScriptLang.Bytecode;
-using ScriptLang.Parsing;
-using ScriptLang.Resolving;
-using ScriptLang.Runtime;
-using ScriptLang.Terminal;
-using ScriptLang.Terminal.Windows;
-using ScriptLang.Terminal.Bridge;
+using fire.Bytecode;
+using fire.Parsing;
+using fire.Resolving;
+using fire.Runtime;
+using fire.Terminal;
+using fire.Terminal.Windows;
+using fire.Terminal.Bridge;
 
 // Grober End-to-End-Test der Grafik-Bruecke (siehe docs/CONSOLE.md):
 // Manager deklarieren, alle Funktionen ueber GraphicsBridge registrieren,
-// ScriptLang-Prelude + Testskript zusammen kompilieren und ausfuehren.
+// fire-Prelude + Testskript zusammen kompilieren und ausfuehren.
 // 'Skriptseite': drei Klassen (Framebuffer/Console/Window) registrieren
 // sich im Konstruktor selbst beim jeweiligen Manager, reichen ihre ID bei
 // jeder Methode automatisch durch, und werfen im Fehlerfall eine
@@ -35,8 +35,8 @@ foreach (var name in registeredNames)
 var demoRegistry = new NativeRegistry();
 var demoNames = demoRegistry.RegisterGroup("__GRPH", new System.Collections.Generic.Dictionary<string, NativeFunction>
 {
-    ["set"] = args => ScriptLang.Values.Value.MakeUndefined(),
-    ["get"] = args => ScriptLang.Values.Value.MakeUndefined(),
+    ["set"] = args => fire.Values.Value.MakeUndefined(),
+    ["get"] = args => fire.Values.Value.MakeUndefined(),
 });
 System.Console.WriteLine();
 System.Console.WriteLine("RegisterGroup(\"__GRPH\", {set, get}) -> " + string.Join(", ", demoNames) +
@@ -64,6 +64,12 @@ string testScript = """
     var stillOpen = win.Tick()
     print("Fenster nach einem Tick offen: " + stillOpen)
 
+    for (var i = 0; i < 255; i = i + 1) {
+        con.Print("Test " + i);
+        con.SetColor(i, 0)
+        win.Tick()
+    }
+
     try {
         var badFb = new Framebuffer(0, 0)
         print("FEHLER: haette werfen sollen")
@@ -72,7 +78,7 @@ string testScript = """
     }
     """;
 
-string combinedSource = ScriptLang.Standard.Prelude.Source + "\n" + GraphicsBridge.PreludeSource + "\n" + testScript;
+string combinedSource = fire.Standard.Prelude.Source + "\n" + GraphicsBridge.PreludeSource + "\n" + testScript;
 
 System.Console.WriteLine();
 System.Console.WriteLine("=== Skript-Ausgabe ===");

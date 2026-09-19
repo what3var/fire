@@ -120,7 +120,7 @@ namespace fire.Parsing
         }
 
         /// <summary>Wie Parse(), aber mit der Standardbibliothek (IEnumerable/
-        /// IEnumerator/List, siehe ScriptLang.Standard.Prelude) vorangestellt.
+        /// IEnumerator/List, siehe fire.Standard.Prelude) vorangestellt.
         /// Prelude und Nutzer-Code werden als EIN kombiniertes Programm
         /// resolved/kompiliert (Klassen/Interfaces werden ja ohnehin vorab
         /// eingesammelt, Reihenfolge spielt keine Rolle).

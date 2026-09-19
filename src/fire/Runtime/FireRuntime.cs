@@ -53,7 +53,7 @@ namespace fire.Runtime
     public static class FireRuntime
     {
         /// <summary>Optionaler Hook für Werkzeuge außerhalb der Sprache
-        /// selbst (aktuell: der Editor-Debugger, siehe ScriptLang.Editor.
+        /// selbst (aktuell: der Editor-Debugger, siehe fire.Editor.
         /// DebugThreadContext) - wird, wenn gesetzt, für JEDE neu erzeugte
         /// Fire-Thread-VM-Instanz aufgerufen, ANSTATT sie sofort frei laufen
         /// zu lassen. Bekommt die fertig aufgebaute VM-Instanz sowie einen

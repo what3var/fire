@@ -1,8 +1,8 @@
 using System;
-using ScriptLang.Terminal;
-using ScriptLang.Terminal.Sdl;
+using fire.Terminal;
+using fire.Terminal.Sdl;
 
-namespace ScriptLang.Terminal.Windows
+namespace fire.Terminal.Windows
 {
     /// <summary>
     /// Eigenständiges Konsolenfenster (siehe docs/CONSOLE.md) - eine DÜNNE
@@ -18,7 +18,7 @@ namespace ScriptLang.Terminal.Windows
     ///
     /// Zwei Nutzungsarten:
     /// - <see cref="Run"/>: blockierende Schleife für einen einfachen
-    ///   Standalone-Lauf (siehe ScriptLang.Terminal.Demo).
+    ///   Standalone-Lauf (siehe fire.Terminal.Demo).
     /// - <see cref="Tick"/>: EIN Zyklus (Events abholen + zeichnen), für
     ///   einen Host, der seine EIGENE Schleife fährt (z.B. eine spätere
     ///   Laufzeit, die daneben auch die Skript-VM taktet) - einfach jeden
@@ -44,7 +44,7 @@ namespace ScriptLang.Terminal.Windows
             _renderer = renderer ?? new SdlFramebufferRenderer();
         }
 
-        public void Open(string title = "ScriptLang Konsole")
+        public void Open(string title = "fire Konsole")
         {
             if (_opened) return;
             _renderer.Initialize(title, Framebuffer.Width, Framebuffer.Height);
@@ -73,7 +73,7 @@ namespace ScriptLang.Terminal.Windows
         /// Fenster geschlossen wird. Für einen Host mit eigener Schleife
         /// (typischer späterer Anwendungsfall, siehe Klassen-Doku) NICHT
         /// aufrufen, stattdessen Tick() selbst einbinden.</summary>
-        public void Run(string title = "ScriptLang Konsole")
+        public void Run(string title = "fire Konsole")
         {
             Open(title);
             while (Tick()) { }

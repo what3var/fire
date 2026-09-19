@@ -2010,7 +2010,7 @@ namespace fire.Bytecode
         private static readonly System.Reflection.Emit.ModuleBuilder DynamicDelegateModule =
             System.Reflection.Emit.AssemblyBuilder
                 .DefineDynamicAssembly(
-                    new System.Reflection.AssemblyName("ScriptLangDynamicExterns"),
+                    new System.Reflection.AssemblyName("fireDynamicExterns"),
                     System.Reflection.Emit.AssemblyBuilderAccess.Run)
                 .DefineDynamicModule("DynamicExterns");
 
@@ -2105,7 +2105,7 @@ namespace fire.Bytecode
             // ersten Mal denselben oder verschiedene externs dynamisch linken.
             lock (DynamicDelegateModuleLock)
             {
-                string typeName = $"ScriptLangExtern_{externName}_{System.Threading.Interlocked.Increment(ref _dynamicDelegateCounter)}";
+                string typeName = $"fireExtern_{externName}_{System.Threading.Interlocked.Increment(ref _dynamicDelegateCounter)}";
 
                 var typeBuilder = DynamicDelegateModule.DefineType(
                     typeName,

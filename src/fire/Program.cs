@@ -8,7 +8,7 @@ using fire.Runtime;
 using fire.Values;
 
 // Kleiner manueller Smoke-Test für Lexer + Parser + Unit-System, bis der
-// Evaluator existiert. Bei dir lokal: `dotnet run` im src/ScriptLang-Ordner.
+// Evaluator existiert. Bei dir lokal: `dotnet run` im src/fire-Ordner.
 
 string sample = """
 var a : int = 5mm
@@ -964,7 +964,7 @@ extern int ShowMessageBox(string text, string caption)
 extern int GetTickCount()
 extern int QueryPerformanceCounter(int* counter)
 
-ShowMessageBox("Hallo von ScriptLang!", "extern-Test")
+ShowMessageBox("Hallo von fire!", "extern-Test")
 print(GetTickCount())
 
 unsafe {
@@ -1172,7 +1172,7 @@ extern int GetTickCount()
 extern int MessageBoxW(int hWnd, string text, string caption, int type)
 
 print(GetTickCount())
-MessageBoxW(0, "Hallo von ScriptLang!", "#extern-Test", 0)
+MessageBoxW(0, "Hallo von fire!", "#extern-Test", 0)
 """;
 
 try
@@ -4400,7 +4400,7 @@ Console.WriteLine("=== #include: globale Komposition statt Baumprinzip ===");
 
 try
 {
-    string tmpDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "scriptlang_include_test_" + System.Guid.NewGuid().ToString("N"));
+    string tmpDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fire_include_test_" + System.Guid.NewGuid().ToString("N"));
     System.IO.Directory.CreateDirectory(tmpDir);
     string sharedPath = System.IO.Path.Combine(tmpDir, "shared.txt");
     System.IO.File.WriteAllText(sharedPath, "// GEMEINSAM_INKLUDIERTE_MARKIERUNG\n");

@@ -1,6 +1,6 @@
 using System;
 
-namespace ScriptLang.Terminal
+namespace fire.Terminal
 {
     /// <summary>
     /// Ein roher, direkt zugreifbarer Pixel-Puffer (R,G,B,A pro Pixel, siehe

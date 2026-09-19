@@ -60,7 +60,7 @@ namespace fire.Editor
 
             var thread = new Thread(RunLoop)
             {
-                Name = $"ScriptLang-Debug-{name}",
+                Name = $"fire-Debug-{name}",
                 // Vordergrund-Thread (.NET-Standard) - eine laufende
                 // Debug-Sitzung soll den Prozess nicht stillschweigend am
                 // Leben halten oder umgekehrt abrupt sterben, während noch

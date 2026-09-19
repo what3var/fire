@@ -31,7 +31,7 @@ namespace fire.Editor
     }
 
     /// <summary>
-    /// Tokenisiert Quelltext mit dem ECHTEN ScriptLang-Lexer für Syntax-
+    /// Tokenisiert Quelltext mit dem ECHTEN fire-Lexer für Syntax-
     /// Highlighting - bewusst KEINE eigene, zweite (und potenziell vom echten
     /// Verhalten abweichende) Tokenisierung. Der Lexer kennt Kommentare nicht
     /// als eigenen Token-Typ (er überspringt sie beim Tokenisieren einfach) -

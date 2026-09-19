@@ -1,7 +1,7 @@
-<Window x:Class="ScriptLang.Editor.MainWindow"
+<Window x:Class="fire.Editor.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="ScriptLang Editor" Height="820" Width="1300"
+        Title="fire Editor" Height="820" Width="1300"
         FontFamily="Segoe UI">
     <DockPanel>
         <Menu DockPanel.Dock="Top">

@@ -1,4 +1,4 @@
-namespace ScriptLang.Terminal
+namespace fire.Terminal
 {
     /// <summary>
     /// Eine anpassbare 256-Farben-Palette (Index 0-255) - jeder Eintrag ist

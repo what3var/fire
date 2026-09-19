@@ -1,8 +1,8 @@
 using System;
 using SDL3;
-using ScriptLang.Terminal;
+using fire.Terminal;
 
-namespace ScriptLang.Terminal.Sdl
+namespace fire.Terminal.Sdl
 {
     /// <summary>IFramebufferRenderer über das SDL3-CS-NuGet-Paket (siehe
     /// .csproj) - bewusst KEINE eigenen [DllImport]-Deklarationen, nur

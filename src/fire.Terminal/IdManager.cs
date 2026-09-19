@@ -1,11 +1,11 @@
 using System.Collections.Generic;
 
-namespace ScriptLang.Terminal
+namespace fire.Terminal
 {
     /// <summary>
     /// Generischer ID-basierter Objekt-Manager - gemeinsame Grundlage für
     /// FramebufferManager/ConsoleManager (hier) und WindowManager (siehe
-    /// ScriptLang.Terminal.Windows). Vergibt AUFSTEIGENDE, innerhalb dieser
+    /// fire.Terminal.Windows). Vergibt AUFSTEIGENDE, innerhalb dieser
     /// EINEN Instanz eindeutige IDs, beginnend bei 1 - 0 bleibt bewusst als
     /// "ungültige/keine ID" reserviert, damit ein vergessenes oder falsch
     /// initialisiertes Id-Feld (Standardwert 0 in C#) nicht zufällig auf ein

@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
-using ScriptLang.Terminal;
+using fire.Terminal;
 
-namespace ScriptLang.Terminal.Windows
+namespace fire.Terminal.Windows
 {
     /// <summary>
     /// Verwaltet Konsolenfenster (ConsoleWindow-Instanzen) über aufsteigende,
@@ -27,7 +27,7 @@ namespace ScriptLang.Terminal.Windows
         /// (die nur das C#-Objekt anlegen) macht das hier auch gleich das
         /// eigentliche OS-Fenster sichtbar, da ein unsichtbar erzeugtes
         /// Fenster für den Aufrufer keinen Sinn ergäbe.</summary>
-        public int CreateWindow(int framebufferId, string title = "ScriptLang Konsole")
+        public int CreateWindow(int framebufferId, string title = "fire Konsole")
         {
             var fb = _framebuffers.GetFramebuffer(framebufferId);
             var window = new ConsoleWindow(fb);

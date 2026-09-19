@@ -1,6 +1,6 @@
 using System;
 
-namespace ScriptLang.Terminal
+namespace fire.Terminal
 {
     /// <summary>
     /// Das "Grafikobjekt" (siehe CONSOLE.md): kennt die aktuelle Cursor-

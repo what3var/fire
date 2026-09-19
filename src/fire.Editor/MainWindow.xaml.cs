@@ -130,7 +130,7 @@ namespace fire.Editor
                 _highlightTimer.Start();
             };
 
-            SetEditorText("// Willkommen im ScriptLang-Editor\nprint(\"Hallo, Welt!\")\n");
+            SetEditorText("// Willkommen im fire-Editor\nprint(\"Hallo, Welt!\")\n");
             UpdateStatus("Bereit.");
         }
 
@@ -576,7 +576,7 @@ namespace fire.Editor
         }
 
         /// <summary>Zeigt die eingebaute Standardbibliothek (Prelude, siehe
-        /// ScriptLang.Standard.Prelude/ScriptSymbolIndex.MergeInPrelude) in
+        /// fire.Standard.Prelude/ScriptSymbolIndex.MergeInPrelude) in
         /// einem schreibgeschützten FileViewerWindow-Popup an, zu `line`
         /// gescrollt - für "zu Definition springen" auf `List`/
         /// `IEnumerable`/etc., die NICHT im aktuellen Dokument selbst
@@ -1082,7 +1082,7 @@ namespace fire.Editor
 
         private void Open_Click(object sender, RoutedEventArgs e)
         {
-            var dlg = new OpenFileDialog { Filter = "ScriptLang-Dateien (*.script)|*.script|Alle Dateien (*.*)|*.*" };
+            var dlg = new OpenFileDialog { Filter = "fire-Dateien (*.script)|*.script|Alle Dateien (*.*)|*.*" };
             if (dlg.ShowDialog() != true) return;
 
             _diagnostics = new List<Diagnostic>();
@@ -1107,7 +1107,7 @@ namespace fire.Editor
 
         private void SaveAs_Click(object sender, RoutedEventArgs e)
         {
-            var dlg = new SaveFileDialog { Filter = "ScriptLang-Dateien (*.script)|*.script|Alle Dateien (*.*)|*.*" };
+            var dlg = new SaveFileDialog { Filter = "fire-Dateien (*.script)|*.script|Alle Dateien (*.*)|*.*" };
             if (dlg.ShowDialog() != true) return;
 
             _currentFilePath = dlg.FileName;

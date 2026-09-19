@@ -160,7 +160,7 @@ namespace fire.Editor
         }
 
         /// <summary>Mischt Klassen/Interfaces der eingebauten Standard-
-        /// bibliothek (ScriptLang.Standard.Prelude, siehe SPEC "Vorangestellte
+        /// bibliothek (fire.Standard.Prelude, siehe SPEC "Vorangestellte
         /// Standardbibliothek") in DIESEN Index ein, markiert mit
         /// <see cref="ClassInfo.IsFromPrelude"/> - jedes reale Skript wird ja
         /// tatsächlich MIT dieser Bibliothek zusammen kompiliert (siehe

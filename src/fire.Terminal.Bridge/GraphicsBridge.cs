@@ -1,17 +1,17 @@
 using System.Collections.Generic;
-using ScriptLang.Bytecode;
-using ScriptLang.Values;
-using ScriptLang.Terminal;
-using ScriptLang.Terminal.Windows;
+using fire.Bytecode;
+using fire.Values;
+using fire.Terminal;
+using fire.Terminal.Windows;
 
-namespace ScriptLang.Terminal.Bridge
+namespace fire.Terminal.Bridge
 {
     /// <summary>
-    /// Die Brücke zwischen ScriptLang und der Grafik-API (siehe docs/
+    /// Die Brücke zwischen fire und der Grafik-API (siehe docs/
     /// CONSOLE.md): registriert FramebufferManager/ConsoleManager/
     /// WindowManager als native Funktionen (über NativeRegistry.
     /// RegisterGroup, jeweils mit eigenem Namens-Präfix) und liefert dazu
-    /// passenden ScriptLang-Quelltext (<see cref="PreludeSource"/>), der
+    /// passenden fire-Quelltext (<see cref="PreludeSource"/>), der
     /// diese nativen Funktionen hinter drei gewöhnlichen Klassen
     /// (Framebuffer/Console/Window) versteckt - Skript-Code sieht nie eine
     /// rohe ID, nur normale Objekte mit normalen Methoden.
@@ -20,7 +20,7 @@ namespace ScriptLang.Terminal.Bridge
     /// ist abgebildet, nur eine repräsentative Auswahl (Erzeugen/Zerstören
     /// plus die gängigsten Operationen je Ressourcenart). Weitere Methoden
     /// lassen sich nach demselben Muster ergänzen: native Funktion in der
-    /// passenden Build*Functions-Methode registrieren, passende ScriptLang-
+    /// passenden Build*Functions-Methode registrieren, passende fire-
     /// Methode in PreludeSource hinzufügen, die `this.id` automatisch
     /// mitgibt.
     /// </summary>
@@ -122,7 +122,7 @@ namespace ScriptLang.Terminal.Bridge
             };
         }
 
-        /// <summary>ScriptLang-Quelltext, der die per <see cref="RegisterAll"/>
+        /// <summary>fire-Quelltext, der die per <see cref="RegisterAll"/>
         /// registrierten nativen Funktionen hinter drei gewöhnlichen Klassen
         /// versteckt - VOR das eigentliche Nutzer-Skript zu setzen (analog
         /// zu Standard.Prelude.Source, siehe Parser.ParseWithPrelude für das

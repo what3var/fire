@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace ScriptLang.Terminal
+namespace fire.Terminal
 {
     /// <summary>
     /// Eine einzelne Farbe, 4 Byte: R, G, B, A - IMMER in genau dieser
@@ -69,7 +69,7 @@ namespace ScriptLang.Terminal
         // ---------------------------------------------------------------
         // Klassische 16-Farben-CGA-/QBasic-Palette (COLOR-Anweisung,
         // Farbnummern 0-15) - als benannte Konstanten, damit eine spätere
-        // ScriptLang-Anbindung (z.B. "color(QBColor.LightBlue, ...)") nicht
+        // fire-Anbindung (z.B. "color(QBColor.LightBlue, ...)") nicht
         // erst eigene Farbwerte definieren/recherchieren muss. Werte
         // entsprechen der Standard-CGA-Palette.
         // ---------------------------------------------------------------

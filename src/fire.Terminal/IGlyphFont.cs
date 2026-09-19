@@ -1,4 +1,4 @@
-namespace ScriptLang.Terminal
+namespace fire.Terminal
 {
     /// <summary>Abstraktion über die tatsächliche Herkunft der Zeichen-
     /// Bitmaps einer Monospace-Schrift - austauschbar (siehe GdiGlyphFont
