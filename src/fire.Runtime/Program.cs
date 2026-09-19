@@ -14,8 +14,8 @@ using fire.Terminal.Bridge;
 // jeder Methode automatisch durch, und werfen im Fehlerfall eine
 // HandleUnavailableException - siehe GraphicsBridge.PreludeSource.
 
-var fbManager = new FramebufferManager();
 using var font = new GdiGlyphFont();
+var fbManager = new FramebufferManager();
 var consoleManager = new ConsoleManager(fbManager, font);
 var windowManager = new WindowManager(fbManager);
 
@@ -28,19 +28,6 @@ foreach (var name in natives.Names)
 System.Console.WriteLine($"Registrierte native Funktionen ({registeredNames.Count}):");
 foreach (var name in registeredNames)
     System.Console.WriteLine("  " + name);
-
-// Kleine, gezielte Stichprobe fuer NativeRegistry.RegisterGroup selbst
-// (unabhaengig von der eigentlichen Bruecke) - genau das Beispiel aus der
-// Anfrage.
-var demoRegistry = new NativeRegistry();
-var demoNames = demoRegistry.RegisterGroup("__GRPH", new System.Collections.Generic.Dictionary<string, NativeFunction>
-{
-    ["set"] = args => fire.Values.Value.MakeUndefined(),
-    ["get"] = args => fire.Values.Value.MakeUndefined(),
-});
-System.Console.WriteLine();
-System.Console.WriteLine("RegisterGroup(\"__GRPH\", {set, get}) -> " + string.Join(", ", demoNames) +
-    " (erwartet: __GRPHset, __GRPHget)");
 
 string testScript = """
     var fb = new Framebuffer(320, 240)
