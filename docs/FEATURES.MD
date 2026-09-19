@@ -118,9 +118,9 @@ Objects always have exactly one owner.
 ```fire
 var sword = new Sword()
 
-sword.TakeGlobal()
-sword.TakeUpwards()
-sword.TakeTo(player)
+sword.TakeGlobal() //The global scope is the new owner
+sword.TakeUpwards() //The parent scope is the new owner
+sword.TakeTo(player) //The specified object is the new owner
 ```
 
 Objects are destroyed automatically when their owner disappears.
@@ -153,7 +153,7 @@ class Dog : Animal {
 
 Supports:
 
-- Single inheritance
+- Single inheritance, Multiple Interfaces
 - Constructors
 - Destructors
 - Virtual methods
@@ -223,9 +223,9 @@ Bind a custom `this`:
 
 ```fire
 var callback =
-    func() => {
-        print(name)
-    } on player
+    func() on player => {
+        print(this.name)
+    }
 ```
 
 Lambda type annotations:
