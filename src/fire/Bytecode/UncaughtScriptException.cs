@@ -1,7 +1,7 @@
 using System;
-using ScriptLang.Runtime;
+using fire.Runtime;
 
-namespace ScriptLang.Bytecode
+namespace fire.Bytecode
 {
     /// <summary>Eine Skript-`throw`, für die kein passender `catch` gefunden
     /// wurde. Die VM selbst wirft diesen Typ NICHT mehr intern (siehe VM.

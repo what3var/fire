@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
-using ScriptLang.Bytecode;
-using ScriptLang.Values;
+using fire.Bytecode;
+using fire.Values;
 
-namespace ScriptLang.Runtime
+namespace fire.Runtime
 {
     /// <summary>Handle auf einen laufenden/beendeten Fire-Thread. Da `fire`
     /// keine Rückgabewerte kennt (docs/THREADING_DESIGN.md Abschnitt 1),

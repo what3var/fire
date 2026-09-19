@@ -1,6 +1,6 @@
-using ScriptLang.Values;
+using fire.Values;
 
-namespace ScriptLang.Runtime
+namespace fire.Runtime
 {
     /// <summary>Zeigt auf einen konkreten Slot in einem konkreten Scope (lokale
     /// oder globale Variable). "Weiterrücken" bewegt sich innerhalb desselben

@@ -2,13 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
-using ScriptLang.Bytecode;
-using ScriptLang.Parsing;
-using ScriptLang.Resolving;
-using ScriptLang.Runtime;
-using ScriptLang.Values;
+using fire.Bytecode;
+using fire.Parsing;
+using fire.Resolving;
+using fire.Runtime;
+using fire.Values;
 
-namespace ScriptLang.Editor
+namespace fire.Editor
 {
     /// <summary>
     /// Kapselt einen Kompilier+Ausführungs-Lauf eines Skripts für den
@@ -105,9 +105,9 @@ namespace ScriptLang.Editor
 
             try
             {
-                var program = Parser.ParseWithPrelude(source);
-                var resolveResult = Resolver.Resolve(program, _natives.Names);
-                var compiled = Compiler.Compile(program, resolveResult, _natives);
+                var program = Parser.ParseWithPrelude(source, out var activeUsings);
+                var resolveResult = Resolver.Resolve(program, _natives.Names, activeUsings: activeUsings);
+                var compiled = Compiler.Compile(program, resolveResult, _natives, activeUsings);
 
                 var globalScope = new Scope(null, isGlobal: true);
                 var mainVm = new VM(compiled.TopLevel, globalScope, _natives, compiled.Classes,

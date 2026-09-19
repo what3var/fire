@@ -1,7 +1,7 @@
 using System;
 using System.Globalization;
 
-namespace ScriptLang.Values
+namespace fire.Values
 {
     /// <summary>
     /// Ein Laufzeitwert. bool/char/string sind reine Value-Types ohne Einheit.

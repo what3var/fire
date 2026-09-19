@@ -1,6 +1,6 @@
-using ScriptLang.Bytecode;
+using fire.Bytecode;
 
-namespace ScriptLang.Runtime
+namespace fire.Runtime
 {
     /// <summary>
     /// Laufzeit-Wert einer Lambda-Funktion. Braucht - anders als klassische

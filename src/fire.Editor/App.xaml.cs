@@ -1,6 +1,6 @@
 using System.Windows;
 
-namespace ScriptLang.Editor
+namespace fire.Editor
 {
     public partial class App : Application
     {

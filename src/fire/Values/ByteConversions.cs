@@ -1,4 +1,4 @@
-namespace ScriptLang.Values
+namespace fire.Values
 {
     /// <summary>ASCII-/"Unicode"-Umwandlungen zwischen string/char und
     /// ByteBuffer (siehe SPEC 8.10). Bewusst NUR einfachste Bausteine

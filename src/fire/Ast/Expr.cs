@@ -1,8 +1,8 @@
 using System.Collections.Generic;
-using ScriptLang.Lexing;
-using ScriptLang.Values;
+using fire.Lexing;
+using fire.Values;
 
-namespace ScriptLang.Ast
+namespace fire.Ast
 {
     public abstract record Expr(int Line);
 

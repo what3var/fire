@@ -1,4 +1,4 @@
-namespace ScriptLang.Values
+namespace fire.Values
 {
     /// <summary>
     /// Signalisiert eine verletzte interne INVARIANTE der VM/des Compilers -

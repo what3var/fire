@@ -1,4 +1,4 @@
-namespace ScriptLang.Values
+namespace fire.Values
 {
     public enum ValueKind
     {

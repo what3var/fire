@@ -2,11 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using ScriptLang.Ast;
-using ScriptLang.Lexing;
-using ScriptLang.Values;
+using fire.Ast;
+using fire.Lexing;
+using fire.Values;
 
-namespace ScriptLang.Parsing
+namespace fire.Parsing
 {
     public sealed class ParseException : Exception
     {
@@ -45,6 +45,15 @@ namespace ScriptLang.Parsing
         /// ExternDecl.LibName), bis eine weitere `#extern`-Direktive sie
         /// ändert. Rein Parser-intern, keine Laufzeit-Bedeutung.</summary>
         private string? _currentExternLib;
+
+        /// <summary>Alle per `#using Name`/`#using A.B` in DIESEM Parse-Durchlauf
+        /// gesehenen Namespace-Namen (siehe ParseDirective/FlattenNamespaces) -
+        /// wirkt bewusst GLOBAL fürs gesamte Programm, nicht nur ab der
+        /// Textposition der Direktive (siehe FlattenNamespaces-Doku für die
+        /// Begründung). Von ParseRaw nach außen gereicht, damit Parse/
+        /// ParseWithPrelude die Usings BEIDER Hälften (Prelude + Nutzer-Code)
+        /// vor dem eigentlichen FlattenNamespaces-Aufruf zusammenführen können.</summary>
+        private readonly List<string> _activeUsings = new();
 
         /// <summary>Stack der synthetischen Zielvariablen-Namen aktiver
         /// `with`-Blöcke (innerster zuletzt) - siehe ParseWithStmt. Ein
@@ -92,8 +101,23 @@ namespace ScriptLang.Parsing
         /// einer Datei stammt (dann üblicherweise deren Verzeichnis), da
         /// Includes sonst relativ zum aktuellen Arbeitsverzeichnis der
         /// Anwendung aufgelöst würden.</summary>
-        public static List<Stmt> Parse(string source, string basePath) =>
-            MergeClassExtensions(ParseRaw(source, basePath, new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
+        public static List<Stmt> Parse(string source, string basePath) => Parse(source, basePath, out _);
+
+        /// <summary>Wie Parse(source, basePath), gibt zusätzlich die per
+        /// `#using Name` gesammelten Namespace-Namen zurück (siehe
+        /// FlattenNamespaces/_activeUsings) - Resolver.Resolve und Compiler.
+        /// Compile brauchen dieselbe Liste, um Namespace-Mitglieder auch
+        /// INNERHALB von Methoden-/Konstruktor-Bodies (`new X()`, `is of X`,
+        /// `catch (e : X)`) unqualifiziert auflösen zu können (SPEC
+        /// "Namespaces"). Als `out`-Parameter statt einer Tupel-Rückgabe, damit
+        /// die einfachen Überladungen oben (nur `List&lt;Stmt&gt;`) bestehende
+        /// Aufrufstellen nicht brechen.</summary>
+        public static List<Stmt> Parse(string source, string basePath, out IReadOnlyList<string> activeUsings)
+        {
+            var (stmts, usings) = ParseRaw(source, basePath, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            activeUsings = usings;
+            return FlattenNamespaces(MergeClassExtensions(stmts), usings);
+        }
 
         /// <summary>Wie Parse(), aber mit der Standardbibliothek (IEnumerable/
         /// IEnumerator/List, siehe ScriptLang.Standard.Prelude) vorangestellt.
@@ -107,7 +131,9 @@ namespace ScriptLang.Parsing
         /// zusammengeführt - sonst würde z.B. `class extends List { ... }`
         /// im Nutzer-Code fälschlich fehlschlagen, weil `List` beim isolierten
         /// Mergen NUR des Nutzer-Codes noch nicht bekannt wäre (die kommt ja
-        /// erst aus der Prelude-Hälfte).
+        /// erst aus der Prelude-Hälfte). Dasselbe gilt für FlattenNamespaces:
+        /// erst NACH dem Zusammenführen beider Hälften aufgerufen, mit den
+        /// `#using`-Namen BEIDER Hälften zusammen.
         ///
         /// WICHTIG für `#include`: Prelude und Nutzer-Code teilen sich EINE
         /// gemeinsame "bereits eingefügt"-Menge (siehe Preprocessor.
@@ -115,20 +141,36 @@ namespace ScriptLang.Parsing
         /// (oder eine von ihr includierte Datei) dieselbe Datei wie der
         /// Nutzer-Code (oder umgekehrt), landet sie insgesamt trotzdem nur
         /// EIN einziges Mal im kombinierten Programm, statt einmal pro Hälfte.</summary>
-        public static List<Stmt> ParseWithPrelude(string userSource)
+        public static List<Stmt> ParseWithPrelude(string userSource) => ParseWithPrelude(userSource, out _);
+
+        /// <summary>Wie ParseWithPrelude(userSource) - siehe Parse(source,
+        /// basePath, out activeUsings) für die Begründung des `out`-
+        /// Parameters.</summary>
+        public static List<Stmt> ParseWithPrelude(string userSource, out IReadOnlyList<string> activeUsings)
         {
             var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var combined = new List<Stmt>();
-            combined.AddRange(ParseRaw(ScriptLang.Standard.Prelude.Source, Directory.GetCurrentDirectory(), alreadyIncluded));
-            combined.AddRange(ParseRaw(userSource, Directory.GetCurrentDirectory(), alreadyIncluded));
-            return MergeClassExtensions(combined);
+            var usings = new List<string>();
+
+            var (preludeStmts, preludeUsings) = ParseRaw(fire.Standard.Prelude.Source, Directory.GetCurrentDirectory(), alreadyIncluded);
+            combined.AddRange(preludeStmts);
+            usings.AddRange(preludeUsings);
+
+            var (userStmts, userUsings) = ParseRaw(userSource, Directory.GetCurrentDirectory(), alreadyIncluded);
+            combined.AddRange(userStmts);
+            usings.AddRange(userUsings);
+
+            activeUsings = usings;
+            return FlattenNamespaces(MergeClassExtensions(combined), usings);
         }
 
-        private static List<Stmt> ParseRaw(string source, string basePath, HashSet<string> alreadyIncluded)
+        private static (List<Stmt> Statements, List<string> Usings) ParseRaw(string source, string basePath, HashSet<string> alreadyIncluded)
         {
             string preprocessed = Preprocessor.Process(source, basePath, alreadyIncluded);
             var tokens = new Lexer(preprocessed).Tokenize();
-            return new Parser(tokens).ParseProgram();
+            var parser = new Parser(tokens);
+            var stmts = parser.ParseProgram();
+            return (stmts, parser._activeUsings);
         }
 
         /// <summary>Führt alle `class extends X { ... }`-Erweiterungen (siehe
@@ -191,9 +233,129 @@ namespace ScriptLang.Parsing
             return result;
         }
 
-        // -----------------------------------------------------------
-        // Programm / Top-Level
-        // -----------------------------------------------------------
+        /// <summary>Löst alle NamespaceDecl-Knoten im bereits VOLLSTÄNDIGEN,
+        /// kombinierten Programm auf (siehe Ast.NamespaceDecl-Doku) - nach
+        /// MergeClassExtensions, damit `class extends X` innerhalb eines
+        /// Namespace-Blocks noch mit dem UNQUALIFIZIERTEN Namen matcht.
+        ///
+        /// Zwei Durchgänge: zuerst rekursiv (verschachtelte `namespace`-
+        /// Blöcke) sammeln, welche Klassen-/Interface-/Enum-Namen in
+        /// welchem Namespace liegen (einfacher Name -> vollqualifizierter
+        /// Name, siehe CollectNamespaceMembers); dann das Programm flach
+        /// durchlaufen, jede Deklaration auf ihren vollqualifizierten Namen
+        /// umbenennen und JEDE Basisklassen-/Interface-Referenz
+        /// (ClassDecl.BaseNames) qualifizieren, wenn sie zu einem Namen im
+        /// AKTUELLEN Namespace ODER einem per `#using` aktiven Namespace
+        /// passt (siehe QualifyReference) - sonst bleibt sie unverändert
+        /// (globaler/nicht-namespacierter Name, z.B. die gesamte
+        /// Standardbibliothek).
+        ///
+        /// BEWUSST NICHT abgedeckt (Grenze dieser Ausbaustufe): Referenzen
+        /// INNERHALB von Methoden-/Konstruktor-Bodies (`new X()`, `is of X`,
+        /// `catch (e : X)`, Feld-/Parameter-/Rückgabetypen) werden NICHT
+        /// automatisch qualifiziert - dafür müsste jede Ausdrucks-/
+        /// Anweisungsart im gesamten Baum durchlaufen werden (ein großer,
+        /// fehleranfälliger Umbau ohne Möglichkeit, hier zu kompilieren/zu
+        /// testen). Referenzen an DIESEN Stellen auf eine namespacierte
+        /// Klasse müssen deshalb vorerst den VOLLQUALIFIZIERTEN Namen direkt
+        /// ausschreiben (`new Foo.Bar()` statt `new Bar()`, selbst innerhalb
+        /// desselben Namespace) - siehe docs/SPEC.md "Namespaces" für die
+        /// genaue Grenze.</summary>
+        public static List<Stmt> FlattenNamespaces(List<Stmt> program, IReadOnlyList<string> activeUsings)
+        {
+            var byNamespace = new Dictionary<string, Dictionary<string, string>>();
+            CollectNamespaceMembers(program, null, byNamespace);
+
+            var result = new List<Stmt>();
+            foreach (var stmt in program)
+                FlattenNamespaceStmt(stmt, null, byNamespace, activeUsings, result);
+            return result;
+        }
+
+        private static void CollectNamespaceMembers(
+            IReadOnlyList<Stmt> stmts, string? currentNs, Dictionary<string, Dictionary<string, string>> byNamespace)
+        {
+            foreach (var stmt in stmts)
+            {
+                if (stmt is not NamespaceDecl nsDecl) continue;
+
+                string fullNs = currentNs == null ? nsDecl.Name : currentNs + "." + nsDecl.Name;
+                if (!byNamespace.TryGetValue(fullNs, out var map))
+                    byNamespace[fullNs] = map = new Dictionary<string, string>();
+
+                foreach (var member in nsDecl.Members)
+                {
+                    string? simpleName = member switch
+                    {
+                        ClassDecl cd => cd.Name,
+                        InterfaceDecl id => id.Name,
+                        EnumDecl ed => ed.Name,
+                        _ => null,
+                    };
+                    if (simpleName != null) map[simpleName] = fullNs + "." + simpleName;
+                }
+
+                CollectNamespaceMembers(nsDecl.Members, fullNs, byNamespace);
+            }
+        }
+
+        private static void FlattenNamespaceStmt(
+            Stmt stmt, string? currentNs, Dictionary<string, Dictionary<string, string>> byNamespace,
+            IReadOnlyList<string> activeUsings, List<Stmt> result)
+        {
+            switch (stmt)
+            {
+                case NamespaceDecl nsDecl:
+                    string fullNs = currentNs == null ? nsDecl.Name : currentNs + "." + nsDecl.Name;
+                    foreach (var member in nsDecl.Members)
+                        FlattenNamespaceStmt(member, fullNs, byNamespace, activeUsings, result);
+                    break;
+
+                case ClassDecl cd:
+                    var newBaseNames = cd.BaseNames
+                        .Select(b => QualifyNamespaceReference(b, currentNs, byNamespace, activeUsings))
+                        .ToList();
+                    result.Add(cd with { Name = QualifyDeclName(cd.Name, currentNs), BaseNames = newBaseNames });
+                    break;
+
+                case InterfaceDecl id:
+                    result.Add(id with { Name = QualifyDeclName(id.Name, currentNs) });
+                    break;
+
+                case EnumDecl ed:
+                    result.Add(ed with { Name = QualifyDeclName(ed.Name, currentNs) });
+                    break;
+
+                default:
+                    result.Add(stmt);
+                    break;
+            }
+        }
+
+        private static string QualifyDeclName(string simpleName, string? currentNs) =>
+            currentNs == null ? simpleName : currentNs + "." + simpleName;
+
+        /// <summary>Siehe FlattenNamespaces-Doku: löst `refName` (z.B. ein
+        /// Eintrag aus ClassDecl.BaseNames) auf ihren vollqualifizierten
+        /// Namen auf, WENN sie zu einem Geschwister im AKTUELLEN Namespace
+        /// oder einem per `#using` aktiven Namespace passt - sonst
+        /// unverändert (globaler Name, z.B. 'Exception' oder 'IEnumerable'
+        /// aus der Standardbibliothek).</summary>
+        private static string QualifyNamespaceReference(
+            string refName, string? currentNs, Dictionary<string, Dictionary<string, string>> byNamespace,
+            IReadOnlyList<string> activeUsings)
+        {
+            if (currentNs != null && byNamespace.TryGetValue(currentNs, out var ownMap)
+                && ownMap.TryGetValue(refName, out var qualifiedSibling))
+                return qualifiedSibling;
+
+            foreach (var ns in activeUsings)
+                if (byNamespace.TryGetValue(ns, out var usedMap) && usedMap.TryGetValue(refName, out var qualifiedUsed))
+                    return qualifiedUsed;
+
+            return refName;
+        }
+
         public List<Stmt> ParseProgram()
         {
             var statements = new List<Stmt>();
@@ -229,6 +391,7 @@ namespace ScriptLang.Parsing
             if (Check(TokenType.Readonly)) return ParseReadonlyDecl();
             if (Check(TokenType.Enum)) return ParseEnumDecl();
             if (Check(TokenType.Class)) return ParseClassDecl();
+            if (Check(TokenType.Namespace)) return ParseNamespaceDecl();
             if (Check(TokenType.Actor)) return ParseActorDecl();
             if (Check(TokenType.Interface)) return ParseInterfaceDecl();
             if (NextLooksLikeTypeThenName()) return ParseBareTypedDecl();
@@ -348,7 +511,7 @@ namespace ScriptLang.Parsing
             string varName = Expect(TokenType.Identifier, "Erwarte Bezeichner in catch(...)").Lexeme;
             string? typeName = null;
             if (Match(TokenType.Colon))
-                typeName = Expect(TokenType.Identifier, "Erwarte Typname nach ':' in catch(...)").Lexeme;
+                typeName = ParseDottedName("Typname nach ':' in catch(...)");
 
             Expect(TokenType.RParen, "Erwarte ')' nach catch-Parametern");
             var body = ParseBlock();
@@ -452,11 +615,26 @@ namespace ScriptLang.Parsing
         /// oder ein Bezeichner (Klassenname). Nur der Name, ohne Bitbreite/Pointer -
         /// für Kontexte, die (bisher) nur einen reinen Namen brauchen (`is of`,
         /// Basisklasse, catch-Typ).</summary>
+        /// <summary>Liest einen Typnamen - entweder ein Typ-Keyword (int/
+        /// float/...) oder einen Bezeichner, optional gefolgt von einem oder
+        /// mehreren '.'-getrennten weiteren Bezeichnern (Namespace-
+        /// qualifizierter Name, z.B. 'Foo.Bar' - siehe Ast.NamespaceDecl/
+        /// SPEC "Namespaces"). Ein '.' wird hier NUR konsumiert, wenn direkt
+        /// danach ein Bezeichner folgt - diese Sprache kennt sonst keine
+        /// Position, an der ein Typname selbst (nicht ein Ausdruck) von
+        /// einem '.' gefolgt sein könnte, der lookahead ist also rein
+        /// defensiv.</summary>
         private string ParseTypeAnnotationName()
         {
             if (TypeKeywords.Contains(Peek().Type))
                 return Advance().Lexeme;
-            return Expect(TokenType.Identifier, "Erwarte Typnamen").Lexeme;
+            string name = Expect(TokenType.Identifier, "Erwarte Typnamen").Lexeme;
+            while (Check(TokenType.Dot) && PeekAt(1).Type == TokenType.Identifier)
+            {
+                Advance(); // '.'
+                name += "." + Advance().Lexeme;
+            }
+            return name;
         }
 
         /// <summary>Vollständiger Typ-Verweis: Basisname, optional `[Bitbreite]`
@@ -698,7 +876,16 @@ namespace ScriptLang.Parsing
                 return new NoShadowDirective(line);
             }
 
-            throw Error($"Unbekannte Präprozessor-Direktive '#{Peek().Lexeme}' (bekannt: '#extern \"libName\"', '#noshadow')", Peek());
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "using")
+            {
+                Advance();
+                string ns = ParseDottedName("Namespace-Namen nach '#using'");
+                ExpectStatementTerminator();
+                _activeUsings.Add(ns);
+                return new NoOpStmt(line);
+            }
+
+            throw Error($"Unbekannte Präprozessor-Direktive '#{Peek().Lexeme}' (bekannt: '#extern \"libName\"', '#noshadow', '#using Name')", Peek());
         }
 
         private Stmt ParseUnsafeStmt()
@@ -1266,6 +1453,41 @@ namespace ScriptLang.Parsing
             return new ClassExtensionDecl(line, targetName, members);
         }
 
+        /// <summary>`namespace Name { Mitglieder... }` bzw. `namespace A.B { ... }`
+        /// - siehe Ast.NamespaceDecl-Doku. Mitglieder werden mit dem normalen
+        /// ParseStatement() geparst (Klassen/Interfaces/Enums, auch
+        /// verschachtelte weitere `namespace`-Blöcke) - die eigentliche
+        /// Namens-Umschreibung passiert NICHT hier, sondern erst später,
+        /// gesammelt über das GESAMTE Programm hinweg (siehe
+        /// FlattenNamespaces).</summary>
+        private Stmt ParseNamespaceDecl()
+        {
+            int line = Peek().Line;
+            Expect(TokenType.Namespace, "Erwarte 'namespace'");
+            string name = ParseDottedName("Namespace-Namen");
+            Expect(TokenType.LBrace, "Erwarte '{' nach Namespace-Namen");
+
+            var members = new List<Stmt>();
+            while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+                members.Add(ParseStatement());
+            Expect(TokenType.RBrace, "Erwarte '}' am Ende des Namespace");
+
+            return new NamespaceDecl(line, name, members);
+        }
+
+        /// <summary>Liest einen (möglicherweise mehrteiligen, per '.' getrennten)
+        /// Namen wie 'A' oder 'A.B.C' - für Namespace-Namen (Deklaration UND
+        /// `#using`) an genau den beiden Stellen genutzt, wo diese Sprache
+        /// sonst nirgendwo einen '.' als Teil eines NAMENS selbst erlaubt
+        /// (überall sonst ist '.' der Elementzugriffs-Operator).</summary>
+        private string ParseDottedName(string what)
+        {
+            string name = Expect(TokenType.Identifier, $"Erwarte {what}").Lexeme;
+            while (Match(TokenType.Dot))
+                name += "." + Expect(TokenType.Identifier, $"Erwarte {what} nach '.'").Lexeme;
+            return name;
+        }
+
         /// <summary>`interface Name { [ReturnType] Method(params) ... }` - reine
         /// Methodensignaturen, keine Felder/Konstruktor/Bodies.</summary>
         private Stmt ParseInterfaceDecl()
@@ -1338,7 +1560,7 @@ namespace ScriptLang.Parsing
         /// da eine Auto-Property zusätzlich ein synthetisches Backing-Field
         /// braucht (siehe unten) - der Aufrufer (ParseClassMember) hängt
         /// beides an die Mitgliederliste der Klasse an.</summary>
-        private List<Stmt> ParsePropertyBody(int line, TypeRef? type, string name)
+        private List<Stmt> ParsePropertyBody(int line, TypeRef? type, string name, AccessModifier access)
         {
             Expect(TokenType.LBrace, "Erwarte '{' nach Property-Namen");
 
@@ -1403,8 +1625,13 @@ namespace ScriptLang.Parsing
                 // ('this._AutoName'), z.B. um ein get-only Property trotzdem im
                 // Konstruktor zu initialisieren (dafür gibt es ja keinen
                 // Setter über die Property selbst).
+                // Backing-Field ist IMMER private, unabhängig vom Modifikator
+                // der Property selbst - reines Implementierungsdetail, das
+                // nur über die Property (get_Name/set_Name) erreichbar sein
+                // soll, niemals direkt von außen ('this._AutoName' bleibt
+                // INNERHALB der Klasse weiterhin normal erlaubt).
                 string backingName = "_Auto" + name;
-                result.Add(new FieldDecl(line, type, Array.Empty<Expr?>(), backingName, null, IsReadonly: false));
+                result.Add(new FieldDecl(line, type, Array.Empty<Expr?>(), backingName, null, IsReadonly: false, Access: AccessModifier.Private));
 
                 if (getterIsAuto)
                     getter = new Stmt.BlockStmt(line, new List<Stmt>
@@ -1421,16 +1648,32 @@ namespace ScriptLang.Parsing
                     });
             }
 
-            result.Add(new PropertyDecl(line, type, name, getter, setter));
+            result.Add(new PropertyDecl(line, type, name, getter, setter, access));
             return result;
+        }
+
+        /// <summary>Liest einen optionalen Zugriffsmodifikator (`public`/
+        /// `private`/`protected`) direkt vor einem Klassenmitglied - Default
+        /// `Public`, wenn keiner angegeben wurde (SPEC "Zugriffsmodifikatoren",
+        /// siehe AccessModifier-Doku). Höchstens EINER erlaubt (kein
+        /// `public private ...`) - ein zweiter Modifikator würde einfach als
+        /// nächstes Token (Typname/Methodenname) fehlschlagen, kein
+        /// gesonderter Fehlerfall nötig.</summary>
+        private AccessModifier ParseOptionalAccessModifier()
+        {
+            if (Match(TokenType.Public)) return AccessModifier.Public;
+            if (Match(TokenType.Private)) return AccessModifier.Private;
+            if (Match(TokenType.Protected)) return AccessModifier.Protected;
+            return AccessModifier.Public;
         }
 
         private List<Stmt> ParseClassMember()
         {
             int line = Peek().Line;
+            var access = ParseOptionalAccessModifier();
 
             if (Check(TokenType.Construct))
-                return new List<Stmt> { ParseConstructor() };
+                return new List<Stmt> { ParseConstructor(access) };
             if (Check(TokenType.Destruct))
                 return new List<Stmt> { ParseDestructor() };
             if (Check(TokenType.Operator))
@@ -1461,7 +1704,7 @@ namespace ScriptLang.Parsing
                 var methodTypeParams = ParseWhereClauses(methodTypeParamNames, line);
                 var body = ParseBlock();
                 return new List<Stmt> { new MethodDecl(line, type, name, parms, body,
-                    methodTypeParamNames.Count > 0 ? methodTypeParams : null) };
+                    methodTypeParamNames.Count > 0 ? methodTypeParams : null, access) };
             }
 
             if (methodTypeParamNames.Count > 0)
@@ -1473,7 +1716,7 @@ namespace ScriptLang.Parsing
                     throw Error(
                         "'readonly' ist für Properties nicht gültig - eine Property ohne 'set' ist bereits nur lesbar",
                         Peek());
-                return ParsePropertyBody(line, type, name);
+                return ParsePropertyBody(line, type, name, access);
             }
 
             var arrayRanks = ParseArrayRanks();
@@ -1482,7 +1725,7 @@ namespace ScriptLang.Parsing
             if (Match(TokenType.Assign))
                 initializer = ParseExpression();
             ExpectStatementTerminator();
-            return new List<Stmt> { new FieldDecl(line, type, arrayRanks, name, initializer, isReadonly) };
+            return new List<Stmt> { new FieldDecl(line, type, arrayRanks, name, initializer, isReadonly, access) };
         }
 
         /// <summary>`operator SYMBOL(params) { body }` - Operator-Überladung
@@ -1560,7 +1803,7 @@ namespace ScriptLang.Parsing
                 "'==', '!=', '<', '<=', '>', '>=')", Peek());
         }
 
-        private Stmt ParseConstructor()
+        private Stmt ParseConstructor(AccessModifier access)
         {
             int line = Peek().Line;
             Expect(TokenType.Construct, "Erwarte 'construct'");
@@ -1574,7 +1817,7 @@ namespace ScriptLang.Parsing
             }
 
             var body = ParseBlock();
-            return new ConstructorDecl(line, parms, baseArgs, body);
+            return new ConstructorDecl(line, parms, baseArgs, body, access);
         }
 
         private Stmt ParseDestructor()
@@ -2134,7 +2377,7 @@ namespace ScriptLang.Parsing
                         return new NewArrayExpr(tok.Line, elementType, sizeExprs);
                     }
 
-                    string className = Expect(TokenType.Identifier, "Erwarte Klassennamen nach 'new'").Lexeme;
+                    string className = ParseTypeAnnotationName();
                     // 'new Name<Arg1, Arg2>(...)' für eine generische Klasse -
                     // unzweideutig, da nach 'new Name' ohnehin zwingend eine
                     // Argumentliste '(...)' folgen MUSS (nie ein Vergleich),

@@ -1,15 +1,17 @@
-namespace ScriptLang.Standard
+namespace fire.Standard
 {
     /// <summary>
     /// Ein Stück ScriptLang-Quelltext, das vor jedes Programm gesetzt wird und
-    /// die "eingebauten" Typen IndexOutOfBoundsException/IEnumerable/
-    /// IEnumerator/List definiert - bewusst in ScriptLang selbst geschrieben
-    /// statt als native C#-Implementierung, da die Sprache dafür inzwischen
-    /// genug Substanz hat (Klassen, Arrays, Interfaces) und das konsistent mit
-    /// allem anderen bleibt. `IndexOutOfBoundsException` wird von der VM bei
-    /// einem ungültigen Array-Index selbst konstruiert und geworfen (siehe
-    /// VM.ThrowIndexOutOfBounds) - Skripte fangen sie ganz normal per `try`/
-    /// `catch`, wie jede andere Exception auch.
+    /// die "eingebauten" Typen IndexOutOfBoundsException/AccessDeniedException/
+    /// IEnumerable/IEnumerator/List definiert - bewusst in ScriptLang selbst
+    /// geschrieben statt als native C#-Implementierung, da die Sprache dafür
+    /// inzwischen genug Substanz hat (Klassen, Arrays, Interfaces) und das
+    /// konsistent mit allem anderen bleibt. `IndexOutOfBoundsException`/
+    /// `AccessDeniedException` werden von der VM bei einem ungültigen
+    /// Array-Index bzw. einer verletzten Zugriffsmodifikator-Regel selbst
+    /// konstruiert und geworfen (siehe VM.ThrowIndexOutOfBounds/
+    /// ThrowAccessDenied) - Skripte fangen sie ganz normal per `try`/`catch`,
+    /// wie jede andere Exception auch.
     ///
     /// `List` nutzt intern ein Array fester Größe, das bei Bedarf verdoppelt
     /// wird (klassisches dynamisches Array). `GetEnumerator` erzeugt einen
@@ -30,6 +32,14 @@ namespace ScriptLang.Standard
                     this.message = message
                     this.index = index
                     this.length = length
+                }
+            }
+
+            class AccessDeniedException : Exception {
+                string message
+
+                construct(string message) {
+                    this.message = message
                 }
             }
 

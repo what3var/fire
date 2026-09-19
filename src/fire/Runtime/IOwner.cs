@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace ScriptLang.Runtime
+namespace fire.Runtime
 {
     /// <summary>
     /// Alles, das Owner einer Objektinstanz sein kann: ein Scope oder eine andere

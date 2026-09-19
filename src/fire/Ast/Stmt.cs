@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace ScriptLang.Ast
+namespace fire.Ast
 {
     public abstract record Stmt(int Line)
     {
@@ -175,6 +175,18 @@ namespace ScriptLang.Ast
     // ---------------------------------------------------------------
     // Klassen
     // ---------------------------------------------------------------
+
+    /// <summary>Zugriffsmodifikator eines Klassenmitglieds (Feld/Methode/
+    /// Property/Konstruktor) - SPEC "Zugriffsmodifikatoren". `Public`
+    /// (Default, wenn kein Modifikator angegeben wurde - bestehende Skripte/
+    /// die Prelude selbst bleiben dadurch unverändert gültig): von überall
+    /// zugreifbar. `Private`: nur innerhalb der DEKLARIERENDEN Klasse selbst
+    /// (nicht einmal von einer abgeleiteten Klasse aus). `Protected`: von
+    /// der deklarierenden Klasse UND jeder davon abgeleiteten Klasse aus
+    /// (rekursiv über die gesamte Vererbungskette) - siehe Resolver.
+    /// CheckMemberAccess für die genaue Prüfung.</summary>
+    public enum AccessModifier { Public, Private, Protected }
+
     /// <summary>IsReadonly: per `readonly` deklariert - nur innerhalb der
     /// eigenen Konstruktoren der deklarierenden Klasse per `this.feld = ...`
     /// zuweisbar (Resolver-Check, siehe ResolveAssignTarget); Zuweisungen an
@@ -182,7 +194,8 @@ namespace ScriptLang.Ast
     /// NICHT statisch erfasst (dynamisches Typsystem) - bewusste Grenze
     /// dieser Ausbaustufe.</summary>
     public sealed record FieldDecl(
-        int Line, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, string Name, Expr? Initializer, bool IsReadonly = false) : Stmt(Line);
+        int Line, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, string Name, Expr? Initializer, bool IsReadonly = false,
+        AccessModifier Access = AccessModifier.Public) : Stmt(Line);
 
     // ---------------------------------------------------------------
     // Generics: Typ-Parameter mit Constraints ('where T is of X, is of Y')
@@ -211,13 +224,15 @@ namespace ScriptLang.Ast
         string Name,
         IReadOnlyList<LambdaParam> Params,
         Stmt.BlockStmt Body,
-        IReadOnlyList<TypeParam>? TypeParams = null) : Stmt(Line);
+        IReadOnlyList<TypeParam>? TypeParams = null,
+        AccessModifier Access = AccessModifier.Public) : Stmt(Line);
 
     public sealed record ConstructorDecl(
         int Line,
         IReadOnlyList<LambdaParam> Params,
         IReadOnlyList<Expr>? BaseArgs,
-        Stmt.BlockStmt Body) : Stmt(Line);
+        Stmt.BlockStmt Body,
+        AccessModifier Access = AccessModifier.Public) : Stmt(Line);
 
     public sealed record DestructorDecl(int Line, Stmt.BlockStmt Body) : Stmt(Line);
 
@@ -281,7 +296,8 @@ namespace ScriptLang.Ast
     /// Properties haben deshalb absichtlich NIE einen eigenen
     /// ObjectInstance.Fields-Eintrag ihres eigenen Namens.</summary>
     public sealed record PropertyDecl(
-        int Line, TypeRef? Type, string Name, Stmt.BlockStmt? Getter, Stmt.BlockStmt? Setter) : Stmt(Line);
+        int Line, TypeRef? Type, string Name, Stmt.BlockStmt? Getter, Stmt.BlockStmt? Setter,
+        AccessModifier Access = AccessModifier.Public) : Stmt(Line);
 
     /// <summary>`class extends Name { neue Mitglieder... }` - fügt die
     /// Mitglieder direkt zur BESTEHENDEN Klasse `Name` hinzu (Ruby-artiges
@@ -291,4 +307,21 @@ namespace ScriptLang.Ast
     /// (siehe Parser.MergeClassExtensions) - Resolver/Compiler sehen davon
     /// nichts mehr, nur die bereits zusammengeführte ClassDecl.</summary>
     public sealed record ClassExtensionDecl(int Line, string TargetName, IReadOnlyList<Stmt> Members) : Stmt(Line);
+
+    /// <summary>`namespace Name { Mitglieder... }` bzw. `namespace A.B { ... }`
+    /// (SPEC "Namespaces") - wie ClassExtensionDecl wird auch das bereits VOR
+    /// dem eigentlichen Resolven/Kompilieren vollständig aufgelöst (siehe
+    /// Parser.FlattenNamespaces): jede enthaltene Klassen-/Interface-/Enum-
+    /// Deklaration bekommt ihren Namen um `Name.` vorangestellt (z.B. `A` in
+    /// `namespace Foo { class A {} }` wird intern zu `Foo.A`), und JEDE
+    /// Referenz darauf (Basisklasse, `new`, `is of`, `catch`, Feld-/
+    /// Parameter-/Rückgabetypen) wird - soweit sie einen Namen aus DIESEM
+    /// Namespace ODER einem per `#using` aktiven Namespace meint - auf den
+    /// vollqualifizierten Namen umgeschrieben. Resolver/Compiler/VM sehen
+    /// danach nur noch ganz normale, wenn auch punkthaltige, Namen - für sie
+    /// ist ein Namespace kein eigenes Konzept, nur ein Teil des Strings.
+    /// `Name` kann selbst bereits punktiert sein (`namespace A.B.C`) -
+    /// äquivalent zu verschachtelten `namespace A { namespace B { namespace
+    /// C { ... } } }`, beide Schreibweisen werden gleich behandelt.</summary>
+    public sealed record NamespaceDecl(int Line, string Name, IReadOnlyList<Stmt> Members) : Stmt(Line);
 }

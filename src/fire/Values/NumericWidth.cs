@@ -1,4 +1,4 @@
-namespace ScriptLang.Values
+namespace fire.Values
 {
     /// <summary>
     /// Bitbreite für int/float-Werte. Default ist immer die höchste Genauigkeit

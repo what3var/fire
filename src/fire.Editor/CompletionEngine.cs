@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace ScriptLang.Editor
+namespace fire.Editor
 {
     public enum CompletionKind
     {
@@ -39,6 +39,8 @@ namespace ScriptLang.Editor
             "if", "else", "while", "for", "foreach", "in", "on", "new", "base", "this",
             "try", "catch", "finally", "throw", "is", "of", "from", "under",
             "extern", "unsafe", "interface", "readonly", "enum",
+            "public", "private", "protected",
+            "namespace",
             "with", "extends", "switch", "case", "default", "break", "continue", "where",
             "fire", "taking", "sync", "flat", "leave", "terminate", "actor", "process", "operator",
             "true", "false", "undefined", "and", "or",

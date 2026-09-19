@@ -1,7 +1,7 @@
 using System.Collections.Generic;
-using ScriptLang.Lexing;
+using fire.Lexing;
 
-namespace ScriptLang.Editor
+namespace fire.Editor
 {
     public enum MemberKind
     {
@@ -217,7 +217,7 @@ namespace ScriptLang.Editor
         /// Dokument gemischt wird.</summary>
         private static readonly System.Lazy<ScriptSymbolIndex> PreludeIndex = new(() =>
         {
-            var index = Build(ScriptLang.Standard.Prelude.Source, isPrelude: true);
+            var index = Build(fire.Standard.Prelude.Source, isPrelude: true);
             return index;
         });
 

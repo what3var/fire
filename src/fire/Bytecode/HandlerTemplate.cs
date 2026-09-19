@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace ScriptLang.Bytecode
+namespace fire.Bytecode
 {
     /// <summary>
     /// Kompilierte Metadaten für einen `try`-Handler (in Chunk.Handlers

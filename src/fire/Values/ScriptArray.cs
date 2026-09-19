@@ -1,4 +1,4 @@
-namespace ScriptLang.Values
+namespace fire.Values
 {
     /// <summary>
     /// Ein Array fester Größe (Elemente default-initialisiert mit 'undefined').

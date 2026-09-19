@@ -1,4 +1,4 @@
-namespace ScriptLang.Bytecode
+namespace fire.Bytecode
 {
     /// <summary>
     /// Steuert, wie viel Laufzeit-Overhead die VM sich leistet - zwei Stufen

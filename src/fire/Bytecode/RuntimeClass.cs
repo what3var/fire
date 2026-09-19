@@ -1,8 +1,8 @@
 using System.Collections.Generic;
 using System.Linq;
-using ScriptLang.Ast;
+using fire.Ast;
 
-namespace ScriptLang.Bytecode
+namespace fire.Bytecode
 {
     /// <summary>
     /// Kompiliertes Gegenstück zu einer ClassDecl: Felder (als 0-Arg-Protos, die
@@ -37,6 +37,29 @@ namespace ScriptLang.Bytecode
         public bool IsActor => Decl.IsActor || (Base?.IsActor ?? false);
 
         public List<(string Name, FunctionProto Init)> Fields { get; } = new();
+
+        /// <summary>Zugriffsmodifikator jedes in DIESER Klasse selbst
+        /// deklarierten Feldes (nicht geerbter) - siehe FindFieldAccess für
+        /// die Basisklassen-Kette. Vom Compiler direkt befüllt (siehe
+        /// CompileClass), Default beim Fehlen eines Eintrags ist `Public`
+        /// (siehe FindFieldAccess).</summary>
+        public Dictionary<string, AccessModifier> OwnFieldAccess { get; } = new();
+
+        /// <summary>Wie FindMethod, aber für Felder: sucht über die
+        /// Basisklassen-Kette (eigene Klasse zuerst) nach der Klasse, die
+        /// `name` tatsächlich SELBST deklariert, samt ihrem
+        /// Zugriffsmodifikator - `null`, wenn kein Feld dieses Namens
+        /// irgendwo in der Kette deklariert ist (z.B. ein dynamisch über
+        /// den Dictionary-Fallback gesetztes Feld, siehe Runtime.
+        /// FieldStore - dafür gibt es keine Zugriffsprüfung, siehe VM.
+        /// CheckFieldAccess).</summary>
+        public (RuntimeClass DeclaringClass, AccessModifier Access)? FindFieldAccess(string name)
+        {
+            for (var rc = this; rc != null; rc = rc.Base)
+                if (rc.OwnFieldAccess.TryGetValue(name, out var access))
+                    return (rc, access);
+            return null;
+        }
 
         /// <summary>Alle Feldnamen dieser Klasse INKLUSIVE aller geerbten
         /// (Basis zuerst, rekursiv, dann die eigenen, jeweils in
@@ -97,11 +120,19 @@ namespace ScriptLang.Bytecode
         /// keinen eigenen `construct` deklariert.</summary>
         public Dictionary<int, FunctionProto> Constructors { get; } = new();
 
-        public void AddConstructor(FunctionProto proto)
+        /// <summary>Zugriffsmodifikator jedes Konstruktors, nach
+        /// Parameteranzahl (parallel zu Constructors) - ein privater
+        /// Konstruktor verhindert `new X(...)` von außerhalb der Klasse
+        /// (klassisches Singleton-/Factory-Method-Muster), siehe VM.
+        /// CheckConstructorAccess.</summary>
+        public Dictionary<int, AccessModifier> ConstructorAccess { get; } = new();
+
+        public void AddConstructor(FunctionProto proto, AccessModifier access = AccessModifier.Public)
         {
             if (!Constructors.TryAdd(proto.ParamCount, proto))
                 throw new System.InvalidOperationException(
                     $"Interner Fehler: Konstruktor mit {proto.ParamCount} Parametern wurde zweimal registriert.");
+            ConstructorAccess[proto.ParamCount] = access;
         }
 
         public FunctionProto? Destructor { get; set; }
@@ -119,8 +150,12 @@ namespace ScriptLang.Bytecode
         /// Überladung mit EXAKT derselben Parameteranzahl existiert -
         /// eigentlich schon vom Resolver abgefangen (siehe Resolver.
         /// ResolveClass), hier als zusätzliches Sicherheitsnetz auf
-        /// Compiler-Ebene.</summary>
-        public void AddMethod(string name, FunctionProto proto)
+        /// Compiler-Ebene. `access` gilt für ALLE Überladungen dieses Namens
+        /// zusammen (nicht pro einzelner Arity) - eine bewusste
+        /// Vereinfachung: unterschiedliche Modifikatoren auf Überladungen
+        /// desselben Namens sind ein seltener, nicht besonders sinnvoller
+        /// Fall, der letzte kompilierte Aufruf gewinnt.</summary>
+        public void AddMethod(string name, FunctionProto proto, AccessModifier access = AccessModifier.Public)
         {
             if (!Methods.TryGetValue(name, out var overloads))
             {
@@ -131,7 +166,14 @@ namespace ScriptLang.Bytecode
                 throw new System.InvalidOperationException(
                     $"Interner Fehler: Methode '{name}' mit {proto.ParamCount} Parametern wurde zweimal registriert.");
             overloads.Add(proto);
+            OwnMethodAccess[name] = access;
         }
+
+        /// <summary>Zugriffsmodifikator jedes in DIESER Klasse selbst
+        /// deklarierten Methodennamens (siehe AddMethod-Doku: gilt für alle
+        /// Überladungen dieses Namens zusammen). Vom Methoden-Cache
+        /// (FindMethod) ausgelesen, nicht separat zu prüfen.</summary>
+        public Dictionary<string, AccessModifier> OwnMethodAccess { get; } = new();
 
         /// <summary>Sucht eine Methode über die Basisklassen-Kette (eigene
         /// Klasse zuerst) nach Namen UND Argumentanzahl - Grundlage der
@@ -157,20 +199,46 @@ namespace ScriptLang.Bytecode
         /// Dictionary-Lookup + linearem Überladungs-Scan durchlaufen, auch
         /// wenn das Ergebnis (bei gleichbleibendem Aufrufort/gleicher
         /// Klasse) immer dasselbe ist.</summary>
-        private readonly Dictionary<(string Name, int ArgCount), FunctionProto?> _methodCache = new();
+        /// <summary>Memoisiert FindMethod-Ergebnisse nach (Name, Argumentzahl) -
+        /// die zugrunde liegenden Daten (Methods/Base) werden NUR während der
+        /// EINMALIGEN Kompilierung befüllt (siehe Compiler.CompileClass),
+        /// nie mehr danach zur Laufzeit verändert - der Cache ist deshalb ab
+        /// dem ersten Treffer für immer gültig, keine Invalidierung nötig.
+        /// Ohne das würde JEDER einzelne `obj.Methode(...)`-Aufruf zur
+        /// Laufzeit die komplette Basisklassen-Kette erneut per
+        /// Dictionary-Lookup + linearem Überladungs-Scan durchlaufen, auch
+        /// wenn das Ergebnis (bei gleichbleibendem Aufrufort/gleicher
+        /// Klasse) immer dasselbe ist. Trägt zusätzlich zum Proto die
+        /// DEKLARIERENDE Klasse und ihren Zugriffsmodifikator mit (siehe
+        /// FindMethodWithAccess) - kostet nichts Zusätzliches, da der Walk
+        /// die deklarierende Ebene ohnehin schon kennt, sobald er sie
+        /// gefunden hat.</summary>
+        private readonly Dictionary<(string Name, int ArgCount), (FunctionProto? Proto, RuntimeClass? DeclaringClass, AccessModifier Access)> _methodCache = new();
 
-        public FunctionProto? FindMethod(string name, int argCount)
+        public FunctionProto? FindMethod(string name, int argCount) => FindMethodWithAccess(name, argCount).Proto;
+
+        /// <summary>Wie FindMethod, liefert zusätzlich die Klasse, die
+        /// `name` tatsächlich SELBST deklariert (für die Basisklassen-Kette
+        /// relevant bei Vererbung/Overrides) samt ihrem Zugriffsmodifikator -
+        /// siehe VM.CheckMethodAccess. DeclaringClass/Access sind bedeutungslos,
+        /// wenn Proto `null` ist (keine passende Methode gefunden).</summary>
+        public (FunctionProto? Proto, RuntimeClass? DeclaringClass, AccessModifier Access) FindMethodWithAccess(string name, int argCount)
         {
             var key = (name, argCount);
             if (_methodCache.TryGetValue(key, out var cached))
                 return cached;
 
-            FunctionProto? result = null;
+            (FunctionProto? Proto, RuntimeClass? DeclaringClass, AccessModifier Access) result = (null, null, AccessModifier.Public);
             for (var rc = this; rc != null; rc = rc.Base)
                 if (rc.Methods.TryGetValue(name, out var overloads))
                 {
                     var match = FindBestMatch(overloads, argCount);
-                    if (match != null) { result = match; break; }
+                    if (match != null)
+                    {
+                        var access = rc.OwnMethodAccess.TryGetValue(name, out var a) ? a : AccessModifier.Public;
+                        result = (match, rc, access);
+                        break;
+                    }
                 }
 
             _methodCache[key] = result;

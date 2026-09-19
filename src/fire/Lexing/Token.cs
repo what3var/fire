@@ -1,4 +1,4 @@
-namespace ScriptLang.Lexing
+namespace fire.Lexing
 {
     public enum TokenType
     {
@@ -18,6 +18,8 @@ namespace ScriptLang.Lexing
         Extern, Unsafe,
         Interface,
         Readonly, Enum,
+        Public, Private, Protected, // Zugriffsmodifikatoren für Klassenmitglieder (siehe Parser.ParseAccessModifier)
+        Namespace, // 'namespace Name { ... }' (siehe Parser.ParseNamespaceDecl/FlattenNamespaces)
         With,
         Extends,
         Switch, Case, Default, Break,

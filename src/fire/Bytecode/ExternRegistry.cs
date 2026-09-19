@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-namespace ScriptLang.Bytecode
+namespace fire.Bytecode
 {
     /// <summary>Eine tatsächlich verlinkte native Implementierung einer per
     /// `extern` deklarierten Funktion. Nimmt die bereits MARSHALLTEN Argumente

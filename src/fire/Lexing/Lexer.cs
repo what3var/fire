@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 
-namespace ScriptLang.Lexing
+namespace fire.Lexing
 {
     public sealed class LexException : Exception
     {
@@ -50,6 +50,10 @@ namespace ScriptLang.Lexing
             ["unsafe"] = TokenType.Unsafe,
             ["interface"] = TokenType.Interface,
             ["readonly"] = TokenType.Readonly,
+            ["public"] = TokenType.Public,
+            ["private"] = TokenType.Private,
+            ["protected"] = TokenType.Protected,
+            ["namespace"] = TokenType.Namespace,
             ["enum"] = TokenType.Enum,
             ["with"] = TokenType.With,
             ["extends"] = TokenType.Extends,

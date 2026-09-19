@@ -1,7 +1,7 @@
 using System.Collections.Generic;
-using ScriptLang.Values;
+using fire.Values;
 
-namespace ScriptLang.Runtime
+namespace fire.Runtime
 {
     /// <summary>Wird geworfen, wenn `taking` (ObjectCopier.Take) eine Referenz
     /// findet, die nicht sicher isoliert kopiert werden kann - entweder weil

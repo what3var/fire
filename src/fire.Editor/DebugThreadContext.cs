@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
-using ScriptLang.Bytecode;
+using fire.Bytecode;
 
-namespace ScriptLang.Editor
+namespace fire.Editor
 {
     /// <summary>
     /// Kapselt EINE VM-Instanz für den thread-fähigen Debugger - sowohl der

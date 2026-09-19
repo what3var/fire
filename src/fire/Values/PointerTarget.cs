@@ -1,4 +1,4 @@
-namespace ScriptLang.Values
+namespace fire.Values
 {
     /// <summary>
     /// Abstraktes Ziel eines Pointers. Konkrete Implementierungen (Scope-Slot,

@@ -1,6 +1,6 @@
 using System.Threading;
 
-namespace ScriptLang.Runtime
+namespace fire.Runtime
 {
     /// <summary>
     /// Ein Lock, der einem GANZEN ausgecheckten Ownership-Baum zugeordnet ist

@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace ScriptLang.Bytecode
+namespace fire.Bytecode
 {
     /// <summary>
     /// Kompilierter Funktionskörper: ein eigener Chunk (die Lambda sieht ja

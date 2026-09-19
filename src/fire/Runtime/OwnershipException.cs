@@ -1,6 +1,6 @@
 using System;
 
-namespace ScriptLang.Runtime
+namespace fire.Runtime
 {
     public sealed class OwnershipException : Exception
     {

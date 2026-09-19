@@ -1,9 +1,9 @@
 using System.Collections.Generic;
-using ScriptLang.Ast;
-using ScriptLang.Bytecode;
-using ScriptLang.Values;
+using fire.Ast;
+using fire.Bytecode;
+using fire.Values;
 
-namespace ScriptLang.Runtime
+namespace fire.Runtime
 {
     /// <summary>
     /// Laufzeit-Instanz einer Klasse. Trägt genau einen Owner (Scope oder eine

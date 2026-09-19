@@ -1,8 +1,8 @@
 using System.Collections.Concurrent;
 using System.Threading;
-using ScriptLang.Values;
+using fire.Values;
 
-namespace ScriptLang.Runtime
+namespace fire.Runtime
 {
     /// <summary>Eine einzelne Nachricht in einer Actor-Mailbox: Methodenname +
     /// Argumente, genau wie bei einem normalen Methodenaufruf - nur eben nicht

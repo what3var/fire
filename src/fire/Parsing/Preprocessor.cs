@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
-using ScriptLang.Lexing;
-using ScriptLang.Values;
+using fire.Lexing;
+using fire.Values;
 
-namespace ScriptLang.Parsing
+namespace fire.Parsing
 {
     /// <summary>Kontext, den eine Präprozessor-Direktiven-Implementierung
     /// bei ihrem Aufruf bekommt (siehe DirectiveHandler/DirectiveRegistry) -

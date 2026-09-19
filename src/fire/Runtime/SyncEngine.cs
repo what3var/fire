@@ -1,7 +1,7 @@
 using System.Collections.Generic;
-using ScriptLang.Values;
+using fire.Values;
 
-namespace ScriptLang.Runtime
+namespace fire.Runtime
 {
     /// <summary>Ergebnis von sync/try sync/sync flat/try sync flat (siehe
     /// docs/THREADING_DESIGN.md Abschnitt 4.1) - `LockBusy` kann nur bei den

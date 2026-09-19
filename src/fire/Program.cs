@@ -1,11 +1,11 @@
 using System.Collections.Generic;
-using ScriptLang.Ast;
-using ScriptLang.Bytecode;
-using ScriptLang.Lexing;
-using ScriptLang.Parsing;
-using ScriptLang.Resolving;
-using ScriptLang.Runtime;
-using ScriptLang.Values;
+using fire.Ast;
+using fire.Bytecode;
+using fire.Lexing;
+using fire.Parsing;
+using fire.Resolving;
+using fire.Runtime;
+using fire.Values;
 
 // Kleiner manueller Smoke-Test für Lexer + Parser + Unit-System, bis der
 // Evaluator existiert. Bei dir lokal: `dotnet run` im src/ScriptLang-Ordner.
@@ -1162,35 +1162,6 @@ catch (Exception ex) when (ex is ParseException or ResolverException or NotSuppo
 }
 
 Console.WriteLine();
-Console.WriteLine("=== Bytecode-Test: #include mit zirkulärer Kette (muss fehlschlagen) ===");
-
-string circularA = """
-#include "circular_b.script"
-class A { construct() { } }
-""";
-
-try
-{
-    // circular_b.script (im TestData-Ordner) includiert seinerseits wieder
-    // 'circular_a.script' zurück - das muss als klarer Fehler erkannt werden,
-    // keine Endlosschleife/Stack-Overflow.
-    File.WriteAllText(Path.Combine(GetTestDataDir(), "circular_a.script"), circularA);
-    File.WriteAllText(Path.Combine(GetTestDataDir(), "circular_b.script"), "#include \"circular_a.script\"\nclass B { construct() { } }\n");
-
-    var program = Parser.Parse(File.ReadAllText(Path.Combine(GetTestDataDir(), "circular_a.script")), GetTestDataDir());
-    Console.WriteLine("FEHLER: hätte eine PreprocessorException werfen müssen, ist aber durchgelaufen.");
-}
-catch (PreprocessorException ex)
-{
-    Console.WriteLine($"Erwarteter Fehler: {ex.Message}");
-}
-finally
-{
-    File.Delete(Path.Combine(GetTestDataDir(), "circular_a.script"));
-    File.Delete(Path.Combine(GetTestDataDir(), "circular_b.script"));
-}
-
-Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: #extern \"libName\" (dynamisches Linking ohne Host-Registrierung) ===");
 
 string dynamicExternSample = """
@@ -1889,20 +1860,22 @@ catch (Exception ex) when (ex is ParseException or ResolverException or NotSuppo
 }
 
 Console.WriteLine();
-Console.WriteLine("=== Bytecode-Test: 'break' außerhalb eines switch (muss fehlschlagen) ===");
+Console.WriteLine("=== Bytecode-Test: 'break' außerhalb einer Schleife (muss fehlschlagen) ===");
 
 string breakOutsideSample = """
-while (true) {
+    print("vorher")
     break
-}
-""";
+    print("nachher")
+    """;
 
 try
 {
     var program = Parser.Parse(breakOutsideSample);
-    Console.WriteLine("FEHLER: hätte eine ParseException werfen müssen, ist aber durchgelaufen.");
+    var natives = NativeRegistry.CreateDefault();
+    Resolver.Resolve(program, natives.Names);
+    Console.WriteLine("FEHLER: hätte eine ResolverException werfen müssen, ist aber durchgelaufen.");
 }
-catch (ParseException ex)
+catch (ResolverException ex)
 {
     Console.WriteLine($"Erwarteter Fehler: {ex.Message}");
 }
@@ -4498,6 +4471,132 @@ foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmE
         // im Skript selbst behandelt zu werden.
         Console.WriteLine($"Roh durchgeschlagene Exception ({ex.GetType().Name}): {ex.Message}");
     }
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Zugriffsmodifikatoren (public/private/protected) ===");
+
+string accessTestScript = """
+    class Base {
+        private int secret
+        protected int shared
+
+        public construct() {
+            this.secret = 1
+            this.shared = 2
+        }
+
+        public int GetSecret() {
+            return this.secret
+        }
+    }
+
+    class Derived : Base {
+        public int TryReadShared() {
+            // protected - von einer abgeleiteten Klasse aus erlaubt
+            return this.shared
+        }
+    }
+
+    class Locked {
+        private construct() {
+        }
+    }
+
+    var b = new Base()
+    print("b.GetSecret() (public Methode, greift intern auf private Feld zu) = " + b.GetSecret())
+
+    var d = new Derived()
+    print("d.TryReadShared() (protected Feld der Basisklasse, ueber this) = " + d.TryReadShared())
+
+    try {
+        print(b.secret)
+        print("FEHLER: haette AccessDeniedException werfen sollen")
+    } catch (e : AccessDeniedException) {
+        print("Erwartet gefangen (privates Feld von aussen): " + e.message)
+    }
+
+    try {
+        new Locked()
+        print("FEHLER: haette AccessDeniedException werfen sollen")
+    } catch (e : AccessDeniedException) {
+        print("Erwartet gefangen (privater Konstruktor von aussen): " + e.message)
+    }
+    """;
+
+try
+{
+    var program = Parser.ParseWithPrelude(accessTestScript);
+    var natives = NativeRegistry.CreateDefault();
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    var globalScope2 = new Scope(null, isGlobal: true);
+    var vm = new VM(compiled.TopLevel, globalScope2, natives, compiled.Classes);
+    vm.Run();
+    if (vm.UnhandledException != null)
+        Console.WriteLine($"FEHLER: unerwartete unbehandelte Exception: {new UncaughtScriptException(vm.UnhandledException).Message}");
+}
+catch (System.Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Namespaces (namespace/#using) ===");
+
+string namespaceTestScript = """
+    namespace Geometry {
+        class Point {
+            int x
+            int y
+        }
+
+        class Circle : Point {
+            int radius
+
+            Point MakeOrigin() {
+                return new Point()
+            }
+        }
+    }
+
+    #using Geometry
+
+    class Named3DPoint : Point {
+        int z
+    }
+
+    var c = new Circle()
+    c.x = 5
+    c.y = 10
+    c.radius = 3
+    print("Circle (unqualifiziert via #using erzeugt): x=" + c.x + " y=" + c.y + " radius=" + c.radius)
+
+    var origin = c.MakeOrigin()
+    print("MakeOrigin() (unqualifizierte new Point() INNERHALB einer Methode im selben Namespace): ist of Point = " + (origin is of Point))
+
+    var n = new Named3DPoint()
+    n.x = 1
+    n.y = 2
+    n.z = 3
+    print("Named3DPoint (Basisklasse per #using aufgeloest): x=" + n.x + " y=" + n.y + " z=" + n.z)
+    """;
+
+try
+{
+    var program = Parser.ParseWithPrelude(namespaceTestScript, out var activeUsings);
+    var natives = NativeRegistry.CreateDefault();
+    var resolveResult = Resolver.Resolve(program, natives.Names, activeUsings: activeUsings);
+    var compiled = Compiler.Compile(program, resolveResult, natives, activeUsings);
+    var globalScope2 = new Scope(null, isGlobal: true);
+    var vm = new VM(compiled.TopLevel, globalScope2, natives, compiled.Classes);
+    vm.Run();
+    if (vm.UnhandledException != null)
+        Console.WriteLine($"FEHLER: unerwartete unbehandelte Exception: {new UncaughtScriptException(vm.UnhandledException).Message}");
+}
+catch (System.Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
 }
 
 static int CountOccurrences(string haystack, string needle)

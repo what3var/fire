@@ -6,7 +6,7 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 
-namespace ScriptLang.Editor
+namespace fire.Editor
 {
     /// <summary>
     /// Schlankes, schreibgeschütztes Popup-Fenster zum Anzeigen EINER Datei -
@@ -169,7 +169,7 @@ namespace ScriptLang.Editor
             if (target.IsPrelude)
             {
                 var preludeViewer = new FileViewerWindow();
-                preludeViewer.LoadSource("Standardbibliothek (Prelude)", ScriptLang.Standard.Prelude.Source, target.Line);
+                preludeViewer.LoadSource("Standardbibliothek (Prelude)", fire.Standard.Prelude.Source, target.Line);
                 preludeViewer.Show();
                 return;
             }

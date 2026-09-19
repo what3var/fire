@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using ScriptLang.Ast;
-using ScriptLang.Values;
+using fire.Ast;
+using fire.Values;
 
-namespace ScriptLang.Resolving
+namespace fire.Resolving
 {
     public sealed class ResolverException : Exception
     {
@@ -94,6 +94,66 @@ namespace ScriptLang.Resolving
 
         private readonly Dictionary<Expr, ResolvedRef> _refs = new(ReferenceEqualityComparer.Instance);
         private readonly Dictionary<string, ClassDecl> _classes = new();
+
+        /// <summary>Wie Bytecode.Compiler.NamespaceResolver, aber für die
+        /// Resolver-eigene Validierung (siehe ResolveNamespaceName/
+        /// IsKnownClassName) - MUSS unabhängig existieren (nicht denselben
+        /// Compiler-internen Typ wiederverwenden), da der Resolver mit
+        /// ClassDecl statt RuntimeClass arbeitet und beide Schichten
+        /// unabhängig voneinander laufen (der Compiler bekommt Klassen
+        /// selbst erneut aus dem AST, nicht vom Resolver übernommen).
+        /// `new X()`/`is of X`/`catch (e : X)` werden hier VOR dem
+        /// eigentlichen Kompilieren bereits validiert (SPEC "Namespaces") -
+        /// ohne dieselbe Auflösung hier würde ein unqualifizierter
+        /// Namespace-Verweis schon an dieser Stelle als "unbekannte Klasse"
+        /// abgelehnt, bevor der Compiler ihn je sehen könnte.</summary>
+        private readonly Dictionary<string, List<(string Namespace, string Qualified)>> _bySimpleName = new();
+        private IReadOnlyList<string> _activeUsings = Array.Empty<string>();
+
+        private void BuildNamespaceIndex()
+        {
+            foreach (var full in _classes.Keys)
+            {
+                int dot = full.LastIndexOf('.');
+                if (dot < 0) continue;
+                string ns = full[..dot];
+                string simple = full[(dot + 1)..];
+                if (!_bySimpleName.TryGetValue(simple, out var list))
+                    _bySimpleName[simple] = list = new List<(string, string)>();
+                list.Add((ns, full));
+            }
+        }
+
+        private string? CurrentNamespace
+        {
+            get
+            {
+                if (_currentClass == null) return null;
+                int dot = _currentClass.Name.LastIndexOf('.');
+                return dot < 0 ? null : _currentClass.Name[..dot];
+            }
+        }
+
+        /// <summary>Löst `name` auf seinen vollqualifizierten Namen auf, WENN
+        /// nötig - siehe Bytecode.Compiler.NamespaceResolver.Resolve für die
+        /// genaue Regel (exakter Treffer > Geschwister im eigenen Namespace >
+        /// `#using` > unverändert lassen).</summary>
+        private string ResolveNamespaceName(string name)
+        {
+            if (IsKnownClassName(name)) return name;
+            if (!_bySimpleName.TryGetValue(name, out var candidates)) return name;
+
+            var currentNs = CurrentNamespace;
+            if (currentNs != null)
+                foreach (var (ns, full) in candidates)
+                    if (ns == currentNs) return full;
+
+            foreach (var (ns, full) in candidates)
+                if (_activeUsings.Contains(ns)) return full;
+
+            return name;
+        }
+
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
         private readonly Dictionary<string, ExternDecl> _externs = new();
         private readonly Dictionary<string, Dictionary<string, long>> _enums = new();
@@ -167,10 +227,13 @@ namespace ScriptLang.Resolving
         }
 
         public static ResolveResult Resolve(
-            IReadOnlyList<Stmt> program, IEnumerable<string>? nativeNames = null, IEnumerable<string>? tryableNativeNames = null)
+            IReadOnlyList<Stmt> program, IEnumerable<string>? nativeNames = null, IEnumerable<string>? tryableNativeNames = null,
+            IReadOnlyList<string>? activeUsings = null)
         {
             var resolver = new Resolver(nativeNames, tryableNativeNames);
+            resolver._activeUsings = activeUsings ?? Array.Empty<string>();
             resolver.CollectClasses(program);
+            resolver.BuildNamespaceIndex();
             resolver.CollectExterns(program);
             resolver.CollectEnums(program);
             resolver._noShadowGlobals = program.Any(s => s is NoShadowDirective);
@@ -416,7 +479,7 @@ namespace ScriptLang.Resolving
         {
             if (PrimitiveTypeNames.Contains(name)) return;
             if (_currentTypeParamNames.ContainsKey(name)) return;
-            if (!IsKnownClassName(name))
+            if (!IsKnownClassName(ResolveNamespaceName(name)))
                 throw new ResolverException($"Unbekannter Typ '{name}'", line);
         }
 
@@ -634,7 +697,7 @@ namespace ScriptLang.Resolving
                     break;
 
                 case CatchThreadsDecl threadsDecl:
-                    if (threadsDecl.TypeName != null && !IsKnownClassName(threadsDecl.TypeName))
+                    if (threadsDecl.TypeName != null && !IsKnownClassName(ResolveNamespaceName(threadsDecl.TypeName)))
                         throw new ResolverException($"Unbekannter Exception-Typ '{threadsDecl.TypeName}'", threadsDecl.Line);
                     ResolveGlobalHandlerBody(threadsDecl.VarName, threadsDecl.Body);
                     break;
@@ -754,7 +817,7 @@ namespace ScriptLang.Resolving
 
             foreach (var c in t.Catches)
             {
-                if (c.TypeName != null && !IsKnownClassName(c.TypeName))
+                if (c.TypeName != null && !IsKnownClassName(ResolveNamespaceName(c.TypeName)))
                     throw new ResolverException($"Unbekannter Exception-Typ '{c.TypeName}'", c.Line);
 
                 PushScope();
@@ -1039,9 +1102,10 @@ namespace ScriptLang.Resolving
                     break;
 
                 case NewExpr ne:
-                    if (!IsKnownClassName(ne.ClassName))
+                    string resolvedNewClassName = ResolveNamespaceName(ne.ClassName);
+                    if (!IsKnownClassName(resolvedNewClassName))
                         throw new ResolverException($"Unbekannte Klasse '{ne.ClassName}'", ne.Line);
-                    if (_classes.TryGetValue(ne.ClassName, out var newTargetCd))
+                    if (_classes.TryGetValue(resolvedNewClassName, out var newTargetCd))
                         CheckTypeArgs(newTargetCd, ne);
                     else if (ne.TypeArgs != null && ne.TypeArgs.Count > 0)
                         throw new ResolverException(

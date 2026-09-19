@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
-using ScriptLang.Values;
+using fire.Values;
 
-namespace ScriptLang.Bytecode
+namespace fire.Bytecode
 {
     /// <summary>Eine native (in C# implementierte) Funktion, aufrufbar per
     /// CALL_NATIVE-Opcode über ihren Index in der Registry.</summary>

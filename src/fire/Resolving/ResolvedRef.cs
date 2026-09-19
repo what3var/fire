@@ -1,4 +1,4 @@
-namespace ScriptLang.Resolving
+namespace fire.Resolving
 {
     /// <summary>
     /// Wohin eine Variablen-Referenz (IdentifierExpr oder Zuweisungsziel) statisch

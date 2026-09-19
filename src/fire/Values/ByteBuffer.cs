@@ -1,4 +1,4 @@
-namespace ScriptLang.Values
+namespace fire.Values
 {
     /// <summary>Little- oder Big-Endian. Beeinflusst NUR die Interpretation
     /// von ToLittleEndian()/ToBigEndian() auf einem ByteBuffer (siehe dort) -

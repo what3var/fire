@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using ScriptLang.Ast;
-using ScriptLang.Runtime;
-using ScriptLang.Values;
+using fire.Ast;
+using fire.Runtime;
+using fire.Values;
 
-namespace ScriptLang.Bytecode
+namespace fire.Bytecode
 {
     /// <summary>Ein Eintrag im Aufruf-Stack: alles, was beim RETURN
     /// wiederhergestellt werden muss, um beim Aufrufer genau dort weiterzumachen,
@@ -1109,6 +1109,14 @@ namespace ScriptLang.Bytecode
                     var rc = ResolveClass(_currentChunk.Constants[classNameIdx].AsString());
                     var ctorProto = rc.FindConstructor(args.Length)
                         ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+                    if (ExecutionMode != VmExecutionMode.Performance
+                        && rc.ConstructorAccess.TryGetValue(ctorProto.ParamCount, out var ctorAccess)
+                        && !IsMemberAccessAllowed(rc, ctorAccess))
+                    {
+                        ThrowAccessDenied(
+                            $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorAccess)} und von hier aus nicht aufrufbar.");
+                        break;
+                    }
 
                     var instance = new ObjectInstance(rc.Decl, _currentScope, rc);
                     if (rc.IsActor) instance.Mailbox = new ActorMailbox();
@@ -1128,6 +1136,14 @@ namespace ScriptLang.Bytecode
                     var rc = ResolveClass(_currentChunk.Constants[classNameIdx].AsString());
                     var ctorProto = rc.FindConstructor(args.Length)
                         ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+                    if (ExecutionMode != VmExecutionMode.Performance
+                        && rc.ConstructorAccess.TryGetValue(ctorProto.ParamCount, out var ctorAccessOwned)
+                        && !IsMemberAccessAllowed(rc, ctorAccessOwned))
+                    {
+                        ThrowAccessDenied(
+                            $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorAccessOwned)} und von hier aus nicht aufrufbar.");
+                        break;
+                    }
 
                     var instance = new ObjectInstance(rc.Decl, owner, rc);
                     if (rc.IsActor) instance.Mailbox = new ActorMailbox();
@@ -1197,6 +1213,17 @@ namespace ScriptLang.Bytecode
                     var obj = RequireObjectInstance(target, "Feldzugriff");
                     if (obj.TryGetFieldLocked(fieldName, out var val))
                     {
+                        if (ExecutionMode != VmExecutionMode.Performance && obj.RtClass != null)
+                        {
+                            var fieldAccess = obj.RtClass.FindFieldAccess(fieldName);
+                            if (fieldAccess is (var declaringRcGet, var accessGet) && !IsMemberAccessAllowed(declaringRcGet, accessGet))
+                            {
+                                ThrowAccessDenied(
+                                    $"Feld '{fieldName}' von '{declaringRcGet.Name}' ist {DescribeAccess(accessGet)} " +
+                                    "und von hier aus nicht zugreifbar.");
+                                break;
+                            }
+                        }
                         Push(val);
                         break;
                     }
@@ -1226,6 +1253,17 @@ namespace ScriptLang.Bytecode
 
                     if (obj.HasFieldLocked(fieldName))
                     {
+                        if (ExecutionMode != VmExecutionMode.Performance && obj.RtClass != null)
+                        {
+                            var fieldAccess = obj.RtClass.FindFieldAccess(fieldName);
+                            if (fieldAccess is (var declaringRcSet, var accessSet) && !IsMemberAccessAllowed(declaringRcSet, accessSet))
+                            {
+                                ThrowAccessDenied(
+                                    $"Feld '{fieldName}' von '{declaringRcSet.Name}' ist {DescribeAccess(accessSet)} " +
+                                    "und von hier aus nicht zugreifbar.");
+                                break;
+                            }
+                        }
                         obj.SetFieldLocked(fieldName, value);
                         Push(value);
                         break;
@@ -1325,8 +1363,16 @@ namespace ScriptLang.Bytecode
                     }
 
                     var rc = ResolveClass(obj.ClassDef.Name);
-                    var proto = rc.FindMethod(methodName, args.Length)
-                        ?? throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
+                    var (proto, declaringRcCall, accessCall) = rc.FindMethodWithAccess(methodName, args.Length);
+                    if (proto == null)
+                        throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
+                    if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
+                    {
+                        ThrowAccessDenied(
+                            $"Methode '{methodName}' von '{declaringRcCall!.Name}' ist {DescribeAccess(accessCall)} " +
+                            "und von hier aus nicht aufrufbar.");
+                        break;
+                    }
                     CheckArity(proto, args.Length);
                     args = FillDefaultArgs(proto, args, obj);
 
@@ -1350,8 +1396,16 @@ namespace ScriptLang.Bytecode
                     for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
                     var rc = ResolveClass(baseClassName);
-                    var proto = rc.FindMethod(methodName, args.Length)
-                        ?? throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
+                    var (proto, declaringRcBase, accessBase) = rc.FindMethodWithAccess(methodName, args.Length);
+                    if (proto == null)
+                        throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
+                    if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcBase!, accessBase))
+                    {
+                        ThrowAccessDenied(
+                            $"Methode '{methodName}' von '{declaringRcBase!.Name}' ist {DescribeAccess(accessBase)} " +
+                            "und von hier aus nicht aufrufbar.");
+                        break;
+                    }
                     CheckArity(proto, args.Length);
                     args = FillDefaultArgs(proto, args, _currentThis);
 
@@ -2457,9 +2511,22 @@ namespace ScriptLang.Bytecode
         private Value? CallMethodNested(ObjectInstance obj, string methodName, Value[] args)
         {
             var rc = ResolveClass(obj.ClassDef.Name);
-            var proto = rc.FindMethod(methodName, args.Length)
-                ?? throw new InvalidOperationException(
-                    $"Methode '{methodName}' nicht gefunden auf '{rc.Name}' (für eine Operator-Überladung benötigt).");
+            var (proto, declaringRcNested, accessNested) = rc.FindMethodWithAccess(methodName, args.Length);
+            if (proto == null)
+                throw new InvalidOperationException(
+                    $"Methode '{methodName}' nicht gefunden auf '{rc.Name}' (für eine Property oder Operator-Überladung benötigt).");
+            // Deckt sowohl Property-Zugriffe (get_X/set_X, siehe VM.GetField/
+            // SetField) als auch Operator-Überladungen ab (siehe
+            // Parser.ParseOperatorMember) - Operatoren bekommen nie einen
+            // expliziten Modifikator (immer Public), die Prüfung greift hier
+            // also praktisch nur für Properties.
+            if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcNested!, accessNested))
+            {
+                ThrowAccessDenied(
+                    $"'{methodName}' von '{declaringRcNested!.Name}' ist {DescribeAccess(accessNested)} " +
+                    "und von hier aus nicht zugreifbar.");
+                return null;
+            }
             CheckArity(proto, args.Length);
             args = FillDefaultArgs(proto, args, obj);
 
@@ -2546,6 +2613,55 @@ namespace ScriptLang.Bytecode
             var instance = ConstructNested(rc, args);
             ThrowException(Value.MakeClassRef(instance));
         }
+
+        private void ThrowAccessDenied(string message)
+        {
+            var rc = ResolveClass("AccessDeniedException");
+            var args = new[] { Value.MakeString(message) };
+            var instance = ConstructNested(rc, args);
+            ThrowException(Value.MakeClassRef(instance));
+        }
+
+        /// <summary>Prüft, ob der GERADE ausführende Code laut
+        /// Zugriffsmodifikator auf ein Mitglied zugreifen darf, das
+        /// `declaringRc` selbst deklariert hat. `Public` (oder gar kein
+        /// Eintrag vorhanden - Rückwärtskompatibilität) ist immer erlaubt.
+        ///
+        /// "Wer greift gerade zu" ist `_currentChunk.OwnerClass` - die
+        /// Klasse, deren Methode/Konstruktor/Property-Accessor GERADE
+        /// ausführt (siehe Chunk.OwnerClass-Doku). BEWUSST NICHT
+        /// `_currentThis`s konkrete Klasse: eine `Derived`-Instanz, die eine
+        /// geerbte, nicht überschriebene `Base`-Methode aufruft (oder deren
+        /// Konstruktion gerade `Base`s eigenen Konstruktor-Code über
+        /// ConstructBase durchläuft), hat `this` konkret als `Derived`
+        /// gebunden, obwohl `Base`s eigener Code läuft - für "darf DIESER
+        /// Code auf Base's privates Mitglied zugreifen" zählt, WESSEN CODE
+        /// läuft, nicht welcher konkreten Klasse die Instanz angehört (sonst
+        /// würde z.B. jede Konstruktion einer abgeleiteten Klasse an einem
+        /// privaten Feld-Initialisierer der Basisklasse scheitern - genau
+        /// dieser Fehler wurde hier gefunden und korrigiert).</summary>
+        private bool IsMemberAccessAllowed(RuntimeClass declaringRc, AccessModifier access)
+        {
+            if (access == AccessModifier.Public) return true;
+
+            var callerRc = _currentChunk.OwnerClass;
+            if (callerRc == null) return false;
+
+            if (access == AccessModifier.Private)
+                return ReferenceEquals(callerRc, declaringRc);
+
+            // Protected: callerRc selbst oder irgendeine davon abgeleitete Klasse.
+            for (var rc = callerRc; rc != null; rc = rc.Base)
+                if (ReferenceEquals(rc, declaringRc)) return true;
+            return false;
+        }
+
+        private static string DescribeAccess(AccessModifier access) => access switch
+        {
+            AccessModifier.Private => "private",
+            AccessModifier.Protected => "protected",
+            _ => "public",
+        };
 
         /// <summary>Grundlage für JEDE arithmetische/bitweise/Vergleichs-
         /// Operation (siehe die entsprechenden OpCode-Handler): ist der LINKE

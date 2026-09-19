@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace ScriptLang.Bytecode
+namespace fire.Bytecode
 {
     /// <summary>
     /// Globale (prozessweite, über ALLE VM-Instanzen/Threads geteilte)

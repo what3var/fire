@@ -1,7 +1,7 @@
 using System.Collections.Generic;
-using ScriptLang.Values;
+using fire.Values;
 
-namespace ScriptLang.Runtime
+namespace fire.Runtime
 {
     /// <summary>
     /// Laufzeit-Gegenstück zu einem vom Resolver erkannten Scope-Knoten (Block,

@@ -1,9 +1,9 @@
 using System.Collections;
 using System.Collections.Generic;
-using ScriptLang.Bytecode;
-using ScriptLang.Values;
+using fire.Bytecode;
+using fire.Values;
 
-namespace ScriptLang.Runtime
+namespace fire.Runtime
 {
     /// <summary>
     /// Feldspeicher einer ObjectInstance (siehe ObjectInstance.Fields) -

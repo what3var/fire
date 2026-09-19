@@ -1,4 +1,4 @@
-using ScriptLang.Runtime;
+using fire.Runtime;
 using System;
 
 sealed class LoggingDestructRunner : IDestructRunner

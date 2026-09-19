@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
-using ScriptLang.Bytecode;
-using ScriptLang.Parsing;
-using ScriptLang.Resolving;
+using fire.Bytecode;
+using fire.Parsing;
+using fire.Resolving;
 
-namespace ScriptLang.Editor
+namespace fire.Editor
 {
     public enum DiagnosticSeverity
     {

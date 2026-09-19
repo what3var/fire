@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
-namespace ScriptLang.Values
+namespace fire.Values
 {
     /// <summary>
     /// Repräsentiert eine Einheit als Dimensionsvektor (Basissymbol -> Exponent)

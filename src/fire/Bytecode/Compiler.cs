@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using ScriptLang.Ast;
-using ScriptLang.Lexing;
-using ScriptLang.Resolving;
-using ScriptLang.Values;
+using fire.Ast;
+using fire.Lexing;
+using fire.Resolving;
+using fire.Values;
 
-namespace ScriptLang.Bytecode
+namespace fire.Bytecode
 {
     /// <summary>Ergebnis eines Compiler-Laufs: der Top-Level-Chunk plus die
     /// kompilierten Klassen (Name -> RuntimeClass), die die VM für `new`/
@@ -153,8 +153,28 @@ namespace ScriptLang.Bytecode
         /// Fire-Blocks stehen.</summary>
         private readonly int _globalSlotCount;
 
+        /// <summary>Löst zur KOMPILIERZEIT einen möglicherweise
+        /// unqualifizierten Klassen-/Typnamen (aus `new X()`, `is of X`,
+        /// `catch (e : X)`) auf seinen tatsächlichen, vollqualifizierten
+        /// Namen auf - siehe die NamespaceResolver-Klasse selbst für die
+        /// Begründung, warum dafür KEIN separater Baumdurchlauf nötig ist.
+        /// `null` nur in Testszenarien, die Compile() direkt mit älterer
+        /// Signatur (ohne activeUsings) aufrufen und dabei zufällig einen
+        /// Pfad nehmen, der NIE einen Namen auflösen müsste - im normalen
+        /// Compile()-Aufruf immer gesetzt. Nicht readonly: der Top-Level-
+        /// Compiler bekommt ihn erst MITTEN in CompileClasses zugewiesen
+        /// (nach dem Sammeln ALLER Klassennamen, aber VOR dem eigentlichen
+        /// Kompilieren der Klassenkörper - siehe dort für die genaue
+        /// Begründung: ein Henne-Ei-Problem, wenn man ihn erst NACH
+        /// CompileClasses zuweisen würde, da CompileClasses selbst schon
+        /// Klassenkörper kompiliert, die ihn brauchen); jeder INNERE Compiler
+        /// (Methoden-/Konstruktor-/Lambda-Body) bekommt ihn dagegen direkt
+        /// über den Konstruktor vom äußeren Compiler mit (zu DEM Zeitpunkt
+        /// längst gesetzt).</summary>
+        private NamespaceResolver? _nsResolver;
+
         private Compiler(ResolveResult resolveResult, NativeRegistry natives)
-            : this(resolveResult.References, natives, null, resolveResult.NoShadowGlobals ? 0 : resolveResult.GlobalSlotCount)
+            : this(resolveResult.References, natives, null, resolveResult.NoShadowGlobals ? 0 : resolveResult.GlobalSlotCount, null)
         {
         }
 
@@ -162,18 +182,43 @@ namespace ScriptLang.Bytecode
         /// in einen eigenen Chunk (FunctionProto): teilt sich die Resolver-
         /// Referenzen und die Native-Registry mit dem äußeren Compiler, baut aber
         /// einen eigenen, frischen Chunk.</summary>
-        private Compiler(IReadOnlyDictionary<Expr, ResolvedRef> refs, NativeRegistry natives, RuntimeClass? enclosingClass, int globalSlotCount)
+        private Compiler(IReadOnlyDictionary<Expr, ResolvedRef> refs, NativeRegistry natives, RuntimeClass? enclosingClass, int globalSlotCount, NamespaceResolver? nsResolver)
         {
             _refs = refs;
             _natives = natives;
             _enclosingClass = enclosingClass;
             _globalSlotCount = globalSlotCount;
+            _nsResolver = nsResolver;
         }
 
-        public static CompiledProgram Compile(IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives)
+        /// <summary>Der Namespace, in dem GERADE kompiliert wird - deduziert aus
+        /// dem Präfix von `_enclosingClass`s bereits vollqualifiziertem Namen
+        /// (siehe Parser.FlattenNamespaces: 'Geometry.Point' -> 'Geometry'),
+        /// `null` außerhalb jeder Klasse oder wenn die Klasse selbst nicht
+        /// namespaciert ist. Grundlage für die "Geschwister im selben
+        /// Namespace haben Vorrang"-Regel in NamespaceResolver.Resolve.</summary>
+        private string? CurrentNamespace
+        {
+            get
+            {
+                if (_enclosingClass == null) return null;
+                int dot = _enclosingClass.Name.LastIndexOf('.');
+                return dot < 0 ? null : _enclosingClass.Name[..dot];
+            }
+        }
+
+        /// <summary>Kurzform für `(_nsResolver?.Resolve(name, CurrentNamespace) ?? name)`
+        /// - überall dort genutzt, wo ein vom Nutzer geschriebener Klassen-/
+        /// Typname als String-Konstante in den Bytecode wandert (siehe
+        /// NewExpr/IsOfExpr/CatchClause-Kompilierung).</summary>
+        private string ResolveTypeName(string name) => _nsResolver?.Resolve(name, CurrentNamespace) ?? name;
+
+        public static CompiledProgram Compile(
+            IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives,
+            IReadOnlyList<string>? activeUsings = null)
         {
             var compiler = new Compiler(resolveResult, natives);
-            var classes = compiler.CompileClasses(program);
+            var classes = compiler.CompileClasses(program, activeUsings ?? Array.Empty<string>());
             foreach (var stmt in program)
                 compiler.CompileStmt(stmt);
             compiler._chunk.EmitOp(OpCode.Halt);
@@ -192,10 +237,74 @@ namespace ScriptLang.Bytecode
             return new CompiledProgram { TopLevel = compiler._chunk, Classes = classes, ExternSignatures = externSignatures };
         }
 
+        /// <summary>Löst zur KOMPILIERZEIT einen möglicherweise unqualifizierten
+        /// Klassen-/Typnamen (aus `new X()`, `is of X`, `catch (e : X)`) auf
+        /// seinen tatsächlichen, vollqualifizierten Namen auf (SPEC
+        /// "Namespaces") - Grundlage dafür, dass Namespace-Mitglieder AUCH
+        /// innerhalb von Methoden-/Konstruktor-Bodies ohne explizite
+        /// Qualifizierung nutzbar sind, OHNE den kompletten AST nach
+        /// Referenzen durchsuchen zu müssen: da nach Parser.
+        /// FlattenNamespaces JEDER Klassenname bereits sein endgültiges
+        /// Format hat ("Foo.Bar" oder unqualifiziert "Bar"), lässt sich die
+        /// komplette Auflösungstabelle rein aus der Menge ALLER bekannten
+        /// Klassennamen ableiten (siehe Compile/CompileClasses) - kein
+        /// separater Baumdurchlauf nötig, nur die paar Stellen, an denen ein
+        /// Name tatsächlich als String-Konstante in den Bytecode wandert.</summary>
+        private sealed class NamespaceResolver
+        {
+            private readonly Dictionary<string, List<(string Namespace, string Qualified)>> _bySimpleName = new();
+            private readonly IReadOnlyList<string> _activeUsings;
+            private readonly HashSet<string> _allNames;
+
+            public NamespaceResolver(IEnumerable<string> allClassNames, IReadOnlyList<string> activeUsings)
+            {
+                _activeUsings = activeUsings;
+                _allNames = new HashSet<string>(allClassNames);
+                foreach (var full in _allNames)
+                {
+                    int dot = full.LastIndexOf('.');
+                    if (dot < 0) continue;
+                    string ns = full[..dot];
+                    string simple = full[(dot + 1)..];
+                    if (!_bySimpleName.TryGetValue(simple, out var list))
+                        _bySimpleName[simple] = list = new List<(string, string)>();
+                    list.Add((ns, full));
+                }
+            }
+
+            /// <summary>Löst `name` auf, WENN nötig. `currentNamespace` ist der
+            /// Namespace, in dessen Klasse diese Referenz textuell steht (siehe
+            /// Compiler.CurrentNamespace), `null` außerhalb jeder Klasse oder
+            /// wenn diese selbst nicht namespaciert ist.</summary>
+            public string Resolve(string name, string? currentNamespace)
+            {
+                // Schon ein exakt bekannter Name (inkl. bereits vom Nutzer
+                // vollqualifiziert geschrieben, oder ein nicht-namespacierter
+                // globaler Name wie 'Exception'/'IndexOutOfBoundsException') -
+                // Priorität, damit sich am bisherigen Verhalten nichts ändert.
+                if (_allNames.Contains(name)) return name;
+                if (!_bySimpleName.TryGetValue(name, out var candidates)) return name;
+
+                // Geschwister im eigenen Namespace hat Vorrang vor #using.
+                if (currentNamespace != null)
+                    foreach (var (ns, full) in candidates)
+                        if (ns == currentNamespace) return full;
+
+                foreach (var (ns, full) in candidates)
+                    if (_activeUsings.Contains(ns)) return full;
+
+                // Uneindeutig (mehrere Namespaces, keiner davon aktiv/
+                // Geschwister) ODER schlicht kein Kandidat aktiv - unverändert
+                // lassen, schlägt dann wie bisher als "Klasse nicht gefunden"
+                // fehl (keine neue, überraschende Fehlerquelle gegenüber vorher).
+                return name;
+            }
+        }
+
         // -----------------------------------------------------------
         // Klassen (Vorab-Pass: Name -> RuntimeClass, analog zum Resolver)
         // -----------------------------------------------------------
-        private Dictionary<string, RuntimeClass> CompileClasses(IReadOnlyList<Stmt> program)
+        private Dictionary<string, RuntimeClass> CompileClasses(IReadOnlyList<Stmt> program, IReadOnlyList<string> activeUsings)
         {
             var classes = new Dictionary<string, RuntimeClass>();
             foreach (var stmt in program)
@@ -225,6 +334,17 @@ namespace ScriptLang.Bytecode
                 }
             }
 
+            // ERST jetzt (nach dem Sammeln ALLER Klassennamen, aber VOR dem
+            // eigentlichen Kompilieren der Klassenkörper unten) - der
+            // NamespaceResolver braucht die Menge ALLER Klassennamen, die
+            // genau HIER zum ersten Mal vollständig feststeht. Ein
+            // Henne-Ei-Problem, wenn man ihn stattdessen NACH dieser ganzen
+            // Methode zuweisen würde (wie ursprünglich versucht): die
+            // Körper-Kompilierung unten (CompileClassBody, u.a. `new X()`
+            // INNERHALB von Methoden) braucht ihn ja schon WÄHREND dieser
+            // Methode noch läuft, nicht erst danach.
+            _nsResolver = new NamespaceResolver(classes.Keys, activeUsings);
+
             foreach (var rc in classes.Values)
                 CompileClassBody(rc);
 
@@ -241,10 +361,11 @@ namespace ScriptLang.Bytecode
                 {
                     case FieldDecl fd:
                         rc.Fields.Add((fd.Name, CompileFieldInitProto(rc, fd.Type, fd.Initializer)));
+                        rc.OwnFieldAccess[fd.Name] = fd.Access;
                         break;
 
                     case MethodDecl md:
-                        rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body));
+                        rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body), md.Access);
                         break;
 
                     case ConstructorDecl ctor:
@@ -259,13 +380,15 @@ namespace ScriptLang.Bytecode
                         // Namenskonvention 'get_'/'set_' (siehe Ast.PropertyDecl-
                         // Doku) - registriert als ganz normale Methoden, VM.
                         // GetField/SetField rufen sie per Namenskonvention auf,
-                        // wenn kein gleichnamiges Feld existiert.
+                        // wenn kein gleichnamiges Feld existiert. Beide Accessoren
+                        // teilen sich den EINEN Modifikator der Property selbst
+                        // (SPEC kennt keine getrennten get/set-Modifikatoren).
                         if (pd.Getter != null)
-                            rc.AddMethod("get_" + pd.Name, CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter));
+                            rc.AddMethod("get_" + pd.Name, CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter), pd.Access);
                         if (pd.Setter != null)
                         {
                             var setterParams = new[] { new LambdaParam("value", pd.Type, Array.Empty<Expr?>()) };
-                            rc.AddMethod("set_" + pd.Name, CompileMethodProto(rc, setterParams, pd.Setter));
+                            rc.AddMethod("set_" + pd.Name, CompileMethodProto(rc, setterParams, pd.Setter), pd.Access);
                         }
                         break;
                 }
@@ -284,7 +407,7 @@ namespace ScriptLang.Bytecode
             else
             {
                 foreach (var ctor in ctorDecls)
-                    rc.AddConstructor(CompileConstructorProto(rc, ctor));
+                    rc.AddConstructor(CompileConstructorProto(rc, ctor), ctor.Access);
             }
         }
 
@@ -300,7 +423,7 @@ namespace ScriptLang.Bytecode
             for (int i = 0; i < parms.Count; i++)
             {
                 if (parms[i].DefaultValue == null) continue;
-                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount);
+                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver);
                 inner.CompileExpr(parms[i].DefaultValue!);
                 inner._chunk.EmitOp(OpCode.Return);
                 defaults[i] = new FunctionProto(inner._chunk, 0);
@@ -310,7 +433,8 @@ namespace ScriptLang.Bytecode
 
         private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver);
+            inner._chunk.OwnerClass = rc;
             if (initializer != null)
             {
                 inner.CompileExpr(initializer);
@@ -373,7 +497,7 @@ namespace ScriptLang.Bytecode
         /// kollidieren.</summary>
         private void CompileFireStmt(FireStmt fs)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _nsResolver);
             int slot = _globalSlotCount;
             foreach (var capture in fs.TakingCaptures)
                 inner._chunk.MarkLocalName(0, slot++, capture.VarName);
@@ -423,7 +547,7 @@ namespace ScriptLang.Bytecode
         /// HandleDeliveredThreadException), nicht hier an dieser Stelle.</summary>
         private void CompileCatchThreadsDecl(CatchThreadsDecl decl)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _nsResolver);
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -437,7 +561,7 @@ namespace ScriptLang.Bytecode
             _chunk.EmitU16(protoIdx);
             bool hasType = decl.TypeName != null;
             _chunk.EmitByte(hasType ? (byte)1 : (byte)0);
-            if (hasType) _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(decl.TypeName!)));
+            if (hasType) _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeName(decl.TypeName!))));
         }
 
         /// <summary>`catch terminate(v) { ... }` (siehe Ast.CatchTerminateDecl-
@@ -445,7 +569,7 @@ namespace ScriptLang.Bytecode
         /// keine "Art" von terminate) und mit dem anderen Register-Opcode.</summary>
         private void CompileCatchTerminateDecl(CatchTerminateDecl decl)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _nsResolver);
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -461,7 +585,8 @@ namespace ScriptLang.Bytecode
 
         private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver);
+            inner._chunk.OwnerClass = rc;
             for (int i = 0; i < parms.Count; i++)
                 inner._chunk.MarkLocalName(0, i, parms[i].Name);
             EmitLambdaParamChecks(inner, parms);
@@ -480,7 +605,8 @@ namespace ScriptLang.Bytecode
         /// einheitlich über denselben Mechanismus.</summary>
         private FunctionProto CompileConstructorProto(RuntimeClass rc, ConstructorDecl? ctor)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver);
+            inner._chunk.OwnerClass = rc;
 
             if (ctor != null)
             {
@@ -1016,7 +1142,7 @@ namespace ScriptLang.Bytecode
             foreach (var c in t.Catches)
             {
                 int catchAddr = _chunk.Here;
-                template.Catches.Add((c.TypeName, catchAddr));
+                template.Catches.Add((c.TypeName == null ? null : ResolveTypeName(c.TypeName), catchAddr));
 
                 foreach (var stmt in c.Body.Statements) CompileStmt(stmt);
 
@@ -1087,13 +1213,13 @@ namespace ScriptLang.Bytecode
                 case IsInExpr iin:
                     CompileExpr(iin.Operand);
                     _chunk.EmitOp(OpCode.IsInUnit);
-                    _chunk.EmitU16(_chunk.AddUnit(ScriptLang.Values.Unit.Parse(iin.UnitName)));
+                    _chunk.EmitU16(_chunk.AddUnit(fire.Values.Unit.Parse(iin.UnitName)));
                     break;
 
                 case IsOfExpr iof:
                     CompileExpr(iof.Operand);
                     _chunk.EmitOp(OpCode.IsOfType);
-                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(iof.TypeName)));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeName(iof.TypeName))));
                     break;
 
                 case IsFromExpr ifr:
@@ -1106,7 +1232,7 @@ namespace ScriptLang.Bytecode
                 case NewExpr ne:
                     foreach (var a in ne.Args) CompileExpr(a);
                     _chunk.EmitOp(OpCode.NewObject);
-                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ne.ClassName)));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeName(ne.ClassName))));
                     _chunk.EmitByte((byte)ne.Args.Count);
                     break;
 
@@ -1245,7 +1371,8 @@ namespace ScriptLang.Bytecode
         /// 'on'-Target kann sich pro Auswertung unterscheiden.</summary>
         private void CompileLambda(LambdaExpr lambda)
         {
-            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount);
+            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _nsResolver);
+            inner._chunk.OwnerClass = _enclosingClass;
             for (int i = 0; i < lambda.Params.Count; i++)
                 inner._chunk.MarkLocalName(0, i, lambda.Params[i].Name);
             EmitLambdaParamChecks(inner, lambda.Params);
@@ -1380,9 +1507,9 @@ namespace ScriptLang.Bytecode
                 EmitCoerceTypeStatic(TokenTypeToTag(info.ExplicitType.Value));
 
             if (info.ExplicitUnit != null)
-                EmitCoerceUnitStatic(ScriptLang.Values.Unit.Parse(info.ExplicitUnit));
+                EmitCoerceUnitStatic(fire.Values.Unit.Parse(info.ExplicitUnit));
             else if (info.UnitIsAuto)
-                EmitCoerceUnitStatic(ScriptLang.Values.Unit.Unitless);
+                EmitCoerceUnitStatic(fire.Values.Unit.Unitless);
         }
 
         private void CompileIdentifierLoad(IdentifierExpr id)
@@ -1425,7 +1552,7 @@ namespace ScriptLang.Bytecode
                     _chunk.EmitOp(OpCode.Dup);
                     foreach (var arg in ne.Args) CompileExpr(arg);
                     _chunk.EmitOp(OpCode.NewObjectOwned);
-                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ne.ClassName)));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeName(ne.ClassName))));
                     _chunk.EmitByte((byte)ne.Args.Count);
                 }
                 else
@@ -1609,11 +1736,11 @@ namespace ScriptLang.Bytecode
 
             CompileExpr(left.Inner);
             if (left.ExplicitType != null) EmitCoerceTypeStatic(TokenTypeToTag(left.ExplicitType.Value));
-            if (left.ExplicitUnit != null) EmitCoerceUnitStatic(ScriptLang.Values.Unit.Parse(left.ExplicitUnit));
+            if (left.ExplicitUnit != null) EmitCoerceUnitStatic(fire.Values.Unit.Parse(left.ExplicitUnit));
 
             CompileExpr(right.Inner);
             if (right.ExplicitType != null) EmitCoerceTypeStatic(TokenTypeToTag(right.ExplicitType.Value));
-            if (right.ExplicitUnit != null) EmitCoerceUnitStatic(ScriptLang.Values.Unit.Parse(right.ExplicitUnit));
+            if (right.ExplicitUnit != null) EmitCoerceUnitStatic(fire.Values.Unit.Parse(right.ExplicitUnit));
 
             // Stack jetzt: [..., left', right']
             bool leftAuto = left.RequestsAnyAuto;
@@ -1643,10 +1770,10 @@ namespace ScriptLang.Bytecode
                 if (left.UnitIsAuto)
                 {
                     _chunk.EmitOp(OpCode.Swap);
-                    EmitCoerceUnitStatic(ScriptLang.Values.Unit.Unitless);
+                    EmitCoerceUnitStatic(fire.Values.Unit.Unitless);
                     _chunk.EmitOp(OpCode.Swap);
                 }
-                if (right.UnitIsAuto) EmitCoerceUnitStatic(ScriptLang.Values.Unit.Unitless);
+                if (right.UnitIsAuto) EmitCoerceUnitStatic(fire.Values.Unit.Unitless);
             }
             // sonst: beide fix/explizit -> keine weitere Angleichung; die
             // Arithmetik-Operation selbst prüft Kompatibilität zur Laufzeit.
@@ -1711,7 +1838,7 @@ namespace ScriptLang.Bytecode
             _chunk.EmitU16(_chunk.AddConstant(v));
         }
 
-        private void EmitCoerceUnitStatic(ScriptLang.Values.Unit unit)
+        private void EmitCoerceUnitStatic(fire.Values.Unit unit)
         {
             _chunk.EmitOp(OpCode.CoerceUnit);
             _chunk.EmitU16(_chunk.AddUnit(unit));

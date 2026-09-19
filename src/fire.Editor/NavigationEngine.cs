@@ -1,6 +1,6 @@
 using System.Linq;
 
-namespace ScriptLang.Editor
+namespace fire.Editor
 {
     /// <summary>Ergebnis einer Klick-Navigation (siehe NavigationEngine.
     /// TryResolve). `FilePath`: `null` bedeutet "Ziel liegt im AKTUELLEN

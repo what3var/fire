@@ -1,4 +1,4 @@
-namespace ScriptLang.Runtime
+namespace fire.Runtime
 {
     /// <summary>
     /// Die Ownership-Schicht weiß, WANN eine Objektinstanz zerstört wird

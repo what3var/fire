@@ -1,4 +1,4 @@
-namespace ScriptLang.Bytecode
+namespace fire.Bytecode
 {
     /// <summary>
     /// Stack-basierte Bytecode-Instruktionen. Bewusst klein und orthogonal

@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
-using ScriptLang.Lexing;
+using fire.Lexing;
 
-namespace ScriptLang.Editor
+namespace fire.Editor
 {
     public enum HighlightCategory
     {
@@ -58,6 +58,8 @@ namespace ScriptLang.Editor
             TokenType.Is, TokenType.Of, TokenType.From, TokenType.Under,
             TokenType.Extern, TokenType.Unsafe, TokenType.Interface,
             TokenType.Readonly, TokenType.Enum,
+            TokenType.Public, TokenType.Private, TokenType.Protected,
+            TokenType.Namespace,
             TokenType.With, TokenType.Extends,
             TokenType.Switch, TokenType.Case, TokenType.Default, TokenType.Break, TokenType.Continue,
             TokenType.Where,

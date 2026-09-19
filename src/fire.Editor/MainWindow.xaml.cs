@@ -11,10 +11,10 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
-using ScriptLang.Runtime;
-using ScriptLang.Values;
+using fire.Runtime;
+using fire.Values;
 
-namespace ScriptLang.Editor
+namespace fire.Editor
 {
     public partial class MainWindow : Window
     {
@@ -586,7 +586,7 @@ namespace ScriptLang.Editor
         private void ShowPreludeSource(int line)
         {
             var viewer = new FileViewerWindow();
-            viewer.LoadSource("Standardbibliothek (Prelude)", ScriptLang.Standard.Prelude.Source, line);
+            viewer.LoadSource("Standardbibliothek (Prelude)", fire.Standard.Prelude.Source, line);
             viewer.Show();
         }
 

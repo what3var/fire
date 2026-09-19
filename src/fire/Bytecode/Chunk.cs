@@ -1,7 +1,7 @@
 using System.Collections.Generic;
-using ScriptLang.Values;
+using fire.Values;
 
-namespace ScriptLang.Bytecode
+namespace fire.Bytecode
 {
     /// <summary>Ein kompiliertes Programm: Instruktions-Bytes plus die Pools, auf
     /// die per Index verwiesen wird (Konstanten, Einheiten), sowie optionale
@@ -15,6 +15,23 @@ namespace ScriptLang.Bytecode
         public List<Unit> Units { get; } = new();
         public List<FunctionProto> Functions { get; } = new();
         public List<HandlerTemplate> Handlers { get; } = new();
+
+        /// <summary>Die Klasse, deren Methode/Konstruktor/Property-Accessor
+        /// dieser Chunk ist - `null` für Top-Level-Code, freie Lambdas und
+        /// alles andere außerhalb einer Klasse. Vom Compiler gesetzt (siehe
+        /// CompileMethodProto/CompileConstructorProto), von der VM für die
+        /// Zugriffsmodifikator-Prüfung gelesen (siehe VM.
+        /// IsMemberAccessAllowed): das ist die Klasse, deren CODE gerade
+        /// tatsächlich ausführt - bewusst NICHT dasselbe wie die konkrete
+        /// Klasse von `this` (VM._currentThis)! Ruft z.B. eine `Derived`-
+        /// Instanz eine geerbte, nicht überschriebene `Base`-Methode auf,
+        /// oder läuft `Base`s eigener Konstruktor als Teil einer `Derived`-
+        /// Konstruktion (siehe ConstructBase), ist `this` konkret eine
+        /// `Derived`-Instanz, obwohl gerade `Base`s eigener Code läuft -
+        /// für "darf dieser Code auf Base's privates Mitglied zugreifen"
+        /// zählt die Klasse des AUSFÜHRENDEN CODES (Base), nicht die
+        /// konkrete Instanzklasse (Derived).</summary>
+        public RuntimeClass? OwnerClass { get; set; }
 
         // Zeilennummern-Tabelle: statt PRO Instruktion eine Zeile zu speichern
         // (viel Redundanz, aufeinanderfolgende Instruktionen gehören fast immer

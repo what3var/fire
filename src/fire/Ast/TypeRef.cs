@@ -1,4 +1,4 @@
-namespace ScriptLang.Ast
+namespace fire.Ast
 {
     /// <summary>Signatur-Angabe für einen `lambda`-Typ (siehe TypeRef.LambdaSignature-
     /// Doku): `ReturnTypeName` ist der optionale, dem `lambda`-Schlüsselwort
