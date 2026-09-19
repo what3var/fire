@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>fire.Terminal.Bridge.Test</RootNamespace>
+    <AssemblyName>fire.Terminal.Bridge.Test</AssemblyName>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\fire.Terminal.Bridge\fire.Terminal.Bridge.csproj" />
+  </ItemGroup>
+
+</Project>

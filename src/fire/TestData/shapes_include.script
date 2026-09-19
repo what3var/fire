@@ -1,0 +1,11 @@
+class Circle {
+    float radius
+
+    construct(float radius) {
+        this.radius = radius
+    }
+
+    Area() {
+        return this.radius * this.radius * 3
+    }
+}
