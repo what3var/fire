@@ -4634,15 +4634,15 @@ string fileB = """
         }
     }
 
-    #using LibB
+    #using LibA
 
     class UserOfB {
         int result
 
         public construct() {
             var h = new Helper()
-            h.otherValue = 22
-            this.result = h.otherValue
+            h.value = 22
+            this.result = h.value
         }
     }
     """;

@@ -25,62 +25,16 @@ namespace fire.Runtime
 
         public void Execute(string[] sourceCodes)
         {
-            var processedSources = new List<string>();
-            var inputSources = new List<string>() { fire.Standard.Prelude.Source };
-            
-            inputSources.AddRange(sourceCodes);
-
-            bool importsGraphicsBridge = false;
-
-            var registry = new DirectiveRegistry(); // komplett leer, NICHT CreateDefault()
-            registry.Register("import", 1, (ctx, args, line) =>
+            var vm = RuntimeSession.Build(sourceCodes, _executionMode, args =>
             {
-                if (args[0].Kind == ValueKind.String)
+                if (args.Length > 0)
                 {
-                    switch(args[0].AsString().ToLower())
-                    {
-                        case "graphics":
-                            importsGraphicsBridge = true;
-                            return null; 
-                        default:
-                            throw new Exception($"'{args[0].AsString()}' ist keine bekannte Erweiterung.");
-                    }
+                    Console.WriteLine(args[0].AsString());
                 }
-                throw new Exception($"Falsche Argumente für 'import'-Direktive.");
+                return Value.MakeUndefined();
             });
-
-            foreach (var source in inputSources)
-            {
-                string preprocessed = Preprocessor.Process(source, Directory.GetCurrentDirectory(), registry);
-                processedSources.Add(preprocessed);
-            }
-
-            var natives = NativeRegistry.CreateDefault();
-
-            if (importsGraphicsBridge)
-            {
-                string preprocessed = Preprocessor.Process(GraphicsBridge.PreludeSource, Directory.GetCurrentDirectory(), registry);
-                processedSources.Insert(1, preprocessed);
-
-                using var font = new GdiGlyphFont();
-                var fbManager = new FramebufferManager();
-                var consoleManager = new ConsoleManager(fbManager, font);
-                var windowManager = new WindowManager(fbManager);
-
-                GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager);
-            }
-
-            var listOfSources = new List<string> { fire.Standard.Prelude.Source };
-
-            var program = Parser.ParseMultiple(listOfSources);
-            
-            var resolveResult = Resolver.Resolve(program, natives.Names);
-            var compiled = Compiler.Compile(program, resolveResult, natives);
-
-            var globalScope = new Scope(null, isGlobal: true);
-            var vm = new VM(compiled.TopLevel, globalScope, natives, compiled.Classes, executionMode: _executionMode);
-            
-            vm.Run();
+ 
+            vm.VirtualMachine.Run();
         }
     }
 }

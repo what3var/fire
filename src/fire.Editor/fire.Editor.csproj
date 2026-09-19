@@ -15,7 +15,7 @@
     <!-- Greift per Projektreferenz direkt auf Lexer/Parser/Resolver/Compiler/VM
          des Hauptprojekts zu - kein separates Kopieren/Verlinken von DLLs,
          Änderungen am Kernprojekt wirken sich beim nächsten Build sofort aus. -->
-    <ProjectReference Include="..\fire\fire.csproj" />
+    <ProjectReference Include="..\fire.Runtime\fire.Runtime.csproj" />
   </ItemGroup>
 
 </Project>

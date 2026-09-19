@@ -246,7 +246,7 @@ namespace fire.Ast
     public sealed record ClassDecl(
         int Line,
         string Name,
-        IReadOnlyList<string> BaseNames,
+        IReadOnlyList<string>? BaseNames,
         IReadOnlyList<Stmt> Members,
         IReadOnlyList<TypeParam>? TypeParams = null,
         bool IsActor = false,

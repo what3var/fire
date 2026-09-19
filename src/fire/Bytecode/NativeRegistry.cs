@@ -38,6 +38,19 @@ namespace fire.Bytecode
         private readonly List<TryableNativeFunction> _tryableFunctions = new();
         private readonly Dictionary<string, int> _tryableIndexByName = new();
 
+        public NativeRegistry()
+        {
+
+        }
+
+        public NativeRegistry(NativeRegistry sourceToCopy)
+        {
+            _functions = sourceToCopy._functions;
+            _indexByName = sourceToCopy._indexByName;
+            _tryableFunctions = sourceToCopy._tryableFunctions;
+            _tryableIndexByName = sourceToCopy._tryableIndexByName;
+        }
+
         public int Register(string name, NativeFunction fn)
         {
             int idx = _functions.Count;

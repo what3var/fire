@@ -1,12 +1,17 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
 using fire.Bytecode;
 using fire.Parsing;
 using fire.Resolving;
 using fire.Runtime;
+using fire.Terminal;
+using fire.Terminal.Bridge;
+using fire.Terminal.Windows;
 using fire.Values;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using static fire.Resolving.ResolvedRef;
 
 namespace fire.Editor
 {
@@ -31,7 +36,6 @@ namespace fire.Editor
     /// </summary>
     public sealed class DebugSession
     {
-        private readonly NativeRegistry _natives = new();
         private readonly object _threadsLock = new();
         private readonly List<DebugThreadContext> _threads = new();
         private int _fireThreadCounter;
@@ -67,13 +71,6 @@ namespace fire.Editor
 
         public DebugSession()
         {
-            _natives.Register("print", args =>
-            {
-                string text = args.Length > 0 ? args[0].ToString() : "";
-                string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
-                OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {text}" : text);
-                return Value.MakeUndefined();
-            });
         }
 
         private DebugThreadContext? FindContextFor(VM? vm)
@@ -99,21 +96,22 @@ namespace fire.Editor
         /// DebugThreadContext.ForMain - startet wartend, noch nichts läuft).
         /// Bei einem Parse-/Resolve-Fehler bleibt Vm null, CompileError
         /// enthält die Meldung.</summary>
-        public bool Compile(string source)
+        public bool Compile(string[] sources)
         {
             Reset();
 
             try
             {
-                var program = Parser.ParseWithPrelude(source, out var activeUsings);
-                var resolveResult = Resolver.Resolve(program, _natives.Names, activeUsings: activeUsings);
-                var compiled = Compiler.Compile(program, resolveResult, _natives, activeUsings);
 
-                var globalScope = new Scope(null, isGlobal: true);
-                var mainVm = new VM(compiled.TopLevel, globalScope, _natives, compiled.Classes,
-                    externSignatures: compiled.ExternSignatures, isMainThreadVm: true);
+                var session = RuntimeSession.Build(sources, VmExecutionMode.Debug, args =>
+                {
+                    string text = args.Length > 0 ? args[0].ToString() : "";
+                    string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
+                    OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {text}" : text);
+                    return Value.MakeUndefined();
+                });
 
-                var mainCtx = DebugThreadContext.ForMain(mainVm);
+                var mainCtx = DebugThreadContext.ForMain(session.VirtualMachine);
                 mainCtx.Paused += ctx => ThreadPaused?.Invoke(ctx);
 
                 lock (_threadsLock)
