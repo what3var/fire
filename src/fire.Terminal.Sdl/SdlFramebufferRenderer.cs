@@ -110,7 +110,7 @@ namespace fire.Terminal.Sdl
 
             _texture = SDL.CreateTexture(
                 _renderer,
-                SDL.PixelFormat.RGBA8888,
+                SDL.PixelFormat.ARGB8888,
                 SDL.TextureAccess.Streaming,
                 width, height);
             if (_texture == IntPtr.Zero)

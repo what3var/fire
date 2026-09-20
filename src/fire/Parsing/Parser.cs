@@ -93,76 +93,9 @@ namespace fire.Parsing
             _tokens = tokens;
         }
 
-        public static List<Stmt> Parse(string source) => Parse(source, Directory.GetCurrentDirectory());
+        public static List<Stmt> Parse(string source) => ParseMultiple(new[] { source }, Directory.GetCurrentDirectory());
 
-        /// <summary>Wie Parse(source), aber mit explizitem Basisverzeichnis für
-        /// die Auflösung relativer `#include "..."`-Pfade (siehe
-        /// Preprocessor.Process) - wichtig, wenn der Quelltext tatsächlich aus
-        /// einer Datei stammt (dann üblicherweise deren Verzeichnis), da
-        /// Includes sonst relativ zum aktuellen Arbeitsverzeichnis der
-        /// Anwendung aufgelöst würden.</summary>
-        public static List<Stmt> Parse(string source, string basePath) => Parse(source, basePath, out _);
-
-        /// <summary>Wie Parse(source, basePath), gibt zusätzlich die per
-        /// `#using Name` gesammelten Namespace-Namen zurück (siehe
-        /// FlattenNamespaces/_activeUsings) - Resolver.Resolve und Compiler.
-        /// Compile brauchen dieselbe Liste, um Namespace-Mitglieder auch
-        /// INNERHALB von Methoden-/Konstruktor-Bodies (`new X()`, `is of X`,
-        /// `catch (e : X)`) unqualifiziert auflösen zu können (SPEC
-        /// "Namespaces"). Als `out`-Parameter statt einer Tupel-Rückgabe, damit
-        /// die einfachen Überladungen oben (nur `List&lt;Stmt&gt;`) bestehende
-        /// Aufrufstellen nicht brechen.</summary>
-        public static List<Stmt> Parse(string source, string basePath, out IReadOnlyList<string> activeUsings)
-        {
-            var (stmts, usings) = ParseRaw(source, basePath, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-            activeUsings = usings;
-            return FlattenNamespaces(MergeClassExtensions(stmts), usings);
-        }
-
-        /// <summary>Wie Parse(), aber mit der Standardbibliothek (IEnumerable/
-        /// IEnumerator/List, siehe fire.Standard.Prelude) vorangestellt.
-        /// Prelude und Nutzer-Code werden als EIN kombiniertes Programm
-        /// resolved/kompiliert (Klassen/Interfaces werden ja ohnehin vorab
-        /// eingesammelt, Reihenfolge spielt keine Rolle).
-        ///
-        /// WICHTIG für `class extends X { ... }` (siehe MergeClassExtensions):
-        /// beide Hälften werden bewusst erst RAW geparst (OHNE die einzelne
-        /// Hälfte schon für sich zu mergen) und dann GEMEINSAM EINMAL
-        /// zusammengeführt - sonst würde z.B. `class extends List { ... }`
-        /// im Nutzer-Code fälschlich fehlschlagen, weil `List` beim isolierten
-        /// Mergen NUR des Nutzer-Codes noch nicht bekannt wäre (die kommt ja
-        /// erst aus der Prelude-Hälfte). Dasselbe gilt für FlattenNamespaces:
-        /// erst NACH dem Zusammenführen beider Hälften aufgerufen, mit den
-        /// `#using`-Namen BEIDER Hälften zusammen.
-        ///
-        /// WICHTIG für `#include`: Prelude und Nutzer-Code teilen sich EINE
-        /// gemeinsame "bereits eingefügt"-Menge (siehe Preprocessor.
-        /// DirectiveContext.AlreadyIncluded-Doku) - includiert die Prelude
-        /// (oder eine von ihr includierte Datei) dieselbe Datei wie der
-        /// Nutzer-Code (oder umgekehrt), landet sie insgesamt trotzdem nur
-        /// EIN einziges Mal im kombinierten Programm, statt einmal pro Hälfte.</summary>
-        public static List<Stmt> ParseWithPrelude(string userSource) => ParseWithPrelude(userSource, out _);
-
-        /// <summary>Wie ParseWithPrelude(userSource) - siehe Parse(source,
-        /// basePath, out activeUsings) für die Begründung des `out`-
-        /// Parameters.</summary>
-        public static List<Stmt> ParseWithPrelude(string userSource, out IReadOnlyList<string> activeUsings)
-        {
-            var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var combined = new List<Stmt>();
-            var usings = new List<string>();
-
-            var (preludeStmts, preludeUsings) = ParseRaw(fire.Standard.Prelude.Source, Directory.GetCurrentDirectory(), alreadyIncluded);
-            combined.AddRange(preludeStmts);
-            usings.AddRange(preludeUsings);
-
-            var (userStmts, userUsings) = ParseRaw(userSource, Directory.GetCurrentDirectory(), alreadyIncluded);
-            combined.AddRange(userStmts);
-            usings.AddRange(userUsings);
-
-            activeUsings = usings;
-            return FlattenNamespaces(MergeClassExtensions(combined), usings);
-        }
+        
 
         /// <summary>Wie ParseWithPrelude, aber für BELIEBIG VIELE Quelltext-
         /// Stücke (Prelude + mehrere Code-Dateien) statt nur Prelude + EINEM
@@ -395,9 +328,9 @@ namespace fire.Parsing
                     // ParseWithPrelude-Pfad (kein Stempel gesetzt, `Usings`
                     // ist `null`), gilt wie bisher die eine, globale Liste.
                     var effectiveUsings = cd.Usings ?? activeUsings;
-                    var newBaseNames = cd.BaseNames
+                    var newBaseNames = cd.BaseNames?
                         .Select(b => QualifyNamespaceReference(b, currentNs, byNamespace, effectiveUsings))
-                        .ToList();
+                        .ToList() ?? new List<string>();
                     result.Add(cd with { Name = QualifyDeclName(cd.Name, currentNs), BaseNames = newBaseNames, Usings = effectiveUsings });
                     break;
 

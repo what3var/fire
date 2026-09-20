@@ -198,7 +198,7 @@ namespace fire.Editor
             string source = GetEditorText();
             int offset = GetOffsetOf(Editor.CaretPosition);
             bool popupRelevant = CompletionPopup.IsOpen
-                || (offset >= 0 && offset <= source.Length && (lastChars.Contains(source[offset - 1])));
+                || (offset >= 0 && offset <= source.Length && (offset == 0 || lastChars.Contains(source[offset - 1])));
 
             if (popupRelevant)
             {
@@ -755,7 +755,7 @@ namespace fire.Editor
             string source = GetEditorText();
             _session.UpdateBreakpoints(_breakpoints);
 
-            if (!_session.Compile(source))
+            if (!_session.Compile(new string[]{source}))
             {
                 ApplyHighlighting();
                 UpdateStatus($"Kompilierfehler: {_session.CompileError}");

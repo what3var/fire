@@ -28,7 +28,7 @@ namespace fire.Runtime
 
         public ConsoleManager? ConsoleManager { get; private set; }
 
-
+        
         private RuntimeSession(VM virtualMachine, CompiledProgram compiledProgram, Scope globalScope, WindowManager? windowManager, FramebufferManager? framebufferManager, ConsoleManager? consoleManager)
         {
             VirtualMachine = virtualMachine;
@@ -43,6 +43,7 @@ namespace fire.Runtime
         public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode executionMode, Func<Value[], Value>? debugWriter = null)
         {
             var natives = new NativeRegistry();
+            var alreadyIncluded = new HashSet<string>();
 
             if (debugWriter == null)
                 natives.Register("print", args => Value.MakeUndefined());
@@ -75,7 +76,7 @@ namespace fire.Runtime
 
             foreach (var source in inputSources)
             {
-                string preprocessed = Preprocessor.Process(source, Directory.GetCurrentDirectory(), registry);
+                string preprocessed = Preprocessor.Process(source, Directory.GetCurrentDirectory(), alreadyIncluded, registry);
                 processedSources.Add(preprocessed);
             }
 
@@ -85,10 +86,10 @@ namespace fire.Runtime
 
             if (importsGraphicsBridge)
             {
-                string preprocessed = Preprocessor.Process(GraphicsBridge.PreludeSource, Directory.GetCurrentDirectory(), registry);
+                string preprocessed = Preprocessor.Process(GraphicsBridge.PreludeSource, Directory.GetCurrentDirectory(), alreadyIncluded, registry);
                 processedSources.Insert(1, preprocessed);
 
-                using var font = new GdiGlyphFont();
+                var font = new IntegratedGlyphFont();
                 fbManager = new FramebufferManager();
                 consoleManager = new ConsoleManager(fbManager, font);
                 windowManager = new WindowManager(fbManager);
@@ -96,7 +97,7 @@ namespace fire.Runtime
                 GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager);
             }
 
-            var program = Parser.ParseMultiple(sources);
+            var program = Parser.ParseMultiple(processedSources);
             var resolveResult = Resolver.Resolve(program, natives.Names);
             var compiled = Compiler.Compile(program, resolveResult, natives);
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using fire.Bytecode;
 
@@ -177,6 +178,7 @@ namespace fire.Editor
                 // unbeobachtet) mitzureißen. Eine unbehandelte SKRIPT-
                 // Exception läuft dagegen über UnhandledException oben, nicht
                 // mehr über diesen catch-Zweig.
+                Debug.WriteLine($"{ex.Message}\r\n{ex.StackTrace}");
                 RuntimeError = ex.Message;
                 IsFinished = true;
             }

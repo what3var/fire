@@ -76,23 +76,6 @@ namespace fire.Terminal
             CursorColumn = Math.Clamp(column, 0, Math.Max(0, Columns - 1));
         }
 
-        public void Color(PixelColor foreground, PixelColor? background)
-        {
-            Foreground = foreground;
-            Background = background;
-        }
-
-        /// <summary>Wie Color(PixelColor, PixelColor?), aber über
-        /// Palette-Indizes statt direkter Farbwerte - `backgroundIndex ==
-        /// null` bedeutet wie beim direkten Überload "transparent", nicht
-        /// "Index 0" (Index 0 der Palette ist eine ganz normale, eigene
-        /// Farbe, siehe Palette-Doku).</summary>
-        public void Color(byte foregroundIndex, byte? backgroundIndex)
-        {
-            Foreground = Palette.GetColor(foregroundIndex);
-            Background = backgroundIndex is byte bgIdx ? Palette.GetColor(bgIdx) : null;
-        }
-
         /// <summary>Löscht den GESAMTEN aktuellen Target-Framebuffer mit der
         /// aktuellen Hintergrundfarbe (Transparent-Hintergrund zählt dabei
         /// als Schwarz, da "Bildschirm löschen" ohne jede Farbe keinen Sinn

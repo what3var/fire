@@ -102,7 +102,6 @@ namespace fire.Editor
 
             try
             {
-
                 var session = RuntimeSession.Build(sources, VmExecutionMode.Debug, args =>
                 {
                     string text = args.Length > 0 ? args[0].ToString() : "";

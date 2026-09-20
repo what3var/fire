@@ -779,7 +779,7 @@ print(list[1])
 try
 {
     var natives = NativeRegistry.CreateDefault();
-    var program = Parser.ParseWithPrelude(listSample);
+    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, listSample });
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
@@ -1120,7 +1120,7 @@ try {
 try
 {
     var natives = NativeRegistry.CreateDefault();
-    var program = Parser.ParseWithPrelude(boundsCheckSample);
+    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, boundsCheckSample });
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
@@ -1147,7 +1147,7 @@ print(c.Area())
 try
 {
     var natives = NativeRegistry.CreateDefault();
-    var program = Parser.Parse(includeMainSample, GetTestDataDir());
+    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, includeMainSample }, GetTestDataDir());
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
@@ -1646,7 +1646,7 @@ print(list.Peek())
 try
 {
     var natives = NativeRegistry.CreateDefault();
-    var program = Parser.ParseWithPrelude(extendListSample);
+    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, extendListSample });
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
@@ -2140,7 +2140,7 @@ print("foreach done")
 try
 {
     var natives = NativeRegistry.CreateDefault();
-    var program = Parser.ParseWithPrelude(foreachBreakSample);
+    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, foreachBreakSample });
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
@@ -4455,7 +4455,7 @@ foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmE
     Console.WriteLine($"--- Modus: {mode} ---");
     try
     {
-        var program = Parser.ParseWithPrelude(modeTestScript);
+        var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, modeTestScript });
         var natives = NativeRegistry.CreateDefault();
         var resolveResult = Resolver.Resolve(program, natives.Names);
         var compiled = Compiler.Compile(program, resolveResult, natives);
@@ -4526,7 +4526,7 @@ string accessTestScript = """
 
 try
 {
-    var program = Parser.ParseWithPrelude(accessTestScript);
+    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, accessTestScript });
     var natives = NativeRegistry.CreateDefault();
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
@@ -4584,10 +4584,10 @@ string namespaceTestScript = """
 
 try
 {
-    var program = Parser.ParseWithPrelude(namespaceTestScript, out var activeUsings);
+    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, namespaceTestScript });
     var natives = NativeRegistry.CreateDefault();
-    var resolveResult = Resolver.Resolve(program, natives.Names, activeUsings: activeUsings);
-    var compiled = Compiler.Compile(program, resolveResult, natives, activeUsings);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
     var globalScope2 = new Scope(null, isGlobal: true);
     var vm = new VM(compiled.TopLevel, globalScope2, natives, compiled.Classes);
     vm.Run();
@@ -4707,7 +4707,7 @@ string incDecScript = """
 
 try
 {
-    var program = Parser.ParseWithPrelude(incDecScript);
+    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, incDecScript });
     var natives = NativeRegistry.CreateDefault();
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
