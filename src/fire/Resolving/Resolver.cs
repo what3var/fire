@@ -241,7 +241,7 @@ namespace fire.Resolving
 
         public static ResolveResult Resolve(
             IReadOnlyList<Stmt> program, IEnumerable<string>? nativeNames = null, IEnumerable<string>? tryableNativeNames = null,
-            IReadOnlyList<string>? activeUsings = null)
+            IReadOnlyList<string>? activeUsings = null, IReadOnlyDictionary<Stmt, IReadOnlyList<string>>? usingsByStmt = null)
         {
             var resolver = new Resolver(nativeNames, tryableNativeNames);
             resolver._topLevelUsings = activeUsings ?? Array.Empty<string>();
@@ -251,7 +251,15 @@ namespace fire.Resolving
             resolver.CollectEnums(program);
             resolver._noShadowGlobals = program.Any(s => s is NoShadowDirective);
             foreach (var stmt in program)
+            {
+                // Wie Compiler.Compile - Pro-Anweisung-Usings haben Vorrang
+                // vor der einen, programmweiten Fallback-Liste (siehe
+                // Parser.ParseMultiple, out usingsByStmt-Doku).
+                resolver._topLevelUsings = usingsByStmt != null && usingsByStmt.TryGetValue(stmt, out var stmtUsings)
+                    ? stmtUsings
+                    : activeUsings ?? Array.Empty<string>();
                 resolver.ResolveStmt(stmt);
+            }
 
             return new ResolveResult
             {

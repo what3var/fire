@@ -235,12 +235,22 @@ namespace fire.Bytecode
 
         public static CompiledProgram Compile(
             IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives,
-            IReadOnlyList<string>? activeUsings = null)
+            IReadOnlyList<string>? activeUsings = null, IReadOnlyDictionary<Stmt, IReadOnlyList<string>>? usingsByStmt = null)
         {
             var compiler = new Compiler(resolveResult, natives);
             var classes = compiler.CompileClasses(program, activeUsings ?? Array.Empty<string>());
             foreach (var stmt in program)
+            {
+                // Pro-Anweisung-Usings haben Vorrang vor der einen,
+                // programmweiten Fallback-Liste (siehe Parser.ParseMultiple,
+                // out usingsByStmt-Doku) - wichtig, wenn MEHR als eine der
+                // kombinierten Quellen eigenen Top-Level-Code mit eigenen,
+                // abweichenden #using-Direktiven hat.
+                compiler._topLevelUsings = usingsByStmt != null && usingsByStmt.TryGetValue(stmt, out var stmtUsings)
+                    ? stmtUsings
+                    : activeUsings ?? Array.Empty<string>();
                 compiler.CompileStmt(stmt);
+            }
             compiler._chunk.EmitOp(OpCode.Halt);
 
             var externSignatures = new Dictionary<string, ExternSignature>();

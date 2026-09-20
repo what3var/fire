@@ -27,8 +27,9 @@ namespace fire.Editor
     /// ohnehin nur ein Folgefehler des ersten und eher verwirrend als
     /// hilfreich.
     ///
-    /// Verwendet - wie DebugSession.Compile - ParseWithPrelude (Prelude +
-    /// Nutzer-Code als EIN kombiniertes Programm), damit List/IEnumerable/
+    /// Verwendet - wie DebugSession/RuntimeSession.Build - ParseMultiple
+    /// (Prelude + Nutzer-Code als EIN kombiniertes Programm, ParseWithPrelude
+    /// gibt es nicht mehr), damit List/IEnumerable/
     /// IndexOutOfBoundsException bekannt sind. WICHTIG: die von Parser/
     /// Resolver gemeldeten Zeilennummern bleiben dabei trotzdem korrekt auf
     /// den NUTZER-Quelltext bezogen, nicht auf die Prelude verschoben - jeder
@@ -48,9 +49,11 @@ namespace fire.Editor
             try
             {
                 var natives = NativeRegistry.CreateDefault();
-                var program = Parser.ParseWithPrelude(source, out var activeUsings);
-                var resolveResult = Resolver.Resolve(program, natives.Names, activeUsings: activeUsings);
-                Compiler.Compile(program, resolveResult, natives, activeUsings);
+                var program = Parser.ParseMultiple(
+                    new[] { fire.Standard.Prelude.Source, source }, null, alreadyPreprocessed: false,
+                    out var activeUsings, out var usingsByStmt);
+                var resolveResult = Resolver.Resolve(program, natives.Names, activeUsings: activeUsings, usingsByStmt: usingsByStmt);
+                Compiler.Compile(program, resolveResult, natives, activeUsings, usingsByStmt);
             }
             catch (ParseException ex)
             {

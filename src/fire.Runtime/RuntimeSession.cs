@@ -97,9 +97,9 @@ namespace fire.Runtime
                 GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager);
             }
 
-            var program = Parser.ParseMultiple(processedSources);
-            var resolveResult = Resolver.Resolve(program, natives.Names);
-            var compiled = Compiler.Compile(program, resolveResult, natives);
+            var program = Parser.ParseMultiple(processedSources, Directory.GetCurrentDirectory(), alreadyPreprocessed: true, out var activeUsings, out var usingsByStmt);
+            var resolveResult = Resolver.Resolve(program, natives.Names, null, usingsByStmt: usingsByStmt);
+            var compiled = Compiler.Compile(program, resolveResult, natives, null, usingsByStmt);
 
             var globalScope = new Scope(null, isGlobal: true);
             var mainVm = new VM(compiled.TopLevel, globalScope, natives, compiled.Classes,

@@ -95,6 +95,15 @@ namespace fire.Parsing
 
         public static List<Stmt> Parse(string source) => ParseMultiple(new[] { source }, Directory.GetCurrentDirectory());
 
+        /// <summary>Wie Parse(source), gibt zusätzlich die `#using`-Namen
+        /// dieser (einzigen) Quelle zurück - siehe ParseMultiple(sources,
+        /// basePath, alreadyPreprocessed, out activeUsings) für die
+        /// Begründung: Top-Level-Code braucht das für die Auflösung
+        /// unqualifizierter Namespace-Referenzen, kann sich aber (anders
+        /// als eine Klasse) nicht selbst stempeln.</summary>
+        public static List<Stmt> Parse(string source, out IReadOnlyList<string> activeUsings) =>
+            ParseMultiple(new[] { source }, Directory.GetCurrentDirectory(), alreadyPreprocessed: false, out activeUsings);
+
         
 
         /// <summary>Wie ParseWithPrelude, aber für BELIEBIG VIELE Quelltext-
@@ -120,28 +129,69 @@ namespace fire.Parsing
         /// ParseWithPrelude), landet ein `#include`-Ziel also nur EIN
         /// einziges Mal im kombinierten Programm, unabhängig davon, aus
         /// welcher der `sources` heraus es zuerst erreicht wird.</summary>
-        public static List<Stmt> ParseMultiple(IReadOnlyList<string> sources, string? basePath = null)
+        public static List<Stmt> ParseMultiple(IReadOnlyList<string> sources, string? basePath = null) =>
+            ParseMultiple(sources, basePath, alreadyPreprocessed: false, out _);
+
+        /// <summary>Wie ParseMultiple(sources, basePath), gibt zusätzlich
+        /// zurück: die `#using`-Namen der LETZTEN Quelle (`activeUsings`,
+        /// als einfacher Fallback - üblicherweise das Hauptskript) UND eine
+        /// Zuordnung JEDER einzelnen Top-Level-Anweisung zu den Usings IHRER
+        /// EIGENEN Quelle (`usingsByStmt`) - WICHTIG, wenn MEHR als eine der
+        /// `sources` eigenen Top-Level-Code (nicht nur Klassen) enthält: eine
+        /// Klasse trägt ihre Usings direkt an sich selbst (siehe
+        /// ClassDecl.Usings/StampUsings), eine einzelne Anweisung wie `var c
+        /// = new Circle()` hat aber kein Feld, an dem man das befestigen
+        /// könnte - `usingsByStmt` schließt genau diese Lücke: OHNE das
+        /// bekäme JEDER Top-Level-Code im ganzen Programm dieselben (die der
+        /// LETZTEN Quelle) Usings, selbst wenn er aus einer GANZ ANDEREN
+        /// Quelle mit eigenen, abweichenden `#using`-Direktiven stammt - SPEC
+        /// "Mehrere Quelldateien" verlangt aber gerade lokale Sichtbarkeit
+        /// pro Datei, auch für Top-Level-Code, nicht nur für Klassen.
+        ///
+        /// Per Referenzgleichheit geschlüsselt (nicht Werten) - genau die
+        /// Stmt-Instanzen, die ParseRaw für die jeweilige Quelle geliefert
+        /// hat, überleben MergeClassExtensions/FlattenNamespaces für JEDE
+        /// Nicht-Klassen-Anweisung unverändert (nur ClassDecl/InterfaceDecl/
+        /// EnumDecl/NamespaceDecl werden per `with` neu erzeugt).
+        ///
+        /// `alreadyPreprocessed`: `true`, wenn `sources` bereits VOR diesem
+        /// Aufruf durch `Preprocessor.Process` gelaufen sind (z.B. weil der
+        /// Aufrufer selbst schon `#include`/eigene Direktiven auflöst) -
+        /// überspringt den sonst doppelten Preprocessor-Lauf innerhalb von
+        /// ParseRaw. Default `false` (unverändertes, bisheriges Verhalten).</summary>
+        public static List<Stmt> ParseMultiple(
+            IReadOnlyList<string> sources, string? basePath, bool alreadyPreprocessed,
+            out IReadOnlyList<string> activeUsings, out IReadOnlyDictionary<Stmt, IReadOnlyList<string>> usingsByStmt)
         {
             basePath ??= Directory.GetCurrentDirectory();
             var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var combined = new List<Stmt>();
+            var lastUsings = (IReadOnlyList<string>)Array.Empty<string>();
+            var byStmt = new Dictionary<Stmt, IReadOnlyList<string>>(ReferenceEqualityComparer.Instance);
 
             foreach (var source in sources)
             {
-                var (stmts, usings) = ParseRaw(source, basePath, alreadyIncluded);
+                var (stmts, usings) = ParseRaw(source, basePath, alreadyIncluded, alreadyPreprocessed);
                 StampUsings(stmts, usings);
+                foreach (var stmt in stmts)
+                    byStmt[stmt] = usings; // jede Anweisung DIESER Quelle -> DIESER Quelle eigene Usings
                 combined.AddRange(stmts);
+                lastUsings = usings;
             }
 
-            // Platzhalter-Liste hier - wird von FlattenNamespaces NICHT
-            // benutzt, solange JEDE ClassDecl bereits ihr eigenes, gestempeltes
-            // Usings-Feld trägt (siehe StampUsings/FlattenNamespaceStmt), was
-            // durch die Schleife oben für ALLE Klassen aus `sources` garantiert
-            // ist. Nur als Fallback für den (hier nicht vorkommenden) Fall
-            // gedacht, dass FlattenNamespaces auf eine ClassDecl OHNE Stempel
-            // träfe.
-            return FlattenNamespaces(MergeClassExtensions(combined), Array.Empty<string>());
+            activeUsings = lastUsings;
+            usingsByStmt = byStmt;
+            return FlattenNamespaces(MergeClassExtensions(combined), lastUsings);
         }
+
+        /// <summary>Wie ParseMultiple(..., out activeUsings, out usingsByStmt),
+        /// ohne die präzisere Pro-Anweisung-Zuordnung - siehe dort für den
+        /// wichtigen Unterschied. Nur für den einfachen Fall gedacht, in dem
+        /// höchstens EINE der `sources` eigenen Top-Level-Code (nicht nur
+        /// Klassen) enthält (üblich: nur das Hauptskript).</summary>
+        public static List<Stmt> ParseMultiple(
+            IReadOnlyList<string> sources, string? basePath, bool alreadyPreprocessed, out IReadOnlyList<string> activeUsings) =>
+            ParseMultiple(sources, basePath, alreadyPreprocessed, out activeUsings, out _);
 
         /// <summary>Setzt `ClassDecl.Usings` auf `usings`, für JEDE Klasse in
         /// `stmts` - rekursiv auch für Klassen, die in einem `namespace`-Block
@@ -169,9 +219,10 @@ namespace fire.Parsing
             }
         }
 
-        private static (List<Stmt> Statements, List<string> Usings) ParseRaw(string source, string basePath, HashSet<string> alreadyIncluded)
+        private static (List<Stmt> Statements, List<string> Usings) ParseRaw(
+            string source, string basePath, HashSet<string> alreadyIncluded, bool alreadyPreprocessed = false)
         {
-            string preprocessed = Preprocessor.Process(source, basePath, alreadyIncluded);
+            string preprocessed = alreadyPreprocessed ? source : Preprocessor.Process(source, basePath, alreadyIncluded);
             var tokens = new Lexer(preprocessed).Tokenize();
             var parser = new Parser(tokens);
             var stmts = parser.ParseProgram();

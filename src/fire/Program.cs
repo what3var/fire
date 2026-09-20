@@ -4584,12 +4584,66 @@ string namespaceTestScript = """
 
 try
 {
-    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, namespaceTestScript });
+    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, namespaceTestScript }, null, alreadyPreprocessed: false, out var activeUsings, out var usingsByStmt);
     var natives = NativeRegistry.CreateDefault();
-    var resolveResult = Resolver.Resolve(program, natives.Names);
-    var compiled = Compiler.Compile(program, resolveResult, natives);
+    var resolveResult = Resolver.Resolve(program, natives.Names, activeUsings: activeUsings, usingsByStmt: usingsByStmt);
+    var compiled = Compiler.Compile(program, resolveResult, natives, activeUsings, usingsByStmt);
     var globalScope2 = new Scope(null, isGlobal: true);
     var vm = new VM(compiled.TopLevel, globalScope2, natives, compiled.Classes);
+    vm.Run();
+    if (vm.UnhandledException != null)
+        Console.WriteLine($"FEHLER: unerwartete unbehandelte Exception: {new UncaughtScriptException(vm.UnhandledException).Message}");
+}
+catch (System.Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== ParseMultiple: Top-Level-Code in ZWEI verschiedenen (nicht-letzten) Dateien mit eigenem #using ===");
+
+// Genau das Szenario, das die einfache activeUsings-Liste (nur die
+// LETZTE Quelle) nicht abdecken konnte: HIER hat sowohl fileA (nicht die
+// letzte Quelle!) als auch mainFile eigenen Top-Level-Code, der jeweils
+// eine ANDERE, gleichnamige Klasse unqualifiziert referenziert.
+string twoTopLevelFileA = """
+    namespace LibA {
+        class Helper {
+            int value
+        }
+    }
+
+    #using LibA
+
+    var globalFromFileA = new Helper()
+    globalFromFileA.value = 111
+    print("Top-Level in fileA (nicht die letzte Quelle!): globalFromFileA.value = " + globalFromFileA.value)
+    """;
+
+string twoTopLevelFileB = """
+    namespace LibB {
+        class Helper {
+            int otherValue
+        }
+    }
+
+    #using LibB
+
+    var globalFromMain = new Helper()
+    globalFromMain.otherValue = 222
+    print("Top-Level in der letzten Quelle: globalFromMain.otherValue = " + globalFromMain.otherValue)
+    """;
+
+try
+{
+    var program = Parser.ParseMultiple(
+        new[] { fire.Standard.Prelude.Source, twoTopLevelFileA, twoTopLevelFileB },
+        null, alreadyPreprocessed: false, out var activeUsings, out var usingsByStmt);
+    var natives = NativeRegistry.CreateDefault();
+    var resolveResult = Resolver.Resolve(program, natives.Names, activeUsings: activeUsings, usingsByStmt: usingsByStmt);
+    var compiled = Compiler.Compile(program, resolveResult, natives, activeUsings, usingsByStmt);
+    var globalScope3 = new Scope(null, isGlobal: true);
+    var vm = new VM(compiled.TopLevel, globalScope3, natives, compiled.Classes);
     vm.Run();
     if (vm.UnhandledException != null)
         Console.WriteLine($"FEHLER: unerwartete unbehandelte Exception: {new UncaughtScriptException(vm.UnhandledException).Message}");
