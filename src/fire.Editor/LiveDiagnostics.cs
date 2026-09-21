@@ -49,11 +49,14 @@ namespace fire.Editor
             try
             {
                 var natives = NativeRegistry.CreateDefault();
-                var program = Parser.ParseMultiple(
-                    new[] { fire.Standard.Prelude.Source, source }, null, alreadyPreprocessed: false,
-                    out var activeUsings, out var usingsByStmt);
-                var resolveResult = Resolver.Resolve(program, natives.Names, activeUsings: activeUsings, usingsByStmt: usingsByStmt);
-                Compiler.Compile(program, resolveResult, natives, activeUsings, usingsByStmt);
+                var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var sources = new[] { fire.Standard.Prelude.Source, source };
+                var processed = new List<ProcessedSource>();
+                foreach (var s in sources)
+                    processed.Add(Preprocessor.Process(s, System.IO.Directory.GetCurrentDirectory(), alreadyIncluded));
+                var program = Parser.ParseMultiple(processed);
+                var resolveResult = Resolver.Resolve(program, natives.Names);
+                Compiler.Compile(program, resolveResult, natives);
             }
             catch (ParseException ex)
             {

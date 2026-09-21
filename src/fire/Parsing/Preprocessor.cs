@@ -12,6 +12,21 @@ namespace fire.Parsing
     /// bei ihrem Aufruf bekommt (siehe DirectiveHandler/DirectiveRegistry) -
     /// erlaubt ihr, rekursiv weitere Dateien einzuschleusen (ProcessFile)
     /// UND auf die GLOBAL geteilte "bereits eingefügt"-Menge zuzugreifen.</summary>
+    /// <summary>Ergebnis von Preprocessor.Process: der fertig vorverarbeitete
+    /// Quelltext (alle `#include`s eingesetzt, alle erkannten Direktiven-
+    /// Zeilen entfernt) UND die in ihm per `#using Name` gesammelten
+    /// Namespace-Namen (SPEC "Namespaces") - ab jetzt eine reine
+    /// Preprocessor-Angelegenheit, nicht mehr Aufgabe des Parsers (siehe
+    /// Parser._usingNamespaces/ParseMultiple): `#using`-Zeilen werden schon
+    /// HIER erkannt und aus dem Text entfernt (wie jede andere erkannte
+    /// Direktive), der Lexer/Parser sieht sie nie. Eine `#using`-Zeile
+    /// INNERHALB einer per `#include` eingefügten Datei landet in
+    /// DENSELBEN `Usings` wie die einschließende Datei - konsistent mit der
+    /// "reines Text-Splicing"-Semantik von `#include` (SPEC 8.1.5): nach
+    /// dem Einsetzen ist nicht mehr unterscheidbar, ob eine Zeile ursprünglich
+    /// aus der Wurzel-Datei oder einer eingefügten Datei stammt.</summary>
+    public sealed record ProcessedSource(string Source, IReadOnlyList<string> Usings);
+
     public sealed class DirectiveContext
     {
         /// <summary>Verzeichnis, relativ zu dem Pfad-Argumente DIESER
@@ -24,7 +39,8 @@ namespace fire.Parsing
         /// angelegt, sondern vom AUFRUFER bereitgestellt und damit
         /// zwischen mehreren Process()-Aufrufen TEILBAR: verarbeitet ein
         /// Host mehrere Wurzel-Dateien zusammen (z.B. Prelude + Nutzer-
-        /// Skript, siehe Parser.ParseWithPrelude), sorgt eine GEMEINSAME
+        /// Skript, siehe Runtime.RuntimeSession.Build/Parser.ParseMultiple),
+        /// sorgt eine GEMEINSAME
         /// Instanz dafür, dass eine von BEIDEN Seiten (transitiv)
         /// includierte Datei insgesamt nur EIN einziges Mal in der
         /// kombinierten Ausgabe landet - eine globale Code-Komposition,
@@ -177,8 +193,22 @@ namespace fire.Parsing
         private static readonly Regex DirectiveLine =
             new(@"^\s*#([A-Za-z_][A-Za-z0-9_]*)(?:[ \t]+(.*))?\s*$", RegexOptions.Compiled);
 
+        /// <summary>Ein gültiger (evtl. punktierter) Namespace-Name nach
+        /// `#using` - dieselbe Namensgrammatik wie Parser.ParseDottedName
+        /// (`A` oder `A.B.C`), hier aber als reine Text-Prüfung statt über
+        /// den echten Lexer/Parser (siehe Klassendoku: bewusst simpel).</summary>
+        private static readonly Regex UsingName =
+            new(@"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$", RegexOptions.Compiled);
+
         private readonly DirectiveRegistry _registry;
         private readonly List<string> _includeChain = new();
+
+        /// <summary>Alle per `#using Name` gesammelten Namespace-Namen - EINE
+        /// gemeinsame Liste für den GESAMTEN Process()-Aufruf inkl. aller
+        /// rekursiv per `#include` eingefügten Dateien (siehe ProcessedSource-
+        /// Doku für die Begründung), deshalb ein Instanzfeld statt eines
+        /// Rückgabewerts von ProcessInner (das rekursiv für `#include` läuft).</summary>
+        private readonly List<string> _usings = new();
 
         private Preprocessor(DirectiveRegistry registry)
         {
@@ -189,20 +219,21 @@ namespace fire.Parsing
         /// FRISCHEN "bereits eingefügt"-Menge - für den einfachen Fall,
         /// dass nur EINE Wurzel-Datei kompiliert wird. `registry`: Default
         /// `DirectiveRegistry.CreateDefault()` (nur `#include`).</summary>
-        public static string Process(string source, string basePath, DirectiveRegistry? registry = null) =>
+        public static ProcessedSource Process(string source, string basePath, DirectiveRegistry? registry = null) =>
             Process(source, basePath, new HashSet<string>(StringComparer.OrdinalIgnoreCase), registry);
 
         /// <summary>Wie Process(source, basePath), aber mit einer VOM
         /// AUFRUFER bereitgestellten (und damit zwischen mehreren Process()-
         /// Aufrufen TEILBAREN) "bereits eingefügt"-Menge - siehe
         /// DirectiveContext.AlreadyIncluded-Doku für den Grund (globale
-        /// statt pro-Wurzeldatei-Komposition, z.B. Prelude + Nutzer-Skript
-        /// zusammen, siehe Parser.ParseWithPrelude).</summary>
-        public static string Process(
+        /// statt pro-Wurzeldatei-Komposition, z.B. Prelude + mehrere
+        /// Nutzer-Dateien zusammen, siehe Parser.ParseMultiple).</summary>
+        public static ProcessedSource Process(
             string source, string basePath, HashSet<string> alreadyIncluded, DirectiveRegistry? registry = null)
         {
             var pre = new Preprocessor(registry ?? DirectiveRegistry.CreateDefault());
-            return pre.ProcessInner(source, basePath, alreadyIncluded);
+            string result = pre.ProcessInner(source, basePath, alreadyIncluded);
+            return new ProcessedSource(result, pre._usings);
         }
 
         internal string ProcessFileRecursive(string fullPath, HashSet<string> alreadyIncluded)
@@ -244,6 +275,18 @@ namespace fire.Parsing
                 }
 
                 string name = match.Groups[1].Value;
+
+                if (string.Equals(name, "using", StringComparison.OrdinalIgnoreCase))
+                {
+                    string usingArg = (match.Groups[2].Success ? match.Groups[2].Value : "").Trim();
+                    if (!UsingName.IsMatch(usingArg))
+                        throw new PreprocessorException(
+                            $"'#using' erwartet einen (evtl. punktierten) Namespace-Namen, nicht '{usingArg}' (Zeile {lineNo + 1}).");
+                    _usings.Add(usingArg);
+                    sb.Append('\n'); // Zeile "verschwindet" wie jede andere erkannte Direktive.
+                    continue;
+                }
+
                 if (!_registry.TryGet(name, out var def))
                 {
                     // Nicht bei DIESEM Preprocessor registriert - z.B.

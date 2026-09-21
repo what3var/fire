@@ -50,7 +50,7 @@ namespace fire.Runtime
             else
                 natives.Register("print", args => debugWriter(args));
 
-            var processedSources = new List<string>();
+            var processedSources = new List<ProcessedSource>();
             var inputSources = new List<string>() { fire.Standard.Prelude.Source };
 
             inputSources.AddRange(sources);
@@ -76,8 +76,8 @@ namespace fire.Runtime
 
             foreach (var source in inputSources)
             {
-                string preprocessed = Preprocessor.Process(source, Directory.GetCurrentDirectory(), alreadyIncluded, registry);
-                processedSources.Add(preprocessed);
+                var processed = Preprocessor.Process(source, Directory.GetCurrentDirectory(), alreadyIncluded, registry);
+                processedSources.Add(processed);
             }
 
             FramebufferManager? fbManager = null;
@@ -86,8 +86,8 @@ namespace fire.Runtime
 
             if (importsGraphicsBridge)
             {
-                string preprocessed = Preprocessor.Process(GraphicsBridge.PreludeSource, Directory.GetCurrentDirectory(), alreadyIncluded, registry);
-                processedSources.Insert(1, preprocessed);
+                var processed = Preprocessor.Process(GraphicsBridge.PreludeSource, Directory.GetCurrentDirectory(), alreadyIncluded, registry);
+                processedSources.Insert(1, processed);
 
                 var font = new IntegratedGlyphFont();
                 fbManager = new FramebufferManager();
@@ -97,9 +97,13 @@ namespace fire.Runtime
                 GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager);
             }
 
-            var program = Parser.ParseMultiple(processedSources, Directory.GetCurrentDirectory(), alreadyPreprocessed: true, out var activeUsings, out var usingsByStmt);
-            var resolveResult = Resolver.Resolve(program, natives.Names, null, usingsByStmt: usingsByStmt);
-            var compiled = Compiler.Compile(program, resolveResult, natives, null, usingsByStmt);
+            // Kein activeUsings/usingsByStmt mehr nötig (SPEC "Namespaces") -
+            // jede Typ-Referenz im AST trägt ihren eigenen Namespace-Kontext
+            // direkt an sich selbst (siehe Ast.TypeRef.Namespaces), vom
+            // Parser beim Parsen jeder einzelnen ProcessedSource gesetzt.
+            var program = Parser.ParseMultiple(processedSources);
+            var resolveResult = Resolver.Resolve(program, natives.Names);
+            var compiled = Compiler.Compile(program, resolveResult, natives);
 
             var globalScope = new Scope(null, isGlobal: true);
             var mainVm = new VM(compiled.TopLevel, globalScope, natives, compiled.Classes,

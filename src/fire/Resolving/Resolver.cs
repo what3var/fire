@@ -95,77 +95,14 @@ namespace fire.Resolving
         private readonly Dictionary<Expr, ResolvedRef> _refs = new(ReferenceEqualityComparer.Instance);
         private readonly Dictionary<string, ClassDecl> _classes = new();
 
-        /// <summary>Wie Bytecode.Compiler.NamespaceResolver, aber für die
-        /// Resolver-eigene Validierung (siehe ResolveNamespaceName/
-        /// IsKnownClassName) - MUSS unabhängig existieren (nicht denselben
-        /// Compiler-internen Typ wiederverwenden), da der Resolver mit
-        /// ClassDecl statt RuntimeClass arbeitet und beide Schichten
-        /// unabhängig voneinander laufen (der Compiler bekommt Klassen
-        /// selbst erneut aus dem AST, nicht vom Resolver übernommen).
-        /// `new X()`/`is of X`/`catch (e : X)` werden hier VOR dem
-        /// eigentlichen Kompilieren bereits validiert (SPEC "Namespaces") -
-        /// ohne dieselbe Auflösung hier würde ein unqualifizierter
-        /// Namespace-Verweis schon an dieser Stelle als "unbekannte Klasse"
-        /// abgelehnt, bevor der Compiler ihn je sehen könnte.</summary>
-        private readonly Dictionary<string, List<(string Namespace, string Qualified)>> _bySimpleName = new();
-
-        /// <summary>Die `#using`-Namen für TOP-LEVEL-Code (außerhalb jeder
-        /// Klasse) - innerhalb einer Klasse gelten stattdessen deren EIGENE,
-        /// gestempelte `Ast.ClassDecl.Usings` (siehe CurrentUsings/Parser.
-        /// StampUsings) statt einer einzigen, programmweiten Liste - wichtig
-        /// bei mehreren kombinierten Quelldateien (Parser.ParseMultiple),
-        /// wo `#using` bewusst nur lokal für die eigene Datei gelten soll.</summary>
-        private IReadOnlyList<string> _topLevelUsings = Array.Empty<string>();
-
-        private void BuildNamespaceIndex()
-        {
-            foreach (var full in _classes.Keys)
-            {
-                int dot = full.LastIndexOf('.');
-                if (dot < 0) continue;
-                string ns = full[..dot];
-                string simple = full[(dot + 1)..];
-                if (!_bySimpleName.TryGetValue(simple, out var list))
-                    _bySimpleName[simple] = list = new List<(string, string)>();
-                list.Add((ns, full));
-            }
-        }
-
-        private string? CurrentNamespace
-        {
-            get
-            {
-                if (_currentClass == null) return null;
-                int dot = _currentClass.Name.LastIndexOf('.');
-                return dot < 0 ? null : _currentClass.Name[..dot];
-            }
-        }
-
-        /// <summary>Die für die AKTUELL aufgelöste Stelle geltenden
-        /// `#using`-Namen - siehe Compiler.CurrentUsings für dieselbe Idee
-        /// auf der Compiler-Seite.</summary>
-        private IReadOnlyList<string> CurrentUsings => _currentClass?.Usings ?? _topLevelUsings;
-
-        /// <summary>Löst `name` auf seinen vollqualifizierten Namen auf, WENN
-        /// nötig - siehe Bytecode.Compiler.NamespaceResolver.Resolve für die
-        /// genaue Regel (exakter Treffer > Geschwister im eigenen Namespace >
-        /// `#using` > unverändert lassen).</summary>
-        private string ResolveNamespaceName(string name)
-        {
-            if (IsKnownClassName(name)) return name;
-            if (!_bySimpleName.TryGetValue(name, out var candidates)) return name;
-
-            var currentNs = CurrentNamespace;
-            if (currentNs != null)
-                foreach (var (ns, full) in candidates)
-                    if (ns == currentNs) return full;
-
-            var activeUsings = CurrentUsings;
-            foreach (var (ns, full) in candidates)
-                if (activeUsings.Contains(ns)) return full;
-
-            return name;
-        }
+        /// <summary>Löst `tr` auf seinen vollqualifizierten Namen auf, WENN
+        /// nötig (SPEC "Namespaces") - siehe TypeRef.ResolveBaseName für die
+        /// genaue Regel. `tr.Namespaces` trägt den Kontext (aktueller
+        /// Namespace + `#using`) schon direkt an sich selbst, gesetzt vom
+        /// Parser GENAU an der Stelle, an der `tr` geparst wurde - der
+        /// Resolver braucht dafür keinen eigenen "aktuelle Klasse"/"aktive
+        /// Usings"-Zustand mehr.</summary>
+        private string ResolveTypeRef(TypeRef tr) => tr.ResolveBaseName(IsKnownClassName);
 
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
         private readonly Dictionary<string, ExternDecl> _externs = new();
@@ -239,27 +176,23 @@ namespace fire.Resolving
             _tryableNativeNames = tryableNativeNames != null ? new HashSet<string>(tryableNativeNames) : new HashSet<string>();
         }
 
+        /// <summary>`nativeNames`/`tryableNativeNames`: bekannte native
+        /// Funktionsnamen (SPEC "Natives"). Anders als früher (siehe
+        /// Bytecode.Compiler.Compile-Historie) KEIN `activeUsings`/
+        /// `usingsByStmt`-Parameter mehr nötig - jede Typ-Referenz im
+        /// AST trägt ihren eigenen Namespace-Kontext direkt an sich selbst
+        /// (siehe Ast.TypeRef.Namespaces, gesetzt vom Parser beim Parsen),
+        /// der Resolver braucht dafür keinen eigenen Usings-Zustand mehr.</summary>
         public static ResolveResult Resolve(
-            IReadOnlyList<Stmt> program, IEnumerable<string>? nativeNames = null, IEnumerable<string>? tryableNativeNames = null,
-            IReadOnlyList<string>? activeUsings = null, IReadOnlyDictionary<Stmt, IReadOnlyList<string>>? usingsByStmt = null)
+            IReadOnlyList<Stmt> program, IEnumerable<string>? nativeNames = null, IEnumerable<string>? tryableNativeNames = null)
         {
             var resolver = new Resolver(nativeNames, tryableNativeNames);
-            resolver._topLevelUsings = activeUsings ?? Array.Empty<string>();
             resolver.CollectClasses(program);
-            resolver.BuildNamespaceIndex();
             resolver.CollectExterns(program);
             resolver.CollectEnums(program);
             resolver._noShadowGlobals = program.Any(s => s is NoShadowDirective);
             foreach (var stmt in program)
-            {
-                // Wie Compiler.Compile - Pro-Anweisung-Usings haben Vorrang
-                // vor der einen, programmweiten Fallback-Liste (siehe
-                // Parser.ParseMultiple, out usingsByStmt-Doku).
-                resolver._topLevelUsings = usingsByStmt != null && usingsByStmt.TryGetValue(stmt, out var stmtUsings)
-                    ? stmtUsings
-                    : activeUsings ?? Array.Empty<string>();
                 resolver.ResolveStmt(stmt);
-            }
 
             return new ResolveResult
             {
@@ -344,6 +277,16 @@ namespace fire.Resolving
         // Klasse (oder 'Exception') sein, alle anderen müssen bekannte
         // Interfaces sein.
         // -----------------------------------------------------------
+        /// <summary>Löst einen Basisklassen-/Interface-Namen (Eintrag aus
+        /// ClassDecl.BaseRefs) auf seinen vollqualifizierten Namen auf, WENN
+        /// nötig (SPEC "Namespaces") - `tr.Namespaces` trägt dafür den beim
+        /// Parsen aktuellen Kontext (siehe TypeRef.ResolveBaseName).
+        /// "Bekannt" heißt hier: 'Exception' ODER eine bekannte Klasse ODER
+        /// ein bekanntes Interface (anders als ResolveTypeRef, das nur
+        /// Klassen kennt - eine Basis KANN ja auch ein Interface sein).</summary>
+        private string ResolveBaseRef(TypeRef tr) =>
+            tr.ResolveBaseName(n => n == "Exception" || _classes.ContainsKey(n) || _interfaces.ContainsKey(n));
+
         private void CollectClasses(IReadOnlyList<Stmt> statements)
         {
             foreach (var stmt in statements)
@@ -366,8 +309,9 @@ namespace fire.Resolving
             foreach (var cd in _classes.Values)
             {
                 string? baseName = null;
-                foreach (var n in cd.BaseNames)
+                foreach (var baseRef in cd.BaseRefs ?? Array.Empty<TypeRef>())
                 {
+                    string n = ResolveBaseRef(baseRef);
                     bool isClass = n == "Exception" || _classes.ContainsKey(n);
                     if (isClass)
                     {
@@ -379,22 +323,28 @@ namespace fire.Resolving
                     else if (!_interfaces.ContainsKey(n))
                     {
                         throw new ResolverException(
-                            $"'{n}' bei Klasse '{cd.Name}' ist weder eine bekannte Klasse noch ein bekanntes Interface", cd.Line);
+                            $"'{baseRef.BaseName}' bei Klasse '{cd.Name}' ist weder eine bekannte Klasse noch ein bekanntes Interface", cd.Line);
                     }
                 }
             }
 
             foreach (var cd in _classes.Values)
-                foreach (var n in cd.BaseNames)
+                foreach (var baseRef in cd.BaseRefs ?? Array.Empty<TypeRef>())
+                {
+                    string n = ResolveBaseRef(baseRef);
                     if (_interfaces.TryGetValue(n, out var iface))
                         ValidateImplementsInterface(cd, iface);
+                }
         }
 
         private string? GetBaseClassName(ClassDecl cd)
         {
-            foreach (var n in cd.BaseNames)
+            foreach (var baseRef in cd.BaseRefs ?? Array.Empty<TypeRef>())
+            {
+                string n = ResolveBaseRef(baseRef);
                 if (n == "Exception" || _classes.ContainsKey(n))
                     return n;
+            }
             return null;
         }
 
@@ -490,18 +440,18 @@ namespace fire.Resolving
         {
             if (argName == targetName) return true;
             if (!_classes.TryGetValue(argName, out var cd)) return false;
-            foreach (var n in cd.BaseNames)
-                if (TypeNameSatisfiesIsOf(n, targetName))
+            foreach (var baseRef in cd.BaseRefs ?? Array.Empty<TypeRef>())
+                if (TypeNameSatisfiesIsOf(ResolveBaseRef(baseRef), targetName))
                     return true;
             return false;
         }
 
-        private void ValidateTypeName(string name, int line)
+        private void ValidateTypeName(TypeRef tr, int line)
         {
-            if (PrimitiveTypeNames.Contains(name)) return;
-            if (_currentTypeParamNames.ContainsKey(name)) return;
-            if (!IsKnownClassName(ResolveNamespaceName(name)))
-                throw new ResolverException($"Unbekannter Typ '{name}'", line);
+            if (PrimitiveTypeNames.Contains(tr.BaseName)) return;
+            if (_currentTypeParamNames.ContainsKey(tr.BaseName)) return;
+            if (!IsKnownClassName(ResolveTypeRef(tr)))
+                throw new ResolverException($"Unbekannter Typ '{tr.BaseName}'", line);
         }
 
         /// <summary>Validiert einen vollständigen TypeRef: Basisname wie
@@ -510,7 +460,7 @@ namespace fire.Resolving
         /// Pointer-Tiefe ist immer gültig.</summary>
         private void ValidateTypeRef(TypeRef type, int line)
         {
-            ValidateTypeName(type.BaseName, line);
+            ValidateTypeName(type, line);
             if (type.BitWidth == null) return;
 
             if (type.BaseName != "int" && type.BaseName != "float")
@@ -718,8 +668,8 @@ namespace fire.Resolving
                     break;
 
                 case CatchThreadsDecl threadsDecl:
-                    if (threadsDecl.TypeName != null && !IsKnownClassName(ResolveNamespaceName(threadsDecl.TypeName)))
-                        throw new ResolverException($"Unbekannter Exception-Typ '{threadsDecl.TypeName}'", threadsDecl.Line);
+                    if (threadsDecl.TypeRef != null && !IsKnownClassName(ResolveTypeRef(threadsDecl.TypeRef)))
+                        throw new ResolverException($"Unbekannter Exception-Typ '{threadsDecl.TypeRef.BaseName}'", threadsDecl.Line);
                     ResolveGlobalHandlerBody(threadsDecl.VarName, threadsDecl.Body);
                     break;
 
@@ -749,10 +699,10 @@ namespace fire.Resolving
                     // löst das schon vor dem Resolven vollständig auf (siehe
                     // Ast.ClassExtensionDecl-Doku). Nur als Sicherheitsnetz,
                     // falls das Programm auf einem anderen Weg als über
-                    // Parser.Parse()/ParseWithPrelude() erzeugt wurde.
+                    // Parser.Parse()/ParseMultiple() erzeugt wurde.
                     throw new ResolverException(
-                        $"Interner Fehler: 'class extends {cx.TargetName}' wurde nicht zusammengeführt " +
-                        "(Programm muss über Parser.Parse()/ParseWithPrelude() erzeugt werden).", cx.Line);
+                        $"Interner Fehler: 'class extends {cx.TargetRef.BaseName}' wurde nicht zusammengeführt " +
+                        "(Programm muss über Parser.Parse()/ParseMultiple() erzeugt werden).", cx.Line);
 
                 case ExternDecl ed:
                     if (ed.ReturnType != null) ValidateTypeRef(ed.ReturnType, ed.Line);
@@ -838,8 +788,8 @@ namespace fire.Resolving
 
             foreach (var c in t.Catches)
             {
-                if (c.TypeName != null && !IsKnownClassName(ResolveNamespaceName(c.TypeName)))
-                    throw new ResolverException($"Unbekannter Exception-Typ '{c.TypeName}'", c.Line);
+                if (c.TypeRef != null && !IsKnownClassName(ResolveTypeRef(c.TypeRef)))
+                    throw new ResolverException($"Unbekannter Exception-Typ '{c.TypeRef.BaseName}'", c.Line);
 
                 PushScope();
                 Define(c.VarName, c.Line);
@@ -1081,7 +1031,7 @@ namespace fire.Resolving
 
                 case IsOfExpr iof:
                     ResolveExpr(iof.Operand);
-                    ValidateTypeName(iof.TypeName, iof.Line);
+                    ValidateTypeName(iof.TypeRef, iof.Line);
                     break;
 
                 case IsFromExpr ifr:
@@ -1133,14 +1083,14 @@ namespace fire.Resolving
                     break;
 
                 case NewExpr ne:
-                    string resolvedNewClassName = ResolveNamespaceName(ne.ClassName);
+                    string resolvedNewClassName = ResolveTypeRef(ne.ClassRef);
                     if (!IsKnownClassName(resolvedNewClassName))
-                        throw new ResolverException($"Unbekannte Klasse '{ne.ClassName}'", ne.Line);
+                        throw new ResolverException($"Unbekannte Klasse '{ne.ClassRef.BaseName}'", ne.Line);
                     if (_classes.TryGetValue(resolvedNewClassName, out var newTargetCd))
                         CheckTypeArgs(newTargetCd, ne);
                     else if (ne.TypeArgs != null && ne.TypeArgs.Count > 0)
                         throw new ResolverException(
-                            $"'{ne.ClassName}' ist nicht generisch, akzeptiert also keine Typ-Argumente in spitzen Klammern",
+                            $"'{ne.ClassRef.BaseName}' ist nicht generisch, akzeptiert also keine Typ-Argumente in spitzen Klammern",
                             ne.Line);
                     foreach (var a in ne.Args) ResolveExpr(a);
                     break;

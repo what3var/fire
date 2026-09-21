@@ -1,3 +1,5 @@
+using System;
+
 namespace fire.Ast
 {
     /// <summary>Signatur-Angabe für einen `lambda`-Typ (siehe TypeRef.LambdaSignature-
@@ -30,9 +32,41 @@ namespace fire.Ast
     /// (`BaseName == "lambda"`) - `[RückgabeTyp] lambda[&lt;Param1,...,ParamN&gt;]`,
     /// siehe LambdaSignature-Doku und SPEC "Lambda-Typen mit Signatur".
     /// </summary>
-    public sealed record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null)
+    public sealed record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null)
     {
         public bool IsPointer => PointerDepth > 0;
+
+        /// <summary>Löst BaseName auf seinen tatsächlichen, vollqualifizierten
+        /// Namen auf, WENN nötig (SPEC "Namespaces") - `isKnown` prüft, ob ein
+        /// Kandidatenname bekannt ist (Resolver: IsKnownClassName, Compiler:
+        /// gegen die Menge aller RuntimeClass-Namen, Parser.MergeClassExtensions:
+        /// gegen die Namen im gerade kombinierten Programm).
+        ///
+        /// `Namespaces` steht an ERSTER Stelle der aktuelle Namespace (falls
+        /// beim Parsen einer war), danach die zum Zeitpunkt des Parsens
+        /// aktiven `#using`-Namen (siehe Parser._currentNamespace/
+        /// _usingNamespaces) - die Reihenfolge selbst kodiert bereits die
+        /// Priorität (aktueller Namespace vor `#using`), kein separater
+        /// "Geschwister gewinnt"-Sonderfall nötig: einfach den ERSTEN
+        /// passenden Kandidaten nehmen.
+        ///
+        /// Schon ein exakt bekannter Name (inkl. vom Nutzer selbst
+        /// vollqualifiziert geschrieben, oder ein nicht-namespacierter
+        /// globaler Name wie 'Exception') hat Vorrang vor jeder
+        /// Namespace-Kombination. Kein Kandidat bekannt -> BaseName
+        /// unverändert zurück, schlägt beim Aufrufer dann wie gewohnt als
+        /// "unbekannte Klasse/unbekannter Typ" fehl.</summary>
+        public string ResolveBaseName(Func<string, bool> isKnown)
+        {
+            if (isKnown(BaseName)) return BaseName;
+            if (Namespaces != null)
+                foreach (var ns in Namespaces)
+                {
+                    string candidate = ns + "." + BaseName;
+                    if (isKnown(candidate)) return candidate;
+                }
+            return BaseName;
+        }
 
         public override string ToString()
         {
@@ -48,4 +82,5 @@ namespace fire.Ast
             return s + new string('*', PointerDepth);
         }
     }
+
 }

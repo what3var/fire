@@ -779,7 +779,7 @@ print(list[1])
 try
 {
     var natives = NativeRegistry.CreateDefault();
-    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, listSample });
+    var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, listSample));
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
@@ -1120,7 +1120,7 @@ try {
 try
 {
     var natives = NativeRegistry.CreateDefault();
-    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, boundsCheckSample });
+    var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, boundsCheckSample));
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
@@ -1147,7 +1147,7 @@ print(c.Area())
 try
 {
     var natives = NativeRegistry.CreateDefault();
-    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, includeMainSample }, GetTestDataDir());
+    var program = Parser.ParseMultiple(Preprocessed(GetTestDataDir(), fire.Standard.Prelude.Source, includeMainSample));
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
@@ -1203,6 +1203,18 @@ catch (Exception ex)
 // verschiedenen Orten aus gestartet werden).
 static string GetTestDataDir([System.Runtime.CompilerServices.CallerFilePath] string here = "") =>
     Path.Combine(Path.GetDirectoryName(here)!, "TestData");
+
+// Test-Hilfsfunktion: jagt jede der `sources` durch den echten Preprocessor
+// (erkennt/entfernt dabei #include/#using wie ein normaler Aufrufer das
+// tun würde, siehe RuntimeSession.Build für dasselbe Muster in "echt") und
+// liefert die daraus entstehenden ProcessedSource-Objekte, die Parser.
+// ParseMultiple jetzt direkt erwartet. `basePath` nur für #include-
+// Pfadauflösung relevant, für die meisten Tests ohne Bedeutung.
+static IReadOnlyList<ProcessedSource> Preprocessed(string basePath, params string[] sources)
+{
+    var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    return sources.Select(s => Preprocessor.Process(s, basePath, alreadyIncluded)).ToList();
+}
 
 Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: readonly Variablen (Konstanten) ===");
@@ -1646,7 +1658,7 @@ print(list.Peek())
 try
 {
     var natives = NativeRegistry.CreateDefault();
-    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, extendListSample });
+    var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, extendListSample));
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
@@ -2140,7 +2152,7 @@ print("foreach done")
 try
 {
     var natives = NativeRegistry.CreateDefault();
-    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, foreachBreakSample });
+    var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, foreachBreakSample));
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
@@ -4352,7 +4364,7 @@ try
     print("nach der Direktive")
     """;
 
-    string preprocessed = Preprocessor.Process(source, "/home/claude", registry);
+    string preprocessed = Preprocessor.Process(source, "/home/claude", registry).Source;
     Console.WriteLine($"Erhaltene Argumente ({receivedArgs.Count}, erwartet 4):");
     foreach (var v in receivedArgs)
         Console.WriteLine($"  {v.Kind}: {v}");
@@ -4387,7 +4399,7 @@ try
 {
     var registry = new DirectiveRegistry(); // 'extern' ist hier NICHT registriert
     string source = "#extern \"kernel32.dll\"\nprint(\"x\")\n";
-    string result = Preprocessor.Process(source, "/home/claude", registry);
+    string result = Preprocessor.Process(source, "/home/claude", registry).Source;
     Console.WriteLine("Zeile blieb erhalten (erwartet true): " + result.Contains("#extern \"kernel32.dll\""));
 }
 catch (System.Exception ex)
@@ -4410,17 +4422,17 @@ try
 
     // Altes Verhalten (zwei UNABHAENGIGE Process()-Aufrufe, je eigene Menge) -
     // die Markierung landet zweimal in der Summe.
-    string outA = Preprocessor.Process(rootA, tmpDir);
-    string outB = Preprocessor.Process(rootB, tmpDir);
+    string outA = Preprocessor.Process(rootA, tmpDir).Source;
+    string outB = Preprocessor.Process(rootB, tmpDir).Source;
     int countIndependent = CountOccurrences(outA + outB, "GEMEINSAM_INKLUDIERTE_MARKIERUNG");
     Console.WriteLine($"Getrennte Process()-Aufrufe: Markierung {countIndependent}x (erwartet 2x, je einmal pro Aufruf).");
 
     // Neues Verhalten: EINE geteilte 'alreadyIncluded'-Menge ueber BEIDE
-    // Aufrufe hinweg (wie Parser.ParseWithPrelude es jetzt fuer Prelude +
+    // Aufrufe hinweg (wie RuntimeSession.Build es jetzt fuer Prelude +
     // Nutzer-Code macht) - die Markierung landet nur noch EINMAL insgesamt.
     var shared = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
-    string outA2 = Preprocessor.Process(rootA, tmpDir, shared);
-    string outB2 = Preprocessor.Process(rootB, tmpDir, shared);
+    string outA2 = Preprocessor.Process(rootA, tmpDir, shared).Source;
+    string outB2 = Preprocessor.Process(rootB, tmpDir, shared).Source;
     int countShared = CountOccurrences(outA2 + outB2, "GEMEINSAM_INKLUDIERTE_MARKIERUNG");
     Console.WriteLine($"Geteilte 'alreadyIncluded'-Menge: Markierung {countShared}x (erwartet 1x, global einmal).");
     Console.WriteLine("Beide Root-Ausgaben haben trotzdem noch ihr eigenes print() (erwartet true): " +
@@ -4455,7 +4467,7 @@ foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmE
     Console.WriteLine($"--- Modus: {mode} ---");
     try
     {
-        var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, modeTestScript });
+        var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, modeTestScript));
         var natives = NativeRegistry.CreateDefault();
         var resolveResult = Resolver.Resolve(program, natives.Names);
         var compiled = Compiler.Compile(program, resolveResult, natives);
@@ -4526,7 +4538,7 @@ string accessTestScript = """
 
 try
 {
-    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, accessTestScript });
+    var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, accessTestScript));
     var natives = NativeRegistry.CreateDefault();
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
@@ -4584,10 +4596,14 @@ string namespaceTestScript = """
 
 try
 {
-    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, namespaceTestScript }, null, alreadyPreprocessed: false, out var activeUsings, out var usingsByStmt);
+    var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var sources = new[] { fire.Standard.Prelude.Source, namespaceTestScript }
+        .Select(s => Preprocessor.Process(s, Directory.GetCurrentDirectory(), alreadyIncluded))
+        .ToList();
+    var program = Parser.ParseMultiple(sources);
     var natives = NativeRegistry.CreateDefault();
-    var resolveResult = Resolver.Resolve(program, natives.Names, activeUsings: activeUsings, usingsByStmt: usingsByStmt);
-    var compiled = Compiler.Compile(program, resolveResult, natives, activeUsings, usingsByStmt);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
     var globalScope2 = new Scope(null, isGlobal: true);
     var vm = new VM(compiled.TopLevel, globalScope2, natives, compiled.Classes);
     vm.Run();
@@ -4602,10 +4618,13 @@ catch (System.Exception ex)
 Console.WriteLine();
 Console.WriteLine("=== ParseMultiple: Top-Level-Code in ZWEI verschiedenen (nicht-letzten) Dateien mit eigenem #using ===");
 
-// Genau das Szenario, das die einfache activeUsings-Liste (nur die
-// LETZTE Quelle) nicht abdecken konnte: HIER hat sowohl fileA (nicht die
-// letzte Quelle!) als auch mainFile eigenen Top-Level-Code, der jeweils
-// eine ANDERE, gleichnamige Klasse unqualifiziert referenziert.
+// Genau das Szenario, das mit einer einzigen programmweiten Usings-Liste
+// nicht funktionieren wuerde: HIER hat sowohl fileA (nicht die letzte
+// Quelle!) als auch mainFile eigenen Top-Level-Code, der jeweils eine
+// ANDERE, gleichnamige Klasse unqualifiziert referenziert. Jede TypeRef
+// traegt ihren eigenen Namespace-Kontext direkt an sich selbst (siehe
+// Ast.TypeRef.Namespaces), deshalb funktioniert das jetzt unabhaengig
+// davon, in welcher Datei/an welcher Position eine Referenz steht.
 string twoTopLevelFileA = """
     namespace LibA {
         class Helper {
@@ -4636,12 +4655,10 @@ string twoTopLevelFileB = """
 
 try
 {
-    var program = Parser.ParseMultiple(
-        new[] { fire.Standard.Prelude.Source, twoTopLevelFileA, twoTopLevelFileB },
-        null, alreadyPreprocessed: false, out var activeUsings, out var usingsByStmt);
+    var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, twoTopLevelFileA, twoTopLevelFileB));
     var natives = NativeRegistry.CreateDefault();
-    var resolveResult = Resolver.Resolve(program, natives.Names, activeUsings: activeUsings, usingsByStmt: usingsByStmt);
-    var compiled = Compiler.Compile(program, resolveResult, natives, activeUsings, usingsByStmt);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
     var globalScope3 = new Scope(null, isGlobal: true);
     var vm = new VM(compiled.TopLevel, globalScope3, natives, compiled.Classes);
     vm.Run();
@@ -4710,7 +4727,7 @@ string mainFile = """
 
 try
 {
-    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, fileA, fileB, mainFile });
+    var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, fileA, fileB, mainFile));
     var natives = NativeRegistry.CreateDefault();
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
@@ -4755,13 +4772,14 @@ string incDecScript = """
     arr[0] = 100
     print("arr[0]++ = " + arr[0]++)
     print("arr[0] danach = " + arr[0])
+    arr[1] = 0
     print("++arr[1] = " + ++arr[1])
     print("arr[1] danach = " + arr[1])
     """;
 
 try
 {
-    var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, incDecScript });
+    var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, incDecScript));
     var natives = NativeRegistry.CreateDefault();
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);

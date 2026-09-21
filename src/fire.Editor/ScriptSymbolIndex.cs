@@ -165,9 +165,9 @@ namespace fire.Editor
         /// Standardbibliothek") in DIESEN Index ein, markiert mit
         /// <see cref="ClassInfo.IsFromPrelude"/> - jedes reale Skript wird ja
         /// tatsächlich MIT dieser Bibliothek zusammen kompiliert (siehe
-        /// Parser.ParseWithPrelude), Vervollständigung/Mitglieder-Suche
-        /// sollen `List`/`IEnumerable`/etc. deshalb genauso kennen wie
-        /// selbst im Dokument definierte Klassen.
+        /// Runtime.RuntimeSession.Build/Parser.ParseMultiple), Vervollständigung/
+        /// Mitglieder-Suche sollen `List`/`IEnumerable`/etc. deshalb genauso
+        /// kennen wie selbst im Dokument definierte Klassen.
         ///
         /// Eine im Dokument SELBST vollständig (neu) definierte Klasse
         /// gewinnt (kein Überschreiben) - deckt sich mit dem Verhalten des

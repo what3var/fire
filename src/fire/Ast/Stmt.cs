@@ -153,7 +153,7 @@ namespace fire.Ast
     /// Konstrukt, keine Notwendigkeit, exakt der alten Konvention zu
     /// folgen. `TypeName`/`VarName` beide `null` bei `catch threads()`
     /// (fängt alles, ohne die Exception an eine Variable zu binden).</summary>
-    public sealed record CatchThreadsDecl(int Line, string? TypeName, string? VarName, Stmt.BlockStmt Body) : Stmt(Line);
+    public sealed record CatchThreadsDecl(int Line, TypeRef? TypeRef, string? VarName, Stmt.BlockStmt Body) : Stmt(Line);
 
     /// <summary>`catch terminate(v) { ... }` (docs/THREADING_DESIGN.md
     /// Abschnitt 6.3) - GLOBALER Beobachtungs-Hook für `terminate`, läuft im
@@ -164,7 +164,7 @@ namespace fire.Ast
     /// (Body ohne gebundenen Wert).</summary>
     public sealed record CatchTerminateDecl(int Line, string? VarName, Stmt.BlockStmt Body) : Stmt(Line);
 
-    public sealed record CatchClause(int Line, string? TypeName, string VarName, Stmt.BlockStmt Body);
+    public sealed record CatchClause(int Line, TypeRef? TypeRef, string VarName, Stmt.BlockStmt Body);
 
     public sealed record TryStmt(
         int Line,
@@ -246,11 +246,10 @@ namespace fire.Ast
     public sealed record ClassDecl(
         int Line,
         string Name,
-        IReadOnlyList<string>? BaseNames,
+        IReadOnlyList<TypeRef>? BaseRefs,
         IReadOnlyList<Stmt> Members,
         IReadOnlyList<TypeParam>? TypeParams = null,
-        bool IsActor = false,
-        IReadOnlyList<string>? Usings = null) : Stmt(Line);
+        bool IsActor = false) : Stmt(Line);
 
     // ---------------------------------------------------------------
     // Interfaces (SPEC 8.5): reine Methodensignaturen, keine Felder/Bodies.
@@ -306,23 +305,29 @@ namespace fire.Ast
     /// ORIGINALEN ClassDecl, als hätten sie direkt dort gestanden). Wird
     /// bereits VOR dem eigentlichen Resolven/Kompilieren komplett aufgelöst
     /// (siehe Parser.MergeClassExtensions) - Resolver/Compiler sehen davon
-    /// nichts mehr, nur die bereits zusammengeführte ClassDecl.</summary>
-    public sealed record ClassExtensionDecl(int Line, string TargetName, IReadOnlyList<Stmt> Members) : Stmt(Line);
+    /// nichts mehr, nur die bereits zusammengeführte ClassDecl. `TargetRef`
+    /// trägt (wie jeder andere TypeRef) den beim Parsen dieser Erweiterung
+    /// aktuellen Namespace + die aktiven `#using`-Namen mit sich (siehe
+    /// TypeRef.Namespaces) - dadurch findet MergeClassExtensions die
+    /// richtige Zielklasse auch dann, wenn `class extends X` den Namen NUR
+    /// unqualifiziert schreibt und `X` erst über den Namespace-Kontext DER
+    /// ERWEITERUNG selbst (nicht den der Zielklasse!) aufzulösen ist.</summary>
+    public sealed record ClassExtensionDecl(int Line, TypeRef TargetRef, IReadOnlyList<Stmt> Members) : Stmt(Line);
 
     /// <summary>`namespace Name { Mitglieder... }` bzw. `namespace A.B { ... }`
-    /// (SPEC "Namespaces") - wie ClassExtensionDecl wird auch das bereits VOR
-    /// dem eigentlichen Resolven/Kompilieren vollständig aufgelöst (siehe
-    /// Parser.FlattenNamespaces): jede enthaltene Klassen-/Interface-/Enum-
-    /// Deklaration bekommt ihren Namen um `Name.` vorangestellt (z.B. `A` in
-    /// `namespace Foo { class A {} }` wird intern zu `Foo.A`), und JEDE
-    /// Referenz darauf (Basisklasse, `new`, `is of`, `catch`, Feld-/
-    /// Parameter-/Rückgabetypen) wird - soweit sie einen Namen aus DIESEM
-    /// Namespace ODER einem per `#using` aktiven Namespace meint - auf den
-    /// vollqualifizierten Namen umgeschrieben. Resolver/Compiler/VM sehen
-    /// danach nur noch ganz normale, wenn auch punkthaltige, Namen - für sie
-    /// ist ein Namespace kein eigenes Konzept, nur ein Teil des Strings.
-    /// `Name` kann selbst bereits punktiert sein (`namespace A.B.C`) -
-    /// äquivalent zu verschachtelten `namespace A { namespace B { namespace
-    /// C { ... } } }`, beide Schreibweisen werden gleich behandelt.</summary>
+    /// (SPEC "Namespaces"). Anders als früher NICHT mehr durch einen
+    /// separaten Baumdurchlauf nach dem Parsen aufgelöst: der Parser
+    /// qualifiziert jede enthaltene Klassen-/Interface-/Enum-Deklaration
+    /// bereits WÄHREND des Parsens (siehe Parser._currentNamespace/
+    /// ParseNamespaceDecl), und jede Referenz (Basisklasse, `new`, `is of`,
+    /// `catch`, Feld-/Parameter-/Rückgabetypen) trägt ihren eigenen
+    /// Namespace-Kontext direkt an sich (siehe TypeRef.Namespaces). Dieser
+    /// Knoten selbst ist dadurch nur noch eine reine Gruppierung ohne eigene
+    /// Bedeutung für Resolver/Compiler - er wird direkt nach dem Parsen
+    /// trivial "flach geklopft" (Members wandern 1:1 an die Stelle des
+    /// NamespaceDecl-Knotens, siehe Parser.FlattenNamespaceWrappers), OHNE
+    /// dabei noch irgendetwas umzubenennen. `Name` ist rein informativ
+    /// (z.B. für Editor-Anzeige), spielt für die eigentliche Auflösung keine
+    /// Rolle mehr.</summary>
     public sealed record NamespaceDecl(int Line, string Name, IReadOnlyList<Stmt> Members) : Stmt(Line);
 }

@@ -153,41 +153,21 @@ namespace fire.Bytecode
         /// Fire-Blocks stehen.</summary>
         private readonly int _globalSlotCount;
 
-        /// <summary>Löst zur KOMPILIERZEIT einen möglicherweise
-        /// unqualifizierten Klassen-/Typnamen (aus `new X()`, `is of X`,
-        /// `catch (e : X)`) auf seinen tatsächlichen, vollqualifizierten
-        /// Namen auf - siehe die NamespaceResolver-Klasse selbst für die
-        /// Begründung, warum dafür KEIN separater Baumdurchlauf nötig ist.
-        /// `null` nur in Testszenarien, die Compile() direkt mit älterer
-        /// Signatur (ohne activeUsings) aufrufen und dabei zufällig einen
-        /// Pfad nehmen, der NIE einen Namen auflösen müsste - im normalen
-        /// Compile()-Aufruf immer gesetzt. Nicht readonly: der Top-Level-
-        /// Compiler bekommt ihn erst MITTEN in CompileClasses zugewiesen
-        /// (nach dem Sammeln ALLER Klassennamen, aber VOR dem eigentlichen
-        /// Kompilieren der Klassenkörper - siehe dort für die genaue
-        /// Begründung: ein Henne-Ei-Problem, wenn man ihn erst NACH
-        /// CompileClasses zuweisen würde, da CompileClasses selbst schon
-        /// Klassenkörper kompiliert, die ihn brauchen); jeder INNERE Compiler
-        /// (Methoden-/Konstruktor-/Lambda-Body) bekommt ihn dagegen direkt
-        /// über den Konstruktor vom äußeren Compiler mit (zu DEM Zeitpunkt
-        /// längst gesetzt).</summary>
-        private NamespaceResolver? _nsResolver;
-
-        /// <summary>Die `#using`-Namen, die für TOP-LEVEL-Code gelten (also
-        /// AUSSERHALB jeder Klasse, inkl. einer dort direkt definierten
-        /// Lambda - siehe CompileLambda) - anders als bei Klassen (deren
-        /// EIGENE, gestempelte `Ast.ClassDecl.Usings` gelten, siehe
-        /// CurrentUsings) gibt es für Top-Level-Code keine "eigene Datei"
-        /// mehr, sobald mehrere Quelltext-Stücke zu einem Programm
-        /// zusammengeführt wurden (siehe Parser.ParseMultiple) - hier gilt
-        /// deshalb schlicht das, was `Compile()` als `activeUsings`
-        /// übergeben bekam (bei ParseMultiple typischerweise die Usings des
-        /// HAUPT-Skripts, das die auszuführenden Top-Level-Anweisungen
-        /// enthält).</summary>
-        private IReadOnlyList<string> _topLevelUsings = Array.Empty<string>();
+        /// <summary>Alle bekannten (vollqualifizierten) Klassennamen - Grundlage
+        /// für ResolveTypeRef (SPEC "Namespaces"). Nicht readonly: der
+        /// Top-Level-Compiler bekommt sie erst MITTEN in CompileClasses
+        /// zugewiesen (nach dem Sammeln ALLER Klassennamen, aber VOR dem
+        /// eigentlichen Kompilieren der Klassenkörper - ein Henne-Ei-Problem,
+        /// wenn man sie erst NACH CompileClasses zuweisen würde, da
+        /// CompileClasses selbst schon Klassenkörper kompiliert, die sie
+        /// brauchen); jeder INNERE Compiler (Methoden-/Konstruktor-/Lambda-
+        /// Body) bekommt sie dagegen direkt über den Konstruktor vom äußeren
+        /// Compiler mit (zu DEM Zeitpunkt längst gesetzt). `null` nur in
+        /// Testszenarien, die nie einen Namen auflösen müssten.</summary>
+        private HashSet<string>? _knownClassNames;
 
         private Compiler(ResolveResult resolveResult, NativeRegistry natives)
-            : this(resolveResult.References, natives, null, resolveResult.NoShadowGlobals ? 0 : resolveResult.GlobalSlotCount, null, Array.Empty<string>())
+            : this(resolveResult.References, natives, null, resolveResult.NoShadowGlobals ? 0 : resolveResult.GlobalSlotCount, null)
         {
         }
 
@@ -195,62 +175,32 @@ namespace fire.Bytecode
         /// in einen eigenen Chunk (FunctionProto): teilt sich die Resolver-
         /// Referenzen und die Native-Registry mit dem äußeren Compiler, baut aber
         /// einen eigenen, frischen Chunk.</summary>
-        private Compiler(IReadOnlyDictionary<Expr, ResolvedRef> refs, NativeRegistry natives, RuntimeClass? enclosingClass, int globalSlotCount, NamespaceResolver? nsResolver, IReadOnlyList<string> topLevelUsings)
+        private Compiler(IReadOnlyDictionary<Expr, ResolvedRef> refs, NativeRegistry natives, RuntimeClass? enclosingClass, int globalSlotCount, HashSet<string>? knownClassNames)
         {
             _refs = refs;
             _natives = natives;
             _enclosingClass = enclosingClass;
             _globalSlotCount = globalSlotCount;
-            _nsResolver = nsResolver;
-            _topLevelUsings = topLevelUsings;
+            _knownClassNames = knownClassNames;
         }
 
-        /// <summary>Die für die AKTUELL kompilierte Stelle geltenden
-        /// `#using`-Namen - innerhalb einer Klasse deren EIGENE, gestempelte
-        /// Usings (`_enclosingClass.Decl.Usings`, siehe Parser.StampUsings),
-        /// außerhalb jeder Klasse `_topLevelUsings` (siehe dort).</summary>
-        private IReadOnlyList<string> CurrentUsings => _enclosingClass?.Decl.Usings ?? _topLevelUsings;
-
-        /// <summary>Der Namespace, in dem GERADE kompiliert wird - deduziert aus
-        /// dem Präfix von `_enclosingClass`s bereits vollqualifiziertem Namen
-        /// (siehe Parser.FlattenNamespaces: 'Geometry.Point' -> 'Geometry'),
-        /// `null` außerhalb jeder Klasse oder wenn die Klasse selbst nicht
-        /// namespaciert ist. Grundlage für die "Geschwister im selben
-        /// Namespace haben Vorrang"-Regel in NamespaceResolver.Resolve.</summary>
-        private string? CurrentNamespace
-        {
-            get
-            {
-                if (_enclosingClass == null) return null;
-                int dot = _enclosingClass.Name.LastIndexOf('.');
-                return dot < 0 ? null : _enclosingClass.Name[..dot];
-            }
-        }
-
-        /// <summary>Kurzform für `(_nsResolver?.Resolve(name, CurrentNamespace) ?? name)`
-        /// - überall dort genutzt, wo ein vom Nutzer geschriebener Klassen-/
-        /// Typname als String-Konstante in den Bytecode wandert (siehe
-        /// NewExpr/IsOfExpr/CatchClause-Kompilierung).</summary>
-        private string ResolveTypeName(string name) => _nsResolver?.Resolve(name, CurrentNamespace, CurrentUsings) ?? name;
+        /// <summary>Löst `tr` auf seinen vollqualifizierten Namen auf, WENN
+        /// nötig (SPEC "Namespaces") - siehe TypeRef.ResolveBaseName für die
+        /// genaue Regel. `tr.Namespaces` trägt den Kontext (aktueller
+        /// Namespace + `#using`) schon direkt an sich selbst, gesetzt vom
+        /// Parser GENAU an der Stelle, an der `tr` geparst wurde - der
+        /// Compiler braucht dafür keinen eigenen "aktuelle Klasse"/"aktive
+        /// Usings"-Zustand mehr.</summary>
+        private string ResolveTypeRef(TypeRef tr) =>
+            _knownClassNames != null ? tr.ResolveBaseName(_knownClassNames.Contains) : tr.BaseName;
 
         public static CompiledProgram Compile(
-            IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives,
-            IReadOnlyList<string>? activeUsings = null, IReadOnlyDictionary<Stmt, IReadOnlyList<string>>? usingsByStmt = null)
+            IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives)
         {
             var compiler = new Compiler(resolveResult, natives);
-            var classes = compiler.CompileClasses(program, activeUsings ?? Array.Empty<string>());
+            var classes = compiler.CompileClasses(program);
             foreach (var stmt in program)
-            {
-                // Pro-Anweisung-Usings haben Vorrang vor der einen,
-                // programmweiten Fallback-Liste (siehe Parser.ParseMultiple,
-                // out usingsByStmt-Doku) - wichtig, wenn MEHR als eine der
-                // kombinierten Quellen eigenen Top-Level-Code mit eigenen,
-                // abweichenden #using-Direktiven hat.
-                compiler._topLevelUsings = usingsByStmt != null && usingsByStmt.TryGetValue(stmt, out var stmtUsings)
-                    ? stmtUsings
-                    : activeUsings ?? Array.Empty<string>();
                 compiler.CompileStmt(stmt);
-            }
             compiler._chunk.EmitOp(OpCode.Halt);
 
             var externSignatures = new Dictionary<string, ExternSignature>();
@@ -267,81 +217,11 @@ namespace fire.Bytecode
             return new CompiledProgram { TopLevel = compiler._chunk, Classes = classes, ExternSignatures = externSignatures };
         }
 
-        /// <summary>Löst zur KOMPILIERZEIT einen möglicherweise unqualifizierten
-        /// Klassen-/Typnamen (aus `new X()`, `is of X`, `catch (e : X)`) auf
-        /// seinen tatsächlichen, vollqualifizierten Namen auf (SPEC
-        /// "Namespaces") - Grundlage dafür, dass Namespace-Mitglieder AUCH
-        /// innerhalb von Methoden-/Konstruktor-Bodies ohne explizite
-        /// Qualifizierung nutzbar sind, OHNE den kompletten AST nach
-        /// Referenzen durchsuchen zu müssen: da nach Parser.
-        /// FlattenNamespaces JEDER Klassenname bereits sein endgültiges
-        /// Format hat ("Foo.Bar" oder unqualifiziert "Bar"), lässt sich die
-        /// komplette Auflösungstabelle rein aus der Menge ALLER bekannten
-        /// Klassennamen ableiten (siehe Compile/CompileClasses) - kein
-        /// separater Baumdurchlauf nötig, nur die paar Stellen, an denen ein
-        /// Name tatsächlich als String-Konstante in den Bytecode wandert.</summary>
-        private sealed class NamespaceResolver
-        {
-            private readonly Dictionary<string, List<(string Namespace, string Qualified)>> _bySimpleName = new();
-            private readonly HashSet<string> _allNames;
-
-            public NamespaceResolver(IEnumerable<string> allClassNames)
-            {
-                _allNames = new HashSet<string>(allClassNames);
-                foreach (var full in _allNames)
-                {
-                    int dot = full.LastIndexOf('.');
-                    if (dot < 0) continue;
-                    string ns = full[..dot];
-                    string simple = full[(dot + 1)..];
-                    if (!_bySimpleName.TryGetValue(simple, out var list))
-                        _bySimpleName[simple] = list = new List<(string, string)>();
-                    list.Add((ns, full));
-                }
-            }
-
-            /// <summary>Löst `name` auf, WENN nötig. `currentNamespace` ist der
-            /// Namespace, in dessen Klasse diese Referenz textuell steht (siehe
-            /// Compiler.CurrentNamespace), `null` außerhalb jeder Klasse oder
-            /// wenn diese selbst nicht namespaciert ist. `activeUsings` sind die
-            /// für GENAU DIESE Referenz geltenden `#using`-Namen - bei einer
-            /// Referenz innerhalb einer Klasse deren EIGENE, gestempelte Usings
-            /// (`Ast.ClassDecl.Usings`, siehe Parser.StampUsings/ParseMultiple),
-            /// bei Top-Level-Code die des jeweiligen Quelltext-Stücks (siehe
-            /// Compiler._topLevelUsings) - NICHT eine einzige, programmweite
-            /// Liste, damit `#using` in einer kombinierten Mehrdatei-Quelle
-            /// (ParseMultiple) wirklich nur lokal für ihre eigene Datei gilt.</summary>
-            public string Resolve(string name, string? currentNamespace, IReadOnlyList<string> activeUsings)
-            {
-                // Schon ein exakt bekannter Name (inkl. bereits vom Nutzer
-                // vollqualifiziert geschrieben, oder ein nicht-namespacierter
-                // globaler Name wie 'Exception'/'IndexOutOfBoundsException') -
-                // Priorität, damit sich am bisherigen Verhalten nichts ändert.
-                if (_allNames.Contains(name)) return name;
-                if (!_bySimpleName.TryGetValue(name, out var candidates)) return name;
-
-                // Geschwister im eigenen Namespace hat Vorrang vor #using.
-                if (currentNamespace != null)
-                    foreach (var (ns, full) in candidates)
-                        if (ns == currentNamespace) return full;
-
-                foreach (var (ns, full) in candidates)
-                    if (activeUsings.Contains(ns)) return full;
-
-                // Uneindeutig (mehrere Namespaces, keiner davon aktiv/
-                // Geschwister) ODER schlicht kein Kandidat aktiv - unverändert
-                // lassen, schlägt dann wie bisher als "Klasse nicht gefunden"
-                // fehl (keine neue, überraschende Fehlerquelle gegenüber vorher).
-                return name;
-            }
-        }
-
         // -----------------------------------------------------------
         // Klassen (Vorab-Pass: Name -> RuntimeClass, analog zum Resolver)
         // -----------------------------------------------------------
-        private Dictionary<string, RuntimeClass> CompileClasses(IReadOnlyList<Stmt> program, IReadOnlyList<string> topLevelUsings)
+        private Dictionary<string, RuntimeClass> CompileClasses(IReadOnlyList<Stmt> program)
         {
-            _topLevelUsings = topLevelUsings;
             var classes = new Dictionary<string, RuntimeClass>();
             foreach (var stmt in program)
                 if (stmt is ClassDecl cd)
@@ -349,20 +229,21 @@ namespace fire.Bytecode
 
             // Basis-Verknüpfung getrennt, da Basisklassen im Quelltext später
             // stehen können als die abgeleitete Klasse (Vorwärtsreferenz). Der
-            // Resolver hat schon geprüft, dass höchstens ein Name in BaseNames
+            // Resolver hat schon geprüft, dass höchstens ein Name in BaseRefs
             // eine echte Klasse ist - hier also einfach den ersten solchen Namen
             // suchen. 'Exception' (eingebaute Basisklasse, SPEC 7.1) hat bewusst
             // keine eigene RuntimeClass - Klassen mit ': Exception' bekommen
             // hier schlicht Base = null (ihre eigenen Felder/Methoden/
             // Konstruktoren funktionieren trotzdem; beim Werfen/Fangen matcht
             // der Typname "Exception" ohnehin immer, siehe VM.ExceptionMatchesType).
-            // Interface-Namen in BaseNames werden hier ignoriert - Interfaces
+            // Interface-Namen in BaseRefs werden hier ignoriert - Interfaces
             // brauchen keine eigene Laufzeit-Repräsentation (rein dynamischer
             // Methodenaufruf per Name), die Erfüllung hat schon der Resolver geprüft.
             foreach (var rc in classes.Values)
             {
-                foreach (var n in rc.Decl.BaseNames)
+                foreach (var baseRef in rc.Decl.BaseRefs ?? Array.Empty<TypeRef>())
                 {
+                    string n = baseRef.ResolveBaseName(name => name == "Exception" || classes.ContainsKey(name));
                     if (n != "Exception" && !classes.TryGetValue(n, out _)) continue;
                     if (n == "Exception") break; // keine RuntimeClass verfügbar -> Base bleibt null
                     rc.Base = classes[n];
@@ -371,15 +252,14 @@ namespace fire.Bytecode
             }
 
             // ERST jetzt (nach dem Sammeln ALLER Klassennamen, aber VOR dem
-            // eigentlichen Kompilieren der Klassenkörper unten) - der
-            // NamespaceResolver braucht die Menge ALLER Klassennamen, die
-            // genau HIER zum ersten Mal vollständig feststeht. Ein
-            // Henne-Ei-Problem, wenn man ihn stattdessen NACH dieser ganzen
-            // Methode zuweisen würde (wie ursprünglich versucht): die
+            // eigentlichen Kompilieren der Klassenkörper unten) - ResolveTypeRef
+            // braucht die Menge ALLER Klassennamen, die genau HIER zum ersten
+            // Mal vollständig feststeht. Ein Henne-Ei-Problem, wenn man sie
+            // stattdessen NACH dieser ganzen Methode zuweisen würde: die
             // Körper-Kompilierung unten (CompileClassBody, u.a. `new X()`
-            // INNERHALB von Methoden) braucht ihn ja schon WÄHREND dieser
+            // INNERHALB von Methoden) braucht sie ja schon WÄHREND dieser
             // Methode noch läuft, nicht erst danach.
-            _nsResolver = new NamespaceResolver(classes.Keys);
+            _knownClassNames = new HashSet<string>(classes.Keys);
 
             foreach (var rc in classes.Values)
                 CompileClassBody(rc);
@@ -459,7 +339,7 @@ namespace fire.Bytecode
             for (int i = 0; i < parms.Count; i++)
             {
                 if (parms[i].DefaultValue == null) continue;
-                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver, _topLevelUsings);
+                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames);
                 inner.CompileExpr(parms[i].DefaultValue!);
                 inner._chunk.EmitOp(OpCode.Return);
                 defaults[i] = new FunctionProto(inner._chunk, 0);
@@ -469,7 +349,7 @@ namespace fire.Bytecode
 
         private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver, _topLevelUsings);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames);
             inner._chunk.OwnerClass = rc;
             if (initializer != null)
             {
@@ -533,7 +413,7 @@ namespace fire.Bytecode
         /// kollidieren.</summary>
         private void CompileFireStmt(FireStmt fs)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _nsResolver, _topLevelUsings);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames);
             int slot = _globalSlotCount;
             foreach (var capture in fs.TakingCaptures)
                 inner._chunk.MarkLocalName(0, slot++, capture.VarName);
@@ -583,7 +463,7 @@ namespace fire.Bytecode
         /// HandleDeliveredThreadException), nicht hier an dieser Stelle.</summary>
         private void CompileCatchThreadsDecl(CatchThreadsDecl decl)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _nsResolver, _topLevelUsings);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames);
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -595,9 +475,9 @@ namespace fire.Bytecode
 
             _chunk.EmitOp(OpCode.RegisterThreadsCatch);
             _chunk.EmitU16(protoIdx);
-            bool hasType = decl.TypeName != null;
+            bool hasType = decl.TypeRef != null;
             _chunk.EmitByte(hasType ? (byte)1 : (byte)0);
-            if (hasType) _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeName(decl.TypeName!))));
+            if (hasType) _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeRef(decl.TypeRef!))));
         }
 
         /// <summary>`catch terminate(v) { ... }` (siehe Ast.CatchTerminateDecl-
@@ -605,7 +485,7 @@ namespace fire.Bytecode
         /// keine "Art" von terminate) und mit dem anderen Register-Opcode.</summary>
         private void CompileCatchTerminateDecl(CatchTerminateDecl decl)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _nsResolver, _topLevelUsings);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames);
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -621,7 +501,7 @@ namespace fire.Bytecode
 
         private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver, _topLevelUsings);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames);
             inner._chunk.OwnerClass = rc;
             for (int i = 0; i < parms.Count; i++)
                 inner._chunk.MarkLocalName(0, i, parms[i].Name);
@@ -641,7 +521,7 @@ namespace fire.Bytecode
         /// einheitlich über denselben Mechanismus.</summary>
         private FunctionProto CompileConstructorProto(RuntimeClass rc, ConstructorDecl? ctor)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _nsResolver, _topLevelUsings);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames);
             inner._chunk.OwnerClass = rc;
 
             if (ctor != null)
@@ -841,8 +721,8 @@ namespace fire.Bytecode
                     // Sollte NIE hier ankommen - siehe derselbe Fall im
                     // Resolver (ResolveStmt) für die Erklärung.
                     throw new NotSupportedException(
-                        $"Interner Fehler: 'class extends {cx.TargetName}' wurde nicht zusammengeführt " +
-                        "(Programm muss über Parser.Parse()/ParseWithPrelude() erzeugt werden).");
+                        $"Interner Fehler: 'class extends {cx.TargetRef.BaseName}' wurde nicht zusammengeführt " +
+                        "(Programm muss über Parser.Parse()/ParseMultiple() erzeugt werden).");
 
                 case ExternDecl:
                     // Reine Signatur-Deklaration, erzeugt selbst keinen Code (nur
@@ -1178,7 +1058,7 @@ namespace fire.Bytecode
             foreach (var c in t.Catches)
             {
                 int catchAddr = _chunk.Here;
-                template.Catches.Add((c.TypeName == null ? null : ResolveTypeName(c.TypeName), catchAddr));
+                template.Catches.Add((c.TypeRef == null ? null : ResolveTypeRef(c.TypeRef), catchAddr));
 
                 foreach (var stmt in c.Body.Statements) CompileStmt(stmt);
 
@@ -1259,7 +1139,7 @@ namespace fire.Bytecode
                 case IsOfExpr iof:
                     CompileExpr(iof.Operand);
                     _chunk.EmitOp(OpCode.IsOfType);
-                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeName(iof.TypeName))));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeRef(iof.TypeRef))));
                     break;
 
                 case IsFromExpr ifr:
@@ -1272,7 +1152,7 @@ namespace fire.Bytecode
                 case NewExpr ne:
                     foreach (var a in ne.Args) CompileExpr(a);
                     _chunk.EmitOp(OpCode.NewObject);
-                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeName(ne.ClassName))));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeRef(ne.ClassRef))));
                     _chunk.EmitByte((byte)ne.Args.Count);
                     break;
 
@@ -1411,7 +1291,7 @@ namespace fire.Bytecode
         /// 'on'-Target kann sich pro Auswertung unterscheiden.</summary>
         private void CompileLambda(LambdaExpr lambda)
         {
-            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _nsResolver, _topLevelUsings);
+            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames);
             inner._chunk.OwnerClass = _enclosingClass;
             for (int i = 0; i < lambda.Params.Count; i++)
                 inner._chunk.MarkLocalName(0, i, lambda.Params[i].Name);
@@ -1592,7 +1472,7 @@ namespace fire.Bytecode
                     _chunk.EmitOp(OpCode.Dup);
                     foreach (var arg in ne.Args) CompileExpr(arg);
                     _chunk.EmitOp(OpCode.NewObjectOwned);
-                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeName(ne.ClassName))));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeRef(ne.ClassRef))));
                     _chunk.EmitByte((byte)ne.Args.Count);
                 }
                 else

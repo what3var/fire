@@ -46,14 +46,26 @@ namespace fire.Parsing
         /// ändert. Rein Parser-intern, keine Laufzeit-Bedeutung.</summary>
         private string? _currentExternLib;
 
-        /// <summary>Alle per `#using Name`/`#using A.B` in DIESEM Parse-Durchlauf
-        /// gesehenen Namespace-Namen (siehe ParseDirective/FlattenNamespaces) -
-        /// wirkt bewusst GLOBAL fürs gesamte Programm, nicht nur ab der
-        /// Textposition der Direktive (siehe FlattenNamespaces-Doku für die
-        /// Begründung). Von ParseRaw nach außen gereicht, damit Parse/
-        /// ParseWithPrelude die Usings BEIDER Hälften (Prelude + Nutzer-Code)
-        /// vor dem eigentlichen FlattenNamespaces-Aufruf zusammenführen können.</summary>
-        private readonly List<string> _activeUsings = new();
+        /// <summary>Die `#using`-Namen DIESER Quelle (SPEC "Namespaces") -
+        /// kommen fertig vom Preprocessor (siehe Parsing.ProcessedSource),
+        /// werden hier VOR ParseProgram() einmal übernommen und ändern sich
+        /// während des Parsens nicht mehr (anders als _currentNamespace).
+        /// Jeder TypeRef, den dieser Parser konstruiert, bekommt sie in sein
+        /// eigenes Namespaces-Feld kopiert (siehe CurrentNamespaces) -
+        /// dadurch tragen Resolver/Compiler später gar keinen eigenen
+        /// Usings-Zustand mehr mit sich herum, jede Referenz weiß selbst,
+        /// wo sie herkommt.</summary>
+        private IReadOnlyList<string> _usingNamespaces = Array.Empty<string>();
+
+        /// <summary>Der Namespace, in dem GERADE geparst wird (SPEC
+        /// "Namespaces") - `null` außerhalb jedes `namespace`-Blocks.
+        /// Verschachtelte Blöcke hängen sich mit '.' an (siehe
+        /// ParseNamespaceDecl: sichert den alten Wert, setzt den neuen,
+        /// schreibt beim Verlassen des Blocks den alten Wert zurück - so
+        /// weiß der Parser beim Bauen JEDES TypeRef/JEDER Deklaration genau,
+        /// "wo" im Programm gerade geparst wird, ohne einen separaten
+        /// Baumdurchlauf danach zu brauchen).</summary>
+        private string? _currentNamespace;
 
         /// <summary>Stack der synthetischen Zielvariablen-Namen aktiver
         /// `with`-Blöcke (innerster zuletzt) - siehe ParseWithStmt. Ein
@@ -93,141 +105,72 @@ namespace fire.Parsing
             _tokens = tokens;
         }
 
-        public static List<Stmt> Parse(string source) => ParseMultiple(new[] { source }, Directory.GetCurrentDirectory());
+        /// <summary>Einfacher Redirect auf ParseMultiple für Tests/Aufrufer,
+        /// die keine Namespaces/Usings brauchen - KEINE eigene Parse-Logik
+        /// (ein einzelnes ProcessedSource mit leeren Usings ist nur der
+        /// Sonderfall "eine Quelle, kein `#using`"). `source` läuft NICHT
+        /// durch den Preprocessor - wer `#include`/`#using` braucht, ruft
+        /// Preprocessor.Process selbst auf und übergibt dessen Ergebnis an
+        /// ParseMultiple.</summary>
+        public static List<Stmt> Parse(string source) =>
+            ParseMultiple(new[] { new ProcessedSource(source, Array.Empty<string>()) });
 
-        /// <summary>Wie Parse(source), gibt zusätzlich die `#using`-Namen
-        /// dieser (einzigen) Quelle zurück - siehe ParseMultiple(sources,
-        /// basePath, alreadyPreprocessed, out activeUsings) für die
-        /// Begründung: Top-Level-Code braucht das für die Auflösung
-        /// unqualifizierter Namespace-Referenzen, kann sich aber (anders
-        /// als eine Klasse) nicht selbst stempeln.</summary>
-        public static List<Stmt> Parse(string source, out IReadOnlyList<string> activeUsings) =>
-            ParseMultiple(new[] { source }, Directory.GetCurrentDirectory(), alreadyPreprocessed: false, out activeUsings);
-
-        
-
-        /// <summary>Wie ParseWithPrelude, aber für BELIEBIG VIELE Quelltext-
-        /// Stücke (Prelude + mehrere Code-Dateien) statt nur Prelude + EINEM
-        /// Nutzer-Quelltext - mit der wichtigen Erweiterung, dass `#using`
-        /// NUR LOKAL für Deklarationen aus GENAU DEM Quelltext-Stück gilt,
-        /// das die Direktive selbst enthält (SPEC "Mehrere Quelldateien") -
-        /// anders als bei Parse/ParseWithPrelude, wo eine `#using`-Direktive
-        /// bewusst programmweit wirkt (dort gibt es ja nur EIN sinnvolles
-        /// "der ganze Rest des Programms"). Bei mehreren, potenziell von
-        /// verschiedenen Autoren stammenden Dateien wäre eine programmweite
-        /// Wirkung dagegen überraschend - Datei B sollte nicht plötzlich
-        /// einen Namespace unqualifiziert sehen, nur weil Datei A ihn
-        /// per `#using` importiert hat.
+        /// <summary>Parst BELIEBIG VIELE bereits vorverarbeitete Quelltext-
+        /// Stücke (siehe Preprocessing.ProcessedSource - jedes trägt seine
+        /// EIGENEN, vom Preprocessor gesammelten `#using`-Namen) zu EINEM
+        /// kombinierten Programm. `#using` gilt dabei NUR LOKAL für
+        /// Deklarationen UND Referenzen aus GENAU DEM ProcessedSource, das
+        /// die Direktive selbst enthielt (SPEC "Mehrere Quelldateien") - bei
+        /// mehreren, potenziell von verschiedenen Autoren stammenden
+        /// Dateien wäre eine programmweite Wirkung überraschend.
         ///
         /// `sources` in der Reihenfolge, in der sie kombiniert werden sollen
         /// (üblich: Prelude zuerst, dann Bibliotheks-/Hilfsdateien, das
         /// eigentliche Hauptskript zuletzt - die Reihenfolge selbst hat für
-        /// Klassenauflösung keine Bedeutung, siehe Parse/ParseWithPrelude-
-        /// Kommentar, nur für `#include`-Pfadauflösung falls `basePath`
-        /// genutzt wird). Jede Datei teilt sich mit den anderen EINE
-        /// gemeinsame `#include`-"bereits eingefügt"-Menge (wie bei
-        /// ParseWithPrelude), landet ein `#include`-Ziel also nur EIN
-        /// einziges Mal im kombinierten Programm, unabhängig davon, aus
-        /// welcher der `sources` heraus es zuerst erreicht wird.</summary>
-        public static List<Stmt> ParseMultiple(IReadOnlyList<string> sources, string? basePath = null) =>
-            ParseMultiple(sources, basePath, alreadyPreprocessed: false, out _);
-
-        /// <summary>Wie ParseMultiple(sources, basePath), gibt zusätzlich
-        /// zurück: die `#using`-Namen der LETZTEN Quelle (`activeUsings`,
-        /// als einfacher Fallback - üblicherweise das Hauptskript) UND eine
-        /// Zuordnung JEDER einzelnen Top-Level-Anweisung zu den Usings IHRER
-        /// EIGENEN Quelle (`usingsByStmt`) - WICHTIG, wenn MEHR als eine der
-        /// `sources` eigenen Top-Level-Code (nicht nur Klassen) enthält: eine
-        /// Klasse trägt ihre Usings direkt an sich selbst (siehe
-        /// ClassDecl.Usings/StampUsings), eine einzelne Anweisung wie `var c
-        /// = new Circle()` hat aber kein Feld, an dem man das befestigen
-        /// könnte - `usingsByStmt` schließt genau diese Lücke: OHNE das
-        /// bekäme JEDER Top-Level-Code im ganzen Programm dieselben (die der
-        /// LETZTEN Quelle) Usings, selbst wenn er aus einer GANZ ANDEREN
-        /// Quelle mit eigenen, abweichenden `#using`-Direktiven stammt - SPEC
-        /// "Mehrere Quelldateien" verlangt aber gerade lokale Sichtbarkeit
-        /// pro Datei, auch für Top-Level-Code, nicht nur für Klassen.
+        /// die Klassenauflösung keine Bedeutung, nur zur Übersicht).
         ///
-        /// Per Referenzgleichheit geschlüsselt (nicht Werten) - genau die
-        /// Stmt-Instanzen, die ParseRaw für die jeweilige Quelle geliefert
-        /// hat, überleben MergeClassExtensions/FlattenNamespaces für JEDE
-        /// Nicht-Klassen-Anweisung unverändert (nur ClassDecl/InterfaceDecl/
-        /// EnumDecl/NamespaceDecl werden per `with` neu erzeugt).
-        ///
-        /// `alreadyPreprocessed`: `true`, wenn `sources` bereits VOR diesem
-        /// Aufruf durch `Preprocessor.Process` gelaufen sind (z.B. weil der
-        /// Aufrufer selbst schon `#include`/eigene Direktiven auflöst) -
-        /// überspringt den sonst doppelten Preprocessor-Lauf innerhalb von
-        /// ParseRaw. Default `false` (unverändertes, bisheriges Verhalten).</summary>
-        public static List<Stmt> ParseMultiple(
-            IReadOnlyList<string> sources, string? basePath, bool alreadyPreprocessed,
-            out IReadOnlyList<string> activeUsings, out IReadOnlyDictionary<Stmt, IReadOnlyList<string>> usingsByStmt)
+        /// JEDE Typ-Referenz (TypeRef, `new X()`, `is of X`, `catch (e : X)`,
+        /// Basisklassen, `class extends X`) trägt ihren eigenen Namespace-
+        /// Kontext direkt an sich selbst, gesetzt GENAU dann, wenn sie
+        /// geparst wird (siehe CurrentNamespaces) - Resolver/Compiler
+        /// brauchen dadurch gar keinen eigenen Usings-Zustand mehr, jede
+        /// Referenz weiß selbst, wie sie sich auflösen soll. Das gilt auch
+        /// für `class extends X`, selbst wenn Erweiterung und Zielklasse aus
+        /// unterschiedlichen Dateien/Namespaces stammen (siehe
+        /// Ast.ClassExtensionDecl.TargetRef-Doku).</summary>
+        public static List<Stmt> ParseMultiple(IReadOnlyList<ProcessedSource> sources)
         {
-            basePath ??= Directory.GetCurrentDirectory();
-            var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var combined = new List<Stmt>();
-            var lastUsings = (IReadOnlyList<string>)Array.Empty<string>();
-            var byStmt = new Dictionary<Stmt, IReadOnlyList<string>>(ReferenceEqualityComparer.Instance);
-
-            foreach (var source in sources)
+            foreach (var src in sources)
             {
-                var (stmts, usings) = ParseRaw(source, basePath, alreadyIncluded, alreadyPreprocessed);
-                StampUsings(stmts, usings);
-                foreach (var stmt in stmts)
-                    byStmt[stmt] = usings; // jede Anweisung DIESER Quelle -> DIESER Quelle eigene Usings
-                combined.AddRange(stmts);
-                lastUsings = usings;
+                var tokens = new Lexer(src.Source).Tokenize();
+                var parser = new Parser(tokens);
+                parser._usingNamespaces = src.Usings;
+                combined.AddRange(parser.ParseProgram());
             }
-
-            activeUsings = lastUsings;
-            usingsByStmt = byStmt;
-            return FlattenNamespaces(MergeClassExtensions(combined), lastUsings);
+            return MergeClassExtensions(FlattenNamespaceWrappers(combined));
         }
 
-        /// <summary>Wie ParseMultiple(..., out activeUsings, out usingsByStmt),
-        /// ohne die präzisere Pro-Anweisung-Zuordnung - siehe dort für den
-        /// wichtigen Unterschied. Nur für den einfachen Fall gedacht, in dem
-        /// höchstens EINE der `sources` eigenen Top-Level-Code (nicht nur
-        /// Klassen) enthält (üblich: nur das Hauptskript).</summary>
-        public static List<Stmt> ParseMultiple(
-            IReadOnlyList<string> sources, string? basePath, bool alreadyPreprocessed, out IReadOnlyList<string> activeUsings) =>
-            ParseMultiple(sources, basePath, alreadyPreprocessed, out activeUsings, out _);
+        /// <summary>Die für ein JETZT geparstes TypeRef/eine JETZT geparste
+        /// Referenz geltenden Namespaces (SPEC "Namespaces") - an erster
+        /// Stelle der aktuelle Namespace (_currentNamespace, falls einer),
+        /// danach die `#using`-Namen dieser Quelle (_usingNamespaces). Ohne
+        /// umschließenden Namespace (Top-Level) enthält die Liste nur die
+        /// Usings. Die Reihenfolge kodiert bereits die Priorität (aktueller
+        /// Namespace vor `#using`) - siehe TypeRef.ResolveBaseName.</summary>
+        private IReadOnlyList<string> CurrentNamespaces() =>
+            _currentNamespace == null
+                ? _usingNamespaces
+                : new[] { _currentNamespace }.Concat(_usingNamespaces).ToList();
 
-        /// <summary>Setzt `ClassDecl.Usings` auf `usings`, für JEDE Klasse in
-        /// `stmts` - rekursiv auch für Klassen, die in einem `namespace`-Block
-        /// verschachtelt sind (siehe ParseMultiple). Läuft VOR jedem
-        /// Zusammenführen/Flatten - der Stempel bleibt danach automatisch
-        /// erhalten, weil sowohl MergeClassExtensions als auch
-        /// FlattenNamespaces eine ClassDecl per `with { ... }` kopieren
-        /// (das übernimmt jedes nicht explizit geänderte Feld 1:1 aus dem
-        /// Original), nicht neu erzeugen.</summary>
-        private static void StampUsings(List<Stmt> stmts, IReadOnlyList<string> usings)
-        {
-            for (int i = 0; i < stmts.Count; i++)
-            {
-                switch (stmts[i])
-                {
-                    case ClassDecl cd:
-                        stmts[i] = cd with { Usings = usings };
-                        break;
-                    case NamespaceDecl nsDecl:
-                        var members = nsDecl.Members.ToList();
-                        StampUsings(members, usings);
-                        stmts[i] = nsDecl with { Members = members };
-                        break;
-                }
-            }
-        }
-
-        private static (List<Stmt> Statements, List<string> Usings) ParseRaw(
-            string source, string basePath, HashSet<string> alreadyIncluded, bool alreadyPreprocessed = false)
-        {
-            string preprocessed = alreadyPreprocessed ? source : Preprocessor.Process(source, basePath, alreadyIncluded);
-            var tokens = new Lexer(preprocessed).Tokenize();
-            var parser = new Parser(tokens);
-            var stmts = parser.ParseProgram();
-            return (stmts, parser._activeUsings);
-        }
+        /// <summary>Hängt `simpleName` an den aktuellen Namespace an (SPEC
+        /// "Namespaces") - `_currentNamespace + "." + simpleName`, oder
+        /// `simpleName` unverändert außerhalb jedes `namespace`-Blocks. Für
+        /// Klassen-/Interface-/Enum-NAMEN SELBST (nicht für Referenzen
+        /// darauf, siehe TypeRef.ResolveBaseName), direkt beim Parsen der
+        /// jeweiligen Deklaration angewendet.</summary>
+        private string QualifyDeclName(string simpleName) =>
+            _currentNamespace == null ? simpleName : _currentNamespace + "." + simpleName;
 
         /// <summary>Führt alle `class extends X { ... }`-Erweiterungen (siehe
         /// Ast.ClassExtensionDecl) in ihre jeweilige Zielklasse zusammen, BEVOR
@@ -237,9 +180,7 @@ namespace fire.Parsing
         /// "Reopening"). Mehrere Erweiterungen derselben Zielklasse werden
         /// alle zusammengeführt, in der Reihenfolge, in der sie im Programm
         /// vorkommen. Wirft, wenn eine Erweiterung eine Klasse nennt, die
-        /// NICHT im selben (übergebenen) Programm gefunden wird - `program`
-        /// muss dafür bereits das VOLLSTÄNDIGE, kombinierte Programm sein
-        /// (siehe ParseWithPrelude-Kommentar).</summary>
+        /// NICHT im selben (übergebenen) Programm gefunden wird.</summary>
         public static List<Stmt> MergeClassExtensions(IReadOnlyList<Stmt> program)
         {
             var extensions = new List<ClassExtensionDecl>();
@@ -251,25 +192,33 @@ namespace fire.Parsing
             }
             if (extensions.Count == 0) return rest;
 
+            // TargetRef.ResolveBaseName (SPEC "Namespaces") braucht die Menge
+            // ALLER Klassennamen im (schon namespace-flachen) Programm -
+            // TargetRef trägt seinen EIGENEN Namespace-Kontext (den der
+            // Erweiterung selbst, nicht den der Zielklasse, siehe
+            // Ast.ClassExtensionDecl-Doku), dadurch findet eine Erweiterung
+            // ihre Zielklasse auch über Datei-/Namespace-Grenzen hinweg.
+            var knownNames = new HashSet<string>(rest.OfType<ClassDecl>().Select(cd => cd.Name));
+            bool IsKnown(string n) => knownNames.Contains(n);
+
             var result = new List<Stmt>(rest.Count);
             var extendedNames = new HashSet<string>();
             foreach (var stmt in rest)
             {
                 if (stmt is ClassDecl cd)
                 {
-                    var extraMembers = extensions.Where(e => e.TargetName == cd.Name)
-                                                  .SelectMany(e => e.Members)
-                                                  .ToList();
+                    var extraMembers = extensions
+                        .Where(e => e.TargetRef.ResolveBaseName(IsKnown) == cd.Name)
+                        .SelectMany(e => e.Members)
+                        .ToList();
                     if (extraMembers.Count > 0)
                     {
                         // WICHTIG: ClassDecl ist ein record - 'with' erzeugt
                         // eine NEUE, unveränderliche Kopie, ändert 'cd' nicht
                         // in-place. Die gemergte Kopie muss deshalb explizit
                         // in die Ergebnisliste - ein einfaches 'result.Add(stmt)'
-                        // hier würde (wie ursprünglich fälschlich geschrieben)
-                        // wieder die alte, unveränderte ClassDecl einfügen und
-                        // die gerade berechneten Zusatz-Mitglieder stillschweigend
-                        // verwerfen.
+                        // hier würde wieder die alte, unveränderte ClassDecl
+                        // einfügen und die Zusatz-Mitglieder verwerfen.
                         cd = cd with { Members = cd.Members.Concat(extraMembers).ToList() };
                         extendedNames.Add(cd.Name);
                     }
@@ -280,147 +229,35 @@ namespace fire.Parsing
             }
 
             foreach (var ext in extensions)
-                if (!extendedNames.Contains(ext.TargetName))
+            {
+                string resolved = ext.TargetRef.ResolveBaseName(IsKnown);
+                if (!extendedNames.Contains(resolved))
                     throw new ParseException(
-                        $"'class extends {ext.TargetName}' - Klasse '{ext.TargetName}' ist im selben " +
+                        $"'class extends {ext.TargetRef.BaseName}' - Klasse '{ext.TargetRef.BaseName}' ist im selben " +
                         "Programm nicht bekannt (Erweiterungen können keine neue Klasse anlegen).",
                         ext.Line, 1);
+            }
 
             return result;
         }
 
-        /// <summary>Löst alle NamespaceDecl-Knoten im bereits VOLLSTÄNDIGEN,
-        /// kombinierten Programm auf (siehe Ast.NamespaceDecl-Doku) - nach
-        /// MergeClassExtensions, damit `class extends X` innerhalb eines
-        /// Namespace-Blocks noch mit dem UNQUALIFIZIERTEN Namen matcht.
-        ///
-        /// Zwei Durchgänge: zuerst rekursiv (verschachtelte `namespace`-
-        /// Blöcke) sammeln, welche Klassen-/Interface-/Enum-Namen in
-        /// welchem Namespace liegen (einfacher Name -> vollqualifizierter
-        /// Name, siehe CollectNamespaceMembers); dann das Programm flach
-        /// durchlaufen, jede Deklaration auf ihren vollqualifizierten Namen
-        /// umbenennen und JEDE Basisklassen-/Interface-Referenz
-        /// (ClassDecl.BaseNames) qualifizieren, wenn sie zu einem Namen im
-        /// AKTUELLEN Namespace ODER einem per `#using` aktiven Namespace
-        /// passt (siehe QualifyReference) - sonst bleibt sie unverändert
-        /// (globaler/nicht-namespacierter Name, z.B. die gesamte
-        /// Standardbibliothek).
-        ///
-        /// BEWUSST NICHT abgedeckt (Grenze dieser Ausbaustufe): Referenzen
-        /// INNERHALB von Methoden-/Konstruktor-Bodies (`new X()`, `is of X`,
-        /// `catch (e : X)`, Feld-/Parameter-/Rückgabetypen) werden NICHT
-        /// automatisch qualifiziert - dafür müsste jede Ausdrucks-/
-        /// Anweisungsart im gesamten Baum durchlaufen werden (ein großer,
-        /// fehleranfälliger Umbau ohne Möglichkeit, hier zu kompilieren/zu
-        /// testen). Referenzen an DIESEN Stellen auf eine namespacierte
-        /// Klasse müssen deshalb vorerst den VOLLQUALIFIZIERTEN Namen direkt
-        /// ausschreiben (`new Foo.Bar()` statt `new Bar()`, selbst innerhalb
-        /// desselben Namespace) - siehe docs/SPEC.md "Namespaces" für die
-        /// genaue Grenze.</summary>
-        public static List<Stmt> FlattenNamespaces(List<Stmt> program, IReadOnlyList<string> activeUsings)
+        /// <summary>Klopft alle NamespaceDecl-Knoten trivial platt (siehe
+        /// Ast.NamespaceDecl-Doku) - KEINE Umbenennung/Qualifizierung mehr
+        /// nötig (das ist beim Parsen selbst schon passiert, siehe
+        /// ParseNamespaceDecl/QualifyDeclName/CurrentNamespaces), nur noch
+        /// simples rekursives Auspacken der Members an die Stelle des
+        /// Wrapper-Knotens.</summary>
+        private static List<Stmt> FlattenNamespaceWrappers(List<Stmt> program)
         {
-            var byNamespace = new Dictionary<string, Dictionary<string, string>>();
-            CollectNamespaceMembers(program, null, byNamespace);
-
             var result = new List<Stmt>();
             foreach (var stmt in program)
-                FlattenNamespaceStmt(stmt, null, byNamespace, activeUsings, result);
-            return result;
-        }
-
-        private static void CollectNamespaceMembers(
-            IReadOnlyList<Stmt> stmts, string? currentNs, Dictionary<string, Dictionary<string, string>> byNamespace)
-        {
-            foreach (var stmt in stmts)
             {
-                if (stmt is not NamespaceDecl nsDecl) continue;
-
-                string fullNs = currentNs == null ? nsDecl.Name : currentNs + "." + nsDecl.Name;
-                if (!byNamespace.TryGetValue(fullNs, out var map))
-                    byNamespace[fullNs] = map = new Dictionary<string, string>();
-
-                foreach (var member in nsDecl.Members)
-                {
-                    string? simpleName = member switch
-                    {
-                        ClassDecl cd => cd.Name,
-                        InterfaceDecl id => id.Name,
-                        EnumDecl ed => ed.Name,
-                        _ => null,
-                    };
-                    if (simpleName != null) map[simpleName] = fullNs + "." + simpleName;
-                }
-
-                CollectNamespaceMembers(nsDecl.Members, fullNs, byNamespace);
-            }
-        }
-
-        private static void FlattenNamespaceStmt(
-            Stmt stmt, string? currentNs, Dictionary<string, Dictionary<string, string>> byNamespace,
-            IReadOnlyList<string> activeUsings, List<Stmt> result)
-        {
-            switch (stmt)
-            {
-                case NamespaceDecl nsDecl:
-                    string fullNs = currentNs == null ? nsDecl.Name : currentNs + "." + nsDecl.Name;
-                    foreach (var member in nsDecl.Members)
-                        FlattenNamespaceStmt(member, fullNs, byNamespace, activeUsings, result);
-                    break;
-
-                case ClassDecl cd:
-                    // cd.Usings ist bereits gesetzt (gestempelt), wenn diese
-                    // Klasse aus ParseMultiple stammt (siehe dort - JEDE
-                    // Quelldatei stempelt ihre eigenen #using-Namen direkt
-                    // auf jede ihrer ClassDecls, BEVOR irgendein Zusammen-
-                    // führen/Flatten passiert) - dann gelten AUSSCHLIESSLICH
-                    // DIESE, nicht das hier übergebene `activeUsings` (das
-                    // wäre bei ParseMultiple ohnehin nur ein Platzhalter).
-                    // Kommt die Klasse dagegen aus dem einfachen Parse/
-                    // ParseWithPrelude-Pfad (kein Stempel gesetzt, `Usings`
-                    // ist `null`), gilt wie bisher die eine, globale Liste.
-                    var effectiveUsings = cd.Usings ?? activeUsings;
-                    var newBaseNames = cd.BaseNames?
-                        .Select(b => QualifyNamespaceReference(b, currentNs, byNamespace, effectiveUsings))
-                        .ToList() ?? new List<string>();
-                    result.Add(cd with { Name = QualifyDeclName(cd.Name, currentNs), BaseNames = newBaseNames, Usings = effectiveUsings });
-                    break;
-
-                case InterfaceDecl id:
-                    result.Add(id with { Name = QualifyDeclName(id.Name, currentNs) });
-                    break;
-
-                case EnumDecl ed:
-                    result.Add(ed with { Name = QualifyDeclName(ed.Name, currentNs) });
-                    break;
-
-                default:
+                if (stmt is NamespaceDecl nsDecl)
+                    result.AddRange(FlattenNamespaceWrappers(nsDecl.Members.ToList()));
+                else
                     result.Add(stmt);
-                    break;
             }
-        }
-
-        private static string QualifyDeclName(string simpleName, string? currentNs) =>
-            currentNs == null ? simpleName : currentNs + "." + simpleName;
-
-        /// <summary>Siehe FlattenNamespaces-Doku: löst `refName` (z.B. ein
-        /// Eintrag aus ClassDecl.BaseNames) auf ihren vollqualifizierten
-        /// Namen auf, WENN sie zu einem Geschwister im AKTUELLEN Namespace
-        /// oder einem per `#using` aktiven Namespace passt - sonst
-        /// unverändert (globaler Name, z.B. 'Exception' oder 'IEnumerable'
-        /// aus der Standardbibliothek).</summary>
-        private static string QualifyNamespaceReference(
-            string refName, string? currentNs, Dictionary<string, Dictionary<string, string>> byNamespace,
-            IReadOnlyList<string> activeUsings)
-        {
-            if (currentNs != null && byNamespace.TryGetValue(currentNs, out var ownMap)
-                && ownMap.TryGetValue(refName, out var qualifiedSibling))
-                return qualifiedSibling;
-
-            foreach (var ns in activeUsings)
-                if (byNamespace.TryGetValue(ns, out var usedMap) && usedMap.TryGetValue(refName, out var qualifiedUsed))
-                    return qualifiedUsed;
-
-            return refName;
+            return result;
         }
 
         public List<Stmt> ParseProgram()
@@ -576,13 +413,13 @@ namespace fire.Parsing
             // (Name zuerst, Typ optional dahinter), statt wie eine C#-
             // Parameterdeklaration (Typ zuerst).
             string varName = Expect(TokenType.Identifier, "Erwarte Bezeichner in catch(...)").Lexeme;
-            string? typeName = null;
+            TypeRef? typeRef = null;
             if (Match(TokenType.Colon))
-                typeName = ParseDottedName("Typname nach ':' in catch(...)");
+                typeRef = new TypeRef(ParseDottedName("Typname nach ':' in catch(...)"), null, 0, Namespaces: CurrentNamespaces());
 
             Expect(TokenType.RParen, "Erwarte ')' nach catch-Parametern");
             var body = ParseBlock();
-            return new CatchClause(line, typeName, varName, body);
+            return new CatchClause(line, typeRef, varName, body);
         }
 
         private Stmt ParseTry()
@@ -720,15 +557,16 @@ namespace fire.Parsing
         private TypeRef ParseTypeRef()
         {
             string baseName = ParseTypeAnnotationName();
+            var namespaces = CurrentNamespaces();
 
             if (baseName != "lambda" && Check(TokenType.Identifier) && Peek().Lexeme == "lambda")
             {
                 Advance(); // 'lambda' konsumieren - 'baseName' war in Wahrheit der Rückgabetyp
-                return new TypeRef("lambda", null, 0, ParseLambdaSignature(returnTypeName: baseName));
+                return new TypeRef("lambda", null, 0, ParseLambdaSignature(returnTypeName: baseName), namespaces);
             }
 
             if (baseName == "lambda")
-                return new TypeRef("lambda", null, 0, ParseLambdaSignature(returnTypeName: null));
+                return new TypeRef("lambda", null, 0, ParseLambdaSignature(returnTypeName: null), namespaces);
 
             // 'byte' ist reines Sugar für 'int[8]' (siehe SPEC 8.10) - eine
             // explizite Bitbreite DANACH wäre widersprüchlich/redundant und
@@ -740,7 +578,7 @@ namespace fire.Parsing
                     throw Error("'byte' hat bereits eine feste Breite von 8 Bit - kein zusätzliches '[...]' danach", Peek());
                 int bytePointerDepth = 0;
                 while (Match(TokenType.Star)) bytePointerDepth++;
-                return new TypeRef("int", 8, bytePointerDepth);
+                return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces);
             }
 
             int? width = null;
@@ -754,7 +592,7 @@ namespace fire.Parsing
             int pointerDepth = 0;
             while (Match(TokenType.Star)) pointerDepth++;
 
-            return new TypeRef(baseName, width, pointerDepth);
+            return new TypeRef(baseName, width, pointerDepth, Namespaces: namespaces);
         }
 
         /// <summary>Optionale `&lt;Param1,...,ParamN&gt;`-Parameterliste nach
@@ -943,16 +781,11 @@ namespace fire.Parsing
                 return new NoShadowDirective(line);
             }
 
-            if (Check(TokenType.Identifier) && Peek().Lexeme == "using")
-            {
-                Advance();
-                string ns = ParseDottedName("Namespace-Namen nach '#using'");
-                ExpectStatementTerminator();
-                _activeUsings.Add(ns);
-                return new NoOpStmt(line);
-            }
-
-            throw Error($"Unbekannte Präprozessor-Direktive '#{Peek().Lexeme}' (bekannt: '#extern \"libName\"', '#noshadow', '#using Name')", Peek());
+            // '#using' ist ab jetzt reine Preprocessor-Angelegenheit (siehe
+            // Preprocessing.Preprocessor.ProcessInner/ProcessedSource) - eine
+            // '#using'-Zeile wird dort schon erkannt und aus dem Text entfernt,
+            // der Parser sieht sie nie mehr. Kein Fall dafür hier mehr nötig.
+            throw Error($"Unbekannte Präprozessor-Direktive '#{Peek().Lexeme}' (bekannt: '#extern \"libName\"', '#noshadow')", Peek());
         }
 
         private Stmt ParseUnsafeStmt()
@@ -1298,7 +1131,7 @@ namespace fire.Parsing
             Expect(TokenType.Identifier, "Erwarte 'threads' oder 'terminate' nach 'catch'");
             Expect(TokenType.LParen, "Erwarte '(' nach 'catch threads'");
 
-            string? typeName = null;
+            TypeRef? typeRef = null;
             string? varName = null;
             if (!Check(TokenType.RParen))
             {
@@ -1306,12 +1139,13 @@ namespace fire.Parsing
                 // (wie ein normaler Methodenparameter), NICHT wie
                 // 'catch (varName : TypeName)' beim normalen catch - die vom
                 // Nutzer vorgegebene Syntax für dieses neue Konstrukt.
-                typeName = Expect(TokenType.Identifier, "Erwarte Typnamen in 'catch threads(...)'").Lexeme;
+                string typeName = Expect(TokenType.Identifier, "Erwarte Typnamen in 'catch threads(...)'").Lexeme;
+                typeRef = new TypeRef(typeName, null, 0, Namespaces: CurrentNamespaces());
                 varName = Expect(TokenType.Identifier, "Erwarte Parametername in 'catch threads(...)'").Lexeme;
             }
             Expect(TokenType.RParen, "Erwarte ')' nach 'catch threads(...)'");
             var threadsBody = ParseBlock();
-            return new CatchThreadsDecl(line, typeName, varName, threadsBody);
+            return new CatchThreadsDecl(line, typeRef, varName, threadsBody);
         }
 
         // -----------------------------------------------------------
@@ -1353,12 +1187,16 @@ namespace fire.Parsing
             // Resolver (der Parser kennt die Klassen-/Interface-Tabelle noch
             // nicht). `class Foo : Bar, IBaz, IQux` oder in beliebiger
             // Reihenfolge, solange höchstens ein Name eine echte Klasse ist.
-            var baseNames = new List<string>();
+            // Jeder Name trägt (wie jeder TypeRef) den HIER, beim Parsen des
+            // Klassenkopfs aktuellen Namespace-Kontext (SPEC "Namespaces").
+            var namespaces = CurrentNamespaces();
+            var baseRefs = new List<TypeRef>();
             if (Match(TokenType.Colon))
             {
                 do
                 {
-                    baseNames.Add(Expect(TokenType.Identifier, "Erwarte Basisklassen-/Interface-Namen").Lexeme);
+                    string baseName = Expect(TokenType.Identifier, "Erwarte Basisklassen-/Interface-Namen").Lexeme;
+                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces));
                 } while (Match(TokenType.Comma));
             }
 
@@ -1373,7 +1211,7 @@ namespace fire.Parsing
                 members.AddRange(ParseClassMember());
             Expect(TokenType.RBrace, "Erwarte '}' am Ende der Klasse");
 
-            return new ClassDecl(line, name, baseNames, members, typeParams, IsActor: isActor);
+            return new ClassDecl(line, QualifyDeclName(name), baseRefs, members, typeParams, IsActor: isActor);
         }
 
         /// <summary>`&lt;T1, T2, ...&gt;` direkt nach einem Klassen-/Methodennamen -
@@ -1510,6 +1348,7 @@ namespace fire.Parsing
         {
             Expect(TokenType.Extends, "Erwarte 'extends'");
             string targetName = Expect(TokenType.Identifier, "Erwarte Namen der zu erweiternden Klasse").Lexeme;
+            var targetRef = new TypeRef(targetName, null, 0, Namespaces: CurrentNamespaces());
             Expect(TokenType.LBrace, "Erwarte '{' nach 'class extends " + targetName + "'");
 
             var members = new List<Stmt>();
@@ -1517,16 +1356,20 @@ namespace fire.Parsing
                 members.AddRange(ParseClassMember());
             Expect(TokenType.RBrace, "Erwarte '}' am Ende der Erweiterung");
 
-            return new ClassExtensionDecl(line, targetName, members);
+            return new ClassExtensionDecl(line, targetRef, members);
         }
 
         /// <summary>`namespace Name { Mitglieder... }` bzw. `namespace A.B { ... }`
         /// - siehe Ast.NamespaceDecl-Doku. Mitglieder werden mit dem normalen
         /// ParseStatement() geparst (Klassen/Interfaces/Enums, auch
-        /// verschachtelte weitere `namespace`-Blöcke) - die eigentliche
-        /// Namens-Umschreibung passiert NICHT hier, sondern erst später,
-        /// gesammelt über das GESAMTE Programm hinweg (siehe
-        /// FlattenNamespaces).</summary>
+        /// verschachtelte weitere `namespace`-Blöcke), WÄHREND `_currentNamespace`
+        /// auf diesen (ggf. verschachtelten) Namespace zeigt - jede Deklaration/
+        /// jeder TypeRef darin qualifiziert/verknüpft sich dadurch schon beim
+        /// Parsen selbst korrekt (siehe QualifyDeclName/CurrentNamespaces).
+        /// Der alte Namespace-Name wird beim Verlassen des Blocks IMMER
+        /// zurückgeschrieben (auch wenn er `null` war), damit verschachtelte
+        /// UND aufeinanderfolgende `namespace`-Blöcke sich nicht gegenseitig
+        /// beeinflussen.</summary>
         private Stmt ParseNamespaceDecl()
         {
             int line = Peek().Line;
@@ -1534,10 +1377,15 @@ namespace fire.Parsing
             string name = ParseDottedName("Namespace-Namen");
             Expect(TokenType.LBrace, "Erwarte '{' nach Namespace-Namen");
 
+            string? savedNamespace = _currentNamespace;
+            _currentNamespace = _currentNamespace == null ? name : _currentNamespace + "." + name;
+
             var members = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
                 members.Add(ParseStatement());
             Expect(TokenType.RBrace, "Erwarte '}' am Ende des Namespace");
+
+            _currentNamespace = savedNamespace;
 
             return new NamespaceDecl(line, name, members);
         }
@@ -1578,7 +1426,7 @@ namespace fire.Parsing
             }
             Expect(TokenType.RBrace, "Erwarte '}' am Ende des Interface");
 
-            return new InterfaceDecl(line, name, methods);
+            return new InterfaceDecl(line, QualifyDeclName(name), methods);
         }
 
         /// <summary>`enum Name { A, B = 5, C }` - siehe Ast.EnumDecl-Doku für die
@@ -1608,7 +1456,7 @@ namespace fire.Parsing
             }
 
             Expect(TokenType.RBrace, "Erwarte '}' nach Enum-Mitgliedern");
-            return new EnumDecl(line, name, members);
+            return new EnumDecl(line, QualifyDeclName(name), members);
         }
 
         /// <summary>`Type Name { get { ... } set { ... } }` - siehe
@@ -2081,7 +1929,7 @@ namespace fire.Parsing
                     else if (Match(TokenType.Of))
                     {
                         string typeName = ParseTypeAnnotationName();
-                        left = new IsOfExpr(line, left, typeName);
+                        left = new IsOfExpr(line, left, new TypeRef(typeName, null, 0, Namespaces: CurrentNamespaces()));
                     }
                     else if (Match(TokenType.From))
                     {
@@ -2461,7 +2309,7 @@ namespace fire.Parsing
                         }
 
                         string elementTypeName = ParseTypeAnnotationName();
-                        var elementType = new TypeRef(elementTypeName, null, 0);
+                        var elementType = new TypeRef(elementTypeName, null, 0, Namespaces: CurrentNamespaces());
                         var sizeExprs = ParseArrayRanks();
                         if (sizeExprs.Count == 0)
                             throw Error("Erwarte '[' nach Array-Elementtyp bei 'new'", Peek());
@@ -2476,7 +2324,7 @@ namespace fire.Parsing
                     // '<name, name>'-Grammatik wie bei der Deklaration).
                     var typeArgs = ParseOptionalTypeParamNames();
                     var args = ParseArgList();
-                    return new NewExpr(tok.Line, className, args, typeArgs);
+                    return new NewExpr(tok.Line, new TypeRef(className, null, 0, Namespaces: CurrentNamespaces()), args, typeArgs);
                 }
 
                 case TokenType.Throw:
