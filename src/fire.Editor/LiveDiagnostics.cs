@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using fire.Bytecode;
+using fire.Compiler;
 using fire.Parsing;
 using fire.Resolving;
 
@@ -56,7 +57,7 @@ namespace fire.Editor
                     processed.Add(Preprocessor.Process(s, System.IO.Directory.GetCurrentDirectory(), alreadyIncluded));
                 var program = Parser.ParseMultiple(processed);
                 var resolveResult = Resolver.Resolve(program, natives.Names);
-                Compiler.Compile(program, resolveResult, natives);
+                Compiler.Compiler.Compile(program, resolveResult, natives);
             }
             catch (ParseException ex)
             {

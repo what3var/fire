@@ -6,7 +6,7 @@ using fire.Ast;
 using fire.Lexing;
 using fire.Values;
 
-namespace fire.Parsing
+namespace fire.Compiler
 {
     public sealed class ParseException : Exception
     {

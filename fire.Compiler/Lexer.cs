@@ -1,9 +1,10 @@
+using fire.Lexing;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 
-namespace fire.Lexing
+namespace fire.Compiler
 {
     public sealed class LexException : Exception
     {

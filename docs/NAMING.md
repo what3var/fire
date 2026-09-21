@@ -1,4 +1,4 @@
 fire: Die Sprache
-forge: Die IDE
+forge: Der Compiler
 ember: Der Package Manager (gibt es noch nicht)
-spark: Das Device-Framework
+spark: IDE & Device-Framework

@@ -2,9 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using fire.Ast;
+using fire.Resolving;
 using fire.Values;
 
-namespace fire.Resolving
+namespace fire.Compiler
 {
     public sealed class ResolverException : Exception
     {

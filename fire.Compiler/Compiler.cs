@@ -2,11 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using fire.Ast;
+using fire.Bytecode;
 using fire.Lexing;
 using fire.Resolving;
 using fire.Values;
 
-namespace fire.Bytecode
+namespace fire.Compiler
 {
     /// <summary>Ergebnis eines Compiler-Laufs: der Top-Level-Chunk plus die
     /// kompilierten Klassen (Name -> RuntimeClass), die die VM für `new`/
@@ -20,17 +21,7 @@ namespace fire.Bytecode
         public required IReadOnlyDictionary<string, ExternSignature> ExternSignatures { get; init; }
     }
 
-    /// <summary>Die Signatur einer `extern`-Deklaration, wie sie für
-    /// dynamisches Linking gebraucht wird (siehe VM.CallExtern) - LibName ist
-    /// null, wenn keine `#extern "libName"`-Direktive vor der Deklaration
-    /// stand (dann bleibt nur manuelle Host-Registrierung über
-    /// Bytecode.ExternRegistry möglich).</summary>
-    public sealed class ExternSignature
-    {
-        public required string? LibName { get; init; }
-        public required IReadOnlyList<TypeRef?> ParamTypes { get; init; }
-        public required TypeRef? ReturnType { get; init; }
-    }
+    
 
     /// <summary>
     /// Übersetzt den AST (nach Resolver-Lauf) in einen Chunk. Deckt aktuell ab:

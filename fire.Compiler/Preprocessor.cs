@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 using fire.Lexing;
 using fire.Values;
 
-namespace fire.Parsing
+namespace fire.Compiler
 {
     /// <summary>Kontext, den eine Präprozessor-Direktiven-Implementierung
     /// bei ihrem Aufruf bekommt (siehe DirectiveHandler/DirectiveRegistry) -

@@ -1,4 +1,5 @@
 using fire.Bytecode;
+using fire.Compiler;
 using fire.Parsing;
 using fire.Resolving;
 using fire.Runtime;

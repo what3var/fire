@@ -61,7 +61,7 @@ namespace fire.Runtime
         /// docs/THREADING_DESIGN.md Abschnitt 3) - Grundlage für `sync`/
         /// `sync flat`, die ja wissen müssen, wohin zurückgeschrieben wird.
         /// Null für ein Objekt, das keine Kopie ist (der Normalfall).</summary>
-        public ObjectInstance? SyncOrigin { get; internal set; }
+        public ObjectInstance? SyncOrigin { get; set; }
 
         /// <summary>Gesetzt (bei `new`, siehe VM.NewObject), wenn diese
         /// Instanz von einer `actor`-Deklaration stammt (docs/
@@ -73,7 +73,7 @@ namespace fire.Runtime
         /// unabhängig davon, von welchem Thread aus der Aufruf kommt (auch
         /// vom "Heimat"-Thread des Actors selbst, siehe THREADING_DESIGN.md
         /// für die bewusste Vereinfachung dieser Ausbaustufe).</summary>
-        public ActorMailbox? Mailbox { get; internal set; }
+        public ActorMailbox? Mailbox { get; set; }
 
         public ObjectInstance(ClassDecl classDef, IOwner initialOwner, RuntimeClass? rtClass = null)
         {

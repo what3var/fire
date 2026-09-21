@@ -2,10 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using fire.Ast;
+using fire.Bytecode;
 using fire.Runtime;
 using fire.Values;
 
-namespace fire.Bytecode
+namespace fire.Runtime
 {
     /// <summary>Ein Eintrag im Aufruf-Stack: alles, was beim RETURN
     /// wiederhergestellt werden muss, um beim Aufrufer genau dort weiterzumachen,

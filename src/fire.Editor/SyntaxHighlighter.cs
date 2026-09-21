@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using fire.Compiler;
 using fire.Lexing;
 
 namespace fire.Editor

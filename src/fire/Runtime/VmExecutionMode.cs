@@ -1,4 +1,4 @@
-namespace fire.Bytecode
+namespace fire.Runtime
 {
     /// <summary>
     /// Steuert, wie viel Laufzeit-Overhead die VM sich leistet - zwei Stufen

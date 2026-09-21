@@ -48,6 +48,27 @@ namespace fire.Terminal.Bridge
             natives.RegisterGroup(WindowPrefix, BuildWindowFunctions(windows));
         }
 
+        public static void RegisterStubs(
+                    NativeRegistry natives)
+        {
+            natives.RegisterGroup(FramebufferPrefix, BuildFramebufferFunctionStubs());
+            natives.RegisterGroup(ConsolePrefix, BuildConsoleFunctionStubs());
+            natives.RegisterGroup(WindowPrefix, BuildWindowFunctionStubs());
+        }
+
+        private static Dictionary<string, NativeFunction> BuildFramebufferFunctionStubs()
+        {
+            return new Dictionary<string, NativeFunction>
+            {
+                ["Create"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Destroy"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Width"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Height"] = args => Value.MakeUndefined() /*STUB*/,
+                ["ReadByte"] = args => Value.MakeUndefined() /*STUB*/,
+                ["WriteByte"] = args => Value.MakeUndefined() /*STUB*/,
+            };
+        }
+
         private static Dictionary<string, NativeFunction> BuildFramebufferFunctions(FramebufferManager mgr)
         {
             return new Dictionary<string, NativeFunction>
@@ -66,6 +87,21 @@ namespace fire.Terminal.Bridge
                     mgr.WriteByte((int)args[0].AsInt(), (int)args[1].AsInt(), (byte)args[2].AsInt());
                     return Value.MakeUndefined();
                 },
+            };
+        }
+
+        private static Dictionary<string, NativeFunction> BuildConsoleFunctionStubs()
+        {
+            return new Dictionary<string, NativeFunction>
+            {
+                ["Create"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Destroy"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Print"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Locate"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Clear"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetColor"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetPixel"] = args => Value.MakeUndefined() /*STUB*/,
+                ["GetPixel"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 
@@ -119,6 +155,16 @@ namespace fire.Terminal.Bridge
                 },
                 ["Destroy"] = args => Value.MakeBool(mgr.DestroyWindow((int)args[0].AsInt())),
                 ["Tick"] = args => Value.MakeBool(mgr.Tick((int)args[0].AsInt())),
+            };
+        }
+
+        private static Dictionary<string, NativeFunction> BuildWindowFunctionStubs()
+        {
+            return new Dictionary<string, NativeFunction>
+            {
+                ["Create"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Destroy"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Tick"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 

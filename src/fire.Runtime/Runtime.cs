@@ -23,18 +23,18 @@ namespace fire.Runtime
             _executionMode = executionMode;
         }
 
-        public void Execute(string[] sourceCodes)
-        {
-            var vm = RuntimeSession.Build(sourceCodes, _executionMode, args =>
-            {
-                if (args.Length > 0)
-                {
-                    Console.WriteLine(args[0].AsString());
-                }
-                return Value.MakeUndefined();
-            });
+        //public void Execute(string[] sourceCodes)
+        //{
+        //    var vm = RuntimeSession.Build(sourceCodes, _executionMode, args =>
+        //    {
+        //        if (args.Length > 0)
+        //        {
+        //            Console.WriteLine(args[0].AsString());
+        //        }
+        //        return Value.MakeUndefined();
+        //    });
  
-            vm.VirtualMachine.Run();
-        }
+        //    vm.VirtualMachine.Run();
+        //}
     }
 }

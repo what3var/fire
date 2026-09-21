@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using fire.Bytecode;
+using fire.Runtime;
 
 namespace fire.Editor
 {
