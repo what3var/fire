@@ -68,7 +68,7 @@ if (foo is under globalList) {
 
 try {
     throw new InvalidUnitException("geht nicht")
-} catch (e : InvalidUnitException) {
+} catch (InvalidUnitException e) {
     e.resume(0)
 } catch (e) {
     // catch-all
@@ -410,7 +410,7 @@ Console.WriteLine();
 Console.WriteLine("=== Typsystem-Test: ungültige Bitbreite (muss fehlschlagen) ===");
 try
 {
-    var program = Parser.Parse("var x : int[17] = 1");
+    var program = Parser.Parse("int[17] x = 1");
     Resolver.Resolve(program);
     Console.WriteLine("FEHLER: hätte ResolverException werfen müssen");
 }
@@ -661,7 +661,7 @@ class MyError {
 var result = 0
 try {
     throw new MyError("boom")
-} catch (e : MyError) {
+} catch (MyError e) {
     print(e.message)
     result = 1
 } finally {
@@ -702,7 +702,7 @@ try {
     } finally {
         print(1)
     }
-} catch (e : ErrB) {
+} catch (ErrB e) {
     print(e.message)
 }
 """;
@@ -892,7 +892,7 @@ var doWork = func () => {
 var r = 0
 try {
     r = doWork()
-} catch (e : MyError) {
+} catch (MyError e) {
     print("gefangen: " + e.message)
     e.resume(42)
     print("SOLLTE NIE LAUFEN")
@@ -934,7 +934,7 @@ var doWork = func () => {
 
 try {
     doWork()
-} catch (e : MyError) {
+} catch (MyError e) {
     print("gefangen ohne resume: " + e.message)
 }
 print("weiter nach try/catch")
@@ -1098,7 +1098,7 @@ var arr = [1, 2, 3]
 try {
     print(arr[10])
     print("SOLLTE NIE LAUFEN")
-} catch (e : IndexOutOfBoundsException) {
+} catch (IndexOutOfBoundsException e) {
     print("gefangen: " + e.message)
     print(e.index)
     print(e.length)
@@ -1113,7 +1113,7 @@ try {
     // erst bei Bedarf) - erst ein Index jenseits DIESER physischen Kapazität
     // (nicht nur jenseits von .Add()-Count) triggert den Bounds-Check.
     list[20] = 99
-} catch (e : IndexOutOfBoundsException) {
+} catch (IndexOutOfBoundsException e) {
     print("auch ueber List[] gefangen: " + e.index)
 }
 """;
@@ -4458,7 +4458,7 @@ string modeTestScript = """
 
     try {
         print(arr[10])
-    } catch (e : IndexOutOfBoundsException) {
+    } catch (IndexOutOfBoundsException e) {
         print("Skript-seitig gefangen: " + e.message)
     }
     """;
@@ -4525,14 +4525,14 @@ string accessTestScript = """
     try {
         print(b.secret)
         print("FEHLER: haette AccessDeniedException werfen sollen")
-    } catch (e : AccessDeniedException) {
+    } catch (AccessDeniedException e) {
         print("Erwartet gefangen (privates Feld von aussen): " + e.message)
     }
 
     try {
         new Locked()
         print("FEHLER: haette AccessDeniedException werfen sollen")
-    } catch (e : AccessDeniedException) {
+    } catch (AccessDeniedException e) {
         print("Erwartet gefangen (privater Konstruktor von aussen): " + e.message)
     }
     """;

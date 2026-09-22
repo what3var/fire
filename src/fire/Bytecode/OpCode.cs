@@ -101,6 +101,10 @@ namespace fire.Bytecode
         ClearPendingResume, //                       : pop excValue; verwirft eine nie fortgesetzte eingefrorene Wurfstelle sauber
 
         CheckLambdaSignature, // u8 expectedParamCount : prüft Peek() ist Lambda mit genau dieser Parameterzahl, wirft sonst (siehe VM)
+        CheckUnit,            // u16 constIdx (erwartete Einheit als String) : prüft Peek().Unit == Unit.Parse(erwartet) exakt
+                              //   (Values.Unit.Equals - Dimension UND Skalierung, "mm" != "m"), wirft sonst UnitMismatchException
+                              //   (siehe VM.ThrowUnitMismatch) - konsumiert NICHT (wie CheckLambdaSignature), Aufrufer poppt bei
+                              //   Bedarf selbst (siehe Compiler.EmitLambdaParamChecks/CompileAssign/VarDeclStmt-Kompilierung)
 
         Fire, // u16 functionProtoIdx, u16 globalSlotCount, u8 takingCount, u8 hasWith : spawnt einen echten Thread (siehe Runtime.FireRuntime) mit Read-only-Globals-Snapshot, takingCount gepoppten taking-Werten und optional einem with-Wert
         Sync, // u8 flags (bit0=isTry, bit1=isFlat) : pop target; ruft SyncEngine.Sync/SyncFlat auf; push true/false/undefined

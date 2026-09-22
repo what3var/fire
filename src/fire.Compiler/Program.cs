@@ -51,7 +51,7 @@ string testScript = """
     try {
         var badFb = new Framebuffer(0, 0)
         print("FEHLER: haette werfen sollen")
-    } catch (e : HandleUnavailableException) {
+    } catch (HandleUnavailableException e) {
         print("Erwarteter Fehler gefangen: " + e.message)
     }
     """;

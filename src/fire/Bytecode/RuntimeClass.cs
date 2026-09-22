@@ -45,6 +45,28 @@ namespace fire.Bytecode
         /// (siehe FindFieldAccess).</summary>
         public Dictionary<string, AccessModifier> OwnFieldAccess { get; } = new();
 
+        /// <summary>Geforderte Einheit (SPEC "Einheiten-Deklarationen") jedes
+        /// in DIESER Klasse selbst deklarierten Feldes mit explizitem `:
+        /// einheit` (nicht geerbter) - siehe FindFieldRequiredUnit für die
+        /// Basisklassen-Kette. Vom Compiler direkt befüllt (siehe
+        /// CompileClassBody), analog zu OwnFieldAccess. Fehlt ein Eintrag,
+        /// hat das Feld KEINE feste Einheit (jeder Wert ist zulässig, wie
+        /// bisher).</summary>
+        public Dictionary<string, string> OwnFieldRequiredUnit { get; } = new();
+
+        /// <summary>Wie FindFieldAccess, aber für die geforderte Einheit -
+        /// sucht über die Basisklassen-Kette (eigene Klasse zuerst) nach der
+        /// Klasse, die `name` tatsächlich SELBST mit einer Einheit deklariert.
+        /// `null`, wenn keine Klasse in der Kette für dieses Feld eine feste
+        /// Einheit vorschreibt.</summary>
+        public string? FindFieldRequiredUnit(string name)
+        {
+            for (var rc = this; rc != null; rc = rc.Base)
+                if (rc.OwnFieldRequiredUnit.TryGetValue(name, out var unit))
+                    return unit;
+            return null;
+        }
+
         /// <summary>Wie FindMethod, aber für Felder: sucht über die
         /// Basisklassen-Kette (eigene Klasse zuerst) nach der Klasse, die
         /// `name` tatsächlich SELBST deklariert, samt ihrem

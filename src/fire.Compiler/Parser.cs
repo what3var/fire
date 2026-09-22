@@ -129,7 +129,7 @@ namespace fire.Compiler
         /// eigentliche Hauptskript zuletzt - die Reihenfolge selbst hat für
         /// die Klassenauflösung keine Bedeutung, nur zur Übersicht).
         ///
-        /// JEDE Typ-Referenz (TypeRef, `new X()`, `is of X`, `catch (e : X)`,
+        /// JEDE Typ-Referenz (TypeRef, `new X()`, `is of X`, `catch (X e)`,
         /// Basisklassen, `class extends X`) trägt ihren eigenen Namespace-
         /// Kontext direkt an sich selbst, gesetzt GENAU dann, wenn sie
         /// geparst wird (siehe CurrentNamespaces) - Resolver/Compiler
@@ -408,14 +408,26 @@ namespace fire.Compiler
             Expect(TokenType.Catch, "Erwarte 'catch'");
             Expect(TokenType.LParen, "Erwarte '(' nach 'catch'");
 
-            // `catch (varName : TypeName)` bzw. ungetypt `catch (varName)` -
-            // bewusst dieselbe Reihenfolge wie bei `var varName : TypeName`
-            // (Name zuerst, Typ optional dahinter), statt wie eine C#-
-            // Parameterdeklaration (Typ zuerst).
-            string varName = Expect(TokenType.Identifier, "Erwarte Bezeichner in catch(...)").Lexeme;
+            // `catch (TypeName varName)` bzw. ungetypt `catch (varName)` -
+            // SEIT SPEC "Einheiten-Deklarationen" dieselbe Reihenfolge wie
+            // überall sonst (Typ/`var` zuerst, Name danach), NICHT mehr die
+            // alte "Name zuerst, Typ per ':' danach"-Schreibweise (die genau
+            // die Mehrdeutigkeit war, die der ':' jetzt überall einheitlich
+            // nur noch für Einheiten löst).
+            //
+            // Eigene, kleine Heuristik statt der geteilten
+            // NextLooksLikeTypeThenName() (die für Felder/Parameter reicht):
+            // die schaut nur EIN Token voraus (Identifier-dann-Identifier),
+            // ein punktierter Typname wie 'Geometry.MyException e' hat an
+            // der Stelle aber einen '.' statt direkt des zweiten Bezeichners
+            // - würde dort also fälschlich als "ungetypt" durchgehen.
             TypeRef? typeRef = null;
-            if (Match(TokenType.Colon))
-                typeRef = new TypeRef(ParseDottedName("Typname nach ':' in catch(...)"), null, 0, Namespaces: CurrentNamespaces());
+            bool looksTyped = TypeKeywords.Contains(Peek().Type)
+                || (Check(TokenType.Identifier) && (PeekAt(1).Type == TokenType.Identifier || PeekAt(1).Type == TokenType.Dot));
+            if (looksTyped)
+                typeRef = new TypeRef(ParseDottedName("Typname in catch(...)"), null, 0, Namespaces: CurrentNamespaces());
+
+            string varName = Expect(TokenType.Identifier, "Erwarte Bezeichner in catch(...)").Lexeme;
 
             Expect(TokenType.RParen, "Erwarte ')' nach catch-Parametern");
             var body = ParseBlock();
@@ -484,9 +496,17 @@ namespace fire.Compiler
             // Bitbreiten-Klammer hinter 'int' zu lesen (Kollision, siehe 'new').
             var arrayRanks = ParseArrayRanks();
 
+            // Der ':' nach dem Namen legt IMMER nur eine EINHEIT fest, NIE
+            // einen Typ (SPEC "Einheiten-Deklarationen") - `var a : mm` heißt
+            // "Typ wie gewöhnlich aus dem Initialisierer hergeleitet, Einheit
+            // ist FEST mm", nicht "Typ ist mm". Der eigentliche Typ bleibt bei
+            // `var` also weiterhin `null` (Inferenz durch den Resolver), außer
+            // eine Einheit ist angegeben - dann trägt ein TypeRef mit
+            // TypeRef.InferredMarker als BaseName NUR die Einheit (siehe
+            // TypeRef.IsInferred-Doku).
             TypeRef? type = null;
             if (Match(TokenType.Colon))
-                type = ParseTypeRef();
+                type = new TypeRef(TypeRef.InferredMarker, null, 0, Unit: ParseUnitName());
 
             Expr? initializer = null;
             if (Match(TokenType.Assign))
@@ -495,17 +515,38 @@ namespace fire.Compiler
             return new VarDeclStmt(line, name, type, arrayRanks, initializer, isReadonly);
         }
 
-        /// <summary>"Nackte" Deklaration ohne `var` (C-artig): `Type name[ranks] [= init]`.
-        /// Semantisch identisch zu `var name : Type`, nur andere Oberflächen-
-        /// syntax - wird als dasselbe VarDeclStmt repräsentiert. Nur erreichbar,
-        /// wenn NextLooksLikeTypeThenName() bereits bestätigt hat, dass hier
-        /// wirklich ein Typ folgt (und nicht z.B. ein Ausdrucks-Statement).</summary>
+        /// <summary>Liest eine Einheit nach ':' (SPEC "Einheiten-Deklarationen") -
+        /// bewusst NUR ein einzelner Bezeichner (z.B. "mm"), NIE ein voller
+        /// TypeRef (keine Bitbreite, kein Pointer, kein Namespace-Pfad) - genau
+        /// das war die vorherige Unklarheit: der ':' wurde bisher über
+        /// ParseTypeRef() aufgelöst, konnte also (fälschlich) wie eine
+        /// zweite, alternative Art der TYP-Angabe aussehen. Die Einheit selbst
+        /// wird hier NICHT gegen eine bekannte Liste geprüft (Values.Unit.Parse
+        /// akzeptiert jeden Bezeichner als atomare, frei erfundene Einheit,
+        /// siehe dortige Doku) - eine etwaige Prüfung "ist mm wirklich schon
+        /// bekannt" wäre ohnehin gegenstandslos.</summary>
+        private string ParseUnitName() => Expect(TokenType.Identifier, "Erwarte Einheitennamen nach ':'").Lexeme;
+
+        /// <summary>"Nackte" Deklaration ohne `var` (C-artig): `Type name[ranks]
+        /// [: einheit] [= init]`. Semantisch identisch zu `var name : Type`
+        /// (bis auf die zusätzliche, optionale Einheit), nur andere
+        /// Oberflächensyntax - wird als dasselbe VarDeclStmt repräsentiert. Nur
+        /// erreichbar, wenn NextLooksLikeTypeThenName() bereits bestätigt hat,
+        /// dass hier wirklich ein Typ folgt (und nicht z.B. ein Ausdrucks-
+        /// Statement).</summary>
         private Stmt ParseBareTypedDecl(bool isReadonly = false)
         {
             int line = Peek().Line;
             var type = ParseTypeRef();
             string name = Expect(TokenType.Identifier, "Erwarte Bezeichner").Lexeme;
             var arrayRanks = ParseArrayRanks();
+
+            // Wie bei ParseVarDeclCore: ':' legt IMMER nur eine Einheit fest
+            // (SPEC "Einheiten-Deklarationen") - hier ist der Typ (anders als
+            // bei `var`) schon explizit da, `int a : mm` hat also BEIDES
+            // gleichzeitig: einen festen Typ UND eine feste Einheit.
+            if (Match(TokenType.Colon))
+                type = type with { Unit = ParseUnitName() };
 
             Expr? initializer = null;
             if (Match(TokenType.Assign))
@@ -650,6 +691,32 @@ namespace fire.Compiler
             return Check(TokenType.Identifier) && PeekAt(1).Type == TokenType.Identifier;
         }
 
+        /// <summary>Wie NextLooksLikeTypeThenName(), erkennt zusätzlich einen
+        /// VOLLQUALIFIZIERTEN (punktierten) Typnamen wie 'Geometry.Circle
+        /// circle' - dort folgt auf den ersten Bezeichner ein '.', nicht
+        /// direkt der zweite Bezeichner, die einfache Heuristik oben würde
+        /// das fälschlich als "ungetypt" lesen (dieselbe Lücke, die vorher
+        /// schon bei 'catch (Typ varName)' aufgefallen war, siehe
+        /// ParseCatchClause).
+        ///
+        /// NUR für Kontexte sicher, in denen IMMER eine Deklaration/ein
+        /// Rückgabetyp folgt (Feld, Parameter, extern-/Methoden-Rückgabetyp -
+        /// siehe Aufrufstellen) - bewusst NICHT für die Top-Level-Anweisungs-
+        /// Weiche (ParseStatement/ParseBareTypedDecl-Dispatch): dort könnte
+        /// 'Namespace.Funktion()' genauso gut ein eigenständiger
+        /// Ausdrucks-Aufruf sein ('Namespace.Funktion' gefolgt von '(' statt
+        /// einem Bezeichner) - das ließe sich mit einem simplen
+        /// 2-Token-Vorausblick nicht zuverlässig von einer echten
+        /// Deklaration unterscheiden, ohne weiter vorauszuschauen (oder
+        /// notfalls zurückzusetzen). In einem GARANTIERTEN Deklarations-
+        /// Kontext gibt es diese Mehrdeutigkeit dagegen nicht.</summary>
+        private bool NextLooksLikeQualifiedTypeThenName()
+        {
+            if (TypeKeywords.Contains(Peek().Type)) return true;
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "lambda") return true;
+            return Check(TokenType.Identifier) && (PeekAt(1).Type == TokenType.Identifier || PeekAt(1).Type == TokenType.Dot);
+        }
+
         private Stmt ParseIf()
         {
             int line = Peek().Line;
@@ -742,7 +809,7 @@ namespace fire.Compiler
             Expect(TokenType.Extern, "Erwarte 'extern'");
 
             TypeRef? returnType = null;
-            if (NextLooksLikeTypeThenName())
+            if (NextLooksLikeQualifiedTypeThenName())
                 returnType = ParseTypeRef();
 
             string name = Expect(TokenType.Identifier, "Erwarte Funktionsnamen nach 'extern'").Lexeme;
@@ -1135,10 +1202,9 @@ namespace fire.Compiler
             string? varName = null;
             if (!Check(TokenType.RParen))
             {
-                // 'catch threads(ExceptionType e)' - bewusst Typ-dann-Name
-                // (wie ein normaler Methodenparameter), NICHT wie
-                // 'catch (varName : TypeName)' beim normalen catch - die vom
-                // Nutzer vorgegebene Syntax für dieses neue Konstrukt.
+                // 'catch threads(ExceptionType e)' - Typ-dann-Name, wie ein
+                // normaler Methodenparameter (und inzwischen auch wie beim
+                // normalen 'catch (TypeName varName)' - siehe ParseCatchClause).
                 string typeName = Expect(TokenType.Identifier, "Erwarte Typnamen in 'catch threads(...)'").Lexeme;
                 typeRef = new TypeRef(typeName, null, 0, Namespaces: CurrentNamespaces());
                 varName = Expect(TokenType.Identifier, "Erwarte Parametername in 'catch threads(...)'").Lexeme;
@@ -1417,7 +1483,7 @@ namespace fire.Compiler
             {
                 int mLine = Peek().Line;
                 TypeRef? returnType = null;
-                if (NextLooksLikeTypeThenName())
+                if (NextLooksLikeQualifiedTypeThenName())
                     returnType = ParseTypeRef();
                 string methodName = Expect(TokenType.Identifier, "Erwarte Methodennamen").Lexeme;
                 var parms = ParseParamList();
@@ -1596,9 +1662,19 @@ namespace fire.Compiler
 
             bool isReadonly = Match(TokenType.Readonly);
 
+            // SPEC "Einheiten-Deklarationen": `var` ist wie bei lokalen
+            // Variablen/Parametern gültig - `var` allein (Typ + evtl. Einheit
+            // aus Initialisierer/':' hergeleitet) ODER ein expliziter Typ.
             TypeRef? type = null;
-            if (NextLooksLikeTypeThenName())
+            if (Check(TokenType.Var))
+            {
+                Advance();
+                type = new TypeRef(TypeRef.InferredMarker, null, 0, Namespaces: CurrentNamespaces());
+            }
+            else if (NextLooksLikeQualifiedTypeThenName())
+            {
                 type = ParseTypeRef();
+            }
 
             string name = Expect(TokenType.Identifier, "Erwarte Feld- oder Methodennamen").Lexeme;
 
@@ -1635,6 +1711,18 @@ namespace fire.Compiler
             }
 
             var arrayRanks = ParseArrayRanks();
+
+            // Wie bei var-/Parameter-Deklarationen: ':' legt IMMER nur eine
+            // Einheit fest, nie einen Typ (SPEC "Einheiten-Deklarationen").
+            // Wie bei Parametern: fehlt ein expliziter Typ/`var` davor, aber
+            // eine Einheit steht da, gilt das implizit wie `var`.
+            if (Match(TokenType.Colon))
+            {
+                string unitName = ParseUnitName();
+                type = type != null
+                    ? type with { Unit = unitName }
+                    : new TypeRef(TypeRef.InferredMarker, null, 0, Namespaces: CurrentNamespaces(), Unit: unitName);
+            }
 
             Expr? initializer = null;
             if (Match(TokenType.Assign))
@@ -1750,24 +1838,39 @@ namespace fire.Compiler
         /// `Name [: Typ]` (var-artige Reihenfolge) - jeweils optional gefolgt
         /// von `= Standardwert`. Welche Reihenfolge vorliegt, entscheidet
         /// NextLooksLikeTypeThenName() genau wie bei Variablen-Deklarationen.</summary>
+        /// <summary>Ein Parameter: `[Typ|var] name[ranks] [: einheit] [= default]`
+        /// (SPEC "Einheiten-Deklarationen") - dieselbe feste Reihenfolge wie bei
+        /// var-/Feld-Deklarationen, KEINE alternative "Name zuerst, Typ per ':'
+        /// danach"-Schreibweise mehr (die es vorher gab - genau die
+        /// Mehrdeutigkeit, die der ':' jetzt einheitlich NUR noch als Einheit
+        /// löst). Weder `var` noch ein Typ ist Pflicht (ein Parameter ohne
+        /// beides bleibt wie bisher ungetypt) - IST aber eine Einheit ohne
+        /// vorangestelltes `var`/Typ angegeben (`func f(a:mm)`), wird das
+        /// implizit wie `var a:mm` behandelt (Typ aus dem Argument beim Aufruf
+        /// übernommen, Einheit fest mm).</summary>
         private LambdaParam ParseOneParam()
         {
             TypeRef? type = null;
-            string pname;
-
-            if (NextLooksLikeTypeThenName())
+            if (Check(TokenType.Var))
+            {
+                Advance();
+                type = new TypeRef(TypeRef.InferredMarker, null, 0, Namespaces: CurrentNamespaces());
+            }
+            else if (NextLooksLikeQualifiedTypeThenName())
             {
                 type = ParseTypeRef();
-                pname = Expect(TokenType.Identifier, "Erwarte Parameternamen").Lexeme;
-            }
-            else
-            {
-                pname = Expect(TokenType.Identifier, "Erwarte Parameternamen").Lexeme;
-                if (Match(TokenType.Colon))
-                    type = ParseTypeRef();
             }
 
+            string pname = Expect(TokenType.Identifier, "Erwarte Parameternamen").Lexeme;
             var arrayRanks = ParseArrayRanks();
+
+            if (Match(TokenType.Colon))
+            {
+                string unitName = ParseUnitName();
+                type = type != null
+                    ? type with { Unit = unitName }
+                    : new TypeRef(TypeRef.InferredMarker, null, 0, Namespaces: CurrentNamespaces(), Unit: unitName);
+            }
 
             Expr? defaultValue = null;
             if (Match(TokenType.Assign))

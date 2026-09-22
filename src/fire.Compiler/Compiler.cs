@@ -269,6 +269,16 @@ namespace fire.Compiler
                     case FieldDecl fd:
                         rc.Fields.Add((fd.Name, CompileFieldInitProto(rc, fd.Type, fd.Initializer)));
                         rc.OwnFieldAccess[fd.Name] = fd.Access;
+                        // SPEC "Einheiten-Deklarationen": geprüft wird das
+                        // NICHT hier beim Initialisieren (siehe
+                        // CompileFieldInitProto - unverändert), sondern
+                        // direkt in der VM bei JEDEM SetField-Aufruf (siehe
+                        // VM.OpCode.SetField) - Feldzuweisungen sind (anders
+                        // als lokale/globale Variablen) grundsätzlich
+                        // dynamisch aufgelöst, die VM kennt zur Laufzeit die
+                        // tatsächliche Klasse des Zielobjekts, der Compiler
+                        // an dieser Stelle nicht.
+                        if (fd.Type?.Unit != null) rc.OwnFieldRequiredUnit[fd.Name] = fd.Type.Unit;
                         break;
 
                     case MethodDecl md:
@@ -375,6 +385,37 @@ namespace fire.Compiler
                 inner._chunk.EmitByte((byte)sig.ParamTypeNames.Count);
                 inner._chunk.EmitOp(OpCode.Pop);
             }
+
+            // SPEC "Einheiten-Deklarationen": ein Parameter mit explizitem
+            // `: einheit` (siehe TypeRef.Unit) verlangt beim tatsächlichen
+            // Aufruf GENAU diese Einheit im übergebenen Wert - dieselbe
+            // LoadLocal+Prüfen+Pop-Technik wie oben für die Lambda-Signatur,
+            // nur mit CheckUnit statt CheckLambdaSignature (siehe
+            // EmitCheckUnitIfNeeded).
+            for (int i = 0; i < parms.Count; i++)
+            {
+                string? unit = parms[i].Type?.Unit;
+                if (unit == null) continue;
+                inner._chunk.EmitOp(OpCode.LoadLocal);
+                inner._chunk.EmitU16(0);
+                inner._chunk.EmitU16((ushort)i);
+                EmitCheckUnitIfNeeded(inner, unit);
+                inner._chunk.EmitOp(OpCode.Pop);
+            }
+        }
+
+        /// <summary>Emittiert (falls `unit` != null) einen CheckUnit-Opcode für
+        /// den Wert, der GERADE OBEN auf dem Stack liegt (SPEC "Einheiten-
+        /// Deklarationen") - prüft (in der VM), ob dessen Einheit exakt
+        /// `unit` entspricht, wirft sonst eine `UnitMismatchException`
+        /// (siehe VM.ThrowUnitMismatch). Peekt nur (siehe OpCode.CheckUnit-
+        /// Doku) - der Aufrufer entscheidet selbst, ob/wann er den Wert
+        /// danach noch braucht oder poppt.</summary>
+        private static void EmitCheckUnitIfNeeded(Compiler target, string? unit)
+        {
+            if (unit == null) return;
+            target._chunk.EmitOp(OpCode.CheckUnit);
+            target._chunk.EmitU16(target._chunk.AddConstant(Value.MakeString(unit)));
         }
 
         /// <summary>`fire { ... }`/`fire taking X { ... }` (siehe Ast.FireStmt-
@@ -611,6 +652,16 @@ namespace fire.Compiler
                         CompileArrayAlloc(vd.ArrayRanks, 0);
                     else
                         EmitLoadConst(Value.MakeUndefined());
+
+                    // SPEC "Einheiten-Deklarationen": `var a : mm = ...`/
+                    // `int a : mm = ...` - der Wert, der GERADE initial in
+                    // den Slot geschrieben wird, muss die geforderte Einheit
+                    // schon tragen (KEINE automatische Koersion, siehe
+                    // Resolver-Antwort/SPEC - bewusst dieselbe Prüfung wie
+                    // bei jeder SPÄTEREN Zuweisung an denselben Slot, siehe
+                    // CompileAssign, sonst könnte man die Prüfung durch eine
+                    // "unpassende" Erstzuweisung umgehen).
+                    EmitCheckUnitIfNeeded(this, vd.Type?.Unit);
 
                     _chunk.EmitOp(OpCode.DeclareLocal);
                     break;
@@ -1502,11 +1553,18 @@ namespace fire.Compiler
             switch (_refs[id])
             {
                 case ResolvedRef.Local local:
+                    // SPEC "Einheiten-Deklarationen": JEDE Zuweisung an einen
+                    // Slot mit geforderter Einheit (nicht nur die erste, siehe
+                    // VarDeclStmt-Kompilierung) - sonst könnte man die
+                    // Anfangsprüfung einfach durch eine spätere, "falsche"
+                    // Zuweisung umgehen.
+                    EmitCheckUnitIfNeeded(this, local.RequiredUnit);
                     _chunk.EmitOp(OpCode.StoreLocal);
                     _chunk.EmitU16(local.Depth);
                     _chunk.EmitU16(local.Slot);
                     break;
                 case ResolvedRef.Global global:
+                    EmitCheckUnitIfNeeded(this, global.RequiredUnit);
                     _chunk.EmitOp(OpCode.StoreGlobal);
                     _chunk.EmitU16(global.Slot);
                     break;
@@ -1604,11 +1662,17 @@ namespace fire.Compiler
                 switch (refKind)
                 {
                     case ResolvedRef.Local local:
+                        // SPEC "Einheiten-Deklarationen" - dieselbe Prüfung wie
+                        // bei jeder normalen Zuweisung (siehe CompileAssign) -
+                        // `++`/`--` ist ja auch nur eine (kompakter geschriebene)
+                        // Zuweisung.
+                        EmitCheckUnitIfNeeded(this, local.RequiredUnit);
                         _chunk.EmitOp(OpCode.StoreLocal);
                         _chunk.EmitU16(local.Depth);
                         _chunk.EmitU16(local.Slot);
                         break;
                     case ResolvedRef.Global global:
+                        EmitCheckUnitIfNeeded(this, global.RequiredUnit);
                         _chunk.EmitOp(OpCode.StoreGlobal);
                         _chunk.EmitU16(global.Slot);
                         break;

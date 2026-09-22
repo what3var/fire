@@ -10,7 +10,7 @@
 </PropertyGroup>
 	
   <ItemGroup>
-    <ProjectReference Include="..\src\fire.Runtime\fire.Runtime.csproj" />
+    <ProjectReference Include="..\fire.Runtime\fire.Runtime.csproj" />
   </ItemGroup>
 
 </Project>

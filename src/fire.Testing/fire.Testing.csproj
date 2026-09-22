@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\fire.Compiler\fire.Compiler.csproj" />
-    <ProjectReference Include="..\src\fire.Runtime\fire.Runtime.csproj" />
+    <ProjectReference Include="..\fire.Runtime\fire.Runtime.csproj" />
   </ItemGroup>
 
 </Project>

@@ -9,12 +9,14 @@ namespace fire.Resolving
     {
         /// <summary>Lokale Variable. Depth = Anzahl Scope-Hops von der aktuellen
         /// Ausführungsposition nach oben (0 = aktueller Scope selbst). Slot = Index
-        /// innerhalb des dortigen Scopes.</summary>
-        public sealed record Local(int Depth, int Slot) : ResolvedRef;
+        /// innerhalb des dortigen Scopes. RequiredUnit: geforderte Einheit (SPEC
+        /// "Einheiten-Deklarationen"), wenn die Deklaration ein explizites
+        /// `: einheit` hatte - `null` sonst (jeder Wert zulässig, wie bisher).</summary>
+        public sealed record Local(int Depth, int Slot, string? RequiredUnit = null) : ResolvedRef;
 
         /// <summary>Globale Variable (Top-Level-Deklaration). Slot = Index im
-        /// globalen Scope.</summary>
-        public sealed record Global(int Slot) : ResolvedRef;
+        /// globalen Scope. RequiredUnit: wie bei Local.</summary>
+        public sealed record Global(int Slot, string? RequiredUnit = null) : ResolvedRef;
 
         /// <summary>Eine registrierte native Funktion (SPEC-fremd, reine Bytecode-
         /// Erweiterungsstelle, siehe Bytecode.NativeRegistry) - nur als direkter

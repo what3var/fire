@@ -1315,6 +1315,25 @@ namespace fire.Runtime
                                     "und von hier aus nicht zugreifbar.");
                                 break;
                             }
+
+                            // SPEC "Einheiten-Deklarationen" - Feldzugriff ist
+                            // grundsätzlich dynamisch (die tatsächliche Klasse
+                            // steht erst hier, zur Laufzeit, fest), deshalb
+                            // anders als bei lokalen/globalen Variablen KEINE
+                            // Compile-Zeit-Prüfung möglich (siehe Compiler.
+                            // CompileClassBody-Kommentar) - die Prüfung selbst
+                            // ist aber inhaltlich identisch zu OpCode.CheckUnit.
+                            string? requiredUnitName = obj.RtClass.FindFieldRequiredUnit(fieldName);
+                            if (requiredUnitName != null)
+                            {
+                                var requiredUnit = Values.Unit.Parse(requiredUnitName);
+                                var actualUnit = value.Unit ?? Values.Unit.Unitless;
+                                if (!actualUnit.Equals(requiredUnit))
+                                {
+                                    ThrowUnitMismatch(requiredUnitName, actualUnit);
+                                    break;
+                                }
+                            }
                         }
                         obj.SetFieldLocked(fieldName, value);
                         Push(value);
@@ -1370,6 +1389,29 @@ namespace fire.Runtime
                     var value = Pop();
                     if (_currentThis is not ObjectInstance oi)
                         throw new InvalidOperationException("SetFieldOnThis ohne gebundene ObjectInstance als 'this'.");
+
+                    // SPEC "Einheiten-Deklarationen" - dieselbe Prüfung wie in
+                    // SetField (siehe dort für die Begründung, warum das zur
+                    // Laufzeit statt zur Compile-Zeit passiert). Dieser Opcode
+                    // wird für die Feld-INITIALISIERER selbst benutzt (siehe
+                    // Compiler.CompileConstructorProto) - `int x : mm = 5`
+                    // würde ohne diese Prüfung hier den ersten, deklarierten
+                    // Wert komplett ungeprüft durchlassen.
+                    if (ExecutionMode != VmExecutionMode.Performance && oi.RtClass != null)
+                    {
+                        string? requiredUnitName = oi.RtClass.FindFieldRequiredUnit(fieldName);
+                        if (requiredUnitName != null)
+                        {
+                            var requiredUnit = Values.Unit.Parse(requiredUnitName);
+                            var actualUnit = value.Unit ?? Values.Unit.Unitless;
+                            if (!actualUnit.Equals(requiredUnit))
+                            {
+                                ThrowUnitMismatch(requiredUnitName, actualUnit);
+                                break;
+                            }
+                        }
+                    }
+
                     oi.SetFieldLocked(fieldName, value);
                     break;
                 }
@@ -1813,6 +1855,33 @@ namespace fire.Runtime
                         throw new InvalidOperationException(
                             $"Lambda-Signatur passt nicht: erwartet {expectedParamCount} Parameter, " +
                             $"das Lambda hat {lambdaVal.Proto.ParamCount}.");
+                    break;
+                }
+
+                case OpCode.CheckUnit:
+                {
+                    // Wie CheckLambdaSignature: prüft nur Peek() (NICHT Pop()),
+                    // der Wert wird direkt danach noch normal weiterverwendet
+                    // (siehe OpCode.CheckUnit-Doku/Compiler.EmitCheckUnitIfNeeded).
+                    // Anders als bei CheckLambdaSignature (roher C#-Fehler) wirft
+                    // ein Mismatch hier aber eine ECHTE, per try/catch fangbare
+                    // Skript-Exception (siehe ThrowUnitMismatch) - explizit vom
+                    // Nutzer per SPEC "Einheiten-Deklarationen" so gewünscht.
+                    // Im Performance-Modus übersprungen - wie jede andere
+                    // "zusätzliche Sicherheit statt Geschwindigkeit"-Prüfung in
+                    // dieser VM (Zugriffsmodifikatoren, Array-/Puffer-Bounds).
+                    string requiredUnitName = _currentChunk.Constants[ReadU16()].AsString();
+                    if (ExecutionMode != VmExecutionMode.Performance)
+                    {
+                        var checkedValue = Peek();
+                        var requiredUnit = Values.Unit.Parse(requiredUnitName);
+                        var actualUnit = checkedValue.Unit ?? Values.Unit.Unitless;
+                        if (!actualUnit.Equals(requiredUnit))
+                        {
+                            ThrowUnitMismatch(requiredUnitName, actualUnit);
+                            break;
+                        }
+                    }
                     break;
                 }
 
@@ -2670,6 +2739,24 @@ namespace fire.Runtime
         {
             var rc = ResolveClass("AccessDeniedException");
             var args = new[] { Value.MakeString(message) };
+            var instance = ConstructNested(rc, args);
+            ThrowException(Value.MakeClassRef(instance));
+        }
+
+        /// <summary>Baut eine `UnitMismatchException`-Instanz (Prelude) und
+        /// wirft sie ganz normal über ThrowException (SPEC "Einheiten-
+        /// Deklarationen") - macht eine Einheiten-Verletzung bei einer
+        /// Deklaration mit explizitem `: einheit` zu einer echten, per
+        /// `try`/`catch` fangbaren Skript-Exception. Aufgerufen aus
+        /// OpCode.CheckUnit (lokale/globale Variablen, Parameter) sowie
+        /// SetField/SetFieldOnThis (Felder, siehe dort für die Begründung,
+        /// warum das dort statt zur Compile-Zeit geprüft wird).</summary>
+        private void ThrowUnitMismatch(string requiredUnitName, Values.Unit actualUnit)
+        {
+            var rc = ResolveClass("UnitMismatchException");
+            string actualDescription = actualUnit.IsUnitless ? "(keine Einheit)" : actualUnit.ToString();
+            string msg = $"Erwartete Einheit '{requiredUnitName}', erhalten: {actualDescription}.";
+            var args = new[] { Value.MakeString(msg), Value.MakeString(requiredUnitName), Value.MakeString(actualDescription) };
             var instance = ConstructNested(rc, args);
             ThrowException(Value.MakeClassRef(instance));
         }

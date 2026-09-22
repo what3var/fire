@@ -449,6 +449,10 @@ namespace fire.Compiler
 
         private void ValidateTypeName(TypeRef tr, int line)
         {
+            // 'var' + nur Einheit (SPEC "Einheiten-Deklarationen") - kein
+            // echter Typname zu validieren, der Typ wird ja aus dem
+            // Initialisierer/Kontext hergeleitet (siehe TypeRef.IsInferred-Doku).
+            if (tr.IsInferred) return;
             if (PrimitiveTypeNames.Contains(tr.BaseName)) return;
             if (_currentTypeParamNames.ContainsKey(tr.BaseName)) return;
             if (!IsKnownClassName(ResolveTypeRef(tr)))
@@ -488,6 +492,11 @@ namespace fire.Compiler
             public readonly Dictionary<string, int> Slots = new();
             public readonly HashSet<string> ReadonlySlots = new();
 
+            /// <summary>Geforderte Einheit (SPEC "Einheiten-Deklarationen") je
+            /// Name in DIESEM Scope, wenn die Deklaration ein explizites
+            /// `: einheit` hatte - siehe Define/ResolveIdentifierRef.</summary>
+            public readonly Dictionary<string, string> RequiredUnits = new();
+
             public ResolverScope(ResolverScope? parent, bool isGlobal = false)
             {
                 Parent = parent;
@@ -498,12 +507,13 @@ namespace fire.Compiler
         private void PushScope() => _current = new ResolverScope(_current);
         private void PopScope() => _current = _current.Parent!;
 
-        private void Define(string name, int line, bool isReadonly = false)
+        private void Define(string name, int line, bool isReadonly = false, string? requiredUnit = null)
         {
             if (_current.Slots.ContainsKey(name))
                 throw new ResolverException($"'{name}' ist in diesem Scope bereits deklariert", line);
             _current.Slots[name] = _current.Slots.Count;
             if (isReadonly) _current.ReadonlySlots.Add(name);
+            if (requiredUnit != null) _current.RequiredUnits[name] = requiredUnit;
         }
 
         private ResolvedRef ResolveIdentifierRef(string name, int line)
@@ -513,9 +523,12 @@ namespace fire.Compiler
             while (scope != null)
             {
                 if (scope.Slots.TryGetValue(name, out int slot))
+                {
+                    scope.RequiredUnits.TryGetValue(name, out var requiredUnit);
                     return scope.IsGlobal
-                        ? new ResolvedRef.Global(slot)
-                        : new ResolvedRef.Local(depth, slot);
+                        ? new ResolvedRef.Global(slot, requiredUnit)
+                        : new ResolvedRef.Local(depth, slot, requiredUnit);
+                }
                 depth++;
                 scope = scope.Parent;
             }
@@ -598,7 +611,7 @@ namespace fire.Compiler
                         throw new ResolverException(
                             $"'{vd.Name}[{sizeLit.Value.AsInt()}]' erwartet {sizeLit.Value.AsInt()} Elemente, " +
                             $"der Array-Literal-Initializer hat aber {arrLit.Elements.Count}", vd.Line);
-                    Define(vd.Name, vd.Line, vd.IsReadonly);
+                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.Unit);
                     break;
 
                 case IfStmt ifs:
@@ -948,7 +961,7 @@ namespace fire.Compiler
             {
                 if (p.Type != null) ValidateTypeRef(p.Type, body.Line);
                 ResolveArrayRanks(p.ArrayRanks);
-                Define(p.Name, body.Line);
+                Define(p.Name, body.Line, requiredUnit: p.Type?.Unit);
             }
 
             if (baseArgs != null)
@@ -1404,7 +1417,7 @@ namespace fire.Compiler
             {
                 if (p.Type != null) ValidateTypeRef(p.Type, lambda.Line);
                 ResolveArrayRanks(p.ArrayRanks);
-                Define(p.Name, lambda.Line);
+                Define(p.Name, lambda.Line, requiredUnit: p.Type?.Unit);
             }
 
             int savedLoopDepth = _loopDepth;

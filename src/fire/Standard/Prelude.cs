@@ -43,6 +43,18 @@ namespace fire.Standard
                 }
             }
 
+            class UnitMismatchException : Exception {
+                string message
+                string expectedUnit
+                string actualUnit
+
+                construct(string message, string expectedUnit, string actualUnit) {
+                    this.message = message
+                    this.expectedUnit = expectedUnit
+                    this.actualUnit = actualUnit
+                }
+            }
+
             interface IEnumerator {
                 bool MoveNext()
                 class GetCurrent()

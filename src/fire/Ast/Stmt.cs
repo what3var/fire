@@ -146,12 +146,11 @@ namespace fire.Ast
     /// <summary>`catch threads(ExceptionType e) { ... }` / `catch threads() { ... }`
     /// (docs/THREADING_DESIGN.md Abschnitt 6.2) - GLOBALE, programmweite
     /// Registrierung (kein normaler try/catch-Handler!), nur an
-    /// Top-Level-Programmposition gültig (siehe Parser.ParseProgram). Anders
-    /// als beim normalen `catch (varName : TypeName)` bewusst in
+    /// Top-Level-Programmposition gültig (siehe Parser.ParseProgram).
     /// Typ-dann-Name-Reihenfolge (`ExceptionType e`, wie ein Methoden-
-    /// parameter) - das ist die vom Nutzer vorgegebene Syntax für dieses neue
-    /// Konstrukt, keine Notwendigkeit, exakt der alten Konvention zu
-    /// folgen. `TypeName`/`VarName` beide `null` bei `catch threads()`
+    /// parameter) - inzwischen dieselbe Reihenfolge wie beim normalen
+    /// `catch (TypeName varName)` (siehe Parser.ParseCatchClause).
+    /// `TypeName`/`VarName` beide `null` bei `catch threads()`
     /// (fängt alles, ohne die Exception an eine Variable zu binden).</summary>
     public sealed record CatchThreadsDecl(int Line, TypeRef? TypeRef, string? VarName, Stmt.BlockStmt Body) : Stmt(Line);
 

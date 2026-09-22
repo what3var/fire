@@ -32,8 +32,26 @@ namespace fire.Ast
     /// (`BaseName == "lambda"`) - `[RückgabeTyp] lambda[&lt;Param1,...,ParamN&gt;]`,
     /// siehe LambdaSignature-Doku und SPEC "Lambda-Typen mit Signatur".
     /// </summary>
-    public sealed record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null)
+    public sealed record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null)
     {
+        /// <summary>Sentinel für `BaseName`, wenn eine Deklaration `var`
+        /// zusammen mit einer EXPLIZITEN Einheit, aber OHNE expliziten Typ
+        /// nutzt (`var a : mm`) - der eigentliche Typ bleibt wie bei
+        /// gewöhnlichem `var` aus dem Initialisierer/Kontext hergeleitet,
+        /// NUR die Einheit ist hier schon fest vorgegeben (siehe SPEC
+        /// "Einheiten-Deklarationen"). Ein TypeRef mit diesem BaseName
+        /// trägt NIE eine eigene Bedeutung als Typname - jede Stelle, die
+        /// `TypeRef.BaseName` als echten Typnamen validieren/auflösen
+        /// würde (ValidateTypeName/ResolveTypeRef im Resolver, entsprechend
+        /// im Compiler), muss zuerst `IsInferred` prüfen und in dem Fall
+        /// NUR `Unit` validieren, nicht `BaseName`.</summary>
+        public const string InferredMarker = "var";
+
+        /// <summary>`true`, wenn dieser TypeRef NUR eine Einheit festlegt,
+        /// den eigentlichen Typ aber (wie normales `var`) aus dem Kontext
+        /// herleiten lässt (siehe InferredMarker-Doku).</summary>
+        public bool IsInferred => BaseName == InferredMarker;
+
         public bool IsPointer => PointerDepth > 0;
 
         /// <summary>Löst BaseName auf seinen tatsächlichen, vollqualifizierten
