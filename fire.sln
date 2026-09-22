@@ -16,9 +16,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Terminal.Bridge", "src
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Runtime", "src\fire.Runtime\fire.Runtime.csproj", "{84FE2CA5-E3AE-4D02-A62E-E8A09F3C32CA}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Compiler", "fire.Compiler\fire.Compiler.csproj", "{7373DFD4-76CE-4451-88F5-02C1913E4F96}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Compiler", "src\fire.Compiler\fire.Compiler.csproj", "{7373DFD4-76CE-4451-88F5-02C1913E4F96}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Testing", "fire.Testing\fire.Testing.csproj", "{603C1A1F-F7B4-439C-8D89-6BCC8A16E8C5}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Testing", "src\fire.Testing\fire.Testing.csproj", "{603C1A1F-F7B4-439C-8D89-6BCC8A16E8C5}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
