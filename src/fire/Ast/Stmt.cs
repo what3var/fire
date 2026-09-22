@@ -248,7 +248,8 @@ namespace fire.Ast
         IReadOnlyList<TypeRef>? BaseRefs,
         IReadOnlyList<Stmt> Members,
         IReadOnlyList<TypeParam>? TypeParams = null,
-        bool IsActor = false) : Stmt(Line);
+        bool IsActor = false,
+        int SourceIndex = 0) : Stmt(Line);
 
     // ---------------------------------------------------------------
     // Interfaces (SPEC 8.5): reine Methodensignaturen, keine Felder/Bodies.

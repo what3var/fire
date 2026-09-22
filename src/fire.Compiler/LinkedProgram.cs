@@ -12,11 +12,14 @@ namespace fire.Compiler
         public CompiledProgram Program { get; init; }
 
         public HashSet<string> NativeImports { get; init; }
+
+        public int FirstUserSource { get; init; }
     
-        public LinkedProgram(CompiledProgram program, HashSet<string> nativeImports)
+        public LinkedProgram(CompiledProgram program, HashSet<string> nativeImports, int firstUserSource)
         {
             Program = program;
             NativeImports = nativeImports;
+            FirstUserSource = firstUserSource;
         }
     }
 }

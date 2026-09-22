@@ -67,6 +67,18 @@ namespace fire.Compiler
         /// Baumdurchlauf danach zu brauchen).</summary>
         private string? _currentNamespace;
 
+        /// <summary>Index dieser Quelle in der `sources`-Liste, die an
+        /// ParseMultiple ging (0 = üblicherweise die Prelude) - EINMAL pro
+        /// Parser-Instanz gesetzt (siehe ParseMultiple, jede Quelle bekommt
+        /// ihre EIGENE, frische Parser-Instanz), ändert sich während des
+        /// Parsens NICHT mehr (anders als `_currentNamespace`). Landet direkt
+        /// in `Ast.ClassDecl.SourceIndex` - Grundlage für Compiler.
+        /// CurrentSourceIndex/Bytecode.Chunk.MarkLine: ein Debugger (siehe
+        /// Editor-Unterprojekt) braucht das, um bei mehreren Quelldateien zu
+        /// wissen, in WELCHER Datei eine gegebene Zeilennummer liegt - eine
+        /// nackte Zeile allein ist dann mehrdeutig.</summary>
+        private int _sourceIndex;
+
         /// <summary>Stack der synthetischen Zielvariablen-Namen aktiver
         /// `with`-Blöcke (innerster zuletzt) - siehe ParseWithStmt. Ein
         /// bloßes '.' am Anfang eines Ausdrucks (siehe ParsePrimary) bezieht
@@ -141,13 +153,20 @@ namespace fire.Compiler
         public static List<Stmt> ParseMultiple(IReadOnlyList<ProcessedSource> sources)
         {
             var combined = new List<Stmt>();
-            foreach (var src in sources)
+            //var byStmt = new Dictionary<Stmt, int>(ReferenceEqualityComparer.Instance);
+            for (int i = 0; i < sources.Count; i++)
             {
+                var src = sources[i];
                 var tokens = new Lexer(src.Source).Tokenize();
                 var parser = new Parser(tokens);
                 parser._usingNamespaces = src.Usings;
-                combined.AddRange(parser.ParseProgram());
+                parser._sourceIndex = i;
+                var stmts = parser.ParseProgram();
+                //foreach (var stmt in stmts)
+                //    byStmt[stmt] = i;
+                combined.AddRange(stmts);
             }
+            //sourceIndexByStmt = byStmt;
             return MergeClassExtensions(FlattenNamespaceWrappers(combined));
         }
 
@@ -1277,7 +1296,7 @@ namespace fire.Compiler
                 members.AddRange(ParseClassMember());
             Expect(TokenType.RBrace, "Erwarte '}' am Ende der Klasse");
 
-            return new ClassDecl(line, QualifyDeclName(name), baseRefs, members, typeParams, IsActor: isActor);
+            return new ClassDecl(line, QualifyDeclName(name), baseRefs, members, typeParams, IsActor: isActor, SourceIndex: _sourceIndex);
         }
 
         /// <summary>`&lt;T1, T2, ...&gt;` direkt nach einem Klassen-/Methodennamen -

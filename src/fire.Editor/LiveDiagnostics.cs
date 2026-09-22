@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
 using fire.Bytecode;
 using fire.Compiler;
 using fire.Parsing;
 using fire.Resolving;
+using fire.Runtime;
 
 namespace fire.Editor
 {
@@ -53,8 +56,17 @@ namespace fire.Editor
                 var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var sources = new[] { fire.Standard.Prelude.Source, source };
                 var processed = new List<ProcessedSource>();
+                // Dieselbe Registry wie beim ECHTEN Kompilieren (siehe
+                // RuntimeSession.Build/CreateProjectDirectiveRegistry) -
+                // sonst würde z.B. '#import "graphics"' hier fälschlich als
+                // unbekannte Präprozessor-Direktive unterkringelt, obwohl
+                // sie beim tatsächlichen Ausführen längst akzeptiert wird.
+                // `onImport: null` - die eigentliche WIRKUNG (Grafik-Bridge
+                // laden) ist für reine Diagnostik irrelevant, nur "ist das
+                // syntaktisch gültig" zählt hier.
+                var registry = RuntimeSession.CreateProjectDirectiveRegistry();
                 foreach (var s in sources)
-                    processed.Add(Preprocessor.Process(s, System.IO.Directory.GetCurrentDirectory(), alreadyIncluded));
+                    processed.Add(Preprocessor.Process(s, System.IO.Directory.GetCurrentDirectory(), alreadyIncluded, registry));
                 var program = Parser.ParseMultiple(processed);
                 var resolveResult = Resolver.Resolve(program, natives.Names);
                 Compiler.Compiler.Compile(program, resolveResult, natives);
@@ -95,6 +107,60 @@ namespace fire.Editor
             }
 
             return diagnostics;
+        }
+
+        private static readonly Regex UnknownClassOrType =
+            new(@"^(?:Unbekannte Klasse|Unbekannter Typ) '([^']+)'", RegexOptions.Compiled);
+
+        /// <summary>Wie Analyze(source), unterdrückt aber Diagnosen, die NUR
+        /// daher kommen, dass diese Analyse ausschließlich `source` (+
+        /// Prelude) kennt, nicht das GESAMTE Projekt (SPEC "Mehrere
+        /// Quelldateien") - eine gültige Referenz auf eine Klasse, die in
+        /// EINER DER `otherProjectFiles` definiert ist, würde sonst
+        /// fälschlich als "Unbekannte Klasse"/"Unbekannter Typ" gemeldet.
+        ///
+        /// Bewusst KEIN vollständiger, kombinierter Parser/Resolver/
+        /// Compiler-Lauf über das GANZE Projekt: ein Parse-/Resolve-Fehler
+        /// trägt keinen Quell-Index (anders als kompilierter Bytecode, siehe
+        /// Bytecode.Chunk.MarkLine) - ein Fehler in einer ANDEREN, gerade
+        /// kaputten Datei ließe sich dann nicht zuverlässig von einem
+        /// ECHTEN Fehler in `source` selbst unterscheiden, man würde also
+        /// riskieren, der falschen Datei einen roten Fehler unterzuschieben.
+        /// Stattdessen ein GEZIELTER, risikoarmer Nachtrag: Analyze(source)
+        /// läuft ganz normal (findet JEDEN echten Fehler in `source` selbst
+        /// zuverlässig), und nur für jede resultierende "Unbekannte Klasse/
+        /// Unbekannter Typ 'X'"-Diagnose wird geprüft, ob 'X' in EINER der
+        /// `otherProjectFiles` als Klasse definiert ist (per
+        /// ScriptSymbolIndex, demselben leichtgewichtigen Scanner wie für
+        /// Vervollständigung/Navigation) - falls ja, war die Diagnose falsch-
+        /// positiv (die Klasse ist projektweit ja tatsächlich bekannt) und
+        /// wird entfernt. Eine der `otherProjectFiles` mit einem gerade
+        /// eigenen Tippfehler bringt diese Prüfung nicht zum Absturz (wird
+        /// einfach übersprungen) - beeinflusst höchstens, ob EINE bestimmte
+        /// falsch-positive Diagnose noch übersehen bleibt, nie die
+        /// Zuverlässigkeit der echten Fehler in `source` selbst.</summary>
+        public static List<Diagnostic> AnalyzeInProject(string source, IReadOnlyList<string> otherProjectFiles)
+        {
+            var diagnostics = Analyze(source);
+            if (diagnostics.Count == 0 || otherProjectFiles.Count == 0) return diagnostics;
+
+            var knownElsewhere = new HashSet<string>();
+            foreach (var other in otherProjectFiles)
+            {
+                if (string.IsNullOrWhiteSpace(other)) continue;
+                ScriptSymbolIndex index;
+                try { index = ScriptSymbolIndex.Build(other); }
+                catch { continue; }
+                foreach (var name in index.Classes.Keys)
+                    knownElsewhere.Add(name);
+            }
+            if (knownElsewhere.Count == 0) return diagnostics;
+
+            return diagnostics.Where(d =>
+            {
+                var match = UnknownClassOrType.Match(d.Message);
+                return !(match.Success && knownElsewhere.Contains(match.Groups[1].Value));
+            }).ToList();
         }
     }
 }

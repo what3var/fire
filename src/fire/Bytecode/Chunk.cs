@@ -36,35 +36,50 @@ namespace fire.Bytecode
         // Zeilennummern-Tabelle: statt PRO Instruktion eine Zeile zu speichern
         // (viel Redundanz, aufeinanderfolgende Instruktionen gehören fast immer
         // zur selben Quelltextzeile), nur die STELLEN, an denen sich die Zeile
-        // ändert (Run-Length-artig) - (Byte-Offset im Code, Zeile). GetLine
-        // sucht die letzte Stelle mit Offset <= gefragtem Offset.
-        private readonly List<(int Offset, int Line)> _lineTable = new();
+        // ändert (Run-Length-artig) - (Byte-Offset im Code, Quell-Index, Zeile).
+        // GetLocation sucht die letzte Stelle mit Offset <= gefragtem Offset.
+        //
+        // Quell-Index (SourceIndex): Position der jeweiligen Quelle in der
+        // `sources`-Liste, die an Parser.ParseMultiple ging (0 = üblicherweise
+        // die Prelude) - siehe Ast.ClassDecl.SourceIndex/Compiler.
+        // CurrentSourceIndex. Nötig, seit ein Programm aus MEHREREN Dateien
+        // bestehen kann (SPEC "Mehrere Quelldateien"): eine nackte Zeilenzahl
+        // allein ist dann mehrdeutig (Zeile 5 in Datei A und Zeile 5 in
+        // Datei B sind unterschiedliche Stellen) - Werkzeuge wie der
+        // Step-Debugger im Editor-Unterprojekt brauchen BEIDES, um die
+        // richtige Datei/Zeile anzuzeigen und Haltepunkte korrekt zu treffen.
+        private readonly List<(int Offset, int SourceIndex, int Line)> _lineTable = new();
+        private int _lastMarkedSourceIndex = -1;
         private int _lastMarkedLine = -1;
 
         /// <summary>Vom Compiler aufgerufen, bevor die Instruktionen für ein
         /// neues Statement emittiert werden (siehe Compiler.CompileStmt) -
-        /// legt einen neuen Zeilentabellen-Eintrag an, aber NUR wenn sich die
-        /// Zeile gegenüber der zuletzt markierten tatsächlich geändert hat
-        /// (mehrere Instruktionen derselben Zeile teilen sich einen Eintrag).</summary>
-        public void MarkLine(int line)
+        /// legt einen neuen Zeilentabellen-Eintrag an, aber NUR wenn sich
+        /// Quelle+Zeile gegenüber der zuletzt markierten Stelle tatsächlich
+        /// geändert haben (mehrere Instruktionen derselben Stelle teilen sich
+        /// einen Eintrag).</summary>
+        public void MarkLine(int sourceIndex, int line)
         {
-            if (line == _lastMarkedLine) return;
-            _lineTable.Add((Code.Count, line));
+            if (sourceIndex == _lastMarkedSourceIndex && line == _lastMarkedLine) return;
+            _lineTable.Add((Code.Count, sourceIndex, line));
+            _lastMarkedSourceIndex = sourceIndex;
             _lastMarkedLine = line;
         }
 
-        /// <summary>Liefert die Quelltextzeile, zu der der Byte-Offset `ip`
-        /// gehört (0, wenn keine Zeileninformation vorhanden ist, z.B. für
-        /// programmatisch/ohne Compiler gebaute Chunks).</summary>
-        public int GetLine(int ip)
+        /// <summary>Liefert Quell-Index und Quelltextzeile, zu denen der
+        /// Byte-Offset `ip` gehört ((0, 0), wenn keine Zeileninformation
+        /// vorhanden ist, z.B. für programmatisch/ohne Compiler gebaute
+        /// Chunks).</summary>
+        public (int SourceIndex, int Line) GetLocation(int ip)
         {
-            int result = 0;
-            foreach (var (offset, line) in _lineTable)
+            int resultSource = 0, resultLine = 0;
+            foreach (var (offset, sourceIndex, line) in _lineTable)
             {
                 if (offset > ip) break;
-                result = line;
+                resultSource = sourceIndex;
+                resultLine = line;
             }
-            return result;
+            return (resultSource, resultLine);
         }
 
         // Debug-Namen für lokale Variablen: (Tiefe relativ zur jeweiligen

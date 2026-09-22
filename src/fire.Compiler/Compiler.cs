@@ -144,6 +144,25 @@ namespace fire.Compiler
         /// Fire-Blocks stehen.</summary>
         private readonly int _globalSlotCount;
 
+        /// <summary>Quell-Index (Position in der `sources`-Liste, die an
+        /// Parser.ParseMultiple ging) für TOP-LEVEL-Code (also AUSSERHALB
+        /// jeder Klasse, inkl. einer dort direkt definierten Lambda - siehe
+        /// CompileLambda) - innerhalb einer Klasse gilt stattdessen deren
+        /// EIGENER `Ast.ClassDecl.SourceIndex` (siehe CurrentSourceIndex).
+        /// Wird in der Top-Level-Schleife von Compile() VOR jeder Anweisung
+        /// aus `sourceIndexByStmt` neu gesetzt (analog zum früheren
+        /// `_topLevelUsings`-Muster) - wichtig, wenn MEHRERE der kombinierten
+        /// Quellen eigenen Top-Level-Code haben.</summary>
+        private int _topLevelSourceIndex;
+
+        /// <summary>Der für die AKTUELL kompilierte Stelle geltende Quell-Index
+        /// (SPEC "Mehrere Quelldateien") - innerhalb einer Klasse deren EIGENER
+        /// `Ast.ClassDecl.SourceIndex`, außerhalb jeder Klasse
+        /// `_topLevelSourceIndex` (siehe dort). An Chunk.MarkLine übergeben,
+        /// damit ein Debugger (siehe Editor-Unterprojekt) bei mehreren
+        /// Quelldateien weiß, in welcher Datei eine gegebene Zeile liegt.</summary>
+        private int CurrentSourceIndex => _enclosingClass?.Decl.SourceIndex ?? _topLevelSourceIndex;
+
         /// <summary>Alle bekannten (vollqualifizierten) Klassennamen - Grundlage
         /// für ResolveTypeRef (SPEC "Namespaces"). Nicht readonly: der
         /// Top-Level-Compiler bekommt sie erst MITTEN in CompileClasses
@@ -604,7 +623,7 @@ namespace fire.Compiler
             // Für den Step-Debugger im Editor-Unterprojekt (Bytecode.Chunk.
             // MarkLine) - markiert, an welcher Code-Position die aktuelle
             // Quelltextzeile beginnt. Rein additiv, keine Laufzeit-Wirkung.
-            _chunk.MarkLine(stmt.Line);
+            _chunk.MarkLine(CurrentSourceIndex, stmt.Line);
 
             switch (stmt)
             {

@@ -18,6 +18,7 @@ namespace fire.Compiler
             var natives = new NativeRegistry();
             var nativeImports = new HashSet<string>();
             var alreadyIncluded = new HashSet<string>();
+            var firstUserSource = 1;
 
             natives.Register("print", args => Value.MakeUndefined());
 
@@ -37,6 +38,7 @@ namespace fire.Compiler
                     {
                         case "graphics":
                             nativeImports.Add(NativeImports.Graphics);
+                            firstUserSource = 2;
                             return null;
                         default:
                             throw new Exception($"'{args[0].AsString()}' ist keine bekannte Erweiterung.");
@@ -68,7 +70,9 @@ namespace fire.Compiler
             var resolveResult = Resolver.Resolve(program, natives.Names);
             var compiled = Compiler.Compile(program, resolveResult, natives);
 
-            var linkedProgram = new LinkedProgram(compiled, nativeImports);
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource);
+
+            Packer.PackProgram(linkedProgram);
 
             return linkedProgram;
         }

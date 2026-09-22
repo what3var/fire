@@ -1,0 +1,24 @@
+<UserControl x:Class="fire.Editor.ScriptEditorControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <RichTextBox x:Name="Editor" FontFamily="Consolas" FontSize="14"
+                     AcceptsTab="True"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto"
+                     TextChanged="Editor_TextChanged"
+                     SelectionChanged="Editor_SelectionChanged"
+                     PreviewKeyDown="Editor_PreviewKeyDown"
+                     PreviewMouseLeftButtonDown="Editor_PreviewMouseLeftButtonDown"
+                     ToolTip="Strg+Klick auf eine Klasse/Methode springt zur Definition (auch über #include hinweg)"/>
+
+        <Popup x:Name="CompletionPopup" PlacementTarget="{Binding ElementName=Editor}"
+               Placement="RelativePoint" StaysOpen="False" AllowsTransparency="True">
+            <Border BorderBrush="#999999" BorderThickness="1" Background="White">
+                <ListBox x:Name="CompletionList" Width="280" MaxHeight="220"
+                         FontFamily="Consolas" FontSize="13"
+                         MouseDoubleClick="CompletionList_MouseDoubleClick"/>
+            </Border>
+        </Popup>
+    </Grid>
+</UserControl>

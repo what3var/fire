@@ -84,7 +84,7 @@ namespace fire.Editor
         /// selbst einen NEUEN, eigenen Hintergrund-Thread für die
         /// eigentliche Ausführung, läuft also nicht auf dem aufrufenden
         /// Thread).</summary>
-        public static DebugThreadContext ForFireThread(VM vm, string name, ISet<int> breakpointsSnapshot)
+        public static DebugThreadContext ForFireThread(VM vm, string name, ISet<(int SourceIndex, int Line)> breakpointsSnapshot)
         {
             var ctx = new DebugThreadContext(vm, name, isMain: false);
             ctx.RequestStep(MakeContinueStep(breakpointsSnapshot, ctx.ConsumePauseRequest));
@@ -233,18 +233,18 @@ namespace fire.Editor
         /// standardmäßig startet, als auch für einen expliziten "Weiter"-
         /// Knopfdruck auf einem BELIEBIGEN Thread (siehe DebugSession.
         /// Continue).</summary>
-        public static Func<VM, bool> MakeContinueStep(ISet<int> breakpoints, Func<bool> isPauseRequested) =>
+        public static Func<VM, bool> MakeContinueStep(ISet<(int SourceIndex, int Line)> breakpoints, Func<bool> isPauseRequested) =>
             vm =>
             {
-                int lastLine = vm.CurrentLine;
+                var lastLocation = vm.CurrentLocation;
                 while (vm.StepInstruction())
                 {
                     if (isPauseRequested()) return true;
-                    int line = vm.CurrentLine;
-                    if (line != lastLine)
+                    var location = vm.CurrentLocation;
+                    if (location != lastLocation)
                     {
-                        lastLine = line;
-                        if (breakpoints.Contains(line)) return true;
+                        lastLocation = location;
+                        if (breakpoints.Contains(location)) return true;
                     }
                 }
                 return false;

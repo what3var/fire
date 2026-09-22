@@ -547,12 +547,24 @@ namespace fire.Runtime
         private bool _steppingStarted;
 
         public bool IsHalted { get; private set; }
+        
+        /// <summary>Aktuelle Quell-Position (Quell-Index + Quelltextzeile) an der
+                                                  /// Ausführungsposition (per Chunk-Zeilentabelle, siehe Chunk.MarkLine) -
+                                                  /// (0, 0), wenn keine Information vorhanden ist (z.B. programmatisch
+                                                  /// gebaute Chunks ohne Compiler-Lauf). Grundlage für die Zeilen-
+                                                  /// Hervorhebung im Editor UND für die Step-/Haltepunkt-Logik unten -
+                                                  /// WICHTIG: seit ein Programm aus mehreren Dateien bestehen kann (SPEC
+                                                  /// "Mehrere Quelldateien") reicht der bloße Zeilenvergleich allein
+                                                  /// nicht mehr aus (Zeile 5 in Datei A und Zeile 5 in Datei B sind
+                                                  /// unterschiedliche Stellen) - IMMER beide Werte zusammen vergleichen.</summary>
+        public (int SourceIndex, int Line) CurrentLocation => _currentChunk.GetLocation(_ip);
 
-        /// <summary>Aktuelle Quelltextzeile an der Ausführungsposition (per
-        /// Chunk-Zeilentabelle, siehe Chunk.MarkLine) - 0, wenn keine
-        /// Information vorhanden ist (z.B. programmatisch gebaute Chunks ohne
-        /// Compiler-Lauf). Für die Zeilen-Hervorhebung im Editor.</summary>
-        public int CurrentLine => _currentChunk.GetLine(_ip);
+        /// <summary>Kurzform für `CurrentLocation.Line` - für Aufrufer, denen
+        /// (noch) nur EINE Datei bekannt ist (z.B. das alte Einzeldatei-
+        /// Editorfenster) und die deshalb den Quell-Index ignorieren können.</summary>
+        public int CurrentLine => CurrentLocation.Line;
+
+
 
         /// <summary>Führt GENAU eine Instruktion aus - Gegenstück zu Run()s
         /// Schleifenkörper, nur einzeln aufrufbar mit explizitem Halt-Status
