@@ -342,19 +342,19 @@ namespace fire.Compiler
             {
                 int breakLine = Advance().Line;
                 ExpectStatementTerminator();
-                return new BreakStmt(breakLine);
+                return new BreakStmt(_sourceIndex ,breakLine);
             }
             if (Check(TokenType.Continue))
             {
                 int continueLine = Advance().Line;
                 ExpectStatementTerminator();
-                return new ContinueStmt(continueLine);
+                return new ContinueStmt(_sourceIndex, continueLine);
             }
             if (Check(TokenType.Leave))
             {
                 int leaveLine = Advance().Line;
                 ExpectStatementTerminator();
-                return new LeaveStmt(leaveLine);
+                return new LeaveStmt(_sourceIndex, leaveLine);
             }
             if (Check(TokenType.Terminate)) return ParseTerminateStmt();
             if (Check(TokenType.Process)) return ParseProcessStmt();
@@ -362,7 +362,7 @@ namespace fire.Compiler
 
             var expr = ParseExpression();
             ExpectStatementTerminator();
-            return new ExprStmt(expr.Line, expr);
+            return new ExprStmt(_sourceIndex, expr.Line, expr);
         }
 
         /// <summary>
@@ -389,7 +389,7 @@ namespace fire.Compiler
             }
 
             Expect(TokenType.RBrace, "Erwarte '}' am Blockende");
-            return new Stmt.BlockStmt(line, statements);
+            return new Stmt.BlockStmt(_sourceIndex, line, statements);
         }
 
         /// <summary>Parst ein oder mehrere `catch`-Klauseln ohne vorangehendes `try`
@@ -417,8 +417,8 @@ namespace fire.Compiler
                 restStatements.Add(ParseStatement());
             }
 
-            var protectedBlock = new Stmt.BlockStmt(line, restStatements);
-            return new TryStmt(line, protectedBlock, catches, finallyBlock);
+            var protectedBlock = new Stmt.BlockStmt(_sourceIndex, line, restStatements);
+            return new TryStmt(_sourceIndex, line, protectedBlock, catches, finallyBlock);
         }
 
         private CatchClause ParseCatchClause()
@@ -450,7 +450,7 @@ namespace fire.Compiler
 
             Expect(TokenType.RParen, "Erwarte ')' nach catch-Parametern");
             var body = ParseBlock();
-            return new CatchClause(line, typeRef, varName, body);
+            return new CatchClause(_sourceIndex, line, typeRef, varName, body);
         }
 
         private Stmt ParseTry()
@@ -470,7 +470,7 @@ namespace fire.Compiler
             if (catches.Count == 0 && finallyBlock == null)
                 throw Error("'try' benötigt mindestens einen 'catch'-Block oder 'finally'", Peek());
 
-            return new TryStmt(line, tryBlock, catches, finallyBlock);
+            return new TryStmt(_sourceIndex, line, tryBlock, catches, finallyBlock);
         }
 
         private Stmt ParseVarDecl()
@@ -531,7 +531,7 @@ namespace fire.Compiler
             if (Match(TokenType.Assign))
                 initializer = ParseExpression();
 
-            return new VarDeclStmt(line, name, type, arrayRanks, initializer, isReadonly);
+            return new VarDeclStmt(_sourceIndex, line, name, type, arrayRanks, initializer, isReadonly);
         }
 
         /// <summary>Liest eine Einheit nach ':' (SPEC "Einheiten-Deklarationen") -
@@ -572,7 +572,7 @@ namespace fire.Compiler
                 initializer = ParseExpression();
 
             ExpectStatementTerminator();
-            return new VarDeclStmt(line, name, type, arrayRanks, initializer, isReadonly);
+            return new VarDeclStmt(_sourceIndex, line, name, type, arrayRanks, initializer, isReadonly);
         }
 
         /// <summary>Typname nach einem ':' – entweder eines der Basistyp-Keywords
@@ -747,7 +747,7 @@ namespace fire.Compiler
             Stmt? elseBranch = null;
             if (Match(TokenType.Else))
                 elseBranch = ParseStatement();
-            return new IfStmt(line, cond, thenBranch, elseBranch);
+            return new IfStmt(_sourceIndex, line, cond, thenBranch, elseBranch);
         }
 
         private Stmt ParseWhile()
@@ -758,7 +758,7 @@ namespace fire.Compiler
             var cond = ParseExpression();
             Expect(TokenType.RParen, "Erwarte ')' nach while-Bedingung");
             var body = ParseStatement();
-            return new WhileStmt(line, cond, body);
+            return new WhileStmt(_sourceIndex, line, cond, body);
         }
 
         private Stmt ParseFor()
@@ -769,7 +769,7 @@ namespace fire.Compiler
 
             Stmt? init = null;
             if (!Check(TokenType.Semicolon))
-                init = Check(TokenType.Var) ? ParseVarDeclCore(isReadonly: false) : new ExprStmt(Peek().Line, ParseExpression());
+                init = Check(TokenType.Var) ? ParseVarDeclCore(isReadonly: false) : new ExprStmt(_sourceIndex, Peek().Line, ParseExpression());
             Expect(TokenType.Semicolon, "Erwarte ';' nach for-Init");
 
             Expr? cond = null;
@@ -781,7 +781,7 @@ namespace fire.Compiler
             Expect(TokenType.RParen, "Erwarte ')' nach for-Klauseln");
 
             var body = ParseStatement();
-            return new ForStmt(line, init, cond, incr, body);
+            return new ForStmt(_sourceIndex, line, init, cond, incr, body);
         }
 
         private Stmt ParseForeach()
@@ -794,7 +794,7 @@ namespace fire.Compiler
             var iterable = ParseExpression();
             Expect(TokenType.RParen, "Erwarte ')' nach foreach-Klauseln");
             var body = ParseStatement();
-            return new ForeachStmt(line, varName, iterable, body);
+            return new ForeachStmt(_sourceIndex, line, varName, iterable, body);
         }
 
         private Stmt ParseReturn()
@@ -805,7 +805,7 @@ namespace fire.Compiler
             if (!Check(TokenType.Semicolon) && !Check(TokenType.RBrace) && !Check(TokenType.Eof))
                 value = ParseExpression();
             ExpectStatementTerminator();
-            return new ReturnStmt(line, value);
+            return new ReturnStmt(_sourceIndex, line, value);
         }
 
         private Stmt ParseThrowStmt()
@@ -814,7 +814,7 @@ namespace fire.Compiler
             Expect(TokenType.Throw, "Erwarte 'throw'");
             var value = ParseExpression();
             ExpectStatementTerminator();
-            return new ThrowStmt(line, value);
+            return new ThrowStmt(_sourceIndex, line, value);
         }
 
         /// <summary>`extern [ReturnType] Name(params)` - deklariert eine native
@@ -834,7 +834,7 @@ namespace fire.Compiler
             string name = Expect(TokenType.Identifier, "Erwarte Funktionsnamen nach 'extern'").Lexeme;
             var parms = ParseParamList();
             ExpectStatementTerminator();
-            return new ExternDecl(line, returnType, name, parms, _currentExternLib);
+            return new ExternDecl(_sourceIndex, line, returnType, name, parms, _currentExternLib);
         }
 
         /// <summary>Präprozessor-Direktiven, aktuell `#extern "libName"` und
@@ -857,14 +857,14 @@ namespace fire.Compiler
                 var libTok = Expect(TokenType.StringLiteral, "Erwarte Bibliotheksnamen (String) nach '#extern'");
                 _currentExternLib = (string)libTok.LiteralValue!;
                 ExpectStatementTerminator();
-                return new NoOpStmt(line);
+                return new NoOpStmt(_sourceIndex, line);
             }
 
             if (Check(TokenType.Identifier) && Peek().Lexeme == "noshadow")
             {
                 Advance();
                 ExpectStatementTerminator();
-                return new NoShadowDirective(line);
+                return new NoShadowDirective(_sourceIndex, line);
             }
 
             // '#using' ist ab jetzt reine Preprocessor-Angelegenheit (siehe
@@ -879,7 +879,7 @@ namespace fire.Compiler
             int line = Peek().Line;
             Expect(TokenType.Unsafe, "Erwarte 'unsafe'");
             var body = ParseBlock();
-            return new UnsafeStmt(line, body);
+            return new UnsafeStmt(_sourceIndex, line, body);
         }
 
         /// <summary>`with ausdruck { .Feld = x; .Methode() }` (BASIC-artig) -
@@ -910,7 +910,7 @@ namespace fire.Compiler
 
             var statements = new List<Stmt>
             {
-                new VarDeclStmt(line, tempName, null, Array.Empty<Expr?>(), target),
+                new VarDeclStmt(_sourceIndex, line, tempName, null, Array.Empty<Expr?>(), target),
             };
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
             {
@@ -928,7 +928,7 @@ namespace fire.Compiler
             // während der innere Body geparst wird, aber nicht mehr danach.
             _withVarStack.Pop();
 
-            return new Stmt.BlockStmt(line, statements);
+            return new Stmt.BlockStmt(_sourceIndex, line, statements);
         }
 
         /// <summary>`switch(ausdruck) { case OP wert: ... break; case default: ... }`
@@ -995,17 +995,17 @@ namespace fire.Compiler
             // If/Else-if-Kette von HINTEN nach VORNE aufbauen - 'case default'
             // (falls vorhanden) wird das innerste 'else', sonst bleibt es null
             // (keiner der Fälle trifft zu -> switch tut einfach nichts).
-            Stmt? chain = defaultBody != null ? new Stmt.BlockStmt(line, defaultBody) : null;
+            Stmt? chain = defaultBody != null ? new Stmt.BlockStmt(_sourceIndex, line, defaultBody) : null;
             for (int i = cases.Count - 1; i >= 0; i--)
-                chain = new IfStmt(line, cases[i].Condition, new Stmt.BlockStmt(line, cases[i].Body), chain);
+                chain = new IfStmt(_sourceIndex, line, cases[i].Condition, new Stmt.BlockStmt(_sourceIndex, line, cases[i].Body), chain);
 
             var outerStatements = new List<Stmt>
             {
-                new VarDeclStmt(line, tempName, null, Array.Empty<Expr?>(), subject),
+                new VarDeclStmt(_sourceIndex, line, tempName, null, Array.Empty<Expr?>(), subject),
             };
             if (chain != null) outerStatements.Add(chain);
 
-            return new Stmt.BlockStmt(line, outerStatements);
+            return new Stmt.BlockStmt(_sourceIndex, line, outerStatements);
         }
 
         /// <summary>Parst den Wertausdruck einer case-Bedingung mit
@@ -1076,7 +1076,7 @@ namespace fire.Compiler
 
             var (takingCaptures, withVarName, withSource) = ParseFireTakingWithClauses();
             var body = ParseBlock();
-            return new FireStmt(line, takingCaptures, withVarName, withSource, body);
+            return new FireStmt(_sourceIndex, line, takingCaptures, withVarName, withSource, body);
         }
 
         /// <summary>`taking X`/`with actorA`, in beliebiger Reihenfolge, `with`
@@ -1152,9 +1152,9 @@ namespace fire.Compiler
             allCaptures.AddRange(explicitTaking);
 
             var callExpr = new CallExpr(line, new MemberExpr(line, new IdentifierExpr(line, thisCaptureName), methodName), argRefs);
-            var body = new Stmt.BlockStmt(line, new List<Stmt> { new ExprStmt(line, callExpr) });
+            var body = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt> { new ExprStmt(_sourceIndex, line, callExpr) });
 
-            return new FireStmt(line, allCaptures, withVarName, withSource, body);
+            return new FireStmt(_sourceIndex, line, allCaptures, withVarName, withSource, body);
         }
 
         /// <summary>`terminate()` / `terminate(wert)` - siehe Ast.TerminateStmt-
@@ -1171,7 +1171,7 @@ namespace fire.Compiler
                 value = ParseExpression();
             Expect(TokenType.RParen, "Erwarte ')' nach terminate-Argument");
             ExpectStatementTerminator();
-            return new TerminateStmt(line, value);
+            return new TerminateStmt(_sourceIndex, line, value);
         }
 
         /// <summary>`process X` (blockierend, siehe Ast.ProcessStmt-Doku).
@@ -1183,7 +1183,7 @@ namespace fire.Compiler
             Expect(TokenType.Process, "Erwarte 'process'");
             var target = ParsePostfix();
             ExpectStatementTerminator();
-            return new ProcessStmt(line, target);
+            return new ProcessStmt(_sourceIndex, line, target);
         }
 
         /// <summary>`catch threads(ExceptionType e) { ... }` / `catch threads() { ... }`
@@ -1209,7 +1209,7 @@ namespace fire.Compiler
                     paramName = Expect(TokenType.Identifier, "Erwarte Parametername in 'catch terminate(...)'").Lexeme;
                 Expect(TokenType.RParen, "Erwarte ')' nach 'catch terminate(...)'");
                 var terminateBody = ParseBlock();
-                return new CatchTerminateDecl(line, paramName, terminateBody);
+                return new CatchTerminateDecl(_sourceIndex, line, paramName, terminateBody);
             }
 
             // 'threads' ist - wie 'get'/'set'/'value' bei Properties - ein rein
@@ -1230,7 +1230,7 @@ namespace fire.Compiler
             }
             Expect(TokenType.RParen, "Erwarte ')' nach 'catch threads(...)'");
             var threadsBody = ParseBlock();
-            return new CatchThreadsDecl(line, typeRef, varName, threadsBody);
+            return new CatchThreadsDecl(_sourceIndex, line, typeRef, varName, threadsBody);
         }
 
         // -----------------------------------------------------------
@@ -1296,7 +1296,7 @@ namespace fire.Compiler
                 members.AddRange(ParseClassMember());
             Expect(TokenType.RBrace, "Erwarte '}' am Ende der Klasse");
 
-            return new ClassDecl(line, QualifyDeclName(name), baseRefs, members, typeParams, IsActor: isActor, SourceIndex: _sourceIndex);
+            return new ClassDecl(_sourceIndex, line, QualifyDeclName(name), baseRefs, members, typeParams, IsActor: isActor);
         }
 
         /// <summary>`&lt;T1, T2, ...&gt;` direkt nach einem Klassen-/Methodennamen -
@@ -1441,7 +1441,7 @@ namespace fire.Compiler
                 members.AddRange(ParseClassMember());
             Expect(TokenType.RBrace, "Erwarte '}' am Ende der Erweiterung");
 
-            return new ClassExtensionDecl(line, targetRef, members);
+            return new ClassExtensionDecl(_sourceIndex, line, targetRef, members);
         }
 
         /// <summary>`namespace Name { Mitglieder... }` bzw. `namespace A.B { ... }`
@@ -1472,7 +1472,7 @@ namespace fire.Compiler
 
             _currentNamespace = savedNamespace;
 
-            return new NamespaceDecl(line, name, members);
+            return new NamespaceDecl(_sourceIndex, line, name, members);
         }
 
         /// <summary>Liest einen (möglicherweise mehrteiligen, per '.' getrennten)
@@ -1511,7 +1511,7 @@ namespace fire.Compiler
             }
             Expect(TokenType.RBrace, "Erwarte '}' am Ende des Interface");
 
-            return new InterfaceDecl(line, QualifyDeclName(name), methods);
+            return new InterfaceDecl(_sourceIndex, line, QualifyDeclName(name), methods);
         }
 
         /// <summary>`enum Name { A, B = 5, C }` - siehe Ast.EnumDecl-Doku für die
@@ -1541,7 +1541,7 @@ namespace fire.Compiler
             }
 
             Expect(TokenType.RBrace, "Erwarte '}' nach Enum-Mitgliedern");
-            return new EnumDecl(line, QualifyDeclName(name), members);
+            return new EnumDecl(_sourceIndex, line, QualifyDeclName(name), members);
         }
 
         /// <summary>`Type Name { get { ... } set { ... } }` - siehe
@@ -1631,24 +1631,24 @@ namespace fire.Compiler
                 // soll, niemals direkt von außen ('this._AutoName' bleibt
                 // INNERHALB der Klasse weiterhin normal erlaubt).
                 string backingName = "_Auto" + name;
-                result.Add(new FieldDecl(line, type, Array.Empty<Expr?>(), backingName, null, IsReadonly: false, Access: AccessModifier.Private));
+                result.Add(new FieldDecl(_sourceIndex, line, type, Array.Empty<Expr?>(), backingName, null, IsReadonly: false, Access: AccessModifier.Private));
 
                 if (getterIsAuto)
-                    getter = new Stmt.BlockStmt(line, new List<Stmt>
+                    getter = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt>
                     {
-                        new ReturnStmt(line, new MemberExpr(line, new ThisExpr(line), backingName)),
+                        new ReturnStmt(_sourceIndex, line, new MemberExpr(line, new ThisExpr(line), backingName)),
                     });
 
                 if (setterIsAuto)
-                    setter = new Stmt.BlockStmt(line, new List<Stmt>
+                    setter = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt>
                     {
-                        new ExprStmt(line, new AssignExpr(line,
+                        new ExprStmt(_sourceIndex, line, new AssignExpr(line,
                             new MemberExpr(line, new ThisExpr(line), backingName),
                             new IdentifierExpr(line, "value"))),
                     });
             }
 
-            result.Add(new PropertyDecl(line, type, name, getter, setter, access));
+            result.Add(new PropertyDecl(_sourceIndex, line, type, name, getter, setter, access));
             return result;
         }
 
@@ -1713,7 +1713,7 @@ namespace fire.Compiler
                 var parms = ParseParamList();
                 var methodTypeParams = ParseWhereClauses(methodTypeParamNames, line);
                 var body = ParseBlock();
-                return new List<Stmt> { new MethodDecl(line, type, name, parms, body,
+                return new List<Stmt> { new MethodDecl(_sourceIndex, line, type, name, parms, body,
                     methodTypeParamNames.Count > 0 ? methodTypeParams : null, access) };
             }
 
@@ -1747,7 +1747,7 @@ namespace fire.Compiler
             if (Match(TokenType.Assign))
                 initializer = ParseExpression();
             ExpectStatementTerminator();
-            return new List<Stmt> { new FieldDecl(line, type, arrayRanks, name, initializer, isReadonly, access) };
+            return new List<Stmt> { new FieldDecl(_sourceIndex, line, type, arrayRanks, name, initializer, isReadonly, access) };
         }
 
         /// <summary>`operator SYMBOL(params) { body }` - Operator-Überladung
@@ -1786,7 +1786,7 @@ namespace fire.Compiler
                 throw Error($"'operator{symbol}' braucht genau 1 Parameter (den rechten Operanden - 'this' ist der linke)", Peek());
 
             var body = ParseBlock();
-            return new MethodDecl(line, null, internalName, parms, body, null);
+            return new MethodDecl(_sourceIndex, line, null, internalName, parms, body, null);
         }
 
         /// <summary>Liest ein einzelnes, überladbares Operator-Symbol direkt
@@ -1839,7 +1839,7 @@ namespace fire.Compiler
             }
 
             var body = ParseBlock();
-            return new ConstructorDecl(line, parms, baseArgs, body, access);
+            return new ConstructorDecl(_sourceIndex, line, parms, baseArgs, body, access);
         }
 
         private Stmt ParseDestructor()
@@ -1849,7 +1849,7 @@ namespace fire.Compiler
             Expect(TokenType.LParen, "Erwarte '(' nach 'destruct'");
             Expect(TokenType.RParen, "'destruct' nimmt keine Parameter");
             var body = ParseBlock();
-            return new DestructorDecl(line, body);
+            return new DestructorDecl(_sourceIndex, line, body);
         }
 
         /// <summary>Ein einzelner Parameter, in beiden Schreibweisen (wie bei
@@ -2548,7 +2548,7 @@ namespace fire.Compiler
                 // Kurzform: `=> ausdruck` wird implizit zu `{ return ausdruck; }`.
                 var exprLine = Peek().Line;
                 var value = ParseExpression();
-                body = new Stmt.BlockStmt(exprLine, new List<Stmt> { new ReturnStmt(exprLine, value) });
+                body = new Stmt.BlockStmt(_sourceIndex, exprLine, new List<Stmt> { new ReturnStmt(_sourceIndex, exprLine, value) });
             }
 
             return new LambdaExpr(line, parms, onTarget, body);

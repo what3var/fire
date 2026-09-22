@@ -161,7 +161,7 @@ namespace fire.Compiler
         /// `_topLevelSourceIndex` (siehe dort). An Chunk.MarkLine übergeben,
         /// damit ein Debugger (siehe Editor-Unterprojekt) bei mehreren
         /// Quelldateien weiß, in welcher Datei eine gegebene Zeile liegt.</summary>
-        private int CurrentSourceIndex => _enclosingClass?.Decl.SourceIndex ?? _topLevelSourceIndex;
+        private int CurrentSourceIndex => _enclosingClass?.Decl.Source ?? _topLevelSourceIndex;
 
         /// <summary>Alle bekannten (vollqualifizierten) Klassennamen - Grundlage
         /// für ResolveTypeRef (SPEC "Namespaces"). Nicht readonly: der
@@ -210,7 +210,10 @@ namespace fire.Compiler
             var compiler = new Compiler(resolveResult, natives);
             var classes = compiler.CompileClasses(program);
             foreach (var stmt in program)
+            {
+                compiler._topLevelSourceIndex = stmt.Source;
                 compiler.CompileStmt(stmt);
+            }
             compiler._chunk.EmitOp(OpCode.Halt);
 
             var externSignatures = new Dictionary<string, ExternSignature>();
