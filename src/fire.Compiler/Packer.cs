@@ -12,9 +12,18 @@ namespace fire.Compiler
     {
         public static void PackProgram(LinkedProgram program)
         {
-            var bin = MessagePack.MessagePackSerializer.Serialize(program);
+            try
+            {
 
-            Debug.WriteLine($"Serialized {bin.Length} bytes.");
+                var bin = MemoryPack.MemoryPackSerializer.Serialize(program);
+
+                Debug.WriteLine($"Serialized {bin.Length} bytes.");
+
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+            }
         }
     }
 }

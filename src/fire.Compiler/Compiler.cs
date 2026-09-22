@@ -290,7 +290,11 @@ namespace fire.Compiler
                 {
                     case FieldDecl fd:
                         rc.Fields.Add((fd.Name, CompileFieldInitProto(rc, fd.Type, fd.Initializer)));
-                        rc.OwnFieldAccess[fd.Name] = fd.Access;
+                        rc.OwnFieldInfo[fd.Name] = new FieldInfo()
+                        {
+                            AccessModifier = fd.Access,
+                            RequiredUnit = fd.Type?.Unit
+                        };
                         // SPEC "Einheiten-Deklarationen": geprüft wird das
                         // NICHT hier beim Initialisieren (siehe
                         // CompileFieldInitProto - unverändert), sondern
@@ -300,11 +304,10 @@ namespace fire.Compiler
                         // dynamisch aufgelöst, die VM kennt zur Laufzeit die
                         // tatsächliche Klasse des Zielobjekts, der Compiler
                         // an dieser Stelle nicht.
-                        if (fd.Type?.Unit != null) rc.OwnFieldRequiredUnit[fd.Name] = fd.Type.Unit;
                         break;
 
                     case MethodDecl md:
-                        rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body), md.Access);
+                        rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access));
                         break;
 
                     case ConstructorDecl ctor:
@@ -312,7 +315,7 @@ namespace fire.Compiler
                         break;
 
                     case DestructorDecl dtor:
-                        rc.Destructor = CompileMethodProto(rc, Array.Empty<LambdaParam>(), dtor.Body);
+                        rc.Destructor = CompileMethodProto(rc, Array.Empty<LambdaParam>(), dtor.Body, AccessModifier.Public);
                         break;
 
                     case PropertyDecl pd:
@@ -323,17 +326,17 @@ namespace fire.Compiler
                         // teilen sich den EINEN Modifikator der Property selbst
                         // (SPEC kennt keine getrennten get/set-Modifikatoren).
                         if (pd.Getter != null)
-                            rc.AddMethod("get_" + pd.Name, CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter), pd.Access);
+                            rc.AddMethod("get_" + pd.Name, CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access));
                         if (pd.Setter != null)
                         {
                             var setterParams = new[] { new LambdaParam("value", pd.Type, Array.Empty<Expr?>()) };
-                            rc.AddMethod("set_" + pd.Name, CompileMethodProto(rc, setterParams, pd.Setter), pd.Access);
+                            rc.AddMethod("set_" + pd.Name, CompileMethodProto(rc, setterParams, pd.Setter, pd.Access));
                         }
                         break;
                 }
             }
 
-            // Keine eigene Deklaration -> genau EIN synthetisierter 0-Arg-
+            // Keine eigene Deklaration -> genau EIN synthetisierter 0-Arg-public-
             // Konstruktor (Basis-Aufruf + Feld-Inits, sonst leer) - `new`
             // funktioniert dadurch immer einheitlich über denselben
             // Mechanismus. Mit eigenen Deklarationen: EINE Überladung pro
@@ -341,12 +344,12 @@ namespace fire.Compiler
             // zwei dieselbe Parameteranzahl haben).
             if (ctorDecls.Count == 0)
             {
-                rc.AddConstructor(CompileConstructorProto(rc, null));
+                rc.AddConstructor(CompileConstructorProto(rc, null, AccessModifier.Public));
             }
             else
             {
                 foreach (var ctor in ctorDecls)
-                    rc.AddConstructor(CompileConstructorProto(rc, ctor), ctor.Access);
+                    rc.AddConstructor(CompileConstructorProto(rc, ctor, ctor.Access));
             }
         }
 
@@ -365,7 +368,7 @@ namespace fire.Compiler
                 var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames);
                 inner.CompileExpr(parms[i].DefaultValue!);
                 inner._chunk.EmitOp(OpCode.Return);
-                defaults[i] = new FunctionProto(inner._chunk, 0);
+                defaults[i] = new FunctionProto(inner._chunk, 0, AccessModifier.Private);
             }
             return defaults;
         }
@@ -381,7 +384,7 @@ namespace fire.Compiler
             }
             else inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
-            return new FunctionProto(inner._chunk, 0);
+            return new FunctionProto(inner._chunk, 0, AccessModifier.Private);
         }
 
         /// <summary>Emittiert für jeden Parameter mit einer Lambda-Signatur-
@@ -493,7 +496,7 @@ namespace fire.Compiler
             // beendet die VM dagegen korrekt ohne jede Frame-Erwartung.
             inner._chunk.EmitOp(OpCode.Halt);
 
-            var proto = new FunctionProto(inner._chunk, slot);
+            var proto = new FunctionProto(inner._chunk, slot, AccessModifier.Private);
             int protoIdx = _chunk.AddFunctionProto(proto);
 
             foreach (var capture in fs.TakingCaptures)
@@ -524,7 +527,7 @@ namespace fire.Compiler
             inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
 
-            var proto = new FunctionProto(inner._chunk, decl.VarName != null ? 1 : 0);
+            var proto = new FunctionProto(inner._chunk, decl.VarName != null ? 1 : 0, AccessModifier.Public);
             int protoIdx = _chunk.AddFunctionProto(proto);
 
             _chunk.EmitOp(OpCode.RegisterThreadsCatch);
@@ -546,14 +549,14 @@ namespace fire.Compiler
             inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
 
-            var proto = new FunctionProto(inner._chunk, decl.VarName != null ? 1 : 0);
+            var proto = new FunctionProto(inner._chunk, decl.VarName != null ? 1 : 0, AccessModifier.Public);
             int protoIdx = _chunk.AddFunctionProto(proto);
 
             _chunk.EmitOp(OpCode.RegisterTerminateCatch);
             _chunk.EmitU16(protoIdx);
         }
 
-        private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body)
+        private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access)
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames);
             inner._chunk.OwnerClass = rc;
@@ -563,7 +566,7 @@ namespace fire.Compiler
             foreach (var stmt in body.Statements) inner.CompileStmt(stmt);
             inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
-            return new FunctionProto(inner._chunk, parms.Count, CompileParamDefaults(rc, parms));
+            return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms));
         }
 
         /// <summary>Konstruktor-Proto: [Basis-Konstruktor-Aufruf (explizit mit
@@ -573,7 +576,7 @@ namespace fire.Compiler
         /// Klasse keinen eigenen `construct` deklariert (dann nur Basis-Aufruf +
         /// Feld-Inits, 0 Parameter) - `new` funktioniert dadurch immer
         /// einheitlich über denselben Mechanismus.</summary>
-        private FunctionProto CompileConstructorProto(RuntimeClass rc, ConstructorDecl? ctor)
+        private FunctionProto CompileConstructorProto(RuntimeClass rc, ConstructorDecl? ctor, AccessModifier access)
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames);
             inner._chunk.OwnerClass = rc;
@@ -615,7 +618,7 @@ namespace fire.Compiler
             inner._chunk.EmitOp(OpCode.Return);
 
             var paramDefaults = ctor != null ? CompileParamDefaults(rc, ctor.Params) : Array.Empty<FunctionProto?>();
-            return new FunctionProto(inner._chunk, ctor?.Params.Count ?? 0, paramDefaults);
+            return new FunctionProto(inner._chunk, ctor?.Params.Count ?? 0, access, paramDefaults);
         }
 
         // -----------------------------------------------------------
@@ -1099,7 +1102,7 @@ namespace fire.Compiler
         private void CompileTry(TryStmt t)
         {
             FunctionProto? finallyProto = t.Finally != null
-                ? CompileMethodProto(_enclosingClass, Array.Empty<LambdaParam>(), t.Finally)
+                ? CompileMethodProto(_enclosingClass, Array.Empty<LambdaParam>(), t.Finally, AccessModifier.Private)
                 : null;
 
             var template = new HandlerTemplate
@@ -1367,7 +1370,7 @@ namespace fire.Compiler
             inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
 
-            var proto = new FunctionProto(inner._chunk, lambda.Params.Count, CompileParamDefaults(_enclosingClass, lambda.Params));
+            var proto = new FunctionProto(inner._chunk, lambda.Params.Count, AccessModifier.Public, CompileParamDefaults(_enclosingClass, lambda.Params));
             int protoIdx = _chunk.AddFunctionProto(proto);
 
             bool hasOnTarget = lambda.OnTarget != null;

@@ -1,3 +1,4 @@
+using fire.Ast;
 using System;
 using System.Collections.Generic;
 
@@ -23,11 +24,14 @@ namespace fire.Bytecode
         public int ParamCount { get; }
         public IReadOnlyList<FunctionProto?> ParamDefaults { get; }
 
-        public FunctionProto(Chunk chunk, int paramCount, IReadOnlyList<FunctionProto?>? paramDefaults = null)
+        public AccessModifier? Access { get; set; }
+
+        public FunctionProto(Chunk chunk, int paramCount, AccessModifier? access, IReadOnlyList<FunctionProto?>? paramDefaults = null)
         {
             Chunk = chunk;
             ParamCount = paramCount;
             ParamDefaults = paramDefaults ?? Array.Empty<FunctionProto?>();
+            Access = access;
         }
     }
 }

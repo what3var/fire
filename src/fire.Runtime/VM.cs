@@ -1174,11 +1174,10 @@ namespace fire.Runtime
                     var ctorProto = rc.FindConstructor(args.Length)
                         ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
                     if (ExecutionMode != VmExecutionMode.Performance
-                        && rc.ConstructorAccess.TryGetValue(ctorProto.ParamCount, out var ctorAccess)
-                        && !IsMemberAccessAllowed(rc, ctorAccess))
+                        && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
                     {
                         ThrowAccessDenied(
-                            $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorAccess)} und von hier aus nicht aufrufbar.");
+                            $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorProto.Access ?? AccessModifier.Public)} und von hier aus nicht aufrufbar.");
                         break;
                     }
 
@@ -1201,11 +1200,10 @@ namespace fire.Runtime
                     var ctorProto = rc.FindConstructor(args.Length)
                         ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
                     if (ExecutionMode != VmExecutionMode.Performance
-                        && rc.ConstructorAccess.TryGetValue(ctorProto.ParamCount, out var ctorAccessOwned)
-                        && !IsMemberAccessAllowed(rc, ctorAccessOwned))
+                        && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
                     {
                         ThrowAccessDenied(
-                            $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorAccessOwned)} und von hier aus nicht aufrufbar.");
+                            $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorProto.Access ?? AccessModifier.Public)} und von hier aus nicht aufrufbar.");
                         break;
                     }
 

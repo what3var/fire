@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using fire.Ast;
+using MemoryPack;
 
 namespace fire.Bytecode
 {
@@ -20,6 +21,15 @@ namespace fire.Bytecode
     /// Verschachtelung der Interpreter-Schleife bräuchte, die hier bewusst noch
     /// nicht gebaut ist (Reentrancy-Risiko, siehe BYTECODE.md).
     /// </summary>
+    /// 
+
+    public sealed partial class FieldInfo
+    {
+        public string? RequiredUnit { get; set; }
+
+        public AccessModifier AccessModifier { get; set; }
+    }
+
     public sealed class RuntimeClass
     {
         public string Name { get; }
@@ -43,16 +53,7 @@ namespace fire.Bytecode
         /// die Basisklassen-Kette. Vom Compiler direkt befüllt (siehe
         /// CompileClass), Default beim Fehlen eines Eintrags ist `Public`
         /// (siehe FindFieldAccess).</summary>
-        public Dictionary<string, AccessModifier> OwnFieldAccess { get; } = new();
-
-        /// <summary>Geforderte Einheit (SPEC "Einheiten-Deklarationen") jedes
-        /// in DIESER Klasse selbst deklarierten Feldes mit explizitem `:
-        /// einheit` (nicht geerbter) - siehe FindFieldRequiredUnit für die
-        /// Basisklassen-Kette. Vom Compiler direkt befüllt (siehe
-        /// CompileClassBody), analog zu OwnFieldAccess. Fehlt ein Eintrag,
-        /// hat das Feld KEINE feste Einheit (jeder Wert ist zulässig, wie
-        /// bisher).</summary>
-        public Dictionary<string, string> OwnFieldRequiredUnit { get; } = new();
+        public Dictionary<string, FieldInfo> OwnFieldInfo { get; } = new();
 
         /// <summary>Wie FindFieldAccess, aber für die geforderte Einheit -
         /// sucht über die Basisklassen-Kette (eigene Klasse zuerst) nach der
@@ -62,8 +63,8 @@ namespace fire.Bytecode
         public string? FindFieldRequiredUnit(string name)
         {
             for (var rc = this; rc != null; rc = rc.Base)
-                if (rc.OwnFieldRequiredUnit.TryGetValue(name, out var unit))
-                    return unit;
+                if (rc.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.RequiredUnit;
             return null;
         }
 
@@ -78,8 +79,8 @@ namespace fire.Bytecode
         public (RuntimeClass DeclaringClass, AccessModifier Access)? FindFieldAccess(string name)
         {
             for (var rc = this; rc != null; rc = rc.Base)
-                if (rc.OwnFieldAccess.TryGetValue(name, out var access))
-                    return (rc, access);
+                if (rc.OwnFieldInfo.TryGetValue(name, out var field))
+                    return (rc, field.AccessModifier);
             return null;
         }
 
@@ -95,7 +96,12 @@ namespace fire.Bytecode
         /// werden NUR während der einmaligen Kompilierung befüllt, nie
         /// danach zur Laufzeit verändert, der Cache ist deshalb dauerhaft
         /// gültig.</summary>
+
+        //ZU MESSAGEPACK: ERSTMAL IGNORIEREN, WIRD IM ZWEIFEL SOWIESO NACHGEBAUT
+
+        [MemoryPackIgnore]
         public IReadOnlyList<string> FlattenedFieldNames => _flattenedFieldNames ??= ComputeFlattenedFieldNames();
+        
         private List<string>? _flattenedFieldNames;
 
         private List<string> ComputeFlattenedFieldNames()
@@ -115,6 +121,10 @@ namespace fire.Bytecode
         /// funktional unbedenklich: genau wie beim alten Dictionary-basierten
         /// Verhalten gewinnt am Ende ohnehin der letzte Schreibzugriff unter
         /// demselben Namen).</summary>
+
+        //ZU MESSAGEPACK: ERSTMAL IGNORIEREN!
+
+        [MemoryPackIgnore]
         public IReadOnlyDictionary<string, int> FieldIndex => _fieldIndex ??= ComputeFieldIndex();
         private Dictionary<string, int>? _fieldIndex;
 
@@ -147,14 +157,11 @@ namespace fire.Bytecode
         /// Konstruktor verhindert `new X(...)` von außerhalb der Klasse
         /// (klassisches Singleton-/Factory-Method-Muster), siehe VM.
         /// CheckConstructorAccess.</summary>
-        public Dictionary<int, AccessModifier> ConstructorAccess { get; } = new();
-
-        public void AddConstructor(FunctionProto proto, AccessModifier access = AccessModifier.Public)
+        public void AddConstructor(FunctionProto proto)
         {
             if (!Constructors.TryAdd(proto.ParamCount, proto))
                 throw new System.InvalidOperationException(
                     $"Interner Fehler: Konstruktor mit {proto.ParamCount} Parametern wurde zweimal registriert.");
-            ConstructorAccess[proto.ParamCount] = access;
         }
 
         public FunctionProto? Destructor { get; set; }
@@ -177,25 +184,20 @@ namespace fire.Bytecode
         /// Vereinfachung: unterschiedliche Modifikatoren auf Überladungen
         /// desselben Namens sind ein seltener, nicht besonders sinnvoller
         /// Fall, der letzte kompilierte Aufruf gewinnt.</summary>
-        public void AddMethod(string name, FunctionProto proto, AccessModifier access = AccessModifier.Public)
+        public void AddMethod(string name, FunctionProto proto)
         {
             if (!Methods.TryGetValue(name, out var overloads))
             {
                 overloads = new List<FunctionProto>();
                 Methods[name] = overloads;
             }
+
             if (overloads.Any(p => p.ParamCount == proto.ParamCount))
                 throw new System.InvalidOperationException(
                     $"Interner Fehler: Methode '{name}' mit {proto.ParamCount} Parametern wurde zweimal registriert.");
-            overloads.Add(proto);
-            OwnMethodAccess[name] = access;
-        }
 
-        /// <summary>Zugriffsmodifikator jedes in DIESER Klasse selbst
-        /// deklarierten Methodennamens (siehe AddMethod-Doku: gilt für alle
-        /// Überladungen dieses Namens zusammen). Vom Methoden-Cache
-        /// (FindMethod) ausgelesen, nicht separat zu prüfen.</summary>
-        public Dictionary<string, AccessModifier> OwnMethodAccess { get; } = new();
+            overloads.Add(proto);
+        }
 
         /// <summary>Sucht eine Methode über die Basisklassen-Kette (eigene
         /// Klasse zuerst) nach Namen UND Argumentanzahl - Grundlage der
@@ -257,7 +259,7 @@ namespace fire.Bytecode
                     var match = FindBestMatch(overloads, argCount);
                     if (match != null)
                     {
-                        var access = rc.OwnMethodAccess.TryGetValue(name, out var a) ? a : AccessModifier.Public;
+                        var access = match.Access ?? AccessModifier.Public;
                         result = (match, rc, access);
                         break;
                     }
