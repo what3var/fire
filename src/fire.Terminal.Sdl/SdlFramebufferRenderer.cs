@@ -1,6 +1,9 @@
 using System;
 using SDL3;
 using fire.Terminal;
+using static SDL3.SDL;
+using System.Runtime.InteropServices;
+using fire.Terminal.Event;
 
 namespace fire.Terminal.Sdl
 {
@@ -51,8 +54,12 @@ namespace fire.Terminal.Sdl
         private bool _quit;
         private bool _disposed;
 
-        public void Initialize(string title, int initialWidth, int initialHeight)
+        private int _internalHandle;
+
+        public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle)
         {
+            _internalHandle = internalHandle;
+
             if (!SDL.Init(SDL.InitFlags.Video))
                 throw new InvalidOperationException($"SDL.Init fehlgeschlagen: {SDL.GetError()}");
 
@@ -68,8 +75,9 @@ namespace fire.Terminal.Sdl
             SDL.SetRenderVSync(_renderer, 1);
         }
 
-        public bool PumpEvents()
+        public WindowPumpResult PumpEvents()
         {
+            var resultEvents = new List<IEvent>();
             while (SDL.PollEvent(out SDL.Event ev))
             {
                 // Zwei leicht unterschiedliche Schreibweisen kursieren in
@@ -77,10 +85,118 @@ namespace fire.Terminal.Sdl
                 // expliziten Cast) - der Cast hier ist die sichere Variante,
                 // die in BEIDEN Fällen kompiliert (ob 'Type' bereits das
                 // Enum ist, oder ein roher uint-Wert).
-                if ((SDL.EventType)ev.Type == SDL.EventType.Quit)
-                    _quit = true;
+
+                var eventType = Event.EventType.Unknown;
+
+                switch((SDL.EventType)ev.Type)
+                {
+                    case SDL.EventType.Quit:
+                        eventType = Event.EventType.Close;
+                        resultEvents.Add(new Terminal.Event.Event() { SourceHandle = _internalHandle, Type = eventType });
+                        _quit = true;
+                        break;
+                    case SDL.EventType.KeyDown:
+                    case SDL.EventType.KeyUp:
+                        eventType = ((SDL.EventType)ev.Type) switch
+                        {
+                            SDL.EventType.KeyUp => Event.EventType.KeyUp,
+                            SDL.EventType.KeyDown => Event.EventType.KeyDown,
+                            _ => Event.EventType.Unknown
+                        };
+                        var keyevent = new KeyEvent()
+                        {
+                            IsButtonDown = ev.Key.Down,
+                            IsKeyRepeat = ev.Key.Repeat,
+                            KeyCode = (int)ev.Key.Key,
+                            ScanCode = (int)ev.Key.Scancode,
+                            SourceHandle = _internalHandle,
+                            Modifier = (int)ev.Key.Mod,
+                            Type = eventType
+                        };
+                        resultEvents.Add(keyevent);
+                        break;
+                    case SDL.EventType.MouseButtonUp:
+                    case SDL.EventType.MouseButtonDown:
+                        eventType = ((SDL.EventType)ev.Type) switch
+                        {
+                            SDL.EventType.MouseButtonUp => Event.EventType.MouseUp,
+                            SDL.EventType.MouseButtonDown => Event.EventType.MouseDown,
+                            _ => Event.EventType.Unknown
+                        };
+
+                        var clickevent = new ClickEvent()
+                        {
+                            X = ev.Button.X,
+                            Y = ev.Button.Y,
+                            Button = (int)ev.Button.Button,
+                            IsButtonDown = ev.Button.Down,
+                            SourceHandle = _internalHandle,
+                            Type = eventType
+                        };
+                        resultEvents.Add(clickevent);
+                        break;
+                    case SDL.EventType.MouseMotion:
+                        eventType = Event.EventType.MouseMove;
+
+                        var moveevent = new MotionEvent()
+                        {
+                            ButtonState = (int)ev.Motion.State,
+                            X = ev.Motion.X,
+                            Y = ev.Motion.Y,
+                            //Xrel = ev.Motion.XRel,
+                            //Yrel = ev.Motion.YRel,
+                            SourceHandle = _internalHandle,
+                            Type = eventType
+                        };
+                        resultEvents.Add(moveevent);
+                        var moveevent2 = new MotionEvent()
+                        {
+                            ButtonState = (int)ev.Motion.State,
+                            //X = ev.Motion.X,
+                            //Y = ev.Motion.Y,
+                            Xrel = ev.Motion.XRel,
+                            Yrel = ev.Motion.YRel,
+                            SourceHandle = _internalHandle,
+                            Type = Event.EventType.MouseMoveRelative
+                        };
+                        resultEvents.Add(moveevent2); 
+                        break;
+                    case SDL.EventType.MouseWheel:
+                        eventType = Event.EventType.MouseScroll;
+
+                        var scrollevent = new ScrollEvent()
+                        {
+                            ScrollX = ev.Wheel.X,
+                            ScrollY = ev.Wheel.Y,
+                            X = ev.Wheel.MouseX,
+                            Y = ev.Wheel.MouseY,
+                            SourceHandle = _internalHandle,
+                            Type = eventType
+                        };
+
+                        resultEvents.Add(scrollevent);
+                        break;
+                    case SDL.EventType.TextInput:
+                        eventType = Event.EventType.TextInput;
+
+                        var textevent = new TextEvent()
+                        {
+                            Text = Marshal.PtrToStringUTF8(ev.Text.Text),
+                            SourceHandle = _internalHandle,
+                            Type = eventType
+                        };
+
+                        resultEvents.Add(textevent);
+                        break;
+                }
+
             }
-            return !_quit;
+
+            return new WindowPumpResult()
+            {
+                StillOpen = !_quit,
+                Events = resultEvents
+            };
         }
 
         public void Present(Framebuffer framebuffer)

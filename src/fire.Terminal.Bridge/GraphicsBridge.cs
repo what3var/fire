@@ -1,8 +1,11 @@
-using System.Collections.Generic;
 using fire.Bytecode;
-using fire.Values;
+using fire.Runtime;
 using fire.Terminal;
+using fire.Terminal.Event;
 using fire.Terminal.Windows;
+using fire.Values;
+using System.Collections.Generic;
+using System.Net.WebSockets;
 
 namespace fire.Terminal.Bridge
 {
@@ -155,9 +158,25 @@ namespace fire.Terminal.Bridge
                 },
                 ["Destroy"] = args => Value.MakeBool(mgr.DestroyWindow((int)args[0].AsInt())),
                 ["Tick"] = args => Value.MakeBool(mgr.Tick((int)args[0].AsInt())),
+                ["RegisterEvent"] = args =>
+                {
+                    if (args.Count() != 3)
+                        return Value.MakeBool(false);
+                    
+                    EventType eventType = (EventType)args[1].AsInt();
+                    var winId = (int)args[0].AsInt();
+                    var callback = (LambdaValue)args[2].AsLambda();
+
+                    if (!EventCallback.CheckParameters(callback, eventType))
+                        return Value.MakeBool(false);
+
+                    mgr.RegisterCallback(winId, eventType, callback);
+
+                    return Value.MakeBool(true);
+                }
             };
         }
-
+        
         private static Dictionary<string, NativeFunction> BuildWindowFunctionStubs()
         {
             return new Dictionary<string, NativeFunction>
@@ -165,6 +184,7 @@ namespace fire.Terminal.Bridge
                 ["Create"] = args => Value.MakeUndefined() /*STUB*/,
                 ["Destroy"] = args => Value.MakeUndefined() /*STUB*/,
                 ["Tick"] = args => Value.MakeUndefined() /*STUB*/,
+                ["RegisterEvent"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 
@@ -242,6 +262,47 @@ namespace fire.Terminal.Bridge
                 }
 
                 bool Tick() { return __GRPHWinTick(this.id) }
+            
+            
+                bool RegisterMouseDown(lambda<int,float,float> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.MouseDown!, fn);
+                }
+            
+                bool RegisterMouseUp(lambda<int,float,float> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.MouseUp!, fn);
+                }
+            
+                bool RegisterMouseMove(lambda<float,float,int> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.MouseMove!, fn);
+                }
+            
+                bool RegisterTextInput(lambda<string> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.TextInput!, fn);
+                }
+            
+                bool RegisterClose(lambda fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.Close!, fn);
+                }
+            
+            }
+
+            enum EventType
+            {
+                Unknown = 0,
+                Close = 1,
+                TextInput = 2,
+                MouseDown = 8,
+                MouseMove = 9,
+                MouseMoveRelative = 10,
+                MouseUp = 11,
+                MouseScroll = 12,
+                KeyDown = 24,
+                KeyUp = 25
             }
             """;
     }

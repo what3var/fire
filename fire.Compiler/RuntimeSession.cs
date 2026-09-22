@@ -9,8 +9,11 @@ using fire.Values;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
+using System.Reflection.Metadata;
 using System.Text;
 using System.Threading.Tasks;
+using static fire.Resolving.ResolvedRef;
 
 namespace fire.Compiler
 {
@@ -30,15 +33,31 @@ namespace fire.Compiler
         public ConsoleManager? ConsoleManager { get; private set; }
 
         
-        private RuntimeSession(VM virtualMachine, CompiledProgram compiledProgram, Scope globalScope, WindowManager? windowManager, FramebufferManager? framebufferManager, ConsoleManager? consoleManager)
+        protected NativeRegistry nativeRegistry { get; set; }
+
+        
+        private RuntimeSession(CompiledProgram compiledProgram)
+        {
+            CompiledProgram = compiledProgram;
+            // Private constructor to prevent direct instantiation
+        }
+
+        protected void SetVM(VM virtualMachine, WindowManager? wm, Scope globalScope, NativeRegistry natives, FramebufferManager? framebufferManager, ConsoleManager? consoleManager)
         {
             VirtualMachine = virtualMachine;
-            CompiledProgram = compiledProgram;
+            WindowManager = wm;
             GlobalScope = globalScope;
-            WindowManager = windowManager;
             FramebufferManager = framebufferManager;
             ConsoleManager = consoleManager;
-            // Private constructor to prevent direct instantiation
+            nativeRegistry = natives;
+        }
+
+        public void CallLambda(LambdaValue lambda, Value[] args)
+        {
+            var snapshot = VirtualMachine.SnapshotGlobals();
+
+            FireRuntime.CallCallback(lambda, args, nativeRegistry, CompiledProgram.Classes, snapshot,
+                ex => Console.WriteLine($"(unbehandelte Exception im Callback: {ex.Message})"));
         }
 
         public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode executionMode, Func<Value[], Value>? debugWriter = null)
@@ -60,21 +79,26 @@ namespace fire.Compiler
             ConsoleManager? consoleManager = null;
             WindowManager? windowManager = null;
 
+            var session = new RuntimeSession(linkedProgram.Program);
+            
             if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
             {
                 var font = new IntegratedGlyphFont();
                 fbManager = new FramebufferManager();
                 consoleManager = new ConsoleManager(fbManager, font);
-                windowManager = new WindowManager(fbManager);
+                windowManager = new WindowManager(fbManager, (l,v) => session.CallLambda(l,v));
 
                 GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager);
             }
 
             var globalScope = new Scope(null, isGlobal: true);
+            
             var mainVm = new VM(linkedProgram.Program.TopLevel, globalScope, natives, linkedProgram.Program.Classes,
                 externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: executionMode);
 
-            return new RuntimeSession(mainVm, linkedProgram.Program, globalScope, windowManager, fbManager, consoleManager);
+            session.SetVM(mainVm, windowManager, globalScope, natives, fbManager, consoleManager);
+
+            return session;
         }
     }
 }

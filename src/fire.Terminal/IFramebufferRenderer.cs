@@ -17,13 +17,13 @@ namespace fire.Terminal
         /// Größe verändert werden, der dargestellte Framebuffer-Inhalt wird
         /// dabei einfach gestreckt/gestaucht (siehe Present-Doku), nicht neu
         /// gerastert.</summary>
-        void Initialize(string title, int initialWidth, int initialHeight);
+        void Initialize(string title, int initialWidth, int initialHeight, int internalHandle);
 
         /// <summary>Verarbeitet alle anstehenden Fenster-Events (Resize,
         /// Schließen, ...). Liefert false, sobald das Fenster geschlossen
         /// werden soll (der Aufrufer beendet dann üblicherweise seine
         /// Schleife) - macht selbst KEIN Present, das ist ein eigener aufruf.</summary>
-        bool PumpEvents();
+        WindowPumpResult PumpEvents();
 
         /// <summary>Zeichnet den kompletten aktuellen Inhalt von
         /// `framebuffer` - IMMER auf die volle aktuelle Fenstergröße

@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using fire.Terminal;
 using fire.Terminal.Sdl;
 
@@ -17,8 +18,6 @@ namespace fire.Terminal.Windows
     /// (falls überhaupt eine) gerade hineinzeichnet.
     ///
     /// Zwei Nutzungsarten:
-    /// - <see cref="Run"/>: blockierende Schleife für einen einfachen
-    ///   Standalone-Lauf (siehe fire.Terminal.Demo).
     /// - <see cref="Tick"/>: EIN Zyklus (Events abholen + zeichnen), für
     ///   einen Host, der seine EIGENE Schleife fährt (z.B. eine spätere
     ///   Laufzeit, die daneben auch die Skript-VM taktet) - einfach jeden
@@ -33,6 +32,8 @@ namespace fire.Terminal.Windows
         private bool _opened;
         private bool _disposed;
 
+        private int _handle;
+
         /// <param name="framebuffer">Der anzuzeigende Framebuffer - lebt
         /// UNABHÄNGIG von diesem Fenster weiter (wird hier weder erzeugt
         /// noch beim Dispose dieses Fensters zerstört).</param>
@@ -44,10 +45,11 @@ namespace fire.Terminal.Windows
             _renderer = renderer ?? new SdlFramebufferRenderer();
         }
 
-        public void Open(string title = "fire Konsole")
+        public void Open(int handle, string title = "fire Console")
         {
             if (_opened) return;
-            _renderer.Initialize(title, Framebuffer.Width, Framebuffer.Height);
+            _handle = handle;
+            _renderer.Initialize(title, Framebuffer.Width, Framebuffer.Height, _handle);
             _opened = true;
         }
 
@@ -61,23 +63,18 @@ namespace fire.Terminal.Windows
         /// Fenster geschlossen wurde - der Host beendet dann üblicherweise
         /// seine eigene Schleife (bzw. entfernt dieses Fenster aus seiner
         /// Verwaltung, siehe WindowManager).</summary>
-        public bool Tick()
+        public WindowPumpResult? Tick()
         {
-            if (!_opened) Open();
-            bool stillOpen = _renderer.PumpEvents();
+            if (!_opened) return null;
+            var result = _renderer.PumpEvents();
             _renderer.Present(Framebuffer);
-            return stillOpen;
+            return result;
         }
 
         /// <summary>Blockierende Standalone-Schleife - ruft Tick(), bis das
         /// Fenster geschlossen wird. Für einen Host mit eigener Schleife
         /// (typischer späterer Anwendungsfall, siehe Klassen-Doku) NICHT
         /// aufrufen, stattdessen Tick() selbst einbinden.</summary>
-        public void Run(string title = "fire Konsole")
-        {
-            Open(title);
-            while (Tick()) { }
-        }
 
         public void Dispose()
         {

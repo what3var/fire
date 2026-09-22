@@ -22,5 +22,8 @@
     <AssemblyName>fire.Terminal</AssemblyName>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\fire\fire.csproj" />
+  </ItemGroup>
 
 </Project>

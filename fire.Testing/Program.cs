@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using fire.Ast;
 using fire.Bytecode;
+using fire.Compiler;
 using fire.Lexing;
 using fire.Parsing;
 using fire.Resolving;
