@@ -4,7 +4,7 @@ using System;
 sealed class LoggingDestructRunner : IDestructRunner
 {
     public void RunDestructor(ObjectInstance instance) =>
-        Console.WriteLine($"  destruct() aufgerufen für Instanz von '{instance.ClassDef.Name}'");
+        Console.WriteLine($"  destruct() aufgerufen für Instanz von '{instance.ClassName}'");
 }
 
 sealed class RaceDemoRunner : IDestructRunner

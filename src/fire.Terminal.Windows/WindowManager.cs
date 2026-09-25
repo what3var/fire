@@ -115,6 +115,12 @@ namespace fire.Terminal.Windows
                                 Callback(hndlr.Callback,
                                     new Value[0]);
                                 break;
+                            case Event.EventType.CloseRequest:
+
+                                var closerqevent = (Event.Event)evnt;
+                                Callback(hndlr.Callback,
+                                    new Value[0]);
+                                break;
                             case Event.EventType.MouseDown:
                             case Event.EventType.MouseUp:
                                 var clickevent = (ClickEvent)evnt;

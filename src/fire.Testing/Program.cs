@@ -225,7 +225,7 @@ catch (UnitMismatchException ex)
 Console.WriteLine();
 Console.WriteLine("=== Runtime/Ownership-Test ===");
 
-var dummyClass = new ClassDecl(0, "Dummy", null, new List<Stmt>());
+var dummyClass = "Dummy";
 var globalScope = new Scope(null, isGlobal: true);
 var funcScope = new Scope(globalScope);
 var innerScope = new Scope(funcScope);
@@ -2688,7 +2688,7 @@ Console.WriteLine("=== Multithreading: sync nach Zerstoerung des Ziels -> Target
 
 try
 {
-    var dummyClass2 = new ClassDecl(0, "SyncGoneDummy", null, new List<Stmt>());
+    var dummyClass2 = "SyncGoneDummy";
     var ownerScope = new Scope(null, isGlobal: true);
     var original = new ObjectInstance(dummyClass2, ownerScope);
     original.Fields["x"] = Value.MakeInt(1);
@@ -2711,7 +2711,7 @@ Console.WriteLine("=== Multithreading: 'taking' lehnt baumfremde Referenzen ab =
 
 try
 {
-    var dummyClass3 = new ClassDecl(0, "TakingDummy", null, new List<Stmt>());
+    var dummyClass3 = "TakingDummy";
     var scopeA = new Scope(null, isGlobal: true);
     var independent = new ObjectInstance(dummyClass3, scopeA);
 

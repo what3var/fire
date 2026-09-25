@@ -196,7 +196,7 @@ namespace fire.Ast
     /// dieser Ausbaustufe.</summary>
     public sealed record FieldDecl(
         int Source, int Line, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, string Name, Expr? Initializer, bool IsReadonly = false,
-        AccessModifier Access = AccessModifier.Public) : Stmt(Source, Line);
+        AccessModifier Access = AccessModifier.Public, bool IsStatic = false) : Stmt(Source, Line);
 
     // ---------------------------------------------------------------
     // Generics: Typ-Parameter mit Constraints ('where T is of X, is of Y')
@@ -227,7 +227,8 @@ namespace fire.Ast
         IReadOnlyList<LambdaParam> Params,
         Stmt.BlockStmt Body,
         IReadOnlyList<TypeParam>? TypeParams = null,
-        AccessModifier Access = AccessModifier.Public) : Stmt(Source, Line);
+        AccessModifier Access = AccessModifier.Public,
+        bool IsStatic = false) : Stmt(Source, Line);
 
     public sealed record ConstructorDecl(
         int Source,
@@ -301,7 +302,7 @@ namespace fire.Ast
     /// ObjectInstance.Fields-Eintrag ihres eigenen Namens.</summary>
     public sealed record PropertyDecl(
         int Source, int Line, TypeRef? Type, string Name, Stmt.BlockStmt? Getter, Stmt.BlockStmt? Setter,
-        AccessModifier Access = AccessModifier.Public) : Stmt(Source, Line);
+        AccessModifier Access = AccessModifier.Public, bool IsStatic = false) : Stmt(Source, Line);
 
     /// <summary>`class extends Name { neue Mitglieder... }` - fügt die
     /// Mitglieder direkt zur BESTEHENDEN Klasse `Name` hinzu (Ruby-artiges

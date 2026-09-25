@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using fire.Ast;
 using fire.Bytecode;
 using fire.Values;
 
@@ -23,7 +22,15 @@ namespace fire.Runtime
     /// </summary>
     public sealed class ObjectInstance : IOwner
     {
-        public ClassDecl ClassDef { get; }
+        /// <summary>Name der Klasse (SPEC 2) - bewusst NUR der Name, nicht
+        /// der volle AST (ClassDecl) wie früher: die VM liest zur Laufzeit
+        /// ausschließlich diesen Namen (für RuntimeClass-Lookups, Fehler-
+        /// meldungen), nie Felder/Methodenkörper direkt aus dem AST - die
+        /// sind ja längst zu RuntimeClass.Fields/Methods/Chunks kompiliert.
+        /// Wichtig für die geplante Programm-Serialisierung: damit hängt an
+        /// jeder ObjectInstance (und damit potenziell an jedem gespeicherten
+        /// Programmzustand) nicht die komplette Stmt/Expr-AST-Hierarchie.</summary>
+        public string ClassName { get; }
 
         /// <summary>Das kompilierte Gegenstück zu ClassDef (siehe Bytecode.
         /// RuntimeClass) - Grundlage für den schnellen, Slot-indizierten
@@ -75,9 +82,9 @@ namespace fire.Runtime
         /// für die bewusste Vereinfachung dieser Ausbaustufe).</summary>
         public ActorMailbox? Mailbox { get; set; }
 
-        public ObjectInstance(ClassDecl classDef, IOwner initialOwner, RuntimeClass? rtClass = null)
+        public ObjectInstance(string className, IOwner initialOwner, RuntimeClass? rtClass = null)
         {
-            ClassDef = classDef;
+            ClassName = className;
             RtClass = rtClass;
             Fields = new FieldStore(rtClass);
             Owner = initialOwner;

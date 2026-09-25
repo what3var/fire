@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using MemoryPack;
 
 namespace fire.Values
 {
@@ -16,7 +17,8 @@ namespace fire.Values
     /// (nach Entfernen von Exponent-0-Einträgen) identisch sind. Die Umrechnung
     /// zwischen kompatiblen Units erfolgt über das Verhältnis der Scale-Faktoren.
     /// </summary>
-    public sealed class Unit : IEquatable<Unit>
+    [MemoryPackable]
+    public sealed partial class Unit : IEquatable<Unit>
     {
         // Basissymbol -> Exponent. Basissymbole sind entweder eine der
         // fest eingebauten Basisdimensionen ("m","g","s","b") oder ein
@@ -30,10 +32,17 @@ namespace fire.Values
         // Für hübsches ToString() bei nicht-zusammengesetzten Einheiten
         // (z.B. "mm" statt nur der Dimension "m"). Null bei zusammengesetzten
         // / abgeleiteten Einheiten (z.B. Ergebnis einer Multiplikation).
+        //
+        // Privat, aber per [MemoryPackInclude] trotzdem serialisiert (siehe
+        // MemoryPack-Doku: private Member standardmäßig NICHT eingeschlossen,
+        // explizit nötig) - braucht dafür `partial` an der Klasse, sonst
+        // hätte der generierte Formatter-Code keinen Zugriff darauf.
+        [MemoryPackInclude]
         private readonly string? _displaySymbol;
 
         public static readonly Unit Unitless = new Unit(new Dictionary<string, int>(), 1.0, null);
 
+        [MemoryPackConstructor]
         private Unit(IReadOnlyDictionary<string, int> dimensions, double scale, string? displaySymbol)
         {
             Dimensions = dimensions;

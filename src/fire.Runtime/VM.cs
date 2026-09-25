@@ -509,12 +509,12 @@ namespace fire.Runtime
         {
             var mailbox = actor.Mailbox
                 ?? throw new InvalidOperationException(
-                    $"'process'/'try process' auf einer Instanz von '{actor.ClassDef.Name}', die kein Actor ist.");
+                    $"'process'/'try process' auf einer Instanz von '{actor.ClassName}', die kein Actor ist.");
 
             if (!mailbox.TryProcessOne(blocking, out var message))
                 return false;
 
-            var rc = ResolveClass(actor.ClassDef.Name);
+            var rc = ResolveClass(actor.ClassName);
             var proto = rc.FindMethod(message.MethodName, message.Args.Length)
                 ?? throw new InvalidOperationException(
                     DescribeMethodNotFound(rc, message.MethodName, message.Args.Length));
@@ -697,7 +697,7 @@ namespace fire.Runtime
         public string? DebugThisDescription => _currentThis switch
         {
             null => null,
-            ObjectInstance oi => $"{oi.ClassDef.Name}-Instanz",
+            ObjectInstance oi => $"{oi.ClassName}-Instanz",
             Value v => $"this (per 'on' gebunden) = {v}",
             _ => _currentThis.ToString(),
         };
@@ -793,7 +793,7 @@ namespace fire.Runtime
         /// deklariert), mit 'this' = dem zu zerstörenden Objekt.</summary>
         public void RunDestructor(ObjectInstance instance)
         {
-            var rc = ResolveClass(instance.ClassDef.Name);
+            var rc = ResolveClass(instance.ClassName);
             if (rc.Destructor == null) return;
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
@@ -1181,7 +1181,7 @@ namespace fire.Runtime
                         break;
                     }
 
-                    var instance = new ObjectInstance(rc.Decl, _currentScope, rc);
+                    var instance = new ObjectInstance(rc.Name, _currentScope, rc);
                     if (rc.IsActor) instance.Mailbox = new ActorMailbox();
                     args = FillDefaultArgs(ctorProto, args, instance);
                     BeginConstruction(instance, ctorProto, args);
@@ -1207,7 +1207,7 @@ namespace fire.Runtime
                         break;
                     }
 
-                    var instance = new ObjectInstance(rc.Decl, owner, rc);
+                    var instance = new ObjectInstance(rc.Name, owner, rc);
                     if (rc.IsActor) instance.Mailbox = new ActorMailbox();
                     args = FillDefaultArgs(ctorProto, args, instance);
                     BeginConstruction(instance, ctorProto, args);
@@ -1294,7 +1294,7 @@ namespace fire.Runtime
                     // (Namenskonvention 'get_'+Name, siehe Ast.PropertyDecl).
                     // Properties haben absichtlich NIE einen eigenen Fields-
                     // Eintrag, landen also immer hier.
-                    var rcGet = ResolveClass(obj.ClassDef.Name);
+                    var rcGet = ResolveClass(obj.ClassName);
                     if (rcGet.FindMethod("get_" + fieldName, 0) != null)
                     {
                         var result = CallMethodNested(obj, "get_" + fieldName, Array.Empty<Value>());
@@ -1303,7 +1303,7 @@ namespace fire.Runtime
                     }
 
                     throw new InvalidOperationException(
-                        $"Feld '{fieldName}' existiert nicht auf einer Instanz von '{obj.ClassDef.Name}' " +
+                        $"Feld '{fieldName}' existiert nicht auf einer Instanz von '{obj.ClassName}' " +
                         $"(auch keine 'get_{fieldName}'-Property).");
                 }
 
@@ -1352,7 +1352,7 @@ namespace fire.Runtime
 
                     // Kein existierendes Feld dieses Namens - Property-Setter
                     // versuchen (Namenskonvention 'set_'+Name).
-                    var rcSet = ResolveClass(obj.ClassDef.Name);
+                    var rcSet = ResolveClass(obj.ClassName);
                     if (rcSet.FindMethod("set_" + fieldName, 1) != null)
                     {
                         var result = CallMethodNested(obj, "set_" + fieldName, new[] { value });
@@ -1373,7 +1373,7 @@ namespace fire.Runtime
                     // prüft).
                     if (rcSet.FindMethod("get_" + fieldName, 0) != null)
                         throw new InvalidOperationException(
-                            $"Property '{fieldName}' auf '{obj.ClassDef.Name}' hat keinen Setter (nur 'get').");
+                            $"Property '{fieldName}' auf '{obj.ClassName}' hat keinen Setter (nur 'get').");
 
                     // Weder existierendes Feld noch Property - wie bisher:
                     // neues Feld einfach anlegen (dynamische Sprache, keine
@@ -1466,7 +1466,7 @@ namespace fire.Runtime
                         break;
                     }
 
-                    var rc = ResolveClass(obj.ClassDef.Name);
+                    var rc = ResolveClass(obj.ClassName);
                     var (proto, declaringRcCall, accessCall) = rc.FindMethodWithAccess(methodName, args.Length);
                     if (proto == null)
                         throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
@@ -1520,6 +1520,173 @@ namespace fire.Runtime
 
                     _currentScope = scope;
                     _currentChunk = proto.Chunk;
+                    _ip = 0;
+                    break;
+                }
+
+                case OpCode.GetStaticField:
+                {
+                    // SPEC "Statische Mitglieder" - kein Objekt auf dem Stack
+                    // (der Klassenname steht schon als Konstante im Bytecode,
+                    // siehe Resolver.TryResolveStaticMemberAccess/Compiler),
+                    // die eigentliche Speicherstelle liegt direkt auf der
+                    // RuntimeClass (siehe FindStaticFieldOwner - teilt sich
+                    // ggf. mit einer Basisklasse dieselbe Speicherstelle).
+                    string className = _currentChunk.Constants[ReadU16()].AsString();
+                    string fieldName = _currentChunk.Constants[ReadU16()].AsString();
+                    var staticRc = ResolveClass(className);
+                    var owner = staticRc.FindStaticFieldOwner(fieldName);
+
+                    if (owner == null)
+                    {
+                        // Kein statisches Feld dieses Namens - Property-
+                        // Getter versuchen (Namenskonvention 'get_'+Name,
+                        // genau wie bei GetField), diesmal als STATISCHER
+                        // Aufruf (keine Instanz).
+                        if (staticRc.FindMethod("get_" + fieldName, 0) is { IsStatic: true })
+                        {
+                            var result = CallStaticMethodNested(staticRc, "get_" + fieldName, Array.Empty<Value>());
+                            if (result != null) Push(result.Value);
+                            break;
+                        }
+                        throw new InvalidOperationException(
+                            $"'{className}' hat kein statisches Feld '{fieldName}' (auch keine statische " +
+                            $"'get_{fieldName}'-Property).");
+                    }
+
+                    if (ExecutionMode != VmExecutionMode.Performance)
+                    {
+                        var fieldAccess = owner.FindFieldAccess(fieldName);
+                        if (fieldAccess is (var declaringRc, var access) && !IsMemberAccessAllowed(declaringRc, access))
+                        {
+                            ThrowAccessDenied(
+                                $"Statisches Feld '{fieldName}' von '{declaringRc.Name}' ist {DescribeAccess(access)} " +
+                                "und von hier aus nicht zugreifbar.");
+                            break;
+                        }
+                    }
+
+                    Push(owner.StaticFieldValues.TryGetValue(fieldName, out var staticVal) ? staticVal : Value.MakeUndefined());
+                    break;
+                }
+
+                case OpCode.SetStaticField:
+                {
+                    string setClassName = _currentChunk.Constants[ReadU16()].AsString();
+                    string setFieldName = _currentChunk.Constants[ReadU16()].AsString();
+                    var setValue = Pop();
+                    var setRc = ResolveClass(setClassName);
+                    var setOwner = setRc.FindStaticFieldOwner(setFieldName);
+
+                    if (setOwner == null)
+                        throw new InvalidOperationException($"'{setClassName}' hat kein statisches Feld '{setFieldName}'.");
+
+                    if (ExecutionMode != VmExecutionMode.Performance)
+                    {
+                        var fieldAccess = setOwner.FindFieldAccess(setFieldName);
+                        if (fieldAccess is (var declaringRc, var access) && !IsMemberAccessAllowed(declaringRc, access))
+                        {
+                            ThrowAccessDenied(
+                                $"Statisches Feld '{setFieldName}' von '{declaringRc.Name}' ist {DescribeAccess(access)} " +
+                                "und von hier aus nicht zugreifbar.");
+                            break;
+                        }
+
+                        // SPEC "Einheiten-Deklarationen" - inhaltlich identisch
+                        // zu SetField, siehe dort.
+                        string? requiredUnitName = setOwner.FindFieldRequiredUnit(setFieldName);
+                        if (requiredUnitName != null)
+                        {
+                            var requiredUnit = Values.Unit.Parse(requiredUnitName);
+                            var actualUnit = setValue.Unit ?? Values.Unit.Unitless;
+                            if (!actualUnit.Equals(requiredUnit))
+                            {
+                                ThrowUnitMismatch(requiredUnitName, actualUnit);
+                                break;
+                            }
+                        }
+                    }
+
+                    setOwner.StaticFieldValues[setFieldName] = setValue;
+                    Push(setValue);
+                    break;
+                }
+
+                case OpCode.SetStaticFieldOnInit:
+                {
+                    // Wie SetStaticField, aber OHNE Zugriffsmodifikator-Prüfung
+                    // (siehe OpCode.SetStaticFieldOnInit-Doku) - NUR für die
+                    // einmalige Initialisierung eines statischen Feldes beim
+                    // Programmstart (siehe Compiler.Compile), analog zu
+                    // SetFieldOnThis bei Instanzfeldern. Einheiten-Prüfung
+                    // bleibt (wie bei SetFieldOnThis) trotzdem bestehen - die
+                    // gilt unabhängig davon, WER schreibt.
+                    string initClassName = _currentChunk.Constants[ReadU16()].AsString();
+                    string initFieldName = _currentChunk.Constants[ReadU16()].AsString();
+                    var initValue = Pop();
+                    var initRc = ResolveClass(initClassName);
+                    var initOwner = initRc.FindStaticFieldOwner(initFieldName);
+
+                    if (initOwner == null)
+                        throw new InvalidOperationException($"'{initClassName}' hat kein statisches Feld '{initFieldName}'.");
+
+                    if (ExecutionMode != VmExecutionMode.Performance)
+                    {
+                        string? requiredUnitName = initOwner.FindFieldRequiredUnit(initFieldName);
+                        if (requiredUnitName != null)
+                        {
+                            var requiredUnit = Values.Unit.Parse(requiredUnitName);
+                            var actualUnit = initValue.Unit ?? Values.Unit.Unitless;
+                            if (!actualUnit.Equals(requiredUnit))
+                            {
+                                ThrowUnitMismatch(requiredUnitName, actualUnit);
+                                break;
+                            }
+                        }
+                    }
+
+                    initOwner.StaticFieldValues[initFieldName] = initValue;
+                    break;
+                }
+
+                case OpCode.CallStaticMethod:
+                {
+                    string callClassName = _currentChunk.Constants[ReadU16()].AsString();
+                    string callMethodName = _currentChunk.Constants[ReadU16()].AsString();
+                    int callArgCount = ReadByte();
+                    var callArgs = new Value[callArgCount];
+                    for (int i = callArgCount - 1; i >= 0; i--) callArgs[i] = Pop();
+
+                    var callRc = ResolveClass(callClassName);
+                    var (callProto, declaringRcCall, accessCall) = callRc.FindMethodWithAccess(callMethodName, callArgs.Length);
+                    if (callProto == null)
+                        throw new InvalidOperationException(DescribeMethodNotFound(callRc, callMethodName, callArgs.Length));
+                    if (!callProto.IsStatic)
+                        throw new InvalidOperationException(
+                            $"'{callMethodName}' auf '{callClassName}' ist keine statische Methode - " +
+                            $"über 'ClassName.{callMethodName}(...)' nur für 'static'-Methoden aufrufbar.");
+                    if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
+                    {
+                        ThrowAccessDenied(
+                            $"Statische Methode '{callMethodName}' von '{declaringRcCall!.Name}' ist " +
+                            $"{DescribeAccess(accessCall)} und von hier aus nicht aufrufbar.");
+                        break;
+                    }
+                    CheckArity(callProto, callArgs.Length);
+                    callArgs = FillDefaultArgs(callProto, callArgs, null);
+
+                    _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+                    var callScope = new Scope(_globalScope);
+                    foreach (var a in callArgs) callScope.DefineSlot(a);
+
+                    // Explizit KEIN 'this' (anders als oben bei CallBaseMethod,
+                    // das die aufrufende Instanz beibehält) - der Resolver
+                    // verbietet 'this'/'super' im Körper einer statischen
+                    // Methode bereits (siehe Resolver.ResolveExpr/ThisExpr),
+                    // das hier ist die zusätzliche Laufzeit-Absicherung dafür.
+                    _currentThis = null;
+                    _currentScope = callScope;
+                    _currentChunk = callProto.Chunk;
                     _ip = 0;
                     break;
                 }
@@ -2492,7 +2659,7 @@ namespace fire.Runtime
         private bool InstanceMatchesClassName(ObjectInstance instance, string typeName)
         {
             if (typeName == "Exception") return true;
-            if (!_classes.TryGetValue(instance.ClassDef.Name, out var rc)) return false;
+            if (!_classes.TryGetValue(instance.ClassName, out var rc)) return false;
             for (; rc != null; rc = rc.Base)
                 if (rc.Name == typeName) return true;
             return false;
@@ -2641,7 +2808,7 @@ namespace fire.Runtime
 
         private Value? CallMethodNested(ObjectInstance obj, string methodName, Value[] args)
         {
-            var rc = ResolveClass(obj.ClassDef.Name);
+            var rc = ResolveClass(obj.ClassName);
             var (proto, declaringRcNested, accessNested) = rc.FindMethodWithAccess(methodName, args.Length);
             if (proto == null)
                 throw new InvalidOperationException(
@@ -2683,6 +2850,51 @@ namespace fire.Runtime
             return completedNormally ? Pop() : (Value?)null;
         }
 
+        /// <summary>Wie CallMethodNested, aber für eine STATISCHE Methode
+        /// (SPEC "Statische Mitglieder") - kein ObjectInstance, kein
+        /// gebundenes 'this' (siehe OpCode.CallStaticMethod für dieselbe
+        /// Begründung). Für den Property-Getter-Fallback in GetStaticField
+        /// (statisches 'get_X', analog zu CallMethodNested dort für
+        /// Instanz-Properties).</summary>
+        private Value? CallStaticMethodNested(RuntimeClass rc, string methodName, Value[] args)
+        {
+            var (proto, declaringRcNested, accessNested) = rc.FindMethodWithAccess(methodName, args.Length);
+            if (proto == null)
+                throw new InvalidOperationException(
+                    $"Statische Methode '{methodName}' nicht gefunden auf '{rc.Name}' (für eine Property benötigt).");
+            if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcNested!, accessNested))
+            {
+                ThrowAccessDenied(
+                    $"'{methodName}' von '{declaringRcNested!.Name}' ist {DescribeAccess(accessNested)} " +
+                    "und von hier aus nicht zugreifbar.");
+                return null;
+            }
+            CheckArity(proto, args.Length);
+            args = FillDefaultArgs(proto, args, null);
+
+            var savedChunk = _currentChunk;
+            var savedIp = _ip;
+            var savedScope = _currentScope;
+            var savedThis = _currentThis;
+
+            _frames.Push(new CallFrame(savedChunk, savedIp, savedScope, savedThis, null));
+            int targetDepth = _frames.Count;
+
+            var scope = new Scope(_globalScope);
+            foreach (var a in args) scope.DefineSlot(a);
+
+            _currentThis = null;
+            _currentScope = scope;
+            _currentChunk = proto.Chunk;
+            _ip = 0;
+
+            RunNestedUntil(targetDepth);
+
+            bool completedNormally =
+                ReferenceEquals(_currentChunk, savedChunk) && _ip == savedIp && ReferenceEquals(_currentScope, savedScope);
+            return completedNormally ? Pop() : (Value?)null;
+        }
+
         /// <summary>Konstruiert eine neue Instanz von `rc` verschachtelt (wie
         /// CallMethodNested) und liefert sie fertig konstruiert zurück - für
         /// von der VM SELBST erzeugte Exceptions (siehe ThrowIndexOutOfBounds),
@@ -2696,7 +2908,7 @@ namespace fire.Runtime
         {
             var ctorProto = rc.FindConstructor(args.Length)
                 ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
-            var instance = new ObjectInstance(rc.Decl, _currentScope, rc);
+            var instance = new ObjectInstance(rc.Name, _currentScope, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
             args = FillDefaultArgs(ctorProto, args, instance);
 
@@ -2930,7 +3142,7 @@ namespace fire.Runtime
             if (a.Kind == ValueKind.Class)
             {
                 var obj = (ObjectInstance)a.AsObjectRef();
-                var rc = ResolveClass(obj.ClassDef.Name);
+                var rc = ResolveClass(obj.ClassName);
                 if (rc.FindMethod(operatorMethodName, 1) != null)
                 {
                     var result = CallMethodNested(obj, operatorMethodName, new[] { b });

@@ -10,7 +10,8 @@ namespace fire.Terminal.Event
     {
         Unknown = 0,
         Close = 1,
-        TextInput = 2,
+        CloseRequest = 2,
+        TextInput = 3,
         MouseDown = 8,
         MouseMove = 9,
         MouseMoveRelative = 10,

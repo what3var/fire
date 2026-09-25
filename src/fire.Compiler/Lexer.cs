@@ -51,6 +51,7 @@ namespace fire.Compiler
             ["unsafe"] = TokenType.Unsafe,
             ["interface"] = TokenType.Interface,
             ["readonly"] = TokenType.Readonly,
+            ["static"] = TokenType.Static,
             ["public"] = TokenType.Public,
             ["private"] = TokenType.Private,
             ["protected"] = TokenType.Protected,

@@ -4,10 +4,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using MemoryPack;
 
-namespace fire.Compiler
+namespace fire.Runtime
 {
-    public class LinkedProgram
+    [MemoryPackable]
+    public partial class LinkedProgram
     {
         public CompiledProgram Program { get; init; }
 

@@ -1,4 +1,5 @@
 using System;
+using MemoryPack;
 
 namespace fire.Ast
 {
@@ -14,7 +15,8 @@ namespace fire.Ast
     /// CheckLambdaSignature) - die einzelnen Typnamen sind rein informativ,
     /// da eine dynamisch typisierte Lambda ihre Parameter-TYPEN nicht
     /// verlässlich vorab offenlegt.</summary>
-    public sealed record LambdaSignature(string? ReturnTypeName, IReadOnlyList<string> ParamTypeNames);
+    [MemoryPackable]
+    public sealed partial record LambdaSignature(string? ReturnTypeName, IReadOnlyList<string> ParamTypeNames);
 
     /// <summary>
     /// Ein Typ-Verweis: Basisname (Basistyp-Keyword oder Klassenname), optionale
@@ -32,7 +34,8 @@ namespace fire.Ast
     /// (`BaseName == "lambda"`) - `[RückgabeTyp] lambda[&lt;Param1,...,ParamN&gt;]`,
     /// siehe LambdaSignature-Doku und SPEC "Lambda-Typen mit Signatur".
     /// </summary>
-    public sealed record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null)
+    [MemoryPackable]
+    public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null)
     {
         /// <summary>Sentinel für `BaseName`, wenn eine Deklaration `var`
         /// zusammen mit einer EXPLIZITEN Einheit, aber OHNE expliziten Typ
@@ -50,8 +53,10 @@ namespace fire.Ast
         /// <summary>`true`, wenn dieser TypeRef NUR eine Einheit festlegt,
         /// den eigentlichen Typ aber (wie normales `var`) aus dem Kontext
         /// herleiten lässt (siehe InferredMarker-Doku).</summary>
+        [MemoryPackIgnore]
         public bool IsInferred => BaseName == InferredMarker;
 
+        [MemoryPackIgnore]
         public bool IsPointer => PointerDepth > 0;
 
         /// <summary>Löst BaseName auf seinen tatsächlichen, vollqualifizierten

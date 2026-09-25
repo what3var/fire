@@ -66,6 +66,7 @@ namespace fire.Compiler
         /// "wo" im Programm gerade geparst wird, ohne einen separaten
         /// Baumdurchlauf danach zu brauchen).</summary>
         private string? _currentNamespace;
+        private string? _currentClassName;
 
         /// <summary>Index dieser Quelle in der `sources`-Liste, die an
         /// ParseMultiple ging (0 = üblicherweise die Prelude) - EINMAL pro
@@ -432,18 +433,11 @@ namespace fire.Compiler
             // überall sonst (Typ/`var` zuerst, Name danach), NICHT mehr die
             // alte "Name zuerst, Typ per ':' danach"-Schreibweise (die genau
             // die Mehrdeutigkeit war, die der ':' jetzt überall einheitlich
-            // nur noch für Einheiten löst).
-            //
-            // Eigene, kleine Heuristik statt der geteilten
-            // NextLooksLikeTypeThenName() (die für Felder/Parameter reicht):
-            // die schaut nur EIN Token voraus (Identifier-dann-Identifier),
-            // ein punktierter Typname wie 'Geometry.MyException e' hat an
-            // der Stelle aber einen '.' statt direkt des zweiten Bezeichners
-            // - würde dort also fälschlich als "ungetypt" durchgehen.
+            // nur noch für Einheiten löst). NextLooksLikeTypeThenName()
+            // erkennt dabei auch einen punktierten Typnamen wie
+            // 'Geometry.MyException e' korrekt (siehe dortige Doku).
             TypeRef? typeRef = null;
-            bool looksTyped = TypeKeywords.Contains(Peek().Type)
-                || (Check(TokenType.Identifier) && (PeekAt(1).Type == TokenType.Identifier || PeekAt(1).Type == TokenType.Dot));
-            if (looksTyped)
+            if (NextLooksLikeTypeThenName())
                 typeRef = new TypeRef(ParseDottedName("Typname in catch(...)"), null, 0, Namespaces: CurrentNamespaces());
 
             string varName = Expect(TokenType.Identifier, "Erwarte Bezeichner in catch(...)").Lexeme;
@@ -699,41 +693,39 @@ namespace fire.Compiler
         /// Ein Klassenname als Zeiger-/Array-Typ in dieser Position ist damit
         /// bewusst (noch) nicht abgedeckt - ein seltener/fortgeschrittener Fall,
         /// der sich bei Bedarf nachrüsten lässt.</summary>
+        /// <summary>Erkennt "hier startet ein Typname (evtl. punktiert), gefolgt
+        /// von einem weiteren Bezeichner" - für die Entscheidung "Deklaration
+        /// oder etwas anderes" an JEDER Stelle, an der beides syntaktisch in
+        /// Frage käme (Top-Level/lokale Anweisung, Feld, Parameter, Methoden-/
+        /// extern-Rückgabetyp).
+        ///
+        /// Überspringt dafür die GESAMTE punktierte Kette (Geometry.Sub.Circle
+        /// ...) und schaut, was DANACH kommt - nur wenn DAS wieder ein
+        /// Bezeichner ist, war die Kette ein TYPNAME gefolgt vom eigentlichen
+        /// Deklarationsnamen. Das ist keine bloße Heuristik, sondern eindeutig:
+        /// zwei Bezeichner UNMITTELBAR hintereinander kommen in KEINEM
+        /// gültigen Ausdruck vor (dafür bräuchte es immer einen Operator/eine
+        /// Klammer/einen Punkt dazwischen) - 'Geometry.Funktion()' hat nach
+        /// der Kette ein '(', keinen Bezeichner (Ausdrucks-Aufruf), 'Geometry.
+        /// Circle x' dagegen schon (Deklaration). Klassenmitglieder-Zugriffe
+        /// wie 'Geometry.Circle.Radius' sind davon unabhängig - die laufen
+        /// über die normale Postfix-Kette ('.'-Zugriffe), sobald der erste
+        /// Teil als gewöhnlicher Ausdruck (nicht als Deklaration) erkannt
+        /// wurde.</summary>
         private bool NextLooksLikeTypeThenName()
         {
             if (TypeKeywords.Contains(Peek().Type)) return true;
             // 'lambda' als Typname (siehe ParseTypeRef) kann - anders als ein
             // Klassenname - auch von '<' statt einem weiteren Bezeichner
-            // gefolgt werden ('lambda<int> x'), das würde die normale
-            // "Identifier gefolgt von Identifier"-Heuristik unten verpassen.
+            // gefolgt werden ('lambda<int> x'), das würde die Ketten-Prüfung
+            // unten verpassen.
             if (Check(TokenType.Identifier) && Peek().Lexeme == "lambda") return true;
-            return Check(TokenType.Identifier) && PeekAt(1).Type == TokenType.Identifier;
-        }
+            if (!Check(TokenType.Identifier)) return false;
 
-        /// <summary>Wie NextLooksLikeTypeThenName(), erkennt zusätzlich einen
-        /// VOLLQUALIFIZIERTEN (punktierten) Typnamen wie 'Geometry.Circle
-        /// circle' - dort folgt auf den ersten Bezeichner ein '.', nicht
-        /// direkt der zweite Bezeichner, die einfache Heuristik oben würde
-        /// das fälschlich als "ungetypt" lesen (dieselbe Lücke, die vorher
-        /// schon bei 'catch (Typ varName)' aufgefallen war, siehe
-        /// ParseCatchClause).
-        ///
-        /// NUR für Kontexte sicher, in denen IMMER eine Deklaration/ein
-        /// Rückgabetyp folgt (Feld, Parameter, extern-/Methoden-Rückgabetyp -
-        /// siehe Aufrufstellen) - bewusst NICHT für die Top-Level-Anweisungs-
-        /// Weiche (ParseStatement/ParseBareTypedDecl-Dispatch): dort könnte
-        /// 'Namespace.Funktion()' genauso gut ein eigenständiger
-        /// Ausdrucks-Aufruf sein ('Namespace.Funktion' gefolgt von '(' statt
-        /// einem Bezeichner) - das ließe sich mit einem simplen
-        /// 2-Token-Vorausblick nicht zuverlässig von einer echten
-        /// Deklaration unterscheiden, ohne weiter vorauszuschauen (oder
-        /// notfalls zurückzusetzen). In einem GARANTIERTEN Deklarations-
-        /// Kontext gibt es diese Mehrdeutigkeit dagegen nicht.</summary>
-        private bool NextLooksLikeQualifiedTypeThenName()
-        {
-            if (TypeKeywords.Contains(Peek().Type)) return true;
-            if (Check(TokenType.Identifier) && Peek().Lexeme == "lambda") return true;
-            return Check(TokenType.Identifier) && (PeekAt(1).Type == TokenType.Identifier || PeekAt(1).Type == TokenType.Dot);
+            int offset = 1;
+            while (PeekAt(offset).Type == TokenType.Dot && PeekAt(offset + 1).Type == TokenType.Identifier)
+                offset += 2;
+            return PeekAt(offset).Type == TokenType.Identifier;
         }
 
         private Stmt ParseIf()
@@ -828,7 +820,7 @@ namespace fire.Compiler
             Expect(TokenType.Extern, "Erwarte 'extern'");
 
             TypeRef? returnType = null;
-            if (NextLooksLikeQualifiedTypeThenName())
+            if (NextLooksLikeTypeThenName())
                 returnType = ParseTypeRef();
 
             string name = Expect(TokenType.Identifier, "Erwarte Funktionsnamen nach 'extern'").Lexeme;
@@ -1292,8 +1284,25 @@ namespace fire.Compiler
 
             Expect(TokenType.LBrace, "Erwarte '{' nach Klassenkopf");
             var members = new List<Stmt>();
-            while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
-                members.AddRange(ParseClassMember());
+            // Für statische Auto-Properties (siehe ParsePropertyBody) - das
+            // synthetisierte Backing-Field ist dort ein Zugriff über
+            // 'ClassName.feld' statt 'this.feld' (keine Instanz gebunden),
+            // braucht also den QUALIFIZIERTEN Klassennamen, GENAU wie er
+            // gleich unten in ClassDecl selbst landet. Gespeichert/
+            // wiederhergestellt statt direkt zugewiesen, falls eine Klasse
+            // jemals verschachtelt vorkäme (aktuell nicht möglich, aber
+            // robust für den Fall).
+            string? savedClassName = _currentClassName;
+            _currentClassName = QualifyDeclName(name);
+            try
+            {
+                while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+                    members.AddRange(ParseClassMember());
+            }
+            finally
+            {
+                _currentClassName = savedClassName;
+            }
             Expect(TokenType.RBrace, "Erwarte '}' am Ende der Klasse");
 
             return new ClassDecl(_sourceIndex, line, QualifyDeclName(name), baseRefs, members, typeParams, IsActor: isActor);
@@ -1502,7 +1511,7 @@ namespace fire.Compiler
             {
                 int mLine = Peek().Line;
                 TypeRef? returnType = null;
-                if (NextLooksLikeQualifiedTypeThenName())
+                if (NextLooksLikeTypeThenName())
                     returnType = ParseTypeRef();
                 string methodName = Expect(TokenType.Identifier, "Erwarte Methodennamen").Lexeme;
                 var parms = ParseParamList();
@@ -1560,7 +1569,7 @@ namespace fire.Compiler
         /// da eine Auto-Property zusätzlich ein synthetisches Backing-Field
         /// braucht (siehe unten) - der Aufrufer (ParseClassMember) hängt
         /// beides an die Mitgliederliste der Klasse an.</summary>
-        private List<Stmt> ParsePropertyBody(int line, TypeRef? type, string name, AccessModifier access)
+        private List<Stmt> ParsePropertyBody(int line, TypeRef? type, string name, AccessModifier access, bool isStatic = false)
         {
             Expect(TokenType.LBrace, "Erwarte '{' nach Property-Namen");
 
@@ -1631,24 +1640,36 @@ namespace fire.Compiler
                 // soll, niemals direkt von außen ('this._AutoName' bleibt
                 // INNERHALB der Klasse weiterhin normal erlaubt).
                 string backingName = "_Auto" + name;
-                result.Add(new FieldDecl(_sourceIndex, line, type, Array.Empty<Expr?>(), backingName, null, IsReadonly: false, Access: AccessModifier.Private));
+                result.Add(new FieldDecl(_sourceIndex, line, type, Array.Empty<Expr?>(), backingName, null, IsReadonly: false,
+                    Access: AccessModifier.Private, IsStatic: isStatic));
+
+                // Statisch: Backing-Field über 'ClassName.feld' statt
+                // 'this.feld' (keine Instanz gebunden, siehe
+                // ParseClassOrActorDecl für _currentClassName) - beides läuft
+                // über denselben MemberExpr-Knoten, nur das Ziel
+                // unterscheidet sich (ThisExpr vs. ein Bezeichner mit dem
+                // Klassennamen, den der Resolver als statischen Zugriff
+                // erkennt, siehe Resolver.TryResolveStaticMemberAccess).
+                Expr backingTarget = isStatic
+                    ? new IdentifierExpr(line, _currentClassName ?? name)
+                    : new ThisExpr(line);
 
                 if (getterIsAuto)
                     getter = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt>
                     {
-                        new ReturnStmt(_sourceIndex, line, new MemberExpr(line, new ThisExpr(line), backingName)),
+                        new ReturnStmt(_sourceIndex, line, new MemberExpr(line, backingTarget, backingName)),
                     });
 
                 if (setterIsAuto)
                     setter = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt>
                     {
                         new ExprStmt(_sourceIndex, line, new AssignExpr(line,
-                            new MemberExpr(line, new ThisExpr(line), backingName),
+                            new MemberExpr(line, backingTarget, backingName),
                             new IdentifierExpr(line, "value"))),
                     });
             }
 
-            result.Add(new PropertyDecl(_sourceIndex, line, type, name, getter, setter, access));
+            result.Add(new PropertyDecl(_sourceIndex, line, type, name, getter, setter, access, isStatic));
             return result;
         }
 
@@ -1679,6 +1700,14 @@ namespace fire.Compiler
             if (Check(TokenType.Operator))
                 return new List<Stmt> { ParseOperatorMember(line) };
 
+            // 'static' bei Feldern/Methoden/Properties (SPEC "Statische
+            // Mitglieder") - EINE geteilte Speicherstelle pro Klasse statt
+            // pro Instanz, aufrufbar als 'ClassName.Member' statt
+            // 'instanz.Member' (siehe Resolver/VM.GetStaticField etc.).
+            // Reihenfolge fest [access] [static] [readonly] - üblichste
+            // Schreibweise ('public static readonly'), keine anderen
+            // Reihenfolgen extra unterstützt (Einfachheit).
+            bool isStatic = Match(TokenType.Static);
             bool isReadonly = Match(TokenType.Readonly);
 
             // SPEC "Einheiten-Deklarationen": `var` ist wie bei lokalen
@@ -1690,7 +1719,7 @@ namespace fire.Compiler
                 Advance();
                 type = new TypeRef(TypeRef.InferredMarker, null, 0, Namespaces: CurrentNamespaces());
             }
-            else if (NextLooksLikeQualifiedTypeThenName())
+            else if (NextLooksLikeTypeThenName())
             {
                 type = ParseTypeRef();
             }
@@ -1714,7 +1743,7 @@ namespace fire.Compiler
                 var methodTypeParams = ParseWhereClauses(methodTypeParamNames, line);
                 var body = ParseBlock();
                 return new List<Stmt> { new MethodDecl(_sourceIndex, line, type, name, parms, body,
-                    methodTypeParamNames.Count > 0 ? methodTypeParams : null, access) };
+                    methodTypeParamNames.Count > 0 ? methodTypeParams : null, access, isStatic) };
             }
 
             if (methodTypeParamNames.Count > 0)
@@ -1726,7 +1755,7 @@ namespace fire.Compiler
                     throw Error(
                         "'readonly' ist für Properties nicht gültig - eine Property ohne 'set' ist bereits nur lesbar",
                         Peek());
-                return ParsePropertyBody(line, type, name, access);
+                return ParsePropertyBody(line, type, name, access, isStatic);
             }
 
             var arrayRanks = ParseArrayRanks();
@@ -1747,7 +1776,7 @@ namespace fire.Compiler
             if (Match(TokenType.Assign))
                 initializer = ParseExpression();
             ExpectStatementTerminator();
-            return new List<Stmt> { new FieldDecl(_sourceIndex, line, type, arrayRanks, name, initializer, isReadonly, access) };
+            return new List<Stmt> { new FieldDecl(_sourceIndex, line, type, arrayRanks, name, initializer, isReadonly, access, isStatic) };
         }
 
         /// <summary>`operator SYMBOL(params) { body }` - Operator-Überladung
@@ -1875,7 +1904,7 @@ namespace fire.Compiler
                 Advance();
                 type = new TypeRef(TypeRef.InferredMarker, null, 0, Namespaces: CurrentNamespaces());
             }
-            else if (NextLooksLikeQualifiedTypeThenName())
+            else if (NextLooksLikeTypeThenName())
             {
                 type = ParseTypeRef();
             }

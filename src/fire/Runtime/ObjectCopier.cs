@@ -66,7 +66,7 @@ namespace fire.Runtime
         {
             if (map.TryGetValue(node, out var existing)) return existing;
 
-            var copy = new ObjectInstance(node.ClassDef, copyOwner, node.RtClass);
+            var copy = new ObjectInstance(node.ClassName, copyOwner, node.RtClass);
             map[node] = copy;
 
             // Unter dem Baum-Lock lesen (node kann seit ActivateThreadSharing
@@ -104,7 +104,7 @@ namespace fire.Runtime
                     if (!IsWithinTree(target, treeRoot))
                         throw new TakingViolationException(
                             $"'taking' abgelehnt: ein Feld verweist auf eine Instanz von " +
-                            $"'{target.ClassDef.Name}', die nicht zum eigenen Ownership-Baum gehört.");
+                            $"'{target.ClassName}', die nicht zum eigenen Ownership-Baum gehört.");
                     var childCopy = CopyNode(target, treeRoot, copyOwner, map);
                     return Value.MakeClassRef(childCopy);
                 }

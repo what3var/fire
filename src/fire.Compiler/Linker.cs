@@ -1,4 +1,5 @@
 ﻿using fire.Bytecode;
+using fire.Runtime;
 using fire.Terminal;
 using fire.Terminal.Bridge;
 using fire.Terminal.Windows;
@@ -72,7 +73,7 @@ namespace fire.Compiler
 
             var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource);
 
-            Packer.PackProgram(linkedProgram);
+            Packer.PackProgram(linkedProgram, "tempout.a");
 
             return linkedProgram;
         }

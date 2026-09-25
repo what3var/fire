@@ -5,24 +5,12 @@ using fire.Ast;
 using fire.Bytecode;
 using fire.Lexing;
 using fire.Resolving;
+using fire.Runtime;
 using fire.Values;
+using MemoryPack;
 
 namespace fire.Compiler
 {
-    /// <summary>Ergebnis eines Compiler-Laufs: der Top-Level-Chunk plus die
-    /// kompilierten Klassen (Name -> RuntimeClass), die die VM für `new`/
-    /// Methodenaufrufe braucht, plus die Signaturen aller `extern`-
-    /// Deklarationen (für dynamisches Linking gegen eine per `#extern
-    /// "libName"` benannte native Bibliothek, siehe VM.CallExtern).</summary>
-    public sealed class CompiledProgram
-    {
-        public required Chunk TopLevel { get; init; }
-        public required IReadOnlyDictionary<string, RuntimeClass> Classes { get; init; }
-        public required IReadOnlyDictionary<string, ExternSignature> ExternSignatures { get; init; }
-    }
-
-    
-
     /// <summary>
     /// Übersetzt den AST (nach Resolver-Lauf) in einen Chunk. Deckt aktuell ab:
     /// Literale, Variablen (Global/Local passend zu den Resolver-Slots),
@@ -209,6 +197,41 @@ namespace fire.Compiler
         {
             var compiler = new Compiler(resolveResult, natives);
             var classes = compiler.CompileClasses(program);
+
+            // SPEC "Statische Mitglieder": statische Feld-Initialisierer
+            // laufen GENAU EINMAL, vor dem eigentlichen Programm (anders als
+            // Instanzfelder, die bei JEDER `new`-Konstruktion neu laufen) -
+            // direkt hier an den ANFANG des TopLevel-Chunks emittiert, damit
+            // sie exakt einmal laufen, in Klassen-/Felddeklarations-
+            // reihenfolge, bevor der eigentliche Nutzer-Code beginnt.
+            // Dummy-'this' (undefined): der Resolver verbietet 'this'/'super'
+            // in einem statischen Feld-Initialisierer (siehe ResolveExpr/
+            // ThisExpr), das Dummy wird also nie tatsächlich gelesen -
+            // gebraucht nur, weil CallProtoWithThis (derselbe Opcode wie für
+            // Instanzfeld-Initialisierer) IMMER ein 'this' auf dem Stack
+            // erwartet.
+            foreach (var rc in classes.Values)
+            {
+                foreach (var (fieldName, initProto) in rc.StaticFields)
+                {
+                    int protoIdx = compiler._chunk.AddFunctionProto(initProto);
+                    compiler.EmitLoadConst(Value.MakeUndefined());
+                    compiler._chunk.EmitOp(OpCode.CallProtoWithThis);
+                    compiler._chunk.EmitU16(protoIdx);
+                    compiler._chunk.EmitByte(0);
+                    // SetStaticFieldOnInit statt SetStaticField - KEINE
+                    // Zugriffsmodifikator-Prüfung (siehe dortige Doku), sonst
+                    // würde ein PRIVATES statisches Feld schon bei seiner
+                    // eigenen Initialisierung abgelehnt (diese läuft als
+                    // Top-Level-Code, ohne zur eigenen Klasse passenden
+                    // OwnerClass-Kontext). Pusht (anders als SetStaticField)
+                    // auch nichts zurück, kein Pop nötig.
+                    compiler._chunk.EmitOp(OpCode.SetStaticFieldOnInit);
+                    compiler._chunk.EmitU16(compiler._chunk.AddConstant(Value.MakeString(rc.Name)));
+                    compiler._chunk.EmitU16(compiler._chunk.AddConstant(Value.MakeString(fieldName)));
+                }
+            }
+
             foreach (var stmt in program)
             {
                 compiler._topLevelSourceIndex = stmt.Source;
@@ -264,6 +287,22 @@ namespace fire.Compiler
                 }
             }
 
+            // RuntimeClass.IsActor ist jetzt ein echtes Feld statt einer
+            // berechneten Property (siehe dortige Doku - wegen Decl.
+            // [MemoryPackIgnore] für die geplante Serialisierung), hier
+            // EINMALIG nach der Basisklassen-Verknüpfung oben berechnet -
+            // dieselbe Logik wie die frühere Property, nur als expliziter
+            // Kettenwalk statt rekursivem Property-Zugriff (unabhängig von
+            // der Iterationsreihenfolge oben: jede Klasse geht ihre EIGENE
+            // Kette ab, braucht also nicht, dass Base schon vorverarbeitet ist).
+            foreach (var rc in classes.Values)
+            {
+                bool isActor = false;
+                for (var walk = rc; walk != null; walk = walk.Base)
+                    if (walk.Decl.IsActor) { isActor = true; break; }
+                rc.IsActor = isActor;
+            }
+
             // ERST jetzt (nach dem Sammeln ALLER Klassennamen, aber VOR dem
             // eigentlichen Kompilieren der Klassenkörper unten) - ResolveTypeRef
             // braucht die Menge ALLER Klassennamen, die genau HIER zum ersten
@@ -289,25 +328,38 @@ namespace fire.Compiler
                 switch (member)
                 {
                     case FieldDecl fd:
-                        rc.Fields.Add((fd.Name, CompileFieldInitProto(rc, fd.Type, fd.Initializer)));
+                    {
+                        var fieldInit = CompileFieldInitProto(rc, fd.Type, fd.Initializer);
                         rc.OwnFieldInfo[fd.Name] = new FieldInfo()
                         {
                             AccessModifier = fd.Access,
-                            RequiredUnit = fd.Type?.Unit
+                            RequiredUnit = fd.Type?.Unit,
+                            IsStatic = fd.IsStatic,
                         };
+                        // SPEC "Statische Mitglieder": statische Felder landen
+                        // NICHT in Fields (der Instanz-Init-Liste, die JEDE
+                        // `new`-Konstruktion erneut durchläuft) - stattdessen
+                        // in StaticFields, EINMALIG beim Programmstart
+                        // ausgewertet (siehe RunStaticInitializers, aufgerufen
+                        // direkt nach CompileClasses in Compile()).
+                        if (fd.IsStatic)
+                            rc.StaticFields.Add((fd.Name, fieldInit));
+                        else
+                            rc.Fields.Add((fd.Name, fieldInit));
                         // SPEC "Einheiten-Deklarationen": geprüft wird das
                         // NICHT hier beim Initialisieren (siehe
                         // CompileFieldInitProto - unverändert), sondern
-                        // direkt in der VM bei JEDEM SetField-Aufruf (siehe
-                        // VM.OpCode.SetField) - Feldzuweisungen sind (anders
-                        // als lokale/globale Variablen) grundsätzlich
-                        // dynamisch aufgelöst, die VM kennt zur Laufzeit die
+                        // direkt in der VM bei JEDEM SetField-/SetStaticField-
+                        // Aufruf - Feldzuweisungen sind (anders als lokale/
+                        // globale Variablen) grundsätzlich dynamisch
+                        // aufgelöst, die VM kennt zur Laufzeit die
                         // tatsächliche Klasse des Zielobjekts, der Compiler
                         // an dieser Stelle nicht.
                         break;
+                    }
 
                     case MethodDecl md:
-                        rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access));
+                        rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic));
                         break;
 
                     case ConstructorDecl ctor:
@@ -324,13 +376,15 @@ namespace fire.Compiler
                         // GetField/SetField rufen sie per Namenskonvention auf,
                         // wenn kein gleichnamiges Feld existiert. Beide Accessoren
                         // teilen sich den EINEN Modifikator der Property selbst
-                        // (SPEC kennt keine getrennten get/set-Modifikatoren).
+                        // (SPEC kennt keine getrennten get/set-Modifikatoren) -
+                        // genauso teilen sie sich das EINE IsStatic (SPEC kennt
+                        // keine gemischt statisch/nicht-statischen Accessoren).
                         if (pd.Getter != null)
-                            rc.AddMethod("get_" + pd.Name, CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access));
+                            rc.AddMethod("get_" + pd.Name, CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic));
                         if (pd.Setter != null)
                         {
                             var setterParams = new[] { new LambdaParam("value", pd.Type, Array.Empty<Expr?>()) };
-                            rc.AddMethod("set_" + pd.Name, CompileMethodProto(rc, setterParams, pd.Setter, pd.Access));
+                            rc.AddMethod("set_" + pd.Name, CompileMethodProto(rc, setterParams, pd.Setter, pd.Access, pd.IsStatic));
                         }
                         break;
                 }
@@ -556,17 +610,23 @@ namespace fire.Compiler
             _chunk.EmitU16(protoIdx);
         }
 
-        private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access)
+        private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access, bool isStatic = false)
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames);
             inner._chunk.OwnerClass = rc;
+            // SPEC "Statische Mitglieder": eine statische Methode hat kein
+            // gebundenes 'this' - der innere Compiler merkt sich das, um
+            // 'this'/'super' im Körper abzulehnen (siehe Resolver statt
+            // Compiler: die Prüfung selbst läuft im Resolver, VOR dem
+            // Kompilieren, über ResolveResult - hier nur zur Vollständigkeit
+            // erwähnt, keine eigene Prüfung an dieser Stelle nötig).
             for (int i = 0; i < parms.Count; i++)
                 inner._chunk.MarkLocalName(0, i, parms[i].Name);
             EmitLambdaParamChecks(inner, parms);
             foreach (var stmt in body.Statements) inner.CompileStmt(stmt);
             inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
-            return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms));
+            return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic);
         }
 
         /// <summary>Konstruktor-Proto: [Basis-Konstruktor-Aufruf (explizit mit
@@ -1282,6 +1342,18 @@ namespace fire.Compiler
                         EmitLoadConst(Value.MakeInt(em.Value));
                         break;
                     }
+                    // 'ClassName.Member' (SPEC "Statische Mitglieder") - kein
+                    // Objekt auf dem Stack nötig (anders als GetField), der
+                    // Klassenname steht schon als Konstante im Bytecode (der
+                    // Resolver hat ihn schon eindeutig aufgelöst, siehe
+                    // ResolvedRef.StaticMember).
+                    if (memberRef is ResolvedRef.StaticMember sm)
+                    {
+                        _chunk.EmitOp(OpCode.GetStaticField);
+                        _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
+                        _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
+                        break;
+                    }
                     CompileExpr(me.Target);
                     _chunk.EmitOp(OpCode.GetField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
@@ -1416,6 +1488,33 @@ namespace fire.Compiler
                     _chunk.EmitByte((byte)call.Args.Count);
                     return;
                 }
+
+                if (resolved is ResolvedRef.StaticMember callSm)
+                {
+                    // SPEC "Statische Mitglieder" - bloßer Name statt
+                    // 'ClassName.Method(...)'.
+                    foreach (var arg in call.Args) CompileExpr(arg);
+                    _chunk.EmitOp(OpCode.CallStaticMethod);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(callSm.ClassName)));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(calleeId.Name)));
+                    _chunk.EmitByte((byte)call.Args.Count);
+                    return;
+                }
+
+                if (resolved is ResolvedRef.ImplicitThisMember)
+                {
+                    // SPEC "Implizite Mitglieder-Referenzen" - bloßer Name
+                    // statt 'this.Method(...)'. CallMethod erwartet das
+                    // Zielobjekt UNTERHALB der Argumente auf dem Stack (siehe
+                    // VM.CallMethod: Args zuerst gepoppt, dann erst 'target')
+                    // - 'this' also VOR den Argumenten pushen.
+                    _chunk.EmitOp(OpCode.LoadThis);
+                    foreach (var arg in call.Args) CompileExpr(arg);
+                    _chunk.EmitOp(OpCode.CallMethod);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(calleeId.Name)));
+                    _chunk.EmitByte((byte)call.Args.Count);
+                    return;
+                }
             }
 
             if (call.Callee is MemberExpr me)
@@ -1441,6 +1540,20 @@ namespace fire.Compiler
                         EmitLoadConst(Value.MakeUndefined());
                     }
                     _chunk.EmitOp(OpCode.ResumeException);
+                    return;
+                }
+
+                // 'ClassName.Method(...)' (SPEC "Statische Mitglieder") - kein
+                // Objekt auf dem Stack (anders als CallMethod), der
+                // Klassenname steht schon als Konstante im Bytecode (siehe
+                // ResolvedRef.StaticMember, vom Resolver aufgelöst).
+                if (_refs.TryGetValue(me, out var calleeMemberRef) && calleeMemberRef is ResolvedRef.StaticMember sm)
+                {
+                    foreach (var arg in call.Args) CompileExpr(arg);
+                    _chunk.EmitOp(OpCode.CallStaticMethod);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
+                    _chunk.EmitByte((byte)call.Args.Count);
                     return;
                 }
 
@@ -1520,6 +1633,20 @@ namespace fire.Compiler
                     throw new NotSupportedException(
                         $"'{ext.Name}' ist eine extern deklarierte Funktion und kann nur direkt aufgerufen werden, " +
                         $"nicht als Wert verwendet werden.");
+                case ResolvedRef.StaticMember sm:
+                    // SPEC "Statische Mitglieder" - bloßer Name statt
+                    // 'ClassName.Name' (siehe Resolver.ResolveIdentifierRef).
+                    _chunk.EmitOp(OpCode.GetStaticField);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
+                    break;
+                case ResolvedRef.ImplicitThisMember:
+                    // SPEC "Implizite Mitglieder-Referenzen" - bloßer Name
+                    // statt 'this.Name' (siehe Resolver.ResolveIdentifierRef).
+                    _chunk.EmitOp(OpCode.LoadThis);
+                    _chunk.EmitOp(OpCode.GetField);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
+                    break;
             }
         }
 
@@ -1527,6 +1654,24 @@ namespace fire.Compiler
         {
             if (a.Target is MemberExpr me)
             {
+                // 'ClassName.Member = ...' (SPEC "Statische Mitglieder") - kein
+                // Zielobjekt auf dem Stack (anders als bei einer Instanz-
+                // Feldzuweisung unten), der Klassenname steht schon als
+                // Konstante im Bytecode (siehe ResolvedRef.StaticMember).
+                // Bewusst OHNE die NewObjectOwned-Sonderbehandlung unten (SPEC
+                // 2.1, kaskadierendes Löschen) - die setzt die Eigentümerschaft
+                // eines frisch erzeugten Objekts auf die INSTANZ, die das Feld
+                // hält; ein statisches Feld gehört aber keiner Instanz, dafür
+                // gibt es hier kein sinnvolles Gegenstück.
+                if (_refs.TryGetValue(me, out var staticTargetRef) && staticTargetRef is ResolvedRef.StaticMember sm)
+                {
+                    CompileExpr(a.Value);
+                    _chunk.EmitOp(OpCode.SetStaticField);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
+                    return;
+                }
+
                 CompileExpr(me.Target);
 
                 // Direkte Feldzuweisung eines frisch erzeugten Objekts: Owner wird
@@ -1599,6 +1744,27 @@ namespace fire.Compiler
                 case ResolvedRef.Extern ext:
                     throw new NotSupportedException(
                         $"Zuweisung an '{ext.Name}' ist nicht möglich - das ist eine extern deklarierte Funktion.");
+                case ResolvedRef.StaticMember sm:
+                    // SPEC "Statische Mitglieder" - bloßer Name statt
+                    // 'ClassName.Name = ...' (siehe Resolver.
+                    // ResolveIdentifierRef/ResolveAssignTarget).
+                    _chunk.EmitOp(OpCode.SetStaticField);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
+                    break;
+                case ResolvedRef.ImplicitThisMember:
+                    // SPEC "Implizite Mitglieder-Referenzen" - bloßer Name
+                    // statt 'this.Name = ...'. Der Wert liegt hier (anders
+                    // als beim MemberExpr-Zweig oben) schon OBEN auf dem
+                    // Stack (CompileExpr(a.Value) lief schon VOR diesem
+                    // switch) - 'this' erst JETZT nachladen und die beiden
+                    // vertauschen, damit SetField sein erwartetes [obj,
+                    // value] bekommt.
+                    _chunk.EmitOp(OpCode.LoadThis); // [value, obj]
+                    _chunk.EmitOp(OpCode.Swap);     // [obj, value]
+                    _chunk.EmitOp(OpCode.SetField);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
+                    break;
             }
         }
 
@@ -1633,6 +1799,31 @@ namespace fire.Compiler
 
             if (e.Target is MemberExpr me)
             {
+                // 'ClassName.staticField++' (SPEC "Statische Mitglieder") -
+                // kein Objekt auf dem Stack, GetStaticField/SetStaticField
+                // statt GetField/SetField, sonst dieselbe Technik wie unten.
+                if (_refs.TryGetValue(me, out var staticIncDecRef) && staticIncDecRef is ResolvedRef.StaticMember stm)
+                {
+                    int classNameConstIdx = _chunk.AddConstant(Value.MakeString(stm.ClassName));
+                    int fieldNameConstIdx = _chunk.AddConstant(Value.MakeString(me.Name));
+                    _chunk.EmitOp(OpCode.GetStaticField);
+                    _chunk.EmitU16(classNameConstIdx);
+                    _chunk.EmitU16(fieldNameConstIdx);
+                    if (!e.IsPrefix) _chunk.EmitOp(OpCode.Dup); // Postfix: [oldVal, oldVal]
+                    EmitLoadConst(Value.MakeInt(1));
+                    _chunk.EmitOp(addSubOp); // Prefix: [newVal] / Postfix: [oldVal, newVal]
+                    _chunk.EmitOp(OpCode.SetStaticField);
+                    _chunk.EmitU16(classNameConstIdx);
+                    _chunk.EmitU16(fieldNameConstIdx);
+                    // SetStaticField poppt+pusht denselben Wert wieder (wie
+                    // SetField) - Stackgröße bleibt dabei UNVERÄNDERT. Prefix:
+                    // [newVal] ist also schon das gewünschte Ergebnis. Postfix:
+                    // [oldVal, newVal] - die obere (neue) Kopie noch weg, damit
+                    // oldVal als Ergebnis übrig bleibt.
+                    if (!e.IsPrefix) _chunk.EmitOp(OpCode.Pop);
+                    return;
+                }
+
                 CompileExpr(me.Target);           // [obj]
                 _chunk.EmitOp(OpCode.Dup);         // [obj, obj]
                 _chunk.EmitOp(OpCode.GetField);
@@ -1665,6 +1856,51 @@ namespace fire.Compiler
                 throw new NotSupportedException("Ungültiges Ziel für '++'/'--' im Bytecode-Compiler.");
 
             var refKind = _refs[id];
+
+            // SPEC "Statische Mitglieder"/"Implizite Mitglieder-Referenzen":
+            // ein bloßer Name, der auf ein statisches oder (implizit über
+            // 'this') Instanzfeld verweist - eigene, in sich geschlossene
+            // Bytecode-Sequenz statt der generischen EmitLoad/EmitStore
+            // unten (die sind auf Local/Global zugeschnitten, brauchen kein
+            // zusätzliches Objekt/Klassenname auf dem Stack).
+            if (refKind is ResolvedRef.StaticMember sm)
+            {
+                int classNameConstIdx = _chunk.AddConstant(Value.MakeString(sm.ClassName));
+                int fieldNameConstIdx = _chunk.AddConstant(Value.MakeString(id.Name));
+                _chunk.EmitOp(OpCode.GetStaticField);
+                _chunk.EmitU16(classNameConstIdx);
+                _chunk.EmitU16(fieldNameConstIdx);
+                if (!e.IsPrefix) _chunk.EmitOp(OpCode.Dup); // Postfix: [oldVal, oldVal]
+                EmitLoadConst(Value.MakeInt(1));
+                _chunk.EmitOp(addSubOp); // Prefix: [newVal] / Postfix: [oldVal, newVal]
+                _chunk.EmitOp(OpCode.SetStaticField);
+                _chunk.EmitU16(classNameConstIdx);
+                _chunk.EmitU16(fieldNameConstIdx);
+                // SetStaticField poppt+pusht denselben Wert wieder (wie
+                // SetField) - Stackgröße bleibt UNVERÄNDERT (siehe dieselbe
+                // Herleitung beim MemberExpr-Fall oben).
+                if (!e.IsPrefix) _chunk.EmitOp(OpCode.Pop);
+                return;
+            }
+
+            if (refKind is ResolvedRef.ImplicitThisMember)
+            {
+                // Wie 'this.feld++' oben (MemberExpr-Fall), nur dass 'this'
+                // hier implizit ist statt ausgeschrieben.
+                _chunk.EmitOp(OpCode.LoadThis);   // [obj]
+                _chunk.EmitOp(OpCode.Dup);         // [obj, obj]
+                _chunk.EmitOp(OpCode.GetField);
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name))); // [obj, oldVal]
+                if (!e.IsPrefix) _chunk.EmitOp(OpCode.Dup); // Postfix: [obj, oldVal, oldVal]
+                EmitLoadConst(Value.MakeInt(1));
+                _chunk.EmitOp(addSubOp);           // Prefix: [obj, newVal] / Postfix: [obj, oldVal, newVal]
+                if (!e.IsPrefix) _chunk.EmitOp(OpCode.RotateUnderTop); // [oldVal, obj, newVal]
+                _chunk.EmitOp(OpCode.SetField);
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name))); // [...,newVal]
+                if (!e.IsPrefix) _chunk.EmitOp(OpCode.Pop); // [oldVal]
+                return;
+            }
+
             void EmitLoad()
             {
                 switch (refKind)

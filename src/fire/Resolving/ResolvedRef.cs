@@ -41,5 +41,24 @@ namespace fire.Resolving
         /// Resolver an den betroffenen MemberExpr-Knoten gehängt (nicht an
         /// einen IdentifierExpr wie die anderen ResolvedRef-Fälle).</summary>
         public sealed record EnumMember(long Value) : ResolvedRef;
+
+        /// <summary>Ein statischer Klassenmitglied-Zugriff ('ClassName.Member',
+        /// SPEC "Statische Mitglieder") - wie EnumMember an den betroffenen
+        /// MemberExpr-Knoten gehängt, `me.Name` bleibt der Mitgliedsname,
+        /// ClassName hier ist der (exakt geschriebene, ggf. schon
+        /// vollqualifizierte) Klassenname, gegen den geprüft wurde (siehe
+        /// Resolver.TryResolveStaticMemberAccess). Der Compiler nutzt das
+        /// für GetStaticField/SetStaticField/CallStaticMethod statt der
+        /// normalen (dynamischen) GetField/SetField/CallMethod.</summary>
+        public sealed record StaticMember(string ClassName) : ResolvedRef;
+
+        /// <summary>Ein Instanzfeld/-methode/-property, per bloßem Namen (ohne
+        /// 'this.'-Präfix) referenziert, INNERHALB einer Klasse (SPEC
+        /// "Implizite Mitglieder-Referenzen") - der Compiler behandelt das
+        /// wie 'this.Name' (LoadThis + GetField/SetField/CallMethod). Kann
+        /// nur innerhalb einer NICHT-statischen Methode/eines NICHT-
+        /// statischen Feld-Initialisierers entstehen (siehe Resolver.
+        /// ResolveIdentifierRef) - dort gibt es kein gebundenes 'this'.</summary>
+        public sealed record ImplicitThisMember : ResolvedRef;
     }
 }

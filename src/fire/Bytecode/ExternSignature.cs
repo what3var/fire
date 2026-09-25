@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using MemoryPack;
 
 namespace fire.Bytecode
 {
@@ -12,7 +13,8 @@ namespace fire.Bytecode
     /// null, wenn keine `#extern "libName"`-Direktive vor der Deklaration
     /// stand (dann bleibt nur manuelle Host-Registrierung über
     /// Bytecode.ExternRegistry möglich).</summary>
-    public sealed class ExternSignature
+    [MemoryPackable]
+    public sealed partial class ExternSignature
     {
         public required string? LibName { get; init; }
         public required IReadOnlyList<TypeRef?> ParamTypes { get; init; }

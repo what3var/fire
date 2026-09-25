@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace fire.Compiler
+namespace fire.Runtime
 {
     public static class NativeImports
     {

@@ -77,6 +77,22 @@ namespace fire.Bytecode
         ConstructBase,      // u16 baseClassNameIdx, u8 argCount : ruft den Basis-Konstruktor für das aktuelle 'this' auf
         CallProtoWithThis,  // u16 protoIdx, u8 argCount : ruft Functions[protoIdx] mit 'this' = TOS-unterhalb-der-Args auf (Feld-Initialisierer)
 
+        // Statische Mitglieder (SPEC "Statische Mitglieder") - eine geteilte
+        // Speicherstelle pro KLASSE statt pro Instanz (siehe RuntimeClass.
+        // StaticFieldValues), KEIN Objekt auf dem Stack (anders als
+        // GetField/SetField/CallMethod) - stattdessen der Klassenname direkt
+        // als Konstante im Bytecode, da 'ClassName.Member' schon zur
+        // Compile-Zeit eindeutig aufgelöst wird (siehe Resolver.
+        // TryResolveStaticMemberAccess).
+        GetStaticField,   // u16 classNameConstIdx, u16 fieldNameConstIdx : pusht den aktuellen Wert
+        SetStaticField,   // u16 classNameConstIdx, u16 fieldNameConstIdx : poppt Wert, speichert, pusht ihn erneut (wie SetField)
+        SetStaticFieldOnInit, // u16 classNameConstIdx, u16 fieldNameConstIdx : wie SetStaticField, aber OHNE Zugriffsmodifikator-
+                              //   Prüfung (wie SetFieldOnThis vs. SetField) - NUR für die einmalige Initialisierung eines
+                              //   statischen Feldes beim Programmstart (siehe Compiler.Compile), die läuft als Top-Level-Code
+                              //   ohne passenden OwnerClass-Kontext, ist aber die eigene Initialisierung der Klasse selbst und
+                              //   soll deshalb IMMER dürfen, auch für ein privates Feld - genau wie ein Instanzfeld-Initialisierer
+        CallStaticMethod, // u16 classNameConstIdx, u16 methodNameConstIdx, u8 argCount : ruft OHNE gebundenes 'this' auf
+
         AddressOfLocal,     // u16 depth, u16 slot  : push Pointer auf GetAncestor(depth)-Slot(slot)
         AddressOfGlobal,    // u16 slot             : push Pointer auf GlobalScope-Slot(slot)
         AddressOfField,     // u16 fieldNameIdx      : pop obj; push Pointer auf obj.Fields[name]

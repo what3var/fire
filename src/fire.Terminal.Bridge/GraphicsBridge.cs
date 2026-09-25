@@ -289,18 +289,26 @@ namespace fire.Terminal.Bridge
                     return __GRPHWinRegisterEvent(this.id, EventType.Close!, fn);
                 }
             
+                bool RegisterCloseRequest(lambda fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.CloseRequest!, fn);
+                }
+            
             }
 
             enum EventType
             {
                 Unknown = 0,
                 Close = 1,
-                TextInput = 2,
+                CloseRequest = 2,
+                TextInput = 3,
                 MouseDown = 8,
                 MouseMove = 9,
                 MouseMoveRelative = 10,
                 MouseUp = 11,
                 MouseScroll = 12,
+                //MouseEnter = 13,
+                //MouseLeave = 14,
                 KeyDown = 24,
                 KeyUp = 25
             }

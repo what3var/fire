@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using MemoryPack;
 
 namespace fire.Bytecode
 {
@@ -18,7 +19,8 @@ namespace fire.Bytecode
     /// derselben "was passiert danach"-Semantik in einem einzigen Bytecode-
     /// Stück ausdrücken lassen (weiterlaufen vs. weiter nach außen werfen).
     /// </summary>
-    public sealed class HandlerTemplate
+    [MemoryPackable]
+    public sealed partial class HandlerTemplate
     {
         public List<(string? TypeName, int CatchAddr)> Catches { get; } = new();
         public int? FinallyProtoIdx { get; set; }

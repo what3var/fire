@@ -173,7 +173,7 @@ namespace fire.Editor
         /// bleiben).</summary>
         private static string DescribeForTree(Value value) => value.Kind switch
         {
-            ValueKind.Class => $"{((ObjectInstance)value.AsObjectRef()).ClassDef.Name} (#{((ObjectInstance)value.AsObjectRef()).Id})",
+            ValueKind.Class => $"{((ObjectInstance)value.AsObjectRef()).ClassName} (#{((ObjectInstance)value.AsObjectRef()).Id})",
             ValueKind.Array => $"Array[{value.AsArray().Length}]",
             _ => value.ToString(),
         };

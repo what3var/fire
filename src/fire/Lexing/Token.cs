@@ -18,6 +18,7 @@ namespace fire.Lexing
         Extern, Unsafe,
         Interface,
         Readonly, Enum,
+        Static, // 'static' bei Feldern/Methoden/Properties (siehe Parser.ParseClassMember)
         Public, Private, Protected, // Zugriffsmodifikatoren für Klassenmitglieder (siehe Parser.ParseAccessModifier)
         Namespace, // 'namespace Name { ... }' (siehe Parser.ParseNamespaceDecl/FlattenNamespaces)
         With,

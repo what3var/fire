@@ -95,6 +95,10 @@ namespace fire.Terminal.Sdl
                         resultEvents.Add(new Terminal.Event.Event() { SourceHandle = _internalHandle, Type = eventType });
                         _quit = true;
                         break;
+                    case SDL.EventType.WindowCloseRequested:
+                        eventType = Event.EventType.CloseRequest;
+                        resultEvents.Add(new Terminal.Event.Event() { SourceHandle = _internalHandle, Type = eventType });
+                        break;
                     case SDL.EventType.KeyDown:
                     case SDL.EventType.KeyUp:
                         eventType = ((SDL.EventType)ev.Type) switch

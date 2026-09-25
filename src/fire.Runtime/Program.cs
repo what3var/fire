@@ -1,2 +1,5 @@
+using fire.Runtime;
 
-Console.WriteLine("Hello, World!");
+var rt = new Runtime(VmExecutionMode.Release);
+
+rt.ExecuteInternal();

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using fire.Values;
+using MemoryPack;
 
 namespace fire.Bytecode
 {
@@ -8,13 +9,14 @@ namespace fire.Bytecode
     /// Debug-Informationen (Zeilennummern-Tabelle, lokale Variablennamen) für
     /// Werkzeuge wie den Step-Debugger im Editor-Unterprojekt - die eigentliche
     /// VM braucht davon nichts, das ist rein für externe Inspektion.</summary>
-    public sealed class Chunk
+    [MemoryPackable]
+    public sealed partial class Chunk
     {
-        public List<byte> Code { get; } = new();
-        public List<Value> Constants { get; } = new();
-        public List<Unit> Units { get; } = new();
-        public List<FunctionProto> Functions { get; } = new();
-        public List<HandlerTemplate> Handlers { get; } = new();
+        public List<byte> Code { get; }
+        public List<Value> Constants { get; }
+        public List<Unit> Units { get; }
+        public List<FunctionProto> Functions { get; }
+        public List<HandlerTemplate> Handlers { get; }
 
         /// <summary>Die Klasse, deren Methode/Konstruktor/Property-Accessor
         /// dieser Chunk ist - `null` für Top-Level-Code, freie Lambdas und
@@ -30,7 +32,17 @@ namespace fire.Bytecode
         /// `Derived`-Instanz, obwohl gerade `Base`s eigener Code läuft -
         /// für "darf dieser Code auf Base's privates Mitglied zugreifen"
         /// zählt die Klasse des AUSFÜHRENDEN CODES (Base), nicht die
-        /// konkrete Instanzklasse (Derived).</summary>
+        /// konkrete Instanzklasse (Derived).
+        ///
+        /// SERIALISIERUNG: erzeugt einen echten Zyklus (RuntimeClass ->
+        /// Methode/Feld-Initialisierer/Konstruktor -> dieser Chunk ->
+        /// OwnerClass -> dieselbe RuntimeClass) - MemoryPack verfolgt keine
+        /// Objekt-Identität/Zyklen (siehe CompiledProgram.
+        /// RelinkAfterDeserialize-Doku für dieselbe Begründung bei
+        /// RuntimeClass.Base), würde also endlos rekursieren ("reached depth
+        /// limit"). Deshalb ausgenommen und nach dem Deserialisieren über
+        /// RelinkAfterDeserialize wiederhergestellt.</summary>
+        [MemoryPackIgnore]
         public RuntimeClass? OwnerClass { get; set; }
 
         // Zeilennummern-Tabelle: statt PRO Instruktion eine Zeile zu speichern
@@ -92,7 +104,41 @@ namespace fire.Bytecode
         // perfekte 1:1-Abbildung für jeden denkbaren Verschachtelungsfall -
         // reicht aber für die allermeisten Fälle (Parameter, top-level lokale
         // Variablen einer Funktion/Methode/eines Lambdas).
-        public Dictionary<(int Depth, int Slot), string> DebugLocalNames { get; } = new();
+        public Dictionary<(int Depth, int Slot), string> DebugLocalNames { get; }
+
+        /// <summary>Normale Verwendung (Compiler baut den Chunk schrittweise
+        /// per EmitByte/AddConstant/... auf) - alle Sammlungen leer.</summary>
+        public Chunk()
+        {
+            Code = new();
+            Constants = new();
+            Units = new();
+            Functions = new();
+            Handlers = new();
+            DebugLocalNames = new();
+        }
+
+        /// <summary>Für MemoryPack (siehe Klassendoku "SERIALISIERUNG") - OHNE
+        /// eigenen Konstruktor mit diesen Parametern hätte der generierte
+        /// Deserialisierer keine Möglichkeit, die aus dem Stream gelesenen
+        /// Werte irgendwo unterzubringen (die Properties haben bewusst KEINEN
+        /// Setter, siehe oben) - er würde sie schlicht VERWERFEN und
+        /// stattdessen `new Chunk()` mit lauter leeren Sammlungen anlegen,
+        /// ohne jede Fehlermeldung. Namen der Parameter müssen (Groß-/
+        /// Kleinschreibung ignoriert) zu den Property-Namen passen, das ist
+        /// die Konvention, an der MemoryPack Konstruktor-Parameter zu
+        /// Properties zuordnet.</summary>
+        [MemoryPackConstructor]
+        public Chunk(List<byte> code, List<Value> constants, List<Unit> units, List<FunctionProto> functions,
+            List<HandlerTemplate> handlers, Dictionary<(int Depth, int Slot), string> debugLocalNames)
+        {
+            Code = code;
+            Constants = constants;
+            Units = units;
+            Functions = functions;
+            Handlers = handlers;
+            DebugLocalNames = debugLocalNames;
+        }
 
         public void MarkLocalName(int depth, int slot, string name) => DebugLocalNames[(depth, slot)] = name;
 
@@ -140,6 +186,7 @@ namespace fire.Bytecode
 
         /// <summary>Aktuelle Schreibposition - als Sprungziel oder als Ausgangspunkt
         /// für ein späteres PatchU16 nützlich.</summary>
+        [MemoryPackIgnore]
         public int Here => Code.Count;
     }
 }

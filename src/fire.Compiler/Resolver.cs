@@ -169,6 +169,12 @@ namespace fire.Compiler
             }
         }
         private bool _inConstructor;
+        /// <summary>SPEC "Statische Mitglieder" - `true` während der Body
+        /// einer statischen Methode/eines statischen Feld-Initialisierers
+        /// aufgelöst wird (siehe ResolveFunctionLike/ResolveFieldInitializer)
+        /// - dort gibt es kein gebundenes 'this' (siehe ThisExpr/BaseExpr-
+        /// Prüfung in ResolveExpr), anders als bei Instanzmethoden/-feldern.</summary>
+        private bool _inStaticMethod;
 
         private Resolver(IEnumerable<string>? nativeNames, IEnumerable<string>? tryableNativeNames)
         {
@@ -349,6 +355,39 @@ namespace fire.Compiler
             return null;
         }
 
+        private ClassDecl? GetBaseClassDecl(ClassDecl cd)
+        {
+            var baseName = GetBaseClassName(cd);
+            return baseName != null && _classes.TryGetValue(baseName, out var baseCd) ? baseCd : null;
+        }
+
+        /// <summary>Sucht über die Basisklassen-Kette (AST-Ebene, ClassDecl.
+        /// Members - zum Resolve-Zeitpunkt existiert noch keine RuntimeClass),
+        /// ob `name` ein Feld/eine Methode/eine Property ist - `startClass`
+        /// zuerst, dann aufwärts. Liefert (Name der deklarierenden Klasse,
+        /// IsStatic) der ERSTEN (nächstgelegenen) Klasse mit einem Mitglied
+        /// dieses Namens, `null` sonst (kein Mitglied in der ganzen Kette).
+        /// Für SPEC "Implizite Mitglieder-Referenzen" (bloßer Name statt
+        /// 'this.'/'ClassName.') UND für 'this.Name', wenn Name eine
+        /// statische Einheit ist (siehe ResolveExpr/ResolveAssignTarget,
+        /// MemberExpr-Fall).</summary>
+        private (string ClassName, bool IsStatic)? FindMemberInClassChain(ClassDecl? startClass, string name)
+        {
+            for (var cd = startClass; cd != null; cd = GetBaseClassDecl(cd))
+            {
+                foreach (var member in cd.Members)
+                {
+                    switch (member)
+                    {
+                        case FieldDecl fd when fd.Name == name: return (cd.Name, fd.IsStatic);
+                        case MethodDecl md when md.Name == name: return (cd.Name, md.IsStatic);
+                        case PropertyDecl pd when pd.Name == name: return (cd.Name, pd.IsStatic);
+                    }
+                }
+            }
+            return null;
+        }
+
         /// <summary>Prüft, ob `cd` (inkl. geerbter Methoden über die
         /// Basisklassen-Kette) alle Methoden von `iface` per Name+Arität
         /// bereitstellt. Reine strukturelle Prüfung, keine Rückgabetyp-
@@ -377,6 +416,42 @@ namespace fire.Compiler
         }
 
         private bool IsKnownClassName(string name) => name == "Exception" || _classes.ContainsKey(name);
+
+        /// <summary>Versucht, `me.Target` als geschlossenen, exakt
+        /// geschriebenen Klassennamen zu lesen (SPEC "Statische Mitglieder") -
+        /// baut dafür die Bezeichner-Kette von `me.Target` (IdentifierExpr
+        /// oder verschachtelte MemberExpr, z.B. bei 'Geometry.Circle.Foo')
+        /// zu einem punktierten String zusammen und prüft, ob DAS GANZE ein
+        /// bekannter Klassenname ist. `null`, wenn `me.Target` keine reine
+        /// Bezeichner-Kette ist oder die Kette keinen bekannten Klassennamen
+        /// ergibt (dann ist `me` ein normaler, dynamischer Ausdruck).
+        ///
+        /// BEWUSSTE EINSCHRÄNKUNG: prüft NUR den exakt geschriebenen (ggf.
+        /// schon vollqualifizierten) Namen, KEINE Auflösung über #using/den
+        /// aktuellen Namespace - anders als ein TypeRef trägt ein
+        /// IdentifierExpr/MemberExpr keinen eigenen Namespace-Kontext (der
+        /// wird nur beim PARSEN einer TypeRef gesetzt, siehe
+        /// Parser.CurrentNamespaces) - 'Circle.Foo()' würde bei
+        /// '#using Geometry' also NICHT als 'Geometry.Circle' erkannt, nur
+        /// 'Geometry.Circle.Foo()' voll ausgeschrieben funktioniert. Eine
+        /// spätere Erweiterung dafür bräuchte Namespace-Info an JEDEM
+        /// Bezeichner, nicht nur an TypeRef - eine größere, eigene Änderung.</summary>
+        private string? TryResolveStaticMemberAccess(MemberExpr me)
+        {
+            var pathSegments = new List<string>();
+            Expr current = me.Target;
+            while (current is MemberExpr innerMe)
+            {
+                pathSegments.Add(innerMe.Name);
+                current = innerMe.Target;
+            }
+            if (current is not IdentifierExpr rootId) return null;
+            pathSegments.Add(rootId.Name);
+            pathSegments.Reverse();
+
+            string className = string.Join(".", pathSegments);
+            return IsKnownClassName(className) ? className : null;
+        }
 
         /// <summary>Prüft bei `new Name&lt;Arg1,...&gt;(...)` (siehe Ast.NewExpr.
         /// TypeArgs), ob die gegebenen Typ-Argumente zu den Typ-Parametern der
@@ -541,6 +616,29 @@ namespace fire.Compiler
                 throw new ResolverException(
                     $"'{name}' ist als 'tryable' registriert - nur mit 'try {name}(...)' aufrufbar, " +
                     "nicht als direkter Aufruf.", line);
+
+            // SPEC "Implizite Mitglieder-Referenzen" - innerhalb einer Klasse
+            // darf ein Feld/eine Methode/eine Property auch OHNE
+            // 'this.'/'ClassName.'-Präfix angesprochen werden, genau wie eine
+            // lokale Variable (zusätzlich zu, nicht statt, den expliziten
+            // Formen - siehe MemberExpr-Fall für 'this.X'/'ClassName.X').
+            // Bewusst NACH natives/externs geprüft - ein gleichnamiges
+            // Klassenmitglied soll eine bestehende native/extern-Funktion
+            // nicht überraschend verschatten.
+            if (_currentClass != null)
+            {
+                var found = FindMemberInClassChain(_currentClass, name);
+                if (found != null)
+                {
+                    if (found.Value.IsStatic)
+                        return new ResolvedRef.StaticMember(found.Value.ClassName);
+                    if (_inStaticMethod)
+                        throw new ResolverException(
+                            $"'{name}' ist ein Instanzmitglied - in einer statischen Methode/einem statischen " +
+                            "Feld-Initialisierer ohne gebundenes 'this' nicht erreichbar", line);
+                    return new ResolvedRef.ImplicitThisMember();
+                }
+            }
 
             throw new ResolverException($"Unbekannter Bezeichner '{name}'", line);
         }
@@ -872,7 +970,7 @@ namespace fire.Compiler
                                 throw new ResolverException(
                                     $"Methode '{md.Name}' mit {md.Params.Count} Parameter(n) ist in dieser Klasse " +
                                     "bereits definiert (eine Überladung braucht eine andere Parameteranzahl).", md.Line);
-                            ResolveFunctionLike(md.Params, md.Body, baseArgs: null, isConstructor: false);
+                            ResolveFunctionLike(md.Params, md.Body, baseArgs: null, isConstructor: false, isStatic: md.IsStatic);
                         }
                         finally
                         {
@@ -888,11 +986,11 @@ namespace fire.Compiler
                         // ganz normale Parameter-Auflösung, keine
                         // Sonderbehandlung nötig.
                         if (pd.Getter != null)
-                            ResolveFunctionLike(Array.Empty<LambdaParam>(), pd.Getter, baseArgs: null, isConstructor: false);
+                            ResolveFunctionLike(Array.Empty<LambdaParam>(), pd.Getter, baseArgs: null, isConstructor: false, isStatic: pd.IsStatic);
                         if (pd.Setter != null)
                         {
                             var setterParams = new[] { new LambdaParam("value", pd.Type, Array.Empty<Expr?>()) };
-                            ResolveFunctionLike(setterParams, pd.Setter, baseArgs: null, isConstructor: false);
+                            ResolveFunctionLike(setterParams, pd.Setter, baseArgs: null, isConstructor: false, isStatic: pd.IsStatic);
                         }
                         break;
                 }
@@ -912,7 +1010,10 @@ namespace fire.Compiler
             if (fd.Initializer == null) return;
             var saved = _current;
             _current = new ResolverScope(_globalScope);
+            bool savedInStaticMethod = _inStaticMethod;
+            _inStaticMethod = fd.IsStatic; // SPEC "Statische Mitglieder" - kein 'this' in einem statischen Feld-Initialisierer
             ResolveExpr(fd.Initializer);
+            _inStaticMethod = savedInStaticMethod;
             _current = saved;
         }
 
@@ -951,7 +1052,7 @@ namespace fire.Compiler
         }
 
         private void ResolveFunctionLike(
-            IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, IReadOnlyList<Expr>? baseArgs, bool isConstructor)
+            IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, IReadOnlyList<Expr>? baseArgs, bool isConstructor, bool isStatic = false)
         {
             ValidateOptionalParamsAreTrailing(parms, body.Line);
             ResolveParamDefaults(parms);
@@ -979,6 +1080,9 @@ namespace fire.Compiler
             bool savedInConstructor = _inConstructor;
             _inConstructor = isConstructor;
 
+            bool savedInStaticMethod = _inStaticMethod;
+            _inStaticMethod = isStatic;
+
             int savedLoopDepth = _loopDepth;
             int savedTryDepth = _tryDepth;
             _loopDepth = 0;
@@ -992,6 +1096,7 @@ namespace fire.Compiler
             _tryDepth = savedTryDepth;
 
             _inConstructor = savedInConstructor;
+            _inStaticMethod = savedInStaticMethod;
 
             PopScope();
         }
@@ -1010,10 +1115,17 @@ namespace fire.Compiler
                     _refs[id] = ResolveIdentifierRef(id.Name, id.Line);
                     break;
 
-                case ThisExpr:
+                case ThisExpr te:
+                    if (_inStaticMethod)
+                        throw new ResolverException(
+                            "'this' ist in einer statischen Methode/einem statischen Feld-Initialisierer nicht gültig " +
+                            "(keine Instanz gebunden)", te.Line);
                     break; // Laufzeit entscheidet, ob/was 'this' aktuell gebunden ist
 
                 case BaseExpr be:
+                    if (_inStaticMethod)
+                        throw new ResolverException(
+                            "'base' ist in einer statischen Methode nicht gültig (keine Instanz gebunden)", be.Line);
                     if (_currentClass == null || !_currentClassHasBase)
                         throw new ResolverException(
                             "'base' nur innerhalb einer Klasse mit Basisklasse gültig", be.Line);
@@ -1072,6 +1184,41 @@ namespace fire.Compiler
                             throw new ResolverException($"'{enumId.Name}' hat kein Mitglied '{me.Name}'", me.Line);
                         _refs[me] = new ResolvedRef.EnumMember(enumValue);
                         break;
+                    }
+                    // 'ClassName.Member' (SPEC "Statische Mitglieder") - wie
+                    // beim enum-Fall: ein bekannter Klassenname "gewinnt"
+                    // immer gegen eine gleichnamige Variable. Der eigentliche
+                    // Zugriff (existiert das Mitglied, ist es WIRKLICH
+                    // statisch, Zugriffsmodifikator) wird bewusst NICHT hier,
+                    // sondern erst in der VM geprüft (GetStaticField/
+                    // CallStaticMethod) - dieselbe Grenze wie bei normalen
+                    // Instanzfeldern/-methoden (siehe VM.CheckFieldAccess),
+                    // der Resolver kennt Feld-/Methodennamen einer Klasse
+                    // nicht vollständig genug, um das schon hier sicher zu
+                    // validieren (Vererbung, dynamisch gesetzte Felder).
+                    string? staticClassName = TryResolveStaticMemberAccess(me);
+                    if (staticClassName != null)
+                    {
+                        _refs[me] = new ResolvedRef.StaticMember(staticClassName);
+                        break;
+                    }
+                    // 'this.StaticMember' (SPEC "Implizite Mitglieder-
+                    // Referenzen") - ein statisches Mitglied ist auch über
+                    // 'this.' erreichbar (zusätzlich zu bloßem Namen und
+                    // 'ClassName.'), obwohl 'this' selbst nichts mit der
+                    // statischen Speicherstelle zu tun hat - der Compiler
+                    // wandelt das dann in denselben GetStaticField/
+                    // SetStaticField/CallStaticMethod-Pfad um wie 'ClassName.X',
+                    // NICHT in GetField/SetField (die würden ein statisches
+                    // Feld nicht finden, siehe RuntimeClass.StaticFieldValues).
+                    if (me.Target is ThisExpr && _currentClass != null)
+                    {
+                        var thisMember = FindMemberInClassChain(_currentClass, me.Name);
+                        if (thisMember is { IsStatic: true })
+                        {
+                            _refs[me] = new ResolvedRef.StaticMember(thisMember.Value.ClassName);
+                            break;
+                        }
                     }
                     ResolveExpr(me.Target); // .Name bleibt unresolved - dynamischer Feld-/Methodenzugriff
                     break;
@@ -1209,6 +1356,29 @@ namespace fire.Compiler
                         throw new ResolverException(
                             $"'{_currentClass.Name}.{me.Name}' ist 'readonly' und kann nur innerhalb eines " +
                             "Konstruktors der deklarierenden Klasse zugewiesen werden", me.Line);
+                    // 'ClassName.Member = ...' (SPEC "Statische Mitglieder") -
+                    // dieselbe Erkennung wie beim Lesen (siehe ResolveExpr/
+                    // TryResolveStaticMemberAccess), hier separat nötig, weil
+                    // ein Zuweisungsziel NICHT über den normalen ResolveExpr-
+                    // Fall läuft (sonst würde 'ClassName' als unbekannter
+                    // Bezeichner statt als Klassenname behandelt).
+                    string? staticAssignClassName = TryResolveStaticMemberAccess(me);
+                    if (staticAssignClassName != null)
+                    {
+                        _refs[me] = new ResolvedRef.StaticMember(staticAssignClassName);
+                        break;
+                    }
+                    // 'this.StaticMember = ...' - siehe dieselbe Begründung im
+                    // Lesefall oben (ResolveExpr, case MemberExpr).
+                    if (me.Target is ThisExpr && _currentClass != null)
+                    {
+                        var thisAssignMember = FindMemberInClassChain(_currentClass, me.Name);
+                        if (thisAssignMember is { IsStatic: true })
+                        {
+                            _refs[me] = new ResolvedRef.StaticMember(thisAssignMember.Value.ClassName);
+                            break;
+                        }
+                    }
                     ResolveExpr(me.Target);
                     break;
                 case IndexExpr ix:

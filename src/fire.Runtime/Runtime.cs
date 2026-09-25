@@ -23,18 +23,26 @@ namespace fire.Runtime
             _executionMode = executionMode;
         }
 
-        //public void Execute(string[] sourceCodes)
-        //{
-        //    var vm = RuntimeSession.Build(sourceCodes, _executionMode, args =>
-        //    {
-        //        if (args.Length > 0)
-        //        {
-        //            Console.WriteLine(args[0].AsString());
-        //        }
-        //        return Value.MakeUndefined();
-        //    });
- 
-        //    vm.VirtualMachine.Run();
-        //}
+        public void ExecuteInternal()
+        {
+            var prog = Packer.UnpackProgram(Path.Combine(Path.GetDirectoryName(Environment.ProcessPath), "tempout.exe"));
+
+            if (prog == null)
+                return;
+
+            var session = Session.Build(prog, _executionMode, args =>
+            {
+                if (args.Length > 0)
+                {
+                    Console.WriteLine(args[0].AsString());
+                }
+                return Value.MakeUndefined();
+            });
+
+            if (session == null)
+                return;
+
+            session.Run();
+        }
     }
 }
