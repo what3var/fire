@@ -322,7 +322,7 @@ namespace fire.Runtime
         private int ShutdownCheckInterval => ExecutionMode switch
         {
             VmExecutionMode.Debug => 1,
-            VmExecutionMode.Release => 64,
+            VmExecutionMode.Release => 16,
             VmExecutionMode.Performance => 4096,
             _ => 1,
         };
@@ -334,6 +334,7 @@ namespace fire.Runtime
             _currentThreadVm = this;
             _ip = 0;
             int interval = ShutdownCheckInterval;
+
             while (true)
             {
                 if (interval <= 1 || ++_instructionsSinceShutdownCheck >= interval)
@@ -344,6 +345,12 @@ namespace fire.Runtime
                 var op = (OpCode)ReadByte();
                 if (op == OpCode.Halt) return;
                 Execute(op);
+
+                // _stopExecutionRequested wird von ThrowException gesetzt,
+                // wenn eine Exception UNBEHANDELT bleibt (kein passender
+                // catch/finally-Handler mehr aktiv - der Stack ist dann
+                // bereits vollständig abgewickelt/geleert).
+                if (_stopExecutionRequested) return;
             }
         }
 
@@ -784,6 +791,19 @@ namespace fire.Runtime
                     throw new InvalidOperationException(
                         "Unerwarteter Halt in verschachtelter Ausführung (z.B. während eines Destruktor-Aufrufs).");
                 Execute(op);
+
+                // Wie Run() (siehe dort für die ausführliche Begründung) -
+                // eine unbehandelte Exception setzt _stopExecutionRequested
+                // sofort, OHNE die Frames/den Stack selbst schon
+                // vollständig abzuwickeln (das macht erst der nächste
+                // CheckShutdownSignals-Aufruf) - normalerweise würde die
+                // Schleifenbedingung oben (_frames.Count >= targetFrameDepth)
+                // das nach dem Abwickeln von selbst auffangen, aber falls
+                // der Frame-Stand GENAU auf targetFrameDepth steht, wenn das
+                // passiert, würde die Schleife sonst fälschlich weiterlaufen
+                // und mit demselben "Pop() auf leerem Stack"-Symptom enden
+                // wie beim Bugreport, der zu diesem Fix geführt hat.
+                if (_stopExecutionRequested) return;
             }
         }
 

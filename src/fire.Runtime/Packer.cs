@@ -139,7 +139,14 @@ namespace fire.Runtime
 
                 var decompressedBin = MemoryPack.MemoryPackSerializer.Deserialize<LinkedProgram>(bin);
                 if (decompressedBin != null)
-                Debug.WriteLine(string.Join(",", decompressedBin.Program.TopLevel.Code));
+                {
+                    Debug.WriteLine(string.Join(",", decompressedBin.Program.TopLevel.Code));
+
+                    Debug.WriteLine($"TopLevel is identical: {program.Program.TopLevel.Code.SequenceEqual(decompressedBin.Program.TopLevel.Code)}");
+                }
+
+
+
                 Debug.WriteLine($"Wrote {outName} to disk");
             }
             catch (Exception ex)
