@@ -55,6 +55,10 @@ namespace fire.Editor
         public string? CompileError { get; private set; }
         public string? RuntimeError => ActiveThread?.RuntimeError;
 
+        public VmExecutionMode ExecutionMode { get; set; } = VmExecutionMode.Debug;
+
+        public VmExecutionMode? ActiveExecutionMode { get; private set; }
+
         /// <summary>Quell-Index (siehe Bytecode.Chunk.MarkLine/VM.CurrentLocation),
         /// ab dem der erste EIGENE Quelltext des Aufrufers (die `sources`, die
         /// an Compile() gingen) im kompilierten Programm beginnt - Weiterleitung
@@ -110,13 +114,15 @@ namespace fire.Editor
 
             try
             {
-                var session = RuntimeSession.Build(sources, VmExecutionMode.Debug, args =>
+                var session = RuntimeSession.Build(sources, ExecutionMode, args =>
                 {
                     string text = args.Length > 0 ? args[0].ToString() : "";
                     string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
                     OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {text}" : text);
                     return Value.MakeUndefined();
                 });
+
+                ActiveExecutionMode = ExecutionMode;
 
                 FirstUserSourceIndex = session.FirstUserSourceIndex;
 

@@ -12,6 +12,8 @@
                 <MenuItem Header="_Speichern" Click="Save_Click" InputGestureText="Ctrl+S"/>
                 <MenuItem Header="Speichern _unter..." Click="SaveAs_Click"/>
                 <Separator/>
+                <MenuItem Header="Buildeinstellungen" Click="BuildSettings_Click"/>
+                <Separator/>
                 <MenuItem Header="_Beenden" Click="Exit_Click"/>
             </MenuItem>
             <MenuItem Header="_Ausführen">
@@ -22,7 +24,11 @@
                 <MenuItem Header="_Weiter (bis Haltepunkt)" Click="Continue_Click" InputGestureText="F8"/>
                 <MenuItem Header="Bis _Ende durchlaufen" Click="RunToEnd_Click" InputGestureText="Ctrl+F5"/>
                 <MenuItem Header="_Stopp" Click="Stop_Click" InputGestureText="Shift+F5"/>
-                <Separator/>
+                    <Separator/>
+                    <MenuItem Header="Debug" IsCheckable="True" x:Name="mnuRunDebug" Click="mnuRunDebug_Click"/>
+                    <MenuItem Header="Release" IsCheckable="True" x:Name="mnuRunRelease" Click="mnuRunRelease_Click"/>
+                    <MenuItem Header="Performance" IsCheckable="True" x:Name="mnuRunPerformance" Click="mnuRunPerformance_Click"/>
+                    <Separator/>
                 <MenuItem Header="_Haltepunkt umschalten (aktuelle Zeile)" Click="ToggleBreakpoint_Click" InputGestureText="F9"/>
             </MenuItem>
         </Menu>

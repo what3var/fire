@@ -31,8 +31,8 @@ namespace fire.Runtime
     /// </summary>
     public enum VmExecutionMode
     {
-        Debug,
-        Release,
-        Performance,
+        Debug = 0,
+        Release = 1,
+        Performance = 2,
     }
 }

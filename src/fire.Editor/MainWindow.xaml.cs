@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -23,6 +24,8 @@ namespace fire.Editor
     public partial class MainWindow : Window
     {
         private readonly DebugSession _session = new();
+
+        private AssemblyInfoModel _scriptAssemblyInfo;
 
         // Ausgabe-Warteschlange (siehe OnScriptOutput-Doku) - thread-sicher,
         // da JEDER Thread (Main oder ein Fire-Thread) gleichzeitig
@@ -99,8 +102,19 @@ namespace fire.Editor
             _outputFlushTimer.Tick += (_, _) => FlushPendingOutput();
             _outputFlushTimer.Start();
 
+            UpdateExecutionModeSelection(_session);
+
             EditorControl.ResetTo("// Willkommen im fire-Editor\nprint(\"Hallo, Welt!\")\n", null);
+            _scriptAssemblyInfo = new AssemblyInfoModel();
+            
             UpdateStatus("Bereit.");
+        }
+
+        private void UpdateExecutionModeSelection(DebugSession session)
+        {
+            mnuRunDebug.IsChecked = session.ExecutionMode == Runtime.VmExecutionMode.Debug;
+            mnuRunRelease.IsChecked = session.ExecutionMode == Runtime.VmExecutionMode.Release;
+            mnuRunPerformance.IsChecked = session.ExecutionMode == Runtime.VmExecutionMode.Performance;
         }
 
         /// <summary>Übergangslösung, solange dieses Fenster immer nur EINE
@@ -392,6 +406,141 @@ namespace fire.Editor
                 case Key.S when ctrl:
                     Save_Click(this, e); e.Handled = true; break;
             }
+        }
+
+        private void BuildSettings_Click(object sender, RoutedEventArgs e)
+        {
+            var buildSettings = new AssemblyInfoDialog();
+
+            var model = new AssemblyInfoModel();
+
+            _scriptAssemblyInfo.CopyTo(model);
+
+            buildSettings.DataContext = model;
+
+            if (buildSettings.ShowDialog() == true)
+            {
+                model.CopyTo(_scriptAssemblyInfo);
+
+                var directives = new List<(string, string?)>();
+
+                if (model.Subsystem == Utilities.SubsystemType.GUI)
+                {
+                    directives.Add(("noconsole", ""));
+                }
+                else
+                {
+                    directives.Add(("noconsole", null));
+                }
+
+                if (model.ExecutionMode == Runtime.VmExecutionMode.Debug)
+                {
+                    directives.Add(("debug", ""));
+                    directives.Add(("performance", null));
+                } 
+                else if (model.ExecutionMode == Runtime.VmExecutionMode.Performance)
+                {
+                    directives.Add(("debug", null));
+                    directives.Add(("performance", ""));
+                }
+                else
+                {
+                    directives.Add(("debug", null));
+                    directives.Add(("performance", null));
+                }
+
+                directives.Add(("name", model.ProductName));
+                directives.Add(("codename", model.InternalName));
+                directives.Add(("description", model.FileDescription));
+                directives.Add(("author", model.CompanyName));
+                directives.Add(("codename", model.InternalName));
+                directives.Add(("comments", model.Comments));
+
+                directives.Add(("icon", model.IconPath));
+
+                directives.Add(("version", model.ProductVersion));
+
+                directives.Add(("fileversion", model.FileVersion));
+
+                var formattedDirectives = new List<(string, string?)>();
+
+                foreach (var directive in directives)
+                {
+                    if (!string.IsNullOrEmpty(directive.Item2))
+                    {
+                        formattedDirectives.Add((directive.Item1, $"\"{directive.Item2}\""));
+                        continue;
+                    }
+
+                    formattedDirectives.Add(directive);
+                }
+
+                EnsureScriptHasDirectives(formattedDirectives);
+            }
+        }
+
+        private void mnuRunDebug_Click(object sender, RoutedEventArgs e)
+        {
+            _session.ExecutionMode = Runtime.VmExecutionMode.Debug;
+            UpdateExecutionModeSelection(_session);
+        }
+
+        private void mnuRunRelease_Click(object sender, RoutedEventArgs e)
+        {
+            _session.ExecutionMode = Runtime.VmExecutionMode.Release;
+            UpdateExecutionModeSelection(_session);
+        }
+
+        private void mnuRunPerformance_Click(object sender, RoutedEventArgs e)
+        {
+            _session.ExecutionMode = Runtime.VmExecutionMode.Performance;
+            UpdateExecutionModeSelection(_session);
+        }
+
+        private void EnsureScriptHasDirectives(IEnumerable<(string, string?)> directives)
+        {
+            var text = EditorControl.GetText();
+
+            var textNew = new StringBuilder();
+            var directivesAfter = directives.ToList();
+
+            foreach (var line in text.EnumerateLines())
+            {
+                var match = false;
+                foreach (var dir in directivesAfter.ToList())
+                {
+                    if (line.StartsWith($"#{dir.Item1}"))
+                    {
+                        match = true;
+                        if (dir.Item2 != null)
+                        {
+                            if (dir.Item2.Length == 0)
+                                textNew.AppendLine($"#{dir.Item1}");
+                            else 
+                                textNew.AppendLine($"#{dir.Item1} {dir.Item2}");
+                        }
+                        directivesAfter.Remove(dir);
+                        break;
+                    }
+                } 
+                if (!match)
+                {
+                    textNew.AppendLine(line.ToString());
+                }
+            }
+
+            foreach (var dir in directivesAfter.Reverse<(string, string?)>())
+            {
+                if (dir.Item2 != null)
+                {
+                    if (dir.Item2.Length == 0)
+                        textNew.Insert(0, $"#{dir.Item1}{Environment.NewLine}");
+                    else
+                        textNew.Insert(0, $"#{dir.Item1} {dir.Item2}{Environment.NewLine}");
+                }
+            }
+
+            EditorControl.SetText(textNew.ToString());
         }
     }
 }
