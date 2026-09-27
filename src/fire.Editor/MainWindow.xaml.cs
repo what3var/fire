@@ -7,6 +7,7 @@ using System.Text;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
+using fire.Compiler.Assembly;
 using Microsoft.Win32;
 
 namespace fire.Editor
@@ -25,7 +26,7 @@ namespace fire.Editor
     {
         private readonly DebugSession _session = new();
 
-        private AssemblyInfoModel _scriptAssemblyInfo;
+        private AssemblyInfo _scriptAssemblyInfo;
 
         // Ausgabe-Warteschlange (siehe OnScriptOutput-Doku) - thread-sicher,
         // da JEDER Thread (Main oder ein Fire-Thread) gleichzeitig
@@ -105,7 +106,7 @@ namespace fire.Editor
             UpdateExecutionModeSelection(_session);
 
             EditorControl.ResetTo("// Willkommen im fire-Editor\nprint(\"Hallo, Welt!\")\n", null);
-            _scriptAssemblyInfo = new AssemblyInfoModel();
+            _scriptAssemblyInfo = new AssemblyInfo();
             
             UpdateStatus("Bereit.");
         }
@@ -412,7 +413,7 @@ namespace fire.Editor
         {
             var buildSettings = new AssemblyInfoDialog();
 
-            var model = new AssemblyInfoModel();
+            var model = new AssemblyInfo();
 
             _scriptAssemblyInfo.CopyTo(model);
 

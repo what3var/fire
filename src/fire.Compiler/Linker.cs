@@ -1,4 +1,5 @@
 ﻿using fire.Bytecode;
+using fire.Compiler.Assembly;
 using fire.Runtime;
 using fire.Terminal;
 using fire.Terminal.Bridge;
@@ -14,8 +15,9 @@ namespace fire.Compiler
 {
     public class Linker
     {
-        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null)
+        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string outname = null)
         {
+            var assemblyInfo = new AssemblyInfo();
             var natives = new NativeRegistry();
             var nativeImports = new HashSet<string>();
             var alreadyIncluded = new HashSet<string>();
@@ -32,6 +34,23 @@ namespace fire.Compiler
 
             var registry = new DirectiveRegistry(); // komplett leer, NICHT CreateDefault()
             registry.Register("import", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind == ValueKind.String)
+                {
+                    switch (args[0].AsString().ToLower())
+                    {
+                        case "graphics":
+                            nativeImports.Add(NativeImports.Graphics);
+                            firstUserSource = 2;
+                            return null;
+                        default:
+                            throw new Exception($"'{args[0].AsString()}' ist keine bekannte Erweiterung.");
+                    }
+                }
+                throw new Exception($"Falsche Argumente für 'import'-Direktive.");
+            });
+
+            registry.Register("noconsole", 0, (ctx, args, line) =>
             {
                 if (args[0].Kind == ValueKind.String)
                 {
@@ -73,8 +92,14 @@ namespace fire.Compiler
 
             var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource);
 
-            Packer.PackProgram(linkedProgram, "tempout.a");
+            var outdir = Path.GetDirectoryName(Environment.ProcessPath);
 
+            if (!string.IsNullOrEmpty(outname) && !string.IsNullOrEmpty(outdir))
+            {
+                var tempfile = Path.Combine(outdir, "tempout.a");
+                Packer.PackProgram(linkedProgram, tempfile);
+                File.Copy(tempfile, outname);
+            }
             return linkedProgram;
         }
     }

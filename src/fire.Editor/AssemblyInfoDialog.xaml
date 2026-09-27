@@ -6,9 +6,10 @@
         xmlns:rt="clr-namespace:fire.Runtime;assembly=fire"
         xmlns:ut="clr-namespace:fire.Utilities;assembly=fire"
         xmlns:cv="clr-namespace:fire.Editor.Converters"
+        xmlns:a="clr-namespace:fire.Compiler.Assembly;assembly=fire.Compiler"
         xmlns:local="clr-namespace:fire.Editor"
         mc:Ignorable="d"
-        d:DataContext="{d:DesignInstance local:AssemblyInfoModel}"
+        d:DataContext="{d:DesignInstance a:AssemblyInfo}"
         Title="AssemblyInfo" Width="400">
     <Grid Margin="4">
         <Grid.ColumnDefinitions>
