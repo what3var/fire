@@ -20,6 +20,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Compiler", "src\fire.C
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Testing", "src\fire.Testing\fire.Testing.csproj", "{603C1A1F-F7B4-439C-8D89-6BCC8A16E8C5}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Device.Manager", "src\fire.Device.Manager\fire.Device.Manager.csproj", "{43E8424C-FFDE-B983-4141-C3240CBA133E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Device.Bridge", "src\fire.Device.Bridge\fire.Device.Bridge.csproj", "{913A699B-F8F3-E42F-A44C-9C0BAAC41BB3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -62,6 +66,14 @@ Global
 		{603C1A1F-F7B4-439C-8D89-6BCC8A16E8C5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{603C1A1F-F7B4-439C-8D89-6BCC8A16E8C5}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{603C1A1F-F7B4-439C-8D89-6BCC8A16E8C5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{43E8424C-FFDE-B983-4141-C3240CBA133E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{43E8424C-FFDE-B983-4141-C3240CBA133E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{43E8424C-FFDE-B983-4141-C3240CBA133E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{43E8424C-FFDE-B983-4141-C3240CBA133E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{913A699B-F8F3-E42F-A44C-9C0BAAC41BB3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{913A699B-F8F3-E42F-A44C-9C0BAAC41BB3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{913A699B-F8F3-E42F-A44C-9C0BAAC41BB3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{913A699B-F8F3-E42F-A44C-9C0BAAC41BB3}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

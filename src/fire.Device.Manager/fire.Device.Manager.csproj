@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>fire.Device.Manager</RootNamespace>
+    <AssemblyName>fire.Device.Manager</AssemblyName>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- SerialPort ist Teil des Shared Frameworks unter Windows, braucht
+         aber unter Linux/macOS ein eigenes Paket - schadet unter Windows
+         nicht, macht das Projekt dafür überall baubar. -->
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>
