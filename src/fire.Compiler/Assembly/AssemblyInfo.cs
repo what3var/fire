@@ -2,14 +2,17 @@
 using fire.Utilities;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
 namespace fire.Compiler.Assembly
 {
-    public class AssemblyInfo
+    public class AssemblyInfo : INotifyPropertyChanged
     {
+        public event PropertyChangedEventHandler? PropertyChanged;
+        
         public VmExecutionMode ExecutionMode { get; set; } = VmExecutionMode.Release;
 
         public SubsystemType Subsystem { get; set; } = SubsystemType.Console;
@@ -38,6 +41,8 @@ namespace fire.Compiler.Assembly
 
         public string? FileDescription { get; set; }
 
+        public string? OriginalFilename { get; set; }
+
         public string? ProductName { get; set; }
 
         public string? LegalCopyright { get; set; }
@@ -46,7 +51,7 @@ namespace fire.Compiler.Assembly
 
         public string? Comments { get; set; }
 
-        public string? FileVersion
+        public string FileVersion
         {
             get
             {
@@ -86,7 +91,7 @@ namespace fire.Compiler.Assembly
             }
         }
 
-        public string? ProductVersion
+        public string ProductVersion
         {
             get
             {
@@ -150,6 +155,30 @@ namespace fire.Compiler.Assembly
             model.ProductMinor = this.ProductMinor;
             model.ProductBuild = this.ProductBuild;
             model.ProductRevision = this.ProductRevision;
+        }
+
+        public PeVersionInfo ToVersionInfo()
+        {
+            var info = new PeVersionInfo();
+
+            info.ProductVersion = new Version(ProductVersion);
+
+            if (FileVersion != "0.0.0.0")
+                info.FileVersion = new Version(FileVersion);
+            else
+                info.FileVersion = new Version(ProductVersion);
+
+            info.Subsystem = Subsystem;
+
+            info.Comments = Comments;
+            info.CompanyName = CompanyName;
+            info.FileDescription = FileDescription;
+            info.InternalName = InternalName;
+            info.LegalCopyright = LegalCopyright;
+            info.OriginalFilename = OriginalFilename;
+            info.ProductName = ProductName;
+
+            return info;
         }
     }
 }

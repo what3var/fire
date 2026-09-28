@@ -1,4 +1,6 @@
-﻿using System;
+﻿using fire.Compiler.Assembly;
+using Microsoft.Win32;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -49,6 +51,17 @@ namespace fire.Editor
         {
             this.DialogResult = true;
             this.Close();
+        }
+
+        private void Load_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new OpenFileDialog { Filter = "Icons (*.ico)|*.ico|Alle Dateien (*.*)|*.*" };
+            if (dlg.ShowDialog() != true) return;
+
+            if (this.DataContext is AssemblyInfo info)
+            {
+                info.IconPath = dlg.FileName;
+            }
         }
     }
 }

@@ -7,7 +7,9 @@ using System.Text;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
+using fire.Compiler;
 using fire.Compiler.Assembly;
+using fire.Utilities;
 using Microsoft.Win32;
 
 namespace fire.Editor
@@ -203,9 +205,9 @@ namespace fire.Editor
             OutputBox.ScrollToEnd();
         }
 
-        private void Run_Click(object sender, RoutedEventArgs e) => CompileAndPrepare();
+        private void Run_Click(object sender, RoutedEventArgs e) => CompileAndPrepare(null);
 
-        private void CompileAndPrepare()
+        private void CompileAndPrepare(string? filename)
         {
             OutputBox.Clear();
             while (_pendingOutput.TryDequeue(out _)) { } // Reste eines evtl. noch nicht abgeflossenen vorigen Laufs verwerfen
@@ -214,7 +216,7 @@ namespace fire.Editor
             string source = EditorControl.GetText();
             _session.UpdateBreakpoints(BreakpointLocations());
 
-            if (!_session.Compile(new[] { source }))
+            if (!_session.Compile(new[] { source }, filename))
             {
                 UpdateStatus($"Kompilierfehler: {_session.CompileError}");
                 MessageBox.Show(_session.CompileError, "Kompilierfehler",
@@ -228,7 +230,7 @@ namespace fire.Editor
 
         private void Step_Click(object sender, RoutedEventArgs e)
         {
-            if (_session.Vm == null) CompileAndPrepare();
+            if (_session.Vm == null) CompileAndPrepare(null);
             if (_session.Vm == null || _isBusy) return;
             BeginStep();
             _session.StepLine();
@@ -236,7 +238,7 @@ namespace fire.Editor
 
         private void StepInto_Click(object sender, RoutedEventArgs e)
         {
-            if (_session.Vm == null) CompileAndPrepare();
+            if (_session.Vm == null) CompileAndPrepare(null);
             if (_session.Vm == null || _isBusy) return;
             BeginStep();
             _session.StepInto();
@@ -251,7 +253,7 @@ namespace fire.Editor
 
         private void Continue_Click(object sender, RoutedEventArgs e)
         {
-            if (_session.Vm == null) CompileAndPrepare();
+            if (_session.Vm == null) CompileAndPrepare(null);
             if (_session.Vm == null || _isBusy) return;
             BeginStep();
             _session.Continue(BreakpointLocations());
@@ -259,7 +261,7 @@ namespace fire.Editor
 
         private void RunToEnd_Click(object sender, RoutedEventArgs e)
         {
-            if (_session.Vm == null) CompileAndPrepare();
+            if (_session.Vm == null) CompileAndPrepare(null);
             if (_session.Vm == null || _isBusy) return;
             BeginStep();
             _session.RunToCompletion();
@@ -320,7 +322,7 @@ namespace fire.Editor
 
         private void Open_Click(object sender, RoutedEventArgs e)
         {
-            var dlg = new OpenFileDialog { Filter = "fire-Dateien (*.script)|*.script|Alle Dateien (*.*)|*.*" };
+            var dlg = new OpenFileDialog { Filter = "fire-Dateien (*.script;*.fi;*.fic)|*.script;*.fi;*.fic|Alle Dateien (*.*)|*.*" };
             if (dlg.ShowDialog() != true) return;
 
             EditorControl.ResetTo(File.ReadAllText(dlg.FileName), dlg.FileName);
@@ -413,9 +415,9 @@ namespace fire.Editor
         {
             var buildSettings = new AssemblyInfoDialog();
 
-            var model = new AssemblyInfo();
+            var source = EditorControl.GetText();
 
-            _scriptAssemblyInfo.CopyTo(model);
+            var model = Linker.ExtractAssemblyInfo(new[] { source });
 
             buildSettings.DataContext = model;
 
@@ -454,7 +456,6 @@ namespace fire.Editor
                 directives.Add(("codename", model.InternalName));
                 directives.Add(("description", model.FileDescription));
                 directives.Add(("author", model.CompanyName));
-                directives.Add(("codename", model.InternalName));
                 directives.Add(("comments", model.Comments));
 
                 directives.Add(("icon", model.IconPath));
@@ -469,7 +470,7 @@ namespace fire.Editor
                 {
                     if (!string.IsNullOrEmpty(directive.Item2))
                     {
-                        formattedDirectives.Add((directive.Item1, $"\"{directive.Item2}\""));
+                        formattedDirectives.Add((directive.Item1, $"\"{ValueUtils.EscapeString(directive.Item2)}\""));
                         continue;
                     }
 
@@ -542,6 +543,16 @@ namespace fire.Editor
             }
 
             EditorControl.SetText(textNew.ToString());
+        }
+
+        private void Build_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new SaveFileDialog { Filter = "Ausführbare Dateien (*.exe)|*.exe|Alle Dateien (*.*)|*.*" };
+            if (dlg.ShowDialog() != true) return;
+
+            var filename = dlg.FileName;
+
+            CompileAndPrepare(filename);
         }
     }
 }

@@ -108,7 +108,7 @@ namespace fire.Editor
         /// DebugThreadContext.ForMain - startet wartend, noch nichts läuft).
         /// Bei einem Parse-/Resolve-Fehler bleibt Vm null, CompileError
         /// enthält die Meldung.</summary>
-        public bool Compile(string[] sources)
+        public bool Compile(string[] sources, string? outname = null)
         {
             Reset();
 
@@ -120,7 +120,7 @@ namespace fire.Editor
                     string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
                     OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {text}" : text);
                     return Value.MakeUndefined();
-                });
+                }, outname);
 
                 ActiveExecutionMode = ExecutionMode;
 

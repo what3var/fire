@@ -18,6 +18,8 @@
             </MenuItem>
             <MenuItem Header="_Ausführen">
                 <MenuItem Header="_Starten/Neu kompilieren" Click="Run_Click" InputGestureText="F5"/>
+                <MenuItem Header="Standalone erstellen..." Click="Build_Click"/>
+                <Separator/>
                 <MenuItem Header="Einzelschritt (_Step Over)" Click="Step_Click" InputGestureText="F10"/>
                 <MenuItem Header="Einzelschritt (Step _Into)" Click="StepInto_Click" InputGestureText="F11"/>
                 <MenuItem Header="Aktuelle Funktion verlassen (Step _Out)" Click="StepOut_Click" InputGestureText="Shift+F11"/>

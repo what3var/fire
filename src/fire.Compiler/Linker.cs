@@ -4,6 +4,7 @@ using fire.Runtime;
 using fire.Terminal;
 using fire.Terminal.Bridge;
 using fire.Terminal.Windows;
+using fire.Utilities;
 using fire.Values;
 using System;
 using System.Collections.Generic;
@@ -15,7 +16,121 @@ namespace fire.Compiler
 {
     public class Linker
     {
-        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string outname = null)
+        public static AssemblyInfo ExtractAssemblyInfo(IReadOnlyList<string> sources)
+        {
+            var assemblyInfo = new AssemblyInfo();
+            var alreadyIncluded = new HashSet<string>();
+            
+            var processedSources = new List<ProcessedSource>();
+            var inputSources = new List<string>() { fire.Standard.Prelude.Source };
+
+            inputSources.AddRange(sources);
+
+            var registry = DirectiveRegistry.CreateDefault(); // komplett leer, NICHT CreateDefault()
+            registry.Register("import", 1, (ctx, args, line) =>
+            {
+                return null;
+            });
+
+            assemblyInfo.Subsystem = Utilities.SubsystemType.Console;
+            assemblyInfo.ExecutionMode = VmExecutionMode.Release;
+
+            registry.Register("noconsole", 0, (ctx, args, line) =>
+            {
+                assemblyInfo.Subsystem = Utilities.SubsystemType.GUI;
+                return null;
+            });
+
+            registry.Register("debug", 0, (ctx, args, line) =>
+            {
+                assemblyInfo.ExecutionMode = VmExecutionMode.Debug;
+                return null;
+            });
+            registry.Register("performance", 0, (ctx, args, line) =>
+            {
+                assemblyInfo.ExecutionMode = VmExecutionMode.Performance;
+                return null;
+            });
+
+            assemblyInfo.FileVersion = "0.0.0.0";
+            assemblyInfo.ProductVersion = "0.0.0.0";
+
+
+            registry.Register("name", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'name'-Direktive.");
+
+                assemblyInfo.ProductName = args[0].AsString();
+                return null;
+            });
+            registry.Register("codename", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'codename'-Direktive.");
+
+                assemblyInfo.InternalName = args[0].AsString();
+                return null;
+            });
+            registry.Register("description", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'description'-Direktive.");
+
+                assemblyInfo.FileDescription = args[0].AsString();
+                return null;
+            });
+            registry.Register("author", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'author'-Direktive.");
+
+                assemblyInfo.CompanyName = args[0].AsString();
+                return null;
+            });
+            registry.Register("comments", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'comments'-Direktive.");
+
+                assemblyInfo.Comments = args[0].AsString();
+                return null;
+            });
+            registry.Register("icon", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'icon'-Direktive.");
+
+                assemblyInfo.IconPath = args[0].AsString();
+                return null;
+            });
+            registry.Register("version", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'version'-Direktive.");
+
+                assemblyInfo.ProductVersion = args[0].AsString();
+                return null;
+            });
+            registry.Register("fileversion", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'fileversion'-Direktive.");
+
+                assemblyInfo.FileVersion = args[0].AsString();
+                return null;
+            });
+
+            foreach (var source in inputSources)
+            {
+                var processed = Preprocessor.Process(source, Directory.GetCurrentDirectory(), alreadyIncluded, registry);
+                processedSources.Add(processed);
+            }
+
+            return assemblyInfo;
+        }
+
+        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string? outname = null)
         {
             var assemblyInfo = new AssemblyInfo();
             var natives = new NativeRegistry();
@@ -32,7 +147,7 @@ namespace fire.Compiler
 
             inputSources.AddRange(sources);
 
-            var registry = new DirectiveRegistry(); // komplett leer, NICHT CreateDefault()
+            var registry = DirectiveRegistry.CreateDefault(); // komplett leer, NICHT CreateDefault()
             registry.Register("import", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind == ValueKind.String)
@@ -50,22 +165,97 @@ namespace fire.Compiler
                 throw new Exception($"Falsche Argumente für 'import'-Direktive.");
             });
 
+            assemblyInfo.Subsystem = Utilities.SubsystemType.Console;
+            assemblyInfo.ExecutionMode = VmExecutionMode.Release;
+
             registry.Register("noconsole", 0, (ctx, args, line) =>
             {
-                if (args[0].Kind == ValueKind.String)
-                {
-                    switch (args[0].AsString().ToLower())
-                    {
-                        case "graphics":
-                            nativeImports.Add(NativeImports.Graphics);
-                            firstUserSource = 2;
-                            return null;
-                        default:
-                            throw new Exception($"'{args[0].AsString()}' ist keine bekannte Erweiterung.");
-                    }
-                }
-                throw new Exception($"Falsche Argumente für 'import'-Direktive.");
+                assemblyInfo.Subsystem = Utilities.SubsystemType.GUI;
+                return null;
             });
+
+            registry.Register("debug", 0, (ctx, args, line) =>
+            {
+                assemblyInfo.ExecutionMode = VmExecutionMode.Debug;
+                return null;
+            });
+            registry.Register("performance", 0, (ctx, args, line) =>
+            {
+                assemblyInfo.ExecutionMode = VmExecutionMode.Performance;
+                return null;
+            });
+
+            assemblyInfo.FileVersion = "0.0.0.0";
+            assemblyInfo.ProductVersion = "0.0.0.0";
+            assemblyInfo.OriginalFilename = outname;
+
+
+            registry.Register("name", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'name'-Direktive.");
+
+                assemblyInfo.ProductName = args[0].AsString();
+                return null;
+            });
+            registry.Register("codename", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'codename'-Direktive.");
+
+                assemblyInfo.InternalName = args[0].AsString();
+                return null;
+            });
+            registry.Register("description", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'description'-Direktive.");
+
+                assemblyInfo.FileDescription = args[0].AsString();
+                return null;
+            });
+            registry.Register("author", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'author'-Direktive.");
+
+                assemblyInfo.CompanyName = args[0].AsString();
+                return null;
+            });
+            registry.Register("comments", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'comments'-Direktive.");
+
+                assemblyInfo.Comments = args[0].AsString();
+                return null;
+            });
+            registry.Register("icon", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'icon'-Direktive.");
+
+                assemblyInfo.IconPath = args[0].AsString();
+                return null;
+            });
+            registry.Register("version", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'version'-Direktive.");
+
+                assemblyInfo.ProductVersion = args[0].AsString();
+                return null;
+            });
+            registry.Register("fileversion", 1, (ctx, args, line) =>
+            {
+                if (args[0].Kind != ValueKind.String)
+                    throw new Exception($"Falsche Argumente für 'fileversion'-Direktive.");
+
+                assemblyInfo.FileVersion = args[0].AsString();
+                return null;
+            });
+
+
 
             foreach (var source in inputSources)
             {
@@ -98,7 +288,15 @@ namespace fire.Compiler
             {
                 var tempfile = Path.Combine(outdir, "tempout.a");
                 Packer.PackProgram(linkedProgram, tempfile);
-                File.Copy(tempfile, outname);
+
+                var verInfo = assemblyInfo.ToVersionInfo();
+
+                PeResourceEditor.SetVersionInfo(tempfile, verInfo);
+
+                if (File.Exists(assemblyInfo.IconPath))
+                    PeResourceEditor.SetIcon(tempfile, assemblyInfo.IconPath);
+
+                File.Copy(tempfile, outname, true);
             }
             return linkedProgram;
         }

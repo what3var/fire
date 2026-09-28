@@ -58,10 +58,10 @@
                     </StackPanel>
                 </StackPanel>
             </GroupBox>
-            <GroupBox Header="Icon" Margin="2">
+            <GroupBox Header="Icon" Margin="2" Padding="4">
                 <StackPanel Orientation="Horizontal">
                     <Image Source="{Binding IconPath}" Width="64" Height="64"></Image>
-                    <Button Content="Laden..." VerticalAlignment="Bottom" Padding="8,2" Margin="8,8,0,0"></Button>
+                    <Button Content="Laden..." VerticalAlignment="Bottom" Padding="8,2" MinWidth="72" Margin="8,8,0,0" Click="Load_Click"></Button>
                 </StackPanel>
             </GroupBox>
         </StackPanel>
@@ -84,8 +84,8 @@
             </GroupBox>
         </StackPanel>
         <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Margin="4" Padding="8,2" IsDefault="True" Click="Button_Click">Save</Button>
-            <Button Margin="4" Padding="8,2" IsCancel="True">Cancel</Button>
+            <Button Margin="4" Padding="8,2" MinWidth="72" IsDefault="True" Click="Button_Click">Save</Button>
+            <Button Margin="4" Padding="8,2" MinWidth="72" IsCancel="True">Cancel</Button>
         </StackPanel>
     </Grid>
 </Window>

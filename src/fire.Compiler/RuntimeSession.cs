@@ -109,12 +109,12 @@ namespace fire.Compiler
             return registry;
         }
 
-        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode executionMode, Func<Value[], Value>? debugWriter = null)
+        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null)
         {
             var linker = new Linker();
             var natives = new NativeRegistry();
 
-            var linkedProgram = linker.CompileAndLink(sources, debugWriter);
+            var linkedProgram = linker.CompileAndLink(sources, debugWriter, outname);
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Print))
             {

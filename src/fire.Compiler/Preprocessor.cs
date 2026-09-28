@@ -121,8 +121,32 @@ namespace fire.Compiler
     /// </summary>
     public sealed class DirectiveRegistry
     {
-        private readonly Dictionary<string, DirectiveDefinition> _directives =
+        private readonly Dictionary<string, DirectiveDefinition?> _directives =
             new(StringComparer.OrdinalIgnoreCase);
+
+        public void Annouce(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                throw new ArgumentException("Direktivenname darf nicht leer sein.", nameof(name));
+            _directives[name] = null;
+        }
+
+        public DirectiveRegistry()
+        {
+            Annouce("import");
+            Annouce("include");
+            Annouce("name");
+            Annouce("codename");
+            Annouce("author");
+            Annouce("comments");
+            Annouce("description");
+            Annouce("icon");
+            Annouce("debug");
+            Annouce("performance");
+            Annouce("noconsole");
+            Annouce("version");
+            Annouce("fileversion");
+        }
 
         /// <summary>Registriert (oder ersetzt) die Direktive `name` - ein
         /// Aufruf `#name ...` mit einer ANDEREN Anzahl Argumente als
@@ -297,20 +321,27 @@ namespace fire.Compiler
                     continue;
                 }
 
-                string argText = match.Groups[2].Success ? match.Groups[2].Value : "";
-                var args = ParseDirectiveArgs(argText, def, lineNo + 1);
-
-                var ctx = new DirectiveContext(basePath, alreadyIncluded, this);
-                string? replacement = def.Handler(ctx, args, lineNo + 1);
-
-                if (!string.IsNullOrEmpty(replacement))
+                if (def == null)
                 {
-                    sb.Append(replacement);
-                    if (!replacement.EndsWith("\n")) sb.Append('\n');
+                    sb.Append('\n'); // Zeile "verschwindet", Zeilenzahl bleibt trotzdem erhalten (siehe Klassendoku).
                 }
                 else
                 {
-                    sb.Append('\n'); // Zeile "verschwindet", Zeilenzahl bleibt trotzdem erhalten (siehe Klassendoku).
+                    string argText = match.Groups[2].Success ? match.Groups[2].Value : "";
+                    var args = ParseDirectiveArgs(argText, def, lineNo + 1);
+
+                    var ctx = new DirectiveContext(basePath, alreadyIncluded, this);
+                    string? replacement = def.Handler(ctx, args, lineNo + 1);
+
+                    if (!string.IsNullOrEmpty(replacement))
+                    {
+                        sb.Append(replacement);
+                        if (!replacement.EndsWith("\n")) sb.Append('\n');
+                    }
+                    else
+                    {
+                        sb.Append('\n'); // Zeile "verschwindet", Zeilenzahl bleibt trotzdem erhalten (siehe Klassendoku).
+                    }
                 }
             }
 
