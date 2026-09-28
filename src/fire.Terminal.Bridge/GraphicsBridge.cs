@@ -279,6 +279,26 @@ namespace fire.Terminal.Bridge
                     return __GRPHWinRegisterEvent(this.id, EventType.MouseMove!, fn);
                 }
             
+                bool RegisterMouseMoveRelative(lambda<float,float,int> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.MouseMoveRelative!, fn);
+                }
+            
+                bool RegisterMouseScroll(lambda<float,float,float,float> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.MouseScroll!, fn);
+                }
+            
+                bool RegisterKeyDown(lambda<int,int,int,bool> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.KeyDown!, fn);
+                }
+            
+                bool RegisterKeyUp(lambda<int,int,int,bool> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.KeyUp!, fn);
+                }
+            
                 bool RegisterTextInput(lambda<string> fn)
                 {
                     return __GRPHWinRegisterEvent(this.id, EventType.TextInput!, fn);
