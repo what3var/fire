@@ -143,10 +143,15 @@ namespace fire.Editor
         private void UpdateErrorPanel()
         {
             var diagnostics = EditorControl.Diagnostics;
-            ErrorList.ItemsSource = diagnostics.Select(d => d.ToString()).ToList();
-            ErrorPanelHeader.Text = diagnostics.Count == 0
-                ? "Fehler (keine)"
-                : $"Fehler ({diagnostics.Count})";
+            var errorlist = diagnostics.Select(d => d.ToString()).ToList();
+
+            Dispatcher.Invoke(() =>
+            {
+                ErrorList.ItemsSource = errorlist;
+                ErrorPanelHeader.Text = diagnostics.Count == 0
+                    ? "Fehler (keine)"
+                    : $"Fehler ({diagnostics.Count})";
+            });
         }
 
         private void ErrorList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)

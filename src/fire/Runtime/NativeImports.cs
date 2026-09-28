@@ -10,6 +10,6 @@ namespace fire.Runtime
 
         public static string Graphics => "graphics";
 
-        public static string Input => "input";
+        public static string Devices => "devices";
     }
 }

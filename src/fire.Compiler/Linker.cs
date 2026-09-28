@@ -1,5 +1,6 @@
 ﻿using fire.Bytecode;
 using fire.Compiler.Assembly;
+using fire.Device.Bridge;
 using fire.Runtime;
 using fire.Terminal;
 using fire.Terminal.Bridge;
@@ -156,7 +157,11 @@ namespace fire.Compiler
                     {
                         case "graphics":
                             nativeImports.Add(NativeImports.Graphics);
-                            firstUserSource = 2;
+                            firstUserSource++;
+                            return null;
+                        case "devices":
+                            nativeImports.Add(NativeImports.Devices);
+                            firstUserSource++;
                             return null;
                         default:
                             throw new Exception($"'{args[0].AsString()}' ist keine bekannte Erweiterung.");
@@ -269,6 +274,14 @@ namespace fire.Compiler
                 processedSources.Insert(1, processed);
 
                 GraphicsBridge.RegisterStubs(natives);
+            }
+
+            if (nativeImports.Contains(NativeImports.Devices))
+            {
+                var processed = Preprocessor.Process(DeviceBridge.PreludeSource, Directory.GetCurrentDirectory(), alreadyIncluded, registry);
+                processedSources.Insert(1, processed);
+
+                DeviceBridge.RegisterStubs(natives);
             }
 
 

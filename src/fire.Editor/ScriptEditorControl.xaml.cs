@@ -78,18 +78,13 @@ namespace fire.Editor
         // Runde anstößt - sonst Endlos-Rekursion.
         private bool _suppressTextChanged;
 
-        // Highlighting läuft debounced (statt bei JEDEM Tastendruck) - sonst
-        // würde das komplette Neuaufbauen des FlowDocument bei schnellem
-        // Tippen spürbar ruckeln.
-        private readonly DispatcherTimer _highlightTimer;
-
         /// <summary>Die aktuell per Debugger angehaltene Zeile (gelb
         /// hervorgehoben), `null` wenn keine - vom Host gesetzt (siehe
         /// MainWindow/ProjectWindow nach jedem Schritt/Stop).</summary>
         public int? HighlightedLine
         {
             get => _highlightedLine;
-            set { _highlightedLine = value; ApplyHighlighting(); }
+            set { _highlightedLine = value; DeferHighlighting(); }
         }
         private int? _highlightedLine;
 
@@ -98,7 +93,6 @@ namespace fire.Editor
         // Resolver + Compiler sind spürbar teurer als reines Lexen) und
         // GETRENNT davon, damit schnelles Tippen nicht bei jedem Zwischen-
         // zustand einen vollständigen Kompilierversuch auslöst.
-        private readonly DispatcherTimer _diagnosticsTimer;
         private List<Diagnostic> _diagnostics = new();
 
         // Die Vorschläge, die GERADE im CompletionPopup angezeigt werden -
@@ -109,30 +103,108 @@ namespace fire.Editor
         {
             InitializeComponent();
 
-            _highlightTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
-            _highlightTimer.Tick += (_, _) =>
-            {
-                _highlightTimer.Stop();
-                ApplyHighlighting();
-            };
+            DeferHighlighting();
 
-            _diagnosticsTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
-            _diagnosticsTimer.Tick += (_, _) =>
-            {
-                _diagnosticsTimer.Stop();
-                RunDiagnostics();
-            };
+            DeferDiagnostics();
 
             // Highlighting wird während das Popup offen ist bewusst
             // ausgesetzt (siehe Editor_TextChanged) - hier nachholen, sobald
             // es schließt (egal ob durch Übernahme, Escape oder Fokusverlust).
             CompletionPopup.Closed += (_, _) =>
             {
-                _highlightTimer.Stop();
-                _highlightTimer.Start();
+                DeferHighlighting();
             };
 
             SetText(string.Empty);
+        }
+
+        DateTime? _highlightMoment = null;
+        bool _highlightInside = false;
+        bool _highlightNeedAnother = false;
+
+        DateTime? _diagMoment = null;
+        bool _diagInside = false;
+        bool _diagNeedAnother = false;
+
+        public void DeferHighlighting()
+        {
+            if (_highlightInside)
+            {
+                _highlightNeedAnother = true;
+                return;
+            }
+
+            var needsThread = _highlightMoment == null;
+
+            _highlightMoment = DateTime.Now.AddMilliseconds(200);
+
+            if (needsThread)
+            {
+                var t = new Thread(() => DeferredHighlighting());
+
+                t.Start();
+            }
+        }
+
+        public void DeferredHighlighting()
+        {
+            while (_highlightMoment != null)
+            {
+                while (DateTime.Now < _highlightMoment)
+                {
+                    Thread.Sleep(50);
+                }
+
+                ApplyHighlighting();
+
+                if (_highlightNeedAnother)
+                    _highlightMoment = DateTime.Now.AddMilliseconds(200);
+                else
+                    _highlightMoment = null;
+
+                _highlightNeedAnother = false;
+            }
+        }
+
+
+        public void DeferDiagnostics()
+        {
+            if (_diagInside)
+            {
+                _diagNeedAnother = true;
+                return;
+            }
+
+            var needsThread = _diagMoment == null;
+
+            _diagMoment = DateTime.Now.AddMilliseconds(200);
+
+            if (needsThread)
+            {
+                var t = new Thread(() => DeferredDiagnostics());
+
+                t.Start();
+            }
+        }
+
+        public void DeferredDiagnostics()
+        {
+            while (_diagMoment != null)
+            {
+                while (DateTime.Now < _diagMoment)
+                {
+                    Thread.Sleep(50);
+                }
+
+                RunDiagnostics();
+
+                if (_diagNeedAnother)
+                    _diagMoment = DateTime.Now.AddMilliseconds(200);
+                else
+                    _diagMoment = null;
+
+                _diagNeedAnother = false;
+            }
         }
 
         // -----------------------------------------------------------
@@ -173,13 +245,12 @@ namespace fire.Editor
                 doc.Blocks.Add(new Paragraph(new Run(line)) { Margin = new Thickness(0) });
             Editor.Document = doc;
             _suppressTextChanged = false;
-            ApplyHighlighting();
+            DeferHighlighting();
 
             // TextChanged wird während des obigen Aufbaus unterdrückt (siehe
             // _suppressTextChanged) - die Diagnostik würde hier also sonst
             // NIE angestoßen, bis der Nutzer selbst das erste Mal tippt.
-            _diagnosticsTimer.Stop();
-            _diagnosticsTimer.Start();
+            DeferDiagnostics();
         }
 
         /// <summary>Setzt den Editor-Text zurück und verwirft dabei auch
@@ -208,8 +279,7 @@ namespace fire.Editor
             // (löst selbst keinen Dokument-Neuaufbau aus, siehe
             // RunDiagnostics - erst das anschließende ApplyHighlighting tut
             // das, und das respektiert die Popup-Sperre bereits).
-            _diagnosticsTimer.Stop();
-            _diagnosticsTimer.Start();
+            DeferDiagnostics();
 
             string source = GetText();
             int offset = GetOffsetOf(Editor.CaretPosition);
@@ -228,7 +298,9 @@ namespace fire.Editor
                 // wird zusätzlich einen Dispatcher-Tick verzögert, damit das
                 // Layout der GERADE getippten Änderung sicher fertig ist,
                 // bevor die Caret-Rechteck-Position abgefragt wird.
-                _highlightTimer.Stop();
+                
+                //_highlightTimer.Stop();
+                
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
                     string src = GetText();
@@ -238,8 +310,7 @@ namespace fire.Editor
             }
             else
             {
-                _highlightTimer.Stop();
-                _highlightTimer.Start();
+                DeferHighlighting();
             }
         }
 
@@ -392,7 +463,8 @@ namespace fire.Editor
 
         private void ApplyHighlighting()
         {
-            string text = GetText();
+            _highlightInside = true;
+            string text = Dispatcher.Invoke(() => GetText());
             var (caretLine, caretColumn) = GetCaretLineColumn();
 
             var spans = SyntaxHighlighter.Highlight(text);
@@ -447,9 +519,21 @@ namespace fire.Editor
                 lineStart = lineEnd + 1; // '+1' für den übersprungenen '\n'
             }
 
-            Editor.Document = doc;
-            SetCaretByLineColumn(caretLine, caretColumn);
+            using var stream = new MemoryStream();
+            System.Windows.Markup.XamlWriter.Save(doc, stream);
+            stream.Position = 0; // Stream-Zeiger zurücksetzen
+
+            Application.Current.Dispatcher.Invoke(new Action(() => {
+                var uiDoc = (FlowDocument)System.Windows.Markup.XamlReader.Load(stream);
+                Editor.Document = uiDoc;
+
+                SetCaretByLineColumn(caretLine, caretColumn);
+            }));
+
+
             _suppressTextChanged = false;
+
+            _highlightInside = false;
         }
 
         /// <summary>Läuft debounced nach Textänderungen (siehe
@@ -461,11 +545,11 @@ namespace fire.Editor
         /// die unterkringelten Zeilen im Editor selbst.</summary>
         private void RunDiagnostics()
         {
-            string source = GetText();
+            string source = Dispatcher.Invoke(() => GetText());
             _diagnostics = DiagnosticsProvider(source);
             DiagnosticsChanged?.Invoke();
-            if (!CompletionPopup.IsOpen)
-                ApplyHighlighting();
+            //if (!CompletionPopup.IsOpen)
+                DeferHighlighting();
         }
 
         /// <summary>Eine ECHTE wellenförmige Unterkringelung (nicht nur eine

@@ -39,6 +39,12 @@ namespace fire.Device.Bridge
         /// DeviceNotFoundException.</summary>
         public const int InvalidHandle = -1;
 
+        public static void RegisterStubs(NativeRegistry natives)
+        {
+            natives.RegisterGroup(ManagerPrefix, BuildManagerStubs());
+            natives.RegisterGroup(DevicePrefix, BuildDeviceStubs());
+        }
+
         public static void RegisterAll(NativeRegistry natives, DeviceManager manager)
         {
             // Pro Geräte-Handle eine eigene Warteschlange empfangener
@@ -76,6 +82,17 @@ namespace fire.Device.Bridge
             natives.RegisterGroup(DevicePrefix, BuildDeviceFunctions(manager, ResolveDevice, receiveQueues));
         }
 
+        private static Dictionary<string, NativeFunction> BuildManagerStubs()
+        {
+            return new Dictionary<string, NativeFunction>
+            {
+                ["Refresh"] = args => Value.MakeUndefined(),
+                ["HandleForIdentifier"] = args => Value.MakeUndefined(),
+                ["Count"] = args => Value.MakeUndefined(),
+                ["HandleAt"] = args => Value.MakeUndefined(),
+            };
+        }
+
         private static Dictionary<string, NativeFunction> BuildManagerFunctions(DeviceManager manager)
         {
             return new Dictionary<string, NativeFunction>
@@ -94,6 +111,23 @@ namespace fire.Device.Bridge
                     long index = args[0].AsInt();
                     return Value.MakeInt(index >= 0 && index < handles.Count ? handles[(int)index] : InvalidHandle);
                 },
+            };
+        }
+
+        private static Dictionary<string, NativeFunction> BuildDeviceStubs()
+        {
+            return new Dictionary<string, NativeFunction>
+            {
+                ["Identifier"] = args => Value.MakeUndefined(),
+                ["IsConnected"] = args => Value.MakeUndefined(),
+                ["PortName"] = args => Value.MakeUndefined(),
+                ["Availability"] = args => Value.MakeUndefined(),
+                ["TestAvailability"] = args => Value.MakeUndefined(),
+                ["Connect"] = args => Value.MakeUndefined(),
+                ["Disconnect"] = args => Value.MakeUndefined(),
+                ["SendCommand"] = args => Value.MakeUndefined(),
+                ["HasData"] = args => Value.MakeUndefined(),
+                ["ReadData"] = args => Value.MakeUndefined(),
             };
         }
 

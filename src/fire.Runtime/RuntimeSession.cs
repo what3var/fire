@@ -1,4 +1,6 @@
 ﻿using fire.Bytecode;
+using fire.Device.Bridge;
+using fire.Device.Manager.DeviceManager;
 using fire.Parsing;
 using fire.Resolving;
 using fire.Runtime;
@@ -89,16 +91,25 @@ namespace fire.Runtime
             ConsoleManager? consoleManager = null;
             WindowManager? windowManager = null;
 
+            DeviceManager? deviceManager = null;
+
             var session = new Session(linkedProgram.Program);
-            
+
             if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
             {
                 var font = new IntegratedGlyphFont();
                 fbManager = new FramebufferManager();
                 consoleManager = new ConsoleManager(fbManager, font);
-                windowManager = new WindowManager(fbManager, (l,v) => session.CallLambda(l,v));
+                windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v));
 
                 GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager);
+            }
+
+            if (linkedProgram.NativeImports.Contains(NativeImports.Devices))
+            {
+                deviceManager = new DeviceManager();
+
+                DeviceBridge.RegisterAll(natives, deviceManager);
             }
 
             var globalScope = new Scope(null, isGlobal: true);
