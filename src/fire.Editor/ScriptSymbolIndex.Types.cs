@@ -207,6 +207,9 @@ namespace fire.Editor
                 string? declared = null;
                 if (t.Type == TokenType.Var && _tokens[k + 1].Type == TokenType.Identifier)
                     declared = _tokens[k + 1].Lexeme;
+                else if (t.Type == TokenType.Foreach && k + 3 < n && _tokens[k + 1].Type == TokenType.LParen
+                         && _tokens[k + 2].Type == TokenType.Identifier && _tokens[k + 3].Type == TokenType.In)
+                    declared = _tokens[k + 2].Lexeme; // 'foreach (name in ...)'
                 else if ((t.Type == TokenType.Identifier || IsTypeKeyword(t.Type)) && _tokens[k + 1].Type == TokenType.Identifier
                          && (k == 0 || _tokens[k - 1].Type is not (TokenType.Dot or TokenType.New))
                          && !_tokens[k + 1].NewlineBefore
@@ -704,15 +707,18 @@ namespace fire.Editor
                     continue;
                 }
 
-                // foreach (var name in ausdruck)
-                if (t.Type == TokenType.Foreach && k + 4 < n && _tokens[k + 1].Type == TokenType.LParen
-                    && _tokens[k + 2].Type == TokenType.Var && _tokens[k + 3].Type == TokenType.Identifier
-                    && _tokens[k + 3].Lexeme == name && _tokens[k + 4].Type == TokenType.In)
+                // foreach (name in ausdruck) - so schreibt es die Sprache (SPEC 8.5);
+                // ein zusätzliches 'var' davor wird ebenfalls erkannt.
+                int loopVar = t.Type == TokenType.Foreach && k + 3 < n && _tokens[k + 1].Type == TokenType.LParen
+                    ? (_tokens[k + 2].Type == TokenType.Var ? k + 3 : k + 2)
+                    : -1;
+                if (loopVar > 0 && loopVar + 1 < n && _tokens[loopVar].Type == TokenType.Identifier
+                    && _tokens[loopVar].Lexeme == name && _tokens[loopVar + 1].Type == TokenType.In)
                 {
                     found = true;
                     explicitType = false;
                     int close = MatchForward(k + 1, TokenType.LParen, TokenType.RParen);
-                    var iterable = close > k + 5 ? EvalExprRange(k + 5, close - 1, depth + 1) : ExprType.Unknown;
+                    var iterable = close > loopVar + 2 ? EvalExprRange(loopVar + 2, close - 1, depth + 1) : ExprType.Unknown;
                     result = iterable.Kind == TypeKind.Array
                         ? FromTypeName(iterable.Name, isArray: false, System.Array.Empty<string>()) // Name ist schon ein Schlüssel
                         : ExprType.Unknown;

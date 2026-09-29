@@ -5108,6 +5108,8 @@ Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden übe
     CheckCompletion("typisierter Parameter", classes + "Foo(Dog d) { d.| }", "Bark", "Curl");
     CheckCompletion("Array-Element", classes + "var arr = new Dog[3]\narr[0].|", "Bark", "Curl");
     CheckCompletion("foreach ueber Array", classes + "Dog ds[]\nforeach (var x in ds) { x.| }", "Bark", "Curl");
+    CheckCompletion("foreach ohne var (so schreibt es die Sprache)", classes + "Dog ds[]\nforeach (x in ds) { x.| }", "Bark", "Curl");
+    CheckCompletion("foreach-Variable wird vorgeschlagen", "var l = new List()\nforeach (zeile in l) { zei| }", "zeile");
     CheckCompletion("Klasse. nur statisch", classes + "Animal.|", "Count", "Speak,name", exact: true);
     CheckCompletion("Enum.", classes + "var c = Color.|", "Red,Green", exact: true);
     CheckCompletion("private/protected ausserhalb versteckt", classes + "var a = new Animal(\"x\")\na.|", "name,Speak", "secret,age,Count");
@@ -5339,9 +5341,9 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         print(IO.File.Exists(f) + " " + IO.File.Size(f))
         print(IO.File.ReadAllText(f))
         var lines = IO.File.ReadAllLines(f)
-        print(lines.length + " " + lines[0] + "|" + lines[1] + "|" + lines[2])
+        print(lines.count + " " + lines[0] + "|" + lines[1] + "|" + lines[2])
         IO.File.AppendAllText(f, "\nvierte\n")
-        print(IO.File.ReadAllLines(f).length)
+        print(IO.File.ReadAllLines(f).count)
         IO.File.WriteAllLines(f, lines)
         print(IO.File.Size(f))
         print(IO.File.ModifiedTime(f) > 1000000000s)
@@ -5368,6 +5370,13 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         try { IO.File.Size(IO.Path.Combine(d, "nope")) } catch (IO.FileNotFoundException e) { print("fehlt " + e.code) }
         """, new[] { "Ziel existiert 7", "False True", "False", "fehlt 3", "fehlt 3" });
 
+    CheckIo("ReadAllLines/GetFiles liefern eine List (foreach)", $$"""
+        var d = "{{apiDir}}"
+        IO.File.WriteAllLines(IO.Path.Combine(d, "l.txt"), ["eins", "zwei"])
+        foreach (line in IO.File.ReadAllLines(IO.Path.Combine(d, "l.txt"))) { print(line) }
+        foreach (name in IO.Directory.GetFiles(d, "l*")) { print(IO.Path.FileName(name)) }
+        """, new[] { "eins", "zwei", "l.txt" });
+
     CheckIo("Directory und Path", $$"""
         var d = "{{apiDir}}"
         var sub = IO.Path.Combine(d, "a", "b")
@@ -5379,9 +5388,9 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         IO.File.WriteAllText(IO.Path.Combine(sub, "y.log"), "2")
         IO.File.WriteAllText(IO.Path.Combine(d, "a", "z.txt"), "3")
         var files = IO.Directory.GetFiles(sub)
-        print(files.length + " " + IO.Path.FileName(files[0]) + " " + IO.Path.FileName(files[1]))
-        print(IO.Directory.GetFiles(sub, "*.txt").length)
-        print(IO.Directory.GetFiles(IO.Path.Combine(d, "a"), "*.txt", true).length)
+        print(files.count + " " + IO.Path.FileName(files[0]) + " " + IO.Path.FileName(files[1]))
+        print(IO.Directory.GetFiles(sub, "*.txt").count)
+        print(IO.Directory.GetFiles(IO.Path.Combine(d, "a"), "*.txt", true).count)
         print(IO.Path.FileName(IO.Directory.GetDirectories(IO.Path.Combine(d, "a"))[0]))
         try { IO.Directory.Delete(IO.Path.Combine(d, "a")) } catch (IO.IOException e) { print("nicht leer") }
         IO.Directory.Delete(IO.Path.Combine(d, "a"), true)

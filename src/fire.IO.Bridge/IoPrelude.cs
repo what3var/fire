@@ -454,16 +454,22 @@ namespace fire.IO.Bridge
                         IO.File.AppendAllBytes(path, IO.Utf8.GetBytes(text))
                     }
 
-                    // Alle Zeilen als Array von Strings.
+                    // Alle Zeilen als List von Strings (`foreach (zeile in ...)`, `.count`, `[i]`).
                     static ReadAllLines(string path) {
-                        return __IOSplitLines(IO.File.ReadAllText(path))
+                        return new List(__IOSplitLines(IO.File.ReadAllText(path)))
                     }
 
-                    // Jede Zeile des Arrays, jeweils mit "\n" abgeschlossen.
+                    // Jede Zeile einer List (oder eines Arrays), jeweils mit "\n" abgeschlossen.
                     static WriteAllLines(string path, lines) {
                         var stream = new IO.FileStream(path, IO.FileMode.Create)
-                        for (var i = 0; i < lines.length; i++) {
-                            stream.Write(IO.Utf8.GetBytes(lines[i] + "\n"))
+                        if (lines is of List) {
+                            foreach (line in lines) {
+                                stream.Write(IO.Utf8.GetBytes(line + "\n"))
+                            }
+                        } else {
+                            for (var i = 0; i < lines.length; i++) {
+                                stream.Write(IO.Utf8.GetBytes(lines[i] + "\n"))
+                            }
                         }
                         stream.Close()
                     }
@@ -486,18 +492,18 @@ namespace fire.IO.Bridge
                         if (!__IODirDelete(path, recursive)) { IO.IOErrors.Throw() }
                     }
 
-                    // Vollständige Pfade der Dateien, sortiert. pattern: z.B. "*.txt".
+                    // Vollständige Pfade der Dateien als sortierte List. pattern: z.B. "*.txt".
                     static GetFiles(string path, string pattern = "*", bool recursive = false) {
                         var list = __IODirList(path, pattern, recursive, 0)
                         if (list == undefined) { IO.IOErrors.Throw() }
-                        return list
+                        return new List(list)
                     }
 
-                    // Vollständige Pfade der Unterverzeichnisse, sortiert.
+                    // Vollständige Pfade der Unterverzeichnisse als sortierte List.
                     static GetDirectories(string path, string pattern = "*", bool recursive = false) {
                         var list = __IODirList(path, pattern, recursive, 1)
                         if (list == undefined) { IO.IOErrors.Throw() }
-                        return list
+                        return new List(list)
                     }
 
                     // Das aktuelle Arbeitsverzeichnis.

@@ -1453,16 +1453,16 @@ aufgelöst).
 var f = IO.Path.Combine("daten", "notizen.txt")
 IO.Directory.Create("daten")
 IO.File.WriteAllText(f, "Grüße\nzweite Zeile")
-for (var line : IO.File.ReadAllLines(f)) { ... }     // Array von Strings
+foreach (line in IO.File.ReadAllLines(f)) { print(line) }   // eine List von Strings (.count, [i])
 print(IO.File.Size(f) + " Bytes, geändert " + IO.File.ModifiedTime(f))   // Sekunden seit 1970 mit Einheit s
 IO.File.Copy(f, "backup.txt", true)
-for (var i = 0; i < IO.Directory.GetFiles("daten", "*.txt").length; i++) { ... }
+foreach (name in IO.Directory.GetFiles("daten", "*.txt")) { print(IO.Path.FileName(name)) }
 ```
 
 | Klasse | Methoden |
 |---|---|
-| `IO.File` | `Exists`, `Size`, `ModifiedTime`, `Delete` (eine fehlende Datei ist kein Fehler), `Copy(quelle, ziel, overwrite = false)`, `Move(quelle, ziel, overwrite = false)`, `ReadAllBytes`, `WriteAllBytes`, `AppendAllBytes`, `ReadAllText`, `WriteAllText`, `AppendAllText`, `ReadAllLines`, `WriteAllLines` |
-| `IO.Directory` | `Exists`, `Create` (auch Zwischenverzeichnisse, ein vorhandenes ist kein Fehler), `Delete(pfad, recursive = false)`, `GetFiles(pfad, pattern = "*", recursive = false)`, `GetDirectories(...)` (vollständige Pfade, sortiert), `Current()` |
+| `IO.File` | `Exists`, `Size`, `ModifiedTime`, `Delete` (eine fehlende Datei ist kein Fehler), `Copy(quelle, ziel, overwrite = false)`, `Move(quelle, ziel, overwrite = false)`, `ReadAllBytes`, `WriteAllBytes`, `AppendAllBytes`, `ReadAllText`, `WriteAllText`, `AppendAllText`, `ReadAllLines` (liefert eine `List`), `WriteAllLines` (List oder Array) |
+| `IO.Directory` | `Exists`, `Create` (auch Zwischenverzeichnisse, ein vorhandenes ist kein Fehler), `Delete(pfad, recursive = false)`, `GetFiles(pfad, pattern = "*", recursive = false)`, `GetDirectories(...)` (vollständige Pfade als sortierte `List`), `Current()` |
 | `IO.Path` | `Combine(a, b[, c])` (ein absoluter Teil verwirft alles davor), `FileName`, `Stem`, `Extension` (mit Punkt), `Parent`, `FullPath`, `Temp()`, `IsRooted`, `Separator()` |
 | `IO.Utf8` | `GetBytes(text)`, `GetString(buffer[, offset, count])` |
 
