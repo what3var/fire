@@ -1272,3 +1272,29 @@ vermerkt statt umgesetzt):
   im Body neu berechnen müssen - ein Fehler dabei bricht Variablenauflösung
   auf eine schwer zu findende Art, deshalb hier nicht leichtfertig
   angegangen.
+
+## 23. IO-Bridge (`#import "io"`) und zwei Sprachänderungen dazu
+
+`src/fire.IO.Bridge`: dasselbe Muster wie `GraphicsBridge`/`DeviceBridge` - `IoBridge.RegisterAll`
+(echt) / `RegisterStubs` (nur Namen, für Linker und Live-Diagnostik über `ImportedPreludes`),
+`IoBridge.PreludeSource` (fire, `namespace IO`), `NativeImports.IO = "io"`. Streams sind
+Handles (`ConcurrentDictionary<int, StreamEntry>` pro `RegisterAll`, jeder Stream mit eigener
+Sperre); jede native Funktion meldet einen Fehler mit `-1` und merkt sich Code/Meldung pro Thread
+(`[ThreadStatic]`, `__IOLastError`/`__IOLastErrorMessage`) - der Prelude wirft daraus die typisierte
+Exception (`IOErrors.Throw`). `ReadByte` liefert -2 am Ende (-1 = Fehler). Die `IoPolicy` des Hosts
+(`AllowAll`/`DenyAll`/`Rooted`) wird vor jedem `FileOpen` mit dem vollständigen Pfad befragt;
+`RuntimeSession.Build` (Compiler- und Runtime-Fassung) nimmt sie als optionalen Parameter.
+
+`FileStream`/`MemoryStream` übergeben ihrer Basis `NativeStream` zuerst `-1` und öffnen im eigenen
+Konstruktor-Body: scheitert das Öffnen, ist das Objekt trotzdem vollständig aufgebaut und sein
+`destruct()` schließt nichts. (Scheitert ein Konstruktor dagegen schon beim Auswerten der
+Basis-Argumente, haben die Felder nur den Standardwert `false`.)
+
+Dafür waren zwei Änderungen an der Sprache nötig:
+- **Destruktor-Kette:** `VM.RunDestructor` ruft die Destruktoren der ganzen Klassenkette (abgeleitete
+  Klasse zuerst, dann jede Basisklasse) - vorher nur den der konkreten Klasse, eine abgeleitete
+  Klasse ohne eigenen `destruct()` hätte den ihrer Basis also nie ausgeführt.
+- **Enums in Namespaces:** `Resolver` erkennt `Name.Mitglied` jetzt auch für einen punktierten Namen
+  (`IO.FileMode.Create`, `DottedName`) - wie beim statischen Klassenzugriff zählt nur der exakt
+  geschriebene Name. Und `class X : Namespace.Basis` akzeptiert einen qualifizierten Basisnamen.
+

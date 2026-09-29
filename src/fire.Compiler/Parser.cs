@@ -1309,7 +1309,9 @@ namespace fire.Compiler
             {
                 do
                 {
-                    string baseName = Expect(TokenType.Identifier, "Erwarte Basisklassen-/Interface-Namen").Lexeme;
+                    // Auch qualifiziert ('Geometry.Shape' - eine Basisklasse in einem
+                    // anderen Namespace, siehe SPEC "Namespaces").
+                    string baseName = ParseDottedName("Basisklassen-/Interface-Namen");
                     baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces));
                 } while (Match(TokenType.Comma));
             }

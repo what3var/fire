@@ -11,5 +11,7 @@ namespace fire.Runtime
         public static string Graphics => "graphics";
 
         public static string Devices => "devices";
+
+        public static string IO => "io";
     }
 }

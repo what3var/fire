@@ -337,6 +337,16 @@ namespace fire.Editor
                     Classes[name] = preludeClass;
                 }
             }
+            // Namespaces und Enums der Prelude (z.B. `IO` samt `IO.FileMode` bei
+            // `#import "io"`) - ohne sie gäbe es kein `IO.`-Vorschlagen.
+            foreach (var ns in prelude.Namespaces)
+                Namespaces.Add(ns);
+            foreach (var (name, members) in prelude.EnumMembers)
+                if (!EnumMembers.ContainsKey(name))
+                {
+                    EnumMembers[name] = members;
+                    if (prelude.EnumDeclLines.TryGetValue(name, out var line)) EnumDeclLines[name] = line;
+                }
             foreach (var name in prelude.AllDeclaredNames)
                 AllDeclaredNames.Add(name);
         }

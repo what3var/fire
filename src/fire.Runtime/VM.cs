@@ -813,26 +813,32 @@ namespace fire.Runtime
         /// deklariert), mit 'this' = dem zu zerstörenden Objekt.</summary>
         public void RunDestructor(ObjectInstance instance)
         {
-            var rc = ResolveClass(instance.ClassName);
-            if (rc.Destructor == null) return;
+            // Die Destruktoren der GANZEN Klassenkette, abgeleitete Klasse
+            // zuerst, dann jede Basisklasse (wie in C#) - eine Basisklasse, die
+            // Ressourcen hält (z.B. einen Datei-Handle) räumt sie so auch für
+            // abgeleitete Klassen auf, die selbst keinen destruct() haben.
+            for (var rc = ResolveClass(instance.ClassName); rc != null; rc = rc.Base)
+            {
+                if (rc.Destructor == null) continue;
 
-            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-            int targetDepth = _frames.Count;
+                _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+                int targetDepth = _frames.Count;
 
-            var scope = new Scope(_globalScope);
-            _currentThis = instance;
-            _currentScope = scope;
-            _currentChunk = rc.Destructor.Chunk;
-            _ip = 0;
+                var scope = new Scope(_globalScope);
+                _currentThis = instance;
+                _currentScope = scope;
+                _currentChunk = rc.Destructor.Chunk;
+                _ip = 0;
 
-            RunNestedUntil(targetDepth);
+                RunNestedUntil(targetDepth);
 
-            // Das abschließende RETURN des Destruktor-Bodys pusht seinen (hier
-            // bedeutungslosen) Rückgabewert auf den Werte-Stack - anders als bei
-            // einem normalen Call/CallMethod/etc. gibt es hier aber keinen
-            // Ausdruckskontext, der ihn abholt. Ohne dieses Pop würde der Stack
-            // bei jeder Destruktor-Ausführung um einen Wert "verwachsen".
-            Pop();
+                // Das abschließende RETURN des Destruktor-Bodys pusht seinen (hier
+                // bedeutungslosen) Rückgabewert auf den Werte-Stack - anders als bei
+                // einem normalen Call/CallMethod/etc. gibt es hier aber keinen
+                // Ausdruckskontext, der ihn abholt. Ohne dieses Pop würde der Stack
+                // bei jeder Destruktor-Ausführung um einen Wert "verwachsen".
+                Pop();
+            }
         }
 
         private void Execute(OpCode op)

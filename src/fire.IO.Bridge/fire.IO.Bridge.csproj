@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Die Brücke zwischen fire und System.IO: Streams (FileStream, MemoryStream,
+    später TextReader/Writer) und Dateisystemzugriff - registriert sie als
+    native Funktionen (NativeRegistry.RegisterGroup, Präfix "__IO") und liefert
+    dazu passenden fire-Quelltext (IoBridge.PreludeSource, `namespace IO`).
+    Aktiviert per `#import "io"`. Welche Pfade ein Skript berühren darf,
+    entscheidet der HOST über eine IoPolicy (siehe dort), nie das Skript.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>fire.IO.Bridge</RootNamespace>
+    <AssemblyName>fire.IO.Bridge</AssemblyName>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\fire\fire.csproj" />
+  </ItemGroup>
+
+</Project>

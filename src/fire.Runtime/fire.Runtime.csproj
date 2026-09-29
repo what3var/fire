@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\fire.Device.Bridge\fire.Device.Bridge.csproj" />
+    <ProjectReference Include="..\fire.IO.Bridge\fire.IO.Bridge.csproj" />
     <ProjectReference Include="..\fire.Terminal.Bridge\fire.Terminal.Bridge.csproj" />
   </ItemGroup>
 

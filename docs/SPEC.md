@@ -288,6 +288,10 @@ class Foo {
 }
 ```
 
+Bei einer abgeleiteten Klasse läuft die **ganze Kette** der Destruktoren: erst der
+der abgeleiteten Klasse, dann der jeder Basisklasse (wie in C#) - eine Klasse ohne eigenen
+`destruct()` räumt also trotzdem mit dem ihrer Basisklasse auf.
+
 ### 5.4 Methodenüberladung
 
 ```
@@ -1398,6 +1402,74 @@ eine RuntimeClass greift. Diese Konvertierungen sind deshalb ganz normale
 Methodenaufrufe, keine Operatoren/Sondersyntax - `SPEC 5.11`s Operator-
 Überladung bleibt davon unberührt (unterschiedliche Opcodes: `CallMethod`
 hier, `BinaryNumericOrOperator` dort).
+
+### 8.11 Streams und Dateizugriff (`#import "io"`)
+
+`#import "io"` schaltet den Namespace `IO` frei (Bridge `fire.IO.Bridge`, wie `graphics`/
+`devices`: native Funktionen `__IO...` plus ein fire-Prelude). Alles liegt in `namespace IO`,
+damit es nicht mit eigenen Klassen wie `File` oder `Stream` kollidiert; ein Enum in einem
+Namespace ist nur **vollqualifiziert** erreichbar (`IO.FileMode.Create`).
+
+**Schritt 1 (umgesetzt): Streams.** `IO.FileStream`, `IO.MemoryStream`; `TextReader`/
+`TextWriter`, die Datei-/Verzeichnis-API (`File`, `Directory`, `Path`) und Stdio folgen.
+
+```
+#import "io"
+
+var w = new IO.FileStream("out.bin", IO.FileMode.Create)   // ohne access: Open->Read, Append->Write, sonst ReadWrite
+w.Write("Hallo".ToBytes())          // Write(buffer) / Write(buffer, offset, count) -> Anzahl Bytes
+w.WriteByte(33)
+w.Close()                           // ein zweites Close() ist wirkungslos
+
+var r = new IO.FileStream("out.bin")             // IO.FileMode.Open, IO.FileAccess.Read
+var head = r.ReadBytes(3)           // bis zu 3 Bytes als neuer Puffer (kürzer am Ende)
+var b = r.ReadByte()                // 0..255, -1 am Ende
+r.Seek(-1, IO.SeekOrigin.End)       // -> neue Position;  r.Position = 0 geht auch
+var rest = r.ReadAll()              // alles bis zum Ende als Puffer
+```
+
+| Mitglied | Bedeutung |
+|---|---|
+| `Read(buffer[, offset, count])` | liest in einen Puffer, liefert die Anzahl (0 = Ende) |
+| `Write(buffer[, offset, count])` | schreibt aus einem Puffer, liefert die Anzahl |
+| `ReadByte()` / `WriteByte(v)` | einzelnes Byte (`ReadByte` -1 am Ende) |
+| `ReadBytes(n)` / `ReadAll()` / `CopyTo(ziel)` | Hilfen, aufgebaut auf `Read`/`Write` |
+| `Position`, `Length` | Property (lesen/setzen); nur bei `CanSeek` |
+| `Seek(offset, origin)` | `IO.SeekOrigin.Begin/Current/End`, liefert die neue Position |
+| `CanRead`/`CanWrite`/`CanSeek`, `IsClosed` | Fähigkeiten |
+| `Flush()`, `Close()` | |
+| `MemoryStream.ToBuffer()` | der gesamte Inhalt als Puffer; `new IO.MemoryStream(buffer)` startet mit einer Kopie |
+| `FileStream.Name` | der Pfad, wie angegeben |
+
+`IO.FileMode`: `Open` (muss existieren), `Create` (anlegen/leeren), `CreateNew` (muss neu
+sein), `OpenOrCreate`, `Append`. `IO.FileAccess`: `Read`, `Write`, `ReadWrite`.
+
+**Aufräumen:** `NativeStream.destruct()` schließt das Handle, wenn der Besitzer-Scope endet
+(siehe 2 und 5.3) - ein vergessenes `Close()` bleibt nicht offen.
+
+**Eigene Streams:** `IO.IStream` (`Read`, `Write`, `Flush`, `Close`) ist die kleinste
+Schnittstelle; bequemer leitet man von `IO.Stream` ab, überschreibt `Read`/`Write` (und
+`CanRead`/`CanWrite`/`Position`/... was unterstützt wird) - `ReadByte`, `ReadBytes`, `ReadAll`,
+`CopyTo` funktionieren dann automatisch.
+
+**Fehler** sind fangbare Exceptions, alle von `IO.IOException` (Felder `message`, `code`):
+`IO.FileNotFoundException` (3), `IO.DirectoryNotFoundException` (4), `IO.FileExistsException`
+(7), `IO.StreamClosedException` (2), `IO.PermissionException` (5 = Betriebssystem, 6 =
+Richtlinie des Hosts), sonst `IO.IOException` (1 ungültiges Argument, 8 nicht unterstützt,
+9 sonstiges). Die Namen vermeiden bewusst `AccessDeniedException`, das die VM selbst für
+Zugriffsmodifikatoren wirft.
+
+**Sicherheit: der HOST entscheidet.** Das Skript kann nichts einschränken oder aufweichen:
+`RuntimeSession.Build(..., ioPolicy)` bekommt eine `IoPolicy` (`AllowAll` = Vorgabe, `DenyAll`,
+`Rooted(verzeichnis, readOnly)` oder eine eigene Ableitung). Jeder Pfad wird vor dem Öffnen
+vollständig normalisiert (`Path.GetFullPath`, also ohne `..`) geprüft; ein abgelehnter Zugriff
+wird zu `IO.PermissionException`. Symbolische Links werden nicht aufgelöst (ein Link innerhalb
+eines erlaubten Verzeichnisses, der nach außen zeigt, führt heraus). `MemoryStream` ist von der
+Richtlinie nicht betroffen.
+
+**Threads:** die Handle-Tabelle ist nebenläufigkeitssicher, jeder Zugriff auf einen Stream ist
+gesperrt; der Fehlerstatus (`__IOLastError`) gilt pro Thread. Lesen blockiert den aufrufenden
+VM-Thread (für Hintergrundarbeit `fire { ... }`).
 
 ## 9. Offene Punkte
 

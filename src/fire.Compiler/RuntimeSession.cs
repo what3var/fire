@@ -101,7 +101,7 @@ namespace fire.Compiler
             return registry;
         }
 
-        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null)
+        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null)
         {
             var linker = new Linker();
             var natives = new NativeRegistry();
@@ -131,6 +131,11 @@ namespace fire.Compiler
 
                 GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager);
             }
+
+            // `ioPolicy`: was Skripte im Dateisystem anfassen dürfen - entscheidet der
+            // HOST (siehe IoPolicy), Vorgabe: alles.
+            if (linkedProgram.NativeImports.Contains(NativeImports.IO))
+                fire.IO.Bridge.IoBridge.RegisterAll(natives, ioPolicy);
 
             var globalScope = new Scope(null, isGlobal: true);
             

@@ -541,8 +541,17 @@ namespace fire.Compiler
             // generischen Klassen.
             if (me.Target is SelfClassExpr) return _currentClass?.Name;
 
+            string? className = DottedName(me.Target);
+            return className != null && IsKnownClassName(className) ? className : null;
+        }
+
+        /// <summary>Der punktierte Name, den `target` als reine Bezeichner-Kette
+        /// schreibt (`A`, `Geometry.Circle`), oder `null`, wenn es keine
+        /// solche Kette ist (Aufruf, Index, `this`, ...).</summary>
+        private static string? DottedName(Expr target)
+        {
             var pathSegments = new List<string>();
-            Expr current = me.Target;
+            Expr current = target;
             while (current is MemberExpr innerMe)
             {
                 pathSegments.Add(innerMe.Name);
@@ -551,9 +560,7 @@ namespace fire.Compiler
             if (current is not IdentifierExpr rootId) return null;
             pathSegments.Add(rootId.Name);
             pathSegments.Reverse();
-
-            string className = string.Join(".", pathSegments);
-            return IsKnownClassName(className) ? className : null;
+            return string.Join(".", pathSegments);
         }
 
         /// <summary>Prüft bei `new Name&lt;Arg1,...&gt;(...)` (siehe Ast.NewExpr.
@@ -1376,10 +1383,16 @@ namespace fire.Compiler
                     // (wie ein Klassenname auch nicht durch eine Variable
                     // verschattet werden kann) - dieselbe Namenskollision wäre
                     // ohnehin verwirrend und in der Praxis leicht vermeidbar.
-                    if (me.Target is IdentifierExpr enumId && _enums.TryGetValue(enumId.Name, out var enumMembers))
+                    // Auch ein Enum in einem Namespace ist so erreichbar, dann aber
+                    // vollqualifiziert ('Geometry.Kind.Round') - wie beim
+                    // statischen Klassenzugriff (siehe TryResolveStaticMemberAccess)
+                    // zählt NUR der exakt geschriebene Name, keine `#using`-/
+                    // Namespace-Auflösung.
+                    string? enumName = DottedName(me.Target);
+                    if (enumName != null && _enums.TryGetValue(enumName, out var enumMembers))
                     {
                         if (!enumMembers.TryGetValue(me.Name, out long enumValue))
-                            throw new ResolverException($"'{enumId.Name}' hat kein Mitglied '{me.Name}'", me.Line);
+                            throw new ResolverException($"'{enumName}' hat kein Mitglied '{me.Name}'", me.Line);
                         _refs[me] = new ResolvedRef.EnumMember(enumValue);
                         break;
                     }

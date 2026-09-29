@@ -5121,6 +5121,9 @@ Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden übe
     CheckCompletion("Interface-Mitglieder", "interface I { Foo() }\nclass A : I { Bar() {} }\nI a\na.|", "Foo", "Bar", exact: true);
     CheckCompletion("Prelude-Klasse", "var l = new List()\nl.|", "Add,GetEnumerator", "Speak");
     CheckCompletion("Erweiterung per #import", "#import \"graphics\"\nvar fb = new Framebuffer(1, 2)\nfb.|", "Width,Height,ReadByte");
+    CheckCompletion("#import io: IO. zeigt Streams und Enums", "#import \"io\"\nIO.|", "FileStream,MemoryStream,Stream,IStream,FileMode,SeekOrigin,IOException");
+    CheckCompletion("#import io: Stream-Mitglieder", "#import \"io\"\nvar s = new IO.FileStream(\"a.bin\")\ns.|", "ReadBytes,ReadAll,CopyTo,Position,Length,Close,Seek,Name", "ToBuffer,Throw");
+    CheckCompletion("#import io: IO.FileMode.", "#import \"io\"\nvar m = IO.FileMode.|", "Open,Create,CreateNew,OpenOrCreate,Append", exact: true);
     CheckCompletion("nach 'new' nur Klassen (keine Interfaces)", "interface I { Foo() }\nclass A { }\nvar x = new |", "A", "I,var");
     CheckCompletion("einfacher Wert hat keine Mitglieder", "var s = \"abc\"\ns.|", "", exact: true);
     CheckCompletion("Variable aus fremder Methode nicht sichtbar -> Fallback", "class A { M() { var q = new B() }\n N() { q.| } }\nclass B { Z() {} }", "Z");
@@ -5170,6 +5173,221 @@ Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden übe
     CheckCompletion("gleichnamige Klassen in zwei Namespaces", "namespace P { class Same { OnlyP() { } } }\nnamespace Q { class Same { OnlyQ() { } } }\nvar a = new P.Same()\na.|", "OnlyP", "OnlyQ", exact: true);
     CheckCompletion("class extends im Namespace", "namespace N { class A { X() { } } }\nnamespace N { class extends A { Y() { this.| } } }", "X,Y");
     Console.WriteLine(completionFailures == 0 ? "Alle Vervollstaendigungs-Pruefungen bestanden." : $"FEHLER: {completionFailures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) und Host-Richtlinie ===");
+
+{
+    string ioDir = Path.Combine(Path.GetTempPath(), "fire-io-test-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(ioDir);
+    string ioFile = Path.Combine(ioDir, "a.bin").Replace("\\", "/");
+    string ioMissing = Path.Combine(ioDir, "missing", "x.bin").Replace("\\", "/");
+    string ioDirFwd = ioDir.Replace("\\", "/");
+    int ioFailures = 0;
+
+    // Führt `script` mit Prelude + IO-Prelude aus und liefert alle `print`-Zeilen.
+    List<string> RunIo(string script, fire.IO.Bridge.IoPolicy? policy = null)
+    {
+        var lines = new List<string>();
+        var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var sources = new[] { fire.Standard.Prelude.Source, fire.IO.Bridge.IoBridge.PreludeSource, script }
+            .Select(s => Preprocessor.Process(s, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList();
+        var program = Parser.ParseMultiple(sources);
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        fire.IO.Bridge.IoBridge.RegisterAll(natives, policy);
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes);
+        vm.Run();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckIo(string title, string script, string[] expected, fire.IO.Bridge.IoPolicy? policy = null)
+    {
+        string[] actual;
+        try { actual = RunIo(script, policy).ToArray(); }
+        catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
+        bool ok = actual.SequenceEqual(expected);
+        if (!ok) ioFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+    }
+
+    CheckIo("FileStream: schreiben, lesen, positionieren", $$"""
+        {
+            var w = new IO.FileStream("{{ioFile}}", IO.FileMode.Create)
+            var data = new byte[5]
+            for (var i = 0; i < 5; i++) { data[i] = 65 + i }
+            print(w.Write(data))
+            w.WriteByte(70)
+            print("len " + w.Length + " pos " + w.Position)
+            w.Close()
+            print("closed " + w.IsClosed)
+        }
+        var r = new IO.FileStream("{{ioFile}}")
+        print("read " + r.CanRead + " write " + r.CanWrite + " seek " + r.CanSeek)
+        print(r.ReadBytes(3).ToString())
+        print(r.ReadByte())
+        r.Seek(-1, IO.SeekOrigin.End)
+        print(r.ReadByte())
+        print(r.ReadByte())
+        r.Position = 0
+        var all = r.ReadAll()
+        print(all.ToString() + " " + all.length)
+        r.Close()
+        """, new[] { "5", "len 6 pos 6", "closed True", "read True write False seek True", "ABC", "68", "70", "-1", "ABCDEF 6" });
+
+    CheckIo("FileStream: Append und ReadWrite", $$"""
+        var a = new IO.FileStream("{{ioFile}}", IO.FileMode.Append)
+        a.Write("GH".ToBytes())
+        a.Close()
+        var rw = new IO.FileStream("{{ioFile}}", IO.FileMode.Open, IO.FileAccess.ReadWrite)
+        print(rw.Length)
+        rw.Position = 1
+        rw.WriteByte(90)
+        rw.Position = 0
+        print(rw.ReadAll().ToString())
+        rw.Length = 3
+        print(rw.Length)
+        rw.Close()
+        """, new[] { "8", "AZCDEFGH", "3" });
+
+    CheckIo("Fehler sind fangbare Exceptions", $$"""
+        try { var x = new IO.FileStream("{{ioMissing}}") } catch (IO.DirectoryNotFoundException e) { print("DNF " + e.code) }
+        try { var x = new IO.FileStream("{{ioDirFwd}}/nope.txt") } catch (IO.FileNotFoundException e) { print("FNF " + e.code) }
+        try { var x = new IO.FileStream("{{ioFile}}", IO.FileMode.CreateNew) } catch (IO.FileExistsException e) { print("EXISTS " + e.code) }
+        var s = new IO.FileStream("{{ioFile}}")
+        try { s.Write(new byte[2]) } catch (IO.IOException e) { print("IOE " + e.code) }
+        s.Close()
+        s.Close()
+        try { s.ReadByte() } catch (IO.StreamClosedException e) { print("CLOSED " + e.code) }
+        try { var m = new IO.MemoryStream(); m.Read(new byte[2], 1, 5) } catch (IO.IOException e) { print("RANGE " + e.code) }
+        try { var m = new IO.MemoryStream(); m.Seek(-1) } catch (IO.IOException e) { print("SEEK " + e.code) }
+        """, new[] { "DNF 4", "FNF 3", "EXISTS 7", "IOE 8", "CLOSED 2", "RANGE 1", "SEEK 1" });
+
+    CheckIo("MemoryStream und CopyTo", """
+        var m = new IO.MemoryStream()
+        m.Write("Hallo Welt".ToBytes())
+        print("len " + m.Length + " pos " + m.Position)
+        m.Position = 0
+        var c = new IO.MemoryStream()
+        m.CopyTo(c)
+        print(c.ToBuffer().ToString())
+        var d = new IO.MemoryStream("abc".ToBytes())
+        print(d.ReadByte() + " " + d.ReadByte() + " " + d.ReadByte() + " " + d.ReadByte())
+        d.Length = 1
+        print(d.ToBuffer().length)
+        """, new[] { "len 10 pos 10", "Hallo Welt", "97 98 99 -1", "1" });
+
+    CheckIo("destruct() schliesst den Stream, wenn der Besitzer endet", $$"""
+        print("offen " + __IOOpenCount())
+        {
+            var s = new IO.FileStream("{{ioFile}}")
+            print("offen " + __IOOpenCount())
+        }
+        print("offen " + __IOOpenCount())
+        try { var bad = new IO.FileStream("{{ioDirFwd}}/nope.txt") } catch (IO.FileNotFoundException e) { print("fehlgeschlagen") }
+        print("offen " + __IOOpenCount())
+        """, new[] { "offen 0", "offen 1", "offen 0", "fehlgeschlagen", "offen 0" });
+
+    CheckIo("eigener Stream (Basisklasse IO.Stream)", """
+        class Upper : IO.Stream {
+            var inner
+            construct(inner) { this.inner = inner }
+            bool CanWrite { get { return true } }
+            int Write(buffer, offset, count) {
+                var copy = new byte[count]
+                for (var i = 0; i < count; i++) {
+                    var c = buffer[offset + i]
+                    if (c >= 97 && c <= 122) { c = c - 32 }
+                    copy[i] = c
+                }
+                return this.inner.Write(copy, 0, count)
+            }
+        }
+        var m = new IO.MemoryStream()
+        var u = new Upper(m)
+        u.Write("hallo".ToBytes())
+        print(m.ToBuffer().ToString())
+        """, new[] { "HALLO" });
+
+    CheckIo("Host-Richtlinie: DenyAll", $$"""
+        try { var x = new IO.FileStream("{{ioFile}}") } catch (IO.PermissionException e) { print("verweigert " + e.code) }
+        var m = new IO.MemoryStream()
+        print("Speicher-Streams gehen trotzdem " + m.CanWrite)
+        """, new[] { "verweigert 6", "Speicher-Streams gehen trotzdem True" }, fire.IO.Bridge.IoPolicy.DenyAll);
+
+    CheckIo("Host-Richtlinie: nur lesen innerhalb eines Verzeichnisses", $$"""
+        var ok = new IO.FileStream("{{ioFile}}")
+        print("lesen ok")
+        try { var x = new IO.FileStream("{{ioFile}}", IO.FileMode.Open, IO.FileAccess.ReadWrite) } catch (IO.PermissionException e) { print("schreiben " + e.code) }
+        try { var x = new IO.FileStream("{{ioDirFwd}}/../outside.txt") } catch (IO.PermissionException e) { print("ausserhalb " + e.code) }
+        """, new[] { "lesen ok", "schreiben 6", "ausserhalb 6" }, fire.IO.Bridge.IoPolicy.Rooted(ioDir, readOnly: true));
+
+    Directory.Delete(ioDir, true);
+    Console.WriteLine(ioFailures == 0 ? "Alle IO-Pruefungen bestanden." : $"FEHLER: {ioFailures} IO-Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Destruktoren: die ganze Klassenkette wird aufgeraeumt (abgeleitet zuerst) ===");
+
+string destructChainSample = """
+class Base {
+    destruct() { print("Base.destruct") }
+}
+class Middle : Base { }
+class Leaf : Middle {
+    destruct() { print("Leaf.destruct") }
+}
+{
+    var a = new Leaf()
+    var b = new Middle()
+}
+print("danach")
+""";
+
+try
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(destructChainSample);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    Console.WriteLine("Ausgabe (erwartet: Leaf.destruct / Base.destruct / Base.destruct - je Objekt, Reihenfolge der Objekte egal - dann danach):");
+    var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes);
+    vm.Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Enums in Namespaces: vollqualifizierter Zugriff ===");
+
+string namespacedEnumSample = """
+namespace Geo {
+    enum Kind { Round, Flat = 5, Sharp }
+}
+print(Geo.Kind.Round)
+print(Geo.Kind.Flat)
+print(Geo.Kind.Sharp)
+""";
+
+try
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(namespacedEnumSample);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    Console.WriteLine("Ausgabe (erwartet: 0 / 5 / 6):");
+    new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes).Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
 }
 
 static int CountOccurrences(string haystack, string needle)

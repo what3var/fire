@@ -1,5 +1,6 @@
 using fire.Bytecode;
 using fire.Device.Bridge;
+using fire.IO.Bridge;
 using fire.Runtime;
 using fire.Terminal.Bridge;
 using System;
@@ -31,6 +32,7 @@ namespace fire.Compiler
         {
             "graphics" => NativeImports.Graphics,
             "devices" => NativeImports.Devices,
+            "io" => NativeImports.IO,
             _ => throw new Exception($"'{name}' ist keine bekannte Erweiterung."),
         };
 
@@ -41,6 +43,7 @@ namespace fire.Compiler
         {
             "graphics" => GraphicsBridge.PreludeSource,
             "devices" => DeviceBridge.PreludeSource,
+            "io" => IoBridge.PreludeSource,
             _ => null,
         };
 
@@ -79,6 +82,13 @@ namespace fire.Compiler
             {
                 processedSources.Insert(1, preprocess(DeviceBridge.PreludeSource));
                 DeviceBridge.RegisterStubs(natives);
+                inserted++;
+            }
+
+            if (nativeImports.Contains(NativeImports.IO))
+            {
+                processedSources.Insert(1, preprocess(IoBridge.PreludeSource));
+                IoBridge.RegisterStubs(natives);
                 inserted++;
             }
 

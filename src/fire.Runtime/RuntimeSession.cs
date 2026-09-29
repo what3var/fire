@@ -1,6 +1,7 @@
 ﻿using fire.Bytecode;
 using fire.Device.Bridge;
 using fire.Device.Manager.DeviceManager;
+using fire.IO.Bridge;
 using fire.Parsing;
 using fire.Resolving;
 using fire.Runtime;
@@ -75,7 +76,7 @@ namespace fire.Runtime
                 ex => Console.WriteLine($"(unbehandelte Exception im Callback: {ex.Message})"));
         }
 
-        public static Session Build(LinkedProgram linkedProgram, VmExecutionMode executionMode, Func<Value[], Value>? debugWriter = null)
+        public static Session Build(LinkedProgram linkedProgram, VmExecutionMode executionMode, Func<Value[], Value>? debugWriter = null, IoPolicy? ioPolicy = null)
         {
             var natives = new NativeRegistry();
             
@@ -111,6 +112,11 @@ namespace fire.Runtime
 
                 DeviceBridge.RegisterAll(natives, deviceManager);
             }
+
+            // `ioPolicy`: was Skripte im Dateisystem anfassen dürfen - entscheidet der
+            // HOST (siehe IoPolicy), Vorgabe: alles.
+            if (linkedProgram.NativeImports.Contains(NativeImports.IO))
+                IoBridge.RegisterAll(natives, ioPolicy);
 
             var globalScope = new Scope(null, isGlobal: true);
             
