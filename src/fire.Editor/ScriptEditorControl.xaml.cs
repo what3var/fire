@@ -1,32 +1,51 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Reflection.Metadata;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Media;
 using System.Windows.Threading;
-using static System.Net.Mime.MediaTypeNames;
+using ICSharpCode.AvalonEdit.CodeCompletion;
+using ICSharpCode.AvalonEdit.Document;
 
 namespace fire.Editor
 {
     /// <summary>Ein eigenständiges, wiederverwendbares Editor-Control:
-    /// RichTextBox + Syntax-Highlighting + Autovervollständigung + Strg+Klick-
-    /// Navigation + Haltepunkt-Rand + Live-Diagnostik - GENAU EIN Quelltext
-    /// pro Instanz. Sowohl vom alten Einzeldatei-Fenster (MainWindow, eine
-    /// Instanz) als auch vom neuen Tabbed-Projekt-Fenster (ProjectWindow, eine
-    /// Instanz PRO offenem Tab) genutzt, damit Editing-Logik nicht zweimal
-    /// gepflegt werden muss.
+    /// AvalonEdit-TextEditor + Syntax-Highlighting + Autovervollständigung +
+    /// Strg+Klick-Navigation + klickbarer Haltepunkt-Rand + Live-Diagnostik -
+    /// GENAU EIN Quelltext pro Instanz. Sowohl vom alten Einzeldatei-Fenster
+    /// (MainWindow, eine Instanz) als auch vom Tabbed-Projekt-Fenster
+    /// (ProjectWindow, eine Instanz PRO offenem Tab) genutzt, damit Editing-
+    /// Logik nicht zweimal gepflegt werden muss.
+    ///
+    /// UMSTIEG von RichTextBox auf AvalonEdit (siehe EditorRendering.cs für
+    /// die neuen Render-Bausteine): der alte Ansatz (Highlighting = beim
+    /// Tippen debounced das KOMPLETTE FlowDocument neu bauen und austauschen)
+    /// war die Wurzel so gut wie aller Bugs mehrerer Debug-Runden - Auswahl/
+    /// Cursor kollabierte beim Austausch, Wettlauf zwischen Tippen und
+    /// Hintergrund-Highlighting, eine echte Rückkopplungsschleife, Scroll-
+    /// Position sprang bei langen Dateien. AvalonEdit hat ein eigenes
+    /// TextDocument-Modell mit ECHTEN Zeichen-Offsets (GetOffset/GetLocation)
+    /// statt WPFs TextPointer/Paragraph-Klassenhierarchie, und Highlighting
+    /// läuft rein beim ZEICHNEN (DocumentColorizingTransformer) - das
+    /// Dokument selbst wird dafür nie angefasst, das eliminiert diese ganze
+    /// Bug-Klasse strukturell, statt sie Fall für Fall zu flicken.
     ///
     /// Bewusst KEINE eigene Kenntnis von DebugSession/Kompilieren/Ausführen -
     /// das bleibt Sache des jeweiligen Host-Fensters (siehe MainWindow/
     /// ProjectWindow), das diese Instanz orchestriert (Breakpoints abfragen,
-    /// HighlightedLine setzen, GetText() beim Kompilieren aufrufen, ...).</summary>
+    /// HighlightedLine setzen, GetText() beim Kompilieren aufrufen, ...).
+    ///
+    /// ZEILENZÄHLUNG: nach außen (öffentliche Schnittstelle) UNVERÄNDERT wie
+    /// bei der alten RichTextBox-Fassung - SetCaretByLineColumn nimmt eine
+    /// 0-basierte Zeile, ScrollToLine/HighlightedLine/Breakpoints/
+    /// GetCaretLine sind 1-basiert (deckungsgleich mit Chunk.MarkLine/
+    /// GetLocation) - damit bleibt MainWindow/ProjectWindow unverändert
+    /// benutzbar. AvalonEdit selbst zählt INTERN überall 1-basiert
+    /// (Caret.Line, DocumentLine.LineNumber, ...) - die Umrechnung an der
+    /// 0-basierten SetCaretByLineColumn-Grenze ist die einzige Stelle, die
+    /// das berücksichtigen muss.</summary>
     public partial class ScriptEditorControl : UserControl
     {
         /// <summary>Der Dateipfad dieses Editors, falls schon einmal
@@ -42,14 +61,13 @@ namespace fire.Editor
 
         /// <summary>Die aktuellen Haltepunkt-Zeilen (1-basiert, wie im
         /// restlichen Editor) - nur LESEND; zum Ändern ToggleBreakpointAtCaret/
-        /// ClearBreakpoints/SetBreakpoints nutzen (löst dabei automatisch
-        /// BreakpointsChanged aus und aktualisiert den Rand).</summary>
+        /// ClearBreakpoints nutzen (löst dabei automatisch BreakpointsChanged
+        /// aus und aktualisiert Rand + Zeilen-Hintergrund).</summary>
         public IReadOnlySet<int> Breakpoints => _breakpoints;
 
         /// <summary>Feuert, wann immer sich die Haltepunkt-Menge geändert hat
-        /// (Rand-Klick/ToggleBreakpointAtCaret/ClearBreakpoints/
-        /// SetBreakpoints) - der Host muss darauf i.d.R. mit DebugSession.
-        /// UpdateBreakpoints reagieren.</summary>
+        /// (Rand-Klick/ToggleBreakpointAtCaret/ClearBreakpoints) - der Host
+        /// muss darauf i.d.R. mit DebugSession.UpdateBreakpoints reagieren.</summary>
         public event Action? BreakpointsChanged;
 
         /// <summary>Die aktuell im Editor angezeigten Live-Diagnostik-Fehler
@@ -75,619 +93,238 @@ namespace fire.Editor
         /// Zeile - für eine Statusleisten-Anzeige im Host.</summary>
         public event Action<int>? CaretLineChanged;
 
-        // Verhindert, dass ApplyHighlighting()s eigenes Neuaufbauen des
-        // FlowDocument (das TextChanged auslöst) eine weitere Highlighting-
-        // Runde anstößt - sonst Endlos-Rekursion.
-        private bool _suppressTextChanged;
-
         /// <summary>Die aktuell per Debugger angehaltene Zeile (gelb
         /// hervorgehoben), `null` wenn keine - vom Host gesetzt (siehe
-        /// MainWindow/ProjectWindow nach jedem Schritt/Stop).</summary>
+        /// MainWindow/ProjectWindow nach jedem Schritt/Stop). Setzt anders
+        /// als früher NUR NOCH den Hintergrund-Renderer und löst ein
+        /// Neuzeichnen aus (TextView.Redraw) - KEIN Dokument-Neuaufbau mehr
+        /// nötig, siehe Klassendoku.</summary>
         public int? HighlightedLine
         {
             get => _highlightedLine;
-            set { _highlightedLine = value; DeferHighlighting(); }
+            set
+            {
+                _highlightedLine = value;
+                _lineBackground.HighlightedLine = value;
+                Editor.TextArea.TextView.Redraw();
+            }
         }
         private int? _highlightedLine;
+
+        // Highlighting läuft debounced (statt bei jedem Tastendruck neu
+        // gelext) - reines Lexen ist zwar schnell, aber bei sehr schnellem
+        // Tippen soll trotzdem nicht bei JEDEM Zwischenzustand neu gelext
+        // werden.
+        private readonly DispatcherTimer _highlightTimer;
 
         // Live-Fehleranalyse (siehe LiveDiagnostics) - läuft debounced wie
         // das Highlighting, aber mit einer LÄNGEREN Verzögerung (Parser +
         // Resolver + Compiler sind spürbar teurer als reines Lexen) und
         // GETRENNT davon, damit schnelles Tippen nicht bei jedem Zwischen-
         // zustand einen vollständigen Kompilierversuch auslöst.
+        private readonly DispatcherTimer _diagnosticsTimer;
         private List<Diagnostic> _diagnostics = new();
 
-        // Die Vorschläge, die GERADE im CompletionPopup angezeigt werden -
-        // Index in CompletionList.SelectedIndex zeigt hierauf.
-        private List<CompletionItem> _completionItems = new();
+        private readonly HighlightingColorizer _colorizer = new();
+        private readonly LineBackgroundRenderer _lineBackground = new();
+        private readonly BreakpointMargin _breakpointMargin = new();
+
+        private CompletionWindow? _completionWindow;
 
         public ScriptEditorControl()
         {
             InitializeComponent();
 
-            DeferHighlighting();
+            Editor.TextArea.TextView.LineTransformers.Add(_colorizer);
+            Editor.TextArea.TextView.BackgroundRenderers.Add(_lineBackground);
+            // Index 0 = ganz links, also vor der (von ShowLineNumbers="True"
+            // automatisch eingefügten) Zeilennummer-Spalte - Haltepunkt-Punkt,
+            // dann Zeilennummer, dann Text, wie in den meisten IDEs üblich.
+            Editor.TextArea.LeftMargins.Insert(0, _breakpointMargin);
+            _breakpointMargin.LineClicked += ToggleBreakpoint;
 
-            DeferDiagnostics();
+            Editor.TextChanged += Editor_TextChanged;
+            Editor.TextArea.Caret.PositionChanged += (_, _) => CaretLineChanged?.Invoke(GetCaretLine());
+            Editor.TextArea.TextEntered += Editor_TextEntered;
+            Editor.PreviewMouseLeftButtonDown += Editor_PreviewMouseLeftButtonDown;
+            Editor.PreviewKeyDown += Editor_PreviewKeyDown;
 
-            // Highlighting wird während das Popup offen ist bewusst
-            // ausgesetzt (siehe Editor_TextChanged) - hier nachholen, sobald
-            // es schließt (egal ob durch Übernahme, Escape oder Fokusverlust).
-            //CompletionPopup.Closed += (_, _) =>
-            //{
-            //    DeferHighlighting();
-            //};
+            _highlightTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+            _highlightTimer.Tick += (_, _) =>
+            {
+                _highlightTimer.Stop();
+                RecomputeHighlighting();
+            };
+
+            _diagnosticsTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+            _diagnosticsTimer.Tick += (_, _) =>
+            {
+                _diagnosticsTimer.Stop();
+                RunDiagnostics();
+            };
 
             SetText(string.Empty);
         }
 
-        DateTime? _highlightMoment = null;
-        bool _highlightInside = false;
-        bool _highlightNeedAnother = false;
-
-        string? _highlightSource = null;
-
-        bool _throwawayHighlight = false;
-
-        DateTime? _diagMoment = null;
-        bool _diagInside = false;
-        bool _diagNeedAnother = false;
-
-        public void DeferHighlighting(string? source = null)
-        {
-            var sourceChanged = Dispatcher.Invoke(() =>
-            {
-                if (source == null)
-                    source = GetText();
-
-                var changed = _highlightSource != source;
-
-                _highlightSource = source;
-
-                return changed;
-            });
-
-            if (_highlightInside && sourceChanged)
-            {
-                _highlightNeedAnother = true;
-                _throwawayHighlight = true;
-
-                return;
-            }
-
-            var needsThread = _highlightMoment == null;
-
-            if (needsThread)
-            {
-                _highlightMoment = DateTime.Now.AddMilliseconds(200);
-
-                var t = new Thread(() => DeferredHighlighting());
-
-                t.Start();
-            }
-        }
-
-        public void DeferredHighlighting()
-        {
-            while (_highlightMoment != null)
-            {
-                while (DateTime.Now < _highlightMoment)
-                {
-                    Thread.Sleep(50);
-                }
-
-                try
-                {
-                    ApplyHighlighting();
-                }
-                catch (TaskCanceledException)
-                {
-                }
-
-                if (_highlightNeedAnother)
-                    _highlightMoment = DateTime.Now.AddMilliseconds(200);
-                else
-                    _highlightMoment = null;
-
-                _highlightNeedAnother = false;
-            }
-
-            _highlightMoment = null;
-        }
-
-
-        public void DeferDiagnostics()
-        {
-            if (_diagInside)
-            {
-                _diagNeedAnother = true;
-                return;
-            }
-
-            var needsThread = _diagMoment == null;
-
-            _diagMoment = DateTime.Now.AddMilliseconds(200);
-
-            if (needsThread)
-            {
-                var t = new Thread(() => DeferredDiagnostics());
-
-                t.Start();
-            }
-        }
-
-        public void DeferredDiagnostics()
-        {
-            while (_diagMoment != null)
-            {
-                while (DateTime.Now < _diagMoment)
-                {
-                    Thread.Sleep(50);
-                }
-
-                RunDiagnostics();
-
-                if (_diagNeedAnother)
-                    _diagMoment = DateTime.Now.AddMilliseconds(200);
-                else
-                    _diagMoment = null;
-
-                _diagNeedAnother = false;
-            }
-        }
-
         // -----------------------------------------------------------
-        // Text-Zugriff (RichTextBox <-> reiner String)
-        //
-        // Bewusste Design-Entscheidung: EIN Paragraph pro Quelltextzeile
-        // (kein Zeilenumbruch, kein automatischer Wortumbruch innerhalb einer
-        // Zeile) - dadurch entspricht "Zeile N im Editor" IMMER exakt
-        // "Zeile N im Sinn von Chunk.MarkLine/GetLocation", ohne dass
-        // Wortumbruch die Zuordnung durcheinanderbringen könnte.
+        // Text-Zugriff
         // -----------------------------------------------------------
 
-        public string GetText()
-        {
-            // Bewusst direkt aus den Absätzen zusammengesetzt, statt über
-            // TextRange(ContentStart, ContentEnd).Text + TrimEnd('\n') zu
-            // raten, wie viele trailing Newlines WPF selbst hinzufügt - das
-            // hatte einen echten Bug: TrimEnd('\n') entfernt ALLE trailing
-            // Newlines, nicht nur ein synthetisches letztes. Ein frisch per
-            // Enter angehängter LEERER Absatz am Dokumentende wurde dadurch
-            // beim Zurückwandeln in Text komplett verschluckt - das Dokument
-            // hatte beim nächsten Neuaufbau eine Zeile WENIGER als der
-            // Nutzer gerade eingegeben hatte, und der Cursor (der auf die
-            // inzwischen "verschwundene" Zeile zeigte) landete auf der Zeile
-            // darüber. Da ein Paragraph hier IMMER genau einer Quelltextzeile
-            // entspricht (siehe Kommentar oben), ist ein einfaches Join mit
-            // '\n' exakt richtig, ohne jede Rate-Logik.
-            var lines = Editor.Document.Blocks.OfType<Paragraph>()
-                .Select(p => new TextRange(p.ContentStart, p.ContentEnd).Text.Replace("\r\n", "\n").TrimEnd('\n'));
-            return string.Join("\n", lines);
-        }
+        public string GetText() => Editor.Text;
 
         public void SetText(string text)
         {
-            _suppressTextChanged = true;
-            var doc = new FlowDocument();
-            foreach (var line in text.Replace("\r\n", "\n").Split('\n'))
-                doc.Blocks.Add(new Paragraph(new Run(line)) { Margin = new Thickness(0) });
-            Editor.Document = doc;
-            _suppressTextChanged = false;
-            DeferHighlighting();
-
-            // TextChanged wird während des obigen Aufbaus unterdrückt (siehe
-            // _suppressTextChanged) - die Diagnostik würde hier also sonst
-            // NIE angestoßen, bis der Nutzer selbst das erste Mal tippt.
-            DeferDiagnostics();
+            Editor.Text = text;
+            RecomputeHighlighting();
+            _diagnosticsTimer.Stop();
+            _diagnosticsTimer.Start();
         }
 
         /// <summary>Setzt den Editor-Text zurück und verwirft dabei auch
         /// Haltepunkte/Diagnostik/Hervorhebung - für "neue Datei"/"andere
-        /// Datei geöffnet" im Host (anders als SetText, das z.B. auch bei
-        /// der Autovervollständigung für ein und dasselbe Dokument genutzt
-        /// wird und dort bewusst NICHTS von alldem verwirft).</summary>
+        /// Datei geöffnet" im Host (anders als SetText, das bewusst NICHTS
+        /// von alldem verwirft).</summary>
         public void ResetTo(string text, string? filePath)
         {
             FilePath = filePath;
             _breakpoints.Clear();
             _diagnostics = new List<Diagnostic>();
             _highlightedLine = null;
+            _lineBackground.HighlightedLine = null;
+            RefreshBreakpointDisplay();
             SetText(text);
             BreakpointsChanged?.Invoke();
             DiagnosticsChanged?.Invoke();
         }
 
-        readonly IEnumerable<char> lastChars = new List<char>() { ' ', '.', '(', ';', ':', '!', '\t', '\r', '\n' };
-
-        private void Editor_TextChanged(object sender, TextChangedEventArgs e)
+        private void Editor_TextChanged(object? sender, EventArgs e)
         {
-            if (_suppressTextChanged) return;
-
-            // Diagnostik läuft UNABHÄNGIG vom Popup-Zustand debounced weiter
-            // (löst selbst keinen Dokument-Neuaufbau aus, siehe
-            // RunDiagnostics - erst das anschließende ApplyHighlighting tut
-            // das, und das respektiert die Popup-Sperre bereits).
-            DeferDiagnostics();
-
-            string source = GetText();
-            int offset = GetOffsetOf(Editor.CaretPosition);
-            bool popupRelevant = CompletionPopup.IsOpen
-                || (offset >= 0 && offset <= source.Length && (offset == 0 || lastChars.Contains(source[offset - 1])));
-
-            if (popupRelevant)
-            {
-                // Solange das Popup aktiv ist (oder gerade durch ein '.'
-                // ausgelöst wird), KEINEN Highlighting-Neuaufbau des
-                // Dokuments zulassen - der ersetzt Editor.Document komplett
-                // und reißt damit ein gerade geöffnetes, an den Editor
-                // "angehängtes" Popup sofort wieder ein. Highlighting holt
-                // automatisch nach, sobald das Popup wieder schließt (siehe
-                // CompletionPopup.Closed im Konstruktor). Die Positionierung
-                // wird zusätzlich einen Dispatcher-Tick verzögert, damit das
-                // Layout der GERADE getippten Änderung sicher fertig ist,
-                // bevor die Caret-Rechteck-Position abgefragt wird.
-
-                //_highlightTimer.Stop();
-                var changed = lastCompletionSource != source;
-
-                lastCompletionSource = source;
-
-                Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    //string src = GetText();
-                    var src = source;
-                    int off = GetOffsetOf(Editor.CaretPosition);
-
-                    if (changed || CompletionPopup.IsOpen)
-                        ShowOrUpdateCompletion(src, off, closeIfEmpty: true);
-
-
-                }), DispatcherPriority.Background);
-            }
-            else
-            {
-                DeferHighlighting(source);
-            }
+            _diagnosticsTimer.Stop();
+            _diagnosticsTimer.Start();
+            _highlightTimer.Stop();
+            _highlightTimer.Start();
         }
-
-        string? lastCompletionSource = null;
-
-        private void Editor_SelectionChanged(object sender, RoutedEventArgs e) =>
-            CaretLineChanged?.Invoke(GetCaretLine());
 
         // -----------------------------------------------------------
         // Autovervollständigung (IntelliSense) - siehe ScriptSymbolIndex/
         // CompletionEngine für die eigentliche Logik, hier nur die UI-
-        // Anbindung (Popup zeigen/filtern/positionieren, Tastatur-Steuerung,
-        // Einfügen der Auswahl).
+        // Anbindung an AvalonEdits CompletionWindow. Deutlich schlanker als
+        // die alte Popup/ListBox-Fassung: Tastatursteuerung (Pfeiltasten/
+        // Enter/Tab/Escape) im offenen Fenster übernimmt AvalonEdit
+        // vollständig selbst, genau wie das fortlaufende Eingrenzen der
+        // Liste beim Weitertippen (StartOffset/EndOffset tracken das
+        // automatisch) - hier wird nur noch der INITIALE Trigger gebraucht.
         // -----------------------------------------------------------
 
         private void Editor_PreviewKeyDown(object sender, KeyEventArgs e)
         {
-            if (CompletionPopup.IsOpen)
-            {
-                switch (e.Key)
-                {
-                    case Key.Down:
-                        if (CompletionList.Items.Count > 0)
-                            CompletionList.SelectedIndex = Math.Min(CompletionList.SelectedIndex + 1, CompletionList.Items.Count - 1);
-                        e.Handled = true;
-                        return;
-                    case Key.Up:
-                        if (CompletionList.Items.Count > 0)
-                            CompletionList.SelectedIndex = Math.Max(CompletionList.SelectedIndex - 1, 0);
-                        e.Handled = true;
-                        return;
-                    case Key.Enter:
-                    case Key.Tab:
-                        e.Handled = AcceptCompletion();
-                        return;
-                    case Key.Escape:
-                        CompletionPopup.IsOpen = false;
-                        e.Handled = true;
-                        return;
-                }
-                return;
-            }
-
             // Strg+Leertaste: Vervollständigung manuell anstoßen, auch ohne
             // vorangehenden '.' (allgemeine Bezeichner-Vervollständigung).
             if (e.Key == Key.Space && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
             {
-                string source = GetText();
-                int offset = GetOffsetOf(Editor.CaretPosition);
-                ShowOrUpdateCompletion(source, offset, closeIfEmpty: true);
+                ShowOrUpdateCompletion(closeIfEmpty: true);
                 e.Handled = true;
             }
         }
 
-        private void ShowOrUpdateCompletion(string source, int offset, bool closeIfEmpty)
+        private void Editor_TextEntered(object? sender, TextCompositionEventArgs e)
         {
+            if (_completionWindow != null) return; // schon offen - AvalonEdit filtert selbst weiter
+            if (string.IsNullOrEmpty(e.Text)) return;
+
+            char c = e.Text[^1];
+            bool isIdentifierChar = char.IsLetter(c) || c == '_';
+            if (c != '.' && !isIdentifierChar) return;
+
+            if (isIdentifierChar)
+            {
+                // Nur am ANFANG eines Bezeichners auslösen (das Zeichen davor
+                // ist selbst kein Bezeichner-Zeichen) - sonst würde jeder
+                // weitere Buchstabe mitten in einem bereits fertig getippten
+                // Wort erneut ein Popup aufreißen.
+                int before = Editor.CaretOffset - 2;
+                if (before >= 0)
+                {
+                    char prev = Editor.Document.GetCharAt(before);
+                    if (char.IsLetterOrDigit(prev) || prev == '_') return;
+                }
+            }
+
+            ShowOrUpdateCompletion(closeIfEmpty: true);
+        }
+
+        private void ShowOrUpdateCompletion(bool closeIfEmpty)
+        {
+            string source = Editor.Text;
+            int offset = Editor.CaretOffset;
             var index = ScriptSymbolIndex.Build(source);
             var items = CompletionEngine.GetSuggestions(source, offset, index);
 
             if (items.Count == 0)
             {
-                if (closeIfEmpty) CompletionPopup.IsOpen = false;
+                if (closeIfEmpty) _completionWindow?.Close();
                 return;
             }
 
-            items.OrderByDescending(i => i.Score);
+            items = items.OrderByDescending(i => i.Score).ToList();
 
-            _completionItems = items;
-            CompletionList.ItemsSource = items.Select(i => i.Display).ToList();
-
-            if (items[0].Score > 0.6f)
-                CompletionList.SelectedIndex = 0;
-            else
-                CompletionList.SelectedIndex = -1;
-
-            PositionCompletionPopup();
-            CompletionPopup.IsOpen = true;
-        }
-
-        private void PositionCompletionPopup()
-        {
-            var caretRect = Editor.CaretPosition.GetCharacterRect(LogicalDirection.Forward);
-            CompletionPopup.Placement = PlacementMode.RelativePoint;
-            CompletionPopup.HorizontalOffset = caretRect.Left;
-            CompletionPopup.VerticalOffset = caretRect.Bottom + 2;
-        }
-
-        private void CompletionList_MouseDoubleClick(object sender, MouseButtonEventArgs e) =>
-            AcceptCompletion();
-
-        /// <summary>Fügt den ausgewählten Vorschlag ein - ersetzt dabei das
-        /// bereits getippte Präfix (Bezeichner-Zeichen unmittelbar vor dem
-        /// Cursor) durch den vollen Vorschlagstext.</summary>
-        private bool AcceptCompletion()
-        {
-            if (_completionItems.Count == 0 || CompletionList.SelectedIndex < 0)
-            {
-                CompletionPopup.IsOpen = false;
-                return false;
-            }
-
-            var item = _completionItems[CompletionList.SelectedIndex];
-            CompletionPopup.IsOpen = false;
-
-            string source = GetText();
-            int offset = GetOffsetOf(Editor.CaretPosition);
-
+            // Bereits getipptes Präfix (Bezeichner-Zeichen unmittelbar vor
+            // dem Cursor) - AvalonEdit soll das ERSETZEN, nicht nur dahinter
+            // einfügen (dieselbe Präfix-Logik wie vorher in AcceptCompletion).
             int start = offset - 1;
             while (start >= 0 && (char.IsLetterOrDigit(source[start]) || source[start] == '_')) start--;
             start++;
 
-            string newSource = source.Substring(0, start) + item.Text + source.Substring(Math.Min(offset, source.Length));
-            int newCaretOffset = start + item.Text.Length;
-            var (newLine, newColumn) = OffsetToLineColumn(newSource, newCaretOffset);
+            _completionWindow?.Close();
+            var window = new CompletionWindow(Editor.TextArea) { StartOffset = start, EndOffset = offset };
+            foreach (var item in items)
+                window.CompletionList.CompletionData.Add(new FireCompletionData(item));
 
-            SetText(newSource);
-            SetCaretByLineColumn(newLine, newColumn);
-            Editor.Focus();
+            if (items[0].Score > 0.6f)
+                window.CompletionList.SelectedItem = window.CompletionList.CompletionData[0];
 
-            return true;
+            window.Closed += (_, _) =>
+            {
+                if (_completionWindow == window) _completionWindow = null;
+            };
+            _completionWindow = window;
+            window.Show();
         }
 
-        /// <summary>Reine String-Umrechnung Offset -> (Zeile, Spalte), ohne
-        /// WPF-Beteiligung - zuverlässig, im Gegensatz zur direkten
-        /// TextPointer-Offset-Umrechnung (siehe GetOffsetOf-Kommentar).</summary>
-        private static (int Line, int Column) OffsetToLineColumn(string text, int offset)
-        {
-            int line = 0, col = 0;
-            int end = Math.Min(offset, text.Length);
-            for (int i = 0; i < end; i++)
-            {
-                if (text[i] == '\n') { line++; col = 0; }
-                else col++;
-            }
-            return (line, col);
-        }
-
-        public int GetCaretLine() => LineColumnOf(Editor.CaretPosition).Line + 1;
-
         // -----------------------------------------------------------
-        // Syntax-Highlighting (debounced, Cursor-Position wird über Zeile+
-        // Spalte statt Gesamt-Offset erhalten - siehe GetCaretLineColumn/
-        // SetCaretByLineColumn weiter unten)
+        // Syntax-Highlighting/Fehler-Unterkringelung - siehe
+        // EditorRendering.HighlightingColorizer für die eigentliche
+        // Zeichen-Logik, hier nur Neuberechnen + Neuzeichnen anstoßen.
         // -----------------------------------------------------------
 
-        private void ApplyHighlighting()
+        private void RecomputeHighlighting()
         {
-            _highlightInside = true;
-            var text = Dispatcher.Invoke(() => GetText());
-
-            var spans = SyntaxHighlighter.Highlight(text);
-            var errorLines = _diagnostics.Select(d => d.Line).ToHashSet();
-
-            var doc = new FlowDocument();
-            var lines = text.Split('\n');
-            int lineStart = 0;
-            int lineNumber = 0;
-
-            foreach (var line in lines)
-            {
-                lineNumber++;
-                int lineEnd = lineStart + line.Length;
-                var para = new Paragraph { Margin = new Thickness(0) };
-
-                int pos = lineStart;
-                foreach (var span in spans.Where(s => s.Start < lineEnd && s.Start + s.Length > lineStart)
-                                           .OrderBy(s => s.Start))
-                {
-                    int spanStart = Math.Max(span.Start, lineStart);
-                    int spanEnd = Math.Min(span.Start + span.Length, lineEnd);
-                    if (spanStart > pos)
-                        para.Inlines.Add(new Run(text.Substring(pos, spanStart - pos)));
-                    para.Inlines.Add(new Run(text.Substring(spanStart, spanEnd - spanStart))
-                    {
-                        Foreground = BrushFor(span.Category),
-                    });
-                    pos = spanEnd;
-                }
-                if (pos < lineEnd)
-                    para.Inlines.Add(new Run(text.Substring(pos, lineEnd - pos)));
-                if (para.Inlines.Count == 0)
-                    para.Inlines.Add(new Run(string.Empty));
-
-                if (_highlightedLine == lineNumber)
-                    para.Background = new SolidColorBrush(Color.FromArgb(90, 255, 215, 0));
-                else if (_breakpoints.Contains(lineNumber))
-                    para.Background = new SolidColorBrush(Color.FromArgb(60, 220, 20, 20));
-
-                // Live-Diagnostik (siehe LiveDiagnostics/RunDiagnostics) -
-                // jede Zeile mit einem gemeldeten Fehler wird komplett
-                // unterkringelt (keine Spalten-Information vorhanden, siehe
-                // Diagnostic-Doku, deshalb die GANZE Zeile statt eines
-                // genauen Bereichs).
-                if (errorLines.Contains(lineNumber))
-                    foreach (var run in para.Inlines.OfType<Run>())
-                        run.TextDecorations = SquigglyDecorations;
-
-                doc.Blocks.Add(para);
-                lineStart = lineEnd + 1; // '+1' für den übersprungenen '\n'
-            }
-
-            if (!_throwawayHighlight)
-            {
-                using var stream = new MemoryStream();
-                
-                var range = new TextRange(
-                    doc.ContentStart,
-                    doc.ContentEnd);
-
-                range.Save(stream, DataFormats.XamlPackage);
-
-                stream.Position = 0; // Stream-Zeiger zurücksetzen
-
-                Dispatcher?.Invoke(new Action(() =>
-                {
-                    // Erst HIER, unmittelbar vor dem Austausch, statt schon
-                    // ganz am Anfang der Methode (siehe Kommentar oben) - die
-                    // Auswahl hat keinen Einfluss auf die Hervorhebung
-                    // selbst, es gibt also keinen Grund, sie vorzeitig
-                    // einzufrieren. Läuft im selben UI-Thread-Aufruf wie der
-                    // Austausch direkt darunter - WPF ist single-threaded,
-                    // dazwischen kann also nichts mehr an der Auswahl
-                    // ändern (kein Shift+Links kann mehr "dazwischenfunken").
-                    var (selAnchor, selMoving) = GetSelectionLineColumn();
-
-                    var clone = new FlowDocument();
-
-                    var newRange = new TextRange(
-                        clone.ContentStart,
-                        clone.ContentEnd);
-
-                    newRange.Load(stream, DataFormats.XamlPackage);
-
-                    //var uiDoc = (FlowDocument)System.Windows.Markup.XamlReader.Load(stream);
-
-                    _suppressTextChanged = true;
-                    
-                    Editor.Document = clone;
-
-                    _suppressTextChanged = false;
-
-                    SetSelectionByLineColumn(selAnchor, selMoving);
-                }));
-            }
-            else
-            {
-                _throwawayHighlight = false;
-            }
-
-            _highlightInside = false;
+            string text = Editor.Text;
+            _colorizer.Spans = SyntaxHighlighter.Highlight(text);
+            _colorizer.ErrorLines = _diagnostics.Select(d => d.Line).ToHashSet();
+            Editor.TextArea.TextView.Redraw();
         }
 
         /// <summary>Läuft debounced nach Textänderungen (siehe
         /// Editor_TextChanged/_diagnosticsTimer): Parser+Resolver+Compiler
         /// auf dem aktuellen Editor-Inhalt (siehe LiveDiagnostics.Analyze),
-        /// aktualisiert Diagnostics (löst DiagnosticsChanged aus) und (falls
-        /// das Vervollständigungs-Popup nicht gerade offen ist, siehe
-        /// ApplyHighlighting-Aufrufe an anderer Stelle für die Begründung)
-        /// die unterkringelten Zeilen im Editor selbst.</summary>
+        /// aktualisiert Diagnostics (löst DiagnosticsChanged aus) und die
+        /// unterkringelten Zeilen im Editor selbst.</summary>
         private void RunDiagnostics()
         {
-            string source = Dispatcher.Invoke(() => GetText());
+            string source = Editor.Text;
             _diagnostics = DiagnosticsProvider(source);
             DiagnosticsChanged?.Invoke();
-            //if (!CompletionPopup.IsOpen)
-            Dispatcher.Invoke(() => DeferHighlighting());
+            RecomputeHighlighting();
         }
-
-        /// <summary>Eine ECHTE wellenförmige Unterkringelung (nicht nur eine
-        /// gerade rote Linie - WPFs eingebaute TextDecorations kennen von
-        /// Haus aus nur gerade Linien): der Pen, der die Unterstreichung
-        /// zeichnet, benutzt selbst einen kleinen, gekachelten Zickzack-
-        /// Pinsel als seine "Farbe" statt einer schlichten SolidColorBrush -
-        /// dadurch besteht die resultierende Linie optisch aus vielen
-        /// kleinen Dreieckswellen hintereinander.</summary>
-        private static readonly TextDecorationCollection SquigglyDecorations = CreateSquigglyDecorations();
-
-        private static TextDecorationCollection CreateSquigglyDecorations()
-        {
-            var figure = new PathFigure { StartPoint = new Point(0, 2) };
-            figure.Segments.Add(new LineSegment(new Point(1.5, 0), true));
-            figure.Segments.Add(new LineSegment(new Point(3, 2), true));
-            var geometry = new PathGeometry();
-            geometry.Figures.Add(figure);
-
-            var tile = new DrawingBrush(new GeometryDrawing(null, new Pen(Brushes.Red, 1), geometry))
-            {
-                TileMode = TileMode.Tile,
-                Viewport = new Rect(0, 0, 3, 4),
-                ViewportUnits = BrushMappingMode.Absolute,
-                Stretch = Stretch.None,
-            };
-            tile.Freeze();
-
-            var pen = new Pen(tile, 3);
-            pen.Freeze();
-
-            var decoration = new TextDecoration
-            {
-                Location = TextDecorationLocation.Underline,
-                Pen = pen,
-                PenThicknessUnit = TextDecorationUnit.Pixel,
-                PenOffset = 1,
-                PenOffsetUnit = TextDecorationUnit.Pixel,
-            };
-
-            var collection = new TextDecorationCollection { decoration };
-            collection.Freeze();
-            return collection;
-        }
-
-        private static Brush BrushFor(HighlightCategory category) => category switch
-        {
-            HighlightCategory.Keyword => Brushes.MediumBlue,
-            HighlightCategory.Type => Brushes.Teal,
-            HighlightCategory.String => Brushes.DarkGreen,
-            HighlightCategory.Char => Brushes.DarkGreen,
-            HighlightCategory.Number => Brushes.DarkOrange,
-            HighlightCategory.Comment => Brushes.Gray,
-            HighlightCategory.Identifier => Brushes.Black,
-            _ => Brushes.Black,
-        };
-
-        /// <summary>Ungefährer Zeichen-Offset einer TextPointer-Position
-        /// relativ zum GESAMTEN Dokument - nur für die Umwandlung IN einen
-        /// Klartext-Offset gedacht (z.B. für die Autovervollständigung, die
-        /// mit reinen String-Positionen arbeitet). NICHT für die
-        /// Wiederherstellung einer Caret-Position nach einem Dokument-
-        /// Neuaufbau verwenden - siehe GetCaretLineColumn/SetCaretByLineColumn
-        /// dafür (WPFs TextPointer.GetPositionAtOffset zählt über
-        /// Absatzgrenzen hinweg NICHT wie reine Zeichen, das würde sich mit
-        /// jeder Zeile vor dem Cursor stärker aufschaukeln - genau das
-        /// Cursor-"Springen", das diese Methode hier zwar lesen, aber nicht
-        /// zuverlässig rückgängig machen kann).</summary>
-        private int GetOffsetOf(TextPointer pointer) =>
-            new TextRange(Editor.Document.ContentStart, pointer).Text.Replace("\r\n", "\n").Length;
 
         // -----------------------------------------------------------
         // Strg+Klick-Navigation zu Definitionen/Includes (siehe
         // NavigationEngine für die eigentliche Auflösung, FileViewerWindow
-        // für die Anzeige einer ANDEREN Datei).
+        // für die Anzeige einer ANDEREN Datei) - unverändert gegenüber der
+        // alten Fassung, nur die Offset-Ermittlung nutzt jetzt AvalonEdits
+        // eigene, zuverlässige GetPositionFromPoint/GetOffset statt
+        // TextPointer-Klimmzüge.
         // -----------------------------------------------------------
 
         private void Editor_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -697,11 +334,11 @@ namespace fire.Editor
             // versehentlich wegzuspringen.
             if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
 
-            var pos = Editor.GetPositionFromPoint(e.GetPosition(Editor), snapToText: true);
+            var pos = Editor.GetPositionFromPoint(e.GetPosition(Editor));
             if (pos == null) return;
 
-            int offset = GetOffsetOf(pos);
-            string source = GetText();
+            int offset = Editor.Document.GetOffset(pos.Value.Location);
+            string source = Editor.Text;
             var index = ScriptSymbolIndex.Build(source);
 
             var target = NavigationEngine.TryResolve(source, offset, index)
@@ -800,148 +437,43 @@ namespace fire.Editor
             viewer.Show();
         }
 
-        /// <summary>Position als (0-basierter Absatz-Index, Zeichen-Offset
-        /// INNERHALB dieses Absatzes) - zuverlässig, weil innerhalb EINES
-        /// Absatzes (keine Absatzgrenze dazwischen) WPFs interne Zählung
-        /// tatsächlich mit reinen Zeichen-Offsets übereinstimmt. Allgemein für
-        /// einen BELIEBIGEN TextPointer (nicht nur die Cursor-Position) -
-        /// GetCaretLineColumn und die Auswahl-Sicherung in ApplyHighlighting
-        /// (siehe GetSelectionLineColumn) teilen sich diese eine Umrechnung.
-        ///
-        /// Bewusst NICHT über `pointer.Paragraph` (der ursprüngliche Ansatz) -
-        /// diese Property liefert `null`, wenn der Zeiger GENAU an einer
-        /// Absatzgrenze steht.
-        ///
-        /// Auch NICHT über eine explizite Ober- UND Untergrenzen-Prüfung pro
-        /// Absatz - genau am Dokumentende ("alles auswählen") verhielt sich
-        /// selbst DAS noch unzuverlässig (Obergrenzen-Vergleich lieferte dort
-        /// fälschlich `false`). Stattdessen wird hier NUR die UNTERGRENZE
-        /// geprüft: der SPÄTESTE Absatz, dessen ANFANG noch vor oder genau
-        /// auf dem Zeiger liegt - das ist eindeutig und robust, auch für
-        /// einen Zeiger ganz am Ende des letzten Absatzes.</summary>
-        private (int Line, int Column) LineColumnOf(TextPointer pointer)
+        // -----------------------------------------------------------
+        // Cursor/Scroll - AvalonEdit zählt intern überall 1-basiert
+        // (Caret.Line, DocumentLine.LineNumber); die 0-basierte Zeile bei
+        // SetCaretByLineColumn ist die einzige Umrechnungsstelle (siehe
+        // Klassendoku ganz oben).
+        // -----------------------------------------------------------
+
+        public int GetCaretLine() => Editor.TextArea.Caret.Line;
+
+        public void SetCaretByLineColumn(int line, int column)
         {
-            var blocks = Editor.Document.Blocks.OfType<Paragraph>().ToList();
-            if (blocks.Count == 0) return (0, 0);
+            if (Editor.Document.LineCount == 0) return;
+            int docLine = Math.Max(1, Math.Min(line + 1, Editor.Document.LineCount));
+            var lineObj = Editor.Document.GetLineByNumber(docLine);
+            int col = Math.Max(0, Math.Min(column, lineObj.Length));
 
-            int line = 0;
-            for (int i = 0; i < blocks.Count; i++)
-            {
-                if (pointer.CompareTo(blocks[i].ContentStart) >= 0)
-                    line = i;
-                else
-                    break;
-            }
-
-            var para = blocks[line];
-            int column = new TextRange(para.ContentStart, pointer).Text.Length;
-            return (line, column);
+            Editor.TextArea.Caret.Line = docLine;
+            Editor.TextArea.Caret.Column = col + 1; // AvalonEdit-Spalten sind 1-basiert
+            Editor.TextArea.Caret.BringCaretToView();
         }
 
-        private (int Line, int Column) GetCaretLineColumn() => LineColumnOf(Editor.CaretPosition);
-
-        /// <summary>Anker (festes Ende) und bewegliches Ende (Cursor-Seite)
-        /// der AKTUELLEN Auswahl als (Zeile, Spalte) - bei leerer Auswahl
-        /// (nur ein Cursor) sind beide gleich (siehe LineColumnOf). Für
-        /// SetSelectionByLineColumn nach einem Dokument-Neuaufbau (siehe
-        /// ApplyHighlighting) - ohne das würde eine bestehende Textmarkierung
-        /// beim Highlighting auf einen bloßen Cursor kollabieren.
-        ///
-        /// BEWUSST NICHT einfach (Selection.Start, Selection.End) - die
-        /// liefern IMMER die Dokumentreihenfolge (Start &lt;= End), UNABHÄNGIG
-        /// davon, in welche Richtung der Nutzer gerade erweitert (z.B. mit
-        /// gehaltenem Shift+Links wandert der Cursor nach LINKS, der Anker
-        /// bleibt aber RECHTS - dort wäre Start also das BEWEGLICHE Ende,
-        /// nicht der Anker). Editor.Selection.Select(anchor, moving) - siehe
-        /// SetSelectionByLineColumn - vertauscht bei falscher Reihenfolge
-        /// genau diese beiden Rollen: nach der Wiederherstellung "denkt" WPF,
-        /// der Anker sei jetzt am ANDEREN Ende, der NÄCHSTE Shift+Links
-        /// erweitert dann plötzlich von der falschen Seite (schrumpft statt
-        /// zu wachsen) - bei jedem weiteren Highlighting-Durchlauf erneut
-        /// vertauscht, das ergibt die charakteristische wandernde,
-        /// abwechselnd wachsende/schrumpfende Auswahl. Editor.CaretPosition
-        /// entspricht bei einer aktiven Auswahl genau dem BEWEGLICHEN Ende
-        /// (Cursor-Seite) - damit lässt sich zuverlässig bestimmen, welches
-        /// der beiden (Start, End) tatsächlich der Anker ist.</summary>
-        private ((int Line, int Column) Anchor, (int Line, int Column) Moving) GetSelectionLineColumn()
-        {
-            var start = LineColumnOf(Editor.Selection.Start);
-            var end = LineColumnOf(Editor.Selection.End);
-            bool caretIsAtStart = Editor.CaretPosition.CompareTo(Editor.Selection.Start) <= 0;
-            return caretIsAtStart ? (end, start) : (start, end);
-        }
-
-        /// <summary>Wie SetCaretByLineColumn, liefert die TextPointer-Position
-        /// aber zurück statt sie direkt zu setzen - gemeinsame Grundlage für
-        /// SetCaretByLineColumn (Cursor) und SetSelectionByLineColumn
-        /// (Auswahlbereich).</summary>
-        private TextPointer PositionOf(int line, int column)
-        {
-            var blocks = Editor.Document.Blocks.OfType<Paragraph>().ToList();
-            if (blocks.Count == 0) return Editor.Document.ContentStart;
-
-            line = Math.Max(0, Math.Min(line, blocks.Count - 1));
-            var para = blocks[line];
-
-            // Bewusst NICHT GetPositionAtOffset(column, ...) - das zählt in
-            // "Symbolen", was bei mehreren Runs INNERHALB desselben Absatzes
-            // (durch das Highlighting entstehen pro Zeile oft mehrere
-            // farbige Runs) offenbar nicht exakt mit der Zeichenanzahl
-            // übereinstimmt (genau das beobachtete "springt um ein oder
-            // mehrere Zeichen"). Stattdessen zeichenweise mit
-            // GetNextInsertionPosition navigieren - dieselbe API, die WPF
-            // auch für die Pfeiltasten-Navigation selbst verwendet, landet
-            // also garantiert an denselben Stellen wie ein manuelles
-            // Drücken von "Rechts" `column`-mal.
-            var pointer = para.ContentStart;
-            for (int i = 0; i <= column; i++)
-            {
-                var next = pointer.GetNextInsertionPosition(LogicalDirection.Forward);
-                if (next == null || next.CompareTo(para.ContentEnd) >= 0)
-                {
-                    pointer = para.ContentEnd;
-                    break;
-                }
-                pointer = next;
-            }
-            return pointer;
-        }
-
-        public void SetCaretByLineColumn(int line, int column) =>
-            Editor.CaretPosition = PositionOf(line, column);
-
-        /// <summary>Stellt einen Auswahlbereich nach Anker/beweglichem Ende
-        /// (Zeile, Spalte) wieder her (siehe GetSelectionLineColumn) - bei
-        /// `anchor == moving` (keine Markierung) entspricht das einem
-        /// einfachen Cursor, genau wie SetCaretByLineColumn, deshalb hier
-        /// bewusst EIN Weg für beide Fälle statt einer Fallunterscheidung
-        /// beim Aufrufer. Reihenfolge der Argumente an
-        /// Editor.Selection.Select(anchorPosition, movingPosition) ist
-        /// wichtig - siehe GetSelectionLineColumn-Doku für die Begründung,
-        /// warum das NICHT einfach (Start, End) sein darf.</summary>
-        public void SetSelectionByLineColumn((int Line, int Column) anchor, (int Line, int Column) moving) =>
-            Editor.Selection.Select(PositionOf(anchor.Line, anchor.Column), PositionOf(moving.Line, moving.Column));
-
-
-        public void ScrollToLine(int line)
-        {
-            var blocks = Editor.Document.Blocks.OfType<Paragraph>().ToList();
-            if (line >= 1 && line <= blocks.Count)
-                blocks[line - 1].BringIntoView();
-        }
+        public void ScrollToLine(int line) => Editor.ScrollToLine(line);
 
         public new void Focus() => Editor.Focus();
 
         // -----------------------------------------------------------
-        // Haltepunkte (Rand-Klick über F9 im Host, siehe ToggleBreakpointAtCaret)
+        // Haltepunkte (Rand-Klick oder F9 im Host, siehe
+        // ToggleBreakpointAtCaret)
         // -----------------------------------------------------------
 
-        public void ToggleBreakpointAtCaret()
+        public void ToggleBreakpointAtCaret() => ToggleBreakpoint(GetCaretLine());
+
+        private void ToggleBreakpoint(int line)
         {
-            int line = GetCaretLine();
             if (!_breakpoints.Remove(line))
                 _breakpoints.Add(line);
-            DeferHighlighting();
+            RefreshBreakpointDisplay();
             BreakpointsChanged?.Invoke();
         }
 
@@ -949,8 +481,16 @@ namespace fire.Editor
         {
             if (_breakpoints.Count == 0) return;
             _breakpoints.Clear();
-            DeferHighlighting();
+            RefreshBreakpointDisplay();
             BreakpointsChanged?.Invoke();
+        }
+
+        private void RefreshBreakpointDisplay()
+        {
+            _lineBackground.Breakpoints = _breakpoints;
+            _breakpointMargin.Breakpoints = _breakpoints;
+            _breakpointMargin.RedrawMargin();
+            Editor.TextArea.TextView.Redraw();
         }
     }
 }
