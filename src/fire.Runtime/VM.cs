@@ -1599,7 +1599,24 @@ namespace fire.Runtime
                     var setOwner = setRc.FindStaticFieldOwner(setFieldName);
 
                     if (setOwner == null)
-                        throw new InvalidOperationException($"'{setClassName}' hat kein statisches Feld '{setFieldName}'.");
+                    {
+                        // Kein statisches Feld dieses Namens - statischen
+                        // Property-Setter versuchen (Namenskonvention
+                        // 'set_'+Name, Gegenstück zum Getter-Fallback in
+                        // GetStaticField, siehe auch SetField).
+                        if (setRc.FindMethod("set_" + setFieldName, 1) is { IsStatic: true })
+                        {
+                            var setterResult = CallStaticMethodNested(setRc, "set_" + setFieldName, new[] { setValue });
+                            // Eine Zuweisung wertet zum ZUGEWIESENEN Wert aus,
+                            // nicht zum Rückgabewert des Setters. null == per
+                            // Exception umgeleitet - dann NICHT pushen.
+                            if (setterResult != null) Push(setValue);
+                            break;
+                        }
+                        throw new InvalidOperationException(
+                            $"'{setClassName}' hat kein statisches Feld '{setFieldName}' (auch keine statische " +
+                            $"'set_{setFieldName}'-Property).");
+                    }
 
                     if (ExecutionMode != VmExecutionMode.Performance)
                     {

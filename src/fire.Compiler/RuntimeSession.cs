@@ -69,8 +69,8 @@ namespace fire.Compiler
         /// Build) UND die Live-Diagnostik (siehe Editor.LiveDiagnostics)
         /// gleichermaßen nutzen - genau EINE Stelle, die weiß, welche
         /// benutzerdefinierten Präprozessor-Direktiven es gibt (aktuell:
-        /// `#import "extension"`), damit beide IMMER im Gleichschritt
-        /// bleiben. Ohne das würde eine hier erkannte Direktive in der
+        /// `#import "extension"`, siehe ImportedPreludes), damit beide IMMER
+        /// im Gleichschritt bleiben. Ohne das würde eine hier erkannte Direktive in der
         /// Live-Diagnostik weiterhin fälschlich als "unbekannte Direktive"
         /// unterkringelt, obwohl sie beim echten Kompilieren längst
         /// akzeptiert wird (der Preprocessor lässt jede NICHT hier
@@ -79,12 +79,11 @@ namespace fire.Compiler
         /// Preprocessor-Klassendoku/Parser.ParseDirective).
         ///
         /// `onImport`: Callback für eine ERKANNTE `#import "name"`-
-        /// Direktive (z.B. um die Grafik-Bridge tatsächlich zu laden, siehe
-        /// Build) - `null`, wenn der Aufrufer nur wissen will "ist das
-        /// syntaktisch eine gültige Direktive", ohne ihre eigentliche
-        /// Wirkung auszulösen (siehe LiveDiagnostics: dort reicht "wird
-        /// nicht als Fehler markiert", ohne dass tatsächlich irgendetwas
-        /// geladen werden müsste). Eine UNBEKANNTE Erweiterung (`#import
+        /// Direktive, mit dem Schlüssel der Erweiterung aus NativeImports
+        /// (z.B. um die Grafik-Bridge tatsächlich zu laden, oder - in der
+        /// Live-Diagnostik - um deren Prelude einzusetzen) - `null`, wenn
+        /// der Aufrufer nur wissen will "ist das syntaktisch eine gültige
+        /// Direktive", ohne ihre eigentliche Wirkung auszulösen. Eine UNBEKANNTE Erweiterung (`#import
         /// "unfug"`) wirft weiterhin - das ist ein ECHTER Fehler, kein
         /// reines "kennt die Live-Diagnostik das nur (noch) nicht".</summary>
         public static DirectiveRegistry CreateProjectDirectiveRegistry(Action<string>? onImport = null)
@@ -94,15 +93,8 @@ namespace fire.Compiler
             {
                 if (args[0].Kind == ValueKind.String)
                 {
-                    string name = args[0].AsString().ToLower();
-                    switch (name)
-                    {
-                        case "graphics":
-                            onImport?.Invoke(name);
-                            return null;
-                        default:
-                            throw new Exception($"'{args[0].AsString()}' ist keine bekannte Erweiterung.");
-                    }
+                    onImport?.Invoke(ImportedPreludes.ParseImportName(args[0].AsString()));
+                    return null;
                 }
                 throw new Exception($"Falsche Argumente für 'import'-Direktive.");
             });

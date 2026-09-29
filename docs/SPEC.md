@@ -456,6 +456,27 @@ Constraint-Prüfung (`where`) bei einem verschachtelten Typ-Argument nur
 dessen ÄUSSERER Name (`Box`, nicht `Box<int>`) – die inneren Argumente
 werden rein syntaktisch gelesen und danach verworfen.
 
+**Gleicher Name wie eine nicht-generische Klasse**: Eine generische Klasse
+darf denselben Namen tragen wie eine nicht-generische (wie in C#):
+
+```
+class Box { }                 // nicht-generisch
+class Box<T> { T item }       // generisch, anderer Typ
+
+var a = new Box()             // die nicht-generische
+var b = new Box<int>()        // die generische
+```
+
+Die **Anzahl der Typ-Argumente** bei `new` wählt die Klasse. Jede Stelle
+OHNE Typ-Argumente (Typ-Annotation, `is of Box`, `catch (Box e)`,
+`Box.Statisch`, Basisklasse, `class extends Box`) meint die nicht-generische
+Klasse - für die generische gibt es (nur) die Form `new Box<...>(...)`.
+Intern heißt die generische Klasse dann `Box`1` (Name + '`' + Anzahl der
+Typ-Parameter, siehe `Ast.GenericClassNames`), das ist nur in Fehlermeldungen
+und Stack-Ausgaben zu sehen. Erlaubt ist nur "generisch NEBEN nicht-generisch";
+zwei generische Klassen gleichen Namens bleiben eine Doppeldefinition (auch
+mit unterschiedlicher Typ-Parameter-Anzahl).
+
 **Wichtige Einschränkung**: Da diese Sprache dynamisch typisiert ist,
 findet **keine echte Typ-Substitution** statt (anders als in C#, wo der
 Compiler pro Instanziierung spezialisierten Code erzeugt) – die Prüfung
