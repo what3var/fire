@@ -7,14 +7,34 @@ using fire.Values;
 
 namespace fire.Compiler
 {
+    /// <summary>Ein Resolver-Fehler. Der Resolver bricht beim ersten Fehler
+    /// NICHT ab, sondern sammelt alle weiteren mit (das Ergebnis ist ab dem
+    /// ersten Fehler ohnehin verworfen, der Nutzer soll aber nicht einen
+    /// Fehler nach dem anderen beheben müssen): `Resolver.Resolve` wirft am
+    /// Ende EINE ResolverException, deren `Message`/`Line` die des ersten
+    /// Fehlers sind (wie bisher) und deren <see cref="Errors"/> ALLE
+    /// gefundenen Fehler in Quelltext-Reihenfolge der Auflösung enthält
+    /// (der erste eingeschlossen). Eine einzeln geworfene Exception (intern,
+    /// vor dem Sammeln) hat nur sich selbst als `Errors`.</summary>
     public sealed class ResolverException : Exception
     {
         public int Line { get; }
+
+        public IReadOnlyList<ResolverException> Errors { get; }
 
         public ResolverException(string message, int line)
             : base($"{message} ({line})")
         {
             Line = line;
+            Errors = new[] { this };
+        }
+
+        /// <summary>Fasst mehrere gesammelte Fehler zusammen (mindestens einer).</summary>
+        public ResolverException(IReadOnlyList<ResolverException> errors)
+            : base(errors[0].Message)
+        {
+            Line = errors[0].Line;
+            Errors = errors;
         }
     }
 
@@ -115,6 +135,21 @@ namespace fire.Compiler
         private ResolverScope _current;
         private int _functionDepth;
 
+        /// <summary>Alle bisher gefundenen Fehler (siehe ResolverException,
+        /// RecoverFrom) - wird von Resolve() am Ende ausgewertet.</summary>
+        private readonly List<ResolverException> _errors = new();
+        private readonly HashSet<string> _errorMessages = new();
+
+        /// <summary>Merkt sich einen Fehler (siehe ResolverException). Derselbe
+        /// Fehler - gleiche Meldung, und die enthält die Zeile - kommt oft
+        /// von mehreren Stellen (z.B. validieren Getter UND Setter einer
+        /// Property beide deren Typ) und wird nur EINMAL gemerkt.</summary>
+        private void AddError(ResolverException error)
+        {
+            if (_errorMessages.Add(error.Message))
+                _errors.Add(error);
+        }
+
         /// <summary>Siehe Ast.NoShadowDirective/ResolveResult.NoShadowGlobals
         /// - von Resolve() VOR jeder Statement-Auflösung in einem
         /// Vorab-Durchlauf gesetzt (wie bei Klassen/Enums/Externs), damit es
@@ -201,6 +236,12 @@ namespace fire.Compiler
             foreach (var stmt in program)
                 resolver.ResolveStmt(stmt);
 
+            // Ab dem ersten Fehler steht fest, dass es kein Ergebnis gibt -
+            // aber erst HIER, nachdem alles aufgelöst wurde, damit der
+            // Aufrufer ALLE Fehler auf einmal bekommt (siehe ResolverException).
+            if (resolver._errors.Count > 0)
+                throw new ResolverException(resolver._errors);
+
             return new ResolveResult
             {
                 References = resolver._refs,
@@ -224,7 +265,10 @@ namespace fire.Compiler
                 // sondern der Normalfall: 'extern' deklariert die Signatur im
                 // Skript, die native Registry liefert die Implementierung dazu.
                 if (_externs.ContainsKey(ed.Name))
-                    throw new ResolverException($"'{ed.Name}' ist bereits als extern deklariert", ed.Line);
+                {
+                    AddError(new ResolverException($"'{ed.Name}' ist bereits als extern deklariert", ed.Line));
+                    continue;
+                }
                 _externs[ed.Name] = ed;
             }
         }
@@ -241,24 +285,43 @@ namespace fire.Compiler
             {
                 if (stmt is not EnumDecl ed) continue;
                 if (_enums.ContainsKey(ed.Name))
-                    throw new ResolverException($"'{ed.Name}' ist bereits als enum deklariert", ed.Line);
+                {
+                    AddError(new ResolverException($"'{ed.Name}' ist bereits als enum deklariert", ed.Line));
+                    continue;
+                }
                 if (IsKnownClassName(ed.Name))
-                    throw new ResolverException($"'{ed.Name}' ist bereits als Klasse deklariert", ed.Line);
+                {
+                    AddError(new ResolverException($"'{ed.Name}' ist bereits als Klasse deklariert", ed.Line));
+                    continue;
+                }
 
+                // Der Name wird auch bei einem fehlerhaften MITGLIED registriert
+                // (mit den bis dahin gültigen Mitgliedern) - sonst würde jede
+                // Verwendung des Enums später als "Unbekannter Bezeichner"
+                // gemeldet, ein reiner Folgefehler des einen echten Fehlers.
                 var members = new Dictionary<string, long>();
+                _enums[ed.Name] = members;
                 long next = 0;
                 foreach (var m in ed.Members)
                 {
                     if (members.ContainsKey(m.Name))
-                        throw new ResolverException($"Enum-Mitglied '{ed.Name}.{m.Name}' ist bereits deklariert", ed.Line);
+                    {
+                        AddError(new ResolverException($"Enum-Mitglied '{ed.Name}.{m.Name}' ist bereits deklariert", ed.Line));
+                        continue;
+                    }
 
                     long value;
                     if (m.ValueExpr != null)
                     {
                         if (m.ValueExpr is not LiteralExpr { Value.Kind: ValueKind.Int } lit)
-                            throw new ResolverException(
+                        {
+                            AddError(new ResolverException(
                                 $"Enum-Mitglied '{ed.Name}.{m.Name}': Wert muss ein Int-Literal sein " +
-                                "(beliebige Ausdrücke werden hier nicht ausgewertet).", ed.Line);
+                                "(beliebige Ausdrücke werden hier nicht ausgewertet).", ed.Line));
+                            members[m.Name] = next; // Mitglied bleibt bekannt (siehe oben)
+                            next++;
+                            continue;
+                        }
                         value = lit.Value.AsInt();
                     }
                     else
@@ -269,8 +332,6 @@ namespace fire.Compiler
                     members[m.Name] = value;
                     next = value + 1;
                 }
-
-                _enums[ed.Name] = members;
             }
         }
 
@@ -302,13 +363,15 @@ namespace fire.Compiler
                 {
                     case ClassDecl cd:
                         if (_classes.ContainsKey(cd.Name))
-                            throw new ResolverException($"Klasse '{cd.Name}' ist bereits definiert", cd.Line);
-                        _classes[cd.Name] = cd;
+                            AddError(new ResolverException($"Klasse '{GenericClassNames.PlainName(cd.Name)}' ist bereits definiert", cd.Line));
+                        else
+                            _classes[cd.Name] = cd;
                         break;
                     case InterfaceDecl id:
                         if (_interfaces.ContainsKey(id.Name))
-                            throw new ResolverException($"Interface '{id.Name}' ist bereits definiert", id.Line);
-                        _interfaces[id.Name] = id;
+                            AddError(new ResolverException($"Interface '{id.Name}' ist bereits definiert", id.Line));
+                        else
+                            _interfaces[id.Name] = id;
                         break;
                 }
             }
@@ -323,14 +386,15 @@ namespace fire.Compiler
                     if (isClass)
                     {
                         if (baseName != null)
-                            throw new ResolverException(
-                                $"Klasse '{cd.Name}' kann nicht mehrere Basisklassen haben ('{baseName}' und '{n}')", cd.Line);
-                        baseName = n;
+                            AddError(new ResolverException(
+                                $"Klasse '{DisplayName(cd)}' kann nicht mehrere Basisklassen haben ('{baseName}' und '{n}')", cd.Line));
+                        else
+                            baseName = n;
                     }
                     else if (!_interfaces.ContainsKey(n))
                     {
-                        throw new ResolverException(
-                            $"'{baseRef.BaseName}' bei Klasse '{cd.Name}' ist weder eine bekannte Klasse noch ein bekanntes Interface", cd.Line);
+                        AddError(new ResolverException(
+                            $"'{baseRef.BaseName}' bei Klasse '{DisplayName(cd)}' ist weder eine bekannte Klasse noch ein bekanntes Interface", cd.Line));
                     }
                 }
             }
@@ -340,8 +404,42 @@ namespace fire.Compiler
                 {
                     string n = ResolveBaseRef(baseRef);
                     if (_interfaces.TryGetValue(n, out var iface))
-                        ValidateImplementsInterface(cd, iface);
+                        Guard(() => ValidateImplementsInterface(cd, iface));
                 }
+        }
+
+        /// <summary>Der Klassenname für Fehlermeldungen: bei einer generischen
+        /// Klasse mit umbenanntem Schlüssel (siehe GenericClassNames) der
+        /// Name samt Typ-Parametern (`Box&lt;T&gt;`), damit sie von der
+        /// gleichnamigen nicht-generischen zu unterscheiden ist.</summary>
+        private static string DisplayName(ClassDecl cd) =>
+            cd.TypeParams is { Count: > 0 }
+                ? GenericClassNames.PlainName(cd.Name) + "<" + string.Join(", ", cd.TypeParams.Select(tp => tp.Name)) + ">"
+                : cd.Name;
+
+        /// <summary>Führt `check` aus und sammelt einen dabei geworfenen
+        /// Resolver-Fehler, statt ihn weiterzureichen (siehe
+        /// ResolverException) - für Prüfungen, nach denen sinnvoll
+        /// weitergemacht werden kann.</summary>
+        private void Guard(Action check)
+        {
+            try { check(); }
+            catch (ResolverException ex) { AddError(ex); }
+        }
+
+        /// <summary>Wie <see cref="Guard"/>, setzt zusätzlich den Resolver-
+        /// Zustand auf den Stand vor `action` zurück, falls ein Fehler
+        /// auftrat (siehe ResolveStmt) - für Aktionen, die Scopes/Tiefen
+        /// verändern.</summary>
+        private void GuardWithState(Action action)
+        {
+            var state = SaveState();
+            try { action(); }
+            catch (ResolverException ex)
+            {
+                AddError(ex);
+                RestoreState(state);
+            }
         }
 
         private string? GetBaseClassName(ClassDecl cd)
@@ -438,6 +536,11 @@ namespace fire.Compiler
         /// Bezeichner, nicht nur an TypeRef - eine größere, eigene Änderung.</summary>
         private string? TryResolveStaticMemberAccess(MemberExpr me)
         {
+            // Die Klasse, in der wir gerade sind (siehe Ast.SelfClassExpr) -
+            // steht nur für das Backing-Field statischer Auto-Properties in
+            // generischen Klassen.
+            if (me.Target is SelfClassExpr) return _currentClass?.Name;
+
             var pathSegments = new List<string>();
             Expr current = me.Target;
             while (current is MemberExpr innerMe)
@@ -464,12 +567,13 @@ namespace fire.Compiler
         private void CheckTypeArgs(ClassDecl targetClass, NewExpr ne)
         {
             var typeParams = targetClass.TypeParams ?? Array.Empty<TypeParam>();
+            string className = GenericClassNames.PlainName(targetClass.Name);
 
             if (typeParams.Count == 0)
             {
                 if (ne.TypeArgs != null && ne.TypeArgs.Count > 0)
                     throw new ResolverException(
-                        $"Klasse '{targetClass.Name}' ist nicht generisch, akzeptiert also keine " +
+                        $"Klasse '{className}' ist nicht generisch, akzeptiert also keine " +
                         "Typ-Argumente in spitzen Klammern", ne.Line);
                 return;
             }
@@ -477,8 +581,8 @@ namespace fire.Compiler
             var typeArgs = ne.TypeArgs ?? Array.Empty<string>();
             if (typeArgs.Count != typeParams.Count)
                 throw new ResolverException(
-                    $"Klasse '{targetClass.Name}' ist generisch mit {typeParams.Count} Typ-Parameter(n) - " +
-                    $"'new {targetClass.Name}<...>' braucht explizite Typ-Argumente dafür " +
+                    $"Klasse '{className}' ist generisch mit {typeParams.Count} Typ-Parameter(n) - " +
+                    $"'new {className}<...>' braucht explizite Typ-Argumente dafür " +
                     $"(erhalten: {typeArgs.Count})", ne.Line);
 
             for (int i = 0; i < typeParams.Count; i++)
@@ -491,7 +595,7 @@ namespace fire.Compiler
                     group => group.Constraints.All(c => SatisfiesConstraint(arg, c)));
                 if (!satisfied)
                     throw new ResolverException(
-                        $"Typ-Argument '{arg}' für Typ-Parameter '{tp.Name}' von '{targetClass.Name}' erfüllt " +
+                        $"Typ-Argument '{arg}' für Typ-Parameter '{tp.Name}' von '{className}' erfüllt " +
                         "keine der 'where'-Bedingungen", ne.Line);
             }
         }
@@ -663,7 +767,67 @@ namespace fire.Compiler
         // -----------------------------------------------------------
         // Statements
         // -----------------------------------------------------------
+        /// <summary>Löst ein Statement auf; ein dabei auftretender Fehler wird
+        /// GESAMMELT (siehe ResolverException), und die Auflösung macht mit
+        /// dem NÄCHSTEN Statement weiter. Jedes Statement - auch jedes in
+        /// einem verschachtelten Block/Methodenkörper/einer Lambda - ist ein
+        /// eigener Wiederaufsetzpunkt, ein Fehler verdirbt also höchstens den
+        /// Rest SEINES Statements. Der Zustand des Resolvers (Scope-Kette,
+        /// Tiefenzähler, aktuelle Klasse...) wird dafür auf den Stand VOR dem
+        /// Statement zurückgesetzt: die Auflösung selbst stellt ihn nur bei
+        /// normalem Ende wieder her, ein Fehler mittendrin würde ihn sonst
+        /// verstellt zurücklassen und Folgefehler auslösen.</summary>
         private void ResolveStmt(Stmt stmt)
+        {
+            var state = SaveState();
+            try
+            {
+                ResolveStmtCore(stmt);
+            }
+            catch (ResolverException ex)
+            {
+                AddError(ex);
+                RestoreState(state);
+                // Ein fehlgeschlagenes `var x = <Fehler>` deklariert x trotzdem,
+                // sonst würde jede spätere Verwendung von x als "Unbekannter
+                // Bezeichner" gemeldet - ein reiner Folgefehler des einen
+                // echten Fehlers.
+                if (stmt is VarDeclStmt vd && !_current.Slots.ContainsKey(vd.Name))
+                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.Unit);
+            }
+        }
+
+        /// <summary>Der Teil des Resolver-Zustands, den die Auflösung eines
+        /// Statements/Klassenmitglieds temporär verändert (siehe
+        /// ResolveStmt).</summary>
+        private readonly record struct ResolverState(
+            ResolverScope Current, int FunctionDepth, int LoopDepth, int TryDepth, int UnsafeDepth,
+            ClassDecl? CurrentClass, bool CurrentClassHasBase, bool InConstructor, bool InStaticMethod,
+            Dictionary<string, int>? TypeParamNames);
+
+        private ResolverState SaveState() => new(
+            _current, _functionDepth, _loopDepth, _tryDepth, _unsafeDepth,
+            _currentClass, _currentClassHasBase, _inConstructor, _inStaticMethod,
+            _currentTypeParamNames.Count > 0 ? new Dictionary<string, int>(_currentTypeParamNames) : null);
+
+        private void RestoreState(ResolverState state)
+        {
+            _current = state.Current;
+            _functionDepth = state.FunctionDepth;
+            _loopDepth = state.LoopDepth;
+            _tryDepth = state.TryDepth;
+            _unsafeDepth = state.UnsafeDepth;
+            _currentClass = state.CurrentClass;
+            _currentClassHasBase = state.CurrentClassHasBase;
+            _inConstructor = state.InConstructor;
+            _inStaticMethod = state.InStaticMethod;
+            _currentTypeParamNames.Clear();
+            if (state.TypeParamNames != null)
+                foreach (var (name, count) in state.TypeParamNames)
+                    _currentTypeParamNames[name] = count;
+        }
+
+        private void ResolveStmtCore(Stmt stmt)
         {
             switch (stmt)
             {
@@ -781,7 +945,7 @@ namespace fire.Compiler
 
                 case CatchThreadsDecl threadsDecl:
                     if (threadsDecl.TypeRef != null && !IsKnownClassName(ResolveTypeRef(threadsDecl.TypeRef)))
-                        throw new ResolverException($"Unbekannter Exception-Typ '{threadsDecl.TypeRef.BaseName}'", threadsDecl.Line);
+                        AddError(new ResolverException($"Unbekannter Exception-Typ '{threadsDecl.TypeRef.BaseName}'", threadsDecl.Line));
                     ResolveGlobalHandlerBody(threadsDecl.VarName, threadsDecl.Body);
                     break;
 
@@ -900,8 +1064,10 @@ namespace fire.Compiler
 
             foreach (var c in t.Catches)
             {
+                // Ein unbekannter Exception-Typ hindert nicht die Auflösung
+                // des catch-Körpers (und der übrigen Blöcke).
                 if (c.TypeRef != null && !IsKnownClassName(ResolveTypeRef(c.TypeRef)))
-                    throw new ResolverException($"Unbekannter Exception-Typ '{c.TypeRef.BaseName}'", c.Line);
+                    AddError(new ResolverException($"Unbekannter Exception-Typ '{c.TypeRef.BaseName}'", c.Line));
 
                 PushScope();
                 Define(c.VarName, c.Line);
@@ -937,63 +1103,74 @@ namespace fire.Compiler
             var seenMethodSignatures = new HashSet<(string Name, int Arity)>();
             var seenConstructorArities = new HashSet<int>();
 
+            // Jedes Mitglied ist ein eigener Wiederaufsetzpunkt (siehe
+            // ResolveStmt) - ein Fehler in einem Feld/einer Methode hindert
+            // nicht die Auflösung der übrigen Mitglieder.
             foreach (var member in cd.Members)
             {
-                switch (member)
+                GuardWithState(() =>
                 {
-                    case FieldDecl fd:
-                        if (fd.Type != null) ValidateTypeRef(fd.Type, fd.Line);
-                        ResolveArrayRanks(fd.ArrayRanks);
-                        ResolveFieldInitializer(fd);
-                        break;
+                    switch (member)
+                    {
+                        case FieldDecl fd:
+                            // Ein ungültiger Typ hindert nicht die Auflösung des
+                            // Initialisierers (und umgekehrt) - beides einzeln
+                            // abgesichert, damit ALLE Fehler gemeldet werden.
+                            if (fd.Type != null) Guard(() => ValidateTypeRef(fd.Type, fd.Line));
+                            ResolveArrayRanks(fd.ArrayRanks);
+                            ResolveFieldInitializer(fd);
+                            break;
 
-                    case ConstructorDecl ctor:
-                        if (!seenConstructorArities.Add(ctor.Params.Count))
-                            throw new ResolverException(
-                                $"Konstruktor mit {ctor.Params.Count} Parameter(n) ist in dieser Klasse " +
-                                "bereits definiert (eine Überladung braucht eine andere Parameteranzahl).", ctor.Line);
-                        ResolveFunctionLike(ctor.Params, ctor.Body, ctor.BaseArgs, isConstructor: true);
-                        break;
+                        case ConstructorDecl ctor:
+                            if (!seenConstructorArities.Add(ctor.Params.Count))
+                                AddError(new ResolverException(
+                                    $"Konstruktor mit {ctor.Params.Count} Parameter(n) ist in dieser Klasse " +
+                                    "bereits definiert (eine Überladung braucht eine andere Parameteranzahl).", ctor.Line));
+                            ResolveFunctionLike(ctor.Params, ctor.Body, ctor.BaseArgs, isConstructor: true);
+                            break;
 
-                    case DestructorDecl dtor:
-                        ResolveFunctionLike(Array.Empty<LambdaParam>(), dtor.Body, baseArgs: null, isConstructor: false);
-                        break;
+                        case DestructorDecl dtor:
+                            ResolveFunctionLike(Array.Empty<LambdaParam>(), dtor.Body, baseArgs: null, isConstructor: false);
+                            break;
 
-                    case MethodDecl md:
-                        var methodTypeParamNames = md.TypeParams?.Select(tp => tp.Name).ToList() ?? new List<string>();
-                        AddTypeParamNames(methodTypeParamNames);
-                        try
-                        {
-                            if (md.ReturnType != null)
-                                ValidateTypeRef(md.ReturnType, md.Line);
-                            if (!seenMethodSignatures.Add((md.Name, md.Params.Count)))
-                                throw new ResolverException(
-                                    $"Methode '{md.Name}' mit {md.Params.Count} Parameter(n) ist in dieser Klasse " +
-                                    "bereits definiert (eine Überladung braucht eine andere Parameteranzahl).", md.Line);
-                            ResolveFunctionLike(md.Params, md.Body, baseArgs: null, isConstructor: false, isStatic: md.IsStatic);
-                        }
-                        finally
-                        {
-                            RemoveTypeParamNames(methodTypeParamNames);
-                        }
-                        break;
+                        case MethodDecl md:
+                            var methodTypeParamNames = md.TypeParams?.Select(tp => tp.Name).ToList() ?? new List<string>();
+                            AddTypeParamNames(methodTypeParamNames);
+                            try
+                            {
+                                if (md.ReturnType != null)
+                                    Guard(() => ValidateTypeRef(md.ReturnType, md.Line));
+                                if (!seenMethodSignatures.Add((md.Name, md.Params.Count)))
+                                    AddError(new ResolverException(
+                                        $"Methode '{md.Name}' mit {md.Params.Count} Parameter(n) ist in dieser Klasse " +
+                                        "bereits definiert (eine Überladung braucht eine andere Parameteranzahl).", md.Line));
+                                ResolveFunctionLike(md.Params, md.Body, baseArgs: null, isConstructor: false, isStatic: md.IsStatic);
+                            }
+                            finally
+                            {
+                                RemoveTypeParamNames(methodTypeParamNames);
+                            }
+                            break;
 
-                    case PropertyDecl pd:
-                        if (pd.Type != null) ValidateTypeRef(pd.Type, pd.Line);
-                        // Getter: wie eine parameterlose Methode. Setter: wie
-                        // eine Methode mit genau einem Parameter 'value' vom
-                        // Property-Typ (implizit, wie C#s Setter-Parameter) -
-                        // ganz normale Parameter-Auflösung, keine
-                        // Sonderbehandlung nötig.
-                        if (pd.Getter != null)
-                            ResolveFunctionLike(Array.Empty<LambdaParam>(), pd.Getter, baseArgs: null, isConstructor: false, isStatic: pd.IsStatic);
-                        if (pd.Setter != null)
-                        {
-                            var setterParams = new[] { new LambdaParam("value", pd.Type, Array.Empty<Expr?>()) };
-                            ResolveFunctionLike(setterParams, pd.Setter, baseArgs: null, isConstructor: false, isStatic: pd.IsStatic);
-                        }
-                        break;
-                }
+                        case PropertyDecl pd:
+                            if (pd.Type != null) Guard(() => ValidateTypeRef(pd.Type, pd.Line));
+                            // Getter: wie eine parameterlose Methode. Setter: wie
+                            // eine Methode mit genau einem Parameter 'value' vom
+                            // Property-Typ (implizit, wie C#s Setter-Parameter) -
+                            // ganz normale Parameter-Auflösung, keine
+                            // Sonderbehandlung nötig.
+                            if (pd.Getter != null)
+                                GuardWithState(() => ResolveFunctionLike(
+                                    Array.Empty<LambdaParam>(), pd.Getter, baseArgs: null, isConstructor: false, isStatic: pd.IsStatic));
+                            if (pd.Setter != null)
+                            {
+                                var setterParams = new[] { new LambdaParam("value", pd.Type, Array.Empty<Expr?>()) };
+                                GuardWithState(() => ResolveFunctionLike(
+                                    setterParams, pd.Setter, baseArgs: null, isConstructor: false, isStatic: pd.IsStatic));
+                            }
+                            break;
+                    }
+                });
             }
 
             RemoveTypeParamNames(classTypeParamNames);
@@ -1054,22 +1231,25 @@ namespace fire.Compiler
         private void ResolveFunctionLike(
             IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, IReadOnlyList<Expr>? baseArgs, bool isConstructor, bool isStatic = false)
         {
-            ValidateOptionalParamsAreTrailing(parms, body.Line);
-            ResolveParamDefaults(parms);
+            // Fehler im Kopf (Parameterliste, base(...)) hindern nicht die
+            // Auflösung des Körpers - alles einzeln abgesichert, damit ALLE
+            // Fehler gemeldet werden (siehe ResolveStmt).
+            Guard(() => ValidateOptionalParamsAreTrailing(parms, body.Line));
+            GuardWithState(() => ResolveParamDefaults(parms));
 
             PushScope();
             foreach (var p in parms)
             {
-                if (p.Type != null) ValidateTypeRef(p.Type, body.Line);
+                if (p.Type != null) Guard(() => ValidateTypeRef(p.Type, body.Line));
                 ResolveArrayRanks(p.ArrayRanks);
-                Define(p.Name, body.Line, requiredUnit: p.Type?.Unit);
+                Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.Unit));
             }
 
             if (baseArgs != null)
             {
                 if (!_currentClassHasBase)
-                    throw new ResolverException(
-                        "'base(...)' nur in einer Klasse mit Basisklasse gültig", body.Line);
+                    AddError(new ResolverException(
+                        "'base(...)' nur in einer Klasse mit Basisklasse gültig", body.Line));
                 foreach (var a in baseArgs) ResolveExpr(a);
             }
 
@@ -1104,7 +1284,25 @@ namespace fire.Compiler
         // -----------------------------------------------------------
         // Ausdrücke
         // -----------------------------------------------------------
+        /// <summary>Löst einen Ausdruck auf; ein Fehler darin wird gesammelt
+        /// (siehe ResolveStmt), die Auflösung macht mit den Geschwister-
+        /// Ausdrücken weiter - z.B. werden bei `f(a, b)` beide unbekannten
+        /// Bezeichner gemeldet, nicht nur `a`.</summary>
         private void ResolveExpr(Expr expr)
+        {
+            var state = SaveState();
+            try
+            {
+                ResolveExprCore(expr);
+            }
+            catch (ResolverException ex)
+            {
+                AddError(ex);
+                RestoreState(state);
+            }
+        }
+
+        private void ResolveExprCore(Expr expr)
         {
             switch (expr)
             {
@@ -1244,15 +1442,24 @@ namespace fire.Compiler
                     break;
 
                 case NewExpr ne:
-                    string resolvedNewClassName = ResolveTypeRef(ne.ClassRef);
-                    if (!IsKnownClassName(resolvedNewClassName))
-                        throw new ResolverException($"Unbekannte Klasse '{ne.ClassRef.BaseName}'", ne.Line);
-                    if (_classes.TryGetValue(resolvedNewClassName, out var newTargetCd))
-                        CheckTypeArgs(newTargetCd, ne);
-                    else if (ne.TypeArgs != null && ne.TypeArgs.Count > 0)
-                        throw new ResolverException(
-                            $"'{ne.ClassRef.BaseName}' ist nicht generisch, akzeptiert also keine Typ-Argumente in spitzen Klammern",
-                            ne.Line);
+                    // Ein Fehler beim Ziel (unbekannte Klasse, falsche
+                    // Typ-Argumente) hindert nicht die Auflösung der Argumente.
+                    Guard(() =>
+                    {
+                        // Die Anzahl der Typ-Argumente wählt zwischen einer
+                        // nicht-generischen und einer gleichnamigen generischen
+                        // Klasse (siehe GenericClassNames).
+                        string resolvedNewClassName = GenericClassNames.ResolveNewTarget(
+                            ne.ClassRef, ne.TypeArgs?.Count ?? 0, IsKnownClassName);
+                        if (!IsKnownClassName(resolvedNewClassName))
+                            throw new ResolverException($"Unbekannte Klasse '{ne.ClassRef.BaseName}'", ne.Line);
+                        if (_classes.TryGetValue(resolvedNewClassName, out var newTargetCd))
+                            CheckTypeArgs(newTargetCd, ne);
+                        else if (ne.TypeArgs != null && ne.TypeArgs.Count > 0)
+                            throw new ResolverException(
+                                $"'{ne.ClassRef.BaseName}' ist nicht generisch, akzeptiert also keine Typ-Argumente in spitzen Klammern",
+                                ne.Line);
+                    });
                     foreach (var a in ne.Args) ResolveExpr(a);
                     break;
 

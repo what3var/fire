@@ -63,5 +63,5 @@ try
 }
 catch (System.Exception ex)
 {
-    System.Console.WriteLine($"HALT! {ex.Message}");
+    System.Console.WriteLine($"HALT! {CompileErrors.Describe(ex)}");
 }

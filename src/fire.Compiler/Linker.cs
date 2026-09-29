@@ -153,19 +153,8 @@ namespace fire.Compiler
             {
                 if (args[0].Kind == ValueKind.String)
                 {
-                    switch (args[0].AsString().ToLower())
-                    {
-                        case "graphics":
-                            nativeImports.Add(NativeImports.Graphics);
-                            firstUserSource++;
-                            return null;
-                        case "devices":
-                            nativeImports.Add(NativeImports.Devices);
-                            firstUserSource++;
-                            return null;
-                        default:
-                            throw new Exception($"'{args[0].AsString()}' ist keine bekannte Erweiterung.");
-                    }
+                    nativeImports.Add(ImportedPreludes.ParseImportName(args[0].AsString()));
+                    return null;
                 }
                 throw new Exception($"Falsche Argumente für 'import'-Direktive.");
             });
@@ -268,22 +257,13 @@ namespace fire.Compiler
                 processedSources.Add(processed);
             }
 
-            if (nativeImports.Contains(NativeImports.Graphics))
-            {
-                var processed = Preprocessor.Process(GraphicsBridge.PreludeSource, Directory.GetCurrentDirectory(), alreadyIncluded, registry);
-                processedSources.Insert(1, processed);
-
-                GraphicsBridge.RegisterStubs(natives);
-            }
-
-            if (nativeImports.Contains(NativeImports.Devices))
-            {
-                var processed = Preprocessor.Process(DeviceBridge.PreludeSource, Directory.GetCurrentDirectory(), alreadyIncluded, registry);
-                processedSources.Insert(1, processed);
-
-                DeviceBridge.RegisterStubs(natives);
-            }
-
+            // Preludes (und native Platzhalter) der per `#import` zugeschalteten
+            // Erweiterungen - dieselbe Logik nutzt die Live-Diagnostik des
+            // Editors (siehe ImportedPreludes). Jede eingefügte Prelude
+            // verschiebt den Start des Nutzer-Codes um eine Quelle.
+            firstUserSource += ImportedPreludes.Insert(
+                nativeImports, natives, processedSources,
+                preludeSource => Preprocessor.Process(preludeSource, Directory.GetCurrentDirectory(), alreadyIncluded, registry));
 
             // Kein activeUsings/usingsByStmt mehr nötig (SPEC "Namespaces") -
             // jede Typ-Referenz im AST trägt ihren eigenen Namespace-Kontext

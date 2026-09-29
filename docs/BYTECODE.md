@@ -948,6 +948,51 @@ METHODEN werden geparst und ihre Typ-Parameter/`where`-Klauseln
 gespeichert, aber NICHT mit Typ-Argumenten am Aufrufort geprüft - siehe
 SPEC 5.8 für die Begründung (Mehrdeutigkeit mit Vergleichsoperatoren).
 
+**Generische Klasse mit demselben Namen wie eine nicht-generische**: Alle
+Klassentabellen (Resolver `_classes`, Compiler/VM `Classes`) sind nach dem
+Namen geschlüsselt - deshalb bekommt in einem Namenskonflikt die GENERISCHE
+Klasse den Schlüssel `Name`N` (N = Anzahl der Typ-Parameter, siehe
+`Ast.GenericClassNames`), die nicht-generische behält ihren Namen. Das
+passiert in `Parser.DisambiguateGenericClasses`, nach dem Parsen ALLER
+Quellen und VOR `MergeClassExtensions` (eine `class extends Name` trifft
+dadurch die nicht-generische Klasse) - ohne Konflikt bleibt alles
+unverändert. Aufgelöst wird über `GenericClassNames.ResolveNewTarget`
+(Anzahl der Typ-Argumente von `new Name<...>`), im Resolver UND im Compiler
+(`ResolveNewClassName`) identisch; alles ohne Typ-Argumente greift wie
+bisher über den Klassennamen und trifft deshalb die nicht-generische Klasse.
+Das Backing-Field einer statischen Auto-Property in einer generischen
+Klasse adressiert der Parser über `Ast.SelfClassExpr` (statt über den
+Klassennamen, der bei einem Konflikt auf die falsche Klasse zeigen würde) -
+der Resolver löst das auf `_currentClass` auf.
+
+**Fehler sammeln statt sofort abbrechen** (Resolver und Compiler): ein
+Fehler verwirft das Ergebnis, ändert aber nichts daran, dass der Nutzer alle
+weiteren Fehler sehen will. `Resolver.Resolve` und `Compiler.Compile`
+werfen deshalb erst NACH dem kompletten Durchlauf - EINE
+`ResolverException`/`CompilerException` (die zweite ist eine
+`NotSupportedException`, bestehende `catch`-Blöcke greifen weiter), deren
+`Message`/`Line` der erste gesammelte Fehler sind und deren `Errors` ALLE
+enthält (`CompileErrors.Messages/Describe` liefert sie als Text). Wiederaufsetzpunkte
+sind jedes Statement (`ResolveStmt`/`CompileStmt`), im Resolver zusätzlich
+jeder Ausdruck (`ResolveExpr`, damit bei `f(a, b)` beide unbekannten Namen
+gemeldet werden) und jedes Klassenmitglied. Ein Fehler setzt den
+Resolver-Zustand (Scope-Kette, Tiefenzähler, aktuelle Klasse...) bzw. die
+Scope-/Schleifen-Zähler des Compilers auf den Stand vor dem Wiederaufsetzpunkt
+zurück; ein fehlgeschlagenes `var x = <Fehler>` deklariert `x` trotzdem, und ein
+Enum mit fehlerhaftem Mitglied bleibt bekannt - beides gegen reine
+Folgefehler. Der Compiler-Lauf findet nur statt, wenn der Resolver fehlerfrei
+war (er braucht dessen Ergebnis). Compiler-Fehler tragen jetzt eine Zeile
+(die des innersten betroffenen Ausdrucks/Statements). Der Parser bricht
+weiterhin beim ersten Syntaxfehler ab (kein Wiederaufsetzen).
+
+**Live-Diagnostik und Preludes**: die Editor-Live-Diagnostik (`LiveDiagnostics`)
+kompiliert wie der Linker: Standard-Prelude UND die Preludes der per
+`#import "graphics"`/`"devices"` zugeschalteten Erweiterungen (samt ihrer
+nativen Platzhalter), gemeinsam in `ImportedPreludes` (von `Linker.CompileAndLink`
+und `LiveDiagnostics` benutzt). Ein `#import` in einer ANDEREN Projektdatei gilt
+auch für die gerade bearbeitete (`AnalyzeInProject`), wie beim echten Kompilieren
+des ganzen Projekts.
+
 ## 17. `break`/`continue` für Schleifen
 
 Anders als `with`/`switch` (reiner Parser-Zucker) brauchen echte

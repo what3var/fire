@@ -149,7 +149,9 @@ namespace fire.Editor
             catch (Exception ex) when (ex is ParseException or ResolverException
                 or NotSupportedException or PreprocessorException)
             {
-                CompileError = ex.Message;
+                // Alle gesammelten Fehler (Resolver/Compiler brechen nicht beim
+                // ersten ab, siehe CompileErrors), nicht nur den ersten.
+                CompileError = CompileErrors.Describe(ex);
                 return false;
             }
         }

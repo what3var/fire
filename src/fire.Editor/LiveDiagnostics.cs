@@ -23,29 +23,45 @@ namespace fire.Editor
     /// <summary>
     /// Live-Fehleranalyse für den Editor: lässt Parser, Resolver UND Compiler
     /// (in dieser Reihenfolge, wie beim echten Kompilieren) auf dem aktuellen
-    /// Editor-Inhalt laufen und wandelt die ERSTE dabei auftretende Exception
-    /// in eine Diagnose mit Zeilenangabe um - bewusst nur die erste (nicht
-    /// "sammle alle Fehler im Dokument"): Parser/Resolver brechen beim ersten
-    /// Fehler sofort ab (keine Fehlerkorrektur/Wiederaufsetzen wie ein
-    /// produktionsreifer Compiler), ein zweiter gemeldeter Fehler wäre also
-    /// ohnehin nur ein Folgefehler des ersten und eher verwirrend als
-    /// hilfreich.
+    /// Editor-Inhalt laufen und wandelt die dabei auftretenden Fehler in
+    /// Diagnosen mit Zeilenangabe um.
+    ///
+    /// Resolver und Compiler brechen beim ersten Fehler NICHT ab, sondern
+    /// sammeln alle weiteren (siehe ResolverException/CompilerException) -
+    /// jeder davon landet als eigene Diagnose im Ergebnis. Der Compiler läuft
+    /// nur, wenn der Resolver keinen Fehler fand (er braucht dessen
+    /// Ergebnis, ein Lauf über einen unaufgelösten AST würde nur
+    /// Folgefehler liefern). Der PARSER dagegen meldet weiterhin nur den
+    /// ersten Fehler: er setzt nach einem Syntaxfehler nicht wieder auf,
+    /// ein zweiter gemeldeter Fehler wäre also nur ein Folgefehler des
+    /// ersten.
     ///
     /// Verwendet - wie DebugSession/RuntimeSession.Build - ParseMultiple
-    /// (Prelude + Nutzer-Code als EIN kombiniertes Programm, ParseWithPrelude
-    /// gibt es nicht mehr), damit List/IEnumerable/
-    /// IndexOutOfBoundsException bekannt sind. WICHTIG: die von Parser/
-    /// Resolver gemeldeten Zeilennummern bleiben dabei trotzdem korrekt auf
-    /// den NUTZER-Quelltext bezogen, nicht auf die Prelude verschoben - jeder
-    /// Programmteil wird intern über eine EIGENE Lexer/Parser-Instanz mit
-    /// bei 1 beginnender Zeilenzählung für GENAU diesen Teil erzeugt (siehe
-    /// Parser.ParseRaw), die Zeilennummer an jedem AST-Knoten bleibt danach
-    /// unverändert erhalten, unabhängig davon, wie die Teile anschließend
-    /// zu einer Liste zusammengefügt werden.
+    /// (Prelude + Nutzer-Code als EIN kombiniertes Programm), damit
+    /// List/IEnumerable/IndexOutOfBoundsException bekannt sind, UND die
+    /// Preludes der per `#import` zugeschalteten Erweiterungen (siehe
+    /// ImportedPreludes): `#import "graphics"` macht Framebuffer/Console/
+    /// Window bekannt, `#import "devices"` die Geräte-Klassen - genau wie
+    /// beim echten Kompilieren, sonst würde jede Verwendung davon als
+    /// "Unbekannte Klasse"/"Unbekannter Bezeichner" unterkringelt.
+    /// WICHTIG: die von Parser/Resolver gemeldeten Zeilennummern bleiben
+    /// dabei trotzdem korrekt auf den NUTZER-Quelltext bezogen, nicht auf
+    /// die Preludes verschoben - jeder Programmteil wird intern über eine
+    /// EIGENE Lexer/Parser-Instanz mit bei 1 beginnender Zeilenzählung für
+    /// GENAU diesen Teil erzeugt (siehe Parser.ParseRaw), die Zeilennummer
+    /// an jedem AST-Knoten bleibt danach unverändert erhalten, unabhängig
+    /// davon, wie die Teile anschließend zu einer Liste zusammengefügt
+    /// werden.
     /// </summary>
     public static class LiveDiagnostics
     {
-        public static List<Diagnostic> Analyze(string source)
+        public static List<Diagnostic> Analyze(string source) => Analyze(source, Array.Empty<string>());
+
+        /// <summary>`extraImports`: Namen von Erweiterungen (wie in `#import
+        /// "name"`), die zusätzlich zu den in `source` selbst
+        /// vorkommenden als zugeschaltet gelten - siehe AnalyzeInProject.
+        /// Unbekannte Namen werden ignoriert.</summary>
+        private static List<Diagnostic> Analyze(string source, IEnumerable<string> extraImports)
         {
             var diagnostics = new List<Diagnostic>();
             if (string.IsNullOrWhiteSpace(source)) return diagnostics;
@@ -54,19 +70,32 @@ namespace fire.Editor
             {
                 var natives = NativeRegistry.CreateDefault();
                 var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var sources = new[] { fire.Standard.Prelude.Source, source };
-                var processed = new List<ProcessedSource>();
+                var cwd = System.IO.Directory.GetCurrentDirectory();
+                var nativeImports = new HashSet<string>();
+                foreach (var name in extraImports)
+                {
+                    try { nativeImports.Add(ImportedPreludes.ParseImportName(name)); }
+                    catch (Exception) { /* unbekannte Erweiterung - meldet deren eigene Datei */ }
+                }
+
                 // Dieselbe Registry wie beim ECHTEN Kompilieren (siehe
-                // RuntimeSession.Build/CreateProjectDirectiveRegistry) -
-                // sonst würde z.B. '#import "graphics"' hier fälschlich als
+                // RuntimeSession.CreateProjectDirectiveRegistry) - sonst
+                // würde z.B. '#import "graphics"' hier fälschlich als
                 // unbekannte Präprozessor-Direktive unterkringelt, obwohl
                 // sie beim tatsächlichen Ausführen längst akzeptiert wird.
-                // `onImport: null` - die eigentliche WIRKUNG (Grafik-Bridge
-                // laden) ist für reine Diagnostik irrelevant, nur "ist das
-                // syntaktisch gültig" zählt hier.
-                var registry = RuntimeSession.CreateProjectDirectiveRegistry();
-                foreach (var s in sources)
-                    processed.Add(Preprocessor.Process(s, System.IO.Directory.GetCurrentDirectory(), alreadyIncluded, registry));
+                // Der Callback merkt sich die zugeschalteten Erweiterungen,
+                // deren Preludes unten eingesetzt werden.
+                var registry = RuntimeSession.CreateProjectDirectiveRegistry(name => nativeImports.Add(name));
+                var processed = new List<ProcessedSource>();
+                foreach (var s in new[] { fire.Standard.Prelude.Source, source })
+                    processed.Add(Preprocessor.Process(s, cwd, alreadyIncluded, registry));
+
+                // Erst NACH dem Vorverarbeiten ALLER Quellen ist bekannt, welche
+                // Erweiterungen zugeschaltet sind - wie im Linker.
+                ImportedPreludes.Insert(
+                    nativeImports, natives, processed,
+                    preludeSource => Preprocessor.Process(preludeSource, cwd, alreadyIncluded, registry));
+
                 var program = Parser.ParseMultiple(processed);
                 var resolveResult = Resolver.Resolve(program, natives.Names);
                 Compiler.Compiler.Compile(program, resolveResult, natives);
@@ -77,7 +106,13 @@ namespace fire.Editor
             }
             catch (ResolverException ex)
             {
-                diagnostics.Add(new Diagnostic(ex.Line, ex.Message));
+                foreach (var error in ex.Errors)
+                    diagnostics.Add(new Diagnostic(error.Line, error.Message));
+            }
+            catch (CompilerException ex)
+            {
+                foreach (var error in ex.Errors)
+                    diagnostics.Add(new Diagnostic(error.Line, error.Message));
             }
             catch (PreprocessorException ex)
             {
@@ -90,8 +125,8 @@ namespace fire.Editor
             }
             catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
             {
-                // Fehler ohne eigene Zeilen-Information (typischerweise aus
-                // dem Compiler, z.B. eine nicht auflösbare Methodenüberladung) -
+                // Fehler ohne eigene Zeilen-Information, der nicht über den
+                // Compiler kam (der meldet über CompilerException MIT Zeile) -
                 // ebenfalls Zeile 1 als Platzhalter.
                 diagnostics.Add(new Diagnostic(1, ex.Message));
             }
@@ -106,8 +141,15 @@ namespace fire.Editor
                 diagnostics.Add(new Diagnostic(1, ex.Message));
             }
 
-            return diagnostics;
+            // Resolver-/Compiler-Fehler kommen in Reihenfolge der Auflösung
+            // (z.B. erst alle Klassen, dann der Top-Level-Code), nicht in
+            // Zeilenreihenfolge - für die Fehleransicht nach Zeile sortieren
+            // (stabil, gleiche Zeile behält die Reihenfolge).
+            return diagnostics.OrderBy(d => d.Line).ToList();
         }
+
+        private static readonly Regex ImportDirective =
+            new("^[ \\t]*#import[ \\t]+\"([^\"\\r\\n]+)\"", RegexOptions.Compiled | RegexOptions.Multiline);
 
         private static readonly Regex UnknownClassOrType =
             new(@"^(?:Unbekannte Klasse|Unbekannter Typ) '([^']+)'", RegexOptions.Compiled);
@@ -138,10 +180,21 @@ namespace fire.Editor
         /// eigenen Tippfehler bringt diese Prüfung nicht zum Absturz (wird
         /// einfach übersprungen) - beeinflusst höchstens, ob EINE bestimmte
         /// falsch-positive Diagnose noch übersehen bleibt, nie die
-        /// Zuverlässigkeit der echten Fehler in `source` selbst.</summary>
+        /// Zuverlässigkeit der echten Fehler in `source` selbst.
+        ///
+        /// Ausnahme: ein `#import "..."` in einer der `otherProjectFiles`
+        /// wird dagegen ECHT mitgezählt - die Erweiterungen (und damit ihre
+        /// Preludes, siehe ImportedPreludes) gelten im echten Compiler für
+        /// das ganze Projekt, nicht pro Datei.</summary>
         public static List<Diagnostic> AnalyzeInProject(string source, IReadOnlyList<string> otherProjectFiles)
         {
-            var diagnostics = Analyze(source);
+            var importsElsewhere = otherProjectFiles
+                .Where(other => !string.IsNullOrWhiteSpace(other))
+                .SelectMany(other => ImportDirective.Matches(other).Select(m => m.Groups[1].Value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var diagnostics = Analyze(source, importsElsewhere);
             if (diagnostics.Count == 0 || otherProjectFiles.Count == 0) return diagnostics;
 
             var knownElsewhere = new HashSet<string>();

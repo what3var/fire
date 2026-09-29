@@ -14,6 +14,19 @@ namespace fire.Ast
     public sealed record ThisExpr(int Line) : Expr(Line);
     public sealed record BaseExpr(int Line) : Expr(Line);
 
+    /// <summary>"Die Klasse, in deren Körper dieser Ausdruck steht" als
+    /// Ziel eines statischen Zugriffs (`SelfClassExpr.feld`) - vom Parser NUR
+    /// für das synthetisierte Backing-Field einer statischen Auto-Property
+    /// in einer GENERISCHEN Klasse erzeugt. Ein normaler Bezeichner mit dem
+    /// Klassennamen würde dort nicht genügen: heißt daneben eine
+    /// nicht-generische Klasse gleich (SPEC "Generische Klassen"), trägt die
+    /// generische intern einen anderen Namen (siehe GenericClassNames) - der
+    /// Parser weiß beim Schreiben der Auto-Property aber noch nicht, ob es
+    /// so eine Namensgleichheit gibt. Der Resolver löst dieses Ziel auf
+    /// die aktuell aufgelöste Klasse auf, der Compiler sieht es nie (er
+    /// arbeitet mit dem daraus entstandenen ResolvedRef.StaticMember).</summary>
+    public sealed record SelfClassExpr(int Line) : Expr(Line);
+
     /// <summary>DefaultValue: optionaler Standardwert-Ausdruck (siehe SPEC
     /// "Optionale Parameter") - null bedeutet "erforderlich". Muss (falls
     /// vorhanden) IMMER an vom Ende her ZUSAMMENHÄNGENDEN Parametern stehen

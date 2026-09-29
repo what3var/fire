@@ -11,6 +11,36 @@ using MemoryPack;
 
 namespace fire.Compiler
 {
+    /// <summary>Ein Fehler des Bytecode-Compilers (ein `NotSupportedException`,
+    /// damit bestehender Code, der diese fängt, weiter funktioniert) - anders
+    /// als eine nackte NotSupportedException MIT Zeile im Quelltext. Wie beim
+    /// Resolver (siehe ResolverException) bricht der Compiler beim ersten
+    /// Fehler NICHT ab, sondern sammelt alle weiteren: `Compiler.Compile`
+    /// wirft am Ende EINE CompilerException, deren `Message`/`Line` die des
+    /// ersten Fehlers sind und deren <see cref="Errors"/> alle Fehler
+    /// enthält (den ersten eingeschlossen).</summary>
+    public sealed class CompilerException : NotSupportedException
+    {
+        public int Line { get; }
+
+        public IReadOnlyList<CompilerException> Errors { get; }
+
+        public CompilerException(string message, int line)
+            : base($"{message} ({line})")
+        {
+            Line = line;
+            Errors = new[] { this };
+        }
+
+        /// <summary>Fasst mehrere gesammelte Fehler zusammen (mindestens einer).</summary>
+        public CompilerException(IReadOnlyList<CompilerException> errors)
+            : base(errors[0].Message)
+        {
+            Line = errors[0].Line;
+            Errors = errors;
+        }
+    }
+
     /// <summary>
     /// Übersetzt den AST (nach Resolver-Lauf) in einen Chunk. Deckt aktuell ab:
     /// Literale, Variablen (Global/Local passend zu den Resolver-Slots),
@@ -165,16 +195,23 @@ namespace fire.Compiler
         private HashSet<string>? _knownClassNames;
 
         private Compiler(ResolveResult resolveResult, NativeRegistry natives)
-            : this(resolveResult.References, natives, null, resolveResult.NoShadowGlobals ? 0 : resolveResult.GlobalSlotCount, null)
+            : this(resolveResult.References, natives, null, resolveResult.NoShadowGlobals ? 0 : resolveResult.GlobalSlotCount, null, new List<CompilerException>())
         {
         }
+
+        /// <summary>Alle bisher gefundenen Fehler (siehe CompilerException) -
+        /// EINE Liste für den äußeren Compiler UND alle inneren (Methoden-/
+        /// Lambda-/Konstruktor-Bodys), wird von Compile() am Ende
+        /// ausgewertet.</summary>
+        private readonly List<CompilerException> _errors;
 
         /// <summary>Für die Kompilierung eines Lambda-/Methoden-/Konstruktor-Bodys
         /// in einen eigenen Chunk (FunctionProto): teilt sich die Resolver-
         /// Referenzen und die Native-Registry mit dem äußeren Compiler, baut aber
         /// einen eigenen, frischen Chunk.</summary>
-        private Compiler(IReadOnlyDictionary<Expr, ResolvedRef> refs, NativeRegistry natives, RuntimeClass? enclosingClass, int globalSlotCount, HashSet<string>? knownClassNames)
+        private Compiler(IReadOnlyDictionary<Expr, ResolvedRef> refs, NativeRegistry natives, RuntimeClass? enclosingClass, int globalSlotCount, HashSet<string>? knownClassNames, List<CompilerException> errors)
         {
+            _errors = errors;
             _refs = refs;
             _natives = natives;
             _enclosingClass = enclosingClass;
@@ -191,6 +228,15 @@ namespace fire.Compiler
         /// Usings"-Zustand mehr.</summary>
         private string ResolveTypeRef(TypeRef tr) =>
             _knownClassNames != null ? tr.ResolveBaseName(_knownClassNames.Contains) : tr.BaseName;
+
+        /// <summary>Der Klassenname, den `new Name&lt;...&gt;(...)` instanziiert - die
+        /// Anzahl der Typ-Argumente wählt zwischen einer nicht-generischen und
+        /// einer gleichnamigen generischen Klasse (siehe GenericClassNames;
+        /// gleiche Wahl wie im Resolver).</summary>
+        private string ResolveNewClassName(NewExpr ne) =>
+            _knownClassNames != null
+                ? GenericClassNames.ResolveNewTarget(ne.ClassRef, ne.TypeArgs?.Count ?? 0, _knownClassNames.Contains)
+                : ne.ClassRef.BaseName;
 
         public static CompiledProgram Compile(
             IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives)
@@ -238,6 +284,12 @@ namespace fire.Compiler
                 compiler.CompileStmt(stmt);
             }
             compiler._chunk.EmitOp(OpCode.Halt);
+
+            // Ab dem ersten Fehler steht fest, dass es kein Ergebnis gibt -
+            // aber erst HIER, nachdem alles kompiliert wurde, damit der
+            // Aufrufer ALLE Fehler auf einmal bekommt (siehe CompilerException).
+            if (compiler._errors.Count > 0)
+                throw new CompilerException(compiler._errors);
 
             var externSignatures = new Dictionary<string, ExternSignature>();
             foreach (var (name, ed) in resolveResult.Externs)
@@ -325,68 +377,78 @@ namespace fire.Compiler
 
             foreach (var member in rc.Decl.Members)
             {
-                switch (member)
+                // Jedes Mitglied ist ein eigener Wiederaufsetzpunkt (siehe
+                // CompileStmt) - ein Fehler in einem Feld/einer Methode hindert
+                // nicht das Kompilieren der übrigen Mitglieder.
+                try
                 {
-                    case FieldDecl fd:
+                    switch (member)
                     {
-                        var fieldInit = CompileFieldInitProto(rc, fd.Type, fd.Initializer);
-                        rc.OwnFieldInfo[fd.Name] = new FieldInfo()
+                        case FieldDecl fd:
                         {
-                            AccessModifier = fd.Access,
-                            RequiredUnit = fd.Type?.Unit,
-                            IsStatic = fd.IsStatic,
-                        };
-                        // SPEC "Statische Mitglieder": statische Felder landen
-                        // NICHT in Fields (der Instanz-Init-Liste, die JEDE
-                        // `new`-Konstruktion erneut durchläuft) - stattdessen
-                        // in StaticFields, EINMALIG beim Programmstart
-                        // ausgewertet (siehe RunStaticInitializers, aufgerufen
-                        // direkt nach CompileClasses in Compile()).
-                        if (fd.IsStatic)
-                            rc.StaticFields.Add((fd.Name, fieldInit));
-                        else
-                            rc.Fields.Add((fd.Name, fieldInit));
-                        // SPEC "Einheiten-Deklarationen": geprüft wird das
-                        // NICHT hier beim Initialisieren (siehe
-                        // CompileFieldInitProto - unverändert), sondern
-                        // direkt in der VM bei JEDEM SetField-/SetStaticField-
-                        // Aufruf - Feldzuweisungen sind (anders als lokale/
-                        // globale Variablen) grundsätzlich dynamisch
-                        // aufgelöst, die VM kennt zur Laufzeit die
-                        // tatsächliche Klasse des Zielobjekts, der Compiler
-                        // an dieser Stelle nicht.
-                        break;
-                    }
-
-                    case MethodDecl md:
-                        rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic));
-                        break;
-
-                    case ConstructorDecl ctor:
-                        ctorDecls.Add(ctor);
-                        break;
-
-                    case DestructorDecl dtor:
-                        rc.Destructor = CompileMethodProto(rc, Array.Empty<LambdaParam>(), dtor.Body, AccessModifier.Public);
-                        break;
-
-                    case PropertyDecl pd:
-                        // Namenskonvention 'get_'/'set_' (siehe Ast.PropertyDecl-
-                        // Doku) - registriert als ganz normale Methoden, VM.
-                        // GetField/SetField rufen sie per Namenskonvention auf,
-                        // wenn kein gleichnamiges Feld existiert. Beide Accessoren
-                        // teilen sich den EINEN Modifikator der Property selbst
-                        // (SPEC kennt keine getrennten get/set-Modifikatoren) -
-                        // genauso teilen sie sich das EINE IsStatic (SPEC kennt
-                        // keine gemischt statisch/nicht-statischen Accessoren).
-                        if (pd.Getter != null)
-                            rc.AddMethod("get_" + pd.Name, CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic));
-                        if (pd.Setter != null)
-                        {
-                            var setterParams = new[] { new LambdaParam("value", pd.Type, Array.Empty<Expr?>()) };
-                            rc.AddMethod("set_" + pd.Name, CompileMethodProto(rc, setterParams, pd.Setter, pd.Access, pd.IsStatic));
+                            var fieldInit = CompileFieldInitProto(rc, fd.Type, fd.Initializer);
+                            rc.OwnFieldInfo[fd.Name] = new FieldInfo()
+                            {
+                                AccessModifier = fd.Access,
+                                RequiredUnit = fd.Type?.Unit,
+                                IsStatic = fd.IsStatic,
+                            };
+                            // SPEC "Statische Mitglieder": statische Felder landen
+                            // NICHT in Fields (der Instanz-Init-Liste, die JEDE
+                            // `new`-Konstruktion erneut durchläuft) - stattdessen
+                            // in StaticFields, EINMALIG beim Programmstart
+                            // ausgewertet (siehe RunStaticInitializers, aufgerufen
+                            // direkt nach CompileClasses in Compile()).
+                            if (fd.IsStatic)
+                                rc.StaticFields.Add((fd.Name, fieldInit));
+                            else
+                                rc.Fields.Add((fd.Name, fieldInit));
+                            // SPEC "Einheiten-Deklarationen": geprüft wird das
+                            // NICHT hier beim Initialisieren (siehe
+                            // CompileFieldInitProto - unverändert), sondern
+                            // direkt in der VM bei JEDEM SetField-/SetStaticField-
+                            // Aufruf - Feldzuweisungen sind (anders als lokale/
+                            // globale Variablen) grundsätzlich dynamisch
+                            // aufgelöst, die VM kennt zur Laufzeit die
+                            // tatsächliche Klasse des Zielobjekts, der Compiler
+                            // an dieser Stelle nicht.
+                            break;
                         }
-                        break;
+
+                        case MethodDecl md:
+                            rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic));
+                            break;
+
+                        case ConstructorDecl ctor:
+                            ctorDecls.Add(ctor);
+                            break;
+
+                        case DestructorDecl dtor:
+                            rc.Destructor = CompileMethodProto(rc, Array.Empty<LambdaParam>(), dtor.Body, AccessModifier.Public);
+                            break;
+
+                        case PropertyDecl pd:
+                            // Namenskonvention 'get_'/'set_' (siehe Ast.PropertyDecl-
+                            // Doku) - registriert als ganz normale Methoden, VM.
+                            // GetField/SetField rufen sie per Namenskonvention auf,
+                            // wenn kein gleichnamiges Feld existiert. Beide Accessoren
+                            // teilen sich den EINEN Modifikator der Property selbst
+                            // (SPEC kennt keine getrennten get/set-Modifikatoren) -
+                            // genauso teilen sie sich das EINE IsStatic (SPEC kennt
+                            // keine gemischt statisch/nicht-statischen Accessoren).
+                            if (pd.Getter != null)
+                                rc.AddMethod("get_" + pd.Name, CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic));
+                            if (pd.Setter != null)
+                            {
+                                var setterParams = new[] { new LambdaParam("value", pd.Type, Array.Empty<Expr?>()) };
+                                rc.AddMethod("set_" + pd.Name, CompileMethodProto(rc, setterParams, pd.Setter, pd.Access, pd.IsStatic));
+                            }
+                            break;
+                    }
+                }
+                catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
+                {
+                    _errors.Add(ex as CompilerException ?? new CompilerException(ex.Message, member.Line));
                 }
             }
 
@@ -403,7 +465,16 @@ namespace fire.Compiler
             else
             {
                 foreach (var ctor in ctorDecls)
-                    rc.AddConstructor(CompileConstructorProto(rc, ctor, ctor.Access));
+                {
+                    try
+                    {
+                        rc.AddConstructor(CompileConstructorProto(rc, ctor, ctor.Access));
+                    }
+                    catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
+                    {
+                        _errors.Add(ex as CompilerException ?? new CompilerException(ex.Message, ctor.Line));
+                    }
+                }
             }
         }
 
@@ -419,7 +490,7 @@ namespace fire.Compiler
             for (int i = 0; i < parms.Count; i++)
             {
                 if (parms[i].DefaultValue == null) continue;
-                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames);
+                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
                 inner.CompileExpr(parms[i].DefaultValue!);
                 inner._chunk.EmitOp(OpCode.Return);
                 defaults[i] = new FunctionProto(inner._chunk, 0, AccessModifier.Private);
@@ -429,7 +500,7 @@ namespace fire.Compiler
 
         private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
             inner._chunk.OwnerClass = rc;
             if (initializer != null)
             {
@@ -524,7 +595,7 @@ namespace fire.Compiler
         /// kollidieren.</summary>
         private void CompileFireStmt(FireStmt fs)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors);
             int slot = _globalSlotCount;
             foreach (var capture in fs.TakingCaptures)
                 inner._chunk.MarkLocalName(0, slot++, capture.VarName);
@@ -574,7 +645,7 @@ namespace fire.Compiler
         /// HandleDeliveredThreadException), nicht hier an dieser Stelle.</summary>
         private void CompileCatchThreadsDecl(CatchThreadsDecl decl)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors);
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -596,7 +667,7 @@ namespace fire.Compiler
         /// keine "Art" von terminate) und mit dem anderen Register-Opcode.</summary>
         private void CompileCatchTerminateDecl(CatchTerminateDecl decl)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors);
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -612,7 +683,7 @@ namespace fire.Compiler
 
         private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access, bool isStatic = false)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
             inner._chunk.OwnerClass = rc;
             // SPEC "Statische Mitglieder": eine statische Methode hat kein
             // gebundenes 'this' - der innere Compiler merkt sich das, um
@@ -638,7 +709,7 @@ namespace fire.Compiler
         /// einheitlich über denselben Mechanismus.</summary>
         private FunctionProto CompileConstructorProto(RuntimeClass rc, ConstructorDecl? ctor, AccessModifier access)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
             inner._chunk.OwnerClass = rc;
 
             if (ctor != null)
@@ -684,7 +755,32 @@ namespace fire.Compiler
         // -----------------------------------------------------------
         // Statements
         // -----------------------------------------------------------
+        /// <summary>Kompiliert ein Statement; ein dabei auftretender Fehler wird
+        /// GESAMMELT (siehe CompilerException), und die Kompilierung macht mit
+        /// dem NÄCHSTEN Statement weiter - jedes Statement, auch in
+        /// verschachtelten Blöcken/Methodenkörpern, ist ein eigener
+        /// Wiederaufsetzpunkt. Der Scope-/Schleifen-Zustand des Compilers
+        /// wird dafür auf den Stand VOR dem Statement zurückgesetzt (der
+        /// erzeugte Bytecode ist nach einem Fehler ohnehin wertlos und wird
+        /// verworfen, nur die Zähler müssen für die Folge-Statements
+        /// stimmen).</summary>
         private void CompileStmt(Stmt stmt)
+        {
+            int scopeDepth = _currentScopeDepth;
+            int loopCount = _loopStack.Count;
+            try
+            {
+                CompileStmtCore(stmt);
+            }
+            catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
+            {
+                _errors.Add(ex as CompilerException ?? new CompilerException(ex.Message, stmt.Line));
+                _currentScopeDepth = scopeDepth;
+                while (_loopStack.Count > loopCount) _loopStack.Pop();
+            }
+        }
+
+        private void CompileStmtCore(Stmt stmt)
         {
             // Für den Step-Debugger im Editor-Unterprojekt (Bytecode.Chunk.
             // MarkLine) - markiert, an welcher Code-Position die aktuelle
@@ -1216,7 +1312,23 @@ namespace fire.Compiler
         // -----------------------------------------------------------
         // Ausdrücke
         // -----------------------------------------------------------
+        /// <summary>Kompiliert einen Ausdruck; ein Fehler darin bekommt hier die
+        /// Zeile des INNERSTEN betroffenen Ausdrucks (die Wurfstellen selbst
+        /// kennen keine Zeile) - gesammelt wird erst auf Statement-Ebene
+        /// (siehe CompileStmt).</summary>
         private void CompileExpr(Expr expr)
+        {
+            try
+            {
+                CompileExprCore(expr);
+            }
+            catch (Exception ex) when ((ex is NotSupportedException || ex is InvalidOperationException) && ex is not CompilerException)
+            {
+                throw new CompilerException(ex.Message, expr.Line);
+            }
+        }
+
+        private void CompileExprCore(Expr expr)
         {
             switch (expr)
             {
@@ -1279,7 +1391,7 @@ namespace fire.Compiler
                 case NewExpr ne:
                     foreach (var a in ne.Args) CompileExpr(a);
                     _chunk.EmitOp(OpCode.NewObject);
-                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeRef(ne.ClassRef))));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
                     _chunk.EmitByte((byte)ne.Args.Count);
                     break;
 
@@ -1430,7 +1542,7 @@ namespace fire.Compiler
         /// 'on'-Target kann sich pro Auswertung unterscheiden.</summary>
         private void CompileLambda(LambdaExpr lambda)
         {
-            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames);
+            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames, _errors);
             inner._chunk.OwnerClass = _enclosingClass;
             for (int i = 0; i < lambda.Params.Count; i++)
                 inner._chunk.MarkLocalName(0, i, lambda.Params[i].Name);
@@ -1684,7 +1796,7 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.Dup);
                     foreach (var arg in ne.Args) CompileExpr(arg);
                     _chunk.EmitOp(OpCode.NewObjectOwned);
-                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeRef(ne.ClassRef))));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
                     _chunk.EmitByte((byte)ne.Args.Count);
                 }
                 else

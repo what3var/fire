@@ -62,7 +62,9 @@ dotnet run
   z.B. "Bis Ende durchlaufen" bei einem länger laufenden Skript die
   komplette Anwendung einfrieren.
 - **Live-Fehleranalyse**: läuft debounced im Hintergrund (Parser + Resolver
-  + Compiler), zeigt Fehler in einem eigenen Panel (Doppelklick springt zur
+  + Compiler; kennt die Standard-Prelude UND die Preludes von `#import
+  "graphics"`/`"devices"`; Resolver/Compiler melden ALLE Fehler, nicht nur
+  den ersten), zeigt Fehler in einem eigenen Panel (Doppelklick springt zur
   Zeile) und unterkringelt die betroffene Zeile im Editor direkt (eine
   ECHTE wellenförmige Linie über einen gekachelten Zickzack-Pinsel als
   Underline-Pen, nicht nur eine gerade rote Linie).
@@ -181,7 +183,7 @@ Weitere, danach vorgeschlagene Ausbaustufen:
 - [x] Konstruktor-Überladung – wie Methodenüberladung, aber ohne Basisklassen-Kette (siehe `docs/SPEC.md` Abschnitt 5.4)
 - [x] Optionale Parameter mit Standardwert (`f(x : int = 42)`) – für Methoden, Konstruktoren UND Lambdas, am Ende zusammenhängend (siehe `docs/SPEC.md` Abschnitt 5.4.1, `docs/BYTECODE.md` Abschnitt 16)
 - [x] `switch`-Statement mit Vergleichsoperatoren (`case <= 1:`, `case default:`) – reiner Parser-Zucker, desugart zu einer If/Else-if-Kette, kein Fallthrough (siehe `docs/SPEC.md` Abschnitt 5.7, `docs/BYTECODE.md` Abschnitt 16)
-- [x] Generische Klassen (`class Name<T> where T is of X, is of Y`) – `,` = ODER zwischen Bedingungsgruppen, `:` = UND innerhalb einer Gruppe; Constraint-Prüfung statisch bei `new Name<...>(...)`, **keine echte Typ-Substitution** (dynamisch typisierte Sprache) – generische Methoden werden geparst, aber ohne Typ-Argumente am Aufrufort geprüft (Mehrdeutigkeit mit Vergleichsoperatoren, siehe `docs/SPEC.md` Abschnitt 5.8)
+- [x] Generische Klassen (`class Name<T> where T is of X, is of Y`) – `,` = ODER zwischen Bedingungsgruppen, `:` = UND innerhalb einer Gruppe; Constraint-Prüfung statisch bei `new Name<...>(...)`; darf denselben Namen wie eine nicht-generische Klasse tragen (die Typ-Argument-Anzahl bei `new` wählt), **keine echte Typ-Substitution** (dynamisch typisierte Sprache) – generische Methoden werden geparst, aber ohne Typ-Argumente am Aufrufort geprüft (Mehrdeutigkeit mit Vergleichsoperatoren, siehe `docs/SPEC.md` Abschnitt 5.8)
 - [x] `break`/`continue` für Schleifen (`while`/`for`/`foreach`) – echte Sprünge mit korrektem Scope-Unwind durch verschachtelte Blöcke; bricht die innerste Schleife; funktioniert **nicht** über eine `try`/`catch`/`finally`-Grenze hinweg (bewusste Einschränkung, siehe `docs/SPEC.md` Abschnitt 5.10, `docs/BYTECODE.md` Abschnitt 17)
 - [x] Auto-Properties (`Typ Name { get; set; }`) – reiner Parser-Zucker, synthetisiert ein Backing-Field `_AutoName` samt trivialem Getter/Setter; das Backing-Field ist ein ganz normales, von innerhalb der Klasse direkt zugängliches Feld (z.B. um eine get-only Property im Konstruktor zu initialisieren) – siehe `docs/SPEC.md` Abschnitt 8.8, `docs/BYTECODE.md` Abschnitt 14
 - [x] `lambda`-Typen mit Signatur (`[RückgabeTyp] lambda[<P1,...,Pn>]`, z.B. `lambda<int>` oder `int lambda<int,int>`) – der Rückgabetyp steht als Präfix vor `lambda` (eindeutig ohne Trennzeichen); anders als sonstige Typ-Annotationen wird die **Parameteranzahl tatsächlich zur Laufzeit geprüft** (bei `var`-Deklarationen und Funktionsparametern), Einzeltypen und Rückgabewert nicht (nicht verlässlich prüfbar in einer dynamisch typisierten Sprache) – siehe `docs/SPEC.md` Abschnitt 4.3, `docs/BYTECODE.md` Abschnitt 14

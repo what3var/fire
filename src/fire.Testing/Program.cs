@@ -4795,6 +4795,192 @@ catch (System.Exception ex)
     Console.WriteLine($"FEHLER: {ex.Message}");
 }
 
+Console.WriteLine();
+Console.WriteLine("=== Generics: generische Klasse mit demselben Namen wie eine nicht-generische ===");
+
+string genericSameNameSample = """
+class Box {
+    int v
+    construct(int v) { this.v = v }
+    Describe() { return "Box(" + this.v + ")" }
+}
+
+class Box<T> {
+    T item
+    construct(T item) { this.item = item }
+    Describe() { return "Box<T>(" + this.item + ")" }
+}
+
+class Pair<A, B> {
+    A first
+    B second
+    construct(A a, B b) { this.first = a; this.second = b }
+}
+
+class Pair {
+    string s
+    construct() { this.s = "plain" }
+}
+
+class extends Box {
+    Extra() { return "extra" }
+}
+
+var plain = new Box(1)
+var generic = new Box<int>(2)
+print(plain.Describe())
+print(generic.Describe())
+print(plain.Extra())
+print(new Pair().s)
+var pair = new Pair<int, int>(3, 4)
+print(pair.first + pair.second)
+""";
+
+try
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(genericSameNameSample);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+
+    Console.WriteLine("Ausgabe (erwartet: Box(1) / Box<T>(2) / extra / plain / 7):");
+    var vmGlobalScope = new Scope(null, isGlobal: true);
+    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes);
+    vm.Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Generics: gleicher Name, statische Auto-Property in der generischen Klasse ===");
+
+string genericSameNameStaticSample = """
+class Counter { }
+
+class Counter<T> {
+    static int Total { get; }
+    Read() { return Total }
+}
+
+var c = new Counter<int>()
+print("gelesen: " + c.Read())
+""";
+
+try
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(genericSameNameStaticSample);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+
+    Console.WriteLine("Ausgabe (erwartet: gelesen: undefined - das Backing-Field gehört zur GENERISCHEN Klasse, nicht zur gleichnamigen):");
+    var vmGlobalScope = new Scope(null, isGlobal: true);
+    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes);
+    vm.Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Generics: gleicher Name - falsche Typ-Argumente / Doppeldefinition (müssen fehlschlagen) ===");
+
+foreach (var (label, source) in new[]
+{
+    ("falsche Typ-Argument-Anzahl", "class Box { }\nclass Box<T> { }\nvar x = new Box<int, int>()"),
+    ("zwei generische mit gleicher Anzahl", "class Box { }\nclass Box<T> { }\nclass Box<U> { }"),
+})
+{
+    try
+    {
+        var natives = NativeRegistry.CreateDefault();
+        var program = Parser.Parse(source);
+        Resolver.Resolve(program, natives.Names);
+        Console.WriteLine($"FEHLER ({label}): haette fehlschlagen muessen");
+    }
+    catch (ResolverException ex)
+    {
+        Console.WriteLine($"Erwarteter Fehler ({label}): {ex.Message}");
+    }
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Resolver: sammelt ALLE Fehler statt beim ersten abzubrechen ===");
+
+string manyResolverErrors = """
+var a = unknown1
+var b = a + 1
+var c = new Nope()
+class K : Missing {
+    Foo() {
+        return alsoMissing
+    }
+    Bar() {
+        return stillMissing
+    }
+}
+print(zzz)
+try { print(x1) } catch (NoSuchException e) { print(e) } finally { print(x2) }
+print(p1 + p2)
+""";
+
+try
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(manyResolverErrors);
+    Resolver.Resolve(program, natives.Names);
+    Console.WriteLine("FEHLER: haette fehlschlagen muessen");
+}
+catch (ResolverException ex)
+{
+    Console.WriteLine($"Message (= Meldung des ersten gesammelten Fehlers, wie bisher): {ex.Message}");
+    Console.WriteLine($"Anzahl gesammelter Fehler (erwartet: 11): {ex.Errors.Count}");
+    foreach (var error in ex.Errors)
+        Console.WriteLine($"  Zeile {error.Line}: {error.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Compiler: sammelt ALLE Fehler statt beim ersten abzubrechen ===");
+
+string manyCompilerErrors = """
+class A {
+    int f = print
+    M1() {
+        var x = print
+        var y = 2
+        var z = print
+    }
+    M2() { print = 5 }
+}
+var top1 = print
+var ok = 1
+var lam = func () => { var inner = print
+                       return inner }
+if (ok == 1) {
+    var nested = print
+}
+print(ok)
+""";
+
+try
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(manyCompilerErrors);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    Compiler.Compile(program, resolveResult, natives);
+    Console.WriteLine("FEHLER: haette fehlschlagen muessen");
+}
+catch (CompilerException ex)
+{
+    Console.WriteLine($"Anzahl gesammelter Fehler (erwartet: 7): {ex.Errors.Count}");
+    foreach (var error in ex.Errors)
+        Console.WriteLine($"  Zeile {error.Line}: {error.Message}");
+    Console.WriteLine($"Ist eine NotSupportedException (bestehender Code faengt sie weiter): {ex is NotSupportedException}");
+}
+
 static int CountOccurrences(string haystack, string needle)
 {
     int count = 0, idx = 0;

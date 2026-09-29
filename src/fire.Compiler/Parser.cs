@@ -68,6 +68,10 @@ namespace fire.Compiler
         private string? _currentNamespace;
         private string? _currentClassName;
 
+        /// <summary>`true`, während der Körper einer GENERISCHEN Klasse
+        /// geparst wird (siehe ParsePropertyBody: statische Auto-Property).</summary>
+        private bool _currentClassIsGeneric;
+
         /// <summary>Index dieser Quelle in der `sources`-Liste, die an
         /// ParseMultiple ging (0 = üblicherweise die Prelude) - EINMAL pro
         /// Parser-Instanz gesetzt (siehe ParseMultiple, jede Quelle bekommt
@@ -168,7 +172,40 @@ namespace fire.Compiler
                 combined.AddRange(stmts);
             }
             //sourceIndexByStmt = byStmt;
-            return MergeClassExtensions(FlattenNamespaceWrappers(combined));
+            // Disambiguierung VOR den Erweiterungen: `class extends Box` meint
+            // (wie jede Referenz ohne Typ-Argumente) die nicht-generische
+            // Klasse, siehe GenericClassNames.
+            return MergeClassExtensions(DisambiguateGenericClasses(FlattenNamespaceWrappers(combined)));
+        }
+
+        /// <summary>Gibt jeder GENERISCHEN Klasse, neben der eine
+        /// NICHT-generische Klasse mit demselben (vollqualifizierten) Namen
+        /// existiert, ihren internen Namen `Name`N` (siehe
+        /// GenericClassNames) - erst hier, nach dem Parsen ALLER Quellen,
+        /// weiß man ja, ob es so eine Kollision gibt (jede Quelle wird von
+        /// einer eigenen Parser-Instanz gelesen). Ohne Kollision bleibt das
+        /// Programm unverändert. Zwei generische Klassen mit gleichem Namen
+        /// UND gleicher Typ-Parameter-Anzahl bleiben eine Doppeldefinition
+        /// (der Resolver meldet sie), gleicher Name mit unterschiedlicher
+        /// Anzahl ohne nicht-generische Klasse ebenso - nur "generisch
+        /// neben nicht-generisch" ist bewusst erlaubt.</summary>
+        private static List<Stmt> DisambiguateGenericClasses(List<Stmt> program)
+        {
+            var nonGenericNames = new HashSet<string>();
+            foreach (var stmt in program)
+                if (stmt is ClassDecl cd && (cd.TypeParams == null || cd.TypeParams.Count == 0))
+                    nonGenericNames.Add(cd.Name);
+            if (nonGenericNames.Count == 0) return program;
+
+            var result = new List<Stmt>(program.Count);
+            foreach (var stmt in program)
+            {
+                if (stmt is ClassDecl { TypeParams.Count: > 0 } generic && nonGenericNames.Contains(generic.Name))
+                    result.Add(generic with { Name = GenericClassNames.Mangle(generic.Name, generic.TypeParams!.Count) });
+                else
+                    result.Add(stmt);
+            }
+            return result;
         }
 
         /// <summary>Die für ein JETZT geparstes TypeRef/eine JETZT geparste
@@ -1293,7 +1330,9 @@ namespace fire.Compiler
             // jemals verschachtelt vorkäme (aktuell nicht möglich, aber
             // robust für den Fall).
             string? savedClassName = _currentClassName;
+            bool savedClassIsGeneric = _currentClassIsGeneric;
             _currentClassName = QualifyDeclName(name);
+            _currentClassIsGeneric = typeParamNames.Count > 0;
             try
             {
                 while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
@@ -1302,6 +1341,7 @@ namespace fire.Compiler
             finally
             {
                 _currentClassName = savedClassName;
+                _currentClassIsGeneric = savedClassIsGeneric;
             }
             Expect(TokenType.RBrace, "Erwarte '}' am Ende der Klasse");
 
@@ -1650,9 +1690,15 @@ namespace fire.Compiler
                 // unterscheidet sich (ThisExpr vs. ein Bezeichner mit dem
                 // Klassennamen, den der Resolver als statischen Zugriff
                 // erkennt, siehe Resolver.TryResolveStaticMemberAccess).
-                Expr backingTarget = isStatic
-                    ? new IdentifierExpr(line, _currentClassName ?? name)
-                    : new ThisExpr(line);
+                //
+                // In einer GENERISCHEN Klasse stattdessen SelfClassExpr: der
+                // Klassenname allein könnte dort auf eine gleichnamige
+                // NICHT-generische Klasse zeigen (siehe GenericClassNames).
+                Expr backingTarget = !isStatic
+                    ? new ThisExpr(line)
+                    : _currentClassIsGeneric
+                        ? new SelfClassExpr(line)
+                        : new IdentifierExpr(line, _currentClassName ?? name);
 
                 if (getterIsAuto)
                     getter = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt>
