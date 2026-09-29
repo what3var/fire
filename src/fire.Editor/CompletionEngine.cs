@@ -281,7 +281,20 @@ namespace fire.Editor
 
                 case TypeKind.Primitive:
                 case TypeKind.Array:
-                    return results; // einfache Werte/Arrays haben keine Klassen-Mitglieder
+                    // Einfache Werte/Arrays haben keine Klassen-Mitglieder, aber eingebaute
+                    // (`text.Length`, `text.IndexOf(...)`, siehe BuiltinMembers).
+                    foreach (var member in BuiltinMembers.For(receiver))
+                    {
+                        if (!MatchesPrefix(member.Name, prefix)) continue;
+                        string type = member.ReturnType?.Replace("buffer", "byte[]") ?? string.Empty;
+                        string detail = member.IsProperty
+                            ? $"Property : {type}"
+                            : $"({member.Signature}){(type.Length > 0 ? " → " + type : string.Empty)}";
+                        results.Add(new CompletionItem(member.Name,
+                            member.IsProperty ? CompletionKind.Property : CompletionKind.Method,
+                            CompareKeywords(prefix, member.Name, 0.3f), detail));
+                    }
+                    return Dedupe(results);
 
                 default:
                     // Typ nicht bestimmbar - als bestmöglicher Fallback zugreifbare

@@ -1271,20 +1271,32 @@ namespace fire.Runtime
                     string fieldName = _currentChunk.Constants[ReadU16()].AsString();
                     var target = Pop();
 
+                    // `Length` ist die Schreibweise der Eigenschaften (wie bei `string`),
+                    // `length` die ältere - beide bei Array/Puffer/String gleichwertig.
+                    if (target.Kind == ValueKind.String)
+                    {
+                        if (fieldName is "Length" or "length")
+                        {
+                            Push(Value.MakeInt(target.AsString().Length));
+                            break;
+                        }
+                        throw new InvalidOperationException($"Zeichenketten haben kein Feld '{fieldName}' (nur 'Length').");
+                    }
+
                     if (target.Kind == ValueKind.Array)
                     {
-                        if (fieldName == "length")
+                        if (fieldName is "Length" or "length")
                         {
                             Push(Value.MakeInt(target.AsArray().Length));
                             break;
                         }
-                        throw new InvalidOperationException($"Arrays haben kein Feld '{fieldName}' (nur 'length').");
+                        throw new InvalidOperationException($"Arrays haben kein Feld '{fieldName}' (nur 'Length').");
                     }
 
                     if (target.Kind == ValueKind.Buffer)
                     {
                         var buf = target.AsBuffer();
-                        if (fieldName == "length")
+                        if (fieldName is "Length" or "length")
                         {
                             Push(Value.MakeInt(buf.Length));
                             break;
@@ -1295,7 +1307,7 @@ namespace fire.Runtime
                             break;
                         }
                         throw new InvalidOperationException(
-                            $"Byte-Puffer haben kein Feld '{fieldName}' (nur 'length', 'littleEndian').");
+                            $"Byte-Puffer haben kein Feld '{fieldName}' (nur 'Length', 'littleEndian').");
                     }
 
                     var obj = RequireObjectInstance(target, "Feldzugriff");
@@ -1481,6 +1493,25 @@ namespace fire.Runtime
                             var enumerator = ConstructNested(enumeratorClass, new[] { target, Value.MakeInt(itemCount) });
                             Push(Value.MakeClassRef(enumerator));
                             break;
+                        }
+
+                        // Methoden von `string` (IndexOf, Substring, Split, ..., siehe
+                        // StringMethods, SPEC 8.12) - ein ungültiger Index wird zu einer
+                        // fangbaren IndexOutOfBoundsException.
+                        if (target.Kind == ValueKind.String)
+                        {
+                            var stringStatus = StringMethods.TryCall(target.AsString(), methodName, args,
+                                out Value stringResult, out long badStringIndex, out int stringLength);
+                            if (stringStatus == StringCallStatus.Ok)
+                            {
+                                Push(stringResult);
+                                break;
+                            }
+                            if (stringStatus == StringCallStatus.IndexOutOfRange)
+                            {
+                                ThrowIndexOutOfBounds(badStringIndex, stringLength, "String-Index");
+                                break;
+                            }
                         }
 
                         if (TryCallBuiltinMethod(target, methodName, args, out Value builtinResult))
@@ -1884,6 +1915,17 @@ namespace fire.Runtime
                                 ThrowIndexOutOfBounds(idx, target.AsBuffer().Length);
                         }
                     }
+                    else if (target.Kind == ValueKind.String)
+                    {
+                        // `s[i]` liest das Zeichen an Index i (nur lesend - Zeichenketten sind
+                        // unveränderlich, siehe ArraySet).
+                        long idx = indexVal.AsInt();
+                        string text = target.AsString();
+                        if (idx >= 0 && idx < text.Length)
+                            Push(Value.MakeChar(text[(int)idx]));
+                        else
+                            ThrowIndexOutOfBounds(idx, text.Length, "String-Index");
+                    }
                     else if (target.Kind == ValueKind.Class)
                     {
                         // '[]'-Operator-Überladung per Namenskonvention (wie
@@ -1959,6 +2001,12 @@ namespace fire.Runtime
                         // verlassen (siehe CallMethodNested-Doku) - dann NICHT
                         // pushen, die Ausführung läuft bereits anderswo weiter.
                         if (result != null) Push(value);
+                    }
+                    else if (target.Kind == ValueKind.String)
+                    {
+                        throw new InvalidOperationException(
+                            "Zeichenketten sind unveränderlich - 's[i] = ...' ist nicht möglich " +
+                            "(Replace/Substring liefern eine neue Zeichenkette).");
                     }
                     else
                     {
@@ -3006,10 +3054,10 @@ namespace fire.Runtime
         /// ScriptArray/ByteBuffer.TryGet/TrySet `false` liefert (bewusst kein
         /// throw/catch dort selbst - siehe ScriptArray-Doku, C++-Portier-
         /// barkeit).</summary>
-        private void ThrowIndexOutOfBounds(long index, int length)
+        private void ThrowIndexOutOfBounds(long index, int length, string what = "Array-Index")
         {
             var rc = ResolveClass("IndexOutOfBoundsException");
-            string msg = $"Array-Index {index} außerhalb des gültigen Bereichs (Länge {length}).";
+            string msg = $"{what} {index} außerhalb des gültigen Bereichs (Länge {length}).";
             var args = new[] { Value.MakeString(msg), Value.MakeInt(index), Value.MakeInt(length) };
             var instance = ConstructNested(rc, args);
             ThrowException(Value.MakeClassRef(instance));

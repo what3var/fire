@@ -510,6 +510,15 @@ namespace fire.Editor
                         if (Namespaces.Contains(full)) return new ExprType(TypeKind.Namespace, full);
                         return ExprType.Unknown;
                     }
+                case TypeKind.Primitive:
+                case TypeKind.Array:
+                    {
+                        // Eingebaute Mitglieder (`text.Length`, `text.Trim()`, `buffer.ToString()`).
+                        foreach (var member in BuiltinMembers.For(receiver))
+                            if (member.Name == name && member.IsProperty == !isCall)
+                                return BuiltinMembers.ToExprType(member.ReturnType);
+                        return ExprType.Unknown;
+                    }
                 default:
                     return ExprType.Unknown;
             }
@@ -523,6 +532,8 @@ namespace fire.Editor
             {
                 case TypeKind.Array:
                     return FromTypeName(container.Name!, isArray: false, System.Array.Empty<string>()); // Name ist schon ein Schlüssel
+                case TypeKind.Primitive when container.Name == "string":
+                    return new ExprType(TypeKind.Primitive, "char"); // s[i]
                 case TypeKind.Instance:
                     {
                         var op = MembersOf(container.Name!).FirstOrDefault(m => m.Name == "operator[]");

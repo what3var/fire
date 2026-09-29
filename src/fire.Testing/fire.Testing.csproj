@@ -14,6 +14,7 @@
     <Compile Include="..\fire.Editor\ScriptSymbolIndex.Types.cs" Link="Editor\ScriptSymbolIndex.Types.cs" />
     <Compile Include="..\fire.Editor\CompletionEngine.cs" Link="Editor\CompletionEngine.cs" />
     <Compile Include="..\fire.Editor\NavigationEngine.cs" Link="Editor\NavigationEngine.cs" />
+    <Compile Include="..\fire.Editor\BuiltinMembers.cs" Link="Editor\BuiltinMembers.cs" />
   </ItemGroup>
 
   <ItemGroup>

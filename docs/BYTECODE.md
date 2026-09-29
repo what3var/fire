@@ -1320,3 +1320,12 @@ Dafür waren Änderungen an der Sprache nötig:
 - **Statische Property-Setter:** `SetStaticField` fällt auf die statische `set_`-Methode zurück (wie
   `GetStaticField` auf `get_`).
 
+## 24. String-Mitglieder
+
+`src/fire.Runtime/StringMethods.cs` (`TryCall(string, name, args, …)`) wird von `VM.CallMethod` für
+String-Ziele **vor** der Liste in `TryCallBuiltinMethod` befragt (`NotFound` → weiter wie bisher,
+`Ok` → Ergebnis, `IndexOutOfRange` → `IndexOutOfBoundsException` "String-Index …"). `GetField` kennt
+`Length`/`length` für String, Array und Puffer; `ArrayGet` liefert auf Strings ein `char`, `ArraySet`
+auf Strings wirft (unveränderlich). Alle Vergleiche ordinal, `ToUpper`/`ToLower` invariant. Für den
+Editor spiegelt `src/fire.Editor/BuiltinMembers.cs` dieselben Mitglieder samt Rückgabetypen
+(`ScriptSymbolIndex.MemberType`/`CompletionEngine`).

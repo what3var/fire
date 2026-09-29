@@ -5127,7 +5127,7 @@ Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden übe
     CheckCompletion("#import io: Stream-Mitglieder", "#import \"io\"\nvar s = new IO.FileStream(\"a.bin\")\ns.|", "ReadBytes,ReadAll,CopyTo,Position,Length,Close,Seek,Name", "ToBuffer,Throw");
     CheckCompletion("#import io: IO.FileMode.", "#import \"io\"\nvar m = IO.FileMode.|", "Open,Create,CreateNew,OpenOrCreate,Append", exact: true);
     CheckCompletion("nach 'new' nur Klassen (keine Interfaces)", "interface I { Foo() }\nclass A { }\nvar x = new |", "A", "I,var");
-    CheckCompletion("einfacher Wert hat keine Mitglieder", "var s = \"abc\"\ns.|", "", exact: true);
+    CheckCompletion("bool hat keine Mitglieder", "var b = true\nb.|", "", exact: true);
     CheckCompletion("Variable aus fremder Methode nicht sichtbar -> Fallback", "class A { M() { var q = new B() }\n N() { q.| } }\nclass B { Z() {} }", "Z");
     CheckCompletion("unbestimmbar -> Fallback auf alle Klassen", classes + "var d = something()\nd.|", "Bark,Curl");
     CheckCompletion("Zyklus haengt nicht", "var a = b\nvar b = a\na.|", "");
@@ -5645,6 +5645,98 @@ try
 catch (Exception ex)
 {
     Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Strings: Length, IndexOf, LastIndexOf, Substring & Co. ===");
+
+string stringSample = """
+int failures = 0
+var Check = func (name, actual, expected) => {
+    if (actual == expected) { print("OK: " + name) }
+    else { failures = failures + 1; print("FEHLER: " + name + " -> " + actual + " (erwartet " + expected + ")") }
+}
+string s = "Hello, World, again"
+Check("Length", s.Length, 19)
+Check("length (Alias)", s.length, 19)
+Check("Length leer", "".Length, 0)
+Check("IndexOf", s.IndexOf("o"), 4)
+Check("IndexOf ab Position", s.IndexOf("o", 5), 8)
+Check("IndexOf nicht gefunden", s.IndexOf("xyz"), -1)
+Check("IndexOf Zeichen", s.IndexOf('W'), 7)
+Check("LastIndexOf", s.LastIndexOf(","), 12)
+Check("LastIndexOf ab Position", s.LastIndexOf(",", 11), 5)
+Check("LastIndexOf nicht gefunden", s.LastIndexOf("xyz"), -1)
+Check("Substring(start)", s.Substring(14), "again")
+Check("Substring(start, count)", s.Substring(7, 5), "World")
+Check("Substring(Ende)", s.Substring(19), "")
+Check("Indexer", s[1], 'e')
+Check("CharAt", s.CharAt(0), 'H')
+Check("Contains", s.Contains("World"), true)
+Check("StartsWith", s.StartsWith("Hello"), true)
+Check("EndsWith", s.EndsWith("Hello"), false)
+Check("ToUpper", "abc".ToUpper(), "ABC")
+Check("ToLower", "ABC".ToLower(), "abc")
+Check("Trim", "  x  ".Trim(), "x")
+Check("TrimStart", "  x  ".TrimStart(), "x  ")
+Check("TrimEnd", "  x  ".TrimEnd(), "  x")
+Check("Replace", "a-b-c".Replace("-", "+"), "a+b+c")
+Check("PadLeft", "7".PadLeft(3, '0'), "007")
+Check("PadRight", "7".PadRight(3), "7  ")
+Check("Kette", "  a,b,c ".Trim().Split(",").Length, 3)
+var parts = "a,b,c".Split(",")
+var joined = ""
+foreach (p in parts) { joined = joined + p.ToUpper() }
+Check("Split + foreach", joined, "ABC")
+Check("Array.Length", [1, 2, 3].Length, 3)
+Check("Puffer.Length", "AB".ToBytes().Length, 2)
+
+int caught = 0
+try { s.Substring(30) } catch (IndexOutOfBoundsException e) { caught = caught + 1 }
+try { s.Substring(5, 100) } catch (IndexOutOfBoundsException e) { caught = caught + 1 }
+try { var c = s[99] } catch (IndexOutOfBoundsException e) { caught = caught + 1 }
+try { s.LastIndexOf("a", 50) } catch (IndexOutOfBoundsException e) { caught = caught + 1 }
+Check("Index-Ausnahmen", caught, 4)
+if (failures == 0) { print("Alle String-Pruefungen bestanden.") } else { print("FEHLER: " + failures) }
+""";
+
+try
+{
+    var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, stringSample));
+    var natives = NativeRegistry.CreateDefault();
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes).Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Strings: Editor-Vervollstaendigung ===");
+{
+    int failures = 0;
+    void Check(string title, string source, string expected, string forbidden = "")
+    {
+        int cursor = source.IndexOf('|');
+        source = source.Remove(cursor, 1);
+        var index = fire.Editor.ScriptSymbolIndex.Build(source);
+        var names = fire.Editor.CompletionEngine.GetSuggestions(source, cursor, index).Select(i => i.Text).ToList();
+        bool ok = expected.Split(',').All(names.Contains) && !forbidden.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(names.Contains);
+        if (!ok) failures++;
+        Console.WriteLine($"{(ok ? "OK" : "FEHLER")}: {title} -> {string.Join(", ", names.Take(8))}");
+    }
+    Check("string-Variable", "string s = \"abc\"\ns.|", "Length,IndexOf,LastIndexOf,Substring", "Bark,length");
+    Check("var s = Literal", "var s = \"abc\"\ns.|", "Length,IndexOf,Substring");
+    Check("Literal direkt", "\"abc\".|", "Length,Trim");
+    Check("Praefix", "var s = \"abc\"\ns.Sub|", "Substring", "Length");
+    Check("Kette Trim().", "var s = \"abc\"\ns.Trim().|", "Length,ToUpper");
+    Check("Split() liefert Array", "var s = \"a,b\"\ns.Split(\",\").|", "Length", "Substring");
+    Check("Array-Element ist string", "var s = \"a,b\"\nvar p = s.Split(\",\")\np[0].|", "Substring");
+    Check("foreach ueber Split", "var s = \"a,b\"\nforeach (p in s.Split(\",\")) { p.| }", "Substring");
+    Check("Length ist int", "var s = \"abc\"\nvar n = s.Length\nn.|", "ToChar");
+    Console.WriteLine(failures == 0 ? "Alle String-Vervollstaendigungs-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
 }
 
 static int CountOccurrences(string haystack, string needle)

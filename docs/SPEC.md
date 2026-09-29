@@ -1541,6 +1541,42 @@ Richtlinie nicht betroffen.
 gesperrt; der Fehlerstatus (`__IOLastError`) gilt pro Thread. Lesen blockiert den aufrufenden
 VM-Thread (für Hintergrundarbeit `fire { ... }`).
 
+### 8.12 Strings: `Length`, Suche, Teilstrings
+
+Ein `string` ist eine **unveränderliche** Folge von 16-Bit-Zeichen (`char`); alle Positionen zählen in
+solchen Einheiten, Vergleiche und Suchen sind **ordinal** (groß/klein zählt, keine Kultur). Die Mitglieder
+sind ganz normale Aufrufe auf dem Wert (`VM.CallMethod` → `StringMethods.TryCall`), keine Operatoren.
+
+```
+string s = "Hello, World, again"
+print(s.Length)                 // 19   (`s.length` ist ein Alias)
+print(s.IndexOf("o"))           // 4    -1, wenn nichts gefunden wird
+print(s.IndexOf("o", 5))        // 8    Suche ab Position 5
+print(s.LastIndexOf(","))       // 12   von hinten
+print(s.Substring(7, 5))        // "World";  Substring(14) = "again"
+print(s[1])                     // 'e'  Indexer liefert ein char, Zuweisung s[i] = ... ist ein Fehler
+foreach (p in "a,b,c".Split(",")) { print(p) }
+```
+
+| Mitglied | Bedeutung |
+|---|---|
+| `Length` (Property) | Anzahl der Zeichen; ebenso `Length` bei Arrays und Puffern (Alias von `length`) |
+| `IndexOf(x[, start])` | erste Position von `x` (string oder char) ab `start`, sonst -1 |
+| `LastIndexOf(x[, start])` | letzte Position von `x`; mit `start` beginnt die Rückwärtssuche dort (`0 <= start < Length`) |
+| `Substring(start[, count])` | Teilstring; ohne `count` bis zum Ende (`Substring(Length)` = `""`) |
+| `CharAt(i)` / `s[i]` | das Zeichen an Position `i` |
+| `Contains(x)`, `StartsWith(x)`, `EndsWith(x)` | `bool` |
+| `ToUpper()`, `ToLower()` | invariante Groß-/Kleinschreibung |
+| `Trim()`, `TrimStart()`, `TrimEnd()` | Leerraum entfernen |
+| `Replace(alt, neu)` | ersetzt alle Vorkommen (leeres `alt` lässt den String unverändert) |
+| `Split(trenner)` | Array von Strings (leerer Trenner: der ganze String als einziges Element) |
+| `PadLeft(breite[, füll])`, `PadRight(...)` | auf Mindestbreite auffüllen (Standard: Leerzeichen) |
+
+Eine Position außerhalb des erlaubten Bereichs wirft `IndexOutOfBoundsException` (Text beginnt mit
+„String-Index“). Das Ergebnis von `Split` ist ein Array und deshalb per `foreach` durchlaufbar.
+Der Editor kennt diese Mitglieder: `text.` schlägt sie vor, und die Typen der Ergebnisse
+(`Trim()` → string, `Split()` → string[], `IndexOf()` → int, …) laufen durch Methodenketten.
+
 ## 9. Offene Punkte
 
 Der einzige frühere Punkt hier – die Methoden-Deklarationssyntax
