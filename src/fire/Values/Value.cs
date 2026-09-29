@@ -220,6 +220,63 @@ namespace fire.Values
             a.Kind is ValueKind.Int or ValueKind.Float && b.Kind is ValueKind.Int or ValueKind.Float
             && ReferenceEquals(a._ref, b._ref);
 
+        // "In place"-Varianten der Schnellpfade für die VM (siehe VM.Step): das Ergebnis überschreibt den linken
+        // Operanden direkt im Stack, ohne Value-Kopien durch Argumente und Rückgabewert. Liefern false, wenn der
+        // Schnellpfad nicht zutrifft (andere Einheit/Art, Division durch 0, ...) - dann rechnet der Aufrufer über
+        // den allgemeinen Weg und bekommt dessen Ergebnis bzw. dessen Ausnahme.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TryAddInPlace(ref Value a, in Value b)
+        {
+            if (!BothNumericSameUnit(a, b)) return false;
+            a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
+                ? new Value(ValueKind.Int, a._bits + b._bits, a._ref)
+                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() + b.ToDouble()), a._ref);
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TrySubtractInPlace(ref Value a, in Value b)
+        {
+            if (!BothNumericSameUnit(a, b)) return false;
+            a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
+                ? new Value(ValueKind.Int, a._bits - b._bits, a._ref)
+                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() - b.ToDouble()), a._ref);
+            return true;
+        }
+
+        /// <summary>Nur für zwei Werte OHNE Einheit (dieselbe `Unitless`-Instanz) - sonst entsteht eine Produkt-Einheit.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TryMultiplyInPlace(ref Value a, in Value b)
+        {
+            if (!BothNumericSameUnit(a, b) || !ReferenceEquals(a._ref, Values.Unit.Unitless)) return false;
+            a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
+                ? new Value(ValueKind.Int, a._bits * b._bits, a._ref)
+                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() * b.ToDouble()), a._ref);
+            return true;
+        }
+
+        /// <summary>Nur int % int mit Divisor != 0 (sonst wirft der allgemeine Weg wie bisher).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TryModuloInPlace(ref Value a, in Value b)
+        {
+            if (a.Kind != ValueKind.Int || b.Kind != ValueKind.Int || !ReferenceEquals(a._ref, b._ref) || b._bits == 0 || b._bits == -1)
+                return false;
+            a = new Value(ValueKind.Int, a._bits % b._bits, a._ref);
+            return true;
+        }
+
+        /// <summary>Vergleich zweier Zahlen mit derselben Einheit-Instanz: `kind` 0 = `&lt;`, 1 = `&lt;=`, 2 = `&gt;`, 3 = `&gt;=`.
+        /// Verglichen wird wie Compare() als double.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TryCompareInPlace(ref Value a, in Value b, int kind)
+        {
+            if (!BothNumericSameUnit(a, b)) return false;
+            int c = a.ToDouble().CompareTo(b.ToDouble());
+            bool result = kind switch { 0 => c < 0, 1 => c <= 0, 2 => c > 0, _ => c >= 0 };
+            a = MakeBool(result);
+            return true;
+        }
+
         public static Value Add(Value a, Value b)
         {
             if (BothNumericSameUnit(a, b))

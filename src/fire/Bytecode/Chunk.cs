@@ -152,6 +152,13 @@ namespace fire.Bytecode
         [MemoryPackIgnore]
         public byte[] CodeArray => _codeArray ??= Code.ToArray();
 
+        /// <summary>Inline-Caches der Aufrufstellen dieses Chunks, indiziert mit dem Byte-Offset des Opcodes
+        /// (siehe SiteCache). Erst beim ersten Bedarf angelegt (nach dem Kompilieren ist die Codelänge fest).</summary>
+        [MemoryPackIgnore]
+        public SiteCache?[]? SiteCaches;
+
+        public SiteCache?[] EnsureSiteCaches() => SiteCaches ??= new SiteCache?[Code.Count + 1];
+
         [MemoryPackIgnore]
         public Value[] ConstantsArray => _constantsArray ??= Constants.ToArray();
 

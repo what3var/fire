@@ -44,6 +44,16 @@ namespace fire.Runtime
             IsGlobal = isGlobal;
         }
 
+        /// <summary>Scope mit bereits belegten Slots: `slots` gehört ab jetzt dieser Scope, die ersten `count`
+        /// Einträge sind die Parameter (der Aufrufer hat sie direkt vom Stack hineinkopiert, statt sie über ein
+        /// Zwischenarray und einzelne DefineSlot-Aufrufe zu verteilen); der Rest ist Platz für lokale Variablen.</summary>
+        public Scope(Scope? parent, Value[] slots, int count)
+        {
+            Parent = parent;
+            _slots = slots;
+            _slotCount = count;
+        }
+
         // -----------------------------------------------------------
         // Slot-Zugriff
         // -----------------------------------------------------------
@@ -76,6 +86,14 @@ namespace fire.Runtime
         {
             if ((uint)index >= (uint)_slotCount) ThrowBadSlot(index);
             return _slots![index];
+        }
+
+        /// <summary>Referenz auf einen Slot (für die VM: ein Slot wird direkt auf den Stack kopiert bzw. vom Stack
+        /// überschrieben, ohne Zwischenkopien). Gleiche Bereichsprüfung wie GetSlot.</summary>
+        public ref Value SlotRef(int index)
+        {
+            if ((uint)index >= (uint)_slotCount) ThrowBadSlot(index);
+            return ref _slots![index];
         }
 
         public void SetSlot(int index, Value value)

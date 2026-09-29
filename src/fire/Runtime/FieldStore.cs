@@ -72,6 +72,11 @@ namespace fire.Runtime
             }
         }
 
+        /// <summary>Direkter Zugriff auf ein DEKLARIERTES Feld über seinen Index (siehe RuntimeClass.FieldIndex) -
+        /// für die Inline-Caches der VM, die den Index schon kennen.</summary>
+        public Value GetAt(int index) => _known[index];
+        public void SetAt(int index, Value value) => _known[index] = value;
+
         public bool TryGetValue(string name, out Value value)
         {
             if (_rtClass != null && _rtClass.FieldIndex.TryGetValue(name, out int idx))

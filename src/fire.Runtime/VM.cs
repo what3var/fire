@@ -877,6 +877,7 @@ namespace fire.Runtime
         /// der eigentlichen Arbeit. Diese Methode hat fast keine Locals und bleibt billig. Jeder Fall hier
         /// verhält sich exakt wie sein Gegenstück in Execute; wo ein Fall nicht zutrifft (z.B. ein Objekt als
         /// linker Operand mit Operator-Überladung, eine Scope mit Besitz), fällt er nach Execute durch.</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
         private void Step(OpCode op)
         {
             switch (op)
@@ -896,23 +897,30 @@ namespace fire.Runtime
                 case OpCode.LoadLocal:
                 {
                     int depth = ReadU16(); int slot = ReadU16();
-                    Push(_currentScope.GetAncestor(depth).GetSlot(slot));
+                    if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
+                    _stack[_sp] = _currentScope.GetAncestor(depth).SlotRef(slot);
+                    _sp++;
                     return;
                 }
 
                 case OpCode.StoreLocal:
                 {
                     int depth = ReadU16(); int slot = ReadU16();
-                    _currentScope.GetAncestor(depth).SetSlot(slot, _stack[_sp - 1]);
+                    _currentScope.GetAncestor(depth).SlotRef(slot) = _stack[_sp - 1];
                     return;
                 }
 
                 case OpCode.LoadGlobal:
-                    Push(_globalScope.GetSlot(ReadU16()));
+                {
+                    int slot = ReadU16();
+                    if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
+                    _stack[_sp] = _globalScope.SlotRef(slot);
+                    _sp++;
                     return;
+                }
 
                 case OpCode.StoreGlobal:
-                    _globalScope.SetSlot(ReadU16(), _stack[_sp - 1]);
+                    _globalScope.SlotRef(ReadU16()) = _stack[_sp - 1];
                     return;
 
                 case OpCode.DeclareLocal:
@@ -922,18 +930,22 @@ namespace fire.Runtime
                 // Binäre Operatoren: der linke Operand liegt bei _sp-2, der rechte bei _sp-1; das Ergebnis
                 // ersetzt beide. Ein Objekt links (Operator-Überladung) geht durch nach Execute.
                 case OpCode.Add:
+                    if (Value.TryAddInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
                     if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Add(_stack[_sp - 2], _stack[_sp - 1])); return; }
                     break;
                 case OpCode.Sub:
+                    if (Value.TrySubtractInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
                     if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Subtract(_stack[_sp - 2], _stack[_sp - 1])); return; }
                     break;
                 case OpCode.Mul:
+                    if (Value.TryMultiplyInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
                     if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Multiply(_stack[_sp - 2], _stack[_sp - 1])); return; }
                     break;
                 case OpCode.Div:
                     if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Divide(_stack[_sp - 2], _stack[_sp - 1])); return; }
                     break;
                 case OpCode.Mod:
+                    if (Value.TryModuloInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
                     if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Modulo(_stack[_sp - 2], _stack[_sp - 1])); return; }
                     break;
                 case OpCode.Eq:
@@ -943,17 +955,116 @@ namespace fire.Runtime
                     if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(!Value.ValuesEqual(_stack[_sp - 2], _stack[_sp - 1]))); return; }
                     break;
                 case OpCode.Lt:
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 0)) { _sp--; return; }
                     if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) < 0)); return; }
                     break;
                 case OpCode.LtEq:
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 1)) { _sp--; return; }
                     if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) <= 0)); return; }
                     break;
                 case OpCode.Gt:
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 2)) { _sp--; return; }
                     if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) > 0)); return; }
                     break;
                 case OpCode.GtEq:
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 3)) { _sp--; return; }
                     if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) >= 0)); return; }
                     break;
+
+                case OpCode.CallMethod:
+                    OpCallMethod();
+                    return;
+
+                case OpCode.CallStaticMethod:
+                    OpCallStaticMethod();
+                    return;
+
+                case OpCode.Call:
+                    OpCall();
+                    return;
+
+                case OpCode.Return:
+                    OpReturn();
+                    return;
+
+                case OpCode.GetField:
+                    OpGetField();
+                    return;
+
+                case OpCode.SetField:
+                    OpSetField();
+                    return;
+
+                case OpCode.LoadThis:
+                    OpLoadThis();
+                    return;
+
+                case OpCode.SetFieldOnThis:
+                    OpSetFieldOnThis();
+                    return;
+
+                case OpCode.NewObject:
+                    OpNewObject();
+                    return;
+
+                case OpCode.GetStaticField:
+                    OpGetStaticField();
+                    return;
+
+                case OpCode.SetStaticField:
+                    OpSetStaticField();
+                    return;
+
+                case OpCode.ArrayGet:
+                    OpArrayGet();
+                    return;
+
+                case OpCode.ArraySet:
+                    OpArraySet();
+                    return;
+
+                case OpCode.IncDecIndex:
+                    OpIncDecIndex();
+                    return;
+
+                case OpCode.NewArray:
+                    OpNewArray();
+                    return;
+
+                case OpCode.MakeArrayLiteral:
+                    OpMakeArrayLiteral();
+                    return;
+
+                case OpCode.CallNative:
+                    OpCallNative();
+                    return;
+
+                case OpCode.MakeLambda:
+                    OpMakeLambda();
+                    return;
+
+                case OpCode.CallBaseMethod:
+                    OpCallBaseMethod();
+                    return;
+
+                case OpCode.NewObjectOwned:
+                    OpNewObjectOwned();
+                    return;
+
+                case OpCode.ConstructBase:
+                    OpConstructBase();
+                    return;
+
+                case OpCode.CallProtoWithThis:
+                    OpCallProtoWithThis();
+                    return;
+
+                case OpCode.Neg:
+                    _stack[_sp - 1] = Value.Negate(_stack[_sp - 1]);
+                    return;
+                case OpCode.LogicalNot:
+                    _stack[_sp - 1] = Value.LogicalNot(_stack[_sp - 1]);
+                    return;
 
                 case OpCode.Jump:
                     _ip = ReadU16();
@@ -1004,6 +1115,1074 @@ namespace fire.Runtime
             _stack[_sp - 1] = result;
         }
 
+        private void OpIncDecIndex()
+        {
+        {
+            bool isIncrement = ReadByte() != 0;
+            bool isPrefix = ReadByte() != 0;
+            var indexVal = Pop();
+            var target = Pop();
+            long idx = indexVal.AsInt();
+
+            if (target.Kind == ValueKind.Array)
+            {
+                var arr = target.AsArray();
+                if (!arr.TryGet(idx, out var oldVal))
+                {
+                    ThrowIndexOutOfBounds(idx, arr.Length);
+                    return;
+                }
+                var newVal = isIncrement ? Value.Add(oldVal, Value.MakeInt(1)) : Value.Subtract(oldVal, Value.MakeInt(1));
+                arr.TrySet(idx, newVal);
+                Push(isPrefix ? newVal : oldVal);
+            }
+            else if (target.Kind == ValueKind.Buffer)
+            {
+                var buf = target.AsBuffer();
+                if (!buf.TryGet(idx, out byte oldByte))
+                {
+                    ThrowIndexOutOfBounds(idx, buf.Length);
+                    return;
+                }
+                byte newByte = (byte)(isIncrement ? oldByte + 1 : oldByte - 1);
+                buf.TrySet(idx, newByte);
+                Push(Value.MakeInt(isPrefix ? newByte : oldByte, width: NumericWidth.W8));
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"'++'/'--' auf einem Index-Ziel erwartet ein Array oder einen Byte-Puffer, nicht {target.Kind}.");
+            }
+            return;
+        }
+        }
+
+        private void OpCallNative()
+        {
+        {
+            int nativeIdx = ReadU16();
+            int argCount = ReadByte();
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+            if (CallNativeGuarded(nativeIdx, args, out Value nativeResult))
+                Push(nativeResult);
+            return;
+        }
+        }
+
+        private void OpMakeLambda()
+        {
+        {
+            int protoIdx = ReadU16();
+            bool hasOnTarget = ReadByte() != 0;
+            var proto = _currentChunk.Functions[protoIdx];
+            object? onTarget = hasOnTarget ? BoxValueForOnTarget(Pop()) : null;
+            var lambdaValue = new LambdaValue(proto, onTarget);
+            Push(Value.MakeLambda(lambdaValue));
+            return;
+        }
+        }
+
+        // -----------------------------------------------------------
+        // Inline-Caches der Aufrufstellen (siehe Bytecode.SiteCache)
+        // -----------------------------------------------------------
+
+        /// <summary>Platz für lokale Variablen, den eine Aufruf-Scope über die Parameter hinaus gleich
+        /// mitbekommt (spart das Vergrößern des Slot-Arrays bei den ersten `var`s im Body).</summary>
+        private const int SlotSlack = 4;
+
+        /// <summary>Wechselt in den Aufruf von `proto`: die obersten `argCount` Stack-Werte werden direkt als
+        /// Parameter-Slots der neuen Scope übernommen und (zusammen mit dem darunterliegenden Empfänger/Callee, falls
+        /// `dropBelow`) vom Stack genommen. Nur für Aufrufe mit EXAKT passender Argumentanzahl (kein Standardwert nötig).</summary>
+        private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis)
+        {
+            var slots = new Value[argCount + SlotSlack];
+            Array.Copy(_stack, _sp - argCount, slots, 0, argCount);
+            _sp -= argCount + (dropBelow ? 1 : 0);
+
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+            _currentThis = newThis;
+            _currentScope = new Scope(_globalScope, slots, argCount);
+            _currentChunk = proto.Chunk;
+            _ip = 0;
+        }
+
+        private void StoreSite(int site, SiteCache entry) => _chunk.EnsureSiteCaches()[site] = entry;
+
+        private SiteCache? LookupSite(int site) => _chunk.SiteCaches?[site];
+
+        private void OpCall()
+        {
+        {
+            int argCount = ReadByte();
+
+            // Schnellpfad: ein Lambda mit genau dieser Parameterzahl (kein Standardwert nötig).
+            if (_stack[_sp - 1 - argCount] is { Kind: ValueKind.Lambda } fastCallee
+                && fastCallee.AsLambda() is LambdaValue fastLambda
+                && fastLambda.Proto.ParamCount == argCount)
+            {
+                EnterCall(fastLambda.Proto, argCount, dropBelow: true, fastLambda.OnTarget);
+                return;
+            }
+
+            OpCallSlow(argCount);
+            return;
+        }
+        }
+
+        private void OpCallSlow(int argCount)
+        {
+        {
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+            var calleeVal = Pop();
+
+            if (calleeVal.Kind != ValueKind.Lambda)
+                throw new InvalidOperationException(
+                    $"Aufruf eines Werts vom Typ {calleeVal.Kind}, der kein Lambda ist.");
+
+            var lambda = (LambdaValue)calleeVal.AsLambda();
+            CheckArity(lambda.Proto, args.Length);
+            args = FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
+
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+
+            var funcScope = new Scope(_globalScope);
+            foreach (var a in args) funcScope.DefineSlot(a);
+
+            _currentThis = lambda.OnTarget;
+            _currentScope = funcScope;
+            _currentChunk = lambda.Proto.Chunk;
+            _ip = 0;
+            return;
+        }
+        }
+
+        private void OpReturn()
+        {
+        {
+            var retVal = Pop();
+
+            // SPEC 2.3: Wird eine Objektinstanz zurückgegeben, deren
+            // Owner der gerade verlassene Scope ist, geht das Ownership
+            // an den AUFRUFENDEN Scope über (nicht einfach '.Parent' -
+            // Funktions-/Methoden-Scopes haben als Parent immer global,
+            // das wäre hier nicht die gewünschte "eine Ebene höher").
+            // Ohne das würde das zurückgegebene Objekt durch das gleich
+            // folgende Release() des eigenen Scopes sofort mit zerstört.
+            if (retVal.Kind == ValueKind.Class && _frames.Count > 0)
+            {
+                var retInstance = (ObjectInstance)retVal.AsObjectRef();
+                if (ReferenceEquals(retInstance.Owner, _currentScope))
+                    retInstance.ReparentTo(_frames.Peek().ReturnScope);
+            }
+
+            _currentScope.Release(this);
+
+            var frame = _frames.Pop();
+            _currentChunk = frame.ReturnChunk;
+            _ip = frame.ReturnIp;
+            _currentScope = frame.ReturnScope;
+            _currentThis = frame.ReturnThis;
+
+            Push(frame.ConstructedInstance != null
+                ? Value.MakeClassRef(frame.ConstructedInstance)
+                : retVal);
+            return;
+        }
+        }
+
+        private void OpNewObject()
+        {
+        {
+            int classNameIdx = ReadU16();
+            int argCount = ReadByte();
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+
+            var rc = ResolveClass(_constants[classNameIdx].AsString());
+            var ctorProto = rc.FindConstructor(args.Length)
+                ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+            if (ExecutionMode != VmExecutionMode.Performance
+                && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
+            {
+                ThrowAccessDenied(
+                    $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorProto.Access ?? AccessModifier.Public)} und von hier aus nicht aufrufbar.");
+                return;
+            }
+
+            var instance = new ObjectInstance(rc.Name, _currentScope, rc);
+            if (rc.IsActor) instance.Mailbox = new ActorMailbox();
+            args = FillDefaultArgs(ctorProto, args, instance);
+            BeginConstruction(instance, ctorProto, args);
+            return;
+        }
+        }
+
+        private void OpNewObjectOwned()
+        {
+        {
+            int classNameIdx = ReadU16();
+            int argCount = ReadByte();
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+            var owner = RequireObjectInstance(Pop(), "Objekt-Erzeugung mit Owner");
+
+            var rc = ResolveClass(_constants[classNameIdx].AsString());
+            var ctorProto = rc.FindConstructor(args.Length)
+                ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+            if (ExecutionMode != VmExecutionMode.Performance
+                && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
+            {
+                ThrowAccessDenied(
+                    $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorProto.Access ?? AccessModifier.Public)} und von hier aus nicht aufrufbar.");
+                return;
+            }
+
+            var instance = new ObjectInstance(rc.Name, owner, rc);
+            if (rc.IsActor) instance.Mailbox = new ActorMailbox();
+            args = FillDefaultArgs(ctorProto, args, instance);
+            BeginConstruction(instance, ctorProto, args);
+            return;
+        }
+        }
+
+        private void OpConstructBase()
+        {
+        {
+            int classNameIdx = ReadU16();
+            int argCount = ReadByte();
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+
+            var rc = ResolveClass(_constants[classNameIdx].AsString());
+            var ctorProto = rc.FindConstructor(args.Length)
+                ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+            args = FillDefaultArgs(ctorProto, args, _currentThis);
+
+            // Dieselbe Instanz wird weiter konstruiert - 'this' bleibt
+            // unverändert (wird trotzdem in den Frame geschrieben, damit
+            // RETURN einheitlich wiederherstellen kann).
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+
+            var baseScope = new Scope(_globalScope);
+            foreach (var a in args) baseScope.DefineSlot(a);
+
+            _currentScope = baseScope;
+            _currentChunk = ctorProto.Chunk;
+            _ip = 0;
+            return;
+        }
+        }
+
+        private void OpGetField()
+        {
+        {
+            int site = _ip - 1;
+            int fieldNameIdx = ReadU16();
+
+            // Schnellpfad (Inline-Cache): Objekt derselben Klasse wie zuvor, Feld liegt an bekanntem Index.
+            if (_stack[_sp - 1] is { Kind: ValueKind.Class } cachedTarget
+                && LookupSite(site) is { } fieldEntry
+                && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
+                && ReferenceEquals(cachedObj.RtClass, fieldEntry.Class)
+                && cachedObj.ThreadLock == null)
+            {
+                _stack[_sp - 1] = cachedObj.Fields.GetAt(fieldEntry.FieldIndex);
+                return;
+            }
+
+            OpGetFieldSlow(site, fieldNameIdx);
+            return;
+        }
+        }
+
+        private void OpGetFieldSlow(int site, int fieldNameIdx)
+        {
+        {
+            string fieldName = _constants[fieldNameIdx].AsString();
+            var target = Pop();
+
+            // `Length` ist die Schreibweise der Eigenschaften (wie bei `string`),
+            // `length` die ältere - beide bei Array/Puffer/String gleichwertig.
+            if (target.Kind == ValueKind.String)
+            {
+                if (fieldName is "Length" or "length")
+                {
+                    Push(Value.MakeInt(target.AsString().Length));
+                    return;
+                }
+                throw new InvalidOperationException($"Zeichenketten haben kein Feld '{fieldName}' (nur 'Length').");
+            }
+
+            if (target.Kind == ValueKind.Array)
+            {
+                if (fieldName is "Length" or "length")
+                {
+                    Push(Value.MakeInt(target.AsArray().Length));
+                    return;
+                }
+                throw new InvalidOperationException($"Arrays haben kein Feld '{fieldName}' (nur 'Length').");
+            }
+
+            if (target.Kind == ValueKind.Buffer)
+            {
+                var buf = target.AsBuffer();
+                if (fieldName is "Length" or "length")
+                {
+                    Push(Value.MakeInt(buf.Length));
+                    return;
+                }
+                if (fieldName == "littleEndian")
+                {
+                    Push(Value.MakeBool(buf.Order == ByteOrder.Little));
+                    return;
+                }
+                throw new InvalidOperationException(
+                    $"Byte-Puffer haben kein Feld '{fieldName}' (nur 'Length', 'littleEndian').");
+            }
+
+            var obj = RequireObjectInstance(target, "Feldzugriff");
+            if (obj.TryGetFieldLocked(fieldName, out var val))
+            {
+                if (ExecutionMode != VmExecutionMode.Performance && obj.RtClass != null)
+                {
+                    var fieldAccess = obj.RtClass.FindFieldAccess(fieldName);
+                    if (fieldAccess is (var declaringRcGet, var accessGet) && !IsMemberAccessAllowed(declaringRcGet, accessGet))
+                    {
+                        ThrowAccessDenied(
+                            $"Feld '{fieldName}' von '{declaringRcGet.Name}' ist {DescribeAccess(accessGet)} " +
+                            "und von hier aus nicht zugreifbar.");
+                        return;
+                    }
+                }
+                if (obj.RtClass != null && obj.ThreadLock == null && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int getIndex))
+                    StoreSite(site, new SiteCache(obj.RtClass, null, getIndex));
+                Push(val);
+                return;
+            }
+
+            // Kein Feld dieses Namens - Property-Getter versuchen
+            // (Namenskonvention 'get_'+Name, siehe Ast.PropertyDecl).
+            // Properties haben absichtlich NIE einen eigenen Fields-
+            // Eintrag, landen also immer hier.
+            var rcGet = ResolveClass(obj.ClassName);
+            if (rcGet.FindMethod("get_" + fieldName, 0) != null)
+            {
+                var result = CallMethodNested(obj, "get_" + fieldName, Array.Empty<Value>());
+                if (result != null) Push(result.Value);
+                return;
+            }
+
+            throw new InvalidOperationException(
+                $"Feld '{fieldName}' existiert nicht auf einer Instanz von '{obj.ClassName}' " +
+                $"(auch keine 'get_{fieldName}'-Property).");
+        }
+        }
+
+        private void OpSetField()
+        {
+        {
+            int site = _ip - 1;
+            int fieldNameIdx = ReadU16();
+
+            // Schnellpfad (Inline-Cache, siehe OpGetField): Objekt derselben Klasse wie zuvor.
+            if (_stack[_sp - 2] is { Kind: ValueKind.Class } cachedTarget
+                && LookupSite(site) is { } fieldEntry
+                && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
+                && ReferenceEquals(cachedObj.RtClass, fieldEntry.Class)
+                && cachedObj.ThreadLock == null)
+            {
+                var assigned = _stack[_sp - 1];
+                cachedObj.Fields.SetAt(fieldEntry.FieldIndex, assigned);
+                _sp--;
+                _stack[_sp - 1] = assigned;
+                return;
+            }
+
+            OpSetFieldSlow(site, fieldNameIdx);
+            return;
+        }
+        }
+
+        private void OpSetFieldSlow(int site, int fieldNameIdx)
+        {
+        {
+            string fieldName = _constants[fieldNameIdx].AsString();
+            var value = Pop();
+            var obj = RequireObjectInstance(Pop(), "Feldzuweisung");
+
+            if (obj.HasFieldLocked(fieldName))
+            {
+                bool hasUnitRule = false;
+                if (ExecutionMode != VmExecutionMode.Performance && obj.RtClass != null)
+                {
+                    var fieldAccess = obj.RtClass.FindFieldAccess(fieldName);
+                    if (fieldAccess is (var declaringRcSet, var accessSet) && !IsMemberAccessAllowed(declaringRcSet, accessSet))
+                    {
+                        ThrowAccessDenied(
+                            $"Feld '{fieldName}' von '{declaringRcSet.Name}' ist {DescribeAccess(accessSet)} " +
+                            "und von hier aus nicht zugreifbar.");
+                        return;
+                    }
+
+                    // SPEC "Einheiten-Deklarationen" - Feldzugriff ist
+                    // grundsätzlich dynamisch (die tatsächliche Klasse
+                    // steht erst hier, zur Laufzeit, fest), deshalb
+                    // anders als bei lokalen/globalen Variablen KEINE
+                    // Compile-Zeit-Prüfung möglich (siehe Compiler.
+                    // CompileClassBody-Kommentar) - die Prüfung selbst
+                    // ist aber inhaltlich identisch zu OpCode.CheckUnit.
+                    string? requiredUnitName = obj.RtClass.FindFieldRequiredUnit(fieldName);
+                    if (requiredUnitName != null)
+                    {
+                        hasUnitRule = true; // jede Zuweisung muss die Einheit prüfen - nicht cachen
+                        var requiredUnit = Values.Unit.Parse(requiredUnitName);
+                        var actualUnit = value.Unit ?? Values.Unit.Unitless;
+                        if (!actualUnit.Equals(requiredUnit))
+                        {
+                            ThrowUnitMismatch(requiredUnitName, actualUnit);
+                            return;
+                        }
+                    }
+                }
+                if (!hasUnitRule && obj.RtClass != null && obj.ThreadLock == null
+                    && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
+                    StoreSite(site, new SiteCache(obj.RtClass, null, setIndex));
+                obj.SetFieldLocked(fieldName, value);
+                Push(value);
+                return;
+            }
+
+            // Kein existierendes Feld dieses Namens - Property-Setter
+            // versuchen (Namenskonvention 'set_'+Name).
+            var rcSet = ResolveClass(obj.ClassName);
+            if (rcSet.FindMethod("set_" + fieldName, 1) != null)
+            {
+                var result = CallMethodNested(obj, "set_" + fieldName, new[] { value });
+                // Rückgabewert des Setters selbst unbenutzt - eine
+                // Zuweisung wertet immer zum ZUGEWIESENEN Wert aus,
+                // nicht zu dem, was der Setter zurückgibt. null ==
+                // per Exception umgeleitet (siehe CallMethodNested-
+                // Doku) - dann NICHT pushen.
+                if (result != null) Push(value);
+                return;
+            }
+
+            // Eine gleichnamige Property MIT Getter, aber OHNE Setter,
+            // existiert - das ist ein Fehler, KEIN "neues Feld anlegen"
+            // (sonst würde die Property ab hier unbemerkt durch ein
+            // gleichnamiges Feld überschattet, auch für künftige
+            // Lesezugriffe über GetField, das Felder vor Properties
+            // prüft).
+            if (rcSet.FindMethod("get_" + fieldName, 0) != null)
+                throw new InvalidOperationException(
+                    $"Property '{fieldName}' auf '{obj.ClassName}' hat keinen Setter (nur 'get').");
+
+            // Weder existierendes Feld noch Property - wie bisher:
+            // neues Feld einfach anlegen (dynamische Sprache, keine
+            // Vorab-Deklarationspflicht für Felder).
+            obj.SetFieldLocked(fieldName, value);
+            Push(value);
+            return;
+        }
+        }
+
+        private void OpLoadThis()
+        {
+            Push(_currentThis switch
+            {
+                null => throw new InvalidOperationException("'this' ist an dieser Stelle nicht gebunden."),
+                ObjectInstance oi => Value.MakeClassRef(oi),
+                Value v => v,
+                _ => throw new InvalidOperationException("Unerwarteter 'this'-Wert."),
+            });
+            return;
+        }
+
+        private void OpSetFieldOnThis()
+        {
+        {
+            string fieldName = _constants[ReadU16()].AsString();
+            var value = Pop();
+            if (_currentThis is not ObjectInstance oi)
+                throw new InvalidOperationException("SetFieldOnThis ohne gebundene ObjectInstance als 'this'.");
+
+            // SPEC "Einheiten-Deklarationen" - dieselbe Prüfung wie in
+            // SetField (siehe dort für die Begründung, warum das zur
+            // Laufzeit statt zur Compile-Zeit passiert). Dieser Opcode
+            // wird für die Feld-INITIALISIERER selbst benutzt (siehe
+            // Compiler.CompileConstructorProto) - `int x : mm = 5`
+            // würde ohne diese Prüfung hier den ersten, deklarierten
+            // Wert komplett ungeprüft durchlassen.
+            if (ExecutionMode != VmExecutionMode.Performance && oi.RtClass != null)
+            {
+                string? requiredUnitName = oi.RtClass.FindFieldRequiredUnit(fieldName);
+                if (requiredUnitName != null)
+                {
+                    var requiredUnit = Values.Unit.Parse(requiredUnitName);
+                    var actualUnit = value.Unit ?? Values.Unit.Unitless;
+                    if (!actualUnit.Equals(requiredUnit))
+                    {
+                        ThrowUnitMismatch(requiredUnitName, actualUnit);
+                        return;
+                    }
+                }
+            }
+
+            oi.SetFieldLocked(fieldName, value);
+            return;
+        }
+        }
+
+        private void OpCallMethod()
+        {
+        {
+            int site = _ip - 1;
+            int methodNameIdx = ReadU16();
+            int argCount = ReadByte();
+
+            // Schnellpfad (Inline-Cache, siehe SiteCache): ein Objekt derselben Klasse wie beim letzten Aufruf
+            // dieser Stelle - Methode, Zugriffs- und Argumentprüfung sind schon erledigt.
+            if (_stack[_sp - 1 - argCount] is { Kind: ValueKind.Class } cachedTarget
+                && LookupSite(site) is { Proto: { } cachedMethod } siteEntry
+                && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
+                && ReferenceEquals(cachedObj.RtClass, siteEntry.Class)
+                && cachedObj.Mailbox == null)
+            {
+                EnterCall(cachedMethod, argCount, dropBelow: true, cachedObj);
+                return;
+            }
+
+            OpCallMethodSlow(site, methodNameIdx, argCount);
+            return;
+        }
+        }
+
+        private void OpCallMethodSlow(int site, int methodNameIdx, int argCount)
+        {
+        {
+            string methodName = _constants[methodNameIdx].AsString();
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+            var target = Pop();
+
+            // Eingebaute Methoden auf primitiven Werten (String/Char/
+            // Int(als byte)/Buffer, siehe TryCallBuiltinMethod, SPEC
+            // 8.10) - GETRENNT vom normalen Klassen-Methodenaufruf
+            // unten, da ein primitiver Wert keine ObjectInstance ist
+            // und nie eine war (RequireObjectInstance würde hier
+            // sonst fälschlich ablehnen).
+            if (target.Kind != ValueKind.Class)
+            {
+                // `foreach (x in array)` / `foreach (b in buffer)`: ein Array/Puffer ist
+                // keine Objektinstanz mit eigenem GetEnumerator() - hier ein
+                // ListEnumerator der Prelude darüber (dieselbe Klasse, die `List`
+                // benutzt; sie liest nur `items[index]`/`count`). Ohne Prelude (reine
+                // Kernprogramme) bleibt es beim Fehler unten.
+                if (methodName == "GetEnumerator" && args.Length == 0
+                    && target.Kind is ValueKind.Array or ValueKind.Buffer
+                    && _classes.TryGetValue("ListEnumerator", out var enumeratorClass))
+                {
+                    long itemCount = target.Kind == ValueKind.Array ? target.AsArray().Length : target.AsBuffer().Length;
+                    var enumerator = ConstructNested(enumeratorClass, new[] { target, Value.MakeInt(itemCount) });
+                    Push(Value.MakeClassRef(enumerator));
+                    return;
+                }
+
+                // Methoden aus einer Basistyp-Erweiterung (`class extends string { ... }`,
+                // SPEC 5.5.1 - z.B. IndexOf/Substring im Prelude): wie ein Objekt-Aufruf, nur
+                // ist `this` der Wert selbst. Vor den fest eingebauten Konvertierungen unten.
+                if (_baseTypeClasses[(int)target.Kind] is { } extensionRc)
+                {
+                    var (extProto, extDeclaringRc, extAccess) = extensionRc.FindMethodWithAccess(methodName, args.Length);
+                    if (extProto != null)
+                    {
+                        if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(extDeclaringRc!, extAccess))
+                        {
+                            ThrowAccessDenied(
+                                $"Methode '{methodName}' der Erweiterung von '{extensionRc.Name.Substring(1)}' ist " +
+                                $"{DescribeAccess(extAccess)} und von hier aus nicht aufrufbar.");
+                            return;
+                        }
+                        CheckArity(extProto, args.Length);
+                        args = FillDefaultArgs(extProto, args, target);
+
+                        _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+                        var extScope = new Scope(_globalScope);
+                        foreach (var a in args) extScope.DefineSlot(a);
+
+                        _currentThis = target;
+                        _currentScope = extScope;
+                        _currentChunk = extProto.Chunk;
+                        _ip = 0;
+                        return;
+                    }
+                }
+
+                if (TryCallBuiltinMethod(target, methodName, args, out Value builtinResult))
+                {
+                    Push(builtinResult);
+                    return;
+                }
+                throw new InvalidOperationException(
+                    $"'{methodName}' ({args.Length} Argument(e)) ist keine bekannte eingebaute Methode " +
+                    $"auf einem Wert vom Typ {target.Kind}.");
+            }
+
+            var obj = (ObjectInstance)target.AsObjectRef();
+
+            // Actor-Ziel (siehe Runtime.ObjectInstance.Mailbox-Doku):
+            // JEDER Methodenaufruf wird zu einer asynchronen Nachricht
+            // statt eines direkten Aufrufs, unabhängig vom rufenden
+            // Thread - dieser Aufruf selbst liefert 'undefined' und
+            // läuft normal weiter (kein Sprung in irgendeinen Chunk).
+            if (obj.Mailbox != null)
+            {
+                obj.Mailbox.Enqueue(new ActorMessage(methodName, args));
+                Push(Value.MakeUndefined());
+                return;
+            }
+
+            var rc = ResolveClass(obj.ClassName);
+            var (proto, declaringRcCall, accessCall) = rc.FindMethodWithAccess(methodName, args.Length);
+            if (proto == null)
+                throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
+            if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
+            {
+                ThrowAccessDenied(
+                    $"Methode '{methodName}' von '{declaringRcCall!.Name}' ist {DescribeAccess(accessCall)} " +
+                    "und von hier aus nicht aufrufbar.");
+                return;
+            }
+            CheckArity(proto, args.Length);
+            if (proto.ParamCount == argCount && obj.RtClass != null)
+                StoreSite(site, new SiteCache(obj.RtClass, proto, 0));
+            args = FillDefaultArgs(proto, args, obj);
+
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+            var scope = new Scope(_globalScope);
+            foreach (var a in args) scope.DefineSlot(a);
+
+            _currentThis = obj;
+            _currentScope = scope;
+            _currentChunk = proto.Chunk;
+            _ip = 0;
+            return;
+        }
+        }
+
+        private void OpCallBaseMethod()
+        {
+        {
+            string baseClassName = _constants[ReadU16()].AsString();
+            string methodName = _constants[ReadU16()].AsString();
+            int argCount = ReadByte();
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+
+            var rc = ResolveClass(baseClassName);
+            var (proto, declaringRcBase, accessBase) = rc.FindMethodWithAccess(methodName, args.Length);
+            if (proto == null)
+                throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
+            if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcBase!, accessBase))
+            {
+                ThrowAccessDenied(
+                    $"Methode '{methodName}' von '{declaringRcBase!.Name}' ist {DescribeAccess(accessBase)} " +
+                    "und von hier aus nicht aufrufbar.");
+                return;
+            }
+            CheckArity(proto, args.Length);
+            args = FillDefaultArgs(proto, args, _currentThis);
+
+            // 'this' bleibt dasselbe Objekt (nicht-virtueller Aufruf).
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+            var scope = new Scope(_globalScope);
+            foreach (var a in args) scope.DefineSlot(a);
+
+            _currentScope = scope;
+            _currentChunk = proto.Chunk;
+            _ip = 0;
+            return;
+        }
+        }
+
+        private void OpGetStaticField()
+        {
+        {
+            // SPEC "Statische Mitglieder" - kein Objekt auf dem Stack
+            // (der Klassenname steht schon als Konstante im Bytecode,
+            // siehe Resolver.TryResolveStaticMemberAccess/Compiler),
+            // die eigentliche Speicherstelle liegt direkt auf der
+            // RuntimeClass (siehe FindStaticFieldOwner - teilt sich
+            // ggf. mit einer Basisklasse dieselbe Speicherstelle).
+            string className = _constants[ReadU16()].AsString();
+            string fieldName = _constants[ReadU16()].AsString();
+            var staticRc = ResolveClass(className);
+            var owner = staticRc.FindStaticFieldOwner(fieldName);
+
+            if (owner == null)
+            {
+                // Kein statisches Feld dieses Namens - Property-
+                // Getter versuchen (Namenskonvention 'get_'+Name,
+                // genau wie bei GetField), diesmal als STATISCHER
+                // Aufruf (keine Instanz).
+                if (staticRc.FindMethod("get_" + fieldName, 0) is { IsStatic: true })
+                {
+                    var result = CallStaticMethodNested(staticRc, "get_" + fieldName, Array.Empty<Value>());
+                    if (result != null) Push(result.Value);
+                    return;
+                }
+                throw new InvalidOperationException(
+                    $"'{className}' hat kein statisches Feld '{fieldName}' (auch keine statische " +
+                    $"'get_{fieldName}'-Property).");
+            }
+
+            if (ExecutionMode != VmExecutionMode.Performance)
+            {
+                var fieldAccess = owner.FindFieldAccess(fieldName);
+                if (fieldAccess is (var declaringRc, var access) && !IsMemberAccessAllowed(declaringRc, access))
+                {
+                    ThrowAccessDenied(
+                        $"Statisches Feld '{fieldName}' von '{declaringRc.Name}' ist {DescribeAccess(access)} " +
+                        "und von hier aus nicht zugreifbar.");
+                    return;
+                }
+            }
+
+            Push(owner.StaticFieldValues.TryGetValue(fieldName, out var staticVal) ? staticVal : Value.MakeUndefined());
+            return;
+        }
+        }
+
+        private void OpSetStaticField()
+        {
+        {
+            string setClassName = _constants[ReadU16()].AsString();
+            string setFieldName = _constants[ReadU16()].AsString();
+            var setValue = Pop();
+            var setRc = ResolveClass(setClassName);
+            var setOwner = setRc.FindStaticFieldOwner(setFieldName);
+
+            if (setOwner == null)
+            {
+                // Kein statisches Feld dieses Namens - statischen
+                // Property-Setter versuchen (Namenskonvention
+                // 'set_'+Name, Gegenstück zum Getter-Fallback in
+                // GetStaticField, siehe auch SetField).
+                if (setRc.FindMethod("set_" + setFieldName, 1) is { IsStatic: true })
+                {
+                    var setterResult = CallStaticMethodNested(setRc, "set_" + setFieldName, new[] { setValue });
+                    // Eine Zuweisung wertet zum ZUGEWIESENEN Wert aus,
+                    // nicht zum Rückgabewert des Setters. null == per
+                    // Exception umgeleitet - dann NICHT pushen.
+                    if (setterResult != null) Push(setValue);
+                    return;
+                }
+                throw new InvalidOperationException(
+                    $"'{setClassName}' hat kein statisches Feld '{setFieldName}' (auch keine statische " +
+                    $"'set_{setFieldName}'-Property).");
+            }
+
+            if (ExecutionMode != VmExecutionMode.Performance)
+            {
+                var fieldAccess = setOwner.FindFieldAccess(setFieldName);
+                if (fieldAccess is (var declaringRc, var access) && !IsMemberAccessAllowed(declaringRc, access))
+                {
+                    ThrowAccessDenied(
+                        $"Statisches Feld '{setFieldName}' von '{declaringRc.Name}' ist {DescribeAccess(access)} " +
+                        "und von hier aus nicht zugreifbar.");
+                    return;
+                }
+
+                // SPEC "Einheiten-Deklarationen" - inhaltlich identisch
+                // zu SetField, siehe dort.
+                string? requiredUnitName = setOwner.FindFieldRequiredUnit(setFieldName);
+                if (requiredUnitName != null)
+                {
+                    var requiredUnit = Values.Unit.Parse(requiredUnitName);
+                    var actualUnit = setValue.Unit ?? Values.Unit.Unitless;
+                    if (!actualUnit.Equals(requiredUnit))
+                    {
+                        ThrowUnitMismatch(requiredUnitName, actualUnit);
+                        return;
+                    }
+                }
+            }
+
+            setOwner.StaticFieldValues[setFieldName] = setValue;
+            Push(setValue);
+            return;
+        }
+        }
+
+        private void OpCallStaticMethod()
+        {
+        {
+            int site = _ip - 1;
+            int classNameIdx = ReadU16();
+            int methodNameIdx = ReadU16();
+            int callArgCount = ReadByte();
+
+            // Schnellpfad: dieselbe Stelle hat sich schon einmal aufgelöst (Klasse/Methode stehen als Konstanten
+            // im Bytecode fest, siehe SiteCache) - kein Lookup nach Klassen- und Methodenname mehr.
+            if (LookupSite(site) is { Proto: { } cachedStatic })
+            {
+                EnterCall(cachedStatic, callArgCount, dropBelow: false, newThis: null);
+                return;
+            }
+
+            OpCallStaticMethodSlow(site, classNameIdx, methodNameIdx, callArgCount);
+            return;
+        }
+        }
+
+        private void OpCallStaticMethodSlow(int site, int classNameIdx, int methodNameIdx, int callArgCount)
+        {
+        {
+            string callClassName = _constants[classNameIdx].AsString();
+            string callMethodName = _constants[methodNameIdx].AsString();
+            var callArgs = new Value[callArgCount];
+            for (int i = callArgCount - 1; i >= 0; i--) callArgs[i] = Pop();
+
+            var callRc = ResolveClass(callClassName);
+            var (callProto, declaringRcCall, accessCall) = callRc.FindMethodWithAccess(callMethodName, callArgs.Length);
+            if (callProto == null)
+                throw new InvalidOperationException(DescribeMethodNotFound(callRc, callMethodName, callArgs.Length));
+            if (!callProto.IsStatic)
+                throw new InvalidOperationException(
+                    $"'{callMethodName}' auf '{callClassName}' ist keine statische Methode - " +
+                    $"über 'ClassName.{callMethodName}(...)' nur für 'static'-Methoden aufrufbar.");
+            if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
+            {
+                ThrowAccessDenied(
+                    $"Statische Methode '{callMethodName}' von '{declaringRcCall!.Name}' ist " +
+                    $"{DescribeAccess(accessCall)} und von hier aus nicht aufrufbar.");
+                return;
+            }
+            CheckArity(callProto, callArgs.Length);
+            callArgs = FillDefaultArgs(callProto, callArgs, null);
+
+            if (callProto.ParamCount == callArgCount)
+                StoreSite(site, new SiteCache(null, callProto, 0));
+
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+            var callScope = new Scope(_globalScope);
+            foreach (var a in callArgs) callScope.DefineSlot(a);
+
+            // Explizit KEIN 'this' (anders als oben bei CallBaseMethod,
+            // das die aufrufende Instanz beibehält) - der Resolver
+            // verbietet 'this'/'super' im Körper einer statischen
+            // Methode bereits (siehe Resolver.ResolveExpr/ThisExpr),
+            // das hier ist die zusätzliche Laufzeit-Absicherung dafür.
+            _currentThis = null;
+            _currentScope = callScope;
+            _currentChunk = callProto.Chunk;
+            _ip = 0;
+            return;
+        }
+        }
+
+        private void OpCallProtoWithThis()
+        {
+        {
+            int protoIdx = ReadU16();
+            int argCount = ReadByte();
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+            var thisVal = Pop();
+            var proto = _currentChunk.Functions[protoIdx];
+            CheckArity(proto, args.Length);
+
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+            var scope = new Scope(_globalScope);
+            foreach (var a in args) scope.DefineSlot(a);
+
+            _currentThis = thisVal.Kind == ValueKind.Class ? thisVal.AsObjectRef() : (object)thisVal;
+            _currentScope = scope;
+            _currentChunk = proto.Chunk;
+            _ip = 0;
+            return;
+        }
+        }
+
+        private void OpNewArray()
+        {
+        {
+            long size = Pop().AsInt();
+            if (size < 0)
+                throw new InvalidOperationException($"Ungültige Array-Größe {size}.");
+            Push(Value.MakeArray(new ScriptArray((int)size)));
+            return;
+        }
+        }
+
+        private void OpMakeArrayLiteral()
+        {
+        {
+            int count = ReadU16();
+            var arr = new ScriptArray(count);
+            for (int i = count - 1; i >= 0; i--)
+                arr.Items[i] = Pop();
+            Push(Value.MakeArray(arr));
+            return;
+        }
+        }
+
+        private void OpArrayGet()
+        {
+        {
+            var indexVal = Pop();
+            var target = Pop();
+
+            if (target.Kind == ValueKind.Array)
+            {
+                if (ExecutionMode == VmExecutionMode.Performance)
+                {
+                    // Siehe VmExecutionMode.Performance-Doku - KEINE
+                    // Bounds-Prüfung, ein ungültiger Index führt zu
+                    // einer rohen .NET-IndexOutOfRangeException statt
+                    // einer fangbaren Skript-Exception.
+                    Push(target.AsArray().GetUnchecked(indexVal.AsInt()));
+                }
+                else
+                {
+                    long idx = indexVal.AsInt();
+                    if (target.AsArray().TryGet(idx, out var v))
+                        Push(v);
+                    else
+                        // Macht einen ungültigen Index zu einer echten,
+                        // fangbaren Skript-Exception statt eines rohen
+                        // C#-Fehlers - KEIN Push hier, ThrowIndexOutOfBounds
+                        // hat _currentChunk/_ip bereits umgeleitet.
+                        ThrowIndexOutOfBounds(idx, target.AsArray().Length);
+                }
+            }
+            else if (target.Kind == ValueKind.Buffer)
+            {
+                // Liefert IMMER int[8] (Width W8, siehe Values.NumericWidth) -
+                // 'byte' ist reines Typ-Sugar für int[8] (SPEC 8.10),
+                // kein eigener ValueKind, ein einzelnes Byte ist deshalb
+                // einfach ein normaler int-Wert mit dieser Breite.
+                if (ExecutionMode == VmExecutionMode.Performance)
+                {
+                    byte bFast = target.AsBuffer().GetUnchecked(indexVal.AsInt());
+                    Push(Value.MakeInt(bFast, width: NumericWidth.W8));
+                }
+                else
+                {
+                    long idx = indexVal.AsInt();
+                    if (target.AsBuffer().TryGet(idx, out byte b))
+                        Push(Value.MakeInt(b, width: NumericWidth.W8));
+                    else
+                        ThrowIndexOutOfBounds(idx, target.AsBuffer().Length);
+                }
+            }
+            else if (target.Kind == ValueKind.String)
+            {
+                // `s[i]` liest das Zeichen an Index i (nur lesend - Zeichenketten sind
+                // unveränderlich, siehe ArraySet).
+                long idx = indexVal.AsInt();
+                string text = target.AsString();
+                if (idx >= 0 && idx < text.Length)
+                    Push(Value.MakeChar(text[(int)idx]));
+                else
+                    ThrowIndexOutOfBounds(idx, text.Length, "String-Index");
+            }
+            else if (target.Kind == ValueKind.Class)
+            {
+                // '[]'-Operator-Überladung per Namenskonvention (wie
+                // GetEnumerator/MoveNext/GetCurrent bei foreach): eine
+                // Klasse mit einer GetIndex(i)-Methode wird für Lesezugriffe
+                // benutzt - rein dynamisch, funktioniert auf jeder Klasse
+                // mit passender Methode, nicht nur auf 'List'.
+                var obj = (ObjectInstance)target.AsObjectRef();
+                var result = CallMethodNested(obj, "GetIndex", new[] { indexVal });
+                // null == GetIndex() wurde durch eine geworfene Exception
+                // verlassen (siehe CallMethodNested-Doku) - dann NICHT
+                // pushen, die Ausführung läuft bereits anderswo weiter.
+                if (result != null) Push(result.Value);
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Index-Zugriff ('[]') auf einem Wert vom Typ {target.Kind} nicht möglich " +
+                    "(weder Array noch eine Klasse mit 'GetIndex'-Methode).");
+            }
+            return;
+        }
+        }
+
+        private void OpArraySet()
+        {
+        {
+            var value = Pop();
+            var indexVal = Pop();
+            var target = Pop();
+
+            if (target.Kind == ValueKind.Array)
+            {
+                if (ExecutionMode == VmExecutionMode.Performance)
+                {
+                    target.AsArray().SetUnchecked(indexVal.AsInt(), value);
+                    Push(value);
+                }
+                else
+                {
+                    long idx = indexVal.AsInt();
+                    if (target.AsArray().TrySet(idx, value))
+                        Push(value);
+                    else
+                        // Kein Push hier - ThrowIndexOutOfBounds hat
+                        // _currentChunk/_ip bereits umgeleitet, ein
+                        // zusätzlicher Push würde den Stack dort verschieben.
+                        ThrowIndexOutOfBounds(idx, target.AsArray().Length);
+                }
+            }
+            else if (target.Kind == ValueKind.Buffer)
+            {
+                if (value.Kind != ValueKind.Int)
+                    throw new InvalidOperationException(
+                        $"Byte-Puffer-Zuweisung erwartet einen int-Wert (byte = int[8]), nicht {value.Kind}.");
+                if (ExecutionMode == VmExecutionMode.Performance)
+                {
+                    target.AsBuffer().SetUnchecked(indexVal.AsInt(), (byte)value.AsInt());
+                    Push(value);
+                }
+                else
+                {
+                    long idx = indexVal.AsInt();
+                    if (target.AsBuffer().TrySet(idx, (byte)value.AsInt()))
+                        Push(value);
+                    else
+                        ThrowIndexOutOfBounds(idx, target.AsBuffer().Length);
+                }
+            }
+            else if (target.Kind == ValueKind.Class)
+            {
+                var obj = (ObjectInstance)target.AsObjectRef();
+                var result = CallMethodNested(obj, "SetIndex", new[] { indexVal, value }); // Rückgabewert unbenutzt
+                // null == SetIndex() wurde durch eine geworfene Exception
+                // verlassen (siehe CallMethodNested-Doku) - dann NICHT
+                // pushen, die Ausführung läuft bereits anderswo weiter.
+                if (result != null) Push(value);
+            }
+            else if (target.Kind == ValueKind.String)
+            {
+                throw new InvalidOperationException(
+                    "Zeichenketten sind unveränderlich - 's[i] = ...' ist nicht möglich " +
+                    "(Replace/Substring liefern eine neue Zeichenkette).");
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Index-Zuweisung ('[]=') auf einem Wert vom Typ {target.Kind} nicht möglich " +
+                    "(weder Array noch eine Klasse mit 'SetIndex'-Methode).");
+            }
+            return;
+        }
+        }
+
         private void Execute(OpCode op)
         {
             switch (op)
@@ -1041,44 +2220,8 @@ namespace fire.Runtime
                 }
 
                 case OpCode.IncDecIndex:
-                {
-                    bool isIncrement = ReadByte() != 0;
-                    bool isPrefix = ReadByte() != 0;
-                    var indexVal = Pop();
-                    var target = Pop();
-                    long idx = indexVal.AsInt();
-
-                    if (target.Kind == ValueKind.Array)
-                    {
-                        var arr = target.AsArray();
-                        if (!arr.TryGet(idx, out var oldVal))
-                        {
-                            ThrowIndexOutOfBounds(idx, arr.Length);
-                            break;
-                        }
-                        var newVal = isIncrement ? Value.Add(oldVal, Value.MakeInt(1)) : Value.Subtract(oldVal, Value.MakeInt(1));
-                        arr.TrySet(idx, newVal);
-                        Push(isPrefix ? newVal : oldVal);
-                    }
-                    else if (target.Kind == ValueKind.Buffer)
-                    {
-                        var buf = target.AsBuffer();
-                        if (!buf.TryGet(idx, out byte oldByte))
-                        {
-                            ThrowIndexOutOfBounds(idx, buf.Length);
-                            break;
-                        }
-                        byte newByte = (byte)(isIncrement ? oldByte + 1 : oldByte - 1);
-                        buf.TrySet(idx, newByte);
-                        Push(Value.MakeInt(isPrefix ? newByte : oldByte, width: NumericWidth.W8));
-                    }
-                    else
-                    {
-                        throw new InvalidOperationException(
-                            $"'++'/'--' auf einem Index-Ziel erwartet ein Array oder einen Byte-Puffer, nicht {target.Kind}.");
-                    }
+                    OpIncDecIndex();
                     break;
-                }
 
                 case OpCode.LoadLocal:
                 {
@@ -1212,15 +2355,8 @@ namespace fire.Runtime
                     break;
 
                 case OpCode.CallNative:
-                {
-                    int nativeIdx = ReadU16();
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-                    if (CallNativeGuarded(nativeIdx, args, out Value nativeResult))
-                        Push(nativeResult);
+                    OpCallNative();
                     break;
-                }
 
                 case OpCode.CallTryableNative:
                 {
@@ -1284,597 +2420,60 @@ namespace fire.Runtime
                 }
 
                 case OpCode.MakeLambda:
-                {
-                    int protoIdx = ReadU16();
-                    bool hasOnTarget = ReadByte() != 0;
-                    var proto = _currentChunk.Functions[protoIdx];
-                    object? onTarget = hasOnTarget ? BoxValueForOnTarget(Pop()) : null;
-                    var lambdaValue = new LambdaValue(proto, onTarget);
-                    Push(Value.MakeLambda(lambdaValue));
+                    OpMakeLambda();
                     break;
-                }
 
                 case OpCode.Call:
-                {
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-                    var calleeVal = Pop();
-
-                    if (calleeVal.Kind != ValueKind.Lambda)
-                        throw new InvalidOperationException(
-                            $"Aufruf eines Werts vom Typ {calleeVal.Kind}, der kein Lambda ist.");
-
-                    var lambda = (LambdaValue)calleeVal.AsLambda();
-                    CheckArity(lambda.Proto, args.Length);
-                    args = FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
-
-                    _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-
-                    var funcScope = new Scope(_globalScope);
-                    foreach (var a in args) funcScope.DefineSlot(a);
-
-                    _currentThis = lambda.OnTarget;
-                    _currentScope = funcScope;
-                    _currentChunk = lambda.Proto.Chunk;
-                    _ip = 0;
+                    OpCall();
                     break;
-                }
 
                 case OpCode.Return:
-                {
-                    var retVal = Pop();
-
-                    // SPEC 2.3: Wird eine Objektinstanz zurückgegeben, deren
-                    // Owner der gerade verlassene Scope ist, geht das Ownership
-                    // an den AUFRUFENDEN Scope über (nicht einfach '.Parent' -
-                    // Funktions-/Methoden-Scopes haben als Parent immer global,
-                    // das wäre hier nicht die gewünschte "eine Ebene höher").
-                    // Ohne das würde das zurückgegebene Objekt durch das gleich
-                    // folgende Release() des eigenen Scopes sofort mit zerstört.
-                    if (retVal.Kind == ValueKind.Class && _frames.Count > 0)
-                    {
-                        var retInstance = (ObjectInstance)retVal.AsObjectRef();
-                        if (ReferenceEquals(retInstance.Owner, _currentScope))
-                            retInstance.ReparentTo(_frames.Peek().ReturnScope);
-                    }
-
-                    _currentScope.Release(this);
-
-                    var frame = _frames.Pop();
-                    _currentChunk = frame.ReturnChunk;
-                    _ip = frame.ReturnIp;
-                    _currentScope = frame.ReturnScope;
-                    _currentThis = frame.ReturnThis;
-
-                    Push(frame.ConstructedInstance != null
-                        ? Value.MakeClassRef(frame.ConstructedInstance)
-                        : retVal);
+                    OpReturn();
                     break;
-                }
 
                 case OpCode.NewObject:
-                {
-                    int classNameIdx = ReadU16();
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-
-                    var rc = ResolveClass(_constants[classNameIdx].AsString());
-                    var ctorProto = rc.FindConstructor(args.Length)
-                        ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
-                    if (ExecutionMode != VmExecutionMode.Performance
-                        && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
-                    {
-                        ThrowAccessDenied(
-                            $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorProto.Access ?? AccessModifier.Public)} und von hier aus nicht aufrufbar.");
-                        break;
-                    }
-
-                    var instance = new ObjectInstance(rc.Name, _currentScope, rc);
-                    if (rc.IsActor) instance.Mailbox = new ActorMailbox();
-                    args = FillDefaultArgs(ctorProto, args, instance);
-                    BeginConstruction(instance, ctorProto, args);
+                    OpNewObject();
                     break;
-                }
 
                 case OpCode.NewObjectOwned:
-                {
-                    int classNameIdx = ReadU16();
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-                    var owner = RequireObjectInstance(Pop(), "Objekt-Erzeugung mit Owner");
-
-                    var rc = ResolveClass(_constants[classNameIdx].AsString());
-                    var ctorProto = rc.FindConstructor(args.Length)
-                        ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
-                    if (ExecutionMode != VmExecutionMode.Performance
-                        && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
-                    {
-                        ThrowAccessDenied(
-                            $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorProto.Access ?? AccessModifier.Public)} und von hier aus nicht aufrufbar.");
-                        break;
-                    }
-
-                    var instance = new ObjectInstance(rc.Name, owner, rc);
-                    if (rc.IsActor) instance.Mailbox = new ActorMailbox();
-                    args = FillDefaultArgs(ctorProto, args, instance);
-                    BeginConstruction(instance, ctorProto, args);
+                    OpNewObjectOwned();
                     break;
-                }
 
                 case OpCode.ConstructBase:
-                {
-                    int classNameIdx = ReadU16();
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-
-                    var rc = ResolveClass(_constants[classNameIdx].AsString());
-                    var ctorProto = rc.FindConstructor(args.Length)
-                        ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
-                    args = FillDefaultArgs(ctorProto, args, _currentThis);
-
-                    // Dieselbe Instanz wird weiter konstruiert - 'this' bleibt
-                    // unverändert (wird trotzdem in den Frame geschrieben, damit
-                    // RETURN einheitlich wiederherstellen kann).
-                    _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-
-                    var baseScope = new Scope(_globalScope);
-                    foreach (var a in args) baseScope.DefineSlot(a);
-
-                    _currentScope = baseScope;
-                    _currentChunk = ctorProto.Chunk;
-                    _ip = 0;
+                    OpConstructBase();
                     break;
-                }
 
                 case OpCode.GetField:
-                {
-                    string fieldName = _constants[ReadU16()].AsString();
-                    var target = Pop();
-
-                    // `Length` ist die Schreibweise der Eigenschaften (wie bei `string`),
-                    // `length` die ältere - beide bei Array/Puffer/String gleichwertig.
-                    if (target.Kind == ValueKind.String)
-                    {
-                        if (fieldName is "Length" or "length")
-                        {
-                            Push(Value.MakeInt(target.AsString().Length));
-                            break;
-                        }
-                        throw new InvalidOperationException($"Zeichenketten haben kein Feld '{fieldName}' (nur 'Length').");
-                    }
-
-                    if (target.Kind == ValueKind.Array)
-                    {
-                        if (fieldName is "Length" or "length")
-                        {
-                            Push(Value.MakeInt(target.AsArray().Length));
-                            break;
-                        }
-                        throw new InvalidOperationException($"Arrays haben kein Feld '{fieldName}' (nur 'Length').");
-                    }
-
-                    if (target.Kind == ValueKind.Buffer)
-                    {
-                        var buf = target.AsBuffer();
-                        if (fieldName is "Length" or "length")
-                        {
-                            Push(Value.MakeInt(buf.Length));
-                            break;
-                        }
-                        if (fieldName == "littleEndian")
-                        {
-                            Push(Value.MakeBool(buf.Order == ByteOrder.Little));
-                            break;
-                        }
-                        throw new InvalidOperationException(
-                            $"Byte-Puffer haben kein Feld '{fieldName}' (nur 'Length', 'littleEndian').");
-                    }
-
-                    var obj = RequireObjectInstance(target, "Feldzugriff");
-                    if (obj.TryGetFieldLocked(fieldName, out var val))
-                    {
-                        if (ExecutionMode != VmExecutionMode.Performance && obj.RtClass != null)
-                        {
-                            var fieldAccess = obj.RtClass.FindFieldAccess(fieldName);
-                            if (fieldAccess is (var declaringRcGet, var accessGet) && !IsMemberAccessAllowed(declaringRcGet, accessGet))
-                            {
-                                ThrowAccessDenied(
-                                    $"Feld '{fieldName}' von '{declaringRcGet.Name}' ist {DescribeAccess(accessGet)} " +
-                                    "und von hier aus nicht zugreifbar.");
-                                break;
-                            }
-                        }
-                        Push(val);
-                        break;
-                    }
-
-                    // Kein Feld dieses Namens - Property-Getter versuchen
-                    // (Namenskonvention 'get_'+Name, siehe Ast.PropertyDecl).
-                    // Properties haben absichtlich NIE einen eigenen Fields-
-                    // Eintrag, landen also immer hier.
-                    var rcGet = ResolveClass(obj.ClassName);
-                    if (rcGet.FindMethod("get_" + fieldName, 0) != null)
-                    {
-                        var result = CallMethodNested(obj, "get_" + fieldName, Array.Empty<Value>());
-                        if (result != null) Push(result.Value);
-                        break;
-                    }
-
-                    throw new InvalidOperationException(
-                        $"Feld '{fieldName}' existiert nicht auf einer Instanz von '{obj.ClassName}' " +
-                        $"(auch keine 'get_{fieldName}'-Property).");
-                }
+                    OpGetField();
+                    break;
 
                 case OpCode.SetField:
-                {
-                    string fieldName = _constants[ReadU16()].AsString();
-                    var value = Pop();
-                    var obj = RequireObjectInstance(Pop(), "Feldzuweisung");
-
-                    if (obj.HasFieldLocked(fieldName))
-                    {
-                        if (ExecutionMode != VmExecutionMode.Performance && obj.RtClass != null)
-                        {
-                            var fieldAccess = obj.RtClass.FindFieldAccess(fieldName);
-                            if (fieldAccess is (var declaringRcSet, var accessSet) && !IsMemberAccessAllowed(declaringRcSet, accessSet))
-                            {
-                                ThrowAccessDenied(
-                                    $"Feld '{fieldName}' von '{declaringRcSet.Name}' ist {DescribeAccess(accessSet)} " +
-                                    "und von hier aus nicht zugreifbar.");
-                                break;
-                            }
-
-                            // SPEC "Einheiten-Deklarationen" - Feldzugriff ist
-                            // grundsätzlich dynamisch (die tatsächliche Klasse
-                            // steht erst hier, zur Laufzeit, fest), deshalb
-                            // anders als bei lokalen/globalen Variablen KEINE
-                            // Compile-Zeit-Prüfung möglich (siehe Compiler.
-                            // CompileClassBody-Kommentar) - die Prüfung selbst
-                            // ist aber inhaltlich identisch zu OpCode.CheckUnit.
-                            string? requiredUnitName = obj.RtClass.FindFieldRequiredUnit(fieldName);
-                            if (requiredUnitName != null)
-                            {
-                                var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                                var actualUnit = value.Unit ?? Values.Unit.Unitless;
-                                if (!actualUnit.Equals(requiredUnit))
-                                {
-                                    ThrowUnitMismatch(requiredUnitName, actualUnit);
-                                    break;
-                                }
-                            }
-                        }
-                        obj.SetFieldLocked(fieldName, value);
-                        Push(value);
-                        break;
-                    }
-
-                    // Kein existierendes Feld dieses Namens - Property-Setter
-                    // versuchen (Namenskonvention 'set_'+Name).
-                    var rcSet = ResolveClass(obj.ClassName);
-                    if (rcSet.FindMethod("set_" + fieldName, 1) != null)
-                    {
-                        var result = CallMethodNested(obj, "set_" + fieldName, new[] { value });
-                        // Rückgabewert des Setters selbst unbenutzt - eine
-                        // Zuweisung wertet immer zum ZUGEWIESENEN Wert aus,
-                        // nicht zu dem, was der Setter zurückgibt. null ==
-                        // per Exception umgeleitet (siehe CallMethodNested-
-                        // Doku) - dann NICHT pushen.
-                        if (result != null) Push(value);
-                        break;
-                    }
-
-                    // Eine gleichnamige Property MIT Getter, aber OHNE Setter,
-                    // existiert - das ist ein Fehler, KEIN "neues Feld anlegen"
-                    // (sonst würde die Property ab hier unbemerkt durch ein
-                    // gleichnamiges Feld überschattet, auch für künftige
-                    // Lesezugriffe über GetField, das Felder vor Properties
-                    // prüft).
-                    if (rcSet.FindMethod("get_" + fieldName, 0) != null)
-                        throw new InvalidOperationException(
-                            $"Property '{fieldName}' auf '{obj.ClassName}' hat keinen Setter (nur 'get').");
-
-                    // Weder existierendes Feld noch Property - wie bisher:
-                    // neues Feld einfach anlegen (dynamische Sprache, keine
-                    // Vorab-Deklarationspflicht für Felder).
-                    obj.SetFieldLocked(fieldName, value);
-                    Push(value);
+                    OpSetField();
                     break;
-                }
 
                 case OpCode.LoadThis:
-                    Push(_currentThis switch
-                    {
-                        null => throw new InvalidOperationException("'this' ist an dieser Stelle nicht gebunden."),
-                        ObjectInstance oi => Value.MakeClassRef(oi),
-                        Value v => v,
-                        _ => throw new InvalidOperationException("Unerwarteter 'this'-Wert."),
-                    });
+                    OpLoadThis();
                     break;
 
                 case OpCode.SetFieldOnThis:
-                {
-                    string fieldName = _constants[ReadU16()].AsString();
-                    var value = Pop();
-                    if (_currentThis is not ObjectInstance oi)
-                        throw new InvalidOperationException("SetFieldOnThis ohne gebundene ObjectInstance als 'this'.");
-
-                    // SPEC "Einheiten-Deklarationen" - dieselbe Prüfung wie in
-                    // SetField (siehe dort für die Begründung, warum das zur
-                    // Laufzeit statt zur Compile-Zeit passiert). Dieser Opcode
-                    // wird für die Feld-INITIALISIERER selbst benutzt (siehe
-                    // Compiler.CompileConstructorProto) - `int x : mm = 5`
-                    // würde ohne diese Prüfung hier den ersten, deklarierten
-                    // Wert komplett ungeprüft durchlassen.
-                    if (ExecutionMode != VmExecutionMode.Performance && oi.RtClass != null)
-                    {
-                        string? requiredUnitName = oi.RtClass.FindFieldRequiredUnit(fieldName);
-                        if (requiredUnitName != null)
-                        {
-                            var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                            var actualUnit = value.Unit ?? Values.Unit.Unitless;
-                            if (!actualUnit.Equals(requiredUnit))
-                            {
-                                ThrowUnitMismatch(requiredUnitName, actualUnit);
-                                break;
-                            }
-                        }
-                    }
-
-                    oi.SetFieldLocked(fieldName, value);
+                    OpSetFieldOnThis();
                     break;
-                }
 
                 case OpCode.CallMethod:
-                {
-                    string methodName = _constants[ReadU16()].AsString();
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-                    var target = Pop();
-
-                    // Eingebaute Methoden auf primitiven Werten (String/Char/
-                    // Int(als byte)/Buffer, siehe TryCallBuiltinMethod, SPEC
-                    // 8.10) - GETRENNT vom normalen Klassen-Methodenaufruf
-                    // unten, da ein primitiver Wert keine ObjectInstance ist
-                    // und nie eine war (RequireObjectInstance würde hier
-                    // sonst fälschlich ablehnen).
-                    if (target.Kind != ValueKind.Class)
-                    {
-                        // `foreach (x in array)` / `foreach (b in buffer)`: ein Array/Puffer ist
-                        // keine Objektinstanz mit eigenem GetEnumerator() - hier ein
-                        // ListEnumerator der Prelude darüber (dieselbe Klasse, die `List`
-                        // benutzt; sie liest nur `items[index]`/`count`). Ohne Prelude (reine
-                        // Kernprogramme) bleibt es beim Fehler unten.
-                        if (methodName == "GetEnumerator" && args.Length == 0
-                            && target.Kind is ValueKind.Array or ValueKind.Buffer
-                            && _classes.TryGetValue("ListEnumerator", out var enumeratorClass))
-                        {
-                            long itemCount = target.Kind == ValueKind.Array ? target.AsArray().Length : target.AsBuffer().Length;
-                            var enumerator = ConstructNested(enumeratorClass, new[] { target, Value.MakeInt(itemCount) });
-                            Push(Value.MakeClassRef(enumerator));
-                            break;
-                        }
-
-                        // Methoden aus einer Basistyp-Erweiterung (`class extends string { ... }`,
-                        // SPEC 5.5.1 - z.B. IndexOf/Substring im Prelude): wie ein Objekt-Aufruf, nur
-                        // ist `this` der Wert selbst. Vor den fest eingebauten Konvertierungen unten.
-                        if (_baseTypeClasses[(int)target.Kind] is { } extensionRc)
-                        {
-                            var (extProto, extDeclaringRc, extAccess) = extensionRc.FindMethodWithAccess(methodName, args.Length);
-                            if (extProto != null)
-                            {
-                                if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(extDeclaringRc!, extAccess))
-                                {
-                                    ThrowAccessDenied(
-                                        $"Methode '{methodName}' der Erweiterung von '{extensionRc.Name.Substring(1)}' ist " +
-                                        $"{DescribeAccess(extAccess)} und von hier aus nicht aufrufbar.");
-                                    break;
-                                }
-                                CheckArity(extProto, args.Length);
-                                args = FillDefaultArgs(extProto, args, target);
-
-                                _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-                                var extScope = new Scope(_globalScope);
-                                foreach (var a in args) extScope.DefineSlot(a);
-
-                                _currentThis = target;
-                                _currentScope = extScope;
-                                _currentChunk = extProto.Chunk;
-                                _ip = 0;
-                                break;
-                            }
-                        }
-
-                        if (TryCallBuiltinMethod(target, methodName, args, out Value builtinResult))
-                        {
-                            Push(builtinResult);
-                            break;
-                        }
-                        throw new InvalidOperationException(
-                            $"'{methodName}' ({args.Length} Argument(e)) ist keine bekannte eingebaute Methode " +
-                            $"auf einem Wert vom Typ {target.Kind}.");
-                    }
-
-                    var obj = (ObjectInstance)target.AsObjectRef();
-
-                    // Actor-Ziel (siehe Runtime.ObjectInstance.Mailbox-Doku):
-                    // JEDER Methodenaufruf wird zu einer asynchronen Nachricht
-                    // statt eines direkten Aufrufs, unabhängig vom rufenden
-                    // Thread - dieser Aufruf selbst liefert 'undefined' und
-                    // läuft normal weiter (kein Sprung in irgendeinen Chunk).
-                    if (obj.Mailbox != null)
-                    {
-                        obj.Mailbox.Enqueue(new ActorMessage(methodName, args));
-                        Push(Value.MakeUndefined());
-                        break;
-                    }
-
-                    var rc = ResolveClass(obj.ClassName);
-                    var (proto, declaringRcCall, accessCall) = rc.FindMethodWithAccess(methodName, args.Length);
-                    if (proto == null)
-                        throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
-                    if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
-                    {
-                        ThrowAccessDenied(
-                            $"Methode '{methodName}' von '{declaringRcCall!.Name}' ist {DescribeAccess(accessCall)} " +
-                            "und von hier aus nicht aufrufbar.");
-                        break;
-                    }
-                    CheckArity(proto, args.Length);
-                    args = FillDefaultArgs(proto, args, obj);
-
-                    _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-                    var scope = new Scope(_globalScope);
-                    foreach (var a in args) scope.DefineSlot(a);
-
-                    _currentThis = obj;
-                    _currentScope = scope;
-                    _currentChunk = proto.Chunk;
-                    _ip = 0;
+                    OpCallMethod();
                     break;
-                }
 
                 case OpCode.CallBaseMethod:
-                {
-                    string baseClassName = _constants[ReadU16()].AsString();
-                    string methodName = _constants[ReadU16()].AsString();
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-
-                    var rc = ResolveClass(baseClassName);
-                    var (proto, declaringRcBase, accessBase) = rc.FindMethodWithAccess(methodName, args.Length);
-                    if (proto == null)
-                        throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
-                    if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcBase!, accessBase))
-                    {
-                        ThrowAccessDenied(
-                            $"Methode '{methodName}' von '{declaringRcBase!.Name}' ist {DescribeAccess(accessBase)} " +
-                            "und von hier aus nicht aufrufbar.");
-                        break;
-                    }
-                    CheckArity(proto, args.Length);
-                    args = FillDefaultArgs(proto, args, _currentThis);
-
-                    // 'this' bleibt dasselbe Objekt (nicht-virtueller Aufruf).
-                    _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-                    var scope = new Scope(_globalScope);
-                    foreach (var a in args) scope.DefineSlot(a);
-
-                    _currentScope = scope;
-                    _currentChunk = proto.Chunk;
-                    _ip = 0;
+                    OpCallBaseMethod();
                     break;
-                }
 
                 case OpCode.GetStaticField:
-                {
-                    // SPEC "Statische Mitglieder" - kein Objekt auf dem Stack
-                    // (der Klassenname steht schon als Konstante im Bytecode,
-                    // siehe Resolver.TryResolveStaticMemberAccess/Compiler),
-                    // die eigentliche Speicherstelle liegt direkt auf der
-                    // RuntimeClass (siehe FindStaticFieldOwner - teilt sich
-                    // ggf. mit einer Basisklasse dieselbe Speicherstelle).
-                    string className = _constants[ReadU16()].AsString();
-                    string fieldName = _constants[ReadU16()].AsString();
-                    var staticRc = ResolveClass(className);
-                    var owner = staticRc.FindStaticFieldOwner(fieldName);
-
-                    if (owner == null)
-                    {
-                        // Kein statisches Feld dieses Namens - Property-
-                        // Getter versuchen (Namenskonvention 'get_'+Name,
-                        // genau wie bei GetField), diesmal als STATISCHER
-                        // Aufruf (keine Instanz).
-                        if (staticRc.FindMethod("get_" + fieldName, 0) is { IsStatic: true })
-                        {
-                            var result = CallStaticMethodNested(staticRc, "get_" + fieldName, Array.Empty<Value>());
-                            if (result != null) Push(result.Value);
-                            break;
-                        }
-                        throw new InvalidOperationException(
-                            $"'{className}' hat kein statisches Feld '{fieldName}' (auch keine statische " +
-                            $"'get_{fieldName}'-Property).");
-                    }
-
-                    if (ExecutionMode != VmExecutionMode.Performance)
-                    {
-                        var fieldAccess = owner.FindFieldAccess(fieldName);
-                        if (fieldAccess is (var declaringRc, var access) && !IsMemberAccessAllowed(declaringRc, access))
-                        {
-                            ThrowAccessDenied(
-                                $"Statisches Feld '{fieldName}' von '{declaringRc.Name}' ist {DescribeAccess(access)} " +
-                                "und von hier aus nicht zugreifbar.");
-                            break;
-                        }
-                    }
-
-                    Push(owner.StaticFieldValues.TryGetValue(fieldName, out var staticVal) ? staticVal : Value.MakeUndefined());
+                    OpGetStaticField();
                     break;
-                }
 
                 case OpCode.SetStaticField:
-                {
-                    string setClassName = _constants[ReadU16()].AsString();
-                    string setFieldName = _constants[ReadU16()].AsString();
-                    var setValue = Pop();
-                    var setRc = ResolveClass(setClassName);
-                    var setOwner = setRc.FindStaticFieldOwner(setFieldName);
-
-                    if (setOwner == null)
-                    {
-                        // Kein statisches Feld dieses Namens - statischen
-                        // Property-Setter versuchen (Namenskonvention
-                        // 'set_'+Name, Gegenstück zum Getter-Fallback in
-                        // GetStaticField, siehe auch SetField).
-                        if (setRc.FindMethod("set_" + setFieldName, 1) is { IsStatic: true })
-                        {
-                            var setterResult = CallStaticMethodNested(setRc, "set_" + setFieldName, new[] { setValue });
-                            // Eine Zuweisung wertet zum ZUGEWIESENEN Wert aus,
-                            // nicht zum Rückgabewert des Setters. null == per
-                            // Exception umgeleitet - dann NICHT pushen.
-                            if (setterResult != null) Push(setValue);
-                            break;
-                        }
-                        throw new InvalidOperationException(
-                            $"'{setClassName}' hat kein statisches Feld '{setFieldName}' (auch keine statische " +
-                            $"'set_{setFieldName}'-Property).");
-                    }
-
-                    if (ExecutionMode != VmExecutionMode.Performance)
-                    {
-                        var fieldAccess = setOwner.FindFieldAccess(setFieldName);
-                        if (fieldAccess is (var declaringRc, var access) && !IsMemberAccessAllowed(declaringRc, access))
-                        {
-                            ThrowAccessDenied(
-                                $"Statisches Feld '{setFieldName}' von '{declaringRc.Name}' ist {DescribeAccess(access)} " +
-                                "und von hier aus nicht zugreifbar.");
-                            break;
-                        }
-
-                        // SPEC "Einheiten-Deklarationen" - inhaltlich identisch
-                        // zu SetField, siehe dort.
-                        string? requiredUnitName = setOwner.FindFieldRequiredUnit(setFieldName);
-                        if (requiredUnitName != null)
-                        {
-                            var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                            var actualUnit = setValue.Unit ?? Values.Unit.Unitless;
-                            if (!actualUnit.Equals(requiredUnit))
-                            {
-                                ThrowUnitMismatch(requiredUnitName, actualUnit);
-                                break;
-                            }
-                        }
-                    }
-
-                    setOwner.StaticFieldValues[setFieldName] = setValue;
-                    Push(setValue);
+                    OpSetStaticField();
                     break;
-                }
 
                 case OpCode.SetStaticFieldOnInit:
                 {
@@ -1914,67 +2513,12 @@ namespace fire.Runtime
                 }
 
                 case OpCode.CallStaticMethod:
-                {
-                    string callClassName = _constants[ReadU16()].AsString();
-                    string callMethodName = _constants[ReadU16()].AsString();
-                    int callArgCount = ReadByte();
-                    var callArgs = new Value[callArgCount];
-                    for (int i = callArgCount - 1; i >= 0; i--) callArgs[i] = Pop();
-
-                    var callRc = ResolveClass(callClassName);
-                    var (callProto, declaringRcCall, accessCall) = callRc.FindMethodWithAccess(callMethodName, callArgs.Length);
-                    if (callProto == null)
-                        throw new InvalidOperationException(DescribeMethodNotFound(callRc, callMethodName, callArgs.Length));
-                    if (!callProto.IsStatic)
-                        throw new InvalidOperationException(
-                            $"'{callMethodName}' auf '{callClassName}' ist keine statische Methode - " +
-                            $"über 'ClassName.{callMethodName}(...)' nur für 'static'-Methoden aufrufbar.");
-                    if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
-                    {
-                        ThrowAccessDenied(
-                            $"Statische Methode '{callMethodName}' von '{declaringRcCall!.Name}' ist " +
-                            $"{DescribeAccess(accessCall)} und von hier aus nicht aufrufbar.");
-                        break;
-                    }
-                    CheckArity(callProto, callArgs.Length);
-                    callArgs = FillDefaultArgs(callProto, callArgs, null);
-
-                    _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-                    var callScope = new Scope(_globalScope);
-                    foreach (var a in callArgs) callScope.DefineSlot(a);
-
-                    // Explizit KEIN 'this' (anders als oben bei CallBaseMethod,
-                    // das die aufrufende Instanz beibehält) - der Resolver
-                    // verbietet 'this'/'super' im Körper einer statischen
-                    // Methode bereits (siehe Resolver.ResolveExpr/ThisExpr),
-                    // das hier ist die zusätzliche Laufzeit-Absicherung dafür.
-                    _currentThis = null;
-                    _currentScope = callScope;
-                    _currentChunk = callProto.Chunk;
-                    _ip = 0;
+                    OpCallStaticMethod();
                     break;
-                }
 
                 case OpCode.CallProtoWithThis:
-                {
-                    int protoIdx = ReadU16();
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-                    var thisVal = Pop();
-                    var proto = _currentChunk.Functions[protoIdx];
-                    CheckArity(proto, args.Length);
-
-                    _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-                    var scope = new Scope(_globalScope);
-                    foreach (var a in args) scope.DefineSlot(a);
-
-                    _currentThis = thisVal.Kind == ValueKind.Class ? thisVal.AsObjectRef() : (object)thisVal;
-                    _currentScope = scope;
-                    _currentChunk = proto.Chunk;
-                    _ip = 0;
+                    OpCallProtoWithThis();
                     break;
-                }
 
                 case OpCode.AddressOfLocal:
                 {
@@ -2015,23 +2559,12 @@ namespace fire.Runtime
                 }
 
                 case OpCode.NewArray:
-                {
-                    long size = Pop().AsInt();
-                    if (size < 0)
-                        throw new InvalidOperationException($"Ungültige Array-Größe {size}.");
-                    Push(Value.MakeArray(new ScriptArray((int)size)));
+                    OpNewArray();
                     break;
-                }
 
                 case OpCode.MakeArrayLiteral:
-                {
-                    int count = ReadU16();
-                    var arr = new ScriptArray(count);
-                    for (int i = count - 1; i >= 0; i--)
-                        arr.Items[i] = Pop();
-                    Push(Value.MakeArray(arr));
+                    OpMakeArrayLiteral();
                     break;
-                }
 
                 case OpCode.MakeBuffer:
                 {
@@ -2043,154 +2576,12 @@ namespace fire.Runtime
                 }
 
                 case OpCode.ArrayGet:
-                {
-                    var indexVal = Pop();
-                    var target = Pop();
-
-                    if (target.Kind == ValueKind.Array)
-                    {
-                        if (ExecutionMode == VmExecutionMode.Performance)
-                        {
-                            // Siehe VmExecutionMode.Performance-Doku - KEINE
-                            // Bounds-Prüfung, ein ungültiger Index führt zu
-                            // einer rohen .NET-IndexOutOfRangeException statt
-                            // einer fangbaren Skript-Exception.
-                            Push(target.AsArray().GetUnchecked(indexVal.AsInt()));
-                        }
-                        else
-                        {
-                            long idx = indexVal.AsInt();
-                            if (target.AsArray().TryGet(idx, out var v))
-                                Push(v);
-                            else
-                                // Macht einen ungültigen Index zu einer echten,
-                                // fangbaren Skript-Exception statt eines rohen
-                                // C#-Fehlers - KEIN Push hier, ThrowIndexOutOfBounds
-                                // hat _currentChunk/_ip bereits umgeleitet.
-                                ThrowIndexOutOfBounds(idx, target.AsArray().Length);
-                        }
-                    }
-                    else if (target.Kind == ValueKind.Buffer)
-                    {
-                        // Liefert IMMER int[8] (Width W8, siehe Values.NumericWidth) -
-                        // 'byte' ist reines Typ-Sugar für int[8] (SPEC 8.10),
-                        // kein eigener ValueKind, ein einzelnes Byte ist deshalb
-                        // einfach ein normaler int-Wert mit dieser Breite.
-                        if (ExecutionMode == VmExecutionMode.Performance)
-                        {
-                            byte bFast = target.AsBuffer().GetUnchecked(indexVal.AsInt());
-                            Push(Value.MakeInt(bFast, width: NumericWidth.W8));
-                        }
-                        else
-                        {
-                            long idx = indexVal.AsInt();
-                            if (target.AsBuffer().TryGet(idx, out byte b))
-                                Push(Value.MakeInt(b, width: NumericWidth.W8));
-                            else
-                                ThrowIndexOutOfBounds(idx, target.AsBuffer().Length);
-                        }
-                    }
-                    else if (target.Kind == ValueKind.String)
-                    {
-                        // `s[i]` liest das Zeichen an Index i (nur lesend - Zeichenketten sind
-                        // unveränderlich, siehe ArraySet).
-                        long idx = indexVal.AsInt();
-                        string text = target.AsString();
-                        if (idx >= 0 && idx < text.Length)
-                            Push(Value.MakeChar(text[(int)idx]));
-                        else
-                            ThrowIndexOutOfBounds(idx, text.Length, "String-Index");
-                    }
-                    else if (target.Kind == ValueKind.Class)
-                    {
-                        // '[]'-Operator-Überladung per Namenskonvention (wie
-                        // GetEnumerator/MoveNext/GetCurrent bei foreach): eine
-                        // Klasse mit einer GetIndex(i)-Methode wird für Lesezugriffe
-                        // benutzt - rein dynamisch, funktioniert auf jeder Klasse
-                        // mit passender Methode, nicht nur auf 'List'.
-                        var obj = (ObjectInstance)target.AsObjectRef();
-                        var result = CallMethodNested(obj, "GetIndex", new[] { indexVal });
-                        // null == GetIndex() wurde durch eine geworfene Exception
-                        // verlassen (siehe CallMethodNested-Doku) - dann NICHT
-                        // pushen, die Ausführung läuft bereits anderswo weiter.
-                        if (result != null) Push(result.Value);
-                    }
-                    else
-                    {
-                        throw new InvalidOperationException(
-                            $"Index-Zugriff ('[]') auf einem Wert vom Typ {target.Kind} nicht möglich " +
-                            "(weder Array noch eine Klasse mit 'GetIndex'-Methode).");
-                    }
+                    OpArrayGet();
                     break;
-                }
 
                 case OpCode.ArraySet:
-                {
-                    var value = Pop();
-                    var indexVal = Pop();
-                    var target = Pop();
-
-                    if (target.Kind == ValueKind.Array)
-                    {
-                        if (ExecutionMode == VmExecutionMode.Performance)
-                        {
-                            target.AsArray().SetUnchecked(indexVal.AsInt(), value);
-                            Push(value);
-                        }
-                        else
-                        {
-                            long idx = indexVal.AsInt();
-                            if (target.AsArray().TrySet(idx, value))
-                                Push(value);
-                            else
-                                // Kein Push hier - ThrowIndexOutOfBounds hat
-                                // _currentChunk/_ip bereits umgeleitet, ein
-                                // zusätzlicher Push würde den Stack dort verschieben.
-                                ThrowIndexOutOfBounds(idx, target.AsArray().Length);
-                        }
-                    }
-                    else if (target.Kind == ValueKind.Buffer)
-                    {
-                        if (value.Kind != ValueKind.Int)
-                            throw new InvalidOperationException(
-                                $"Byte-Puffer-Zuweisung erwartet einen int-Wert (byte = int[8]), nicht {value.Kind}.");
-                        if (ExecutionMode == VmExecutionMode.Performance)
-                        {
-                            target.AsBuffer().SetUnchecked(indexVal.AsInt(), (byte)value.AsInt());
-                            Push(value);
-                        }
-                        else
-                        {
-                            long idx = indexVal.AsInt();
-                            if (target.AsBuffer().TrySet(idx, (byte)value.AsInt()))
-                                Push(value);
-                            else
-                                ThrowIndexOutOfBounds(idx, target.AsBuffer().Length);
-                        }
-                    }
-                    else if (target.Kind == ValueKind.Class)
-                    {
-                        var obj = (ObjectInstance)target.AsObjectRef();
-                        var result = CallMethodNested(obj, "SetIndex", new[] { indexVal, value }); // Rückgabewert unbenutzt
-                        // null == SetIndex() wurde durch eine geworfene Exception
-                        // verlassen (siehe CallMethodNested-Doku) - dann NICHT
-                        // pushen, die Ausführung läuft bereits anderswo weiter.
-                        if (result != null) Push(value);
-                    }
-                    else if (target.Kind == ValueKind.String)
-                    {
-                        throw new InvalidOperationException(
-                            "Zeichenketten sind unveränderlich - 's[i] = ...' ist nicht möglich " +
-                            "(Replace/Substring liefern eine neue Zeichenkette).");
-                    }
-                    else
-                    {
-                        throw new InvalidOperationException(
-                            $"Index-Zuweisung ('[]=') auf einem Wert vom Typ {target.Kind} nicht möglich " +
-                            "(weder Array noch eine Klasse mit 'SetIndex'-Methode).");
-                    }
+                    OpArraySet();
                     break;
-                }
 
                 case OpCode.RegisterHandler:
                 {
