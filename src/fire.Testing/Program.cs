@@ -4981,6 +4981,77 @@ catch (CompilerException ex)
     Console.WriteLine($"Ist eine NotSupportedException (bestehender Code faengt sie weiter): {ex is NotSupportedException}");
 }
 
+Console.WriteLine();
+Console.WriteLine("=== Statische Properties: Schreiben ueber statischen Setter (auto + eigener Body) ===");
+
+string staticPropertySetSample = """
+class Counter {
+    static int Total { get; set }
+    static int Twice {
+        get { return _twice }
+        set { _twice = value * 2 }
+    }
+    static int _twice
+
+    static Init() { Total = 5 }
+    static Bump() {
+        Total = Total + 10
+        return Total
+    }
+}
+
+Counter.Init()
+print(Counter.Bump())
+Counter.Total = 7
+print(Counter.Total)
+Counter.Twice = 4
+print(Counter.Twice)
+var chained = (Counter.Total = 9)
+print(chained)
+""";
+
+try
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(staticPropertySetSample);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+
+    Console.WriteLine("Ausgabe (erwartet: 15 / 7 / 8 / 9):");
+    var vmGlobalScope = new Scope(null, isGlobal: true);
+    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes);
+    vm.Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Statische Properties: Schreiben ohne Setter (muss fehlschlagen) ===");
+
+string staticPropertyNoSetterSample = """
+class Counter {
+    static int Total { get; }
+}
+Counter.Total = 1
+""";
+
+try
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(staticPropertyNoSetterSample);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    var vmGlobalScope = new Scope(null, isGlobal: true);
+    new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes).Run();
+    Console.WriteLine("FEHLER: haette fehlschlagen muessen");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Erwarteter Fehler: {ex.Message}");
+}
+
 static int CountOccurrences(string haystack, string needle)
 {
     int count = 0, idx = 0;
