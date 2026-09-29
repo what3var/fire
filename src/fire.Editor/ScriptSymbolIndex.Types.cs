@@ -26,6 +26,10 @@ namespace fire.Editor
 
         /// <summary>Ein Array mit Elementtyp `Name`.</summary>
         Array,
+
+        /// <summary>Der Namespace `Name` (vollqualifiziert) - `Name.` zeigt
+        /// dessen Klassen/Enums/Unter-Namespaces.</summary>
+        Namespace,
     }
 
     /// <summary>Der (best-effort) hergeleitete Typ eines Ausdrucks im Editor.
@@ -206,7 +210,8 @@ namespace fire.Editor
                 else if ((t.Type == TokenType.Identifier || IsTypeKeyword(t.Type)) && _tokens[k + 1].Type == TokenType.Identifier
                          && (k == 0 || _tokens[k - 1].Type is not (TokenType.Dot or TokenType.New))
                          && !_tokens[k + 1].NewlineBefore
-                         && (PrimitiveTypeNames.Contains(t.Lexeme) || Classes.ContainsKey(t.Lexeme)))
+                         && (PrimitiveTypeNames.Contains(t.Lexeme) || ResolveClassKey(t.Lexeme, ContextAt(offset)) != null
+                             || ResolveEnumKey(t.Lexeme, ContextAt(offset)) != null))
                     declared = _tokens[k + 1].Lexeme;
 
                 if (declared != null && TokenOffset(k + 1) < offset && !result.Contains(declared))
@@ -317,7 +322,12 @@ namespace fire.Editor
                 }
                 else if (t.Type is TokenType.Identifier or TokenType.This or TokenType.Base)
                 {
-                    bool isNew = t.Type == TokenType.Identifier && j > 0 && _tokens[j - 1].Type == TokenType.New;
+                    // 'new Name' (nur mit folgendem '[', siehe 'new X[n]') - steht
+                    // hinter dem Namen aber ein '.', ist er der ANFANG eines
+                    // qualifizierten Namens ('new Geometry.Circle(...)'), siehe
+                    // MergeQualifiedNew.
+                    bool isNew = t.Type == TokenType.Identifier && j > 0 && _tokens[j - 1].Type == TokenType.New
+                        && !(j + 1 < _tokens.Count && _tokens[j + 1].Type == TokenType.Dot);
                     seg = new Seg(isNew ? SegKind.New : SegKind.Name, t.Lexeme);
                     segStart = isNew ? j - 1 : j;
                 }
@@ -338,7 +348,32 @@ namespace fire.Editor
             }
 
             rev.Reverse();
+            MergeQualifiedNew(rev, ref startIdx);
             return true;
+        }
+
+        /// <summary>`new Geometry.Circle(...)`/`new Geometry.Circle[n]`: der
+        /// Rückwärts-Lauf sieht hier die Kette `Geometry` `.` `Circle(...)` und
+        /// erst danach das `new` DAVOR - dann zu EINEM New-Segment mit dem
+        /// qualifizierten Namen zusammenfassen.</summary>
+        private void MergeQualifiedNew(List<Seg> segs, ref int startIdx)
+        {
+            if (startIdx <= 0 || _tokens[startIdx - 1].Type != TokenType.New) return;
+
+            int core = segs.Count > 0 && segs[^1].Kind == SegKind.Index ? segs.Count - 1 : segs.Count;
+            if (core < 2) return;
+            for (int q = 0; q < core - 1; q++)
+                if (segs[q].Kind != SegKind.Name || segs[q].Text is "this" or "base") return;
+            var last = segs[core - 1];
+            bool hasIndex = core < segs.Count;
+            if (last.Kind != (hasIndex ? SegKind.Name : SegKind.Call)) return;
+
+            string qualified = string.Join(".", segs.Take(core).Select(sg => sg.Text));
+            var merged = new List<Seg> { new Seg(SegKind.New, qualified) };
+            if (hasIndex) merged.Add(segs[^1]);
+            segs.Clear();
+            segs.AddRange(merged);
+            startIdx--;
         }
 
         private int FirstTokenOfChainEndingAt(int endIdx) =>
@@ -389,10 +424,11 @@ namespace fire.Editor
             {
                 case SegKind.New:
                     {
-                        var created = FromTypeName(root.Text, isArray: false);
+                        var context = ContextAt(scopeOffset);
+                        var created = FromTypeName(root.Text, isArray: false, context);
                         if (segs.Count > 1 && segs[1].Kind == SegKind.Index) // 'new X[n]'
                         {
-                            created = FromTypeName(root.Text, isArray: true);
+                            created = FromTypeName(root.Text, isArray: true, context);
                             next = 2;
                         }
                         cur = created;
@@ -408,7 +444,7 @@ namespace fire.Editor
                     {
                         var cls = EnclosingClassAt(scopeOffset);
                         string? baseName = cls != null && Classes.TryGetValue(cls, out var info)
-                            ? info.BaseNames.FirstOrDefault(Classes.ContainsKey)
+                            ? ResolvedBases(info).FirstOrDefault(b => !Classes[b].IsInterface)
                             : null;
                         cur = baseName != null ? new ExprType(TypeKind.Instance, baseName, ViaThis: true) : ExprType.Unknown;
                         break;
@@ -458,6 +494,19 @@ namespace fire.Editor
                     return EnumMembers.TryGetValue(receiver.Name!, out var members) && members.Contains(name)
                         ? new ExprType(TypeKind.Primitive, "int")
                         : ExprType.Unknown;
+                case TypeKind.Namespace:
+                    {
+                        // 'Geometry.Circle' (die Klasse selbst: statischer
+                        // Zugriff), 'Geometry.Color' (Enum), 'Geometry.Inner'
+                        // (Unter-Namespace) - Aufrufe gibt es auf einem
+                        // Namespace nicht.
+                        string full = receiver.Name + "." + name;
+                        if (isCall) return ExprType.Unknown;
+                        if (Classes.ContainsKey(full)) return new ExprType(TypeKind.Static, full);
+                        if (EnumMembers.ContainsKey(full)) return new ExprType(TypeKind.Enum, full);
+                        if (Namespaces.Contains(full)) return new ExprType(TypeKind.Namespace, full);
+                        return ExprType.Unknown;
+                    }
                 default:
                     return ExprType.Unknown;
             }
@@ -470,7 +519,7 @@ namespace fire.Editor
             switch (container.Kind)
             {
                 case TypeKind.Array:
-                    return FromTypeName(container.Name!, isArray: false);
+                    return FromTypeName(container.Name!, isArray: false, System.Array.Empty<string>()); // Name ist schon ein Schlüssel
                 case TypeKind.Instance:
                     {
                         var op = MembersOf(container.Name!).FirstOrDefault(m => m.Name == "operator[]");
@@ -481,13 +530,22 @@ namespace fire.Editor
             }
         }
 
-        private ExprType FromTypeName(string? name, bool isArray)
+        /// <summary>Der Typ, den der Typname `name` (so geschrieben, evtl.
+        /// qualifiziert) meint, aufgelöst gegen `context` (siehe
+        /// ClassInfo.Context) - Klasse, Enum, oder ein einfacher Typ wie `int`.</summary>
+        private ExprType FromTypeName(string? name, bool isArray, IReadOnlyList<string> context)
         {
             if (name == null) return ExprType.Unknown;
-            if (Classes.ContainsKey(name))
-                return new ExprType(isArray ? TypeKind.Array : TypeKind.Instance, name);
-            if (PrimitiveTypeNames.Contains(name) || EnumMembers.ContainsKey(name))
+            if (PrimitiveTypeNames.Contains(name))
                 return new ExprType(isArray ? TypeKind.Array : TypeKind.Primitive, name);
+
+            string? classKey = ResolveClassKey(name, context);
+            if (classKey != null)
+                return new ExprType(isArray ? TypeKind.Array : TypeKind.Instance, classKey);
+
+            string? enumKey = ResolveEnumKey(name, context);
+            if (enumKey != null)
+                return new ExprType(isArray ? TypeKind.Array : TypeKind.Primitive, enumKey);
             return ExprType.Unknown;
         }
 
@@ -499,7 +557,12 @@ namespace fire.Editor
         {
             if (depth > MaxDepth) return ExprType.Unknown;
 
-            var declared = FromTypeName(member.TypeName, member.TypeIsArray);
+            // Typnamen in der Deklaration sind relativ zum Kontext der
+            // deklarierenden Klasse geschrieben (Namespace + #using ihrer Datei).
+            var ownerContext = Classes.TryGetValue(member.Owner, out var ownerInfo)
+                ? ownerInfo.Context
+                : System.Array.Empty<string>();
+            var declared = FromTypeName(member.TypeName, member.TypeIsArray, ownerContext);
             if (declared.Kind != TypeKind.Unknown) return declared;
 
             // Kein (brauchbarer) deklarierter Typ - aus dem Body/den
@@ -574,8 +637,13 @@ namespace fire.Editor
                 if (member != null) return TypeOfMember(member, depth);
             }
 
+            // Klassen-/Enum-/Namespace-Namen als Ausdruck (`Name.Mitglied`):
+            // wie beim echten Compiler NUR der exakt geschriebene, ggf. schon
+            // vollqualifizierte Name (siehe Resolver.TryResolveStaticMemberAccess
+            // - keine Auflösung über `#using`/den aktuellen Namespace).
             if (Classes.ContainsKey(name)) return new ExprType(TypeKind.Static, name);
             if (EnumMembers.ContainsKey(name)) return new ExprType(TypeKind.Enum, name);
+            if (Namespaces.Contains(name)) return new ExprType(TypeKind.Namespace, name);
             return ExprType.Unknown;
         }
 
@@ -596,13 +664,14 @@ namespace fire.Editor
             var result = ExprType.Unknown;
             bool explicitType = false;
 
+            var context = ContextAt(offset);
             var fn = EnclosingFunction(offset);
             if (fn != null)
                 foreach (var (paramName, paramType) in fn.Params)
                     if (paramName == name)
                     {
                         found = true;
-                        result = FromTypeName(paramType, isArray: false);
+                        result = FromTypeName(paramType, isArray: false, context);
                         explicitType = result.Kind != TypeKind.Unknown;
                     }
 
@@ -612,9 +681,12 @@ namespace fire.Editor
                 if (TokenOffset(k) >= offset) break;
                 var t = _tokens[k];
 
-                // var name [: T] [= ausdruck] - außer als Schleifenvariable von
-                // 'foreach (var name in ...)', die der Fall darunter (beim
-                // 'foreach'-Token selbst) schon vollständig behandelt hat.
+                // 'var name [: einheit] [= ausdruck]' - hinter dem ':' steht nur
+                // eine EINHEIT (einen Typ gibt man als 'T name' an, nicht als
+                // 'var name : T'), der Typ kommt also allein aus dem
+                // Initialisierer. Außer als Schleifenvariable von 'foreach (var
+                // name in ...)', die der Fall darunter (beim 'foreach'-Token
+                // selbst) schon vollständig behandelt hat.
                 if (t.Type == TokenType.Var && k + 1 < n && _tokens[k + 1].Type == TokenType.Identifier
                     && _tokens[k + 1].Lexeme == name
                     && !(k >= 2 && _tokens[k - 1].Type == TokenType.LParen && _tokens[k - 2].Type == TokenType.Foreach))
@@ -622,21 +694,13 @@ namespace fire.Editor
                     found = true;
                     result = ExprType.Unknown;
                     explicitType = false;
-                    int q = k + 2;
-                    if (q < n && _tokens[q].Type == TokenType.Colon)
-                    {
-                        q++;
-                        if (q < n && (_tokens[q].Type == TokenType.Identifier || IsTypeKeyword(_tokens[q].Type)))
+                    int statementEnd = ExpressionEnd(k + 1, n);
+                    for (int q = k + 2; q < statementEnd; q++)
+                        if (_tokens[q].Type == TokenType.Assign)
                         {
-                            // 'var x : mm' hat eine EINHEIT statt eines Typs - dann
-                            // bleibt der Initialisierer maßgeblich.
-                            var declared = FromTypeName(_tokens[q].Lexeme, isArray: false);
-                            if (declared.Kind != TypeKind.Unknown) { result = declared; explicitType = true; }
-                            q++;
+                            result = EvalExprRange(q + 1, ExpressionEnd(q + 1, n) - 1, depth + 1);
+                            break;
                         }
-                    }
-                    if (!explicitType && q < n && _tokens[q].Type == TokenType.Assign)
-                        result = EvalExprRange(q + 1, ExpressionEnd(q + 1, n) - 1, depth + 1);
                     continue;
                 }
 
@@ -649,21 +713,31 @@ namespace fire.Editor
                     explicitType = false;
                     int close = MatchForward(k + 1, TokenType.LParen, TokenType.RParen);
                     var iterable = close > k + 5 ? EvalExprRange(k + 5, close - 1, depth + 1) : ExprType.Unknown;
-                    result = iterable.Kind == TypeKind.Array ? FromTypeName(iterable.Name, isArray: false) : ExprType.Unknown;
+                    result = iterable.Kind == TypeKind.Array
+                        ? FromTypeName(iterable.Name, isArray: false, System.Array.Empty<string>()) // Name ist schon ein Schlüssel
+                        : ExprType.Unknown;
                     continue;
                 }
 
-                // 'T name' (auch 'foreach (T name in ...)', 'catch (T name)')
+                // 'T name' (auch 'foreach (T name in ...)', 'catch (T name)'), T
+                // evtl. qualifiziert ('Geometry.Circle name').
                 if ((t.Type == TokenType.Identifier || IsTypeKeyword(t.Type)) && k + 1 < n
                     && _tokens[k + 1].Type == TokenType.Identifier && _tokens[k + 1].Lexeme == name
-                    && !_tokens[k + 1].NewlineBefore
-                    && (k == 0 || _tokens[k - 1].Type is not (TokenType.Dot or TokenType.New)))
+                    && !_tokens[k + 1].NewlineBefore)
                 {
-                    found = true;
-                    bool isArray = k + 2 < n && _tokens[k + 2].Type == TokenType.LBracket;
-                    result = FromTypeName(t.Lexeme, isArray);
-                    explicitType = result.Kind != TypeKind.Unknown;
-                    continue;
+                    int typeStart = k;
+                    while (typeStart >= 2 && _tokens[typeStart - 1].Type == TokenType.Dot
+                           && _tokens[typeStart - 2].Type == TokenType.Identifier)
+                        typeStart -= 2;
+                    if (typeStart == 0 || _tokens[typeStart - 1].Type is not (TokenType.Dot or TokenType.New))
+                    {
+                        found = true;
+                        bool isArray = k + 2 < n && _tokens[k + 2].Type == TokenType.LBracket;
+                        string typeText = string.Concat(_tokens.Skip(typeStart).Take(k - typeStart + 1).Select(tok => tok.Lexeme));
+                        result = FromTypeName(typeText, isArray, context);
+                        explicitType = result.Kind != TypeKind.Unknown;
+                        continue;
+                    }
                 }
 
                 // name = ausdruck - nur als Anweisung, und nur, wenn der Typ

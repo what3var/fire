@@ -201,8 +201,14 @@ namespace fire.Editor
                 ScriptSymbolIndex index;
                 try { index = ScriptSymbolIndex.Build(other); }
                 catch { continue; }
-                foreach (var name in index.Classes.Keys)
-                    knownElsewhere.Add(name);
+                // Der Name kann in `source` qualifiziert (`Geometry.Circle`) ODER -
+                // über den aktuellen Namespace/ein `#using` - einfach (`Circle`)
+                // geschrieben sein.
+                foreach (var cls in index.Classes.Values)
+                {
+                    knownElsewhere.Add(cls.Name);
+                    knownElsewhere.Add(cls.SimpleName);
+                }
             }
             if (knownElsewhere.Count == 0) return diagnostics;
 

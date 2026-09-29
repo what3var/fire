@@ -94,15 +94,28 @@ dotnet run
   und nur dessen Mitglieder angeboten: `new X(...)`, `this`/`base`,
   Variablen/Parameter/Felder (auch ohne `this.`), Klassen-/Enum-Namen und
   beliebige Ketten daraus (`a.B().c[0].`). Variablentypen kommen aus
-  `var x : T`, `T x`, typisierten Parametern, `foreach`, oder - bei
-  `var x = ausdruck`/`x = ausdruck` - aus dem Typ des Ausdrucks; bei
+  `T x` (auch qualifiziert: `Geometry.Circle x`), typisierten Parametern,
+  `foreach`, oder - bei `var x = ausdruck`/`x = ausdruck` - aus dem Typ des
+  Ausdrucks (`var x : einheit` legt nur eine Einheit fest, der Typ kommt
+  dann ebenfalls aus dem Initialisierer); bei
   Mitgliedern aus dem deklarierten Typ, sonst bei Methoden aus den
   `return`-Ausdrücken, bei Feldern aus `= new X()` bzw. `this.feld = ...`.
   Angezeigt werden auch geerbte Mitglieder (Basisklasse UND Interfaces, mit
   Klassenname dahinter; nähere Klassen ranken höher), `private`/`protected`
   nur, wo sie zugreifbar sind, bei `Klasse.` nur `static`-, bei einer
   Instanz nur Instanz-Mitglieder, bei `Enum.` die Enum-Werte, nach `new `
-  nur Klassen. Die Preludes von `#import "graphics"`/`"devices"` sind
+  nur Klassen. **Namespaces**: `Klassen` sind unter ihrem vollqualifizierten
+  Namen indiziert (`Geometry.Circle`, wie beim Compiler); `Geometry.` zeigt
+  deren Klassen/Interfaces/Enums und Unter-Namespaces (hinter `new
+  Geometry.` nur Klassen und Namespaces), `Geometry.Circle.` die statischen
+  Mitglieder, `new Geometry.Circle()` bzw. `Geometry.Circle c` liefern
+  Instanzen. Ohne Qualifizierung erscheinen nur Klassen, die dort
+  tatsächlich ansprechbar sind (aktueller Namespace oder `#using`, siehe
+  `ContextAt`), sonst der Namespace oberster Ebene; nach `#using ` werden
+  Namespaces vorgeschlagen. Typnamen in Basisklassen/Feldern werden relativ
+  zum Namespace ihrer Klasse aufgelöst. Ein Ausdruck `Circle.` (statischer
+  Zugriff) wird - wie im Resolver - nur über den EXAKT geschriebenen Namen
+  aufgelöst, nicht über `#using`. Die Preludes von `#import "graphics"`/`"devices"` sind
   bekannt (siehe `ImportedPreludes`). NUR wenn sich der Typ gar nicht
   bestimmen lässt (dynamische Typisierung, z.B. `var x = irgendwas()` ohne
   Rückgabetyp), fällt es auf Mitglieder ALLER bekannten Klassen zurück,

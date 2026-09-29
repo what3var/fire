@@ -11,6 +11,7 @@ namespace fire.Editor
         ClassName,
         EnumName,
         EnumMember,
+        Namespace,
         Field,
         Method,
         Property,
@@ -82,9 +83,14 @@ namespace fire.Editor
 
             int i = offset - 1;
 
+            // '#using Namespace' - hier kommen nur Namespaces in Frage.
+            var usingLine = UsingLinePrefix.Match(source.Substring(LineStart(source, offset), offset - LineStart(source, offset)));
+            if (usingLine.Success)
+                return GetUsingSuggestions(index, usingLine.Groups[1].Value);
+
             // Direkt nach einem '.' (noch nichts vom Mitgliedsnamen getippt).
             if (i >= 0 && source[i] == '.')
-                return GetMemberSuggestions(offset, index, dotOffset: i, string.Empty);
+                return GetMemberSuggestions(source, offset, index, dotOffset: i, string.Empty);
 
             int start = i;
             while (start >= 0 && (char.IsLetterOrDigit(source[start]) || source[start] == '_')) start--;
@@ -93,20 +99,59 @@ namespace fire.Editor
             if (start >= 0 && source[start] == '.')
             {
                 string prefix = source.Substring(start + 1, offset - start - 1);
-                return GetMemberSuggestions(offset, index, dotOffset: start, prefix);
+                return GetMemberSuggestions(source, offset, index, dotOffset: start, prefix);
             }
 
             string idPrefix = start + 1 <= offset ? source.Substring(start + 1, offset - start - 1) : string.Empty;
 
             // Nach 'new ' kommt ein Klassenname, sonst nichts.
             if (IsAfterNew(source, start))
-                return GetClassNameSuggestions(index, idPrefix);
+                return GetClassNameSuggestions(offset, index, idPrefix);
 
             return GetIdentifierSuggestions(offset, index, idPrefix);
         }
 
+        // Der Text VOR dem Cursor in einer '#using'-Zeile (Gruppe 1: schon Getipptes
+        // hinter '#using ', evtl. mit Punkten).
+        private static readonly System.Text.RegularExpressions.Regex UsingLinePrefix =
+            new(@"^[ \t]*#using[ \t]+([A-Za-z0-9_.]*)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        private static int LineStart(string source, int offset)
+        {
+            int j = offset;
+            while (j > 0 && source[j - 1] != '\n') j--;
+            return j;
+        }
+
+        /// <summary>`#using |`: der nächste Namespace-Abschnitt hinter dem, was
+        /// schon dasteht (`Geo` -> Namespaces auf oberster Ebene mit diesem
+        /// Anfang, `Geometry.` -> deren Unter-Namespaces) - jeweils nur EIN
+        /// Abschnitt, weil der Editor beim Einfügen nur den Text hinter dem
+        /// letzten '.' ersetzt.</summary>
+        private static List<CompletionItem> GetUsingSuggestions(ScriptSymbolIndex index, string typed)
+        {
+            int dot = typed.LastIndexOf('.');
+            string parent = dot < 0 ? string.Empty : typed.Substring(0, dot);
+            string prefix = dot < 0 ? typed : typed.Substring(dot + 1);
+
+            var results = new List<CompletionItem>();
+            foreach (var member in index.MembersOfNamespace(parent))
+                if (member.Kind == NamespaceMemberKind.Namespace && MatchesPrefix(member.Name, prefix))
+                    results.Add(new CompletionItem(member.Name, CompletionKind.Namespace, CompareKeywords(prefix, member.Name, 0.3f), $"Namespace {member.FullName}"));
+            return Dedupe(results);
+        }
+
         /// <summary>Steht vor dem Bezeichner, der bei `identifierStart - 1`
         /// endet (`start` = Index des Zeichens DAVOR), das Wort `new`?</summary>
+        /// <summary>Steht vor dem (evtl. qualifizierten) Namen `A.B.`, dessen
+        /// letzter Punkt bei `dotOffset` liegt, das Wort `new`?</summary>
+        private static bool IsQualifiedNameAfterNew(string source, int dotOffset)
+        {
+            int j = dotOffset - 1;
+            while (j >= 0 && (char.IsLetterOrDigit(source[j]) || source[j] == '_' || source[j] == '.')) j--;
+            return IsAfterNew(source, j);
+        }
+
         private static bool IsAfterNew(string source, int start)
         {
             int j = start;
@@ -117,13 +162,50 @@ namespace fire.Editor
             return source.Substring(j + 1, wordEnd - j) == "new";
         }
 
-        private static List<CompletionItem> GetClassNameSuggestions(ScriptSymbolIndex index, string prefix)
+        /// <summary>Nach `new `: die Klassen, die an `offset` ohne Qualifizierung
+        /// ansprechbar sind (im aktuellen Namespace, per `#using` oder ohne
+        /// Namespace - keine Interfaces), dazu die Namespaces oberster Ebene,
+        /// um `new Namespace.Klasse(...)` fortzusetzen.</summary>
+        private static List<CompletionItem> GetClassNameSuggestions(int offset, ScriptSymbolIndex index, string prefix)
         {
             var results = new List<CompletionItem>();
-            foreach (var (name, cls) in index.Classes)
-                if (!cls.IsInterface && MatchesPrefix(name, prefix))
-                    results.Add(new CompletionItem(name, CompletionKind.ClassName, CompareKeywords(prefix, name)));
+            AddVisibleTypes(results, offset, index, prefix, includeInterfaces: false, includeEnums: false);
+            AddTopLevelNamespaces(results, index, prefix);
             return Dedupe(results);
+        }
+
+        /// <summary>Fügt die Klassen (und ggf. Interfaces/Enums) hinzu, deren
+        /// EINFACHER Name an `offset` genau sie meint - also nicht von einer
+        /// gleichnamigen Klasse in einem anderen Namespace verdeckt und über
+        /// den aktuellen Namespace oder ein `#using` erreichbar. Klassen in
+        /// anderen Namespaces erscheinen so erst nach `Namespace.`.</summary>
+        private static void AddVisibleTypes(
+            List<CompletionItem> results, int offset, ScriptSymbolIndex index, string prefix, bool includeInterfaces, bool includeEnums)
+        {
+            var context = index.ContextAt(offset);
+            foreach (var cls in index.Classes.Values)
+            {
+                if ((cls.IsInterface && !includeInterfaces) || !MatchesPrefix(cls.SimpleName, prefix)) continue;
+                if (index.ResolveClassKey(cls.SimpleName, context, lenient: false) != cls.Name) continue;
+                string detail = cls.Namespace.Length > 0 ? $"{(cls.IsInterface ? "Interface" : "Klasse")} in {cls.Namespace}" : (cls.IsInterface ? "Interface" : "Klasse");
+                results.Add(new CompletionItem(cls.SimpleName, CompletionKind.ClassName, CompareKeywords(prefix, cls.SimpleName), detail));
+            }
+
+            if (!includeEnums) return;
+            foreach (var key in index.EnumMembers.Keys)
+            {
+                string simple = key.Substring(key.LastIndexOf('.') + 1);
+                if (!MatchesPrefix(simple, prefix) || index.ResolveEnumKey(simple, context) != key) continue;
+                results.Add(new CompletionItem(simple, CompletionKind.EnumName, CompareKeywords(prefix, simple),
+                    key.Contains('.') ? $"Enum in {key.Substring(0, key.LastIndexOf('.'))}" : "Enum"));
+            }
+        }
+
+        private static void AddTopLevelNamespaces(List<CompletionItem> results, ScriptSymbolIndex index, string prefix)
+        {
+            foreach (var member in index.MembersOfNamespace(string.Empty))
+                if (member.Kind == NamespaceMemberKind.Namespace && MatchesPrefix(member.Name, prefix))
+                    results.Add(new CompletionItem(member.Name, CompletionKind.Namespace, CompareKeywords(prefix, member.Name), "Namespace"));
         }
 
         /// <summary>Darf Code in der Klasse `fromClass` (null = außerhalb jeder
@@ -147,7 +229,7 @@ namespace fire.Editor
         /// der Typ gar nicht bestimmen lässt (dynamische Typisierung), fällt
         /// das auf Mitglieder ALLER bekannten Klassen zurück.</summary>
         private static List<CompletionItem> GetMemberSuggestions(
-            int offset, ScriptSymbolIndex index, int dotOffset, string prefix)
+            string source, int offset, ScriptSymbolIndex index, int dotOffset, string prefix)
         {
             var results = new List<CompletionItem>();
             var receiver = index.ResolveReceiver(dotOffset);
@@ -155,6 +237,28 @@ namespace fire.Editor
 
             switch (receiver.Kind)
             {
+                case TypeKind.Namespace:
+                    {
+                        // 'Namespace.' - Unter-Namespaces, Klassen, Interfaces und
+                        // Enums darin; hinter 'new Namespace.' nur, was sich
+                        // instanziieren lässt (Klassen) bzw. weiterführt (Namespaces).
+                        bool afterNew = IsQualifiedNameAfterNew(source, dotOffset);
+                        foreach (var member in index.MembersOfNamespace(receiver.Name!))
+                        {
+                            if (!MatchesPrefix(member.Name, prefix)) continue;
+                            if (afterNew && member.Kind is NamespaceMemberKind.Interface or NamespaceMemberKind.Enum) continue;
+                            var (kind, detail) = member.Kind switch
+                            {
+                                NamespaceMemberKind.Namespace => (CompletionKind.Namespace, $"Namespace {member.FullName}"),
+                                NamespaceMemberKind.Interface => (CompletionKind.ClassName, "Interface"),
+                                NamespaceMemberKind.Enum => (CompletionKind.EnumName, "Enum"),
+                                _ => (CompletionKind.ClassName, "Klasse"),
+                            };
+                            results.Add(new CompletionItem(member.Name, kind, CompareKeywords(prefix, member.Name, 0.3f), detail));
+                        }
+                        return Dedupe(results);
+                    }
+
                 case TypeKind.Enum:
                     if (index.EnumMembers.TryGetValue(receiver.Name!, out var enumMembers))
                         foreach (var name in enumMembers)
@@ -201,11 +305,10 @@ namespace fire.Editor
             foreach (var kw in TypeKeywords)
                 if (MatchesPrefix(kw, prefix)) results.Add(new CompletionItem(kw, CompletionKind.TypeKeyword, CompareKeywords(prefix, kw)));
 
-            foreach (var cls in index.Classes.Keys)
-                if (MatchesPrefix(cls, prefix)) results.Add(new CompletionItem(cls, CompletionKind.ClassName, CompareKeywords(prefix, cls)));
-
-            foreach (var enumName in index.EnumMembers.Keys)
-                if (MatchesPrefix(enumName, prefix)) results.Add(new CompletionItem(enumName, CompletionKind.EnumName, CompareKeywords(prefix, enumName)));
+            // Typen, die hier ohne Qualifizierung ansprechbar sind, und die
+            // Namespaces oberster Ebene (für 'Namespace.Klasse').
+            AddVisibleTypes(results, offset, index, prefix, includeInterfaces: true, includeEnums: true);
+            AddTopLevelNamespaces(results, index, prefix);
 
             foreach (var (name, _) in index.EnclosingFunctionParams(offset))
                 if (MatchesPrefix(name, prefix)) results.Add(new CompletionItem(name, CompletionKind.Parameter, CompareKeywords(prefix, name)));
