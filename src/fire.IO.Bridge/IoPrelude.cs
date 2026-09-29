@@ -422,6 +422,11 @@ namespace fire.IO.Bridge
                         if (!__IOFileMove(source, target, overwrite)) { IO.IOErrors.Throw() }
                     }
 
+                    // Ein TextReader/TextWriter auf der Datei (siehe dort); ohne append wird überschrieben.
+                    static OpenText(string path) { return new IO.TextReader(path) }
+                    static CreateText(string path) { return new IO.TextWriter(path) }
+                    static AppendText(string path) { return new IO.TextWriter(path, true) }
+
                     static ReadAllBytes(string path) {
                         var stream = new IO.FileStream(path)
                         var data = stream.ReadAll()
@@ -508,6 +513,288 @@ namespace fire.IO.Bridge
 
                     // Das aktuelle Arbeitsverzeichnis.
                     static string Current() { return __IOCurrentDir() }
+                }
+
+                // Liest UTF-8-Text zeilenweise von einem Stream. `new IO.TextReader(pfad)`
+                // öffnet die Datei selbst; `new IO.TextReader(stream)` liest von einem
+                // vorhandenen Stream und SCHLIESST ihn mit, außer leaveOpen ist true.
+                // Zeilen enden mit "\n" oder "\r\n" (das "\r" gehört nicht zur Zeile).
+                //
+                //     var reader = new IO.TextReader("notizen.txt")
+                //     foreach (zeile in reader) { print(zeile) }
+                //
+                // ReadLine() liefert undefined am Ende des Streams.
+                class TextReader {
+                    var source
+                    bool ownsSource
+                    var chunk
+                    int pos
+                    int len
+                    bool eof
+                    bool closed
+                    var pending
+
+                    construct(source, bool leaveOpen = false) {
+                        // Alle Felder zuerst belegen: scheitert das Öffnen unten (Datei nicht
+                        // gefunden), räumt destruct() ein sonst halb aufgebautes Objekt auf.
+                        this.source = undefined
+                        this.ownsSource = false
+                        this.closed = false
+                        this.eof = false
+                        this.pos = 0
+                        this.len = 0
+                        this.chunk = new byte[4096]
+                        this.pending = new IO.MemoryStream()
+                        if (source is of string) {
+                            this.source = new IO.FileStream(source)
+                            this.ownsSource = true
+                        } else {
+                            this.source = source
+                            this.ownsSource = !leaveOpen
+                        }
+                    }
+
+                    destruct() { this.Close() }
+
+                    bool IsClosed { get { return this.closed } }
+
+                    // true, wenn kein weiteres Zeichen mehr kommt (liest dafür ggf. vor).
+                    bool EndOfStream {
+                        get {
+                            this.Check()
+                            return !this.Fill() && this.pending.Length == 0
+                        }
+                    }
+
+                    Check() {
+                        if (this.closed) { throw new StreamClosedException("Der Reader ist geschlossen.") }
+                    }
+
+                    // Sorgt dafür, dass chunk[pos..len) Daten enthält; false am Ende des Streams.
+                    Fill() {
+                        if (this.pos < this.len) { return true }
+                        if (this.eof) { return false }
+                        var n = this.source.Read(this.chunk, 0, 4096)
+                        if (n <= 0) {
+                            this.eof = true
+                            this.pos = 0
+                            this.len = 0
+                            return false
+                        }
+                        this.pos = 0
+                        this.len = n
+                        return true
+                    }
+
+                    // Die gesammelten Bytes als Zeile (ohne abschließendes "\r"), Sammler leeren.
+                    TakeLine() {
+                        var bytes = this.pending.ToBuffer()
+                        this.pending.Length = 0
+                        var count = bytes.length
+                        if (count > 0 && bytes[count - 1] == 13) { count = count - 1 }
+                        return IO.Utf8.GetString(bytes, 0, count)
+                    }
+
+                    // Die nächste Zeile, oder undefined am Ende.
+                    ReadLine() {
+                        this.Check()
+                        while (this.Fill()) {
+                            var nl = __IOBufferIndexOf(this.chunk, this.pos, this.len - this.pos, 10)
+                            if (nl >= 0) {
+                                if (this.pending.Length == 0) {
+                                    // Ganze Zeile im Puffer - direkt dekodieren.
+                                    var count = nl - this.pos
+                                    if (count > 0 && this.chunk[nl - 1] == 13) { count = count - 1 }
+                                    var text = IO.Utf8.GetString(this.chunk, this.pos, count)
+                                    this.pos = nl + 1
+                                    return text
+                                }
+                                this.pending.Write(this.chunk, this.pos, nl - this.pos)
+                                this.pos = nl + 1
+                                return this.TakeLine()
+                            }
+                            this.pending.Write(this.chunk, this.pos, this.len - this.pos)
+                            this.pos = this.len
+                        }
+                        if (this.pending.Length == 0) { return undefined }
+                        return this.TakeLine()
+                    }
+
+                    // Der gesamte Rest als ein String.
+                    string ReadAll() {
+                        this.Check()
+                        while (this.Fill()) {
+                            this.pending.Write(this.chunk, this.pos, this.len - this.pos)
+                            this.pos = this.len
+                        }
+                        var bytes = this.pending.ToBuffer()
+                        this.pending.Length = 0
+                        return IO.Utf8.GetString(bytes)
+                    }
+
+                    // Alle übrigen Zeilen als List.
+                    ReadLines() {
+                        var lines = new List()
+                        var line = this.ReadLine()
+                        while (line != undefined) {
+                            lines.Add(line)
+                            line = this.ReadLine()
+                        }
+                        return lines
+                    }
+
+                    // `foreach (zeile in reader)` liest Zeile für Zeile.
+                    GetEnumerator() { return new IO.LineEnumerator(this) }
+
+                    Close() {
+                        if (this.closed == undefined || this.closed) { return }
+                        this.closed = true
+                        if (this.ownsSource) { this.source.Close() }
+                        if (this.pending != undefined) { this.pending.Close() }
+                    }
+                }
+
+                class LineEnumerator {
+                    var reader
+                    var line
+
+                    construct(reader) {
+                        this.reader = reader
+                        this.line = undefined
+                    }
+
+                    MoveNext() {
+                        this.line = this.reader.ReadLine()
+                        return this.line != undefined
+                    }
+
+                    GetCurrent() { return this.line }
+                }
+
+                // Schreibt UTF-8-Text (ohne Byte-Order-Mark) in einen Stream. `new
+                // IO.TextWriter(pfad[, append])` öffnet die Datei selbst (überschreibt,
+                // mit append = true hängt an); `new IO.TextWriter(stream[, leaveOpen])`
+                // schreibt in einen vorhandenen Stream und SCHLIESST ihn mit, außer
+                // leaveOpen ist true. Zeilen enden mit "\n".
+                class TextWriter {
+                    var target
+                    bool ownsTarget
+                    bool closed
+
+                    construct(dest, bool flag = false) {
+                        // Alle Felder zuerst belegen (siehe TextReader).
+                        this.target = undefined
+                        this.ownsTarget = false
+                        this.closed = false
+                        if (dest is of string) {
+                            var mode = IO.FileMode.Create
+                            if (flag) { mode = IO.FileMode.Append }
+                            this.target = new IO.FileStream(dest, mode)
+                            this.ownsTarget = true
+                        } else {
+                            this.target = dest
+                            this.ownsTarget = !flag
+                        }
+                    }
+
+                    destruct() { this.Close() }
+
+                    bool IsClosed { get { return this.closed } }
+
+                    Check() {
+                        if (this.closed) { throw new StreamClosedException("Der Writer ist geschlossen.") }
+                    }
+
+                    // Schreibt den Wert als Text (Zahlen usw. werden umgewandelt).
+                    Write(value) {
+                        this.Check()
+                        this.target.Write(IO.Utf8.GetBytes("" + value))
+                    }
+
+                    // Wie Write, hängt zusätzlich einen Zeilenumbruch an.
+                    WriteLine(value = "") {
+                        this.Check()
+                        this.target.Write(IO.Utf8.GetBytes("" + value + "\n"))
+                    }
+
+                    Flush() {
+                        this.Check()
+                        this.target.Flush()
+                    }
+
+                    Close() {
+                        if (this.closed == undefined || this.closed) { return }
+                        this.closed = true
+                        if (this.target == undefined) { return }
+                        this.target.Flush()
+                        if (this.ownsTarget) { this.target.Close() }
+                    }
+                }
+
+                // Standardeingabe/-ausgabe/-fehler als Stream (In() nur lesbar, Out()/Err()
+                // nur schreibbar). Wohin sie führen, entscheidet der Host (Konsole, im
+                // Editor das Ausgabefenster). Close() ändert nichts - die Streams gehören
+                // dem Host und bleiben offen.
+                class StdStream : NativeStream {
+                    construct(int kind) : base(-1) {
+                        this.handle = IO.IOErrors.Handle(__IOStdHandle(kind))
+                    }
+
+                    Close() { }
+                }
+
+                // Bequemer Zugriff auf Standardeingabe/-ausgabe/-fehler:
+                //
+                //     IO.Stdio.WriteLine("Hallo")
+                //     var name = IO.Stdio.ReadLine()          // undefined am Ende der Eingabe
+                //     var out = new IO.TextWriter(IO.Stdio.Out(), true)
+                //
+                // Ausgabe geht immer als UTF-8. ReadLine/ReadAll lesen gepuffert - nicht mit
+                // rohen Lesezugriffen auf In() mischen. Eine unvollständige Ausgabezeile
+                // erscheint, wenn im Editor der Zeilenumbruch kommt oder Flush() aufgerufen
+                // wird.
+                class Stdio {
+                    static In() { return new IO.StdStream(0) }
+                    static Out() { return new IO.StdStream(1) }
+                    static Err() { return new IO.StdStream(2) }
+
+                    // Schreibt den Wert als Text auf die Standardausgabe.
+                    static Write(value) {
+                        if (!__IOStdWrite(1, "" + value)) { IO.IOErrors.Throw() }
+                    }
+
+                    static WriteLine(value = "") {
+                        if (!__IOStdWrite(1, "" + value + "\n")) { IO.IOErrors.Throw() }
+                    }
+
+                    // Dasselbe auf den Standardfehler.
+                    static ErrorWrite(value) {
+                        if (!__IOStdWrite(2, "" + value)) { IO.IOErrors.Throw() }
+                    }
+
+                    static ErrorLine(value = "") {
+                        if (!__IOStdWrite(2, "" + value + "\n")) { IO.IOErrors.Throw() }
+                    }
+
+                    // Gibt gepufferte Ausgabe (auch eine unvollständige Zeile) aus.
+                    static Flush() {
+                        __IOStdFlush(1)
+                        __IOStdFlush(2)
+                    }
+
+                    // Die nächste Zeile der Standardeingabe, oder undefined am Ende.
+                    static ReadLine() {
+                        var line = __IOStdReadLine()
+                        if (line == undefined && __IOLastError() != 0) { IO.IOErrors.Throw() }
+                        return line
+                    }
+
+                    // Alles, was noch an Standardeingabe kommt, als ein String.
+                    static string ReadAll() {
+                        var text = __IOStdReadAll()
+                        if (text == undefined) { IO.IOErrors.Throw() }
+                        return text
+                    }
                 }
             }
             """;

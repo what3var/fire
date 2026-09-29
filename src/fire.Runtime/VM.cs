@@ -1468,6 +1468,21 @@ namespace fire.Runtime
                     // sonst fälschlich ablehnen).
                     if (target.Kind != ValueKind.Class)
                     {
+                        // `foreach (x in array)` / `foreach (b in buffer)`: ein Array/Puffer ist
+                        // keine Objektinstanz mit eigenem GetEnumerator() - hier ein
+                        // ListEnumerator der Prelude darüber (dieselbe Klasse, die `List`
+                        // benutzt; sie liest nur `items[index]`/`count`). Ohne Prelude (reine
+                        // Kernprogramme) bleibt es beim Fehler unten.
+                        if (methodName == "GetEnumerator" && args.Length == 0
+                            && target.Kind is ValueKind.Array or ValueKind.Buffer
+                            && _classes.TryGetValue("ListEnumerator", out var enumeratorClass))
+                        {
+                            long itemCount = target.Kind == ValueKind.Array ? target.AsArray().Length : target.AsBuffer().Length;
+                            var enumerator = ConstructNested(enumeratorClass, new[] { target, Value.MakeInt(itemCount) });
+                            Push(Value.MakeClassRef(enumerator));
+                            break;
+                        }
+
                         if (TryCallBuiltinMethod(target, methodName, args, out Value builtinResult))
                         {
                             Push(builtinResult);

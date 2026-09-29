@@ -12,8 +12,8 @@ using fire.Values;
 // Evaluator existiert. Bei dir lokal: `dotnet run` im src/fire-Ordner.
 
 string sample = """
-var a : int = 5mm
-var b : float = undefined:km
+int a = 5mm
+float b = undefined:km
 
 var c = b + a:!
 var d = b: + a:!
@@ -279,8 +279,8 @@ for (var i = 1; i <= 5; i = i + 1) {
 }
 print(globalTotal)
 
-var b : float = 2.5km
-var a : int = 500m
+float b = 2.5km
+int a = 500m
 var z = b + a:!
 print(z)
 
@@ -368,8 +368,8 @@ string typeSystemSample = """
 extern int GetTickCount()
 extern PlaySound(string path)
 
-var narrow : int[8] = 300
-var wide : int[64] = 9999999999
+int[8] narrow = 300
+int[64] wide = 9999999999
 
 int arr[10]
 int matrix[][]
@@ -377,7 +377,7 @@ var dyn = new int[5]
 
 unsafe {
     var x = 42
-    var p : int[64]* = &x
+    int[64]* p = &x
     var y = *p
 }
 """;
@@ -821,7 +821,7 @@ Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: is in / is of / is from / is under ===");
 
 string isOperatorsSample = """
-var x : int = 5mm
+int x = 5mm
 print(x is in mm)
 print(x is in kg)
 print(x is of int)
@@ -1736,7 +1736,7 @@ catch (Exception ex) when (ex is ParseException or ResolverException or NotSuppo
 }
 
 Console.WriteLine();
-Console.WriteLine("=== Bytecode-Test: optionale Parameter (Methode, Lambda, beide Syntaxstile) ===");
+Console.WriteLine("=== Bytecode-Test: optionale Parameter (Methode, Lambda, Standardwert mit und ohne Typ) ===");
 
 string optionalParamsSample = """
 class Greeter {
@@ -1753,7 +1753,7 @@ var f = func (x, y = 10) => { return x + y }
 print(f(5))
 print(f(5, 20))
 
-var h = func (x : int = 42) => { return x }
+var h = func (int x = 42) => { return x }
 print(h())
 print(h(7))
 """;
@@ -5189,7 +5189,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
     int ioFailures = 0;
 
     // Führt `script` mit Prelude + IO-Prelude aus und liefert alle `print`-Zeilen.
-    List<string> RunIo(string script, fire.IO.Bridge.IoPolicy? policy = null)
+    List<string> RunIo(string script, fire.IO.Bridge.IoPolicy? policy = null, fire.IO.Bridge.IoStdio? stdio = null)
     {
         var lines = new List<string>();
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -5198,7 +5198,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         var program = Parser.ParseMultiple(sources);
         var natives = new NativeRegistry();
         natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
-        fire.IO.Bridge.IoBridge.RegisterAll(natives, policy);
+        fire.IO.Bridge.IoBridge.RegisterAll(natives, policy, stdio);
         var resolveResult = Resolver.Resolve(program, natives.Names);
         var compiled = Compiler.Compile(program, resolveResult, natives);
         var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes);
@@ -5208,10 +5208,10 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         return lines;
     }
 
-    void CheckIo(string title, string script, string[] expected, fire.IO.Bridge.IoPolicy? policy = null)
+    void CheckIo(string title, string script, string[] expected, fire.IO.Bridge.IoPolicy? policy = null, fire.IO.Bridge.IoStdio? stdio = null)
     {
         string[] actual;
-        try { actual = RunIo(script, policy).ToArray(); }
+        try { actual = RunIo(script, policy, stdio).ToArray(); }
         catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
         bool ok = actual.SequenceEqual(expected);
         if (!ok) ioFailures++;
@@ -5415,6 +5415,110 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         print(IO.File.ReadAllText(f))
         """, new[] { "True", "write 6", "delete 6", "mkdir 6", "list 6", "copy 6", "move 6", "x" }, fire.IO.Bridge.IoPolicy.Rooted(ioDir, readOnly: true));
 
+    // ---- Schritt 3: TextWriter / TextReader ----
+    string textDir = Path.Combine(ioDir, "text").Replace("\\", "/");
+    Directory.CreateDirectory(textDir);
+
+    CheckIo("TextWriter und TextReader: Zeilen, UTF-8, EndOfStream", $$"""
+        var f = "{{textDir}}/t.txt"
+        var w = new IO.TextWriter(f)
+        w.WriteLine("Grüße")
+        w.Write("zwei")
+        w.Write(" ")
+        w.Write(3)
+        w.WriteLine()
+        w.WriteLine("")
+        w.Write("ohne Ende")
+        w.Close()
+        print(IO.File.Size(f))
+        var r = new IO.TextReader(f)
+        var l = r.ReadLine()
+        while (l != undefined) { print("[" + l + "]"); l = r.ReadLine() }
+        print(r.EndOfStream)
+        r.Close()
+        """, new[] { "25", "[Grüße]", "[zwei 3]", "[]", "[ohne Ende]", "True" });
+
+    CheckIo("TextReader: foreach, ReadAll, ReadLines, Anhaengen, OpenText", $$"""
+        var f = "{{textDir}}/t.txt"
+        foreach (zeile in new IO.TextReader(f)) { print("f:" + zeile) }
+        var a = new IO.TextWriter(f, true)
+        a.WriteLine("!")
+        a.Close()
+        var rd = IO.File.OpenText(f)
+        print(rd.ReadAll())
+        rd.Close()
+        print(new IO.TextReader(f).ReadLines().count)
+        var cw = IO.File.CreateText(f)
+        cw.WriteLine("neu")
+        cw.Close()
+        var ap = IO.File.AppendText(f)
+        ap.WriteLine("mehr")
+        ap.Close()
+        print(IO.File.ReadAllLines(f).count)
+        """, new[] { "f:Grüße", "f:zwei 3", "f:", "f:ohne Ende", "Grüße\nzwei 3\n\nohne Ende!\n", "4", "2" });
+
+    CheckIo("TextReader: CRLF, leere Zeilen, fremder Stream, lange Eingabe", """
+        var m = new IO.MemoryStream("a\r\nb\n\nlast".ToBytes())
+        var r = new IO.TextReader(m, true)
+        print("[" + r.ReadLine() + "][" + r.ReadLine() + "][" + r.ReadLine() + "][" + r.ReadLine() + "][" + r.ReadLine() + "]")
+        r.Close()
+        print("Stream bleibt offen: " + !m.IsClosed)
+        var big = new IO.MemoryStream()
+        var tw = new IO.TextWriter(big, true)
+        for (var i = 0; i < 2000; i++) { tw.WriteLine("Zeile " + i + " äöü") }
+        tw.Flush()
+        big.Position = 0
+        var br = new IO.TextReader(big)
+        var n = 0
+        var last = ""
+        foreach (z in br) { n = n + 1; last = z }
+        print(n + " " + last)
+        br.Close()
+        print("Stream mitgeschlossen: " + big.IsClosed)
+        """, new[] { "[a][b][][last][undefined]", "Stream bleibt offen: True", "2000 Zeile 1999 äöü", "Stream mitgeschlossen: True" });
+
+    CheckIo("TextReader/TextWriter: destruct() schliesst, Fehler bleiben Exceptions", $$"""
+        {
+            var r = new IO.TextReader("{{textDir}}/t.txt")
+            var w = new IO.TextWriter("{{textDir}}/d.txt")
+            print("offen " + __IOOpenCount())
+        }
+        print("offen " + __IOOpenCount())
+        try { var x = new IO.TextReader("{{textDir}}/gibtsnicht.txt") } catch (IO.FileNotFoundException e) { print("fehlt") }
+        try { var w = new IO.TextWriter("{{textDir}}/x.txt"); w.Close(); w.WriteLine("z") } catch (IO.StreamClosedException e) { print("geschlossen") }
+        print("offen " + __IOOpenCount())
+        """, new[] { "offen 3", "offen 0", "fehlt", "geschlossen", "offen 0" });
+
+    // ---- Schritt 4: Stdio ----
+    var stdoutLines = new List<string>();
+    var stderrLines = new List<string>();
+    var stdinData = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("Anna\nBärbel\nrest1\nrest2"));
+    CheckIo("IO.Stdio: Ausgabe, Fehler, Eingabe, Streams", """
+        IO.Stdio.WriteLine("Hallo Welt")
+        IO.Stdio.Write("teil")
+        IO.Stdio.Write(1)
+        IO.Stdio.WriteLine(" ende")
+        IO.Stdio.Write("ohne Umbruch")
+        IO.Stdio.Flush()
+        IO.Stdio.ErrorLine("Fehler ä")
+        print("gelesen: " + IO.Stdio.ReadLine())
+        var w = new IO.TextWriter(IO.Stdio.Out(), true)
+        w.WriteLine("via TextWriter äöü")
+        w.Flush()
+        print(IO.Stdio.ReadLine())
+        print(IO.Stdio.ReadAll())
+        print(IO.Stdio.ReadLine())
+        IO.Stdio.Out().Close()
+        IO.Stdio.WriteLine("nach Close")
+        print("offen: " + __IOOpenCount())
+        """, new[] { "gelesen: Anna", "Bärbel", "rest1\nrest2", "undefined", "offen: 0" }, null,
+        fire.IO.Bridge.IoStdio.Custom(l => stdoutLines.Add(l), l => stderrLines.Add(l), stdinData));
+    Console.WriteLine(stdoutLines.SequenceEqual(new[] { "Hallo Welt", "teil1 ende", "ohne Umbruch", "via TextWriter äöü", "nach Close" })
+        && stderrLines.SequenceEqual(new[] { "Fehler ä" })
+        ? "OK: Stdio-Ausgabe/-Fehler landen beim Host (zeilenweise)"
+        : $"FEHLER: Stdio-Ausgabe: {string.Join(" | ", stdoutLines)} / Fehler: {string.Join(" | ", stderrLines)}");
+    if (!(stdoutLines.Count == 5 && stderrLines.Count == 1)) ioFailures++;
+
     Directory.Delete(ioDir, true);
     Console.WriteLine(ioFailures == 0 ? "Alle IO-Pruefungen bestanden." : $"FEHLER: {ioFailures} IO-Pruefung(en) fehlgeschlagen.");
 }
@@ -5471,6 +5575,71 @@ try
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
     Console.WriteLine("Ausgabe (erwartet: 0 / 5 / 6):");
+    new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes).Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Felder eines nicht fertig konstruierten Objekts sind undefined (nicht false) ===");
+
+string halfConstructedSample = """
+class Base {
+    int handle
+    bool closed
+    construct(int h) { this.handle = h; this.closed = false }
+    destruct() { print("destruct: handle=" + this.handle + " undefined=" + (this.handle == undefined)) }
+}
+class Boom : Exception { }
+class Child : Base {
+    construct(int m) : base(Fail(m)) { }
+    static int Fail(int m) { throw new Boom() }
+}
+try { var x = new Child(1) } catch (Boom e) { print("gefangen") }
+print("ende")
+""";
+
+try
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(halfConstructedSample);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    Console.WriteLine("Ausgabe (erwartet: gefangen / destruct: handle=undefined undefined=True / ende):");
+    new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes).Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== foreach ueber Arrays und Puffer ===");
+
+string foreachArraySample = """
+var arr = [10, 20, 30]
+var sum = 0
+foreach (x in arr) { sum = sum + x }
+print(sum)
+foreach (b in "AB".ToBytes()) { print(b) }
+var names = new string[2]
+names[0] = "a"
+names[1] = "b"
+foreach (n in names) { print(n) }
+foreach (x in arr) { if (x == 20) { break } print("v" + x) }
+foreach (e in new int[0]) { print("nie") }
+print("ok")
+""";
+
+try
+{
+    var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, foreachArraySample));
+    var natives = NativeRegistry.CreateDefault();
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    Console.WriteLine("Ausgabe (erwartet: 60 / 65 / 66 / a / b / v10 / ok):");
     new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes).Run();
 }
 catch (Exception ex)

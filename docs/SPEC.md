@@ -153,7 +153,7 @@ Jede Objektinstanz (`class`) hat **genau einen Owner**: entweder einen Scope (Bl
 - Da beide Positionen syntaktisch eindeutig unterscheidbar sind (Präfix vor einem Unary-Operanden, Suffix nach einem bereits geparsten Ausdruck), reicht ein einziges Lexer-Token (`Bang`); die Disambiguierung erfolgt im Parser über die Grammatikposition.
 - **`~ausdruck`** (nur Präfix) → bitweise Inversion.
 
-`var x : int` (nach dem Variablennamen) ist die **Typ**-Deklaration der Variable, unabhängig vom `:`-Einheiten-Operator an Werten – die Position (nach Variable vs. nach Wert) entscheidet über die Bedeutung.
+Den **Typ** einer Variable gibt man VOR dem Namen an (`int x`, `float y = 2.5`, `Foo f`); `var x` leitet ihn aus dem Wert ab. Ein `:` hinter dem Variablennamen (`var x : mm`) legt dagegen nur die **Einheit** fest (siehe „Einheiten-Deklarationen“) – `var x : int` als Typ-Deklaration gibt es nicht mehr.
 
 ### 3.2 Zieleinheit bei Operationen ("Anker-Regel")
 
@@ -165,8 +165,8 @@ Bei einer binären Operation zwischen Operanden mit Einheiten:
 - **Ketten mit mehr als zwei Operanden** (`a + b + c`) werden klassisch links-assoziativ ausgewertet: `(a + b) + c`. Die Anker-Regel wird bei jedem Teilschritt erneut angewendet, wobei das Zwischenergebnis (inkl. seiner bereits bestimmten Einheit) als linker Operand des nächsten Schritts gilt – es gibt also keine globale "alle Operanden auf einmal"-Betrachtung über die ganze Kette.
 
 ```
-var a : int = 5mm
-var b : float = undefined:km
+int a = 5mm
+float b = undefined:km
 
 var c = b + a:!     // a wird auto-coerced (Einheit+Typ), b ist Anker -> c : float:km
 var d = b: + a:!    // beide fordern Auto-Coercion -> kein Anker -> d : float:unitless
@@ -349,12 +349,12 @@ Ein Parameter kann einen **Standardwert** bekommen (`= ausdruck`), der
 verwendet wird, wenn der Aufruf weniger Argumente liefert. Optionale
 Parameter müssen am **Ende** der Parameterliste zusammenhängen – kein
 Pflichtparameter nach einem optionalen. Gilt für Methoden, Konstruktoren
-und Lambdas gleichermaßen. Parameter können wie Variablen in zwei
-Reihenfolgen geschrieben werden: `Typ name` (bestehend) oder `name : Typ`
-(wie bei `var`) – beide optional gefolgt von `= Standardwert`:
+und Lambdas gleichermaßen. Ein Parameter wird wie eine Variable geschrieben:
+`Typ name` (der Typ vor dem Namen, wie bei `int x`), optional gefolgt von
+`= Standardwert`. Die frühere Schreibweise `name : Typ` gibt es nicht mehr.
 
 ```
-f(x : int = 42) { ... }   // äquivalent zu: f(int x = 42) { ... }
+f(int x = 42) { ... }
 ```
 
 Der Standardwert-Ausdruck sieht dabei nur seinen eigenen Kontext + global +
@@ -670,7 +670,7 @@ throw ausdruck;
 ```
 try {
     // ...
-} catch (e : ErrorType) {
+} catch (ErrorType e) {
     // nur wenn geworfener Wert Instanz von ErrorType oder einer Subklasse ist
 } catch (e) {
     // ungetypter catch-all, fängt alles Übrige
@@ -679,7 +679,7 @@ try {
 }
 ```
 
-- Mehrere `catch`-Blöcke werden der Reihe nach geprüft; ein getypter `catch (name : Type)` filtert per `is of`-Check, ein ungetypter `catch (name)` fängt alles. Bewusst dieselbe Reihenfolge (Name, dann optional Typ) wie bei `var name : Type` - nicht wie eine C#-Parameterdeklaration.
+- Mehrere `catch`-Blöcke werden der Reihe nach geprüft; ein getypter `catch (Type name)` filtert per `is of`-Check, ein ungetypter `catch (name)` fängt alles. Der Typ steht - wie bei jeder Deklaration (`int x`) - VOR dem Namen.
 - `finally` ist optional und läuft immer.
 
 ### 7.4 `catch` ohne `try` – impliziter Block-Scope-Catch
@@ -968,9 +968,9 @@ erzeugten Namen zurück.
 ### 8.2 Bitbreiten für `int`/`float`
 
 ```
-var a : int[8]        // 8 Bit
-var b : int[16]       // 16 Bit
-var c : int            // Default: höchste Genauigkeit (64 Bit)
+int[8] a        // 8 Bit
+int[16] b       // 16 Bit
+int c           // Default: höchste Genauigkeit (64 Bit)
 float[32] Compute(int[16] x) { ... }   // auch bei Parametern/Rückgabetypen
 ```
 
@@ -995,7 +995,7 @@ nachhalten) ist noch nicht verdrahtet – nächste Ausbaustufe.
 
 ```
 unsafe {
-    var p : int[32]* = &x
+    int[32]* p = &x
     var y = *p
     p = p + 1        // Pointer-Arithmetik
 }
@@ -1040,7 +1040,7 @@ hintereinander ergeben ein mehrdimensionales Array (Rang = Anzahl Gruppen).
 `new Type[sizeExpr]` alloziert ein Array. Der Elementtyp hier ist bewusst nur
 ein Basisname (ohne eigene Bitbreiten-Klammer, aus demselben
 Kollisionsgrund) – eine bestimmte Elementbreite legt man stattdessen über den
-deklarierten Variablentyp fest (`var a : int[16] = new int[10]`).
+deklarierten Variablentyp fest (`int[16] a = new int[10]`).
 
 **Implementiert**: Laufzeit-Repräsentation (`Values.ScriptArray`, fest
 allozierte `Value[]`, Elemente `undefined`-initialisiert), Indexzugriff
@@ -1107,7 +1107,10 @@ class List : IEnumerable {
 - `foreach (x in collection)` (SPEC 5) läuft über `GetEnumerator()`/
   `MoveNext()`/`GetCurrent()` – rein per NAMENS-Dispatch, funktioniert also
   auch auf jeder anderen Klasse mit denselben drei Methoden, nicht nur auf
-  `IEnumerable`-Instanzen im formalen Sinn.
+  `IEnumerable`-Instanzen im formalen Sinn. Auch ein **Array** (`[1, 2, 3]`,
+  `new string[3]`) und ein **Byte-Puffer** sind direkt durchlaufbar
+  (`foreach (x in arr)`) - die VM liefert dafür einen `ListEnumerator` der
+  Prelude (ohne Prelude bleibt es bei einem Fehler).
 - `IEnumerable`/`IEnumerator`/`List`/`ListEnumerator` sowie
   `IndexOutOfBoundsException` sind Teil der **Prelude**
   (`Standard/Prelude.cs`) – bewusst in ScriptLang selbst geschrieben statt
@@ -1338,7 +1341,7 @@ Ein `byte`-Puffer ist ein eigener Laufzeit-Typ (`Values.ByteBuffer`,
 `ByteBuffer` ist ein echtes, kompaktes `byte[]`, gedacht für Binärdaten aus
 IO (seriell, Netzwerk, Dateien).
 
-`byte` als **skalarer Typ** (z.B. `var b : byte = 5`) ist dagegen KEIN
+`byte` als **skalarer Typ** (z.B. `byte b = 5`) ist dagegen KEIN
 eigener `ValueKind`, sondern reines Parser-Sugar für `int[8]` (eine
 explizite Bitbreite direkt nach `byte` ist deshalb ein Fehler, sie wäre
 redundant) - ein einzelnes Element eines Puffers (`buf[i]`) ist also
@@ -1410,9 +1413,9 @@ hier, `BinaryNumericOrOperator` dort).
 damit es nicht mit eigenen Klassen wie `File` oder `Stream` kollidiert; ein Enum in einem
 Namespace ist nur **vollqualifiziert** erreichbar (`IO.FileMode.Create`).
 
-**Umgesetzt:** Streams (`IO.FileStream`, `IO.MemoryStream`, eigene Streams) und die Datei-/
-Verzeichnis-API (`IO.File`, `IO.Directory`, `IO.Path`, `IO.Utf8`, siehe unten). Es folgen
-`TextReader`/`TextWriter` und Stdio.
+Aufbau: Streams (`IO.FileStream`, `IO.MemoryStream`, eigene Streams), Datei-/Verzeichnis-API
+(`IO.File`, `IO.Directory`, `IO.Path`, `IO.Utf8`), Text (`IO.TextReader`, `IO.TextWriter`) und
+Standardein-/-ausgabe (`IO.Stdio`) - alles unten beschrieben.
 
 ```
 #import "io"
@@ -1476,6 +1479,40 @@ ist `IO.PermissionException` (Code 6), auch bei `Exists` - eine Abfrage darf nic
 es außerhalb des erlaubten Bereichs gibt. `IO.Path` selbst ist reine Textverarbeitung ohne
 Dateizugriff. `Copy`/`Move` auf ein vorhandenes Ziel ohne `overwrite` wirft
 `IO.FileExistsException`, ein fehlendes Verzeichnis `IO.DirectoryNotFoundException`.
+
+**Text (`IO.TextReader`, `IO.TextWriter`).** UTF-8, zeilenweise, auf Dateien oder beliebigen Streams:
+
+```
+var out = new IO.TextWriter("log.txt")            // überschreibt; ("log.txt", true) hängt an
+out.WriteLine("Grüße")
+out.Write("Wert: ")
+out.Write(42)                                      // Zahlen usw. werden als Text geschrieben
+out.Close()
+
+foreach (zeile in new IO.TextReader("log.txt")) { print(zeile) }   // Zeile für Zeile
+
+var reader = IO.File.OpenText("log.txt")           // auch CreateText / AppendText
+var erste = reader.ReadLine()                      // undefined am Ende
+var rest = reader.ReadAll()                        // der Rest als ein String
+reader.Close()
+```
+
+`new IO.TextReader(quelle[, leaveOpen])` / `new IO.TextWriter(ziel[, flag])`: bei einem **Pfad**
+öffnen sie die Datei selbst (Writer: `flag` = append); bei einem **Stream** (`IO.IStream`) lesen/
+schreiben sie darauf und **schließen ihn mit**, außer `leaveOpen`/`flag` ist true. Zeilen enden mit
+`\n` oder `\r\n` (das `\r` gehört nicht zur Zeile), geschrieben wird `\n`. `TextReader`: `ReadLine()`,
+`ReadAll()`, `ReadLines()` (List), `EndOfStream`, `foreach`. Beide schließen sich in `destruct()`
+und werfen `IO.StreamClosedException`, wenn man nach `Close()` weitermacht.
+
+**Standardein-/-ausgabe (`IO.Stdio`).** `IO.Stdio.Write(x)`, `WriteLine(x)`, `ErrorWrite(x)`,
+`ErrorLine(x)`, `Flush()`, `ReadLine()` (undefined am Ende), `ReadAll()`; `In()`/`Out()`/`Err()`
+liefern sie als Stream (z.B. `new IO.TextWriter(IO.Stdio.Out(), true)`), `Close()` darauf ändert
+nichts. **Wohin** das führt, bestimmt der Host: die echte Konsole (Vorgabe, `IoStdio.SystemConsole`)
+oder Rückruffunktionen (`IoStdio.Custom(ausgabe, fehler, eingabe)` - der Editor leitet sie in sein
+Ausgabefenster, die Eingabe ist dort leer). Ausgabe läuft immer als UTF-8; beim `Custom`-Ziel wird
+zeilenweise weitergegeben, eine unvollständige Zeile bleibt bis zum Umbruch oder `Flush()` liegen.
+`ReadLine`/`ReadAll` lesen gepuffert - nicht mit rohen Lesezugriffen auf `In()` mischen. (Anders als
+`print` gibt es hier keinen automatischen Zeilenumbruch.)
 
 **Aufräumen:** `NativeStream.destruct()` schließt das Handle, wenn der Besitzer-Scope endet
 (siehe 2 und 5.3) - ein vergessenes `Close()` bleibt nicht offen.

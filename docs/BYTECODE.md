@@ -267,7 +267,7 @@ müsste.
 **Wichtige Voraussetzung**: `IndexOutOfBoundsException` lebt in der Prelude
 (wie `List`/`IEnumerable`) - ein Programm, das mit `Parser.Parse(...)`
 (ohne Prelude) kompiliert wird, kennt diesen Klassennamen NICHT. Das wirft
-schon beim Resolven eines `catch (e : IndexOutOfBoundsException)` einen
+schon beim Resolven eines `catch (IndexOutOfBoundsException e)` einen
 klaren Fehler ("Unbekannter Exception-Typ"), lange bevor überhaupt ein
 Index verletzt wird - sobald irgendwo im Programm `catch` auf diesen Typ
 lauern soll (nicht nur beim tatsächlichen Werfen!), muss also `Parser.
@@ -1296,11 +1296,27 @@ Datei-API (`IoFileSystem.cs`, `IoHost` ist `partial`): jeder Skript-Pfad läuft 
 `Utf8Decode`/`SplitLines`. `IO.File`/`IO.Directory`/`IO.Path`/`IO.Utf8` sind statische fire-Klassen
 im Prelude (die Ganzdatei-Funktionen bauen auf `FileStream` auf).
 
-Dafür waren zwei Änderungen an der Sprache nötig:
+Text/Stdio: `TextReader` liest in 4096-Byte-Blöcken vom Stream und sucht Zeilenenden mit dem nativen
+`BufferIndexOf` (ein Byte-Lauf in fire wäre zu langsam), Zeilen über Blockgrenzen sammelt ein
+`MemoryStream`; UTF-8 ist zeilenweise sicher, weil `0x0A` in Mehrbyte-Folgen nie vorkommt. Der Host
+gibt `IoStdio` mit (`SystemConsole` oder `Custom(...)` mit einem `LineCallbackStream`, der über
+Chunk-Grenzen dekodiert); die drei Standardstreams sind pro `RegisterAll` einmalig, ihre Handles
+`Permanent` (ein `Close()` aus dem Skript schließt sie nicht), Ausgabe/Eingabe laufen über
+`StdWrite`/`StdReadLine`/`StdReadAll`.
+
+Dafür waren Änderungen an der Sprache nötig:
 - **Destruktor-Kette:** `VM.RunDestructor` ruft die Destruktoren der ganzen Klassenkette (abgeleitete
   Klasse zuerst, dann jede Basisklasse) - vorher nur den der konkreten Klasse, eine abgeleitete
   Klasse ohne eigenen `destruct()` hätte den ihrer Basis also nie ausgeführt.
 - **Enums in Namespaces:** `Resolver` erkennt `Name.Mitglied` jetzt auch für einen punktierten Namen
   (`IO.FileMode.Create`, `DottedName`) - wie beim statischen Klassenzugriff zählt nur der exakt
   geschriebene Name. Und `class X : Namespace.Basis` akzeptiert einen qualifizierten Basisnamen.
+- **Felder vor der Konstruktion:** `FieldStore` belegt deklarierte Felder mit `undefined` statt mit
+  `default(Value)` (= `false`). Bricht ein Konstruktor ab, bevor die Feld-Initialisierer liefen (z.B. eine
+  Exception beim Auswerten der `base(...)`-Argumente), sieht ein `destruct()` `undefined`, kein erfundenes
+  `false`.
+- **`foreach` über Arrays/Puffer:** `CallMethod` auf einem Array/Puffer mit `GetEnumerator()` konstruiert
+  (`ConstructNested`) einen `ListEnumerator` der Prelude über die Elemente.
+- **Statische Property-Setter:** `SetStaticField` fällt auf die statische `set_`-Methode zurück (wie
+  `GetStaticField` auf `get_`).
 

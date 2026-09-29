@@ -40,6 +40,15 @@ namespace fire.Runtime
         {
             _rtClass = rtClass;
             _known = new Value[rtClass?.FieldIndex.Count ?? 0];
+
+            // `default(Value)` ist `false` (ValueKind.Bool = 0) - ein deklariertes Feld,
+            // das noch nichts zugewiesen bekam, ist aber `undefined`. Sichtbar wird das
+            // bei einem Objekt, dessen Konstruktor abbricht, bevor die Feld-
+            // Initialisierer liefen (z.B. Exception beim Auswerten der base(...)-
+            // Argumente): sein destruct() darf dann `undefined` sehen, nicht ein
+            // erfundenes `false`.
+            for (int i = 0; i < _known.Length; i++)
+                _known[i] = Value.MakeUndefined();
         }
 
         public Value this[string name]

@@ -120,7 +120,14 @@ namespace fire.Editor
                     string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
                     OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {text}" : text);
                     return Value.MakeUndefined();
-                }, outname);
+                }, outname,
+                // IO.Stdio (`#import "io"`) landet im selben Ausgabefenster wie print():
+                // Ausgabe und Fehler zeilenweise, Eingabe ist leer (sofort Ende).
+                ioStdio: fire.IO.Bridge.IoStdio.Custom(line =>
+                {
+                    string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
+                    OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {line}" : line);
+                }));
 
                 ActiveExecutionMode = ExecutionMode;
 

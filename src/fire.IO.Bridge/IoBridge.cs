@@ -56,7 +56,7 @@ namespace fire.IO.Bridge
         public static void RegisterStubs(NativeRegistry natives)
         {
             var stubs = new Dictionary<string, NativeFunction>();
-            foreach (var name in new IoHost(IoPolicy.DenyAll).BuildFunctions().Keys)
+            foreach (var name in new IoHost(IoPolicy.DenyAll, IoStdio.SystemConsole).BuildFunctions().Keys)
                 stubs[name] = args => Value.MakeUndefined();
             natives.RegisterGroup(Prefix, stubs);
         }
@@ -64,8 +64,8 @@ namespace fire.IO.Bridge
         /// <summary>Die echten Funktionen. `policy`: was Skripte anfassen dürfen
         /// (Vorgabe: alles, siehe IoPolicy.AllowAll). Jeder Aufruf erzeugt eine
         /// EIGENE Handle-Tabelle - Sessions teilen sich keine offenen Streams.</summary>
-        public static void RegisterAll(NativeRegistry natives, IoPolicy? policy = null) =>
-            natives.RegisterGroup(Prefix, new IoHost(policy ?? IoPolicy.AllowAll).BuildFunctions());
+        public static void RegisterAll(NativeRegistry natives, IoPolicy? policy = null, IoStdio? stdio = null) =>
+            natives.RegisterGroup(Prefix, new IoHost(policy ?? IoPolicy.AllowAll, stdio ?? IoStdio.SystemConsole).BuildFunctions());
 
         /// <summary>Die offenen Streams EINER Registrierung - für Tests/Diagnose
         /// (fire: `__IOOpenCount()`).</summary>
@@ -75,9 +75,18 @@ namespace fire.IO.Bridge
             {
                 public required Stream Stream { get; init; }
                 public readonly object Lock = new();
+
+                /// <summary>Standardein-/-ausgabe/-fehler: gehören dem Host, ein
+                /// `Close()` aus dem Skript schließt sie nicht.</summary>
+                public bool Permanent { get; init; }
             }
 
             private readonly IoPolicy _policy;
+            private readonly IoStdio _stdio;
+            private readonly Stream?[] _stdStreams = new Stream?[3];
+            private readonly int[] _stdHandles = new int[3];
+            private StreamReader? _stdReader;
+            private readonly object _stdLock = new();
             private readonly ConcurrentDictionary<int, StreamEntry> _streams = new();
             private int _nextHandle;
 
@@ -86,7 +95,11 @@ namespace fire.IO.Bridge
             [ThreadStatic] private static IoError _lastError;
             [ThreadStatic] private static string? _lastMessage;
 
-            public IoHost(IoPolicy policy) => _policy = policy;
+            public IoHost(IoPolicy policy, IoStdio stdio)
+            {
+                _policy = policy;
+                _stdio = stdio;
+            }
 
             private static long Fail(IoError error, string message)
             {
@@ -178,7 +191,7 @@ namespace fire.IO.Bridge
                 // ---- Fehler ----
                 ["LastError"] = args => Value.MakeInt((long)_lastError),
                 ["LastErrorMessage"] = args => Value.MakeString(_lastMessage ?? string.Empty),
-                ["OpenCount"] = args => Value.MakeInt(_streams.Count),
+                ["OpenCount"] = args => Value.MakeInt(_streams.Values.Count(e => !e.Permanent)),
 
                 // ---- Öffnen ----
                 // mode: 0 Open (muss existieren), 1 Create (anlegen/leeren),
@@ -201,6 +214,11 @@ namespace fire.IO.Bridge
                 },
                 ["Close"] = args =>
                 {
+                    if (_streams.TryGetValue((int)args[0].AsInt(), out var permanent) && permanent.Permanent)
+                    {
+                        Succeed(); // Standardstreams gehören dem Host
+                        return Value.MakeBool(true);
+                    }
                     if (!_streams.TryRemove((int)args[0].AsInt(), out var entry))
                     {
                         Fail(IoError.InvalidHandle, "Ungültiges oder bereits geschlossenes Stream-Handle.");

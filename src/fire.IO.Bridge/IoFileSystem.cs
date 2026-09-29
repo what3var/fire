@@ -96,6 +96,46 @@ namespace fire.IO.Bridge
                 }
             }
 
+            private Stream GetStdStream(int kind) => _stdStreams[kind] ??= kind switch
+            {
+                0 => _stdio.OpenInput(),
+                1 => _stdio.OpenOutput(),
+                _ => _stdio.OpenError(),
+            };
+
+            private StreamReader StdReader() => _stdReader ??= new StreamReader(GetStdStream(0), new UTF8Encoding(false));
+
+            private Value StdWrite(long kind, string text, bool flush)
+            {
+                if (kind != 1 && kind != 2) return BoolFailureWith(IoError.InvalidArgument, $"Ungültiger Ausgabestream {kind}.");
+                try
+                {
+                    lock (_stdLock)
+                    {
+                        var stream = GetStdStream((int)kind);
+                        if (text.Length > 0)
+                        {
+                            var bytes = new UTF8Encoding(false).GetBytes(text);
+                            stream.Write(bytes, 0, bytes.Length);
+                        }
+                        if (flush) stream.Flush();
+                        Succeed();
+                        return Bool(true);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    FailFrom(ex);
+                    return BoolFailure;
+                }
+            }
+
+            private static Value BoolFailureWith(IoError error, string message)
+            {
+                Fail(error, message);
+                return BoolFailure;
+            }
+
             private Dictionary<string, NativeFunction> BuildFileSystemFunctions() => new()
             {
                 // ---- Dateien ----
@@ -183,6 +223,76 @@ namespace fire.IO.Bridge
                 ["PathTemp"] = args => TextResult(Path.GetTempPath),
                 ["PathSeparator"] = args => Value.MakeString(Path.DirectorySeparatorChar.ToString()),
                 ["PathIsRooted"] = args => Bool(Path.IsPathRooted(args[0].AsString())),
+
+                // ---- Standardein-/-ausgabe (Ziel bestimmt der Host, siehe IoStdio) ----
+                // kind: 0 Eingabe, 1 Ausgabe, 2 Fehler. Immer dasselbe Handle je kind.
+                ["StdHandle"] = args =>
+                {
+                    long kind = args[0].AsInt();
+                    if (kind < 0 || kind > 2)
+                    {
+                        Fail(IoError.InvalidArgument, $"Ungültiger Standardstream {kind}.");
+                        return IntFailure;
+                    }
+                    try
+                    {
+                        lock (_stdLock)
+                        {
+                            if (_stdHandles[kind] == 0)
+                            {
+                                int handle = Interlocked.Increment(ref _nextHandle);
+                                _streams[handle] = new StreamEntry { Stream = GetStdStream((int)kind), Permanent = true };
+                                _stdHandles[kind] = handle;
+                            }
+                            Succeed();
+                            return Value.MakeInt(_stdHandles[kind]);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        FailFrom(ex);
+                        return IntFailure;
+                    }
+                },
+                ["StdWrite"] = args => StdWrite(args[0].AsInt(), args[1].AsString(), flush: false),
+                ["StdFlush"] = args => StdWrite(args[0].AsInt(), string.Empty, flush: true),
+                // Eine Zeile Standardeingabe (ohne Umbruch), `undefined` am Ende. Liest gepuffert -
+                // nicht mit rohen Lesezugriffen auf IO.Stdio.In() mischen.
+                ["StdReadLine"] = args =>
+                {
+                    try
+                    {
+                        lock (_stdLock)
+                        {
+                            string? line = StdReader().ReadLine();
+                            Succeed();
+                            return line == null ? NoValue : Value.MakeString(line);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        FailFrom(ex);
+                        return NoValue;
+                    }
+                },
+                ["StdReadAll"] = args => TextResult(() =>
+                {
+                    lock (_stdLock) return StdReader().ReadToEnd();
+                }),
+
+                // ---- Puffer ----
+                // Index (absolut) des ersten Bytes `value` in buffer[offset .. offset+count), sonst -1.
+                // Schnelle Suche für Zeilentrenner (TextReader) - ein Byte-für-Byte-Lauf in fire
+                // wäre dafür viel zu langsam.
+                ["BufferIndexOf"] = args =>
+                {
+                    var buffer = args[0].AsBuffer();
+                    long offset = args[1].AsInt(), count = args[2].AsInt();
+                    if (!CheckRange(buffer, offset, count)) return IntFailure;
+                    int index = Array.IndexOf(buffer.Bytes, (byte)(args[3].AsInt() & 0xFF), (int)offset, (int)count);
+                    Succeed();
+                    return Value.MakeInt(index);
+                },
 
                 // ---- Text (UTF-8) ----
                 ["Utf8Encode"] = args => Value.MakeBuffer(
