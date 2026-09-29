@@ -522,7 +522,6 @@ namespace fire.Editor
                         if (isCall && BuiltinMembers.ExtensionClassOf(receiver) is { } extensionKey
                             && Classes.ContainsKey(extensionKey))
                         {
-                            if (BuiltinMembers.ReturnTypeHint(receiver, name) is { } hint) return hint;
                             var extension = MembersOf(extensionKey).FirstOrDefault(m => m.Kind == MemberKind.Method && m.Name == name);
                             if (extension != null) return TypeOfMember(extension, depth);
                         }

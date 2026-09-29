@@ -88,13 +88,6 @@ namespace fire.Editor
             };
         }
 
-        /// <summary>Rückgabetypen, die sich in fire nicht als Typ hinschreiben lassen (ein Array wie bei
-        /// `Split`) - der Prelude deklariert die Methode dann ohne Typ, der Editor kennt ihn hierher.</summary>
-        public static ExprType? ReturnTypeHint(ExprType receiver, string method) =>
-            receiver.Kind == TypeKind.Primitive && receiver.Name == "string" && method == "Split"
-                ? new ExprType(TypeKind.Array, "string")
-                : null;
-
         /// <summary>Der Typ, den `returnType` (siehe BuiltinMember) meint.</summary>
         public static ExprType ToExprType(string? returnType)
         {

@@ -64,8 +64,7 @@ namespace fire.Standard
             (StringMethod.TrimStart, "string", "TrimStart", ""),
             (StringMethod.TrimEnd, "string", "TrimEnd", ""),
             (StringMethod.Replace, "string", "Replace", "oldValue, newValue"),
-            // Ein Array kann man als Rückgabetyp nicht hinschreiben - `Split` bleibt ohne Typ.
-            (StringMethod.Split, "", "Split", "separator"),
+            (StringMethod.Split, "string[]", "Split", "separator"),
             (StringMethod.PadLeft, "string", "PadLeft", "width"),
             (StringMethod.PadLeft, "string", "PadLeft", "width, fill"),
             (StringMethod.PadRight, "string", "PadRight", "width"),

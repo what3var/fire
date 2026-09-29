@@ -1372,3 +1372,15 @@ Prelude UND Nutzerdokument hat.
 über einen direkten `switch` in der VM; im Debug-Modus gemessen etwa 30 % langsamer als die frühere
 VM-eingebaute Fassung (300 000 × `IndexOf` + `Length`, dann 300 000 × `Substring(..).Length`: 3,0 s statt
 2,3 s). Der Namensvergleich ist es nicht - er steckt nur noch im normalen Methoden-Lookup der Klasse.
+
+## 25. Array-Rückgabetypen (`int[] Name()`)
+
+`TypeRef` hat das Feld `ArrayRank` (Anzahl leerer Klammerpaare, Vorgabe 0). `Parser.ParseTypeRef(allowArray)` liest
+`[` `]` hinter Basisname/Bitbreite/`*`; `[8]` (mit Zahl) bleibt die Bitbreite (`NextIsEmptyBrackets` unterscheidet,
+`byte[]` ist erlaubt, `byte[8]` nicht). `allowArray` ist nur bei Methoden-/Property-/Interface-Rückgabetypen gesetzt;
+sonst (Variable, Parameter, `extern`) wirft `ParseArrayTypeSuffix` einen Fehler mit dem Hinweis auf `Typ name[]`, bei
+Feldern erst nach dem Namen (Klassenmitglieder wissen vorher nicht, ob eine Methode folgt). `NextLooksLikeTypeThenName`
+überspringt leere Klammerpaare hinter einem Klassennamen (`Dog[] Name`; `Name[] Name` kommt in keinem Ausdruck vor).
+Resolver, Compiler und VM lesen `ArrayRank` nicht - Rückgabetypen werden nur auf existierende Typnamen geprüft.
+Editor: `HarvestMember` überspringt die Klammern und setzt `MemberInfo.TypeIsArray` (für Methoden und Properties =
+Elementtyp + Array), `TypeOfMember` macht daraus `TypeKind.Array`. Das Prelude nutzt es für `string[] Split(...)`.

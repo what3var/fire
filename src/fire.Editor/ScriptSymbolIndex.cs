@@ -740,6 +740,18 @@ namespace fire.Editor
             return i;
         }
 
+        /// <summary>Überspringt leere Klammerpaare `[]` ab `i` (Array-Typ, `int[] Name()`) und meldet über
+        /// `found`, ob es welche gab.</summary>
+        private int SkipEmptyBrackets(int i, int end, ref bool found)
+        {
+            while (i + 1 < end && _tokens[i].Type == TokenType.LBracket && _tokens[i + 1].Type == TokenType.RBracket)
+            {
+                found = true;
+                i += 2;
+            }
+            return i;
+        }
+
         /// <summary>Index des ersten Tokens NACH einem Ausdruck, der bei
         /// `startIdx` beginnt: das Ende ist ein `;`, ein schließendes
         /// '}'/')'/']' oder ein Zeilenumbruch - jeweils nur auf
@@ -774,11 +786,14 @@ namespace fire.Editor
 
             // Optionalen Typ merken/überspringen (Typ-Keyword, oder zwei
             // Identifier hintereinander = "Klassenname Feldname").
+            // `int[] Name()` - leere Klammern hinter dem Typ = Array-RÜCKGABETYP (Methode/Property).
             string? typeName = null;
+            bool returnsArray = false;
             if (IsTypeKeyword(_tokens[i].Type))
             {
                 typeName = _tokens[i].Lexeme;
                 i = SkipTypeSuffix(i + 1, bodyEnd);
+                i = SkipEmptyBrackets(i, bodyEnd, ref returnsArray);
             }
             else if (_tokens[i].Type == TokenType.Identifier)
             {
@@ -788,11 +803,14 @@ namespace fire.Editor
                 while (typeEnd + 2 < bodyEnd && _tokens[typeEnd + 1].Type == TokenType.Dot
                        && _tokens[typeEnd + 2].Type == TokenType.Identifier)
                     typeEnd += 2;
-                if (typeEnd + 1 < bodyEnd && _tokens[typeEnd + 1].Type == TokenType.Identifier
-                    && !_tokens[typeEnd + 1].NewlineBefore)
+                bool identifierArray = false;
+                int afterType = SkipEmptyBrackets(typeEnd + 1, bodyEnd, ref identifierArray);
+                if (afterType < bodyEnd && _tokens[afterType].Type == TokenType.Identifier
+                    && !_tokens[afterType].NewlineBefore)
                 {
                     typeName = string.Concat(_tokens.Skip(i).Take(typeEnd - i + 1).Select(t => t.Lexeme));
-                    i = typeEnd + 1;
+                    returnsArray = identifierArray;
+                    i = afterType;
                 }
             }
 
@@ -820,6 +838,7 @@ namespace fire.Editor
                 AddMember(info, new MemberInfo(name, MemberKind.Method, paramCount, DeclLineOf(_tokens[nameIdx]))
                 {
                     TypeName = typeName,
+                    TypeIsArray = returnsArray,
                     IsStatic = isStatic,
                     Access = access,
                     Signature = FormatSignature(parms),
@@ -834,6 +853,7 @@ namespace fire.Editor
                 AddMember(info, new MemberInfo(name, MemberKind.Property, 0, DeclLineOf(_tokens[nameIdx]))
                 {
                     TypeName = typeName,
+                    TypeIsArray = returnsArray,
                     IsStatic = isStatic,
                     Access = access,
                 });

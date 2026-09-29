@@ -660,7 +660,7 @@ namespace fire.Compiler
         /// Klammern (die enthalten nur die Parametertypen), das macht die
         /// Grammatik unzweideutig ohne Trennzeichen zwischen Rückgabe- und
         /// Parametertypen zu brauchen.</summary>
-        private TypeRef ParseTypeRef()
+        private TypeRef ParseTypeRef(bool allowArray = false)
         {
             string baseName = ParseTypeAnnotationName();
             var namespaces = CurrentNamespaces();
@@ -680,16 +680,18 @@ namespace fire.Compiler
             // oder zu überschreiben.
             if (baseName == "byte")
             {
-                if (Check(TokenType.LBracket))
+                if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
                     throw Error("'byte' hat bereits eine feste Breite von 8 Bit - kein zusätzliches '[...]' danach", Peek());
                 int bytePointerDepth = 0;
                 while (Match(TokenType.Star)) bytePointerDepth++;
-                return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces);
+                return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
             }
 
+            // `[8]` = Bitbreite; leere Klammern `[]` gehören zum Array-Rückgabetyp (siehe unten).
             int? width = null;
-            if (Match(TokenType.LBracket))
+            if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
             {
+                Advance();
                 var widthTok = Expect(TokenType.IntLiteral, "Erwarte Bitbreite (8/16/32/64)");
                 width = (int)(long)widthTok.LiteralValue!;
                 Expect(TokenType.RBracket, "Erwarte ']' nach Bitbreite");
@@ -698,7 +700,31 @@ namespace fire.Compiler
             int pointerDepth = 0;
             while (Match(TokenType.Star)) pointerDepth++;
 
-            return new TypeRef(baseName, width, pointerDepth, Namespaces: namespaces);
+            return new TypeRef(baseName, width, pointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
+        }
+
+        /// <summary>Steht als nächstes `[` `]` (leere Klammern)? Das ist ein Array-Typ
+        /// (`int[]`), keine Bitbreite (`int[8]`).</summary>
+        private bool NextIsEmptyBrackets() =>
+            Check(TokenType.LBracket) && PeekAt(1).Type == TokenType.RBracket;
+
+        /// <summary>Liest die leeren Klammerpaare eines Array-TYPS (`int[]`, `Dog[][]`) und liefert ihre
+        /// Anzahl. Nur dort erlaubt, wo der Typ keinen Bezeichner hat, hinter dem die Klammern stünden
+        /// (Rückgabetypen) - überall sonst gilt `Typ name[]`, und der Fehler sagt das.</summary>
+        private int ParseArrayTypeSuffix(bool allowArray)
+        {
+            int rank = 0;
+            while (NextIsEmptyBrackets())
+            {
+                if (!allowArray)
+                    throw Error(
+                        "Ein Array schreibt man bei Variablen, Feldern und Parametern mit den Klammern hinter dem Namen " +
+                        "('int werte[]'); 'int[]' als Typ gibt es nur als Rückgabetyp einer Methode oder Property", Peek());
+                Advance(); // '['
+                Advance(); // ']'
+                rank++;
+            }
+            return rank;
         }
 
         /// <summary>Optionale `&lt;Param1,...,ParamN&gt;`-Parameterliste nach
@@ -776,6 +802,10 @@ namespace fire.Compiler
 
             int offset = 1;
             while (PeekAt(offset).Type == TokenType.Dot && PeekAt(offset + 1).Type == TokenType.Identifier)
+                offset += 2;
+            // `Dog[] Name`: leere Klammern hinter dem Typnamen (Array-Rückgabetyp) - wie zwei Bezeichner
+            // hintereinander kommt `Name[] Name` in keinem gültigen Ausdruck vor.
+            while (PeekAt(offset).Type == TokenType.LBracket && PeekAt(offset + 1).Type == TokenType.RBracket)
                 offset += 2;
             return PeekAt(offset).Type == TokenType.Identifier;
         }
@@ -1611,7 +1641,7 @@ namespace fire.Compiler
                 int mLine = Peek().Line;
                 TypeRef? returnType = null;
                 if (NextLooksLikeTypeThenName())
-                    returnType = ParseTypeRef();
+                    returnType = ParseTypeRef(allowArray: true);
                 string methodName = Expect(TokenType.Identifier, "Erwarte Methodennamen").Lexeme;
                 var parms = ParseParamList();
                 ExpectStatementTerminator();
@@ -1826,7 +1856,9 @@ namespace fire.Compiler
             }
             else if (NextLooksLikeTypeThenName())
             {
-                type = ParseTypeRef();
+                // `int[] Name()`: ein Array-Rückgabetyp (Methode/Property) - bei einem FELD fängt das der
+                // Check unten ab (dort stehen die Klammern hinter dem Namen).
+                type = ParseTypeRef(allowArray: true);
             }
 
             string name = Expect(TokenType.Identifier, "Erwarte Feld- oder Methodennamen").Lexeme;
@@ -1862,6 +1894,11 @@ namespace fire.Compiler
                         Peek());
                 return ParsePropertyBody(line, type, name, access, isStatic);
             }
+
+            if (type is { ArrayRank: > 0 })
+                throw Error(
+                    "Ein Array-Feld schreibt man mit den Klammern hinter dem Namen ('int werte[]'); " +
+                    "'int[]' als Typ gibt es nur als Rückgabetyp einer Methode oder Property", Previous());
 
             var arrayRanks = ParseArrayRanks();
 

@@ -1011,7 +1011,10 @@ Syntax: `[Bitbreite]` direkt hinter dem Basistyp (`int`/`float`), erlaubt
 sind `8`, `16`, `32`, `64`. Ohne Angabe gilt die höchste Genauigkeit (64 Bit,
 also int64 bzw. double). Diese Klammer steht bewusst direkt hinter dem *Typ*
 – im Gegensatz zu Array-Klammern, die hinter dem *Bezeichner* stehen (siehe
-8.4), dadurch gibt es keine Mehrdeutigkeit.
+8.4), dadurch gibt es keine Mehrdeutigkeit. Ein **Array-Rückgabetyp** (8.4.1)
+hat keinen Bezeichner, hinter den die Klammern könnten: dort stehen *leere*
+Klammern hinter dem Typ (`int[]`) - eine Bitbreite hat immer eine Zahl
+(`int[8]`), das unterscheidet beide.
 
 **Kopierverhalten:** Wird ein Wert in eine Variable/einen Parameter mit
 geringerer deklarierter Bitbreite kopiert, wird abgeschnitten (`Value.TruncateTo`):
@@ -1105,6 +1108,26 @@ Ausdruck statt Literal) wird nicht geprüft.
 Für `List` (siehe Prelude) gibt es dieselbe Idee über eine zweite
 Konstruktor-Überladung: `new List([1, 2, 3, 4])` kopiert die Array-Elemente
 einzeln über `Add()` in eine neue Liste.
+
+### 8.4.1 Arrays als Rückgabetyp
+
+```
+class Kennel {
+    int[] Numbers() { return [1, 2, 3] }
+    Dog[] Dogs() { ... }
+    string[][] Grid() { ... }        // mehrere Klammerpaare: Array von Arrays
+    byte[] Bytes() { return "AB".ToBytes() }
+    int[8][] Small() { ... }         // Array aus 8-Bit-Ganzzahlen (Bitbreite + leere Klammern)
+}
+interface IHolder { int[] Items() }
+```
+
+Eine Methode, ein Interface-Eintrag oder eine Property darf ein Array liefern: `Typ[] Name(...)`, mit **leeren**
+Klammern hinter dem Typ. Nur dort - überall, wo ein Bezeichner da ist, bleiben die Klammern dahinter
+(`int werte[]`); `int[] werte` als Feld, Parameter oder Variable ist ein Fehler mit genau diesem Hinweis, ebenso
+ein Array-Rückgabetyp bei `extern` (die native Schnittstelle kennt keine Skript-Arrays). Wie jeder Rückgabetyp wird
+er nicht zur Laufzeit erzwungen, der Resolver prüft nur, dass der Typname existiert; der Editor nutzt ihn für die
+Typ-Herleitung (`k.Dogs()[0].` schlägt die Mitglieder von `Dog` vor, `k.Numbers().` `Length`).
 
 ### 8.5 `IEnumerable`/`IEnumerator` & `interface`
 

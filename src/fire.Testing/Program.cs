@@ -5930,6 +5930,116 @@ Console.WriteLine("=== Basistyp-Erweiterungen: Editor ===");
     Console.WriteLine(failures == 0 ? "Alle Basistyp-Editor-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
 }
 
+Console.WriteLine();
+Console.WriteLine("=== Array als Rueckgabetyp (int[] Name(), leere Klammern) ===");
+{
+    int arrFailures = 0;
+
+    List<string> RunArr(string script)
+    {
+        var lines = new List<string>();
+        var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, script));
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes);
+        vm.Run();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckArr(string title, string script, params string[] expected)
+    {
+        string[] actual;
+        try { actual = RunArr(script).ToArray(); }
+        catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
+        bool ok = actual.SequenceEqual(expected);
+        if (!ok) arrFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+    }
+
+    void CheckArrError(string title, string script, string fragment)
+    {
+        string actual;
+        try { actual = "kein Fehler: " + string.Join(" | ", RunArr(script)); }
+        catch (Exception ex) { actual = ex.Message; }
+        bool ok = actual.Contains(fragment);
+        if (!ok) arrFailures++;
+        Console.WriteLine(ok ? $"OK: {title} -> {actual}" : $"FEHLER: {title}\n  erwartet: ...{fragment}...\n  erhalten: {actual}");
+    }
+
+    CheckArr("Methoden mit Array-Rueckgabetyp (int, Klasse, mehrdimensional, byte)", """
+        class Dog { string name; construct(string n) { this.name = n } }
+        class Kennel {
+            int[] Numbers() { return [1, 2, 3] }
+            Dog[] Dogs() { return [new Dog("Rex"), new Dog("Fido")] }
+            string[][] Grid() { return [["a", "b"], ["c"]] }
+            byte[] Bytes() { return "AB".ToBytes() }
+            int[8] Small() { return 7 }
+            static int[] Twice() { return [4, 4] }
+        }
+        var k = new Kennel()
+        print(k.Numbers().Length)
+        print(k.Numbers()[2])
+        foreach (d in k.Dogs()) { print(d.name) }
+        print(k.Grid()[0][1])
+        print(k.Bytes().Length)
+        print(k.Small())
+        print(Kennel.Twice().Length)
+        """, "3", "3", "Rex", "Fido", "b", "2", "7", "2");
+
+    CheckArr("Interface und Property mit Array-Typ", """
+        interface IHolder { int[] Items() }
+        class Holder : IHolder {
+            int[] Items() { return [5, 6] }
+            string[] Names { get { return ["x", "y", "z"] } }
+        }
+        var h = new Holder()
+        print(h.Items()[1])
+        print(new Holder().Names.Length)
+        """, "6", "3");
+
+    CheckArr("Prelude: Split liefert string[]", """
+        var parts = "a,b,c".Split(",")
+        print(parts.Length)
+        """, "3");
+
+    CheckArrError("Feld mit int[] Typ", "class A { int[] values }", "hinter dem Namen");
+    CheckArrError("Parameter mit int[] Typ", "class A { F(int[] p) { } }", "hinter dem Namen");
+    CheckArrError("lokale Variable mit int[] Typ", "int[] v = [1, 2]", "hinter dem Namen");
+    CheckArrError("extern mit Array-Rueckgabe", "extern int[] Foo()", "hinter dem Namen");
+    CheckArrError("unbekannte Klasse im Array-Rueckgabetyp", "class A { Gibtsnicht[] F() { return [] } }", "Gibtsnicht");
+    CheckArrError("byte[8] bleibt widerspruechlich", "class A { byte[8] F() { return 1 } }", "'byte' hat bereits");
+
+    Console.WriteLine(arrFailures == 0 ? "Alle Array-Rueckgabetyp-Pruefungen bestanden." : $"FEHLER: {arrFailures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Array als Rueckgabetyp: Editor ===");
+{
+    int failures = 0;
+    void Check(string title, string source, string expected, string forbidden = "")
+    {
+        int cursor = source.IndexOf('|');
+        source = source.Remove(cursor, 1);
+        var index = fire.Editor.ScriptSymbolIndex.Build(source);
+        var names = fire.Editor.CompletionEngine.GetSuggestions(source, cursor, index).Select(i => i.Text).ToList();
+        bool ok = expected.Split(',', StringSplitOptions.RemoveEmptyEntries).All(names.Contains)
+            && !forbidden.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(names.Contains);
+        if (!ok) failures++;
+        Console.WriteLine($"{(ok ? "OK" : "FEHLER")}: {title} -> {string.Join(", ", names.Take(8))}");
+    }
+    const string kennel = "class Dog { Bark() { } }\nclass Kennel {\n  Dog[] Dogs() { return [new Dog()] }\n  string[] Names() { return [\"a\"] }\n  int[8] Small() { return 1 }\n}\nvar k = new Kennel()\n";
+    Check("Element eines Array-Rueckgabetyps", kennel + "k.Dogs()[0].|", "Bark", "Length");
+    Check("Array-Rueckgabetyp hat Length", kennel + "k.Names().|", "Length", "Bark");
+    Check("Element eines string[]", kennel + "k.Names()[0].|", "Substring,Trim");
+    Check("Bitbreite ist kein Array", kennel + "k.Small().|", "ToChar", "Length");
+    Console.WriteLine(failures == 0 ? "Alle Array-Editor-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
+}
+
 static int CountOccurrences(string haystack, string needle)
 {
     int count = 0, idx = 0;

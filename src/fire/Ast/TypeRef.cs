@@ -30,12 +30,17 @@ namespace fire.Ast
     /// die Bitbreiten-Klammern, die direkt hinter dem Typ stehen). Beide Syntaxen
     /// sind dadurch rein positionell unterscheidbar, keine Mehrdeutigkeit.
     ///
+    /// EINE Ausnahme: ein RÜCKGABETYP hat keinen Bezeichner, hinter dem die Klammern
+    /// stehen könnten - dort schreibt man `int[] Name()` bzw. `Dog[][] Name()`. Die
+    /// LEEREN Klammern unterscheiden das von der Bitbreite (`int[8]`, immer mit
+    /// Zahl). `ArrayRank` zählt diese Klammerpaare (0 = kein Array).
+    ///
     /// LambdaSignature: gesetzt, wenn dieser TypeRef ein Lambda-Typ ist
     /// (`BaseName == "lambda"`) - `[RückgabeTyp] lambda[&lt;Param1,...,ParamN&gt;]`,
     /// siehe LambdaSignature-Doku und SPEC "Lambda-Typen mit Signatur".
     /// </summary>
     [MemoryPackable]
-    public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null)
+    public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null, int ArrayRank = 0)
     {
         /// <summary>Sentinel für `BaseName`, wenn eine Deklaration `var`
         /// zusammen mit einer EXPLIZITEN Einheit, aber OHNE expliziten Typ

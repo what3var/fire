@@ -301,12 +301,7 @@ namespace fire.Editor
                     if (BuiltinMembers.ExtensionClassOf(receiver) is { } extensionKey && index.Classes.ContainsKey(extensionKey))
                         foreach (var (m, _) in index.MembersOfWithDepth(extensionKey))
                             if (m.Kind == MemberKind.Method && IsListable(m) && MatchesPrefix(m.Name, prefix) && IsVisible(m, fromClass, index))
-                            {
-                                var item = ToItem(m, prefix, 0.3f, showOwner: false);
-                                if (BuiltinMembers.ReturnTypeHint(receiver, m.Name) is { } hint)
-                                    item = item with { Detail = $"({m.Signature}) → {hint.Name}[]" };
-                                results.Add(item);
-                            }
+                                results.Add(ToItem(m, prefix, 0.3f, showOwner: false));
                     return Dedupe(results);
 
                 default:
