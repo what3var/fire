@@ -69,7 +69,7 @@ namespace fire.IO.Bridge
 
         /// <summary>Die offenen Streams EINER Registrierung - für Tests/Diagnose
         /// (fire: `__IOOpenCount()`).</summary>
-        internal sealed class IoHost
+        internal sealed partial class IoHost
         {
             private sealed class StreamEntry
             {
@@ -163,7 +163,17 @@ namespace fire.IO.Bridge
                 }
             }
 
-            public Dictionary<string, NativeFunction> BuildFunctions() => new()
+            /// <summary>Alle nativen Funktionen: Streams (hier) und Dateisystem/Text
+            /// (IoFileSystem.cs).</summary>
+            public Dictionary<string, NativeFunction> BuildFunctions()
+            {
+                var all = BuildStreamFunctions();
+                foreach (var (name, function) in BuildFileSystemFunctions())
+                    all[name] = function;
+                return all;
+            }
+
+            private Dictionary<string, NativeFunction> BuildStreamFunctions() => new()
             {
                 // ---- Fehler ----
                 ["LastError"] = args => Value.MakeInt((long)_lastError),
@@ -329,15 +339,12 @@ namespace fire.IO.Bridge
                 {
                     if (mode < 0 || mode > 4) return Fail(IoError.InvalidArgument, $"Ungültiger FileMode {mode}.");
                     if (access < 0 || access > 2) return Fail(IoError.InvalidArgument, $"Ungültiger FileAccess {access}.");
-                    if (string.IsNullOrWhiteSpace(path)) return Fail(IoError.InvalidArgument, "Der Pfad ist leer.");
                     if (mode == 4 && access != 1) return Fail(IoError.InvalidArgument, "FileMode.Append verlangt FileAccess.Write.");
                     if ((mode == 1 || mode == 2) && access == 0)
                         return Fail(IoError.InvalidArgument, "Anlegen einer Datei verlangt Schreibzugriff.");
 
-                    string fullPath = Path.GetFullPath(path);
                     var needed = access == 0 ? IoAccess.Read : access == 1 ? IoAccess.Write : IoAccess.Read | IoAccess.Write;
-                    if (!_policy.IsAllowed(fullPath, needed, out var reason))
-                        return Fail(IoError.Denied, reason ?? $"Zugriff auf '{fullPath}' ist nicht erlaubt.");
+                    if (!Authorize(path, needed, out string fullPath)) return Failed;
 
                     if (mode == 2 && File.Exists(fullPath))
                         return Fail(IoError.AlreadyExists, $"Die Datei '{fullPath}' existiert bereits.");

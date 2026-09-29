@@ -6,7 +6,7 @@ namespace fire.IO.Bridge
         /// Der fire-Quelltext zur Brücke (analog zu GraphicsBridge.PreludeSource/
         /// DeviceBridge.PreludeSource) - VOR das eigentliche Nutzer-Skript zu
         /// setzen, wenn es `#import "io"` gibt. Alles liegt in `namespace IO`
-        /// (`IO.FileStream`, `IO.MemoryStream`, ...), damit kein Nutzer-
+        /// (`IO.FileStream`, `IO.File`, `IO.Path`, ...), damit kein Nutzer-
         /// Klassenname wie `File` oder `Stream` damit kollidiert.
         ///
         /// Aufbau: `IStream` ist die kleinste Schnittstelle (Read/Write/Flush/
@@ -324,6 +324,184 @@ namespace fire.IO.Bridge
                         if (all == undefined) { IO.IOErrors.Throw() }
                         return all
                     }
+                }
+
+                // UTF-8 <-> Puffer. (`string.ToBytes()` ist nur ASCII.)
+                class Utf8 {
+                    // Der Text als UTF-8 (ohne Byte-Order-Mark) in einem neuen Puffer.
+                    static GetBytes(string text) { return __IOUtf8Encode(text) }
+
+                    // Ein Byte-Order-Mark am Anfang wird entfernt, ungültige Folgen
+                    // werden zu U+FFFD. Ohne count: bis zum Ende des Puffers.
+                    static string GetString(buffer, int offset = 0, int count = -1) {
+                        if (count == -1) { count = buffer.length - offset }
+                        var text = __IOUtf8Decode(buffer, offset, count)
+                        if (text == undefined) { IO.IOErrors.Throw() }
+                        return text
+                    }
+                }
+
+                // Reine Textverarbeitung auf Pfaden (kein Dateizugriff). Wie überall in
+                // dieser Sprache mit dem Namespace: IO.Path.Combine(...).
+                class Path {
+                    // Das Zeichen, das Verzeichnisse trennt ("/" oder "\").
+                    static string Separator() { return __IOPathSeparator() }
+
+                    // Fügt Pfadteile zusammen; ein absoluter Teil verwirft alles davor
+                    // (wie Path.Combine in .NET).
+                    static string Combine(string a, string b) {
+                        var r = __IOPathCombine(a, b)
+                        if (r == undefined) { IO.IOErrors.Throw() }
+                        return r
+                    }
+
+                    static string Combine(string a, string b, string c) {
+                        return IO.Path.Combine(IO.Path.Combine(a, b), c)
+                    }
+
+                    // "dir/name.txt" -> "name.txt"
+                    static string FileName(string path) { return IO.Path.Text(__IOPathFileName(path)) }
+
+                    // "dir/name.txt" -> "name"
+                    static string Stem(string path) { return IO.Path.Text(__IOPathStem(path)) }
+
+                    // "dir/name.txt" -> ".txt" ("" ohne Endung)
+                    static string Extension(string path) { return IO.Path.Text(__IOPathExtension(path)) }
+
+                    // "dir/sub/name.txt" -> "dir/sub" ("" bei einem reinen Namen)
+                    static string Parent(string path) { return IO.Path.Text(__IOPathParent(path)) }
+
+                    // Der absolute, normalisierte Pfad (ohne "..").
+                    static string FullPath(string path) { return IO.Path.Text(__IOPathFull(path)) }
+
+                    // Das Verzeichnis für temporäre Dateien.
+                    static string Temp() { return IO.Path.Text(__IOPathTemp()) }
+
+                    static bool IsRooted(string path) { return __IOPathIsRooted(path) }
+
+                    static string Text(value) {
+                        if (value == undefined) { IO.IOErrors.Throw() }
+                        return value
+                    }
+                }
+
+                // Dateien als Ganzes. Jeder Zugriff geht durch die Richtlinie des Hosts;
+                // Fehler sind IO.IOException und Ableitungen. Text ist UTF-8, Zeilen
+                // werden mit "\n" geschrieben und mit \n, \r\n oder \r gelesen.
+                class File {
+                    static bool Exists(string path) {
+                        var r = __IOFileExists(path)
+                        if (r < 0) { IO.IOErrors.Throw() }
+                        return r == 1
+                    }
+
+                    // Größe in Bytes.
+                    static int Size(string path) {
+                        var n = __IOFileSize(path)
+                        if (n < 0) { IO.IOErrors.Throw() }
+                        return n
+                    }
+
+                    // Zeitpunkt der letzten Änderung: Sekunden seit 1970 (UTC), mit der Einheit s.
+                    static ModifiedTime(string path) {
+                        var t = __IOFileTime(path)
+                        if (t == undefined) { IO.IOErrors.Throw() }
+                        return t
+                    }
+
+                    // Eine fehlende Datei ist kein Fehler.
+                    static Delete(string path) {
+                        if (!__IOFileDelete(path)) { IO.IOErrors.Throw() }
+                    }
+
+                    static Copy(string source, string target, bool overwrite = false) {
+                        if (!__IOFileCopy(source, target, overwrite)) { IO.IOErrors.Throw() }
+                    }
+
+                    static Move(string source, string target, bool overwrite = false) {
+                        if (!__IOFileMove(source, target, overwrite)) { IO.IOErrors.Throw() }
+                    }
+
+                    static ReadAllBytes(string path) {
+                        var stream = new IO.FileStream(path)
+                        var data = stream.ReadAll()
+                        stream.Close()
+                        return data
+                    }
+
+                    // Legt die Datei an bzw. überschreibt sie.
+                    static WriteAllBytes(string path, buffer) {
+                        var stream = new IO.FileStream(path, IO.FileMode.Create)
+                        stream.Write(buffer)
+                        stream.Close()
+                    }
+
+                    static AppendAllBytes(string path, buffer) {
+                        var stream = new IO.FileStream(path, IO.FileMode.Append)
+                        stream.Write(buffer)
+                        stream.Close()
+                    }
+
+                    static string ReadAllText(string path) {
+                        return IO.Utf8.GetString(IO.File.ReadAllBytes(path))
+                    }
+
+                    static WriteAllText(string path, string text) {
+                        IO.File.WriteAllBytes(path, IO.Utf8.GetBytes(text))
+                    }
+
+                    static AppendAllText(string path, string text) {
+                        IO.File.AppendAllBytes(path, IO.Utf8.GetBytes(text))
+                    }
+
+                    // Alle Zeilen als Array von Strings.
+                    static ReadAllLines(string path) {
+                        return __IOSplitLines(IO.File.ReadAllText(path))
+                    }
+
+                    // Jede Zeile des Arrays, jeweils mit "\n" abgeschlossen.
+                    static WriteAllLines(string path, lines) {
+                        var stream = new IO.FileStream(path, IO.FileMode.Create)
+                        for (var i = 0; i < lines.length; i++) {
+                            stream.Write(IO.Utf8.GetBytes(lines[i] + "\n"))
+                        }
+                        stream.Close()
+                    }
+                }
+
+                class Directory {
+                    static bool Exists(string path) {
+                        var r = __IODirExists(path)
+                        if (r < 0) { IO.IOErrors.Throw() }
+                        return r == 1
+                    }
+
+                    // Legt auch fehlende Zwischenverzeichnisse an; ein vorhandenes ist kein Fehler.
+                    static Create(string path) {
+                        if (!__IODirCreate(path)) { IO.IOErrors.Throw() }
+                    }
+
+                    // Ein nicht leeres Verzeichnis nur mit recursive = true.
+                    static Delete(string path, bool recursive = false) {
+                        if (!__IODirDelete(path, recursive)) { IO.IOErrors.Throw() }
+                    }
+
+                    // Vollständige Pfade der Dateien, sortiert. pattern: z.B. "*.txt".
+                    static GetFiles(string path, string pattern = "*", bool recursive = false) {
+                        var list = __IODirList(path, pattern, recursive, 0)
+                        if (list == undefined) { IO.IOErrors.Throw() }
+                        return list
+                    }
+
+                    // Vollständige Pfade der Unterverzeichnisse, sortiert.
+                    static GetDirectories(string path, string pattern = "*", bool recursive = false) {
+                        var list = __IODirList(path, pattern, recursive, 1)
+                        if (list == undefined) { IO.IOErrors.Throw() }
+                        return list
+                    }
+
+                    // Das aktuelle Arbeitsverzeichnis.
+                    static string Current() { return __IOCurrentDir() }
                 }
             }
             """;

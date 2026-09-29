@@ -5327,6 +5327,85 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         try { var x = new IO.FileStream("{{ioDirFwd}}/../outside.txt") } catch (IO.PermissionException e) { print("ausserhalb " + e.code) }
         """, new[] { "lesen ok", "schreiben 6", "ausserhalb 6" }, fire.IO.Bridge.IoPolicy.Rooted(ioDir, readOnly: true));
 
+    // ---- Schritt 2: Datei- und Verzeichnis-API ----
+    string apiDir = Path.Combine(ioDir, "api").Replace("\\", "/");
+    Directory.CreateDirectory(apiDir);
+
+    CheckIo("File: Text (UTF-8), Zeilen, Groesse, Zeit", $$"""
+        var d = "{{apiDir}}"
+        var f = IO.Path.Combine(d, "t.txt")
+        print(IO.File.Exists(f))
+        IO.File.WriteAllText(f, "Grüße\nzweite Zeile\r\ndritte")
+        print(IO.File.Exists(f) + " " + IO.File.Size(f))
+        print(IO.File.ReadAllText(f))
+        var lines = IO.File.ReadAllLines(f)
+        print(lines.length + " " + lines[0] + "|" + lines[1] + "|" + lines[2])
+        IO.File.AppendAllText(f, "\nvierte\n")
+        print(IO.File.ReadAllLines(f).length)
+        IO.File.WriteAllLines(f, lines)
+        print(IO.File.Size(f))
+        print(IO.File.ModifiedTime(f) > 1000000000s)
+        print(IO.File.ReadAllBytes(f).length)
+        IO.File.WriteAllBytes(f, "AB".ToBytes())
+        print(IO.File.ReadAllText(f))
+        """, new[] { "False", "True 28", "Grüße\nzweite Zeile\r\ndritte", "3 Grüße|zweite Zeile|dritte", "4", "28", "True", "28", "AB" });
+
+    CheckIo("File: Copy, Move, Delete und ihre Fehler", $$"""
+        var d = "{{apiDir}}"
+        var f = IO.Path.Combine(d, "src.txt")
+        IO.File.WriteAllText(f, "x")
+        var c = IO.Path.Combine(d, "copy.txt")
+        IO.File.Copy(f, c)
+        try { IO.File.Copy(f, c) } catch (IO.FileExistsException e) { print("Ziel existiert " + e.code) }
+        IO.File.Copy(f, c, true)
+        var m = IO.Path.Combine(d, "moved.txt")
+        IO.File.Move(c, m)
+        print(IO.File.Exists(c) + " " + IO.File.Exists(m))
+        IO.File.Delete(m)
+        IO.File.Delete(m)
+        print(IO.File.Exists(m))
+        try { IO.File.ReadAllText(IO.Path.Combine(d, "nope")) } catch (IO.FileNotFoundException e) { print("fehlt " + e.code) }
+        try { IO.File.Size(IO.Path.Combine(d, "nope")) } catch (IO.FileNotFoundException e) { print("fehlt " + e.code) }
+        """, new[] { "Ziel existiert 7", "False True", "False", "fehlt 3", "fehlt 3" });
+
+    CheckIo("Directory und Path", $$"""
+        var d = "{{apiDir}}"
+        var sub = IO.Path.Combine(d, "a", "b")
+        print(IO.Directory.Exists(sub))
+        IO.Directory.Create(sub)
+        IO.Directory.Create(sub)
+        print(IO.Directory.Exists(sub))
+        IO.File.WriteAllText(IO.Path.Combine(sub, "x.txt"), "1")
+        IO.File.WriteAllText(IO.Path.Combine(sub, "y.log"), "2")
+        IO.File.WriteAllText(IO.Path.Combine(d, "a", "z.txt"), "3")
+        var files = IO.Directory.GetFiles(sub)
+        print(files.length + " " + IO.Path.FileName(files[0]) + " " + IO.Path.FileName(files[1]))
+        print(IO.Directory.GetFiles(sub, "*.txt").length)
+        print(IO.Directory.GetFiles(IO.Path.Combine(d, "a"), "*.txt", true).length)
+        print(IO.Path.FileName(IO.Directory.GetDirectories(IO.Path.Combine(d, "a"))[0]))
+        try { IO.Directory.Delete(IO.Path.Combine(d, "a")) } catch (IO.IOException e) { print("nicht leer") }
+        IO.Directory.Delete(IO.Path.Combine(d, "a"), true)
+        print(IO.Directory.Exists(IO.Path.Combine(d, "a")))
+        var p = "dir/sub/name.tar.gz"
+        print(IO.Path.FileName(p) + " " + IO.Path.Stem(p) + " " + IO.Path.Extension(p) + " " + IO.Path.Parent(p))
+        print(IO.Path.IsRooted(p) + " " + IO.Path.IsRooted(IO.Path.FullPath(p)))
+        print(IO.Path.Combine("a", "/abs") == "/abs" || IO.Path.Combine("a", "/abs") == "/abs")
+        try { IO.Directory.GetFiles(IO.Path.Combine(d, "gibtsnicht")) } catch (IO.DirectoryNotFoundException e) { print("kein Verzeichnis " + e.code) }
+        """, new[] { "False", "True", "2 x.txt y.log", "1", "2", "b", "nicht leer", "False", "name.tar.gz name.tar .gz dir/sub", "False True", "True", "kein Verzeichnis 4" });
+
+    CheckIo("Host-Richtlinie gilt auch fuer die API (nur lesen)", $$"""
+        var d = "{{apiDir}}"
+        var f = IO.Path.Combine(d, "src.txt")
+        print(IO.File.Exists(f))
+        try { IO.File.WriteAllText(IO.Path.Combine(d, "w.txt"), "x") } catch (IO.PermissionException e) { print("write " + e.code) }
+        try { IO.File.Delete(f) } catch (IO.PermissionException e) { print("delete " + e.code) }
+        try { IO.Directory.Create(IO.Path.Combine(d, "n")) } catch (IO.PermissionException e) { print("mkdir " + e.code) }
+        try { IO.Directory.GetFiles("/") } catch (IO.PermissionException e) { print("list " + e.code) }
+        try { IO.File.Copy(f, IO.Path.Combine(d, "k.txt")) } catch (IO.PermissionException e) { print("copy " + e.code) }
+        try { IO.File.Move(f, IO.Path.Combine(d, "k.txt")) } catch (IO.PermissionException e) { print("move " + e.code) }
+        print(IO.File.ReadAllText(f))
+        """, new[] { "True", "write 6", "delete 6", "mkdir 6", "list 6", "copy 6", "move 6", "x" }, fire.IO.Bridge.IoPolicy.Rooted(ioDir, readOnly: true));
+
     Directory.Delete(ioDir, true);
     Console.WriteLine(ioFailures == 0 ? "Alle IO-Pruefungen bestanden." : $"FEHLER: {ioFailures} IO-Pruefung(en) fehlgeschlagen.");
 }

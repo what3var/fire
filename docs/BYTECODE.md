@@ -1290,6 +1290,12 @@ Konstruktor-Body: scheitert das Öffnen, ist das Objekt trotzdem vollständig au
 `destruct()` schließt nichts. (Scheitert ein Konstruktor dagegen schon beim Auswerten der
 Basis-Argumente, haben die Felder nur den Standardwert `false`.)
 
+Datei-API (`IoFileSystem.cs`, `IoHost` ist `partial`): jeder Skript-Pfad läuft durch `Authorize`
+(`Path.GetFullPath` + `IoPolicy.IsAllowed`), `OnPath` fängt .NET-Fehler (`FailFrom`). Listen kommen als
+`ScriptArray` von Strings zurück, Zeiten als `int` mit der Einheit `s`, Text über `Utf8Encode`/
+`Utf8Decode`/`SplitLines`. `IO.File`/`IO.Directory`/`IO.Path`/`IO.Utf8` sind statische fire-Klassen
+im Prelude (die Ganzdatei-Funktionen bauen auf `FileStream` auf).
+
 Dafür waren zwei Änderungen an der Sprache nötig:
 - **Destruktor-Kette:** `VM.RunDestructor` ruft die Destruktoren der ganzen Klassenkette (abgeleitete
   Klasse zuerst, dann jede Basisklasse) - vorher nur den der konkreten Klasse, eine abgeleitete
