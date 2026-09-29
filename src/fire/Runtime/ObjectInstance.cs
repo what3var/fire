@@ -45,7 +45,8 @@ namespace fire.Runtime
         public IOwner Owner { get; private set; }
         public FieldStore Fields { get; }
 
-        private readonly List<ObjectInstance> _owned = new();
+        // Erst beim ersten besessenen Kind angelegt - die meisten Objekte besitzen keins.
+        private List<ObjectInstance>? _owned;
         private bool _destroyed;
 
         public bool IsDestroyed => _destroyed;
@@ -107,8 +108,9 @@ namespace fire.Runtime
         {
             if (ThreadLock != null) return;
             ThreadLock = treeLock;
-            foreach (var child in _owned)
-                child.ActivateThreadSharing(treeLock);
+            if (_owned != null)
+                foreach (var child in _owned)
+                    child.ActivateThreadSharing(treeLock);
         }
 
         /// <summary>Liest ein Feld unter dem Baum-Lock, falls dieses Objekt
@@ -151,9 +153,9 @@ namespace fire.Runtime
         // -----------------------------------------------------------
         // IOwner (Felder dieser Instanz können selbst wieder Objekte besitzen)
         // -----------------------------------------------------------
-        public IReadOnlyList<ObjectInstance> OwnedObjects => _owned;
-        public void AddOwned(ObjectInstance obj) => _owned.Add(obj);
-        public void RemoveOwned(ObjectInstance obj) => _owned.Remove(obj);
+        public IReadOnlyList<ObjectInstance> OwnedObjects => (IReadOnlyList<ObjectInstance>?)_owned ?? System.Array.Empty<ObjectInstance>();
+        public void AddOwned(ObjectInstance obj) => (_owned ??= new List<ObjectInstance>()).Add(obj);
+        public void RemoveOwned(ObjectInstance obj) => _owned?.Remove(obj);
 
         // -----------------------------------------------------------
         // Ownership-Transfer: TakeUpwards / TakeGlobal / TakeTo (SPEC 2.2)
@@ -216,6 +218,7 @@ namespace fire.Runtime
         /// Grundlage des Zyklenschutzes bei TakeTo.</summary>
         private bool IsAncestorOf(ObjectInstance candidate)
         {
+            if (_owned == null) return false;
             foreach (var child in _owned)
             {
                 if (ReferenceEquals(child, candidate)) return true;
@@ -264,6 +267,7 @@ namespace fire.Runtime
 
             runner.RunDestructor(this);
 
+            if (_owned == null) return;
             foreach (var child in _owned.ToArray())
                 child.Destroy(runner);
             _owned.Clear();

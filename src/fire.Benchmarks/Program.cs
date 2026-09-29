@@ -15,6 +15,7 @@ using fire.Values;
 //   --mode debug|release|performance|all   Ausführungsmodus (Vorgabe: performance)
 //   --runs N                                Messläufe pro Benchmark (Vorgabe: 5), dazu 1 Aufwärmlauf
 //   --filter TEXT                           nur Benchmarks, deren Name TEXT enthält
+//   --file DATEI                            statt der eingebauten Benchmarks ein eigenes fire-Skript messen
 //   --list                                  Benchmarks auflisten
 //   --save DATEI                            Ergebnisse (Name=Ausgabe) als Referenz speichern
 //   --check DATEI                           Ergebnisse gegen eine Referenz prüfen (Exit-Code 1 bei Abweichung)
@@ -48,13 +49,17 @@ var modes = modeText switch
     _ => throw new ArgumentException("--mode: debug, release, performance oder all"),
 };
 
+var scripts = options.TryGetValue("file", out var filePath) && filePath != null
+    ? new[] { new BenchmarkScript(Path.GetFileName(filePath), "eigenes Skript", File.ReadAllText(filePath)) }
+    : BenchmarkScripts.All;
+
 var results = new SortedDictionary<string, string>();
 var totals = new Dictionary<VmExecutionMode, double>();
 
 Console.WriteLine($"{"Benchmark",-8} {"Modus",-12} {"min ms",9} {"Mittel ms",10}  Ergebnis");
 foreach (var mode in modes)
 {
-    foreach (var script in BenchmarkScripts.All)
+    foreach (var script in scripts)
     {
         if (filter != null && !script.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
 

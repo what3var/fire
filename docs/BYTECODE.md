@@ -1384,3 +1384,60 @@ Feldern erst nach dem Namen (Klassenmitglieder wissen vorher nicht, ob eine Meth
 Resolver, Compiler und VM lesen `ArrayRank` nicht - Rückgabetypen werden nur auf existierende Typnamen geprüft.
 Editor: `HarvestMember` überspringt die Klammern und setzt `MemberInfo.TypeIsArray` (für Methoden und Properties =
 Elementtyp + Array), `TypeOfMember` macht daraus `TypeKind.Array`. Das Prelude nutzt es für `string[] Split(...)`.
+
+## 26. VM-Performance und das Benchmark-Projekt
+
+**Messen.** `src/fire.Benchmarks` (`dotnet run -c Release --project src/fire.Benchmarks -- --mode all`) führt neun kleine
+fire-Programme aus (`loop`, `float`, `fib`, `method`, `array`, `string`, `alloc`, `lambda`, `list`; Beschreibung mit `--list`),
+misst nur `VM.Run()` (1 Aufwärmlauf, dann `--runs N`, Ausgabe: kleinste und mittlere Zeit) und zeigt das Ergebnis jedes
+Programms. **Regressionsschutz:** `--save datei` speichert diese Ergebnisse, `--check datei` prüft sie später (Exit-Code 1
+bei Abweichung) - eine Optimierung darf sie nie ändern. `--file x.fire` misst ein eigenes Skript. Die Zeiten schwanken auf
+geteilten Rechnern stark (±20 %); für Vergleiche zwei Builds abwechselnd laufen lassen und jeweils das Minimum nehmen.
+
+**Ergebnis** (Modus Performance, 4-Kern-Xeon 2,1 GHz, kleinste Zeit in ms):
+
+| | vorher | nachher |
+|---|---:|---:|
+| loop (1,5 Mio. Iterationen) | 4542 | 216 |
+| float | 2293 | 114 |
+| fib(23) | 212 | 18 |
+| method (250 000 Aufrufe) | 1099 | 74 |
+| array | 3356 | 150 |
+| string | 319 | 33 |
+| alloc (60 000 Objekte) | 562 | 62 |
+| lambda | 816 | 67 |
+| list | 836 | 57 |
+| **Summe** | **14035** | **791** |
+
+Alle Ergebnisse (und die komplette Testsuite) sind unverändert. Was den Unterschied macht, in der Reihenfolge der Wirkung:
+
+1. **`Execute()` nicht pro Instruktion aufrufen.** Die Methode ist riesig und hat sehr viele lokale Variablen (v.a. `Value`-
+   Structs mit Referenzen); der JIT nullt ihren Stackframe bei JEDEM Aufruf. Das war der größte Einzelposten. Jetzt gibt es
+   `Step(op)` mit den häufigsten Opcodes direkt ausgeschrieben (Laden/Speichern, Rechnen, Vergleichen, Springen, Scopes) -
+   `[AggressiveInlining]`, es steckt also in `Run()`, `RunNestedUntil()` und `StepInstruction()` selbst; alles andere geht an
+   `Execute()`. Die schweren Fälle (Aufrufe, Feldzugriffe, `new`, Arrays, ...) sind eigene Methoden `Op<Name>()` (Schnellpfad)
+   und `Op<Name>Slow(...)` (der bisherige Code, unverändert). **Regel für Änderungen:** häufige Opcodes gehören in `Step`
+   bzw. eine `Op*`-Methode, nicht als neuer `case` mit vielen Locals in `Execute`.
+2. **`Value` von 64 auf 24 Byte** (`Kind`, `Width`, ein `long` für Int/Float-Bits/Bool/Char und EINE Referenz für
+   String/Objekt/`Unit`). Ein Value wird bei jedem Stack-Zugriff kopiert.
+3. **Arrays statt `List<T>`** für Werte-Stack (`_stack`/`_sp`), Code und Konstanten (`Chunk.CodeArray`/`ConstantsArray`, beim
+   Bauen verworfen, danach fest) und Scope-Slots (`Scope`, Parameter werden beim Aufruf direkt vom Stack hineinkopiert:
+   `VM.EnterCall`).
+4. **Rechnen ohne Umwege:** `Unit.Equals`/`Value.Add` & Co. erkennen "dieselbe Einheit-Instanz" (meist `Unit.Unitless`) per
+   Referenzvergleich; `Value.Try*InPlace` überschreiben den linken Operanden direkt im Stack. Kein Schnellpfad, wenn die
+   Einheiten verschieden sind, `%`/`/` durch 0 oder ein Objekt links steht - dann läuft der bisherige Weg samt Ausnahmen.
+5. **Inline-Caches** (`Bytecode.SiteCache`, `Chunk.SiteCaches`, indiziert mit dem Byte-Offset des Opcodes) für
+   `CallMethod`, `CallStaticMethod`, `GetField`, `SetField`, `SetFieldOnThis` und `NewObject`: die Stelle merkt sich Klasse des
+   Empfängers und Ziel (Methode bzw. Feld-Index) und überspringt beim nächsten Mal die Dictionary-Lookups (Klassenname,
+   Methodenname+Arity, Feldname). Ein Eintrag entsteht erst, nachdem die langsame Route ALLE Prüfungen bestanden hat
+   (Zugriffsmodifikator, Argumentanzahl, Einheiten-Vorgabe eines Feldes - ein Feld `int x : mm` wird deshalb nie gecacht),
+   und gilt nur für dieselbe Empfängerklasse; ein Objekt mit Actor-Postfach oder Thread-Lock (`ThreadLock != null`) geht
+   immer den langsamen Weg. Einträge sind unveränderlich und werden als Ganzes ersetzt (Threads teilen sich die Chunks).
+6. Kleinteiliges: `Array`-`Get`/`Set` mit gültigem int-Index ohne Umweg, `ObjectInstance` legt seine Besitz-Liste erst bei
+   Bedarf an.
+
+**Offen / Ideen** (nicht gemacht, weil sie Semantik berühren oder wenig bringen): Scopes von Schleifenkörpern ohne
+Deklarationen weglassen (würde die Besitz-/Destruktor-Zeitpunkte von in dem Block erzeugten Objekten verschieben, Resolver und
+Compiler müssten sich einig sein), Superinstruktionen im Compiler (`LoadLocal+LoadConst+Add`), eine Ein-Element-Besitzliste
+in `Scope` (spart bei `new` in Schleifen zwei Allokationen), die Signalprüfung pro Instruktion im Debug-Modus
+(`CheckShutdownSignals` fragt eine `ConcurrentQueue` ab), `_frames` als Array.

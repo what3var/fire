@@ -6040,6 +6040,175 @@ Console.WriteLine("=== Array als Rueckgabetyp: Editor ===");
     Console.WriteLine(failures == 0 ? "Alle Array-Editor-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
 }
 
+Console.WriteLine();
+Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regressionsschutz) ===");
+{
+    int perfFailures = 0;
+
+    List<string> RunPerf(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, script));
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, executionMode: mode);
+        vm.Run();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    // Jedes Skript läuft in ALLEN drei Modi mit demselben erwarteten Ergebnis (Performance lässt die
+    // Zugriffs-/Grenzprüfungen weg - die Beispiele hier lösen sie deshalb nicht aus, außer wo `modes` es sagt).
+    void CheckPerf(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
+    {
+        foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            try { actual = RunPerf(script, mode).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) perfFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    // --- Value: Gleichheit und Arithmetik (kompaktes Layout, Schnellpfade)
+    CheckPerf("Gleichheit: Art, Einheit und Breite", """
+        print(1 == 1)
+        print(1 == 1.0)
+        print(5mm == 5)
+        print("a" == "a")
+        print('a' == 'a')
+        print(true == true)
+        print(1.5 == 1.5)
+        print(undefined == undefined)
+        print(1 != 2)
+        """, new[] { "True", "False", "True", "True", "True", "True", "True", "True", "True" });
+
+    CheckPerf("Arithmetik: int, float, gemischt, Einheiten", """
+        print(7 + 3)
+        print(7 - 10)
+        print(6 * 7)
+        print(7 / 2)
+        print(7 % 4)
+        print(2.5 + 1)
+        print(1 + 2.5)
+        print(7.5 / 2)
+        print(-7 % 3)
+        print(3mm + 4mm)
+        print(2 * 3mm)
+        print(6mm / 2)
+        print(1 < 2)
+        print(2 <= 2)
+        print(3 > 4)
+        print(4 >= 4.0)
+        print(1.5 < 1.6)
+        """, new[] { "10", "-3", "42", "3", "3", "3.5", "3.5", "3.75", "-1", "7mm", "6mm", "3mm", "True", "True", "False", "True", "True" });
+
+    CheckPerf("Division und Modulo durch 0 bleiben Fehler", """
+        var zero = 0
+        try { print(5 % zero) } catch (Exception e) { print("mod") }
+        print("weiter")
+        """, new[] { "AUSNAHME: Attempted to divide by zero." });
+
+    CheckPerf("Einheiten-Konflikt bleibt ein Fehler", """
+        print(1mm + 2)
+        """, new[] { "AUSNAHME: Einheiten inkompatibel: 'mm' kann nicht nach 'unitless' umgerechnet werden." });
+
+    // --- Stack und Scope-Slots wachsen
+    CheckPerf("tiefe Rekursion (Stack und Frames wachsen)", """
+        class R { static int Sum(int n) { if (n == 0) { return 0 } return n + R.Sum(n - 1) } }
+        print(R.Sum(1500))
+        """, new[] { "1125750" });
+
+    CheckPerf("viele lokale Variablen und langes Array-Literal", """
+        class T { static int G() { var a = 1; var b = 2; var c = 3; var d = 4; var e = 5; var f = 6; var g = 7; return a + b + c + d + e + f + g } }
+        print(T.G())
+        var arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        var s = 0
+        foreach (x in arr) { s = s + x }
+        print(s)
+        """, new[] { "28", "210" });
+
+    // --- Inline-Caches: eine Aufrufstelle, mehrere Klassen
+    CheckPerf("polymorphe Aufrufstelle: Klasse wechselt, Override, Feldzugriff", """
+        class A { int v; construct() { this.v = 1 } Who() { return "A" + this.v } }
+        class B : A { construct() : base() { this.v = 2 } Who() { return "B" + this.v } }
+        class C { int v; construct() { this.v = 3 } Who() { return "C" + this.v } }
+        var items = [new A(), new B(), new C(), new A(), new C(), new B()]
+        var text = ""
+        foreach (o in items) { text = text + o.Who() + "," + o.v + ";" }
+        print(text)
+        for (var i = 0; i < 6; i = i + 1) { items[i].v = i * 10 }
+        var sum = 0
+        foreach (o in items) { sum = sum + o.v }
+        print(sum)
+        """, new[] { "A1,1;B2,2;C3,3;A1,1;C3,3;B2,2;", "150" });
+
+    CheckPerf("Aufrufstelle: erst erlaubt, dann private Methode/Feld (Zugriffsschutz bleibt)", """
+        class Open { int f; Go() { return "offen" } construct() { this.f = 1 } }
+        class Closed { private int f; private Go() { return "zu" } construct() { this.f = 2 } }
+        var Probe = func (o) => {
+            try { return o.Go() } catch (AccessDeniedException e) { return "verweigert" }
+        }
+        var ProbeField = func (o) => {
+            try { return o.f } catch (AccessDeniedException e) { return "feld verweigert" }
+        }
+        var objs = [new Open(), new Closed(), new Open(), new Closed()]
+        for (var i = 0; i < 4; i = i + 1) { print(Probe(objs[i])); print(ProbeField(objs[i])) }
+        """, new[] { "offen", "1", "verweigert", "feld verweigert", "offen", "1", "verweigert", "feld verweigert" },
+        new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
+
+    CheckPerf("Feld mit Einheit: jede Zuweisung wird geprueft (auch nach dem ersten Erfolg)", """
+        class M { int len : mm = 0mm; construct() { this.len = 1mm } }
+        var m = new M()
+        for (var i = 0; i < 3; i = i + 1) { m.len = 5mm }
+        print(m.len)
+        try { m.len = 7 } catch (UnitMismatchException e) { print("Einheit") }
+        m.len = 6mm
+        print(m.len)
+        """, new[] { "5mm", "Einheit", "6mm" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
+
+    CheckPerf("Konstruktoren, Standardwerte, Lambdas, statische Aufrufe an einer Stelle", """
+        class P { int x; int y; construct(int x, int y = 5) { this.x = x; this.y = y } }
+        class Q { static int Twice(int a, int b = 2) { return a * b } }
+        var total = 0
+        for (var i = 0; i < 5; i = i + 1) {
+            var p = new P(i)
+            var q = new P(i, i)
+            total = total + p.x + p.y + q.y + Q.Twice(i) + Q.Twice(i, 3)
+        }
+        print(total)
+        var add = func (a, b) => { return a + b }
+        var inc = func (a) => { return a + 1 }
+        print(add(2, 3) + inc(4))
+        """, new[] { "95", "10" });
+
+    CheckPerf("Objekte: Ownership und Destruktor pro Schleifendurchlauf", """
+        class D { int id; construct(int id) { this.id = id } destruct() { print("d" + this.id) } }
+        for (var i = 0; i < 3; i = i + 1) { var d = new D(i) }
+        print("ende")
+        """, new[] { "d0", "d1", "d2", "ende" });
+
+    CheckPerf("Arrays: Lesen, Schreiben, Grenzen, byte-Puffer, Strings", """
+        var a = new int[3]
+        a[0] = 10; a[1] = 20; a[2] = a[0] + a[1]
+        print(a[2])
+        try { print(a[3]) } catch (IndexOutOfBoundsException e) { print("aussen") }
+        try { a[-1] = 1 } catch (IndexOutOfBoundsException e) { print("aussen2") }
+        var b = new byte[2]
+        b[1] = 200
+        print(b[1])
+        print("hey"[1])
+        """, new[] { "30", "aussen", "aussen2", "200", "e" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
+
+    Console.WriteLine(perfFailures == 0 ? "Alle VM-Optimierungs-Pruefungen bestanden." : $"FEHLER: {perfFailures} Pruefung(en) fehlgeschlagen.");
+}
+
 static int CountOccurrences(string haystack, string needle)
 {
     int count = 0, idx = 0;

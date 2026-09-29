@@ -1194,13 +1194,13 @@ namespace fire.Runtime
         /// <summary>Wechselt in den Aufruf von `proto`: die obersten `argCount` Stack-Werte werden direkt als
         /// Parameter-Slots der neuen Scope übernommen und (zusammen mit dem darunterliegenden Empfänger/Callee, falls
         /// `dropBelow`) vom Stack genommen. Nur für Aufrufe mit EXAKT passender Argumentanzahl (kein Standardwert nötig).</summary>
-        private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis)
+        private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null)
         {
             var slots = new Value[argCount + SlotSlack];
             Array.Copy(_stack, _sp - argCount, slots, 0, argCount);
             _sp -= argCount + (dropBelow ? 1 : 0);
 
-            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, constructed));
             _currentThis = newThis;
             _currentScope = new Scope(_globalScope, slots, argCount);
             _currentChunk = proto.Chunk;
@@ -1294,9 +1294,25 @@ namespace fire.Runtime
 
         private void OpNewObject()
         {
-        {
+            int site = _ip - 1;
             int classNameIdx = ReadU16();
             int argCount = ReadByte();
+
+            // Schnellpfad (Inline-Cache): Klasse und Konstruktor dieser Stelle sind bekannt, Zugriffs- und
+            // Argumentprüfung schon bestanden.
+            if (LookupSite(site) is { Class: { } cachedClass, Proto: { } cachedCtor })
+            {
+                var created = new ObjectInstance(cachedClass.Name, _currentScope, cachedClass);
+                if (cachedClass.IsActor) created.Mailbox = new ActorMailbox();
+                EnterCall(cachedCtor, argCount, dropBelow: false, newThis: created, constructed: created);
+                return;
+            }
+            OpNewObjectSlow(site, classNameIdx, argCount);
+        }
+
+        private void OpNewObjectSlow(int site, int classNameIdx, int argCount)
+        {
+        {
             var args = new Value[argCount];
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
@@ -1311,6 +1327,8 @@ namespace fire.Runtime
                 return;
             }
 
+            if (ctorProto.ParamCount == argCount)
+                StoreSite(site, new SiteCache(rc, ctorProto, 0));
             var instance = new ObjectInstance(rc.Name, _currentScope, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
             args = FillDefaultArgs(ctorProto, args, instance);
@@ -1602,8 +1620,25 @@ namespace fire.Runtime
 
         private void OpSetFieldOnThis()
         {
+            int site = _ip - 1;
+            int fieldNameIdx = ReadU16();
+
+            // Schnellpfad (Inline-Cache, siehe OpSetField): `this` hat dieselbe Klasse wie zuvor.
+            if (_currentThis is ObjectInstance fastThis
+                && LookupSite(site) is { } thisEntry
+                && ReferenceEquals(fastThis.RtClass, thisEntry.Class)
+                && fastThis.ThreadLock == null)
+            {
+                fastThis.Fields.SetAt(thisEntry.FieldIndex, _stack[--_sp]);
+                return;
+            }
+            OpSetFieldOnThisSlow(site, fieldNameIdx);
+        }
+
+        private void OpSetFieldOnThisSlow(int site, int fieldNameIdx)
         {
-            string fieldName = _constants[ReadU16()].AsString();
+        {
+            string fieldName = _constants[fieldNameIdx].AsString();
             var value = Pop();
             if (_currentThis is not ObjectInstance oi)
                 throw new InvalidOperationException("SetFieldOnThis ohne gebundene ObjectInstance als 'this'.");
@@ -1615,11 +1650,13 @@ namespace fire.Runtime
             // Compiler.CompileConstructorProto) - `int x : mm = 5`
             // würde ohne diese Prüfung hier den ersten, deklarierten
             // Wert komplett ungeprüft durchlassen.
+            bool hasUnitRule = false;
             if (ExecutionMode != VmExecutionMode.Performance && oi.RtClass != null)
             {
                 string? requiredUnitName = oi.RtClass.FindFieldRequiredUnit(fieldName);
                 if (requiredUnitName != null)
                 {
+                    hasUnitRule = true; // jede Zuweisung muss die Einheit prüfen - nicht cachen
                     var requiredUnit = Values.Unit.Parse(requiredUnitName);
                     var actualUnit = value.Unit ?? Values.Unit.Unitless;
                     if (!actualUnit.Equals(requiredUnit))
@@ -1630,6 +1667,9 @@ namespace fire.Runtime
                 }
             }
 
+            if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null
+                && oi.RtClass.FieldIndex.TryGetValue(fieldName, out int thisIndex))
+                StoreSite(site, new SiteCache(oi.RtClass, null, thisIndex));
             oi.SetFieldLocked(fieldName, value);
             return;
         }
@@ -2031,6 +2071,25 @@ namespace fire.Runtime
 
         private void OpArrayGet()
         {
+            // Schnellpfad: Array mit int-Index im gültigen Bereich (alles andere - auch der Fehlerfall - unten).
+            ref Value fastTarget = ref _stack[_sp - 2];
+            ref Value fastIndex = ref _stack[_sp - 1];
+            if (fastTarget.Kind == ValueKind.Array && fastIndex.Kind == ValueKind.Int)
+            {
+                var items = fastTarget.AsArray().Items;
+                long i = fastIndex.AsInt();
+                if ((ulong)i < (ulong)items.Length)
+                {
+                    fastTarget = items[i];
+                    _sp--;
+                    return;
+                }
+            }
+            OpArrayGetSlow();
+        }
+
+        private void OpArrayGetSlow()
+        {
         {
             var indexVal = Pop();
             var target = Pop();
@@ -2114,6 +2173,27 @@ namespace fire.Runtime
         }
 
         private void OpArraySet()
+        {
+            // Schnellpfad wie bei OpArrayGet.
+            ref Value fastTarget = ref _stack[_sp - 3];
+            ref Value fastIndex = ref _stack[_sp - 2];
+            if (fastTarget.Kind == ValueKind.Array && fastIndex.Kind == ValueKind.Int)
+            {
+                var items = fastTarget.AsArray().Items;
+                long i = fastIndex.AsInt();
+                if ((ulong)i < (ulong)items.Length)
+                {
+                    var assigned = _stack[_sp - 1];
+                    items[i] = assigned;
+                    _sp -= 2;
+                    _stack[_sp - 1] = assigned;
+                    return;
+                }
+            }
+            OpArraySetSlow();
+        }
+
+        private void OpArraySetSlow()
         {
         {
             var value = Pop();
