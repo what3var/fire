@@ -14,6 +14,22 @@ namespace fire.Bytecode
         Pop,                //                       : pop
         Dup,                //                       : push Peek()
         Swap,               //                       : vertauscht die obersten zwei Werte
+        RotateUnderTop,     //                       : [A,B,C] (unten->oben) -> [B,A,C] - vertauscht die
+                            //                         beiden Werte UNTER dem obersten, lässt ihn selbst
+                            //                         unangetastet (siehe Compiler.CompileIncDec für
+                            //                         `++`/`--` auf einem Feld-/Index-Ziel: obj/Index
+                            //                         müssen für Lesen UND Schreiben erhalten bleiben,
+                            //                         während der alte Wert für das Postfix-Ergebnis
+                            //                         separat aufgehoben wird - mit Swap allein (nur
+                            //                         die ABSOLUTEN obersten zwei) nicht erreichbar,
+                            //                         ohne den Zielausdruck ein zweites Mal auszuwerten)
+        IncDecIndex,        // arr,idx -> wert        : `++`/`--` auf einem Index-Ziel (arr[i]++ usw.) -
+                            //                         Lesen+Rechnen+Schreiben ATOMAR in der VM statt über
+                            //                         Stack-Umsortierung, da hier ZWEI "Adress"-Teile
+                            //                         (Array UND Index) erhalten bleiben müssen - mit
+                            //                         RotateUnderTop (nur 3 Werte) allein nicht sauber
+                            //                         lösbar. Operanden: 1 Byte isIncrement, 1 Byte
+                            //                         isPrefix (siehe Compiler.CompileIncDec)
 
         LoadLocal,          // u16 depth, u16 slot  : push GetAncestor(depth).GetSlot(slot)
         StoreLocal,         // u16 depth, u16 slot  : GetAncestor(depth).SetSlot(slot, Peek())
@@ -61,6 +77,22 @@ namespace fire.Bytecode
         ConstructBase,      // u16 baseClassNameIdx, u8 argCount : ruft den Basis-Konstruktor für das aktuelle 'this' auf
         CallProtoWithThis,  // u16 protoIdx, u8 argCount : ruft Functions[protoIdx] mit 'this' = TOS-unterhalb-der-Args auf (Feld-Initialisierer)
 
+        // Statische Mitglieder (SPEC "Statische Mitglieder") - eine geteilte
+        // Speicherstelle pro KLASSE statt pro Instanz (siehe RuntimeClass.
+        // StaticFieldValues), KEIN Objekt auf dem Stack (anders als
+        // GetField/SetField/CallMethod) - stattdessen der Klassenname direkt
+        // als Konstante im Bytecode, da 'ClassName.Member' schon zur
+        // Compile-Zeit eindeutig aufgelöst wird (siehe Resolver.
+        // TryResolveStaticMemberAccess).
+        GetStaticField,   // u16 classNameConstIdx, u16 fieldNameConstIdx : pusht den aktuellen Wert
+        SetStaticField,   // u16 classNameConstIdx, u16 fieldNameConstIdx : poppt Wert, speichert, pusht ihn erneut (wie SetField)
+        SetStaticFieldOnInit, // u16 classNameConstIdx, u16 fieldNameConstIdx : wie SetStaticField, aber OHNE Zugriffsmodifikator-
+                              //   Prüfung (wie SetFieldOnThis vs. SetField) - NUR für die einmalige Initialisierung eines
+                              //   statischen Feldes beim Programmstart (siehe Compiler.Compile), die läuft als Top-Level-Code
+                              //   ohne passenden OwnerClass-Kontext, ist aber die eigene Initialisierung der Klasse selbst und
+                              //   soll deshalb IMMER dürfen, auch für ein privates Feld - genau wie ein Instanzfeld-Initialisierer
+        CallStaticMethod, // u16 classNameConstIdx, u16 methodNameConstIdx, u8 argCount : ruft OHNE gebundenes 'this' auf
+
         AddressOfLocal,     // u16 depth, u16 slot  : push Pointer auf GetAncestor(depth)-Slot(slot)
         AddressOfGlobal,    // u16 slot             : push Pointer auf GlobalScope-Slot(slot)
         AddressOfField,     // u16 fieldNameIdx      : pop obj; push Pointer auf obj.Fields[name]
@@ -85,6 +117,10 @@ namespace fire.Bytecode
         ClearPendingResume, //                       : pop excValue; verwirft eine nie fortgesetzte eingefrorene Wurfstelle sauber
 
         CheckLambdaSignature, // u8 expectedParamCount : prüft Peek() ist Lambda mit genau dieser Parameterzahl, wirft sonst (siehe VM)
+        CheckUnit,            // u16 constIdx (erwartete Einheit als String) : prüft Peek().Unit == Unit.Parse(erwartet) exakt
+                              //   (Values.Unit.Equals - Dimension UND Skalierung, "mm" != "m"), wirft sonst UnitMismatchException
+                              //   (siehe VM.ThrowUnitMismatch) - konsumiert NICHT (wie CheckLambdaSignature), Aufrufer poppt bei
+                              //   Bedarf selbst (siehe Compiler.EmitLambdaParamChecks/CompileAssign/VarDeclStmt-Kompilierung)
 
         Fire, // u16 functionProtoIdx, u16 globalSlotCount, u8 takingCount, u8 hasWith : spawnt einen echten Thread (siehe Runtime.FireRuntime) mit Read-only-Globals-Snapshot, takingCount gepoppten taking-Werten und optional einem with-Wert
         Sync, // u8 flags (bit0=isTry, bit1=isFlat) : pop target; ruft SyncEngine.Sync/SyncFlat auf; push true/false/undefined

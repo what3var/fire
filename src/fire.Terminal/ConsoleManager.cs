@@ -1,6 +1,6 @@
 using System;
 
-namespace ScriptLang.Terminal
+namespace fire.Terminal
 {
     /// <summary>
     /// Verwaltet "Konsolen" (TerminalCanvas-Instanzen) über aufsteigende,
@@ -14,11 +14,11 @@ namespace ScriptLang.Terminal
     ///
     /// Bekommt die zu verwendende Schrift-Implementierung per Konstruktor
     /// injiziert (`defaultFont`, z.B. eine GdiGlyphFont-Instanz aus
-    /// ScriptLang.Terminal.Windows) statt sie selbst zu kennen - DAS ist
+    /// fire.Terminal.Windows) statt sie selbst zu kennen - DAS ist
     /// die einzige Stelle, an der dieser sonst plattformunabhängige Manager
     /// überhaupt von einer konkreten IGlyphFont-Implementierung erfährt,
     /// und das passiert einmalig bei der Komposition (siehe
-    /// ScriptLang.Terminal.Windows), nicht hier im Kern.
+    /// fire.Terminal.Windows), nicht hier im Kern.
     /// </summary>
     public sealed class ConsoleManager
     {
@@ -63,12 +63,22 @@ namespace ScriptLang.Terminal
         public void SetColor(int id, int foreground, int? background)
         {
             var c = _consoles.Get(id);
-            c.Foreground = new PixelColor(unchecked((uint)foreground));
-            c.Background = background is int bg ? new PixelColor(unchecked((uint)bg)) : null;
-        }
 
-        public void SetColorByIndex(int id, byte foregroundIndex, byte? backgroundIndex) =>
-            _consoles.Get(id).Color(foregroundIndex, backgroundIndex);
+            if ((foreground & 0xFFFFFF00) == 0)
+                foreground = GetPaletteColor(id, (byte)foreground);
+
+            var hasBackground = false;
+            var bg = background ?? 0;
+
+            if (background is int && (bg & 0xFFFFFF00) == 0)
+            { 
+                background = GetPaletteColor(id, (byte)bg);
+                hasBackground = true;
+            }
+
+            c.Foreground = new PixelColor(unchecked((uint)foreground));
+            c.Background = hasBackground ? new PixelColor(unchecked((uint)bg)) : null;
+        }
 
         public void SetPixel(int id, int x, int y, int color) =>
             _consoles.Get(id).SetPixel(x, y, new PixelColor(unchecked((uint)color)));

@@ -1,17 +1,20 @@
+using fire.Bytecode;
+using fire.Runtime;
+using fire.Terminal;
+using fire.Terminal.Event;
+using fire.Terminal.Windows;
+using fire.Values;
 using System.Collections.Generic;
-using ScriptLang.Bytecode;
-using ScriptLang.Values;
-using ScriptLang.Terminal;
-using ScriptLang.Terminal.Windows;
+using System.Net.WebSockets;
 
-namespace ScriptLang.Terminal.Bridge
+namespace fire.Terminal.Bridge
 {
     /// <summary>
-    /// Die Brücke zwischen ScriptLang und der Grafik-API (siehe docs/
+    /// Die Brücke zwischen fire und der Grafik-API (siehe docs/
     /// CONSOLE.md): registriert FramebufferManager/ConsoleManager/
     /// WindowManager als native Funktionen (über NativeRegistry.
     /// RegisterGroup, jeweils mit eigenem Namens-Präfix) und liefert dazu
-    /// passenden ScriptLang-Quelltext (<see cref="PreludeSource"/>), der
+    /// passenden fire-Quelltext (<see cref="PreludeSource"/>), der
     /// diese nativen Funktionen hinter drei gewöhnlichen Klassen
     /// (Framebuffer/Console/Window) versteckt - Skript-Code sieht nie eine
     /// rohe ID, nur normale Objekte mit normalen Methoden.
@@ -20,7 +23,7 @@ namespace ScriptLang.Terminal.Bridge
     /// ist abgebildet, nur eine repräsentative Auswahl (Erzeugen/Zerstören
     /// plus die gängigsten Operationen je Ressourcenart). Weitere Methoden
     /// lassen sich nach demselben Muster ergänzen: native Funktion in der
-    /// passenden Build*Functions-Methode registrieren, passende ScriptLang-
+    /// passenden Build*Functions-Methode registrieren, passende fire-
     /// Methode in PreludeSource hinzufügen, die `this.id` automatisch
     /// mitgibt.
     /// </summary>
@@ -48,6 +51,27 @@ namespace ScriptLang.Terminal.Bridge
             natives.RegisterGroup(WindowPrefix, BuildWindowFunctions(windows));
         }
 
+        public static void RegisterStubs(
+                    NativeRegistry natives)
+        {
+            natives.RegisterGroup(FramebufferPrefix, BuildFramebufferFunctionStubs());
+            natives.RegisterGroup(ConsolePrefix, BuildConsoleFunctionStubs());
+            natives.RegisterGroup(WindowPrefix, BuildWindowFunctionStubs());
+        }
+
+        private static Dictionary<string, NativeFunction> BuildFramebufferFunctionStubs()
+        {
+            return new Dictionary<string, NativeFunction>
+            {
+                ["Create"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Destroy"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Width"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Height"] = args => Value.MakeUndefined() /*STUB*/,
+                ["ReadByte"] = args => Value.MakeUndefined() /*STUB*/,
+                ["WriteByte"] = args => Value.MakeUndefined() /*STUB*/,
+            };
+        }
+
         private static Dictionary<string, NativeFunction> BuildFramebufferFunctions(FramebufferManager mgr)
         {
             return new Dictionary<string, NativeFunction>
@@ -66,6 +90,21 @@ namespace ScriptLang.Terminal.Bridge
                     mgr.WriteByte((int)args[0].AsInt(), (int)args[1].AsInt(), (byte)args[2].AsInt());
                     return Value.MakeUndefined();
                 },
+            };
+        }
+
+        private static Dictionary<string, NativeFunction> BuildConsoleFunctionStubs()
+        {
+            return new Dictionary<string, NativeFunction>
+            {
+                ["Create"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Destroy"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Print"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Locate"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Clear"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetColor"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetPixel"] = args => Value.MakeUndefined() /*STUB*/,
+                ["GetPixel"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 
@@ -119,10 +158,37 @@ namespace ScriptLang.Terminal.Bridge
                 },
                 ["Destroy"] = args => Value.MakeBool(mgr.DestroyWindow((int)args[0].AsInt())),
                 ["Tick"] = args => Value.MakeBool(mgr.Tick((int)args[0].AsInt())),
+                ["RegisterEvent"] = args =>
+                {
+                    if (args.Count() != 3)
+                        return Value.MakeBool(false);
+                    
+                    EventType eventType = (EventType)args[1].AsInt();
+                    var winId = (int)args[0].AsInt();
+                    var callback = (LambdaValue)args[2].AsLambda();
+
+                    if (!EventCallback.CheckParameters(callback, eventType))
+                        return Value.MakeBool(false);
+
+                    mgr.RegisterCallback(winId, eventType, callback);
+
+                    return Value.MakeBool(true);
+                }
+            };
+        }
+        
+        private static Dictionary<string, NativeFunction> BuildWindowFunctionStubs()
+        {
+            return new Dictionary<string, NativeFunction>
+            {
+                ["Create"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Destroy"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Tick"] = args => Value.MakeUndefined() /*STUB*/,
+                ["RegisterEvent"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 
-        /// <summary>ScriptLang-Quelltext, der die per <see cref="RegisterAll"/>
+        /// <summary>fire-Quelltext, der die per <see cref="RegisterAll"/>
         /// registrierten nativen Funktionen hinter drei gewöhnlichen Klassen
         /// versteckt - VOR das eigentliche Nutzer-Skript zu setzen (analog
         /// zu Standard.Prelude.Source, siehe Parser.ParseWithPrelude für das
@@ -196,6 +262,75 @@ namespace ScriptLang.Terminal.Bridge
                 }
 
                 bool Tick() { return __GRPHWinTick(this.id) }
+            
+            
+                bool RegisterMouseDown(lambda<int,float,float> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.MouseDown!, fn);
+                }
+            
+                bool RegisterMouseUp(lambda<int,float,float> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.MouseUp!, fn);
+                }
+            
+                bool RegisterMouseMove(lambda<float,float,int> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.MouseMove!, fn);
+                }
+            
+                bool RegisterMouseMoveRelative(lambda<float,float,int> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.MouseMoveRelative!, fn);
+                }
+            
+                bool RegisterMouseScroll(lambda<float,float,float,float> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.MouseScroll!, fn);
+                }
+            
+                bool RegisterKeyDown(lambda<int,int,int,bool> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.KeyDown!, fn);
+                }
+            
+                bool RegisterKeyUp(lambda<int,int,int,bool> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.KeyUp!, fn);
+                }
+            
+                bool RegisterTextInput(lambda<string> fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.TextInput!, fn);
+                }
+            
+                bool RegisterClose(lambda fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.Close!, fn);
+                }
+            
+                bool RegisterCloseRequest(lambda fn)
+                {
+                    return __GRPHWinRegisterEvent(this.id, EventType.CloseRequest!, fn);
+                }
+            
+            }
+
+            enum EventType
+            {
+                Unknown = 0,
+                Close = 1,
+                CloseRequest = 2,
+                TextInput = 3,
+                MouseDown = 8,
+                MouseMove = 9,
+                MouseMoveRelative = 10,
+                MouseUp = 11,
+                MouseScroll = 12,
+                //MouseEnter = 13,
+                //MouseLeave = 14,
+                KeyDown = 24,
+                KeyUp = 25
             }
             """;
     }

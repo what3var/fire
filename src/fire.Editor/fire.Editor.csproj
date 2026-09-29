@@ -15,7 +15,18 @@
     <!-- Greift per Projektreferenz direkt auf Lexer/Parser/Resolver/Compiler/VM
          des Hauptprojekts zu - kein separates Kopieren/Verlinken von DLLs,
          Änderungen am Kernprojekt wirken sich beim nächsten Build sofort aus. -->
-    <ProjectReference Include="..\fire\fire.csproj" />
+    <ProjectReference Include="..\fire.Compiler\fire.Compiler.csproj" />
+    <ProjectReference Include="..\fire.Runtime\fire.Runtime.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ScriptEditorControl baut auf AvalonEdit statt RichTextBox auf (siehe
+         dortige Klassendoku) - eigenes TextDocument-Modell mit echten,
+         zuverlässigen Zeichen-Offsets statt WPFs TextPointer/Paragraph-
+         Klassenhierarchie, Highlighting per DocumentColorizingTransformer
+         OHNE Dokument-Neuaufbau. -->
+    <PackageReference Include="AvalonEdit" Version="6.3.0.90" />
+    <PackageReference Include="PropertyChanged.Fody" Version="4.1.0" PrivateAssets="All" />
   </ItemGroup>
 
 </Project>

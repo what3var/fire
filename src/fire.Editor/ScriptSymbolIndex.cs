@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Diagnostics;
+using fire.Compiler;
 using fire.Lexing;
 
 namespace fire.Editor
@@ -160,13 +162,13 @@ namespace fire.Editor
         }
 
         /// <summary>Mischt Klassen/Interfaces der eingebauten Standard-
-        /// bibliothek (ScriptLang.Standard.Prelude, siehe SPEC "Vorangestellte
+        /// bibliothek (fire.Standard.Prelude, siehe SPEC "Vorangestellte
         /// Standardbibliothek") in DIESEN Index ein, markiert mit
         /// <see cref="ClassInfo.IsFromPrelude"/> - jedes reale Skript wird ja
         /// tatsächlich MIT dieser Bibliothek zusammen kompiliert (siehe
-        /// Parser.ParseWithPrelude), Vervollständigung/Mitglieder-Suche
-        /// sollen `List`/`IEnumerable`/etc. deshalb genauso kennen wie
-        /// selbst im Dokument definierte Klassen.
+        /// Runtime.RuntimeSession.Build/Parser.ParseMultiple), Vervollständigung/
+        /// Mitglieder-Suche sollen `List`/`IEnumerable`/etc. deshalb genauso
+        /// kennen wie selbst im Dokument definierte Klassen.
         ///
         /// Eine im Dokument SELBST vollständig (neu) definierte Klasse
         /// gewinnt (kein Überschreiben) - deckt sich mit dem Verhalten des
@@ -738,9 +740,14 @@ namespace fire.Editor
             var result = new List<string>();
             for (int i = 0; i < _tokens.Count - 1; i++)
             {
+                //Debug.WriteLine($"Offset i: {OffsetOf(_tokens[i])} Offset i+1: {OffsetOf(_tokens[i + 1])} Offset Cursor: {offset}");
                 if (OffsetOf(_tokens[i]) >= offset) break;
                 if (_tokens[i].Type == TokenType.Var && _tokens[i + 1].Type == TokenType.Identifier)
-                    result.Add(_tokens[i + 1].Lexeme);
+                    if (OffsetOf(_tokens[i + 1]) < offset)
+                    {
+                        //Debug.WriteLine(_tokens[i + 1].Lexeme);
+                        result.Add(_tokens[i + 1].Lexeme);
+                    }
             }
             return result;
         }

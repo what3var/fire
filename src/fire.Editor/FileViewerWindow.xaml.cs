@@ -64,8 +64,8 @@ namespace fire.Editor
         /// INNERHALB dieser Ansicht funktioniert identisch zu LoadFile;
         /// ein etwaiges `#include` darin würde (mangels echtem Verzeichnis)
         /// relativ zum aktuellen Arbeitsverzeichnis aufgelöst - genau wie
-        /// beim ECHTEN Kompilieren der Prelude selbst (siehe Parser.
-        /// ParseWithPrelude), also konsistent zum tatsächlichen Verhalten.</summary>
+        /// beim ECHTEN Kompilieren der Prelude selbst (siehe Runtime.
+        /// RuntimeSession.Build), also konsistent zum tatsächlichen Verhalten.</summary>
         public void LoadSource(string title, string source, int? jumpToLine = null)
         {
             _filePath = "";

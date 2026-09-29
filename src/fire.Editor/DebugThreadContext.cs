@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using fire.Bytecode;
+using fire.Runtime;
 
 namespace fire.Editor
 {
@@ -60,7 +62,7 @@ namespace fire.Editor
 
             var thread = new Thread(RunLoop)
             {
-                Name = $"ScriptLang-Debug-{name}",
+                Name = $"fire-Debug-{name}",
                 // Vordergrund-Thread (.NET-Standard) - eine laufende
                 // Debug-Sitzung soll den Prozess nicht stillschweigend am
                 // Leben halten oder umgekehrt abrupt sterben, während noch
@@ -82,7 +84,7 @@ namespace fire.Editor
         /// selbst einen NEUEN, eigenen Hintergrund-Thread für die
         /// eigentliche Ausführung, läuft also nicht auf dem aufrufenden
         /// Thread).</summary>
-        public static DebugThreadContext ForFireThread(VM vm, string name, ISet<int> breakpointsSnapshot)
+        public static DebugThreadContext ForFireThread(VM vm, string name, ISet<(int SourceIndex, int Line)> breakpointsSnapshot)
         {
             var ctx = new DebugThreadContext(vm, name, isMain: false);
             ctx.RequestStep(MakeContinueStep(breakpointsSnapshot, ctx.ConsumePauseRequest));
@@ -177,6 +179,7 @@ namespace fire.Editor
                 // unbeobachtet) mitzureißen. Eine unbehandelte SKRIPT-
                 // Exception läuft dagegen über UnhandledException oben, nicht
                 // mehr über diesen catch-Zweig.
+                Debug.WriteLine($"{ex.Message}\r\n{ex.StackTrace}");
                 RuntimeError = ex.Message;
                 IsFinished = true;
             }
@@ -230,18 +233,18 @@ namespace fire.Editor
         /// standardmäßig startet, als auch für einen expliziten "Weiter"-
         /// Knopfdruck auf einem BELIEBIGEN Thread (siehe DebugSession.
         /// Continue).</summary>
-        public static Func<VM, bool> MakeContinueStep(ISet<int> breakpoints, Func<bool> isPauseRequested) =>
+        public static Func<VM, bool> MakeContinueStep(ISet<(int SourceIndex, int Line)> breakpoints, Func<bool> isPauseRequested) =>
             vm =>
             {
-                int lastLine = vm.CurrentLine;
+                var lastLocation = vm.CurrentLocation;
                 while (vm.StepInstruction())
                 {
                     if (isPauseRequested()) return true;
-                    int line = vm.CurrentLine;
-                    if (line != lastLine)
+                    var location = vm.CurrentLocation;
+                    if (location != lastLocation)
                     {
-                        lastLine = line;
-                        if (breakpoints.Contains(line)) return true;
+                        lastLocation = location;
+                        if (breakpoints.Contains(location)) return true;
                     }
                 }
                 return false;

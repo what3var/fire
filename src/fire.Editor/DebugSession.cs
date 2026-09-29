@@ -1,12 +1,18 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
 using fire.Bytecode;
+using fire.Compiler;
 using fire.Parsing;
 using fire.Resolving;
 using fire.Runtime;
+using fire.Terminal;
+using fire.Terminal.Bridge;
+using fire.Terminal.Windows;
 using fire.Values;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using static fire.Resolving.ResolvedRef;
 
 namespace fire.Editor
 {
@@ -31,11 +37,10 @@ namespace fire.Editor
     /// </summary>
     public sealed class DebugSession
     {
-        private readonly NativeRegistry _natives = new();
         private readonly object _threadsLock = new();
         private readonly List<DebugThreadContext> _threads = new();
         private int _fireThreadCounter;
-        private HashSet<int> _breakpointsSnapshot = new();
+        private HashSet<(int SourceIndex, int Line)> _breakpointsSnapshot = new();
 
         public IReadOnlyList<DebugThreadContext> Threads
         {
@@ -49,6 +54,17 @@ namespace fire.Editor
         public bool IsFinished => ActiveThread?.IsFinished ?? false;
         public string? CompileError { get; private set; }
         public string? RuntimeError => ActiveThread?.RuntimeError;
+
+        public VmExecutionMode ExecutionMode { get; set; } = VmExecutionMode.Debug;
+
+        public VmExecutionMode? ActiveExecutionMode { get; private set; }
+
+        /// <summary>Quell-Index (siehe Bytecode.Chunk.MarkLine/VM.CurrentLocation),
+        /// ab dem der erste EIGENE Quelltext des Aufrufers (die `sources`, die
+        /// an Compile() gingen) im kompilierten Programm beginnt - Weiterleitung
+        /// von Runtime.RuntimeSession.FirstUserSourceIndex (siehe dort), erst
+        /// nach einem erfolgreichen Compile()-Aufruf gültig (vorher 0).</summary>
+        public int FirstUserSourceIndex { get; private set; }
 
         public event Action<string>? OutputWritten;
 
@@ -67,13 +83,6 @@ namespace fire.Editor
 
         public DebugSession()
         {
-            _natives.Register("print", args =>
-            {
-                string text = args.Length > 0 ? args[0].ToString() : "";
-                string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
-                OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {text}" : text);
-                return Value.MakeUndefined();
-            });
         }
 
         private DebugThreadContext? FindContextFor(VM? vm)
@@ -92,28 +101,32 @@ namespace fire.Editor
         /// Vereinfachung, um keine über mehrere Threads hinweg geteilte,
         /// nebenläufig veränderliche Breakpoint-Menge synchronisieren zu
         /// müssen.</summary>
-        public void UpdateBreakpoints(IEnumerable<int> lines) => _breakpointsSnapshot = new HashSet<int>(lines);
+        public void UpdateBreakpoints(IEnumerable<(int SourceIndex, int Line)> locations) => _breakpointsSnapshot = new HashSet<(int, int)>(locations);
 
         /// <summary>Kompiliert den Quelltext neu und setzt eine frische
         /// Main-Thread-VM auf (auf ihrem eigenen Hintergrund-Thread, siehe
         /// DebugThreadContext.ForMain - startet wartend, noch nichts läuft).
         /// Bei einem Parse-/Resolve-Fehler bleibt Vm null, CompileError
         /// enthält die Meldung.</summary>
-        public bool Compile(string source)
+        public bool Compile(string[] sources, string? outname = null)
         {
             Reset();
 
             try
             {
-                var program = Parser.ParseWithPrelude(source, out var activeUsings);
-                var resolveResult = Resolver.Resolve(program, _natives.Names, activeUsings: activeUsings);
-                var compiled = Compiler.Compile(program, resolveResult, _natives, activeUsings);
+                var session = RuntimeSession.Build(sources, ExecutionMode, args =>
+                {
+                    string text = args.Length > 0 ? args[0].ToString() : "";
+                    string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
+                    OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {text}" : text);
+                    return Value.MakeUndefined();
+                }, outname);
 
-                var globalScope = new Scope(null, isGlobal: true);
-                var mainVm = new VM(compiled.TopLevel, globalScope, _natives, compiled.Classes,
-                    externSignatures: compiled.ExternSignatures, isMainThreadVm: true);
+                ActiveExecutionMode = ExecutionMode;
 
-                var mainCtx = DebugThreadContext.ForMain(mainVm);
+                FirstUserSourceIndex = session.FirstUserSourceIndex;
+
+                var mainCtx = DebugThreadContext.ForMain(session.VirtualMachine);
                 mainCtx.Paused += ctx => ThreadPaused?.Invoke(ctx);
 
                 lock (_threadsLock)
@@ -197,8 +210,8 @@ namespace fire.Editor
 
         /// <summary>Läuft bis zum nächsten Haltepunkt oder Programmende, auf
         /// dem AKTIVEN Thread - unterbrechbar über PauseActiveThread.</summary>
-        public void Continue(ISet<int> breakpointLines) =>
-            RunGuarded(ctx => DebugThreadContext.MakeContinueStep(breakpointLines, ctx.ConsumePauseRequest));
+        public void Continue(ISet<(int SourceIndex, int Line)> breakpoints) =>
+            RunGuarded(ctx => DebugThreadContext.MakeContinueStep(breakpoints, ctx.ConsumePauseRequest));
 
         /// <summary>Läuft ohne Unterbrechung bis zum Programmende (kein
         /// Debugging, einfach nur ausführen) - AUF DEM AKTIVEN Thread,

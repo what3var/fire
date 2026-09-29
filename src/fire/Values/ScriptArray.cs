@@ -13,7 +13,7 @@ namespace fire.Values
     /// docs/PORTING.md) übertragen lässt, wo Exceptions in eingebetteten
     /// Umgebungen oft ganz abgeschaltet sind. Die VM (siehe VM.ArrayGet/
     /// ArraySet) wandelt ein `false` hier in eine ordentliche, fangbare
-    /// ScriptLang-`IndexOutOfBoundsException` um (VM.ThrowIndexOutOfBounds) -
+    /// fire-`IndexOutOfBoundsException` um (VM.ThrowIndexOutOfBounds) -
     /// diese Umwandlung bleibt bewusst VM-seitig, nicht hier, da "eine
     /// Skript-Exception werfen" ein Konzept der VM/des Interpreters ist,
     /// keins dieser reinen Datenstruktur.

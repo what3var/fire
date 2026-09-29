@@ -1,4 +1,4 @@
-# ScriptLang – Sprachspezifikation (v0.1)
+# fire – Sprachspezifikation (v0.1)
 
 Referenzdokument für den Interpreter. Wird während der Implementierung erweitert.
 

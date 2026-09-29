@@ -18,6 +18,7 @@ namespace fire.Lexing
         Extern, Unsafe,
         Interface,
         Readonly, Enum,
+        Static, // 'static' bei Feldern/Methoden/Properties (siehe Parser.ParseClassMember)
         Public, Private, Protected, // Zugriffsmodifikatoren für Klassenmitglieder (siehe Parser.ParseAccessModifier)
         Namespace, // 'namespace Name { ... }' (siehe Parser.ParseNamespaceDecl/FlattenNamespaces)
         With,
@@ -41,6 +42,7 @@ namespace fire.Lexing
 
         // Operatoren
         Plus, Minus, Star, Slash, Percent,
+        PlusPlus, MinusMinus, // ++ / -- (siehe Parser.ParseUnary/ParsePostfix)
         Caret,       // '^'  -> Potenz (NICHT bitweises XOR - das ist Hash, siehe dort)
         Pipe,        // '|'  -> bitweises Oder. '||' bleibt eigenes Token (Or).
         Assign, Eq, NotEq, Lt, LtEq, Gt, GtEq,

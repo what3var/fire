@@ -25,12 +25,12 @@ namespace fire.Bytecode
         /// steht für `catch threads()` (matcht alles). Der Proto hat entweder
         /// 0 Parameter (`catch threads()`, Body ohne gebundene Variable) oder
         /// 1 Parameter (`catch threads(ExceptionType e)`, `e` gebunden).</summary>
-        internal static readonly List<(string? TypeName, FunctionProto Proto)> ThreadsCatches = new();
+        public static readonly List<(string? TypeName, FunctionProto Proto)> ThreadsCatches = new();
 
         /// <summary>Höchstens einer - `catch terminate(v)` gibt es nur einmal
         /// im ganzen Programm (kein Stack wie bei try/catch). 0 oder 1
         /// Parameter, analog zu ThreadsCatches.</summary>
-        internal static FunctionProto? TerminateHandler;
+        public static FunctionProto? TerminateHandler;
 
         private static readonly object Gate = new();
 

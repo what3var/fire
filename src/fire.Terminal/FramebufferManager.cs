@@ -1,6 +1,6 @@
 using System;
 
-namespace ScriptLang.Terminal
+namespace fire.Terminal
 {
     /// <summary>
     /// Verwaltet Framebuffer-Instanzen über aufsteigende, eindeutige IDs

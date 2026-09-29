@@ -1,0 +1,91 @@
+﻿<Window x:Class="fire.Editor.AssemblyInfoDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:rt="clr-namespace:fire.Runtime;assembly=fire"
+        xmlns:ut="clr-namespace:fire.Utilities;assembly=fire"
+        xmlns:cv="clr-namespace:fire.Editor.Converters"
+        xmlns:a="clr-namespace:fire.Compiler.Assembly;assembly=fire.Compiler"
+        xmlns:local="clr-namespace:fire.Editor"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance a:AssemblyInfo}"
+        Title="AssemblyInfo" Width="400">
+    <Grid Margin="4">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"></ColumnDefinition>
+            <ColumnDefinition Width="*"></ColumnDefinition>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"></RowDefinition>
+            <RowDefinition Height="auto"></RowDefinition>
+        </Grid.RowDefinitions>
+    <StackPanel Orientation="Vertical" Grid.Column="0" Grid.Row="0">
+        <GroupBox Header="Build Execution Mode" Margin="2">
+            <StackPanel Orientation="Vertical" Margin="4">
+                    <RadioButton Content="Debug" IsChecked="{Binding ExecutionMode, Converter={cv:RadioButtonValueConverter {x:Static rt:VmExecutionMode.Debug}}}"></RadioButton>
+                    <RadioButton Content="Release" IsChecked="{Binding ExecutionMode, Converter={cv:RadioButtonValueConverter {x:Static rt:VmExecutionMode.Release}}}"></RadioButton>
+                    <RadioButton Content="Performance" IsChecked="{Binding ExecutionMode, Converter={cv:RadioButtonValueConverter {x:Static rt:VmExecutionMode.Performance}}}"></RadioButton>
+            </StackPanel>    
+        </GroupBox>
+            <GroupBox Header="Subsystem" Margin="2">
+            <StackPanel Margin="4px">
+                    <RadioButton Content="GUI" IsChecked="{Binding Subsystem, Converter={cv:RadioButtonValueConverter {x:Static ut:SubsystemType.GUI}}}"></RadioButton>
+                    <RadioButton Content="Console" IsChecked="{Binding Subsystem, Converter={cv:RadioButtonValueConverter {x:Static ut:SubsystemType.Console}}}"></RadioButton>
+            </StackPanel>
+        </GroupBox>
+            <GroupBox Header="Version" Margin="2">
+                <StackPanel Orientation="Vertical" Margin="3">
+                    <Label Content="File version" Padding="0,4"></Label>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBox Width="32px" Text="{Binding FileMajor}" PreviewTextInput="TextBox_PreviewTextInput" DataObject.Pasting="TextBox_Pasting" ></TextBox>
+                        <Label Content="."></Label>
+                        <TextBox Width="32px" Text="{Binding FileMinor}" PreviewTextInput="TextBox_PreviewTextInput" DataObject.Pasting="TextBox_Pasting" ></TextBox>
+                        <Label Content="."></Label>
+                        <TextBox Width="32px" Text="{Binding FileBuild}" PreviewTextInput="TextBox_PreviewTextInput" DataObject.Pasting="TextBox_Pasting" ></TextBox>
+                        <Label Content="."></Label>
+                        <TextBox Width="32px" Text="{Binding FileRevision}" PreviewTextInput="TextBox_PreviewTextInput" DataObject.Pasting="TextBox_Pasting" ></TextBox>
+                    </StackPanel>
+                    <Label Content="Product version" Padding="0,4"></Label>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBox Width="32px" Text="{Binding ProductMajor}" PreviewTextInput="TextBox_PreviewTextInput" DataObject.Pasting="TextBox_Pasting" ></TextBox>
+                        <Label Content="."></Label>
+                        <TextBox Width="32px" Text="{Binding ProductMinor}" PreviewTextInput="TextBox_PreviewTextInput" DataObject.Pasting="TextBox_Pasting" ></TextBox>
+                        <Label Content="."></Label>
+                        <TextBox Width="32px" Text="{Binding ProductBuild}" PreviewTextInput="TextBox_PreviewTextInput" DataObject.Pasting="TextBox_Pasting" ></TextBox>
+                        <Label Content="."></Label>
+                        <TextBox Width="32px" Text="{Binding ProductRevision}" PreviewTextInput="TextBox_PreviewTextInput" DataObject.Pasting="TextBox_Pasting" ></TextBox>
+                    </StackPanel>
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="Icon" Margin="2" Padding="4">
+                <StackPanel Orientation="Horizontal">
+                    <Image Source="{Binding IconPath}" Width="64" Height="64"></Image>
+                    <Button Content="Laden..." VerticalAlignment="Bottom" Padding="8,2" MinWidth="72" Margin="8,8,0,0" Click="Load_Click"></Button>
+                </StackPanel>
+            </GroupBox>
+        </StackPanel>
+        <StackPanel Orientation="Vertical" Grid.Column="1" Grid.Row="0">
+            <GroupBox Header="Assembly Info" Margin="2">
+                <StackPanel Orientation="Vertical">
+                    <Label Content="ProductName"></Label>
+                    <TextBox Text="{Binding ProductName}"></TextBox>
+                    <Label Content="FileDescription"></Label>
+                    <TextBox Text="{Binding FileDescription}"></TextBox>
+                    <Label Content="CompanyName"></Label>
+                    <TextBox Text="{Binding CompanyName}"></TextBox>
+                    <Label Content="Copyright"></Label>
+                    <TextBox Text="{Binding LegalCopyright}"></TextBox>
+                    <Label Content="Internal Name"></Label>
+                    <TextBox Text="{Binding InternalName}"></TextBox>
+                    <Label Content="Comments"></Label>
+                    <TextBox Text="{Binding Comments}" AcceptsReturn="True" MinHeight="32"></TextBox>
+                </StackPanel>
+            </GroupBox>
+        </StackPanel>
+        <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Margin="4" Padding="8,2" MinWidth="72" IsDefault="True" Click="Button_Click">Save</Button>
+            <Button Margin="4" Padding="8,2" MinWidth="72" IsCancel="True">Cancel</Button>
+        </StackPanel>
+    </Grid>
+</Window>

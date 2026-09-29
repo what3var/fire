@@ -1,3 +1,5 @@
+using fire.Ast;
+using MemoryPack;
 using System;
 using System.Collections.Generic;
 
@@ -17,17 +19,29 @@ namespace fire.Bytecode
     /// FillDefaultArgs ausgewertet, wenn ein Aufruf weniger Argumente liefert
     /// als ParamCount (siehe Ast.LambdaParam.DefaultValue-Doku).
     /// </summary>
-    public sealed class FunctionProto
+    [MemoryPackable]
+    public sealed partial class FunctionProto
     {
         public Chunk Chunk { get; }
         public int ParamCount { get; }
         public IReadOnlyList<FunctionProto?> ParamDefaults { get; }
 
-        public FunctionProto(Chunk chunk, int paramCount, IReadOnlyList<FunctionProto?>? paramDefaults = null)
+        public AccessModifier? Access { get; set; }
+
+        /// <summary>SPEC "Statische Mitglieder" - `true` für eine `static`
+        /// deklarierte Methode/Property-Accessor (Konstruktoren sind nie
+        /// statisch). Bestimmt beim Aufruf, ob VM.CallMethod ein Objekt
+        /// erwartet (Instanzmethode) oder VM.CallStaticMethod ohne
+        /// gebundenes 'this' läuft.</summary>
+        public bool IsStatic { get; set; }
+
+        public FunctionProto(Chunk chunk, int paramCount, AccessModifier? access, IReadOnlyList<FunctionProto?>? paramDefaults = null, bool isStatic = false)
         {
             Chunk = chunk;
             ParamCount = paramCount;
             ParamDefaults = paramDefaults ?? Array.Empty<FunctionProto?>();
+            Access = access;
+            IsStatic = isStatic;
         }
     }
 }

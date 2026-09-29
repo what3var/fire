@@ -10,7 +10,7 @@
   -->
   <PropertyGroup>
     <OutputType>Library</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>fire.Terminal.Windows</RootNamespace>
@@ -21,13 +21,6 @@
   <ItemGroup>
     <ProjectReference Include="..\fire.Terminal\fire.Terminal.csproj" />
     <ProjectReference Include="..\fire.Terminal.Sdl\fire.Terminal.Sdl.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- Für GdiGlyphFont (Rastern der Monospace-Systemschrift, siehe dort) -
-         seit .NET 6 kein Teil des Shared Frameworks mehr, muss explizit
-         referenziert werden. -->
-    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
   </ItemGroup>
 
 </Project>

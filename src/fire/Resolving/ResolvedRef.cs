@@ -9,12 +9,14 @@ namespace fire.Resolving
     {
         /// <summary>Lokale Variable. Depth = Anzahl Scope-Hops von der aktuellen
         /// Ausführungsposition nach oben (0 = aktueller Scope selbst). Slot = Index
-        /// innerhalb des dortigen Scopes.</summary>
-        public sealed record Local(int Depth, int Slot) : ResolvedRef;
+        /// innerhalb des dortigen Scopes. RequiredUnit: geforderte Einheit (SPEC
+        /// "Einheiten-Deklarationen"), wenn die Deklaration ein explizites
+        /// `: einheit` hatte - `null` sonst (jeder Wert zulässig, wie bisher).</summary>
+        public sealed record Local(int Depth, int Slot, string? RequiredUnit = null) : ResolvedRef;
 
         /// <summary>Globale Variable (Top-Level-Deklaration). Slot = Index im
-        /// globalen Scope.</summary>
-        public sealed record Global(int Slot) : ResolvedRef;
+        /// globalen Scope. RequiredUnit: wie bei Local.</summary>
+        public sealed record Global(int Slot, string? RequiredUnit = null) : ResolvedRef;
 
         /// <summary>Eine registrierte native Funktion (SPEC-fremd, reine Bytecode-
         /// Erweiterungsstelle, siehe Bytecode.NativeRegistry) - nur als direkter
@@ -39,5 +41,24 @@ namespace fire.Resolving
         /// Resolver an den betroffenen MemberExpr-Knoten gehängt (nicht an
         /// einen IdentifierExpr wie die anderen ResolvedRef-Fälle).</summary>
         public sealed record EnumMember(long Value) : ResolvedRef;
+
+        /// <summary>Ein statischer Klassenmitglied-Zugriff ('ClassName.Member',
+        /// SPEC "Statische Mitglieder") - wie EnumMember an den betroffenen
+        /// MemberExpr-Knoten gehängt, `me.Name` bleibt der Mitgliedsname,
+        /// ClassName hier ist der (exakt geschriebene, ggf. schon
+        /// vollqualifizierte) Klassenname, gegen den geprüft wurde (siehe
+        /// Resolver.TryResolveStaticMemberAccess). Der Compiler nutzt das
+        /// für GetStaticField/SetStaticField/CallStaticMethod statt der
+        /// normalen (dynamischen) GetField/SetField/CallMethod.</summary>
+        public sealed record StaticMember(string ClassName) : ResolvedRef;
+
+        /// <summary>Ein Instanzfeld/-methode/-property, per bloßem Namen (ohne
+        /// 'this.'-Präfix) referenziert, INNERHALB einer Klasse (SPEC
+        /// "Implizite Mitglieder-Referenzen") - der Compiler behandelt das
+        /// wie 'this.Name' (LoadThis + GetField/SetField/CallMethod). Kann
+        /// nur innerhalb einer NICHT-statischen Methode/eines NICHT-
+        /// statischen Feld-Initialisierers entstehen (siehe Resolver.
+        /// ResolveIdentifierRef) - dort gibt es kein gebundenes 'this'.</summary>
+        public sealed record ImplicitThisMember : ResolvedRef;
     }
 }

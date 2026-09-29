@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using fire.Ast;
+using fire.Values;
+using MemoryPack;
 
 namespace fire.Bytecode
 {
@@ -20,9 +22,36 @@ namespace fire.Bytecode
     /// Verschachtelung der Interpreter-Schleife bräuchte, die hier bewusst noch
     /// nicht gebaut ist (Reentrancy-Risiko, siehe BYTECODE.md).
     /// </summary>
-    public sealed class RuntimeClass
+    /// 
+
+    [MemoryPackable]
+    public sealed partial class FieldInfo
+    {
+        public string? RequiredUnit { get; set; }
+
+        public AccessModifier AccessModifier { get; set; }
+
+        /// <summary>SPEC "Statische Mitglieder" - `true` für ein `static`
+        /// deklariertes Feld: EINE geteilte Speicherstelle pro Klasse
+        /// (RuntimeClass.StaticFieldValues/StaticFields), NICHT pro Instanz
+        /// (ObjectInstance.Fields, siehe RuntimeClass.Fields).</summary>
+        public bool IsStatic { get; set; }
+    }
+
+    [MemoryPackable]
+    public sealed partial class RuntimeClass
     {
         public string Name { get; }
+
+        /// <summary>Nur vom Compiler gebraucht (Basisklassen-Auflösung,
+        /// SourceIndex für Multi-Datei-Debugging) - NICHT mehr von der VM zur
+        /// Laufzeit (ObjectInstance trägt nur noch den Klassennamen, siehe
+        /// dortige Doku, genau damit die komplette Stmt/Expr-AST-Hierarchie
+        /// nicht an jedem Laufzeit-Objekt hängt). Deshalb von der geplanten
+        /// Programm-Serialisierung ausgenommen - ein aus dem Cache geladenes
+        /// Programm ist bereits fertig kompiliert, braucht den Quell-AST
+        /// nicht mehr.</summary>
+        [MemoryPackIgnore]
         public ClassDecl Decl { get; }
         public RuntimeClass? Base { get; set; }
 
@@ -33,17 +62,80 @@ namespace fire.Bytecode
         /// einem Actor erbt, ist selbst ebenfalls ein Actor (Erben von einer
         /// NICHT-Actor-Basis durch eine Actor-Klasse ist dagegen nicht
         /// sinnvoll möglich, da eine normale Klasse keine Mailbox-Semantik
-        /// kennt - wird in dieser Ausbaustufe nicht eigens geprüft).</summary>
-        public bool IsActor => Decl.IsActor || (Base?.IsActor ?? false);
+        /// kennt - wird in dieser Ausbaustufe nicht eigens geprüft).
+        ///
+        /// War früher über Decl.IsActor abgeleitet - Decl ist jetzt aber
+        /// [MemoryPackIgnore] (siehe dort), stünde nach dem Deserialisieren
+        /// also nicht mehr zur Verfügung. Eigenes, echtes Feld statt
+        /// berechneter Property, damit der Wert den Sprung über die
+        /// Serialisierung übersteht - vom Compiler einmalig beim Anlegen der
+        /// RuntimeClass gesetzt (siehe Compiler.CompileClasses).</summary>
+        public bool IsActor { get; set; }
 
-        public List<(string Name, FunctionProto Init)> Fields { get; } = new();
+        public List<(string Name, FunctionProto Init)> Fields { get; }
 
         /// <summary>Zugriffsmodifikator jedes in DIESER Klasse selbst
         /// deklarierten Feldes (nicht geerbter) - siehe FindFieldAccess für
         /// die Basisklassen-Kette. Vom Compiler direkt befüllt (siehe
         /// CompileClass), Default beim Fehlen eines Eintrags ist `Public`
         /// (siehe FindFieldAccess).</summary>
-        public Dictionary<string, AccessModifier> OwnFieldAccess { get; } = new();
+        public Dictionary<string, FieldInfo> OwnFieldInfo { get; }
+
+        // ------------------------------------------------------------
+        // Statische Mitglieder (SPEC "Statische Mitglieder") - EINE geteilte
+        // Speicherstelle pro KLASSE statt pro Instanz. Zugriffsmodifikator/
+        // geforderte Einheit eines statischen Feldes laufen bewusst über
+        // DIESELBEN OwnFieldInfo-Einträge wie Instanzfelder (FieldInfo.
+        // IsStatic unterscheidet nur, WO der eigentliche WERT liegt) - ein
+        // Name ist pro Klasse ohnehin eindeutig, egal ob statisch oder nicht.
+        // ------------------------------------------------------------
+
+        /// <summary>Statische Feldwerte - lebt HIER direkt auf der
+        /// RuntimeClass (nicht wie normale Felder in ObjectInstance.Fields),
+        /// weil es davon je Klasse nur GENAU EINE Speicherstelle gibt, keine
+        /// pro Instanz. Initialisiert einmalig beim Programmstart (siehe
+        /// VM.RunStaticInitializers), danach ganz normal per GetStaticField/
+        /// SetStaticField gelesen/geschrieben.</summary>
+        public Dictionary<string, Value> StaticFieldValues { get; }
+
+        /// <summary>Statische Feld-Initialisierer DIESER Klasse (Name -> 0-Arg-
+        /// Proto) - wie Fields, aber getrennt geführt: laufen NICHT wie
+        /// Fields bei JEDER `new`-Konstruktion, sondern GENAU EINMAL beim
+        /// Programmstart (siehe VM.RunStaticInitializers), in
+        /// Deklarationsreihenfolge.</summary>
+        public List<(string Name, FunctionProto Init)> StaticFields { get; }
+
+        /// <summary>Wie FindFieldAccess, aber für statische Felder: die
+        /// Klasse, die `name` als statisches Feld SELBST deklariert
+        /// (Basisklassen-Kette, eigene Klasse zuerst) - `null`, wenn keine
+        /// Klasse in der Kette ein statisches Feld dieses Namens hat. Eine
+        /// abgeleitete Klasse OHNE eigenes gleichnamiges statisches Feld
+        /// teilt sich die Speicherstelle der Basisklasse (`Derived.X` und
+        /// `Base.X` sind dann DASSELBE Feld, dieselbe StaticFieldValues-
+        /// Instanz) - deklariert Derived selbst eins mit demselben Namen,
+        /// ist es eine GETRENNTE, unabhängige Speicherstelle (verdeckt die
+        /// der Basis, wie bei Instanzfeldern nicht möglich, aber bei
+        /// statischen in den meisten OO-Sprachen üblich).</summary>
+        public RuntimeClass? FindStaticFieldOwner(string name)
+        {
+            for (var rc = this; rc != null; rc = rc.Base)
+                if (rc.OwnFieldInfo.TryGetValue(name, out var info) && info.IsStatic)
+                    return rc;
+            return null;
+        }
+
+        /// <summary>Wie FindFieldAccess, aber für die geforderte Einheit -
+        /// sucht über die Basisklassen-Kette (eigene Klasse zuerst) nach der
+        /// Klasse, die `name` tatsächlich SELBST mit einer Einheit deklariert.
+        /// `null`, wenn keine Klasse in der Kette für dieses Feld eine feste
+        /// Einheit vorschreibt.</summary>
+        public string? FindFieldRequiredUnit(string name)
+        {
+            for (var rc = this; rc != null; rc = rc.Base)
+                if (rc.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.RequiredUnit;
+            return null;
+        }
 
         /// <summary>Wie FindMethod, aber für Felder: sucht über die
         /// Basisklassen-Kette (eigene Klasse zuerst) nach der Klasse, die
@@ -56,8 +148,8 @@ namespace fire.Bytecode
         public (RuntimeClass DeclaringClass, AccessModifier Access)? FindFieldAccess(string name)
         {
             for (var rc = this; rc != null; rc = rc.Base)
-                if (rc.OwnFieldAccess.TryGetValue(name, out var access))
-                    return (rc, access);
+                if (rc.OwnFieldInfo.TryGetValue(name, out var field))
+                    return (rc, field.AccessModifier);
             return null;
         }
 
@@ -73,7 +165,12 @@ namespace fire.Bytecode
         /// werden NUR während der einmaligen Kompilierung befüllt, nie
         /// danach zur Laufzeit verändert, der Cache ist deshalb dauerhaft
         /// gültig.</summary>
+
+        //ZU MESSAGEPACK: ERSTMAL IGNORIEREN, WIRD IM ZWEIFEL SOWIESO NACHGEBAUT
+
+        [MemoryPackIgnore]
         public IReadOnlyList<string> FlattenedFieldNames => _flattenedFieldNames ??= ComputeFlattenedFieldNames();
+        
         private List<string>? _flattenedFieldNames;
 
         private List<string> ComputeFlattenedFieldNames()
@@ -93,6 +190,10 @@ namespace fire.Bytecode
         /// funktional unbedenklich: genau wie beim alten Dictionary-basierten
         /// Verhalten gewinnt am Ende ohnehin der letzte Schreibzugriff unter
         /// demselben Namen).</summary>
+
+        //ZU MESSAGEPACK: ERSTMAL IGNORIEREN!
+
+        [MemoryPackIgnore]
         public IReadOnlyDictionary<string, int> FieldIndex => _fieldIndex ??= ComputeFieldIndex();
         private Dictionary<string, int>? _fieldIndex;
 
@@ -109,7 +210,7 @@ namespace fire.Bytecode
         /// FindMethod für die Auflösung nach Aufruf-Argumentzahl). Properties
         /// (get_X/set_X, siehe PropertyDecl-Doku) landen ebenfalls hier, als
         /// Liste mit genau einem Eintrag (keine Überladung für Properties).</summary>
-        public Dictionary<string, List<FunctionProto>> Methods { get; } = new();
+        public Dictionary<string, List<FunctionProto>> Methods { get; }
 
         /// <summary>Konstruktor-Überladungen dieser Klasse, nach
         /// Parameteranzahl - anders als Methoden OHNE Basisklassen-Kette:
@@ -118,21 +219,18 @@ namespace fire.Bytecode
         /// AUS einem eigenen Konstruktor heraus aufgerufen). Immer mindestens
         /// ein Eintrag (Arity 0) - wird synthetisiert, falls die Klasse
         /// keinen eigenen `construct` deklariert.</summary>
-        public Dictionary<int, FunctionProto> Constructors { get; } = new();
+        public Dictionary<int, FunctionProto> Constructors { get; }
 
         /// <summary>Zugriffsmodifikator jedes Konstruktors, nach
         /// Parameteranzahl (parallel zu Constructors) - ein privater
         /// Konstruktor verhindert `new X(...)` von außerhalb der Klasse
         /// (klassisches Singleton-/Factory-Method-Muster), siehe VM.
         /// CheckConstructorAccess.</summary>
-        public Dictionary<int, AccessModifier> ConstructorAccess { get; } = new();
-
-        public void AddConstructor(FunctionProto proto, AccessModifier access = AccessModifier.Public)
+        public void AddConstructor(FunctionProto proto)
         {
             if (!Constructors.TryAdd(proto.ParamCount, proto))
                 throw new System.InvalidOperationException(
                     $"Interner Fehler: Konstruktor mit {proto.ParamCount} Parametern wurde zweimal registriert.");
-            ConstructorAccess[proto.ParamCount] = access;
         }
 
         public FunctionProto? Destructor { get; set; }
@@ -141,6 +239,38 @@ namespace fire.Bytecode
         {
             Name = name;
             Decl = decl;
+            Fields = new();
+            OwnFieldInfo = new();
+            StaticFieldValues = new();
+            StaticFields = new();
+            Methods = new();
+            Constructors = new();
+        }
+
+        /// <summary>Für MemoryPack (siehe Decl-Doku und Chunk.Chunk(List&lt;byte&gt;,...)-
+        /// Doku für die ausführliche Begründung) - Decl bleibt dabei `null!`
+        /// (nicht gebraucht, nie gelesen nach dem Kompilieren). Die sechs
+        /// Sammlungs-Parameter sind zwingend nötig, weil Fields/OwnFieldInfo/
+        /// StaticFieldValues/StaticFields/Methods/Constructors KEINEN Setter
+        /// haben (bewusst, siehe deren Doku) - ohne einen Konstruktor, der sie
+        /// entgegennimmt, hätte der generierte Deserialisierer keine
+        /// Möglichkeit, die aus dem Stream gelesenen Werte irgendwo
+        /// unterzubringen, und würde sie stillschweigend verwerfen (Base/
+        /// IsActor/Destructor betrifft das NICHT, die haben normale Setter).</summary>
+        [MemoryPackConstructor]
+        public RuntimeClass(string name, List<(string Name, FunctionProto Init)> fields,
+            Dictionary<string, FieldInfo> ownFieldInfo, Dictionary<string, Value> staticFieldValues,
+            List<(string Name, FunctionProto Init)> staticFields, Dictionary<string, List<FunctionProto>> methods,
+            Dictionary<int, FunctionProto> constructors)
+        {
+            Name = name;
+            Decl = null!;
+            Fields = fields;
+            OwnFieldInfo = ownFieldInfo;
+            StaticFieldValues = staticFieldValues;
+            StaticFields = staticFields;
+            Methods = methods;
+            Constructors = constructors;
         }
 
         /// <summary>Registriert eine (überladene) Methode unter ihrem Namen -
@@ -155,25 +285,20 @@ namespace fire.Bytecode
         /// Vereinfachung: unterschiedliche Modifikatoren auf Überladungen
         /// desselben Namens sind ein seltener, nicht besonders sinnvoller
         /// Fall, der letzte kompilierte Aufruf gewinnt.</summary>
-        public void AddMethod(string name, FunctionProto proto, AccessModifier access = AccessModifier.Public)
+        public void AddMethod(string name, FunctionProto proto)
         {
             if (!Methods.TryGetValue(name, out var overloads))
             {
                 overloads = new List<FunctionProto>();
                 Methods[name] = overloads;
             }
+
             if (overloads.Any(p => p.ParamCount == proto.ParamCount))
                 throw new System.InvalidOperationException(
                     $"Interner Fehler: Methode '{name}' mit {proto.ParamCount} Parametern wurde zweimal registriert.");
-            overloads.Add(proto);
-            OwnMethodAccess[name] = access;
-        }
 
-        /// <summary>Zugriffsmodifikator jedes in DIESER Klasse selbst
-        /// deklarierten Methodennamens (siehe AddMethod-Doku: gilt für alle
-        /// Überladungen dieses Namens zusammen). Vom Methoden-Cache
-        /// (FindMethod) ausgelesen, nicht separat zu prüfen.</summary>
-        public Dictionary<string, AccessModifier> OwnMethodAccess { get; } = new();
+            overloads.Add(proto);
+        }
 
         /// <summary>Sucht eine Methode über die Basisklassen-Kette (eigene
         /// Klasse zuerst) nach Namen UND Argumentanzahl - Grundlage der
@@ -235,7 +360,7 @@ namespace fire.Bytecode
                     var match = FindBestMatch(overloads, argCount);
                     if (match != null)
                     {
-                        var access = rc.OwnMethodAccess.TryGetValue(name, out var a) ? a : AccessModifier.Public;
+                        var access = match.Access ?? AccessModifier.Public;
                         result = (match, rc, access);
                         break;
                     }
@@ -310,5 +435,16 @@ namespace fire.Bytecode
                     return true;
             return false;
         }
+
+        /// <summary>`true`, wenn `name` (über die Basisklassen-Kette, wie
+        /// FindMethod) eine statische Methode/Property-Accessor ist - für
+        /// den Fehlerfall "ClassName.Method()" auf einer NICHT-statischen
+        /// Methode (siehe VM.CallStaticMethod) bzw. umgekehrt "instanz.
+        /// Method()" auf einer statischen. `argCount` wie bei FindMethod,
+        /// da Überladungen unterschiedlicher Arity theoretisch unterschiedlich
+        /// statisch sein könnten (SPEC macht dazu zwar keine Vorgabe, aber
+        /// FunctionProto.IsStatic ist ohnehin pro Überladung gespeichert -
+        /// kein Grund, das hier künstlich einzuschränken).</summary>
+        public bool IsStaticMethod(string name, int argCount) => FindMethod(name, argCount)?.IsStatic ?? false;
     }
 }

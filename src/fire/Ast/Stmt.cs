@@ -2,20 +2,20 @@ using System.Collections.Generic;
 
 namespace fire.Ast
 {
-    public abstract record Stmt(int Line)
+    public abstract record Stmt(int Source, int Line)
     {
         // Als eigener, benannter Typ referenziert (u.a. von LambdaExpr.Body),
         // daher als nested type statt nur als sealed record auf Namespace-Ebene.
-        public sealed record BlockStmt(int Line, IReadOnlyList<Stmt> Statements) : Stmt(Line);
+        public sealed record BlockStmt(int Source, int Line, IReadOnlyList<Stmt> Statements) : Stmt(Source, Line);
     }
 
-    public sealed record ExprStmt(int Line, Expr Expression) : Stmt(Line);
+    public sealed record ExprStmt(int Source, int Line, Expr Expression) : Stmt(Source, Line);
 
     /// <summary>Eine Präprozessor-Direktive, die keine eigene Laufzeit-Wirkung
     /// hat (z.B. `#extern "libName"` - wirkt nur beim Parsen, siehe
     /// Parser._currentExternLib/ExternDecl.LibName). Resolver/Compiler
     /// überspringen sie einfach.</summary>
-    public sealed record NoOpStmt(int Line) : Stmt(Line);
+    public sealed record NoOpStmt(int Source, int Line) : Stmt(Source, Line);
 
     /// <summary>`#noshadow` (siehe Parser.ParseDirective/Resolving.Resolver.
     /// ResolveFireStmt) - schaltet den Read-only-Globals-Snapshot in JEDEM
@@ -31,7 +31,7 @@ namespace fire.Ast
     /// Blocks) - der Vorab-Durchlauf sucht nur dort, exakt wie bei
     /// `#include`/`#extern` üblich (Direktiven stehen konventionell am
     /// Dateianfang).</summary>
-    public sealed record NoShadowDirective(int Line) : Stmt(Line);
+    public sealed record NoShadowDirective(int Source, int Line) : Stmt(Source, Line);
 
     /// <summary>Ein einzelnes Enum-Mitglied. ValueExpr fehlt -> Wert ist der
     /// des Vorgängers + 1 (0 beim ersten Mitglied) - klassisches C-artiges
@@ -48,24 +48,24 @@ namespace fire.Ast
     /// Mitglied als eigene Objekt-Instanz einer generierten Klasse zu
     /// modellieren - das bräuchte ein Konzept für STATISCHE/geteilte Instanzen,
     /// das diese Sprache aktuell nicht hat.</summary>
-    public sealed record EnumDecl(int Line, string Name, IReadOnlyList<EnumMember> Members) : Stmt(Line);
+    public sealed record EnumDecl(int Source, int Line, string Name, IReadOnlyList<EnumMember> Members) : Stmt(Source, Line);
 
     /// <summary>IsReadonly: per `readonly` deklariert - der Resolver verbietet
     /// dann jede weitere Zuweisung an diese Variable nach der Deklaration
     /// (siehe Resolver.ResolveAssignTarget).</summary>
     public sealed record VarDeclStmt(
-        int Line, string Name, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, Expr? Initializer, bool IsReadonly = false) : Stmt(Line);
+        int Source, int Line, string Name, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, Expr? Initializer, bool IsReadonly = false) : Stmt(Source, Line);
 
-    public sealed record IfStmt(int Line, Expr Condition, Stmt Then, Stmt? Else) : Stmt(Line);
-    public sealed record WhileStmt(int Line, Expr Condition, Stmt Body) : Stmt(Line);
+    public sealed record IfStmt(int Source, int Line, Expr Condition, Stmt Then, Stmt? Else) : Stmt(Source, Line);
+    public sealed record WhileStmt(int Source, int Line, Expr Condition, Stmt Body) : Stmt(Source, Line);
 
     public sealed record ForStmt(
-        int Line, Stmt? Init, Expr? Condition, Expr? Increment, Stmt Body) : Stmt(Line);
+        int Source, int Line, Stmt? Init, Expr? Condition, Expr? Increment, Stmt Body) : Stmt(Source, Line);
 
-    public sealed record ForeachStmt(int Line, string VarName, Expr Iterable, Stmt Body) : Stmt(Line);
+    public sealed record ForeachStmt(int Source, int Line, string VarName, Expr Iterable, Stmt Body) : Stmt(Source, Line);
 
-    public sealed record ReturnStmt(int Line, Expr? Value) : Stmt(Line);
-    public sealed record ThrowStmt(int Line, Expr Value) : Stmt(Line);
+    public sealed record ReturnStmt(int Source, int Line, Expr? Value) : Stmt(Source, Line);
+    public sealed record ThrowStmt(int Source, int Line, Expr Value) : Stmt(Source, Line);
 
     /// <summary>`break`/`continue` - nur innerhalb einer Schleife (`while`/
     /// `for`/`foreach`) gültig, geprüft vom Resolver (`_loopDepth`). Bricht
@@ -77,8 +77,8 @@ namespace fire.Ast
     /// entsteht nur für ein `break` AUSSERHALB eines switch-case (z.B.
     /// direkt in einer Schleife, auch einer, die selbst in einem switch-case
     /// steckt).</summary>
-    public sealed record BreakStmt(int Line) : Stmt(Line);
-    public sealed record ContinueStmt(int Line) : Stmt(Line);
+    public sealed record BreakStmt(int Source, int Line) : Stmt(Source, Line);
+    public sealed record ContinueStmt(int Source, int Line) : Stmt(Source, Line);
 
     /// <summary>Eine einzelne `taking`-Erfassung in einem `fire`-Statement
     /// (siehe Ast.FireStmt-Doku) - `VarName` ist der Name, unter dem der Wert
@@ -110,11 +110,12 @@ namespace fire.Ast
     /// unterscheidbar - kompletter Code-Reuse ohne jede Sonderbehandlung
     /// jenseits des Parsers.</summary>
     public sealed record FireStmt(
+        int Source,
         int Line,
         IReadOnlyList<FireTakingCapture> TakingCaptures,
         string? WithVarName,
         Expr? WithSource,
-        Stmt.BlockStmt Body) : Stmt(Line);
+        Stmt.BlockStmt Body) : Stmt(Source, Line);
 
     /// <summary>`process X` (docs/THREADING_DESIGN.md Abschnitt 2) -
     /// blockierend: wartet, bis eine Nachricht in der Mailbox des
@@ -124,7 +125,7 @@ namespace fire.Ast
     /// nicht-blockierende Variante `try process X` ist dagegen ein AUSDRUCK
     /// (liefert true/false, siehe Ast.TryProcessExpr) - wie beim
     /// `sync`/`try sync`-Paar.</summary>
-    public sealed record ProcessStmt(int Line, Expr Target) : Stmt(Line);
+    public sealed record ProcessStmt(int Source, int Line, Expr Target) : Stmt(Source, Line);
 
     /// <summary>`leave` (docs/THREADING_DESIGN.md Abschnitt 6.1) - verlässt
     /// den aktuellen Fire-Thread (oder, wenn außerhalb eines Fire-Threads
@@ -132,7 +133,7 @@ namespace fire.Ast
     /// eigens auf "nur innerhalb von fire" eingeschränkt, siehe BYTECODE.md).
     /// Kompiliert zu einem einzelnen Opcode (VM.RequestLeave), keine eigenen
     /// Kinder/Operanden.</summary>
-    public sealed record LeaveStmt(int Line) : Stmt(Line);
+    public sealed record LeaveStmt(int Source, int Line) : Stmt(Source, Line);
 
     /// <summary>`terminate()` / `terminate(wert)` (docs/THREADING_DESIGN.md
     /// Abschnitt 6.3) - globaler, endgültiger Not-Aus für ALLE Threads.
@@ -141,19 +142,18 @@ namespace fire.Ast
     /// explizit übergeben" (beides landet zwar zur Laufzeit gleich bei
     /// `undefined`, aber die Unterscheidung ist für den Compiler relevant,
     /// der sonst unnötig einen LoadConst-Undefined emittieren müsste).</summary>
-    public sealed record TerminateStmt(int Line, Expr? Value) : Stmt(Line);
+    public sealed record TerminateStmt(int Source, int Line, Expr? Value) : Stmt(Source, Line);
 
     /// <summary>`catch threads(ExceptionType e) { ... }` / `catch threads() { ... }`
     /// (docs/THREADING_DESIGN.md Abschnitt 6.2) - GLOBALE, programmweite
     /// Registrierung (kein normaler try/catch-Handler!), nur an
-    /// Top-Level-Programmposition gültig (siehe Parser.ParseProgram). Anders
-    /// als beim normalen `catch (varName : TypeName)` bewusst in
+    /// Top-Level-Programmposition gültig (siehe Parser.ParseProgram).
     /// Typ-dann-Name-Reihenfolge (`ExceptionType e`, wie ein Methoden-
-    /// parameter) - das ist die vom Nutzer vorgegebene Syntax für dieses neue
-    /// Konstrukt, keine Notwendigkeit, exakt der alten Konvention zu
-    /// folgen. `TypeName`/`VarName` beide `null` bei `catch threads()`
+    /// parameter) - inzwischen dieselbe Reihenfolge wie beim normalen
+    /// `catch (TypeName varName)` (siehe Parser.ParseCatchClause).
+    /// `TypeName`/`VarName` beide `null` bei `catch threads()`
     /// (fängt alles, ohne die Exception an eine Variable zu binden).</summary>
-    public sealed record CatchThreadsDecl(int Line, string? TypeName, string? VarName, Stmt.BlockStmt Body) : Stmt(Line);
+    public sealed record CatchThreadsDecl(int Source, int Line, TypeRef? TypeRef, string? VarName, Stmt.BlockStmt Body) : Stmt(Source, Line);
 
     /// <summary>`catch terminate(v) { ... }` (docs/THREADING_DESIGN.md
     /// Abschnitt 6.3) - GLOBALER Beobachtungs-Hook für `terminate`, läuft im
@@ -162,15 +162,16 @@ namespace fire.Ast
     /// sinnvoll (spätere Registrierungen überschreiben frühere, siehe
     /// Bytecode.GlobalHandlers). `VarName == null` bei `catch terminate()`
     /// (Body ohne gebundenen Wert).</summary>
-    public sealed record CatchTerminateDecl(int Line, string? VarName, Stmt.BlockStmt Body) : Stmt(Line);
+    public sealed record CatchTerminateDecl(int Source, int Line, string? VarName, Stmt.BlockStmt Body) : Stmt(Source, Line);
 
-    public sealed record CatchClause(int Line, string? TypeName, string VarName, Stmt.BlockStmt Body);
+    public sealed record CatchClause(int Source, int Line, TypeRef? TypeRef, string VarName, Stmt.BlockStmt Body);
 
     public sealed record TryStmt(
+        int Source,
         int Line,
         Stmt.BlockStmt TryBlock,
         IReadOnlyList<CatchClause> Catches,
-        Stmt.BlockStmt? Finally) : Stmt(Line);
+        Stmt.BlockStmt? Finally) : Stmt(Source, Line);
 
     // ---------------------------------------------------------------
     // Klassen
@@ -194,8 +195,8 @@ namespace fire.Ast
     /// NICHT statisch erfasst (dynamisches Typsystem) - bewusste Grenze
     /// dieser Ausbaustufe.</summary>
     public sealed record FieldDecl(
-        int Line, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, string Name, Expr? Initializer, bool IsReadonly = false,
-        AccessModifier Access = AccessModifier.Public) : Stmt(Line);
+        int Source, int Line, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, string Name, Expr? Initializer, bool IsReadonly = false,
+        AccessModifier Access = AccessModifier.Public, bool IsStatic = false) : Stmt(Source, Line);
 
     // ---------------------------------------------------------------
     // Generics: Typ-Parameter mit Constraints ('where T is of X, is of Y')
@@ -219,22 +220,25 @@ namespace fire.Ast
     public sealed record TypeParam(string Name, IReadOnlyList<TypeConstraintGroup> ConstraintGroups);
 
     public sealed record MethodDecl(
+        int Source,
         int Line,
         TypeRef? ReturnType,
         string Name,
         IReadOnlyList<LambdaParam> Params,
         Stmt.BlockStmt Body,
         IReadOnlyList<TypeParam>? TypeParams = null,
-        AccessModifier Access = AccessModifier.Public) : Stmt(Line);
+        AccessModifier Access = AccessModifier.Public,
+        bool IsStatic = false) : Stmt(Source, Line);
 
     public sealed record ConstructorDecl(
+        int Source,
         int Line,
         IReadOnlyList<LambdaParam> Params,
         IReadOnlyList<Expr>? BaseArgs,
         Stmt.BlockStmt Body,
-        AccessModifier Access = AccessModifier.Public) : Stmt(Line);
+        AccessModifier Access = AccessModifier.Public) : Stmt(Source, Line);
 
-    public sealed record DestructorDecl(int Line, Stmt.BlockStmt Body) : Stmt(Line);
+    public sealed record DestructorDecl(int Source, int Line, Stmt.BlockStmt Body) : Stmt(Source, Line);
 
     /// <summary>TypeParams: die Typ-Parameter dieser Klasse samt Constraints
     /// (siehe TypeParam-Doku), leer für eine nicht-generische Klasse - siehe
@@ -244,12 +248,13 @@ namespace fire.Ast
     /// Constraint-PRÜFUNG passiert bei `new Name&lt;Arg1, ...&gt;(...)`
     /// (siehe NewExpr.TypeArgs, VM.CheckTypeArgConstraints).</summary>
     public sealed record ClassDecl(
+        int Source,
         int Line,
         string Name,
-        IReadOnlyList<string> BaseNames,
+        IReadOnlyList<TypeRef>? BaseRefs,
         IReadOnlyList<Stmt> Members,
         IReadOnlyList<TypeParam>? TypeParams = null,
-        bool IsActor = false) : Stmt(Line);
+        bool IsActor = false) : Stmt(Source, Line);
 
     // ---------------------------------------------------------------
     // Interfaces (SPEC 8.5): reine Methodensignaturen, keine Felder/Bodies.
@@ -262,7 +267,7 @@ namespace fire.Ast
         int Line, TypeRef? ReturnType, string Name, IReadOnlyList<LambdaParam> Params);
 
     public sealed record InterfaceDecl(
-        int Line, string Name, IReadOnlyList<InterfaceMethodSig> Methods) : Stmt(Line);
+        int Source, int Line, string Name, IReadOnlyList<InterfaceMethodSig> Methods) : Stmt(Source, Line);
 
     // ---------------------------------------------------------------
     // Native Anbindung / unsafe (SPEC "APIs & Bitbreiten & Pointer")
@@ -279,11 +284,11 @@ namespace fire.Ast
     /// manuelle Host-Registrierung (Bytecode.ExternRegistry) als Weg zur
     /// Implementierung.</summary>
     public sealed record ExternDecl(
-        int Line, TypeRef? ReturnType, string Name, IReadOnlyList<LambdaParam> Params, string? LibName) : Stmt(Line);
+        int Source, int Line, TypeRef? ReturnType, string Name, IReadOnlyList<LambdaParam> Params, string? LibName) : Stmt(Source, Line);
 
     /// <summary>`unsafe { ... }` - nur innerhalb eines solchen Blocks sind
     /// Dereferenzierung ('*ausdruck') und Address-of ('&ausdruck') erlaubt.</summary>
-    public sealed record UnsafeStmt(int Line, Stmt.BlockStmt Body) : Stmt(Line);
+    public sealed record UnsafeStmt(int Source, int Line, Stmt.BlockStmt Body) : Stmt(Source, Line);
 
     /// <summary>`Type Name { get { ... } set { ... } }` - C#-artige Property.
     /// Mindestens eine der beiden (Getter/Setter) muss vorhanden sein (reine
@@ -296,8 +301,8 @@ namespace fire.Ast
     /// Properties haben deshalb absichtlich NIE einen eigenen
     /// ObjectInstance.Fields-Eintrag ihres eigenen Namens.</summary>
     public sealed record PropertyDecl(
-        int Line, TypeRef? Type, string Name, Stmt.BlockStmt? Getter, Stmt.BlockStmt? Setter,
-        AccessModifier Access = AccessModifier.Public) : Stmt(Line);
+        int Source, int Line, TypeRef? Type, string Name, Stmt.BlockStmt? Getter, Stmt.BlockStmt? Setter,
+        AccessModifier Access = AccessModifier.Public, bool IsStatic = false) : Stmt(Source, Line);
 
     /// <summary>`class extends Name { neue Mitglieder... }` - fügt die
     /// Mitglieder direkt zur BESTEHENDEN Klasse `Name` hinzu (Ruby-artiges
@@ -305,23 +310,29 @@ namespace fire.Ast
     /// ORIGINALEN ClassDecl, als hätten sie direkt dort gestanden). Wird
     /// bereits VOR dem eigentlichen Resolven/Kompilieren komplett aufgelöst
     /// (siehe Parser.MergeClassExtensions) - Resolver/Compiler sehen davon
-    /// nichts mehr, nur die bereits zusammengeführte ClassDecl.</summary>
-    public sealed record ClassExtensionDecl(int Line, string TargetName, IReadOnlyList<Stmt> Members) : Stmt(Line);
+    /// nichts mehr, nur die bereits zusammengeführte ClassDecl. `TargetRef`
+    /// trägt (wie jeder andere TypeRef) den beim Parsen dieser Erweiterung
+    /// aktuellen Namespace + die aktiven `#using`-Namen mit sich (siehe
+    /// TypeRef.Namespaces) - dadurch findet MergeClassExtensions die
+    /// richtige Zielklasse auch dann, wenn `class extends X` den Namen NUR
+    /// unqualifiziert schreibt und `X` erst über den Namespace-Kontext DER
+    /// ERWEITERUNG selbst (nicht den der Zielklasse!) aufzulösen ist.</summary>
+    public sealed record ClassExtensionDecl(int Source, int Line, TypeRef TargetRef, IReadOnlyList<Stmt> Members) : Stmt(Source, Line);
 
     /// <summary>`namespace Name { Mitglieder... }` bzw. `namespace A.B { ... }`
-    /// (SPEC "Namespaces") - wie ClassExtensionDecl wird auch das bereits VOR
-    /// dem eigentlichen Resolven/Kompilieren vollständig aufgelöst (siehe
-    /// Parser.FlattenNamespaces): jede enthaltene Klassen-/Interface-/Enum-
-    /// Deklaration bekommt ihren Namen um `Name.` vorangestellt (z.B. `A` in
-    /// `namespace Foo { class A {} }` wird intern zu `Foo.A`), und JEDE
-    /// Referenz darauf (Basisklasse, `new`, `is of`, `catch`, Feld-/
-    /// Parameter-/Rückgabetypen) wird - soweit sie einen Namen aus DIESEM
-    /// Namespace ODER einem per `#using` aktiven Namespace meint - auf den
-    /// vollqualifizierten Namen umgeschrieben. Resolver/Compiler/VM sehen
-    /// danach nur noch ganz normale, wenn auch punkthaltige, Namen - für sie
-    /// ist ein Namespace kein eigenes Konzept, nur ein Teil des Strings.
-    /// `Name` kann selbst bereits punktiert sein (`namespace A.B.C`) -
-    /// äquivalent zu verschachtelten `namespace A { namespace B { namespace
-    /// C { ... } } }`, beide Schreibweisen werden gleich behandelt.</summary>
-    public sealed record NamespaceDecl(int Line, string Name, IReadOnlyList<Stmt> Members) : Stmt(Line);
+    /// (SPEC "Namespaces"). Anders als früher NICHT mehr durch einen
+    /// separaten Baumdurchlauf nach dem Parsen aufgelöst: der Parser
+    /// qualifiziert jede enthaltene Klassen-/Interface-/Enum-Deklaration
+    /// bereits WÄHREND des Parsens (siehe Parser._currentNamespace/
+    /// ParseNamespaceDecl), und jede Referenz (Basisklasse, `new`, `is of`,
+    /// `catch`, Feld-/Parameter-/Rückgabetypen) trägt ihren eigenen
+    /// Namespace-Kontext direkt an sich (siehe TypeRef.Namespaces). Dieser
+    /// Knoten selbst ist dadurch nur noch eine reine Gruppierung ohne eigene
+    /// Bedeutung für Resolver/Compiler - er wird direkt nach dem Parsen
+    /// trivial "flach geklopft" (Members wandern 1:1 an die Stelle des
+    /// NamespaceDecl-Knotens, siehe Parser.FlattenNamespaceWrappers), OHNE
+    /// dabei noch irgendetwas umzubenennen. `Name` ist rein informativ
+    /// (z.B. für Editor-Anzeige), spielt für die eigentliche Auflösung keine
+    /// Rolle mehr.</summary>
+    public sealed record NamespaceDecl(int Source, int Line, string Name, IReadOnlyList<Stmt> Members) : Stmt(Source, Line);
 }

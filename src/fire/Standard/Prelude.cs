@@ -1,9 +1,9 @@
 namespace fire.Standard
 {
     /// <summary>
-    /// Ein Stück ScriptLang-Quelltext, das vor jedes Programm gesetzt wird und
+    /// Ein Stück fire-Quelltext, das vor jedes Programm gesetzt wird und
     /// die "eingebauten" Typen IndexOutOfBoundsException/AccessDeniedException/
-    /// IEnumerable/IEnumerator/List definiert - bewusst in ScriptLang selbst
+    /// IEnumerable/IEnumerator/List definiert - bewusst in fire selbst
     /// geschrieben statt als native C#-Implementierung, da die Sprache dafür
     /// inzwischen genug Substanz hat (Klassen, Arrays, Interfaces) und das
     /// konsistent mit allem anderen bleibt. `IndexOutOfBoundsException`/
@@ -40,6 +40,18 @@ namespace fire.Standard
 
                 construct(string message) {
                     this.message = message
+                }
+            }
+
+            class UnitMismatchException : Exception {
+                string message
+                string expectedUnit
+                string actualUnit
+
+                construct(string message, string expectedUnit, string actualUnit) {
+                    this.message = message
+                    this.expectedUnit = expectedUnit
+                    this.actualUnit = actualUnit
                 }
             }
 
@@ -107,15 +119,11 @@ namespace fire.Standard
                     this.count = this.count + 1
                 }
 
-                Get(int index) {
+                operator[](int index) {
                     return this.items[index]
                 }
 
-                GetIndex(int index) {
-                    return this.items[index]
-                }
-
-                SetIndex(int index, class value) {
+                operator[](int index, class value) {
                     this.items[index] = value
                 }
 
