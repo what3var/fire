@@ -390,6 +390,39 @@ Name`-Blöcke für denselben Namen werden alle zusammengeführt. Das erlaubt
 z.B. eigene Zusatzmethoden für `List` aus der Standardbibliothek, ohne
 deren Quelltext selbst anfassen zu müssen.
 
+### 5.5.1 Basistypen erweitern (`class extends string`)
+
+```
+class extends string {
+    string Shout() { return this.ToUpper() + "!" }
+    bool IsBlank() { return this.Trim().Length == 0 }
+}
+
+class extends int {
+    bool IsEven() { return this % 2 == 0 }
+}
+
+print("hallo".Shout())      // HALLO!
+int n = 21
+print(n.IsEven())           // False
+```
+
+Auch die Basistypen `string`, `char`, `int`, `float` und `bool` lassen sich mit `class extends` erweitern.
+Innerhalb der Methoden ist `this` der **Wert selbst** (kein Objekt), sonst gilt alles wie bei
+Methoden (Überladung nach Parameteranzahl, optionale Parameter, `private`, Ausnahmen, Aufruf anderer
+Erweiterungsmethoden über `this.`). Mehrere Blöcke für denselben Typ - auch aus anderen Dateien oder
+Namespaces - werden zusammengeführt; die Erweiterung gilt für alle Werte dieses Typs.
+
+Erlaubt sind **nur Methoden**: ein Basiswert hat keinen Speicher, in dem ein Feld oder eine Property
+liegen könnte. Ein Feld, eine (Auto-)Property, ein Konstruktor/Destruktor, eine `static`-Methode
+(`string.Foo()` gibt es nicht) und eine Operator-Überladung sind ein Fehler bei der Übersetzung
+(„'class extends string': Feld 'x' nicht erlaubt …“). `byte` lässt sich nicht erweitern - ein `byte`
+ist zur Laufzeit ein `int`, also `class extends int`. Arrays und Puffer sind ebenfalls nicht erweiterbar.
+
+Die Methoden des Prelude für `string` und `char` (8.12) sind genau solche Erweiterungen. Eine eigene
+Methode mit demselben Namen und derselben Parameteranzahl wie eine bestehende ist - wie bei jeder Klasse -
+eine Doppeldefinition.
+
 ### 5.6 `with`-Statement
 
 ```
@@ -1541,11 +1574,21 @@ Richtlinie nicht betroffen.
 gesperrt; der Fehlerstatus (`__IOLastError`) gilt pro Thread. Lesen blockiert den aufrufenden
 VM-Thread (für Hintergrundarbeit `fire { ... }`).
 
-### 8.12 Strings: `Length`, Suche, Teilstrings
+### 8.12 Strings und Zeichen: `Length`, Suche, Teilstrings
 
 Ein `string` ist eine **unveränderliche** Folge von 16-Bit-Zeichen (`char`); alle Positionen zählen in
-solchen Einheiten, Vergleiche und Suchen sind **ordinal** (groß/klein zählt, keine Kultur). Die Mitglieder
-sind ganz normale Aufrufe auf dem Wert (`VM.CallMethod` → `StringMethods.TryCall`), keine Operatoren.
+solchen Einheiten, Vergleiche und Suchen sind **ordinal** (groß/klein zählt, keine Kultur).
+
+Die Methoden stehen im **Prelude** als Erweiterung des Basistyps (`class extends string { ... }`, 5.5.1)
+und rufen jeweils die **eine** native Funktion `__StringCall(id, text, argumente...)` auf; für `char` ebenso
+`__CharCall(id, zeichen)`. Die Methode wird über ihre **ID** gewählt (`StringMethod`/`CharMethod` in
+`fire.Standard`, feste Zahlen), nicht über den Namen - kein Zeichenkettenvergleich in der VM. Den fire-Text
+`class extends string { ... }` erzeugt `StringMethods.PreludeSource` aus einer Tabelle, die IDs stehen also
+nur in C#. Ohne Prelude gibt es diese Methoden nicht.
+
+Nicht im Prelude, sondern von der VM selbst kommen die Properties `Length` (auch bei Arrays und
+Puffern; `length` ist ein Alias) und die Indexierung `s[i]` (liefert ein `char`; Zuweisung ist ein Fehler).
+Eine Property kann eine Erweiterung nicht definieren (5.5.1).
 
 ```
 string s = "Hello, World, again"
@@ -1554,13 +1597,12 @@ print(s.IndexOf("o"))           // 4    -1, wenn nichts gefunden wird
 print(s.IndexOf("o", 5))        // 8    Suche ab Position 5
 print(s.LastIndexOf(","))       // 12   von hinten
 print(s.Substring(7, 5))        // "World";  Substring(14) = "again"
-print(s[1])                     // 'e'  Indexer liefert ein char, Zuweisung s[i] = ... ist ein Fehler
+print(s[1])                     // 'e'
 foreach (p in "a,b,c".Split(",")) { print(p) }
 ```
 
-| Mitglied | Bedeutung |
+| `string` | Bedeutung |
 |---|---|
-| `Length` (Property) | Anzahl der Zeichen; ebenso `Length` bei Arrays und Puffern (Alias von `length`) |
 | `IndexOf(x[, start])` | erste Position von `x` (string oder char) ab `start`, sonst -1 |
 | `LastIndexOf(x[, start])` | letzte Position von `x`; mit `start` beginnt die Rückwärtssuche dort (`0 <= start < Length`) |
 | `Substring(start[, count])` | Teilstring; ohne `count` bis zum Ende (`Substring(Length)` = `""`) |
@@ -1572,10 +1614,20 @@ foreach (p in "a,b,c".Split(",")) { print(p) }
 | `Split(trenner)` | Array von Strings (leerer Trenner: der ganze String als einziges Element) |
 | `PadLeft(breite[, füll])`, `PadRight(...)` | auf Mindestbreite auffüllen (Standard: Leerzeichen) |
 
+| `char` | Bedeutung |
+|---|---|
+| `IsDigit()`, `IsLetter()`, `IsLetterOrDigit()`, `IsWhiteSpace()`, `IsUpper()`, `IsLower()` | Unicode-Klassifizierung der einzelnen 16-Bit-Einheit, `bool` |
+| `ToUpper()`, `ToLower()` | invariant, liefert ein `char` |
+| `ToString()`, `ToInt()` | als string bzw. als Zahlenwert der Codeeinheit |
+
+(`ToByte()` und `ToUnicode(n)` bei `char`, `ToBytes()`/`ToUnicode(n)` bei `string` und `ToChar()` bei `int`
+bleiben die eingebauten Konvertierungen aus 8.10.)
+
 Eine Position außerhalb des erlaubten Bereichs wirft `IndexOutOfBoundsException` (Text beginnt mit
 „String-Index“). Das Ergebnis von `Split` ist ein Array und deshalb per `foreach` durchlaufbar.
-Der Editor kennt diese Mitglieder: `text.` schlägt sie vor, und die Typen der Ergebnisse
-(`Trim()` → string, `Split()` → string[], `IndexOf()` → int, …) laufen durch Methodenketten.
+Der Editor kennt diese Methoden aus dem Prelude (und auch die eigenen Erweiterungen des Nutzers): `text.`
+schlägt sie vor, und die Typen der Ergebnisse (`Trim()` → string, `Split()` → string[], `IndexOf()` → int,
+…) laufen durch Methodenketten.
 
 ## 9. Offene Punkte
 

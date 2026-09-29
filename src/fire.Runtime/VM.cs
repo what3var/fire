@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using fire.Ast;
 using fire.Bytecode;
+using fire.Standard;
 using fire.Runtime;
 using fire.Values;
 
@@ -128,6 +129,12 @@ namespace fire.Runtime
         private readonly ExternRegistry _externs;
         private readonly IReadOnlyDictionary<string, RuntimeClass> _classes;
         private readonly IReadOnlyDictionary<string, ExternSignature> _externSignatures;
+
+        /// <summary>Die Sammelklassen der Basistyp-Erweiterungen (`class extends string { ... }`, SPEC
+        /// 5.5.1), indiziert über `(int)ValueKind` - ein Array statt eines Namens-Lookups, weil CallMethod
+        /// für JEDEN Methodenaufruf auf einem Nicht-Objekt hier nachsieht. `null` = für diese Werteart gibt
+        /// es keine Erweiterung.</summary>
+        private readonly RuntimeClass?[] _baseTypeClasses;
 
         private readonly List<Value> _stack = new();
         private readonly Stack<CallFrame> _frames = new();
@@ -301,6 +308,11 @@ namespace fire.Runtime
             _externs = externs ?? new ExternRegistry();
             _externSignatures = externSignatures ?? new Dictionary<string, ExternSignature>();
             _currentScope = globalScope;
+            _baseTypeClasses = new RuntimeClass?[Enum.GetValues<ValueKind>().Length];
+            foreach (var kind in Enum.GetValues<ValueKind>())
+                if (BaseTypeExtensions.ClassNameFor(kind) is { } extensionClassName
+                    && _classes.TryGetValue(extensionClassName, out var extensionClass))
+                    _baseTypeClasses[(int)kind] = extensionClass;
             IsMainThreadVm = isMainThreadVm;
             IsFireThreadVm = isFireThreadVm;
             ExecutionMode = executionMode;
@@ -1054,7 +1066,8 @@ namespace fire.Runtime
                     int argCount = ReadByte();
                     var args = new Value[argCount];
                     for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-                    Push(_natives[nativeIdx](args));
+                    if (CallNativeGuarded(nativeIdx, args, out Value nativeResult))
+                        Push(nativeResult);
                     break;
                 }
 
@@ -1495,21 +1508,32 @@ namespace fire.Runtime
                             break;
                         }
 
-                        // Methoden von `string` (IndexOf, Substring, Split, ..., siehe
-                        // StringMethods, SPEC 8.12) - ein ungültiger Index wird zu einer
-                        // fangbaren IndexOutOfBoundsException.
-                        if (target.Kind == ValueKind.String)
+                        // Methoden aus einer Basistyp-Erweiterung (`class extends string { ... }`,
+                        // SPEC 5.5.1 - z.B. IndexOf/Substring im Prelude): wie ein Objekt-Aufruf, nur
+                        // ist `this` der Wert selbst. Vor den fest eingebauten Konvertierungen unten.
+                        if (_baseTypeClasses[(int)target.Kind] is { } extensionRc)
                         {
-                            var stringStatus = StringMethods.TryCall(target.AsString(), methodName, args,
-                                out Value stringResult, out long badStringIndex, out int stringLength);
-                            if (stringStatus == StringCallStatus.Ok)
+                            var (extProto, extDeclaringRc, extAccess) = extensionRc.FindMethodWithAccess(methodName, args.Length);
+                            if (extProto != null)
                             {
-                                Push(stringResult);
-                                break;
-                            }
-                            if (stringStatus == StringCallStatus.IndexOutOfRange)
-                            {
-                                ThrowIndexOutOfBounds(badStringIndex, stringLength, "String-Index");
+                                if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(extDeclaringRc!, extAccess))
+                                {
+                                    ThrowAccessDenied(
+                                        $"Methode '{methodName}' der Erweiterung von '{extensionRc.Name.Substring(1)}' ist " +
+                                        $"{DescribeAccess(extAccess)} und von hier aus nicht aufrufbar.");
+                                    break;
+                                }
+                                CheckArity(extProto, args.Length);
+                                args = FillDefaultArgs(extProto, args, target);
+
+                                _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+                                var extScope = new Scope(_globalScope);
+                                foreach (var a in args) extScope.DefineSlot(a);
+
+                                _currentThis = target;
+                                _currentScope = extScope;
+                                _currentChunk = extProto.Chunk;
+                                _ip = 0;
                                 break;
                             }
                         }
@@ -3044,6 +3068,26 @@ namespace fire.Runtime
 
             Pop(); // Return am Ende des Konstruktors pusht 'instance' selbst (siehe BeginConstruction/frame.ConstructedInstance) - haben wir schon direkt, hier verwerfen
             return instance;
+        }
+
+        /// <summary>Ruft eine native Funktion auf. Meldet sie einen ungültigen Index
+        /// (<see cref="NativeIndexOutOfRangeException"/>, z.B. `"abc".Substring(9)`), wird daraus eine
+        /// fangbare `IndexOutOfBoundsException` des Skripts und `false` geliefert (KEIN Ergebnis pushen -
+        /// die Ausführung läuft schon im Handler weiter). Eigene Methode statt try/catch mitten in
+        /// Execute, damit dessen Register-Zuteilung unberührt bleibt.</summary>
+        private bool CallNativeGuarded(int nativeIdx, Value[] args, out Value result)
+        {
+            try
+            {
+                result = _natives[nativeIdx](args);
+                return true;
+            }
+            catch (NativeIndexOutOfRangeException ex)
+            {
+                result = default;
+                ThrowIndexOutOfBounds(ex.Index, ex.Length, ex.What);
+                return false;
+            }
         }
 
         /// <summary>Baut eine `IndexOutOfBoundsException`-Instanz (Prelude) und

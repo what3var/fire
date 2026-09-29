@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using fire.Compiler;
 using fire.Lexing;
+using fire.Standard;
 
 namespace fire.Editor
 {
@@ -629,7 +630,21 @@ namespace fire.Editor
         /// eigene neue Klasse zu erzeugen.</summary>
         private int HarvestClassExtension(int i)
         {
-            if (i >= _tokens.Count || _tokens[i].Type != TokenType.Identifier) return i;
+            if (i >= _tokens.Count) return i;
+
+            // `class extends string { ... }` (SPEC 5.5.1): ein Basistyp ist ein Schlüsselwort. Seine
+            // Methoden landen wie im Compiler in einer Sammelklasse (`$string`, siehe
+            // BaseTypeExtensions), die die Vervollständigung für Werte dieses Typs auswertet.
+            if (_tokens[i].Type is TokenType.KwString or TokenType.KwChar or TokenType.KwInt or TokenType.KwFloat or TokenType.KwBool)
+            {
+                string baseTypeClass = BaseTypeExtensions.ClassName(_tokens[i].Lexeme);
+                i++;
+                if (i >= _tokens.Count || _tokens[i].Type != TokenType.LBrace) return i;
+                _pendingExtensions.Add((baseTypeClass, CurrentContext(), i));
+                return MatchBrace(i) + 1;
+            }
+
+            if (_tokens[i].Type != TokenType.Identifier) return i;
             string targetName = _tokens[i].Lexeme;
             i++;
             while (i + 1 < _tokens.Count && _tokens[i].Type == TokenType.Dot && _tokens[i + 1].Type == TokenType.Identifier)

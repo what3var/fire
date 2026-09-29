@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using fire.Ast;
 using fire.Lexing;
+using fire.Standard;
 using fire.Values;
 
 namespace fire.Compiler
@@ -241,12 +242,26 @@ namespace fire.Compiler
         public static List<Stmt> MergeClassExtensions(IReadOnlyList<Stmt> program)
         {
             var extensions = new List<ClassExtensionDecl>();
+            var baseTypeExtensions = new Dictionary<string, List<ClassExtensionDecl>>();
             var rest = new List<Stmt>();
             foreach (var stmt in program)
             {
-                if (stmt is ClassExtensionDecl ext) extensions.Add(ext);
+                // `class extends string { ... }`: kein ClassDecl, in das man mergen könnte - alle
+                // Erweiterungen desselben Basistyps werden unten zu EINER Sammelklasse (siehe
+                // BaseTypeExtensions).
+                if (stmt is ClassExtensionDecl baseExt
+                    && BaseTypeExtensions.IsExtendable(baseExt.TargetRef.BaseName))
+                {
+                    if (!baseTypeExtensions.TryGetValue(baseExt.TargetRef.BaseName, out var list))
+                        baseTypeExtensions[baseExt.TargetRef.BaseName] = list = new List<ClassExtensionDecl>();
+                    list.Add(baseExt);
+                }
+                else if (stmt is ClassExtensionDecl ext) extensions.Add(ext);
                 else rest.Add(stmt);
             }
+            foreach (var (typeName, list) in baseTypeExtensions)
+                rest.Add(new ClassDecl(list[0].Source, list[0].Line, BaseTypeExtensions.ClassName(typeName), null,
+                    list.SelectMany(e => e.Members).ToList()));
             if (extensions.Count == 0) return rest;
 
             // TargetRef.ResolveBaseName (SPEC "Namespaces") braucht die Menge
@@ -1483,7 +1498,17 @@ namespace fire.Compiler
         private Stmt ParseClassExtensionDecl(int line)
         {
             Expect(TokenType.Extends, "Erwarte 'extends'");
-            string targetName = Expect(TokenType.Identifier, "Erwarte Namen der zu erweiternden Klasse").Lexeme;
+
+            // Ein Basistyp (`string`, `char`, ...) ist ein Schlüsselwort, kein Bezeichner - die
+            // Erweiterung eines Basistyps (SPEC 5.5.1) darf NUR Methoden enthalten.
+            bool isBaseType = TypeKeywords.Contains(Peek().Type) && Peek().Type != TokenType.Class && Peek().Type != TokenType.Undefined;
+            string targetName = isBaseType
+                ? Advance().Lexeme
+                : Expect(TokenType.Identifier, "Erwarte Namen der zu erweiternden Klasse").Lexeme;
+            if (isBaseType && !BaseTypeExtensions.IsExtendable(targetName))
+                throw Error(targetName == "byte"
+                    ? "'byte' lässt sich nicht erweitern - ein byte ist zur Laufzeit ein int, erweitere 'int'"
+                    : $"'{targetName}' lässt sich nicht erweitern", Previous());
             var targetRef = new TypeRef(targetName, null, 0, Namespaces: CurrentNamespaces());
             Expect(TokenType.LBrace, "Erwarte '{' nach 'class extends " + targetName + "'");
 
@@ -1492,7 +1517,39 @@ namespace fire.Compiler
                 members.AddRange(ParseClassMember());
             Expect(TokenType.RBrace, "Erwarte '}' am Ende der Erweiterung");
 
+            if (isBaseType)
+                foreach (var member in members)
+                    ValidateBaseTypeExtensionMember(targetName, member);
+
             return new ClassExtensionDecl(_sourceIndex, line, targetRef, members);
+        }
+
+        /// <summary>Eine Erweiterung eines Basistyps (`class extends string { ... }`) darf nur
+        /// gewöhnliche Instanzmethoden enthalten: ein Basiswert hat keinen Speicher für Felder/Properties,
+        /// keinen Konstruktor/Destruktor und (VM.BinaryNumericOrOperator prüft nur Objekte) keine
+        /// Operator-Überladung; `static` hätte keinen Aufrufweg (`string.Foo()` gibt es nicht).</summary>
+        private static void ValidateBaseTypeExtensionMember(string typeName, Stmt member)
+        {
+            string prefix = $"'class extends {typeName}': ";
+            switch (member)
+            {
+                case MethodDecl { IsStatic: true } m:
+                    throw new ParseException(prefix + $"statische Methode '{m.Name}' nicht erlaubt - Erweiterungen von Basistypen bestehen nur aus Instanzmethoden.", m.Line, 1);
+                case MethodDecl m when m.Name.StartsWith("operator", StringComparison.Ordinal) || m.Name is "GetIndex" or "SetIndex":
+                    throw new ParseException(prefix + "Operatoren lassen sich für Basistypen nicht überladen.", m.Line, 1);
+                case MethodDecl:
+                    return;
+                case FieldDecl f:
+                    throw new ParseException(prefix + $"Feld '{f.Name}' nicht erlaubt - Erweiterungen von Basistypen dürfen nur Methoden enthalten.", f.Line, 1);
+                case PropertyDecl p:
+                    throw new ParseException(prefix + $"Property '{p.Name}' nicht erlaubt - Erweiterungen von Basistypen dürfen nur Methoden enthalten.", p.Line, 1);
+                case ConstructorDecl c:
+                    throw new ParseException(prefix + "ein Konstruktor ist nicht erlaubt - Erweiterungen von Basistypen dürfen nur Methoden enthalten.", c.Line, 1);
+                case DestructorDecl d:
+                    throw new ParseException(prefix + "ein Destruktor ist nicht erlaubt - Erweiterungen von Basistypen dürfen nur Methoden enthalten.", d.Line, 1);
+                default:
+                    throw new ParseException(prefix + "nur Methoden sind erlaubt.", member.Line, 1);
+            }
         }
 
         /// <summary>`namespace Name { Mitglieder... }` bzw. `namespace A.B { ... }`

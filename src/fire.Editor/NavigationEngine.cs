@@ -73,7 +73,7 @@ namespace fire.Editor
                     {
                         // Ob das MITGLIED aus der Prelude stammt (auch ein geerbtes
                         // einer Prelude-Basisklasse), nicht die angeklickte Klasse.
-                        bool fromPrelude = index.Classes.TryGetValue(member.Owner, out var ownerClass) && ownerClass.IsFromPrelude;
+                        bool fromPrelude = !ReferenceEquals(member.Source, index);
                         return new NavigationTarget(null, member.DeclLine, fromPrelude);
                     }
                 }
@@ -102,7 +102,7 @@ namespace fire.Editor
                 var member = index.MembersOf(enclosing).FirstOrDefault(m => m.Name == identifier && m.DeclLine > 0);
                 if (member != null)
                 {
-                    bool fromPrelude = index.Classes.TryGetValue(member.Owner, out var enclosingClass) && enclosingClass.IsFromPrelude;
+                    bool fromPrelude = !ReferenceEquals(member.Source, index);
                     return new NavigationTarget(null, member.DeclLine, fromPrelude);
                 }
             }

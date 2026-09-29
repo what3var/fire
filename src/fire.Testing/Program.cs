@@ -5198,6 +5198,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         var program = Parser.ParseMultiple(sources);
         var natives = new NativeRegistry();
         natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
         fire.IO.Bridge.IoBridge.RegisterAll(natives, policy, stdio);
         var resolveResult = Resolver.Resolve(program, natives.Names);
         var compiled = Compiler.Compile(program, resolveResult, natives);
@@ -5737,6 +5738,196 @@ Console.WriteLine("=== Strings: Editor-Vervollstaendigung ===");
     Check("foreach ueber Split", "var s = \"a,b\"\nforeach (p in s.Split(\",\")) { p.| }", "Substring");
     Check("Length ist int", "var s = \"abc\"\nvar n = s.Length\nn.|", "ToChar");
     Console.WriteLine(failures == 0 ? "Alle String-Vervollstaendigungs-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...) ===");
+{
+    int extFailures = 0;
+
+    List<string> RunExt(string script)
+    {
+        var lines = new List<string>();
+        var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, script));
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes);
+        vm.Run();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckExt(string title, string script, params string[] expected)
+    {
+        string[] actual;
+        try { actual = RunExt(script).ToArray(); }
+        catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
+        bool ok = actual.SequenceEqual(expected);
+        if (!ok) extFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+    }
+
+    // Der Fehlertext muss `fragment` enthalten (Parser-/Resolver-/Laufzeitfehler).
+    void CheckExtError(string title, string script, string fragment)
+    {
+        string actual;
+        try { actual = "kein Fehler: " + string.Join(" | ", RunExt(script)); }
+        catch (Exception ex) { actual = ex.Message; }
+        bool ok = actual.Contains(fragment);
+        if (!ok) extFailures++;
+        Console.WriteLine(ok ? $"OK: {title} -> {actual}" : $"FEHLER: {title}\n  erwartet: ...{fragment}...\n  erhalten: {actual}");
+    }
+
+    CheckExt("eigene Methoden auf string (this ist der Wert)", """
+        class extends string {
+            string Shout() { return this.ToUpper() + "!" }
+            bool IsBlank() { return this.Trim().Length == 0 }
+            string Twice() { return this + this }
+        }
+        var s = "hallo"
+        print(s.Shout())
+        print("abc".Twice())
+        print("  ".IsBlank())
+        print(s.Shout().Shout())
+        print(s)
+        """, "HALLO!", "abcabc", "True", "HALLO!!", "hallo");
+
+    CheckExt("Ueberladung nach Parameteranzahl und optionale Parameter", """
+        class extends string {
+            string Wrap() { return "[" + this + "]" }
+            string Wrap(string edge) { return edge + this + edge }
+            string Tag(string name = "b") { return "<" + name + ">" + this + "</" + name + ">" }
+        }
+        print("x".Wrap())
+        print("x".Wrap("*"))
+        print("x".Tag())
+        print("x".Tag("i"))
+        """, "[x]", "*x*", "<b>x</b>", "<i>x</i>");
+
+    CheckExt("int, char, bool und float erweitern", """
+        class extends int {
+            bool IsEven() { return this % 2 == 0 }
+            int Twice() { return this * 2 }
+        }
+        class extends char { bool IsVowel() { return "aeiou".Contains(this.ToLower()) } }
+        class extends bool { string Word() { if (this) { return "ja" } return "nein" } }
+        class extends float { float Half() { return this / 2.0 } }
+        int n = 21
+        print(n.IsEven())
+        print((n + 1).IsEven())
+        print(n.Twice())
+        print('E'.IsVowel())
+        print('x'.IsVowel())
+        print((n > 5).Word())
+        float f = 5.0
+        print(f.Half())
+        """, "False", "True", "42", "True", "False", "ja", "2.5");
+
+    CheckExt("mehrere Bloecke fuer denselben Typ und Namespaces werden zusammengefuehrt", """
+        class extends string { string A() { return "a" + this } }
+        namespace Util {
+            class extends string { string B() { return this + "b" } }
+        }
+        class extends string { string C() { return this.A().B() } }
+        print("x".C())
+        """, "axb");
+
+    CheckExt("private Hilfsmethode der Erweiterung", """
+        class extends string {
+            private string Quote() { return "'" + this + "'" }
+            string Quoted() { return this.Quote() }
+        }
+        print("q".Quoted())
+        try { print("q".Quote()) } catch (AccessDeniedException e) { print("verweigert") }
+        """, "'q'", "verweigert");
+
+    CheckExt("Ausnahme in der Erweiterung ist fangbar", """
+        class extends string {
+            string First() { return this.Substring(0, 1) }
+        }
+        print("abc".First())
+        try { print("".First()) } catch (IndexOutOfBoundsException e) { print("leer " + e.index) }
+        """, "a", "leer 1");
+
+    // Eine Erweiterung von string gilt nur für string - ein int kennt `Foo` nicht (kein Skript-, sondern ein VM-Fehler).
+    CheckExt("Erweiterung gilt nur fuer ihren Typ", """
+        class extends string { int Foo() { return 1 } }
+        print("s".Foo())
+        int i = 5
+        print(i.Foo())
+        """, "AUSNAHME: 'Foo' (0 Argument(e)) ist keine bekannte eingebaute Methode auf einem Wert vom Typ Int.");
+
+    CheckExt("char-Methoden des Prelude", """
+        char c = 'a'
+        print(c.IsLetter())
+        print(c.IsDigit())
+        print('7'.IsDigit())
+        print(' '.IsWhiteSpace())
+        print(c.IsLetterOrDigit())
+        print(c.IsUpper())
+        print(c.ToUpper())
+        print('Q'.ToLower())
+        print('Q'.IsUpper())
+        print('q'.IsLower())
+        print(c.ToInt())
+        print(c.ToString() + "b")
+        print(c.ToByte())
+        """, "True", "False", "True", "True", "True", "False", "A", "q", "True", "True", "97", "ab", "97");
+
+    // Die Methode wird über ihre ID gewählt, nicht über den Namen: die native Funktion ist direkt aufrufbar.
+    CheckExt("native Funktionen nehmen die Methoden-ID", $$"""
+        print({{fire.Standard.StringMethods.NativeName}}({{(int)fire.Standard.StringMethod.Substring}}, "hello", 1, 3))
+        print({{fire.Standard.StringMethods.NativeName}}({{(int)fire.Standard.StringMethod.ToUpper}}, "hello"))
+        print({{fire.Standard.CharMethods.NativeName}}({{(int)fire.Standard.CharMethod.IsDigit}}, '5'))
+        try { print({{fire.Standard.StringMethods.NativeName}}({{(int)fire.Standard.StringMethod.Substring}}, "hello", 9)) }
+        catch (IndexOutOfBoundsException e) { print("Index " + e.index + " Laenge " + e.length) }
+        """, "ell", "HELLO", "True", "Index 9 Laenge 5");
+
+    CheckExt("native Funktion: falsches Argument wird gemeldet", $$"""
+        print({{fire.Standard.StringMethods.NativeName}}(1, 5, "x"))
+        """, "AUSNAHME: __StringCall(id, text, ...) erwartet die Zeichenkette als zweites Argument.");
+
+    CheckExtError("Feld in Basistyp-Erweiterung", "class extends string { int count }", "nur Methoden");
+    CheckExtError("Property in Basistyp-Erweiterung", "class extends string { int Size { get { return 1 } } }", "Property 'Size' nicht erlaubt");
+    CheckExtError("Auto-Property in Basistyp-Erweiterung", "class extends int { int Size { get; set; } }", "nicht erlaubt");
+    CheckExtError("Konstruktor in Basistyp-Erweiterung", "class extends string { construct() { } }", "Konstruktor");
+    CheckExtError("Destruktor in Basistyp-Erweiterung", "class extends string { destruct() { } }", "Destruktor");
+    CheckExtError("statische Methode in Basistyp-Erweiterung", "class extends string { static int F() { return 1 } }", "statische Methode 'F'");
+    CheckExtError("Operator in Basistyp-Erweiterung", "class extends string { operator+(other) { return this } }", "Operatoren");
+    CheckExtError("byte nicht erweiterbar", "class extends byte { int F() { return 1 } }", "'byte' lässt sich nicht erweitern");
+    CheckExtError("unbekannte Klasse bleibt ein Fehler", "class extends Gibtsnicht { F() { } }", "nicht bekannt");
+    CheckExtError("doppelte Methode (Prelude + eigene)", "class extends string { int IndexOf(value) { return 0 } }", "IndexOf");
+
+    Console.WriteLine(extFailures == 0 ? "Alle Basistyp-Erweiterungs-Pruefungen bestanden." : $"FEHLER: {extFailures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Basistyp-Erweiterungen: Editor ===");
+{
+    int failures = 0;
+    void Check(string title, string source, string expected, string forbidden = "")
+    {
+        int cursor = source.IndexOf('|');
+        source = source.Remove(cursor, 1);
+        var index = fire.Editor.ScriptSymbolIndex.Build(source);
+        var names = fire.Editor.CompletionEngine.GetSuggestions(source, cursor, index).Select(i => i.Text).ToList();
+        bool ok = expected.Split(',', StringSplitOptions.RemoveEmptyEntries).All(names.Contains)
+            && !forbidden.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(names.Contains);
+        if (!ok) failures++;
+        Console.WriteLine($"{(ok ? "OK" : "FEHLER")}: {title} -> {string.Join(", ", names.Take(8))}");
+    }
+    const string userExt = "class extends string { string Shout() { return this.ToUpper() } }\nclass extends int { bool IsEven() { return true } }\n";
+    Check("eigene string-Methode", userExt + "var s = \"a\"\ns.|", "Shout,IndexOf,Length");
+    Check("eigene Methode in der Kette", userExt + "var s = \"a\"\ns.Shout().|", "Shout,Trim,Length");
+    Check("int-Erweiterung", userExt + "int n = 4\nn.|", "IsEven,ToChar", "Shout");
+    Check("char-Methoden aus dem Prelude", "char c = 'x'\nc.|", "IsDigit,IsLetter,ToUpper,ToByte", "Shout");
+    Check("Sammelklasse taucht nicht als Typ auf", userExt + "var x = |", "string", "$string,$int");
+    Check("Split-Kette liefert string", "var s = \"a,b\"\ns.Split(\",\")[0].|", "Substring,Trim");
+    Console.WriteLine(failures == 0 ? "Alle Basistyp-Editor-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
 }
 
 static int CountOccurrences(string haystack, string needle)

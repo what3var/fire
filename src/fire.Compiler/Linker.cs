@@ -140,6 +140,7 @@ namespace fire.Compiler
             var firstUserSource = 1;
 
             natives.Register("print", args => Value.MakeUndefined());
+            natives.RegisterBaseTypeNatives();
 
             nativeImports.Add(NativeImports.Print);
 

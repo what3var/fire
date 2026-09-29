@@ -8,10 +8,13 @@ namespace fire.Editor
     /// `char`, `buffer` (Byte-Puffer), oder `X[]` (Array von X) - null: kein Ergebnis.</summary>
     public sealed record BuiltinMember(string Name, bool IsProperty, string Signature, string? ReturnType);
 
-    /// <summary>Die eingebauten Mitglieder der Werttypen - Grundlage für Vorschläge
-    /// nach `text.` (siehe CompletionEngine) UND für die Typ-Herleitung von Ketten
-    /// wie `text.Trim().Split(",")` (siehe ScriptSymbolIndex.MemberType). Muss mit
-    /// Runtime.StringMethods/VM.TryCallBuiltinMethod übereinstimmen.</summary>
+    /// <summary>Die von der VM SELBST bereitgestellten Mitglieder der Werttypen (Properties wie
+    /// `Length`, feste Konvertierungen wie `ToBytes()`) - Grundlage für Vorschläge nach `text.`
+    /// (siehe CompletionEngine) UND für die Typ-Herleitung von Ketten (siehe
+    /// ScriptSymbolIndex.MemberType). Die Methoden von `string`/`char` (`IndexOf`, `Trim`, ...) stehen
+    /// NICHT hier, sondern als `class extends string { ... }` im Prelude (SPEC 5.5.1/8.12) - der Index
+    /// liest sie von dort (auch die eigenen Erweiterungen des Nutzers), siehe
+    /// <see cref="ExtensionClassOf"/>. Muss mit VM.GetField/VM.TryCallBuiltinMethod übereinstimmen.</summary>
     public static class BuiltinMembers
     {
         private static BuiltinMember P(string name, string type) => new(name, true, string.Empty, type);
@@ -20,22 +23,6 @@ namespace fire.Editor
         private static readonly BuiltinMember[] StringMembers =
         {
             P("Length", "int"),
-            M("IndexOf", "wert[, start]", "int"),
-            M("LastIndexOf", "wert[, start]", "int"),
-            M("Substring", "start[, anzahl]", "string"),
-            M("CharAt", "index", "char"),
-            M("Contains", "wert", "bool"),
-            M("StartsWith", "wert", "bool"),
-            M("EndsWith", "wert", "bool"),
-            M("ToUpper", "", "string"),
-            M("ToLower", "", "string"),
-            M("Trim", "", "string"),
-            M("TrimStart", "", "string"),
-            M("TrimEnd", "", "string"),
-            M("Replace", "alt, neu", "string"),
-            M("Split", "trenner", "string[]"),
-            M("PadLeft", "breite[, zeichen]", "string"),
-            M("PadRight", "breite[, zeichen]", "string"),
             M("ToBytes", "", "buffer"),
             M("ToUnicode", "breite", "buffer"),
         };
@@ -82,6 +69,31 @@ namespace fire.Editor
                     return System.Array.Empty<BuiltinMember>();
             }
         }
+
+        /// <summary>Der Schlüssel der Sammelklasse, in die der Index die Basistyp-Erweiterungen
+        /// (`class extends string`) legt (siehe fire.Standard.BaseTypeExtensions) - für Werte dieses
+        /// Typs; null für Arrays und Typen ohne erweiterbaren Basistyp. Ein `byte` ist zur Laufzeit ein
+        /// `int`.</summary>
+        public static string? ExtensionClassOf(ExprType type)
+        {
+            if (type.Kind != TypeKind.Primitive) return null;
+            return type.Name switch
+            {
+                "string" => "$string",
+                "char" => "$char",
+                "int" or "byte" => "$int",
+                "float" => "$float",
+                "bool" => "$bool",
+                _ => null,
+            };
+        }
+
+        /// <summary>Rückgabetypen, die sich in fire nicht als Typ hinschreiben lassen (ein Array wie bei
+        /// `Split`) - der Prelude deklariert die Methode dann ohne Typ, der Editor kennt ihn hierher.</summary>
+        public static ExprType? ReturnTypeHint(ExprType receiver, string method) =>
+            receiver.Kind == TypeKind.Primitive && receiver.Name == "string" && method == "Split"
+                ? new ExprType(TypeKind.Array, "string")
+                : null;
 
         /// <summary>Der Typ, den `returnType` (siehe BuiltinMember) meint.</summary>
         public static ExprType ToExprType(string? returnType)

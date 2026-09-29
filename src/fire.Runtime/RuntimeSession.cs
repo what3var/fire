@@ -87,6 +87,7 @@ namespace fire.Runtime
                 else
                     natives.Register("print", args => debugWriter(args));
             }
+            natives.RegisterBaseTypeNatives();
 
             FramebufferManager? fbManager = null;
             ConsoleManager? consoleManager = null;

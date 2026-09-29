@@ -1320,12 +1320,55 @@ Dafür waren Änderungen an der Sprache nötig:
 - **Statische Property-Setter:** `SetStaticField` fällt auf die statische `set_`-Methode zurück (wie
   `GetStaticField` auf `get_`).
 
-## 24. String-Mitglieder
+## 24. Basistyp-Erweiterungen (`class extends string`) und die String-/Char-Methoden
 
-`src/fire.Runtime/StringMethods.cs` (`TryCall(string, name, args, …)`) wird von `VM.CallMethod` für
-String-Ziele **vor** der Liste in `TryCallBuiltinMethod` befragt (`NotFound` → weiter wie bisher,
-`Ok` → Ergebnis, `IndexOutOfRange` → `IndexOutOfBoundsException` "String-Index …"). `GetField` kennt
-`Length`/`length` für String, Array und Puffer; `ArrayGet` liefert auf Strings ein `char`, `ArraySet`
-auf Strings wirft (unveränderlich). Alle Vergleiche ordinal, `ToUpper`/`ToLower` invariant. Für den
-Editor spiegelt `src/fire.Editor/BuiltinMembers.cs` dieselben Mitglieder samt Rückgabetypen
-(`ScriptSymbolIndex.MemberType`/`CompletionEngine`).
+**Parser.** `class extends <string|char|int|float|bool>` (Schlüsselwort statt Bezeichner,
+`ParseClassExtensionDecl`) wird wie jede Erweiterung als `ClassExtensionDecl` geparst, danach aber sofort
+geprüft (`ValidateBaseTypeExtensionMember`): nur `MethodDecl`, weder `static` noch `operator`/`GetIndex`/
+`SetIndex`; sonst `ParseException` (Feld/Property/Konstruktor/Destruktor/static/Operator; `byte` und andere
+Typen werden abgelehnt). `MergeClassExtensions` hat keine `ClassDecl`, in die es mergen könnte - es sammelt
+alle Blöcke desselben Basistyps in **eine synthetische `ClassDecl`** mit dem Namen `$string`, `$char`, ...
+(`fire.Standard.BaseTypeExtensions.ClassName`; `$` kann kein Bezeichner enthalten, es kollidiert also nie mit
+einer Nutzerklasse). Resolver, Compiler und Linker sehen eine ganz normale Klasse ohne Sonderfall.
+
+**VM.** Der Konstruktor legt `_baseTypeClasses` an (Array, indiziert mit `(int)ValueKind`; gefüllt aus
+`_classes` über `BaseTypeExtensions.ClassNameFor`). `CallMethod` auf einem Nicht-Objekt sucht dort zuerst
+die Methode (`FindMethodWithAccess`, dann `CheckArity`/`FillDefaultArgs` wie bei Objekten) und ruft sie mit
+dem Wert selbst als `this` (`_currentThis` ist ein geboxter `Value`, `LoadThis` kannte das schon); erst wenn
+keine Erweiterungsmethode passt, kommt `TryCallBuiltinMethod` (Konvertierungen aus 8.10). `SetFieldOnThis`
+auf so einem `this` scheitert - ein Basiswert hat keine Felder.
+
+**Native Funktionen.** `fire.Standard.StringMethods`/`CharMethods` (im Kernprojekt `fire`, nicht in
+`fire.Runtime`): je eine `NativeFunction` (`__StringCall`, `__CharCall`), deren erstes Argument die Methoden-ID
+(`enum StringMethod`/`CharMethod`, feste Zahlen) und das zweite der Wert ist; `switch` über die ID,
+Argumentzahl je Fall geprüft. `NativeRegistry.RegisterBaseTypeNatives()` registriert beide und muss in
+**jeder** Registry direkt hinter `print` stehen (Linker, beide `RuntimeSession.Build`, `CreateDefault`) - native
+Funktionen werden über ihren Index aufgerufen, und Kompilier- und Laufzeit-Registry müssen dieselbe
+Reihenfolge haben. Der fire-Text des Prelude (`class extends string { int IndexOf(value) { return
+__StringCall(1, this, value) } ... }`) wird aus einer Signaturtabelle erzeugt (`PreludeSource`);
+`Prelude.Source` ist deshalb `static readonly` (Kernklassen + beide Erweiterungen).
+
+**Fehler aus nativen Funktionen.** Ein ungültiger Index wirft `NativeIndexOutOfRangeException(index, length,
+what)`; `VM.CallNativeGuarded` (bewusst eine eigene Methode statt try/catch mitten in `Execute`) fängt sie am
+`CallNative`-Aufruf und macht daraus per `ThrowIndexOutOfBounds` die fangbare `IndexOutOfBoundsException`
+(„String-Index …“). Nicht abgefangen bleiben andere .NET-Fehler (falsche Argumenttypen an der nativen
+Funktion) - sie sind Programmierfehler, keine Skript-Exceptions.
+
+**Weiter in der VM statt im Prelude:** `Length`/`length` (`GetField` auf String/Array/Puffer), `s[i]`
+(`ArrayGet` liefert ein `char`, `ArraySet` auf einem String wirft) - eine Erweiterung darf keine Property
+definieren.
+
+**Editor.** `ScriptSymbolIndex.HarvestClassExtension` legt für ein Basistyp-Schlüsselwort ebenfalls die
+Sammelklasse `$string` an (aus dem Prelude-Index UND dem Dokument, sie werden wie bei `class extends List`
+zusammengeführt); `CompletionEngine` und `ScriptSymbolIndex.MemberType` lesen für Primitive daraus Methoden und
+Rückgabetypen (`BuiltinMembers.ExtensionClassOf`). `BuiltinMembers` enthält nur noch, was die VM selbst
+liefert (`Length`, `ToBytes()`, Puffer-Mitglieder), plus einen Typ-Hinweis für `Split` (ein Array-Rückgabetyp
+lässt sich in fire nicht hinschreiben). Die Sammelklassen erscheinen nicht als Typen in der
+Vervollständigung. "Zu Definition springen" erkennt Prelude-Mitglieder jetzt an der Herkunft des Mitglieds
+(`MemberInfo.Source`) statt am Flag der Klasse - wichtig, sobald eine Klasse (`$string`) Mitglieder aus
+Prelude UND Nutzerdokument hat.
+
+**Kosten.** Ein Aufruf wie `s.IndexOf("o")` läuft jetzt über einen fire-Frame plus die native Funktion statt
+über einen direkten `switch` in der VM; im Debug-Modus gemessen etwa 30 % langsamer als die frühere
+VM-eingebaute Fassung (300 000 × `IndexOf` + `Length`, dann 300 000 × `Substring(..).Length`: 3,0 s statt
+2,3 s). Der Namensvergleich ist es nicht - er steckt nur noch im normalen Methoden-Lookup der Klasse.

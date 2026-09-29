@@ -185,6 +185,8 @@ namespace fire.Editor
             var context = index.ContextAt(offset);
             foreach (var cls in index.Classes.Values)
             {
+                // `$string` & Co.: die Sammelklassen der Basistyp-Erweiterungen sind keine Typen zum Hinschreiben.
+                if (cls.Name.StartsWith('$')) continue;
                 if ((cls.IsInterface && !includeInterfaces) || !MatchesPrefix(cls.SimpleName, prefix)) continue;
                 if (index.ResolveClassKey(cls.SimpleName, context, lenient: false) != cls.Name) continue;
                 string detail = cls.Namespace.Length > 0 ? $"{(cls.IsInterface ? "Interface" : "Klasse")} in {cls.Namespace}" : (cls.IsInterface ? "Interface" : "Klasse");
@@ -294,6 +296,17 @@ namespace fire.Editor
                             member.IsProperty ? CompletionKind.Property : CompletionKind.Method,
                             CompareKeywords(prefix, member.Name, 0.3f), detail));
                     }
+
+                    // Methoden aus `class extends string { ... }` (Prelude und eigene Erweiterungen).
+                    if (BuiltinMembers.ExtensionClassOf(receiver) is { } extensionKey && index.Classes.ContainsKey(extensionKey))
+                        foreach (var (m, _) in index.MembersOfWithDepth(extensionKey))
+                            if (m.Kind == MemberKind.Method && IsListable(m) && MatchesPrefix(m.Name, prefix) && IsVisible(m, fromClass, index))
+                            {
+                                var item = ToItem(m, prefix, 0.3f, showOwner: false);
+                                if (BuiltinMembers.ReturnTypeHint(receiver, m.Name) is { } hint)
+                                    item = item with { Detail = $"({m.Signature}) → {hint.Name}[]" };
+                                results.Add(item);
+                            }
                     return Dedupe(results);
 
                 default:
