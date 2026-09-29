@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection.Metadata;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -10,6 +11,7 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace fire.Editor
 {
@@ -110,10 +112,10 @@ namespace fire.Editor
             // Highlighting wird während das Popup offen ist bewusst
             // ausgesetzt (siehe Editor_TextChanged) - hier nachholen, sobald
             // es schließt (egal ob durch Übernahme, Escape oder Fokusverlust).
-            CompletionPopup.Closed += (_, _) =>
-            {
-                DeferHighlighting();
-            };
+            //CompletionPopup.Closed += (_, _) =>
+            //{
+            //    DeferHighlighting();
+            //};
 
             SetText(string.Empty);
         }
@@ -122,24 +124,42 @@ namespace fire.Editor
         bool _highlightInside = false;
         bool _highlightNeedAnother = false;
 
+        string? _highlightSource = null;
+
+        bool _throwawayHighlight = false;
+
         DateTime? _diagMoment = null;
         bool _diagInside = false;
         bool _diagNeedAnother = false;
 
-        public void DeferHighlighting()
+        public void DeferHighlighting(string? source = null)
         {
-            if (_highlightInside)
+            var sourceChanged = Dispatcher.Invoke(() =>
+            {
+                if (source == null)
+                    source = GetText();
+
+                var changed = _highlightSource != source;
+
+                _highlightSource = source;
+
+                return changed;
+            });
+
+            if (_highlightInside && sourceChanged)
             {
                 _highlightNeedAnother = true;
+                _throwawayHighlight = true;
+
                 return;
             }
 
             var needsThread = _highlightMoment == null;
 
-            _highlightMoment = DateTime.Now.AddMilliseconds(200);
-
             if (needsThread)
             {
+                _highlightMoment = DateTime.Now.AddMilliseconds(200);
+
                 var t = new Thread(() => DeferredHighlighting());
 
                 t.Start();
@@ -155,7 +175,13 @@ namespace fire.Editor
                     Thread.Sleep(50);
                 }
 
-                ApplyHighlighting();
+                try
+                {
+                    ApplyHighlighting();
+                }
+                catch (TaskCanceledException)
+                {
+                }
 
                 if (_highlightNeedAnother)
                     _highlightMoment = DateTime.Now.AddMilliseconds(200);
@@ -164,6 +190,8 @@ namespace fire.Editor
 
                 _highlightNeedAnother = false;
             }
+
+            _highlightMoment = null;
         }
 
 
@@ -269,7 +297,7 @@ namespace fire.Editor
             DiagnosticsChanged?.Invoke();
         }
 
-        readonly IEnumerable<char> lastChars = new List<char>() { ' ', '.', '(', ';', ':', '!', '\t', '\r', '\n', '{' };
+        readonly IEnumerable<char> lastChars = new List<char>() { ' ', '.', '(', ';', ':', '!', '\t', '\r', '\n' };
 
         private void Editor_TextChanged(object sender, TextChangedEventArgs e)
         {
@@ -298,21 +326,31 @@ namespace fire.Editor
                 // wird zusätzlich einen Dispatcher-Tick verzögert, damit das
                 // Layout der GERADE getippten Änderung sicher fertig ist,
                 // bevor die Caret-Rechteck-Position abgefragt wird.
-                
+
                 //_highlightTimer.Stop();
-                
+                var changed = lastCompletionSource != source;
+
+                lastCompletionSource = source;
+
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
-                    string src = GetText();
+                    //string src = GetText();
+                    var src = source;
                     int off = GetOffsetOf(Editor.CaretPosition);
-                    ShowOrUpdateCompletion(src, off, closeIfEmpty: true);
+
+                    if (changed || CompletionPopup.IsOpen)
+                        ShowOrUpdateCompletion(src, off, closeIfEmpty: true);
+
+
                 }), DispatcherPriority.Background);
             }
             else
             {
-                DeferHighlighting();
+                DeferHighlighting(source);
             }
         }
+
+        string? lastCompletionSource = null;
 
         private void Editor_SelectionChanged(object sender, RoutedEventArgs e) =>
             CaretLineChanged?.Invoke(GetCaretLine());
@@ -342,8 +380,7 @@ namespace fire.Editor
                         return;
                     case Key.Enter:
                     case Key.Tab:
-                        AcceptCompletion();
-                        e.Handled = true;
+                        e.Handled = AcceptCompletion();
                         return;
                     case Key.Escape:
                         CompletionPopup.IsOpen = false;
@@ -377,7 +414,6 @@ namespace fire.Editor
 
             items.OrderByDescending(i => i.Score);
 
-            Debug.WriteLine(items[0].Display + " (Score: " + items[0].Score + ")");
             _completionItems = items;
             CompletionList.ItemsSource = items.Select(i => i.Display).ToList();
 
@@ -404,12 +440,12 @@ namespace fire.Editor
         /// <summary>Fügt den ausgewählten Vorschlag ein - ersetzt dabei das
         /// bereits getippte Präfix (Bezeichner-Zeichen unmittelbar vor dem
         /// Cursor) durch den vollen Vorschlagstext.</summary>
-        private void AcceptCompletion()
+        private bool AcceptCompletion()
         {
             if (_completionItems.Count == 0 || CompletionList.SelectedIndex < 0)
             {
                 CompletionPopup.IsOpen = false;
-                return;
+                return false;
             }
 
             var item = _completionItems[CompletionList.SelectedIndex];
@@ -429,6 +465,8 @@ namespace fire.Editor
             SetText(newSource);
             SetCaretByLineColumn(newLine, newColumn);
             Editor.Focus();
+
+            return true;
         }
 
         /// <summary>Reine String-Umrechnung Offset -> (Zeile, Spalte), ohne
@@ -446,14 +484,7 @@ namespace fire.Editor
             return (line, col);
         }
 
-        public int GetCaretLine()
-        {
-            var para = Editor.CaretPosition.Paragraph;
-            if (para == null) return 1;
-            var blocks = Editor.Document.Blocks.OfType<Paragraph>().ToList();
-            int index = blocks.IndexOf(para);
-            return index < 0 ? 1 : index + 1;
-        }
+        public int GetCaretLine() => LineColumnOf(Editor.CaretPosition).Line + 1;
 
         // -----------------------------------------------------------
         // Syntax-Highlighting (debounced, Cursor-Position wird über Zeile+
@@ -464,13 +495,11 @@ namespace fire.Editor
         private void ApplyHighlighting()
         {
             _highlightInside = true;
-            string text = Dispatcher.Invoke(() => GetText());
-            var (caretLine, caretColumn) = GetCaretLineColumn();
+            var text = Dispatcher.Invoke(() => GetText());
 
             var spans = SyntaxHighlighter.Highlight(text);
             var errorLines = _diagnostics.Select(d => d.Line).ToHashSet();
 
-            _suppressTextChanged = true;
             var doc = new FlowDocument();
             var lines = text.Split('\n');
             int lineStart = 0;
@@ -519,19 +548,53 @@ namespace fire.Editor
                 lineStart = lineEnd + 1; // '+1' für den übersprungenen '\n'
             }
 
-            using var stream = new MemoryStream();
-            System.Windows.Markup.XamlWriter.Save(doc, stream);
-            stream.Position = 0; // Stream-Zeiger zurücksetzen
+            if (!_throwawayHighlight)
+            {
+                using var stream = new MemoryStream();
+                
+                var range = new TextRange(
+                    doc.ContentStart,
+                    doc.ContentEnd);
 
-            Application.Current.Dispatcher.Invoke(new Action(() => {
-                var uiDoc = (FlowDocument)System.Windows.Markup.XamlReader.Load(stream);
-                Editor.Document = uiDoc;
+                range.Save(stream, DataFormats.XamlPackage);
 
-                SetCaretByLineColumn(caretLine, caretColumn);
-            }));
+                stream.Position = 0; // Stream-Zeiger zurücksetzen
 
+                Dispatcher?.Invoke(new Action(() =>
+                {
+                    // Erst HIER, unmittelbar vor dem Austausch, statt schon
+                    // ganz am Anfang der Methode (siehe Kommentar oben) - die
+                    // Auswahl hat keinen Einfluss auf die Hervorhebung
+                    // selbst, es gibt also keinen Grund, sie vorzeitig
+                    // einzufrieren. Läuft im selben UI-Thread-Aufruf wie der
+                    // Austausch direkt darunter - WPF ist single-threaded,
+                    // dazwischen kann also nichts mehr an der Auswahl
+                    // ändern (kein Shift+Links kann mehr "dazwischenfunken").
+                    var (selAnchor, selMoving) = GetSelectionLineColumn();
 
-            _suppressTextChanged = false;
+                    var clone = new FlowDocument();
+
+                    var newRange = new TextRange(
+                        clone.ContentStart,
+                        clone.ContentEnd);
+
+                    newRange.Load(stream, DataFormats.XamlPackage);
+
+                    //var uiDoc = (FlowDocument)System.Windows.Markup.XamlReader.Load(stream);
+
+                    _suppressTextChanged = true;
+                    
+                    Editor.Document = clone;
+
+                    _suppressTextChanged = false;
+
+                    SetSelectionByLineColumn(selAnchor, selMoving);
+                }));
+            }
+            else
+            {
+                _throwawayHighlight = false;
+            }
 
             _highlightInside = false;
         }
@@ -549,7 +612,7 @@ namespace fire.Editor
             _diagnostics = DiagnosticsProvider(source);
             DiagnosticsChanged?.Invoke();
             //if (!CompletionPopup.IsOpen)
-                DeferHighlighting();
+            Dispatcher.Invoke(() => DeferHighlighting());
         }
 
         /// <summary>Eine ECHTE wellenförmige Unterkringelung (nicht nur eine
@@ -737,28 +800,85 @@ namespace fire.Editor
             viewer.Show();
         }
 
-        /// <summary>Caret-Position als (0-basierter Absatz-Index, Zeichen-
-        /// Offset INNERHALB dieses Absatzes) - zuverlässig, weil innerhalb
-        /// EINES Absatzes (keine Absatzgrenze dazwischen) WPFs interne
-        /// Zählung tatsächlich mit reinen Zeichen-Offsets übereinstimmt.</summary>
-        private (int Line, int Column) GetCaretLineColumn()
+        /// <summary>Position als (0-basierter Absatz-Index, Zeichen-Offset
+        /// INNERHALB dieses Absatzes) - zuverlässig, weil innerhalb EINES
+        /// Absatzes (keine Absatzgrenze dazwischen) WPFs interne Zählung
+        /// tatsächlich mit reinen Zeichen-Offsets übereinstimmt. Allgemein für
+        /// einen BELIEBIGEN TextPointer (nicht nur die Cursor-Position) -
+        /// GetCaretLineColumn und die Auswahl-Sicherung in ApplyHighlighting
+        /// (siehe GetSelectionLineColumn) teilen sich diese eine Umrechnung.
+        ///
+        /// Bewusst NICHT über `pointer.Paragraph` (der ursprüngliche Ansatz) -
+        /// diese Property liefert `null`, wenn der Zeiger GENAU an einer
+        /// Absatzgrenze steht.
+        ///
+        /// Auch NICHT über eine explizite Ober- UND Untergrenzen-Prüfung pro
+        /// Absatz - genau am Dokumentende ("alles auswählen") verhielt sich
+        /// selbst DAS noch unzuverlässig (Obergrenzen-Vergleich lieferte dort
+        /// fälschlich `false`). Stattdessen wird hier NUR die UNTERGRENZE
+        /// geprüft: der SPÄTESTE Absatz, dessen ANFANG noch vor oder genau
+        /// auf dem Zeiger liegt - das ist eindeutig und robust, auch für
+        /// einen Zeiger ganz am Ende des letzten Absatzes.</summary>
+        private (int Line, int Column) LineColumnOf(TextPointer pointer)
         {
-            var caret = Editor.CaretPosition;
-            var para = caret.Paragraph;
-            if (para == null) return (0, 0);
-
             var blocks = Editor.Document.Blocks.OfType<Paragraph>().ToList();
-            int line = blocks.IndexOf(para);
-            if (line < 0) line = 0;
+            if (blocks.Count == 0) return (0, 0);
 
-            int column = new TextRange(para.ContentStart, caret).Text.Length;
+            int line = 0;
+            for (int i = 0; i < blocks.Count; i++)
+            {
+                if (pointer.CompareTo(blocks[i].ContentStart) >= 0)
+                    line = i;
+                else
+                    break;
+            }
+
+            var para = blocks[line];
+            int column = new TextRange(para.ContentStart, pointer).Text.Length;
             return (line, column);
         }
 
-        public void SetCaretByLineColumn(int line, int column)
+        private (int Line, int Column) GetCaretLineColumn() => LineColumnOf(Editor.CaretPosition);
+
+        /// <summary>Anker (festes Ende) und bewegliches Ende (Cursor-Seite)
+        /// der AKTUELLEN Auswahl als (Zeile, Spalte) - bei leerer Auswahl
+        /// (nur ein Cursor) sind beide gleich (siehe LineColumnOf). Für
+        /// SetSelectionByLineColumn nach einem Dokument-Neuaufbau (siehe
+        /// ApplyHighlighting) - ohne das würde eine bestehende Textmarkierung
+        /// beim Highlighting auf einen bloßen Cursor kollabieren.
+        ///
+        /// BEWUSST NICHT einfach (Selection.Start, Selection.End) - die
+        /// liefern IMMER die Dokumentreihenfolge (Start &lt;= End), UNABHÄNGIG
+        /// davon, in welche Richtung der Nutzer gerade erweitert (z.B. mit
+        /// gehaltenem Shift+Links wandert der Cursor nach LINKS, der Anker
+        /// bleibt aber RECHTS - dort wäre Start also das BEWEGLICHE Ende,
+        /// nicht der Anker). Editor.Selection.Select(anchor, moving) - siehe
+        /// SetSelectionByLineColumn - vertauscht bei falscher Reihenfolge
+        /// genau diese beiden Rollen: nach der Wiederherstellung "denkt" WPF,
+        /// der Anker sei jetzt am ANDEREN Ende, der NÄCHSTE Shift+Links
+        /// erweitert dann plötzlich von der falschen Seite (schrumpft statt
+        /// zu wachsen) - bei jedem weiteren Highlighting-Durchlauf erneut
+        /// vertauscht, das ergibt die charakteristische wandernde,
+        /// abwechselnd wachsende/schrumpfende Auswahl. Editor.CaretPosition
+        /// entspricht bei einer aktiven Auswahl genau dem BEWEGLICHEN Ende
+        /// (Cursor-Seite) - damit lässt sich zuverlässig bestimmen, welches
+        /// der beiden (Start, End) tatsächlich der Anker ist.</summary>
+        private ((int Line, int Column) Anchor, (int Line, int Column) Moving) GetSelectionLineColumn()
+        {
+            var start = LineColumnOf(Editor.Selection.Start);
+            var end = LineColumnOf(Editor.Selection.End);
+            bool caretIsAtStart = Editor.CaretPosition.CompareTo(Editor.Selection.Start) <= 0;
+            return caretIsAtStart ? (end, start) : (start, end);
+        }
+
+        /// <summary>Wie SetCaretByLineColumn, liefert die TextPointer-Position
+        /// aber zurück statt sie direkt zu setzen - gemeinsame Grundlage für
+        /// SetCaretByLineColumn (Cursor) und SetSelectionByLineColumn
+        /// (Auswahlbereich).</summary>
+        private TextPointer PositionOf(int line, int column)
         {
             var blocks = Editor.Document.Blocks.OfType<Paragraph>().ToList();
-            if (blocks.Count == 0) return;
+            if (blocks.Count == 0) return Editor.Document.ContentStart;
 
             line = Math.Max(0, Math.Min(line, blocks.Count - 1));
             var para = blocks[line];
@@ -784,8 +904,24 @@ namespace fire.Editor
                 }
                 pointer = next;
             }
-            Editor.CaretPosition = pointer;
+            return pointer;
         }
+
+        public void SetCaretByLineColumn(int line, int column) =>
+            Editor.CaretPosition = PositionOf(line, column);
+
+        /// <summary>Stellt einen Auswahlbereich nach Anker/beweglichem Ende
+        /// (Zeile, Spalte) wieder her (siehe GetSelectionLineColumn) - bei
+        /// `anchor == moving` (keine Markierung) entspricht das einem
+        /// einfachen Cursor, genau wie SetCaretByLineColumn, deshalb hier
+        /// bewusst EIN Weg für beide Fälle statt einer Fallunterscheidung
+        /// beim Aufrufer. Reihenfolge der Argumente an
+        /// Editor.Selection.Select(anchorPosition, movingPosition) ist
+        /// wichtig - siehe GetSelectionLineColumn-Doku für die Begründung,
+        /// warum das NICHT einfach (Start, End) sein darf.</summary>
+        public void SetSelectionByLineColumn((int Line, int Column) anchor, (int Line, int Column) moving) =>
+            Editor.Selection.Select(PositionOf(anchor.Line, anchor.Column), PositionOf(moving.Line, moving.Column));
+
 
         public void ScrollToLine(int line)
         {
@@ -805,7 +941,7 @@ namespace fire.Editor
             int line = GetCaretLine();
             if (!_breakpoints.Remove(line))
                 _breakpoints.Add(line);
-            ApplyHighlighting();
+            DeferHighlighting();
             BreakpointsChanged?.Invoke();
         }
 
@@ -813,7 +949,7 @@ namespace fire.Editor
         {
             if (_breakpoints.Count == 0) return;
             _breakpoints.Clear();
-            ApplyHighlighting();
+            DeferHighlighting();
             BreakpointsChanged?.Invoke();
         }
     }
