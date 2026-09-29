@@ -123,7 +123,21 @@ namespace fire.Runtime
 
     public sealed class VM : IDestructRunner
     {
-        private Chunk _currentChunk;
+        // Der gerade laufende Chunk samt Array-Kopien von Code/Konstanten (siehe Chunk.CodeArray) - jede
+        // Zuweisung an _currentChunk (Aufruf, Return, Exception-Sprung, ...) aktualisiert sie mit.
+        private Chunk _chunk;
+        private byte[] _code;
+        private Value[] _constants;
+        private Chunk _currentChunk
+        {
+            get => _chunk;
+            set
+            {
+                _chunk = value;
+                _code = value.CodeArray;
+                _constants = value.ConstantsArray;
+            }
+        }
         private readonly Scope _globalScope;
         private readonly NativeRegistry _natives;
         private readonly ExternRegistry _externs;
@@ -136,7 +150,10 @@ namespace fire.Runtime
         /// es keine Erweiterung.</summary>
         private readonly RuntimeClass?[] _baseTypeClasses;
 
-        private readonly List<Value> _stack = new();
+        // Der Werte-Stack: ein Array mit Stackzeiger statt einer List<Value> (kein Versionszähler, keine
+        // doppelte Bereichsprüfung, kein Nullen beim Entfernen) - Push/Pop sind der heißeste Pfad der VM.
+        private Value[] _stack = new Value[256];
+        private int _sp;
         private readonly Stack<CallFrame> _frames = new();
         private readonly List<ActiveHandler> _handlers = new();
         private readonly Dictionary<ObjectInstance, PendingResume> _pendingResumes = new();
@@ -356,7 +373,7 @@ namespace fire.Runtime
                 }
                 var op = (OpCode)ReadByte();
                 if (op == OpCode.Halt) return;
-                Execute(op);
+                Step(op);
 
                 // _stopExecutionRequested wird von ThrowException gesetzt,
                 // wenn eine Exception UNBEHANDELT bleibt (kein passender
@@ -612,7 +629,7 @@ namespace fire.Runtime
                 IsHalted = true;
                 return false;
             }
-            Execute(op);
+            Step(op);
 
             // Eine unbehandelte Skript-Exception wird seit UnhandledException
             // (siehe dort) nicht mehr geworfen, sondern nur noch GESETZT -
@@ -704,7 +721,7 @@ namespace fire.Runtime
         /// <summary>Unveränderlicher Blick auf den aktuellen Wert-Stack - rein
         /// zur Inspektion, keine Kopie (Werte selbst sind ohnehin unveränderliche
         /// Structs).</summary>
-        public IReadOnlyList<Value> DebugStackSnapshot => _stack;
+        public IReadOnlyList<Value> DebugStackSnapshot => new ArraySegment<Value>(_stack, 0, _sp);
 
         /// <summary>Aktuelle Aufruf-Tiefe (Anzahl aktiver CallFrames) - für eine
         /// einfache Anzeige "wie tief verschachtelt bin ich gerade".</summary>
@@ -802,7 +819,7 @@ namespace fire.Runtime
                 if (op == OpCode.Halt)
                     throw new InvalidOperationException(
                         "Unerwarteter Halt in verschachtelter Ausführung (z.B. während eines Destruktor-Aufrufs).");
-                Execute(op);
+                Step(op);
 
                 // Wie Run() (siehe dort für die ausführliche Begründung) -
                 // eine unbehandelte Exception setzt _stopExecutionRequested
@@ -853,12 +870,146 @@ namespace fire.Runtime
             }
         }
 
+        /// <summary>Führt EINE Instruktion aus. Die häufigsten (Laden/Speichern, Grundrechenarten, Vergleiche,
+        /// Sprünge, Scopes) sind hier direkt ausgeschrieben, alles andere geht an <see cref="Execute"/>.
+        /// Der Grund für die Trennung: Execute ist eine riesige Methode mit sehr vielen lokalen Variablen, und
+        /// deren Stackframe wird bei JEDEM Aufruf neu genullt - das kostete pro Instruktion ein Vielfaches
+        /// der eigentlichen Arbeit. Diese Methode hat fast keine Locals und bleibt billig. Jeder Fall hier
+        /// verhält sich exakt wie sein Gegenstück in Execute; wo ein Fall nicht zutrifft (z.B. ein Objekt als
+        /// linker Operand mit Operator-Überladung, eine Scope mit Besitz), fällt er nach Execute durch.</summary>
+        private void Step(OpCode op)
+        {
+            switch (op)
+            {
+                case OpCode.LoadConst:
+                    Push(_constants[ReadU16()]);
+                    return;
+
+                case OpCode.Pop:
+                    _sp--;
+                    return;
+
+                case OpCode.Dup:
+                    Push(_stack[_sp - 1]);
+                    return;
+
+                case OpCode.LoadLocal:
+                {
+                    int depth = ReadU16(); int slot = ReadU16();
+                    Push(_currentScope.GetAncestor(depth).GetSlot(slot));
+                    return;
+                }
+
+                case OpCode.StoreLocal:
+                {
+                    int depth = ReadU16(); int slot = ReadU16();
+                    _currentScope.GetAncestor(depth).SetSlot(slot, _stack[_sp - 1]);
+                    return;
+                }
+
+                case OpCode.LoadGlobal:
+                    Push(_globalScope.GetSlot(ReadU16()));
+                    return;
+
+                case OpCode.StoreGlobal:
+                    _globalScope.SetSlot(ReadU16(), _stack[_sp - 1]);
+                    return;
+
+                case OpCode.DeclareLocal:
+                    _currentScope.DefineSlot(Pop());
+                    return;
+
+                // Binäre Operatoren: der linke Operand liegt bei _sp-2, der rechte bei _sp-1; das Ergebnis
+                // ersetzt beide. Ein Objekt links (Operator-Überladung) geht durch nach Execute.
+                case OpCode.Add:
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Add(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    break;
+                case OpCode.Sub:
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Subtract(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    break;
+                case OpCode.Mul:
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Multiply(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    break;
+                case OpCode.Div:
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Divide(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    break;
+                case OpCode.Mod:
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Modulo(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    break;
+                case OpCode.Eq:
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.ValuesEqual(_stack[_sp - 2], _stack[_sp - 1]))); return; }
+                    break;
+                case OpCode.NotEq:
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(!Value.ValuesEqual(_stack[_sp - 2], _stack[_sp - 1]))); return; }
+                    break;
+                case OpCode.Lt:
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) < 0)); return; }
+                    break;
+                case OpCode.LtEq:
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) <= 0)); return; }
+                    break;
+                case OpCode.Gt:
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) > 0)); return; }
+                    break;
+                case OpCode.GtEq:
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) >= 0)); return; }
+                    break;
+
+                case OpCode.Jump:
+                    _ip = ReadU16();
+                    return;
+
+                case OpCode.JumpIfFalse:
+                {
+                    int addr = ReadU16();
+                    if (!Pop().AsBool()) _ip = addr;
+                    return;
+                }
+
+                case OpCode.JumpIfFalsePeek:
+                {
+                    int addr = ReadU16();
+                    if (!_stack[_sp - 1].AsBool()) _ip = addr;
+                    return;
+                }
+
+                case OpCode.JumpIfTruePeek:
+                {
+                    int addr = ReadU16();
+                    if (_stack[_sp - 1].AsBool()) _ip = addr;
+                    return;
+                }
+
+                case OpCode.EnterScope:
+                    _currentScope = new Scope(_currentScope);
+                    return;
+
+                case OpCode.ExitScope:
+                {
+                    var scope = _currentScope;
+                    if (scope.HasOwned) break; // Release kann Destruktoren ausführen - der ausführliche Pfad
+                    _currentScope = scope.Parent
+                        ?? throw new InvalidOperationException("ExitScope auf dem globalen Scope aufgerufen.");
+                    return;
+                }
+            }
+
+            Execute(op);
+        }
+
+        /// <summary>Ersetzt die obersten ZWEI Stack-Werte durch `result` (Ergebnis einer binären Operation).</summary>
+        private void ReplaceTwoWith(Value result)
+        {
+            _sp--;
+            _stack[_sp - 1] = result;
+        }
+
         private void Execute(OpCode op)
         {
             switch (op)
             {
                 case OpCode.LoadConst:
-                    Push(_currentChunk.Constants[ReadU16()]);
+                    Push(_constants[ReadU16()]);
                     break;
 
                 case OpCode.Pop:
@@ -969,7 +1120,7 @@ namespace fire.Runtime
 
                 case OpCode.FormatValue:
                 {
-                    string format = _currentChunk.Constants[ReadU16()].AsString();
+                    string format = _constants[ReadU16()].AsString();
                     var v = Pop();
                     Push(Value.MakeString(v.Format(format)));
                     break;
@@ -1090,7 +1241,7 @@ namespace fire.Runtime
                 {
                     int nameIdx = ReadU16();
                     int argCount = ReadByte();
-                    string externName = _currentChunk.Constants[nameIdx].AsString();
+                    string externName = _constants[nameIdx].AsString();
 
                     var scriptArgs = new Value[argCount];
                     for (int i = argCount - 1; i >= 0; i--) scriptArgs[i] = Pop();
@@ -1209,7 +1360,7 @@ namespace fire.Runtime
                     var args = new Value[argCount];
                     for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
-                    var rc = ResolveClass(_currentChunk.Constants[classNameIdx].AsString());
+                    var rc = ResolveClass(_constants[classNameIdx].AsString());
                     var ctorProto = rc.FindConstructor(args.Length)
                         ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
                     if (ExecutionMode != VmExecutionMode.Performance
@@ -1235,7 +1386,7 @@ namespace fire.Runtime
                     for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
                     var owner = RequireObjectInstance(Pop(), "Objekt-Erzeugung mit Owner");
 
-                    var rc = ResolveClass(_currentChunk.Constants[classNameIdx].AsString());
+                    var rc = ResolveClass(_constants[classNameIdx].AsString());
                     var ctorProto = rc.FindConstructor(args.Length)
                         ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
                     if (ExecutionMode != VmExecutionMode.Performance
@@ -1260,7 +1411,7 @@ namespace fire.Runtime
                     var args = new Value[argCount];
                     for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
-                    var rc = ResolveClass(_currentChunk.Constants[classNameIdx].AsString());
+                    var rc = ResolveClass(_constants[classNameIdx].AsString());
                     var ctorProto = rc.FindConstructor(args.Length)
                         ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
                     args = FillDefaultArgs(ctorProto, args, _currentThis);
@@ -1281,7 +1432,7 @@ namespace fire.Runtime
 
                 case OpCode.GetField:
                 {
-                    string fieldName = _currentChunk.Constants[ReadU16()].AsString();
+                    string fieldName = _constants[ReadU16()].AsString();
                     var target = Pop();
 
                     // `Length` ist die Schreibweise der Eigenschaften (wie bei `string`),
@@ -1360,7 +1511,7 @@ namespace fire.Runtime
 
                 case OpCode.SetField:
                 {
-                    string fieldName = _currentChunk.Constants[ReadU16()].AsString();
+                    string fieldName = _constants[ReadU16()].AsString();
                     var value = Pop();
                     var obj = RequireObjectInstance(Pop(), "Feldzuweisung");
 
@@ -1446,7 +1597,7 @@ namespace fire.Runtime
 
                 case OpCode.SetFieldOnThis:
                 {
-                    string fieldName = _currentChunk.Constants[ReadU16()].AsString();
+                    string fieldName = _constants[ReadU16()].AsString();
                     var value = Pop();
                     if (_currentThis is not ObjectInstance oi)
                         throw new InvalidOperationException("SetFieldOnThis ohne gebundene ObjectInstance als 'this'.");
@@ -1479,7 +1630,7 @@ namespace fire.Runtime
 
                 case OpCode.CallMethod:
                 {
-                    string methodName = _currentChunk.Constants[ReadU16()].AsString();
+                    string methodName = _constants[ReadU16()].AsString();
                     int argCount = ReadByte();
                     var args = new Value[argCount];
                     for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
@@ -1589,8 +1740,8 @@ namespace fire.Runtime
 
                 case OpCode.CallBaseMethod:
                 {
-                    string baseClassName = _currentChunk.Constants[ReadU16()].AsString();
-                    string methodName = _currentChunk.Constants[ReadU16()].AsString();
+                    string baseClassName = _constants[ReadU16()].AsString();
+                    string methodName = _constants[ReadU16()].AsString();
                     int argCount = ReadByte();
                     var args = new Value[argCount];
                     for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
@@ -1628,8 +1779,8 @@ namespace fire.Runtime
                     // die eigentliche Speicherstelle liegt direkt auf der
                     // RuntimeClass (siehe FindStaticFieldOwner - teilt sich
                     // ggf. mit einer Basisklasse dieselbe Speicherstelle).
-                    string className = _currentChunk.Constants[ReadU16()].AsString();
-                    string fieldName = _currentChunk.Constants[ReadU16()].AsString();
+                    string className = _constants[ReadU16()].AsString();
+                    string fieldName = _constants[ReadU16()].AsString();
                     var staticRc = ResolveClass(className);
                     var owner = staticRc.FindStaticFieldOwner(fieldName);
 
@@ -1668,8 +1819,8 @@ namespace fire.Runtime
 
                 case OpCode.SetStaticField:
                 {
-                    string setClassName = _currentChunk.Constants[ReadU16()].AsString();
-                    string setFieldName = _currentChunk.Constants[ReadU16()].AsString();
+                    string setClassName = _constants[ReadU16()].AsString();
+                    string setFieldName = _constants[ReadU16()].AsString();
                     var setValue = Pop();
                     var setRc = ResolveClass(setClassName);
                     var setOwner = setRc.FindStaticFieldOwner(setFieldName);
@@ -1734,8 +1885,8 @@ namespace fire.Runtime
                     // SetFieldOnThis bei Instanzfeldern. Einheiten-Prüfung
                     // bleibt (wie bei SetFieldOnThis) trotzdem bestehen - die
                     // gilt unabhängig davon, WER schreibt.
-                    string initClassName = _currentChunk.Constants[ReadU16()].AsString();
-                    string initFieldName = _currentChunk.Constants[ReadU16()].AsString();
+                    string initClassName = _constants[ReadU16()].AsString();
+                    string initFieldName = _constants[ReadU16()].AsString();
                     var initValue = Pop();
                     var initRc = ResolveClass(initClassName);
                     var initOwner = initRc.FindStaticFieldOwner(initFieldName);
@@ -1764,8 +1915,8 @@ namespace fire.Runtime
 
                 case OpCode.CallStaticMethod:
                 {
-                    string callClassName = _currentChunk.Constants[ReadU16()].AsString();
-                    string callMethodName = _currentChunk.Constants[ReadU16()].AsString();
+                    string callClassName = _constants[ReadU16()].AsString();
+                    string callMethodName = _constants[ReadU16()].AsString();
                     int callArgCount = ReadByte();
                     var callArgs = new Value[callArgCount];
                     for (int i = callArgCount - 1; i >= 0; i--) callArgs[i] = Pop();
@@ -1841,7 +1992,7 @@ namespace fire.Runtime
 
                 case OpCode.AddressOfField:
                 {
-                    string fieldName = _currentChunk.Constants[ReadU16()].AsString();
+                    string fieldName = _constants[ReadU16()].AsString();
                     var obj = RequireObjectInstance(Pop(), "Address-of auf Feld");
                     Push(Value.MakePointer(new FieldPointerTarget(obj, fieldName)));
                     break;
@@ -2071,7 +2222,7 @@ namespace fire.Runtime
 
                 case OpCode.IsOfType:
                 {
-                    string typeName = _currentChunk.Constants[ReadU16()].AsString();
+                    string typeName = _constants[ReadU16()].AsString();
                     var v = Pop();
                     Push(Value.MakeBool(IsOfType(v, typeName)));
                     break;
@@ -2177,7 +2328,7 @@ namespace fire.Runtime
                     // Im Performance-Modus übersprungen - wie jede andere
                     // "zusätzliche Sicherheit statt Geschwindigkeit"-Prüfung in
                     // dieser VM (Zugriffsmodifikatoren, Array-/Puffer-Bounds).
-                    string requiredUnitName = _currentChunk.Constants[ReadU16()].AsString();
+                    string requiredUnitName = _constants[ReadU16()].AsString();
                     if (ExecutionMode != VmExecutionMode.Performance)
                     {
                         var checkedValue = Peek();
@@ -2292,7 +2443,7 @@ namespace fire.Runtime
                 {
                     int protoIdx = ReadU16();
                     bool hasType = ReadByte() != 0;
-                    string? typeName = hasType ? _currentChunk.Constants[ReadU16()].AsString() : null;
+                    string? typeName = hasType ? _constants[ReadU16()].AsString() : null;
                     GlobalHandlers.RegisterThreadsCatch(typeName, _currentChunk.Functions[protoIdx]);
                     break;
                 }
@@ -3441,24 +3592,24 @@ namespace fire.Runtime
         // -----------------------------------------------------------
         // Stack- & Code-Zugriff
         // -----------------------------------------------------------
-        private void Push(Value v) => _stack.Add(v);
-
-        private Value Pop()
+        private void Push(Value v)
         {
-            var v = _stack[^1];
-            _stack.RemoveAt(_stack.Count - 1);
-            return v;
+            if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
+            _stack[_sp++] = v;
         }
 
-        private Value Peek() => _stack[^1];
+        private Value Pop() => _stack[--_sp];
 
-        private byte ReadByte() => _currentChunk.Code[_ip++];
+        private Value Peek() => _stack[_sp - 1];
+
+        private byte ReadByte() => _code[_ip++];
 
         private int ReadU16()
         {
-            int lo = _currentChunk.Code[_ip++];
-            int hi = _currentChunk.Code[_ip++];
-            return lo | (hi << 8);
+            var code = _code;
+            int ip = _ip;
+            _ip = ip + 2;
+            return code[ip] | (code[ip + 1] << 8);
         }
     }
 }
