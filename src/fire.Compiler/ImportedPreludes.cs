@@ -4,6 +4,8 @@ using fire.Runtime;
 using fire.Terminal.Bridge;
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace fire.Compiler
 {
@@ -31,6 +33,27 @@ namespace fire.Compiler
             "devices" => NativeImports.Devices,
             _ => throw new Exception($"'{name}' ist keine bekannte Erweiterung."),
         };
+
+        /// <summary>Der fire-Quelltext der Prelude der Erweiterung `importName`
+        /// (Name aus `#import "name"`, Groß-/Kleinschreibung egal), null bei
+        /// einer unbekannten Erweiterung.</summary>
+        public static string? TrySourceFor(string importName) => importName.ToLowerInvariant() switch
+        {
+            "graphics" => GraphicsBridge.PreludeSource,
+            "devices" => DeviceBridge.PreludeSource,
+            _ => null,
+        };
+
+        private static readonly Regex ImportDirective =
+            new("^[ \\t]*#import[ \\t]+\"([^\"\\r\\n]+)\"", RegexOptions.Compiled | RegexOptions.Multiline);
+
+        /// <summary>Die Namen aller `#import "name"`-Zeilen in `source` (rein
+        /// TEXTUELL erkannt, ohne den Präprozessor zu bemühen - für den
+        /// Editor, der auf unverarbeitetem, evtl. gerade erst getipptem Text
+        /// arbeitet). Unbekannte Namen sind enthalten - prüfen mit
+        /// <see cref="TrySourceFor"/>.</summary>
+        public static IEnumerable<string> FindImportNames(string source) =>
+            ImportDirective.Matches(source).Select(m => m.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>Setzt die Preludes aller in `nativeImports` enthaltenen
         /// Erweiterungen (jeweils durch `preprocess` vorverarbeitet) direkt

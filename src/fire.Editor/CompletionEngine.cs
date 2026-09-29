@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Windows.Media.Animation;
-using System.Xml.Linq;
 
 namespace fire.Editor
 {
@@ -12,6 +10,7 @@ namespace fire.Editor
         TypeKeyword,
         ClassName,
         EnumName,
+        EnumMember,
         Field,
         Method,
         Property,
@@ -21,7 +20,7 @@ namespace fire.Editor
 
     public sealed record CompletionItem(string Text, CompletionKind Kind, float Score, string? Detail = null)
     {
-        public string Display => Detail != null ? $"{Text}  ({Detail})" : Text;
+        public string Display => Detail != null ? $"{Text}  {Detail}" : Text;
     }
 
     /// <summary>
@@ -85,10 +84,7 @@ namespace fire.Editor
 
             // Direkt nach einem '.' (noch nichts vom Mitgliedsnamen getippt).
             if (i >= 0 && source[i] == '.')
-            {
-                string? target = ReadIdentifierBefore(source, i);
-                return GetMemberSuggestions(offset, index, target, string.Empty);
-            }
+                return GetMemberSuggestions(offset, index, dotOffset: i, string.Empty);
 
             int start = i;
             while (start >= 0 && (char.IsLetterOrDigit(source[start]) || source[start] == '_')) start--;
@@ -97,54 +93,103 @@ namespace fire.Editor
             if (start >= 0 && source[start] == '.')
             {
                 string prefix = source.Substring(start + 1, offset - start - 1);
-                string? target = ReadIdentifierBefore(source, start);
-                return GetMemberSuggestions(offset, index, target, prefix);
+                return GetMemberSuggestions(offset, index, dotOffset: start, prefix);
             }
 
             string idPrefix = start + 1 <= offset ? source.Substring(start + 1, offset - start - 1) : string.Empty;
+
+            // Nach 'new ' kommt ein Klassenname, sonst nichts.
+            if (IsAfterNew(source, start))
+                return GetClassNameSuggestions(index, idPrefix);
+
             return GetIdentifierSuggestions(offset, index, idPrefix);
         }
 
-        private static string? ReadIdentifierBefore(string source, int dotIdx)
+        /// <summary>Steht vor dem Bezeichner, der bei `identifierStart - 1`
+        /// endet (`start` = Index des Zeichens DAVOR), das Wort `new`?</summary>
+        private static bool IsAfterNew(string source, int start)
         {
-            int end = dotIdx;
-            int start = end - 1;
-            while (start >= 0 && (char.IsLetterOrDigit(source[start]) || source[start] == '_')) start--;
-            if (start + 1 >= end) return null;
-            return source.Substring(start + 1, end - start - 1);
+            int j = start;
+            while (j >= 0 && (source[j] == ' ' || source[j] == '\t')) j--;
+            if (j == start) return false; // kein Leerraum zwischen 'new' und dem Bezeichner
+            int wordEnd = j;
+            while (j >= 0 && (char.IsLetterOrDigit(source[j]) || source[j] == '_')) j--;
+            return source.Substring(j + 1, wordEnd - j) == "new";
         }
 
-        private static List<CompletionItem> GetMemberSuggestions(
-            int offset, ScriptSymbolIndex index, string? target, string prefix)
+        private static List<CompletionItem> GetClassNameSuggestions(ScriptSymbolIndex index, string prefix)
         {
             var results = new List<CompletionItem>();
-            if (string.IsNullOrEmpty(target)) return results;
-
-            string? className = target == "this"
-                ? index.EnclosingClassAt(offset)
-                : index.TryResolveDeclaredType(offset, target);
-
-            if (className == null && index.Classes.ContainsKey(target))
-                className = target; // 'ClassName.' direkt (unüblich, aber warum nicht abdecken)
-
-            if (className == null)
-            {
-                // Typ nicht bestimmbar (dynamische Typisierung - der
-                // Normalfall für nicht explizit typisierte Variablen) - als
-                // bestmöglicher Fallback Mitglieder ALLER bekannten Klassen
-                // anbieten, statt gar nichts vorzuschlagen.
-                foreach (var cls in index.Classes.Values)
-                    foreach (var m in cls.Members)
-                        if (m.Kind != MemberKind.Constructor && MatchesPrefix(m.Name, prefix))
-                            results.Add(ToItem(m, prefix, 0f));
-                return Dedupe(results);
-            }
-
-            foreach (var m in index.MembersOf(className))
-                if (m.Kind != MemberKind.Constructor && MatchesPrefix(m.Name, prefix))
-                    results.Add(ToItem(m, prefix, 0.25f));
-
+            foreach (var (name, cls) in index.Classes)
+                if (!cls.IsInterface && MatchesPrefix(name, prefix))
+                    results.Add(new CompletionItem(name, CompletionKind.ClassName, CompareKeywords(prefix, name)));
             return Dedupe(results);
+        }
+
+        /// <summary>Darf Code in der Klasse `fromClass` (null = außerhalb jeder
+        /// Klasse) auf `m` zugreifen? `private`: nur die deklarierende
+        /// Klasse, `protected`: auch ihre Ableitungen.</summary>
+        private static bool IsVisible(MemberInfo m, string? fromClass, ScriptSymbolIndex index) => m.Access switch
+        {
+            MemberAccess.Private => fromClass == m.Owner,
+            MemberAccess.Protected => fromClass != null && (fromClass == m.Owner || index.DerivesFrom(fromClass, m.Owner)),
+            _ => true,
+        };
+
+        private static bool IsListable(MemberInfo m) =>
+            m.Kind != MemberKind.Constructor && !m.Name.StartsWith("operator", StringComparison.Ordinal);
+
+        /// <summary>Vorschläge nach `Ausdruck.` - der Typ des Ausdrucks wird
+        /// hergeleitet (siehe ScriptSymbolIndex.ResolveReceiver) und dann NUR
+        /// dessen Mitglieder angeboten (inkl. geerbter, ohne nicht
+        /// zugreifbare `private`/`protected`, bei einer Klasse `Name.` nur
+        /// statische, bei einer Instanz nur nicht-statische). Nur wenn sich
+        /// der Typ gar nicht bestimmen lässt (dynamische Typisierung), fällt
+        /// das auf Mitglieder ALLER bekannten Klassen zurück.</summary>
+        private static List<CompletionItem> GetMemberSuggestions(
+            int offset, ScriptSymbolIndex index, int dotOffset, string prefix)
+        {
+            var results = new List<CompletionItem>();
+            var receiver = index.ResolveReceiver(dotOffset);
+            string? fromClass = index.EnclosingClassAt(offset);
+
+            switch (receiver.Kind)
+            {
+                case TypeKind.Enum:
+                    if (index.EnumMembers.TryGetValue(receiver.Name!, out var enumMembers))
+                        foreach (var name in enumMembers)
+                            if (MatchesPrefix(name, prefix))
+                                results.Add(new CompletionItem(name, CompletionKind.EnumMember, CompareKeywords(prefix, name, 0.3f), $"Enum {receiver.Name}"));
+                    return Dedupe(results);
+
+                case TypeKind.Instance:
+                case TypeKind.Static:
+                    foreach (var (m, depth) in index.MembersOfWithDepth(receiver.Name!))
+                    {
+                        if (!IsListable(m) || !MatchesPrefix(m.Name, prefix) || !IsVisible(m, fromClass, index)) continue;
+                        bool staticOk = receiver.Kind == TypeKind.Static ? m.IsStatic : (!m.IsStatic || receiver.ViaThis);
+                        if (!staticOk) continue;
+                        // Eigene Mitglieder vor geerbten, nähere Basis vor fernerer.
+                        float baseScore = Math.Max(0.1f, 0.3f - 0.05f * depth);
+                        results.Add(ToItem(m, prefix, baseScore, showOwner: depth > 0));
+                    }
+                    return Dedupe(results);
+
+                case TypeKind.Primitive:
+                case TypeKind.Array:
+                    return results; // einfache Werte/Arrays haben keine Klassen-Mitglieder
+
+                default:
+                    // Typ nicht bestimmbar - als bestmöglicher Fallback zugreifbare
+                    // Mitglieder ALLER bekannten Klassen anbieten (mit Klassenname
+                    // dahinter, damit man sieht, woher ein Vorschlag stammt),
+                    // statt gar nichts vorzuschlagen.
+                    foreach (var cls in index.Classes.Values)
+                        foreach (var m in cls.Members)
+                            if (IsListable(m) && MatchesPrefix(m.Name, prefix) && IsVisible(m, fromClass, index))
+                                results.Add(ToItem(m, prefix, cls.IsFromPrelude ? 0f : 0.05f, showOwner: true));
+                    return Dedupe(results);
+            }
         }
 
         private static List<CompletionItem> GetIdentifierSuggestions(int offset, ScriptSymbolIndex index, string prefix)
@@ -170,9 +215,9 @@ namespace fire.Editor
 
             string? enclosingClass = index.EnclosingClassAt(offset);
             if (enclosingClass != null)
-                foreach (var m in index.MembersOf(enclosingClass))
-                    if (m.Kind != MemberKind.Constructor && MatchesPrefix(m.Name, prefix))
-                        results.Add(ToItem(m, prefix, 0.1f));
+                foreach (var (m, depth) in index.MembersOfWithDepth(enclosingClass))
+                    if (IsListable(m) && MatchesPrefix(m.Name, prefix) && IsVisible(m, enclosingClass, index))
+                        results.Add(ToItem(m, prefix, Math.Max(0.05f, 0.15f - 0.03f * depth), showOwner: depth > 0));
 
             //foreach (var name in index.AllDeclaredNames)
             //    if (MatchesPrefix(name, prefix)) results.Add(new CompletionItem(name, CompletionKind.Variable, CompareKeywords(prefix, name)));
@@ -183,16 +228,35 @@ namespace fire.Editor
         private static bool MatchesPrefix(string candidate, string prefix) =>
             prefix.Length == 0 || candidate.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
 
-        private static CompletionItem ToItem(MemberInfo m, string prefix, float baseScore) => m.Kind switch
+        private static CompletionItem ToItem(MemberInfo m, string prefix, float baseScore, bool showOwner)
         {
-            MemberKind.Method => new CompletionItem(m.Name, CompletionKind.Method, CompareKeywords(prefix, m.Name, baseScore), $"{m.ParamCount} Parameter"),
-            MemberKind.Property => new CompletionItem(m.Name, CompletionKind.Property, CompareKeywords(prefix, m.Name, baseScore), "Property"),
-            _ => new CompletionItem(m.Name, CompletionKind.Field, CompareKeywords(prefix, m.Name, baseScore), "Feld"),
-        };
+            string type = m.TypeName != null ? m.TypeName + (m.TypeIsArray ? "[]" : "") : string.Empty;
+            string owner = showOwner ? $"  [{m.Owner}]" : string.Empty;
+            string modifiers = (m.IsStatic ? "static " : string.Empty) + m.Access switch
+            {
+                MemberAccess.Private => "private ",
+                MemberAccess.Protected => "protected ",
+                _ => string.Empty,
+            };
+
+            var kind = m.Kind switch
+            {
+                MemberKind.Method => CompletionKind.Method,
+                MemberKind.Property => CompletionKind.Property,
+                _ => CompletionKind.Field,
+            };
+            string detail = m.Kind switch
+            {
+                MemberKind.Method => $"{modifiers}({m.Signature}){(type.Length > 0 ? " → " + type : string.Empty)}{owner}",
+                MemberKind.Property => $"{modifiers}Property{(type.Length > 0 ? " : " + type : string.Empty)}{owner}",
+                _ => $"{modifiers}Feld{(type.Length > 0 ? " : " + type : string.Empty)}{owner}",
+            };
+            return new CompletionItem(m.Name, kind, CompareKeywords(prefix, m.Name, baseScore), detail);
+        }
 
         private static List<CompletionItem> Dedupe(List<CompletionItem> items) =>
             items.GroupBy(i => (i.Text, i.Kind))
-                 .Select(g => g.First())
+                 .Select(g => g.OrderByDescending(i => i.Score).First())
                  .OrderBy(i => i.Text, StringComparer.OrdinalIgnoreCase)
                  .ToList();
     }

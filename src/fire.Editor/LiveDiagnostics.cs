@@ -148,9 +148,6 @@ namespace fire.Editor
             return diagnostics.OrderBy(d => d.Line).ToList();
         }
 
-        private static readonly Regex ImportDirective =
-            new("^[ \\t]*#import[ \\t]+\"([^\"\\r\\n]+)\"", RegexOptions.Compiled | RegexOptions.Multiline);
-
         private static readonly Regex UnknownClassOrType =
             new(@"^(?:Unbekannte Klasse|Unbekannter Typ) '([^']+)'", RegexOptions.Compiled);
 
@@ -190,7 +187,7 @@ namespace fire.Editor
         {
             var importsElsewhere = otherProjectFiles
                 .Where(other => !string.IsNullOrWhiteSpace(other))
-                .SelectMany(other => ImportDirective.Matches(other).Select(m => m.Groups[1].Value))
+                .SelectMany(ImportedPreludes.FindImportNames)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 

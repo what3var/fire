@@ -71,8 +71,7 @@ dotnet run
 - **Sprung zu Definitionen** (Strg+Klick): auf eine Klasse springt zu deren
   `class`/`actor`-Deklaration, auf `x.Methode(...)`/`this.Methode(...)` zu
   deren Definition (Empfänger-Typ nach denselben Heuristiken wie die
-  Autovervollständigung bestimmt - siehe dortige Einschränkung: NUR `this`
-  und explizit typisierte Variablen/Parameter, keine echte Typinferenz),
+  Autovervollständigung bestimmt - siehe dortige Einschränkungen),
   auf eine `#include "datei"`-Zeile öffnet die referenzierte Datei. Wird
   das Ziel nicht im aktuellen Dokument gefunden, aber es gibt `#include`s,
   wird zusätzlich in JEDER eingebundenen Datei gesucht (braucht dafür einen
@@ -90,12 +89,24 @@ dotnet run
   zum Schließen. Bewusst TOKEN-basiert (`ScriptSymbolIndex`, über den echten
   Lexer) statt über den echten Parser/Resolver - der scheitert beim Live-
   Tippen zu oft genau an der Cursor-Stelle und würde dann gar nichts liefern.
-  Für `this.`/typisierte Variablen (`var x : Kreis`, `Kreis x`, typisierte
-  Parameter) werden die tatsächlichen Mitglieder der erkannten Klasse
-  vorgeschlagen (inkl. geerbter, soweit die Basisklasse im selben Dokument
-  bekannt ist); für alles andere (dynamische Typisierung - der Normalfall)
-  fällt es auf Mitglieder ALLER bekannten Klassen zurück, statt gar nichts
-  vorzuschlagen.
+  Nach `Ausdruck.` wird der TYP des Ausdrucks hergeleitet
+  (`ScriptSymbolIndex.ResolveReceiver`, Datei `ScriptSymbolIndex.Types.cs`)
+  und nur dessen Mitglieder angeboten: `new X(...)`, `this`/`base`,
+  Variablen/Parameter/Felder (auch ohne `this.`), Klassen-/Enum-Namen und
+  beliebige Ketten daraus (`a.B().c[0].`). Variablentypen kommen aus
+  `var x : T`, `T x`, typisierten Parametern, `foreach`, oder - bei
+  `var x = ausdruck`/`x = ausdruck` - aus dem Typ des Ausdrucks; bei
+  Mitgliedern aus dem deklarierten Typ, sonst bei Methoden aus den
+  `return`-Ausdrücken, bei Feldern aus `= new X()` bzw. `this.feld = ...`.
+  Angezeigt werden auch geerbte Mitglieder (Basisklasse UND Interfaces, mit
+  Klassenname dahinter; nähere Klassen ranken höher), `private`/`protected`
+  nur, wo sie zugreifbar sind, bei `Klasse.` nur `static`-, bei einer
+  Instanz nur Instanz-Mitglieder, bei `Enum.` die Enum-Werte, nach `new `
+  nur Klassen. Die Preludes von `#import "graphics"`/`"devices"` sind
+  bekannt (siehe `ImportedPreludes`). NUR wenn sich der Typ gar nicht
+  bestimmen lässt (dynamische Typisierung, z.B. `var x = irgendwas()` ohne
+  Rückgabetyp), fällt es auf Mitglieder ALLER bekannten Klassen zurück,
+  statt gar nichts vorzuschlagen (Klassen des Dokuments vor der Prelude).
 - Dafür wurden zwei kleine, rein additive Debug-Erweiterungen ins
   Kernprojekt eingebaut: eine Zeilennummern-Tabelle im `Chunk`
   (`MarkLine`/`GetLine`) und eine öffentliche Stepping-/Inspektions-API in
@@ -123,12 +134,13 @@ vollwertiges Debugger-/IDE-Feature-Set):
   als `(local N)`, globale Variablen als `(global N)` (kein Namens-Register
   für Top-Level-`var`-Deklarationen).
 - Die Autovervollständigung macht KEIN echtes Block-Scope-Tracking (eine
-  Variable aus einem bereits verlassenen Geschwister-Block wird ggf. noch
-  vorgeschlagen) und kann den Typ eines Ausdrucks nur in den häufigsten,
-  TEXTUELL erkennbaren Fällen bestimmen (`this`, explizit typisierte
-  Variablen/Parameter) - für alles andere (z.B. das Ergebnis eines
-  Methodenaufrufs) gibt es keine echte Typinferenz, das wäre bei einer
-  dynamisch typisierten Sprache ohnehin nicht immer möglich.
+  Variable aus einem bereits verlassenen Geschwister-Block der SELBEN
+  Funktion wird ggf. noch vorgeschlagen; Variablen anderer Funktionen sind
+  dagegen nicht sichtbar) und keine echte Typinferenz: Klammerausdrücke
+  `(a).`, Operator-Ergebnisse (`a + b`), Lambda-Aufrufe, Generics-
+  Substitution (`Box<Animal>.item` bleibt `T`) und die Elemente einer
+  `List` (dynamisch typisiert) sind nicht herleitbar - dort greift der
+  Fallback (siehe oben). Die Herleitung ist rekursiv, mit Tiefenlimit.
 - Die Cursor-Position wird beim Neu-Einfärben über (Absatz-Index, Zeichen-
   Offset INNERHALB dieses Absatzes) gesichert/wiederhergestellt, nicht über
   einen Gesamt-Dokument-Offset - WPFs `TextPointer.GetPositionAtOffset`
