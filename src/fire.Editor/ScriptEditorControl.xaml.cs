@@ -203,17 +203,31 @@ namespace fire.Editor
             _diagnosticsTimer.Start();
             _highlightTimer.Stop();
             _highlightTimer.Start();
+
+            // Läuft bei JEDER Textänderung, auch Löschen (Backspace/Entf) -
+            // TextEntered (siehe unten) feuert NUR bei tatsächlich
+            // eingefügtem Text, sieht Löschungen also gar nicht. Ein bereits
+            // offenes Popup hier EXPLIZIT neu berechnen und bei Bedarf
+            // schließen, statt uns auf AvalonEdits eigene interne "beim
+            // Weitertippen filtern"-Logik zu verlassen - genau DAS war
+            // vermutlich die Ursache dafür, dass die Liste oft weder
+            // zuverlässig aufging noch zuverlässig wieder zuging.
+            if (_completionWindow != null)
+                ShowOrUpdateCompletion(closeIfEmpty: true);
         }
 
         // -----------------------------------------------------------
         // Autovervollständigung (IntelliSense) - siehe ScriptSymbolIndex/
         // CompletionEngine für die eigentliche Logik, hier nur die UI-
-        // Anbindung an AvalonEdits CompletionWindow. Deutlich schlanker als
-        // die alte Popup/ListBox-Fassung: Tastatursteuerung (Pfeiltasten/
-        // Enter/Tab/Escape) im offenen Fenster übernimmt AvalonEdit
-        // vollständig selbst, genau wie das fortlaufende Eingrenzen der
-        // Liste beim Weitertippen (StartOffset/EndOffset tracken das
-        // automatisch) - hier wird nur noch der INITIALE Trigger gebraucht.
+        // Anbindung an AvalonEdits CompletionWindow. Tastatursteuerung
+        // (Pfeiltasten/Enter/Tab/Escape) im offenen Fenster übernimmt
+        // AvalonEdit vollständig selbst - das fortlaufende Eingrenzen der
+        // Liste beim Weitertippen dagegen NICHT verlässlich genug (siehe
+        // Editor_TextChanged), deshalb wird bei jeder Änderung explizit neu
+        // gerechnet: Editor_TextEntered öffnet (nur am Anfang eines
+        // Bezeichners bzw. nach '.'), Editor_TextChanged hält ein bereits
+        // offenes Popup synchron zum aktuellen Text und schließt es, sobald
+        // nichts mehr passt.
         // -----------------------------------------------------------
 
         private void Editor_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -229,7 +243,11 @@ namespace fire.Editor
 
         private void Editor_TextEntered(object? sender, TextCompositionEventArgs e)
         {
-            if (_completionWindow != null) return; // schon offen - AvalonEdit filtert selbst weiter
+            // Ein bereits offenes Popup wird von Editor_TextChanged
+            // aktualisiert (das feuert für JEDE Änderung, auch diese
+            // Einfügung hier - doppeltes Berechnen für dasselbe Zeichen wird
+            // dadurch vermieden).
+            if (_completionWindow != null) return;
             if (string.IsNullOrEmpty(e.Text)) return;
 
             char c = e.Text[^1];
@@ -247,6 +265,7 @@ namespace fire.Editor
                 {
                     char prev = Editor.Document.GetCharAt(before);
                     if (char.IsLetterOrDigit(prev) || prev == '_') return;
+
                 }
             }
 

@@ -1,0 +1,53 @@
+#import "graphics"
+var fb = new Framebuffer(640, 480)
+
+print("Framebuffer erstellt, id=" + fb.id)
+print("Breite: " + fb.Width() + ", Hoehe: " + fb.Height())
+
+var con = new Console(fb)
+print("Console erstellt, id=" + con.id)
+
+class MyWin : Window
+{
+    public bool closing = false;
+    construct(Framebuffer buffer, string caption) : base(buffer, caption)
+    {
+        
+    }
+}
+
+var win = new MyWin(fb, "Bridge-Test")
+print("Fenster erstellt, id=" + win.id)
+
+win.RegisterMouseMove(func (x,y,b) on win => {print($"x: {x} y: {y} b: {b}")})
+win.RegisterCloseRequest(func () on win => {this.closing = true;})
+
+con.SetColor(0xFFFFFFFF, 0)
+con.Clear()
+con.Locate(0, 0)
+con.Print("Hallo von der Bruecke!")
+con.SetPixel(5, 5, 0xFF0000FF)
+print("Pixel(5,5) = " + con.GetPixel(5, 5))
+
+fb.WriteByte(0, 123)
+print("Byte 0 = " + fb.ReadByte(0))
+
+int i = 0;
+
+var stillOpen = win.Tick()
+print("Fenster nach einem Tick offen: " + stillOpen)
+
+
+while(!win.closing) {
+    i++
+    con.SetColor(i, 0)
+    con.Print("Test " + i);
+    win.Tick()
+}
+
+try {
+    var badFb = new Framebuffer(0, 0)
+    print("FEHLER: haette werfen sollen")
+} catch (HandleUnavailableException e) {
+    print("Erwarteter Fehler gefangen: " + e.message)
+}
