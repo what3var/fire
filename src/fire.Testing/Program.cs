@@ -6778,6 +6778,153 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     Console.WriteLine(lifeFailures == 0 ? "Alle Kopie/leave-Pruefungen bestanden." : $"FEHLER: {lifeFailures} Pruefung(en) fehlgeschlagen.");
 }
 
+// ---------------------------------------------------------------------------
+// Packer: eigenstaendige Datei (Bundle + Payload), Bridges nur bei Bedarf, Lader statt Costura
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Packer / Payload / Lader ===");
+    int packFailures = 0;
+    void PackCheck(bool ok, string what)
+    {
+        if (!ok) packFailures++;
+        Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
+    }
+
+    var baseDir = AppContext.BaseDirectory;
+
+    // 1) Pack-Plan: je Import nur die noetigen DLLs, nichts Unaufgeloestes.
+    PackagePlan Plan(params string[] imports) => PackagePlan.Create(imports, baseDir);
+    var planPrint = Plan(NativeImports.Print);
+    PackCheck(planPrint.Assemblies.ContainsKey("fire") && planPrint.Assemblies.ContainsKey("MemoryPack.Core"), "Plan: Kern (fire, MemoryPack) ist immer dabei");
+    PackCheck(!planPrint.Assemblies.Keys.Any(n => n.StartsWith("fire.Terminal") || n.StartsWith("fire.Device") || n.StartsWith("fire.IO") || n == "SDL3-CS" || n == "System.IO.Ports") && planPrint.Natives.Count == 0,
+        "Plan: ohne Import keine Bridge, keine nativen Bibliotheken");
+    var planIo = Plan(NativeImports.Print, NativeImports.IO);
+    PackCheck(planIo.Assemblies.ContainsKey("fire.IO.Bridge") && !planIo.Assemblies.ContainsKey("fire.Terminal.Bridge") && !planIo.Assemblies.ContainsKey("fire.Device.Bridge"),
+        "Plan: io bindet nur die IO-Bridge ein");
+    var planGfx = Plan(NativeImports.Print, NativeImports.Graphics);
+    PackCheck(new[] { "fire.Terminal.Bridge", "fire.Terminal", "fire.Terminal.Windows", "fire.Terminal.Sdl", "SDL3-CS" }.All(planGfx.Assemblies.ContainsKey) && !planGfx.Assemblies.ContainsKey("fire.IO.Bridge"),
+        "Plan: graphics bindet Terminal-Bridge samt Terminal/Windows/SDL ein (Abhaengigkeiten aus den Metadaten)");
+    var planDev = Plan(NativeImports.Print, NativeImports.Devices);
+    PackCheck(new[] { "fire.Device.Bridge", "fire.Device.Manager", "System.IO.Ports" }.All(planDev.Assemblies.ContainsKey) && !planDev.Assemblies.ContainsKey("SDL3-CS"),
+        "Plan: devices bindet Device-Bridge, Manager und System.IO.Ports ein");
+    PackCheck(planGfx.Unresolved.Count == 0 && planDev.Unresolved.Count == 0 && planIo.Unresolved.Count == 0 && planPrint.Unresolved.Count == 0,
+        "Plan: alle Verweise aufloesbar (Datei neben dem Compiler oder Teil des Frameworks)");
+    PackCheck(planGfx.Natives.Count == 0 || planGfx.Natives.ContainsKey("SDL3.dll") || planGfx.Natives.ContainsKey("libSDL3.so.0") || planGfx.Natives.ContainsKey("libSDL3.dylib"),
+        "Plan: graphics bringt SDL3 mit, wo es die Plattform gibt");
+    bool unknownImportRejected = false;
+    try { Plan("gibtsnicht"); } catch (InvalidOperationException) { unknownImportRejected = true; }
+    PackCheck(unknownImportRejected, "Plan: unbekannter Import wird abgelehnt statt still ignoriert");
+
+    // 2) Payload-Format: Rundlauf, Kompression, Integritaet, keine Marker-Suche.
+    var tmpDir = Path.Combine(Path.GetTempPath(), "fire-packtest-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(tmpDir);
+    try
+    {
+        var plFile = Path.Combine(tmpDir, "pl.bin");
+        var rnd = new Random(42);
+        var incompressible = new byte[5000]; rnd.NextBytes(incompressible);
+        var compressible = Enumerable.Repeat((byte)7, 20000).ToArray();
+        // Die alten Marker-Bytes (DA 1D) mitten im Inhalt duerfen nichts stoeren.
+        var withMarker = new byte[] { 1, 2, 0xDA, 0x1D, 3, 4, 0xDA, 0x1D };
+        using (var fs = new FileStream(plFile, FileMode.Create))
+        {
+            fs.Write(new byte[] { 0xDA, 0x1D, 9, 9, 0xDA, 0x1D });
+            PayloadFile.Append(fs, new[]
+            {
+                (PayloadKind.Program, "program", withMarker),
+                (PayloadKind.Assembly, "A", compressible),
+                (PayloadKind.Native, "n.dll", incompressible),
+            });
+        }
+        var reader = PayloadFile.Open(plFile);
+        PackCheck(reader != null && reader.Entries.Count == 3, "Payload: Index wird am Dateiende gefunden");
+        if (reader != null)
+        {
+            PackCheck(reader.Read(reader.Find(PayloadKind.Program, "program")!)!.SequenceEqual(withMarker), "Payload: Inhalt mit Marker-Bytes bleibt unversehrt");
+            var eA = reader.Find(PayloadKind.Assembly, "a")!;
+            PackCheck(eA.Compressed && eA.StoredLength < eA.RawLength / 10 && reader.Read(eA)!.SequenceEqual(compressible), "Payload: Brotli packt Kompressibles, Rundlauf stimmt");
+            var eN = reader.Find(PayloadKind.Native, "n.dll")!;
+            PackCheck(!eN.Compressed && reader.Read(eN)!.SequenceEqual(incompressible), "Payload: Unkomprimierbares wird roh gespeichert");
+
+            // Ein geflipptes Byte im gespeicherten Eintrag muss auffallen.
+            var bytes = File.ReadAllBytes(plFile);
+            bytes[(int)eN.Offset + 10] ^= 0xFF;
+            var badFile = Path.Combine(tmpDir, "bad.bin");
+            File.WriteAllBytes(badFile, bytes);
+            var badReader = PayloadFile.Open(badFile)!;
+            PackCheck(badReader.Read(badReader.Find(PayloadKind.Native, "n.dll")!) == null, "Payload: beschaedigter Eintrag wird erkannt (Pruefsumme)");
+        }
+        var plain = Path.Combine(tmpDir, "plain.bin");
+        File.WriteAllBytes(plain, new byte[1000]);
+        PackCheck(PayloadFile.Open(plain) == null, "Payload: Datei ohne Payload liefert null");
+
+        // 3) Lader: native Bibliothek wird aus dem Payload entpackt und geladen (Linux: die .so der Ports-Bibliothek
+        //    unter fremdem Namen, damit sie nicht ueber die normale Suche gefunden wird).
+        if (OperatingSystem.IsLinux())
+        {
+            var so = Directory.GetFiles(Path.Combine(baseDir, "runtimes", "linux-x64", "native"), "libSystem.IO.Ports.Native.so").FirstOrDefault();
+            if (so != null && System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64)
+            {
+                var loaderFile = Path.Combine(tmpDir, "loader.bin");
+                using (var fs = new FileStream(loaderFile, FileMode.Create))
+                    PayloadFile.Append(fs, new[] { (PayloadKind.Native, "libfiretestnative.so", File.ReadAllBytes(so)) });
+                PackCheck(PayloadLoader.Install(loaderFile), "Lader: Payload der eigenen Datei wird erkannt");
+                string result;
+                try { PackerNativeProbe.Call(); result = "geladen?"; }
+                catch (EntryPointNotFoundException) { result = "geladen"; }
+                catch (DllNotFoundException) { result = "nicht gefunden"; }
+                PackCheck(result == "geladen", "Lader: native Bibliothek wird aus dem Payload entpackt und gefunden");
+            }
+        }
+
+        // 4) Ende-zu-Ende: eigenstaendige Datei packen, AUSSERHALB des Compiler-Ordners starten.
+        var stubName = OperatingSystem.IsWindows() ? "fire.Runtime.exe" : "fire.Runtime";
+        if (File.Exists(Path.Combine(baseDir, stubName)))
+        {
+            string RunPacked(string source, string name, out long size, out PackagePlan? plan)
+            {
+                var exe = Path.Combine(tmpDir, name + (OperatingSystem.IsWindows() ? ".exe" : ""));
+                var linked = new Linker().CompileAndLink(new[] { source }, null, exe);
+                plan = PackagePlan.Create(linked.NativeImports, baseDir);
+                size = new FileInfo(exe).Length;
+                var psi = new System.Diagnostics.ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = tmpDir };
+                using var proc = System.Diagnostics.Process.Start(psi)!;
+                var output = proc.StandardOutput.ReadToEnd();
+                var error = proc.StandardError.ReadToEnd();
+                proc.WaitForExit(20000);
+                return proc.ExitCode == 0 ? output.Replace("\r\n", "\n") : $"EXIT {proc.ExitCode}: {output}{error}";
+            }
+
+            var outPrint = RunPacked("print(\"hallo\")\nprint(\"welt\")", "p_print", out var sizePrint, out _);
+            PackCheck(outPrint == "hallo\nwelt\n", $"Ende-zu-Ende: gepackte Datei laeuft allein (ohne DLLs daneben), Ausgabe: {outPrint.Trim()}");
+            var outIo = RunPacked("#import \"io\"\nIO.Stdio.WriteLine(\"io ok\")", "p_io", out var sizeIo, out _);
+            PackCheck(outIo == "io ok\n", $"Ende-zu-Ende: IO-Bridge wird zur Laufzeit aus der eigenen Datei geladen, Ausgabe: {outIo.Trim()}");
+            PackCheck(sizeIo > sizePrint, $"Groesse: mit io ({sizeIo} B) groesser als ohne Bridge ({sizePrint} B)");
+            var gfxSize = PackProgramSize("#import \"graphics\"\nprint(\"x\")");
+            PackCheck(gfxSize > sizeIo, $"Groesse: graphics ({gfxSize} B) ist die groesste Variante, print ({sizePrint} B) die kleinste");
+            // Ohne Payload (nackte Runtime) gibt es eine klare Meldung statt eines Absturzes.
+            var bare = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(baseDir, stubName)) { RedirectStandardError = true, RedirectStandardOutput = true })!;
+            var bareErr = bare.StandardError.ReadToEnd(); bare.WaitForExit(20000);
+            PackCheck(bare.ExitCode == 1 && bareErr.Contains("Payload"), "Ende-zu-Ende: nackte Runtime ohne Payload meldet das verstaendlich");
+
+            long PackProgramSize(string source)
+            {
+                var exe = Path.Combine(tmpDir, "size_probe" + (OperatingSystem.IsWindows() ? ".exe" : ""));
+                new Linker().CompileAndLink(new[] { source }, null, exe);
+                return new FileInfo(exe).Length;
+            }
+        }
+        else Console.WriteLine($"(uebersprungen: {stubName} liegt nicht im Testordner)");
+    }
+    finally
+    {
+        try { Directory.Delete(tmpDir, true); } catch (IOException) { }
+    }
+
+    Console.WriteLine(packFailures == 0 ? "Alle Packer-Pruefungen bestanden." : $"FEHLER: {packFailures} Packer-Pruefung(en) fehlgeschlagen.");
+}
+
 static int CountOccurrences(string haystack, string needle)
 {
     int count = 0, idx = 0;
@@ -6787,4 +6934,10 @@ static int CountOccurrences(string haystack, string needle)
         idx += needle.Length;
     }
     return count;
+}
+
+static class PackerNativeProbe
+{
+    [System.Runtime.InteropServices.DllImport("libfiretestnative")] private static extern int Nonexistent();
+    public static int Call() => Nonexistent();
 }

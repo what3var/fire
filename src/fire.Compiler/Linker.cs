@@ -276,21 +276,28 @@ namespace fire.Compiler
 
             var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource);
 
-            var outdir = Path.GetDirectoryName(Environment.ProcessPath);
-
-            if (!string.IsNullOrEmpty(outname) && !string.IsNullOrEmpty(outdir))
+            if (!string.IsNullOrEmpty(outname))
             {
-                var tempfile = Path.Combine(outdir, "tempout.a");
-                Packer.PackProgram(linkedProgram, tempfile);
-
+                // Icon und Versionsinfo gehören in den apphost, BEVOR er zum Bundle wird (siehe Packer.PackProgram).
                 var verInfo = assemblyInfo.ToVersionInfo();
+                var tempfile = outname + ".tmp";
+                try
+                {
+                    Packer.PackProgram(linkedProgram, tempfile, apphost =>
+                    {
+                        if (!OperatingSystem.IsWindows()) return; // PeResourceEditor nutzt Win32-APIs
 
-                PeResourceEditor.SetVersionInfo(tempfile, verInfo);
+                        PeResourceEditor.SetVersionInfo(apphost, verInfo);
 
-                if (File.Exists(assemblyInfo.IconPath))
-                    PeResourceEditor.SetIcon(tempfile, assemblyInfo.IconPath);
-
-                File.Copy(tempfile, outname, true);
+                        if (File.Exists(assemblyInfo.IconPath))
+                            PeResourceEditor.SetIcon(apphost, assemblyInfo.IconPath);
+                    });
+                    File.Move(tempfile, outname, true);
+                }
+                finally
+                {
+                    if (File.Exists(tempfile)) File.Delete(tempfile);
+                }
             }
             return linkedProgram;
         }

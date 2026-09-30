@@ -1510,3 +1510,38 @@ frei (`Scope.ReleaseWhere`; Globals-Schnappschuss und `taking`-Kopien sind Kopie
 (`UnwindForShutdown(destroyGlobalScope: true)`), `terminate` und die Abwicklung nach unbehandelter Exception nicht. `VM.DestroyGlobalsAtEnd = false` schaltet es für Hosts ab, die die
 Objekte nach dem Lauf noch verwenden (die Thread-Tests tun das); im Einzelschritt (`StepInstruction`) wird ohne Warten freigegeben. Die IO-Destruktoren (`NativeStream`, `TextReader`,
 `TextWriter`) verschlucken IO-Fehler, weil ein Destruktor nie werfen soll.
+
+## 30. Packer: eigenständige Datei, Bridges nur bei Bedarf, eigener Lader (kein Costura/Fody mehr)
+
+**Ergebnis.** `Linker.CompileAndLink(..., outname)` erzeugt EINE Datei, die ohne daneben liegende DLLs läuft. Sie besteht aus
+1. dem **Start-Stück**: `fire.Runtime.exe` (apphost) + `fire.Runtime.dll` + `fire.Runtime.runtimeconfig.json` als .NET-Single-File-Bundle (Format v6, `BundleWriter`; dasselbe Layout wie
+   `dotnet publish -p:PublishSingleFile=true` für framework-abhängige Apps, selbst geschrieben, damit der Compiler kein SDK braucht). Mehr braucht der .NET-Host nicht; der Host liest nur ab dem im apphost
+   eingetragenen Header-Offset, Daten dahinter stören nicht. Es läuft weiterhin eine installierte .NET-8-Runtime vor (framework-abhängig).
+2. dem **Payload** dahinter (`PayloadFile`): Programm (MemoryPack), Kern (`fire.dll`, `MemoryPack.Core`) und - NUR bei entsprechendem `#import` - die Bridge-DLLs samt Abhängigkeiten und nativen Bibliotheken. Jeder
+   Eintrag ist einzeln Brotli-gepackt (nur wenn es etwas bringt) und trägt eine SHA-256-Prüfsumme. Layout: `[Einträge][Index][Fuß: int64 Index-Offset, int32 Index-Länge, "FIREPAK1"]` - gelesen wird über den
+   Fuß, die frühere Marker-Suche (`DA 1D`) gibt es nicht mehr.
+
+**Welche DLLs.** `PackagePlan.Create(nativeImports, baseDir)`: Kern immer; je Import die Einstiegs-Assemblies (`graphics`: `fire.Terminal.Bridge`/`.Windows`/`.Sdl` + natives SDL3; `devices`: `fire.Device.Bridge`/
+`fire.Device.Manager` (+ `libSystem.IO.Ports.Native` außerhalb von Windows); `io`: `fire.IO.Bridge`; `print`: nichts). Der Rest folgt aus den Assembly-Verweisen der DLLs (System.Reflection.Metadata): alles, was neben
+dem Compiler liegt und nicht zum .NET-Framework gehört, kommt mit. Plattform-Unterordner (`runtimes/win/lib/...`, `runtimes/unix/lib/...`) haben Vorrang vor dem Hauptordner (System.IO.Ports liefert dort
+nur eine Attrappe). `PackagePlan.Unresolved` (Verweis ohne Datei und nicht im Framework) lässt `Packer.PackProgram` mit einer Fehlermeldung abbrechen statt eine kaputte Datei zu erzeugen. Native Bibliotheken
+werden nur für die Plattform des Compilers eingebunden (passend zum apphost, den er mitbringt).
+
+**Laden zur Laufzeit.** `Program.cs` ruft nur `Bootstrap.Start()`: `PayloadLoader.Install()` öffnet den Payload der eigenen Datei (`Environment.ProcessPath`) und hängt `AssemblyLoadContext.Default.Resolving`
+(verwaltete DLLs, `LoadFromStream`) und `ResolvingUnmanagedDll` (native Bibliotheken) ein; erst danach läuft `Bootstrap.Run` (`[NoInlining]`), der als Erstes `fire.dll` braucht. Die Ereignisse feuern erst,
+wenn der Standard-Kontext eine Assembly nicht findet, also genau beim ersten echten Gebrauch - eine nicht eingebundene Bridge wird nie angefasst. Native DLLs (Windows kann keine aus dem Speicher laden) werden einmal nach
+`%TEMP%/fire-native/<Prüfsumme>/` geschrieben (über eine Zwischendatei + `File.Move`, also auch bei gleichzeitigen Starts sicher) und von dort geladen; spätere Starts nutzen die Kopie.
+
+**Regel für `fire.Runtime`.** Der JIT löst einen Typ schon beim Übersetzen einer Methode auf, die ihn in Signatur, lokaler Variable oder Aufruf erwähnt. Deshalb steht jeder Zugriff auf Bridge-Typen in
+`Session.RegisterGraphics/RegisterDevices/RegisterIo` (`[MethodImpl(NoInlining)]`, nur betreten wenn der Import da ist); `Session` selbst hat keine Bridge-Typen in Feldern/Properties/Parametern (die früheren
+Properties `WindowManager`/`FramebufferManager`/`ConsoleManager` und die Parameter `ioPolicy`/`ioStdio` von `Session.Build` sind entfallen - Hosts mit eigener Policy nutzen `fire.Compiler.RuntimeSession`). Ebenso
+darf `Main` keinen Typ aus `fire.dll` erwähnen. Neue Bridge = Eintrag in `PackagePlan.Imports` + eigene `Register...`-Methode.
+
+**Icon/Version.** `PeResourceEditor` ändert die PE-Ressourcen und verschiebt damit Dateiinhalt: das geschieht jetzt auf einer Kopie des apphost VOR dem Bündeln (`PackProgram(..., customizeApphost)`), sonst wäre
+der Header-Offset des Bundles ungültig. Geschrieben wird erst in `<outname>.tmp`, dann umbenannt. Die Runtime liest ihr Programm aus der eigenen Datei (früher hart `tempout.exe` neben der Runtime).
+
+**Größen (Linux-Build, Richtwerte).** Nur `print` ~300 KB, `io` ~320 KB, `devices` ~350 KB, `graphics` ~700 KB (Windows zusätzlich komprimiertes SDL3.dll). Noch kleiner ginge es, wenn auch die VM (`fire.Runtime.dll`,
+~80-100 KB, im Bundle unkomprimiert) in den Payload wanderte und das Start-Stück nur aus einer winzigen Bootstrap-Assembly bestünde.
+
+**Tests.** Suite-Block "Packer / Payload / Lader": Plan je Import, Payload-Rundlauf inkl. Marker-Bytes im Inhalt, Kompression, Prüfsummenfehler, nativer Lader (Linux), Ende-zu-Ende (packen, außerhalb des
+Compiler-Ordners starten: `print`, `io`; Größenreihenfolge; nackte Runtime meldet fehlenden Payload).

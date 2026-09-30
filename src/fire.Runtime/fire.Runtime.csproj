@@ -11,12 +11,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Costura.Fody" Version="6.2.0">
-      <PrivateAssets>all</PrivateAssets>
-    </PackageReference>
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\fire.Device.Bridge\fire.Device.Bridge.csproj" />
     <ProjectReference Include="..\fire.IO.Bridge\fire.IO.Bridge.csproj" />
     <ProjectReference Include="..\fire.Terminal.Bridge\fire.Terminal.Bridge.csproj" />
