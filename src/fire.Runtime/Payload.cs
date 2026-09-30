@@ -59,13 +59,14 @@ namespace fire.Runtime
 
         /// <summary>Hängt die Einträge an das Ende von `stream` an (Position = Ende der ausführbaren Datei) und
         /// schreibt Index und Fuß.</summary>
-        public static void Append(Stream stream, IEnumerable<(PayloadKind Kind, string Name, byte[] Data)> items)
+        public static void Append(Stream stream, IEnumerable<(PayloadKind Kind, string Name, byte[] Data)> items,
+            Func<PayloadKind, byte[], byte[]>? compress = null)
         {
             stream.Seek(0, SeekOrigin.End);
             var entries = new List<PayloadEntry>();
             foreach (var (kind, name, data) in items)
             {
-                var packed = Compress(data);
+                var packed = compress != null ? compress(kind, data) : Compress(data, CompressionLevel.Optimal);
                 bool compressed = packed.Length < data.Length;
                 var stored = compressed ? packed : data;
                 entries.Add(new PayloadEntry
@@ -103,10 +104,13 @@ namespace fire.Runtime
             }
         }
 
-        private static byte[] Compress(byte[] data)
+        /// <summary>Brotli-Packen. `Optimal` braucht für eine DLL wenige Millisekunden, `SmallestSize` (Qualität 11) dagegen
+        /// Sekunden (SDL3-CS.dll: ~3 s statt ~40 ms) für nur etwa 15-20 % weniger Größe - deshalb Vorgabe `Optimal`; der
+        /// Packer nutzt `SmallestSize` nur zusammen mit einem Cache (siehe Packer.CompressCached).</summary>
+        public static byte[] Compress(byte[] data, CompressionLevel level)
         {
             using var ms = new MemoryStream();
-            using (var br = new BrotliStream(ms, CompressionLevel.SmallestSize, leaveOpen: true))
+            using (var br = new BrotliStream(ms, level, leaveOpen: true))
                 br.Write(data, 0, data.Length);
             return ms.ToArray();
         }

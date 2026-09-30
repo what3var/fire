@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 
 namespace fire.Runtime
@@ -77,10 +78,46 @@ namespace fire.Runtime
             foreach (var (name, path) in plan.Natives)
                 items.Add((PayloadKind.Native, name, File.ReadAllBytes(path)));
 
+            // Das Programm ist klein und ändert sich bei jedem Build: schnell packen. Die DLLs sind bei jedem Build dieselben:
+            // einmal mit höchster Stufe packen und danach aus dem Cache nehmen.
             using (var fs = new FileStream(outName, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-                PayloadFile.Append(fs, items);
+                PayloadFile.Append(fs, items, (kind, data) =>
+                    kind == PayloadKind.Program
+                        ? PayloadFile.Compress(data, CompressionLevel.Optimal)
+                        : CompressCached(data));
 
             return plan;
+        }
+
+        /// <summary>Packt `data` mit der höchsten Brotli-Stufe (mehrere Sekunden für eine große DLL) und merkt sich das
+        /// Ergebnis unter seiner SHA-256-Prüfsumme in einem Cache-Ordner: jeder weitere Build mit derselben DLL liest nur
+        /// noch die fertige Datei. Geht der Cache nicht (kein Schreibrecht), wird schnell (`Optimal`) gepackt, statt jeden
+        /// Build Sekunden zu verlieren.</summary>
+        private static byte[] CompressCached(byte[] data)
+        {
+            string file;
+            try
+            {
+                var dir = Path.Combine(Path.GetTempPath(), "fire-pack-cache");
+                Directory.CreateDirectory(dir);
+                file = Path.Combine(dir, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data)) + ".br");
+                if (File.Exists(file))
+                    return File.ReadAllBytes(file);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return PayloadFile.Compress(data, CompressionLevel.Optimal);
+            }
+
+            var packed = PayloadFile.Compress(data, CompressionLevel.SmallestSize);
+            try
+            {
+                var tmp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                File.WriteAllBytes(tmp, packed);
+                File.Move(tmp, file, overwrite: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            return packed;
         }
 
         /// <summary>Liest das Programm aus einer gepackten Datei (für Tests/Werkzeuge; die Runtime selbst nutzt den

@@ -1518,7 +1518,9 @@ Objekte nach dem Lauf noch verwenden (die Thread-Tests tun das); im Einzelschrit
    `dotnet publish -p:PublishSingleFile=true` für framework-abhängige Apps, selbst geschrieben, damit der Compiler kein SDK braucht). Mehr braucht der .NET-Host nicht; der Host liest nur ab dem im apphost
    eingetragenen Header-Offset, Daten dahinter stören nicht. Es läuft weiterhin eine installierte .NET-8-Runtime vor (framework-abhängig).
 2. dem **Payload** dahinter (`PayloadFile`): Programm (MemoryPack), Kern (`fire.dll`, `MemoryPack.Core`) und - NUR bei entsprechendem `#import` - die Bridge-DLLs samt Abhängigkeiten und nativen Bibliotheken. Jeder
-   Eintrag ist einzeln Brotli-gepackt (nur wenn es etwas bringt) und trägt eine SHA-256-Prüfsumme. Layout: `[Einträge][Index][Fuß: int64 Index-Offset, int32 Index-Länge, "FIREPAK1"]` - gelesen wird über den
+   Eintrag ist einzeln Brotli-gepackt (nur wenn es etwas bringt) und trägt eine SHA-256-Prüfsumme. Stufe: das Programm mit `Optimal` (Millisekunden), die DLLs mit `SmallestSize`
+   (Qualität 11, für SDL3-CS.dll ~3 s) - aber nur einmal: das Ergebnis liegt im Cache `%TEMP%/fire-pack-cache/<SHA-256 der DLL>.br`, jeder weitere Build liest es nur (Build ~0,3 s statt 1,6-5 s). Ohne Schreibrecht
+   auf den Cache wird schnell (`Optimal`) gepackt. Layout: `[Einträge][Index][Fuß: int64 Index-Offset, int32 Index-Länge, "FIREPAK1"]` - gelesen wird über den
    Fuß, die frühere Marker-Suche (`DA 1D`) gibt es nicht mehr.
 
 **Welche DLLs.** `PackagePlan.Create(nativeImports, baseDir)`: Kern immer; je Import die Einstiegs-Assemblies (`graphics`: `fire.Terminal.Bridge`/`.Windows`/`.Sdl` + natives SDL3; `devices`: `fire.Device.Bridge`/
