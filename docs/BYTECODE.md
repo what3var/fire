@@ -1545,3 +1545,10 @@ der Header-Offset des Bundles ungültig. Geschrieben wird erst in `<outname>.tmp
 
 **Tests.** Suite-Block "Packer / Payload / Lader": Plan je Import, Payload-Rundlauf inkl. Marker-Bytes im Inhalt, Kompression, Prüfsummenfehler, nativer Lader (Linux), Ende-zu-Ende (packen, außerhalb des
 Compiler-Ordners starten: `print`, `io`; Größenreihenfolge; nackte Runtime meldet fehlenden Payload).
+
+**Nachtrag: `leave`/`terminate` enden wie das normale Programmende, der Aufrufer hält sofort.** `leave`/`terminate` rufen `ShutdownSelfNow()`: die eigene VM geht unabhängig vom Signalzähler
+sofort in den Halt (auch wenn `terminate` schon von einem anderen Thread gesetzt war). Die Abwicklung (`CheckShutdownSignals` -> `UnwindForShutdown`) gibt den globalen Scope nicht mehr selbst frei, sondern
+setzt `_shutdownReleasePending`; am Halt (`Run`, im Einzelschritt `StepInstruction`) läuft dann wie beim normalen Ende `ReleaseGlobalScopeAtEnd` - das Hauptprogramm wartet also auch nach `leave`/`terminate` auf alle
+Fire-Threads, und jeder Fire-Thread zerstört vorher seine eigenen Objekte (nur nach einer unbehandelten Exception bleibt der globale Scope stehen). Der Stopp-Zustand (`_stopExecutionRequested`) wird dafür kurz aufgehoben
+(`ReleaseGlobalScopeAfterStop`), weil `RunDestructor` in ihm nichts mehr ausführt. In einer VERSCHACHTELTEN Ausführung (Destruktor, Property, Operator, Callback) hält die VM sofort an und merkt sich
+`_shutdownDeferred`; `FinishDeferredShutdown()` (am Halt in `Run`, in `StepInstruction`, in `CallLambdaEntry`) wickelt dann nach, sobald `_nestedDepth` wieder 0 ist.

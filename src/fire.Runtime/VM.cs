@@ -312,6 +312,15 @@ namespace fire.Runtime
         /// `_terminateRequested`, wo CheckShutdownSignals selbst den Unwind
         /// noch durchführt.</summary>
         private bool _stopExecutionRequested;
+
+        /// <summary>`leave`/`terminate` hat diese VM beendet: am Halt wird wie beim normalen Programmende der globale Scope
+        /// freigegeben (das Hauptprogramm wartet vorher auf alle Fire-Threads) - anders als nach einer unbehandelten Exception.</summary>
+        private bool _shutdownReleasePending;
+
+        /// <summary>`leave`/`terminate` wurde in einer VERSCHACHTELTEN Ausführung (Destruktor, Property, Operator, Callback)
+        /// aufgerufen: die VM hält dort sofort an (Halt), das geordnete Abwickeln (finally, Destruktoren) holt
+        /// <see cref="FinishDeferredShutdown"/> nach, sobald die Verschachtelung zurück ist.</summary>
+        private bool _shutdownDeferred;
         // (Nur noch in den VERSCHACHTELTEN Schleifen und im Einzelschritt geprüft - Run() liest nach StopExecution() das Halt.)
 
         public VM(
@@ -432,6 +441,39 @@ namespace fire.Runtime
             return false;
         }
 
+        /// <summary>Der `leave`-/`terminate`-Aufruf der eigenen VM: sie geht SOFORT in den Halt, unabhängig davon, ob das Signal
+        /// schon länger anliegt (z.B. `terminate` ist bereits von einem anderen Thread ausgelöst worden - der Aufrufer darf trotzdem
+        /// keine weitere Anweisung ausführen). Der Opcode hat keine Operanden, `_ip - 1` ist also die Instruktionsgrenze.</summary>
+        private void ShutdownSelfNow()
+        {
+            _seenEpoch = System.Threading.Volatile.Read(ref s_signalEpoch);
+            if (_nestedDepth > 0)
+            {
+                // Mitten in einem Destruktor/einer Property/einem Operator/Callback: hier nur anhalten (die Aufrufer kennen das
+                // vom Stopp durch eine unbehandelte Exception), das Abwickeln folgt in FinishDeferredShutdown.
+                _shutdownDeferred = true;
+                StopExecution();
+                return;
+            }
+            _ip--;
+            CheckShutdownSignals();
+            StopExecution();
+        }
+
+        /// <summary>Holt das Abwickeln eines in verschachtelter Ausführung ausgelösten `leave`/`terminate` nach (siehe
+        /// <see cref="_shutdownDeferred"/>). true = es wurde etwas getan, die VM steht danach wieder auf dem Halt-Chunk.</summary>
+        private bool FinishDeferredShutdown()
+        {
+            if (!_shutdownDeferred || _nestedDepth > 0) return false;
+            _shutdownDeferred = false;
+            _stopExecutionRequested = false; // die verschachtelten Läufe beim Abwickeln (finally, Destruktoren) müssen wieder laufen dürfen
+            _currentChunk = StopChunk;
+            _ip = 0;
+            CheckShutdownSignals();
+            StopExecution();
+            return true;
+        }
+
         public void Run()
         {
             _currentThreadVm = this;
@@ -442,8 +484,11 @@ namespace fire.Runtime
                 var op = (OpCode)ReadByte();
                 if (op == OpCode.Halt)
                 {
-                    // Normales Ende (nicht der Halt-Chunk eines Stopps, siehe StopExecution).
-                    if (!_stopExecutionRequested) ReleaseGlobalScopeAtEnd();
+                    // Ein in verschachtelter Ausführung aufgerufenes leave/terminate wird erst jetzt geordnet abgewickelt;
+                    // danach steht wieder der Halt-Chunk da und das nächste Lesen landet erneut hier.
+                    if (FinishDeferredShutdown()) continue;
+                    // Normales Ende oder geordnetes leave/terminate (nicht der Halt-Chunk einer unbehandelten Exception).
+                    if (!_stopExecutionRequested || _shutdownReleasePending) ReleaseGlobalScopeAtEnd();
                     return;
                 }
                 Step(op);
@@ -457,9 +502,21 @@ namespace fire.Runtime
         /// <see cref="DestroyGlobalsAtEnd"/> ab.</summary>
         private void ReleaseGlobalScopeAtEnd()
         {
+            bool afterShutdown = _shutdownReleasePending;
+            _shutdownReleasePending = false;
             if (!DestroyGlobalsAtEnd) return;
             if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(); // das Hauptprogramm (jede VM, die kein Fire-Thread ist)
-            ReleaseGlobalScope();
+            ReleaseGlobalScopeAfterStop(afterShutdown);
+        }
+
+        /// <summary>Gibt den globalen Scope frei; nach einem leave/terminate steht die VM schon im Stopp-Zustand, in dem
+        /// Destruktoren nicht mehr laufen (siehe RunDestructor) - er wird dafür kurz aufgehoben.</summary>
+        private void ReleaseGlobalScopeAfterStop(bool afterShutdown)
+        {
+            if (!afterShutdown) { ReleaseGlobalScope(); return; }
+            _stopExecutionRequested = false;
+            try { ReleaseGlobalScope(); }
+            finally { _stopExecutionRequested = true; }
         }
 
         /// <summary>Gibt den globalen Scope frei. Bei einem Fire-Thread sind die Objekte mit `SyncOrigin` Kopien von Objekten des
@@ -494,18 +551,20 @@ namespace fire.Runtime
                     if (HandleDeliveredThreadException(excInstance)) return true;
                 }
 
+            // `terminate` und `leave` enden beide wie das normale Programmende: Scopes abwickeln (finally, Destruktoren),
+            // danach - am Halt, nach dem Ende aller Fire-Threads - den globalen Scope freigeben (siehe _shutdownReleasePending).
             if (_terminateRequested)
             {
                 UnwindForShutdown();
+                _shutdownReleasePending = true;
                 if (IsMainThreadVm) RunTerminateHandlerIfAny();
                 return true;
             }
             if (_leaveRequested)
             {
                 _leaveRequested = false;
-                // `leave` beendet diese VM geordnet: auch die Objekte des globalen Scopes werden zerstört
-                // (destruct() läuft, Handles werden geschlossen) - wie beim Verlassen jedes anderen Scopes.
-                UnwindForShutdown(destroyGlobalScope: true);
+                UnwindForShutdown();
+                _shutdownReleasePending = true;
                 return true;
             }
             return false;
@@ -716,7 +775,8 @@ namespace fire.Runtime
             if (op == OpCode.Halt)
             {
                 // Wie Run(): das normale Ende räumt den globalen Scope ab - im Einzelschritt ohne auf Threads zu warten (der Debugger hält sie evtl. an).
-                if (!_stopExecutionRequested && DestroyGlobalsAtEnd) ReleaseGlobalScope();
+                if ((!_stopExecutionRequested || _shutdownReleasePending) && DestroyGlobalsAtEnd) ReleaseGlobalScopeAfterStop(_shutdownReleasePending);
+                _shutdownReleasePending = false;
                 IsHalted = true;
                 return false;
             }
@@ -732,6 +792,10 @@ namespace fire.Runtime
             // passiert, statt sauber zu stoppen.
             if (_stopExecutionRequested)
             {
+                FinishDeferredShutdown();
+                // leave/terminate enden wie das normale Programmende (ohne auf Threads zu warten, der Debugger hält sie evtl. an).
+                if (_shutdownReleasePending && DestroyGlobalsAtEnd) ReleaseGlobalScopeAfterStop(true);
+                _shutdownReleasePending = false;
                 IsHalted = true;
                 return false;
             }
@@ -3117,19 +3181,17 @@ namespace fire.Runtime
                 }
 
                 case OpCode.Leave:
-                    // Setzt nur das Flag (siehe VM.RequestLeave) - die
-                    // eigentliche Abwicklung passiert am NÄCHSTEN Prüfpunkt
-                    // (CheckShutdownSignals, am Anfang der nächsten
-                    // Schleifen-Iteration in Run()), nicht sofort hier.
+                    // Der aufrufende Thread geht sofort in den Halt (ShutdownSelfNow) - nach `leave` läuft keine Anweisung mehr.
                     RequestLeave();
-                    if (PollSignals()) break;
+                    ShutdownSelfNow();
                     break;
 
                 case OpCode.Terminate:
                 {
+                    // Auch wenn ein anderer Thread schneller war (erster Aufruf gewinnt): dieser Thread hält hier an.
                     var terminateValue = Pop();
                     RequestTerminate(terminateValue);
-                    if (PollSignals()) break;
+                    ShutdownSelfNow();
                     break;
                 }
 
@@ -3780,6 +3842,13 @@ namespace fire.Runtime
             _ip = 0;
 
             RunNestedUntil(targetDepth);
+
+            // `leave`/`terminate` im Callback: sauber abwickeln (kein Fehler, der Callback liefert nichts).
+            if (_shutdownDeferred)
+            {
+                FinishDeferredShutdown();
+                return Value.MakeUndefined();
+            }
 
             // Ein unbehandelter Fehler im Callback beendet die VM (StopExecution): der Host bekommt ihn als Ausnahme, die er
             // bewusst fangen kann (siehe FireRuntime.CallCallback) - statt dass hier ein Rückgabewert fehlt.

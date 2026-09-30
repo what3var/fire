@@ -6644,6 +6644,108 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         print("nie")
         """, new[] { "~Ba", "~I1", "~Bc", "~I1" });
 
+    // ---- leave/terminate: der aufrufende Thread haelt sofort an; beide enden wie das normale Programmende
+    //      (Hauptprogramm wartet auf alle Fire-Threads, erst danach werden die globalen Destruktoren ausgefuehrt)
+    void CheckShutdown(string title, string script, string[] expected)
+    {
+        foreach (var mode in allModes)
+        {
+            string[] actual;
+            VM.ResetTerminateForTests();
+            try
+            {
+                var task = Task.Run(() => RunLife(script, mode).ToArray());
+                actual = task.Wait(TimeSpan.FromSeconds(20)) ? task.Result : new[] { "ZEITUEBERSCHREITUNG (haengt)" };
+            }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.InnerException?.Message ?? ex.Message }; }
+            VM.ResetTerminateForTests();
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) lifeFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    CheckShutdown("leave im Hauptprogramm wartet auf Fire-Threads, dann erst werden die Globals zerstoert", lifeClasses + """
+        var g = new Item(1)
+        fire {
+            var i = 0
+            while (i < 300000) { i = i + 1 }
+            print("thread fertig")
+        }
+        leave
+        print("nie")
+        """, new[] { "thread fertig", "~I1" });
+
+    CheckShutdown("terminate im Hauptprogramm stoppt Fire-Threads (finally laeuft), Globals zuletzt", lifeClasses + """
+        var g = new Item(1)
+        fire {
+            try { while (true) { } } finally { print("thread finally") }
+        }
+        var j = 0
+        while (j < 1000) { j = j + 1 }
+        terminate(5)
+        print("nie")
+        """, new[] { "thread finally", "~I1" });
+
+    CheckShutdown("terminate in einem Fire-Thread stoppt auch das Hauptprogramm; der Aufrufer fuehrt nichts mehr aus", lifeClasses + """
+        var g = new Item(1)
+        fire {
+            var k = 0
+            while (k < 1000) { k = k + 1 }
+            terminate(3)
+            print("nie im thread")
+        }
+        try { while (true) { } } finally { print("main finally") }
+        print("nie")
+        """, new[] { "main finally", "~I1" });
+
+    CheckShutdown("terminate: zwei Threads rufen es auf, beide halten sofort an", lifeClasses + """
+        var g = new Item(1)
+        fire { terminate(1); print("nie a") }
+        fire { terminate(2); print("nie b") }
+        var w = 0
+        while (w < 100000) { w = w + 1 }
+        print("nie main")
+        """, Array.Empty<string>().Concat(new[] { "~I1" }).ToArray());
+
+    CheckShutdown("terminate in einer Property (verschachtelte Ausfuehrung) haelt sofort an, danach geordnet (finally, Globals)", lifeClasses + """
+        class P {
+            int v {
+                get {
+                    print("im getter")
+                    terminate(1)
+                    print("nie getter")
+                    return 5
+                }
+            }
+        }
+        var g = new Item(1)
+        var p = new P()
+        try {
+            var x = p.v
+            print("nie x")
+        } finally {
+            print("finally")
+        }
+        print("nie")
+        """, new[] { "im getter", "finally", "~I1" });
+
+    CheckShutdown("leave in einer Property (verschachtelte Ausfuehrung) haelt sofort an", lifeClasses + """
+        class P {
+            int v {
+                get {
+                    leave
+                    print("nie getter")
+                    return 5
+                }
+            }
+        }
+        var g = new Item(1)
+        var p = new P()
+        var x = p.v
+        print("nie")
+        """, new[] { "~I1" });
+
     {
         // Ein offener FileStream: sein Destruktor schliesst ihn beim leave (der Inhalt ist danach vollstaendig auf der Platte).
         string leaveFile = Path.Combine(Path.GetTempPath(), "fire-leave-" + Guid.NewGuid().ToString("N") + ".bin").Replace("\\", "/");
@@ -6766,8 +6868,8 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
             if (kind == "terminate") VM.RequestTerminate(Value.MakeInt(7)); else vm.RequestLeave();
             bool finished = runner.Wait(TimeSpan.FromSeconds(10));
             VM.ResetTerminateForTests();
-            // `leave` zerstoert den globalen Scope (destruct laeuft), `terminate` laeuft wie bisher ohne ihn.
-            string[] expected = kind == "leave" ? new[] { "~I1" } : Array.Empty<string>();
+            // `leave` und `terminate` enden beide wie das normale Programmende: der globale Scope wird zerstoert (destruct laeuft).
+            string[] expected = new[] { "~I1" };
             bool ok = finished && lines.SequenceEqual(expected);
             if (!ok) lifeFailures++;
             Console.WriteLine(ok ? $"OK: {kind} von einem anderen Thread beendet eine Endlosschleife [{mode}]"

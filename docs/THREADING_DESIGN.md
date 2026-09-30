@@ -225,8 +225,12 @@ fire {
   Fire-Blocks. Danach wird der **globale Scope** freigegeben (`destruct()`
   für alles, was ihm gehört - offene Streams werden so geschlossen; in einem
   Fire-Thread nur für Objekte, die er selbst angelegt hat, nicht für seine
-  Kopien von Objekten des Hauptprogramms), und das Verlassen wirkt **sofort**,
-  unabhängig vom Ausführungsmodus.
+  Kopien von Objekten des Hauptprogramms). Im **Hauptprogramm** wartet `leave`
+  dafür - wie das normale Programmende - erst auf alle laufenden Fire-Threads.
+  Das Verlassen wirkt **sofort**, unabhängig vom Ausführungsmodus: der aufrufende
+  Thread geht direkt in einen `Halt`, auch mitten in einer Property, einem
+  Destruktor oder einer Operator-Überladung (dort wird das geordnete Abwickeln
+  nachgeholt, sobald die Verschachtelung zurück ist).
 - **Prüfpunkte:** Signale (`terminate`, eine zugestellte Fire-Thread-Exception,
   `leave` per API) werden nicht vor jeder Instruktion geprüft, sondern an den
   sicheren Punkten - Schleifen-Rücksprung, Aufruf, nach einem nativen Aufruf und
@@ -301,7 +305,16 @@ catch terminate(v)
   mitten in einem `finally` abgeschnitten, nur weil ein anderer (z.B. der
   Main-Thread) schneller fertig war.
 - Aufrufbar von **jedem** Thread (Main oder Fire) - ein Not-Aus muss von
-  überall auslösbar sein.
+  überall auslösbar sein. Der aufrufende Thread geht dabei - wie bei `leave` -
+  **sofort** in einen `Halt`, auch wenn ein anderer Thread `terminate` schon
+  ausgelöst hat (kein weiterer Befehl nach dem Aufruf).
+- **Sanftes Ende für alles:** Nach dem Abwickeln aller Threads (`finally`,
+  Destruktoren der Scopes) läuft das Ende wie beim normalen Programmende: das
+  Hauptprogramm wartet auf den letzten Fire-Thread und zerstört **danach** den
+  globalen Scope (`destruct()` der Globals, offene Streams werden geschlossen);
+  jeder Fire-Thread zerstört zuvor seine eigenen Objekte. Der
+  `catch terminate(v)`-Handler läuft auf dem Main-Thread direkt nach dessen
+  eigenem Abwickeln, also VOR dem Zerstören der Globals.
 - **Erster Aufruf gewinnt**: wird `terminate` gleichzeitig von mehreren
   Threads mit unterschiedlichen Werten aufgerufen, gewinnt der erste, der
   das globale Signal setzt - alle weiteren `terminate`-Aufrufe werden zu
