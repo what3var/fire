@@ -1487,7 +1487,7 @@ dem Prüfintervall (Release 16, Performance 4096). `UnwindForShutdown(destroyGlo
 und die Abwicklung nach einer unbehandelten Exception lassen den globalen Scope wie bisher aus.
 
 **Host-Sicherheitsnetz.** `IoBridge.RegisterAll` gibt ein `IDisposable` zurück (`IoHost.Dispose` schließt alle noch offenen, nicht-permanenten Streams); die Sessions halten es
-(`IoResources`), `Runtime.Session.Run()` ruft es nach dem Lauf, `RuntimeSession.CloseHostResources()` ist für Hosts, die die VM selbst treiben (der Step-Debugger ruft es noch nicht).
+(`IoResources`), `Runtime.Session.Run()` ruft es nach dem Lauf, `RuntimeSession.CloseHostResources()` ist für Hosts, die die VM selbst treiben (der Step-Debugger `DebugSession` ruft es, sobald alle Threads des Laufs beendet sind, und in `Reset()` bei einem abgebrochenen Lauf; höchstens einmal je Lauf).
 
 ## 29. Shutdown-Signale an sicheren Punkten, Programmende räumt ab
 
