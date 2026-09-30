@@ -2568,7 +2568,7 @@ try
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
     var vmGlobalScope = new Scope(null, isGlobal: true);
-    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes);
+    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes) { DestroyGlobalsAtEnd = false }; // die Objekte werden danach noch von Hand an Threads gegeben
     vm.Run();
 
     var player = (ObjectInstance)vmGlobalScope.GetSlot(0).AsObjectRef();
@@ -2629,7 +2629,7 @@ try
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
     var vmGlobalScope = new Scope(null, isGlobal: true);
-    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes);
+    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes) { DestroyGlobalsAtEnd = false };
     vm.Run();
 
     var counter = (ObjectInstance)vmGlobalScope.GetSlot(0).AsObjectRef();
@@ -2773,7 +2773,7 @@ try
     var setupCompiled = Compiler.Compile(setupProgram, setupResolve, mainNatives);
 
     var mainGlobalScope = new Scope(null, isGlobal: true);
-    var mainVm = new VM(setupCompiled.TopLevel, mainGlobalScope, mainNatives, setupCompiled.Classes);
+    var mainVm = new VM(setupCompiled.TopLevel, mainGlobalScope, mainNatives, setupCompiled.Classes) { DestroyGlobalsAtEnd = false };
     mainVm.Run();
 
     var player = (ObjectInstance)mainGlobalScope.GetSlot(0).AsObjectRef();
@@ -6283,7 +6283,7 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
         print(f == a)
         f.item.n = 9
         print(a.item.n)
-        """, "a15", "f76", "True", "False", "9");
+        """, "a15", "f76", "True", "False", "9", "~Ba", "~I9", "~Bf");
 
     CheckClone("copy: Tiefenkopie, Kopie ist unabhaengig", cloneClasses + """
         var a = new Box("a")
@@ -6294,7 +6294,7 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
         print(a.item.n + " " + d.item.n)
         print(d.item == a.item)
         print(a.name)
-        """, "1 99", "False", "a");
+        """, "1 99", "False", "a", "~Ba", "~I1", "~Bd", "~I99");
 
     CheckClone("copy: gemeinsame Referenz bleibt gemeinsam, Zyklus bleibt Zyklus", cloneClasses + """
         var shared = new Item(5)
@@ -6309,7 +6309,7 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
         print(c.other.other == c)
         print(c.other.other == x)
         print(c.other != x.other)
-        """, "True", "False", "True", "False", "True");
+        """, "True", "False", "True", "False", "True", "~I5", "~Bx", "~By", "~Bx", "~By", "~I5");
 
     CheckClone("Arrays: flat teilt die Elemente, copy kopiert sie; Array als Operand", cloneClasses + """
         var b = new Box("arr")
@@ -6331,7 +6331,7 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
         var b2 = copy bytes
         b2[0] = 67
         print(bytes[0] + " " + b2[0])
-        """, "1 20 10", "True", "False", "1 2 100 200", "65 67");
+        """, "1 20 10", "True", "False", "1 2 100 200", "65 67", "~Barr", "~I1", "~I20", "~Barr", "~Barr", "~I2", "~I10");
 
     CheckClone("Werte: nichts zu kopieren", """
         print(copy 5)
@@ -6352,7 +6352,7 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
         a.item.n = 1
         print(Touch(copy a))
         print(a.name + " " + a.item.n)
-        """, "~Bgeaendert", "geaendert", "a 77", "~Bgeaendert", "~I77", "geaendert", "a 1");
+        """, "~Bgeaendert", "geaendert", "a 77", "~Bgeaendert", "~I77", "geaendert", "a 1", "~Ba", "~I1");
 
     CheckClone("Owner: Kopie gehoert dem Scope und wird mit ihm zerstoert (Besitz bleibt erhalten)", cloneClasses + """
         {
@@ -6417,7 +6417,7 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
             print(m.name + " " + m.item.n)
         }
         print("danach")
-        """, "made 4", "~Bmade", "~I4", "danach");
+        """, "made 4", "~Bmade", "~I4", "danach", "~Bs", "~I4");
 
     CheckClone("Actor: in der Tiefe geteilt", """
         actor Counter { int n; construct() { this.n = 0 } Inc() { this.n = this.n + 1 } }
@@ -6487,7 +6487,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var program = Parser.ParseMultiple(sources.Select(s => Preprocessor.Process(s, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
         var natives = new NativeRegistry();
-        natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
         natives.RegisterBaseTypeNatives();
         IDisposable? io = withIo ? fire.IO.Bridge.IoBridge.RegisterAll(natives) : null;
         var resolveResult = Resolver.Resolve(program, natives.Names);
@@ -6560,7 +6560,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         for (var i = 0; i < 3; i = i + 1) { total = total + F.Bump(copy a) }
         print(total)
         print(a.item.n)
-        """, new[] { "~Ba", "~I2", "~Ba", "~I2", "~Ba", "~I2", "6", "1" });
+        """, new[] { "~Ba", "~I2", "~Ba", "~I2", "~Ba", "~I2", "6", "1", "~Ba", "~I1" });
 
     CheckLife("Parameter: Konstruktor (TakeTo behaelt die Kopie) und base(...)", lifeClasses + """
         class Keep { Item held; construct(i) { this.held = i; i.TakeTo(this) } }
@@ -6574,7 +6574,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
             print("d")
         }
         print("ende")
-        """, new[] { "4", "base 4", "~I4", "derived", "d", "~I4", "ende" });
+        """, new[] { "4", "base 4", "~I4", "derived", "d", "~I4", "ende", "~I4" });
 
     CheckLife("Parameter: auch bei Methoden von Basistypen (Erweiterung) und verschachtelten Aufrufen", """
         class extends string { bool Has(x) { return this.Contains(x) } }
@@ -6605,7 +6605,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
             print("nach setup")
         }
         print("ende")
-        """, new[] { "nach ctor", "nach setup", "~H", "~I1", "~I9", "~I5", "~I9", "ende" });
+        """, new[] { "nach ctor", "nach setup", "~H", "~I1", "~I9", "~I5", "~I9", "ende", "~I9" });
 
     CheckLife("Zuweisung an ein Objekt, das schon zerstoert wird: die Kopie wird sofort mit zerstoert (wie TakeTo)", lifeClasses + """
         var template = new Item(9)
@@ -6614,7 +6614,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
             var r = new R()
         }
         print("ende")
-        """, new[] { "~I9", "ende" });
+        """, new[] { "~I9", "ende", "~I9" });
 
     // ---- leave: sofort, und alles wird zerstoert
     CheckLife("leave wirkt sofort und zerstoert auch die Objekte des globalen Scopes (finally laeuft)", lifeClasses + """
@@ -6697,6 +6697,82 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         bool ok = result == "4";
         if (!ok) lifeFailures++;
         Console.WriteLine(ok ? "OK: Host-Sicherheitsnetz schliesst offene Streams" : $"FEHLER: Host-Sicherheitsnetz\n  erwartet: 4\n  erhalten: {result}");
+    }
+
+    // ---- normales Programmende raeumt den globalen Scope ab
+    CheckLife("Programmende: globale Objekte werden zerstoert (destruct laeuft)", lifeClasses + """
+        var a = new Box("a")
+        a.item = new Item(1)
+        var b = new Item(2)
+        print("ende")
+        """, new[] { "ende", "~Ba", "~I1", "~I2" });
+
+    CheckLife("Programmende: das Hauptprogramm wartet auf Fire-Threads, dann erst werden die Globals zerstoert", lifeClasses + """
+        var g = new Item(1)
+        fire {
+            var i = 0
+            while (i < 300000) { i = i + 1 }
+            print("thread fertig")
+        }
+        print("main fertig")
+        """, new[] { "main fertig", "thread fertig", "~I1" });
+
+    {
+        // Ein offener FileStream im globalen Scope wird beim normalen Ende vom Destruktor geschlossen (ohne Host-Sicherheitsnetz).
+        string endFile = Path.Combine(Path.GetTempPath(), "fire-end-" + Guid.NewGuid().ToString("N") + ".bin").Replace("\\", "/");
+        string result;
+        try
+        {
+            RunLife($$"""
+                var w = new IO.FileStream("{{endFile}}", IO.FileMode.Create)
+                w.Write("Ende".ToBytes())
+                """, VmExecutionMode.Debug, withIo: true, disposeIo: false);
+            result = (File.Exists(endFile) ? new FileInfo(endFile).Length : -1).ToString();
+        }
+        catch (Exception ex) { result = "AUSNAHME: " + ex.Message; }
+        finally { try { File.Delete(endFile); } catch { } }
+        bool ok = result == "4";
+        if (!ok) lifeFailures++;
+        Console.WriteLine(ok ? "OK: Programmende schliesst offene Streams (Destruktor)" : $"FEHLER: Programmende schliesst offene Streams\n  erwartet: 4\n  erhalten: {result}");
+    }
+
+    // ---- Signale von anderen Threads werden an den sicheren Punkten (Schleifen, Aufrufe) bemerkt
+    foreach (var mode in allModes)
+    {
+        foreach (var kind in new[] { "terminate", "leave" })
+        {
+            VM.ResetTerminateForTests();
+            var lines = new List<string>();
+            var natives = new NativeRegistry();
+            natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+            natives.RegisterBaseTypeNatives();
+            // Eine Schleife mit Aufruf und eine ohne - beide muessen unterbrechbar sein.
+            string script = lifeClasses + """
+                class L { static Tick(n) { return n + 1 } }
+                var g = new Item(1)
+                var i = 0
+                while (true) {
+                    i = L.Tick(i)
+                    var j = 0
+                    while (j < 1000) { j = j + 1 }
+                }
+                """;
+            var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, script }.Select(s => Preprocessor.Process(s, Directory.GetCurrentDirectory(), new HashSet<string>())).ToList());
+            var resolveResult = Resolver.Resolve(program, natives.Names);
+            var compiled = Compiler.Compile(program, resolveResult, natives);
+            var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, executionMode: mode);
+            var runner = Task.Run(() => vm.Run());
+            Thread.Sleep(100);
+            if (kind == "terminate") VM.RequestTerminate(Value.MakeInt(7)); else vm.RequestLeave();
+            bool finished = runner.Wait(TimeSpan.FromSeconds(10));
+            VM.ResetTerminateForTests();
+            // `leave` zerstoert den globalen Scope (destruct laeuft), `terminate` laeuft wie bisher ohne ihn.
+            string[] expected = kind == "leave" ? new[] { "~I1" } : Array.Empty<string>();
+            bool ok = finished && lines.SequenceEqual(expected);
+            if (!ok) lifeFailures++;
+            Console.WriteLine(ok ? $"OK: {kind} von einem anderen Thread beendet eine Endlosschleife [{mode}]"
+                                 : $"FEHLER: {kind} von einem anderen Thread [{mode}] - beendet: {finished}, Ausgabe: {string.Join(" | ", lines)}");
+        }
     }
 
     Console.WriteLine(lifeFailures == 0 ? "Alle Kopie/leave-Pruefungen bestanden." : $"FEHLER: {lifeFailures} Pruefung(en) fehlgeschlagen.");

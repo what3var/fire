@@ -1488,3 +1488,25 @@ und die Abwicklung nach einer unbehandelten Exception lassen den globalen Scope 
 
 **Host-Sicherheitsnetz.** `IoBridge.RegisterAll` gibt ein `IDisposable` zurück (`IoHost.Dispose` schließt alle noch offenen, nicht-permanenten Streams); die Sessions halten es
 (`IoResources`), `Runtime.Session.Run()` ruft es nach dem Lauf, `RuntimeSession.CloseHostResources()` ist für Hosts, die die VM selbst treiben (der Step-Debugger ruft es noch nicht).
+
+## 29. Shutdown-Signale an sicheren Punkten, Programmende räumt ab
+
+**Prüfung.** `Run()` fragt nichts mehr pro Instruktion ab. Jedes Signal (`RequestLeave`, `RequestTerminate`, eine eingereihte Fire-Thread-Exception) erhöht den globalen Zähler
+`s_signalEpoch` (`RaiseSignal`); jede VM merkt sich den zuletzt gesehenen Stand (`_seenEpoch`). Die sicheren Punkte rufen `PollSignals()` (ein `Volatile.Read` und ein Vergleich):
+Rücksprung-`Jump` (Ziel ≤ aktuelle Position, d.h. jede Schleife), Beginn von `Call`/`CallMethod`/`CallStaticMethod`/`NewObject`, und - als `PollSignalsAfterOp` - nach
+`CallNative`/`CallTryableNative`/`CallExtern` (eine native Funktion darf `leave` auslösen) sowie in den Opcodes `Leave`/`Terminate` selbst. Nur bei einer Abweichung läuft die eigentliche
+Prüfung `CheckShutdownSignals`; sie liegt mitten in einer Instruktion, deshalb rechnet `PollSignalsSlow` mit `_ip--` auf die Instruktionsgrenze (ein dort genesteter `catch threads`-Handler
+kehrt an die richtige Stelle zurück). In verschachtelten Ausführungen (`_nestedDepth > 0`: Destruktor, Operator-Überladung, Property) wird nicht geprüft, das Signal bleibt stehen.
+Debug/Release/Performance unterscheiden sich dadurch nicht mehr (`ShutdownCheckInterval` ist weg).
+
+**Beenden ohne Exception.** `StopExecution()` setzt `_stopExecutionRequested` und stellt Chunk/ip auf `StopChunk` (nur `Halt`); die aufrufende Instruktion kehrt sofort zurück
+(`if (PollSignals()) return;`, wie nach `ThrowException`), `Run()` liest das `Halt` und endet. Verschachtelte Schleifen, `StepInstruction` und `CallLambdaEntry` prüfen das Flag weiterhin
+(sie sind nicht der heiße Pfad); `RunDestructor` und die `RunNestedUntil`-Aufrufer verwerfen den Rückgabewert nur, wenn nicht gestoppt wurde (`PopNestedResult`), und ein Destruktor, der
+die VM beendet, bricht die restliche Kaskade ab. (Eine Ausnahme als Abbruchweg wurde bewusst nicht gewählt, siehe docs/PORTING.md.)
+
+**Programmende.** Beim `Halt` der Hauptschleife (nicht beim `Halt` des `StopChunk`) wird der globale Scope freigegeben (`ReleaseGlobalScopeAtEnd`): das Hauptprogramm (jede VM, die kein
+Fire-Thread ist) wartet vorher mit `FireRuntime.WaitForAllFireThreads()` auf alle lebenden Fire-Threads (`FireRuntime.Fire` zählt sie), ein Fire-Thread gibt nur Objekte ohne `SyncOrigin`
+frei (`Scope.ReleaseWhere`; Globals-Schnappschuss und `taking`-Kopien sind Kopien von Objekten des Hauptprogramms und dürfen z.B. kein geteiltes Handle schließen). `leave` tut dasselbe
+(`UnwindForShutdown(destroyGlobalScope: true)`), `terminate` und die Abwicklung nach unbehandelter Exception nicht. `VM.DestroyGlobalsAtEnd = false` schaltet es für Hosts ab, die die
+Objekte nach dem Lauf noch verwenden (die Thread-Tests tun das); im Einzelschritt (`StepInstruction`) wird ohne Warten freigegeben. Die IO-Destruktoren (`NativeStream`, `TextReader`,
+`TextWriter`) verschlucken IO-Fehler, weil ein Destruktor nie werfen soll.

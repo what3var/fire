@@ -16,7 +16,10 @@ namespace fire.IO.Bridge
         /// ist die gemeinsame Basis von `FileStream`/`MemoryStream`, hinter der
         /// ein natives Handle liegt (siehe IoBridge); sein `destruct()` schließt
         /// das Handle, wenn der Besitzer-Scope endet - ein vergessenes Close()
-        /// bleibt also nicht offen.
+        /// bleibt also nicht offen. Ein Destruktor wirft nie: schlägt das Schließen
+        /// fehl (z.B. weil der Stream, in den ein TextWriter noch leeren will,
+        /// schon von jemand anderem geschlossen wurde), wird der IO-Fehler dort
+        /// verschluckt.
         ///
         /// Konventionen: Lesefunktionen liefern die Anzahl gelesener Bytes
         /// (0 = Ende des Streams), `ReadByte` liefert -1 am Ende. Fehler sind
@@ -198,7 +201,7 @@ namespace fire.IO.Bridge
                     // findet dann handle == -1 und schließt nichts. (Scheitert ein
                     // Konstruktor schon BEVOR der der Basisklasse lief, haben die Felder
                     // nur den Standardwert `false` - darauf ist kein Verlass.)
-                    destruct() { this.Close() }
+                    destruct() { try { this.Close() } catch (IO.IOException e) { } }
 
                     bool IsClosed { get { return this.closed } }
 
@@ -554,7 +557,7 @@ namespace fire.IO.Bridge
                         }
                     }
 
-                    destruct() { this.Close() }
+                    destruct() { try { this.Close() } catch (IO.IOException e) { } }
 
                     bool IsClosed { get { return this.closed } }
 
@@ -697,7 +700,7 @@ namespace fire.IO.Bridge
                         }
                     }
 
-                    destruct() { this.Close() }
+                    destruct() { try { this.Close() } catch (IO.IOException e) { } }
 
                     bool IsClosed { get { return this.closed } }
 

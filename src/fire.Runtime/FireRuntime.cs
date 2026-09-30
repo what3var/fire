@@ -80,9 +80,24 @@ namespace fire.Runtime
                 vm.Run();
         }
 
+        // Lebende Fire-Threads - das Hauptprogramm wartet an seinem Ende auf sie, bevor es seinen globalen Scope freigibt
+        // (siehe VM.FinishProgram): ein Thread, der per `sync` in Objekte des Hauptprogramms zurückschreibt, darf sie nicht
+        // schon zerstört vorfinden.
+        private static int _liveThreads;
+        private static readonly object _liveThreadsGate = new();
+
+        /// <summary>Blockiert, bis alle Fire-Threads beendet sind (sofort, wenn keiner läuft).</summary>
+        public static void WaitForAllFireThreads()
+        {
+            lock (_liveThreadsGate)
+                while (_liveThreads > 0)
+                    Monitor.Wait(_liveThreadsGate);
+        }
+
         public static FireThreadHandle Fire(Action body)
         {
             FireThreadHandle? handle = null;
+            lock (_liveThreadsGate) _liveThreads++;
             var thread = new Thread(() =>
             {
                 try
@@ -92,6 +107,14 @@ namespace fire.Runtime
                 catch (Exception ex)
                 {
                     handle!.SetError(ex);
+                }
+                finally
+                {
+                    lock (_liveThreadsGate)
+                    {
+                        _liveThreads--;
+                        Monitor.PulseAll(_liveThreadsGate);
+                    }
                 }
             })
             {

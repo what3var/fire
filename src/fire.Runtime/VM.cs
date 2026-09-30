@@ -173,8 +173,8 @@ namespace fire.Runtime
         // -----------------------------------------------------------
         // leave/terminate (docs/THREADING_DESIGN.md Abschnitt 6) - kooperative
         // Prüfpunkte statt echter Unterbrechung: jede laufende VM-Instanz
-        // bemerkt ein Signal spätestens an der nächsten Instruktion (siehe
-        // Run()) und wickelt sich dann selbst sauber ab (UnwindForShutdown),
+        // bemerkt ein Signal spätestens am nächsten sicheren Punkt (siehe
+        // PollSignals) und wickelt sich dann selbst sauber ab (UnwindForShutdown),
         // OHNE dabei irgendeinen normalen `catch`/`catch(e)` zu durchlaufen -
         // beide Signale werden absichtlich NIE gegen HandlerTemplate.Catches
         // geprüft, sie laufen nur durch etwaige `finally`-Blöcke hindurch.
@@ -211,7 +211,11 @@ namespace fire.Runtime
         /// Grundlage einer nativen Brücken-Funktion wie `__leave()`, siehe
         /// Program.cs-Test, solange es noch keine echte `leave`-Sprachsyntax
         /// gibt).</summary>
-        public void RequestLeave() => _leaveRequested = true;
+        public void RequestLeave()
+        {
+            _leaveRequested = true;
+            RaiseSignal();
+        }
 
         /// <summary>Globaler Not-Aus (siehe THREADING_DESIGN.md 6.3) - "erster
         /// Aufruf gewinnt", alle weiteren werden zu No-Ops.</summary>
@@ -223,6 +227,7 @@ namespace fire.Runtime
                 _terminateValue = value;
                 _terminateRequested = true;
             }
+            RaiseSignal();
         }
 
         /// <summary>Nur für Tests/eine frische Programmausführung gedacht -
@@ -307,6 +312,7 @@ namespace fire.Runtime
         /// `_terminateRequested`, wo CheckShutdownSignals selbst den Unwind
         /// noch durchführt.</summary>
         private bool _stopExecutionRequested;
+        // (Nur noch in den VERSCHACHTELTEN Schleifen und im Einzelschritt geprüft - Run() liest nach StopExecution() das Halt.)
 
         public VM(
             Chunk chunk,
@@ -336,58 +342,138 @@ namespace fire.Runtime
             ExecutionMode = executionMode;
         }
 
-        /// <summary>Siehe VmExecutionMode-Doku - steuert u.a. wie oft
-        /// CheckShutdownSignals läuft (ShutdownCheckInterval) und ob
+        /// <summary>Siehe VmExecutionMode-Doku - steuert u.a., ob
         /// ArrayGet/ArraySet/Puffer-Zugriffe ihre Bounds-Prüfung überspringen
         /// (siehe die jeweiligen Opcode-Handler).</summary>
         public VmExecutionMode ExecutionMode { get; }
 
-        /// <summary>Alle wie viele Instruktionen CheckShutdownSignals in
-        /// Run() tatsächlich läuft (siehe dort) - 1 bedeutet "vor jeder
-        /// Instruktion" (Debug, unverändertes bisheriges Verhalten). Reine
-        /// Zahlenwerte statt eines Schaltverhaltens pro Fall, damit Run()
-        /// selbst einfach bleibt (ein Modulo-Vergleich statt einer
-        /// Fallunterscheidung nach ExecutionMode in der heißesten Schleife
-        /// der gesamten VM).</summary>
-        private int ShutdownCheckInterval => ExecutionMode switch
+        // -----------------------------------------------------------
+        // Shutdown-Signale: Prüfung nur an sicheren Punkten, Beenden über den Halt-Chunk
+        // -----------------------------------------------------------
+        //
+        // Signale kommen meist von ANDEREN Threads (`terminate`, eine unbehandelte Fire-Thread-Exception für den
+        // Main-Thread) - in einen laufenden Thread lässt sich keine Ausnahme "hineinwerfen", er muss sie selbst
+        // bemerken. Das passiert nicht mehr vor jeder Instruktion, sondern nur an den sicheren Punkten (Schleifen-
+        // Rücksprung, Aufruf, `leave`/`terminate`), und dort mit EINEM Vergleich: jedes Signal erhöht den globalen
+        // Zähler `s_signalEpoch`, jede VM merkt sich den zuletzt gesehenen Stand (`_seenEpoch`) - nur bei einer
+        // Abweichung läuft die eigentliche Prüfung (CheckShutdownSignals).
+        //
+        // Das BEENDEN ist bewusst keine C#-Ausnahme (docs/PORTING.md, "VM-interner Kontrollfluss": in einer C++-Fassung
+        // ohne Exceptions gäbe es dafür keine Entsprechung), sondern reine Zustandsumschaltung wie beim Sprung in einen
+        // `catch`: StopExecution() stellt Chunk/ip auf einen Chunk, der nur aus `Halt` besteht - Run() liest als Nächstes
+        // dieses `Halt` und kehrt zurück, ohne dass irgendeine Instruktion ein Stop-Flag abfragen müsste.
+
+        private static int s_signalEpoch;
+        private int _seenEpoch = int.MinValue;
+
+        /// <summary>Tiefe der verschachtelten Ausführungen (RunNestedUntil) - darin wird nicht auf Signale geprüft (wie bisher).</summary>
+        private int _nestedDepth;
+
+        /// <summary>Der Chunk, auf den StopExecution() umschaltet: nur ein `Halt`.</summary>
+        private static readonly Chunk StopChunk = BuildStopChunk();
+
+        private static Chunk BuildStopChunk()
         {
-            VmExecutionMode.Debug => 1,
-            VmExecutionMode.Release => 16,
-            VmExecutionMode.Performance => 4096,
-            _ => 1,
-        };
+            var chunk = new Chunk();
+            chunk.EmitOp(OpCode.Halt);
+            return chunk;
+        }
 
-        private long _instructionsSinceShutdownCheck;
+        private static void RaiseSignal() => System.Threading.Interlocked.Increment(ref s_signalEpoch);
 
-        /// <summary>Lässt Run() das Signal schon VOR der nächsten Instruktion prüfen, nicht erst nach dem Prüfintervall
-        /// (Release: 16, Performance: 4096 Instruktionen). Ein `leave`/`terminate` dieser VM selbst muss sofort wirken -
-        /// sonst liefe das Programm nach dem `leave` (je nach Modus) noch eine ganze Weile weiter.</summary>
-        private void ForceShutdownCheck() => _instructionsSinceShutdownCheck = long.MaxValue / 2;
+        /// <summary>Beendet die Ausführung dieser VM: merkt den Stopp vor und springt auf den Halt-Chunk. Aufrufer müssen danach
+        /// sofort aus ihrer Instruktion zurückkehren (wie nach ThrowException).</summary>
+        /// <summary>Verwirft den (bedeutungslosen) Rückgabewert einer verschachtelten Ausführung - außer die VM wurde dabei
+        /// beendet (unbehandelte Exception): dann hat der Aufruf nichts zurückgegeben.</summary>
+        private void PopNestedResult()
+        {
+            if (!_stopExecutionRequested) Pop();
+        }
+
+        private void StopExecution()
+        {
+            _stopExecutionRequested = true;
+            _currentChunk = StopChunk;
+            _ip = 0;
+        }
+
+        /// <summary>Sicherer Punkt: hat sich seit dem letzten Mal ein Signal gemeldet (ein Vergleich, sonst nichts)? Liefert true,
+        /// wenn die VM dadurch beendet wurde - die aufrufende Instruktion muss dann sofort zurückkehren.</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private bool PollSignals() =>
+            _seenEpoch != System.Threading.Volatile.Read(ref s_signalEpoch) && PollSignalsSlow();
+
+        /// <summary>Wie <see cref="PollSignals"/>, aber NACH einer vollständig ausgeführten Instruktion (`_ip` steht schon an der nächsten
+        /// Instruktionsgrenze) - für native Aufrufe: eine native Funktion darf `leave`/`terminate` auslösen (z.B. `VM.RequestLeave`), das muss
+        /// sofort danach wirken.</summary>
+        private void PollSignalsAfterOp()
+        {
+            if (_seenEpoch == System.Threading.Volatile.Read(ref s_signalEpoch) || _nestedDepth > 0) return;
+            _seenEpoch = System.Threading.Volatile.Read(ref s_signalEpoch);
+            if (CheckShutdownSignals()) StopExecution();
+        }
+
+        private bool PollSignalsSlow()
+        {
+            // In einer verschachtelten Ausführung (Destruktor, Operator-Überladung, Property, ...) wird nicht geprüft - wie
+            // bisher; das Signal bleibt stehen und gilt am nächsten sicheren Punkt außerhalb.
+            if (_nestedDepth > 0) return false;
+            _seenEpoch = System.Threading.Volatile.Read(ref s_signalEpoch);
+
+            // Der Aufruf kommt aus dem Innern einer Instruktion, deren Opcode schon gelesen ist: für einen evtl. genesteten
+            // Handler muss `_ip` auf die Instruktionsgrenze zeigen, damit dessen Rücksprung an der richtigen Stelle landet.
+            _ip--;
+            if (CheckShutdownSignals())
+            {
+                StopExecution();
+                return true;
+            }
+            _ip++;
+            return false;
+        }
 
         public void Run()
         {
             _currentThreadVm = this;
             _ip = 0;
-            int interval = ShutdownCheckInterval;
 
             while (true)
             {
-                if (interval <= 1 || ++_instructionsSinceShutdownCheck >= interval)
-                {
-                    _instructionsSinceShutdownCheck = 0;
-                    if (CheckShutdownSignals()) return;
-                }
                 var op = (OpCode)ReadByte();
-                if (op == OpCode.Halt) return;
+                if (op == OpCode.Halt)
+                {
+                    // Normales Ende (nicht der Halt-Chunk eines Stopps, siehe StopExecution).
+                    if (!_stopExecutionRequested) ReleaseGlobalScopeAtEnd();
+                    return;
+                }
                 Step(op);
-
-                // _stopExecutionRequested wird von ThrowException gesetzt,
-                // wenn eine Exception UNBEHANDELT bleibt (kein passender
-                // catch/finally-Handler mehr aktiv - der Stack ist dann
-                // bereits vollständig abgewickelt/geleert).
-                if (_stopExecutionRequested) return;
             }
         }
+
+        /// <summary>Normales Programmende (oder Ende eines Threads): der globale Scope wird wie jeder andere Scope beim
+        /// Verlassen freigegeben - `destruct()` läuft für alles, was ihm gehört, offene Streams werden geschlossen.
+        /// Das Hauptprogramm wartet vorher auf alle noch laufenden Fire-Threads (sie können per `sync` in seine Objekte
+        /// zurückschreiben). Ein Host, der den Zustand NACH dem Lauf noch braucht (Tests, Inspektion), schaltet das mit
+        /// <see cref="DestroyGlobalsAtEnd"/> ab.</summary>
+        private void ReleaseGlobalScopeAtEnd()
+        {
+            if (!DestroyGlobalsAtEnd) return;
+            if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(); // das Hauptprogramm (jede VM, die kein Fire-Thread ist)
+            ReleaseGlobalScope();
+        }
+
+        /// <summary>Gibt den globalen Scope frei. Bei einem Fire-Thread sind die Objekte mit `SyncOrigin` Kopien von Objekten des
+        /// Hauptprogramms (Globals-Schnappschuss, `taking`) - sie bleiben unberührt, nur was der Thread selbst angelegt hat wird
+        /// zerstört.</summary>
+        private void ReleaseGlobalScope()
+        {
+            if (IsFireThreadVm) _globalScope.ReleaseWhere(this, o => o.SyncOrigin == null);
+            else _globalScope.Release(this);
+        }
+
+        /// <summary>Soll das normale Programmende den globalen Scope freigeben (Vorgabe: ja)? `false` für Hosts, die die
+        /// Objekte nach dem Lauf noch lesen oder weiterverwenden (z.B. Tests, die danach Threads auf ihnen arbeiten lassen).</summary>
+        public bool DestroyGlobalsAtEnd { get; set; } = true;
 
         /// <summary>Der kooperative Prüfpunkt für `leave`/`terminate` (siehe
         /// Feld-Doku oben) - bewusst vor JEDER einzelnen Instruktion geprüft
@@ -398,11 +484,6 @@ namespace fire.Runtime
         /// Overhead je relevant werden sollte.</summary>
         private bool CheckShutdownSignals()
         {
-            // Bereits SELBST abgewickelt (siehe ThrowException) - nur noch
-            // sauber stoppen, der aktuelle _ip/_currentChunk-Zustand ist ab
-            // hier bedeutungslos und wird nicht mehr verwendet.
-            if (_stopExecutionRequested) return true;
-
             // Nur der Main-Thread verarbeitet zugestellte Fire-Thread-
             // Exceptions (siehe HandleDeliveredThreadException) - läuft dabei
             // GENESTET (wie RunFinallyNested), der Main-Thread macht danach
@@ -410,8 +491,7 @@ namespace fire.Runtime
             if (IsMainThreadVm)
                 while (_pendingThreadExceptions.TryDequeue(out var excInstance))
                 {
-                    HandleDeliveredThreadException(excInstance);
-                    if (_stopExecutionRequested) return true;
+                    if (HandleDeliveredThreadException(excInstance)) return true;
                 }
 
             if (_terminateRequested)
@@ -458,7 +538,7 @@ namespace fire.Runtime
             }
 
             UnwindTo(0, _globalScope);
-            if (destroyGlobalScope) _globalScope.Release(this);
+            if (destroyGlobalScope) ReleaseGlobalScope();
         }
 
         /// <summary>Führt einen zugestellten, unbehandelten Fire-Thread-
@@ -468,7 +548,7 @@ namespace fire.Runtime
         /// leave/terminate). Kein passender Handler registriert -> kompletter
         /// Programmabbruch, wie eine unbehandelte Exception im Main-Thread
         /// selbst (docs/THREADING_DESIGN.md 6.2).</summary>
-        private void HandleDeliveredThreadException(ObjectInstance excInstance)
+        private bool HandleDeliveredThreadException(ObjectInstance excInstance)
         {
             var handlerProto = FindGlobalThreadsCatch(excInstance);
             if (handlerProto == null)
@@ -478,8 +558,7 @@ namespace fire.Runtime
                 // MUSS danach sofort stoppen, statt evtl. weitere in der
                 // Warteschlange stehende Exceptions noch zu verarbeiten.
                 UnhandledException = excInstance;
-                _stopExecutionRequested = true;
-                return;
+                return true;
             }
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
@@ -495,7 +574,8 @@ namespace fire.Runtime
             _ip = 0;
 
             RunNestedUntil(targetDepth);
-            Pop(); // Rückgabewert des Handler-Protos unbenutzt, wie RunFinallyNested/RunDestructor.
+            PopNestedResult(); // Rückgabewert des Handler-Protos unbenutzt, wie RunFinallyNested/RunDestructor.
+            return false;
         }
 
         /// <summary>`catch threads(...)`-Auflösung - exakt wie FindMatchingCatch
@@ -538,7 +618,7 @@ namespace fire.Runtime
             _ip = 0;
 
             RunNestedUntil(targetDepth);
-            Pop();
+            PopNestedResult();
         }
 
         /// <summary>`process X`/`try process X` (siehe Ast.ProcessStmt/
@@ -578,7 +658,7 @@ namespace fire.Runtime
             _ip = 0;
 
             RunNestedUntil(targetDepth);
-            Pop(); // Rückgabewert unbenutzt, siehe Doku oben.
+            PopNestedResult(); // Rückgabewert unbenutzt, siehe Doku oben.
             return true;
         }
 
@@ -635,6 +715,8 @@ namespace fire.Runtime
             var op = (OpCode)ReadByte();
             if (op == OpCode.Halt)
             {
+                // Wie Run(): das normale Ende räumt den globalen Scope ab - im Einzelschritt ohne auf Threads zu warten (der Debugger hält sie evtl. an).
+                if (!_stopExecutionRequested && DestroyGlobalsAtEnd) ReleaseGlobalScope();
                 IsHalted = true;
                 return false;
             }
@@ -822,6 +904,13 @@ namespace fire.Runtime
         /// Destruktoren auslöst.</summary>
         private void RunNestedUntil(int targetFrameDepth)
         {
+            _nestedDepth++;
+            RunNestedLoop(targetFrameDepth);
+            _nestedDepth--;
+        }
+
+        private void RunNestedLoop(int targetFrameDepth)
+        {
             while (_frames.Count >= targetFrameDepth)
             {
                 var op = (OpCode)ReadByte();
@@ -855,6 +944,7 @@ namespace fire.Runtime
             // zuerst, dann jede Basisklasse (wie in C#) - eine Basisklasse, die
             // Ressourcen hält (z.B. einen Datei-Handle) räumt sie so auch für
             // abgeleitete Klassen auf, die selbst keinen destruct() haben.
+            if (_stopExecutionRequested) return;
             for (var rc = ResolveClass(instance.ClassName); rc != null; rc = rc.Base)
             {
                 if (rc.Destructor == null) continue;
@@ -875,7 +965,8 @@ namespace fire.Runtime
                 // einem normalen Call/CallMethod/etc. gibt es hier aber keinen
                 // Ausdruckskontext, der ihn abholt. Ohne dieses Pop würde der Stack
                 // bei jeder Destruktor-Ausführung um einen Wert "verwachsen".
-                Pop();
+                PopNestedResult();
+                if (_stopExecutionRequested) return; // ein Destruktor hat die VM beendet (unbehandelte Exception) - nichts mehr aufrufen
             }
         }
 
@@ -1076,8 +1167,14 @@ namespace fire.Runtime
                     return;
 
                 case OpCode.Jump:
-                    _ip = ReadU16();
+                {
+                    // Ein Rücksprung (Schleife) ist ein sicherer Punkt für Shutdown-Signale (siehe PollSignals); `_ip` zeigt hier
+                    // noch auf den Operanden, PollSignalsSlow rechnet mit der Instruktionsgrenze davor.
+                    int target = _code[_ip] | (_code[_ip + 1] << 8);
+                    if (target <= _ip && PollSignals()) return;
+                    _ip = target;
                     return;
+                }
 
                 case OpCode.JumpIfFalse:
                 {
@@ -1175,6 +1272,7 @@ namespace fire.Runtime
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
             if (CallNativeGuarded(nativeIdx, args, out Value nativeResult))
                 Push(nativeResult);
+            PollSignalsAfterOp();
             return;
         }
         }
@@ -1261,6 +1359,7 @@ namespace fire.Runtime
         private void OpCall()
         {
         {
+            if (PollSignals()) return;
             int argCount = ReadByte();
             int copyMask = TakeCopyMask();
 
@@ -1343,6 +1442,7 @@ namespace fire.Runtime
 
         private void OpNewObject()
         {
+            if (PollSignals()) return;
             int site = _ip - 1;
             int classNameIdx = ReadU16();
             int argCount = ReadByte();
@@ -1731,6 +1831,7 @@ namespace fire.Runtime
         private void OpCallMethod()
         {
         {
+            if (PollSignals()) return;
             int site = _ip - 1;
             int methodNameIdx = ReadU16();
             int argCount = ReadByte();
@@ -2047,6 +2148,7 @@ namespace fire.Runtime
         private void OpCallStaticMethod()
         {
         {
+            if (PollSignals()) return;
             int site = _ip - 1;
             int classNameIdx = ReadU16();
             int methodNameIdx = ReadU16();
@@ -2540,6 +2642,7 @@ namespace fire.Runtime
                     // einen Wurf; das Skript sieht dafür einfach 'undefined'.
                     bool success = _natives.TryableAt(tryableIdx)(args, out Value tryResult);
                     Push(success ? tryResult : Value.MakeUndefined());
+                    PollSignalsAfterOp();
                     break;
                 }
 
@@ -2586,6 +2689,7 @@ namespace fire.Runtime
                     }
 
                     Push(MarshalResultIn(nativeResult));
+                    PollSignalsAfterOp();
                     break;
                 }
 
@@ -3018,14 +3122,14 @@ namespace fire.Runtime
                     // (CheckShutdownSignals, am Anfang der nächsten
                     // Schleifen-Iteration in Run()), nicht sofort hier.
                     RequestLeave();
-                    ForceShutdownCheck();
+                    if (PollSignals()) break;
                     break;
 
                 case OpCode.Terminate:
                 {
                     var terminateValue = Pop();
                     RequestTerminate(terminateValue);
-                    ForceShutdownCheck();
+                    if (PollSignals()) break;
                     break;
                 }
 
@@ -3446,8 +3550,10 @@ namespace fire.Runtime
             if (IsFireThreadVm)
             {
                 _pendingThreadExceptions.Enqueue(excInstance);
+                RaiseSignal();
+                // Der globale Scope bleibt stehen: die Exception gehört ihm (TakeGlobal oben) und wird noch an den Main-Thread zugestellt.
                 UnwindForShutdown(); // _handlers ist an dieser Stelle ohnehin schon leer, siehe Schleife oben - äquivalent zu UnwindTo(0, _globalScope), aber ein Aufruf statt Code-Duplikat.
-                _stopExecutionRequested = true;
+                StopExecution();
                 return;
             }
 
@@ -3456,7 +3562,7 @@ namespace fire.Runtime
             // geworfen, Run() kehrt gleich danach über den nächsten
             // CheckShutdownSignals-Prüfpunkt ganz normal zurück).
             UnhandledException = excInstance;
-            _stopExecutionRequested = true;
+            StopExecution();
         }
 
         /// <summary>Friert den aktuellen Ausführungszustand ein, indem die
@@ -3601,7 +3707,7 @@ namespace fire.Runtime
             _ip = 0;
 
             RunNestedUntil(targetDepth);
-            Pop(); // bedeutungsloser Rückgabewert des finally-Protos, siehe RunDestructor
+            PopNestedResult(); // bedeutungsloser Rückgabewert des finally-Protos, siehe RunDestructor
         }
 
         /// <summary>Ruft eine Methode auf `obj` verschachtelt auf (siehe
@@ -3674,6 +3780,13 @@ namespace fire.Runtime
             _ip = 0;
 
             RunNestedUntil(targetDepth);
+
+            // Ein unbehandelter Fehler im Callback beendet die VM (StopExecution): der Host bekommt ihn als Ausnahme, die er
+            // bewusst fangen kann (siehe FireRuntime.CallCallback) - statt dass hier ein Rückgabewert fehlt.
+            if (_stopExecutionRequested)
+                throw UnhandledException != null
+                    ? new UncaughtScriptException(UnhandledException)
+                    : new InvalidOperationException("Der Callback wurde vorzeitig beendet.");
 
             return Pop();
         }

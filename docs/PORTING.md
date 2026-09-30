@@ -57,6 +57,16 @@ durch etwas Portables ersetzt werden müssen.
   Betrifft: `ThrowException` (kein Handler in dieser VM-Instanz) und
   `HandleDeliveredThreadException` (kein `catch threads(...)` zugestellt).
 
+- **Shutdown-Signale ohne Exceptions und ohne Dauer-Abfrage:** `leave`/`terminate`/
+  eine zugestellte Thread-Exception werden nur noch an den sicheren Punkten der VM
+  geprüft (Schleifen-Rücksprung, Aufruf, nach einem nativen Aufruf; ein Vergleich des
+  globalen Zählers `s_signalEpoch` mit dem zuletzt gesehenen Stand), und das Beenden
+  läuft über `VM.StopExecution()` - `_currentChunk` auf einen Chunk aus nur `Halt`
+  stellen, `Run()` liest als Nächstes dieses `Halt`. Keine C#-Exception, kein Stop-Flag
+  pro Instruktion in `Run()`. (Der Vorschlag, das Beenden als Exception zu werfen, wurde
+  verworfen: es widerspricht dieser Regel, und ein Signal von einem anderen Thread lässt
+  sich ohnehin nicht in einen laufenden Thread werfen - der muss es selbst bemerken.)
+
 - **`Value.RequireKind`** (ehem. Punkt 4): Analyse ergab, dass
   `InvalidOperationException` (aus RequireKind wie auch den ~48 ähnlichen
   Stellen in VM.cs) NIRGENDS im Kern gezielt als BEHANDELBARER Fehler

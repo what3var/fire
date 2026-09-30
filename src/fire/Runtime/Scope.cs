@@ -131,6 +131,17 @@ namespace fire.Runtime
 
         /// <summary>Wird beim Verlassen des Scopes aufgerufen: zerstört
         /// kaskadierend alle noch von diesem Scope besessenen Objekte.</summary>
+        /// <summary>Wie <see cref="Release"/>, aber nur für Objekte, die `filter` bejaht - die übrigen bleiben im Besitz dieser Scope
+        /// (für das Ende eines Fire-Threads: seine Globals-Schnappschüsse und `taking`-Kopien sind Kopien von Objekten des
+        /// Hauptprogramms und dürfen dort keine Destruktoren auslösen, z.B. ein geteiltes Handle schließen).</summary>
+        public void ReleaseWhere(IDestructRunner runner, Func<ObjectInstance, bool> filter)
+        {
+            if (_owned == null) return;
+            foreach (var obj in _owned.ToArray())
+                if (filter(obj)) obj.Destroy(runner);
+            _owned.RemoveAll(o => o.IsDestroyed);
+        }
+
         public void Release(IDestructRunner runner)
         {
             if (_owned == null) return; // nichts zu tun - der häufigste Fall bei einfachen Blöcken/Schleifenkörpern

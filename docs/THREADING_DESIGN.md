@@ -222,11 +222,19 @@ fire {
   und den Thread am Beenden hindern.
 - Läuft beim Verlassen durch alle offenen `finally`-Blöcke (korrektes
   Aufräumen/Destruktoren), endet dann still am Rand des jeweiligen
-  Fire-Blocks. Danach wird der **globale Scope** des Threads freigegeben
-  (`destruct()` für alles, was ihm gehört - offene Streams werden so
-  geschlossen), und das Verlassen wirkt **sofort**, unabhängig vom
-  Ausführungsmodus (früher konnte es in Release/Performance bis zu 16/4096
-  Instruktionen verzögert werden).
+  Fire-Blocks. Danach wird der **globale Scope** freigegeben (`destruct()`
+  für alles, was ihm gehört - offene Streams werden so geschlossen; in einem
+  Fire-Thread nur für Objekte, die er selbst angelegt hat, nicht für seine
+  Kopien von Objekten des Hauptprogramms), und das Verlassen wirkt **sofort**,
+  unabhängig vom Ausführungsmodus.
+- **Prüfpunkte:** Signale (`terminate`, eine zugestellte Fire-Thread-Exception,
+  `leave` per API) werden nicht vor jeder Instruktion geprüft, sondern an den
+  sicheren Punkten - Schleifen-Rücksprung, Aufruf, nach einem nativen Aufruf und
+  beim `leave`/`terminate` selbst - mit einem einzigen Vergleich eines globalen
+  Signalzählers (siehe VM.PollSignals). Das Beenden ist keine C#-Exception,
+  sondern Zustandsumschaltung (Sprung auf einen `Halt`-Chunk), damit es sich nach
+  C++ ohne Exceptions übertragen lässt (docs/PORTING.md). Eine Exception aus
+  einem anderen Thread in einen laufenden Thread zu werfen ist ohnehin nicht möglich.
 - **Muss nirgendwo zugestellt werden** - kein `catch threads(...)` nötig,
   kein Fehler. Ein `leave` ist ein gewollter, sauberer Ausstieg; das
   Programm läuft normal weiter, der Thread ist einfach zu seinem

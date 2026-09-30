@@ -133,10 +133,14 @@ Jede Objektinstanz (`class`) hat **genau einen Owner**: entweder einen Scope (Bl
 ### 2.3 Lebenszeit / Kaskadenlöschung
 
 - Wird ein Owner (Scope beim Verlassen, oder Objekt beim Löschen) zerstört, werden alle Objekte, deren Owner er noch ist, rekursiv mitzerstört (Kaskade). Dabei wird pro Objekt `destruct()` aufgerufen (s. 5.3).
-- **`leave`** (auch `terminate`, unbehandelte Exception) wickelt alle offenen Scopes ab. Bei `leave` wird zusätzlich der **globale Scope** des
-  Threads/Programms freigegeben: `destruct()` läuft für alles, was ihm (transitiv) gehört, offene Streams werden also geschlossen, und das sofort
-  (nicht erst nach einer Wartezeit, die vom Ausführungsmodus abhing). Das normale Programmende räumt den globalen Scope dagegen nicht ab. Als
-  Sicherheitsnetz schließt der Host am Ende außerdem alle Streams, die noch offen sind (`IoBridge.RegisterAll(...).Dispose()`).
+- **Programmende und `leave`:** Beim **normalen Ende** des Programms und bei `leave` wird der **globale Scope** wie jeder andere Scope beim Verlassen
+  freigegeben: `destruct()` läuft für alles, was ihm (transitiv) gehört, offene Streams werden also geschlossen. `leave` wirkt sofort, in jedem
+  Ausführungsmodus; vorher werden die offenen Scopes abgewickelt und `finally`-Blöcke laufen. Das Hauptprogramm **wartet an seinem Ende auf alle laufenden
+  `fire`-Threads** (sie können per `sync` in seine Objekte zurückschreiben), erst danach werden seine Globals zerstört. Ein Fire-Thread zerstört an seinem
+  Ende nur Objekte, die er selbst angelegt hat - Kopien von Objekten des Hauptprogramms (Globals-Schnappschuss, `taking`) bleiben unberührt, damit sie z.B. kein
+  geteiltes Handle schließen. `terminate` und eine unbehandelte Exception wickeln die offenen Scopes ab, geben den globalen Scope aber nicht frei. Als
+  Sicherheitsnetz schließt der Host am Ende außerdem alle Streams, die noch offen sind (`IoBridge.RegisterAll(...).Dispose()`). Ein Destruktor sollte nie
+  werfen: ein unbehandelter Fehler darin beendet das Programm (die `IO`-Destruktoren verschlucken deshalb IO-Fehler).
 - **Ausnahme `return`:** Wird aus einem lokalen Scope eine Objektinstanz per `return` zurückgegeben, *und* war dieser Scope ihr Owner, geht das Ownership implizit an den aufrufenden/Parent-Scope über (kein Kaskadenlöschen in diesem Fall).
 
 ### 2.4 Kopieren: `flat` und `copy`
