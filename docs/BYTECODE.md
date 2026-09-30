@@ -1463,3 +1463,28 @@ Wurzel-Instanz.
 
 **Editor.** `copy` steht in der Keyword-Liste und im Syntax-Highlighter; `EvalExprRangeCore` überspringt das Präfix, `var d = copy a` hat also den
 Typ von `a`.
+
+## 28. Kopien als Argument/Zuweisung (Owner), `leave`, `TakeTo`
+
+**`CopyArgs`-Präfix.** `Compiler.CompileArgs` wertet bei einem Aufruf, der eine Scope für die aufgerufene Funktion erzeugt (Lambda, Methode, `static`, `base.`,
+`new`, `base(...)`), ein Argument `flat x`/`copy x` nur als `x` aus und sammelt eine Maske (2 Bit je Argument, höchstens 16); `EmitCopyArgsPrefix` schreibt
+`CopyArgs lo hi` DIREKT vor den Aufruf-Opcode. Jeder dieser Opcodes holt die Maske sofort zu Beginn ab (`VM.TakeCopyMask`, sie gelangt so nie an einen späteren Aufruf) und
+wendet sie an, sobald die Scope der aufgerufenen Funktion steht (`ApplyCopyMask`: `ObjectCloner.Clone(slot, scope, deep)`) - auch in den Inline-Cache-Schnellpfaden
+(`EnterCall(..., copyMask)`). Aufrufe ohne Scope (eingebaute Methoden, Actor-Nachrichten) kopieren auf dem Stack mit dem aktuellen Scope als Owner
+(`ApplyCopyMaskToArgs`); native Funktionen bekommen vom Compiler gar kein Präfix, dort bleibt es `CopyValue`.
+
+**Zuweisung an ein Objekt.** `Compiler.IsOwnedCreation`/`TryCompileOwnedCreation` fassen `new`, `flat` und `copy` zusammen: der künftige Owner liegt schon auf dem Stack
+(`Dup` bei `obj.feld = ...`, `LoadThis` bei einem bloßen Feldnamen und im Instanzfeld-Initialisierer), danach `NewObjectOwned` bzw. `CopyValueOwned`. `CopyValueOwned` läuft über
+`ObjectCloner.CloneOwnedBy` - ist der Owner schon zerstört, entsteht die Kopie in einer Wegwerf-Scope, die sofort freigegeben wird (Verhalten wie `TakeTo`, SPEC 2.2).
+Der Instanzfeld-Initialisierer (`CompileFieldInitProto`) und ein bloßer Feldname in `CompileAssign` gehörten bisher der Initialisierer-/Methoden-Scope: das `new` darin wurde
+beim Verlassen zerstört, obwohl das Feld darauf zeigte - jetzt gehört es der Instanz (SPEC 2.1).
+
+**`TakeTo`/`TakeUpwards`/`TakeGlobal`** (SPEC 2.2) waren nur in C# vorhanden. `VM.TryCallOwnershipMethod` macht sie zu eingebauten Methoden jedes Objekts (greift nur, wenn die Klasse
+nichts Gleichnamiges deklariert, also nach dem Methoden-Lookup).
+
+**`leave`.** `Leave`/`Terminate` rufen `ForceShutdownCheck()` (setzt den Instruktionszähler auf "fällig"), damit `Run()` das Signal vor der nächsten Instruktion prüft statt erst nach
+dem Prüfintervall (Release 16, Performance 4096). `UnwindForShutdown(destroyGlobalScope: true)` gibt bei `leave` nach dem Abwickeln der Frames auch `_globalScope` frei; `terminate`
+und die Abwicklung nach einer unbehandelten Exception lassen den globalen Scope wie bisher aus.
+
+**Host-Sicherheitsnetz.** `IoBridge.RegisterAll` gibt ein `IDisposable` zurück (`IoHost.Dispose` schließt alle noch offenen, nicht-permanenten Streams); die Sessions halten es
+(`IoResources`), `Runtime.Session.Run()` ruft es nach dem Lauf, `RuntimeSession.CloseHostResources()` ist für Hosts, die die VM selbst treiben (der Step-Debugger ruft es noch nicht).

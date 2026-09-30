@@ -6352,7 +6352,7 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
         a.item.n = 1
         print(Touch(copy a))
         print(a.name + " " + a.item.n)
-        """, "geaendert", "a 77", "geaendert", "a 1");
+        """, "~Bgeaendert", "geaendert", "a 77", "~Bgeaendert", "~I77", "geaendert", "a 1");
 
     CheckClone("Owner: Kopie gehoert dem Scope und wird mit ihm zerstoert (Besitz bleibt erhalten)", cloneClasses + """
         {
@@ -6470,6 +6470,236 @@ Console.WriteLine("=== Kopieren: Editor ===");
     Check("copy/flat als Schluesselwoerter", "var x = 1\nco|", "copy");
     Check("flat als Schluesselwort", "var x = 1\nfla|", "flat");
     Console.WriteLine(failures == 0 ? "Alle Kopier-Editor-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerstoert alles ===");
+{
+    int lifeFailures = 0;
+    var allModes = new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance };
+
+    List<string> RunLife(string script, VmExecutionMode mode, bool withIo = false, bool disposeIo = true)
+    {
+        var lines = new List<string>();
+        var sources = withIo
+            ? new[] { fire.Standard.Prelude.Source, fire.IO.Bridge.IoBridge.PreludeSource, script }
+            : new[] { fire.Standard.Prelude.Source, script };
+        var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var program = Parser.ParseMultiple(sources.Select(s => Preprocessor.Process(s, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        IDisposable? io = withIo ? fire.IO.Bridge.IoBridge.RegisterAll(natives) : null;
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, executionMode: mode);
+        vm.Run();
+        if (disposeIo) io?.Dispose();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckLife(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
+    {
+        foreach (var mode in modes ?? allModes)
+        {
+            string[] actual;
+            try { actual = RunLife(script, mode).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) lifeFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    const string lifeClasses = """
+        class Item {
+            int n
+            construct(int n) { this.n = n }
+            destruct() { print("~I" + this.n) }
+        }
+        class Box {
+            string name
+            Item item
+            Item extra
+            construct(string name) { this.name = name }
+            destruct() { print("~B" + this.name) }
+        }
+
+        """;
+
+    // ---- Kopien als Parameter: Scope der aufgerufenen Funktion
+    CheckLife("Parameter: die Kopie gehoert der aufgerufenen Funktion (auch static/Methode/Lambda)", lifeClasses + """
+        class F {
+            static Use(b) { b.name = "s"; print("in") }
+            static Keep(b) { return b }
+            Inst(b) { b.name = "m"; print("inst") }
+        }
+        var lam = func (b) => { b.name = "l"; print("lam") }
+        {
+            var a = new Box("a")
+            a.item = new Item(1)
+            F.Use(copy a)
+            print("|")
+            new F().Inst(flat a)
+            print("|")
+            lam(copy a)
+            print("|")
+            var k = F.Keep(copy a)
+            print("k")
+        }
+        print("ende")
+        """, new[] { "in", "~Bs", "~I1", "|", "inst", "~Bm", "|", "lam", "~Bl", "~I1", "|", "k", "~Ba", "~I1", "~Ba", "~I1", "ende" });
+
+    CheckLife("Parameter: dieselbe Aufrufstelle in der Schleife, Kopie jedes Mal neu", lifeClasses + """
+        class F { static int Bump(b) { b.item.n = b.item.n + 1; return b.item.n } }
+        var a = new Box("a")
+        a.item = new Item(1)
+        var total = 0
+        for (var i = 0; i < 3; i = i + 1) { total = total + F.Bump(copy a) }
+        print(total)
+        print(a.item.n)
+        """, new[] { "~Ba", "~I2", "~Ba", "~I2", "~Ba", "~I2", "6", "1" });
+
+    CheckLife("Parameter: Konstruktor (TakeTo behaelt die Kopie) und base(...)", lifeClasses + """
+        class Keep { Item held; construct(i) { this.held = i; i.TakeTo(this) } }
+        class Base2 { construct(i) { print("base " + i.n) } }
+        class Derived : Base2 { construct(i) : base(copy i) { print("derived") } }
+        var t = new Item(4)
+        {
+            var k = new Keep(copy t)
+            print(k.held.n)
+            var d = new Derived(t)
+            print("d")
+        }
+        print("ende")
+        """, new[] { "4", "base 4", "~I4", "derived", "d", "~I4", "ende" });
+
+    CheckLife("Parameter: auch bei Methoden von Basistypen (Erweiterung) und verschachtelten Aufrufen", """
+        class extends string { bool Has(x) { return this.Contains(x) } }
+        var Id = func (x) => { return x }
+        var Two = func (a, b) => { return a.n + b.n }
+        class N { int n; construct(int n) { this.n = n } }
+        print("abc".Has(copy "b"))
+        print(Two(copy new N(1), Id(copy new N(2))))
+        """, new[] { "True", "3" });
+
+    // ---- Kopie einem Objekt zugewiesen: das Objekt wird der Owner (wie TakeTo)
+    CheckLife("Zuweisung an ein Objekt: Feld, Feld-Initialisierer, bloßer Feldname", lifeClasses + """
+        var template = new Item(9)
+        class H {
+            Item init = new Item(1)
+            Item cp = copy template
+            Item later
+            Item bare
+            Setup() { bare = new Item(5) }
+            SetupCopy() { later = copy template }
+            destruct() { print("~H") }
+        }
+        {
+            var h = new H()
+            print("nach ctor")
+            h.Setup()
+            h.SetupCopy()
+            print("nach setup")
+        }
+        print("ende")
+        """, new[] { "nach ctor", "nach setup", "~H", "~I1", "~I9", "~I5", "~I9", "ende" });
+
+    CheckLife("Zuweisung an ein Objekt, das schon zerstoert wird: die Kopie wird sofort mit zerstoert (wie TakeTo)", lifeClasses + """
+        var template = new Item(9)
+        class R { Item late; destruct() { this.late = copy template } }
+        {
+            var r = new R()
+        }
+        print("ende")
+        """, new[] { "~I9", "ende" });
+
+    // ---- leave: sofort, und alles wird zerstoert
+    CheckLife("leave wirkt sofort und zerstoert auch die Objekte des globalen Scopes (finally laeuft)", lifeClasses + """
+        var g = new Item(1)
+        var f = func () => {
+            var local = new Item(2)
+            {
+                var inner = new Item(3)
+                leave
+            }
+            print("nie")
+        }
+        try {
+            f()
+        } finally {
+            print("finally")
+        }
+        print("nicht erreicht")
+        """, new[] { "~I3", "~I2", "finally", "~I1" });
+
+    CheckLife("leave: Kopien und verschachtelte Besitzer werden mit zerstoert", lifeClasses + """
+        var a = new Box("a")
+        a.item = new Item(1)
+        var c = copy a
+        c.name = "c"
+        leave
+        print("nie")
+        """, new[] { "~Ba", "~I1", "~Bc", "~I1" });
+
+    {
+        // Ein offener FileStream: sein Destruktor schliesst ihn beim leave (der Inhalt ist danach vollstaendig auf der Platte).
+        string leaveFile = Path.Combine(Path.GetTempPath(), "fire-leave-" + Guid.NewGuid().ToString("N") + ".bin").Replace("\\", "/");
+        foreach (var mode in allModes)
+        {
+            string result;
+            try
+            {
+                var lines = RunLife($$"""
+                    #import "io"
+                    var w = new IO.FileStream("{{leaveFile}}", IO.FileMode.Create)
+                    w.Write("Hallo".ToBytes())
+                    var Work = func () => {
+                        var w2 = new IO.FileStream("{{leaveFile}}.2", IO.FileMode.Create)
+                        w2.Write("Zwei".ToBytes())
+                        leave
+                    }
+                    Work()
+                    print("nie")
+                    """, mode, withIo: true, disposeIo: false); // ohne Sicherheitsnetz: nur die Destruktoren schliessen
+                long size1 = File.Exists(leaveFile) ? new FileInfo(leaveFile).Length : -1;
+                long size2 = File.Exists(leaveFile + ".2") ? new FileInfo(leaveFile + ".2").Length : -1;
+                result = $"{string.Join(",", lines)}|{size1}|{size2}";
+            }
+            catch (Exception ex) { result = "AUSNAHME: " + ex.Message; }
+            finally
+            {
+                try { File.Delete(leaveFile); File.Delete(leaveFile + ".2"); } catch { }
+            }
+            bool ok = result == "|5|4";
+            if (!ok) lifeFailures++;
+            Console.WriteLine(ok ? $"OK: leave schliesst offene Streams [{mode}]" : $"FEHLER: leave schliesst offene Streams [{mode}]\n  erwartet: |5|4\n  erhalten: {result}");
+        }
+    }
+
+    {
+        // Das Sicherheitsnetz des Hosts (IoBridge.RegisterAll(...).Dispose()) schliesst, was am Ende noch offen ist -
+        // hier ein Stream im globalen Scope, der beim normalen Programmende nicht zerstoert wird.
+        string netFile = Path.Combine(Path.GetTempPath(), "fire-net-" + Guid.NewGuid().ToString("N") + ".bin").Replace("\\", "/");
+        string result;
+        try
+        {
+            RunLife($$"""
+                var w = new IO.FileStream("{{netFile}}", IO.FileMode.Create)
+                w.Write("Netz".ToBytes())
+                """, VmExecutionMode.Debug, withIo: true, disposeIo: true);
+            result = (File.Exists(netFile) ? new FileInfo(netFile).Length : -1).ToString();
+        }
+        catch (Exception ex) { result = "AUSNAHME: " + ex.Message; }
+        finally { try { File.Delete(netFile); } catch { } }
+        bool ok = result == "4";
+        if (!ok) lifeFailures++;
+        Console.WriteLine(ok ? "OK: Host-Sicherheitsnetz schliesst offene Streams" : $"FEHLER: Host-Sicherheitsnetz\n  erwartet: 4\n  erhalten: {result}");
+    }
+
+    Console.WriteLine(lifeFailures == 0 ? "Alle Kopie/leave-Pruefungen bestanden." : $"FEHLER: {lifeFailures} Pruefung(en) fehlgeschlagen.");
 }
 
 static int CountOccurrences(string haystack, string needle)

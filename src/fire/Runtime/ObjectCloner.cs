@@ -56,6 +56,21 @@ namespace fire.Runtime
             }
         }
 
+        /// <summary>Wie <see cref="Clone"/>, aber für eine Kopie, die einem OBJEKT gehören soll (Zuweisung an ein Feld, SPEC 2.4) -
+        /// die Übergabe verhält sich wie `TakeTo` (SPEC 2.2): befindet sich das Zielobjekt schon in der Kaskadenlöschung, wird die
+        /// Kopie so behandelt, als wäre sie eine Sekunde VOR deren Beginn übergeben worden - sie wird sofort mit zerstört (samt
+        /// `destruct()`). (Einen Zyklus kann es nicht geben: die Kopie ist neu und besitzt nichts, was das Ziel schon besäße.)</summary>
+        public static Value CloneOwnedBy(Value source, ObjectInstance owner, bool deep, IDestructRunner runner)
+        {
+            if (!owner.IsDestroyed)
+                return Clone(source, owner, deep);
+
+            var scratch = new Scope(null);
+            var result = Clone(source, scratch, deep);
+            scratch.Release(runner);
+            return result;
+        }
+
         private static void RequireCopyableRoot(ObjectInstance obj)
         {
             if (obj.IsDestroyed)

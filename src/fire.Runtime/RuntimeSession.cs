@@ -49,10 +49,15 @@ namespace fire.Runtime
             // Private constructor to prevent direct instantiation
         }
 
+        /// <summary>Sicherheitsnetz des Hosts: schließt nach dem Lauf alle Streams, die ein Skript offen gelassen hat
+        /// (siehe IoBridge.RegisterAll). Der Destruktor von `IO.FileStream` & Co. schließt sie normalerweise schon.</summary>
+        protected IDisposable? IoResources { get; set; }
+
         public void Run()
         {
-            if (VirtualMachine != null)
-                VirtualMachine.Run();
+            if (VirtualMachine == null) return;
+            try { VirtualMachine.Run(); }
+            finally { IoResources?.Dispose(); }
         }
 
         protected void SetVM(VM virtualMachine, WindowManager? wm, Scope globalScope, NativeRegistry natives, FramebufferManager? framebufferManager, ConsoleManager? consoleManager, int firstUserSourceIndex)
@@ -117,8 +122,9 @@ namespace fire.Runtime
             // `ioPolicy`: was Skripte im Dateisystem anfassen dürfen, `ioStdio`: wohin
             // IO.Stdio führt - beides entscheidet der HOST (siehe IoPolicy/IoStdio),
             // Vorgabe: alles erlaubt, echte Konsole.
+            IDisposable? ioResources = null;
             if (linkedProgram.NativeImports.Contains(NativeImports.IO))
-                IoBridge.RegisterAll(natives, ioPolicy, ioStdio);
+                ioResources = IoBridge.RegisterAll(natives, ioPolicy, ioStdio);
 
             var globalScope = new Scope(null, isGlobal: true);
             
@@ -126,6 +132,7 @@ namespace fire.Runtime
                 externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: executionMode);
 
             session.SetVM(mainVm, windowManager, globalScope, natives, fbManager, consoleManager, linkedProgram.FirstUserSource);
+            session.IoResources = ioResources;
 
             return session;
         }

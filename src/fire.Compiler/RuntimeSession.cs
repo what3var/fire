@@ -39,6 +39,12 @@ namespace fire.Compiler
 
         protected NativeRegistry? nativeRegistry { get; set; }
 
+        /// <summary>Sicherheitsnetz des Hosts (siehe IoBridge.RegisterAll): schließt alle Streams, die ein Skript offen
+        /// gelassen hat. Wer die VM selbst treibt (z.B. der Step-Debugger), ruft das nach dem Lauf auf.</summary>
+        protected IDisposable? IoResources { get; set; }
+
+        public void CloseHostResources() => IoResources?.Dispose();
+
         
         private RuntimeSession(CompiledProgram compiledProgram)
         {
@@ -136,8 +142,9 @@ namespace fire.Compiler
             // `ioPolicy`: was Skripte im Dateisystem anfassen dürfen, `ioStdio`: wohin
             // IO.Stdio führt - beides entscheidet der HOST (siehe IoPolicy/IoStdio),
             // Vorgabe: alles erlaubt, echte Konsole.
+            IDisposable? ioResources = null;
             if (linkedProgram.NativeImports.Contains(NativeImports.IO))
-                fire.IO.Bridge.IoBridge.RegisterAll(natives, ioPolicy, ioStdio);
+                ioResources = fire.IO.Bridge.IoBridge.RegisterAll(natives, ioPolicy, ioStdio);
 
             var globalScope = new Scope(null, isGlobal: true);
             
@@ -145,6 +152,7 @@ namespace fire.Compiler
                 externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: executionMode);
 
             session.SetVM(mainVm, windowManager, globalScope, natives, fbManager, consoleManager, linkedProgram.FirstUserSource);
+            session.IoResources = ioResources;
 
             return session;
         }

@@ -136,6 +136,10 @@ namespace fire.Bytecode
         // Bewusst NACH Halt angehängt, damit die Zahlenwerte aller bisherigen Opcodes (auch die von Halt) stabil bleiben.
         CopyValue,      // u8 flags (bit0 = tief) : pop Quelle; push Kopie (`flat x` / `copy x`), Owner = aktueller Scope
         CopyValueOwned, // u8 flags (bit0 = tief) : pop Quelle, pop Owner-Objekt; push Kopie, Owner = das Objekt (wie NewObjectOwned, SPEC 2.1)
+        CopyArgs,       // u16 lo, u16 hi : Präfix DIREKT vor einem Aufruf-Opcode (Call/CallMethod/CallStaticMethod/CallBaseMethod/NewObject/
+                        //   NewObjectOwned/ConstructBase) - 2 Bit je Argument (Bit 2i = flach kopieren, Bit 2i+1 = tief kopieren): der Aufruf
+                        //   kopiert diese Argumente selbst, sobald die Scope der aufgerufenen Funktion steht, und die Kopie gehört dieser Scope
+                        //   (SPEC 2.4). Höchstens 16 Argumente.
     }
 
     /// <summary>Zieltyp für CoerceType/CoerceTypeDynamic - entspricht genau den

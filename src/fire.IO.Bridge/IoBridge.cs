@@ -63,14 +63,34 @@ namespace fire.IO.Bridge
 
         /// <summary>Die echten Funktionen. `policy`: was Skripte anfassen dürfen
         /// (Vorgabe: alles, siehe IoPolicy.AllowAll). Jeder Aufruf erzeugt eine
-        /// EIGENE Handle-Tabelle - Sessions teilen sich keine offenen Streams.</summary>
-        public static void RegisterAll(NativeRegistry natives, IoPolicy? policy = null, IoStdio? stdio = null) =>
-            natives.RegisterGroup(Prefix, new IoHost(policy ?? IoPolicy.AllowAll, stdio ?? IoStdio.SystemConsole).BuildFunctions());
+        /// EIGENE Handle-Tabelle - Sessions teilen sich keine offenen Streams.
+        ///
+        /// Der Rückgabewert schließt beim `Dispose()` alle noch offenen Streams dieser Registrierung (ausgenommen die
+        /// Standardstreams des Hosts) - das Sicherheitsnetz des Hosts für Streams, die ein Skript nie geschlossen hat und
+        /// deren Destruktor nicht (mehr) lief. Normalerweise schließt der Destruktor von `IO.FileStream` & Co. sie schon.</summary>
+        public static IDisposable RegisterAll(NativeRegistry natives, IoPolicy? policy = null, IoStdio? stdio = null)
+        {
+            var host = new IoHost(policy ?? IoPolicy.AllowAll, stdio ?? IoStdio.SystemConsole);
+            natives.RegisterGroup(Prefix, host.BuildFunctions());
+            return host;
+        }
 
         /// <summary>Die offenen Streams EINER Registrierung - für Tests/Diagnose
         /// (fire: `__IOOpenCount()`).</summary>
-        internal sealed partial class IoHost
+        internal sealed partial class IoHost : IDisposable
         {
+            /// <summary>Schließt alle noch offenen, nicht-permanenten Streams (siehe RegisterAll).</summary>
+            public void Dispose()
+            {
+                foreach (var handle in _streams.Keys.ToArray())
+                {
+                    if (!_streams.TryGetValue(handle, out var entry) || entry.Permanent) continue;
+                    if (!_streams.TryRemove(handle, out entry)) continue;
+                    try { lock (entry.Lock) entry.Stream.Dispose(); }
+                    catch { /* beim Aufräumen ist ein Fehler beim Schließen egal */ }
+                }
+            }
+
             private sealed class StreamEntry
             {
                 public required Stream Stream { get; init; }

@@ -152,6 +152,7 @@ namespace fire.Runtime
 
         // Der Werte-Stack: ein Array mit Stackzeiger statt einer List<Value> (kein Versionszähler, keine
         // doppelte Bereichsprüfung, kein Nullen beim Entfernen) - Push/Pop sind der heißeste Pfad der VM.
+        private int _copyArgMask; // gesetzt vom Präfix CopyArgs, abgeholt vom nächsten Aufruf-Opcode (TakeCopyMask)
         private Value[] _stack = new Value[256];
         private int _sp;
         private readonly Stack<CallFrame> _frames = new();
@@ -358,6 +359,11 @@ namespace fire.Runtime
 
         private long _instructionsSinceShutdownCheck;
 
+        /// <summary>Lässt Run() das Signal schon VOR der nächsten Instruktion prüfen, nicht erst nach dem Prüfintervall
+        /// (Release: 16, Performance: 4096 Instruktionen). Ein `leave`/`terminate` dieser VM selbst muss sofort wirken -
+        /// sonst liefe das Programm nach dem `leave` (je nach Modus) noch eine ganze Weile weiter.</summary>
+        private void ForceShutdownCheck() => _instructionsSinceShutdownCheck = long.MaxValue / 2;
+
         public void Run()
         {
             _currentThreadVm = this;
@@ -417,7 +423,9 @@ namespace fire.Runtime
             if (_leaveRequested)
             {
                 _leaveRequested = false;
-                UnwindForShutdown();
+                // `leave` beendet diese VM geordnet: auch die Objekte des globalen Scopes werden zerstört
+                // (destruct() läuft, Handles werden geschlossen) - wie beim Verlassen jedes anderen Scopes.
+                UnwindForShutdown(destroyGlobalScope: true);
                 return true;
             }
             return false;
@@ -437,7 +445,7 @@ namespace fire.Runtime
         /// diese eine VM-Instanz) und `terminate` (jede VM-Instanz bemerkt
         /// das globale Signal an ihrem eigenen nächsten Prüfpunkt und wickelt
         /// sich GENAUSO ab - nur die Auslösung unterscheidet sich).</summary>
-        private void UnwindForShutdown()
+        private void UnwindForShutdown(bool destroyGlobalScope = false)
         {
             while (_handlers.Count > 0)
             {
@@ -450,6 +458,7 @@ namespace fire.Runtime
             }
 
             UnwindTo(0, _globalScope);
+            if (destroyGlobalScope) _globalScope.Release(this);
         }
 
         /// <summary>Führt einen zugestellten, unbehandelten Fire-Thread-
@@ -1194,7 +1203,7 @@ namespace fire.Runtime
         /// <summary>Wechselt in den Aufruf von `proto`: die obersten `argCount` Stack-Werte werden direkt als
         /// Parameter-Slots der neuen Scope übernommen und (zusammen mit dem darunterliegenden Empfänger/Callee, falls
         /// `dropBelow`) vom Stack genommen. Nur für Aufrufe mit EXAKT passender Argumentanzahl (kein Standardwert nötig).</summary>
-        private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null)
+        private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null, int copyMask = 0)
         {
             var slots = new Value[argCount + SlotSlack];
             Array.Copy(_stack, _sp - argCount, slots, 0, argCount);
@@ -1203,8 +1212,46 @@ namespace fire.Runtime
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, constructed));
             _currentThis = newThis;
             _currentScope = new Scope(_globalScope, slots, argCount);
+            if (copyMask != 0) ApplyCopyMask(_currentScope, copyMask);
             _currentChunk = proto.Chunk;
             _ip = 0;
+        }
+
+        // -----------------------------------------------------------
+        // `flat x` / `copy x` als Argument (SPEC 2.4, Opcode CopyArgs)
+        // -----------------------------------------------------------
+
+        /// <summary>Die Kopier-Maske, die das Präfix `CopyArgs` für den Aufruf-Opcode hinterlegt hat - hier gelesen UND
+        /// gelöscht (jeder Aufruf-Opcode holt sie gleich zu Beginn ab, damit sie nie an einen späteren Aufruf gerät).</summary>
+        private int TakeCopyMask()
+        {
+            int mask = _copyArgMask;
+            _copyArgMask = 0;
+            return mask;
+        }
+
+        /// <summary>Kopiert die markierten Parameter einer frisch aufgebauten Aufruf-Scope: die Kopie gehört dieser Scope
+        /// (wird also mit dem Verlassen der Funktion zerstört, außer die Funktion gibt sie zurück oder übergibt sie per TakeTo).</summary>
+        private void ApplyCopyMask(Scope scope, int mask)
+        {
+            if (mask == 0) return;
+            for (int i = 0; i < 16; i++)
+            {
+                int bits = (mask >> (2 * i)) & 3;
+                if (bits == 0) continue;
+                scope.SlotRef(i) = ObjectCloner.Clone(scope.SlotRef(i), scope, deep: bits == 2);
+            }
+        }
+
+        /// <summary>Für Aufrufe OHNE Funktions-Scope (eingebaute Methoden, Actor-Nachrichten): die Kopie gehört dem
+        /// aktuellen Scope, wie bei einer gewöhnlichen Kopie.</summary>
+        private void ApplyCopyMaskToArgs(Value[] args, int mask)
+        {
+            for (int i = 0; i < args.Length && i < 16; i++)
+            {
+                int bits = (mask >> (2 * i)) & 3;
+                if (bits != 0) args[i] = ObjectCloner.Clone(args[i], _currentScope, deep: bits == 2);
+            }
         }
 
         private void StoreSite(int site, SiteCache entry) => _chunk.EnsureSiteCaches()[site] = entry;
@@ -1215,22 +1262,23 @@ namespace fire.Runtime
         {
         {
             int argCount = ReadByte();
+            int copyMask = TakeCopyMask();
 
             // Schnellpfad: ein Lambda mit genau dieser Parameterzahl (kein Standardwert nötig).
             if (_stack[_sp - 1 - argCount] is { Kind: ValueKind.Lambda } fastCallee
                 && fastCallee.AsLambda() is LambdaValue fastLambda
                 && fastLambda.Proto.ParamCount == argCount)
             {
-                EnterCall(fastLambda.Proto, argCount, dropBelow: true, fastLambda.OnTarget);
+                EnterCall(fastLambda.Proto, argCount, dropBelow: true, fastLambda.OnTarget, copyMask: copyMask);
                 return;
             }
 
-            OpCallSlow(argCount);
+            OpCallSlow(argCount, copyMask);
             return;
         }
         }
 
-        private void OpCallSlow(int argCount)
+        private void OpCallSlow(int argCount, int copyMask)
         {
         {
             var args = new Value[argCount];
@@ -1249,6 +1297,7 @@ namespace fire.Runtime
 
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
+            ApplyCopyMask(funcScope, copyMask);
 
             _currentThis = lambda.OnTarget;
             _currentScope = funcScope;
@@ -1297,6 +1346,7 @@ namespace fire.Runtime
             int site = _ip - 1;
             int classNameIdx = ReadU16();
             int argCount = ReadByte();
+            int copyMask = TakeCopyMask();
 
             // Schnellpfad (Inline-Cache): Klasse und Konstruktor dieser Stelle sind bekannt, Zugriffs- und
             // Argumentprüfung schon bestanden.
@@ -1304,13 +1354,13 @@ namespace fire.Runtime
             {
                 var created = new ObjectInstance(cachedClass.Name, _currentScope, cachedClass);
                 if (cachedClass.IsActor) created.Mailbox = new ActorMailbox();
-                EnterCall(cachedCtor, argCount, dropBelow: false, newThis: created, constructed: created);
+                EnterCall(cachedCtor, argCount, dropBelow: false, newThis: created, constructed: created, copyMask: copyMask);
                 return;
             }
-            OpNewObjectSlow(site, classNameIdx, argCount);
+            OpNewObjectSlow(site, classNameIdx, argCount, copyMask);
         }
 
-        private void OpNewObjectSlow(int site, int classNameIdx, int argCount)
+        private void OpNewObjectSlow(int site, int classNameIdx, int argCount, int copyMask)
         {
         {
             var args = new Value[argCount];
@@ -1332,7 +1382,7 @@ namespace fire.Runtime
             var instance = new ObjectInstance(rc.Name, _currentScope, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
             args = FillDefaultArgs(ctorProto, args, instance);
-            BeginConstruction(instance, ctorProto, args);
+            BeginConstruction(instance, ctorProto, args, copyMask);
             return;
         }
         }
@@ -1342,6 +1392,7 @@ namespace fire.Runtime
         {
             int classNameIdx = ReadU16();
             int argCount = ReadByte();
+            int copyMask = TakeCopyMask();
             var args = new Value[argCount];
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
             var owner = RequireObjectInstance(Pop(), "Objekt-Erzeugung mit Owner");
@@ -1360,7 +1411,7 @@ namespace fire.Runtime
             var instance = new ObjectInstance(rc.Name, owner, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
             args = FillDefaultArgs(ctorProto, args, instance);
-            BeginConstruction(instance, ctorProto, args);
+            BeginConstruction(instance, ctorProto, args, copyMask);
             return;
         }
         }
@@ -1370,6 +1421,7 @@ namespace fire.Runtime
         {
             int classNameIdx = ReadU16();
             int argCount = ReadByte();
+            int copyMask = TakeCopyMask();
             var args = new Value[argCount];
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
@@ -1385,6 +1437,7 @@ namespace fire.Runtime
 
             var baseScope = new Scope(_globalScope);
             foreach (var a in args) baseScope.DefineSlot(a);
+            ApplyCopyMask(baseScope, copyMask);
 
             _currentScope = baseScope;
             _currentChunk = ctorProto.Chunk;
@@ -1681,6 +1734,7 @@ namespace fire.Runtime
             int site = _ip - 1;
             int methodNameIdx = ReadU16();
             int argCount = ReadByte();
+            int copyMask = TakeCopyMask();
 
             // Schnellpfad (Inline-Cache, siehe SiteCache): ein Objekt derselben Klasse wie beim letzten Aufruf
             // dieser Stelle - Methode, Zugriffs- und Argumentprüfung sind schon erledigt.
@@ -1690,16 +1744,16 @@ namespace fire.Runtime
                 && ReferenceEquals(cachedObj.RtClass, siteEntry.Class)
                 && cachedObj.Mailbox == null)
             {
-                EnterCall(cachedMethod, argCount, dropBelow: true, cachedObj);
+                EnterCall(cachedMethod, argCount, dropBelow: true, cachedObj, copyMask: copyMask);
                 return;
             }
 
-            OpCallMethodSlow(site, methodNameIdx, argCount);
+            OpCallMethodSlow(site, methodNameIdx, argCount, copyMask);
             return;
         }
         }
 
-        private void OpCallMethodSlow(int site, int methodNameIdx, int argCount)
+        private void OpCallMethodSlow(int site, int methodNameIdx, int argCount, int copyMask)
         {
         {
             string methodName = _constants[methodNameIdx].AsString();
@@ -1751,6 +1805,7 @@ namespace fire.Runtime
                         _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
                         var extScope = new Scope(_globalScope);
                         foreach (var a in args) extScope.DefineSlot(a);
+                        ApplyCopyMask(extScope, copyMask);
 
                         _currentThis = target;
                         _currentScope = extScope;
@@ -1760,6 +1815,7 @@ namespace fire.Runtime
                     }
                 }
 
+                if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
                 if (TryCallBuiltinMethod(target, methodName, args, out Value builtinResult))
                 {
                     Push(builtinResult);
@@ -1779,6 +1835,7 @@ namespace fire.Runtime
             // läuft normal weiter (kein Sprung in irgendeinen Chunk).
             if (obj.Mailbox != null)
             {
+                if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
                 obj.Mailbox.Enqueue(new ActorMessage(methodName, args));
                 Push(Value.MakeUndefined());
                 return;
@@ -1787,7 +1844,15 @@ namespace fire.Runtime
             var rc = ResolveClass(obj.ClassName);
             var (proto, declaringRcCall, accessCall) = rc.FindMethodWithAccess(methodName, args.Length);
             if (proto == null)
+            {
+                // Die Ownership-Übergabe (SPEC 2.2) ist für jedes Objekt da, ohne dass die Klasse sie deklariert.
+                if (TryCallOwnershipMethod(obj, methodName, args))
+                {
+                    Push(Value.MakeUndefined());
+                    return;
+                }
                 throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
+            }
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
             {
                 ThrowAccessDenied(
@@ -1803,6 +1868,7 @@ namespace fire.Runtime
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
             var scope = new Scope(_globalScope);
             foreach (var a in args) scope.DefineSlot(a);
+            ApplyCopyMask(scope, copyMask);
 
             _currentThis = obj;
             _currentScope = scope;
@@ -1812,12 +1878,33 @@ namespace fire.Runtime
         }
         }
 
+        /// <summary>`obj.TakeUpwards()`, `obj.TakeGlobal()`, `obj.TakeTo(other)` (SPEC 2.2): eingebaute Methoden jedes Objekts, die
+        /// nur greifen, wenn die Klasse nichts Gleichnamiges deklariert. Liefert false, wenn `name`/Argumentzahl keine davon ist.</summary>
+        private bool TryCallOwnershipMethod(ObjectInstance obj, string name, Value[] args)
+        {
+            switch (name)
+            {
+                case "TakeUpwards" when args.Length == 0:
+                    obj.TakeUpwards();
+                    return true;
+                case "TakeGlobal" when args.Length == 0:
+                    obj.TakeGlobal(_globalScope);
+                    return true;
+                case "TakeTo" when args.Length == 1:
+                    obj.TakeTo(RequireObjectInstance(args[0], "TakeTo"), this);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private void OpCallBaseMethod()
         {
         {
             string baseClassName = _constants[ReadU16()].AsString();
             string methodName = _constants[ReadU16()].AsString();
             int argCount = ReadByte();
+            int copyMask = TakeCopyMask();
             var args = new Value[argCount];
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
@@ -1839,6 +1926,7 @@ namespace fire.Runtime
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
             var scope = new Scope(_globalScope);
             foreach (var a in args) scope.DefineSlot(a);
+            ApplyCopyMask(scope, copyMask);
 
             _currentScope = scope;
             _currentChunk = proto.Chunk;
@@ -1963,21 +2051,22 @@ namespace fire.Runtime
             int classNameIdx = ReadU16();
             int methodNameIdx = ReadU16();
             int callArgCount = ReadByte();
+            int copyMask = TakeCopyMask();
 
             // Schnellpfad: dieselbe Stelle hat sich schon einmal aufgelöst (Klasse/Methode stehen als Konstanten
             // im Bytecode fest, siehe SiteCache) - kein Lookup nach Klassen- und Methodenname mehr.
             if (LookupSite(site) is { Proto: { } cachedStatic })
             {
-                EnterCall(cachedStatic, callArgCount, dropBelow: false, newThis: null);
+                EnterCall(cachedStatic, callArgCount, dropBelow: false, newThis: null, copyMask: copyMask);
                 return;
             }
 
-            OpCallStaticMethodSlow(site, classNameIdx, methodNameIdx, callArgCount);
+            OpCallStaticMethodSlow(site, classNameIdx, methodNameIdx, callArgCount, copyMask);
             return;
         }
         }
 
-        private void OpCallStaticMethodSlow(int site, int classNameIdx, int methodNameIdx, int callArgCount)
+        private void OpCallStaticMethodSlow(int site, int classNameIdx, int methodNameIdx, int callArgCount, int copyMask)
         {
         {
             string callClassName = _constants[classNameIdx].AsString();
@@ -2009,6 +2098,7 @@ namespace fire.Runtime
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
             var callScope = new Scope(_globalScope);
             foreach (var a in callArgs) callScope.DefineSlot(a);
+            ApplyCopyMask(callScope, copyMask);
 
             // Explizit KEIN 'this' (anders als oben bei CallBaseMethod,
             // das die aufrufende Instanz beibehält) - der Resolver
@@ -2528,13 +2618,21 @@ namespace fire.Runtime
                     break;
                 }
 
+                case OpCode.CopyArgs:
+                {
+                    int lo = ReadU16();
+                    int hi = ReadU16();
+                    _copyArgMask = lo | (hi << 16);
+                    break;
+                }
+
                 case OpCode.CopyValueOwned:
                 {
                     // Direkt einem Feld zugewiesen: die Kopie gehört dem Zielobjekt (wie NewObjectOwned).
                     bool deep = (ReadByte() & 1) != 0;
                     var source = Pop();
                     var owner = RequireObjectInstance(Pop(), "Kopie mit Owner");
-                    Push(ObjectCloner.Clone(source, owner, deep));
+                    Push(ObjectCloner.CloneOwnedBy(source, owner, deep, this));
                     break;
                 }
 
@@ -2920,12 +3018,14 @@ namespace fire.Runtime
                     // (CheckShutdownSignals, am Anfang der nächsten
                     // Schleifen-Iteration in Run()), nicht sofort hier.
                     RequestLeave();
+                    ForceShutdownCheck();
                     break;
 
                 case OpCode.Terminate:
                 {
                     var terminateValue = Pop();
                     RequestTerminate(terminateValue);
+                    ForceShutdownCheck();
                     break;
                 }
 
@@ -3270,12 +3370,13 @@ namespace fire.Runtime
             return BitConverter.ToDouble(buf, 0);
         }
 
-        private void BeginConstruction(ObjectInstance instance, FunctionProto ctorProto, Value[] args)
+        private void BeginConstruction(ObjectInstance instance, FunctionProto ctorProto, Value[] args, int copyMask = 0)
         {
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, instance));
 
             var ctorScope = new Scope(_globalScope);
             foreach (var a in args) ctorScope.DefineSlot(a);
+            if (copyMask != 0) ApplyCopyMask(ctorScope, copyMask);
 
             _currentThis = instance;
             _currentScope = ctorScope;

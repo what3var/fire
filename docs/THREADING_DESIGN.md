@@ -222,7 +222,11 @@ fire {
   und den Thread am Beenden hindern.
 - Läuft beim Verlassen durch alle offenen `finally`-Blöcke (korrektes
   Aufräumen/Destruktoren), endet dann still am Rand des jeweiligen
-  Fire-Blocks.
+  Fire-Blocks. Danach wird der **globale Scope** des Threads freigegeben
+  (`destruct()` für alles, was ihm gehört - offene Streams werden so
+  geschlossen), und das Verlassen wirkt **sofort**, unabhängig vom
+  Ausführungsmodus (früher konnte es in Release/Performance bis zu 16/4096
+  Instruktionen verzögert werden).
 - **Muss nirgendwo zugestellt werden** - kein `catch threads(...)` nötig,
   kein Fehler. Ein `leave` ist ein gewollter, sauberer Ausstieg; das
   Programm läuft normal weiter, der Thread ist einfach zu seinem

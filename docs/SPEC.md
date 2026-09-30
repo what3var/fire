@@ -117,6 +117,7 @@ Jede Objektinstanz (`class`) hat **genau einen Owner**: entweder einen Scope (Bl
 
 - Wird das neue Objekt **direkt einem Feld eines anderen Objekts zugewiesen** (`obj1.Foo = new Bar()`), ist der Owner sofort `obj1`.
 - In allen anderen Fällen (lokale Variable, Parameterwert, Ausdruck) ist der Owner der **aktuelle Scope**.
+- Das gilt auch für den Initialisierer eines Instanzfelds (`Item it = new Item(1)` im Klassenkörper) und für einen bloßen Feldnamen in einer Klasse (`feld = new X()` statt `this.feld = new X()`): das Objekt gehört der Instanz. (Früher gehörte es dort dem Initialisierer-/Methoden-Scope und wurde beim Verlassen zerstört, obwohl das Feld noch darauf zeigte.)
 - Dieselbe Regel gilt für Lambda-Werte: direkte Feldzuweisung → Owner ist das Objekt; sonst → aktueller Scope. Das `on`-Binding (this-Kontext, s. 4.2) ist davon unabhängig und ändert den Owner nicht.
 
 ### 2.2 Ownership-Transfer (Member-Funktionen auf Objektinstanzen)
@@ -124,6 +125,7 @@ Jede Objektinstanz (`class`) hat **genau einen Owner**: entweder einen Scope (Bl
 - `obj.TakeUpwards()` – Owner wird der Parent-Scope des aktuellen Owner-Scopes (nur sinnvoll, wenn aktueller Owner ein Scope ist).
 - `obj.TakeGlobal()` – Owner wird der globale Scope.
 - `obj.TakeTo(other)` – Owner wird `other` (eine Objektinstanz).
+- Alle drei sind eingebaute Methoden jeder Objektinstanz (eine Klasse, die eine gleichnamige Methode selbst deklariert, geht vor). Eine Funktion behält damit ein Objekt, das ihr gehört (z.B. eine als Parameter übergebene Kopie, 2.4): `param.TakeTo(this)`.
 - **Zyklenschutz:** `TakeTo(other)` prüft, ob `other` transitiv bereits ein "Nachfahre" (direkt oder indirekt im Besitz) von `obj` ist. Falls ja: Laufzeitfehler statt Zyklus im Ownership-Baum.
 - **Race mit laufender Löschung:** Befindet sich `other` (das Ziel von `TakeTo`) selbst gerade in Kaskadenlöschung (ihr eigener Owner wurde gerade zerstört, ihre `destruct()`-Kaskade läuft bereits), wird die Übergabe so behandelt, als wäre sie eine Sekunde *vor* Beginn dieser Löschung erfolgt: `obj` wird ebenfalls sofort in die laufende Kaskade aufgenommen und mitgelöscht (inkl. `destruct()`-Aufruf), statt als Waise mit einem halb-zerstörten Owner zurückzubleiben.
 - Variablen-Bindings (Name → Wert) selbst wandern **nicht** – nur Objekt-Ownership ist transferierbar.
@@ -131,6 +133,10 @@ Jede Objektinstanz (`class`) hat **genau einen Owner**: entweder einen Scope (Bl
 ### 2.3 Lebenszeit / Kaskadenlöschung
 
 - Wird ein Owner (Scope beim Verlassen, oder Objekt beim Löschen) zerstört, werden alle Objekte, deren Owner er noch ist, rekursiv mitzerstört (Kaskade). Dabei wird pro Objekt `destruct()` aufgerufen (s. 5.3).
+- **`leave`** (auch `terminate`, unbehandelte Exception) wickelt alle offenen Scopes ab. Bei `leave` wird zusätzlich der **globale Scope** des
+  Threads/Programms freigegeben: `destruct()` läuft für alles, was ihm (transitiv) gehört, offene Streams werden also geschlossen, und das sofort
+  (nicht erst nach einer Wartezeit, die vom Ausführungsmodus abhing). Das normale Programmende räumt den globalen Scope dagegen nicht ab. Als
+  Sicherheitsnetz schließt der Host am Ende außerdem alle Streams, die noch offen sind (`IoBridge.RegisterAll(...).Dispose()`).
 - **Ausnahme `return`:** Wird aus einem lokalen Scope eine Objektinstanz per `return` zurückgegeben, *und* war dieser Scope ihr Owner, geht das Ownership implizit an den aufrufenden/Parent-Scope über (kein Kaskadenlöschen in diesem Fall).
 
 ### 2.4 Kopieren: `flat` und `copy`
@@ -156,11 +162,21 @@ Lambdas, Pointer - bleibt **dieselbe Referenz wie im Original**.
 kopiert. Kommt dieselbe Instanz (oder dasselbe Array) wieder vor - gemeinsam genutzt oder zyklisch -, zeigt die Kopie auf die
 schon gemachte Kopie: die Struktur des Originals (Teilen, Zyklen) bleibt erhalten.
 
-**Owner.** Die Kopie ist ein neues Objekt und bekommt wie jedes neue Objekt einen Owner (2.1): der aktuelle Scope, bzw. bei einer
-direkten Feldzuweisung (`obj.feld = copy x`) das Zielobjekt. Bei `copy` gilt für die Instanzen darunter: war eine kopierte Instanz im
-Original im Besitz einer ebenfalls kopierten Instanz, gehört ihre Kopie deren Kopie (der Besitzbaum wird nachgebildet); alles andere
-- insbesondere Instanzen, die im Original jemand anderem gehören (ein Scope, ein Objekt außerhalb der Kopie) - gehört dem Owner der
-Wurzel-Kopie. So wird jede Kopie mit ihrem Owner zerstört (2.3), und die Originale bleiben unberührt.
+**Owner.** Die Kopie ist ein neues Objekt und bekommt einen Owner, abhängig davon, wohin sie geht:
+- **Als Argument** eines Aufrufs (`f(copy a)`, `obj.M(flat a)`, `new X(copy a)`, `base(copy a)`, Lambda-Aufruf): die Kopie gehört dem **Scope der
+  aufgerufenen Funktion** und wird mit deren Ende zerstört - es sei denn, die Funktion gibt sie zurück (dann geht sie an den Aufrufer, 2.3) oder
+  behält sie mit `param.TakeTo(...)`/`TakeGlobal()` (2.2). Das gilt auch für Konstruktoren: `construct(i) { this.held = i }` allein reicht nicht,
+  `i.TakeTo(this)` gehört dazu. Bei einer **nativen** Funktion (`print(copy a)`) und bei Nachrichten an einen Actor gibt es keine solche Scope - dort gehört die
+  Kopie dem aktuellen Scope. Die Kopie wird erst **beim Aufruf** angelegt, nachdem alle Argumente ausgewertet sind (`f(copy a, a.Inc())` kopiert also den
+  Stand nach `Inc()`); `flat`/`copy` als Argument ist für die ersten 16 Argumente möglich.
+- **An ein Objekt zugewiesen** (`obj.feld = copy x`, `this.feld = ...`, bloßer `feld = ...` in einer Klasse, Feld-Initialisierer `Item i = copy x`): das
+  Objekt wird der Owner, wie bei `copy.TakeTo(obj)` (2.2) - auch die Sonderregel gilt: ist das Zielobjekt schon in der Kaskadenlöschung, wird die Kopie
+  sofort mitzerstört.
+- **Sonst** (lokale Variable, Index-Zuweisung, Ausdruck): der aktuelle Scope.
+
+Bei `copy` gilt für die Instanzen darunter: war eine kopierte Instanz im Original im Besitz einer ebenfalls kopierten Instanz, gehört ihre Kopie deren
+Kopie (der Besitzbaum wird nachgebildet); alles andere - insbesondere Instanzen, die im Original jemand anderem gehören (ein Scope, ein Objekt außerhalb der
+Kopie) - gehört dem Owner der Wurzel-Kopie. So wird jede Kopie mit ihrem Owner zerstört (2.3), und die Originale bleiben unberührt.
 
 **Weitere Regeln**
 - Es läuft **kein Konstruktor** - die Feldwerte werden einfach übertragen. Der Destruktor läuft für die Kopie wie für jedes Objekt.

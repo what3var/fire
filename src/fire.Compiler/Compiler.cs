@@ -386,7 +386,7 @@ namespace fire.Compiler
                     {
                         case FieldDecl fd:
                         {
-                            var fieldInit = CompileFieldInitProto(rc, fd.Type, fd.Initializer);
+                            var fieldInit = CompileFieldInitProto(rc, fd.Type, fd.Initializer, fd.IsStatic);
                             rc.OwnFieldInfo[fd.Name] = new FieldInfo()
                             {
                                 AccessModifier = fd.Access,
@@ -498,13 +498,24 @@ namespace fire.Compiler
             return defaults;
         }
 
-        private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer)
+        private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer, bool isStatic = false)
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
             inner._chunk.OwnerClass = rc;
             if (initializer != null)
             {
-                inner.CompileExpr(initializer);
+                // Ein Instanzfeld mit `new X()`/`flat x`/`copy x` als Initialisierer: das neue Objekt gehört der Instanz
+                // (`this` ist beim Auswerten gebunden, siehe CallProtoWithThis), nicht der Initialisierer-Scope - sonst
+                // würde es nach dem Konstruktor zerstört, während das Feld darauf zeigt (SPEC 2.1).
+                if (!isStatic && IsOwnedCreation(initializer))
+                {
+                    inner._chunk.EmitOp(OpCode.LoadThis);
+                    inner.TryCompileOwnedCreation(initializer);
+                }
+                else
+                {
+                    inner.CompileExpr(initializer);
+                }
                 inner.EmitCheckLambdaSignatureIfNeeded(type);
             }
             else inner.EmitLoadConst(Value.MakeUndefined());
@@ -722,8 +733,8 @@ namespace fire.Compiler
             if (rc.Base != null)
             {
                 var baseArgs = ctor?.BaseArgs;
-                if (baseArgs != null)
-                    foreach (var a in baseArgs) inner.CompileExpr(a);
+                uint baseCopyMask = baseArgs != null ? inner.CompileArgs(baseArgs, scopeCreating: true) : 0;
+                inner.EmitCopyArgsPrefix(baseCopyMask);
 
                 inner._chunk.EmitOp(OpCode.ConstructBase);
                 inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(rc.Base.Name)));
@@ -1389,11 +1400,14 @@ namespace fire.Compiler
                     break;
 
                 case NewExpr ne:
-                    foreach (var a in ne.Args) CompileExpr(a);
+                {
+                    uint newCopyMask = CompileArgs(ne.Args, scopeCreating: true);
+                    EmitCopyArgsPrefix(newCopyMask);
                     _chunk.EmitOp(OpCode.NewObject);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
                     _chunk.EmitByte((byte)ne.Args.Count);
                     break;
+                }
 
                 case NewArrayExpr na:
                     CompileArrayAlloc(na.SizeExprs, 0);
@@ -1571,6 +1585,67 @@ namespace fire.Compiler
         /// (CallMethod), `base.Method(...)` über direkte Basis-Auflösung
         /// (CallBaseMethod), alles andere als allgemeiner Lambda-Aufruf (Callee
         /// muss zur Laufzeit zu einem Lambda-Wert auswerten).</summary>
+        /// <summary>Kompiliert die Argumente eines Aufrufs. Ist ein Argument `flat x`/`copy x` und der Aufruf erzeugt eine Scope
+        /// für die aufgerufene Funktion (`scopeCreating`), wird nur `x` ausgewertet und das Kopieren dem Aufruf überlassen
+        /// (Präfix <see cref="OpCode.CopyArgs"/>, siehe <see cref="EmitCopyArgsPrefix"/>): die Kopie gehört dann der Scope der
+        /// aufgerufenen Funktion (SPEC 2.4). Bei nativen Funktionen gibt es diese Scope nicht - dort bleibt es eine gewöhnliche
+        /// Kopie (Owner: aktueller Scope). Liefert die Kopier-Maske (2 Bit je Argument, 0 = keine).</summary>
+        private uint CompileArgs(IReadOnlyList<Expr> args, bool scopeCreating)
+        {
+            uint mask = 0;
+            for (int i = 0; i < args.Count; i++)
+            {
+                if (scopeCreating && args[i] is UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy } copyArg)
+                {
+                    if (i >= 16)
+                        throw new NotSupportedException("`flat`/`copy` als Argument ist nur für die ersten 16 Argumente eines Aufrufs möglich.");
+                    mask |= (copyArg.Op == UnaryOp.DeepCopy ? 2u : 1u) << (2 * i);
+                    CompileExpr(copyArg.Operand);
+                }
+                else
+                {
+                    CompileExpr(args[i]);
+                }
+            }
+            return mask;
+        }
+
+        /// <summary>Emittiert das Präfix `CopyArgs` (nur wenn eine Maske da ist) - direkt VOR den Aufruf-Opcode.</summary>
+        private void EmitCopyArgsPrefix(uint mask)
+        {
+            if (mask == 0) return;
+            _chunk.EmitOp(OpCode.CopyArgs);
+            _chunk.EmitU16((int)(mask & 0xFFFF));
+            _chunk.EmitU16((int)(mask >> 16));
+        }
+
+        /// <summary>Kompiliert `new X(...)` bzw. `flat x`/`copy x` für den Fall, dass der künftige OWNER (ein Objekt) schon
+        /// auf dem Stack liegt (SPEC 2.1/2.4: direkt einem Feld zugewiesen). Liefert false, wenn `value` keins von beiden ist
+        /// (dann ist nichts emittiert).</summary>
+        private static bool IsOwnedCreation(Expr value) =>
+            value is NewExpr or UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy };
+
+        private bool TryCompileOwnedCreation(Expr value)
+        {
+            if (value is NewExpr ne)
+            {
+                uint mask = CompileArgs(ne.Args, scopeCreating: true);
+                EmitCopyArgsPrefix(mask);
+                _chunk.EmitOp(OpCode.NewObjectOwned);
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
+                _chunk.EmitByte((byte)ne.Args.Count);
+                return true;
+            }
+            if (value is UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy } copyExpr)
+            {
+                CompileExpr(copyExpr.Operand);
+                _chunk.EmitOp(OpCode.CopyValueOwned);
+                _chunk.EmitByte(copyExpr.Op == UnaryOp.DeepCopy ? (byte)1 : (byte)0);
+                return true;
+            }
+            return false;
+        }
+
         private void CompileCall(CallExpr call)
         {
             if (call.Callee is IdentifierExpr calleeId && _refs.TryGetValue(calleeId, out var resolved))
@@ -1605,7 +1680,7 @@ namespace fire.Compiler
                 {
                     // SPEC "Statische Mitglieder" - bloßer Name statt
                     // 'ClassName.Method(...)'.
-                    foreach (var arg in call.Args) CompileExpr(arg);
+                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
                     _chunk.EmitOp(OpCode.CallStaticMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(callSm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(calleeId.Name)));
@@ -1621,7 +1696,7 @@ namespace fire.Compiler
                     // VM.CallMethod: Args zuerst gepoppt, dann erst 'target')
                     // - 'this' also VOR den Argumenten pushen.
                     _chunk.EmitOp(OpCode.LoadThis);
-                    foreach (var arg in call.Args) CompileExpr(arg);
+                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
                     _chunk.EmitOp(OpCode.CallMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(calleeId.Name)));
                     _chunk.EmitByte((byte)call.Args.Count);
@@ -1661,7 +1736,7 @@ namespace fire.Compiler
                 // ResolvedRef.StaticMember, vom Resolver aufgelöst).
                 if (_refs.TryGetValue(me, out var calleeMemberRef) && calleeMemberRef is ResolvedRef.StaticMember sm)
                 {
-                    foreach (var arg in call.Args) CompileExpr(arg);
+                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
                     _chunk.EmitOp(OpCode.CallStaticMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
@@ -1681,7 +1756,8 @@ namespace fire.Compiler
                         throw new NotSupportedException(
                             "'base.Method(...)' außerhalb einer Klasse mit Basisklasse - sollte der Resolver bereits abgefangen haben.");
 
-                    foreach (var arg in call.Args) CompileExpr(arg);
+                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+
                     _chunk.EmitOp(OpCode.CallBaseMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(_enclosingClass.Base.Name)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
@@ -1690,7 +1766,7 @@ namespace fire.Compiler
                 }
 
                 CompileExpr(me.Target);
-                foreach (var arg in call.Args) CompileExpr(arg);
+                EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
                 _chunk.EmitOp(OpCode.CallMethod);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
                 _chunk.EmitByte((byte)call.Args.Count);
@@ -1698,7 +1774,7 @@ namespace fire.Compiler
             }
 
             CompileExpr(call.Callee);
-            foreach (var arg in call.Args) CompileExpr(arg);
+            EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
             _chunk.EmitOp(OpCode.Call);
             _chunk.EmitByte((byte)call.Args.Count);
         }
@@ -1791,21 +1867,10 @@ namespace fire.Compiler
                 // muss das Zielobjekt beim NewObjectOwned-Aufruf schon auf dem Stack
                 // liegen (unterhalb der Konstruktor-Argumente) - daher Dup, bevor die
                 // Argumente gepusht werden, und SetField am Ende nutzt die zweite Kopie.
-                if (a.Value is NewExpr ne)
+                if (IsOwnedCreation(a.Value))
                 {
                     _chunk.EmitOp(OpCode.Dup);
-                    foreach (var arg in ne.Args) CompileExpr(arg);
-                    _chunk.EmitOp(OpCode.NewObjectOwned);
-                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
-                    _chunk.EmitByte((byte)ne.Args.Count);
-                }
-                else if (a.Value is UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy } copyExpr)
-                {
-                    // Wie `new`: eine direkt einem Feld zugewiesene Kopie gehört dem Zielobjekt (SPEC 2.1/2.4).
-                    _chunk.EmitOp(OpCode.Dup);
-                    CompileExpr(copyExpr.Operand);
-                    _chunk.EmitOp(OpCode.CopyValueOwned);
-                    _chunk.EmitByte(copyExpr.Op == UnaryOp.DeepCopy ? (byte)1 : (byte)0);
+                    TryCompileOwnedCreation(a.Value);
                 }
                 else
                 {
@@ -1837,6 +1902,20 @@ namespace fire.Compiler
             if (a.Target is not IdentifierExpr id)
                 throw new NotSupportedException(
                     "Ungültiges Zuweisungsziel für den Bytecode-Compiler.");
+
+            // Bloßer Feldname in einer Klasse (`feld = new X()` / `feld = copy x`): wie `this.feld = ...` gehört das neue
+            // Objekt dem Objekt, nicht der Scope (SPEC 2.1/2.4) - sonst würde es beim Verlassen der Methode zerstört,
+            // während das Feld noch darauf zeigt.
+            if (_refs[id] is ResolvedRef.ImplicitThisMember && IsOwnedCreation(a.Value))
+            {
+                _chunk.EmitOp(OpCode.LoadThis);
+                TryCompileOwnedCreation(a.Value);       // [neues Objekt]
+                _chunk.EmitOp(OpCode.LoadThis);         // [wert, obj]
+                _chunk.EmitOp(OpCode.Swap);             // [obj, wert]
+                _chunk.EmitOp(OpCode.SetField);
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
+                return;
+            }
 
             CompileExpr(a.Value);
 
