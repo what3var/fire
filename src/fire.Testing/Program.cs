@@ -6908,6 +6908,8 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     PackCheck(new[] { "fire.Terminal.Bridge", "fire.Terminal", "fire.Terminal.Windows", "fire.Terminal.Sdl", "SDL3-CS" }.All(planGfx.Assemblies.ContainsKey) && !planGfx.Assemblies.ContainsKey("fire.IO.Bridge"),
         "Plan: graphics bindet Terminal-Bridge samt Terminal/Windows/SDL ein (Abhaengigkeiten aus den Metadaten)");
     var planDev = Plan(NativeImports.Print, NativeImports.Devices);
+    var planUi = Plan(NativeImports.Print, NativeImports.Graphics, NativeImports.Ui);
+    PackCheck(planUi.Assemblies.Keys.SequenceEqual(planGfx.Assemblies.Keys) && planUi.Unresolved.Count == 0, "Plan: ui bringt keine eigene DLL mit (reiner fire-Quelltext, graphics kommt ueber den Import)");
     PackCheck(new[] { "fire.Device.Bridge", "fire.Device.Manager", "System.IO.Ports" }.All(planDev.Assemblies.ContainsKey) && !planDev.Assemblies.ContainsKey("SDL3-CS"),
         "Plan: devices bindet Device-Bridge, Manager und System.IO.Ports ein");
     PackCheck(planGfx.Unresolved.Count == 0 && planDev.Unresolved.Count == 0 && planIo.Unresolved.Count == 0 && planPrint.Unresolved.Count == 0,
@@ -7098,6 +7100,348 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     Console.WriteLine(cliFailures == 0 ? "Alle Befehlszeilen-Pruefungen bestanden." : $"FEHLER: {cliFailures} Befehlszeilen-Pruefung(en) fehlgeschlagen.");
 }
 
+Console.WriteLine();
+Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===");
+{
+    int fontFailures = 0;
+    void FontCheck(bool ok, string what)
+    {
+        if (!ok) fontFailures++;
+        Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
+    }
+
+    // Dieselbe Schrift, aber OHNE Bitmap-Zeilen: TerminalCanvas muss dann den allgemeinen Weg (IsPixelSet je Pixel) nehmen.
+    var slowFont = new PixelOnlyFont(new fire.Terminal.IntegratedGlyphFont());
+    var rng = new Random(7);
+    foreach (bool small in new[] { false, true })
+    {
+        var fastFont = new fire.Terminal.IntegratedGlyphFont(small);
+        var slow = new PixelOnlyFont(fastFont);
+        foreach (bool opaque in new[] { true, false })
+        {
+            var fbFast = new fire.Terminal.Framebuffer(203, 97); // krumme Groesse: Raster endet nicht am Rand, Texte ragen hinaus
+            var fbSlow = new fire.Terminal.Framebuffer(203, 97);
+            var fast = new fire.Terminal.TerminalCanvas(fbFast, fastFont);
+            var slowCanvas = new fire.Terminal.TerminalCanvas(fbSlow, slow);
+            foreach (var cv in new[] { fast, slowCanvas })
+            {
+                cv.Foreground = new fire.Terminal.PixelColor(200, 100, 50);
+                cv.Background = opaque ? new fire.Terminal.PixelColor(10, 20, 30) : null;
+                cv.Target.Clear(new fire.Terminal.PixelColor(1, 2, 3));
+            }
+            // Zeichen des ganzen Bereichs (auch > 255), an zufaelligen Positionen inkl. teilweise ausserhalb
+            for (int i = 0; i < 400; i++)
+            {
+                char ch = (char)rng.Next(0, 400);
+                int x = rng.Next(-12, 215), y = rng.Next(-16, 110);
+                fast.DrawGlyph(x, y, ch, fast.Foreground, fast.Background);
+                slowCanvas.DrawGlyph(x, y, ch, slowCanvas.Foreground, slowCanvas.Background);
+            }
+            // Print mit Umbruch und Scrollen
+            string text = string.Join("\n", Enumerable.Range(0, 40).Select(n => new string((char)('A' + n % 26), 10 + n % 40)));
+            fast.Locate(0, 0); fast.Print(text);
+            slowCanvas.Locate(0, 0); slowCanvas.Print(text);
+            FontCheck(fbFast.Pixels.SequenceEqual(fbSlow.Pixels),
+                $"{(small ? "8x8" : "8x14")} {(opaque ? "opak" : "transparent")}: Glyphen an beliebigen (auch ueberstehenden) Positionen und Print mit Umbruch/Scrollen identisch");
+        }
+    }
+
+    {
+        var fb = new fire.Terminal.Framebuffer(100, 40);
+        var cv = new fire.Terminal.TerminalCanvas(fb, new fire.Terminal.IntegratedGlyphFont());
+        cv.DrawText(3, 5, "Hallo", fire.Terminal.PixelColor.White);
+        FontCheck(cv.MeasureText("Hallo") == 5 * cv.CellWidth, "MeasureText: Zeichenzahl mal Zellbreite");
+        var fb2 = new fire.Terminal.Framebuffer(100, 40);
+        var cv2 = new fire.Terminal.TerminalCanvas(fb2, new fire.Terminal.IntegratedGlyphFont());
+        for (int i = 0; i < 5; i++) cv2.DrawGlyph(3 + i * cv2.CellWidth, 5, "Hallo"[i], fire.Terminal.PixelColor.White, null);
+        FontCheck(fb.Pixels.SequenceEqual(fb2.Pixels), "DrawText == DrawGlyph je Zeichen");
+        cv.Locate(0, 0); cv.Print("\u20AC\u4E2D"); // Zeichen ausserhalb der Tabelle: kein Absturz
+        FontCheck(true, "Zeichen > 255 werfen nicht");
+    }
+
+    Console.WriteLine(fontFailures == 0 ? "Alle Font-Pruefungen bestanden." : $"FEHLER: {fontFailures} Font-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// UI-Bibliothek (#import "ui"): headless - echte Framebuffer/Konsole/WindowManager, nur der Renderer ist eine Attrappe
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== UI-Bibliothek ===");
+    int uiFailures = 0;
+
+    IReadOnlyDictionary<string, RuntimeClass>? uiClasses = null;
+
+    // Fuehrt `script` mit Grafik-Prelude + UI-Prelude aus. Das Fenster laeuft ueber den echten WindowManager (Ereignis-Warteschlange
+    // inklusive), nur der Renderer ist `FakeRenderer`: `__TestEvent(typ, ...)` legt ein Ereignis ab, das das naechste Tick abholt,
+    // `__TestClose()` schliesst das Fenster.
+    List<string> RunUi(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.UI.Bridge.UiBridge.PreludeSource, script };
+        var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+
+        var renderer = new FakeRenderer();
+        var fbManager = new fire.Terminal.FramebufferManager();
+        var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
+        var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => renderer);
+        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, winManager);
+
+        natives.Register("__TestClose", args => { renderer.Closed = true; return Value.MakeUndefined(); });
+        natives.Register("__TestEvent", args =>
+        {
+            renderer.Push((int)args[0].AsInt(), args);
+            return Value.MakeUndefined();
+        });
+
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        uiClasses = compiled.Classes;
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
+        vm.Run();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckUi(string title, string script, string[] expected)
+    {
+        foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release })
+        {
+            string[] actual;
+            try { actual = RunUi(script, mode).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + CompileErrors.Describe(ex) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) uiFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    const string uiHead = """
+        // GetPixel liefert den Farbwert mit Vorzeichen (32 Bit); die Farben der UI-Bibliothek sind vorzeichenlose Werte
+        class Px { static int Get(console, int x, int y) { var v = console.GetPixel(x, y); if (v < 0) { v = v + 4294967296 } return v } }
+        var fb = new Framebuffer(320, 200)
+        var win = new Window(fb, "Test")
+        var ui = new UI.Root(fb, win)
+
+        """;
+
+    CheckUi("Button: Hover, Druecken, Klick (Abfrage per TakeClicked)", uiHead + """
+        var b = new UI.Button("OK", 10, 10, 80, 26)
+        ui.Add(b)
+        __TestEvent(9, 20.0, 20.0)
+        ui.Tick()
+        print("hover " + b.hover)
+        __TestEvent(8, 1, 20.0, 20.0)
+        ui.Tick()
+        print("pressed " + b.pressed)
+        __TestEvent(11, 1, 20.0, 20.0)
+        ui.Tick()
+        print("pressed " + b.pressed)
+        print("geklickt " + b.TakeClicked())
+        print("nochmal " + b.TakeClicked())
+        """, new[] { "hover True", "pressed True", "pressed False", "geklickt True", "nochmal False" });
+
+    CheckUi("Button: Loslassen ausserhalb klickt nicht", uiHead + """
+        var b = new UI.Button("OK", 10, 10, 80, 26)
+        ui.Add(b)
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(11, 1, 200.0, 150.0)
+        ui.Tick()
+        print("geklickt " + b.TakeClicked())
+        """, new[] { "geklickt False" });
+
+    CheckUi("Button: onClick-Lambda sieht die echten globalen Variablen", uiHead + """
+        var clicks = 0
+        var b = new UI.Button("OK", 10, 10, 80, 26)
+        b.onClick = func () => { clicks = clicks + 1 }
+        ui.Add(b)
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(11, 1, 20.0, 20.0)
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(11, 1, 20.0, 20.0)
+        ui.Tick()
+        print("clicks " + clicks)
+        """, new[] { "clicks 2" });
+
+    CheckUi("Zeichnen: Flaeche, Hover-Farbe, Text- und Rahmenpixel", uiHead + """
+        var b = new UI.Button("OK", 10, 10, 80, 26)
+        ui.Add(b)
+        ui.Draw()
+        var t = ui.theme
+        print("back " + (Px.Get(ui.console, 300, 190) == t.back))
+        print("face " + (Px.Get(ui.console, 12, 12) == t.face))
+        print("border " + (Px.Get(ui.console, 10, 10) == t.border))
+        var textPixels = 0
+        for (var y = 10; y < 36; y = y + 1) {
+            for (var x = 10; x < 90; x = x + 1) {
+                if (Px.Get(ui.console, x, y) == t.text) { textPixels = textPixels + 1 }
+            }
+        }
+        print("text " + (textPixels > 20))
+        __TestEvent(9, 20.0, 20.0)
+        ui.Tick()
+        ui.Draw()
+        print("hover " + (Px.Get(ui.console, 12, 12) == t.faceHover))
+        """, new[] { "back True", "face True", "border True", "text True", "hover True" });
+
+    CheckUi("CheckBox: Klick und Leertaste schalten um", uiHead + """
+        var c = new UI.CheckBox("Option", 10, 10)
+        ui.Add(c)
+        ui.Draw()
+        __TestEvent(8, 1, 15.0, 15.0)
+        __TestEvent(11, 1, 15.0, 15.0)
+        ui.Tick()
+        print("an " + c.isChecked + " " + c.TakeChanged())
+        __TestEvent(24, 32, 0)
+        ui.Tick()
+        print("aus " + c.isChecked)
+        """, new[] { "an True True", "aus False" });
+
+    CheckUi("TextBox: Fokus per Klick, Eingabe, Rueck-/Entf-Taste, Pfeile, Enter", uiHead + """
+        var t = new UI.TextBox("", 10, 10, 160, 24)
+        ui.Add(t)
+        ui.Draw()
+        __TestEvent(3, "Hallo")
+        ui.Tick()
+        print("ohne Fokus '" + t.text + "'")
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(11, 1, 20.0, 20.0)
+        __TestEvent(3, "Hallo")
+        ui.Tick()
+        print("eingegeben '" + t.text + "' caret " + t.caret)
+        __TestEvent(24, 8, 0)
+        ui.Tick()
+        print("rueck '" + t.text + "'")
+        __TestEvent(24, 1073741904, 0)
+        __TestEvent(24, 1073741904, 0)
+        __TestEvent(3, "X")
+        ui.Tick()
+        print("links+X '" + t.text + "' caret " + t.caret)
+        __TestEvent(24, 127, 0)
+        ui.Tick()
+        print("entf '" + t.text + "'")
+        __TestEvent(24, 1073741898, 0)
+        ui.Tick()
+        print("pos1 " + t.caret)
+        __TestEvent(24, 1073741901, 0)
+        ui.Tick()
+        print("ende " + t.caret)
+        __TestEvent(24, 13, 0)
+        ui.Tick()
+        print("enter " + t.TakeEntered() + " geaendert " + t.TakeChanged())
+        """, new[] { "ohne Fokus ''", "eingegeben 'Hallo' caret 5", "rueck 'Hall'", "links+X 'HaXll' caret 3", "entf 'HaXl'", "pos1 0", "ende 4", "enter True geaendert True" });
+
+    CheckUi("TextBox: Klick setzt die Einfuegemarke, maxLength, scrollt bei langem Text", uiHead + """
+        var t = new UI.TextBox("abcdef", 10, 10, 160, 24)
+        t.maxLength = 8
+        ui.Add(t)
+        ui.Draw()
+        __TestEvent(8, 1, 10.0 + 4.0 + 8.0 * 2.0 + 1.0, 20.0)
+        __TestEvent(11, 1, 10.0 + 4.0 + 8.0 * 2.0 + 1.0, 20.0)
+        ui.Tick()
+        print("caret " + t.caret)
+        __TestEvent(3, "123456")
+        ui.Tick()
+        print("max '" + t.text + "'")
+        t.SetText("0123456789012345678901234567890123456789")
+        ui.Draw()
+        print("scroll " + (t.scroll > 0) + " caret " + t.caret)
+        """, new[] { "caret 2", "max 'abcdef'", "scroll True caret 40" });
+
+    CheckUi("Tab wechselt den Fokus (Umschalt rueckwaerts), deaktivierte und unsichtbare werden uebersprungen", uiHead + """
+        var a = new UI.Button("A", 10, 10)
+        var b = new UI.Button("B", 10, 50)
+        var c = new UI.TextBox("", 10, 90)
+        var d = new UI.Button("D", 10, 130)
+        b.enabled = false
+        d.visible = false
+        ui.Add(a)
+        ui.Add(b)
+        ui.Add(c)
+        ui.Add(d)
+        __TestEvent(24, 9, 0)
+        ui.Tick()
+        print("1: " + a.focused + " " + c.focused)
+        __TestEvent(24, 9, 0)
+        ui.Tick()
+        print("2: " + a.focused + " " + c.focused)
+        __TestEvent(24, 9, 0)
+        ui.Tick()
+        print("3: " + a.focused + " " + c.focused)
+        __TestEvent(24, 9, 1)
+        ui.Tick()
+        print("zurueck: " + a.focused + " " + c.focused)
+        """, new[] { "1: True False", "2: False True", "3: True False", "zurueck: False True" });
+
+    CheckUi("Stack ordnet an; Panel verschachtelt Koordinaten; deaktiviert bekommt keine Klicks", uiHead + """
+        var panel = new UI.Panel(100, 20, 200, 160)
+        var stack = new UI.Stack(10, 10, 150, 120, false, 6, 4)
+        var b1 = new UI.Button("Eins", 0, 0, 100, 20)
+        var b2 = new UI.Button("Zwei", 0, 0, 100, 30)
+        stack.Add(b1)
+        stack.Add(b2)
+        panel.Add(stack)
+        ui.Add(panel)
+        ui.Draw()
+        print("b1 " + b1.ax + "," + b1.ay + " b2 " + b2.ax + "," + b2.ay)
+        __TestEvent(8, 1, 120.0, 44.0)
+        __TestEvent(11, 1, 120.0, 44.0)
+        ui.Tick()
+        print("b1 " + b1.TakeClicked() + " b2 " + b2.TakeClicked())
+        b2.enabled = false
+        __TestEvent(8, 1, 120.0, 65.0)
+        __TestEvent(11, 1, 120.0, 65.0)
+        ui.Tick()
+        print("b2 deaktiviert " + b2.TakeClicked())
+        """, new[] { "b1 114,34 b2 114,60", "b1 True b2 False", "b2 deaktiviert False" });
+
+    CheckUi("Elemente gehoeren ihrem Container: eine Hilfsfunktion darf sie anlegen", uiHead + """
+        class Helper {
+            static Build(root) {
+                var b = new UI.Button("Lokal", 10, 10, 80, 26)
+                root.Add(b)
+                var l = new UI.Label("Text", 10, 50)
+                root.Add(l)
+            }
+        }
+        Helper.Build(ui)
+        ui.Draw()
+        var first = ui.content.children[0]
+        print(first.text + " " + first.ax)
+        print(ui.content.children[1].width)
+        """, new[] { "Lokal 10", "32" });
+
+    CheckUi("Tick zeichnet, verarbeitet Ereignisse und liefert false, sobald das Fenster geschlossen wurde", uiHead + """
+        var b = new UI.Button("OK", 10, 10, 80, 26)
+        ui.Add(b)
+        print("offen " + ui.Tick())
+        print("gezeichnet " + (Px.Get(ui.console, 12, 12) == ui.theme.face))
+        __TestClose()
+        print("offen " + ui.Tick() + " geschlossen " + ui.closed)
+        """, new[] { "offen True", "gezeichnet True", "offen False geschlossen True" });
+
+    CheckUi("Window.NextEvent: Aufbau der Ereignisse, leere Warteschlange liefert undefined", uiHead + """
+        var w2 = new Window(fb, "zwei")
+        w2.EnableEvents()
+        print("leer " + (w2.NextEvent() == undefined))
+        __TestEvent(8, 2, 20.7, 30.2)
+        __TestEvent(3, "a")
+        w2.Tick()
+        var e1 = w2.NextEvent()
+        print(e1[0] + " " + e1[1] + " " + e1[2] + " " + e1[3])
+        var e2 = w2.NextEvent()
+        print(e2[0] + " " + e2[1])
+        print("danach " + (w2.NextEvent() == undefined))
+        """, new[] { "leer True", "8 2 20 30", "3 a", "danach True" });
+
+    Console.WriteLine(uiFailures == 0 ? "Alle UI-Pruefungen bestanden." : $"FEHLER: {uiFailures} UI-Pruefung(en) fehlgeschlagen.");
+}
+
 static int CountOccurrences(string haystack, string needle)
 {
     int count = 0, idx = 0;
@@ -7113,4 +7457,55 @@ static class PackerNativeProbe
 {
     [System.Runtime.InteropServices.DllImport("libfiretestnative")] private static extern int Nonexistent();
     public static int Call() => Nonexistent();
+}
+
+/// <summary>Schrift ohne Bitmap-Zeilen (nur IsPixelSet) - erzwingt den allgemeinen Zeichenweg von TerminalCanvas.</summary>
+sealed class PixelOnlyFont : fire.Terminal.IGlyphFont
+{
+    private readonly fire.Terminal.IntegratedGlyphFont _inner;
+    public PixelOnlyFont(fire.Terminal.IntegratedGlyphFont inner) { _inner = inner; }
+    public int GlyphWidth => _inner.GlyphWidth;
+    public int GlyphHeight => _inner.GlyphHeight;
+    public bool IsPixelSet(char c, int px, int py) => _inner.IsPixelSet(c, px, py);
+}
+
+/// <summary>Renderer-Attrappe fuer die UI-Tests: liefert die abgelegten Ereignisse beim naechsten PumpEvents, zeichnet nichts.</summary>
+sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
+{
+    private readonly List<fire.Terminal.Event.IEvent> _pending = new();
+    public bool Closed { get; set; }
+
+    public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle) { }
+    public void Present(fire.Terminal.Framebuffer framebuffer) { }
+    public void Dispose() { }
+
+    public fire.Terminal.WindowPumpResult PumpEvents()
+    {
+        var events = _pending.ToArray();
+        _pending.Clear();
+        return new fire.Terminal.WindowPumpResult { StillOpen = !Closed, Events = events };
+    }
+
+    /// <summary>Legt ein Ereignis ab: args[0] Typ, danach je nach Typ: Maus (taste, x, y) bzw. Bewegung (x, y), Taste (keycode, modifier), Text (text).</summary>
+    public void Push(int type, IReadOnlyList<Value> args)
+    {
+        var kind = (fire.Terminal.Event.EventType)type;
+        switch (kind)
+        {
+            case fire.Terminal.Event.EventType.MouseDown:
+            case fire.Terminal.Event.EventType.MouseUp:
+                _pending.Add(new fire.Terminal.Event.ClickEvent { Type = kind, Button = (int)args[1].AsInt(), X = (float)args[2].AsFloat(), Y = (float)args[3].AsFloat() });
+                break;
+            case fire.Terminal.Event.EventType.MouseMove:
+                _pending.Add(new fire.Terminal.Event.MotionEvent { Type = kind, X = (float)args[1].AsFloat(), Y = (float)args[2].AsFloat() });
+                break;
+            case fire.Terminal.Event.EventType.KeyDown:
+            case fire.Terminal.Event.EventType.KeyUp:
+                _pending.Add(new fire.Terminal.Event.KeyEvent { Type = kind, KeyCode = (int)args[1].AsInt(), Modifier = (int)args[2].AsInt() });
+                break;
+            case fire.Terminal.Event.EventType.TextInput:
+                _pending.Add(new fire.Terminal.Event.TextEvent { Type = kind, Text = args[1].AsString() });
+                break;
+        }
+    }
 }

@@ -71,12 +71,9 @@ namespace fire.Terminal
             uint packed = color.Packed;
             int x0 = Math.Max(0, x), y0 = Math.Max(0, y);
             int x1 = Math.Min(Width, x + w), y1 = Math.Min(Height, y + h);
+            if (x1 <= x0) return;
             for (int yy = y0; yy < y1; yy++)
-            {
-                int rowStart = yy * Width;
-                for (int xx = x0; xx < x1; xx++)
-                    Pixels[rowStart + xx] = packed;
-            }
+                Pixels.AsSpan(yy * Width + x0, x1 - x0).Fill(packed);
         }
 
         /// <summary>Verschiebt den GESAMTEN Inhalt um `pixelRows` Pixel-

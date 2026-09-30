@@ -3,6 +3,7 @@ using fire.Device.Bridge;
 using fire.IO.Bridge;
 using fire.Runtime;
 using fire.Terminal.Bridge;
+using fire.UI.Bridge;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -33,17 +34,27 @@ namespace fire.Compiler
             "graphics" => NativeImports.Graphics,
             "devices" => NativeImports.Devices,
             "io" => NativeImports.IO,
+            "ui" => NativeImports.Ui,
             _ => throw new Exception($"'{name}' ist keine bekannte Erweiterung."),
         };
 
         /// <summary>Der fire-Quelltext der Prelude der Erweiterung `importName`
         /// (Name aus `#import "name"`, Groß-/Kleinschreibung egal), null bei
         /// einer unbekannten Erweiterung.</summary>
+        /// <summary>Die Erweiterungen, die `importKey` (Schlüssel aus <see cref="NativeImports"/>) selbst mitbringt: `ui` baut auf
+        /// `graphics` auf und schaltet es mit zu. Jede Stelle, die ein `#import` auswertet, trägt alle Schlüssel daraus ein.</summary>
+        public static IEnumerable<string> WithDependencies(string importKey)
+        {
+            if (importKey == NativeImports.Ui) yield return NativeImports.Graphics;
+            yield return importKey;
+        }
+
         public static string? TrySourceFor(string importName) => importName.ToLowerInvariant() switch
         {
             "graphics" => GraphicsBridge.PreludeSource,
             "devices" => DeviceBridge.PreludeSource,
             "io" => IoBridge.PreludeSource,
+            "ui" => UiBridge.PreludeSource,
             _ => null,
         };
 
@@ -75,6 +86,13 @@ namespace fire.Compiler
             {
                 processedSources.Insert(1, preprocess(GraphicsBridge.PreludeSource));
                 GraphicsBridge.RegisterStubs(natives);
+                inserted++;
+            }
+
+            if (nativeImports.Contains(NativeImports.Ui))
+            {
+                // reiner fire-Quelltext auf den Klassen der Grafik-Brücke: keine nativen Funktionen
+                processedSources.Insert(1, preprocess(UiBridge.PreludeSource));
                 inserted++;
             }
 

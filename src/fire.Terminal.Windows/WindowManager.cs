@@ -24,12 +24,77 @@ namespace fire.Terminal.Windows
 
         private Action<LambdaValue, Value[]> Callback;
 
-        public WindowManager(FramebufferManager framebuffers, Action<LambdaValue, Value[]> callbackRunner)
+        private readonly Func<IFramebufferRenderer>? _rendererFactory;
+
+        // Ereignis-Warteschlangen der Fenster, die sie per EnableEventQueue angefordert haben (Abfrage-Stil statt Callback, siehe
+        // NextEvent). Nur gefüllt, solange eine Warteschlange angefordert ist, damit ein reines Callback-Fenster nichts ansammelt.
+        private readonly Dictionary<int, Queue<IEvent>> _eventQueues = new();
+        private const int MaxQueuedEvents = 4096;
+
+        /// <param name="rendererFactory">Erzeugt den Renderer je Fenster (Vorgabe: SDL). Für Tests und andere Backends austauschbar.</param>
+        public WindowManager(FramebufferManager framebuffers, Action<LambdaValue, Value[]> callbackRunner,
+            Func<IFramebufferRenderer>? rendererFactory = null)
         {
             _framebuffers = framebuffers ?? throw new ArgumentNullException(nameof(framebuffers));
             _callbacks = new List<EventCallback>();
+            _rendererFactory = rendererFactory;
 
             Callback = callbackRunner;
+        }
+
+        /// <summary>Fordert für das Fenster eine Ereignis-Warteschlange an: ab jetzt landet jedes Ereignis, das Tick holt, auch dort
+        /// und lässt sich mit <see cref="NextEvent"/> abfragen - ohne Callback, also auch ohne dessen isolierte Kopie der globalen
+        /// Variablen (siehe SPEC 8.1.4). Callbacks laufen daneben unverändert weiter.</summary>
+        public void EnableEventQueue(int id)
+        {
+            _windows.Get(id);
+            if (!_eventQueues.ContainsKey(id)) _eventQueues[id] = new Queue<IEvent>();
+        }
+
+        /// <summary>Das nächste Ereignis des Fensters als Werte-Array (siehe <see cref="EncodeEvent"/>), oder undefined, wenn keins
+        /// ansteht (oder keine Warteschlange angefordert wurde).</summary>
+        public Value NextEvent(int id)
+        {
+            if (!_eventQueues.TryGetValue(id, out var queue) || queue.Count == 0) return Value.MakeUndefined();
+            return EncodeEvent(queue.Dequeue());
+        }
+
+        /// <summary>Kodiert ein Ereignis als Array: [0] ist der Typ (siehe EventType), der Rest hängt vom Typ ab - Positionen sind
+        /// ganze Pixel (nach unten gerundet, in Framebuffer-Koordinaten):
+        /// MouseDown/MouseUp [typ, taste, x, y]; MouseMove [typ, x, y, tastenzustand]; MouseMoveRelative [typ, dx, dy, tastenzustand];
+        /// MouseScroll [typ, scrollX, scrollY, x, y] (Scrollwerte als Fließkommazahl); KeyDown/KeyUp [typ, keycode, scancode, modifier,
+        /// wiederholt]; TextInput [typ, text]; Close/CloseRequest [typ].</summary>
+        public static Value EncodeEvent(IEvent evnt)
+        {
+            static long Px(float v) => (long)Math.Floor(v);
+            Value[] items;
+            switch (evnt)
+            {
+                case KeyEvent key:
+                    items = new[] { Value.MakeInt((int)key.Type), Value.MakeInt(key.KeyCode), Value.MakeInt(key.ScanCode), Value.MakeInt(key.Modifier), Value.MakeBool(key.IsKeyRepeat) };
+                    break;
+                case ClickEvent click:
+                    items = new[] { Value.MakeInt((int)click.Type), Value.MakeInt(click.Button), Value.MakeInt(Px(click.X)), Value.MakeInt(Px(click.Y)) };
+                    break;
+                case MotionEvent motion when motion.Type == Event.EventType.MouseMoveRelative:
+                    items = new[] { Value.MakeInt((int)motion.Type), Value.MakeInt(Px(motion.Xrel)), Value.MakeInt(Px(motion.Yrel)), Value.MakeInt(motion.ButtonState) };
+                    break;
+                case MotionEvent motion:
+                    items = new[] { Value.MakeInt((int)motion.Type), Value.MakeInt(Px(motion.X)), Value.MakeInt(Px(motion.Y)), Value.MakeInt(motion.ButtonState) };
+                    break;
+                case ScrollEvent scroll:
+                    items = new[] { Value.MakeInt((int)scroll.Type), Value.MakeFloat(scroll.ScrollX), Value.MakeFloat(scroll.ScrollY), Value.MakeInt(Px(scroll.X)), Value.MakeInt(Px(scroll.Y)) };
+                    break;
+                case TextEvent text:
+                    items = new[] { Value.MakeInt((int)text.Type), text.Text == null ? Value.MakeUndefined() : Value.MakeString(text.Text) };
+                    break;
+                default:
+                    items = new[] { Value.MakeInt((int)evnt.Type) };
+                    break;
+            }
+            var array = new ScriptArray(items.Length);
+            for (int i = 0; i < items.Length; i++) array.Items[i] = items[i];
+            return Value.MakeArray(array);
         }
 
         /// <summary>Erzeugt UND öffnet sofort ein neues Fenster für den
@@ -41,7 +106,7 @@ namespace fire.Terminal.Windows
         public int CreateWindow(int framebufferId, string title = "fire Konsole")
         {
             var fb = _framebuffers.GetFramebuffer(framebufferId);
-            var window = new ConsoleWindow(fb);
+            var window = new ConsoleWindow(fb, _rendererFactory?.Invoke());
             
             var handle = _windows.Create(window);
             
@@ -70,6 +135,7 @@ namespace fire.Terminal.Windows
         public bool DestroyWindow(int id)
         {
             if (!_windows.TryGet(id, out var window) || window == null) return false;
+            _eventQueues.Remove(id);
             window.Dispose();
             return _windows.Destroy(id);
         }
@@ -88,6 +154,10 @@ namespace fire.Terminal.Windows
 
             if (result?.Events != null)
             {
+                if (_eventQueues.TryGetValue(id, out var queue))
+                    foreach (var queued in result.Events)
+                        if (queue.Count < MaxQueuedEvents) queue.Enqueue(queued);
+
                 foreach (var evnt in result.Events)
                 {
                     foreach (var hndlr in _callbacks.Where(c => c.WindowHandle == id && c.EventType == evnt.Type))

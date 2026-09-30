@@ -35,6 +35,8 @@ namespace fire.Runtime
                 new[] { "fire.Device.Bridge", "fire.Device.Manager" },
                 new[] { "libSystem.IO.Ports.Native.so", "libSystem.IO.Ports.Native.dylib" }),
             [NativeImports.IO] = new(new[] { "fire.IO.Bridge" }, Array.Empty<string>()),
+            // reiner fire-Quelltext (im Programm selbst), braucht keine DLL - `graphics` kommt über den Import selbst dazu
+            [NativeImports.Ui] = new(Array.Empty<string>(), Array.Empty<string>()),
         };
 
         /// <summary>Verwaltete DLLs: Assembly-Name -> Pfad.</summary>

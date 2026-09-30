@@ -60,6 +60,18 @@ namespace fire.Terminal
         public void Locate(int id, int row, int column) => _consoles.Get(id).Locate(row, column);
         public void Clear(int id) => _consoles.Get(id).Clear();
 
+        public int GetCellWidth(int id) => _consoles.Get(id).CellWidth;
+        public int GetCellHeight(int id) => _consoles.Get(id).CellHeight;
+
+        /// <summary>Text an einer PIXEL-Position (siehe TerminalCanvas.DrawText). Farben sind hier ROHE 32-Bit-Werte (R im
+        /// niedrigsten Byte, Alpha im höchsten - keine Palette-Indizes wie bei SetColor); ein Hintergrund mit Alpha 0 (z.B. 0)
+        /// bedeutet "transparent".</summary>
+        public void DrawText(int id, int x, int y, string text, int foreground, int background)
+        {
+            var bg = new PixelColor(unchecked((uint)background));
+            _consoles.Get(id).DrawText(x, y, text, new PixelColor(unchecked((uint)foreground)), bg.A == 0 ? null : bg);
+        }
+
         public void SetColor(int id, int foreground, int? background)
         {
             var c = _consoles.Get(id);

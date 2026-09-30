@@ -30,6 +30,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{1CE2AFF7-C2F
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Benchmarks", "src\fire.Benchmarks\fire.Benchmarks.csproj", "{7858E7A3-1536-418A-B601-A4882C089599}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.UI.Bridge", "src\fire.UI.Bridge\fire.UI.Bridge.csproj", "{2897725B-75E8-4A90-877A-F70F0516156E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -88,6 +90,10 @@ Global
 		{7858E7A3-1536-418A-B601-A4882C089599}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7858E7A3-1536-418A-B601-A4882C089599}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7858E7A3-1536-418A-B601-A4882C089599}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2897725B-75E8-4A90-877A-F70F0516156E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2897725B-75E8-4A90-877A-F70F0516156E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2897725B-75E8-4A90-877A-F70F0516156E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2897725B-75E8-4A90-877A-F70F0516156E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -97,5 +103,6 @@ Global
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{7858E7A3-1536-418A-B601-A4882C089599} = {1CE2AFF7-C2F8-4AF0-B36A-A8F8F7CE698C}
+		{2897725B-75E8-4A90-877A-F70F0516156E} = {1CE2AFF7-C2F8-4AF0-B36A-A8F8F7CE698C}
 	EndGlobalSection
 EndGlobal

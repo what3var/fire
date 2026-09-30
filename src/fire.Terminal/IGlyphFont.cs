@@ -1,3 +1,5 @@
+﻿using System;
+
 namespace fire.Terminal
 {
     /// <summary>Abstraktion über die tatsächliche Herkunft der Zeichen-
@@ -20,5 +22,15 @@ namespace fire.Terminal
         /// (Hintergrund/leer)? (px, py) liegen im Bereich
         /// [0, GlyphWidth) x [0, GlyphHeight).</summary>
         bool IsPixelSet(char c, int px, int py);
+    }
+
+    /// <summary>Eine Schrift, deren Zeichen als Bitmaps aus Zeilen zu je höchstens 8 Bits vorliegen (Bit 7 = linkes Pixel,
+    /// 8 Pixel Breite oder weniger): TerminalCanvas liest dann pro Zeichen einmal die Zeilen und schreibt die Pixel
+    /// direkt in den Framebuffer, statt für jedes Pixel <see cref="IGlyphFont.IsPixelSet"/> zu fragen (Faktor ~10
+    /// schneller). Jede andere Schrift funktioniert weiter über IsPixelSet.</summary>
+    public interface IBitmapGlyphFont : IGlyphFont
+    {
+        /// <summary>Die `GlyphHeight` Zeilen von Zeichen `c`, je Zeile ein Byte (Bit 7 = Pixel 0).</summary>
+        ReadOnlySpan<byte> GetGlyphRows(char c);
     }
 }

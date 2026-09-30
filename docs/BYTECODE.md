@@ -1554,3 +1554,25 @@ setzt `_shutdownReleasePending`; am Halt (`Run`, im Einzelschritt `StepInstructi
 Fire-Threads, und jeder Fire-Thread zerstört vorher seine eigenen Objekte (nur nach einer unbehandelten Exception bleibt der globale Scope stehen). Der Stopp-Zustand (`_stopExecutionRequested`) wird dafür kurz aufgehoben
 (`ReleaseGlobalScopeAfterStop`), weil `RunDestructor` in ihm nichts mehr ausführt. In einer VERSCHACHTELTEN Ausführung (Destruktor, Property, Operator, Callback) hält die VM sofort an und merkt sich
 `_shutdownDeferred`; `FinishDeferredShutdown()` (am Halt in `Run`, in `StepInstruction`, in `CallLambdaEntry`) wickelt dann nach, sobald `_nestedDepth` wieder 0 ist.
+
+## 31. Font-Rendering, Pixel-Text, Ereignis-Warteschlange und die UI-Bibliothek
+
+**Font.** `IBitmapGlyphFont.GetGlyphRows(char)` (Bitmap-Zeilen zu je ≤ 8 Bit) + `GlyphMasks.Table` (256 Zeilen x 2 `Vector128<uint>`-Masken): `TerminalCanvas.DrawGlyph` schreibt eine 8 Pixel
+breite Zeile mit zwei `ConditionalSelect` (opak) bzw. Lesen-Auswählen-Schreiben (transparent, leere Zeilen übersprungen) direkt in `Framebuffer.Pixels`; die Zelle muss vollständig im Target liegen, sonst der
+pixelweise Weg. Spalten/Zeilen-Raster und Zellgröße sind einmal berechnet (`UpdateGrid`), `DrawGlyph` ist `AggressiveOptimization` (kein Warten auf das Hochstufen). Messung (80x30 Zeichen):
+opak 370 -> 32 ns/Zeichen, transparent 270 -> 26 ns/Zeichen. Der Test-Block "Font-Rendering" vergleicht schnellen und allgemeinen Weg Pixel für Pixel (beide Schriftgrößen, opak/transparent, Positionen
+über den Rand hinaus, Scrollen). `IntegratedGlyphFont`: Tabellen statisch, Zeichen > 255 als `?`.
+
+**Pixel-Text.** `TerminalCanvas.DrawText/MeasureText`, `ConsoleManager.DrawText/GetCellWidth/GetCellHeight`, in der Bridge `Console.FillRect/DrawRect/DrawLine/DrawText/CellWidth/CellHeight` (rohe Farben).
+
+**Ereignisse.** `WindowManager.EnableEventQueue/NextEvent/EncodeEvent` (siehe `docs/CONSOLE.md`), `Window.EnableEvents()/NextEvent()`. `SdlFramebufferRenderer` rechnet die Mausposition von Fenster- auf
+Framebuffer-Koordinaten um (`SDL.GetWindowSize`) und startet die Texteingabe. `WindowManager(framebuffers, runner, rendererFactory)`.
+
+**Warum Abfrage statt Callback.** `Session.CallLambda` -> `FireRuntime.CallCallback` kopiert für JEDES Ereignis alle globalen Objekte (`ObjectCopier.Take`, außerdem wird dabei auf deren Baum
+Thread-Sharing aktiviert); ein Objekt mit Lambda-Feld oder mit einem Verweis auf ein fremdes Objekt wirft dabei `TakingViolationException` (der Callback schlägt fehl, SPEC 8.1.4 beschreibt das so). Ein Widget-Baum
+mit `onClick`-Lambdas wäre davon betroffen, deshalb holt `UI.Root.Tick` die Ereignisse per Warteschlange im Hauptprogramm ab.
+
+**UI.** `src/fire.UI.Bridge` (`UiBridge.PreludeSource`, `namespace UI`, siehe `docs/UI.md`); `NativeImports.Ui = "ui"`, `ImportedPreludes.WithDependencies("ui") = graphics + ui` (Linker, Editor-Diagnose und
+`CreateProjectDirectiveRegistry` tragen alle Schlüssel ein), `PackagePlan` kennt `ui` ohne eigene DLL. Innerhalb eines Namespace sind statische Klassen nur vollqualifiziert erreichbar (`UI.Color.Rgb`), Felder
+brauchen einen Typ (`Element hoverElement`), ein Lambda-Feld ruft man über eine lokale Variable (`var callback = this.onClick`, `callback()`), nicht als `this.onClick()`. Tests: Suite-Block "UI-Bibliothek".
+

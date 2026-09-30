@@ -74,7 +74,7 @@ namespace fire.Editor
                 var nativeImports = new HashSet<string>();
                 foreach (var name in extraImports)
                 {
-                    try { nativeImports.Add(ImportedPreludes.ParseImportName(name)); }
+                    try { foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name))) nativeImports.Add(key); }
                     catch (Exception) { /* unbekannte Erweiterung - meldet deren eigene Datei */ }
                 }
 

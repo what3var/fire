@@ -154,7 +154,7 @@ namespace fire.Compiler
             {
                 if (args[0].Kind == ValueKind.String)
                 {
-                    nativeImports.Add(ImportedPreludes.ParseImportName(args[0].AsString()));
+                    foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(args[0].AsString()))) nativeImports.Add(key);
                     return null;
                 }
                 throw new Exception($"Falsche Argumente für 'import'-Direktive.");
