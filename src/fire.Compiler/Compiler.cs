@@ -1799,6 +1799,14 @@ namespace fire.Compiler
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
                     _chunk.EmitByte((byte)ne.Args.Count);
                 }
+                else if (a.Value is UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy } copyExpr)
+                {
+                    // Wie `new`: eine direkt einem Feld zugewiesene Kopie gehört dem Zielobjekt (SPEC 2.1/2.4).
+                    _chunk.EmitOp(OpCode.Dup);
+                    CompileExpr(copyExpr.Operand);
+                    _chunk.EmitOp(OpCode.CopyValueOwned);
+                    _chunk.EmitByte(copyExpr.Op == UnaryOp.DeepCopy ? (byte)1 : (byte)0);
+                }
                 else
                 {
                     CompileExpr(a.Value);
@@ -2065,6 +2073,14 @@ namespace fire.Compiler
             if (u.Op == UnaryOp.AddressOf)
             {
                 CompileAddressOf(u.Operand);
+                return;
+            }
+
+            if (u.Op is UnaryOp.FlatCopy or UnaryOp.DeepCopy)
+            {
+                CompileExpr(u.Operand);
+                _chunk.EmitOp(OpCode.CopyValue);
+                _chunk.EmitByte(u.Op == UnaryOp.DeepCopy ? (byte)1 : (byte)0);
                 return;
             }
 

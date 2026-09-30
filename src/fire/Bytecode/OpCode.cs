@@ -132,6 +132,10 @@ namespace fire.Bytecode
         TryProcess, // pop target; nicht-blockierend; push true/false
 
         Halt,
+
+        // Bewusst NACH Halt angehängt, damit die Zahlenwerte aller bisherigen Opcodes (auch die von Halt) stabil bleiben.
+        CopyValue,      // u8 flags (bit0 = tief) : pop Quelle; push Kopie (`flat x` / `copy x`), Owner = aktueller Scope
+        CopyValueOwned, // u8 flags (bit0 = tief) : pop Quelle, pop Owner-Objekt; push Kopie, Owner = das Objekt (wie NewObjectOwned, SPEC 2.1)
     }
 
     /// <summary>Zieltyp für CoerceType/CoerceTypeDynamic - entspricht genau den

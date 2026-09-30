@@ -70,6 +70,7 @@ namespace fire.Compiler
             ["operator"] = TokenType.Operator,
             ["sync"] = TokenType.Sync,
             ["flat"] = TokenType.Flat,
+            ["copy"] = TokenType.Copy,
             ["leave"] = TokenType.Leave,
             ["terminate"] = TokenType.Terminate,
             ["actor"] = TokenType.Actor,

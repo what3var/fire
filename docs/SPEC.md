@@ -133,6 +133,49 @@ Jede Objektinstanz (`class`) hat **genau einen Owner**: entweder einen Scope (Bl
 - Wird ein Owner (Scope beim Verlassen, oder Objekt beim Löschen) zerstört, werden alle Objekte, deren Owner er noch ist, rekursiv mitzerstört (Kaskade). Dabei wird pro Objekt `destruct()` aufgerufen (s. 5.3).
 - **Ausnahme `return`:** Wird aus einem lokalen Scope eine Objektinstanz per `return` zurückgegeben, *und* war dieser Scope ihr Owner, geht das Ownership implizit an den aufrufenden/Parent-Scope über (kein Kaskadenlöschen in diesem Fall).
 
+### 2.4 Kopieren: `flat` und `copy`
+
+```
+var a = new Box("a")
+a.item = new Item(1)
+
+var f = flat a        // flache Kopie: neues Box-Objekt, a.item wird geteilt
+var d = copy a        // Tiefenkopie: neues Box-Objekt UND neues Item
+holder.other = copy a // direkt einem Feld zugewiesen: die Kopie gehört holder (wie bei `new`, 2.1)
+Work(flat a)          // auch als Argument
+```
+
+`flat` und `copy` sind Präfixe vor einem Ausdruck (`copy a.b` kopiert `a.b`) und als Wort reserviert - `copy` ist damit
+kein Bezeichner mehr, `flat` war es schon (`sync flat`).
+
+**`flat x`** kopiert das Objekt selbst samt seiner Felder (auch der Backing-Felder von Auto-Properties). Wertartige Felder
+(`bool`/`int`/`float`/`char`/`string`/`undefined`) werden als Wert übernommen, alles Referenzartige - Objekte, Arrays, Puffer,
+Lambdas, Pointer - bleibt **dieselbe Referenz wie im Original**.
+
+**`copy x`** ist eine Tiefenkopie: jede vom Operanden aus über Felder und Array-Elemente erreichbare Instanz wird genau **einmal**
+kopiert. Kommt dieselbe Instanz (oder dasselbe Array) wieder vor - gemeinsam genutzt oder zyklisch -, zeigt die Kopie auf die
+schon gemachte Kopie: die Struktur des Originals (Teilen, Zyklen) bleibt erhalten.
+
+**Owner.** Die Kopie ist ein neues Objekt und bekommt wie jedes neue Objekt einen Owner (2.1): der aktuelle Scope, bzw. bei einer
+direkten Feldzuweisung (`obj.feld = copy x`) das Zielobjekt. Bei `copy` gilt für die Instanzen darunter: war eine kopierte Instanz im
+Original im Besitz einer ebenfalls kopierten Instanz, gehört ihre Kopie deren Kopie (der Besitzbaum wird nachgebildet); alles andere
+- insbesondere Instanzen, die im Original jemand anderem gehören (ein Scope, ein Objekt außerhalb der Kopie) - gehört dem Owner der
+Wurzel-Kopie. So wird jede Kopie mit ihrem Owner zerstört (2.3), und die Originale bleiben unberührt.
+
+**Weitere Regeln**
+- Es läuft **kein Konstruktor** - die Feldwerte werden einfach übertragen. Der Destruktor läuft für die Kopie wie für jedes Objekt.
+  Vorsicht bei Objekten, die eine externe Ressource halten (z.B. einen `IO.FileStream` mit seinem Handle): die Kopie teilt sich den
+  Handle mit dem Original, beide schließen ihn beim Zerstören.
+- Ein **Actor** als Operand ist ein Fehler; ein Actor im Innern einer Kopie bleibt eine geteilte Referenz (Actor-Referenzen sind zum
+  Herumreichen da). Ebenso bleibt ein bereits zerstörtes Objekt im Innern eine geteilte Referenz; als Operand ist es ein Fehler.
+- Lambdas und Pointer werden in beiden Fällen geteilt, nicht kopiert.
+- Operanden ohne Inhalt (Zahl, Text, `true`, `undefined`) ergeben einfach sich selbst. Ein **Array** als Operand: `flat` legt ein neues
+  Array mit denselben Elementen an, `copy` kopiert auch die Elemente; ein **Puffer** (`byte[]`) wird in beiden Fällen byteweise kopiert.
+- `flat` kann zwischen Original und Kopie geteilte Referenzen hinterlassen, deren Besitzer das Original ist: wird das Original
+  zerstört (samt dem, was es besitzt), zeigt die flache Kopie auf zerstörte Objekte. Wer ein eigenständiges Gebilde braucht, nimmt `copy`.
+- Anders als `taking` (Kopie für einen Thread, lehnt jede Referenz aus dem Besitzbaum hinaus ab, `sync` schreibt zurück) ist das eine
+  gewöhnliche Kopie ohne Rückverknüpfung zum Original.
+
 ## 3. Einheiten (Units)
 
 ### 3.1 Syntax

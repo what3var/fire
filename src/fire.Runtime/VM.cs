@@ -2519,6 +2519,25 @@ namespace fire.Runtime
                     OpNewObjectOwned();
                     break;
 
+                case OpCode.CopyValue:
+                {
+                    // `flat x` / `copy x` (SPEC 2.4) - die Kopie gehört dem aktuellen Scope (SPEC 2.1).
+                    bool deep = (ReadByte() & 1) != 0;
+                    var source = Pop();
+                    Push(ObjectCloner.Clone(source, _currentScope, deep));
+                    break;
+                }
+
+                case OpCode.CopyValueOwned:
+                {
+                    // Direkt einem Feld zugewiesen: die Kopie gehört dem Zielobjekt (wie NewObjectOwned).
+                    bool deep = (ReadByte() & 1) != 0;
+                    var source = Pop();
+                    var owner = RequireObjectInstance(Pop(), "Kopie mit Owner");
+                    Push(ObjectCloner.Clone(source, owner, deep));
+                    break;
+                }
+
                 case OpCode.ConstructBase:
                     OpConstructBase();
                     break;

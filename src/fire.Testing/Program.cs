@@ -5302,13 +5302,13 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
             construct(inner) { this.inner = inner }
             bool CanWrite { get { return true } }
             int Write(buffer, offset, count) {
-                var copy = new byte[count]
+                var chunk = new byte[count]
                 for (var i = 0; i < count; i++) {
                     var c = buffer[offset + i]
                     if (c >= 97 && c <= 122) { c = c - 32 }
-                    copy[i] = c
+                    chunk[i] = c
                 }
-                return this.inner.Write(copy, 0, count)
+                return this.inner.Write(chunk, 0, count)
             }
         }
         var m = new IO.MemoryStream()
@@ -6207,6 +6207,269 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         """, new[] { "30", "aussen", "aussen2", "200", "e" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
 
     Console.WriteLine(perfFailures == 0 ? "Alle VM-Optimierungs-Pruefungen bestanden." : $"FEHLER: {perfFailures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
+{
+    int cloneFailures = 0;
+
+    List<string> RunClone(string script)
+    {
+        var lines = new List<string>();
+        var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, script));
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes);
+        vm.Run();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckClone(string title, string script, params string[] expected)
+    {
+        string[] actual;
+        try { actual = RunClone(script).ToArray(); }
+        catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
+        bool ok = actual.SequenceEqual(expected);
+        if (!ok) cloneFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+    }
+
+    void CheckCloneError(string title, string script, string fragment)
+    {
+        string actual;
+        try { actual = "kein Fehler: " + string.Join(" | ", RunClone(script)); }
+        catch (Exception ex) { actual = ex.Message; }
+        bool ok = actual.Contains(fragment);
+        if (!ok) cloneFailures++;
+        Console.WriteLine(ok ? $"OK: {title} -> {actual}" : $"FEHLER: {title}\n  erwartet: ...{fragment}...\n  erhalten: {actual}");
+    }
+
+    const string cloneClasses = """
+        class Item {
+            int n
+            construct(int n) { this.n = n }
+            destruct() { print("~I" + this.n) }
+        }
+        class Box {
+            string name
+            int size
+            Item item
+            Box other
+            Item list[]
+            int Extra { get; set; }
+            construct(string name) { this.name = name; this.size = 1 }
+            destruct() { print("~B" + this.name) }
+        }
+
+        """;
+
+    CheckClone("flat: Objekt selbst und Werte kopiert, Referenzen bleiben", cloneClasses + """
+        var a = new Box("a")
+        a.item = new Item(1)
+        a.Extra = 5
+        var f = flat a
+        f.name = "f"
+        f.size = 7
+        f.Extra = 6
+        print(a.name + a.size + a.Extra)
+        print(f.name + f.size + f.Extra)
+        print(f.item == a.item)
+        print(f == a)
+        f.item.n = 9
+        print(a.item.n)
+        """, "a15", "f76", "True", "False", "9");
+
+    CheckClone("copy: Tiefenkopie, Kopie ist unabhaengig", cloneClasses + """
+        var a = new Box("a")
+        a.item = new Item(1)
+        var d = copy a
+        d.item.n = 99
+        d.name = "d"
+        print(a.item.n + " " + d.item.n)
+        print(d.item == a.item)
+        print(a.name)
+        """, "1 99", "False", "a");
+
+    CheckClone("copy: gemeinsame Referenz bleibt gemeinsam, Zyklus bleibt Zyklus", cloneClasses + """
+        var shared = new Item(5)
+        var x = new Box("x")
+        x.item = shared
+        x.other = new Box("y")
+        x.other.item = shared
+        x.other.other = x
+        var c = copy x
+        print(c.item == c.other.item)
+        print(c.item == shared)
+        print(c.other.other == c)
+        print(c.other.other == x)
+        print(c.other != x.other)
+        """, "True", "False", "True", "False", "True");
+
+    CheckClone("Arrays: flat teilt die Elemente, copy kopiert sie; Array als Operand", cloneClasses + """
+        var b = new Box("arr")
+        b.list = [new Item(1), new Item(2)]
+        var f = flat b
+        var c = copy b
+        c.list[0].n = 10
+        f.list[1].n = 20
+        print(b.list[0].n + " " + b.list[1].n + " " + c.list[0].n)
+        print(f.list == b.list)
+        print(c.list == b.list)
+        var nums = [1, 2, 3]
+        var n1 = flat nums
+        var n2 = copy nums
+        n1[0] = 100
+        n2[1] = 200
+        print(nums[0] + " " + nums[1] + " " + n1[0] + " " + n2[1])
+        var bytes = "AB".ToBytes()
+        var b2 = copy bytes
+        b2[0] = 67
+        print(bytes[0] + " " + b2[0])
+        """, "1 20 10", "True", "False", "1 2 100 200", "65 67");
+
+    CheckClone("Werte: nichts zu kopieren", """
+        print(copy 5)
+        print(flat "text")
+        print(copy 2.5)
+        print(flat true)
+        var u = copy undefined
+        print(u == undefined)
+        """, "5", "text", "2.5", "True", "True");
+
+    CheckClone("Parameter: die Funktion arbeitet auf einer Kopie", cloneClasses + """
+        var Touch = func (b) => { b.name = "geaendert"; b.item.n = 77; return b.name }
+        var a = new Box("a")
+        a.item = new Item(1)
+        print(Touch(flat a))
+        print(a.name + " " + a.item.n)
+        a.name = "a"
+        a.item.n = 1
+        print(Touch(copy a))
+        print(a.name + " " + a.item.n)
+        """, "geaendert", "a 77", "geaendert", "a 1");
+
+    CheckClone("Owner: Kopie gehoert dem Scope und wird mit ihm zerstoert (Besitz bleibt erhalten)", cloneClasses + """
+        {
+            var a = new Box("a")
+            a.item = new Item(1)
+            var f = flat a
+            f.name = "f"
+            var d = copy a
+            d.name = "d"
+            print("|")
+        }
+        print("danach")
+        """, "|", "~Ba", "~I1", "~Bf", "~Bd", "~I1", "danach");
+
+    CheckClone("Owner: direkt einem Feld zugewiesen gehoert die Kopie dem Zielobjekt", cloneClasses + """
+        {
+            var src = new Box("src")
+            src.item = new Item(3)
+            var holder = new Box("holder")
+            holder.other = copy src
+            holder.other.name = "kopie"
+            holder.item = flat src.item
+            print("|")
+        }
+        print("danach")
+        """, "|", "~Bsrc", "~I3", "~Bholder", "~Bkopie", "~I3", "~I3", "danach");
+
+    CheckClone("Owner ausserhalb der Kopie: die Kopie gehoert dem Scope", cloneClasses + """
+        {
+            var owner = new Box("own")
+            owner.item = new Item(7)
+            var holder = new Box("holder")
+            holder.item = owner.item
+            var c = copy holder
+            c.item.n = 8
+            print(holder.item.n + " " + c.item.n)
+        }
+        print("danach")
+        """, "7 8", "~Bown", "~I7", "~Bholder", "~Bholder", "~I8", "danach");
+
+    CheckClone("Kopie laeuft ohne Konstruktor, der Destruktor laeuft fuer die Kopie", """
+        class K {
+            int v
+            construct(int v) { this.v = v; print("ctor") }
+            destruct() { print("dtor" + this.v) }
+        }
+        {
+            var k = new K(1)
+            var c = copy k
+            var f = flat k
+            c.v = 2
+            print("kopiert")
+        }
+        """, "ctor", "kopiert", "dtor1", "dtor2", "dtor1");
+
+    CheckClone("Kopie in Methode und return: Ownership geht an den Aufrufer", cloneClasses + """
+        class Maker { static Box Make(Box src) { var c = copy src; c.name = "made"; return c } }
+        var s = new Box("s")
+        s.item = new Item(4)
+        {
+            var m = Maker.Make(s)
+            print(m.name + " " + m.item.n)
+        }
+        print("danach")
+        """, "made 4", "~Bmade", "~I4", "danach");
+
+    CheckClone("Actor: in der Tiefe geteilt", """
+        actor Counter { int n; construct() { this.n = 0 } Inc() { this.n = this.n + 1 } }
+        class Holder { Counter c; construct() { this.c = new Counter() } }
+        var h = new Holder()
+        var d = copy h
+        var f = flat h
+        print(d.c == h.c)
+        print(f.c == h.c)
+        """, "True", "True");
+
+    CheckCloneError("Actor als Operand", """
+        actor Counter { int n; construct() { this.n = 0 } }
+        var c = new Counter()
+        var d = copy c
+        """, "Actor");
+
+    CheckCloneError("zerstoertes Objekt", cloneClasses + """
+        var leaked = new Box("x")
+        {
+            var t = new Box("t")
+            leaked = t
+        }
+        var d = copy leaked
+        """, "zerstört");
+
+    CheckCloneError("Kopier-Praefix ohne Operand", "var x = copy", "Unerwartetes Token");
+
+    Console.WriteLine(cloneFailures == 0 ? "Alle Kopier-Pruefungen bestanden." : $"FEHLER: {cloneFailures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Kopieren: Editor ===");
+{
+    int failures = 0;
+    void Check(string title, string source, string expected, string forbidden = "")
+    {
+        int cursor = source.IndexOf('|');
+        source = source.Remove(cursor, 1);
+        var index = fire.Editor.ScriptSymbolIndex.Build(source);
+        var names = fire.Editor.CompletionEngine.GetSuggestions(source, cursor, index).Select(i => i.Text).ToList();
+        bool ok = expected.Split(',', StringSplitOptions.RemoveEmptyEntries).All(names.Contains)
+            && !forbidden.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(names.Contains);
+        if (!ok) failures++;
+        Console.WriteLine($"{(ok ? "OK" : "FEHLER")}: {title} -> {string.Join(", ", names.Take(8))}");
+    }
+    const string dogs = "class Dog { Bark() { } }\nclass Cat { Purr() { } }\nvar a = new Dog()\n";
+    Check("var d = copy a", dogs + "var d = copy a\nd.|", "Bark", "Purr");
+    Check("var f = flat a.Self", "class Dog { Bark() { } }\nclass Kennel { Dog dog }\nvar k = new Kennel()\nvar f = flat k.dog\nf.|", "Bark");
+    Check("copy/flat als Schluesselwoerter", "var x = 1\nco|", "copy");
+    Check("flat als Schluesselwort", "var x = 1\nfla|", "flat");
+    Console.WriteLine(failures == 0 ? "Alle Kopier-Editor-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
 }
 
 static int CountOccurrences(string haystack, string needle)

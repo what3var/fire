@@ -399,6 +399,10 @@ namespace fire.Editor
             if (depth > MaxDepth || startIdx < 0 || startIdx > endIdx || endIdx >= _tokens.Count)
                 return ExprType.Unknown;
 
+            // `flat x` / `copy x` (Kopier-Präfixe): das Ergebnis hat den Typ des kopierten Ausdrucks.
+            if (startIdx < endIdx && _tokens[startIdx].Type is TokenType.Flat or TokenType.Copy)
+                return EvalExprRangeCore(startIdx + 1, endIdx, depth + 1);
+
             if (startIdx == endIdx)
             {
                 switch (_tokens[startIdx].Type)

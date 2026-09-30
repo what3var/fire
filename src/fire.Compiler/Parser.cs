@@ -2363,6 +2363,15 @@ namespace fire.Compiler
                 return new IncDecExpr(opTok.Line, target, isIncrement, IsPrefix: true);
             }
 
+            // `flat x` / `copy x` (SPEC 2.4): Kopier-Präfixe - der Operand ist wieder ein Unary-Ausdruck,
+            // `copy a.b` kopiert also `a.b`, `copy a + b` ist `(copy a) + b`. (`sync flat x` liest sein `flat`
+            // selbst, siehe ParseSync - es kommt hier nie an.)
+            if (Check(TokenType.Flat) || Check(TokenType.Copy))
+            {
+                var copyTok = Advance();
+                return new UnaryExpr(copyTok.Line, copyTok.Type == TokenType.Flat ? UnaryOp.FlatCopy : UnaryOp.DeepCopy, ParseUnary());
+            }
+
             if (Check(TokenType.Minus) || Check(TokenType.Bang) || Check(TokenType.Tilde)
                 || Check(TokenType.Star) || Check(TokenType.Amp))
             {

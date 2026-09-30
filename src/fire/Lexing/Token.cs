@@ -29,6 +29,7 @@ namespace fire.Lexing
         Fire, Taking,
         Operator, // 'operator' - Operator-Überladung (siehe Parser.ParseOperatorMember)
         Sync, Flat,
+        Copy, // 'copy ausdruck' - tiefe Kopie (siehe Ast.UnaryOp.DeepCopy); 'flat ausdruck' ist die flache (UnaryOp.FlatCopy)
         Leave, Terminate,
         Actor, Process,
 

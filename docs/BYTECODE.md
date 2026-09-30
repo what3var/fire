@@ -1441,3 +1441,25 @@ Deklarationen weglassen (würde die Besitz-/Destruktor-Zeitpunkte von in dem Blo
 Compiler müssten sich einig sein), Superinstruktionen im Compiler (`LoadLocal+LoadConst+Add`), eine Ein-Element-Besitzliste
 in `Scope` (spart bei `new` in Schleifen zwei Allokationen), die Signalprüfung pro Instruktion im Debug-Modus
 (`CheckShutdownSignals` fragt eine `ConcurrentQueue` ab), `_frames` als Array.
+
+## 27. Kopier-Präfixe `flat x` / `copy x`
+
+**Parser/AST.** `copy` ist ein neues Schlüsselwort (`TokenType.Copy`), `flat` gab es schon (`sync flat`). `ParseUnary` liest
+`flat`/`copy` als Präfix und erzeugt ein `UnaryExpr` mit den neuen `UnaryOp.FlatCopy`/`DeepCopy` (Operand wieder ein Unary-Ausdruck;
+`sync flat x` liest sein `flat` in `ParseSync` selbst und kommt hier nie an). Der Resolver braucht nichts Eigenes (er löst den Operanden auf).
+
+**Compiler/VM.** Zwei neue Opcodes, hinter `Halt` angehängt (damit alle bisherigen Zahlenwerte stabil bleiben): `CopyValue u8 flags`
+(bit0 = tief; pop Quelle, push Kopie, Owner = aktueller Scope) und `CopyValueOwned u8 flags` (pop Quelle, pop Owner-Objekt, push Kopie) -
+letzteren erzeugt `CompileAssign` genau dort, wo es auch `NewObjectOwned` erzeugt (`obj.feld = copy x`; eine bloße `feld = copy x` im Innern
+einer Klasse gehört wie bei `new` dem Scope). Beide laufen über `Execute` (kein heißer Pfad); die Arbeit macht `Runtime.ObjectCloner.Clone`.
+
+**ObjectCloner.** `flat`: neue `ObjectInstance` (gleiche Klasse, Owner wie übergeben) und Feld für Feld übertragen (`Snapshot` unter dem
+Baum-Lock, falls das Objekt an einem `taking`-Thread hängt). `copy` (`DeepCopier`) in drei Phasen: (1) Entdecken - alles über Felder/Array-
+Elemente Erreichbare mit Feld-Schnappschüssen sammeln (Stack statt Rekursion, Actors und Zerstörtes bleiben draußen); (2) Anlegen - die
+Wurzel zuerst, danach jede Instanz unter der Kopie ihres Besitzers, sofern der mitkopiert wird (Rekursion über die Besitzer endet, der Besitzbaum
+ist zyklenfrei), sonst unter dem Wurzel-Owner; (3) Füllen - Feldwerte über die Identitätstabellen (`_copies`, `_arrayCopies`, `_bufferCopies`)
+abbilden; ein Array trägt sich vor dem Füllen ein, darf sich also selbst enthalten. Ein Array als Operand läuft durch dieselben Phasen ohne
+Wurzel-Instanz.
+
+**Editor.** `copy` steht in der Keyword-Liste und im Syntax-Highlighter; `EvalExprRangeCore` überspringt das Präfix, `var d = copy a` hat also den
+Typ von `a`.
