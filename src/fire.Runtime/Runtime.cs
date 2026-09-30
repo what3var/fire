@@ -24,20 +24,13 @@ namespace fire.Runtime
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static int Run()
         {
-            new Runtime(VmExecutionMode.Release).ExecuteInternal();
+            new Runtime().ExecuteInternal();
             return 0;
         }
     }
 
     public class Runtime
     {
-        private VmExecutionMode _executionMode;
-
-        public Runtime(VmExecutionMode executionMode = VmExecutionMode.Release)
-        {
-            _executionMode = executionMode;
-        }
-
         public void ExecuteInternal()
         {
             var bin = PayloadLoader.ReadProgram();
@@ -49,7 +42,7 @@ namespace fire.Runtime
                 return;
             }
 
-            var session = Session.Build(prog, _executionMode, args =>
+            var session = Session.Build(prog, prog.ExecutionMode, args =>
             {
                 if (args.Length > 0)
                 {

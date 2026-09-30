@@ -131,7 +131,7 @@ namespace fire.Compiler
             return assemblyInfo;
         }
 
-        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string? outname = null)
+        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string? outname = null, VmExecutionMode? executionModeOverride = null)
         {
             var assemblyInfo = new AssemblyInfo();
             var natives = new NativeRegistry();
@@ -274,7 +274,7 @@ namespace fire.Compiler
             var resolveResult = Resolver.Resolve(program, natives.Names);
             var compiled = Compiler.Compile(program, resolveResult, natives);
 
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource);
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode);
 
             if (!string.IsNullOrEmpty(outname))
             {

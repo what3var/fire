@@ -45,6 +45,16 @@ namespace fire.Compiler
 
         public void CloseHostResources() => IoResources?.Dispose();
 
+        /// <summary>Führt das Programm auf dem aufrufenden Thread bis zum Ende aus (normales Ende, `leave`,
+        /// `terminate` oder unbehandelte Exception, siehe <see cref="VM.UnhandledException"/>) und schließt danach die
+        /// vom Skript offen gelassenen Handles.</summary>
+        public void Run()
+        {
+            if (VirtualMachine == null) return;
+            try { VirtualMachine.Run(); }
+            finally { CloseHostResources(); }
+        }
+
         
         private RuntimeSession(CompiledProgram compiledProgram)
         {
@@ -107,12 +117,12 @@ namespace fire.Compiler
             return registry;
         }
 
-        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null)
+        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null)
         {
             var linker = new Linker();
             var natives = new NativeRegistry();
 
-            var linkedProgram = linker.CompileAndLink(sources, debugWriter, outname);
+            var linkedProgram = linker.CompileAndLink(sources, debugWriter, outname, executionMode);
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Print))
             {
@@ -149,7 +159,7 @@ namespace fire.Compiler
             var globalScope = new Scope(null, isGlobal: true);
             
             var mainVm = new VM(linkedProgram.Program.TopLevel, globalScope, natives, linkedProgram.Program.Classes,
-                externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: executionMode);
+                externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: linkedProgram.ExecutionMode);
 
             session.SetVM(mainVm, windowManager, globalScope, natives, fbManager, consoleManager, linkedProgram.FirstUserSource);
             session.IoResources = ioResources;

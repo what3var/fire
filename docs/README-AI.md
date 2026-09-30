@@ -18,6 +18,20 @@ dotnet run
 `Program.cs` enthält aktuell einen manuellen Smoke-Test für Lexer und
 Unit-System (noch kein Parser/Evaluator).
 
+## Befehlszeile des Compilers (`src/fire.Compiler`)
+
+```
+fire.Compiler run   datei1 [datei2 ...] [-m DEBUG|RELEASE|PERFORMANCE]
+fire.Compiler build datei1 [datei2 ...] [-o ziel.exe] [-m DEBUG|RELEASE|PERFORMANCE]
+```
+
+`run` kompiliert die Dateien (in der angegebenen Reihenfolge zu EINEM Programm verbunden, wie die Quellen im Editor) und führt sie aus; `build` erzeugt daraus eine
+eigenständige Datei (Vorgabe `out.exe`, siehe `docs/BYTECODE.md` Abschnitt 30). Dateinamen ohne Leerzeichen brauchen keine Anführungszeichen. `-m` setzt den Ausführungsmodus
+(ohne `-m`: `#debug`/`#performance` im Skript, sonst Release); bei `build` steckt er im gepackten Programm (`LinkedProgram.ExecutionMode`) und gilt für die erzeugte Datei.
+Exitcodes: 0 ok bzw. der Ganzzahlwert von `terminate(wert)`, 1 Kompilier-/Laufzeitfehler des Skripts (Meldung auf stderr), 2 ungültige Befehlszeile oder fehlende Datei.
+`#include`-Pfade und Pfade der IO-Bridge gelten relativ zum aktuellen Verzeichnis des Aufrufs. Umsetzung: `CommandLine.cs` (`CommandLineParser`, `CommandLineRunner`), getestet im Block
+"Befehlszeile" der Suite.
+
 ## Editor (`src/ScriptLang.Editor`)
 
 Ein kleiner WPF-Editor mit Syntax-Highlighting und einem Step-Debugger, in
