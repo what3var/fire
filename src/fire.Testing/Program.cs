@@ -7442,6 +7442,174 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     Console.WriteLine(uiFailures == 0 ? "Alle UI-Pruefungen bestanden." : $"FEHLER: {uiFailures} UI-Pruefung(en) fehlgeschlagen.");
 }
 
+// ---------------------------------------------------------------------------
+// Native Callbacks (Fenster-Ereignisse) laufen verschachtelt auf der VM des Threads: echte Globals, kein Kopieren
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Callbacks auf dem VM-Thread ===");
+    int cbFailures = 0;
+
+    // Wie RuntimeSession.CallLambda: der Host-Runner ruft FireRuntime.RunCallback; unbehandelte Callback-Fehler landen als "CB: ..." in der Ausgabe.
+    List<string> RunCb(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, script };
+        var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+
+        var renderer = new FakeRenderer();
+        VM? vm = null;
+        IReadOnlyDictionary<string, RuntimeClass>? classes = null;
+        var fbManager = new fire.Terminal.FramebufferManager();
+        var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
+        var winManager = new fire.Terminal.Windows.WindowManager(fbManager,
+            (l, v) => FireRuntime.RunCallback(l, v, natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode),
+            () => renderer);
+        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, winManager);
+
+        var kept = new List<LambdaValue>();
+        natives.Register("__TestEvent", args => { renderer.Push((int)args[0].AsInt(), args); return Value.MakeUndefined(); });
+        natives.Register("__Keep", args => { kept.Add((LambdaValue)args[0].AsLambda()); return Value.MakeUndefined(); });
+        // fuehrt das gemerkte Lambda auf einem ANDEREN Thread ohne laufende VM aus (wie ein Host-Ereignis)
+        natives.Register("__RunKeptOnOtherThread", args =>
+        {
+            var t = new Thread(() => FireRuntime.RunCallback(kept[0], Array.Empty<Value>(), natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode));
+            t.Start();
+            t.Join();
+            return Value.MakeUndefined();
+        });
+
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        classes = compiled.Classes;
+        VM.ResetTerminateForTests();
+        vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
+        vm.Run();
+        VM.ResetTerminateForTests();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckCb(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
+    {
+        foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            try { actual = RunCb(script, mode).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + CompileErrors.Describe(ex) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) cbFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    const string cbHead = """
+        class Exception { string message; construct(string message) { this.message = message } }
+        var fb = new Framebuffer(64, 64)
+        var win = new Window(fb, "t")
+
+        """;
+
+    CheckCb("Callback schreibt auf die echten Globals", cbHead + """
+        var counter = 0
+        win.RegisterMouseDown(func (int b, float x, float y) => { counter = counter + b })
+        __TestEvent(8, 2, 1.0, 1.0)
+        __TestEvent(8, 3, 1.0, 1.0)
+        win.Tick()
+        print("counter " + counter)
+        """, new[] { "counter 5" });
+
+    CheckCb("Objekte mit Lambda-Feld und Verweis auf Fremdes als Globals stoeren den Callback nicht", cbHead + """
+        class Holder { lambda cb; Framebuffer other }
+        var h = new Holder()
+        h.cb = func () => { }
+        h.other = fb
+        var hits = 0
+        win.RegisterMouseDown(func (int b, float x, float y) => { hits = hits + 1; h.other = undefined })
+        __TestEvent(8, 1, 1.0, 1.0)
+        win.Tick()
+        print("hits " + hits + " other " + (h.other == undefined))
+        """, new[] { "hits 1 other True" });
+
+    CheckCb("Unbehandelte Exception im Callback: gemeldet, Programm laeuft weiter, try/catch des Aufrufers sieht sie nicht", cbHead + """
+        win.RegisterMouseDown(func (int b, float x, float y) => { throw new Exception("boom") })
+        __TestEvent(8, 1, 1.0, 1.0)
+        try { win.Tick() } catch (e) { print("aeusserer catch") }
+        print("weiter " + (1 + 2))
+        try { throw new Exception("m") } catch (e) { print("catch " + e.message) }
+        """, new[] { "CB: Unbehandelte Exception vom Typ 'Exception': boom", "weiter 3", "catch m" });
+
+    CheckCb("Ein try/catch im Callback selbst faengt", cbHead + """
+        var caught = 0
+        win.RegisterMouseDown(func (int b, float x, float y) => {
+            try { throw new Exception("x") } catch (e) { caught = caught + 1 }
+        })
+        __TestEvent(8, 1, 1.0, 1.0)
+        win.Tick()
+        print("caught " + caught)
+        """, new[] { "caught 1" });
+
+    CheckCb("Callback in einer Funktion mit offenem try: der Fehler bricht nur den Callback ab", cbHead + """
+        win.RegisterMouseDown(func (int b, float x, float y) => { throw new Exception("boom") })
+        __TestEvent(8, 1, 1.0, 1.0)
+        class T {
+            static Step(w) {
+                try {
+                    w.Tick()
+                    print("nach Tick")
+                } catch (e) {
+                    print("falsch gefangen")
+                } finally {
+                    print("finally")
+                }
+            }
+        }
+        T.Step(win)
+        """, new[] { "CB: Unbehandelte Exception vom Typ 'Exception': boom", "nach Tick", "finally" });
+
+    // Der Performance-Modus prueft nichts: ein Zugriff ausserhalb des Arrays ist eine rohe C#-Ausnahme. Der Zustand der VM muss danach stimmen.
+    CheckCb("Rohe C#-Ausnahme im Callback (Performance): Zustand wiederhergestellt, Programm laeuft weiter", cbHead + """
+        win.RegisterMouseDown(func (int b, float x, float y) => { var z = new int[2]; z[5] = 1 })
+        __TestEvent(8, 1, 1.0, 1.0)
+        try { win.Tick(); print("nach Tick") } finally { print("finally") }
+        var sum = 0
+        for (var i = 0; i < 100; i = i + 1) { sum = sum + i }
+        print("sum " + sum)
+        """, new[] { "CB: Index was outside the bounds of the array.", "nach Tick", "finally", "sum 4950" }, new[] { VmExecutionMode.Performance });
+
+    CheckCb("leave im Callback beendet das Programm geordnet (Destruktoren laufen)", cbHead + """
+        class G { destruct() { print("~G") } }
+        var g = new G()
+        win.RegisterMouseDown(func (int b, float x, float y) => { leave })
+        __TestEvent(8, 1, 1.0, 1.0)
+        win.Tick()
+        print("nie")
+        """, new[] { "~G" });
+
+    CheckCb("terminate im Callback beendet das Programm geordnet", cbHead + """
+        class G { destruct() { print("~G") } }
+        var g = new G()
+        win.RegisterMouseDown(func (int b, float x, float y) => { terminate(3) })
+        __TestEvent(8, 1, 1.0, 1.0)
+        win.Tick()
+        print("nie")
+        """, new[] { "~G" });
+
+    CheckCb("Ohne laufende VM (anderer Thread) bleibt der Callback isoliert: er arbeitet auf einer Kopie", cbHead + """
+        var counter = 0
+        __Keep(func () => { counter = counter + 1; print("cb " + counter) })
+        __RunKeptOnOtherThread()
+        print("counter " + counter)
+        """, new[] { "cb 1", "counter 0" });
+
+    Console.WriteLine(cbFailures == 0 ? "Alle Callback-Pruefungen bestanden." : $"FEHLER: {cbFailures} Callback-Pruefung(en) fehlgeschlagen.");
+}
+
 static int CountOccurrences(string haystack, string needle)
 {
     int count = 0, idx = 0;

@@ -1576,3 +1576,14 @@ mit `onClick`-Lambdas wäre davon betroffen, deshalb holt `UI.Root.Tick` die Ere
 `CreateProjectDirectiveRegistry` tragen alle Schlüssel ein), `PackagePlan` kennt `ui` ohne eigene DLL. Innerhalb eines Namespace sind statische Klassen nur vollqualifiziert erreichbar (`UI.Color.Rgb`), Felder
 brauchen einen Typ (`Element hoverElement`), ein Lambda-Feld ruft man über eine lokale Variable (`var callback = this.onClick`, `callback()`), nicht als `this.onClick()`. Tests: Suite-Block "UI-Bibliothek".
 
+## 32. Native Callbacks laufen verschachtelt auf der VM des Threads
+
+`Session.CallLambda` (Runtime- und Compiler-Fassung) ruft `FireRuntime.RunCallback`. Auf dem Thread einer laufenden VM (`VM.CurrentThreadVm`, wird am Ende von `Run` wieder null; im Debugger zusätzlich `!IsHalted`) führt
+`VM.CallLambdaInline` das Lambda verschachtelt aus (`RunNestedUntil`): Frame auf den Aufrufer-Zustand, neuer Scope mit dem globalen Scope als Parent, `this` = `OnTarget`. Die Globals sind die echten, nichts wird kopiert,
+kein Thread-Sharing aktiviert. Für eine unbehandelte Exception im Callback gibt es eine `CallbackBoundary` (Frame-Tiefe, Scope, Handler-Untergrenze, Stackhöhe des Aufrufers): `ThrowException` sucht nur Handler über der
+Untergrenze (die try/catch des Aufrufers sind für den Callback unsichtbar); findet es keinen, wickelt es bis zur Grenze ab (`UnwindTo`), stellt die Stackhöhe wieder her und merkt sich die Exception in `_callbackError`,
+die `CallLambdaInline` an den Host zurückgibt (Text an `onUnhandled`, Programm läuft weiter). Eine rohe C#-Ausnahme (z.B. Performance-Modus ohne Prüfungen) stellt den Aufrufer-Zustand im `catch` wieder her und wird vom
+Host gemeldet; `RunNestedUntil` gibt `_nestedDepth` jetzt auch dann wieder frei (`finally`). `leave`/`terminate` im Callback laufen über den bekannten Weg (`_shutdownDeferred`, `FinishDeferredShutdown`).
+`WindowManager.Tick` kopiert die Callback-Liste je Ereignis (`ToList`), ein Callback darf Ereignisse an-/abmelden. Ohne laufende VM auf dem Thread bleibt es beim isolierten `FireRuntime.CallCallback` mit Kopie.
+Tests: Suite-Block "Callbacks auf dem VM-Thread".
+

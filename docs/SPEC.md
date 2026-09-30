@@ -939,6 +939,18 @@ daran, ob direkt nach `try` eine `{` folgt (Block) oder nicht (Ausdruck).
 
 ### 8.1.4 Native Callbacks
 
+**Wo ein Callback läuft.** `FireRuntime.RunCallback(lambda, args, natives, classes, snapshotGlobals, onUnhandled)` entscheidet:
+
+- **Auf dem Thread einer laufenden VM** (der Normalfall: das Skript ruft selbst z.B. `Window.Tick`, und dabei feuern die Ereignisse) läuft das Lambda **verschachtelt auf dieser VM**
+  (`VM.CallLambdaInline`): mit den **echten globalen Variablen**, lesend und schreibend, wie jedes andere Lambda (4.2) - es gibt nichts zu isolieren, weil nichts nebenläufig ist. Objekte mit
+  Lambda-Feldern oder Verweisen auf fremde Objekte sind als Globals kein Problem, und `leave`/`terminate` im Callback wirken auf das Programm. Eine unbehandelte Exception im Callback bricht nur den
+  Callback ab (ein `try`/`catch` um den auslösenden Aufruf sieht sie nicht): sie geht als Text an `onUnhandled`, das Programm läuft weiter. Wie bei Destruktoren und Properties wird während eines
+  verschachtelten Callbacks nicht auf `leave`/`terminate` anderer Threads geprüft (erst danach).
+- **Auf einem Thread ohne laufende VM** (ein Host-Thread, z.B. ein Seriell-Ereignis) wäre der Zugriff auf die Globals ein Datenrennen: dort gilt die isolierte Kopie wie unten beschrieben
+  (`FireRuntime.CallCallback`).
+
+Der Rest dieses Abschnitts beschreibt diesen isolierten Fall.
+
 ```csharp
 // Host-seitige C#-Registrierung (RegisterCallback ist eine GEWÖHNLICHE
 // native Funktion - Lambdas sind bereits first-class Values, keine

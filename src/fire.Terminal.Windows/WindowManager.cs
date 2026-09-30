@@ -160,7 +160,8 @@ namespace fire.Terminal.Windows
 
                 foreach (var evnt in result.Events)
                 {
-                    foreach (var hndlr in _callbacks.Where(c => c.WindowHandle == id && c.EventType == evnt.Type))
+                    // ToList: ein Callback darf selbst Ereignisse an- oder abmelden, ohne die Schleife zu stören
+                    foreach (var hndlr in _callbacks.Where(c => c.WindowHandle == id && c.EventType == evnt.Type).ToList())
                     {
                         switch(evnt.Type)
                         {

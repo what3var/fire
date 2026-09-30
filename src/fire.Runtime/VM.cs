@@ -321,6 +321,13 @@ namespace fire.Runtime
         /// aufgerufen: die VM hält dort sofort an (Halt), das geordnete Abwickeln (finally, Destruktoren) holt
         /// <see cref="FinishDeferredShutdown"/> nach, sobald die Verschachtelung zurück ist.</summary>
         private bool _shutdownDeferred;
+
+        /// <summary>Ein Lambda, das ein nativer Aufruf auf DIESER VM verschachtelt ausführt (siehe <see cref="CallLambdaInline"/>): wo es
+        /// begonnen hat - Frame-Tiefe, Scope und Stackhöhe des Aufrufers und wie viele Handler der Aufrufer schon registriert hat
+        /// (ein `throw` im Callback darf die try/catch des Aufrufers nicht sehen).</summary>
+        private readonly record struct CallbackBoundary(int FrameDepth, Scope Scope, int HandlerFloor, int StackPointer);
+        private readonly Stack<CallbackBoundary> _callbackBoundaries = new();
+        private ObjectInstance? _callbackError;
         // (Nur noch in den VERSCHACHTELTEN Schleifen und im Einzelschritt geprüft - Run() liest nach StopExecution() das Halt.)
 
         public VM(
@@ -477,6 +484,12 @@ namespace fire.Runtime
         public void Run()
         {
             _currentThreadVm = this;
+            try { RunLoop(); }
+            finally { _currentThreadVm = null; } // ein später auf diesem Thread feuernder Callback sucht keine beendete VM
+        }
+
+        private void RunLoop()
+        {
             _ip = 0;
 
             while (true)
@@ -969,8 +982,8 @@ namespace fire.Runtime
         private void RunNestedUntil(int targetFrameDepth)
         {
             _nestedDepth++;
-            RunNestedLoop(targetFrameDepth);
-            _nestedDepth--;
+            try { RunNestedLoop(targetFrameDepth); }
+            finally { _nestedDepth--; } // auch bei einer C#-Ausnahme (z.B. im Performance-Modus ohne Prüfungen) wieder freigeben
         }
 
         private void RunNestedLoop(int targetFrameDepth)
@@ -3568,7 +3581,9 @@ namespace fire.Runtime
             // mit-zerstört, bevor der catch-Block sie lesen kann.
             excInstance.TakeGlobal(_globalScope);
 
-            while (_handlers.Count > 0)
+            // In einem verschachtelten Callback (CallLambdaInline) gehören die Handler bis zur Untergrenze dem Aufrufer.
+            int handlerFloor = _callbackBoundaries.Count > 0 ? _callbackBoundaries.Peek().HandlerFloor : 0;
+            while (_handlers.Count > handlerFloor)
             {
                 var handler = _handlers[^1];
                 _handlers.RemoveAt(_handlers.Count - 1);
@@ -3601,6 +3616,17 @@ namespace fire.Runtime
 
                 if (handler.Template.FinallyProtoIdx is int protoIdx)
                     RunFinallyNested(handler.Chunk.Functions[protoIdx]);
+            }
+
+            // Unbehandelt in einem Callback: nur der Callback bricht ab (Abwickeln bis zu seinem Aufrufer, dort hört CallLambdaInline
+            // den Fehler ab) - das Programm läuft weiter, und der Aufrufer des Callbacks sieht keine Ausnahme (SPEC 8.1.4).
+            if (_callbackBoundaries.Count > 0)
+            {
+                var boundary = _callbackBoundaries.Peek();
+                UnwindTo(boundary.FrameDepth, boundary.Scope);
+                _sp = boundary.StackPointer;
+                _callbackError = excInstance;
+                return;
             }
 
             // Kein Handler in DIESER VM-Instanz hat gematcht. Auf einem
@@ -3807,6 +3833,66 @@ namespace fire.Runtime
             for (int i = 0; i < snapshot.Length; i++)
                 snapshot[i] = _globalScope.GetSlot(i);
             return snapshot;
+        }
+
+        /// <summary>Führt ein Lambda, das ein NATIVER Aufruf dieser VM auslöst (z.B. ein Fenster-Ereignis, das `Window.Tick` liefert),
+        /// verschachtelt auf dieser VM aus: es sieht die echten globalen Variablen (lesend UND schreibend, wie jedes Lambda, SPEC 4.2),
+        /// ohne Kopie und ohne Thread-Sperren, und `leave`/`terminate` darin wirken auf dieses Programm. Nur aufrufen, wenn der Aufruf
+        /// auf dem Thread dieser VM geschieht (`VM.CurrentThreadVm`). Liefert null, wenn das Lambda normal endete (oder das Programm
+        /// beendet wurde), sonst die unbehandelte Exception des Lambdas - die den Aufrufer NICHT unterbricht: wie bei jedem Callback
+        /// meldet sie der Host, das Programm läuft weiter.</summary>
+        public ObjectInstance? CallLambdaInline(LambdaValue lambda, Value[] args)
+        {
+            CheckArity(lambda.Proto, args.Length);
+            args = FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
+
+            int frameDepth = _frames.Count;
+            var callerScope = _currentScope;
+            int stackPointer = _sp;
+
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+            int targetDepth = _frames.Count;
+            _callbackBoundaries.Push(new CallbackBoundary(frameDepth, callerScope, _handlers.Count, stackPointer));
+            _callbackError = null;
+
+            var funcScope = new Scope(_globalScope);
+            foreach (var a in args) funcScope.DefineSlot(a);
+
+            _currentThis = lambda.OnTarget;
+            _currentScope = funcScope;
+            _currentChunk = lambda.Proto.Chunk;
+            _ip = 0;
+
+            try
+            {
+                RunNestedUntil(targetDepth);
+            }
+            catch
+            {
+                // Eine C#-Ausnahme mitten im Callback (z.B. ein Zugriff außerhalb des Arrays im Performance-Modus, der nichts prüft):
+                // den Zustand des Aufrufers wiederherstellen, damit das Programm weiterlaufen kann, und die Ausnahme dem Host melden.
+                while (_frames.Count > frameDepth + 1) _frames.Pop();
+                var callerFrame = _frames.Pop();
+                _currentChunk = callerFrame.ReturnChunk;
+                _ip = callerFrame.ReturnIp;
+                _currentScope = callerFrame.ReturnScope;
+                _currentThis = callerFrame.ReturnThis;
+                _sp = stackPointer;
+                var floor = _callbackBoundaries.Pop().HandlerFloor;
+                while (_handlers.Count > floor) _handlers.RemoveAt(_handlers.Count - 1);
+                throw;
+            }
+            _callbackBoundaries.Pop();
+
+            // `leave`/`terminate` im Callback: das Programm ordentlich abwickeln (beim Zurückkehren in die Hauptschleife steht der Halt).
+            if (_shutdownDeferred) FinishDeferredShutdown();
+
+            var error = _callbackError;
+            _callbackError = null;
+            if (error != null) return error;
+
+            PopNestedResult(); // der (unbenutzte) Rückgabewert des Lambdas
+            return null;
         }
 
         /// <summary>Ruft eine Lambda als die EINZIGE Ausführung DIESER VM-

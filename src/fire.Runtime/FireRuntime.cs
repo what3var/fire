@@ -259,6 +259,42 @@ namespace fire.Runtime
             }
         }
 
+        /// <summary>Führt das Lambda eines nativen Callbacks aus (z.B. ein Fenster-Ereignis) - die eine Stelle, die entscheidet, WO:
+        ///
+        /// - Auf dem Thread einer laufenden VM (der Normalfall: das Skript selbst ruft z.B. `Window.Tick`, und dabei feuern die
+        ///   Ereignisse) läuft es VERSCHACHTELT auf dieser VM (<see cref="VM.CallLambdaInline"/>): mit den echten globalen Variablen,
+        ///   lesend und schreibend, ohne Kopie. Es gibt keine nebenläufige Ausführung, also nichts zu isolieren.
+        /// - Auf einem Thread ohne laufende VM (ein Host-Thread, z.B. ein Seriell-Ereignis) wäre Zugriff auf die Globals ein Datenrennen:
+        ///   dort läuft es wie <see cref="CallCallback"/> auf einer isolierten Kopie (`snapshotGlobals` liefert sie).
+        ///
+        /// Eine unbehandelte Exception im Callback geht nie an den Aufrufer, sondern als Text an `onUnhandled`.</summary>
+        public static void RunCallback(
+            LambdaValue callback,
+            Value[] args,
+            NativeRegistry natives,
+            IReadOnlyDictionary<string, RuntimeClass>? classes,
+            Func<IReadOnlyList<Value>> snapshotGlobals,
+            Action<string>? onUnhandled = null,
+            VmExecutionMode executionMode = VmExecutionMode.Debug)
+        {
+            var vm = VM.CurrentThreadVm;
+            if (vm != null && !vm.IsHalted)
+            {
+                try
+                {
+                    var error = vm.CallLambdaInline(callback, args);
+                    if (error != null) onUnhandled?.Invoke(new UncaughtScriptException(error).Message);
+                }
+                catch (Exception ex)
+                {
+                    onUnhandled?.Invoke(ex.Message);
+                }
+                return;
+            }
+
+            CallCallback(callback, args, natives, classes, snapshotGlobals(), ex => onUnhandled?.Invoke(ex.Message), executionMode);
+        }
+
         /// <summary>Gemeinsame Bindungslogik für sowohl den Globals-Snapshot
         /// als auch taking-Erfassungen (siehe FireVmTaking-Doku) - bei einem
         /// Objekt eine isolierte Tiefenkopie, sonst der Wert direkt.</summary>
