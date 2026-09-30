@@ -181,6 +181,16 @@ vollwertiges Debugger-/IDE-Feature-Set):
   API-Ecke selbst für erfahrene WPF-Entwickler; hier ist mit Nacharbeit zu
   rechnen.
 
+### Andockbare Bereiche, Fehlerliste, Symbolleisten (`MainWindow`)
+
+Die Bereiche des Editors (Editor, Ausgabe, Fehlerliste, Debugger) liegen in einem `DockingManager` der NuGet-Bibliothek **Dirkster.AvalonDock** (+ Theme `Vs2013Light`): per Ziehen an den Titeln an jede
+Seite andockbar, als Registerkarten stapelbar, frei schwebend oder automatisch ausblendend. Menü "Ansicht" blendet Bereiche wieder ein, "Layout zurücksetzen" stellt die Vorgabe wieder her. Das Layout wird beim
+Schließen nach `%AppData%/fire/editor-layout.xml` gespeichert und beim Start geladen (`XmlLayoutSerializer`, Schlüssel = `ContentId` aus `MainWindow.xaml`; ein nicht ladbares Layout fällt still auf die Vorgabe
+zurück). Nach dem Laden sind die Layout-Elemente neue Objekte - deshalb merkt sich `MainWindow` sie in `_panels` (aus dem Serializer-Callback) statt der XAML-Objekte.
+
+Die Fehlerliste ist ein `DataGrid` (Symbol, Beschreibung, Datei, Zeile; Spalten verschieb-/vergrößer-/sortierbar, Doppelklick auf eine Zeile springt in den Editor, Filterknopf "n Fehler"); die Zeilen sind
+`ErrorListItem`. Symbolleisten (Datei, Ausführen, Debuggen, Modus/Erstellen) rufen dieselben Handler wie Menü und Tastenkürzel; der Modus (Debug/Release/Performance) ist eine ComboBox, die mit dem Menü synchron bleibt.
+
 ## Stand der Implementierung
 
 - [x] `docs/SPEC.md` – Sprachspezifikation

@@ -2,8 +2,24 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:fire.Editor"
+        xmlns:ad="https://github.com/Dirkster99/AvalonDock"
+        xmlns:adt="clr-namespace:AvalonDock.Themes;assembly=AvalonDock.Themes.VS2013"
         Title="fire Editor" Height="820" Width="1300"
         FontFamily="Segoe UI">
+    <Window.Resources>
+        <!-- Symbole der Symbolleisten: Segoe MDL2 Assets (ab Windows 10 vorhanden). Jeder Knopf hat zusätzlich
+             einen Text oder ein ToolTip mit Tastenkürzel, falls ein Symbol auf einem System fehlt. -->
+        <Style x:Key="GlyphText" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="ToolbarButtonText" TargetType="TextBlock">
+            <Setter Property="Margin" Value="5,0,2,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+
     <DockPanel>
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="_Datei">
@@ -26,14 +42,93 @@
                 <MenuItem Header="_Weiter (bis Haltepunkt)" Click="Continue_Click" InputGestureText="F8"/>
                 <MenuItem Header="Bis _Ende durchlaufen" Click="RunToEnd_Click" InputGestureText="Ctrl+F5"/>
                 <MenuItem Header="_Stopp" Click="Stop_Click" InputGestureText="Shift+F5"/>
-                    <Separator/>
-                    <MenuItem Header="Debug" IsCheckable="True" x:Name="mnuRunDebug" Click="mnuRunDebug_Click"/>
-                    <MenuItem Header="Release" IsCheckable="True" x:Name="mnuRunRelease" Click="mnuRunRelease_Click"/>
-                    <MenuItem Header="Performance" IsCheckable="True" x:Name="mnuRunPerformance" Click="mnuRunPerformance_Click"/>
-                    <Separator/>
+                <Separator/>
+                <MenuItem Header="Debug" IsCheckable="True" x:Name="mnuRunDebug" Click="mnuRunDebug_Click"/>
+                <MenuItem Header="Release" IsCheckable="True" x:Name="mnuRunRelease" Click="mnuRunRelease_Click"/>
+                <MenuItem Header="Performance" IsCheckable="True" x:Name="mnuRunPerformance" Click="mnuRunPerformance_Click"/>
+                <Separator/>
                 <MenuItem Header="_Haltepunkt umschalten (aktuelle Zeile)" Click="ToggleBreakpoint_Click" InputGestureText="F9"/>
             </MenuItem>
+            <!-- Haken = Fenster ist sichtbar (wird beim Öffnen des Menüs aktualisiert, siehe ViewMenu_SubmenuOpened). -->
+            <MenuItem Header="_Ansicht" x:Name="mnuView" SubmenuOpened="ViewMenu_SubmenuOpened">
+                <MenuItem Header="_Ausgabe" Tag="output" Click="ViewPanel_Click"/>
+                <MenuItem Header="_Fehlerliste" Tag="errors" Click="ViewPanel_Click"/>
+                <MenuItem Header="_Debugger" Tag="debugger" Click="ViewPanel_Click"/>
+                <Separator/>
+                <MenuItem Header="_Layout zurücksetzen" Click="ResetLayout_Click"/>
+            </MenuItem>
         </Menu>
+
+        <ToolBarTray DockPanel.Dock="Top" IsLocked="False">
+            <ToolBar Band="0" BandIndex="0" ToolTip="Datei">
+                <Button Click="New_Click" ToolTip="Neu (Ctrl+N)">
+                    <TextBlock Style="{StaticResource GlyphText}" Text="&#xE7C3;"/>
+                </Button>
+                <Button Click="Open_Click" ToolTip="Öffnen... (Ctrl+O)">
+                    <TextBlock Style="{StaticResource GlyphText}" Text="&#xE8E5;"/>
+                </Button>
+                <Button Click="Save_Click" ToolTip="Speichern (Ctrl+S)">
+                    <TextBlock Style="{StaticResource GlyphText}" Text="&#xE74E;"/>
+                </Button>
+            </ToolBar>
+
+            <ToolBar Band="0" BandIndex="1" ToolTip="Ausführen">
+                <Button Click="Run_Click" ToolTip="Starten/Neu kompilieren (F5)">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource GlyphText}" Text="&#xE768;" Foreground="#107C10"/>
+                        <TextBlock Style="{StaticResource ToolbarButtonText}" Text="Starten"/>
+                    </StackPanel>
+                </Button>
+                <Button Click="Continue_Click" ToolTip="Weiter bis Haltepunkt (F8)">
+                    <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="Weiter"/>
+                </Button>
+                <Button Click="RunToEnd_Click" ToolTip="Bis Ende durchlaufen (Ctrl+F5)">
+                    <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="Bis Ende"/>
+                </Button>
+                <Button Click="Stop_Click" ToolTip="Stopp (Shift+F5)">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource GlyphText}" Text="&#xE71A;" Foreground="#C42B1C"/>
+                        <TextBlock Style="{StaticResource ToolbarButtonText}" Text="Stopp"/>
+                    </StackPanel>
+                </Button>
+            </ToolBar>
+
+            <ToolBar Band="0" BandIndex="2" ToolTip="Debuggen">
+                <Button Click="Step_Click" ToolTip="Einzelschritt, Step Over (F10)">
+                    <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="Step Over"/>
+                </Button>
+                <Button Click="StepInto_Click" ToolTip="Einzelschritt, Step Into (F11)">
+                    <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="Step Into"/>
+                </Button>
+                <Button Click="StepOut_Click" ToolTip="Aktuelle Funktion verlassen, Step Out (Shift+F11)">
+                    <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="Step Out"/>
+                </Button>
+                <Separator/>
+                <Button Click="ToggleBreakpoint_Click" ToolTip="Haltepunkt umschalten (F9)">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#x25CF;" FontSize="14" Foreground="#C42B1C" VerticalAlignment="Center"/>
+                        <TextBlock Style="{StaticResource ToolbarButtonText}" Text="Haltepunkt"/>
+                    </StackPanel>
+                </Button>
+            </ToolBar>
+
+            <ToolBar Band="0" BandIndex="3" ToolTip="Erstellen">
+                <TextBlock Text="Modus:" VerticalAlignment="Center" Margin="2,0,4,0"/>
+                <ComboBox x:Name="cmbMode" Width="100" SelectionChanged="cmbMode_SelectionChanged"
+                          ToolTip="Ausführungsmodus: Debug, Release oder Performance">
+                    <ComboBoxItem Content="Debug" Tag="Debug"/>
+                    <ComboBoxItem Content="Release" Tag="Release"/>
+                    <ComboBoxItem Content="Performance" Tag="Performance"/>
+                </ComboBox>
+                <Separator/>
+                <Button Click="Build_Click" ToolTip="Standalone erstellen (eigenständige Datei)...">
+                    <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="Erstellen"/>
+                </Button>
+                <Button Click="BuildSettings_Click" ToolTip="Buildeinstellungen (Name, Version, Icon, ...)">
+                    <TextBlock Style="{StaticResource GlyphText}" Text="&#xE713;"/>
+                </Button>
+            </ToolBar>
+        </ToolBarTray>
 
         <StatusBar DockPanel.Dock="Bottom">
             <StatusBarItem>
@@ -45,56 +140,84 @@
             </StatusBarItem>
         </StatusBar>
 
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="5"/>
-                <ColumnDefinition Width="300"/>
-            </Grid.ColumnDefinitions>
+        <!-- Alle Bereiche sind andockbar (AvalonDock): per Ziehen an den Titeln in jede Seite oder als Registerkarte
+             einer anderen Gruppe, als frei schwebendes Fenster oder automatisch ausblendend (Pin-Symbol).
+             Die ContentId ist der Schlüssel, unter dem das Layout gespeichert wird (siehe SaveLayout/LoadLayout). -->
+        <ad:DockingManager x:Name="DockManager" AllowMixedOrientation="True">
+            <ad:DockingManager.Theme>
+                <adt:Vs2013LightTheme/>
+            </ad:DockingManager.Theme>
 
-            <Grid Grid.Column="0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="3*"/>
-                    <RowDefinition Height="5"/>
-                    <RowDefinition Height="1*"/>
-                </Grid.RowDefinitions>
+            <ad:LayoutRoot>
+                <ad:LayoutPanel Orientation="Horizontal">
+                    <ad:LayoutPanel Orientation="Vertical">
+                        <ad:LayoutDocumentPane>
+                            <ad:LayoutDocument ContentId="editor" Title="Editor" CanClose="False">
+                                <local:ScriptEditorControl x:Name="EditorControl"/>
+                            </ad:LayoutDocument>
+                        </ad:LayoutDocumentPane>
 
-                <local:ScriptEditorControl x:Name="EditorControl" Grid.Row="0"/>
+                        <ad:LayoutAnchorablePane DockHeight="230">
+                            <ad:LayoutAnchorable ContentId="output" Title="Ausgabe" CanFloat="True">
+                                <TextBox x:Name="OutputBox" IsReadOnly="True"
+                                         FontFamily="Consolas" FontSize="13"
+                                         VerticalScrollBarVisibility="Auto"
+                                         HorizontalScrollBarVisibility="Auto"
+                                         TextWrapping="Wrap"
+                                         Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0"/>
+                            </ad:LayoutAnchorable>
 
-                <GridSplitter Grid.Row="1" HorizontalAlignment="Stretch" Background="#DDDDDD"/>
+                            <ad:LayoutAnchorable ContentId="errors" Title="Fehlerliste" CanFloat="True">
+                                <DockPanel x:Name="ErrorPanelContent">
+                                    <ToolBar DockPanel.Dock="Top" Loaded="ToolBar_HideOverflow">
+                                        <ToggleButton x:Name="ErrorFilterButton" IsChecked="True" Click="ErrorFilter_Click"
+                                                      ToolTip="Fehler anzeigen oder ausblenden">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="&#x2716;" FontSize="13" Foreground="#C42B1C" VerticalAlignment="Center"/>
+                                                <TextBlock x:Name="ErrorCountText" Style="{StaticResource ToolbarButtonText}" Text="0 Fehler"/>
+                                            </StackPanel>
+                                        </ToggleButton>
+                                    </ToolBar>
 
-                <DockPanel Grid.Row="2">
-                    <TextBlock DockPanel.Dock="Top" Text="Ausgabe" FontWeight="Bold" Margin="4,2"/>
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="2*"/>
-                            <RowDefinition Height="4"/>
-                            <RowDefinition Height="1*"/>
-                        </Grid.RowDefinitions>
+                                    <!-- Mehrspaltig wie in Visual Studio: Spalten per Ziehen in Größe und Reihenfolge änderbar,
+                                         per Klick auf die Spaltenüberschrift sortierbar, Doppelklick springt zur Zeile. -->
+                                    <DataGrid x:Name="ErrorGrid"
+                                              AutoGenerateColumns="False" IsReadOnly="True"
+                                              CanUserAddRows="False" CanUserDeleteRows="False"
+                                              CanUserResizeColumns="True" CanUserReorderColumns="True" CanUserSortColumns="True"
+                                              SelectionMode="Single" SelectionUnit="FullRow"
+                                              HeadersVisibility="Column" RowHeaderWidth="0"
+                                              GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#E6E6E6"
+                                              BorderThickness="0" Background="White"
+                                              FontSize="12"
+                                              MouseDoubleClick="ErrorGrid_MouseDoubleClick">
+                                        <DataGrid.Columns>
+                                            <DataGridTemplateColumn Header="" Width="28" SortMemberPath="Severity" CanUserResize="False">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="&#x2716;" Foreground="#C42B1C"
+                                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                   ToolTip="{Binding Severity}"/>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTextColumn Header="Beschreibung" Binding="{Binding Description}" Width="*"/>
+                                            <DataGridTextColumn Header="Datei" Binding="{Binding File}" Width="160"/>
+                                            <DataGridTextColumn Header="Zeile" Binding="{Binding Line}" Width="60"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </DockPanel>
+                            </ad:LayoutAnchorable>
+                        </ad:LayoutAnchorablePane>
+                    </ad:LayoutPanel>
 
-                        <TextBox x:Name="OutputBox" Grid.Row="0" IsReadOnly="True"
-                                 FontFamily="Consolas" FontSize="13"
-                                 VerticalScrollBarVisibility="Auto"
-                                 TextWrapping="Wrap"
-                                 Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0"/>
-
-                        <GridSplitter Grid.Row="1" HorizontalAlignment="Stretch" Background="#DDDDDD"/>
-
-                        <DockPanel Grid.Row="2">
-                            <TextBlock x:Name="ErrorPanelHeader" DockPanel.Dock="Top"
-                                       Text="Fehler" FontWeight="Bold" Margin="4,2"
-                                       Foreground="#B00000"/>
-                            <ListBox x:Name="ErrorList" FontFamily="Consolas" FontSize="12"
-                                     Foreground="#B00000"
-                                     MouseDoubleClick="ErrorList_MouseDoubleClick"/>
-                        </DockPanel>
-                    </Grid>
-                </DockPanel>
-            </Grid>
-
-            <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="#DDDDDD"/>
-
-            <local:DebuggerPanelControl x:Name="DebuggerPanel" Grid.Column="2"/>
-        </Grid>
+                    <ad:LayoutAnchorablePane DockWidth="320">
+                        <ad:LayoutAnchorable ContentId="debugger" Title="Debugger" CanFloat="True">
+                            <local:DebuggerPanelControl x:Name="DebuggerPanel"/>
+                        </ad:LayoutAnchorable>
+                    </ad:LayoutAnchorablePane>
+                </ad:LayoutPanel>
+            </ad:LayoutRoot>
+        </ad:DockingManager>
     </DockPanel>
 </Window>
