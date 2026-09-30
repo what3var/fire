@@ -915,6 +915,21 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.Leave);
                     break;
 
+                case SectionEnterStmt:
+                    _chunk.EmitOp(OpCode.SectionEnter);
+                    break;
+
+                case SectionExitStmt:
+                    _chunk.EmitOp(OpCode.SectionExit);
+                    break;
+
+                case PostGlobalStmt postGlobal:
+                    foreach (var arg in postGlobal.Args) CompileExpr(arg);
+                    CompileLambda(postGlobal.Lambda);
+                    _chunk.EmitOp(OpCode.PostGlobal);
+                    _chunk.EmitByte((byte)postGlobal.Args.Count);
+                    break;
+
                 case TerminateStmt terminateStmt:
                     if (terminateStmt.Value != null) CompileExpr(terminateStmt.Value);
                     else EmitLoadConst(Value.MakeUndefined());
@@ -1498,6 +1513,10 @@ namespace fire.Compiler
 
                 case LambdaExpr lam:
                     CompileLambda(lam);
+                    break;
+
+                case SyncGlobalsExpr:
+                    _chunk.EmitOp(OpCode.SyncGlobals);
                     break;
 
                 case SyncExpr syncExpr:

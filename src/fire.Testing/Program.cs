@@ -3652,7 +3652,7 @@ catch (Exception ex)
 }
 
 Console.WriteLine();
-Console.WriteLine("=== Multithreading: Schreiben auf ein Hauptprogramm-Global in 'fire' wird abgelehnt ===");
+Console.WriteLine("=== Multithreading: Schreiben auf ein Hauptprogramm-Global in 'fire' wird uebersetzt (laeuft als Sektion, siehe Block 'Globals und Fire-Threads') ===");
 
 string mtGlobalWriteRejectedSample = """
 var counter = 10
@@ -3668,11 +3668,11 @@ try
     var program = Parser.Parse(mtGlobalWriteRejectedSample);
     var resolveResult = Resolver.Resolve(program, natives.Names);
     Compiler.Compile(program, resolveResult, natives);
-    Console.WriteLine("FEHLER: Hätte einen ResolverException erwarten sollen, ist aber durchgelaufen!");
+    Console.WriteLine("OK: das Schreiben wird uebersetzt");
 }
 catch (ResolverException ex)
 {
-    Console.WriteLine($"Erwarteter Fehler (korrekt abgelehnt): {ex.Message}");
+    Console.WriteLine($"FEHLER: Schreiben auf ein Global in 'fire' wurde abgelehnt: {ex.Message}");
 }
 catch (Exception ex)
 {
@@ -3680,7 +3680,7 @@ catch (Exception ex)
 }
 
 Console.WriteLine();
-Console.WriteLine("=== Multithreading: Objekt-Global im Snapshot ist isoliert (Mutation betrifft nicht das Original) ===");
+Console.WriteLine("=== Multithreading: Objekt-Global wird vom Thread direkt geaendert (Sektion, bei Programmende vom Hauptprogramm abgearbeitet) ===");
 
 string mtGlobalObjectSnapshotSample = """
 class Vault {
@@ -3713,7 +3713,7 @@ try
 
     var vault = (ObjectInstance)vmGlobalScope.GetSlot(0).AsObjectRef();
     Console.WriteLine(
-        $"Hauptprogramm NACH fire (erwartet UNVERAENDERT 100): vault.gold = {vault.Fields["gold"].AsInt()}");
+        $"Hauptprogramm NACH fire (erwartet 999, die Sektion lief beim Programmende): vault.gold = {vault.Fields["gold"].AsInt()}");
 }
 catch (Exception ex)
 {
@@ -7608,6 +7608,213 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         """, new[] { "cb 1", "counter 0" });
 
     Console.WriteLine(cbFailures == 0 ? "Alle Callback-Pruefungen bestanden." : $"FEHLER: {cbFailures} Callback-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Globals und Fire-Threads: direktes Lesen, Schreiben in Sektionen (sync globals / sync global { } / fire global { })
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Globals und Fire-Threads ===");
+    int glFailures = 0;
+
+    List<string> RunGl(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var natives = NativeRegistry.CreateDefault();
+        natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, script }
+            .Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase))).ToList());
+        var compiled = Compiler.Compile(program, Resolver.Resolve(program, natives.Names), natives);
+        VM.ResetTerminateForTests();
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
+        vm.Run();
+        VM.ResetTerminateForTests();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckGl(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
+    {
+        foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            try
+            {
+                var task = Task.Run(() => RunGl(script, mode).ToArray());
+                actual = task.Wait(TimeSpan.FromSeconds(30)) ? task.Result : new[] { "ZEITUEBERSCHREITUNG (haengt)" };
+            }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + (ex.InnerException != null ? CompileErrors.Describe(ex.InnerException) : ex.Message) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) glFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    CheckGl("Ein Thread schreibt ein Global: es wird erst bei `sync globals` des Hauptprogramms wirksam", """
+        var counter = 0
+        fire { counter = 5 }
+        var handled = 0
+        while (handled == 0) { handled = sync globals }
+        print("counter " + counter + " bearbeitet " + handled)
+        """, new[] { "counter 5 bearbeitet 1" });
+
+    CheckGl("Ohne `sync globals` bleibt der Wert unveraendert, solange das Hauptprogramm nicht abarbeitet", """
+        var counter = 0
+        var seen = 0
+        fire { counter = 5 }
+        for (var i = 0; i < 200000; i = i + 1) { seen = seen + counter }
+        print("gesehen " + seen)
+        """, new[] { "gesehen 0" });
+
+    CheckGl("Ein Thread liest Globals direkt (kein Snapshot): er sieht spaetere Aenderungen des Hauptprogramms", """
+        var flag = 0
+        var done = 0
+        fire {
+            while (flag == 0) { }
+            sync global { done = done + 1 }
+        }
+        flag = 1
+        while (done == 0) { sync globals }
+        print("fertig " + done)
+        """, new[] { "fertig 1" });
+
+    CheckGl("Methoden auf globalen Objekten laufen atomar (4 Threads x 100 Aufrufe)", """
+        class Counter {
+            int n
+            construct() { this.n = 0 }
+            Inc() { var old = this.n; this.n = old + 1 }
+        }
+        var c = new Counter()
+        var done = 0
+        fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+        fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+        fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+        fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+        while (done < 4) { sync globals }
+        print("n " + c.n)
+        """, new[] { "n 400" });
+
+    CheckGl("`sync global { }`: Lesen-Aendern-Schreiben im Block ist atomar (4 Threads x 100)", """
+        var total = 0
+        var done = 0
+        fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+        fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+        fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+        fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+        while (done < 4) { sync globals }
+        print("total " + total)
+        """, new[] { "total 400" });
+
+    CheckGl("Der Block sieht die Locals des Threads", """
+        var total = 0
+        var done = 0
+        fire {
+            var step = 7
+            sync global { total = total + step }
+            done = 1
+        }
+        while (done == 0) { sync globals }
+        print("total " + total)
+        """, new[] { "total 7" });
+
+    CheckGl("`fire global { }`: der Thread wartet nicht, das Hauptprogramm fuehrt den Auftrag bei `sync globals` aus (taking als Wert)", """
+        var total = 0
+        var started = 0
+        fire {
+            var x = 7
+            fire global taking x { total = total + x }
+            fire global taking x { total = total + x * 10 }
+        }
+        while (total == 0) { sync globals }
+        while (total < 77) { sync globals }
+        print("total " + total)
+        """, new[] { "total 77" });
+
+    CheckGl("`fire global` mit einem Objekt als taking: der Auftrag bekommt eine Kopie", """
+        class Box { int v; construct(int v) { this.v = v } }
+        var seen = 0
+        fire {
+            var b = new Box(5)
+            fire global taking b { seen = seen + b.v }
+            b.v = 100
+        }
+        while (seen == 0) { sync globals }
+        print("seen " + seen)
+        """, new[] { "seen 5" });
+
+    CheckGl("Programmende ohne `sync globals`: wartende Threads werden bedient, dann erst werden die Globals zerstoert", """
+        class G { int v; construct() { this.v = 1 } destruct() { print("~G " + this.v) } }
+        var g = new G()
+        fire { g.v = 9 }
+        print("ende")
+        """, new[] { "ende", "~G 9" });
+
+    CheckGl("Eine Exception im Block beendet die Sektion (der Hauptthread haengt nicht)", """
+        class Exception { string message; construct(string message) { this.message = message } }
+        var total = 0
+        var done = 0
+        fire {
+            try { sync global { total = total + 1; throw new Exception("x") } } catch (e) { }
+            sync global { total = total + 10; done = 1 }
+        }
+        while (done == 0) { sync globals }
+        print("total " + total)
+        """, new[] { "total 11" });
+
+    CheckGl("Array der Globals: Thread liest live und schreibt Elemente (jedes Schreiben eine Sektion)", """
+        var arr = new int[5]
+        var done = 0
+        fire {
+            for (var i = 0; i < 5; i = i + 1) { arr[i] = i * 2 }
+            sync global { done = 1 }
+        }
+        while (done == 0) { sync globals }
+        var sum = 0
+        for (var i = 0; i < 5; i = i + 1) { sum = sum + arr[i] }
+        print("sum " + sum)
+        """, new[] { "sum 20" });
+
+    CheckGl("Statisches Feld: Thread schreibt, Hauptprogramm liest nach `sync globals`", """
+        class Cfg { static int hits = 0 }
+        var done = 0
+        fire { Cfg.hits = 3; sync global { done = 1 } }
+        while (done == 0) { sync globals }
+        print("hits " + Cfg.hits)
+        """, new[] { "hits 3" });
+
+    CheckGl("Ein Thread startet einen Thread; beide schreiben ueber Sektionen", """
+        var total = 0
+        var done = 0
+        fire {
+            sync global { total = total + 1 }
+            fire { sync global { total = total + 10; done = 1 } }
+        }
+        while (done == 0) { sync globals }
+        print("total " + total)
+        """, new[] { "total 11" });
+
+    CheckGl("Unbehandelte Exception im Hauptprogramm: ein auf eine Sektion wartender Thread haengt nicht", """
+        class Exception { string message; construct(string message) { this.message = message } }
+        class G { int v; construct() { this.v = 1 } }
+        var g = new G()
+        fire { g.v = 2 }
+        for (var i = 0; i < 100000; i = i + 1) { }
+        throw new Exception("kaputt")
+        """, new[] { "UNBEHANDELT: Unbehandelte Exception vom Typ 'Exception': kaputt" });
+
+    CheckGl("terminate in einem Thread beendet ein Hauptprogramm, das nur `sync globals` ausfuehrt", """
+        fire { terminate(1) }
+        while (true) { sync globals }
+        """, Array.Empty<string>());
+
+    CheckGl("`sync globals` liefert 0 ohne wartende Threads", """
+        print("n " + (sync globals))
+        """, new[] { "n 0" });
+
+    Console.WriteLine(glFailures == 0 ? "Alle Globals-Pruefungen bestanden." : $"FEHLER: {glFailures} Globals-Pruefung(en) fehlgeschlagen.");
 }
 
 static int CountOccurrences(string haystack, string needle)

@@ -140,6 +140,14 @@ namespace fire.Bytecode
                         //   NewObjectOwned/ConstructBase) - 2 Bit je Argument (Bit 2i = flach kopieren, Bit 2i+1 = tief kopieren): der Aufruf
                         //   kopiert diese Argumente selbst, sobald die Scope der aufgerufenen Funktion steht, und die Kopie gehört dieser Scope
                         //   (SPEC 2.4). Höchstens 16 Argumente.
+
+        // Globale Variablen und Fire-Threads (docs/THREADING_DESIGN.md Abschnitt 7) - wieder NACH allen bisherigen angehängt.
+        SyncGlobals,    //                : `sync globals`: das Hauptprogramm arbeitet die Warteschlange seiner Fire-Threads ab; push Anzahl (int)
+        SectionEnter,   //                : `sync global { ` - ein Fire-Thread meldet sich an und wartet, bis das Hauptprogramm die Sektion erteilt
+                        //                  (im Hauptprogramm wirkungslos); Gegenstück SectionExit steht im `finally` des Blocks
+        SectionExit,    //                : beendet die Sektion
+        PostGlobal,     // u8 argCount   : `fire global { ... }`: pop Lambda, pop argCount Argumente; reiht das Lambda (Objekt-Argumente als Kopie)
+                        //                  als Auftrag für das Hauptprogramm ein, der bei dessen nächstem `sync globals` läuft; der Aufrufer wartet nicht
     }
 
     /// <summary>Zieltyp für CoerceType/CoerceTypeDynamic - entspricht genau den

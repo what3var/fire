@@ -61,6 +61,10 @@ namespace fire.Ast
     /// Runtime.SyncEngine).</summary>
     public sealed record SyncExpr(int Line, bool IsTry, bool IsFlat, Expr Target) : Expr(Line);
 
+    /// <summary>`sync globals` (docs/THREADING_DESIGN.md Abschnitt 7) - im Hauptprogramm: arbeitet ab, was die Fire-Threads an
+    /// Änderungen der Globals angemeldet haben; liefert die Anzahl der bearbeiteten Einträge (int).</summary>
+    public sealed record SyncGlobalsExpr(int Line) : Expr(Line);
+
     /// <summary>`try process X` (docs/THREADING_DESIGN.md Abschnitt 2) -
     /// nicht-blockierende Variante von Ast.ProcessStmt: liefert `true`, wenn
     /// eine Nachricht verarbeitet wurde, sonst `false` (nie `undefined` -

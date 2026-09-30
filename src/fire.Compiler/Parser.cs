@@ -391,6 +391,8 @@ namespace fire.Compiler
             if (Check(TokenType.With)) return ParseWithStmt();
             if (Check(TokenType.Switch)) return ParseSwitchStmt();
             if (Check(TokenType.Fire)) return ParseFireStmt();
+            if (Check(TokenType.Sync) && PeekAt(1).Type == TokenType.Identifier && PeekAt(1).Lexeme == "global" && PeekAt(2).Type == TokenType.LBrace)
+                return ParseSyncGlobalBlock();
             if (Check(TokenType.Break))
             {
                 int breakLine = Advance().Line;
@@ -1148,9 +1150,42 @@ namespace fire.Compiler
             if (Check(TokenType.Identifier) && PeekAt(1).Type == TokenType.LParen)
                 return ParseFireCallForm(line);
 
+            // `fire global { ... }`: Auftrag für das Hauptprogramm statt eines neuen Threads (docs/THREADING_DESIGN.md Abschnitt 7)
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "global" && (PeekAt(1).Type == TokenType.LBrace || PeekAt(1).Type == TokenType.Taking))
+                return ParseFireGlobal(line);
+
             var (takingCaptures, withVarName, withSource) = ParseFireTakingWithClauses();
             var body = ParseBlock();
             return new FireStmt(_sourceIndex, line, takingCaptures, withVarName, withSource, body);
+        }
+
+        /// <summary>`sync global { ... }` (docs/THREADING_DESIGN.md Abschnitt 7): ein Block, der mit exklusivem Zugriff auf die Globals läuft.
+        /// Entzuckert zu `SectionEnter; try { Body } finally { SectionExit }` - die Sektion endet so auch bei `throw` im Block.</summary>
+        private Stmt ParseSyncGlobalBlock()
+        {
+            int line = Peek().Line;
+            Expect(TokenType.Sync, "Erwarte 'sync'");
+            Advance(); // 'global'
+            var body = ParseBlock();
+            var exit = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt> { new SectionExitStmt(_sourceIndex, line) });
+            return new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt>
+            {
+                new SectionEnterStmt(_sourceIndex, line),
+                new TryStmt(_sourceIndex, line, body, new List<CatchClause>(), exit, IsSyncSection: true),
+            });
+        }
+
+        /// <summary>`fire global { ... } [taking X ...]` - siehe Ast.PostGlobalStmt.</summary>
+        private Stmt ParseFireGlobal(int line)
+        {
+            Advance(); // 'global'
+            var (captures, withVarName, _) = ParseFireTakingWithClauses();
+            if (withVarName != null)
+                throw Error("'with' gibt es bei 'fire global' nicht", Peek());
+            var body = ParseBlock();
+            var parameters = captures.Select(c => new LambdaParam(c.VarName, null, new List<Expr?>(), null)).ToList();
+            var lambda = new LambdaExpr(line, parameters, null, body);
+            return new PostGlobalStmt(_sourceIndex, line, lambda, captures.Select(c => c.Source).ToList());
         }
 
         /// <summary>`taking X`/`with actorA`, in beliebiger Reihenfolge, `with`
@@ -2460,6 +2495,13 @@ namespace fire.Compiler
             int line = Peek().Line;
             bool isTry = Match(TokenType.Try);
             Expect(TokenType.Sync, "Erwarte 'sync'");
+            // `sync globals`: das Hauptprogramm arbeitet die Warteschlange seiner Fire-Threads ab
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "globals")
+            {
+                if (isTry) throw Error("'try sync globals' gibt es nicht", Peek());
+                Advance();
+                return new SyncGlobalsExpr(line);
+            }
             bool isFlat = Match(TokenType.Flat);
             var target = ParsePostfix();
             return new SyncExpr(line, isTry, isFlat, target);

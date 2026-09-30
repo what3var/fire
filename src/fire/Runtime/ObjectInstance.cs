@@ -64,6 +64,24 @@ namespace fire.Runtime
         /// ActivateThreadSharing, siehe dort für die genaue Semantik.</summary>
         public ThreadShareLock? ThreadLock { get; private set; }
 
+        /// <summary>Gehört dieses Objekt zum geteilten Bereich der GLOBALEN Variablen (siehe GlobalsBroker/docs/THREADING_DESIGN.md
+        /// Abschnitt 7)? Das sind alle Objekte, die dem globalen Scope des Hauptprogramms (direkt oder über andere Objekte) gehören,
+        /// sobald ein `fire`-Thread läuft. Fire-Threads lesen sie direkt (unter dem Baum-Lock), ändern sie aber nur innerhalb einer
+        /// Sektion, die das Hauptprogramm bei `sync globals` erteilt.</summary>
+        public bool InGlobalsDomain { get; private set; }
+
+        /// <summary>Nimmt diesen Baum (sich und alle besessenen Objekte) in den geteilten Bereich der Globals auf und aktiviert dafür
+        /// das Locking (ein schon vorhandener Baum-Lock, z.B. von `taking`, bleibt bestehen). Idempotent.</summary>
+        public void MarkGlobalsDomain(ThreadShareLock treeLock)
+        {
+            if (InGlobalsDomain) return;
+            InGlobalsDomain = true;
+            ThreadLock ??= treeLock;
+            if (_owned != null)
+                foreach (var child in _owned)
+                    child.MarkGlobalsDomain(ThreadLock);
+        }
+
         /// <summary>Versteckte Rückverknüpfung zum Original, falls DIESES
         /// Objekt selbst eine `taking`-Kopie ist (siehe
         /// docs/THREADING_DESIGN.md Abschnitt 3) - Grundlage für `sync`/
@@ -154,7 +172,13 @@ namespace fire.Runtime
         // IOwner (Felder dieser Instanz können selbst wieder Objekte besitzen)
         // -----------------------------------------------------------
         public IReadOnlyList<ObjectInstance> OwnedObjects => (IReadOnlyList<ObjectInstance>?)_owned ?? System.Array.Empty<ObjectInstance>();
-        public void AddOwned(ObjectInstance obj) => (_owned ??= new List<ObjectInstance>()).Add(obj);
+        public void AddOwned(ObjectInstance obj)
+        {
+            (_owned ??= new List<ObjectInstance>()).Add(obj);
+            // Ein neuer Besitz in einem geteilten Baum gehört sofort dazu (sonst wäre er ohne Sperre lesbar).
+            if (InGlobalsDomain) obj.MarkGlobalsDomain(ThreadLock!);
+            else if (ThreadLock != null) obj.ActivateThreadSharing(ThreadLock);
+        }
         public void RemoveOwned(ObjectInstance obj) => _owned?.Remove(obj);
 
         // -----------------------------------------------------------

@@ -328,6 +328,214 @@ namespace fire.Runtime
         private readonly record struct CallbackBoundary(int FrameDepth, Scope Scope, int HandlerFloor, int StackPointer);
         private readonly Stack<CallbackBoundary> _callbackBoundaries = new();
         private ObjectInstance? _callbackError;
+
+        // -----------------------------------------------------------
+        // Globale Variablen und Fire-Threads (docs/THREADING_DESIGN.md Abschnitt 7, Runtime.GlobalsBroker)
+        // -----------------------------------------------------------
+
+        /// <summary>Im Hauptprogramm: gesetzt, sobald zum ersten Mal ein `fire` (oder `fire global`) läuft. Ab dann schreibt diese VM Globals
+        /// unter dem Baum-Lock (Fire-Threads lesen sie gleichzeitig).</summary>
+        private GlobalsBroker? _ownerBroker;
+
+        /// <summary>In einem Fire-Thread: die Vermittlung zum Hauptprogramm. Die Globals-Slots 0 bis `_sharedCount` - 1 sind die echten
+        /// Globals des Hauptprogramms (Lesen direkt, Schreiben in einer Sektion); darüber liegen die eigenen (taking/with, Top-Level-Variablen
+        /// des Blocks) im privaten `_globalScope`.</summary>
+        private GlobalsBroker? _threadBroker;
+        private int _sharedCount;
+
+        /// <summary>Tiefe der Sektion, die dieser Thread gerade hält (0 = keine). Verschachtelte Zugriffe (eine Methode, die `this.x = ...`
+        /// schreibt, in einer schon erteilten Sektion) laufen direkt.</summary>
+        private int _sectionDepth;
+        private object? _sectionHandle;
+
+        /// <summary>Hängt diese (Fire-Thread-)VM an die Globals des Hauptprogramms an (siehe FireRuntime.FireVmTaking).</summary>
+        internal void AttachToGlobals(GlobalsBroker broker, int sharedGlobalCount)
+        {
+            _threadBroker = broker;
+            _sharedCount = sharedGlobalCount;
+        }
+
+        private GlobalsBroker EnsureOwnerBroker()
+        {
+            if (_ownerBroker != null) return _ownerBroker;
+            var broker = new GlobalsBroker(this, _globalScope);
+            _ownerBroker = broker;
+            ShareGlobals(broker);
+            return broker;
+        }
+
+        /// <summary>Nimmt alles, was die Globals erreichen (Objekte samt Besitz, Felder, Arrays, statische Felder), in den geteilten Bereich auf.</summary>
+        private void ShareGlobals(GlobalsBroker broker)
+        {
+            var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            foreach (var owned in _globalScope.OwnedObjects.ToArray())
+                ShareValue(Value.MakeClassRef(owned), broker.Lock, seen);
+            for (int i = 0; i < _globalScope.SlotCount; i++)
+                ShareValue(_globalScope.GetSlot(i), broker.Lock, seen);
+            foreach (var rc in _classes.Values)
+                foreach (var staticValue in rc.StaticFieldValues.Values.ToArray())
+                    ShareValue(staticValue, broker.Lock, seen);
+        }
+
+        private static void ShareValue(Value value, ThreadShareLock treeLock, HashSet<object> seen)
+        {
+            if (value.Kind == ValueKind.Class)
+            {
+                var obj = (ObjectInstance)value.AsObjectRef();
+                if (!seen.Add(obj)) return;
+                obj.MarkGlobalsDomain(treeLock);
+                foreach (var field in obj.Fields.ToArray()) ShareValue(field.Value, treeLock, seen);
+                foreach (var child in obj.OwnedObjects.ToArray()) ShareValue(Value.MakeClassRef(child), treeLock, seen);
+            }
+            else if (value.Kind == ValueKind.Array)
+            {
+                var array = value.AsArray();
+                if (!seen.Add(array)) return;
+                array.IsShared = true;
+                foreach (var item in array.Items) ShareValue(item, treeLock, seen);
+            }
+        }
+
+        /// <summary>Ein Array, das ein Fire-Thread über die Globals erreicht: ab jetzt geteilt (Elementzugriffe unter dem Lock).</summary>
+        private static void MarkShared(Value value)
+        {
+            if (value.Kind != ValueKind.Array) return;
+            var array = value.AsArray();
+            if (array.IsShared) return;
+            array.IsShared = true;
+            foreach (var item in array.Items) MarkShared(item);
+        }
+
+        /// <summary>Meldet den Thread für eine Sektion an (oder zählt nur hoch, wenn er schon eine hält). Erst wenn das Hauptprogramm bei
+        /// `sync globals` die Sektion erteilt, kehrt der Aufruf zurück.</summary>
+        private void EnterGlobalsSection()
+        {
+            if (_sectionDepth++ == 0) _sectionHandle = _threadBroker!.EnterSection();
+        }
+
+        private void ExitGlobalsSection()
+        {
+            if (--_sectionDepth == 0)
+            {
+                var handle = _sectionHandle;
+                _sectionHandle = null;
+                _threadBroker!.ExitSection(handle);
+            }
+        }
+
+        /// <summary>Sicherheitsnetz am Ende eines Fire-Threads: eine noch gehaltene Sektion wird freigegeben, sonst wartet das Hauptprogramm ewig.</summary>
+        internal void ReleaseGlobalsSections()
+        {
+            if (_threadBroker == null || _sectionDepth == 0) return;
+            _sectionDepth = 0;
+            var handle = _sectionHandle;
+            _sectionHandle = null;
+            _threadBroker.ExitSection(handle);
+        }
+
+        private bool NeedsSection(ObjectInstance obj) => _threadBroker != null && _sectionDepth == 0 && obj.InGlobalsDomain;
+
+        private Value LoadSharedGlobal(int slot)
+        {
+            var broker = _threadBroker!;
+            Value value;
+            broker.Lock.Enter();
+            try { value = slot < broker.Scope.SlotCount ? broker.Scope.GetSlot(slot) : Value.MakeUndefined(); }
+            finally { broker.Lock.Exit(); }
+            MarkShared(value);
+            return value;
+        }
+
+        private void StoreSharedGlobal(int slot, Value value)
+        {
+            var broker = _threadBroker!;
+            EnterGlobalsSection();
+            try
+            {
+                broker.Lock.Enter();
+                try
+                {
+                    if (slot >= broker.Scope.SlotCount)
+                        throw new InvalidOperationException("Diese globale Variable ist im Hauptprogramm noch nicht deklariert worden.");
+                    broker.Scope.SetSlot(slot, value);
+                }
+                finally { broker.Lock.Exit(); }
+            }
+            finally { ExitGlobalsSection(); }
+        }
+
+        /// <summary>Hauptprogramm, nach dem ersten `fire`: Schreiben der Globals unter dem Lock (Fire-Threads lesen gleichzeitig).</summary>
+        private void StoreOwnerGlobal(int slot, Value value)
+        {
+            var broker = _ownerBroker!;
+            broker.Lock.Enter();
+            try { _globalScope.SetSlot(slot, value); }
+            finally { broker.Lock.Exit(); }
+        }
+
+        private void DeclareOwnerGlobal(Value value)
+        {
+            var broker = _ownerBroker!;
+            broker.Lock.Enter();
+            try { _globalScope.DefineSlot(value); }
+            finally { broker.Lock.Exit(); }
+        }
+
+        /// <summary>Ein Element eines geteilten Arrays lesen: im Fire-Thread unter dem Lock, im Hauptprogramm (einziger Schreiber) direkt.</summary>
+        private bool TryGetSharedElement(ScriptArray array, long index, out Value value)
+        {
+            var broker = _threadBroker;
+            if (broker == null) return array.TryGet(index, out value);
+            broker.Lock.Enter();
+            try { return array.TryGet(index, out value); }
+            finally { broker.Lock.Exit(); }
+        }
+
+        /// <summary>Ein Element eines geteilten Arrays schreiben: im Fire-Thread in einer Sektion, überall unter dem Lock.</summary>
+        private bool TrySetSharedElement(ScriptArray array, long index, Value value)
+        {
+            var broker = _threadBroker ?? _ownerBroker;
+            if (broker == null) return array.TrySet(index, value);
+            bool inThread = _threadBroker != null;
+            if (inThread) EnterGlobalsSection();
+            try
+            {
+                broker.Lock.Enter();
+                try { return array.TrySet(index, value); }
+                finally { broker.Lock.Exit(); }
+            }
+            finally { if (inThread) ExitGlobalsSection(); }
+        }
+
+        /// <summary>Methodenaufruf eines Fire-Threads auf ein Objekt des geteilten Bereichs: die Methode läuft, solange der Thread die Sektion
+        /// hält, als Ganzes - auch ihr Lesen-Ändern-Schreiben ist damit atomar.</summary>
+        private Value? CallGlobalsMethodInSection(ObjectInstance obj, string methodName, Value[] args)
+        {
+            EnterGlobalsSection();
+            try
+            {
+                var rc = ResolveClass(obj.ClassName);
+                if (rc.FindMethodWithAccess(methodName, args.Length).Item1 == null && TryCallOwnershipMethod(obj, methodName, args))
+                    return Value.MakeUndefined();
+                return CallMethodNested(obj, methodName, args);
+            }
+            finally { ExitGlobalsSection(); }
+        }
+
+        /// <summary>`sync globals` im Hauptprogramm: arbeitet die Warteschlange ab (Sektionen erteilen, Aufträge ausführen).</summary>
+        private int SyncGlobalsNow() => _ownerBroker?.Drain() ?? 0;
+
+        /// <summary>Führt einen `fire global`-Auftrag auf dieser (der Besitzer-)VM aus. Eine unbehandelte Exception darin wird wie die eines
+        /// Fire-Threads behandelt: sie geht an das Hauptprogramm (`catch threads`), sonst bricht es ab.</summary>
+        internal void RunGlobalsJob(LambdaValue lambda, Value[] args)
+        {
+            var error = CallLambdaInline(lambda, args);
+            if (error != null)
+            {
+                _pendingThreadExceptions.Enqueue(error);
+                RaiseSignal();
+            }
+        }
         // (Nur noch in den VERSCHACHTELTEN Schleifen und im Einzelschritt geprüft - Run() liest nach StopExecution() das Halt.)
 
         public VM(
@@ -485,7 +693,11 @@ namespace fire.Runtime
         {
             _currentThreadVm = this;
             try { RunLoop(); }
-            finally { _currentThreadVm = null; } // ein später auf diesem Thread feuernder Callback sucht keine beendete VM
+            finally
+            {
+                _currentThreadVm = null; // ein später auf diesem Thread feuernder Callback sucht keine beendete VM
+                _ownerBroker?.Close();   // kein Besitzer mehr: wartende Fire-Threads werden freigegeben
+            }
         }
 
         private void RunLoop()
@@ -518,7 +730,7 @@ namespace fire.Runtime
             bool afterShutdown = _shutdownReleasePending;
             _shutdownReleasePending = false;
             if (!DestroyGlobalsAtEnd) return;
-            if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(); // das Hauptprogramm (jede VM, die kein Fire-Thread ist)
+            if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(_ownerBroker); // das Hauptprogramm (jede VM, die kein Fire-Thread ist); währenddessen bedient es die Warteschlange der Threads
             ReleaseGlobalScopeAfterStop(afterShutdown);
         }
 
@@ -1091,16 +1303,23 @@ namespace fire.Runtime
                 {
                     int slot = ReadU16();
                     if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
+                    if (slot < _sharedCount) { _stack[_sp] = LoadSharedGlobal(slot); _sp++; return; } // Fire-Thread: die echten Globals
                     _stack[_sp] = _globalScope.SlotRef(slot);
                     _sp++;
                     return;
                 }
 
                 case OpCode.StoreGlobal:
-                    _globalScope.SlotRef(ReadU16()) = _stack[_sp - 1];
+                {
+                    int slot = ReadU16();
+                    if (slot < _sharedCount) { StoreSharedGlobal(slot, _stack[_sp - 1]); return; }
+                    if (_ownerBroker != null) { StoreOwnerGlobal(slot, _stack[_sp - 1]); return; }
+                    _globalScope.SlotRef(slot) = _stack[_sp - 1];
                     return;
+                }
 
                 case OpCode.DeclareLocal:
+                    if (_ownerBroker != null && ReferenceEquals(_currentScope, _globalScope)) { DeclareOwnerGlobal(Pop()); return; }
                     _currentScope.DefineSlot(Pop());
                     return;
 
@@ -1310,13 +1529,16 @@ namespace fire.Runtime
             if (target.Kind == ValueKind.Array)
             {
                 var arr = target.AsArray();
+                if (arr.IsShared && _threadBroker != null && _sectionDepth == 0)
+                    throw new InvalidOperationException(
+                        "'++'/'--' auf ein Array-Element der Globals ist in einem Fire-Thread nur innerhalb von 'sync global { ... }' möglich (Lesen und Schreiben müssen zusammen geschehen).");
                 if (!arr.TryGet(idx, out var oldVal))
                 {
                     ThrowIndexOutOfBounds(idx, arr.Length);
                     return;
                 }
                 var newVal = isIncrement ? Value.Add(oldVal, Value.MakeInt(1)) : Value.Subtract(oldVal, Value.MakeInt(1));
-                arr.TrySet(idx, newVal);
+                if (arr.IsShared) TrySetSharedElement(arr, idx, newVal); else arr.TrySet(idx, newVal);
                 Push(isPrefix ? newVal : oldVal);
             }
             else if (target.Kind == ValueKind.Buffer)
@@ -1693,6 +1915,7 @@ namespace fire.Runtime
             var obj = RequireObjectInstance(target, "Feldzugriff");
             if (obj.TryGetFieldLocked(fieldName, out var val))
             {
+                if (_threadBroker != null && obj.InGlobalsDomain) MarkShared(val); // ein Array des geteilten Bereichs
                 if (ExecutionMode != VmExecutionMode.Performance && obj.RtClass != null)
                 {
                     var fieldAccess = obj.RtClass.FindFieldAccess(fieldName);
@@ -1754,6 +1977,21 @@ namespace fire.Runtime
         }
 
         private void OpSetFieldSlow(int site, int fieldNameIdx)
+        {
+            // Ein Fire-Thread ändert ein Objekt des geteilten Bereichs nur in einer Sektion (siehe GlobalsBroker).
+            if (_threadBroker != null && _sectionDepth == 0
+                && _stack[_sp - 2] is { Kind: ValueKind.Class } sectionTarget
+                && ((ObjectInstance)sectionTarget.AsObjectRef()).InGlobalsDomain)
+            {
+                EnterGlobalsSection();
+                try { OpSetFieldSlowCore(site, fieldNameIdx); }
+                finally { ExitGlobalsSection(); }
+                return;
+            }
+            OpSetFieldSlowCore(site, fieldNameIdx);
+        }
+
+        private void OpSetFieldSlowCore(int site, int fieldNameIdx)
         {
         {
             string fieldName = _constants[fieldNameIdx].AsString();
@@ -1920,7 +2158,8 @@ namespace fire.Runtime
                 && LookupSite(site) is { Proto: { } cachedMethod } siteEntry
                 && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
                 && ReferenceEquals(cachedObj.RtClass, siteEntry.Class)
-                && cachedObj.Mailbox == null)
+                && cachedObj.Mailbox == null
+                && (_threadBroker == null || _sectionDepth > 0 || !cachedObj.InGlobalsDomain))
             {
                 EnterCall(cachedMethod, argCount, dropBelow: true, cachedObj, copyMask: copyMask);
                 return;
@@ -2016,6 +2255,15 @@ namespace fire.Runtime
                 if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
                 obj.Mailbox.Enqueue(new ActorMessage(methodName, args));
                 Push(Value.MakeUndefined());
+                return;
+            }
+
+            // Fire-Thread ruft eine Methode eines Objekts des geteilten Bereichs: sie läuft als Ganzes in einer Sektion (atomar).
+            if (NeedsSection(obj))
+            {
+                if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
+                var sectionResult = CallGlobalsMethodInSection(obj, methodName, args);
+                if (sectionResult != null) Push(sectionResult.Value); // null: eine Exception hat den Ablauf umgeleitet
                 return;
             }
 
@@ -2156,7 +2404,21 @@ namespace fire.Runtime
                 }
             }
 
-            Push(owner.StaticFieldValues.TryGetValue(fieldName, out var staticVal) ? staticVal : Value.MakeUndefined());
+            Value staticVal;
+            var staticBroker = _threadBroker;
+            if (staticBroker == null)
+            {
+                staticVal = owner.StaticFieldValues.TryGetValue(fieldName, out var plain) ? plain : Value.MakeUndefined();
+            }
+            else
+            {
+                // Fire-Thread: statische Felder sind Teil des geteilten Bereichs - Lesen unter dem Lock
+                staticBroker.Lock.Enter();
+                try { staticVal = owner.StaticFieldValues.TryGetValue(fieldName, out var shared) ? shared : Value.MakeUndefined(); }
+                finally { staticBroker.Lock.Exit(); }
+                MarkShared(staticVal);
+            }
+            Push(staticVal);
             return;
         }
         }
@@ -2216,7 +2478,24 @@ namespace fire.Runtime
                 }
             }
 
-            setOwner.StaticFieldValues[setFieldName] = setValue;
+            var staticWriteBroker = _threadBroker ?? _ownerBroker;
+            if (staticWriteBroker == null)
+            {
+                setOwner.StaticFieldValues[setFieldName] = setValue;
+            }
+            else
+            {
+                // Statische Felder gehören zum geteilten Bereich: ein Fire-Thread schreibt in einer Sektion, überall unter dem Lock
+                bool staticInThread = _threadBroker != null;
+                if (staticInThread) EnterGlobalsSection();
+                try
+                {
+                    staticWriteBroker.Lock.Enter();
+                    try { setOwner.StaticFieldValues[setFieldName] = setValue; }
+                    finally { staticWriteBroker.Lock.Exit(); }
+                }
+                finally { if (staticInThread) ExitGlobalsSection(); }
+            }
             Push(setValue);
             return;
         }
@@ -2345,9 +2624,10 @@ namespace fire.Runtime
             ref Value fastIndex = ref _stack[_sp - 1];
             if (fastTarget.Kind == ValueKind.Array && fastIndex.Kind == ValueKind.Int)
             {
-                var items = fastTarget.AsArray().Items;
+                var fastArray = fastTarget.AsArray();
+                var items = fastArray.Items;
                 long i = fastIndex.AsInt();
-                if ((ulong)i < (ulong)items.Length)
+                if ((ulong)i < (ulong)items.Length && !fastArray.IsShared)
                 {
                     fastTarget = items[i];
                     _sp--;
@@ -2363,7 +2643,18 @@ namespace fire.Runtime
             var indexVal = Pop();
             var target = Pop();
 
-            if (target.Kind == ValueKind.Array)
+            if (target.Kind == ValueKind.Array && target.AsArray().IsShared)
+            {
+                // Array des geteilten Bereichs (siehe GlobalsBroker): ein Fire-Thread liest es unter dem Lock
+                long sharedIdx = indexVal.AsInt();
+                if (TryGetSharedElement(target.AsArray(), sharedIdx, out var sharedValue))
+                {
+                    if (_threadBroker != null) MarkShared(sharedValue);
+                    Push(sharedValue);
+                }
+                else ThrowIndexOutOfBounds(sharedIdx, target.AsArray().Length);
+            }
+            else if (target.Kind == ValueKind.Array)
             {
                 if (ExecutionMode == VmExecutionMode.Performance)
                 {
@@ -2448,9 +2739,10 @@ namespace fire.Runtime
             ref Value fastIndex = ref _stack[_sp - 2];
             if (fastTarget.Kind == ValueKind.Array && fastIndex.Kind == ValueKind.Int)
             {
-                var items = fastTarget.AsArray().Items;
+                var fastArray = fastTarget.AsArray();
+                var items = fastArray.Items;
                 long i = fastIndex.AsInt();
-                if ((ulong)i < (ulong)items.Length)
+                if ((ulong)i < (ulong)items.Length && !fastArray.IsShared)
                 {
                     var assigned = _stack[_sp - 1];
                     items[i] = assigned;
@@ -2469,7 +2761,14 @@ namespace fire.Runtime
             var indexVal = Pop();
             var target = Pop();
 
-            if (target.Kind == ValueKind.Array)
+            if (target.Kind == ValueKind.Array && target.AsArray().IsShared)
+            {
+                // Array des geteilten Bereichs: ein Fire-Thread ändert es nur in einer Sektion, überall unter dem Lock
+                long sharedIdx = indexVal.AsInt();
+                if (TrySetSharedElement(target.AsArray(), sharedIdx, value)) Push(value);
+                else ThrowIndexOutOfBounds(sharedIdx, target.AsArray().Length);
+            }
+            else if (target.Kind == ValueKind.Array)
             {
                 if (ExecutionMode == VmExecutionMode.Performance)
                 {
@@ -2587,15 +2886,24 @@ namespace fire.Runtime
                 }
 
                 case OpCode.LoadGlobal:
-                    Push(_globalScope.GetSlot(ReadU16()));
+                    {
+                        int loadSlot = ReadU16();
+                        Push(loadSlot < _sharedCount ? LoadSharedGlobal(loadSlot) : _globalScope.GetSlot(loadSlot));
+                    }
                     break;
 
                 case OpCode.StoreGlobal:
-                    _globalScope.SetSlot(ReadU16(), Peek());
+                    {
+                        int storeSlot = ReadU16();
+                        if (storeSlot < _sharedCount) StoreSharedGlobal(storeSlot, Peek());
+                        else if (_ownerBroker != null) StoreOwnerGlobal(storeSlot, Peek());
+                        else _globalScope.SetSlot(storeSlot, Peek());
+                    }
                     break;
 
                 case OpCode.DeclareLocal:
-                    _currentScope.DefineSlot(Pop());
+                    if (_ownerBroker != null && ReferenceEquals(_currentScope, _globalScope)) DeclareOwnerGlobal(Pop());
+                    else _currentScope.DefineSlot(Pop());
                     break;
 
                 case OpCode.Add: BinaryNumericOrOperator(Value.Add, "operator+"); break;
@@ -2908,6 +3216,8 @@ namespace fire.Runtime
                 case OpCode.AddressOfGlobal:
                 {
                     int slot = ReadU16();
+                    if (slot < _sharedCount)
+                        throw new InvalidOperationException("Ein Fire-Thread kann keinen Zeiger auf eine globale Variable des Hauptprogramms nehmen ('&').");
                     Push(Value.MakePointer(new ScopeSlotPointerTarget(_globalScope, slot)));
                     break;
                 }
@@ -3135,24 +3445,11 @@ namespace fire.Runtime
                     var takingValues = new Value[takingCount];
                     for (int i = takingCount - 1; i >= 0; i--) takingValues[i] = Pop();
 
-                    // Read-only-Snapshot ALLER Hauptprogramm-Globals (siehe
-                    // Resolving.Resolver.ResolveFireStmt/Runtime.FireRuntime.
-                    // FireVmTaking-Doku) - MUSS hier, SYNCHRON auf DIESEM
-                    // (dem aufrufenden) Thread gelesen werden, BEVOR der neue
-                    // Thread überhaupt gestartet wird - ein späteres, lazy
-                    // Lesen AUS dem neuen Thread heraus wäre ein echter
-                    // Daten-Wettlauf mit diesem, hier weiterlaufenden Thread.
-                    // `globalSlotCount` kann GRÖSSER sein als der aktuelle
-                    // Füllstand von `_globalScope` (steht dieses `fire` VOR
-                    // später im Quelltext folgenden globalen `var`-
-                    // Deklarationen, wurden die zu DIESEM Zeitpunkt der
-                    // Ausführung noch nicht erreicht) - mit `undefined`
-                    // aufgefüllt, damit die vom Compiler fest vergebenen
-                    // Folge-Slots (taking/with) immer an der erwarteten
-                    // Position landen.
-                    var globalSnapshot = new Value[globalSlotCount];
-                    for (int i = 0; i < globalSlotCount; i++)
-                        globalSnapshot[i] = i < _globalScope.SlotCount ? _globalScope.GetSlot(i) : Value.MakeUndefined();
+                    // Die Globals des Hauptprogramms werden NICHT kopiert: der Thread liest sie direkt (unter dem Lock) und ändert sie nur in
+                    // einer Sektion, die das Hauptprogramm bei `sync globals` erteilt (siehe Runtime.GlobalsBroker). Beim ersten `fire`
+                    // wird dafür alles, was die Globals erreichen, in den geteilten Bereich aufgenommen (Locking aktiv). Ein Thread, der selbst
+                    // `fire` ausführt, reicht seine Verbindung weiter.
+                    var broker = IsFireThreadVm ? _threadBroker : EnsureOwnerBroker();
 
                     var fireProto = _currentChunk.Functions[protoIdx];
                     // Der neue Fire-Thread erbt den ExecutionMode DIESER VM -
@@ -3161,8 +3458,38 @@ namespace fire.Runtime
                     // in welchem Modus das Hauptprogramm selbst läuft (siehe
                     // VmExecutionMode-Doku).
                     FireRuntime.FireVmTaking(
-                        fireProto.Chunk, _natives, _classes, globalSnapshot, takingValues, withValue,
+                        fireProto.Chunk, _natives, _classes, broker, globalSlotCount, takingValues, withValue,
                         executionMode: ExecutionMode);
+                    break;
+                }
+
+                case OpCode.SyncGlobals:
+                    Push(Value.MakeInt(SyncGlobalsNow()));
+                    break;
+
+                case OpCode.SectionEnter:
+                    if (_threadBroker != null) EnterGlobalsSection(); // im Hauptprogramm: wirkungslos (es ist selbst der Besitzer)
+                    break;
+
+                case OpCode.SectionExit:
+                    if (_threadBroker != null && _sectionDepth > 0) ExitGlobalsSection();
+                    break;
+
+                case OpCode.PostGlobal:
+                {
+                    int jobArgCount = ReadByte();
+                    var jobLambda = (LambdaValue)Pop().AsLambda();
+                    var jobArgs = new Value[jobArgCount];
+                    for (int i = jobArgCount - 1; i >= 0; i--) jobArgs[i] = Pop();
+
+                    // Die Argumente gehören dem Auftrag, nicht diesem Thread: Objekte werden tief kopiert, ihr Besitzer ist ein Halter-Scope, den
+                    // das Hauptprogramm nach dem Lauf freigibt.
+                    var holder = new Scope(null);
+                    for (int i = 0; i < jobArgs.Length; i++)
+                        if (jobArgs[i].Kind == ValueKind.Class) jobArgs[i] = ObjectCloner.Clone(jobArgs[i], holder, deep: true);
+
+                    var postBroker = IsFireThreadVm ? _threadBroker! : EnsureOwnerBroker();
+                    postBroker.PostJob(jobLambda, jobArgs, holder);
                     break;
                 }
 

@@ -126,7 +126,17 @@ namespace fire.Runtime
         /// <summary>Besitzt diese Scope Objekte? Verlassen ist sonst ein reines Umhängen des Parent-Zeigers
         /// (siehe VM.Step, ExitScope).</summary>
         public bool HasOwned => _owned != null;
-        public void AddOwned(ObjectInstance obj) => (_owned ??= new List<ObjectInstance>()).Add(obj);
+
+        /// <summary>Gesetzt für den globalen Scope des Hauptprogramms, sobald ein `fire`-Thread läuft (siehe GlobalsBroker): jedes Objekt,
+        /// das ihm gehört - auch eines, das erst später entsteht - gehört dann zum geteilten Bereich (siehe
+        /// ObjectInstance.MarkGlobalsDomain).</summary>
+        public ThreadShareLock? SharingLock { get; set; }
+
+        public void AddOwned(ObjectInstance obj)
+        {
+            (_owned ??= new List<ObjectInstance>()).Add(obj);
+            if (SharingLock != null) obj.MarkGlobalsDomain(SharingLock);
+        }
         public void RemoveOwned(ObjectInstance obj) => _owned?.Remove(obj);
 
         /// <summary>Wird beim Verlassen des Scopes aufgerufen: zerstört

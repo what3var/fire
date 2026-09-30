@@ -1587,3 +1587,30 @@ Host gemeldet; `RunNestedUntil` gibt `_nestedDepth` jetzt auch dann wieder frei 
 `WindowManager.Tick` kopiert die Callback-Liste je Ereignis (`ToList`), ein Callback darf Ereignisse an-/abmelden. Ohne laufende VM auf dem Thread bleibt es beim isolierten `FireRuntime.CallCallback` mit Kopie.
 Tests: Suite-Block "Callbacks auf dem VM-Thread".
 
+## 33. Globals und Fire-Threads: Broker, Sektionen, `sync globals`
+
+Siehe docs/THREADING_DESIGN.md Abschnitt 7 für das Verhalten. Umsetzung:
+
+**`GlobalsBroker`** (`fire.Runtime/GlobalsBroker.cs`): entsteht im Hauptprogramm beim ersten `fire`/`fire global` (`VM.EnsureOwnerBroker`), hält den globalen Scope des Hauptprogramms, den gemeinsamen
+`ThreadShareLock` und eine FIFO-Warteschlange aus `SectionRequest` (ein Thread wartet auf `Granted`, das Hauptprogramm wartet danach auf `Done`) und `JobRequest` (`fire global`). `Drain()` ist
+`sync globals`. `Close()` (am Ende von `VM.Run` des Besitzers) gewährt wartende und künftige Sektionen sofort. `FireRuntime.WaitForAllFireThreads(broker)` bedient die Warteschlange, solange Threads leben
+(`WakeWaitingOwner` weckt es), und `FireRuntime.FireVmTaking` hängt den Thread per `VM.AttachToGlobals` an; ein `finally` ruft `ReleaseGlobalsSections` (Sicherheitsnetz gegen ein hängendes Hauptprogramm).
+
+**Geteilter Bereich.** `ShareGlobals` (beim ersten `fire`) markiert alles, was die Globals erreicht: Objekte per `ObjectInstance.MarkGlobalsDomain` (setzt `InGlobalsDomain`, aktiviert den Baum-Lock, rekursiv über den Besitz),
+Arrays per `ScriptArray.IsShared`, dazu die statischen Felder. `Scope.SharingLock` (globaler Scope) und `ObjectInstance.AddOwned` geben das an jedes später besessene Objekt weiter. Die Schnellpfade für Feldzugriffe
+sind für gesperrte Objekte ohnehin aus (`ThreadLock != null`), die Array-Schnellpfade prüfen zusätzlich `IsShared`. Benchmarks vor/nach: kein messbarer Unterschied (837/852 ms vs. 848/839 ms, Performance).
+
+**Thread-Seite.** Slots `< _sharedCount` der Globals gehen in `LoadGlobal`/`StoreGlobal`/`DeclareLocal`-Nachbarn über den Broker (`LoadSharedGlobal` unter dem Lock, `StoreSharedGlobal` in einer Sektion); der private `_globalScope`
+enthält Platzhalter für diese Slots und dahinter die `taking`/`with`-Erfassungen. Sektionen sind in `_sectionDepth` gezählt (`EnterGlobalsSection`/`ExitGlobalsSection`); in einer schon erteilten Sektion laufen alle
+Schreibzugriffe direkt (unter dem Lock). Eingebaut in: `OpSetFieldSlow` (Objekt im geteilten Bereich), `OpCallMethod` (Schnellpfad nur, wenn das Objekt nicht im geteilten Bereich liegt oder die Sektion gehalten wird;
+sonst `CallGlobalsMethodInSection` über `CallMethodNested`), Array-Zugriffe (`TryGetSharedElement`/`TrySetSharedElement`), statische Felder, `IncDecIndex`. Ein Array, das ein Thread über die Globals erreicht, wird dabei
+nachträglich als geteilt markiert (`MarkShared`). Das Hauptprogramm schreibt nach dem ersten `fire` Globals und Deklarationen unter dem Lock (`StoreOwnerGlobal`/`DeclareOwnerGlobal`).
+
+**Syntax.** Opcodes `SyncGlobals`, `SectionEnter`, `SectionExit`, `PostGlobal` (am Ende von `OpCode`). Der Parser entzuckert `sync global { B }` zu `SectionEnter; try { B } finally { SectionExit }` (`TryStmt.IsSyncSection`
+nur für die Fehlermeldung bei `break`/`continue`) und `fire global { B } taking x` zu `PostGlobalStmt(Lambda(x) => B, [x])`, das der Resolver wie ein Lambda (Globals sichtbar, Locals des Aufrufers nicht) und der Compiler als
+Argumente + Lambda + `PostGlobal n` behandelt. `PostGlobal` kopiert Objekt-Argumente tief (`ObjectCloner.Clone`, Besitzer ein Halter-Scope, den das Hauptprogramm nach dem Lauf freigibt); ein Fehler im Auftrag geht wie
+der eines Fire-Threads an die Warteschlange der Thread-Exceptions (`catch threads`). Der Resolver schützt die Globals in einem `fire`-Block nicht mehr (`ReadonlySlots` entfällt für die Schatten-Einträge).
+
+Tests: Suite-Block "Globals und Fire-Threads" (14 Fälle in drei Modi: direktes Lesen, atomare Methoden und Blöcke, Locals im Block, `fire global` mit Wert/Objekt, Programmende ohne `sync globals`, Exception im Block, Arrays,
+statische Felder, verschachtelte Threads).
+

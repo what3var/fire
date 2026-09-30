@@ -117,6 +117,19 @@ namespace fire.Ast
         Expr? WithSource,
         Stmt.BlockStmt Body) : Stmt(Source, Line);
 
+    /// <summary>Beginn einer `sync global { ... }`-Sektion (docs/THREADING_DESIGN.md Abschnitt 7) - der Parser entzuckert den Block zu
+    /// `SectionEnterStmt; try { Body } finally { SectionExitStmt }`, damit die Sektion auch bei `throw` im Block wieder endet.</summary>
+    public sealed record SectionEnterStmt(int Source, int Line) : Stmt(Source, Line);
+
+    /// <summary>Ende einer `sync global { ... }`-Sektion (siehe <see cref="SectionEnterStmt"/>).</summary>
+    public sealed record SectionExitStmt(int Source, int Line) : Stmt(Source, Line);
+
+    /// <summary>`fire global { ... } [taking X ...]` (docs/THREADING_DESIGN.md Abschnitt 7): ein Auftrag für das Hauptprogramm, der bei
+    /// dessen nächstem `sync globals` mit den echten Globals läuft, ohne dass der Aufrufer wartet. Der Parser macht den Block zu einem
+    /// Lambda, dessen Parameter die `taking`-Erfassungen sind (sie werden beim Einreihen als Wert/Kopie übergeben) - das Lambda sieht
+    /// wie jedes Lambda die Globals, aber keine Locals des Aufrufers.</summary>
+    public sealed record PostGlobalStmt(int Source, int Line, LambdaExpr Lambda, IReadOnlyList<Expr> Args) : Stmt(Source, Line);
+
     /// <summary>`process X` (docs/THREADING_DESIGN.md Abschnitt 2) -
     /// blockierend: wartet, bis eine Nachricht in der Mailbox des
     /// Actor-Ziels `X` eintrifft, und führt dann GENAU EINE davon aus (siehe
@@ -171,7 +184,8 @@ namespace fire.Ast
         int Line,
         Stmt.BlockStmt TryBlock,
         IReadOnlyList<CatchClause> Catches,
-        Stmt.BlockStmt? Finally) : Stmt(Source, Line);
+        Stmt.BlockStmt? Finally,
+        bool IsSyncSection = false) : Stmt(Source, Line); // IsSyncSection: vom Parser aus `sync global { }` erzeugt (nur für die Fehlermeldung)
 
     // ---------------------------------------------------------------
     // Klassen

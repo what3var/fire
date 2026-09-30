@@ -86,12 +86,27 @@ namespace fire.Runtime
         private static int _liveThreads;
         private static readonly object _liveThreadsGate = new();
 
-        /// <summary>Blockiert, bis alle Fire-Threads beendet sind (sofort, wenn keiner läuft).</summary>
-        public static void WaitForAllFireThreads()
+        /// <summary>Blockiert, bis alle Fire-Threads beendet sind (sofort, wenn keiner läuft). Mit `broker` (das Hauptprogramm, dem die
+        /// Globals gehören) bedient es dabei die Warteschlange der Threads - sie warten ja auf ein `sync globals` -, sonst würde das Programmende
+        /// an einem Thread hängen, der gerade eine Sektion angemeldet hat.</summary>
+        public static void WaitForAllFireThreads(GlobalsBroker? broker = null)
         {
-            lock (_liveThreadsGate)
-                while (_liveThreads > 0)
-                    Monitor.Wait(_liveThreadsGate);
+            while (true)
+            {
+                broker?.Drain();
+                lock (_liveThreadsGate)
+                {
+                    bool pending = broker != null && broker.HasPending;
+                    if (_liveThreads == 0 && !pending) return;
+                    if (!pending) Monitor.Wait(_liveThreadsGate, 50);
+                }
+            }
+        }
+
+        /// <summary>Weckt ein Hauptprogramm, das in <see cref="WaitForAllFireThreads"/> wartet (ein Thread hat etwas in die Warteschlange gestellt).</summary>
+        internal static void WakeWaitingOwner()
+        {
+            lock (_liveThreadsGate) Monitor.PulseAll(_liveThreadsGate);
         }
 
         public static FireThreadHandle Fire(Action body)
@@ -158,56 +173,42 @@ namespace fire.Runtime
             });
         }
 
-        /// <summary>Wie FireVm, aber mit `taking`/`with`-Bindungen UND einem
-        /// Read-only-Snapshot ALLER Hauptprogramm-Globals (siehe Ast.FireStmt/
-        /// docs/THREADING_DESIGN.md Abschnitt 2/3/8, Resolving.Resolver.
-        /// ResolveFireStmt für die Slot-Zuordnung):
+        /// <summary>Wie FireVm, aber mit `taking`/`with`-Bindungen und der Verbindung zu den Globals des Hauptprogramms (siehe
+        /// docs/THREADING_DESIGN.md Abschnitt 7, GlobalsBroker):
         ///
-        /// `globalSnapshot`: die Werte ALLER Hauptprogramm-Globals, MUSS
-        /// bereits VOR diesem Aufruf SYNCHRON auf dem AUFRUFENDEN Thread
-        /// gelesen worden sein (siehe VM.OpCode.Fire) - ein lazy Zugriff auf
-        /// die LEBENDIGE Scope-Instanz des Hauptprogramms von HIER (bereits
-        /// auf dem neuen Thread laufend) aus wäre ein echter Daten-
-        /// Wettlauf, da der aufrufende Thread zwischenzeitlich weiterlaufen
-        /// und dieselben Slots verändern könnte. Werden an den Original-
-        /// Slots (0..Count-1) des neuen globalen Scopes gebunden.
+        /// `broker`/`sharedGlobalCount`: die Globals des Hauptprogramms (Slots 0..sharedGlobalCount-1) werden NICHT kopiert - der Thread liest sie
+        /// direkt und ändert sie in Sektionen (siehe VM.AttachToGlobals). Der private globale Scope des Threads hält dafür nur Platzhalter, damit die
+        /// Slots der Erfassungen dahinter an den Stellen liegen, die Resolving.Resolver.ResolveFireStmt/Compiler.CompileFireStmt vergeben haben.
         ///
-        /// `takingValues`: wie bisher, direkt IM ANSCHLUSS an den Globals-
-        /// Snapshot gebunden (siehe Compiler.CompileFireStmt für die
-        /// exakte Slot-Zuordnung).
+        /// `takingValues`: direkt im Anschluss an die Platzhalter gebunden. Ein Objekt (ValueKind.Class) wird als isolierte Tiefenkopie gebunden
+        /// (Runtime.ObjectCopier.Take - das Kopieren selbst aktiviert das Thread-Sharing auf dem Original), sonst direkt (Value ist ein unveränderlicher
+        /// struct).
         ///
-        /// Für BEIDE gilt: ein Objekt (ValueKind.Class) wird als isolierte
-        /// Tiefenkopie gebunden (Runtime.ObjectCopier.Take - das darf
-        /// weiterhin LAZY hier auf dem neuen Thread passieren, siehe
-        /// DefineSnapshotSlot: das Kopieren selbst aktiviert das Thread-
-        /// Sharing-Locking auf dem Original ERST beim tatsächlichen
-        /// Kopieren, konsistent mit dem etablierten Sicherheitsmodell von
-        /// `taking` - nur das INITIALE LESEN der rohen Werte aus dem
-        /// Hauptprogramm-Scope selbst darf nicht lazy sein), sonst direkt
-        /// (Value ist ein unveränderlicher struct).
-        ///
-        /// `withValue` (eine Actor-Referenz) wird dagegen IMMER DIREKT
-        /// weitergegeben, OHNE Kopie, als letzter Slot - ein Actor verwaltet
-        /// seine eigene Thread-Sicherheit über seine Mailbox (siehe Runtime.
-        /// ActorMailbox), nicht über das taking/sync-Ownership-Modell.</summary>
+        /// `withValue` (eine Actor-Referenz) wird dagegen IMMER DIREKT weitergegeben, OHNE Kopie, als letzter Slot - ein Actor verwaltet seine eigene
+        /// Thread-Sicherheit über seine Mailbox (siehe Runtime.ActorMailbox), nicht über das taking/sync-Ownership-Modell.</summary>
         public static FireThreadHandle FireVmTaking(
             Chunk chunk,
             NativeRegistry natives,
             IReadOnlyDictionary<string, RuntimeClass>? classes,
-            IReadOnlyList<Value> globalSnapshot,
+            GlobalsBroker? broker,
+            int sharedGlobalCount,
             IReadOnlyList<Value> takingValues,
             Value? withValue = null,
             VmExecutionMode executionMode = VmExecutionMode.Debug)
         {
             return Fire(() =>
             {
+                // Die Slots 0..sharedGlobalCount-1 sind die echten Globals des Hauptprogramms (die VM liest/schreibt sie über den Broker,
+                // siehe GlobalsBroker/VM.AttachToGlobals) - hier nur Platzhalter, damit taking/with an den vom Compiler vergebenen Slots liegen.
                 var scope = new Scope(null, isGlobal: true);
-                foreach (var v in globalSnapshot) DefineSnapshotSlot(scope, v);
+                for (int i = 0; i < sharedGlobalCount; i++) scope.DefineSlot(Value.MakeUndefined());
                 foreach (var tv in takingValues) DefineSnapshotSlot(scope, tv);
                 if (withValue is Value wv)
                     scope.DefineSlot(wv);
                 var vm = new VM(chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode);
-                RunVm(vm);
+                if (broker != null) vm.AttachToGlobals(broker, sharedGlobalCount);
+                try { RunVm(vm); }
+                finally { vm.ReleaseGlobalsSections(); }
             });
         }
 

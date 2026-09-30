@@ -923,8 +923,10 @@ namespace fire.Compiler
                         throw new ResolverException("'break' außerhalb einer Schleife ('while'/'for'/'foreach')", bs.Line);
                     if (_tryDepth > 0)
                         throw new ResolverException(
-                            "'break' kann nicht aus einem 'try'/'catch'/'finally' heraus verwendet werden " +
-                            "(Einschränkung dieser Ausbaustufe - siehe BYTECODE.md)", bs.Line);
+                            _innermostTryIsSection
+                                ? "'break' kann nicht aus einem 'sync global { ... }' heraus verwendet werden (der Block ist intern ein 'try'/'finally' - Einschränkung dieser Ausbaustufe, siehe BYTECODE.md)"
+                                : "'break' kann nicht aus einem 'try'/'catch'/'finally' heraus verwendet werden " +
+                                  "(Einschränkung dieser Ausbaustufe - siehe BYTECODE.md)", bs.Line);
                     break;
 
                 case ContinueStmt cs:
@@ -932,12 +934,23 @@ namespace fire.Compiler
                         throw new ResolverException("'continue' außerhalb einer Schleife ('while'/'for'/'foreach')", cs.Line);
                     if (_tryDepth > 0)
                         throw new ResolverException(
-                            "'continue' kann nicht aus einem 'try'/'catch'/'finally' heraus verwendet werden " +
-                            "(Einschränkung dieser Ausbaustufe - siehe BYTECODE.md)", cs.Line);
+                            _innermostTryIsSection
+                                ? "'continue' kann nicht aus einem 'sync global { ... }' heraus verwendet werden (der Block ist intern ein 'try'/'finally' - Einschränkung dieser Ausbaustufe, siehe BYTECODE.md)"
+                                : "'continue' kann nicht aus einem 'try'/'catch'/'finally' heraus verwendet werden " +
+                                  "(Einschränkung dieser Ausbaustufe - siehe BYTECODE.md)", cs.Line);
                     break;
 
                 case FireStmt fireStmt:
                     ResolveFireStmt(fireStmt);
+                    break;
+
+                case SectionEnterStmt:
+                case SectionExitStmt:
+                    break;
+
+                case PostGlobalStmt postGlobal:
+                    foreach (var arg in postGlobal.Args) ResolveExpr(arg);
+                    ResolveLambda(postGlobal.Lambda);
                     break;
 
                 case LeaveStmt:
@@ -1064,8 +1077,12 @@ namespace fire.Compiler
         /// `break`/`continue`-Sprung, der das sauber mit abräumt, wäre ein
         /// riskanteres, deutlich größeres Stück Arbeit, das hier bewusst
         /// nicht mit angegangen wird (siehe BYTECODE.md).</summary>
+        private bool _innermostTryIsSection;
+
         private void ResolveTry(TryStmt t)
         {
+            bool savedInnermostIsSection = _innermostTryIsSection;
+            _innermostTryIsSection = t.IsSyncSection;
             _tryDepth++;
             ResolveBlockNewScope(t.TryBlock);
 
@@ -1084,6 +1101,7 @@ namespace fire.Compiler
 
             if (t.Finally != null) ResolveBlockNewScope(t.Finally);
             _tryDepth--;
+            _innermostTryIsSection = savedInnermostIsSection;
         }
 
         // -----------------------------------------------------------
@@ -1510,6 +1528,9 @@ namespace fire.Compiler
                     ResolveExpr(syncExpr.Target);
                     break;
 
+                case SyncGlobalsExpr:
+                    break;
+
                 case TryProcessExpr tryProcessExpr:
                     ResolveExpr(tryProcessExpr.Target);
                     break;
@@ -1679,8 +1700,9 @@ namespace fire.Compiler
             if (!_noShadowGlobals)
                 foreach (var (name, slot) in _globalScope.Slots)
                 {
+                    // Ein Fire-Thread darf Globals ändern (docs/THREADING_DESIGN.md Abschnitt 7): einzelne Zuweisungen laufen als Sektion, die
+                    // das Hauptprogramm bei `sync globals` erteilt - deshalb hier kein Schreibschutz mehr.
                     _current.Slots[name] = slot;
-                    _current.ReadonlySlots.Add(name);
                 }
 
             // taking/with - bekommen NEUE, EIGENE Slots ab hier (direkt
