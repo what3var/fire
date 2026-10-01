@@ -22,5 +22,8 @@ namespace fire.Runtime
 
         /// <summary>Die Reflection-Bibliothek (`Type.Of(obj)`, `Reflect.Get(...)`, siehe fire.Standard.ReflectionPrelude, native Seite: fire.Runtime.ReflectionNatives).</summary>
         public static string Reflection => "reflection";
+
+        /// <summary>`DateTime`, `TimeSpan` und `Sleep` (siehe fire.Standard.TimePrelude, native Seite: fire.Runtime.TimeNatives).</summary>
+        public static string Time => "time";
     }
 }

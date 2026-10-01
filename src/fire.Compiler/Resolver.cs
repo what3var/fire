@@ -774,6 +774,11 @@ namespace fire.Compiler
                 }
             }
 
+            // Eine Lambda mit `on ziel` (SPEC 4.2): die Mitglieder des gebundenen Objekts sind unqualifiziert sichtbar. Wessen Klasse das ist, steht
+            // erst zur Laufzeit fest - der Name wird dort wie `this.name` gelesen/geschrieben/aufgerufen (ein unbekannter Name ist dann ein Laufzeitfehler).
+            if (_inBoundLambda)
+                return new ResolvedRef.ImplicitThisMember();
+
             throw new ResolverException($"Unbekannter Bezeichner '{name}'", line);
         }
 
@@ -1875,7 +1880,18 @@ namespace fire.Compiler
             if (captures != null) _refs[lambda] = new ResolvedRef.LambdaCaptures(captures);
         }
 
+        /// <summary>Steckt der gerade aufgelöste Code in einer Lambda mit `on ziel`? Dann sind unbekannte Namen Mitglieder des gebundenen Objekts.</summary>
+        private bool _inBoundLambda;
+
         private void ResolveLambda(LambdaExpr lambda)
+        {
+            bool savedBound = _inBoundLambda;
+            _inBoundLambda = lambda.OnTarget != null;
+            try { ResolveLambdaCore(lambda); }
+            finally { _inBoundLambda = savedBound; }
+        }
+
+        private void ResolveLambdaCore(LambdaExpr lambda)
         {
             if (lambda.OnTarget != null)
                 ResolveExpr(lambda.OnTarget);

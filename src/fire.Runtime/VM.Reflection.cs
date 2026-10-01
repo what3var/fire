@@ -30,9 +30,13 @@ namespace fire.Runtime
         }
 
         /// <summary>Wirft eine `ReflectionException` (fangbar) und merkt die Umleitung für den nativen Aufruf.</summary>
-        internal Value ReflectFail(string message)
+        internal Value ReflectFail(string message) => NativeFail("ReflectionException", message);
+
+        /// <summary>Löst aus einer NATIVEN Funktion heraus eine fangbare Skript-Exception der Klasse `className` (mit dem Konstruktor `(message)`) aus und
+        /// merkt die Umleitung: der native Aufruf liefert dann kein Ergebnis (siehe CallNativeGuarded).</summary>
+        internal Value NativeFail(string className, string message)
         {
-            var instance = ConstructNested(ResolveClass("ReflectionException"), new[] { Value.MakeString(message) });
+            var instance = ConstructNested(ResolveClass(className), new[] { Value.MakeString(message) });
             ThrowException(Value.MakeClassRef(instance));
             _nativeRedirected = true;
             return default;

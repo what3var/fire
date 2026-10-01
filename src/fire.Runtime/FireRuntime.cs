@@ -109,6 +109,13 @@ namespace fire.Runtime
             lock (_liveThreadsGate) Monitor.PulseAll(_liveThreadsGate);
         }
 
+        /// <summary>Wartet höchstens `milliseconds`, wacht aber früher auf, wenn etwas in die Warteschlange des Hauptprogramms gestellt wird
+        /// (siehe <see cref="WakeWaitingOwner"/>) - für `Sleep`.</summary>
+        internal static void WaitForWake(int milliseconds)
+        {
+            lock (_liveThreadsGate) Monitor.Wait(_liveThreadsGate, milliseconds);
+        }
+
         public static FireThreadHandle Fire(Action body)
         {
             FireThreadHandle? handle = null;

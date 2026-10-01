@@ -40,6 +40,7 @@ namespace fire.Runtime
             // reiner fire-Quelltext, braucht keine DLL
             [NativeImports.Linq] = new(Array.Empty<string>(), Array.Empty<string>()),
             [NativeImports.Reflection] = new(Array.Empty<string>(), Array.Empty<string>()),
+            [NativeImports.Time] = new(Array.Empty<string>(), Array.Empty<string>()),
         };
 
         /// <summary>Verwaltete DLLs: Assembly-Name -> Pfad.</summary>

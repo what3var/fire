@@ -127,11 +127,13 @@ namespace fire.Compiler
                 if (debugWriter == null)
                     natives.Register("print", args => Value.MakeUndefined());
                 else
-                    natives.Register("print", args => debugWriter(args));
+                    natives.Register("print", args => VM.StringifyForPrint(args) is { } shown ? debugWriter(shown) : Value.MakeUndefined());
             }
             natives.RegisterBaseTypeNatives();
             if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
                 ReflectionNatives.Register(natives);
+            if (linkedProgram.NativeImports.Contains(NativeImports.Time))
+                TimeNatives.Register(natives);
 
             FramebufferManager? fbManager = null;
             ConsoleManager? consoleManager = null;

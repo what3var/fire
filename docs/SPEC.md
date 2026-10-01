@@ -284,7 +284,7 @@ Jede sonstige, nicht erkannte Suffix-Zeichenfolge an einem Literal wird als **at
 
 - Eine Lambda sieht beim Namens-Lookup **ihren eigenen Scope, den globalen Scope und Kopien der äußeren lokalen Werte, die ihr Körper benutzt** (Captures, siehe 4.2.1) – keine Closure über dazwischenliegende Scopes.
 - `on obj` bindet ein Objekt als `this`-Kontext, entweder bei Definition (`func (X) on obj => { ... }`) oder nachträglich bei Zuweisung (`var b = a on obj2;`, erzeugt einen neuen Lambda-Wert mit anderem `this`, `a` bleibt unverändert).
-- Membervariablen des gebundenen `this`-Objekts sind im Lambda-Body unqualifiziert sichtbar.
+- Membervariablen des gebundenen `this`-Objekts sind im Lambda-Body unqualifiziert sichtbar: bei einer Lambda mit `on ziel` (`func (x) on win => { n = n + x; Hello() }`) sind unbekannte Namen Mitglieder des Ziels - lesen, schreiben, `++` und Methodenaufrufe wirken wie mit `this.` davor (die Klasse steht erst zur Laufzeit fest, ein unbekannter Name ist dort ein Laufzeitfehler). Lokale Variablen, Parameter und Captures haben Vorrang. Eine Lambda ohne `on` kennt keine Mitglieder (ein unbekannter Name ist ein Übersetzungsfehler).
 - Ownership des Lambda-Werts folgt Abschnitt 2.1 (Feldzuweisung → Objekt-Owner, sonst Scope-Owner) – unabhängig vom `on`-Binding.
 - Für eine Typ-Annotation, die einen Lambda-Wert erwartet (Feld, Parameter, Rückgabetyp, `var`), steht der Typname **`lambda`** zur Verfügung, optional mit Signatur: `[RückgabeTyp] lambda[<ParamTyp1,...,ParamTypN>]`. Bewusst **nicht** `func` (das leitet einen Lambda-*Ausdruck* ein, `func (x) => ...`, und würde als Typname mit dieser Ausdrucks-Syntax kollidieren). Details siehe 4.3.
 
@@ -1856,6 +1856,38 @@ silence cfg.*            // alle Proben des Objekts (ebenso: silence cfg)
 - **Schlüsselwörter:** `probe`, `silence`, `changed`, `changing` sind kontextabhängig (`probe`/`silence` nur, wenn direkt ein Bezeichner oder `this` folgt) - als Variablennamen bleiben sie nutzbar.
 - **Mit Reflection** (`#import "reflection"`, 8.13): `Reflect.Probe(obj, "name", "changed"|"changing", handler)`, `Reflect.ProbeAll`, `Reflect.Silence(obj, "name")`, `Reflect.SilenceAll(obj)`, `Reflect.SilenceHandle(h)`, `Member.Probe(obj, kind, handler)`
   und `Selector.Probe(obj, kind, handler)`/`Selector.Silence(obj)` - z.B. `Watch(c => c.volume, cfg)` mit `lambda member<Cfg> sel` und `sel.Probe(cfg, "changed", ...)`.
+
+### 8.15 `DateTime`, `TimeSpan` und `Sleep` (`#import "time"`)
+
+Zeit wird in **Ticks** zu 100 ns gerechnet (wie in .NET); `DateTime` zählt ab 0001-01-01. Die Klassen sind in fire geschrieben (`fire.Standard.TimePrelude`) über wenige native Funktionen (`fire.Runtime.TimeNatives`); Fehler sind fangbare **`TimeException`**.
+
+```
+#import "time"
+
+var dauer = TimeSpan.FromSeconds(90)              // auch FromMilliseconds/FromMinutes/FromHours/FromDays/FromTicks, Zero(); new TimeSpan(h, m, s) / (d, h, m, s) / (d, h, m, s, ms)
+print(dauer)                                      // 00:01:30
+print(dauer.TotalMinutes + " " + dauer.Seconds)   // 1.5 30
+var w = TimeSpan.Of(250ms)                        // aus einem Wert mit Zeiteinheit, einer Zahl (ms) oder einer TimeSpan
+
+var jetzt = DateTime.Now()                        // UtcNow(), Today(); new DateTime(2024, 3, 15) / (y, m, d, h, mi, s) / (..., ms)
+var morgen = jetzt + TimeSpan.FromDays(1)
+print(morgen.ToString("dd.MM.yyyy HH:mm"))
+print(DateTime.Parse("2024-12-24 18:00") - jetzt)  // eine TimeSpan
+Sleep(500ms)                                      // oder Sleep(dauer), Sleep(250) (Millisekunden)
+```
+
+- **`TimeSpan`**: Fabriken (s.o.), `Of(wert)`; Komponenten `Days`/`Hours`/`Minutes`/`Seconds`/`Milliseconds` (ganzzahlig), `Total...` (Kommazahlen), `Ticks`; Rechnen `+`, `-`, `* zahl`, `/ zahl` (auch `Add`/`Subtract`/`Multiply`/`Divide`/`Negate`/`Abs`),
+  Vergleiche `< <= > >= == != ##`, `CompareTo`, `Equals`; `ToString()` liefert `[-][d.]hh:mm:ss[.fffffff]`.
+- **`DateTime`**: Komponenten `Year`/`Month`/`Day`/`Hour`/`Minute`/`Second`/`Millisecond`/`DayOfWeek` (0 = Sonntag)/`DayOfYear`/`Ticks`/`Kind`, `DayName()`/`MonthName()`, `Date()`, `TimeOfDay()`; Rechnen `dt + zeitspanne`, `dt - zeitspanne` (ein `DateTime`),
+  `dt - dt` (eine `TimeSpan`), `AddDays`/`AddHours`/`AddMinutes`/`AddSeconds`/`AddMilliseconds`/`AddTicks`/`AddMonths`/`AddYears`; Vergleiche wie bei `TimeSpan`; `ToString()` (`yyyy-MM-dd HH:mm:ss`) und `ToString(format)` mit den .NET-Zeitformaten (invariante Kultur);
+  `Parse(text)` (wirft `TimeException`), `TryParse(text)` (undefined), `DaysInMonth`, `IsLeapYear`, `FromUnixSeconds`/`ToUnixSeconds`. **`Kind`** ist `"local"` (`Now`, `Today`, Konstruktoren, `Parse`) oder `"utc"` (`UtcNow`, `FromUnixSeconds`); `ToUtc()`/`ToLocal()` wandeln. Vergleiche und
+  Differenzen setzen gleiche Art voraus. Zeitzonen jenseits von Lokal/UTC gibt es nicht.
+- **`Sleep(zeit)`** legt den Thread schlafen. `zeit` ist eine `TimeSpan`, ein Wert mit Zeiteinheit (`500ms`, `2s`, `1.5min`) oder eine Zahl (Millisekunden). Das Schlafen ist **nicht taub**: in kurzen Stücken läuft, was sonst an den sicheren Punkten läuft - `leave`/`terminate` beenden
+  es sofort, zugestellte Fire-Thread-Exceptions werden behandelt, und im Hauptprogramm arbeitet das **automatische Abarbeiten der Warteschlange** (Sektionen der Fire-Threads, `fire global`-Aufträge, Host-Callbacks, siehe THREADING_DESIGN.md Abschnitt 7; mit `#nosync` nur bei `sync globals`).
+  Ein neuer Eintrag in der Warteschlange weckt das Schlafen früher auf. Ein Callback oder Destruktor (verschachtelte Ausführung) schläft ohne diese Aufgaben.
+
+**`ToString()` bei Ausgabe und Verkettung.** Hat ein Objekt eine parameterlose Methode `ToString()`, benutzt sie `print(objekt)`, `"text" + objekt`, `objekt + "text"` (hat die Klasse einen `operator+`, gilt dieser, `DateTime`/`TimeSpan` behandeln eine Zeichenkette dort selbst) und `$"{objekt}"`. Eine
+Exception in `ToString()` läuft zum umgebenden `catch`. Ohne `ToString()` bleibt die alte Darstellung (`<object ...>`).
 
 ## 9. Offene Punkte
 

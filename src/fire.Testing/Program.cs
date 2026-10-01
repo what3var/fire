@@ -7689,7 +7689,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         }
     }
 
+    // Mit #nosync: sonst koennte das automatische Abarbeiten die Anmeldung des Threads vor dem ersten `sync globals` erledigen, dessen Rueckgabe bliebe 0
     CheckGl("Ein Thread schreibt ein Global: es wird erst bei `sync globals` des Hauptprogramms wirksam", """
+        #nosync
         var counter = 0
         fire { counter = 5 }
         var handled = 0
@@ -7982,7 +7984,12 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     {
         var lines = new List<string>();
         var natives = NativeRegistry.CreateDefault();
-        natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.Register("print", args =>
+        {
+            var shown = VM.StringifyForPrint(args);
+            if (shown != null) lock (lines) lines.Add(shown[0].ToString());
+            return Value.MakeUndefined();
+        });
         natives.RegisterBaseTypeNatives();
         var sources = new List<string> { fire.Standard.Prelude.Source };
         if (script.Contains("#import \"linq\""))
@@ -7991,6 +7998,11 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             fire.Runtime.ReflectionNatives.Register(natives);
             sources.Add(fire.Standard.ReflectionPrelude.Source);
             sources.Add(fire.Standard.LinqPrelude.Source);
+        }
+        if (script.Contains("#import \"time\""))
+        {
+            fire.Runtime.TimeNatives.Register(natives);
+            sources.Add(fire.Standard.TimePrelude.Source);
         }
         sources.Add(script);
         var program = Parser.ParseMultiple(sources
@@ -8036,6 +8048,116 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var f = x => x + 1
         print(f(1))
         """, new[] { "1 2 3 w", "paren w", "expr 1", "2" });
+
+    CheckLq("func (...) on ziel => ...: Mitglieder des Ziels sind unqualifiziert sichtbar (lesen, schreiben, ++, Methoden)", """
+        class W { string n; int c; construct(string n) { this.n = n; this.c = 0 } Hello(string s) { return "hello " + s + " " + this.n } Run(class f) { f(1, 2, 3) } }
+        var win = new W("w")
+        win.Run(func (x, y, b) on win => { c = c + x; c++; print($"x: {x} y: {y} b: {b} n: {n} c: {c}"); print(Hello("a")) })
+        print(win.c)
+        var plain = func (x) => x + 1
+        print(plain(1))
+        """, new[] { "x: 1 y: 2 b: 3 n: w c: 2", "hello a w", "2", "2" });
+
+    const string timeHead = "#import \"time\"\nclass Exception { string message; construct(string message) { this.message = message } }\n";
+
+    CheckLq("TimeSpan: Fabriken, Komponenten, Summen, Vergleiche, Text", timeHead + """
+        var a = TimeSpan.FromSeconds(90)
+        var b = new TimeSpan(1, 2, 3, 4, 500)
+        print(a.ToString() + " " + a.TotalMinutes + " " + a.Minutes + " " + a.Seconds)
+        print(b.ToString() + " " + b.Days + " " + b.Hours + " " + b.Milliseconds)
+        print((a + b).ToString() + " | " + (b - a).ToString() + " | " + (a * 2).ToString() + " | " + (a / 3).ToString())
+        print((a < b) + " " + (a ## b) + " " + (a == TimeSpan.FromSeconds(90)) + " " + a.CompareTo(b) + " " + a.Negate().Abs().Equals(a))
+        print(TimeSpan.Of(1.5s).TotalMilliseconds + " " + TimeSpan.Of(250ms).TotalSeconds + " " + TimeSpan.Of(2).TotalMilliseconds + " " + TimeSpan.FromMinutes(2).TotalSeconds)
+        """, new[]
+        {
+            "00:01:30 1.5 1 30", "1.02:03:04.5000000 1 2 500",
+            "1.02:04:34.5000000 | 1.02:01:34.5000000 | 00:03:00 | 00:00:30",
+            "True True True -1 True",
+            "1500 0.25 2 120",
+        });
+
+    CheckLq("DateTime: Komponenten, Rechnen, Format, Parse, Differenz, Vergleiche, Unix", timeHead + """
+        var d = new DateTime(2024, 3, 15, 14, 30, 5)
+        var a = TimeSpan.FromSeconds(90)
+        print(d.ToString() + " " + d.Year + " " + d.Month + " " + d.Day + " " + d.DayOfWeek + " " + d.DayName() + " " + d.DayOfYear)
+        print(d.AddDays(20).ToString() + " | " + d.AddMonths(11).ToString("dd.MM.yyyy") + " | " + (d + a).ToString("HH:mm:ss") + " | " + d.AddYears(-1).Year)
+        var e = new DateTime(2024, 3, 17)
+        print((e - d).ToString() + " " + (e > d) + " " + (d - TimeSpan.FromHours(15)).ToString() + " " + (d ## e))
+        print(DateTime.Parse("2024-12-24 18:00").ToString() + " " + DateTime.IsLeapYear(2024) + " " + DateTime.DaysInMonth(2023, 2) + " " + (DateTime.TryParse("quatsch") == undefined))
+        print(d.Date().ToString() + " " + d.TimeOfDay().ToString())
+        print(DateTime.FromUnixSeconds(86400).ToString() + " " + DateTime.FromUnixSeconds(86400).ToUnixSeconds())
+        try { new DateTime(2024, 13, 1) } catch (x) { print("1 " + x.message) }
+        try { DateTime.Parse("quatsch") } catch (x) { print("2 " + x.message) }
+        print(DateTime.Now().Year >= 2024)
+        print(DateTime.UtcNow().Kind + " " + DateTime.Now().Kind)
+        """, new[]
+        {
+            "2024-03-15 14:30:05 2024 3 15 5 Friday 75",
+            "2024-04-04 14:30:05 | 15.02.2025 | 14:31:35 | 2023",
+            "1.09:29:55 True 2024-03-14 23:30:05 True",
+            "2024-12-24 18:00:00 True 28 True",
+            "2024-03-15 00:00:00 14:30:05",
+            "1970-01-02 00:00:00 86400",
+            "1 Ungültiges Datum/ungültige Zeit: 2024-13-1 0:0:0.0",
+            "2 Kein gültiges Datum: 'quatsch'",
+            "True",
+            "utc local",
+        });
+
+    CheckLq("Objekte mit ToString(): print, Textverkettung (beide Seiten), Interpolation; ohne ToString bleibt die alte Darstellung, eine Exception darin laeuft zum Aufrufer", timeHead + """
+        class P { string n; construct(string n) { this.n = n } ToString() { return "P(" + this.n + ")" } }
+        class Q { int x; construct() { this.x = 1 } }
+        class Bad { ToString() { throw new Exception("nein") } }
+        var d = new DateTime(2024, 3, 15, 14, 30, 5)
+        print(d)
+        print("jetzt: " + d + " / " + new P("x") + " / " + TimeSpan.FromSeconds(75))
+        print(d + " ist heute")
+        print($"{d} {new P("y")}")
+        print(new P("z"))
+        print(("q=" + new Q()).Length > 3)
+        try { print("b=" + new Bad()) } catch (e) { print("1 " + e.message) }
+        try { print(new Bad()) } catch (e) { print("2 " + e.message) }
+        print("ende")
+        """, new[]
+        {
+            "2024-03-15 14:30:05", "jetzt: 2024-03-15 14:30:05 / P(x) / 00:01:15", "2024-03-15 14:30:05 ist heute", "2024-03-15 14:30:05 P(y)",
+            "P(z)", "True", "1 nein", "2 nein", "ende",
+        });
+
+    CheckLq("Sleep: Zeitspanne, Zeitwert und Millisekunden; Dauer stimmt", timeHead + """
+        var t0 = DateTime.UtcNow()
+        Sleep(TimeSpan.FromMilliseconds(120))
+        Sleep(60ms)
+        Sleep(30)
+        var ms = (DateTime.UtcNow() - t0).TotalMilliseconds
+        print((ms >= 190) + " " + (ms < 2000))
+        try { Sleep("x") } catch (e) { print(e.message) }
+        """, new[] { "True True", "Sleep erwartet eine TimeSpan, einen Zeitwert oder Millisekunden, erhalten: String." });
+
+    CheckLq("Sleep arbeitet die Warteschlange ab (automatischer Globals-Sync); mit #nosync nicht; fire global-Auftraege auch", timeHead + """
+        var counter = 0
+        var jobs = 0
+        fire { sync global { counter = counter + 1 } }
+        fire { fire global { jobs = jobs + 10 } }
+        Sleep(400ms)
+        print("counter " + counter + " jobs " + jobs)
+        """, new[] { "counter 1 jobs 10" });
+
+    CheckLq("Sleep mit #nosync laesst die Warteschlange liegen, bis `sync globals` kommt", "#nosync\n" + timeHead + """
+        var counter = 0
+        fire { sync global { counter = counter + 1 } }
+        Sleep(300ms)
+        print("vorher " + counter)
+        var n = 0
+        while (counter == 0) { n = sync globals }
+        print("nachher " + counter)
+        """, new[] { "vorher 0", "nachher 1" });
+
+    CheckLq("terminate aus einem Thread beendet ein laufendes Sleep sofort", timeHead + """
+        fire { Sleep(100ms); terminate(3) }
+        Sleep(20s)
+        print("nie")
+        """, new string[0]);
 
     CheckLq("Capture: ein lokaler Wert wird kopiert (spaetere Aenderungen sind unsichtbar)", """
         class T {

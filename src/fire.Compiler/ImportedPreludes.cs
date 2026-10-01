@@ -37,6 +37,7 @@ namespace fire.Compiler
             "ui" => NativeImports.Ui,
             "linq" => NativeImports.Linq,
             "reflection" => NativeImports.Reflection,
+            "time" => NativeImports.Time,
             _ => throw new Exception($"'{name}' ist keine bekannte Erweiterung."),
         };
 
@@ -60,6 +61,7 @@ namespace fire.Compiler
             "ui" => UiBridge.PreludeSource,
             "linq" => fire.Standard.LinqPrelude.Source,
             "reflection" => fire.Standard.ReflectionPrelude.Source,
+            "time" => fire.Standard.TimePrelude.Source,
             _ => null,
         };
 
@@ -112,6 +114,13 @@ namespace fire.Compiler
             {
                 processedSources.Insert(1, preprocess(fire.Standard.ReflectionPrelude.Source));
                 ReflectionNatives.Register(natives); // beim Übersetzen zählen nur die Namen (der Compiler schreibt daraufhin Typ-Metadaten mit)
+                inserted++;
+            }
+
+            if (nativeImports.Contains(NativeImports.Time))
+            {
+                processedSources.Insert(1, preprocess(fire.Standard.TimePrelude.Source));
+                TimeNatives.Register(natives); // beim Übersetzen zählen nur die Namen
                 inserted++;
             }
 

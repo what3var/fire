@@ -1766,3 +1766,17 @@ Tests: Suite-Block "Lambda-Captures und LINQ" (zwei Fälle: alle Wege, Locals, O
 - **`Query.SelectField` / `SelectProperty` / `SelectMember`** (`lambda field|property|member<class> sel`): Projektion per Selektor; sie halten nur den Pfad (Namen), nicht den `Selector` (der gehört dem Aufruf und wäre danach zerstört), und lesen über `Linq.GetPath(obj, path, kind)` (Reflection, also mit deren Zugriffsregeln). `#import "linq"` schaltet `reflection` mit
   (`WithDependencies`). Eine Überladung `Select(...)` je nach Selektor-Art gibt es nicht: Überladungen unterscheiden sich in dieser Sprache nur nach der Parameterzahl (die Auflösung ist je (Klasse, Name, Anzahl) gecacht), `Select(fn)` bleibt die allgemeine Projektion.
 - **`##`:** der Lexer liefert für `##` das Token `NotEq` (`#` allein bleibt Xor/Direktive); `operator!=`-Überladungen gelten damit auch für `##`.
+
+## 42. `on`-Lambdas, `#import "time"`, `Sleep`, `ToString()` bei Ausgabe
+
+- **Unqualifizierte Mitglieder in `on`-Lambdas:** `Resolver._inBoundLambda` (gesetzt in `ResolveLambda` für eine Lambda mit `OnTarget`, je Lambda gesichert/zurückgesetzt): `ResolveIdentifierRef` liefert dort für einen sonst unbekannten Namen `ResolvedRef.ImplicitThisMember` - der Compiler
+  übersetzt das schon wie `this.name` (`LoadThis` + `GetField`/`SetField`/`CallMethod`, auch `++`). Locals, Parameter und Captures werden vorher gefunden, Klassenmitglieder im Klassenkontext ebenfalls.
+- **Zeit:** `NativeImports.Time` (`#import "time"`, keine DLL), `TimePrelude` (`TimeException`, `TimeSpan`, `DateTime` in fire), `TimeNatives` (`__time_*` über .NET-`DateTime`/`TimeSpan`, in Ticks; Fehler über `VM.NativeFail("TimeException", ...)`, die Verallgemeinerung von `ReflectFail`).
+  `TimeSpan` hält `ticks`, `DateTime` `ticks` und `kind`; Operatoren per `operator+` & Co. (die Prelude fängt bei `+` eine Zeichenkette selbst ab).
+- **`Sleep`:** native Funktion `Sleep(x)` (TimeSpan: das Feld `ticks`; Wert mit Zeiteinheit über `Unit.ConversionFactorTo("s")`; Zahl = Millisekunden) -> `VM.SleepTicks`: Schleife aus `PollSignalsAfterOp()` (Shutdown-Signale, Fire-Thread-Exceptions, `AutoSyncNow`, also die Warteschlange) und einem Warten
+  von höchstens 20 ms (`FireRuntime.WaitForWake`, das `WakeWaitingOwner` - jeder Eintrag in die Warteschlange - vorzeitig beendet), bis die Frist abläuft oder `_stopExecutionRequested` gesetzt ist.
+- **`ToString()` bei Ausgabe:** `VM.StringifyForText(v)` (parameterloses `ToString()` per `CallMethodNested`, `null` = in einen Handler umgeleitet). Eingehängt in `BinaryNumericOrOperator` für `+` (Text auf einer Seite, Objekt ohne `operator+` auf der anderen), in `FormatValue` (`$"{objekt}"`) und über
+  `VM.StringifyForPrint(args)` im `print` der beiden `RuntimeSession`-Fassungen (bei Umleitung setzt es `_nativeRedirected`). Der Schnellpfad von `Add` überspringt jetzt auch Objekte als rechten Operanden.
+
+Tests: Suite-Block "Lambda-Captures und LINQ" (`on`-Lambdas, TimeSpan, DateTime, `ToString()`, `Sleep` mit Zeitspanne/Zeitwert/Millisekunden, automatisches Abarbeiten während `Sleep`, `#nosync`, `terminate` beendet `Sleep`). **Nebenbei:** der Globals-Test "Ein Thread schreibt ein Global ..." hing gelegentlich
+(30-s-Zeitüberschreitung): das automatische Abarbeiten konnte die Anmeldung des Threads vor dem ersten `sync globals` erledigen, dessen Rückgabewert dann dauerhaft 0 blieb - ein Fehler des Tests, nicht der Laufzeit; er läuft jetzt mit `#nosync`.

@@ -1406,7 +1406,7 @@ namespace fire.Runtime
                 // ersetzt beide. Ein Objekt links (Operator-Überladung) geht durch nach Execute.
                 case OpCode.Add:
                     if (Value.TryAddInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Add(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class && _stack[_sp - 1].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Add(_stack[_sp - 2], _stack[_sp - 1])); return; }
                     break;
                 case OpCode.Sub:
                     if (Value.TrySubtractInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
@@ -3080,6 +3080,14 @@ namespace fire.Runtime
                 {
                     string format = _constants[ReadU16()].AsString();
                     var v = Pop();
+                    if (v.Kind == ValueKind.Class && string.IsNullOrEmpty(format))
+                    {
+                        // `$"{objekt}"`: das Ergebnis von ToString() des Objekts
+                        var text = StringifyForText(v);
+                        if (text == null) break;
+                        Push(Value.MakeString(text));
+                        break;
+                    }
                     Push(Value.MakeString(v.Format(format)));
                     break;
                 }
@@ -4883,6 +4891,19 @@ namespace fire.Runtime
         {
             var b = Pop();
             var a = Pop();
+
+            // `"text" + objekt` / `objekt + "text"`: ein Objekt mit `ToString()` geht mit diesem Text in die Verkettung ein
+            if (operatorMethodName == "operator+"
+                && ((a.Kind == ValueKind.String && b.Kind == ValueKind.Class)
+                    || (b.Kind == ValueKind.String && a.Kind == ValueKind.Class
+                        && ResolveClass(((ObjectInstance)a.AsObjectRef()).ClassName).FindMethod("operator+", 1) == null)))
+            {
+                bool objectIsRight = a.Kind == ValueKind.String;
+                var text = StringifyForText(objectIsRight ? b : a);
+                if (text == null) return;
+                if (objectIsRight) b = Value.MakeString(text); else a = Value.MakeString(text);
+            }
+
             if (a.Kind == ValueKind.Class)
             {
                 var obj = (ObjectInstance)a.AsObjectRef();
