@@ -1506,6 +1506,18 @@ namespace fire.Runtime
                     OpMakeLambdaCapturing();
                     return;
 
+                case OpCode.Probe:
+                    OpProbe();
+                    return;
+
+                case OpCode.SilenceMember:
+                    OpSilenceMember();
+                    return;
+
+                case OpCode.SilenceValue:
+                    OpSilenceValue();
+                    return;
+
                 case OpCode.CallBaseMethod:
                     OpCallBaseMethod();
                     return;
@@ -2048,7 +2060,7 @@ namespace fire.Runtime
                 && LookupSite(site) is { } fieldEntry
                 && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
                 && ReferenceEquals(cachedObj.RtClass, fieldEntry.Class)
-                && cachedObj.ThreadLock == null)
+                && cachedObj.AccessGuard == null)
             {
                 var assigned = _stack[_sp - 1];
                 cachedObj.Fields.SetAt(fieldEntry.FieldIndex, assigned);
@@ -2067,6 +2079,15 @@ namespace fire.Runtime
         /// <summary>`obj.fieldName = value` (Stack: obj, value) - Langsam-Pfad von SetField, auch für die Reflection (site &lt; 0: kein
         /// Inline-Cache). true, wenn der zugewiesene Wert auf dem Stack liegt; false bei einer in einen Handler umgeleiteten Exception.</summary>
         private bool SetFieldSlow(string fieldName, int site)
+        {
+            // Hat das Objekt Proben auf dieses Mitglied: `changing`-Handler, Schreiben, `changed`-Handler (siehe SetFieldProbed)
+            if (_stack[_sp - 2] is { Kind: ValueKind.Class } probeTarget
+                && ((ObjectInstance)probeTarget.AsObjectRef()).Probes is { } probes && probes.Affects(fieldName))
+                return SetFieldProbed(fieldName, probes);
+            return SetFieldSlowSections(fieldName, site);
+        }
+
+        private bool SetFieldSlowSections(string fieldName, int site)
         {
             // Ein Fire-Thread ändert ein Objekt des geteilten Bereichs nur in einer Sektion (siehe GlobalsBroker).
             if (_threadBroker != null && _sectionDepth == 0
@@ -2120,7 +2141,7 @@ namespace fire.Runtime
                         }
                     }
                 }
-                if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.ThreadLock == null
+                if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
                     StoreSite(site, new SiteCache(obj.RtClass, null, setIndex));
                 obj.SetFieldLocked(fieldName, value);
@@ -3172,6 +3193,18 @@ namespace fire.Runtime
 
                 case OpCode.MakeLambdaCapturing:
                     OpMakeLambdaCapturing();
+                    break;
+
+                case OpCode.Probe:
+                    OpProbe();
+                    break;
+
+                case OpCode.SilenceMember:
+                    OpSilenceMember();
+                    break;
+
+                case OpCode.SilenceValue:
+                    OpSilenceValue();
                     break;
 
                 case OpCode.Call:

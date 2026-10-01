@@ -363,6 +363,16 @@ namespace fire.Compiler
         // -----------------------------------------------------------
         private Stmt ParseStatement()
         {
+            // `probe a.b changed ...` / `silence a.b`: kontextabhängige Schlüsselwörter - nur wenn direkt ein Bezeichner/`this` folgt (zwei Namen
+            // hintereinander sind sonst nie ein gültiger Ausdruck), so bleiben `probe`/`silence` als Variablennamen nutzbar
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "silence" && IsProbeOperandNext()) return ParseSilence();
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "probe" && IsProbeOperandNext())
+            {
+                int probeLine = Peek().Line;
+                var probe = ParseProbe();
+                ExpectStatementTerminator();
+                return new ExprStmt(_sourceIndex, probeLine, probe);
+            }
             if (Check(TokenType.Var)) return ParseVarDecl();
             if (Check(TokenType.Readonly)) return ParseReadonlyDecl();
             if (Check(TokenType.Enum)) return ParseEnumDecl();
@@ -2616,6 +2626,7 @@ namespace fire.Compiler
                     return new LiteralExpr(tok.Line, Value.MakeUndefined());
 
                 case TokenType.Identifier:
+                    if (tok.Lexeme == "probe" && IsProbeOperandNext()) return ParseProbe();
                     if (PeekAt(1).Type == TokenType.Arrow)
                     {
                         // Kurzform `x => ausdruck`
@@ -2789,6 +2800,74 @@ namespace fire.Compiler
                 onTarget = ParsePostfix();
 
             return ParseLambdaTail(line, parms, onTarget);
+        }
+
+        /// <summary>Folgt auf das aktuelle Wort (`probe`/`silence`) ein Bezeichner oder `this`?</summary>
+        private bool IsProbeOperandNext() => PeekAt(1).Type is TokenType.Identifier or TokenType.This;
+
+        /// <summary>Liest `a.b.c` (auch `a.b.*`, `a`): liefert das Objekt-Ausdruck, das Mitglied (null bei `.*` und ohne Punkt) und ob ein Mitglied
+        /// angegeben war (`.name` oder `.*`).</summary>
+        private (Expr Target, string? Member, bool HasMember) ParseProbePath()
+        {
+            Expr target = ParsePrimary();
+            if (!Check(TokenType.Dot)) return (target, null, false);
+            string? member = null;
+            while (Check(TokenType.Dot))
+            {
+                Advance();
+                if (Check(TokenType.Star))
+                {
+                    var starTok = Advance();
+                    if (member != null) target = new MemberExpr(starTok.Line, target, member);
+                    member = null;
+                    break;
+                }
+                var nameTok = Expect(TokenType.Identifier, "Erwarte einen Mitgliedsnamen nach '.'");
+                if (member != null) target = new MemberExpr(nameTok.Line, target, member);
+                member = nameTok.Lexeme;
+            }
+            return (target, member, true);
+        }
+
+        /// <summary>`probe ziel changed|changing handler` - der Handler ist ein Block `{ ... }`, `=> ausdruck`, `(a, b) => ...` oder ein beliebiger
+        /// Lambda-Ausdruck. Block und `=> ausdruck` bekommen die impliziten Namen `sender`, `name`, `old`, `value` (4 Parameter, siehe VM.RunProbeHandler).</summary>
+        private Expr ParseProbe()
+        {
+            int line = Peek().Line;
+            Advance(); // 'probe'
+            var (target, member, hasMember) = ParseProbePath();
+            if (!hasMember)
+                throw Error("'probe' erwartet ein Mitglied: 'probe objekt.mitglied changed ...' (oder 'objekt.*' für alle)", Peek());
+            if (!Check(TokenType.Identifier) || Peek().Lexeme is not ("changed" or "changing"))
+                throw Error("Erwarte 'changed' oder 'changing' nach dem Ziel von 'probe'", Peek());
+            bool changing = Advance().Lexeme == "changing";
+
+            Expr handler;
+            if (Check(TokenType.LBrace))
+            {
+                var body = ParseBlock();
+                handler = new LambdaExpr(line, ImplicitProbeParams(), null, body);
+            }
+            else if (Check(TokenType.Arrow))
+                handler = ParseLambdaTail(line, ImplicitProbeParams());
+            else if (IsParenLambda())
+                handler = ParseLambdaTail(line, ParseParamList());
+            else
+                handler = ParseExpression();
+            return new ProbeExpr(line, target, member, changing, handler);
+        }
+
+        private static List<LambdaParam> ImplicitProbeParams() =>
+            new[] { "sender", "name", "old", "value" }.Select(n => new LambdaParam(n, null, new List<Expr?>(), null)).ToList();
+
+        /// <summary>`silence a.b` / `silence a.*` (Mitglied bzw. alle Proben des Objekts `a`) oder `silence x` (Probe-Handle bzw. Objekt).</summary>
+        private Stmt ParseSilence()
+        {
+            int line = Peek().Line;
+            Advance(); // 'silence'
+            var (target, member, hasMember) = ParseProbePath();
+            ExpectStatementTerminator();
+            return new SilenceStmt(_sourceIndex, line, target, member, hasMember);
         }
 
         /// <summary>Steht der aktuelle `(` am Anfang einer Kurzform-Lambda `(...) =>`? (Lookahead bis zur passenden `)`.)</summary>

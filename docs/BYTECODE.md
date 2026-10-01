@@ -1688,3 +1688,24 @@ Selector-Parameter am Funktionsanfang `LoadLocal; CallStaticMethod Reflect.Selec
 still). Jetzt `{ get; set; }`; der Test "Gepacktes Programm ..." sichert es. Außerdem druckte `print` der gepackten Runtime nur Strings (`AsString`), jetzt wie die Befehlszeile jeden Wert.
 
 Tests: Suite-Block "Reflection" (Typ-Beschreibung, Find/Has/Interfaces, Get/Set/Call/New, Zugriffsregeln, Fehler und umgeleitete Exceptions, Selektoren inkl. Fehlerfälle, gepackter Rundlauf).
+
+## 38. `probe` / `silence`
+
+**Daten.** `ProbeTable` (`fire/Runtime/ProbeTable.cs`) je Objekt (`ObjectInstance.Probes`, meist null): Liste von `ProbeEntry` (Id, Mitglied oder null = alle, `changing`/`changed`, Handler-Lambda), threadsicher, plus die Menge der Mitglieder, deren Handler gerade laufen
+(Rekursionsschutz). `ProbeRegistry` ordnet Handle-Ids schwach ihrem Objekt zu (`silence h`). `ObjectInstance.Destroy` entfernt die Proben.
+
+**Schnellpfade.** `ObjectInstance.AccessGuard` (= `ThreadLock ?? Probes`, bei Änderung neu gesetzt) ersetzt den `ThreadLock == null`-Vergleich im Schreib-Schnellpfad von `SetField` und beim Eintragen in den Inline-Cache: ein Objekt mit Probe geht immer über `SetFieldSlow`.
+Lesezugriffe behalten ihren Schnellpfad. Eine schon gecachte Schreibstelle sieht eine später angemeldete Probe, weil der Vergleich am Objekt hängt, nicht am Cache-Eintrag. Benchmarks vor/nach: kein Unterschied.
+
+**Ablauf (`VM.Probe.cs`).** `SetFieldSlow` prüft zuerst `Probes?.Affects(name)` und ruft dann `SetFieldProbed`: alten Wert lesen (Feld, sonst Getter über `CallMethodNested`), `changing`-Handler der Reihe nach (`false` -> Stack `[obj, value]` -> `[value]`,
+kein Schreiben), Schreiben über `SetFieldSlowSections` (Zugriffsprüfung, Einheiten, Property-Setter, Sektionen der Globals), bei `!ValuesEqual(alt, neu)` die `changed`-Handler. Handler laufen über `CallLambdaNested` (wie `CallMethodNested`: eine Exception darin läuft zu
+den Handlern des Schreibers, `null` = umgeleitet -> der Op liefert `false`). Argumente nach Parameterzahl in `RunProbeHandler`. `TryProbeAdd`/`TrySilenceMember`/`TrySilenceValue` sind die gemeinsame Logik von Opcodes und Reflection.
+
+**Opcodes** (am Ende von `OpCode`): `Probe u16 name, u8 flags` (1 = changing, 2 = alle Mitglieder; Stack `obj, handler` -> `id`), `SilenceMember u16 name, u8 wildcard` (Stack `obj`), `SilenceValue` (Stack `x`).
+
+**Syntax.** `ProbeExpr` (Ausdruck, Wert = Handle), `SilenceStmt`. Parser: `probe`/`silence` nur, wenn direkt ein Bezeichner/`this` folgt (`IsProbeOperandNext`; als Statement vor der `Typ Name`-Erkennung, sonst würde `probe cfg` als Deklaration gelesen),
+`ParseProbePath` liest `a.b.c`/`a.b.*`/`a`; der Handler ist `{ ... }` oder `=> ausdruck` (implizite Parameter `sender, name, old, value` = 4 Parameter) oder `(...) =>` oder ein Ausdruck. Der Resolver löst Ziel und Handler auf, der Compiler emittiert Ziel, Handler, `Probe`.
+
+**Reflection.** Natives `__refl_probe/__refl_silence/__refl_silence_handle` (Fehler als `ReflectionException`), in der Prelude `Reflect.Probe/ProbeAll/Silence/SilenceAll/SilenceHandle`, `Member.Probe`, `Selector.Probe/Silence`.
+
+Tests: Suite-Block "Reflection" (9 Fälle zu probe/silence: implizite Namen und Gleichheitsprüfung, Veto mit Capture, Handler-Argumente nach Parameterzahl, `obj.*` mit Properties, Pfad und Cache-Stelle, Rekursion, Exceptions, Variablennamen, Reflection-API).

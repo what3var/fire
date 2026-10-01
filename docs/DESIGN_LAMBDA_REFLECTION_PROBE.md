@@ -1,7 +1,8 @@
 # Lambda-Ausdrücke, Reflection, `selector` und `probe` - Entwurf
 
-Stand: Schritt 1 (Captures, Kurzsyntax, LINQ) und Schritt 2 (Reflection samt `selector`) sind umgesetzt (siehe SPEC 4.2.1/8.13, BYTECODE.md Abschnitt 36/37).
-Schritt 3 (`probe`/`silence`) ist hier festgehalten, so wie er abgestimmt wurde. Die Beschreibung von Schritt 2 unten ist der ursprüngliche Entwurf - maßgeblich ist SPEC 8.13.
+Stand: alle drei Schritte sind umgesetzt (SPEC 4.2.1/8.13/8.14, BYTECODE.md Abschnitt 36/37/38). Der Text unten ist der ursprüngliche Entwurf - maßgeblich sind SPEC und BYTECODE.
+Abweichungen bei `probe`: das Handle ist ein `int`; `silence cfg.sub` (ein Mitglied, das ein Objekt hält) entfernt die Proben dieses Mitglieds, nicht die des Objekts darin (dafür `silence cfg.sub.*`);
+Handler-Argumente nach Parameterzahl (0..4); `silence cfg.*`/`silence cfg` entfernen alle Proben des Objekts.
 
 ## Entscheidungen
 

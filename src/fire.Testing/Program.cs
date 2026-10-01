@@ -8369,6 +8369,130 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         try { throw new Exception("x") } catch (e) { print("gefangen") }
         """, new[] { "public float r", "private int s", "public  A", "privat", "gefangen" }, debugRelease, packed: true);
 
+    // ---- probe / silence
+    const string probeHead = """
+        class Exception { string message; construct(string message) { this.message = message } }
+        class C {
+            int v
+            string name
+            int Loud { get { return this.v * 2 } set { this.v = value / 2 } }
+            construct() { this.v = 1; this.name = "a" }
+        }
+
+        """;
+
+    CheckRf("probe changed: implizite Namen, nur bei geaendertem Wert, silence mit Handle", probeHead + """
+        var c = new C()
+        var h = probe c.v changed { print(name + " " + old + "->" + value + " " + sender.name) }
+        c.v = 5
+        c.v = 5
+        c.v++
+        silence h
+        c.v = 9
+        print(c.v)
+        """, new[] { "v 1->5 a", "v 5->6 a", "9" });
+
+    CheckRf("probe changing: ein Handler mit false bricht das Schreiben ab (Ausdrucksform mit Capture)", probeHead + """
+        class T {
+            static Run() {
+                var c = new C()
+                var limit = 100
+                probe c.v changing (o, n) => n <= limit
+                c.v = 50
+                c.v = 500
+                print(c.v)
+                var r = (c.v = 700)
+                print(r + " " + c.v)
+            }
+        }
+        T.Run()
+        """, new[] { "50", "700 50" });
+
+    CheckRf("probe: Handler-Argumente nach Parameterzahl (0, 1, 2, 3, 4)", probeHead + """
+        var c = new C()
+        probe c.v changed () => print("0")
+        probe c.v changed x => print("1 " + x)
+        probe c.v changed (a, b) => print("2 " + a + " " + b)
+        probe c.v changed (s, a, b) => print("3 " + s.v + " " + a + " " + b)
+        probe c.v changed (s, n, a, b) => print("4 " + n + " " + a + " " + b)
+        c.v = 2
+        """, new[] { "0", "1 2", "2 1 2", "3 2 1 2", "4 v 1 2" });
+
+    CheckRf("probe obj.*: alle Mitglieder; Properties feuern, die Writes im Setter ebenfalls; silence obj.* entfernt alle", probeHead + """
+        var c = new C()
+        probe c.* changed (s, n, a, b) => print(n + " " + a + "->" + b)
+        c.name = "b"
+        c.Loud = 20
+        silence c.*
+        c.name = "c"
+        c.v = 77
+        print("still")
+        """, new[] { "name a->b", "v 1->10", "Loud 2->20", "still" });
+
+    CheckRf("probe: Pfad (a.b.c), nur das Objekt mit Probe ist betroffen, eine schon gecachte Schreibstelle sieht die Probe", probeHead + """
+        class Holder { C c; construct() { this.c = new C() } }
+        class T { static Bump(C c) { c.v = c.v + 1 } }
+        var a = new C()
+        var b = new C()
+        T.Bump(a); T.Bump(b); T.Bump(a)
+        probe a.v changed (o, n) => print("a " + o + "->" + n)
+        T.Bump(a); T.Bump(b); T.Bump(a)
+        var h = new Holder()
+        probe h.c.v changing (o, n) => n < 3
+        h.c.v = 2
+        h.c.v = 9
+        print(h.c.v + " " + b.v)
+        """, new[] { "a 3->4", "a 4->5", "2 3" });
+
+    CheckRf("probe: ein Handler, der dasselbe Mitglied schreibt, loest sich nicht selbst aus", probeHead + """
+        var c = new C()
+        probe c.v changed { c.v = 0 }
+        c.v = 3
+        print(c.v)
+        """, new[] { "0" });
+
+    CheckRf("probe: Exceptions im Handler laufen zum Schreiber (changing bricht das Schreiben ab, changed kommt nach dem Schreiben)", probeHead + """
+        var c = new C()
+        probe c.v changing (o, n) => { throw new Exception("nein") }
+        try { c.v = 5 } catch (e) { print("1 " + e.message) }
+        print(c.v)
+        silence c
+        probe c.v changed (o, n) => { throw new Exception("danach") }
+        try { c.v = 6 } catch (e) { print("2 " + e.message) }
+        print(c.v)
+        print("weiter")
+        """, new[] { "1 nein", "1", "2 danach", "6", "weiter" });
+
+    CheckRf("probe/silence bleiben als Variablennamen nutzbar", """
+        var probe = 5
+        var silence = probe + 1
+        print(probe + " " + silence)
+        """, new[] { "5 6" });
+
+    CheckRf("Reflect.Probe/Silence, Selector.Probe, Handle und Fehler", probeHead + """
+        class W { static Watch(lambda property<C> s, C c) { return s.Probe(c, "changing", (o, n) => n < 10) } }
+        var c = new C()
+        var h = Reflect.Probe(c, "v", "changed", (o, n) => print("r " + o + " " + n))
+        c.v = 4
+        Reflect.SilenceHandle(h)
+        c.v = 5
+        W.Watch(x => x.v, c)
+        c.v = 50
+        print(c.v)
+        Reflect.SilenceAll(c)
+        c.v = 50
+        print(c.v)
+        try { Reflect.Probe(c, "nope", "changed", () => 1) } catch (e) { print(e.message) }
+        try { Reflect.Probe(c, "v", "gestern", () => 1) } catch (e) { print(e.message) }
+        try { Reflect.Probe(c, "v", "changed", (a, b, c, d, e) => 1) } catch (e) { print(e.message) }
+        """, new[]
+        {
+            "r 1 4", "5", "50",
+            "'C' hat kein Mitglied 'nope' - dort lässt sich keine Probe anmelden.",
+            "Die Art einer Probe ist \"changed\" oder \"changing\", erhalten: \"gestern\".",
+            "Der Handler einer Probe darf höchstens 4 Parameter haben (Objekt, Name, alt, neu), hat 5.",
+        }, debugRelease);
+
     Console.WriteLine(rfFailures == 0 ? "Alle Reflection-Pruefungen bestanden." : $"FEHLER: {rfFailures} Reflection-Pruefung(en) fehlgeschlagen.");
 }
 

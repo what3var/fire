@@ -149,6 +149,9 @@ namespace fire.Bytecode
         SetAutoSync,    // u8 on        : `#nosync` (on = 0) schaltet das automatische Abarbeiten der Warteschlange an sicheren Punkten ab (wird am Programmanfang emittiert)
         PostGlobal,     // u8 argCount   : `fire global { ... }`: pop Lambda, pop argCount Argumente; reiht das Lambda (Objekt-Argumente als Kopie)
                         //                  als Auftrag für das Hauptprogramm ein, der bei dessen nächstem `sync globals` läuft; der Aufrufer wartet nicht
+        Probe,          // u16 nameConstIdx, u8 flags (1 = changing, 2 = alle Mitglieder) : pop Handler, pop Objekt; legt die Probe an, pusht ihr Handle (int)
+        SilenceMember,  // u16 nameConstIdx, u8 wildcard : pop Objekt; entfernt die Proben dieses Mitglieds (wildcard: alle des Objekts)
+        SilenceValue,   //                : pop Wert; ein Probe-Handle (int) entfernt diese Probe, ein Objekt alle seine Proben
         MakeLambdaCapturing, // u16 protoIdx, u8 hasOnTarget, u8 captureCount : wie MakeLambda; darunter liegen captureCount KOPIERTE Werte (Stack: c0..cn-1, [onTarget]),
                         //                  die der Lambda-Aufruf als Slots hinter den Parametern in den neuen Scope legt (Lambda-Captures, SPEC 4.2)
     }

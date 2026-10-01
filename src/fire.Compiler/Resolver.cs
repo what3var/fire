@@ -980,6 +980,10 @@ namespace fire.Compiler
                 case SectionExitStmt:
                     break;
 
+                case SilenceStmt silence:
+                    ResolveExpr(silence.Target);
+                    break;
+
                 case PostGlobalStmt postGlobal:
                     foreach (var arg in postGlobal.Args) ResolveExpr(arg);
                     ResolveLambda(postGlobal.Lambda);
@@ -1554,6 +1558,11 @@ namespace fire.Compiler
 
                 case SyncExpr syncExpr:
                     ResolveExpr(syncExpr.Target);
+                    break;
+
+                case ProbeExpr probe:
+                    ResolveExpr(probe.Target);
+                    ResolveExpr(probe.Handler);
                     break;
 
                 case SyncGlobalsExpr:

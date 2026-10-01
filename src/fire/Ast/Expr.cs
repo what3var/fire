@@ -68,6 +68,11 @@ namespace fire.Ast
     /// Änderungen der Globals angemeldet haben; liefert die Anzahl der bearbeiteten Einträge (int).</summary>
     public sealed record SyncGlobalsExpr(int Line) : Expr(Line);
 
+    /// <summary>`probe obj.member changed|changing handler` (docs/DESIGN_LAMBDA_REFLECTION_PROBE.md): meldet einen Handler für Schreibzugriffe auf das
+    /// Mitglied `Member` des Objekts `Target` an (`Member == null`: `probe obj.* ...`, alle Mitglieder). Wertet zum Probe-Handle (int) aus.
+    /// `Handler` ist eine Lambda (aus der Block-/`=>`-Kurzform oder ein beliebiger Lambda-Ausdruck).</summary>
+    public sealed record ProbeExpr(int Line, Expr Target, string? Member, bool IsChanging, Expr Handler) : Expr(Line);
+
     /// <summary>`try process X` (docs/THREADING_DESIGN.md Abschnitt 2) -
     /// nicht-blockierende Variante von Ast.ProcessStmt: liefert `true`, wenn
     /// eine Nachricht verarbeitet wurde, sonst `false` (nie `undefined` -

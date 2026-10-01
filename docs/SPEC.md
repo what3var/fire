@@ -1808,6 +1808,37 @@ Watch.Show(c => c.radius, myCircle)
 Körper darf nur eine **Mitgliedskette auf diesem Parameter** sein; alles andere ist eine `ReflectionException` ("Die Lambda ist kein Selektor ..."). Wird ein schon umgewandelter Selektor an einen weiteren `lambda property<T>`-Parameter
 weitergereicht, bleibt er unverändert. Das `T` ist Dokumentation/Prüfung gegen den Klassennamen im Resolver; die Instanz wird zur Laufzeit nicht gegen `T` geprüft. Ohne `#import "reflection"` ist der Typ ein Fehler.
 
+### 8.14 `probe` und `silence`
+
+Ein `probe` hängt einen Handler an **Schreibzugriffe auf ein Mitglied eines Objekts** - auch von außen, ohne die Klasse zu ändern. `silence` nimmt Proben wieder weg. Beides braucht keinen Import.
+
+```
+var h = probe cfg.volume changed { print(name + ": " + old + " -> " + value) }   // Block: implizite Namen sender, name, old, value
+probe cfg.volume changing (old, new) => new <= 100                              // false bricht das Schreiben ab
+probe player.stats.hp changed (o, v) => ui.Refresh(v)                           // Pfad: Objekt = player.stats, Mitglied = hp
+probe cfg.volume changed handlerLambda                                          // beliebiger Lambda-Wert
+probe cfg.* changed (s, n, a, b) => print(n + " " + a + "->" + b)               // alle Mitglieder
+
+silence h                // Handle (int) -> genau diese Probe
+silence cfg.volume       // alle Proben dieses Mitglieds
+silence cfg.*            // alle Proben des Objekts (ebenso: silence cfg)
+```
+
+- **Ziel:** `probe a.b.c ...` wertet `a.b` **einmal** aus; die Probe hängt an **diesem Objekt**, nicht am Slot (wird `a.b` später ersetzt, bleibt sie am alten Objekt). Das Mitglied muss existieren (Feld, Property oder Methode),
+  sonst ist es ein Fehler beim Anmelden. `probe ...` ist ein Ausdruck und liefert das Handle (`int`), als Statement wird es verworfen. `silence x` mit einem Objekt entfernt alle seine Proben; ein schon entferntes Handle ist kein Fehler.
+- **Handler:** der Block und `=> ausdruck` bekommen die vier Namen `sender` (das Objekt), `name` (das Mitglied), `old`, `value`; eine Lambda mit Parameterliste bekommt je nach **Anzahl** 0 nichts, 1 `(neu)`, 2 `(alt, neu)`,
+  3 `(Objekt, alt, neu)`, 4 `(Objekt, Name, alt, neu)` (mehr als 4 ist ein Fehler). Sie darf lokale Werte erfassen (4.2.1).
+- **Wann:** `changing` läuft **vor** dem Schreiben; liefert ein Handler `false`, wird nicht geschrieben (der Zuweisungsausdruck wertet trotzdem zum zugewiesenen Wert aus), die übrigen laufen nicht mehr. `changed` läuft **nach** dem
+  Schreiben und nur, wenn sich der Wert wirklich geändert hat (Vergleich wie `==`, Objekte per Referenz). Mehrere Proben laufen in der Reihenfolge ihrer Anmeldung.
+- **Was beobachtet wird:** Schreibzugriffe auf das Mitglied (`=`, `++`, `+=`, über Reflection) - bei Properties vor/nach dem Aufruf des Setters (alter Wert = Ergebnis des Getters, falls es einen gibt); schreibt der Setter selbst Felder, feuern auch
+  deren Proben. **Nicht** beobachtet: Änderungen *innerhalb* eines Objekts (`obj.list.Add(...)`, Array-Elemente), eine berechnete Property, deren Quelle sich ändert (dafür das Feld proben), und Schreibzugriffe von `sync`-Rückschreibungen.
+- **Ablauf:** synchron auf dem Thread des Schreibers (bei Objekten der Globals innerhalb der Sektion). Schreibt ein Handler dasselbe Mitglied desselben Objekts, feuert dafür nichts erneut. Eine Exception im Handler läuft zum
+  Schreiber: bei `changing` bleibt der Wert unverändert, bei `changed` ist er schon geschrieben. Proben leben mit dem Objekt (sein Ende entfernt sie).
+- **Kosten:** nur Objekte mit Probe nehmen den langsamen Schreibpfad; alle anderen behalten die schnellen Pfade unverändert.
+- **Schlüsselwörter:** `probe`, `silence`, `changed`, `changing` sind kontextabhängig (`probe`/`silence` nur, wenn direkt ein Bezeichner oder `this` folgt) - als Variablennamen bleiben sie nutzbar.
+- **Mit Reflection** (`#import "reflection"`, 8.13): `Reflect.Probe(obj, "name", "changed"|"changing", handler)`, `Reflect.ProbeAll`, `Reflect.Silence(obj, "name")`, `Reflect.SilenceAll(obj)`, `Reflect.SilenceHandle(h)`, `Member.Probe(obj, kind, handler)`
+  und `Selector.Probe(obj, kind, handler)`/`Selector.Silence(obj)` - z.B. `Watch(c => c.volume, cfg)` mit `lambda property<Cfg> sel` und `sel.Probe(cfg, "changed", ...)`.
+
 ## 9. Offene Punkte
 
 Der einzige frühere Punkt hier – die Methoden-Deklarationssyntax

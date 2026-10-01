@@ -61,6 +61,9 @@ namespace fire.Standard
                 Get(class obj) { return Reflect.Get(obj, this.Name) }
                 Set(class obj, class value) { Reflect.Set(obj, this.Name, value) }
                 Call(class obj, class args) { return Reflect.Call(obj, this.Name, args) }
+
+                // Wie `probe obj.name changed|changing handler` (liefert das Handle für Reflect.SilenceHandle)
+                Probe(class obj, string kind, class handler) { return Reflect.Probe(obj, this.Name, kind, handler) }
             }
 
             // Eine Klasse: Name, Basis, Interfaces und alle (auch geerbten) Mitglieder
@@ -140,6 +143,10 @@ namespace fire.Standard
                 Get(class obj) { return Reflect.Get(this.Parent(obj), this.Name) }
                 Set(class obj, class value) { Reflect.Set(this.Parent(obj), this.Name, value) }
                 Describe(class obj) { return Type.Of(this.Parent(obj)).Find(this.Name) }
+
+                // Probe auf das gewählte Mitglied (kind: "changed" oder "changing"); Silence entfernt sie wieder
+                Probe(class obj, string kind, class handler) { return Reflect.Probe(this.Parent(obj), this.Name, kind, handler) }
+                Silence(class obj) { Reflect.Silence(this.Parent(obj), this.Name) }
             }
 
             class Reflect {
@@ -148,6 +155,14 @@ namespace fire.Standard
                 static Call(class obj, string name, class args) { return __refl_call(obj, name, args) }
                 static New(string className, class args) { return __refl_new(className, args) }
                 static Has(class obj, string name) { return __refl_has(obj, name) }
+
+                // Proben (siehe `probe`/`silence`): kind ist "changed" oder "changing"; der Handler bekommt je nach Parameterzahl
+                // (neu), (alt, neu), (Objekt, alt, neu) oder (Objekt, Name, alt, neu). Liefert das Handle.
+                static Probe(class obj, string name, string kind, class handler) { return __refl_probe(obj, name, kind, handler) }
+                static ProbeAll(class obj, string kind, class handler) { return __refl_probe(obj, undefined, kind, handler) }
+                static Silence(class obj, string name) { __refl_silence(obj, name) }
+                static SilenceAll(class obj) { __refl_silence(obj, undefined) }
+                static SilenceHandle(class handle) { __refl_silence_handle(handle) }
 
                 // Wandelt die Lambda eines `lambda property<T>`-Parameters in einen Selector (vom Compiler am Funktionsanfang aufgerufen)
                 static SelectorOf(class l) {

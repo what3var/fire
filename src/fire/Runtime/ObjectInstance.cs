@@ -64,6 +64,26 @@ namespace fire.Runtime
         /// ActivateThreadSharing, siehe dort für die genaue Semantik.</summary>
         public ThreadShareLock? ThreadLock { get; private set; }
 
+        /// <summary>Die Proben dieses Objekts (`probe obj.member changed ...`) oder null - der Normalfall.</summary>
+        public ProbeTable? Probes { get; private set; }
+
+        /// <summary>Ist dieses Feld ungleich null (Baum-Lock oder Proben), laufen Schreibzugriffe nicht über die Inline-Cache-Schnellpfade
+        /// der VM, sondern über den langsamen Pfad, der Lock und Proben beachtet. Ein einziger Vergleich im heißen Pfad.</summary>
+        public object? AccessGuard { get; private set; }
+
+        private void RefreshGuard() => AccessGuard = (object?)ThreadLock ?? Probes;
+
+        /// <summary>Die Proben-Tabelle des Objekts, bei Bedarf angelegt (schaltet die Schnellpfade für dieses Objekt ab).</summary>
+        public ProbeTable GetOrCreateProbes()
+        {
+            if (Probes == null)
+            {
+                Probes = new ProbeTable();
+                RefreshGuard();
+            }
+            return Probes;
+        }
+
         /// <summary>Gehört dieses Objekt zum geteilten Bereich der GLOBALEN Variablen (siehe GlobalsBroker/docs/THREADING_DESIGN.md
         /// Abschnitt 7)? Das sind alle Objekte, die dem globalen Scope des Hauptprogramms (direkt oder über andere Objekte) gehören,
         /// sobald ein `fire`-Thread läuft. Fire-Threads lesen sie direkt (unter dem Baum-Lock), ändern sie aber nur innerhalb einer
@@ -77,6 +97,7 @@ namespace fire.Runtime
             if (InGlobalsDomain) return;
             InGlobalsDomain = true;
             ThreadLock ??= treeLock;
+            RefreshGuard();
             if (_owned != null)
                 foreach (var child in _owned)
                     child.MarkGlobalsDomain(ThreadLock);
@@ -126,6 +147,7 @@ namespace fire.Runtime
         {
             if (ThreadLock != null) return;
             ThreadLock = treeLock;
+            RefreshGuard();
             if (_owned != null)
                 foreach (var child in _owned)
                     child.ActivateThreadSharing(treeLock);
@@ -288,6 +310,9 @@ namespace fire.Runtime
         {
             if (_destroyed) return;
             _destroyed = true;
+
+            // Proben leben mit dem Objekt
+            if (Probes != null) ProbeRegistry.Forget(Probes.RemoveAll());
 
             runner.RunDestructor(this);
 

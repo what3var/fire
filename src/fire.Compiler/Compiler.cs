@@ -1086,6 +1086,17 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.SectionExit);
                     break;
 
+                case SilenceStmt silence:
+                    CompileExpr(silence.Target);
+                    if (silence.MemberForm)
+                    {
+                        _chunk.EmitOp(OpCode.SilenceMember);
+                        _chunk.EmitU16(silence.Member != null ? _chunk.AddConstant(Value.MakeString(silence.Member)) : 0);
+                        _chunk.EmitByte(silence.Member == null ? (byte)1 : (byte)0);
+                    }
+                    else _chunk.EmitOp(OpCode.SilenceValue);
+                    break;
+
                 case PostGlobalStmt postGlobal:
                     foreach (var arg in postGlobal.Args) CompileExpr(arg);
                     CompileLambda(postGlobal.Lambda);
@@ -1685,6 +1696,14 @@ namespace fire.Compiler
 
                 case LambdaExpr lam:
                     CompileLambda(lam);
+                    break;
+
+                case ProbeExpr probe:
+                    CompileExpr(probe.Target);
+                    CompileExpr(probe.Handler);
+                    _chunk.EmitOp(OpCode.Probe);
+                    _chunk.EmitU16(probe.Member != null ? _chunk.AddConstant(Value.MakeString(probe.Member)) : 0);
+                    _chunk.EmitByte((byte)((probe.IsChanging ? 1 : 0) | (probe.Member == null ? 2 : 0)));
                     break;
 
                 case SyncGlobalsExpr:

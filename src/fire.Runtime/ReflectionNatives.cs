@@ -28,6 +28,9 @@ namespace fire.Runtime
                 ? Value.MakeBool(Vm().ReflectHas((ObjectInstance)a[0].AsObjectRef(), a[1].AsString()))
                 : Value.MakeBool(false));
             natives.Register("__refl_selector_path", a => SelectorPath(a[0]));
+            natives.Register("__refl_probe", a => Probe(a[0], a[1], a[2].AsString(), a[3]));
+            natives.Register("__refl_silence", a => Silence(a[0], a[1]));
+            natives.Register("__refl_silence_handle", a => SilenceHandle(a[0]));
         }
 
         private static VM Vm() =>
@@ -126,6 +129,31 @@ namespace fire.Runtime
             var arr = new ScriptArray(result.Count);
             for (int i = 0; i < result.Count; i++) arr.Items[i] = result[i];
             return Value.MakeArray(arr);
+        }
+
+        /// <summary>`Reflect.Probe`: dasselbe wie `probe obj.name changed|changing handler` (`name` undefined = alle Mitglieder); liefert das Handle.</summary>
+        private static Value Probe(Value obj, Value member, string kind, Value handler)
+        {
+            var vm = Vm();
+            if (kind is not ("changed" or "changing"))
+                return vm.ReflectFail($"Die Art einer Probe ist \"changed\" oder \"changing\", erhalten: \"{kind}\".");
+            if (!vm.TryProbeAdd(obj, member.Kind == ValueKind.String ? member.AsString() : null, kind == "changing", handler, out long id, out string error))
+                return vm.ReflectFail(error);
+            return Value.MakeInt(id);
+        }
+
+        private static Value Silence(Value obj, Value member)
+        {
+            var vm = Vm();
+            return vm.TrySilenceMember(obj, member.Kind == ValueKind.String ? member.AsString() : null, out string error)
+                ? Value.MakeUndefined()
+                : vm.ReflectFail(error);
+        }
+
+        private static Value SilenceHandle(Value handle)
+        {
+            var vm = Vm();
+            return vm.TrySilenceValue(handle, out string error) ? Value.MakeUndefined() : vm.ReflectFail(error);
         }
 
         private static Value SelectorPath(Value l)
