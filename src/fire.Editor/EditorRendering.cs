@@ -64,7 +64,7 @@ namespace fire.Editor
             }
         }
 
-        private static Brush BrushFor(HighlightCategory category) => category switch
+        internal static Brush BrushFor(HighlightCategory category) => category switch
         {
             HighlightCategory.Keyword => Brushes.MediumBlue,
             HighlightCategory.Type => Brushes.Teal,
@@ -214,7 +214,7 @@ namespace fire.Editor
         public void RedrawMargin() => InvalidateVisual();
     }
 
-    file static class BrushFreezeExtensions
+    internal static class BrushFreezeExtensions
     {
         public static Brush AsFrozen(this SolidColorBrush brush)
         {

@@ -183,13 +183,38 @@ vollwertiges Debugger-/IDE-Feature-Set):
 
 ### Andockbare Bereiche, Fehlerliste, Symbolleisten (`MainWindow`)
 
-Die Bereiche des Editors (Editor, Ausgabe, Fehlerliste, Debugger) liegen in einem `DockingManager` der NuGet-Bibliothek **Dirkster.AvalonDock** (+ Theme `Vs2013Light`): per Ziehen an den Titeln an jede
+Die Bereiche des Editors (Dokument-Tabs, Ausgabe, Fehlerliste, Debugger) liegen in einem `DockingManager` der NuGet-Bibliothek **Dirkster.AvalonDock** (+ Theme `Vs2013Light`): per Ziehen an den Titeln an jede
 Seite andockbar, als Registerkarten stapelbar, frei schwebend oder automatisch ausblendend. Menü "Ansicht" blendet Bereiche wieder ein, "Layout zurücksetzen" stellt die Vorgabe wieder her. Das Layout wird beim
 Schließen nach `%AppData%/fire/editor-layout.xml` gespeichert und beim Start geladen (`XmlLayoutSerializer`, Schlüssel = `ContentId` aus `MainWindow.xaml`; ein nicht ladbares Layout fällt still auf die Vorgabe
 zurück). Nach dem Laden sind die Layout-Elemente neue Objekte - deshalb merkt sich `MainWindow` sie in `_panels` (aus dem Serializer-Callback) statt der XAML-Objekte.
 
 Die Fehlerliste ist ein `DataGrid` (Symbol, Beschreibung, Datei, Zeile; Spalten verschieb-/vergrößer-/sortierbar, Doppelklick auf eine Zeile springt in den Editor, Filterknopf "n Fehler"); die Zeilen sind
 `ErrorListItem`. Symbolleisten (Datei, Ausführen, Debuggen, Modus/Erstellen) rufen dieselben Handler wie Menü und Tastenkürzel; der Modus (Debug/Release/Performance) ist eine ComboBox, die mit dem Menü synchron bleibt.
+
+### Mehrere Dokumente in Tabs, Markdown-Editor (`MainWindow`, `MarkdownEditorControl`)
+
+Der Dokumentbereich des `DockingManager` enthält beliebig viele Tabs, zur Laufzeit angelegt (`MainWindow.CreateDocument`): fire-Skripte (`ScriptEditorControl`) und Markdown-Dokumente
+(`MarkdownEditorControl`); beide implementieren `IDocumentView` (Pfad, `IsModified`/`ModifiedChanged`, `ResetTo`, `GetText`, `MarkSaved`, Cursor-Zeile). Ein Tab-Titel trägt einen `*`, solange ungespeichert
+(Rückfrage beim Schließen des Tabs/Fensters: Speichern/Verwerfen/Abbrechen). Dateien öffnen über Menü (Mehrfachauswahl), Drag&Drop aufs Fenster oder Kommandozeile; die Endung (`.md`/`.markdown`) entscheidet
+über den Editor-Typ. Ist eine Datei schon offen, wird nur zu ihrem Tab gewechselt; ein noch unberührtes "Unbenannt"-Dokument wird beim Öffnen ersetzt.
+
+**Alles wirkt nur auf das AKTIVE Dokument** (`ActiveDocument`, nachgeführt über `LayoutContent.IsActiveChanged`): Ausführen/Debuggen/Standalone-Build, Haltepunkte, Fehlerliste, Buildeinstellungen, Zeilenanzeige,
+Fenstertitel. Zur Quellen-Sammlung des Compilers gehört nur der Text des aktiven Skripts (`Compile(new[] { text }, ...)`); mehrere Dateien übersetzt man per `#include`. Relative `#include`-Pfade beziehen sich dabei
+auf den Ordner der aktiven Datei (`Linker.BasePath`, durchgereicht über `RuntimeSession.Build(..., basePath)`/`DebugSession.Compile(..., basePath)`; ohne Datei: Arbeitsverzeichnis) - dasselbe gilt für die
+Live-Diagnostik (`LiveDiagnostics.Analyze(source, basePath)`). Ein laufendes/angehaltenes Programm bleibt an SEIN Skript gebunden (`_debugDocument`: gelbe Zeile, Haltepunkte), auch wenn man den Tab wechselt;
+beim Anhalten wird sein Tab nach vorn geholt, beim Schließen des Tabs wird der Lauf beendet. Ist ein Markdown-Tab aktiv, melden Ausführen/Haltepunkt/Buildeinstellungen das nur in der Statuszeile.
+
+Das Layout (`editor-layout.xml`) speichert auch die Tab-Positionen, die aber nur innerhalb einer Sitzung wiederhergestellt werden ("Layout zurücksetzen" lässt offene Tabs im Dokumentbereich; beim Programmstart
+werden nicht mehr vorhandene Tabs ignoriert, fehlt der Dokumentbereich ganz, gilt das Standard-Layout).
+
+Der **Markdown-Editor** ist AvalonEdit mit Zeilenumbruch und einer Live-Vorschau daneben (umschaltbar, Strg+Umschalt+V, 300 ms entprellt, Scroll-Position bleibt erhalten):
+- `MarkdownParser` (rein, ohne WPF): Überschriften (`#`, Setext), Absätze mit hartem Umbruch, **fett**/*kursiv*/~~durchgestrichen~~/`Code`, Links, Bilder, `<autolinks>`, Zitate, verschachtelte (nummerierte) Listen,
+  Aufgabenlisten `- [x]`, Code-Blöcke (``` und ~~~), Trennlinien, Pipe-Tabellen mit Ausrichtung; rohes HTML wird nicht interpretiert.
+- `MarkdownRenderer` baut daraus ein `FlowDocument`. Code-Blöcke mit Sprache `fire` werden mit dem echten Lexer eingefärbt (`SyntaxHighlighter`, wie im Skript-Editor). Bilder nur aus lokalen Dateien (relativ zum
+  Dokument; kein Netzwerkzugriff beim bloßen Ansehen). Ein Klick auf einen Link öffnet `http(s)`/`mailto` im Browser, ein relativer Link auf eine vorhandene Datei öffnet diese in einem neuen Tab.
+- `MarkdownColorizer` hebt die Syntax im Quelltext hervor (Überschriften größer, fett/kursiv, Code, Links, Zitate, Listenmarken; Code-Blöcke grau hinterlegt, `fire`-Blöcke farbig).
+- Bearbeiten: Symbolleiste und Kürzel (Strg+B fett, Strg+I kursiv, Strg+E Code, Strg+K Link, Strg+H Überschriftenebene wechseln), Aufzählung/Nummerierung/Zitat/Code-Block/Tabelle einfügen, Enter am Ende
+  eines Listenpunkts setzt die Liste fort (leerer Punkt beendet sie).
 
 ## Stand der Implementierung
 

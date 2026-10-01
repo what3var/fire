@@ -5,7 +5,8 @@
         xmlns:ad="https://github.com/Dirkster99/AvalonDock"
         xmlns:adt="clr-namespace:AvalonDock.Themes;assembly=AvalonDock.Themes.VS2013"
         Title="fire Editor" Height="820" Width="1300"
-        FontFamily="Segoe UI">
+        FontFamily="Segoe UI"
+        AllowDrop="True" PreviewDragOver="Window_PreviewDragOver" PreviewDrop="Window_PreviewDrop">
     <Window.Resources>
         <!-- Symbole der Symbolleisten: Segoe MDL2 Assets (ab Windows 10 vorhanden). Jeder Knopf hat zusätzlich
              einen Text oder ein ToolTip mit Tastenkürzel, falls ein Symbol auf einem System fehlt. -->
@@ -23,10 +24,13 @@
     <DockPanel>
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="_Datei">
-                <MenuItem Header="_Neu" Click="New_Click" InputGestureText="Ctrl+N"/>
+                <MenuItem Header="_Neues Skript" Click="New_Click" InputGestureText="Ctrl+N"/>
+                <MenuItem Header="Neues _Markdown-Dokument" Click="NewMarkdown_Click" InputGestureText="Ctrl+Umschalt+N"/>
                 <MenuItem Header="_Öffnen..." Click="Open_Click" InputGestureText="Ctrl+O"/>
                 <MenuItem Header="_Speichern" Click="Save_Click" InputGestureText="Ctrl+S"/>
                 <MenuItem Header="Speichern _unter..." Click="SaveAs_Click"/>
+                <MenuItem Header="_Alle speichern" Click="SaveAll_Click" InputGestureText="Ctrl+Umschalt+S"/>
+                <MenuItem Header="Dokument _schließen" Click="CloseDocument_Click" InputGestureText="Ctrl+W"/>
                 <Separator/>
                 <MenuItem Header="Buildeinstellungen" Click="BuildSettings_Click"/>
                 <Separator/>
@@ -55,14 +59,19 @@
                 <MenuItem Header="_Fehlerliste" Tag="errors" Click="ViewPanel_Click"/>
                 <MenuItem Header="_Debugger" Tag="debugger" Click="ViewPanel_Click"/>
                 <Separator/>
+                <MenuItem Header="Markdown-_Vorschau ein/aus" Click="ToggleMarkdownPreview_Click" InputGestureText="Ctrl+Umschalt+V"/>
+                <Separator/>
                 <MenuItem Header="_Layout zurücksetzen" Click="ResetLayout_Click"/>
             </MenuItem>
         </Menu>
 
         <ToolBarTray DockPanel.Dock="Top" IsLocked="False">
             <ToolBar Band="0" BandIndex="0" ToolTip="Datei">
-                <Button Click="New_Click" ToolTip="Neu (Ctrl+N)">
+                <Button Click="New_Click" ToolTip="Neues Skript (Ctrl+N)">
                     <TextBlock Style="{StaticResource GlyphText}" Text="&#xE7C3;"/>
+                </Button>
+                <Button Click="NewMarkdown_Click" ToolTip="Neues Markdown-Dokument (Ctrl+Umschalt+N)">
+                    <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="MD"/>
                 </Button>
                 <Button Click="Open_Click" ToolTip="Öffnen... (Ctrl+O)">
                     <TextBlock Style="{StaticResource GlyphText}" Text="&#xE8E5;"/>
@@ -151,11 +160,8 @@
             <ad:LayoutRoot>
                 <ad:LayoutPanel Orientation="Horizontal">
                     <ad:LayoutPanel Orientation="Vertical">
-                        <ad:LayoutDocumentPane>
-                            <ad:LayoutDocument ContentId="editor" Title="Editor" CanClose="False">
-                                <local:ScriptEditorControl x:Name="EditorControl"/>
-                            </ad:LayoutDocument>
-                        </ad:LayoutDocumentPane>
+                        <!-- Die Dokument-Tabs (Skripte und Markdown) werden zur Laufzeit angelegt, siehe MainWindow.CreateDocument. -->
+                        <ad:LayoutDocumentPane/>
 
                         <ad:LayoutAnchorablePane DockHeight="230">
                             <ad:LayoutAnchorable ContentId="output" Title="Ausgabe" CanFloat="True">

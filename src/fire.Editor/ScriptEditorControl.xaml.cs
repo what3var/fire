@@ -46,7 +46,7 @@ namespace fire.Editor
     /// (Caret.Line, DocumentLine.LineNumber, ...) - die Umrechnung an der
     /// 0-basierten SetCaretByLineColumn-Grenze ist die einzige Stelle, die
     /// das berücksichtigen muss.</summary>
-    public partial class ScriptEditorControl : UserControl
+    public partial class ScriptEditorControl : UserControl, IDocumentView
     {
         /// <summary>Der Dateipfad dieses Editors, falls schon einmal
         /// gespeichert/geöffnet - `null` für ein neues, ungespeichertes
@@ -83,7 +83,32 @@ namespace fire.Editor
         /// Variante (LiveDiagnostics.AnalyzeInProject), damit eine gültige
         /// Referenz auf eine Klasse aus einer ANDEREN Projektdatei nicht
         /// fälschlich als Fehler markiert wird.</summary>
-        public Func<string, List<Diagnostic>> DiagnosticsProvider { get; set; } = LiveDiagnostics.Analyze;
+        public Func<string, List<Diagnostic>> DiagnosticsProvider { get; set; }
+
+        /// <summary>Verzeichnis dieses Dokuments (für relative `#include`-
+        /// Pfade) - `null` solange noch nie gespeichert/geöffnet (dann gilt
+        /// das Arbeitsverzeichnis).</summary>
+        public string? BaseDirectory => FilePath == null ? null : Path.GetDirectoryName(Path.GetFullPath(FilePath));
+
+        /// <summary>Wahr, sobald der Text seit dem Laden/letzten Speichern
+        /// geändert wurde (für den Stern im Tab-Titel und die Rückfrage beim
+        /// Schließen).</summary>
+        public bool IsModified { get; private set; }
+
+        /// <summary>Feuert, wenn sich IsModified geändert hat.</summary>
+        public event Action? ModifiedChanged;
+
+        /// <summary>Der Host hat den aktuellen Text gespeichert.</summary>
+        public void MarkSaved() => SetModified(false);
+
+        private void SetModified(bool value)
+        {
+            if (IsModified == value) return;
+            IsModified = value;
+            ModifiedChanged?.Invoke();
+        }
+
+        private bool _loading;
 
         /// <summary>Feuert, wann immer sich Diagnostics geändert hat - der
         /// Host zeigt das i.d.R. in einer eigenen Fehlerliste an.</summary>
@@ -135,6 +160,8 @@ namespace fire.Editor
         {
             InitializeComponent();
 
+            DiagnosticsProvider = source => LiveDiagnostics.Analyze(source, BaseDirectory);
+
             Editor.TextArea.TextView.LineTransformers.Add(_colorizer);
             Editor.TextArea.TextView.BackgroundRenderers.Add(_lineBackground);
             // Index 0 = ganz links, also vor der (von ShowLineNumbers="True"
@@ -164,6 +191,7 @@ namespace fire.Editor
             };
 
             SetText(string.Empty);
+            IsModified = false;
         }
 
         // -----------------------------------------------------------
@@ -192,13 +220,17 @@ namespace fire.Editor
             _highlightedLine = null;
             _lineBackground.HighlightedLine = null;
             RefreshBreakpointDisplay();
-            SetText(text);
+            _loading = true;
+            try { SetText(text); }
+            finally { _loading = false; }
+            SetModified(false);
             BreakpointsChanged?.Invoke();
             DiagnosticsChanged?.Invoke();
         }
 
         private void Editor_TextChanged(object? sender, EventArgs e)
         {
+            if (!_loading) SetModified(true);
             _diagnosticsTimer.Stop();
             _diagnosticsTimer.Start();
             _highlightTimer.Stop();
@@ -461,6 +493,8 @@ namespace fire.Editor
         public void ScrollToLine(int line) => Editor.ScrollToLine(line);
 
         public new void Focus() => Editor.Focus();
+
+        public void FocusEditor() => Editor.Focus();
 
         // -----------------------------------------------------------
         // Haltepunkte (Rand-Klick oder F9 im Host, siehe
