@@ -8027,6 +8027,16 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(inc(1) + " " + add(2, 3) + " " + five() + " " + blk(4))
         """, new[] { "2 5 5 9" });
 
+    CheckLq("func (...) on ziel => ...: das Ziel von `on` ist kein Kurzform-Lambda (Bezeichner und geklammert)", """
+        class W { string n; construct(string n) { this.n = n } Run(class f) { f(1, 2, 3) } }
+        var win = new W("w")
+        win.Run(func (x, y, b) on win => { print($"{x} {y} {b} {this.n}") })
+        win.Run(func (x, y, b) on (win) => print("paren " + this.n))
+        win.Run(func (x, y, b) on win => print("expr " + x))
+        var f = x => x + 1
+        print(f(1))
+        """, new[] { "1 2 3 w", "paren w", "expr 1", "2" });
+
     CheckLq("Capture: ein lokaler Wert wird kopiert (spaetere Aenderungen sind unsichtbar)", """
         class T {
             static Run() {

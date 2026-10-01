@@ -2536,8 +2536,15 @@ namespace fire.Compiler
             return new SyncExpr(line, isTry, isFlat, target);
         }
 
+        /// <summary>Gesetzt, solange das ZIEL von `on` einer `func`-Lambda gelesen wird (`func (x) on win => ...`): ein Bezeichner oder eine geklammerte
+        /// Angabe direkt davor darf dort nicht als Kurzform-Lambda (`win => ...`, `(win) => ...`) gelesen werden - das `=>` gehört zur `func`-Lambda.
+        /// ParsePrimary verbraucht das Flag mit dem ersten Primärausdruck.</summary>
+        private bool _suppressShortLambda;
+
         private Expr ParsePrimary()
         {
+            bool noShortLambda = _suppressShortLambda;
+            _suppressShortLambda = false;
             var tok = Peek();
 
             switch (tok.Type)
@@ -2628,7 +2635,7 @@ namespace fire.Compiler
 
                 case TokenType.Identifier:
                     if (tok.Lexeme == "probe" && IsProbeOperandNext()) return ParseProbe();
-                    if (PeekAt(1).Type == TokenType.Arrow)
+                    if (!noShortLambda && PeekAt(1).Type == TokenType.Arrow)
                     {
                         // Kurzform `x => ausdruck`
                         Advance();
@@ -2719,7 +2726,7 @@ namespace fire.Compiler
 
                 case TokenType.LParen:
                 {
-                    if (IsParenLambda())
+                    if (!noShortLambda && IsParenLambda())
                     {
                         // Kurzform `(a, b) => ausdruck` / `() => ausdruck`
                         int lambdaLine = tok.Line;
@@ -2798,7 +2805,11 @@ namespace fire.Compiler
 
             Expr? onTarget = null;
             if (Match(TokenType.On))
+            {
+                _suppressShortLambda = true;
                 onTarget = ParsePostfix();
+                _suppressShortLambda = false;
+            }
 
             return ParseLambdaTail(line, parms, onTarget);
         }
