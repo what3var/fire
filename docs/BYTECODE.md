@@ -1679,7 +1679,7 @@ ist (der Code, der `Reflect.Get` & Co. aufgerufen hat, auch über `Member.Get` �
 **Native Funktionen mit Umleitung.** Löst eine native Funktion eine Exception aus (`ReflectFail` baut eine `ReflectionException` und ruft `ThrowException`), liegt die Ausführung schon im Handler: `_nativeRedirected` sagt
 `CallNativeGuarded`, dass kein Ergebnis zu pushen ist (wie bei `NativeIndexOutOfRangeException`). Dasselbe gilt, wenn ein Getter/eine Methode in einen äußeren Handler umgeleitet wird.
 
-**Selektoren.** `LambdaSignature.IsSelector` (Parser: `lambda property<T>`), `FunctionProto.SelectorPath` (`TrySelectorPath`: ein Parameter, Körper nur `ReturnStmt` einer `MemberExpr`-Kette auf ihm). `EmitLambdaParamChecks` emittiert für einen
+**Selektoren.** `LambdaSignature.IsSelector` (Parser: `lambda field|property|member|selector<T>`, `SelectorKind`), `FunctionProto.SelectorPath` (`TrySelectorPath`: ein Parameter, Körper nur `ReturnStmt` einer `MemberExpr`-Kette auf ihm). `EmitLambdaParamChecks` emittiert für einen
 Selector-Parameter am Funktionsanfang `LoadLocal; CallStaticMethod Reflect.SelectorOf; StoreLocal; Pop` (der Parameter wird ersetzt); `Reflect.SelectorOf` baut über `__refl_selector_path` ein `Selector`-Objekt. Der Resolver verlangt die Klasse
 `Reflect` (sonst "braucht ... #import \"reflection\"") und kennt `T`.
 
@@ -1756,12 +1756,13 @@ Fehler); bei `return` im `try` lief gar kein `finally`, ebenso nicht bei einer E
 Geändert/entfernt: `HandlerTemplate.FinallyProtoIdx` und der separat übersetzte finally-Proto samt `RunFinallyNested`; neue Opcodes `EnterFinallyNormal`, `PushJump`, `EndFinally`. Die Sperre für `break`/`continue` AUS dem `finally` heraus (Resolver) bleibt.
 Tests: Suite-Block "Lambda-Captures und LINQ" (zwei Fälle: alle Wege, Locals, Objekte, resume, Exception im finally) und die bestehenden `leave`/`terminate`-Tests.
 
-## 41. Arrays als `IEnumerable`, `lambda field<T>`, `SelectProperty`/`SelectField`, `##`
+## 41. Arrays als `IEnumerable`, Selektor-Arten, `SelectMember`/`SelectProperty`/`SelectField`, `##`
 
 - **Arrays:** `class extends array` (`BaseTypeExtensions`: Name `array` -> Art `Array` -> Sammelklasse `$array`, wie `string`; der Parser validiert die Mitglieder, auch wenn `array` kein Schlüsselwort ist). Der Methodenaufruf auf einem Array sucht erst die Erweiterung, dann die eingebauten Methoden;
   `GetEnumerator()` bleibt eingebaut (läuft auch ohne Prelude). `IsOfType`: Array/Puffer erfüllen `IEnumerable`. Die LINQ-Prelude erzeugt dieselben Operatoren für `List` und `array` (`Extension(target, toListExpression)`), `Linq.Iter` ist nur noch `source.GetEnumerator()`.
 - **Interfaces in `is of`:** `RuntimeClass.Interfaces` (der Compiler trägt die in `class X : Basis, IFoo` genannten Interfaces ein), `InstanceMatchesClassName` prüft sie auf jeder Stufe der Basisklassen-Kette; der Resolver lässt Interface-Namen bei `is of` zu.
-- **`lambda field<T>`:** `LambdaSignature.FieldOnly`; der Compiler ruft für den Parameter `Reflect.FieldSelectorOf` statt `SelectorOf` (setzt `Selector.FieldOnly`); `Selector.CheckKind` prüft per `__refl_member_kind(obj, name)` ("field"/"property"/"method"/undefined), sobald es ein Objekt gibt.
-- **`Query.SelectProperty(lambda property<class> sel)` / `SelectField(lambda field<class> sel)`:** Projektion per Selektor; sie halten nur den Pfad (Namen), nicht den `Selector` (der gehört dem Aufruf und wäre danach zerstört), und lesen über `Linq.GetPath` (Reflection, also mit deren Zugriffsregeln). `#import "linq"` schaltet `reflection` mit
+- **Selektor-Arten:** `LambdaSignature.SelectorKind` ("field", "property", "member", "selector"; ersetzt das frühere `FieldOnly`). Der Compiler ruft für den Parameter `Reflect.SelectorOf(l, kind)`; `Selector.Kind` merkt sich die Art, `Selector.CheckKind` prüft per `__refl_member_kind(obj, name)` ("field"/"property"/"method"/undefined) und
+  `Reflect.KindAllowed` (field: Feld, property: Property, member: Feld oder Property, selector: alles), sobald es ein Objekt gibt. Methoden: `Selector.Call`; `Get`/`Set`/`Probe` darauf sind Fehler. `property` meint ausschließlich Properties (früher nahm es auch Felder: das ist jetzt `member`).
+- **`Query.SelectField` / `SelectProperty` / `SelectMember`** (`lambda field|property|member<class> sel`): Projektion per Selektor; sie halten nur den Pfad (Namen), nicht den `Selector` (der gehört dem Aufruf und wäre danach zerstört), und lesen über `Linq.GetPath(obj, path, kind)` (Reflection, also mit deren Zugriffsregeln). `#import "linq"` schaltet `reflection` mit
   (`WithDependencies`). Eine Überladung `Select(...)` je nach Selektor-Art gibt es nicht: Überladungen unterscheiden sich in dieser Sprache nur nach der Parameterzahl (die Auflösung ist je (Klasse, Name, Anzahl) gecacht), `Select(fn)` bleibt die allgemeine Projektion.
 - **`##`:** der Lexer liefert für `##` das Token `NotEq` (`#` allein bleibt Xor/Direktive); `operator!=`-Überladungen gelten damit auch für `##`.

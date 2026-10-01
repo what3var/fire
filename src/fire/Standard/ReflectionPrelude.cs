@@ -124,24 +124,26 @@ namespace fire.Standard
                 New(class args) { return Reflect.New(this.Name, args) }
             }
 
-            // Ein Selektor: die Reflection des Mitglieds, das eine Lambda `c => c.radius` auswählt (Parametertyp `lambda property<T>`)
+            // Ein Selektor: die Reflection des Mitglieds, das eine Lambda `c => c.radius` auswählt (Parametertyp `lambda member<T>`; `Kind` ist die
+            // Art des Parametertyps: "field", "property", "member" (Feld oder Property) oder "selector" (auch Methoden))
             class Selector {
                 class Path
                 string Name
-                bool FieldOnly
+                string Kind
 
-                construct(class path) {
+                construct(class path, string kind) {
                     this.Path = path
                     this.Name = path[path.length - 1]
-                    this.FieldOnly = false
+                    this.Kind = kind
                 }
 
-                // `lambda field<T>`: das gewählte Mitglied muss ein Feld sein (geprüft, sobald es ein Objekt gibt)
+                // Die Art des gewählten Mitglieds auf `obj`: "field", "property", "method" oder undefined
+                ActualKind(class obj) { return __refl_member_kind(this.Parent(obj), this.Name) }
+
+                // Prüft, dass das gewählte Mitglied zur Art des Selektors passt (sobald es ein Objekt gibt); liefert das Objekt, dem es gehört
                 CheckKind(class parent) {
-                    if (this.FieldOnly) {
-                        var kind = __refl_member_kind(parent, this.Name)
-                        if (kind != "field") { throw new ReflectionException(Reflect.NotAField(this.Name, kind) + " (erwartet: lambda field<...>)") }
-                    }
+                    var actual = __refl_member_kind(parent, this.Name)
+                    if (!Reflect.KindAllowed(actual, this.Kind)) { throw new ReflectionException(Reflect.KindMessage(this.Name, actual, this.Kind)) }
                     return parent
                 }
 
@@ -151,12 +153,34 @@ namespace fire.Standard
                     for (var i = 0; i < this.Path.length - 1; i = i + 1) { o = Reflect.Get(o, this.Path[i]) }
                     return o
                 }
-                Get(class obj) { return Reflect.Get(this.CheckKind(this.Parent(obj)), this.Name) }
-                Set(class obj, class value) { Reflect.Set(this.CheckKind(this.Parent(obj)), this.Name, value) }
+
+                // Feld oder Property lesen/schreiben (eine Methode: Call)
+                Get(class obj) {
+                    var parent = this.CheckKind(this.Parent(obj))
+                    if (__refl_member_kind(parent, this.Name) == "method") { throw new ReflectionException("'" + this.Name + "' ist eine Methode - Call(obj, args) ruft sie auf") }
+                    return Reflect.Get(parent, this.Name)
+                }
+                Set(class obj, class value) {
+                    var parent = this.CheckKind(this.Parent(obj))
+                    if (__refl_member_kind(parent, this.Name) == "method") { throw new ReflectionException("'" + this.Name + "' ist eine Methode und lässt sich nicht zuweisen") }
+                    Reflect.Set(parent, this.Name, value)
+                }
+
+                // Eine Methode aufrufen (nur bei `lambda selector<T>`, das Methoden zulässt)
+                Call(class obj, class args) {
+                    var parent = this.CheckKind(this.Parent(obj))
+                    if (__refl_member_kind(parent, this.Name) != "method") { throw new ReflectionException("'" + this.Name + "' ist keine Methode") }
+                    return Reflect.Call(parent, this.Name, args)
+                }
+
                 Describe(class obj) { return Type.Of(this.CheckKind(this.Parent(obj))).Find(this.Name) }
 
-                // Probe auf das gewählte Mitglied (kind: "changed" oder "changing"); Silence entfernt sie wieder
-                Probe(class obj, string kind, class handler) { return Reflect.Probe(this.CheckKind(this.Parent(obj)), this.Name, kind, handler) }
+                // Probe auf das gewählte Feld/die Property (kind: "changed" oder "changing"); Silence entfernt sie wieder
+                Probe(class obj, string kind, class handler) {
+                    var parent = this.CheckKind(this.Parent(obj))
+                    if (__refl_member_kind(parent, this.Name) == "method") { throw new ReflectionException("Auf eine Methode lässt sich keine Probe anmelden ('" + this.Name + "')") }
+                    return Reflect.Probe(parent, this.Name, kind, handler)
+                }
                 Silence(class obj) { Reflect.Silence(this.Parent(obj), this.Name) }
             }
 
@@ -175,23 +199,34 @@ namespace fire.Standard
                 static SilenceAll(class obj) { __refl_silence(obj, undefined) }
                 static SilenceHandle(class handle) { __refl_silence_handle(handle) }
 
-                // Wandelt die Lambda eines `lambda property<T>`-Parameters in einen Selector (vom Compiler am Funktionsanfang aufgerufen)
-                static SelectorOf(class l) {
+                // Wandelt die Lambda eines Selektor-Parameters (`lambda field|property|member|selector<T>`) in einen Selector (vom Compiler am
+                // Funktionsanfang aufgerufen); `kind` ist die Art des Parametertyps
+                static SelectorOf(class l, string kind) {
                     if (l is of Selector) { return l }
-                    return new Selector(__refl_selector_path(l))
+                    return new Selector(__refl_selector_path(l), kind)
                 }
 
-                // Meldung für ein Mitglied, das kein Feld ist (kind: "property", "method" oder undefined)
-                static NotAField(string name, class kind) {
-                    if (kind == undefined) { return "'" + name + "' ist kein Mitglied" }
-                    return "'" + name + "' ist kein Feld, sondern " + kind
+                // Darf ein Mitglied dieser Art (actual: "field", "property", "method" oder undefined) von einem Selektor dieser Art gewählt werden?
+                static KindAllowed(class actual, string kind) {
+                    if (actual == undefined) { return false }
+                    if (kind == "selector") { return true }
+                    if (kind == "member") { return actual == "field" || actual == "property" }
+                    return actual == kind
                 }
 
-                // Dasselbe für `lambda field<T>`: das Mitglied muss ein Feld sein
-                static FieldSelectorOf(class l) {
-                    var s = Reflect.SelectorOf(l)
-                    s.FieldOnly = true
-                    return s
+                static KindWord(class actual) {
+                    if (actual == "field") { return "ein Feld" }
+                    if (actual == "property") { return "eine Property" }
+                    return "eine Methode"
+                }
+
+                // Meldung für ein Mitglied, das zum Selektor nicht passt
+                static KindMessage(string name, class actual, string kind) {
+                    if (actual == undefined) { return "'" + name + "' ist kein Mitglied" }
+                    var erwartet = "ein Feld"
+                    if (kind == "property") { erwartet = "eine Property" }
+                    if (kind == "member") { erwartet = "ein Feld oder eine Property" }
+                    return "'" + name + "' ist " + Reflect.KindWord(actual) + ", erwartet (lambda " + kind + "<...>): " + erwartet
                 }
             }
             """;

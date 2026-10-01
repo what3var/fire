@@ -385,7 +385,7 @@ namespace fire.Compiler
         private static string TypeText(TypeRef? type, int extraArrayRank = 0)
         {
             if (type == null || type.IsInferred) return "";
-            string text = type.LambdaSignature is { IsSelector: true } sel ? "lambda " + (sel.FieldOnly ? "field" : "property") + "<" + string.Join(", ", sel.ParamTypeNames) + ">" : type.ToString();
+            string text = type.LambdaSignature is { IsSelector: true } sel ? "lambda " + sel.SelectorKind + "<" + string.Join(", ", sel.ParamTypeNames) + ">" : type.ToString();
             return text + string.Concat(Enumerable.Repeat("[]", type.ArrayRank + extraArrayRank));
         }
 
@@ -691,15 +691,16 @@ namespace fire.Compiler
                 if (sig == null) continue;
                 if (sig.IsSelector)
                 {
-                    // `lambda property<T> name`: der Parameter wird durch die Reflection des gewählten Mitglieds ersetzt:
-                    // name = Reflect.SelectorOf(name)
+                    // `lambda member<T> name` (und field/property/selector): der Parameter wird durch die Reflection des gewählten Mitglieds
+                    // ersetzt: name = Reflect.SelectorOf(name, "member")
                     inner._chunk.EmitOp(OpCode.LoadLocal);
                     inner._chunk.EmitU16(0);
                     inner._chunk.EmitU16((ushort)i);
+                    inner.EmitLoadConst(Value.MakeString(sig.SelectorKind));
                     inner._chunk.EmitOp(OpCode.CallStaticMethod);
                     inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString("Reflect")));
-                    inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(sig.FieldOnly ? "FieldSelectorOf" : "SelectorOf")));
-                    inner._chunk.EmitByte(1);
+                    inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString("SelectorOf")));
+                    inner._chunk.EmitByte(2);
                     inner._chunk.EmitOp(OpCode.StoreLocal);
                     inner._chunk.EmitU16(0);
                     inner._chunk.EmitU16((ushort)i);

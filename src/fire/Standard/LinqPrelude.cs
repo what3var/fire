@@ -18,7 +18,7 @@ namespace fire.Standard
         /// <summary>Operatoren, die `List` zusätzlich direkt bekommt: Name und Parameteranzahlen (Überladung nach Anzahl).</summary>
         private static readonly (string Name, int[] Arities)[] ListOperators =
         {
-            ("Where", new[] { 1 }), ("Select", new[] { 1 }), ("SelectProperty", new[] { 1 }), ("SelectField", new[] { 1 }), ("SelectMany", new[] { 1 }), ("Take", new[] { 1 }), ("Skip", new[] { 1 }),
+            ("Where", new[] { 1 }), ("Select", new[] { 1 }), ("SelectField", new[] { 1 }), ("SelectProperty", new[] { 1 }), ("SelectMember", new[] { 1 }), ("SelectMany", new[] { 1 }), ("Take", new[] { 1 }), ("Skip", new[] { 1 }),
             ("TakeWhile", new[] { 1 }), ("SkipWhile", new[] { 1 }), ("Concat", new[] { 1 }), ("Zip", new[] { 2 }), ("OrderBy", new[] { 1 }),
             ("OrderByDescending", new[] { 1 }), ("Reverse", new[] { 0 }), ("Distinct", new[] { 0 }),
             ("ToArray", new[] { 0 }), ("First", new[] { 0, 1 }), ("FirstOrDefault", new[] { 1, 2 }), ("Last", new[] { 0 }),
@@ -218,13 +218,14 @@ namespace fire.Standard
                 // Ein Enumerator für alles Durchlaufbare: Objekte mit GetEnumerator() und Arrays (die ebenfalls IEnumerable sind)
                 static Iter(class source) { return source.GetEnumerator() }
 
-                // Liest die Mitgliedskette `path` (Namen von außen nach innen) von `obj` - über die Reflection, also mit deren Zugriffsregeln
-                static GetPath(class obj, class path, bool fieldOnly) {
+                // Liest die Mitgliedskette `path` (Namen von außen nach innen) von `obj` - über die Reflection, also mit deren Zugriffsregeln;
+                // das letzte Mitglied muss zur `kind` ("field", "property" oder "member") passen
+                static GetPath(class obj, class path, string kind) {
                     var o = obj
                     for (var i = 0; i < path.length; i = i + 1) {
-                        if (fieldOnly && i == path.length - 1) {
-                            var kind = __refl_member_kind(o, path[i])
-                            if (kind != "field") { throw new ReflectionException(Reflect.NotAField(path[i], kind)) }
+                        if (i == path.length - 1) {
+                            var actual = __refl_member_kind(o, path[i])
+                            if (!Reflect.KindAllowed(actual, kind)) { throw new ReflectionException(Reflect.KindMessage(path[i], actual, kind)) }
                         }
                         o = Reflect.Get(o, path[i])
                     }
@@ -302,18 +303,23 @@ namespace fire.Standard
                     var f = this.factory
                     return new Query(() => new LinqSelectEnumerator(f(), fn))
                 }
-                // Projektion auf ein Mitglied, gewählt per Selektor: `list.SelectProperty(p => p.name)` (Feld oder Property) bzw.
-                // `list.SelectField(p => p.name)` (nur ein Feld) - die Lambda muss eine reine Mitgliedskette sein (siehe `lambda property<T>`).
-                // Anders als `Select(fn)` prüft das Mitglied-Zugriffsregeln der Reflection und meldet ein falsches Mitglied als ReflectionException.
-                SelectProperty(lambda property<class> sel) {
-                    var f = this.factory
-                    var path = sel.Path
-                    return new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, false)))
-                }
+                // Projektion auf ein Mitglied, gewählt per Selektor: `list.SelectMember(p => p.name)` (Feld oder Property), `SelectField` (nur ein Feld),
+                // `SelectProperty` (nur eine Property) - die Lambda muss eine reine Mitgliedskette sein (siehe `lambda member<T>`). Anders als
+                // `Select(fn)` läuft der Zugriff über die Reflection (mit deren Zugriffsregeln) und ein Mitglied der falschen Art ist eine ReflectionException.
                 SelectField(lambda field<class> sel) {
                     var f = this.factory
                     var path = sel.Path
-                    return new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, true)))
+                    return new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "field")))
+                }
+                SelectProperty(lambda property<class> sel) {
+                    var f = this.factory
+                    var path = sel.Path
+                    return new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "property")))
+                }
+                SelectMember(lambda member<class> sel) {
+                    var f = this.factory
+                    var path = sel.Path
+                    return new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "member")))
                 }
                 SelectMany(lambda<int> fn) {
                     var f = this.factory

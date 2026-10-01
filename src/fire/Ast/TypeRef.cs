@@ -11,16 +11,16 @@ namespace fire.Ast
     /// Beide sind reine NAMEN (kein rekursiver TypeRef) - ein Lambda-Parameter-
     /// oder Rückgabetyp, der selbst wieder ein Lambda-Typ mit eigener Signatur
     /// wäre, ist bewusst nicht unterstützt (SPEC-Grenze dieser Ausbaustufe).
-    /// `IsSelector`: `lambda property&lt;T&gt; name` - die übergebene Lambda wählt ein Mitglied aus (`c => c.radius`); der Parameter
+    /// `IsSelector`: `lambda member&lt;T&gt; name` - die übergebene Lambda wählt ein Mitglied aus (`c => c.radius`); der Parameter
     /// enthält im Körper stattdessen die Reflection dieses Mitglieds (siehe docs/DESIGN_LAMBDA_REFLECTION_PROBE.md); `ParamTypeNames`
-    /// enthält dann genau den Namen `T`. `FieldOnly`: `lambda field<T> name` - wie `property`, aber das gewählte Mitglied muss ein FELD sein
-    /// (`lambda property<T>` nimmt Felder und Properties).
+    /// enthält dann genau den Namen `T`. `SelectorKind` legt fest, was die Lambda auswählen darf:
+    /// `field` (nur ein Feld), `property` (nur eine Property), `member` (Feld oder Property), `selector` (auch eine Methode).
     /// Nur die ANZAHL der Parameter wird zur Laufzeit geprüft (VM.
     /// CheckLambdaSignature) - die einzelnen Typnamen sind rein informativ,
     /// da eine dynamisch typisierte Lambda ihre Parameter-TYPEN nicht
     /// verlässlich vorab offenlegt.</summary>
     [MemoryPackable]
-    public sealed partial record LambdaSignature(string? ReturnTypeName, IReadOnlyList<string> ParamTypeNames, bool IsSelector = false, bool FieldOnly = false);
+    public sealed partial record LambdaSignature(string? ReturnTypeName, IReadOnlyList<string> ParamTypeNames, bool IsSelector = false, string SelectorKind = "member");
 
     /// <summary>
     /// Ein Typ-Verweis: Basisname (Basistyp-Keyword oder Klassenname), optionale

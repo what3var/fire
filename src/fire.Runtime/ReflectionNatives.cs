@@ -174,7 +174,7 @@ namespace fire.Runtime
         private static Value SelectorPath(Value l)
         {
             if (l.Kind != ValueKind.Lambda)
-                return Vm().ReflectFail($"Ein Selektor ('lambda property<...>') erwartet eine Lambda wie `c => c.radius`, erhalten: {l.Kind}.");
+                return Vm().ReflectFail($"Ein Selektor ('lambda member<...>' o.ä.) erwartet eine Lambda wie `c => c.radius`, erhalten: {l.Kind}.");
             var path = ((LambdaValue)l.AsLambda()).Proto.SelectorPath;
             if (path == null)
                 return Vm().ReflectFail("Die Lambda ist kein Selektor: sie braucht genau einen Parameter, und ihr Körper darf nur eine Mitgliedskette darauf sein (`c => c.radius`, `p => p.address.city`).");

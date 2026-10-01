@@ -642,10 +642,10 @@ namespace fire.Compiler
             if (tr.LambdaSignature is { IsSelector: true } selector)
             {
                 if (!_classes.ContainsKey("Reflect"))
-                    throw new ResolverException($"'lambda {(selector.FieldOnly ? "field" : "property")}<...>' (Selektor) braucht die Reflection-Bibliothek: #import \"reflection\"", line);
+                    throw new ResolverException($"'lambda {selector.SelectorKind}<...>' (Selektor) braucht die Reflection-Bibliothek: #import \"reflection\"", line);
                 foreach (var target in selector.ParamTypeNames)
                     if (!PrimitiveTypeNames.Contains(target) && !_currentTypeParamNames.ContainsKey(target) && !IsKnownClassName(target))
-                        throw new ResolverException($"Unbekannter Typ '{target}' in 'lambda {(selector.FieldOnly ? "field" : "property")}<{target}>'", line);
+                        throw new ResolverException($"Unbekannter Typ '{target}' in 'lambda {selector.SelectorKind}<{target}>'", line);
                 return;
             }
             if (PrimitiveTypeNames.Contains(tr.BaseName)) return;

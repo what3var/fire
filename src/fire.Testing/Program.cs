@@ -8307,26 +8307,28 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         T.Run()
         """, new[] { "True", "True", "False", "5 4", "50,30,80", "4 17 3 5 True", "2,3" });
 
-    CheckLq("SelectProperty/SelectField: Projektion per Selektor (Feld oder Property bzw. nur Feld), Fehler als ReflectionException", linqHead + """
+    CheckLq("SelectMember/SelectProperty/SelectField: Projektion per Selektor (Feld oder Property / nur Property / nur Feld), Fehler als ReflectionException", linqHead + """
         class Item { string name; int price; int Double { get { return this.price * 2 } } construct(string n, int p) { this.name = n; this.price = p } }
         class T {
             static Run() {
                 var items = [new Item("a", 3), new Item("b", 1)]
-                print(items.SelectProperty(p => p.name).Join(",") + " " + items.SelectProperty(p => p.Double).Join(",") + " " + items.SelectField(p => p.price).Join(","))
+                print(items.SelectMember(p => p.name).Join(",") + " " + items.SelectMember(p => p.Double).Join(",") + " " + items.SelectField(p => p.price).Join(",") + " " + items.SelectProperty(p => p.Double).Join(","))
                 var l = new List(items)
-                print(l.SelectField(p => p.name).Join("") + " " + l.OrderBy(p => p.price).SelectProperty(p => p.name).Join(""))
+                print(l.SelectField(p => p.name).Join("") + " " + l.OrderBy(p => p.price).SelectMember(p => p.name).Join(""))
                 try { items.SelectField(p => p.Double).ToList() } catch (e) { print("1 " + e.message) }
-                try { items.SelectProperty(p => p.nope).ToList() } catch (e) { print("2 " + e.message) }
-                try { items.SelectProperty(p => p.price + 1) } catch (e) { print("3 " + e.message) }
+                try { items.SelectProperty(p => p.price).ToList() } catch (e) { print("2 " + e.message) }
+                try { items.SelectMember(p => p.nope).ToList() } catch (e) { print("3 " + e.message) }
+                try { items.SelectMember(p => p.price + 1) } catch (e) { print("4 " + e.message) }
             }
         }
         T.Run()
         """, new[]
         {
-            "a,b 6,2 3,1", "ab ba",
-            "1 'Double' ist kein Feld, sondern property",
-            "2 'Item' hat kein lesbares Mitglied 'nope'.",
-            "3 Die Lambda ist kein Selektor: sie braucht genau einen Parameter, und ihr Körper darf nur eine Mitgliedskette darauf sein (`c => c.radius`, `p => p.address.city`).",
+            "a,b 6,2 3,1 6,2", "ab ba",
+            "1 'Double' ist eine Property, erwartet (lambda field<...>): ein Feld",
+            "2 'price' ist ein Feld, erwartet (lambda property<...>): eine Property",
+            "3 'nope' ist kein Mitglied",
+            "4 Die Lambda ist kein Selektor: sie braucht genau einen Parameter, und ihr Körper darf nur eine Mitgliedskette darauf sein (`c => c.radius`, `p => p.address.city`).",
         });
 
     CheckLq("## ist ein Synonym fuer !=", """
@@ -8507,15 +8509,15 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             "weiter",
         });
 
-    CheckRf("Selektor: lambda property<T> enthaelt die Reflection des gewaehlten Mitglieds (Get/Set/Describe, verschachtelt, durchgereicht)", """
+    CheckRf("Selektor: lambda member<T> enthaelt die Reflection des gewaehlten Mitglieds (Get/Set/Describe, verschachtelt, durchgereicht)", """
         class Address { string city; construct(string c) { this.city = c } }
         class Person { string name; Address address; construct(string n, Address a) { this.name = n; this.address = a } }
         class W {
-            static Show(lambda property<Person> sel, Person p) {
+            static Show(lambda member<Person> sel, Person p) {
                 print(sel.Name + "=" + sel.Get(p) + " " + sel.Describe(p).TypeName + " " + sel.Path.length)
                 sel.Set(p, "X")
             }
-            static Pass(lambda property<Person> sel, Person p) { W.Show(sel, p) }
+            static Pass(lambda member<Person> sel, Person p) { W.Show(sel, p) }
         }
         var p = new Person("Ann", new Address("Wien"))
         W.Show(q => q.name, p)
@@ -8526,13 +8528,13 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
     CheckRf("Selektor: eine Lambda, die keine reine Mitgliedskette ist, wird abgelehnt", """
         class P { string name }
-        class W { static Show(lambda property<P> sel, P p) { print(sel.Name) } }
+        class W { static Show(lambda member<P> sel, P p) { print(sel.Name) } }
         try { W.Show(q => q.name + "x", new P()) } catch (e) { print("1 " + e.message) }
         try { W.Show(5, new P()) } catch (e) { print("2 " + e.message) }
         """, new[]
         {
             "1 Die Lambda ist kein Selektor: sie braucht genau einen Parameter, und ihr Körper darf nur eine Mitgliedskette darauf sein (`c => c.radius`, `p => p.address.city`).",
-            "2 Ein Selektor ('lambda property<...>') erwartet eine Lambda wie `c => c.radius`, erhalten: Int.",
+            "2 Ein Selektor ('lambda member<...>' o.ä.) erwartet eine Lambda wie `c => c.radius`, erhalten: Int.",
         });
 
     // gepackt: Metadaten und try/catch muessen die Serialisierung ueberleben (catch-Klauseln gingen frueher verloren)
@@ -8647,7 +8649,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         """, new[] { "5 6" });
 
     CheckRf("Reflect.Probe/Silence, Selector.Probe, Handle und Fehler", probeHead + """
-        class W { static Watch(lambda property<C> s, C c) { return s.Probe(c, "changing", (o, n) => n < 10) } }
+        class W { static Watch(lambda member<C> s, C c) { return s.Probe(c, "changing", (o, n) => n < 10) } }
         var c = new C()
         var h = Reflect.Probe(c, "v", "changed", (o, n) => print("r " + o + " " + n))
         c.v = 4
@@ -8670,17 +8672,36 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             "Der Handler einer Probe darf höchstens 4 Parameter haben (Objekt, Name, alt, neu), hat 5.",
         }, debugRelease);
 
-    CheckRf("lambda field<T>: der Selektor muss ein FELD waehlen (lambda property<T> nimmt Felder und Properties)", """
-        class C { int v; int P { get { return 7 } } construct() { this.v = 1 } }
+    CheckRf("Selektor-Arten: field (nur Feld), property (nur Property), member (Feld oder Property), selector (auch Methoden)", """
+        class C { int v; int P { get { return 7 } } Twice(int n) { return n * 2 } construct() { this.v = 1 } }
         class W {
             static F(lambda field<C> s, C c) { return s.Name + "=" + s.Get(c) }
-            static G(lambda property<C> s, C c) { return s.Name + "=" + s.Get(c) }
+            static P(lambda property<C> s, C c) { return s.Name + "=" + s.Get(c) }
+            static M(lambda member<C> s, C c) { return s.Name + "=" + s.Get(c) }
+            static S(lambda selector<C> s, C c) { return s.Name + ":" + s.ActualKind(c) }
+            static Call(lambda selector<> s, C c) { return s.Call(c, [21]) }
+            static GetOnly(lambda selector<C> s, C c) { return s.Get(c) }
         }
         var c = new C()
-        print(W.F(x => x.v, c) + " " + W.G(x => x.v, c) + " " + W.G(x => x.P, c))
+        print(W.F(x => x.v, c) + " " + W.P(x => x.P, c) + " " + W.M(x => x.v, c) + " " + W.M(x => x.P, c))
+        print(W.S(x => x.v, c) + " " + W.S(x => x.P, c) + " " + W.S(x => x.Twice, c) + " " + W.Call(x => x.Twice, c))
         try { W.F(x => x.P, c) } catch (e) { print("1 " + e.message) }
-        try { W.F(x => x.nope, c) } catch (e) { print("2 " + e.message) }
-        """, new[] { "v=1 v=1 P=7", "1 'P' ist kein Feld, sondern property (erwartet: lambda field<...>)", "2 'nope' ist kein Mitglied (erwartet: lambda field<...>)" });
+        try { W.P(x => x.v, c) } catch (e) { print("2 " + e.message) }
+        try { W.M(x => x.Twice, c) } catch (e) { print("3 " + e.message) }
+        try { W.F(x => x.nope, c) } catch (e) { print("4 " + e.message) }
+        try { W.GetOnly(x => x.Twice, c) } catch (e) { print("5 " + e.message) }
+        try { W.Call(x => x.v, c) } catch (e) { print("6 " + e.message) }
+        """, new[]
+        {
+            "v=1 P=7 v=1 P=7",
+            "v:field P:property Twice:method 42",
+            "1 'P' ist eine Property, erwartet (lambda field<...>): ein Feld",
+            "2 'v' ist ein Feld, erwartet (lambda property<...>): eine Property",
+            "3 'Twice' ist eine Methode, erwartet (lambda member<...>): ein Feld oder eine Property",
+            "4 'nope' ist kein Mitglied",
+            "5 'Twice' ist eine Methode - Call(obj, args) ruft sie auf",
+            "6 'v' ist keine Methode",
+        });
 
     Console.WriteLine(rfFailures == 0 ? "Alle Reflection-Pruefungen bestanden." : $"FEHLER: {rfFailures} Reflection-Pruefung(en) fehlgeschlagen.");
 }

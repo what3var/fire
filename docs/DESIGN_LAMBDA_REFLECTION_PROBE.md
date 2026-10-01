@@ -1,6 +1,7 @@
 # Lambda-Ausdrücke, Reflection, `selector` und `probe` - Entwurf
 
 Stand: alle drei Schritte sind umgesetzt (SPEC 4.2.1/8.13/8.14, BYTECODE.md Abschnitt 36/37/38). Der Text unten ist der ursprüngliche Entwurf - maßgeblich sind SPEC und BYTECODE.
+Abweichung bei den Selektoren: es gibt vier Arten (`field`, `property`, `member`, `selector`, SPEC 8.13); `property` meint nur Properties.
 Abweichungen bei `probe`: das Handle ist ein `int`; `silence cfg.sub` (ein Mitglied, das ein Objekt hält) entfernt die Proben dieses Mitglieds, nicht die des Objekts darin (dafür `silence cfg.sub.*`);
 Handler-Argumente nach Parameterzahl (0..4); `silence cfg.*`/`silence cfg` entfernen alle Proben des Objekts.
 
@@ -32,7 +33,7 @@ Alle Zugriffe laufen über dieselben Pfade wie normaler Code (`OpSetFieldSlow`, 
 Eine Lambda, die ein Kind/Mitglied eines Objekts auswählt, als Argument statt eines Namens-Strings:
 
 ```
-Watch(lambda property<Circle> selector, Circle c) {
+Watch(lambda member<Circle> selector, Circle c) {
     print(selector.Name)              // "radius"
     var v = selector.Get(c)           // liest c.radius
     selector.Set(c, 3.0)              // schreibt (Zugriffs-/readonly-Regeln wie überall)

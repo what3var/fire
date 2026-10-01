@@ -685,14 +685,15 @@ namespace fire.Compiler
 
             if (baseName == "lambda")
             {
-                // `lambda property<T>`: ein Selektor (siehe LambdaSignature.IsSelector)
-                if (Check(TokenType.Identifier) && Peek().Lexeme is "property" or "field" && PeekAt(1).Type == TokenType.Lt)
+                // `lambda field|property|member|selector<T>`: ein Selektor (siehe LambdaSignature.IsSelector)
+                if (Check(TokenType.Identifier) && Peek().Lexeme is "field" or "property" or "member" or "selector" && PeekAt(1).Type == TokenType.Lt)
                 {
-                    bool fieldOnly = Advance().Lexeme == "field"; // 'property' bzw. 'field'
+                    string selectorKind = Advance().Lexeme; // 'field', 'property', 'member' oder 'selector'
                     Advance(); // '<'
-                    string targetType = ParseTypeAnnotationName();
-                    Expect(TokenType.Gt, $"Erwarte '>' nach dem Typ von 'lambda {(fieldOnly ? "field" : "property")}<...>'");
-                    return new TypeRef("lambda", null, 0, new LambdaSignature(null, new List<string> { targetType }, IsSelector: true, FieldOnly: fieldOnly), namespaces);
+                    var targetTypes = new List<string>();
+                    if (!Check(TokenType.Gt)) targetTypes.Add(ParseTypeAnnotationName()); // `lambda selector<>`: ohne Typ
+                    Expect(TokenType.Gt, $"Erwarte '>' nach dem Typ von 'lambda {selectorKind}<...>'");
+                    return new TypeRef("lambda", null, 0, new LambdaSignature(null, targetTypes, IsSelector: true, SelectorKind: selectorKind), namespaces);
                 }
                 return new TypeRef("lambda", null, 0, ParseLambdaSignature(returnTypeName: null), namespaces);
             }
