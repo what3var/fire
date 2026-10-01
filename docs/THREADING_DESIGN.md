@@ -352,8 +352,8 @@ keinen Snapshot und keine Kopie mehr:
   bedient das Hauptprogramm die Warteschlange, solange Threads leben, und zerstört erst danach seine Globals; endet es, bevor ein Thread
   fertig ist (z.B. durch eine unbehandelte Exception), werden wartende und künftige Sektionen sofort gewährt.
 - **`sync global { ... }`** (Fire-Thread): der Block läuft als eine Sektion, mit den echten Globals UND den Locals des Threads; Lesen-Ändern-
-  Schreiben ist atomar. Er wird intern zu `try { ... } finally { Sektion beenden }` - `break`/`continue` daraus heraus sind wie bei `try`
-  nicht möglich. Im Hauptprogramm ist der Block einfach ein Block.
+  Schreiben ist atomar. Er wird intern zu `try { ... } finally { Sektion beenden }` - `break`/`continue` daraus heraus sind erlaubt (das `finally`
+  gibt die Sektion dabei frei). Im Hauptprogramm ist der Block einfach ein Block.
 - **`fire global { ... } [taking X ...]`**: wie `sync global`, aber ohne Warten: der Thread reiht einen **Auftrag** ein (ein Lambda mit den
   `taking`-Werten als Parametern, Objekte als Kopie) und läuft sofort weiter. Das Hauptprogramm führt ihn beim nächsten `sync globals` mit den
   echten Globals aus; eine unbehandelte Exception darin geht wie die eines Fire-Threads an `catch threads`. Der Block sieht die Locals des

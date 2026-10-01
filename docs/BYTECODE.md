@@ -1629,3 +1629,12 @@ Siehe docs/THREADING_DESIGN.md Abschnitt 7. Umsetzung (alles in `VM.cs`, Besitze
 - `#nosync` = `NoSyncDirective` (AST) -> der Compiler setzt am Programmanfang `SetAutoSync 0` -> `_autoSync = false`.
 
 Tests: Suite-Blöcke "Callbacks auf dem VM-Thread" (Host-Thread-Callback automatisch/`#nosync`/Exception) und "Globals und Fire-Threads" (Standard-Automatik, `fire global` ohne `sync globals`, `#nosync`).
+
+## 35. `break`/`continue` aus `try`/`catch` heraus
+
+Löst die Einschränkung aus Abschnitt 17 auf (Resolver: `_tryDepth` zählt nur noch umgebende `finally`-Blöcke, je Schleife neu). Der Compiler führt einen `_tryStack` (`TryCompileContext`: Phase Try/Catch, Scope-Tiefe außerhalb,
+Anzahl offener Schleifen beim Betreten); die von der VM erzeugte Catch-Scope zählt in `_currentScopeDepth` mit. `CompileBreakOrContinue` geht die `try`s der aktuellen Schleife von innen nach außen durch: Scopes bis zur Tiefe des
+`try` schließen, im Try-Teil `UnregisterHandler`, im Catch-Teil `ClearPendingResume` + `ExitScope` (wie am normalen catch-Ende), dann das `finally` **inline** (Handler sind schon abgemeldet, ein Fehler darin propagiert normal) -
+zuletzt die restlichen Scopes bis zum Schleifenkörper und der Sprung. Aus dem `finally` selbst bleibt `break`/`continue` ein Resolver-Fehler (das `finally` wird zusätzlich als eigene Funktion für den Ausnahmepfad
+kompiliert, dort gibt es die Schleife nicht). Das gilt auch für `sync global { }` (intern `try`/`finally`). Tests: Suite-Block "Globals und Fire-Threads" (8 Fälle: finally, Locals, Handler-Abmeldung, catch, verschachtelt,
+innere Schleife, Sektion) und der Resolver-Test "break in finally".

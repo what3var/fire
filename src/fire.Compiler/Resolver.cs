@@ -895,7 +895,9 @@ namespace fire.Compiler
                 case WhileStmt ws:
                     ResolveExpr(ws.Condition);
                     _loopDepth++;
+                    int savedFinallyDepth = _tryDepth; _tryDepth = 0;
                     ResolveStmtAsScope(ws.Body);
+                    _tryDepth = savedFinallyDepth;
                     _loopDepth--;
                     break;
 
@@ -925,22 +927,14 @@ namespace fire.Compiler
                     if (_loopDepth == 0)
                         throw new ResolverException("'break' außerhalb einer Schleife ('while'/'for'/'foreach')", bs.Line);
                     if (_tryDepth > 0)
-                        throw new ResolverException(
-                            _innermostTryIsSection
-                                ? "'break' kann nicht aus einem 'sync global { ... }' heraus verwendet werden (der Block ist intern ein 'try'/'finally' - Einschränkung dieser Ausbaustufe, siehe BYTECODE.md)"
-                                : "'break' kann nicht aus einem 'try'/'catch'/'finally' heraus verwendet werden " +
-                                  "(Einschränkung dieser Ausbaustufe - siehe BYTECODE.md)", bs.Line);
+                        throw new ResolverException("'break' kann nicht aus einem 'finally'-Block heraus verwendet werden (Einschränkung dieser Ausbaustufe - siehe BYTECODE.md)", bs.Line);
                     break;
 
                 case ContinueStmt cs:
                     if (_loopDepth == 0)
                         throw new ResolverException("'continue' außerhalb einer Schleife ('while'/'for'/'foreach')", cs.Line);
                     if (_tryDepth > 0)
-                        throw new ResolverException(
-                            _innermostTryIsSection
-                                ? "'continue' kann nicht aus einem 'sync global { ... }' heraus verwendet werden (der Block ist intern ein 'try'/'finally' - Einschränkung dieser Ausbaustufe, siehe BYTECODE.md)"
-                                : "'continue' kann nicht aus einem 'try'/'catch'/'finally' heraus verwendet werden " +
-                                  "(Einschränkung dieser Ausbaustufe - siehe BYTECODE.md)", cs.Line);
+                        throw new ResolverException("'continue' kann nicht aus einem 'finally'-Block heraus verwendet werden (Einschränkung dieser Ausbaustufe - siehe BYTECODE.md)", cs.Line);
                     break;
 
                 case FireStmt fireStmt:
@@ -1055,7 +1049,9 @@ namespace fire.Compiler
             if (fs.Condition != null) ResolveExpr(fs.Condition);
             if (fs.Increment != null) ResolveExpr(fs.Increment);
             _loopDepth++;
+            int savedFinallyDepth = _tryDepth; _tryDepth = 0;
             ResolveStmtAsScope(fs.Body);
+            _tryDepth = savedFinallyDepth;
             _loopDepth--;
             PopScope();
         }
@@ -1066,27 +1062,18 @@ namespace fire.Compiler
             PushScope();
             Define(fe.VarName, fe.Line);
             _loopDepth++;
+            int savedFinallyDepth = _tryDepth; _tryDepth = 0;
             ResolveStmtAsScope(fe.Body);
+            _tryDepth = savedFinallyDepth;
             _loopDepth--;
             PopScope();
         }
 
-        /// <summary>`break`/`continue` dürfen (siehe ResolveStmt) nicht aus
-        /// einem `try`/`catch`/`finally` heraus verwendet werden - deshalb
-        /// wird `_tryDepth` hier für ALLE drei Teile hochgezählt (nicht nur
-        /// den Try-Block selbst). Bewusste Einschränkung: die VM verwaltet
-        /// den registrierten Exception-Handler UND die try-eigenen Scopes
-        /// über eigene Opcodes (RegisterHandler/UnregisterHandler) - ein
-        /// `break`/`continue`-Sprung, der das sauber mit abräumt, wäre ein
-        /// riskanteres, deutlich größeres Stück Arbeit, das hier bewusst
-        /// nicht mit angegangen wird (siehe BYTECODE.md).</summary>
-        private bool _innermostTryIsSection;
-
+        /// <summary>`break`/`continue` dürfen aus dem `try`- und den `catch`-Blöcken heraus verwendet werden (der Compiler räumt Handler und
+        /// Scopes ab und führt ein vorhandenes `finally` vorher aus, siehe Compiler.CompileBreakOrContinue) - aber nicht aus dem `finally`-Block
+        /// selbst: `_tryDepth` zählt deshalb nur noch die umgebenden `finally`-Blöcke (je Schleife neu).</summary>
         private void ResolveTry(TryStmt t)
         {
-            bool savedInnermostIsSection = _innermostTryIsSection;
-            _innermostTryIsSection = t.IsSyncSection;
-            _tryDepth++;
             ResolveBlockNewScope(t.TryBlock);
 
             foreach (var c in t.Catches)
@@ -1102,9 +1089,12 @@ namespace fire.Compiler
                 PopScope();
             }
 
-            if (t.Finally != null) ResolveBlockNewScope(t.Finally);
-            _tryDepth--;
-            _innermostTryIsSection = savedInnermostIsSection;
+            if (t.Finally != null)
+            {
+                _tryDepth++;
+                ResolveBlockNewScope(t.Finally);
+                _tryDepth--;
+            }
         }
 
         // -----------------------------------------------------------

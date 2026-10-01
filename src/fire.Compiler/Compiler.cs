@@ -124,17 +124,64 @@ namespace fire.Compiler
                 _chunk.EmitOp(OpCode.ExitScope);
         }
 
-        /// <summary>Gemeinsame Kompilierung für `break`/`continue`: erst die
-        /// zwischen hier und dem Schleifenkörper-Anfang offenen Scopes
-        /// schließen (siehe EmitScopeUnwindForJump), dann ein unbedingter
-        /// Sprung, dessen Ziel noch nicht feststeht - die Adresse wird in
-        /// der passenden Liste (Break-/ContinueJumpPatchAddrs) gesammelt und
-        /// erst beim Fertigkompilieren der jeweiligen Schleife (CompileWhile/
-        /// CompileFor/CompileForeach) aufgelöst.</summary>
+        private enum TryPhase { Try, Catch }
+
+        /// <summary>Ein gerade kompiliertes `try` (Try- oder Catch-Teil) - Grundlage dafür, dass `break`/`continue` den Handler abräumen und das
+        /// `finally` ausführen. `OuterDepth` = Scope-Tiefe außerhalb des `try`, `LoopCount` = Schleifen, die beim Betreten schon offen waren.</summary>
+        private sealed class TryCompileContext
+        {
+            public TryStmt Stmt = null!;
+            public TryPhase Phase;
+            public int OuterDepth;
+            public int LoopCount;
+        }
+
+        private readonly List<TryCompileContext> _tryStack = new();
+
+        /// <summary>Gemeinsame Kompilierung für `break`/`continue`: verlässt zuerst alle `try`/`catch`-Blöcke, die seit dem Schleifenkörper
+        /// offen sind (von innen nach außen: Scopes schließen, Handler abmelden bzw. Catch-Zustand verwerfen, `finally` inline ausführen),
+        /// schließt dann die restlichen Scopes und springt unbedingt - die Adresse wird in der passenden Liste (Break-/ContinueJumpPatchAddrs)
+        /// gesammelt und beim Fertigkompilieren der jeweiligen Schleife aufgelöst.</summary>
         private void CompileBreakOrContinue(bool isBreak)
         {
             var ctx = _loopStack.Peek();
-            EmitScopeUnwindForJump(ctx);
+            int depth = _currentScopeDepth;      // tatsächliche Tiefe am Sprung; `_currentScopeDepth` selbst bleibt unverändert
+            int savedDepth = _currentScopeDepth;
+            var savedTryStack = _tryStack.ToArray();
+
+            for (int k = _tryStack.Count - 1; k >= 0 && _tryStack[k].LoopCount == _loopStack.Count; k--)
+            {
+                var t = _tryStack[k];
+                int innerTarget = t.Phase == TryPhase.Catch ? t.OuterDepth + 1 : t.OuterDepth; // im Catch-Teil zuerst bis zur Catch-Scope
+                for (; depth > innerTarget; depth--) _chunk.EmitOp(OpCode.ExitScope);
+
+                if (t.Phase == TryPhase.Try)
+                {
+                    _chunk.EmitOp(OpCode.UnregisterHandler);
+                }
+                else
+                {
+                    // wie am normalen Ende des catch-Blocks: Wurfstellen-Zustand verwerfen, Catch-Scope schließen
+                    _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(0);
+                    _chunk.EmitOp(OpCode.ClearPendingResume);
+                    _chunk.EmitOp(OpCode.ExitScope);
+                    depth--;
+                }
+
+                if (t.Stmt.Finally != null)
+                {
+                    // das finally läuft hier inline, außerhalb dieses try (Handler sind schon abgemeldet)
+                    _tryStack.RemoveRange(k, _tryStack.Count - k);
+                    _currentScopeDepth = depth;
+                    CompileBlockNewScope(t.Stmt.Finally);
+                }
+            }
+
+            _tryStack.Clear();
+            _tryStack.AddRange(savedTryStack);
+            _currentScopeDepth = savedDepth;
+
+            for (; depth > ctx.ScopeDepthAtLoopBodyStart; depth--) _chunk.EmitOp(OpCode.ExitScope);
             _chunk.EmitOp(OpCode.Jump);
             (isBreak ? ctx.BreakJumpPatchAddrs : ctx.ContinueJumpPatchAddrs).Add(_chunk.Here);
             _chunk.EmitU16(0);
@@ -1306,7 +1353,10 @@ namespace fire.Compiler
             _chunk.EmitOp(OpCode.RegisterHandler);
             _chunk.EmitU16(templateIdx);
 
+            var tryContext = new TryCompileContext { Stmt = t, Phase = TryPhase.Try, OuterDepth = _currentScopeDepth, LoopCount = _loopStack.Count };
+            _tryStack.Add(tryContext);
             CompileBlockNewScope(t.TryBlock);
+            _tryStack.RemoveAt(_tryStack.Count - 1);
 
             _chunk.EmitOp(OpCode.UnregisterHandler);
 
@@ -1319,7 +1369,13 @@ namespace fire.Compiler
                 int catchAddr = _chunk.Here;
                 template.Catches.Add((c.TypeRef == null ? null : ResolveTypeRef(c.TypeRef), catchAddr));
 
+                // Die von der VM erzeugte Catch-Scope zählt für ein `break`/`continue` im Block mit (siehe CompileBreakOrContinue).
+                tryContext.Phase = TryPhase.Catch;
+                _tryStack.Add(tryContext);
+                _currentScopeDepth++;
                 foreach (var stmt in c.Body.Statements) CompileStmt(stmt);
+                _currentScopeDepth--;
+                _tryStack.RemoveAt(_tryStack.Count - 1);
 
                 // Falls diese Exception nie per resume() fortgesetzt wurde (der
                 // catch-Block also ganz normal hier ankommt), muss der beim

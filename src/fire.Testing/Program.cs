@@ -2295,16 +2295,17 @@ catch (ResolverException ex)
 }
 
 Console.WriteLine();
-Console.WriteLine("=== Bytecode-Test: break in try innerhalb einer Schleife (muss fehlschlagen) ===");
+Console.WriteLine("=== Bytecode-Test: break in finally innerhalb einer Schleife (muss fehlschlagen) ===");
 
 string breakInTrySample = """
 var m = 0
 while (m < 5) {
     m = m + 1
     try {
-        break
+        m = 7
     }
-    catch (e) {
+    finally {
+        break
     }
 }
 """;
@@ -7859,6 +7860,92 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     CheckGl("`sync globals` liefert 0 ohne wartende Threads", """
         print("n " + (sync globals))
         """, new[] { "n 0" });
+
+    // ---- break/continue aus try/catch heraus (der Compiler meldet Handler ab und fuehrt das finally inline aus)
+    CheckGl("break aus try: das finally laeuft, die Schleife endet", """
+        var log = ""
+        for (var i = 0; i < 5; i = i + 1) {
+            try { if (i == 2) { break } log = log + i }
+            finally { log = log + "f" }
+        }
+        print(log)
+        """, new[] { "0f1ff" });
+
+    CheckGl("continue aus try mit Locals und verschachtelten Bloecken", """
+        var sum = 0
+        for (var i = 0; i < 6; i = i + 1) {
+            try { var x = i * 2; if (i % 2 == 0) { var y = 1; continue } sum = sum + x }
+            catch (e) { }
+        }
+        print(sum)
+        """, new[] { "18" });
+
+    CheckGl("break aus try meldet den Handler ab: eine spaetere Exception faengt der aeussere catch", """
+        class Exception { string message; construct(string message) { this.message = message } }
+        try {
+            while (true) { try { break } catch (e) { print("innen") } }
+            throw new Exception("aussen")
+        } catch (e) { print("gefangen " + e.message) }
+        """, new[] { "gefangen aussen" });
+
+    CheckGl("break aus catch (mit finally und eigenen Locals im catch)", """
+        class Exception { string message; construct(string message) { this.message = message } }
+        var log = ""
+        var i = 0
+        while (i < 5) {
+            i = i + 1
+            try { if (i == 3) { throw new Exception("drei") } log = log + i }
+            catch (e) { var m = e.message; log = log + m; break }
+            finally { log = log + "f" }
+        }
+        print(log + " " + i)
+        """, new[] { "1f2fdreif 3" });
+
+    CheckGl("continue aus catch", """
+        class Exception { string message; construct(string message) { this.message = message } }
+        var n = 0
+        for (var i = 0; i < 4; i = i + 1) {
+            try { throw new Exception("x") }
+            catch (e) { n = n + 1; continue }
+            n = n + 100
+        }
+        print(n)
+        """, new[] { "4" });
+
+    CheckGl("break aus zwei verschachtelten try: die finally laufen von innen nach aussen", """
+        var log = ""
+        while (true) {
+            try {
+                try { break } finally { log = log + "a" }
+            } finally { log = log + "b" }
+        }
+        print(log)
+        """, new[] { "ab" });
+
+    CheckGl("break in einer inneren Schleife im try beruehrt das aeussere try nicht", """
+        var log = ""
+        try {
+            for (var i = 0; i < 3; i = i + 1) { try { break } finally { log = log + "i" } }
+            log = log + "x"
+        } finally { log = log + "o" }
+        print(log)
+        """, new[] { "ixo" });
+
+    CheckGl("break/continue aus `sync global { }`: die Sektion wird freigegeben", """
+        var total = 0
+        var done = 0
+        fire {
+            for (var i = 0; i < 10; i = i + 1) {
+                sync global { if (i == 3) { break } total = total + 1 }
+            }
+            for (var j = 0; j < 4; j = j + 1) {
+                sync global { if (j % 2 == 0) { continue } total = total + 10 }
+            }
+            sync global { done = 1 }
+        }
+        while (done == 0) { sync globals }
+        print("total " + total)
+        """, new[] { "total 23" });
 
     Console.WriteLine(glFailures == 0 ? "Alle Globals-Pruefungen bestanden." : $"FEHLER: {glFailures} Globals-Pruefung(en) fehlgeschlagen.");
 }

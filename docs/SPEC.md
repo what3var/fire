@@ -666,12 +666,10 @@ stehen; alle dazwischenliegenden Scopes werden dabei sauber geschlossen.
 - Eine verschachtelte Lambda "sieht" die Schleife einer umschließenden
   Funktion nicht – `break`/`continue` innerhalb einer Lambda sind nur
   gültig, wenn die Lambda SELBST eine Schleife umschließt.
-- `break`/`continue` dürfen **nicht** aus einem `try`/`catch`/`finally`
-  heraus verwendet werden, auch wenn die Schleife außerhalb des `try`
-  liegt – das ist ein Fehler. (Grund: die `catch`-Exception-Umgebung wird
-  von der Bytecode-VM selbst verwaltet, ein sauberer Sprung müsste dort
-  zusätzlich den registrierten Exception-Handler abmelden – das ist in
-  dieser Ausbaustufe bewusst nicht umgesetzt, siehe BYTECODE.md.)
+- `break`/`continue` dürfen aus dem `try`- und den `catch`-Blöcken heraus verwendet werden: der
+  Exception-Handler wird abgemeldet und ein vorhandenes `finally` läuft vor dem Sprung (bei mehreren
+  verschachtelten `try` von innen nach außen). Nur aus dem `finally`-Block selbst heraus sind sie ein
+  Fehler (eine Schleife IM `finally` darf natürlich `break`/`continue` benutzen).
 
 ### 5.11 Operator-Überladung
 
