@@ -674,7 +674,18 @@ namespace fire.Compiler
             }
 
             if (baseName == "lambda")
+            {
+                // `lambda property<T>`: ein Selektor (siehe LambdaSignature.IsSelector)
+                if (Check(TokenType.Identifier) && Peek().Lexeme == "property" && PeekAt(1).Type == TokenType.Lt)
+                {
+                    Advance(); // 'property'
+                    Advance(); // '<'
+                    string targetType = ParseTypeAnnotationName();
+                    Expect(TokenType.Gt, "Erwarte '>' nach dem Typ von 'lambda property<...>'");
+                    return new TypeRef("lambda", null, 0, new LambdaSignature(null, new List<string> { targetType }, IsSelector: true), namespaces);
+                }
                 return new TypeRef("lambda", null, 0, ParseLambdaSignature(returnTypeName: null), namespaces);
+            }
 
             // 'byte' ist reines Sugar für 'int[8]' (siehe SPEC 8.10) - eine
             // explizite Bitbreite DANACH wäre widersprüchlich/redundant und

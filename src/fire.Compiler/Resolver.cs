@@ -639,6 +639,15 @@ namespace fire.Compiler
             // echter Typname zu validieren, der Typ wird ja aus dem
             // Initialisierer/Kontext hergeleitet (siehe TypeRef.IsInferred-Doku).
             if (tr.IsInferred) return;
+            if (tr.LambdaSignature is { IsSelector: true } selector)
+            {
+                if (!_classes.ContainsKey("Reflect"))
+                    throw new ResolverException("'lambda property<...>' (Selektor) braucht die Reflection-Bibliothek: #import \"reflection\"", line);
+                foreach (var target in selector.ParamTypeNames)
+                    if (!PrimitiveTypeNames.Contains(target) && !_currentTypeParamNames.ContainsKey(target) && !IsKnownClassName(target))
+                        throw new ResolverException($"Unbekannter Typ '{target}' in 'lambda property<{target}>'", line);
+                return;
+            }
             if (PrimitiveTypeNames.Contains(tr.BaseName)) return;
             if (_currentTypeParamNames.ContainsKey(tr.BaseName)) return;
             if (!IsKnownClassName(ResolveTypeRef(tr)))

@@ -77,6 +77,8 @@ namespace fire.Runtime
                     natives.Register("print", args => debugWriter(args));
             }
             natives.RegisterBaseTypeNatives();
+            if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
+                ReflectionNatives.Register(natives);
 
             var session = new Session(linkedProgram.Program);
 

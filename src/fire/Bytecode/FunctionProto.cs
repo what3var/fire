@@ -35,6 +35,10 @@ namespace fire.Bytecode
         /// gebundenes 'this' läuft.</summary>
         public bool IsStatic { get; set; }
 
+        /// <summary>Besteht der Körper einer Lambda mit genau einem Parameter nur aus einer Mitgliedskette auf diesem Parameter
+        /// (`c => c.radius`, `p => p.address.city`), die Namen von außen nach innen - sonst null. Grundlage des Lambda-Typs `selector`.</summary>
+        public string[]? SelectorPath { get; set; }
+
         public FunctionProto(Chunk chunk, int paramCount, AccessModifier? access, IReadOnlyList<FunctionProto?>? paramDefaults = null, bool isStatic = false)
         {
             Chunk = chunk;

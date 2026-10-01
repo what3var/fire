@@ -8160,6 +8160,218 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     Console.WriteLine(lqFailures == 0 ? "Alle Lambda-/LINQ-Pruefungen bestanden." : $"FEHLER: {lqFailures} Lambda-/LINQ-Pruefung(en) fehlgeschlagen.");
 }
 
+// ---------------------------------------------------------------------------
+// Reflection (#import "reflection"): Typ-Beschreibungen, Get/Set/Call/New, Zugriffsregeln, Selektoren
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Reflection ===");
+    int rfFailures = 0;
+
+    List<string> RunRf(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var natives = NativeRegistry.CreateDefault();
+        natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        fire.Runtime.ReflectionNatives.Register(natives);
+        var sources = new List<string> { fire.Standard.Prelude.Source, fire.Standard.ReflectionPrelude.Source, script };
+        var program = Parser.ParseMultiple(sources
+            .Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                fire.Compiler.RuntimeSession.CreateProjectDirectiveRegistry())).ToList());
+        var compiled = Compiler.Compile(program, Resolver.Resolve(program, natives.Names), natives);
+        VM.ResetTerminateForTests();
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
+        vm.Run();
+        VM.ResetTerminateForTests();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    // Wie ein gepacktes Programm: kompilieren, serialisieren, wieder laden, mit der gepackten Runtime ausfuehren
+    List<string> RunRfPacked(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var linked = new fire.Compiler.Linker().CompileAndLink(new[] { script }, null, null, mode);
+        var restored = Packer.Deserialize(MemoryPack.MemoryPackSerializer.Serialize(linked))!;
+        VM.ResetTerminateForTests();
+        var session = fire.Runtime.Session.Build(restored, mode, args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        session.Run();
+        VM.ResetTerminateForTests();
+        return lines;
+    }
+
+    void CheckRf(string title, string script, string[] expected, VmExecutionMode[]? modes = null, bool packed = false)
+    {
+        foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            try { actual = (packed ? RunRfPacked(script, mode) : RunRf(script, mode)).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + CompileErrors.Describe(ex) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) rfFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    var debugRelease = new[] { VmExecutionMode.Debug, VmExecutionMode.Release };
+
+    const string shapes = """
+        class Shape {
+            string name
+            construct(string name) { this.name = name }
+            string Describe() { return "shape " + this.name }
+        }
+        class Circle : Shape {
+            float radius
+            private int secret
+            readonly int id
+            float w : mm = 5mm
+            construct(float radius) : base("circle") { this.radius = radius; this.secret = 42; this.id = 7 }
+            float Diameter { get { return this.radius * 2 } set { this.radius = value / 2 } }
+            float Area() { return this.radius * this.radius * 3 }
+            Scale(float f, int times) { this.radius = this.radius * f }
+            private Hidden() { return "hidden" }
+            int PeekSecret() { return Reflect.Get(this, "secret") }
+        }
+
+        """;
+
+    CheckRf("Type.Of: Name, Basisklasse, Mitglieder mit Art, Zugriff, Typ, Einheit, readonly, Herkunft", shapes + """
+        var t = Type.Of(new Circle(5.0))
+        print(t.Name + " : " + t.Base.Name)
+        foreach (m in t.All) { print(m.Kind + " " + m.Access + " " + m.TypeName + " " + m.Name + " " + m.ParamCount() + " " + m.DeclaredIn + " " + m.IsReadonly + " " + m.Unit) }
+        """, new[]
+        {
+            "Circle : Shape",
+            "field public float radius 0 Circle False ",
+            "field private int secret 0 Circle False ",
+            "field public int id 0 Circle True ",
+            "field public float w 0 Circle False mm",
+            "constructor public  Circle 1 Circle False ",
+            "property public float Diameter 0 Circle False ",
+            "method public float Area 0 Circle False ",
+            "method public  Scale 2 Circle False ",
+            "method private  Hidden 0 Circle False ",
+            "method public int PeekSecret 0 Circle False ",
+            "field public string name 0 Shape False ",
+            "method public string Describe 0 Shape False ",
+        });
+
+    CheckRf("Type: Find/Has/Fields/Properties/Methods/Interfaces, Named und IsSubclassOf", shapes + """
+        interface IThing { Ping() }
+        class Thing : Circle, IThing { construct() : base(1.0) { } Ping() { return 1 } }
+        var t = Type.Of("Thing")
+        print(t.Base.Name + " " + t.Interfaces.length + " " + t.Interfaces[0])
+        print(t.Fields().count + " " + t.Properties().count + " " + t.Methods().count + " " + t.Constructors().count)
+        print(t.Has("radius") + " " + t.Has("nope") + " " + t.Find("Diameter").CanWrite + " " + t.Find("Area").IsMethod())
+        print(t.IsSubclassOf(Type.Of("Shape")) + " " + Type.Of("Shape").IsSubclassOf(t) + " " + (Type.Named("Gibts") == undefined))
+        """, new[] { "Circle 1 IThing", "5 1 6 1", "True False True True", "True False True" }, debugRelease);
+
+    CheckRf("Get/Set/Call/New: Felder, Properties, geerbte Methoden, Konstruktion", shapes + """
+        var c = new Circle(5.0)
+        print(Reflect.Get(c, "radius"))
+        Reflect.Set(c, "radius", 6.0)
+        print(Reflect.Get(c, "Diameter") + " " + Reflect.Has(c, "Area") + " " + Reflect.Has(c, "nope"))
+        Reflect.Set(c, "Diameter", 20.0)
+        print(c.radius)
+        print(Reflect.Call(c, "Area", []) + " " + Reflect.Call(c, "Describe", []))
+        Reflect.Call(c, "Scale", [2.0, 1])
+        print(c.radius)
+        var c2 = Reflect.New("Circle", [2.0])
+        print(c2.radius + " " + c2.Describe())
+        var m = Type.Of(c).Find("radius")
+        m.Set(c, 1.5)
+        print(m.Get(c))
+        """, new[] { "5", "12 True False", "10", "300 shape circle", "20", "2 shape circle", "1.5" });
+
+    CheckRf("Zugriffsregeln: private/readonly/Einheit gelten auch fuer die Reflection (aus der Klasse selbst ist private erlaubt)", shapes + """
+        var c = new Circle(5.0)
+        try { Reflect.Get(c, "secret") } catch (e) { print("1 " + e.message) }
+        try { Reflect.Call(c, "Hidden", []) } catch (e) { print("2 " + e.message) }
+        try { Reflect.Set(c, "id", 9) } catch (e) { print("3 " + e.message) }
+        try { Reflect.Set(c, "w", 5.0) } catch (e) { print("4 Einheit") }
+        print(c.PeekSecret())
+        """, new[]
+        {
+            "1 Feld 'secret' von 'Circle' ist private und von hier aus nicht zugreifbar.",
+            "2 'Hidden' von 'Circle' ist private und von hier aus nicht zugreifbar.",
+            "3 Das Feld 'id' von 'Circle' ist 'readonly' und lässt sich nicht zuweisen.",
+            "4 Einheit",
+            "42",
+        }, debugRelease);
+
+    CheckRf("Fehler sind fangbare ReflectionExceptions; Exceptions aus Getter/Methode laufen zum aeusseren catch", """
+        class Exception { string message; construct(string message) { this.message = message } }
+        class P {
+            int n
+            int Age { get { throw new Exception("kein Alter") } }
+            Boom() { throw new Exception("boom") }
+        }
+        var p = new P()
+        try { Reflect.Get(p, "nope") } catch (e) { print("1 " + e.message) }
+        try { Reflect.Set(p, "Age", 1) } catch (e) { print("2 " + e.message) }
+        try { Reflect.Call(p, "Nope", []) } catch (e) { print("3 " + e.message) }
+        try { Reflect.Get(5, "x") } catch (e) { print("4 " + e.message) }
+        try { Reflect.New("Gibts", []) } catch (e) { print("5 " + e.message) }
+        try { Reflect.Get(p, "Age") } catch (e) { print("6 " + e.message) }
+        try { Reflect.Call(p, "Boom", []) } catch (e) { print("7 " + e.message) }
+        print("weiter")
+        """, new[]
+        {
+            "1 'P' hat kein lesbares Mitglied 'nope'.",
+            "2 Die Property 'Age' von 'P' hat keinen Setter (nur 'get').",
+            "3 'P' hat keine Methode 'Nope' mit 0 Parameter(n).",
+            "4 Reflect.Get: erwartet ein Objekt, erhalten: Int.",
+            "5 Unbekannte Klasse 'Gibts'.",
+            "6 kein Alter",
+            "7 boom",
+            "weiter",
+        });
+
+    CheckRf("Selektor: lambda property<T> enthaelt die Reflection des gewaehlten Mitglieds (Get/Set/Describe, verschachtelt, durchgereicht)", """
+        class Address { string city; construct(string c) { this.city = c } }
+        class Person { string name; Address address; construct(string n, Address a) { this.name = n; this.address = a } }
+        class W {
+            static Show(lambda property<Person> sel, Person p) {
+                print(sel.Name + "=" + sel.Get(p) + " " + sel.Describe(p).TypeName + " " + sel.Path.length)
+                sel.Set(p, "X")
+            }
+            static Pass(lambda property<Person> sel, Person p) { W.Show(sel, p) }
+        }
+        var p = new Person("Ann", new Address("Wien"))
+        W.Show(q => q.name, p)
+        W.Show(q => q.address.city, p)
+        W.Pass(q => q.address.city, p)
+        print(p.name + " " + p.address.city)
+        """, new[] { "name=Ann string 1", "city=Wien string 2", "city=X string 2", "X X" });
+
+    CheckRf("Selektor: eine Lambda, die keine reine Mitgliedskette ist, wird abgelehnt", """
+        class P { string name }
+        class W { static Show(lambda property<P> sel, P p) { print(sel.Name) } }
+        try { W.Show(q => q.name + "x", new P()) } catch (e) { print("1 " + e.message) }
+        try { W.Show(5, new P()) } catch (e) { print("2 " + e.message) }
+        """, new[]
+        {
+            "1 Die Lambda ist kein Selektor: sie braucht genau einen Parameter, und ihr Körper darf nur eine Mitgliedskette darauf sein (`c => c.radius`, `p => p.address.city`).",
+            "2 Ein Selektor ('lambda property<...>') erwartet eine Lambda wie `c => c.radius`, erhalten: Int.",
+        });
+
+    // gepackt: Metadaten und try/catch muessen die Serialisierung ueberleben (catch-Klauseln gingen frueher verloren)
+    CheckRf("Gepacktes Programm: Typ-Metadaten, Zugriffsregeln und try/catch ueberleben die Serialisierung", """
+        #import "reflection"
+        class Exception { string message; construct(string message) { this.message = message } }
+        class A { float r; private int s; construct() { this.r = 1.5; this.s = 3 } }
+        var t = Type.Of(new A())
+        foreach (m in t.All) { print(m.Access + " " + m.TypeName + " " + m.Name) }
+        try { Reflect.Get(new A(), "s") } catch (e) { print("privat") }
+        try { throw new Exception("x") } catch (e) { print("gefangen") }
+        """, new[] { "public float r", "private int s", "public  A", "privat", "gefangen" }, debugRelease, packed: true);
+
+    Console.WriteLine(rfFailures == 0 ? "Alle Reflection-Pruefungen bestanden." : $"FEHLER: {rfFailures} Reflection-Pruefung(en) fehlgeschlagen.");
+}
+
 static int CountOccurrences(string haystack, string needle)
 {
     int count = 0, idx = 0;

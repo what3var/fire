@@ -254,6 +254,10 @@ namespace fire.Compiler
         /// ausgewertet.</summary>
         private readonly List<CompilerException> _errors;
 
+        /// <summary>Nutzt das Programm die Reflection-Bibliothek (`#import "reflection"`)? Dann schreibt der Compiler die deklarierten Typen als
+        /// <see cref="ClassMeta"/> mit und markiert die Klassen der Bibliothek.</summary>
+        private bool Reflection => _natives.Has(fire.Standard.ReflectionPrelude.MembersNative);
+
         /// <summary>Für die Kompilierung eines Lambda-/Methoden-/Konstruktor-Bodys
         /// in einen eigenen Chunk (FunctionProto): teilt sich die Resolver-
         /// Referenzen und die Native-Registry mit dem äußeren Compiler, baut aber
@@ -364,12 +368,87 @@ namespace fire.Compiler
         // -----------------------------------------------------------
         // Klassen (Vorab-Pass: Name -> RuntimeClass, analog zum Resolver)
         // -----------------------------------------------------------
+        /// <summary>Der Typ so, wie er im Quelltext stand (`int`, `Circle`, `lambda<int>`, `float[]`), "" ohne Angabe.</summary>
+        private static string TypeText(TypeRef? type, int extraArrayRank = 0)
+        {
+            if (type == null || type.IsInferred) return "";
+            string text = type.LambdaSignature is { IsSelector: true } sel ? "lambda property<" + string.Join(", ", sel.ParamTypeNames) + ">" : type.ToString();
+            return text + string.Concat(Enumerable.Repeat("[]", type.ArrayRank + extraArrayRank));
+        }
+
+        private static string AccessText(AccessModifier access) => access switch
+        {
+            AccessModifier.Private => "private",
+            AccessModifier.Protected => "protected",
+            _ => "public",
+        };
+
+        /// <summary>Die Reflection-Metadaten einer Klasse: was die Laufzeit sonst nicht behält (Typnamen, Parameternamen, `readonly`, Property-Form).</summary>
+        private static ClassMeta BuildClassMeta(ClassDecl cd)
+        {
+            var meta = new ClassMeta();
+            if (cd.BaseRefs != null)
+                foreach (var b in cd.BaseRefs) meta.BaseNames.Add(b.BaseName);
+
+            static void AddParams(MemberMeta m, IReadOnlyList<LambdaParam> parms)
+            {
+                foreach (var p in parms)
+                {
+                    m.ParamNames.Add(p.Name);
+                    m.ParamTypes.Add(TypeText(p.Type, p.ArrayRanks.Count));
+                }
+            }
+
+            foreach (var member in cd.Members)
+            {
+                switch (member)
+                {
+                    case FieldDecl f:
+                        meta.Members.Add(new MemberMeta
+                        {
+                            Name = f.Name, Kind = "field", TypeName = TypeText(f.Type, f.ArrayRanks.Count), Access = AccessText(f.Access),
+                            IsStatic = f.IsStatic, IsReadonly = f.IsReadonly, Unit = f.Type?.Unit ?? "",
+                        });
+                        break;
+                    case PropertyDecl pd:
+                        meta.Members.Add(new MemberMeta
+                        {
+                            Name = pd.Name, Kind = "property", TypeName = TypeText(pd.Type), Access = AccessText(pd.Access),
+                            IsStatic = pd.IsStatic, CanRead = pd.Getter != null, CanWrite = pd.Setter != null, Unit = pd.Type?.Unit ?? "",
+                        });
+                        break;
+                    case MethodDecl md:
+                        {
+                            var m = new MemberMeta { Name = md.Name, Kind = "method", TypeName = TypeText(md.ReturnType), Access = AccessText(md.Access), IsStatic = md.IsStatic };
+                            AddParams(m, md.Params);
+                            meta.Members.Add(m);
+                            break;
+                        }
+                    case ConstructorDecl ctor:
+                        {
+                            var m = new MemberMeta { Name = cd.Name, Kind = "constructor", Access = AccessText(ctor.Access) };
+                            AddParams(m, ctor.Params);
+                            meta.Members.Add(m);
+                            break;
+                        }
+                }
+            }
+            return meta;
+        }
+
         private Dictionary<string, RuntimeClass> CompileClasses(IReadOnlyList<Stmt> program)
         {
             var classes = new Dictionary<string, RuntimeClass>();
             foreach (var stmt in program)
                 if (stmt is ClassDecl cd)
+                {
                     classes[cd.Name] = new RuntimeClass(cd.Name, cd);
+                    if (Reflection)
+                    {
+                        classes[cd.Name].Meta = BuildClassMeta(cd);
+                        classes[cd.Name].IsReflectionHelper = fire.Standard.ReflectionPrelude.HelperClasses.Contains(cd.Name);
+                    }
+                }
 
             // Basis-Verknüpfung getrennt, da Basisklassen im Quelltext später
             // stehen können als die abgeleitete Klasse (Vorwärtsreferenz). Der
@@ -595,6 +674,23 @@ namespace fire.Compiler
             {
                 var sig = parms[i].Type?.LambdaSignature;
                 if (sig == null) continue;
+                if (sig.IsSelector)
+                {
+                    // `lambda property<T> name`: der Parameter wird durch die Reflection des gewählten Mitglieds ersetzt:
+                    // name = Reflect.SelectorOf(name)
+                    inner._chunk.EmitOp(OpCode.LoadLocal);
+                    inner._chunk.EmitU16(0);
+                    inner._chunk.EmitU16((ushort)i);
+                    inner._chunk.EmitOp(OpCode.CallStaticMethod);
+                    inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString("Reflect")));
+                    inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString("SelectorOf")));
+                    inner._chunk.EmitByte(1);
+                    inner._chunk.EmitOp(OpCode.StoreLocal);
+                    inner._chunk.EmitU16(0);
+                    inner._chunk.EmitU16((ushort)i);
+                    inner._chunk.EmitOp(OpCode.Pop);
+                    continue;
+                }
                 inner._chunk.EmitOp(OpCode.LoadLocal);
                 inner._chunk.EmitU16(0);
                 inner._chunk.EmitU16((ushort)i);
@@ -1649,6 +1745,22 @@ namespace fire.Compiler
         /// Auswertung DIESER LambdaExpr zur Laufzeit (MakeLambda) erzeugt einen
         /// neuen LambdaValue, der denselben Proto wiederverwendet - nur das
         /// 'on'-Target kann sich pro Auswertung unterscheiden.</summary>
+        /// <summary>`c => c.radius` / `p => p.address.city`: ein Parameter, der Körper nur eine Mitgliedskette darauf - die Namen von außen nach innen.</summary>
+        private static string[]? TrySelectorPath(LambdaExpr lambda)
+        {
+            if (lambda.Params.Count != 1 || lambda.Body.Statements.Count != 1 || lambda.Body.Statements[0] is not ReturnStmt { Value: { } value })
+                return null;
+            var path = new List<string>();
+            while (value is MemberExpr member)
+            {
+                path.Add(member.Name);
+                value = member.Target;
+            }
+            if (path.Count == 0 || value is not IdentifierExpr root || root.Name != lambda.Params[0].Name) return null;
+            path.Reverse();
+            return path.ToArray();
+        }
+
         private void CompileLambda(LambdaExpr lambda)
         {
             var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames, _errors);
@@ -1667,6 +1779,7 @@ namespace fire.Compiler
             inner._chunk.EmitOp(OpCode.Return);
 
             var proto = new FunctionProto(inner._chunk, lambda.Params.Count, AccessModifier.Public, CompileParamDefaults(_enclosingClass, lambda.Params));
+            if (Reflection) proto.SelectorPath = TrySelectorPath(lambda);
             int protoIdx = _chunk.AddFunctionProto(proto);
 
             // Lambda-Captures (SPEC 4.2): die Werte der benutzten äußeren Locals werden JETZT geladen (Kopie), im umschließenden Scope.

@@ -19,5 +19,8 @@ namespace fire.Runtime
 
         /// <summary>Die Abfrage-Bibliothek (`Linq.From(...).Where(...)`, reiner fire-Quelltext, siehe fire.Standard.LinqPrelude).</summary>
         public static string Linq => "linq";
+
+        /// <summary>Die Reflection-Bibliothek (`Type.Of(obj)`, `Reflect.Get(...)`, siehe fire.Standard.ReflectionPrelude, native Seite: fire.Runtime.ReflectionNatives).</summary>
+        public static string Reflection => "reflection";
     }
 }

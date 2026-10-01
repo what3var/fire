@@ -36,6 +36,7 @@ namespace fire.Compiler
             "io" => NativeImports.IO,
             "ui" => NativeImports.Ui,
             "linq" => NativeImports.Linq,
+            "reflection" => NativeImports.Reflection,
             _ => throw new Exception($"'{name}' ist keine bekannte Erweiterung."),
         };
 
@@ -57,6 +58,7 @@ namespace fire.Compiler
             "io" => IoBridge.PreludeSource,
             "ui" => UiBridge.PreludeSource,
             "linq" => fire.Standard.LinqPrelude.Source,
+            "reflection" => fire.Standard.ReflectionPrelude.Source,
             _ => null,
         };
 
@@ -102,6 +104,13 @@ namespace fire.Compiler
             {
                 // reiner fire-Quelltext, keine nativen Funktionen
                 processedSources.Insert(1, preprocess(fire.Standard.LinqPrelude.Source));
+                inserted++;
+            }
+
+            if (nativeImports.Contains(NativeImports.Reflection))
+            {
+                processedSources.Insert(1, preprocess(fire.Standard.ReflectionPrelude.Source));
+                ReflectionNatives.Register(natives); // beim Übersetzen zählen nur die Namen (der Compiler schreibt daraufhin Typ-Metadaten mit)
                 inserted++;
             }
 

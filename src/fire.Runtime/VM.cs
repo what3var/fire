@@ -121,7 +121,7 @@ namespace fire.Runtime
         }
     }
 
-    public sealed class VM : IDestructRunner
+    public sealed partial class VM : IDestructRunner
     {
         // Der gerade laufende Chunk samt Array-Kopien von Code/Konstanten (siehe Chunk.CodeArray) - jede
         // Zuweisung an _currentChunk (Aufruf, Return, Exception-Sprung, ...) aktualisiert sie mit.
@@ -1949,10 +1949,14 @@ namespace fire.Runtime
         }
         }
 
-        private void OpGetFieldSlow(int site, int fieldNameIdx)
+        private void OpGetFieldSlow(int site, int fieldNameIdx) => GetFieldSlowCore(_constants[fieldNameIdx].AsString(), site);
+
+        /// <summary>Feldzugriff `target.fieldName` (Wert OBEN auf dem Stack) samt Zugriffsprüfung und Property-Getter - der Langsam-Pfad von
+        /// GetField, auch für die Reflection (site &lt; 0: kein Inline-Cache). true, wenn das Ergebnis auf dem Stack liegt; false, wenn
+        /// stattdessen eine Exception in einen Handler umgeleitet wurde.</summary>
+        private bool GetFieldSlowCore(string fieldName, int site)
         {
         {
-            string fieldName = _constants[fieldNameIdx].AsString();
             var target = Pop();
 
             // `Length` ist die Schreibweise der Eigenschaften (wie bei `string`),
@@ -1962,7 +1966,7 @@ namespace fire.Runtime
                 if (fieldName is "Length" or "length")
                 {
                     Push(Value.MakeInt(target.AsString().Length));
-                    return;
+                    return true;
                 }
                 throw new InvalidOperationException($"Zeichenketten haben kein Feld '{fieldName}' (nur 'Length').");
             }
@@ -1972,7 +1976,7 @@ namespace fire.Runtime
                 if (fieldName is "Length" or "length")
                 {
                     Push(Value.MakeInt(target.AsArray().Length));
-                    return;
+                    return true;
                 }
                 throw new InvalidOperationException($"Arrays haben kein Feld '{fieldName}' (nur 'Length').");
             }
@@ -1983,12 +1987,12 @@ namespace fire.Runtime
                 if (fieldName is "Length" or "length")
                 {
                     Push(Value.MakeInt(buf.Length));
-                    return;
+                    return true;
                 }
                 if (fieldName == "littleEndian")
                 {
                     Push(Value.MakeBool(buf.Order == ByteOrder.Little));
-                    return;
+                    return true;
                 }
                 throw new InvalidOperationException(
                     $"Byte-Puffer haben kein Feld '{fieldName}' (nur 'Length', 'littleEndian').");
@@ -2006,13 +2010,13 @@ namespace fire.Runtime
                         ThrowAccessDenied(
                             $"Feld '{fieldName}' von '{declaringRcGet.Name}' ist {DescribeAccess(accessGet)} " +
                             "und von hier aus nicht zugreifbar.");
-                        return;
+                        return false;
                     }
                 }
-                if (obj.RtClass != null && obj.ThreadLock == null && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int getIndex))
+                if (site >= 0 && obj.RtClass != null && obj.ThreadLock == null && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int getIndex))
                     StoreSite(site, new SiteCache(obj.RtClass, null, getIndex));
                 Push(val);
-                return;
+                return true;
             }
 
             // Kein Feld dieses Namens - Property-Getter versuchen
@@ -2024,7 +2028,7 @@ namespace fire.Runtime
             {
                 var result = CallMethodNested(obj, "get_" + fieldName, Array.Empty<Value>());
                 if (result != null) Push(result.Value);
-                return;
+                return result != null;
             }
 
             throw new InvalidOperationException(
@@ -2058,7 +2062,11 @@ namespace fire.Runtime
         }
         }
 
-        private void OpSetFieldSlow(int site, int fieldNameIdx)
+        private void OpSetFieldSlow(int site, int fieldNameIdx) => SetFieldSlow(_constants[fieldNameIdx].AsString(), site);
+
+        /// <summary>`obj.fieldName = value` (Stack: obj, value) - Langsam-Pfad von SetField, auch für die Reflection (site &lt; 0: kein
+        /// Inline-Cache). true, wenn der zugewiesene Wert auf dem Stack liegt; false bei einer in einen Handler umgeleiteten Exception.</summary>
+        private bool SetFieldSlow(string fieldName, int site)
         {
             // Ein Fire-Thread ändert ein Objekt des geteilten Bereichs nur in einer Sektion (siehe GlobalsBroker).
             if (_threadBroker != null && _sectionDepth == 0
@@ -2066,17 +2074,15 @@ namespace fire.Runtime
                 && ((ObjectInstance)sectionTarget.AsObjectRef()).InGlobalsDomain)
             {
                 EnterGlobalsSection();
-                try { OpSetFieldSlowCore(site, fieldNameIdx); }
+                try { return SetFieldSlowCore(fieldName, site); }
                 finally { ExitGlobalsSection(); }
-                return;
             }
-            OpSetFieldSlowCore(site, fieldNameIdx);
+            return SetFieldSlowCore(fieldName, site);
         }
 
-        private void OpSetFieldSlowCore(int site, int fieldNameIdx)
+        private bool SetFieldSlowCore(string fieldName, int site)
         {
         {
-            string fieldName = _constants[fieldNameIdx].AsString();
             var value = Pop();
             var obj = RequireObjectInstance(Pop(), "Feldzuweisung");
 
@@ -2091,7 +2097,7 @@ namespace fire.Runtime
                         ThrowAccessDenied(
                             $"Feld '{fieldName}' von '{declaringRcSet.Name}' ist {DescribeAccess(accessSet)} " +
                             "und von hier aus nicht zugreifbar.");
-                        return;
+                        return false;
                     }
 
                     // SPEC "Einheiten-Deklarationen" - Feldzugriff ist
@@ -2110,16 +2116,16 @@ namespace fire.Runtime
                         if (!actualUnit.Equals(requiredUnit))
                         {
                             ThrowUnitMismatch(requiredUnitName, actualUnit);
-                            return;
+                            return false;
                         }
                     }
                 }
-                if (!hasUnitRule && obj.RtClass != null && obj.ThreadLock == null
+                if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.ThreadLock == null
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
                     StoreSite(site, new SiteCache(obj.RtClass, null, setIndex));
                 obj.SetFieldLocked(fieldName, value);
                 Push(value);
-                return;
+                return true;
             }
 
             // Kein existierendes Feld dieses Namens - Property-Setter
@@ -2134,7 +2140,7 @@ namespace fire.Runtime
                 // per Exception umgeleitet (siehe CallMethodNested-
                 // Doku) - dann NICHT pushen.
                 if (result != null) Push(value);
-                return;
+                return result != null;
             }
 
             // Eine gleichnamige Property MIT Getter, aber OHNE Setter,
@@ -2152,7 +2158,7 @@ namespace fire.Runtime
             // Vorab-Deklarationspflicht für Felder).
             obj.SetFieldLocked(fieldName, value);
             Push(value);
-            return;
+            return true;
         }
         }
 
@@ -4509,6 +4515,12 @@ namespace fire.Runtime
             try
             {
                 result = _natives[nativeIdx](args);
+                if (_nativeRedirected)
+                {
+                    // Die native Funktion (Reflection) hat eine Exception ausgelöst, die schon in einen Handler umgeleitet ist
+                    _nativeRedirected = false;
+                    return false;
+                }
                 return true;
             }
             catch (NativeIndexOutOfRangeException ex)
@@ -4585,6 +4597,8 @@ namespace fire.Runtime
             if (access == AccessModifier.Public) return true;
 
             var callerRc = _currentChunk.OwnerClass;
+            // Läuft der Zugriff über die Reflection-Bibliothek (`Reflect.Get` &amp; Co.), zählt der Code, der sie aufgerufen hat
+            if (callerRc is { IsReflectionHelper: true }) callerRc = ReflectionCallerClass();
             if (callerRc == null) return false;
 
             if (access == AccessModifier.Private)

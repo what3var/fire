@@ -72,6 +72,12 @@ namespace fire.Bytecode
         /// RuntimeClass gesetzt (siehe Compiler.CompileClasses).</summary>
         public bool IsActor { get; set; }
 
+        /// <summary>Deklarierte Typen/Signaturen für die Reflection (nur wenn das Programm `#import "reflection"` nutzt), sonst null.</summary>
+        public ClassMeta? Meta { get; set; }
+
+        /// <summary>Klasse der Reflection-Bibliothek (`Reflect`, `Type`, `Member`, `Selector`): für die Zugriffsprüfung zählt der Aufrufer DAVOR.</summary>
+        public bool IsReflectionHelper { get; set; }
+
         public List<(string Name, FunctionProto Init)> Fields { get; }
 
         /// <summary>Zugriffsmodifikator jedes in DIESER Klasse selbst

@@ -1,7 +1,7 @@
 # Lambda-Ausdrücke, Reflection, `selector` und `probe` - Entwurf
 
-Stand: Schritt 1 (Captures, Kurzsyntax, LINQ) ist umgesetzt (siehe SPEC 4.2.1, BYTECODE.md Abschnitt 36). Schritt 2 (Reflection samt `selector`) und
-Schritt 3 (`probe`/`silence`) sind hier festgehalten, so wie sie abgestimmt wurden.
+Stand: Schritt 1 (Captures, Kurzsyntax, LINQ) und Schritt 2 (Reflection samt `selector`) sind umgesetzt (siehe SPEC 4.2.1/8.13, BYTECODE.md Abschnitt 36/37).
+Schritt 3 (`probe`/`silence`) ist hier festgehalten, so wie er abgestimmt wurde. Die Beschreibung von Schritt 2 unten ist der ursprüngliche Entwurf - maßgeblich ist SPEC 8.13.
 
 ## Entscheidungen
 

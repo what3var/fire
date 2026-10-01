@@ -318,6 +318,8 @@ class T {
 
 ### 4.3 Lambda-Typen mit Signatur
 
+(`lambda property<T> name` - ein Selektor, der ein Mitglied eines Objekts auswählt - steht in 8.13.)
+
 ```
 class Runner {
     Execute(lambda<int> callback, int x) {
@@ -1756,6 +1758,55 @@ Eine Position außerhalb des erlaubten Bereichs wirft `IndexOutOfBoundsException
 Der Editor kennt diese Methoden aus dem Prelude (und auch die eigenen Erweiterungen des Nutzers): `text.`
 schlägt sie vor, und die Typen der Ergebnisse (`Trim()` → string, `Split()` → string[], `IndexOf()` → int,
 …) laufen durch Methodenketten.
+
+### 8.13 Reflection (`#import "reflection"`)
+
+Klassen und ihre Mitglieder lassen sich zur Laufzeit beschreiben und über ihren **Namen** benutzen. Die Bibliothek ist reiner fire-Quelltext über ein paar native Funktionen
+(`fire.Standard.ReflectionPrelude`, `fire.Runtime.ReflectionNatives`); bei Programmen ohne den Import entsteht kein Mehraufwand, und der Compiler schreibt die Typ-Metadaten (`ClassMeta`) nur mit,
+wenn er sie braucht.
+
+```
+#import "reflection"
+
+var t = Type.Of(circle)                 // oder Type.Of("Circle"); Type.Named("Gibts") liefert undefined statt zu werfen
+print(t.Name + " : " + t.Base.Name)     // Circle : Shape
+foreach (m in t.All) { print(m.Kind + " " + m.Access + " " + m.TypeName + " " + m.Name) }
+
+Reflect.Get(circle, "radius")           Reflect.Set(circle, "Diameter", 20.0)      // Felder UND Properties
+Reflect.Call(circle, "Scale", [2.0, 1]) Reflect.New("Circle", [5.0])
+Reflect.Has(circle, "Area")
+t.Find("radius").Get(circle)            // Member.Get/Set/Call(obj, ...)
+```
+
+- **`Type`**: `Name`, `Base` (ein `Type` oder `undefined`), `IsActor`, `Interfaces` (Namen), `All` (alle `Member`, auch geerbte; eine abgeleitete Klasse verdeckt gleichnamige der Basis, Konstruktoren nur die eigenen),
+  `Fields()`/`Properties()`/`Methods()`/`Constructors()`, `Find(name)`/`Has(name)`, `IsSubclassOf(type)`, `New(args)`; `Type.Of(x)`, `Type.Named(name)`, `Type.Names()`.
+- **`Member`**: `Name`, `Kind` (`"field"`, `"property"`, `"method"`, `"constructor"`), `TypeName` (der deklarierte Typ wie im Quelltext, bei Methoden der Rückgabetyp, `""` ohne Angabe), `Access` (`"public"`/`"private"`/`"protected"`),
+  `IsStatic`, `IsReadonly`, `CanRead`/`CanWrite` (Properties), `Unit` (geforderte Einheit), `DeclaredIn`, `ParamNames`/`ParamTypes`, `ParamCount()`, dazu `Get(obj)`, `Set(obj, wert)`, `Call(obj, args)`.
+- **Regeln:** Reflection umgeht nichts, sie läuft durch dieselben Pfade wie normaler Code. `private`/`protected` gelten für den Code, der die Bibliothek **aufgerufen** hat (aus einer Methode der Klasse selbst ist `Reflect.Get(this, "secret")`
+  erlaubt, von außen nicht: `AccessDeniedException`; im Modus `Performance` entfällt die Prüfung wie überall); ein `readonly`-Feld lässt sich nicht zuweisen; Einheiten werden geprüft (`UnitMismatchException`); Property-Accessoren
+  laufen als normale Methoden (eine Exception darin läuft zum äußeren `catch`); für Objekte der Globals gelten die Sektionsregeln (THREADING_DESIGN.md Abschnitt 7).
+- **Fehler** sind fangbare **`ReflectionException`** (`message`): unbekanntes oder nicht lesbares/beschreibbares Mitglied, falsche Argumentzahl, kein Objekt, unbekannte Klasse.
+- **Grenzen:** Statische Mitglieder stehen in der Beschreibung, lassen sich aber nicht über `Reflect` lesen/schreiben/aufrufen. `Reflect.New` baut über eine verschachtelte Ausführung: wirft ein Konstruktor eine Exception, ist das ein
+  interner Fehler statt einer fangbaren Exception. Dynamisch angelegte Felder (ohne Deklaration) erscheinen nicht in `Type`, `Reflect.Has` kennt sie.
+
+#### Selektoren: `lambda property<T> name`
+
+Ein Parameter mit dem Typ `lambda property<T>` nimmt eine Lambda entgegen, die ein Mitglied **auswählt**; im Körper enthält der Parameter dann die **Reflection des gewählten Mitglieds** (einen `Selector`), nicht die Lambda:
+
+```
+class Watch {
+    static Show(lambda property<Circle> sel, Circle c) {
+        print(sel.Name + " = " + sel.Get(c))       // radius = 5
+        sel.Set(c, 3.0)
+        print(sel.Describe(c).TypeName)             // float (das `Member`)
+    }
+}
+Watch.Show(c => c.radius, myCircle)
+```
+
+`Selector`: `Name` (das gewählte Mitglied), `Path` (alle Namen, bei `p => p.address.city`: `address`, `city`), `Parent(obj)`, `Get(obj)`, `Set(obj, wert)`, `Describe(obj)` (das `Member`). Die Lambda muss genau einen Parameter haben, und ihr
+Körper darf nur eine **Mitgliedskette auf diesem Parameter** sein; alles andere ist eine `ReflectionException` ("Die Lambda ist kein Selektor ..."). Wird ein schon umgewandelter Selektor an einen weiteren `lambda property<T>`-Parameter
+weitergereicht, bleibt er unverändert. Das `T` ist Dokumentation/Prüfung gegen den Klassennamen im Resolver; die Instanz wird zur Laufzeit nicht gegen `T` geprüft. Ohne `#import "reflection"` ist der Typ ein Fehler.
 
 ## 9. Offene Punkte
 

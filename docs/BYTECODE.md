@@ -1663,3 +1663,28 @@ Abschluss `ToList/ToArray/First/FirstOrDefault/Last/ElementAt/Any/All/Count/Sum/
 (aus einer Tabelle erzeugt). Arrays: `Linq.From(array).…` (Arrays sind nicht erweiterbar). Leere Folgen: `LinqEmptyException`.
 
 Tests: Suite-Block "Lambda-Captures und LINQ" (Kurzsyntax, Capture-Semantik, Verdecken, Globals, Zuweisungsfehler, Objekte, `return` im `foreach`, LINQ in vier Gruppen) und der angepasste Resolver-Test.
+
+## 37. Reflection und Selektoren
+
+**Metadaten.** `ClassMeta`/`MemberMeta` (`fire/Bytecode/ClassMeta.cs`) hängen als `RuntimeClass.Meta` an jeder Klasse und halten, was die Laufzeit sonst verliert: deklarierte Typnamen (Feld, Property, Rückgabe, Parameter), Parameternamen,
+`readonly`, Property-Form (`CanRead`/`CanWrite`), `IsStatic`, Zugriff, Einheit, Basisnamen. Der Compiler (`BuildClassMeta`) schreibt sie nur mit, wenn die native Funktion `__refl_members` registriert ist (`#import "reflection"`,
+`Compiler.Reflection`) - ohne den Import bleibt alles wie vorher. MemoryPack serialisiert sie mit (gepackte Programme). Dieselbe Bedingung setzt `RuntimeClass.IsReflectionHelper` für `Reflect`, `Type`, `Member`, `Selector`.
+
+**Aufrufer für Zugriffsprüfungen.** `IsMemberAccessAllowed` nimmt `_currentChunk.OwnerClass`; ist das eine Reflection-Klasse, läuft `ReflectionCallerClass()` die `_frames` von oben nach unten ab und liefert die erste Klasse, die keine
+ist (der Code, der `Reflect.Get` & Co. aufgerufen hat, auch über `Member.Get` → `Reflect.Get`). Nur im Nicht-Public-Pfad, kein Mehraufwand sonst.
+
+**Zugriff nach Namen.** Die Langsam-Pfade von `GetField`/`SetField` sind in `GetFieldSlowCore(name, site)`/`SetFieldSlow(name, site)` herausgelöst (liefern `true`, wenn das Ergebnis auf dem Stack liegt, `false` bei einer in einen Handler umgeleiteten Exception;
+`site < 0` = kein Inline-Cache): die Opcodes und `VM.ReflectGet/ReflectSet` (`VM.Reflection.cs`, `partial class VM`) teilen sich damit Zugriffsprüfung, Einheiten, Property-Accessoren und die Sektionsregeln der Globals. `ReflectCall` ruft über
+`CallMethodNested` (bzw. `CallGlobalsMethodInSection`), `ReflectNew` über `ConstructNested` (mit Zugriffsprüfung am Konstruktor).
+
+**Native Funktionen mit Umleitung.** Löst eine native Funktion eine Exception aus (`ReflectFail` baut eine `ReflectionException` und ruft `ThrowException`), liegt die Ausführung schon im Handler: `_nativeRedirected` sagt
+`CallNativeGuarded`, dass kein Ergebnis zu pushen ist (wie bei `NativeIndexOutOfRangeException`). Dasselbe gilt, wenn ein Getter/eine Methode in einen äußeren Handler umgeleitet wird.
+
+**Selektoren.** `LambdaSignature.IsSelector` (Parser: `lambda property<T>`), `FunctionProto.SelectorPath` (`TrySelectorPath`: ein Parameter, Körper nur `ReturnStmt` einer `MemberExpr`-Kette auf ihm). `EmitLambdaParamChecks` emittiert für einen
+Selector-Parameter am Funktionsanfang `LoadLocal; CallStaticMethod Reflect.SelectorOf; StoreLocal; Pop` (der Parameter wird ersetzt); `Reflect.SelectorOf` baut über `__refl_selector_path` ein `Selector`-Objekt. Der Resolver verlangt die Klasse
+`Reflect` (sonst "braucht ... #import \"reflection\"") und kennt `T`.
+
+**Nebenbei behoben.** `HandlerTemplate.Catches` war eine Nur-Lese-Eigenschaft und wurde von MemoryPack nicht mitgeschrieben: in einem **gepackten** Programm gab es dadurch keine einzige `catch`-Klausel (eine Exception beendete das Programm
+still). Jetzt `{ get; set; }`; der Test "Gepacktes Programm ..." sichert es. Außerdem druckte `print` der gepackten Runtime nur Strings (`AsString`), jetzt wie die Befehlszeile jeden Wert.
+
+Tests: Suite-Block "Reflection" (Typ-Beschreibung, Find/Has/Interfaces, Get/Set/Call/New, Zugriffsregeln, Fehler und umgeleitete Exceptions, Selektoren inkl. Fehlerfälle, gepackter Rundlauf).

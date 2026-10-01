@@ -22,7 +22,7 @@ namespace fire.Bytecode
     [MemoryPackable]
     public sealed partial class HandlerTemplate
     {
-        public List<(string? TypeName, int CatchAddr)> Catches { get; } = new();
+        public List<(string? TypeName, int CatchAddr)> Catches { get; set; } = new();
         public int? FinallyProtoIdx { get; set; }
     }
 }

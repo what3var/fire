@@ -130,6 +130,8 @@ namespace fire.Compiler
                     natives.Register("print", args => debugWriter(args));
             }
             natives.RegisterBaseTypeNatives();
+            if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
+                ReflectionNatives.Register(natives);
 
             FramebufferManager? fbManager = null;
             ConsoleManager? consoleManager = null;
