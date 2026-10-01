@@ -33,6 +33,11 @@ namespace fire.Ast
     /// Dateianfang).</summary>
     public sealed record NoShadowDirective(int Source, int Line) : Stmt(Source, Line);
 
+    /// <summary>`#nosync` (docs/THREADING_DESIGN.md Abschnitt 7): das Hauptprogramm arbeitet die Warteschlange seiner Fire-Threads (und eingehende
+    /// Host-Callbacks) NICHT mehr selbst an sicheren Punkten ab, sondern nur noch bei einem ausdrücklichen `sync globals`. Wirkt fürs ganze
+    /// Programm (der Compiler emittiert dafür ganz am Anfang `SetAutoSync 0`); muss eine Top-Level-Anweisung sein.</summary>
+    public sealed record NoSyncDirective(int Source, int Line) : Stmt(Source, Line);
+
     /// <summary>Ein einzelnes Enum-Mitglied. ValueExpr fehlt -> Wert ist der
     /// des Vorgängers + 1 (0 beim ersten Mitglied) - klassisches C-artiges
     /// Auto-Increment. Wenn gesetzt, MUSS ValueExpr ein Int-Literal sein (vom

@@ -946,8 +946,9 @@ daran, ob direkt nach `try` eine `{` folgt (Block) oder nicht (Ausdruck).
   Lambda-Feldern oder Verweisen auf fremde Objekte sind als Globals kein Problem, und `leave`/`terminate` im Callback wirken auf das Programm. Eine unbehandelte Exception im Callback bricht nur den
   Callback ab (ein `try`/`catch` um den auslösenden Aufruf sieht sie nicht): sie geht als Text an `onUnhandled`, das Programm läuft weiter. Wie bei Destruktoren und Properties wird während eines
   verschachtelten Callbacks nicht auf `leave`/`terminate` anderer Threads geprüft (erst danach).
-- **Auf einem Thread ohne laufende VM** (ein Host-Thread, z.B. ein Seriell-Ereignis) wäre der Zugriff auf die Globals ein Datenrennen: dort gilt die isolierte Kopie wie unten beschrieben
-  (`FireRuntime.CallCallback`).
+- **Auf einem Thread ohne laufende VM** (ein Host-Thread, z.B. ein Seriell-Ereignis) wäre der Zugriff auf die Globals ein Datenrennen: der Callback wird deshalb dem Hauptprogramm **eingereiht**
+  (`VM.PostCallback`, über `RunCallback(..., owner)`) und dort - automatisch an einem sicheren Punkt oder bei `sync globals`, mit `#nosync` nur dann - mit den echten Globals ausgeführt. Läuft das
+  Hauptprogramm nicht (mehr), gilt die isolierte Kopie wie unten beschrieben (`FireRuntime.CallCallback`).
 
 Der Rest dieses Abschnitts beschreibt diesen isolierten Fall.
 

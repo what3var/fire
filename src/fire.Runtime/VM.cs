@@ -522,8 +522,61 @@ namespace fire.Runtime
             finally { ExitGlobalsSection(); }
         }
 
-        /// <summary>`sync globals` im Hauptprogramm: arbeitet die Warteschlange ab (Sektionen erteilen, Aufträge ausführen).</summary>
-        private int SyncGlobalsNow() => _ownerBroker?.Drain() ?? 0;
+        /// <summary>`sync globals` im Hauptprogramm: arbeitet ab, was Fire-Threads angemeldet haben (Sektionen erteilen, Aufträge ausführen) und
+        /// was Host-Threads als Callback eingereiht haben. Liefert die Anzahl der Einträge.</summary>
+        private int SyncGlobalsNow() => DrainInbound() + (_ownerBroker?.Drain() ?? 0);
+
+        // ---- Callbacks von Host-Threads (z.B. ein Seriell-Ereignis): sie laufen NICHT auf dem fremden Thread, sondern werden hier eingereiht
+        // und vom Hauptprogramm ausgeführt - bei `sync globals` oder (ohne `#nosync`) automatisch an einem sicheren Punkt. So sehen sie die echten
+        // Globals, und es gibt keinen nebenläufigen Zugriff darauf.
+
+        private readonly record struct InboundCallback(LambdaValue Lambda, Value[] Args, Action<string>? OnUnhandled);
+        private readonly System.Collections.Concurrent.ConcurrentQueue<InboundCallback> _inbound = new();
+        private volatile bool _acceptingCallbacks;
+
+        /// <summary>Soll das Hauptprogramm die Warteschlange an sicheren Punkten selbst abarbeiten? Vorgabe ja; `#nosync` schaltet es ab.</summary>
+        private bool _autoSync = true;
+
+        /// <summary>Nimmt ein Callback eines BELIEBIGEN Threads entgegen (threadsicher) und reiht es für diese VM ein. false, wenn die VM nicht (mehr)
+        /// läuft - dann hat der Aufrufer einen anderen Weg zu wählen.</summary>
+        public bool PostCallback(LambdaValue lambda, Value[] args, Action<string>? onUnhandled)
+        {
+            if (!_acceptingCallbacks) return false;
+            _inbound.Enqueue(new InboundCallback(lambda, args, onUnhandled));
+            RaiseSignal();
+            FireRuntime.WakeWaitingOwner();
+            return true;
+        }
+
+        private int DrainInbound()
+        {
+            int handled = 0;
+            while (_inbound.TryDequeue(out var callback))
+            {
+                handled++;
+                try
+                {
+                    var error = CallLambdaInline(callback.Lambda, callback.Args);
+                    if (error != null) callback.OnUnhandled?.Invoke(new UncaughtScriptException(error).Message);
+                }
+                catch (Exception ex)
+                {
+                    callback.OnUnhandled?.Invoke(ex.Message);
+                }
+                if (_stopExecutionRequested) break;
+            }
+            return handled;
+        }
+
+        /// <summary>Automatisches Abarbeiten an einem sicheren Punkt (nicht in verschachtelter Ausführung, nicht mit `#nosync`): erst Host-Callbacks, dann
+        /// die Sektionen und Aufträge der Fire-Threads. true, wenn das Programm dabei beendet wurde (`leave`/`terminate` in einem Auftrag).</summary>
+        private bool AutoSyncNow()
+        {
+            if (!_autoSync || _nestedDepth > 0) return false;
+            if (!_inbound.IsEmpty) DrainInbound();
+            if (!_stopExecutionRequested && _ownerBroker != null && _ownerBroker.HasPending) _ownerBroker.Drain();
+            return _stopExecutionRequested;
+        }
 
         /// <summary>Führt einen `fire global`-Auftrag auf dieser (der Besitzer-)VM aus. Eine unbehandelte Exception darin wird wie die eines
         /// Fire-Threads behandelt: sie geht an das Hauptprogramm (`catch threads`), sonst bricht es ab.</summary>
@@ -603,7 +656,7 @@ namespace fire.Runtime
             return chunk;
         }
 
-        private static void RaiseSignal() => System.Threading.Interlocked.Increment(ref s_signalEpoch);
+        internal static void RaiseSignal() => System.Threading.Interlocked.Increment(ref s_signalEpoch);
 
         /// <summary>Beendet die Ausführung dieser VM: merkt den Stopp vor und springt auf den Halt-Chunk. Aufrufer müssen danach
         /// sofort aus ihrer Instruktion zurückkehren (wie nach ThrowException).</summary>
@@ -635,6 +688,7 @@ namespace fire.Runtime
             if (_seenEpoch == System.Threading.Volatile.Read(ref s_signalEpoch) || _nestedDepth > 0) return;
             _seenEpoch = System.Threading.Volatile.Read(ref s_signalEpoch);
             if (CheckShutdownSignals()) StopExecution();
+            else AutoSyncNow(); // Host-Callbacks und Fire-Threads, die auf das Hauptprogramm warten (siehe `#nosync`)
         }
 
         private bool PollSignalsSlow()
@@ -653,7 +707,9 @@ namespace fire.Runtime
                 return true;
             }
             _ip++;
-            return false;
+            // Host-Callbacks und Fire-Threads, die auf das Hauptprogramm warten (siehe `#nosync`): an der Stelle, die der Aufrufer gleich
+            // fortsetzt, läuft die Abarbeitung verschachtelt und kehrt unverändert hierher zurück.
+            return AutoSyncNow();
         }
 
         /// <summary>Der `leave`-/`terminate`-Aufruf der eigenen VM: sie geht SOFORT in den Halt, unabhängig davon, ob das Signal
@@ -692,9 +748,11 @@ namespace fire.Runtime
         public void Run()
         {
             _currentThreadVm = this;
+            _acceptingCallbacks = true;
             try { RunLoop(); }
             finally
             {
+                _acceptingCallbacks = false; // Host-Callbacks nehmen danach den anderen Weg
                 _currentThreadVm = null; // ein später auf diesem Thread feuernder Callback sucht keine beendete VM
                 _ownerBroker?.Close();   // kein Besitzer mehr: wartende Fire-Threads werden freigegeben
             }
@@ -994,6 +1052,7 @@ namespace fire.Runtime
                 _currentThreadVm = this;
                 _ip = 0;
                 _steppingStarted = true;
+                _acceptingCallbacks = true;
             }
 
             var op = (OpCode)ReadByte();
@@ -1003,9 +1062,12 @@ namespace fire.Runtime
                 if ((!_stopExecutionRequested || _shutdownReleasePending) && DestroyGlobalsAtEnd) ReleaseGlobalScopeAfterStop(_shutdownReleasePending);
                 _shutdownReleasePending = false;
                 IsHalted = true;
+                _acceptingCallbacks = false;
                 return false;
             }
             Step(op);
+            if (_autoSync && _nestedDepth == 0 && !_stopExecutionRequested && (!_inbound.IsEmpty || (_ownerBroker != null && _ownerBroker.HasPending)))
+                AutoSyncNow();
 
             // Eine unbehandelte Skript-Exception wird seit UnhandledException
             // (siehe dort) nicht mehr geworfen, sondern nur noch GESETZT -
@@ -1022,6 +1084,7 @@ namespace fire.Runtime
                 if (_shutdownReleasePending && DestroyGlobalsAtEnd) ReleaseGlobalScopeAfterStop(true);
                 _shutdownReleasePending = false;
                 IsHalted = true;
+                _acceptingCallbacks = false;
                 return false;
             }
 
@@ -3465,6 +3528,10 @@ namespace fire.Runtime
 
                 case OpCode.SyncGlobals:
                     Push(Value.MakeInt(SyncGlobalsNow()));
+                    break;
+
+                case OpCode.SetAutoSync:
+                    _autoSync = ReadByte() != 0;
                     break;
 
                 case OpCode.SectionEnter:

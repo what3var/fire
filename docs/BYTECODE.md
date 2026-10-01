@@ -1614,3 +1614,18 @@ der eines Fire-Threads an die Warteschlange der Thread-Exceptions (`catch thread
 Tests: Suite-Block "Globals und Fire-Threads" (14 Fälle in drei Modi: direktes Lesen, atomare Methoden und Blöcke, Locals im Block, `fire global` mit Wert/Objekt, Programmende ohne `sync globals`, Exception im Block, Arrays,
 statische Felder, verschachtelte Threads).
 
+
+## 34. Automatisches Abarbeiten, `#nosync`, Host-Callbacks in der Warteschlange
+
+Siehe docs/THREADING_DESIGN.md Abschnitt 7. Umsetzung (alles in `VM.cs`, Besitzer = Hauptprogramm-VM):
+
+- `SyncGlobalsNow()` (= `sync globals`) liefert `DrainInbound()` + `GlobalsBroker.Drain()`.
+- `PostCallback(lambda, args, onUnhandled)` (threadsicher, von jedem Thread) reiht ein `InboundCallback` in eine `ConcurrentQueue` und hebt das Signal; es liefert false, wenn die VM nicht läuft (`_acceptingCallbacks`
+  ist nur während `Run()`/Einzelschritt gesetzt). `FireRuntime.RunCallback(..., owner)` nimmt diesen Weg für Threads ohne VM und fällt sonst auf die isolierte Kopie zurück; beide `RuntimeSession.CallLambda` übergeben
+  die Haupt-VM.
+- `GlobalsBroker.EnterSection`/`PostJob` rufen `VM.RaiseSignal()` (globale Epoche), damit der Besitzer es an seinem nächsten sicheren Punkt bemerkt.
+- `AutoSyncNow()` (nicht in verschachtelter Ausführung, nur bei `_autoSync`) wird von `PollSignalsAfterOp` und `PollSignalsSlow` gerufen, also an denselben Punkten wie die Shutdown-Signale, und im Einzelschritt
+  nach jeder Instruktion (`StepInstruction`). Kein Mehraufwand im Normalfall: dieselbe Epochen-Prüfung wie bisher (Benchmark vor/nach 852/866 ms vs. 854/855 ms, Performance).
+- `#nosync` = `NoSyncDirective` (AST) -> der Compiler setzt am Programmanfang `SetAutoSync 0` -> `_autoSync = false`.
+
+Tests: Suite-Blöcke "Callbacks auf dem VM-Thread" (Host-Thread-Callback automatisch/`#nosync`/Exception) und "Globals und Fire-Threads" (Standard-Automatik, `fire global` ohne `sync globals`, `#nosync`).

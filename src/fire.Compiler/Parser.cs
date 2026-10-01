@@ -943,11 +943,18 @@ namespace fire.Compiler
                 return new NoShadowDirective(_sourceIndex, line);
             }
 
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "nosync")
+            {
+                Advance();
+                ExpectStatementTerminator();
+                return new NoSyncDirective(_sourceIndex, line);
+            }
+
             // '#using' ist ab jetzt reine Preprocessor-Angelegenheit (siehe
             // Preprocessing.Preprocessor.ProcessInner/ProcessedSource) - eine
             // '#using'-Zeile wird dort schon erkannt und aus dem Text entfernt,
             // der Parser sieht sie nie mehr. Kein Fall dafür hier mehr nötig.
-            throw Error($"Unbekannte Präprozessor-Direktive '#{Peek().Lexeme}' (bekannt: '#extern \"libName\"', '#noshadow')", Peek());
+            throw Error($"Unbekannte Präprozessor-Direktive '#{Peek().Lexeme}' (bekannt: '#extern \"libName\"', '#noshadow', '#nosync')", Peek());
         }
 
         private Stmt ParseUnsafeStmt()

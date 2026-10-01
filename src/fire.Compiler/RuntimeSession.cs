@@ -76,7 +76,7 @@ namespace fire.Compiler
         public void CallLambda(LambdaValue lambda, Value[] args)
         {
             FireRuntime.RunCallback(lambda, args, nativeRegistry, CompiledProgram.Classes, () => VirtualMachine.SnapshotGlobals(),
-                message => Console.WriteLine($"(unbehandelte Exception im Callback: {message})"));
+                message => Console.WriteLine($"(unbehandelte Exception im Callback: {message})"), owner: VirtualMachine);
         }
 
         /// <summary>Baut die DirectiveRegistry, die reale Programme (siehe

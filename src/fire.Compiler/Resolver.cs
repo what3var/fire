@@ -854,6 +854,9 @@ namespace fire.Compiler
                     // eingesammelt - hier nichts mehr zu tun.
                     break;
 
+                case NoSyncDirective:
+                    break; // wirkt erst zur Laufzeit (siehe Compiler.Compile: SetAutoSync)
+
                 case VarDeclStmt vd:
                     if (vd.Initializer != null) ResolveExpr(vd.Initializer);
                     if (vd.Type != null) ValidateTypeRef(vd.Type, vd.Line);

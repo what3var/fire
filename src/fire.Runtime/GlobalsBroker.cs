@@ -85,6 +85,7 @@ namespace fire.Runtime
                 if (_closed) return null;
                 _queue.Enqueue(request);
             }
+            VM.RaiseSignal(); // das Hauptprogramm bemerkt es an seinem naechsten sicheren Punkt (siehe VM.AutoSyncNow)
             FireRuntime.WakeWaitingOwner();
             request.Granted.Wait();
             return request;
@@ -105,6 +106,7 @@ namespace fire.Runtime
                 if (_closed) { holder.Release(NullDestructRunner.Instance); return; }
                 _queue.Enqueue(new JobRequest { Lambda = lambda, Args = args, Holder = holder });
             }
+            VM.RaiseSignal(); // das Hauptprogramm bemerkt es an seinem naechsten sicheren Punkt (siehe VM.AutoSyncNow)
             FireRuntime.WakeWaitingOwner();
         }
 

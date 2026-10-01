@@ -146,6 +146,7 @@ namespace fire.Bytecode
         SectionEnter,   //                : `sync global { ` - ein Fire-Thread meldet sich an und wartet, bis das Hauptprogramm die Sektion erteilt
                         //                  (im Hauptprogramm wirkungslos); Gegenstück SectionExit steht im `finally` des Blocks
         SectionExit,    //                : beendet die Sektion
+        SetAutoSync,    // u8 on        : `#nosync` (on = 0) schaltet das automatische Abarbeiten der Warteschlange an sicheren Punkten ab (wird am Programmanfang emittiert)
         PostGlobal,     // u8 argCount   : `fire global { ... }`: pop Lambda, pop argCount Argumente; reiht das Lambda (Objekt-Argumente als Kopie)
                         //                  als Auftrag für das Hauptprogramm ein, der bei dessen nächstem `sync globals` läuft; der Aufrufer wartet nicht
     }

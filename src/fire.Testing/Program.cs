@@ -7467,7 +7467,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var fbManager = new fire.Terminal.FramebufferManager();
         var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
         var winManager = new fire.Terminal.Windows.WindowManager(fbManager,
-            (l, v) => FireRuntime.RunCallback(l, v, natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode),
+            (l, v) => FireRuntime.RunCallback(l, v, natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode, vm),
             () => renderer);
         fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, winManager);
 
@@ -7477,7 +7477,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         // fuehrt das gemerkte Lambda auf einem ANDEREN Thread ohne laufende VM aus (wie ein Host-Ereignis)
         natives.Register("__RunKeptOnOtherThread", args =>
         {
-            var t = new Thread(() => FireRuntime.RunCallback(kept[0], Array.Empty<Value>(), natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode));
+            var t = new Thread(() => FireRuntime.RunCallback(kept[0], Array.Empty<Value>(), natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode, vm));
             t.Start();
             t.Join();
             return Value.MakeUndefined();
@@ -7600,12 +7600,27 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print("nie")
         """, new[] { "~G" });
 
-    CheckCb("Ohne laufende VM (anderer Thread) bleibt der Callback isoliert: er arbeitet auf einer Kopie", cbHead + """
+    CheckCb("Host-Thread-Callback wird dem Hauptprogramm eingereiht und automatisch an einem sicheren Punkt ausgefuehrt (echte Globals)", cbHead + """
         var counter = 0
         __Keep(func () => { counter = counter + 1; print("cb " + counter) })
         __RunKeptOnOtherThread()
         print("counter " + counter)
-        """, new[] { "cb 1", "counter 0" });
+        """, new[] { "cb 1", "counter 1" });
+
+    CheckCb("Mit #nosync wartet der Host-Thread-Callback auf `sync globals`", "#nosync\n" + cbHead + """
+        var counter = 0
+        __Keep(func () => { counter = counter + 1; print("cb " + counter) })
+        __RunKeptOnOtherThread()
+        print("vorher " + counter)
+        var n = sync globals
+        print("nachher " + counter + " " + n)
+        """, new[] { "vorher 0", "cb 1", "nachher 1 1" });
+
+    CheckCb("Host-Thread-Callback: eine unbehandelte Exception geht als Text an den Host, das Hauptprogramm laeuft weiter", cbHead + """
+        __Keep(func () => { throw new Exception("kaputt") })
+        __RunKeptOnOtherThread()
+        print("weiter")
+        """, new[] { "CB: Unbehandelte Exception vom Typ 'Exception': kaputt", "weiter" });
 
     Console.WriteLine(cbFailures == 0 ? "Alle Callback-Pruefungen bestanden." : $"FEHLER: {cbFailures} Callback-Pruefung(en) fehlgeschlagen.");
 }
@@ -7661,13 +7676,44 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print("counter " + counter + " bearbeitet " + handled)
         """, new[] { "counter 5 bearbeitet 1" });
 
-    CheckGl("Ohne `sync globals` bleibt der Wert unveraendert, solange das Hauptprogramm nicht abarbeitet", """
+    CheckGl("Mit #nosync bleibt der Wert unveraendert, solange das Hauptprogramm nicht `sync globals` ruft", """
+        #nosync
         var counter = 0
         var seen = 0
         fire { counter = 5 }
         for (var i = 0; i < 200000; i = i + 1) { seen = seen + counter }
         print("gesehen " + seen)
         """, new[] { "gesehen 0" });
+
+    CheckGl("Standardmaessig arbeitet das Hauptprogramm die Warteschlange selbst ab (ohne `sync globals`)", """
+        var counter = 0
+        fire { counter = 5 }
+        var spins = 0
+        while (counter == 0 && spins < 100000000) { spins = spins + 1 }
+        print("counter " + counter)
+        """, new[] { "counter 5" });
+
+    CheckGl("Standardmaessig: `fire global` und Methodenaufrufe auf globalen Objekten werden ohne `sync globals` bearbeitet", """
+        class Box { int n; construct() { this.n = 0 } Add(int d) { this.n = this.n + d } }
+        var box = new Box()
+        var done = 0
+        fire { box.Add(2); box.Add(3); fire global { done = done + 1 } }
+        var spins = 0
+        while (done == 0 && spins < 100000000) { spins = spins + 1 }
+        print("n " + box.n + " done " + done)
+        """, new[] { "n 5 done 1" });
+
+    CheckGl("Mit #nosync bearbeitet nur `sync globals` die Warteschlange (Methodenaufruf wartet)", """
+        #nosync
+        class Box { int n; construct() { this.n = 0 } Add(int d) { this.n = this.n + d } }
+        var box = new Box()
+        var finished = 0
+        fire { box.Add(4) }
+        for (var i = 0; i < 300000; i = i + 1) { finished = finished + box.n }
+        print("vorher " + finished)
+        while (box.n == 0) { sync globals }
+        print("nachher " + box.n)
+        """, new[] { "vorher 0", "nachher 4" });
 
     CheckGl("Ein Thread liest Globals direkt (kein Snapshot): er sieht spaetere Aenderungen des Hauptprogramms", """
         var flag = 0

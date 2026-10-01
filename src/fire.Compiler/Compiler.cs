@@ -244,6 +244,13 @@ namespace fire.Compiler
             var compiler = new Compiler(resolveResult, natives);
             var classes = compiler.CompileClasses(program);
 
+            // `#nosync` (egal, wo im Top-Level-Code es steht): gleich am Anfang, bevor irgendein Code läuft
+            if (program.Any(s => s is NoSyncDirective))
+            {
+                compiler._chunk.EmitOp(OpCode.SetAutoSync);
+                compiler._chunk.EmitByte(0);
+            }
+
             // SPEC "Statische Mitglieder": statische Feld-Initialisierer
             // laufen GENAU EINMAL, vor dem eigentlichen Programm (anders als
             // Instanzfelder, die bei JEDER `new`-Konstruktion neu laufen) -
@@ -811,6 +818,9 @@ namespace fire.Compiler
 
                 case NoOpStmt:
                     break;
+
+                case NoSyncDirective:
+                    break; // siehe Compile: `SetAutoSync 0` steht schon am Programmanfang
 
                 case NoShadowDirective:
                     // Wie NoOpStmt - bereits vom Resolver in einem Vorab-Pass

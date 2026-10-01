@@ -266,7 +266,9 @@ namespace fire.Runtime
         ///   Ereignisse) läuft es VERSCHACHTELT auf dieser VM (<see cref="VM.CallLambdaInline"/>): mit den echten globalen Variablen,
         ///   lesend und schreibend, ohne Kopie. Es gibt keine nebenläufige Ausführung, also nichts zu isolieren.
         /// - Auf einem Thread ohne laufende VM (ein Host-Thread, z.B. ein Seriell-Ereignis) wäre Zugriff auf die Globals ein Datenrennen:
-        ///   dort läuft es wie <see cref="CallCallback"/> auf einer isolierten Kopie (`snapshotGlobals` liefert sie).
+        ///   dort wird es der Besitzer-VM (`owner`, das Hauptprogramm) eingereiht und von ihr an einem sicheren Punkt ausgeführt
+        ///   (`sync globals` oder - ohne `#nosync` - automatisch, siehe <see cref="VM.PostCallback"/>). Läuft das Hauptprogramm nicht (mehr)
+        ///   oder gibt es keinen Besitzer, läuft es wie <see cref="CallCallback"/> auf einer isolierten Kopie (`snapshotGlobals` liefert sie).
         ///
         /// Eine unbehandelte Exception im Callback geht nie an den Aufrufer, sondern als Text an `onUnhandled`.</summary>
         public static void RunCallback(
@@ -276,7 +278,8 @@ namespace fire.Runtime
             IReadOnlyDictionary<string, RuntimeClass>? classes,
             Func<IReadOnlyList<Value>> snapshotGlobals,
             Action<string>? onUnhandled = null,
-            VmExecutionMode executionMode = VmExecutionMode.Debug)
+            VmExecutionMode executionMode = VmExecutionMode.Debug,
+            VM? owner = null)
         {
             var vm = VM.CurrentThreadVm;
             if (vm != null && !vm.IsHalted)
@@ -292,6 +295,8 @@ namespace fire.Runtime
                 }
                 return;
             }
+
+            if (owner != null && owner.PostCallback(callback, args, onUnhandled)) return;
 
             CallCallback(callback, args, natives, classes, snapshotGlobals(), ex => onUnhandled?.Invoke(ex.Message), executionMode);
         }

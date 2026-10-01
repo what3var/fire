@@ -360,7 +360,17 @@ keinen Snapshot und keine Kopie mehr:
   Threads nicht (nur die `taking`-Erfassungen) und kein `this`. Im Hauptprogramm ist es ein Auftrag an sich selbst für das nächste `sync globals`.
 - **Grenzen:** Ein Zeiger (`&`) auf ein Global ist im Thread nicht möglich. `x++` auf ein Array-Element der Globals braucht einen
   `sync global`-Block. Mit der Direktive `#noshadow` sieht der Thread keine Globals.
-- **Noch offen:** automatisches Abarbeiten an sicheren Punkten und in `Window.Tick` (abschaltbar per `#nosync`), Host-Callbacks über dieselbe Warteschlange.
+- **Automatisches Abarbeiten (Standard).** Das Hauptprogramm arbeitet die Warteschlange (Sektionen der Fire-Threads, `fire global`-Aufträge,
+  Host-Callbacks) **selbst** ab, ohne dass es `sync globals` schreibt: an seinen sicheren Punkten (dieselben, an denen `leave`/`terminate` anderer
+  Threads wirken) und damit auch direkt nach einem nativen Aufruf wie `Window.Tick` (DoEvents-Prinzip). Wer bewusst eine Stelle festlegen will,
+  an der sich Globals ändern dürfen, schreibt `#nosync` an den Programmanfang: dann arbeitet **nur** `sync globals` (und das Programmende) die
+  Warteschlange ab. Zu beachten: die automatische Variante kann zwischen zwei beliebigen Anweisungen eingreifen (nicht in Destruktoren, Properties
+  und anderen verschachtelten Ausführungen), ein Wert, den das Hauptprogramm gerade gelesen hat, kann sich also danach ändern - wer das nicht will,
+  nutzt `#nosync`.
+- **Host-Callbacks.** Ein Callback von einem fremden Thread (z.B. ein Seriell-Ereignis) läuft nicht mehr auf einer isolierten Kopie, sondern wird dem
+  Hauptprogramm eingereiht (`VM.PostCallback`) und dort mit den echten Globals ausgeführt - automatisch oder bei `sync globals` (`#nosync`). Eine
+  unbehandelte Exception darin geht als Text an den Host. Läuft das Hauptprogramm nicht (mehr), gilt weiter die isolierte Kopie. Callbacks, die beim
+  Programmende noch eingereiht sind, verfallen.
 
 ## 8. Offene Implementierungspunkte (bewusst hier vermerkt, nicht vergessen)
 
