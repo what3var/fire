@@ -64,12 +64,17 @@ namespace fire.Runtime
         public readonly Scope TargetScope;
         public readonly HandlerTemplate Template;
 
-        public ActiveHandler(Chunk chunk, int frameDepthAtEntry, Scope targetScope, HandlerTemplate template)
+        /// <summary>Höhe des Operanden-Stacks beim Registrieren: ein `catch` beginnt wieder auf dieser Höhe - was die Wurfstelle darüber hinterlassen
+        /// hat (angefangene Ausdrücke, die Enumeratoren eines `foreach`, Operanden tieferer Aufrufe), wird für ein mögliches `resume()` beiseitegelegt.</summary>
+        public readonly int StackPointer;
+
+        public ActiveHandler(Chunk chunk, int frameDepthAtEntry, Scope targetScope, HandlerTemplate template, int stackPointer)
         {
             Chunk = chunk;
             FrameDepthAtEntry = frameDepthAtEntry;
             TargetScope = targetScope;
             Template = template;
+            StackPointer = stackPointer;
         }
     }
 
@@ -85,6 +90,9 @@ namespace fire.Runtime
         public readonly Scope Scope;
         public readonly object? This;
         public readonly List<CallFrame> Frames;
+
+        /// <summary>Die Operanden der Wurfstelle oberhalb von <see cref="ActiveHandler.StackPointer"/> (siehe dort), beim Fortsetzen zurückgespielt.</summary>
+        public Value[] Stack = Array.Empty<Value>();
 
         public SavedContinuation(Chunk chunk, int ip, Scope scope, object? thisObj, List<CallFrame> frames)
         {
@@ -1804,6 +1812,15 @@ namespace fire.Runtime
         {
             var retVal = Pop();
 
+            // Ein `return` mitten in einem `try` lässt dessen Handler registriert: er würde danach eine fremde Exception abfangen (mit einer Adresse
+            // in einer längst beendeten Funktion). Die Handler dieses Frames werden hier abgemeldet (die der Aufrufer, unterhalb, bleiben).
+            if (_handlers.Count > 0)
+            {
+                int handlerFloor = _callbackBoundaries.Count > 0 ? _callbackBoundaries.Peek().HandlerFloor : 0;
+                while (_handlers.Count > handlerFloor && _handlers[^1].FrameDepthAtEntry >= _frames.Count)
+                    _handlers.RemoveAt(_handlers.Count - 1);
+            }
+
             // SPEC 2.3: Wird eine Objektinstanz zurückgegeben, deren
             // Owner der gerade verlassene Scope ist, geht das Ownership
             // an den AUFRUFENDEN Scope über (nicht einfach '.Parent' -
@@ -3400,7 +3417,7 @@ namespace fire.Runtime
                 {
                     int templateIdx = ReadU16();
                     var template = _currentChunk.Handlers[templateIdx];
-                    _handlers.Add(new ActiveHandler(_currentChunk, _frames.Count, _currentScope, template));
+                    _handlers.Add(new ActiveHandler(_currentChunk, _frames.Count, _currentScope, template, _sp));
                     break;
                 }
 
@@ -3474,6 +3491,10 @@ namespace fire.Runtime
                     _ip = pending.Continuation.Ip;
                     _currentScope = pending.Continuation.Scope;
                     _currentThis = pending.Continuation.This;
+
+                    // Operanden der Wurfstelle zurück auf den Stack (der catch-Kontext, den resume() verlässt, wird verworfen)
+                    _sp = pending.Handler.StackPointer;
+                    foreach (var operand in pending.Continuation.Stack) Push(operand);
 
                     // Die fortgesetzte Stelle ist konzeptionell "immer noch im
                     // try-Block" - Handler wieder scharf schalten (siehe
@@ -4056,6 +4077,16 @@ namespace fire.Runtime
                     // wird oder nicht (siehe ClearPendingResume).
                     var continuation = CaptureContinuation(handler.FrameDepthAtEntry);
                     _pendingResumes[excInstance] = new PendingResume(continuation, handler);
+
+                    // Der `catch` beginnt auf der Stack-Höhe des `try`: die Operanden der Wurfstelle (z.B. der Enumerator eines `foreach`, aus dem
+                    // geworfen wurde, oder halb ausgewertete Ausdrücke des Aufrufers tieferer Frames) bleiben nicht als Leichen liegen und
+                    // verschieben später keine Operanden. `resume()` spielt sie zurück.
+                    if (_sp > handler.StackPointer)
+                    {
+                        continuation.Stack = new Value[_sp - handler.StackPointer];
+                        Array.Copy(_stack, handler.StackPointer, continuation.Stack, 0, continuation.Stack.Length);
+                        _sp = handler.StackPointer;
+                    }
 
                     var catchScope = new Scope(handler.TargetScope);
                     catchScope.DefineSlot(exceptionValue);

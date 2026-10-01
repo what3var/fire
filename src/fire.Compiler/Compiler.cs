@@ -1033,6 +1033,16 @@ namespace fire.Compiler
                 case ReturnStmt rs:
                     if (rs.Value != null) CompileExpr(rs.Value);
                     else EmitLoadConst(Value.MakeUndefined());
+                    // Ein `return` im `catch`: die beim Werfen eingefrorene Wurfstelle (siehe ClearPendingResume) wird verworfen, wie am normalen Ende
+                    // des catch-Blocks - sonst bliebe sie samt ihrer Scopes liegen. Die Exception-Variable liegt im catch-Scope (Slot 0).
+                    for (int k = _tryStack.Count - 1; k >= 0; k--)
+                        if (_tryStack[k].Phase == TryPhase.Catch)
+                        {
+                            _chunk.EmitOp(OpCode.LoadLocal);
+                            _chunk.EmitU16((ushort)(_currentScopeDepth - (_tryStack[k].OuterDepth + 1)));
+                            _chunk.EmitU16(0);
+                            _chunk.EmitOp(OpCode.ClearPendingResume);
+                        }
                     // Die Enumeratoren der umgebenden `foreach` liegen unter dem Rückgabewert auf dem Stack: sonst blieben sie dort liegen und
                     // verschöben die Operanden des Aufrufers (`1 + f()` mit einem `return` im `foreach` von `f`).
                     foreach (var loop in _loopStack)

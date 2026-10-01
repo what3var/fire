@@ -1654,8 +1654,7 @@ Benchmarks vor/nach: kein Unterschied.
 **Kurzsyntax.** Parser: `Identifier =>` und `( ... ) =>` (Lookahead bis zur passenden `)`, `IsParenLambda`) laufen über `ParseLambdaTail`, wie die `func`-Form.
 
 **`return` im `foreach`.** `foreach` hält seinen Enumerator auf dem Operanden-Stack; ein `return` darin ließ ihn dort liegen und verschob Operanden des Aufrufers (`10 + f() + f()` mit `return` im `foreach` von `f` warf „Typ Class
-ist nicht numerisch“). Der Compiler emittiert jetzt vor dem `Return` je umgebendem `foreach` `Swap; Pop` (`LoopCompileContext.IsForeach`). Offen: dieselbe Leiche entsteht, wenn eine Exception aus einem `foreach` heraus von
-außerhalb gefangen wird (nur sichtbar, wenn dabei Operanden pending sind).
+ist nicht numerisch“). Der Compiler emittiert jetzt vor dem `Return` je umgebendem `foreach` `Swap; Pop` (`LoopCompileContext.IsForeach`). Die Exception-Variante dazu (Exception aus einem `foreach` heraus, weiter außen gefangen) ist in Abschnitt 39 behoben.
 
 **`#import "linq"`** (`fire.Standard.LinqPrelude`, reiner fire-Quelltext wie die UI-Bibliothek, keine DLL): `Linq.From(quelle)`/`Linq.Range`/`Linq.Repeat` liefern eine `Query` (eine Fabrik-Lambda, die je Durchlauf einen frischen
 Enumerator liefert - nutzt selbst Captures); träge Operatoren `Where/Select/SelectMany/Take/Skip/TakeWhile/SkipWhile/Concat/Zip` als Enumerator-Klassen, eifrig `OrderBy/OrderByDescending` (stabiler Mergesort)/`Reverse/Distinct`,
@@ -1709,3 +1708,21 @@ den Handlern des Schreibers, `null` = umgeleitet -> der Op liefert `false`). Arg
 **Reflection.** Natives `__refl_probe/__refl_silence/__refl_silence_handle` (Fehler als `ReflectionException`), in der Prelude `Reflect.Probe/ProbeAll/Silence/SilenceAll/SilenceHandle`, `Member.Probe`, `Selector.Probe/Silence`.
 
 Tests: Suite-Block "Reflection" (9 Fälle zu probe/silence: implizite Namen und Gleichheitsprüfung, Veto mit Capture, Handler-Argumente nach Parameterzahl, `obj.*` mit Properties, Pfad und Cache-Stelle, Rekursion, Exceptions, Variablennamen, Reflection-API).
+
+## 39. Operanden-Stack bei Exceptions, `return` im `try`/`catch`
+
+**Der Fehler.** Eine Exception ließ den Operanden-Stack so liegen, wie die Wurfstelle ihn hinterlassen hatte (nötig, damit `resume()` dort fortsetzen kann): der Enumerator eines `foreach`, aus dem geworfen wurde, halb ausgewertete Ausdrücke
+und die Operanden tieferer Aufrufe blieben als Leichen unter den Werten des `catch`/der Aufrufer liegen und verschoben später deren Operanden (`10 + f()` mit einem `try { foreach (...) { throw } } catch { return 7 }` in `f` warf „Typ Class ist nicht numerisch“).
+
+**Die Lösung.** `ActiveHandler.StackPointer` hält die Stack-Höhe beim `RegisterHandler`. Greift ein `catch` (in `ThrowException`), legt die VM alles oberhalb davon in `SavedContinuation.Stack` beiseite und setzt `_sp` darauf zurück: der `catch` beginnt auf der
+Höhe des `try`, egal wie tief und mitten in welchem Ausdruck geworfen wurde. `resume()` setzt `_sp` wieder auf diese Höhe und spielt die Operanden zurück, danach den Ersatzwert (so läuft der `throw`-Ausdruck mitten in einem Ausdruck weiter).
+
+**Dazu behoben**, weil es dieselbe Gegend ist:
+- Ein `return` mitten in einem `try` ließ den Handler des `try` registriert: eine spätere, fremde Exception sprang in die längst beendete Funktion (das Programm endete still). `OpReturn` meldet jetzt die Handler seines Frames ab (`FrameDepthAtEntry >= _frames.Count`, nicht unter der Callback-Grenze).
+- Ein `return` im `catch` ließ die beim Werfen eingefrorene Wurfstelle samt Scopes liegen: der Compiler verwirft sie vor dem `Return` (`ClearPendingResume` auf die Exception-Variable im `catch`-Scope, Tiefe aus `_tryStack`).
+
+**Noch offen (gefunden, nicht angefasst):** `finally` ist an zwei Stellen unvollständig. (1) Ein `return` im `try` führt das `finally` nicht aus (der Handler wird nur abgemeldet). (2) Läuft das `finally` auf dem Ausnahmepfad (die Exception geht an
+diesem `try` vorbei nach außen), ist es ein eigenständig übersetzter Proto (`RunFinallyNested`) und sieht die lokalen Variablen der Funktion nicht - ein Zugriff darauf wirft einen internen Fehler. Außerdem läuft das `finally` nicht, wenn die Exception aus dem `catch`-Block selbst kommt. Die
+saubere Lösung ist ein Landeplatz im selben Chunk (inline kompiliertes `finally` + `Rethrow`) statt des separaten Protos, plus inline-Kopien an `return`.
+
+Tests: Suite-Block "Lambda-Captures und LINQ" (vier Fälle: `foreach`-Exception mit `return` im `catch`, Exception aus tieferen Aufrufen mit halb ausgewerteten Ausdrücken, `return` im `try`, `resume()` mit Operanden).

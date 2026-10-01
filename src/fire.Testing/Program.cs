@@ -8157,6 +8157,61 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(arr.length + " " + s)
         """, new[] { "3 2 4 6 " });
 
+    // ---- Operanden-Stack und Exceptions: was die Wurfstelle auf dem Stack hinterlaesst, darf den Aufrufer nicht verschieben
+    const string excHead = "class Exception { string message; construct(string message) { this.message = message } }\n";
+
+    CheckLq("Exception aus einem foreach, im selben try gefangen: keine Operanden-Leichen (catch mit return, Aufrufer mitten im Ausdruck)", excHead + """
+        class T {
+            static C(class l) { try { foreach (x in l) { throw new Exception("x") } } catch (e) { return 7 } return 0 }
+            static D(class l) { foreach (x in l) { try { throw new Exception("y") } catch (e) { return 8 } } return 0 }
+            static Run() {
+                print(10 + T.C([1, 2]) + 1)
+                print(10 + T.D([1, 2]) + 1)
+            }
+        }
+        T.Run()
+        """, new[] { "18", "19" });
+
+    CheckLq("Exception aus einer tieferen Funktion mit halb ausgewerteten Ausdruecken, weiter aussen gefangen", excHead + """
+        class T {
+            static Boom(int n) { return 100 + n + T.Fail() }
+            static Fail() { throw new Exception("boom") }
+            static Run() {
+                var total = 0
+                for (var i = 0; i < 3; i = i + 1) {
+                    try { total = total + 1 + T.Boom(i) } catch (e) { total = total + 1000 }
+                }
+                print(total + 5)
+            }
+        }
+        T.Run()
+        """, new[] { "3005" });
+
+    CheckLq("return mitten in einem try meldet seinen Handler ab (keine fremde Exception landet in der beendeten Funktion)", excHead + """
+        class T {
+            static A() { try { return 1 } catch (e) { return 2 } }
+            static Run() {
+                print(1 + T.A())
+                try { T.A(); throw new Exception("spaeter") } catch (e) { print("gefangen " + e.message) }
+                print(7 + T.A())
+            }
+        }
+        T.Run()
+        """, new[] { "2", "gefangen spaeter", "8" });
+
+    CheckLq("resume() setzt mit den Operanden der Wurfstelle fort (Stack wird beim catch beiseitegelegt und zurueckgespielt)", excHead + """
+        class T {
+            static Get() { return 10 + (throw new Exception("fehlt")) }
+            static Run() {
+                try { print(1 + T.Get()) } catch (e) { e.resume(5) }
+                var s = 0
+                try { foreach (x in [1, 2, 3]) { s = s + x + (throw new Exception("n")) } } catch (e) { e.resume(100) }
+                print(s)
+            }
+        }
+        T.Run()
+        """, new[] { "16", "306" });
+
     Console.WriteLine(lqFailures == 0 ? "Alle Lambda-/LINQ-Pruefungen bestanden." : $"FEHLER: {lqFailures} Lambda-/LINQ-Pruefung(en) fehlgeschlagen.");
 }
 
