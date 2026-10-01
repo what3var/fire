@@ -35,6 +35,7 @@ namespace fire.Compiler
             "devices" => NativeImports.Devices,
             "io" => NativeImports.IO,
             "ui" => NativeImports.Ui,
+            "linq" => NativeImports.Linq,
             _ => throw new Exception($"'{name}' ist keine bekannte Erweiterung."),
         };
 
@@ -55,6 +56,7 @@ namespace fire.Compiler
             "devices" => DeviceBridge.PreludeSource,
             "io" => IoBridge.PreludeSource,
             "ui" => UiBridge.PreludeSource,
+            "linq" => fire.Standard.LinqPrelude.Source,
             _ => null,
         };
 
@@ -93,6 +95,13 @@ namespace fire.Compiler
             {
                 // reiner fire-Quelltext auf den Klassen der Grafik-Brücke: keine nativen Funktionen
                 processedSources.Insert(1, preprocess(UiBridge.PreludeSource));
+                inserted++;
+            }
+
+            if (nativeImports.Contains(NativeImports.Linq))
+            {
+                // reiner fire-Quelltext, keine nativen Funktionen
+                processedSources.Insert(1, preprocess(fire.Standard.LinqPrelude.Source));
                 inserted++;
             }
 

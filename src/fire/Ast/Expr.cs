@@ -40,13 +40,16 @@ namespace fire.Ast
     /// davon optional sind.</summary>
     public sealed record LambdaParam(string Name, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, Expr? DefaultValue = null);
 
+    // AutoCapture: äußere LOKALE Variablen, die der Körper benutzt, werden beim Erzeugen als Wert kopiert (SPEC 4.2);
+    // false für `fire global { }` (dort gilt allein `taking`).
     // Body ist entweder ein BlockStmt (mehrzeiliger Lambda-Body) oder ein
     // einzelnes ReturnStmt (Kurzform `=> ausdruck`, implizit als Return gewrappt).
     public sealed record LambdaExpr(
         int Line,
         IReadOnlyList<LambdaParam> Params,
         Expr? OnTarget,
-        Stmt.BlockStmt Body) : Expr(Line);
+        Stmt.BlockStmt Body,
+        bool AutoCapture = true) : Expr(Line);
 
     /// <summary>`sync X` / `try sync X` / `sync flat X` / `try sync flat X`
     /// (docs/THREADING_DESIGN.md Abschnitt 4) - ein AUSDRUCK (kein

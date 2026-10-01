@@ -149,6 +149,8 @@ namespace fire.Bytecode
         SetAutoSync,    // u8 on        : `#nosync` (on = 0) schaltet das automatische Abarbeiten der Warteschlange an sicheren Punkten ab (wird am Programmanfang emittiert)
         PostGlobal,     // u8 argCount   : `fire global { ... }`: pop Lambda, pop argCount Argumente; reiht das Lambda (Objekt-Argumente als Kopie)
                         //                  als Auftrag für das Hauptprogramm ein, der bei dessen nächstem `sync globals` läuft; der Aufrufer wartet nicht
+        MakeLambdaCapturing, // u16 protoIdx, u8 hasOnTarget, u8 captureCount : wie MakeLambda; darunter liegen captureCount KOPIERTE Werte (Stack: c0..cn-1, [onTarget]),
+                        //                  die der Lambda-Aufruf als Slots hinter den Parametern in den neuen Scope legt (Lambda-Captures, SPEC 4.2)
     }
 
     /// <summary>Zieltyp für CoerceType/CoerceTypeDynamic - entspricht genau den

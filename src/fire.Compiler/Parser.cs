@@ -1191,7 +1191,7 @@ namespace fire.Compiler
                 throw Error("'with' gibt es bei 'fire global' nicht", Peek());
             var body = ParseBlock();
             var parameters = captures.Select(c => new LambdaParam(c.VarName, null, new List<Expr?>(), null)).ToList();
-            var lambda = new LambdaExpr(line, parameters, null, body);
+            var lambda = new LambdaExpr(line, parameters, null, body, AutoCapture: false);
             return new PostGlobalStmt(_sourceIndex, line, lambda, captures.Select(c => c.Source).ToList());
         }
 
@@ -2605,6 +2605,12 @@ namespace fire.Compiler
                     return new LiteralExpr(tok.Line, Value.MakeUndefined());
 
                 case TokenType.Identifier:
+                    if (PeekAt(1).Type == TokenType.Arrow)
+                    {
+                        // Kurzform `x => ausdruck`
+                        Advance();
+                        return ParseLambdaTail(tok.Line, new List<LambdaParam> { new LambdaParam(tok.Lexeme, null, new List<Expr?>(), null) });
+                    }
                     Advance();
                     return new IdentifierExpr(tok.Line, tok.Lexeme);
 
@@ -2690,6 +2696,12 @@ namespace fire.Compiler
 
                 case TokenType.LParen:
                 {
+                    if (IsParenLambda())
+                    {
+                        // Kurzform `(a, b) => ausdruck` / `() => ausdruck`
+                        int lambdaLine = tok.Line;
+                        return ParseLambdaTail(lambdaLine, ParseParamList());
+                    }
                     Advance();
                     var inner = ParseExpression();
                     Expect(TokenType.RParen, "Erwarte ')' nach geklammertem Ausdruck");
@@ -2765,6 +2777,25 @@ namespace fire.Compiler
             if (Match(TokenType.On))
                 onTarget = ParsePostfix();
 
+            return ParseLambdaTail(line, parms, onTarget);
+        }
+
+        /// <summary>Steht der aktuelle `(` am Anfang einer Kurzform-Lambda `(...) =>`? (Lookahead bis zur passenden `)`.)</summary>
+        private bool IsParenLambda()
+        {
+            int depth = 0;
+            for (int i = 0; ; i++)
+            {
+                var t = PeekAt(i);
+                if (t.Type == TokenType.Eof) return false;
+                if (t.Type == TokenType.LParen) depth++;
+                else if (t.Type == TokenType.RParen && --depth == 0) return PeekAt(i + 1).Type == TokenType.Arrow;
+            }
+        }
+
+        /// <summary>`=> ausdruck` bzw. `=> { ... }` einer Lambda (nach Parameterliste und optionalem `on`).</summary>
+        private Expr ParseLambdaTail(int line, List<LambdaParam> parms, Expr? onTarget = null)
+        {
             Expect(TokenType.Arrow, "Erwarte '=>' im Lambda");
 
             Stmt.BlockStmt body;

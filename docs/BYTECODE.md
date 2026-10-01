@@ -111,7 +111,8 @@ Präzision durch vorzeitige Ganzzahlrundung verloren (`500m` → `1km` statt
 
 Eine Lambda braucht - anders als klassische Closures - **keine Upvalues**:
 da sie ohnehin nur ihren eigenen Scope + global sieht (SPEC 4.2), reicht ein
-simpler eigener Adressraum. Konkret:
+simpler eigener Adressraum (äußere Locals kommen als KOPIERTE Werte hinzu, siehe
+Abschnitt 36). Konkret:
 
 - Der Compiler kompiliert jeden Lambda-Body **einmal** in einen eigenen
   `Chunk` (`FunctionProto`, in `Chunk.Functions` abgelegt), unabhängig davon,
@@ -1638,3 +1639,27 @@ Anzahl offener Schleifen beim Betreten); die von der VM erzeugte Catch-Scope zä
 zuletzt die restlichen Scopes bis zum Schleifenkörper und der Sprung. Aus dem `finally` selbst bleibt `break`/`continue` ein Resolver-Fehler (das `finally` wird zusätzlich als eigene Funktion für den Ausnahmepfad
 kompiliert, dort gibt es die Schleife nicht). Das gilt auch für `sync global { }` (intern `try`/`finally`). Tests: Suite-Block "Globals und Fire-Threads" (8 Fälle: finally, Locals, Handler-Abmeldung, catch, verschachtelt,
 innere Schleife, Sektion) und der Resolver-Test "break in finally".
+
+## 36. Lambda-Captures, Kurzsyntax, `return` im `foreach`, die Abfrage-Bibliothek
+
+**Captures (SPEC 4.2.1).** Resolver (`DefineCaptures`): vor dem Auflösen des Körpers sammelt `AstNames.Collect` per Reflection alle Bezeichner des Körpers (auch aus verschachtelten Lambdas, Interpolationen, `taking`-Quellen -
+neue Syntax braucht keine Pflege). Jeder, der im umschließenden Code ein **nicht-globaler** Name ist und kein Parameter der Lambda, wird als Slot direkt hinter den Parametern definiert (Slot-Nummern müssen vor dem Körper
+feststehen) und in `ResolverScope.CaptureNames` vermerkt; ein synthetischer `IdentifierExpr` je Capture wird im UMSCHLIESSENDEN Scope aufgelöst und als `ResolvedRef.LambdaCaptures` unter dem `LambdaExpr` in `_refs`
+hinterlegt (so braucht der Compiler keinen neuen Kanal). Deklariert der Körper selbst einen als Capture angelegten Namen, verschiebt `Define` den Capture-Slot unter einen unzugänglichen Schlüssel (Slot-Zählung bleibt
+lückenlos); `ResolveAssignTarget` lehnt Zuweisungen an einen Capture ab. `LambdaExpr.AutoCapture = false` (nur `fire global`) schaltet das ab.
+Compiler: lädt die Capture-Werte im umschließenden Scope und emittiert `MakeLambdaCapturing u16 proto, u8 hasOn, u8 count` (Stack: c0..cn-1, [onTarget]); ohne Captures bleibt es beim alten `MakeLambda`. VM: `LambdaValue.Captures`
+(`Value[]`); alle vier Aufrufwege legen sie hinter den Argumenten in den neuen Scope (`EnterCall(..., captures)` im Schnellpfad, `OpCallSlow`, `CallLambdaInline`, `CallLambdaEntry`) - `WithOnTarget` behält sie.
+Benchmarks vor/nach: kein Unterschied.
+
+**Kurzsyntax.** Parser: `Identifier =>` und `( ... ) =>` (Lookahead bis zur passenden `)`, `IsParenLambda`) laufen über `ParseLambdaTail`, wie die `func`-Form.
+
+**`return` im `foreach`.** `foreach` hält seinen Enumerator auf dem Operanden-Stack; ein `return` darin ließ ihn dort liegen und verschob Operanden des Aufrufers (`10 + f() + f()` mit `return` im `foreach` von `f` warf „Typ Class
+ist nicht numerisch“). Der Compiler emittiert jetzt vor dem `Return` je umgebendem `foreach` `Swap; Pop` (`LoopCompileContext.IsForeach`). Offen: dieselbe Leiche entsteht, wenn eine Exception aus einem `foreach` heraus von
+außerhalb gefangen wird (nur sichtbar, wenn dabei Operanden pending sind).
+
+**`#import "linq"`** (`fire.Standard.LinqPrelude`, reiner fire-Quelltext wie die UI-Bibliothek, keine DLL): `Linq.From(quelle)`/`Linq.Range`/`Linq.Repeat` liefern eine `Query` (eine Fabrik-Lambda, die je Durchlauf einen frischen
+Enumerator liefert - nutzt selbst Captures); träge Operatoren `Where/Select/SelectMany/Take/Skip/TakeWhile/SkipWhile/Concat/Zip` als Enumerator-Klassen, eifrig `OrderBy/OrderByDescending` (stabiler Mergesort)/`Reverse/Distinct`,
+Abschluss `ToList/ToArray/First/FirstOrDefault/Last/ElementAt/Any/All/Count/Sum/Min/Max/Average/Aggregate/Contains/ForEach/Join` (Überladung nach Parameteranzahl). `List` bekommt dieselben Operatoren über `class extends List`
+(aus einer Tabelle erzeugt). Arrays: `Linq.From(array).…` (Arrays sind nicht erweiterbar). Leere Folgen: `LinqEmptyException`.
+
+Tests: Suite-Block "Lambda-Captures und LINQ" (Kurzsyntax, Capture-Semantik, Verdecken, Globals, Zuweisungsfehler, Objekte, `return` im `foreach`, LINQ in vier Gruppen) und der angepasste Resolver-Test.

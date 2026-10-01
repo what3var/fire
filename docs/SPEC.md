@@ -282,11 +282,39 @@ Jede sonstige, nicht erkannte Suffix-Zeichenfolge an einem Literal wird als **at
 
 ### 4.2 Lambdas
 
-- Eine Lambda sieht beim Namens-Lookup **nur ihren eigenen Scope und den globalen Scope** – keine Closure über dazwischenliegende Scopes.
+- Eine Lambda sieht beim Namens-Lookup **ihren eigenen Scope, den globalen Scope und Kopien der äußeren lokalen Werte, die ihr Körper benutzt** (Captures, siehe 4.2.1) – keine Closure über dazwischenliegende Scopes.
 - `on obj` bindet ein Objekt als `this`-Kontext, entweder bei Definition (`func (X) on obj => { ... }`) oder nachträglich bei Zuweisung (`var b = a on obj2;`, erzeugt einen neuen Lambda-Wert mit anderem `this`, `a` bleibt unverändert).
 - Membervariablen des gebundenen `this`-Objekts sind im Lambda-Body unqualifiziert sichtbar.
 - Ownership des Lambda-Werts folgt Abschnitt 2.1 (Feldzuweisung → Objekt-Owner, sonst Scope-Owner) – unabhängig vom `on`-Binding.
 - Für eine Typ-Annotation, die einen Lambda-Wert erwartet (Feld, Parameter, Rückgabetyp, `var`), steht der Typname **`lambda`** zur Verfügung, optional mit Signatur: `[RückgabeTyp] lambda[<ParamTyp1,...,ParamTypN>]`. Bewusst **nicht** `func` (das leitet einen Lambda-*Ausdruck* ein, `func (x) => ...`, und würde als Typname mit dieser Ausdrucks-Syntax kollidieren). Details siehe 4.3.
+
+### 4.2.1 Kurzsyntax und Captures
+
+**Kurzsyntax.** Neben `func (x) => ...` gibt es `x => ausdruck`, `(a, b) => ausdruck`, `() => ausdruck` und jeweils `=> { ... }` mit Block. Parameter dürfen
+wie sonst Typen/Standardwerte tragen (`(int a, int b) => a + b`); `on obj` gibt es nur bei der `func`-Form.
+
+**Captures.** Benutzt der Körper einer Lambda Namen, die im umschließenden Code **lokale Variablen oder Parameter** sind (Methodenparameter, `var` in Blöcken und
+Schleifen, Parameter einer umschließenden Lambda), werden deren **Werte beim Erzeugen der Lambda kopiert**:
+
+```
+class T {
+    static Run() {
+        var limit = 3
+        var f = x => x > limit          // limit wird kopiert
+        limit = 10
+        print(f(5))                     // True - die Lambda sieht weiter 3
+    }
+}
+```
+
+- Es wird der **Wert** kopiert, nicht die Variable: spätere Änderungen draußen sind drinnen unsichtbar und umgekehrt (es gibt keine geteilten, veränderlichen Variablen - auch
+  keine Schleifenvariablen-Falle: `for (...) { fs.Add(() => i) }` erfasst je Durchlauf den aktuellen Wert).
+- Eine **Zuweisung an einen Capture** im Lambda ist ein Fehler („ist im Lambda eine KOPIE …“); eine eigene Deklaration mit demselben Namen (`var limit = 100`) verdeckt ihn.
+- **Objekte** werden als Referenz kopiert (der Wert ist die Referenz): die Lambda sieht und verändert dasselbe Objekt. Es bleibt im Besitz seines ursprünglichen Owners - überlebt die Lambda
+  ihn, ist es danach zerstört. Eine eigene Kopie erzwingt man mit `copy x`/`flat x` in einer lokalen Variable davor.
+- **Globale** Variablen werden nicht kopiert, sie bleiben lebendig (`g = 7` ist in der Lambda sichtbar). Das gilt auch für Top-Level-Variablen.
+- `this` wird nicht erfasst (dafür `on this`). `fire global { }` erfasst nichts - dort gilt allein `taking`.
+- Nicht erfasst werden Namen, die kein Lokal des umschließenden Codes sind (Klassenmitglieder, Natives, Klassen): sie lösen wie bisher auf.
 
 ### 4.3 Lambda-Typen mit Signatur
 

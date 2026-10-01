@@ -170,9 +170,9 @@ catch (ResolverException ex)
 }
 
 Console.WriteLine();
-Console.WriteLine("=== Resolver-Test (muss fehlschlagen: Lambda sieht Block-Scope nicht) ===");
+Console.WriteLine("=== Resolver-Test (Lambda erfasst Block-Locals als Kopie; ein Name aus einem anderen Block bleibt unbekannt) ===");
 
-string resolverSampleInvalid = """
+string resolverSampleCapture = """
 {
     var blockOnlyLocal = 42
     var lam = func () => {
@@ -183,9 +183,29 @@ string resolverSampleInvalid = """
 
 try
 {
-    var program = Parser.Parse(resolverSampleInvalid);
-    Resolver.Resolve(program);
-    Console.WriteLine("FEHLER: hätte ResolverException werfen müssen (Lambda sieht Block-Scope nicht)");
+    Resolver.Resolve(Parser.Parse(resolverSampleCapture));
+    Console.WriteLine("OK - die Lambda erfasst 'blockOnlyLocal' (Capture).");
+}
+catch (ResolverException ex)
+{
+    Console.WriteLine($"FEHLER: unerwarteter Resolver-Fehler: {ex.Message}");
+}
+
+string resolverSampleInvalid = """
+{
+    var blockOnlyLocal = 42
+}
+{
+    var lam = func () => {
+        return blockOnlyLocal
+    }
+}
+""";
+
+try
+{
+    Resolver.Resolve(Parser.Parse(resolverSampleInvalid));
+    Console.WriteLine("FEHLER: hätte ResolverException werfen müssen (Name aus einem anderen Block)");
 }
 catch (ResolverException ex)
 {
@@ -7948,6 +7968,196 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         """, new[] { "total 23" });
 
     Console.WriteLine(glFailures == 0 ? "Alle Globals-Pruefungen bestanden." : $"FEHLER: {glFailures} Globals-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Lambda-Captures, Kurzsyntax `x => ...` und die Abfrage-Bibliothek (#import "linq")
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Lambda-Captures und LINQ ===");
+    int lqFailures = 0;
+
+    List<string> RunLq(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var natives = NativeRegistry.CreateDefault();
+        natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        var sources = new List<string> { fire.Standard.Prelude.Source };
+        if (script.Contains("#import \"linq\"")) sources.Add(fire.Standard.LinqPrelude.Source);
+        sources.Add(script);
+        var program = Parser.ParseMultiple(sources
+            .Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                fire.Compiler.RuntimeSession.CreateProjectDirectiveRegistry())).ToList());
+        var compiled = Compiler.Compile(program, Resolver.Resolve(program, natives.Names), natives);
+        VM.ResetTerminateForTests();
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
+        vm.Run();
+        VM.ResetTerminateForTests();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckLq(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
+    {
+        foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            try { actual = RunLq(script, mode).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + CompileErrors.Describe(ex) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) lqFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    CheckLq("Kurzsyntax: x => ..., (a, b) => ..., () => ..., mit Block", """
+        var inc = x => x + 1
+        var add = (a, b) => a + b
+        var five = () => 5
+        var blk = x => { var t = x * 2; return t + 1 }
+        print(inc(1) + " " + add(2, 3) + " " + five() + " " + blk(4))
+        """, new[] { "2 5 5 9" });
+
+    CheckLq("Capture: ein lokaler Wert wird kopiert (spaetere Aenderungen sind unsichtbar)", """
+        class T {
+            static Run() {
+                var local = 3
+                var f = x => x > local
+                local = 10
+                print(f(5) + " " + f(2))
+            }
+        }
+        T.Run()
+        """, new[] { "True False" });
+
+    CheckLq("Capture: Parameter der umgebenden Methode, verschachtelte Lambdas, Schleifenvariable", """
+        class T {
+            static Make(int offset) { return x => x + offset }
+            static Run() {
+                var f = T.Make(100)
+                var nested = a => (b => a + b)
+                var fs = new List()
+                for (var i = 0; i < 3; i = i + 1) { var q = i * 10; fs.Add(() => q + i) }
+                var parts = ""
+                foreach (fn in fs) { parts = parts + fn() + " " }
+                print(f(1) + " " + nested(1)(2) + " " + parts)
+            }
+        }
+        T.Run()
+        """, new[] { "101 3 0 11 22 " });
+
+    CheckLq("Capture: eine Deklaration im Lambda verdeckt den gleichnamigen aeusseren Wert", """
+        class T {
+            static Run() {
+                var local = 3
+                var f = x => { var local = 100; return local + x }
+                print(f(1))
+            }
+        }
+        T.Run()
+        """, new[] { "101" });
+
+    CheckLq("Capture: Globals bleiben lebendig (kein Kopieren)", """
+        var g = 1
+        var f = () => g
+        g = 7
+        print(f())
+        """, new[] { "7" });
+
+    CheckLq("Capture: Zuweisung an den Capture ist ein Fehler", """
+        class T {
+            static Run() {
+                var n = 1
+                var f = () => { n = 2; return n }
+                print(f())
+            }
+        }
+        T.Run()
+        """, new[] { "AUSNAHME: 'n' ist im Lambda eine KOPIE der \u00e4u\u00dferen Variablen (Capture) und kann dort nicht zugewiesen werden (eine neue lokale Variable mit anderem Namen anlegen) (4)" });
+
+    CheckLq("Capture: ein Objekt wird als Referenz geteilt", """
+        class Box { int n; construct() { this.n = 0 } }
+        class T {
+            static Run() {
+                var b = new Box()
+                var bump = () => { b.n = b.n + 1 }
+                bump(); bump()
+                print(b.n)
+            }
+        }
+        T.Run()
+        """, new[] { "2" });
+
+    CheckLq("return mitten in einem foreach hinterlaesst nichts auf dem Stack", """
+        class T {
+            static First(class l) { foreach (x in l) { return x } return 0 }
+            static Run() {
+                var l = [5, 3]
+                print(10 + T.First(l) + T.First(l))
+            }
+        }
+        T.Run()
+        """, new[] { "20" });
+
+    const string linqHead = "#import \"linq\"\nclass P { string name; int price; construct(string n, int p) { this.name = n; this.price = p } }\n";
+
+    CheckLq("LINQ: Where/Select mit Capture, trage Auswertung, mehrfach durchlaufbar", linqHead + """
+        class T {
+            static Run() {
+                var limit = 2
+                var nums = new List([5, 3, 8, 1, 9, 2, 8])
+                var q = nums.Where(x => x > limit).Select(x => x * 10)
+                print(q.Join(",") + " | " + q.Count())
+                print(Linq.From([1, 2, 3, 4, 5, 6]).Where(x => x % 2 == 0).Select(x => x * x).Join(" "))
+            }
+        }
+        T.Run()
+        """, new[] { "50,30,80,90,80 | 5", "4 16 36" });
+
+    CheckLq("LINQ: Sortieren (stabil), Distinct, Reverse", linqHead + """
+        var nums = new List([5, 3, 8, 1, 9, 2, 8])
+        print(nums.OrderBy(x => x).Join(",") + " | " + nums.OrderByDescending(x => x).Join(",") + " | " + nums.Distinct().Count() + " | " + nums.Reverse().Join(","))
+        var ps = new List()
+        ps.Add(new P("a", 20)); ps.Add(new P("b", 10)); ps.Add(new P("c", 20)); ps.Add(new P("d", 10))
+        print(ps.OrderBy(p => p.price).Select(p => p.name).Join(""))
+        """, new[] { "1,2,3,5,8,8,9 | 9,8,8,5,3,2,1 | 6 | 8,2,9,1,8,3,5", "bdac" });
+
+    CheckLq("LINQ: Take/Skip/TakeWhile/SkipWhile/Concat/Zip/SelectMany/Range", linqHead + """
+        var nums = new List([5, 3, 8, 1, 9, 2, 8])
+        print(nums.Take(3).Join(",") + " | " + nums.Skip(5).Join(",") + " | " + nums.TakeWhile(x => x > 2).Join(",") + " | " + nums.SkipWhile(x => x > 2).Join(","))
+        print(Linq.Range(1, 3).Concat([7, 8]).Join(",") + " | " + Linq.Range(1, 3).Zip([10, 20, 30], (a, b) => a * b).Join(",") + " | " + Linq.Range(1, 3).SelectMany(x => Linq.Range(0, x)).Join(","))
+        """, new[] { "5,3,8 | 2,8 | 5,3,8 | 1,9,2,8", "1,2,3,7,8 | 10,40,90 | 0,0,1,0,1,2" });
+
+    CheckLq("LINQ: Abschluss-Operatoren (First/Last/Any/All/Count/Sum/Min/Max/Average/Aggregate/Contains/ElementAt)", linqHead + """
+        class T {
+            static Run() {
+                var nums = new List([5, 3, 8, 1, 9, 2, 8])
+                print(nums.First() + " " + nums.First(x => x > 5) + " " + nums.Last() + " " + nums.ElementAt(2))
+                print(nums.Any() + " " + nums.Any(x => x > 8) + " " + nums.All(x => x > 0) + " " + nums.Contains(9) + " " + nums.Count(x => x > 4))
+                print(nums.Sum() + " " + nums.Min() + " " + nums.Max() + " " + nums.Aggregate(0, (a, b) => a + b))
+                var ps = new List()
+                ps.Add(new P("a", 30)); ps.Add(new P("b", 10)); ps.Add(new P("c", 20))
+                print(ps.Sum(p => p.price) + " " + ps.Min(p => p.price) + " " + ps.Max(p => p.price) + " " + ps.Average(p => p.price) + " " + ps.FirstOrDefault(p => p.price > 100, "none"))
+            }
+        }
+        T.Run()
+        """, new[] { "5 8 8 8", "True True True True 4", "36 1 9 36", "60 10 30 20 none" });
+
+    CheckLq("LINQ: First auf einer leeren Folge wirft LinqEmptyException", linqHead + """
+        try { Linq.From([]).First() } catch (e) { print("leer: " + e.message) }
+        """, new[] { "leer: Die Folge enthaelt kein Element" });
+
+    CheckLq("LINQ: foreach ueber eine Abfrage, ToArray, Query auf einem Array", linqHead + """
+        var arr = Linq.From([3, 1, 2]).OrderBy(x => x).ToArray()
+        var s = ""
+        foreach (x in Linq.From(arr).Select(x => x * 2)) { s = s + x + " " }
+        print(arr.length + " " + s)
+        """, new[] { "3 2 4 6 " });
+
+    Console.WriteLine(lqFailures == 0 ? "Alle Lambda-/LINQ-Pruefungen bestanden." : $"FEHLER: {lqFailures} Lambda-/LINQ-Pruefung(en) fehlgeschlagen.");
 }
 
 static int CountOccurrences(string haystack, string needle)

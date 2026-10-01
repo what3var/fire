@@ -1502,6 +1502,10 @@ namespace fire.Runtime
                     OpMakeLambda();
                     return;
 
+                case OpCode.MakeLambdaCapturing:
+                    OpMakeLambdaCapturing();
+                    return;
+
                 case OpCode.CallBaseMethod:
                     OpCallBaseMethod();
                     return;
@@ -1652,6 +1656,18 @@ namespace fire.Runtime
         }
         }
 
+        private void OpMakeLambdaCapturing()
+        {
+            int protoIdx = ReadU16();
+            bool hasOnTarget = ReadByte() != 0;
+            int captureCount = ReadByte();
+            var proto = _currentChunk.Functions[protoIdx];
+            object? onTarget = hasOnTarget ? BoxValueForOnTarget(Pop()) : null;
+            var captures = new Value[captureCount];
+            for (int i = captureCount - 1; i >= 0; i--) captures[i] = Pop();
+            Push(Value.MakeLambda(new LambdaValue(proto, onTarget, null, captures)));
+        }
+
         // -----------------------------------------------------------
         // Inline-Caches der Aufrufstellen (siehe Bytecode.SiteCache)
         // -----------------------------------------------------------
@@ -1663,15 +1679,17 @@ namespace fire.Runtime
         /// <summary>Wechselt in den Aufruf von `proto`: die obersten `argCount` Stack-Werte werden direkt als
         /// Parameter-Slots der neuen Scope übernommen und (zusammen mit dem darunterliegenden Empfänger/Callee, falls
         /// `dropBelow`) vom Stack genommen. Nur für Aufrufe mit EXAKT passender Argumentanzahl (kein Standardwert nötig).</summary>
-        private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null, int copyMask = 0)
+        private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null, int copyMask = 0, Value[]? captures = null)
         {
-            var slots = new Value[argCount + SlotSlack];
+            int captureCount = captures?.Length ?? 0;
+            var slots = new Value[argCount + captureCount + SlotSlack];
             Array.Copy(_stack, _sp - argCount, slots, 0, argCount);
+            if (captureCount != 0) Array.Copy(captures!, 0, slots, argCount, captureCount); // Lambda-Captures direkt hinter den Parametern
             _sp -= argCount + (dropBelow ? 1 : 0);
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, constructed));
             _currentThis = newThis;
-            _currentScope = new Scope(_globalScope, slots, argCount);
+            _currentScope = new Scope(_globalScope, slots, argCount + captureCount);
             if (copyMask != 0) ApplyCopyMask(_currentScope, copyMask);
             _currentChunk = proto.Chunk;
             _ip = 0;
@@ -1730,7 +1748,7 @@ namespace fire.Runtime
                 && fastCallee.AsLambda() is LambdaValue fastLambda
                 && fastLambda.Proto.ParamCount == argCount)
             {
-                EnterCall(fastLambda.Proto, argCount, dropBelow: true, fastLambda.OnTarget, copyMask: copyMask);
+                EnterCall(fastLambda.Proto, argCount, dropBelow: true, fastLambda.OnTarget, copyMask: copyMask, captures: fastLambda.Captures);
                 return;
             }
 
@@ -1758,6 +1776,7 @@ namespace fire.Runtime
 
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
+            if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
             ApplyCopyMask(funcScope, copyMask);
 
             _currentThis = lambda.OnTarget;
@@ -3145,6 +3164,10 @@ namespace fire.Runtime
                     OpMakeLambda();
                     break;
 
+                case OpCode.MakeLambdaCapturing:
+                    OpMakeLambdaCapturing();
+                    break;
+
                 case OpCode.Call:
                     OpCall();
                     break;
@@ -4251,6 +4274,7 @@ namespace fire.Runtime
 
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
+            if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
 
             _currentThis = lambda.OnTarget;
             _currentScope = funcScope;
@@ -4315,6 +4339,7 @@ namespace fire.Runtime
 
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
+            if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
 
             _currentThis = lambda.OnTarget;
             _currentScope = funcScope;

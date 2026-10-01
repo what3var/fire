@@ -89,6 +89,8 @@ namespace fire.Compiler
         private sealed class LoopCompileContext
         {
             public int ScopeDepthAtLoopBodyStart;
+            /// <summary>`foreach` hält seinen Enumerator auf dem Operanden-Stack: ein `return` mitten darin muss ihn mit entfernen.</summary>
+            public bool IsForeach;
             public readonly List<int> BreakJumpPatchAddrs = new();
             public readonly List<int> ContinueJumpPatchAddrs = new();
         }
@@ -935,6 +937,14 @@ namespace fire.Compiler
                 case ReturnStmt rs:
                     if (rs.Value != null) CompileExpr(rs.Value);
                     else EmitLoadConst(Value.MakeUndefined());
+                    // Die Enumeratoren der umgebenden `foreach` liegen unter dem Rückgabewert auf dem Stack: sonst blieben sie dort liegen und
+                    // verschöben die Operanden des Aufrufers (`1 + f()` mit einem `return` im `foreach` von `f`).
+                    foreach (var loop in _loopStack)
+                        if (loop.IsForeach)
+                        {
+                            _chunk.EmitOp(OpCode.Swap);
+                            _chunk.EmitOp(OpCode.Pop);
+                        }
                     _chunk.EmitOp(OpCode.Return);
                     break;
 
@@ -1211,7 +1221,7 @@ namespace fire.Compiler
             EmitCallMethodByName("GetEnumerator", 0);
             // Stack: [enumerator]
 
-            var ctx = new LoopCompileContext { ScopeDepthAtLoopBodyStart = _currentScopeDepth };
+            var ctx = new LoopCompileContext { ScopeDepthAtLoopBodyStart = _currentScopeDepth, IsForeach = true };
             _loopStack.Push(ctx);
 
             int loopStart = _chunk.Here;
@@ -1645,6 +1655,9 @@ namespace fire.Compiler
             inner._chunk.OwnerClass = _enclosingClass;
             for (int i = 0; i < lambda.Params.Count; i++)
                 inner._chunk.MarkLocalName(0, i, lambda.Params[i].Name);
+            if (_refs.TryGetValue(lambda, out var nameRef) && nameRef is ResolvedRef.LambdaCaptures named)
+                for (int i = 0; i < named.Variables.Count; i++)
+                    inner._chunk.MarkLocalName(0, lambda.Params.Count + i, named.Variables[i].Name);
             EmitLambdaParamChecks(inner, lambda.Params);
             foreach (var stmt in lambda.Body.Statements)
                 inner.CompileStmt(stmt);
@@ -1656,13 +1669,31 @@ namespace fire.Compiler
             var proto = new FunctionProto(inner._chunk, lambda.Params.Count, AccessModifier.Public, CompileParamDefaults(_enclosingClass, lambda.Params));
             int protoIdx = _chunk.AddFunctionProto(proto);
 
+            // Lambda-Captures (SPEC 4.2): die Werte der benutzten äußeren Locals werden JETZT geladen (Kopie), im umschließenden Scope.
+            var captures = _refs.TryGetValue(lambda, out var captureRef) && captureRef is ResolvedRef.LambdaCaptures lc ? lc.Variables : null;
+            if (captures != null)
+            {
+                if (captures.Count > 255) throw new NotSupportedException("Eine Lambda kann höchstens 255 äußere Variablen erfassen.");
+                foreach (var captured in captures) CompileExpr(captured);
+            }
+
             bool hasOnTarget = lambda.OnTarget != null;
             if (hasOnTarget)
                 CompileExpr(lambda.OnTarget!); // im UMSCHLIESSENDEN (aktuellen) Scope, nicht im Lambda-Scope
 
-            _chunk.EmitOp(OpCode.MakeLambda);
-            _chunk.EmitU16(protoIdx);
-            _chunk.EmitByte(hasOnTarget ? (byte)1 : (byte)0);
+            if (captures != null)
+            {
+                _chunk.EmitOp(OpCode.MakeLambdaCapturing);
+                _chunk.EmitU16(protoIdx);
+                _chunk.EmitByte(hasOnTarget ? (byte)1 : (byte)0);
+                _chunk.EmitByte((byte)captures.Count);
+            }
+            else
+            {
+                _chunk.EmitOp(OpCode.MakeLambda);
+                _chunk.EmitU16(protoIdx);
+                _chunk.EmitByte(hasOnTarget ? (byte)1 : (byte)0);
+            }
         }
 
         /// <summary>Aufrufe registrierter nativer Funktionen (`print(...)` usw.)

@@ -16,5 +16,8 @@ namespace fire.Runtime
 
         /// <summary>Die Oberflächen-Bibliothek (siehe fire.UI.Bridge) - setzt `graphics` voraus.</summary>
         public static string Ui => "ui";
+
+        /// <summary>Die Abfrage-Bibliothek (`Linq.From(...).Where(...)`, reiner fire-Quelltext, siehe fire.Standard.LinqPrelude).</summary>
+        public static string Linq => "linq";
     }
 }
