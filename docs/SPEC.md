@@ -1793,7 +1793,7 @@ t.Find("radius").Get(circle)            // Member.Get/Set/Call(obj, ...)
 - **Grenzen:** Statische Mitglieder stehen in der Beschreibung, lassen sich aber nicht über `Reflect` lesen/schreiben/aufrufen. `Reflect.New` baut über eine verschachtelte Ausführung: wirft ein Konstruktor eine Exception, ist das ein
   interner Fehler statt einer fangbaren Exception. Dynamisch angelegte Felder (ohne Deklaration) erscheinen nicht in `Type`, `Reflect.Has` kennt sie.
 
-#### Selektoren: `lambda member<T> name` (und `field`, `property`, `selector`)
+#### Selektoren: `lambda member<T> name` (und `field`, `property`, `method`, `selector`)
 
 Ein Parameter mit einem Selektor-Typ nimmt eine Lambda entgegen, die ein Mitglied **auswählt**; im Körper enthält der Parameter dann die **Reflection des gewählten Mitglieds** (einen `Selector`), nicht die Lambda:
 
@@ -1808,20 +1808,21 @@ class Watch {
 Watch.Show(c => c.radius, myCircle)
 ```
 
-Vier Arten, je nachdem, was die Lambda auswählen darf:
+Fünf Arten, je nachdem, was die Lambda auswählen darf:
 
 | Typ | erlaubt |
 |---|---|
 | `lambda field<T>` | nur ein **Feld** |
 | `lambda property<T>` | nur eine **Property** |
 | `lambda member<T>` | ein Feld **oder** eine Property |
+| `lambda method<T>` | nur eine **Methode** |
 | `lambda selector<T>` | **alles**: Feld, Property und Methode |
 
 `T` ist der Klassenname, gegen den der Resolver prüft (`lambda selector<>` ohne Typ geht auch); die Instanz wird zur Laufzeit nicht gegen `T` geprüft. Passt das gewählte Mitglied nicht zur Art, ist das eine `ReflectionException`
 ("'P' ist eine Property, erwartet (lambda field<...>): ein Feld") - sobald es ein Objekt gibt (`Get`/`Set`/`Call`/`Describe`/`Probe`).
 
 `Selector`: `Name` (das gewählte Mitglied), `Path` (alle Namen, bei `p => p.address.city`: `address`, `city`), `Kind` (die Art des Parametertyps), `Parent(obj)`, `ActualKind(obj)` (`"field"`, `"property"`, `"method"`), `Get(obj)`, `Set(obj, wert)`,
-`Call(obj, args)` (nur bei einer Methode, also mit `selector<T>`), `Describe(obj)` (das `Member`), `Probe`/`Silence` (nicht für Methoden). `Get`/`Set` auf einer Methode sind eine `ReflectionException` (dafür gibt es `Call`). Eine Methode wählt man ohne Aufruf: `x => x.Twice`.
+`Call(obj, args)` (nur bei einer Methode, also mit `method<T>` oder `selector<T>`), `Describe(obj)` (das `Member`), `Probe`/`Silence` (nicht für Methoden). `Get`/`Set` auf einer Methode sind eine `ReflectionException` (dafür gibt es `Call`). Eine Methode wählt man ohne Aufruf: `x => x.Twice`.
 Die Lambda muss genau einen Parameter haben, und ihr Körper darf nur eine **Mitgliedskette auf diesem Parameter** sein; alles andere ist eine `ReflectionException` ("Die Lambda ist kein Selektor ..."). Wird ein schon umgewandelter Selektor an einen weiteren
 Selektor-Parameter weitergereicht, bleibt er unverändert (und behält die Art des ersten Parameters). Ohne `#import "reflection"` ist jeder Selektor-Typ ein Fehler.
 

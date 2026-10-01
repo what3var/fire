@@ -686,9 +686,9 @@ namespace fire.Compiler
             if (baseName == "lambda")
             {
                 // `lambda field|property|member|selector<T>`: ein Selektor (siehe LambdaSignature.IsSelector)
-                if (Check(TokenType.Identifier) && Peek().Lexeme is "field" or "property" or "member" or "selector" && PeekAt(1).Type == TokenType.Lt)
+                if (Check(TokenType.Identifier) && Peek().Lexeme is "field" or "property" or "member" or "method" or "selector" && PeekAt(1).Type == TokenType.Lt)
                 {
-                    string selectorKind = Advance().Lexeme; // 'field', 'property', 'member' oder 'selector'
+                    string selectorKind = Advance().Lexeme; // 'field', 'property', 'member', 'method' oder 'selector'
                     Advance(); // '<'
                     var targetTypes = new List<string>();
                     if (!Check(TokenType.Gt)) targetTypes.Add(ParseTypeAnnotationName()); // `lambda selector<>`: ohne Typ

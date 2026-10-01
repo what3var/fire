@@ -8672,7 +8672,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             "Der Handler einer Probe darf höchstens 4 Parameter haben (Objekt, Name, alt, neu), hat 5.",
         }, debugRelease);
 
-    CheckRf("Selektor-Arten: field (nur Feld), property (nur Property), member (Feld oder Property), selector (auch Methoden)", """
+    CheckRf("Selektor-Arten: field, property, member (Feld oder Property), method (nur Methode), selector (alles)", """
         class C { int v; int P { get { return 7 } } Twice(int n) { return n * 2 } construct() { this.v = 1 } }
         class W {
             static F(lambda field<C> s, C c) { return s.Name + "=" + s.Get(c) }
@@ -8680,6 +8680,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             static M(lambda member<C> s, C c) { return s.Name + "=" + s.Get(c) }
             static S(lambda selector<C> s, C c) { return s.Name + ":" + s.ActualKind(c) }
             static Call(lambda selector<> s, C c) { return s.Call(c, [21]) }
+            static Meth(lambda method<C> s, C c) { return s.Name + "->" + s.Call(c, [4]) }
             static GetOnly(lambda selector<C> s, C c) { return s.Get(c) }
         }
         var c = new C()
@@ -8691,6 +8692,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         try { W.F(x => x.nope, c) } catch (e) { print("4 " + e.message) }
         try { W.GetOnly(x => x.Twice, c) } catch (e) { print("5 " + e.message) }
         try { W.Call(x => x.v, c) } catch (e) { print("6 " + e.message) }
+        print(W.Meth(x => x.Twice, c))
+        try { W.Meth(x => x.v, c) } catch (e) { print("7 " + e.message) }
+        try { W.Meth(x => x.P, c) } catch (e) { print("8 " + e.message) }
         """, new[]
         {
             "v=1 P=7 v=1 P=7",
@@ -8701,6 +8705,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             "4 'nope' ist kein Mitglied",
             "5 'Twice' ist eine Methode - Call(obj, args) ruft sie auf",
             "6 'v' ist keine Methode",
+            "Twice->8",
+            "7 'v' ist ein Feld, erwartet (lambda method<...>): eine Methode",
+            "8 'P' ist eine Property, erwartet (lambda method<...>): eine Methode",
         });
 
     Console.WriteLine(rfFailures == 0 ? "Alle Reflection-Pruefungen bestanden." : $"FEHLER: {rfFailures} Reflection-Pruefung(en) fehlgeschlagen.");

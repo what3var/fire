@@ -125,7 +125,7 @@ namespace fire.Standard
             }
 
             // Ein Selektor: die Reflection des Mitglieds, das eine Lambda `c => c.radius` auswählt (Parametertyp `lambda member<T>`; `Kind` ist die
-            // Art des Parametertyps: "field", "property", "member" (Feld oder Property) oder "selector" (auch Methoden))
+            // Art des Parametertyps: "field", "property", "member" (Feld oder Property), "method" oder "selector" (alles))
             class Selector {
                 class Path
                 string Name
@@ -225,6 +225,7 @@ namespace fire.Standard
                     if (actual == undefined) { return "'" + name + "' ist kein Mitglied" }
                     var erwartet = "ein Feld"
                     if (kind == "property") { erwartet = "eine Property" }
+                    if (kind == "method") { erwartet = "eine Methode" }
                     if (kind == "member") { erwartet = "ein Feld oder eine Property" }
                     return "'" + name + "' ist " + Reflect.KindWord(actual) + ", erwartet (lambda " + kind + "<...>): " + erwartet
                 }

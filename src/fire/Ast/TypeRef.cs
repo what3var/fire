@@ -14,7 +14,7 @@ namespace fire.Ast
     /// `IsSelector`: `lambda member&lt;T&gt; name` - die übergebene Lambda wählt ein Mitglied aus (`c => c.radius`); der Parameter
     /// enthält im Körper stattdessen die Reflection dieses Mitglieds (siehe docs/DESIGN_LAMBDA_REFLECTION_PROBE.md); `ParamTypeNames`
     /// enthält dann genau den Namen `T`. `SelectorKind` legt fest, was die Lambda auswählen darf:
-    /// `field` (nur ein Feld), `property` (nur eine Property), `member` (Feld oder Property), `selector` (auch eine Methode).
+    /// `field` (nur ein Feld), `property` (nur eine Property), `member` (Feld oder Property), `method` (nur eine Methode), `selector` (alles).
     /// Nur die ANZAHL der Parameter wird zur Laufzeit geprüft (VM.
     /// CheckLambdaSignature) - die einzelnen Typnamen sind rein informativ,
     /// da eine dynamisch typisierte Lambda ihre Parameter-TYPEN nicht
