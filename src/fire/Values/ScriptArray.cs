@@ -21,6 +21,10 @@ namespace fire.Values
     public sealed class ScriptArray
     {
         public Value[] Items { get; }
+
+        /// <summary>Wurde dieses Array von einem Fire-Thread über die Globals erreicht (siehe GlobalsBroker)? Dann gehört es zum geteilten
+        /// Bereich: Elementzugriffe laufen unter dem Baum-Lock, und ein Fire-Thread ändert Elemente nur innerhalb einer Sektion.</summary>
+        public bool IsShared { get; set; }
         public int Length => Items.Length;
 
         public ScriptArray(int length)

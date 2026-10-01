@@ -8,6 +8,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Die (WPF-freie) Vervollständigungs-Logik des Editors, zum Testen direkt eingebunden -
+         das Editor-Projekt selbst ist nur unter Windows baubar. -->
+    <Compile Include="..\fire.Editor\ScriptSymbolIndex.cs" Link="Editor\ScriptSymbolIndex.cs" />
+    <Compile Include="..\fire.Editor\ScriptSymbolIndex.Types.cs" Link="Editor\ScriptSymbolIndex.Types.cs" />
+    <Compile Include="..\fire.Editor\CompletionEngine.cs" Link="Editor\CompletionEngine.cs" />
+    <Compile Include="..\fire.Editor\NavigationEngine.cs" Link="Editor\NavigationEngine.cs" />
+    <Compile Include="..\fire.Editor\BuiltinMembers.cs" Link="Editor\BuiltinMembers.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\fire.Compiler\fire.Compiler.csproj" />
     <ProjectReference Include="..\fire.Runtime\fire.Runtime.csproj" />
   </ItemGroup>

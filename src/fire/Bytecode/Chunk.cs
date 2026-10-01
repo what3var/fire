@@ -142,8 +142,29 @@ namespace fire.Bytecode
 
         public void MarkLocalName(int depth, int slot, string name) => DebugLocalNames[(depth, slot)] = name;
 
+        // Array-Kopien von Code und Konstanten für die VM (siehe VM.ReadByte/LoadConst): ein Array-Zugriff ist
+        // deutlich billiger als der Indexer einer List<T>, und der Code wird pro Instruktion 1-3 Mal gelesen.
+        // Beim Bauen (Emit*/Patch*/AddConstant) wird die Kopie verworfen und beim nächsten Lesen neu angelegt;
+        // nach dem Kompilieren ändert sich nichts mehr. Zwei Threads dürfen gleichzeitig anlegen (gleicher Inhalt).
+        [MemoryPackIgnore] private byte[]? _codeArray;
+        [MemoryPackIgnore] private Value[]? _constantsArray;
+
+        [MemoryPackIgnore]
+        public byte[] CodeArray => _codeArray ??= Code.ToArray();
+
+        /// <summary>Inline-Caches der Aufrufstellen dieses Chunks, indiziert mit dem Byte-Offset des Opcodes
+        /// (siehe SiteCache). Erst beim ersten Bedarf angelegt (nach dem Kompilieren ist die Codelänge fest).</summary>
+        [MemoryPackIgnore]
+        public SiteCache?[]? SiteCaches;
+
+        public SiteCache?[] EnsureSiteCaches() => SiteCaches ??= new SiteCache?[Code.Count + 1];
+
+        [MemoryPackIgnore]
+        public Value[] ConstantsArray => _constantsArray ??= Constants.ToArray();
+
         public int AddConstant(Value v)
         {
+            _constantsArray = null;
             Constants.Add(v);
             return Constants.Count - 1;
         }
@@ -166,11 +187,16 @@ namespace fire.Bytecode
             return Handlers.Count - 1;
         }
 
-        public void EmitByte(byte b) => Code.Add(b);
+        public void EmitByte(byte b)
+        {
+            _codeArray = null;
+            Code.Add(b);
+        }
         public void EmitOp(OpCode op) => EmitByte((byte)op);
 
         public void EmitU16(int value)
         {
+            _codeArray = null;
             Code.Add((byte)(value & 0xFF));
             Code.Add((byte)((value >> 8) & 0xFF));
         }
@@ -180,6 +206,7 @@ namespace fire.Bytecode
         /// des übersprungenen Codes bekannt sind).</summary>
         public void PatchU16(int at, int value)
         {
+            _codeArray = null;
             Code[at] = (byte)(value & 0xFF);
             Code[at + 1] = (byte)((value >> 8) & 0xFF);
         }

@@ -120,14 +120,26 @@ namespace fire.Editor
                     string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
                     OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {text}" : text);
                     return Value.MakeUndefined();
-                }, outname);
+                }, outname,
+                // IO.Stdio (`#import "io"`) landet im selben Ausgabefenster wie print():
+                // Ausgabe und Fehler zeilenweise, Eingabe ist leer (sofort Ende).
+                ioStdio: fire.IO.Bridge.IoStdio.Custom(line =>
+                {
+                    string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
+                    OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {line}" : line);
+                }));
 
                 ActiveExecutionMode = ExecutionMode;
+                _session = session;
 
                 FirstUserSourceIndex = session.FirstUserSourceIndex;
 
                 var mainCtx = DebugThreadContext.ForMain(session.VirtualMachine);
-                mainCtx.Paused += ctx => ThreadPaused?.Invoke(ctx);
+                mainCtx.Paused += ctx =>
+                {
+                    CloseHostResourcesIfAllFinished();
+                    ThreadPaused?.Invoke(ctx);
+                };
 
                 lock (_threadsLock)
                 {
@@ -168,7 +180,11 @@ namespace fire.Editor
         {
             string name = $"Fire #{Interlocked.Increment(ref _fireThreadCounter)}";
             var ctx = DebugThreadContext.ForFireThread(vm, name, _breakpointsSnapshot);
-            ctx.Paused += c => ThreadPaused?.Invoke(c);
+            ctx.Paused += c =>
+            {
+                CloseHostResourcesIfAllFinished();
+                ThreadPaused?.Invoke(c);
+            };
 
             lock (_threadsLock) { _threads.Add(ctx); }
             ThreadAdded?.Invoke(ctx);
@@ -176,10 +192,28 @@ namespace fire.Editor
 
         public void SelectThread(DebugThreadContext thread) => ActiveThread = thread;
 
+        /// <summary>Die Session des aktuellen Laufs - hält das Sicherheitsnetz für offene IO-Streams (siehe
+        /// RuntimeSession.CloseHostResources).</summary>
+        private RuntimeSession? _session;
+
+        /// <summary>Schließt die vom Skript noch offen gelassenen IO-Streams, sobald alle Threads des Laufs beendet sind
+        /// (vorher könnte ein Fire-Thread sie noch brauchen). Läuft höchstens einmal je Lauf.</summary>
+        private void CloseHostResourcesIfAllFinished()
+        {
+            lock (_threadsLock)
+            {
+                if (_threads.Count == 0 || _threads.Any(t => !t.IsFinished)) return;
+            }
+            Interlocked.Exchange(ref _session, null)?.CloseHostResources();
+        }
+
         public void Reset()
         {
             if (FireRuntime.ThreadBodyInterceptor != null)
                 FireRuntime.ThreadBodyInterceptor = null;
+
+            // Abgebrochener Lauf: offene Streams trotzdem schließen (die Threads sind gleich abgemeldet).
+            Interlocked.Exchange(ref _session, null)?.CloseHostResources();
 
             lock (_threadsLock)
             {

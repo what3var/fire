@@ -61,6 +61,10 @@ namespace fire.Ast
     /// Runtime.SyncEngine).</summary>
     public sealed record SyncExpr(int Line, bool IsTry, bool IsFlat, Expr Target) : Expr(Line);
 
+    /// <summary>`sync globals` (docs/THREADING_DESIGN.md Abschnitt 7) - im Hauptprogramm: arbeitet ab, was die Fire-Threads an
+    /// Änderungen der Globals angemeldet haben; liefert die Anzahl der bearbeiteten Einträge (int).</summary>
+    public sealed record SyncGlobalsExpr(int Line) : Expr(Line);
+
     /// <summary>`try process X` (docs/THREADING_DESIGN.md Abschnitt 2) -
     /// nicht-blockierende Variante von Ast.ProcessStmt: liefert `true`, wenn
     /// eine Nachricht verarbeitet wurde, sonst `false` (nie `undefined` -
@@ -127,7 +131,11 @@ namespace fire.Ast
     // ---------------------------------------------------------------
     // Dereference ('*ausdruck') und AddressOf ('&ausdruck') sind nur innerhalb
     // von 'unsafe { }' gültig (vom Resolver geprüft, siehe SPEC "Pointer/unsafe").
-    public enum UnaryOp { Negate, LogicalNot, BitNot, Dereference, AddressOf }
+    //
+    // FlatCopy (`flat x`) und DeepCopy (`copy x`) sind Kopier-Präfixe (SPEC 2.4): `flat` kopiert das Objekt selbst
+    // samt seiner wertartigen Mitglieder, Referenzen bleiben wie im Original; `copy` ist eine Tiefenkopie (jede
+    // erreichbare Instanz genau einmal kopiert). Der Compiler behandelt sie wie `new` bei der Owner-Wahl (SPEC 2.1).
+    public enum UnaryOp { Negate, LogicalNot, BitNot, Dereference, AddressOf, FlatCopy, DeepCopy }
     public sealed record UnaryExpr(int Line, UnaryOp Op, Expr Operand) : Expr(Line);
 
     public enum BinaryOp { Add, Sub, Mul, Div, Mod, Eq, NotEq, Lt, LtEq, Gt, GtEq, And, Or, BitAnd, BitOr, BitXor, ShiftLeft, ShiftRight, Power }

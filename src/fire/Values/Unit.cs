@@ -208,6 +208,7 @@ namespace fire.Values
         public bool Equals(Unit? other)
         {
             if (other is null) return false;
+            if (ReferenceEquals(this, other)) return true; // der häufigste Fall: dieselbe Einheit (meist `Unitless`)
             if (!IsCompatibleWith(other)) return false;
             return Math.Abs(Scale - other.Scale) < 1e-12;
         }

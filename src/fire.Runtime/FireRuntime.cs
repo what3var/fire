@@ -80,9 +80,39 @@ namespace fire.Runtime
                 vm.Run();
         }
 
+        // Lebende Fire-Threads - das Hauptprogramm wartet an seinem Ende auf sie, bevor es seinen globalen Scope freigibt
+        // (siehe VM.FinishProgram): ein Thread, der per `sync` in Objekte des Hauptprogramms zurückschreibt, darf sie nicht
+        // schon zerstört vorfinden.
+        private static int _liveThreads;
+        private static readonly object _liveThreadsGate = new();
+
+        /// <summary>Blockiert, bis alle Fire-Threads beendet sind (sofort, wenn keiner läuft). Mit `broker` (das Hauptprogramm, dem die
+        /// Globals gehören) bedient es dabei die Warteschlange der Threads - sie warten ja auf ein `sync globals` -, sonst würde das Programmende
+        /// an einem Thread hängen, der gerade eine Sektion angemeldet hat.</summary>
+        public static void WaitForAllFireThreads(GlobalsBroker? broker = null)
+        {
+            while (true)
+            {
+                broker?.Drain();
+                lock (_liveThreadsGate)
+                {
+                    bool pending = broker != null && broker.HasPending;
+                    if (_liveThreads == 0 && !pending) return;
+                    if (!pending) Monitor.Wait(_liveThreadsGate, 50);
+                }
+            }
+        }
+
+        /// <summary>Weckt ein Hauptprogramm, das in <see cref="WaitForAllFireThreads"/> wartet (ein Thread hat etwas in die Warteschlange gestellt).</summary>
+        internal static void WakeWaitingOwner()
+        {
+            lock (_liveThreadsGate) Monitor.PulseAll(_liveThreadsGate);
+        }
+
         public static FireThreadHandle Fire(Action body)
         {
             FireThreadHandle? handle = null;
+            lock (_liveThreadsGate) _liveThreads++;
             var thread = new Thread(() =>
             {
                 try
@@ -92,6 +122,14 @@ namespace fire.Runtime
                 catch (Exception ex)
                 {
                     handle!.SetError(ex);
+                }
+                finally
+                {
+                    lock (_liveThreadsGate)
+                    {
+                        _liveThreads--;
+                        Monitor.PulseAll(_liveThreadsGate);
+                    }
                 }
             })
             {
@@ -135,56 +173,42 @@ namespace fire.Runtime
             });
         }
 
-        /// <summary>Wie FireVm, aber mit `taking`/`with`-Bindungen UND einem
-        /// Read-only-Snapshot ALLER Hauptprogramm-Globals (siehe Ast.FireStmt/
-        /// docs/THREADING_DESIGN.md Abschnitt 2/3/8, Resolving.Resolver.
-        /// ResolveFireStmt für die Slot-Zuordnung):
+        /// <summary>Wie FireVm, aber mit `taking`/`with`-Bindungen und der Verbindung zu den Globals des Hauptprogramms (siehe
+        /// docs/THREADING_DESIGN.md Abschnitt 7, GlobalsBroker):
         ///
-        /// `globalSnapshot`: die Werte ALLER Hauptprogramm-Globals, MUSS
-        /// bereits VOR diesem Aufruf SYNCHRON auf dem AUFRUFENDEN Thread
-        /// gelesen worden sein (siehe VM.OpCode.Fire) - ein lazy Zugriff auf
-        /// die LEBENDIGE Scope-Instanz des Hauptprogramms von HIER (bereits
-        /// auf dem neuen Thread laufend) aus wäre ein echter Daten-
-        /// Wettlauf, da der aufrufende Thread zwischenzeitlich weiterlaufen
-        /// und dieselben Slots verändern könnte. Werden an den Original-
-        /// Slots (0..Count-1) des neuen globalen Scopes gebunden.
+        /// `broker`/`sharedGlobalCount`: die Globals des Hauptprogramms (Slots 0..sharedGlobalCount-1) werden NICHT kopiert - der Thread liest sie
+        /// direkt und ändert sie in Sektionen (siehe VM.AttachToGlobals). Der private globale Scope des Threads hält dafür nur Platzhalter, damit die
+        /// Slots der Erfassungen dahinter an den Stellen liegen, die Resolving.Resolver.ResolveFireStmt/Compiler.CompileFireStmt vergeben haben.
         ///
-        /// `takingValues`: wie bisher, direkt IM ANSCHLUSS an den Globals-
-        /// Snapshot gebunden (siehe Compiler.CompileFireStmt für die
-        /// exakte Slot-Zuordnung).
+        /// `takingValues`: direkt im Anschluss an die Platzhalter gebunden. Ein Objekt (ValueKind.Class) wird als isolierte Tiefenkopie gebunden
+        /// (Runtime.ObjectCopier.Take - das Kopieren selbst aktiviert das Thread-Sharing auf dem Original), sonst direkt (Value ist ein unveränderlicher
+        /// struct).
         ///
-        /// Für BEIDE gilt: ein Objekt (ValueKind.Class) wird als isolierte
-        /// Tiefenkopie gebunden (Runtime.ObjectCopier.Take - das darf
-        /// weiterhin LAZY hier auf dem neuen Thread passieren, siehe
-        /// DefineSnapshotSlot: das Kopieren selbst aktiviert das Thread-
-        /// Sharing-Locking auf dem Original ERST beim tatsächlichen
-        /// Kopieren, konsistent mit dem etablierten Sicherheitsmodell von
-        /// `taking` - nur das INITIALE LESEN der rohen Werte aus dem
-        /// Hauptprogramm-Scope selbst darf nicht lazy sein), sonst direkt
-        /// (Value ist ein unveränderlicher struct).
-        ///
-        /// `withValue` (eine Actor-Referenz) wird dagegen IMMER DIREKT
-        /// weitergegeben, OHNE Kopie, als letzter Slot - ein Actor verwaltet
-        /// seine eigene Thread-Sicherheit über seine Mailbox (siehe Runtime.
-        /// ActorMailbox), nicht über das taking/sync-Ownership-Modell.</summary>
+        /// `withValue` (eine Actor-Referenz) wird dagegen IMMER DIREKT weitergegeben, OHNE Kopie, als letzter Slot - ein Actor verwaltet seine eigene
+        /// Thread-Sicherheit über seine Mailbox (siehe Runtime.ActorMailbox), nicht über das taking/sync-Ownership-Modell.</summary>
         public static FireThreadHandle FireVmTaking(
             Chunk chunk,
             NativeRegistry natives,
             IReadOnlyDictionary<string, RuntimeClass>? classes,
-            IReadOnlyList<Value> globalSnapshot,
+            GlobalsBroker? broker,
+            int sharedGlobalCount,
             IReadOnlyList<Value> takingValues,
             Value? withValue = null,
             VmExecutionMode executionMode = VmExecutionMode.Debug)
         {
             return Fire(() =>
             {
+                // Die Slots 0..sharedGlobalCount-1 sind die echten Globals des Hauptprogramms (die VM liest/schreibt sie über den Broker,
+                // siehe GlobalsBroker/VM.AttachToGlobals) - hier nur Platzhalter, damit taking/with an den vom Compiler vergebenen Slots liegen.
                 var scope = new Scope(null, isGlobal: true);
-                foreach (var v in globalSnapshot) DefineSnapshotSlot(scope, v);
+                for (int i = 0; i < sharedGlobalCount; i++) scope.DefineSlot(Value.MakeUndefined());
                 foreach (var tv in takingValues) DefineSnapshotSlot(scope, tv);
                 if (withValue is Value wv)
                     scope.DefineSlot(wv);
                 var vm = new VM(chunk, scope, natives, classes, isFireThreadVm: true, executionMode: executionMode);
-                RunVm(vm);
+                if (broker != null) vm.AttachToGlobals(broker, sharedGlobalCount);
+                try { RunVm(vm); }
+                finally { vm.ReleaseGlobalsSections(); }
             });
         }
 
@@ -234,6 +258,47 @@ namespace fire.Runtime
                 onUnhandled?.Invoke(ex);
                 return Value.MakeUndefined();
             }
+        }
+
+        /// <summary>Führt das Lambda eines nativen Callbacks aus (z.B. ein Fenster-Ereignis) - die eine Stelle, die entscheidet, WO:
+        ///
+        /// - Auf dem Thread einer laufenden VM (der Normalfall: das Skript selbst ruft z.B. `Window.Tick`, und dabei feuern die
+        ///   Ereignisse) läuft es VERSCHACHTELT auf dieser VM (<see cref="VM.CallLambdaInline"/>): mit den echten globalen Variablen,
+        ///   lesend und schreibend, ohne Kopie. Es gibt keine nebenläufige Ausführung, also nichts zu isolieren.
+        /// - Auf einem Thread ohne laufende VM (ein Host-Thread, z.B. ein Seriell-Ereignis) wäre Zugriff auf die Globals ein Datenrennen:
+        ///   dort wird es der Besitzer-VM (`owner`, das Hauptprogramm) eingereiht und von ihr an einem sicheren Punkt ausgeführt
+        ///   (`sync globals` oder - ohne `#nosync` - automatisch, siehe <see cref="VM.PostCallback"/>). Läuft das Hauptprogramm nicht (mehr)
+        ///   oder gibt es keinen Besitzer, läuft es wie <see cref="CallCallback"/> auf einer isolierten Kopie (`snapshotGlobals` liefert sie).
+        ///
+        /// Eine unbehandelte Exception im Callback geht nie an den Aufrufer, sondern als Text an `onUnhandled`.</summary>
+        public static void RunCallback(
+            LambdaValue callback,
+            Value[] args,
+            NativeRegistry natives,
+            IReadOnlyDictionary<string, RuntimeClass>? classes,
+            Func<IReadOnlyList<Value>> snapshotGlobals,
+            Action<string>? onUnhandled = null,
+            VmExecutionMode executionMode = VmExecutionMode.Debug,
+            VM? owner = null)
+        {
+            var vm = VM.CurrentThreadVm;
+            if (vm != null && !vm.IsHalted)
+            {
+                try
+                {
+                    var error = vm.CallLambdaInline(callback, args);
+                    if (error != null) onUnhandled?.Invoke(new UncaughtScriptException(error).Message);
+                }
+                catch (Exception ex)
+                {
+                    onUnhandled?.Invoke(ex.Message);
+                }
+                return;
+            }
+
+            if (owner != null && owner.PostCallback(callback, args, onUnhandled)) return;
+
+            CallCallback(callback, args, natives, classes, snapshotGlobals(), ex => onUnhandled?.Invoke(ex.Message), executionMode);
         }
 
         /// <summary>Gemeinsame Bindungslogik für sowohl den Globals-Snapshot

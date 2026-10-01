@@ -105,6 +105,12 @@ namespace fire.Terminal.Bridge
                 ["SetColor"] = args => Value.MakeUndefined() /*STUB*/,
                 ["SetPixel"] = args => Value.MakeUndefined() /*STUB*/,
                 ["GetPixel"] = args => Value.MakeUndefined() /*STUB*/,
+                ["FillRect"] = args => Value.MakeUndefined() /*STUB*/,
+                ["DrawRect"] = args => Value.MakeUndefined() /*STUB*/,
+                ["DrawLine"] = args => Value.MakeUndefined() /*STUB*/,
+                ["DrawText"] = args => Value.MakeUndefined() /*STUB*/,
+                ["CellWidth"] = args => Value.MakeUndefined() /*STUB*/,
+                ["CellHeight"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 
@@ -144,6 +150,29 @@ namespace fire.Terminal.Bridge
                     return Value.MakeUndefined();
                 },
                 ["GetPixel"] = args => Value.MakeInt(mgr.GetPixel((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt())),
+                // Die folgenden nehmen ROHE Farbwerte (R im niedrigsten Byte, Alpha im höchsten), keine Palette-Indizes.
+                ["FillRect"] = args =>
+                {
+                    mgr.FillRect((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt(), (int)args[3].AsInt(), (int)args[4].AsInt(), (int)args[5].AsInt());
+                    return Value.MakeUndefined();
+                },
+                ["DrawRect"] = args =>
+                {
+                    mgr.DrawRect((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt(), (int)args[3].AsInt(), (int)args[4].AsInt(), (int)args[5].AsInt());
+                    return Value.MakeUndefined();
+                },
+                ["DrawLine"] = args =>
+                {
+                    mgr.DrawLine((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt(), (int)args[3].AsInt(), (int)args[4].AsInt(), (int)args[5].AsInt());
+                    return Value.MakeUndefined();
+                },
+                ["DrawText"] = args =>
+                {
+                    mgr.DrawText((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt(), args[3].AsString(), (int)args[4].AsInt(), (int)args[5].AsInt());
+                    return Value.MakeUndefined();
+                },
+                ["CellWidth"] = args => Value.MakeInt(mgr.GetCellWidth((int)args[0].AsInt())),
+                ["CellHeight"] = args => Value.MakeInt(mgr.GetCellHeight((int)args[0].AsInt())),
             };
         }
 
@@ -158,6 +187,12 @@ namespace fire.Terminal.Bridge
                 },
                 ["Destroy"] = args => Value.MakeBool(mgr.DestroyWindow((int)args[0].AsInt())),
                 ["Tick"] = args => Value.MakeBool(mgr.Tick((int)args[0].AsInt())),
+                ["EnableEvents"] = args =>
+                {
+                    mgr.EnableEventQueue((int)args[0].AsInt());
+                    return Value.MakeBool(true);
+                },
+                ["NextEvent"] = args => mgr.NextEvent((int)args[0].AsInt()),
                 ["RegisterEvent"] = args =>
                 {
                     if (args.Count() != 3)
@@ -184,6 +219,8 @@ namespace fire.Terminal.Bridge
                 ["Create"] = args => Value.MakeUndefined() /*STUB*/,
                 ["Destroy"] = args => Value.MakeUndefined() /*STUB*/,
                 ["Tick"] = args => Value.MakeUndefined() /*STUB*/,
+                ["EnableEvents"] = args => Value.MakeUndefined() /*STUB*/,
+                ["NextEvent"] = args => Value.MakeUndefined() /*STUB*/,
                 ["RegisterEvent"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
@@ -245,6 +282,16 @@ namespace fire.Terminal.Bridge
                 SetColor(int foreground, int background) { __GRPHConSetColor(this.id, foreground, background) }
                 SetPixel(int x, int y, int color) { __GRPHConSetPixel(this.id, x, y, color) }
                 int GetPixel(int x, int y) { return __GRPHConGetPixel(this.id, x, y) }
+
+                // Farben der folgenden Methoden sind ROHE Werte: r + g*256 + b*65536 + a*16777216 (a = 255 deckend; siehe
+                // UI.Color.Rgb) - keine Palette-Indizes wie bei SetColor. Positionen/Größen in PIXELN.
+                FillRect(int x, int y, int w, int h, int color) { __GRPHConFillRect(this.id, x, y, w, h, color) }
+                DrawRect(int x, int y, int w, int h, int color) { __GRPHConDrawRect(this.id, x, y, w, h, color) }
+                DrawLine(int x0, int y0, int x1, int y1, int color) { __GRPHConDrawLine(this.id, x0, y0, x1, y1, color) }
+                // background 0 (Alpha 0) = transparent: nur die Zeichen-Pixel werden geschrieben
+                DrawText(int x, int y, string text, int color, int background) { __GRPHConDrawText(this.id, x, y, text, color, background) }
+                int CellWidth() { return __GRPHConCellWidth(this.id) }
+                int CellHeight() { return __GRPHConCellHeight(this.id) }
             }
 
             class Window {
@@ -262,6 +309,16 @@ namespace fire.Terminal.Bridge
                 }
 
                 bool Tick() { return __GRPHWinTick(this.id) }
+
+                // Abfrage-Stil statt Callbacks: EnableEvents() schaltet eine Warteschlange ein, danach holt man nach jedem Tick
+                // mit NextEvent() ein Ereignis nach dem anderen ab (undefined, wenn keins mehr ansteht). Das Ereignis ist ein
+                // Array: e[0] ist der Typ (siehe EventType), der Rest hängt vom Typ ab, Positionen sind ganze Pixel des
+                // Framebuffers: MouseDown/MouseUp [typ, taste, x, y], MouseMove [typ, x, y, tasten], MouseScroll [typ, scrollX,
+                // scrollY, x, y], KeyDown/KeyUp [typ, keycode, scancode, modifier, wiederholt], TextInput [typ, text], Close [typ].
+                // Die Verarbeitung läuft so im Hauptprogramm - mit den echten globalen Variablen, nicht der isolierten Kopie eines
+                // Callbacks.
+                bool EnableEvents() { return __GRPHWinEnableEvents(this.id) }
+                NextEvent() { return __GRPHWinNextEvent(this.id) }
             
             
                 bool RegisterMouseDown(lambda<int,float,float> fn)

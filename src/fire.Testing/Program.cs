@@ -12,8 +12,8 @@ using fire.Values;
 // Evaluator existiert. Bei dir lokal: `dotnet run` im src/fire-Ordner.
 
 string sample = """
-var a : int = 5mm
-var b : float = undefined:km
+int a = 5mm
+float b = undefined:km
 
 var c = b + a:!
 var d = b: + a:!
@@ -279,8 +279,8 @@ for (var i = 1; i <= 5; i = i + 1) {
 }
 print(globalTotal)
 
-var b : float = 2.5km
-var a : int = 500m
+float b = 2.5km
+int a = 500m
 var z = b + a:!
 print(z)
 
@@ -368,8 +368,8 @@ string typeSystemSample = """
 extern int GetTickCount()
 extern PlaySound(string path)
 
-var narrow : int[8] = 300
-var wide : int[64] = 9999999999
+int[8] narrow = 300
+int[64] wide = 9999999999
 
 int arr[10]
 int matrix[][]
@@ -377,7 +377,7 @@ var dyn = new int[5]
 
 unsafe {
     var x = 42
-    var p : int[64]* = &x
+    int[64]* p = &x
     var y = *p
 }
 """;
@@ -821,7 +821,7 @@ Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: is in / is of / is from / is under ===");
 
 string isOperatorsSample = """
-var x : int = 5mm
+int x = 5mm
 print(x is in mm)
 print(x is in kg)
 print(x is of int)
@@ -1736,7 +1736,7 @@ catch (Exception ex) when (ex is ParseException or ResolverException or NotSuppo
 }
 
 Console.WriteLine();
-Console.WriteLine("=== Bytecode-Test: optionale Parameter (Methode, Lambda, beide Syntaxstile) ===");
+Console.WriteLine("=== Bytecode-Test: optionale Parameter (Methode, Lambda, Standardwert mit und ohne Typ) ===");
 
 string optionalParamsSample = """
 class Greeter {
@@ -1753,7 +1753,7 @@ var f = func (x, y = 10) => { return x + y }
 print(f(5))
 print(f(5, 20))
 
-var h = func (x : int = 42) => { return x }
+var h = func (int x = 42) => { return x }
 print(h())
 print(h(7))
 """;
@@ -2295,16 +2295,17 @@ catch (ResolverException ex)
 }
 
 Console.WriteLine();
-Console.WriteLine("=== Bytecode-Test: break in try innerhalb einer Schleife (muss fehlschlagen) ===");
+Console.WriteLine("=== Bytecode-Test: break in finally innerhalb einer Schleife (muss fehlschlagen) ===");
 
 string breakInTrySample = """
 var m = 0
 while (m < 5) {
     m = m + 1
     try {
-        break
+        m = 7
     }
-    catch (e) {
+    finally {
+        break
     }
 }
 """;
@@ -2568,7 +2569,7 @@ try
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
     var vmGlobalScope = new Scope(null, isGlobal: true);
-    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes);
+    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes) { DestroyGlobalsAtEnd = false }; // die Objekte werden danach noch von Hand an Threads gegeben
     vm.Run();
 
     var player = (ObjectInstance)vmGlobalScope.GetSlot(0).AsObjectRef();
@@ -2629,7 +2630,7 @@ try
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
     var vmGlobalScope = new Scope(null, isGlobal: true);
-    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes);
+    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes) { DestroyGlobalsAtEnd = false };
     vm.Run();
 
     var counter = (ObjectInstance)vmGlobalScope.GetSlot(0).AsObjectRef();
@@ -2773,7 +2774,7 @@ try
     var setupCompiled = Compiler.Compile(setupProgram, setupResolve, mainNatives);
 
     var mainGlobalScope = new Scope(null, isGlobal: true);
-    var mainVm = new VM(setupCompiled.TopLevel, mainGlobalScope, mainNatives, setupCompiled.Classes);
+    var mainVm = new VM(setupCompiled.TopLevel, mainGlobalScope, mainNatives, setupCompiled.Classes) { DestroyGlobalsAtEnd = false };
     mainVm.Run();
 
     var player = (ObjectInstance)mainGlobalScope.GetSlot(0).AsObjectRef();
@@ -3652,7 +3653,7 @@ catch (Exception ex)
 }
 
 Console.WriteLine();
-Console.WriteLine("=== Multithreading: Schreiben auf ein Hauptprogramm-Global in 'fire' wird abgelehnt ===");
+Console.WriteLine("=== Multithreading: Schreiben auf ein Hauptprogramm-Global in 'fire' wird uebersetzt (laeuft als Sektion, siehe Block 'Globals und Fire-Threads') ===");
 
 string mtGlobalWriteRejectedSample = """
 var counter = 10
@@ -3668,11 +3669,11 @@ try
     var program = Parser.Parse(mtGlobalWriteRejectedSample);
     var resolveResult = Resolver.Resolve(program, natives.Names);
     Compiler.Compile(program, resolveResult, natives);
-    Console.WriteLine("FEHLER: Hätte einen ResolverException erwarten sollen, ist aber durchgelaufen!");
+    Console.WriteLine("OK: das Schreiben wird uebersetzt");
 }
 catch (ResolverException ex)
 {
-    Console.WriteLine($"Erwarteter Fehler (korrekt abgelehnt): {ex.Message}");
+    Console.WriteLine($"FEHLER: Schreiben auf ein Global in 'fire' wurde abgelehnt: {ex.Message}");
 }
 catch (Exception ex)
 {
@@ -3680,7 +3681,7 @@ catch (Exception ex)
 }
 
 Console.WriteLine();
-Console.WriteLine("=== Multithreading: Objekt-Global im Snapshot ist isoliert (Mutation betrifft nicht das Original) ===");
+Console.WriteLine("=== Multithreading: Objekt-Global wird vom Thread direkt geaendert (Sektion, bei Programmende vom Hauptprogramm abgearbeitet) ===");
 
 string mtGlobalObjectSnapshotSample = """
 class Vault {
@@ -3713,7 +3714,7 @@ try
 
     var vault = (ObjectInstance)vmGlobalScope.GetSlot(0).AsObjectRef();
     Console.WriteLine(
-        $"Hauptprogramm NACH fire (erwartet UNVERAENDERT 100): vault.gold = {vault.Fields["gold"].AsInt()}");
+        $"Hauptprogramm NACH fire (erwartet 999, die Sektion lief beim Programmende): vault.gold = {vault.Fields["gold"].AsInt()}");
 }
 catch (Exception ex)
 {
@@ -5052,6 +5053,2903 @@ catch (Exception ex)
     Console.WriteLine($"Erwarteter Fehler: {ex.Message}");
 }
 
+Console.WriteLine();
+Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden über die Typen aufgelöst ===");
+
+{
+    const string classes = """
+        class Animal {
+            string name
+            protected int age
+            private int secret
+            static int Count
+            construct(string n) { this.name = n }
+            Speak() { return "..." }
+        }
+        class Dog : Animal {
+            Tail tail = new Tail()
+            Bark() { return 1 }
+            Wag() { return this.tail }
+        }
+        class Tail {
+            int length
+            Curl() { }
+        }
+        enum Color { Red, Green }
+
+        """;
+
+    int completionFailures = 0;
+    // '|' im Quelltext = Cursor-Position. `expected`: diese Namen MÜSSEN vorgeschlagen
+    // werden, `forbidden`: diese DÜRFEN NICHT (Komma-getrennt).
+    void CheckCompletion(string title, string source, string expected, string forbidden = "", bool exact = false)
+    {
+        int cursor = source.IndexOf('|');
+        source = source.Remove(cursor, 1);
+        var index = fire.Editor.ScriptSymbolIndex.Build(source);
+        var names = fire.Editor.CompletionEngine.GetSuggestions(source, cursor, index).Select(i => i.Text).ToList();
+        var want = expected.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        var deny = forbidden.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        bool ok = want.All(names.Contains) && !deny.Any(names.Contains) && (!exact || names.Count == want.Length);
+        if (!ok) completionFailures++;
+        Console.WriteLine($"{(ok ? "OK" : "FEHLER")}: {title} -> {string.Join(", ", names.Take(10))}");
+    }
+
+    CheckCompletion("typisierte Variable", classes + "Dog d = new Dog(\"a\")\nd.|", "Bark,Wag,tail,name,Speak", "Curl,Count,age,secret,Dog");
+    CheckCompletion("typisierte Variable ohne Initialisierer", classes + "Dog d\nd.|", "Bark,Wag,tail,name,Speak", "Curl,Count,age,secret,Dog");
+    // 'var x : einheit' legt nur eine Einheit fest, der Typ kommt aus dem Initialisierer.
+    CheckCompletion("var mit Einheit", classes + "var d : mm = new Dog(\"a\")\nd.|", "Bark,Wag", "Curl");
+    CheckCompletion("var = new X()", classes + "var d = new Dog(\"a\")\nd.|", "Bark,name,Speak", "Curl,length");
+    CheckCompletion("Praefix filtert", classes + "var d = new Dog(\"a\")\nd.Ba|", "Bark", "Speak", exact: true);
+    CheckCompletion("var = andere Variable", classes + "var d = new Dog(\"a\")\nvar e = d\ne.|", "Bark", "Curl");
+    CheckCompletion("Methodenkette (Rueckgabetyp aus return)", classes + "var d = new Dog(\"a\")\nd.Wag().|", "Curl,length", "Bark", exact: true);
+    CheckCompletion("Feldkette", classes + "var d = new Dog(\"a\")\nd.tail.|", "Curl,length", "Bark", exact: true);
+    CheckCompletion("new X().", classes + "new Dog(\"a\").|", "Bark", "Curl");
+    CheckCompletion("Zuweisung spaeter", classes + "var d = null\nd = new Dog(\"a\")\nd.|", "Bark", "Curl");
+    CheckCompletion("typisierter Parameter", classes + "Foo(Dog d) { d.| }", "Bark", "Curl");
+    CheckCompletion("Array-Element", classes + "var arr = new Dog[3]\narr[0].|", "Bark", "Curl");
+    CheckCompletion("foreach ueber Array", classes + "Dog ds[]\nforeach (var x in ds) { x.| }", "Bark", "Curl");
+    CheckCompletion("foreach ohne var (so schreibt es die Sprache)", classes + "Dog ds[]\nforeach (x in ds) { x.| }", "Bark", "Curl");
+    CheckCompletion("foreach-Variable wird vorgeschlagen", "var l = new List()\nforeach (zeile in l) { zei| }", "zeile");
+    CheckCompletion("Klasse. nur statisch", classes + "Animal.|", "Count", "Speak,name", exact: true);
+    CheckCompletion("Enum.", classes + "var c = Color.|", "Red,Green", exact: true);
+    CheckCompletion("private/protected ausserhalb versteckt", classes + "var a = new Animal(\"x\")\na.|", "name,Speak", "secret,age,Count");
+    CheckCompletion("private innerhalb sichtbar", "class A { private int p\n M() { this.| } }", "p,M");
+    CheckCompletion("protected in Ableitung", "class A { protected int p }\nclass B : A { M() { this.| } }", "p,M");
+    CheckCompletion("this.feld.", "class A { B b = new B()\n M() { this.b.| } }\nclass B { Z() {} }", "Z", "M", exact: true);
+    CheckCompletion("Feld ohne this.", "class A { B b = new B()\n M() { b.| } }\nclass B { Z() {} }", "Z", "M", exact: true);
+    CheckCompletion("Feldtyp aus Konstruktor", "class A { b\n construct() { this.b = new B() }\n M() { this.b.| } }\nclass B { Z() {} }", "Z", "M", exact: true);
+    CheckCompletion("Aufruf ohne this.", "class A { B mk() { return new B() }\n M() { mk().| } }\nclass B { Z() {} }", "Z", "M", exact: true);
+    CheckCompletion("generische Klasse", "class Box<T> where T is of A {\n T item\n Get() { return this.item }\n}\nclass A { Run() {} }\nvar b = new Box<A>()\nb.|", "Get,item", "Run", exact: true);
+    CheckCompletion("Interface-Mitglieder", "interface I { Foo() }\nclass A : I { Bar() {} }\nI a\na.|", "Foo", "Bar", exact: true);
+    CheckCompletion("Prelude-Klasse", "var l = new List()\nl.|", "Add,GetEnumerator", "Speak");
+    CheckCompletion("Erweiterung per #import", "#import \"graphics\"\nvar fb = new Framebuffer(1, 2)\nfb.|", "Width,Height,ReadByte");
+    CheckCompletion("#import io: IO. zeigt Streams und Enums", "#import \"io\"\nIO.|", "FileStream,MemoryStream,Stream,IStream,FileMode,SeekOrigin,IOException");
+    CheckCompletion("#import io: Stream-Mitglieder", "#import \"io\"\nvar s = new IO.FileStream(\"a.bin\")\ns.|", "ReadBytes,ReadAll,CopyTo,Position,Length,Close,Seek,Name", "ToBuffer,Throw");
+    CheckCompletion("#import io: IO.FileMode.", "#import \"io\"\nvar m = IO.FileMode.|", "Open,Create,CreateNew,OpenOrCreate,Append", exact: true);
+    CheckCompletion("nach 'new' nur Klassen (keine Interfaces)", "interface I { Foo() }\nclass A { }\nvar x = new |", "A", "I,var");
+    CheckCompletion("bool hat keine Mitglieder", "var b = true\nb.|", "", exact: true);
+    CheckCompletion("Variable aus fremder Methode nicht sichtbar -> Fallback", "class A { M() { var q = new B() }\n N() { q.| } }\nclass B { Z() {} }", "Z");
+    CheckCompletion("unbestimmbar -> Fallback auf alle Klassen", classes + "var d = something()\nd.|", "Bark,Curl");
+    CheckCompletion("Zyklus haengt nicht", "var a = b\nvar b = a\na.|", "");
+    // ---- Namespaces und ihre Mitglieder ----
+    const string geo = """
+        namespace Geometry {
+            class Shape { string label
+                Describe() { return "s" } }
+            class Circle : Shape {
+                int radius
+                static Circle Unit() { return new Circle() }
+                Area() { return 1 }
+            }
+            interface IDrawable { Draw() }
+            enum Kind { Round, Flat }
+            namespace Inner {
+                class Deep { Go() { } }
+            }
+        }
+        class Other { Z() { } }
+
+        """;
+    CheckCompletion("Namespace. zeigt Klassen, Enums, Unter-Namespaces", geo + "Geometry.|", "Shape,Circle,IDrawable,Kind,Inner", "Deep,Other,Area", exact: true);
+    CheckCompletion("Namespace. Praefix", geo + "Geometry.Ci|", "Circle", "Shape", exact: true);
+    CheckCompletion("verschachtelter Namespace.", geo + "Geometry.Inner.|", "Deep", "Shape", exact: true);
+    CheckCompletion("Namespace.Klasse. -> statische Mitglieder", geo + "Geometry.Circle.|", "Unit", "Area,radius", exact: true);
+    CheckCompletion("Namespace.Enum.", geo + "Geometry.Kind.|", "Round,Flat", exact: true);
+    CheckCompletion("new Namespace.", geo + "var c = new Geometry.|", "Shape,Circle,Inner", "IDrawable,Kind", exact: true);
+    CheckCompletion("new Namespace.Klasse(...).", geo + "new Geometry.Circle().|", "Area,radius,Describe,label", "Unit,Z");
+    CheckCompletion("var = new Namespace.Klasse()", geo + "var c = new Geometry.Circle()\nc.|", "Area,radius,Describe,label", "Unit,Z");
+    CheckCompletion("Namespace-Typ als Deklaration", geo + "Geometry.Circle c\nc.|", "Area,radius", "Unit,Z");
+    CheckCompletion("Ergebnis einer statischen Methode aus Namespace", geo + "var c = Geometry.Circle.Unit()\nc.|", "Area,radius", "Unit");
+    CheckCompletion("Namespace auf oberster Ebene angeboten", geo + "Geo|", "Geometry", "Other,Circle");
+    CheckCompletion("Klasse ausserhalb des Namespaces nicht unqualifiziert", geo + "Cir|", "", "Circle,Shape");
+    CheckCompletion("Klasse ohne Namespace unqualifiziert", geo + "Ot|", "Other", "Circle");
+    CheckCompletion("new: Klasse nur qualifiziert erreichbar", geo + "var x = new Ci|", "", "Circle");
+    CheckCompletion("Kontext: innerhalb des Namespaces einfach ansprechbar", geo + "namespace Geometry { class Extra { M() { var c = new Ci| } } }", "Circle", "Other");
+    CheckCompletion("#using macht Klassen unqualifiziert ansprechbar", "#using Geometry\n" + geo + "var c = new Ci|", "Circle", "Deep");
+    CheckCompletion("#using: var = new Klasse()", "#using Geometry\n" + geo + "var c = new Circle()\nc.|", "Area,radius", "Unit");
+    CheckCompletion("#using: Namespaces vorschlagen", "namespace Geometry { namespace Inner { } }\n#using Ge|", "Geometry", "Inner", exact: true);
+    CheckCompletion("#using: Unter-Namespaces", "namespace Geometry { namespace Inner { } }\n#using Geometry.|", "Inner", "Geometry", exact: true);
+    CheckCompletion("Basisklasse aus Namespace geerbt", geo + "var c = new Geometry.Circle()\nc.|", "label,Describe");
+    CheckCompletion("Feldtyp aus Namespace", "namespace N { class A { B b = new B()\n M() { this.b.| } }\n class B { Z() { } } }", "Z", "M", exact: true);
+    CheckCompletion("Feldtyp qualifiziert", "namespace N { class B { Z() { } } }\nclass A { N.B b\n M() { this.b.| } }", "Z", "M", exact: true);
+    CheckCompletion("gleichnamige Klassen in zwei Namespaces", "namespace P { class Same { OnlyP() { } } }\nnamespace Q { class Same { OnlyQ() { } } }\nvar a = new P.Same()\na.|", "OnlyP", "OnlyQ", exact: true);
+    CheckCompletion("class extends im Namespace", "namespace N { class A { X() { } } }\nnamespace N { class extends A { Y() { this.| } } }", "X,Y");
+    Console.WriteLine(completionFailures == 0 ? "Alle Vervollstaendigungs-Pruefungen bestanden." : $"FEHLER: {completionFailures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) und Host-Richtlinie ===");
+
+{
+    string ioDir = Path.Combine(Path.GetTempPath(), "fire-io-test-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(ioDir);
+    string ioFile = Path.Combine(ioDir, "a.bin").Replace("\\", "/");
+    string ioMissing = Path.Combine(ioDir, "missing", "x.bin").Replace("\\", "/");
+    string ioDirFwd = ioDir.Replace("\\", "/");
+    int ioFailures = 0;
+
+    // Führt `script` mit Prelude + IO-Prelude aus und liefert alle `print`-Zeilen.
+    List<string> RunIo(string script, fire.IO.Bridge.IoPolicy? policy = null, fire.IO.Bridge.IoStdio? stdio = null)
+    {
+        var lines = new List<string>();
+        var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var sources = new[] { fire.Standard.Prelude.Source, fire.IO.Bridge.IoBridge.PreludeSource, script }
+            .Select(s => Preprocessor.Process(s, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList();
+        var program = Parser.ParseMultiple(sources);
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        fire.IO.Bridge.IoBridge.RegisterAll(natives, policy, stdio);
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes);
+        vm.Run();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckIo(string title, string script, string[] expected, fire.IO.Bridge.IoPolicy? policy = null, fire.IO.Bridge.IoStdio? stdio = null)
+    {
+        string[] actual;
+        try { actual = RunIo(script, policy, stdio).ToArray(); }
+        catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
+        bool ok = actual.SequenceEqual(expected);
+        if (!ok) ioFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+    }
+
+    CheckIo("FileStream: schreiben, lesen, positionieren", $$"""
+        {
+            var w = new IO.FileStream("{{ioFile}}", IO.FileMode.Create)
+            var data = new byte[5]
+            for (var i = 0; i < 5; i++) { data[i] = 65 + i }
+            print(w.Write(data))
+            w.WriteByte(70)
+            print("len " + w.Length + " pos " + w.Position)
+            w.Close()
+            print("closed " + w.IsClosed)
+        }
+        var r = new IO.FileStream("{{ioFile}}")
+        print("read " + r.CanRead + " write " + r.CanWrite + " seek " + r.CanSeek)
+        print(r.ReadBytes(3).ToString())
+        print(r.ReadByte())
+        r.Seek(-1, IO.SeekOrigin.End)
+        print(r.ReadByte())
+        print(r.ReadByte())
+        r.Position = 0
+        var all = r.ReadAll()
+        print(all.ToString() + " " + all.length)
+        r.Close()
+        """, new[] { "5", "len 6 pos 6", "closed True", "read True write False seek True", "ABC", "68", "70", "-1", "ABCDEF 6" });
+
+    CheckIo("FileStream: Append und ReadWrite", $$"""
+        var a = new IO.FileStream("{{ioFile}}", IO.FileMode.Append)
+        a.Write("GH".ToBytes())
+        a.Close()
+        var rw = new IO.FileStream("{{ioFile}}", IO.FileMode.Open, IO.FileAccess.ReadWrite)
+        print(rw.Length)
+        rw.Position = 1
+        rw.WriteByte(90)
+        rw.Position = 0
+        print(rw.ReadAll().ToString())
+        rw.Length = 3
+        print(rw.Length)
+        rw.Close()
+        """, new[] { "8", "AZCDEFGH", "3" });
+
+    CheckIo("Fehler sind fangbare Exceptions", $$"""
+        try { var x = new IO.FileStream("{{ioMissing}}") } catch (IO.DirectoryNotFoundException e) { print("DNF " + e.code) }
+        try { var x = new IO.FileStream("{{ioDirFwd}}/nope.txt") } catch (IO.FileNotFoundException e) { print("FNF " + e.code) }
+        try { var x = new IO.FileStream("{{ioFile}}", IO.FileMode.CreateNew) } catch (IO.FileExistsException e) { print("EXISTS " + e.code) }
+        var s = new IO.FileStream("{{ioFile}}")
+        try { s.Write(new byte[2]) } catch (IO.IOException e) { print("IOE " + e.code) }
+        s.Close()
+        s.Close()
+        try { s.ReadByte() } catch (IO.StreamClosedException e) { print("CLOSED " + e.code) }
+        try { var m = new IO.MemoryStream(); m.Read(new byte[2], 1, 5) } catch (IO.IOException e) { print("RANGE " + e.code) }
+        try { var m = new IO.MemoryStream(); m.Seek(-1) } catch (IO.IOException e) { print("SEEK " + e.code) }
+        """, new[] { "DNF 4", "FNF 3", "EXISTS 7", "IOE 8", "CLOSED 2", "RANGE 1", "SEEK 1" });
+
+    CheckIo("MemoryStream und CopyTo", """
+        var m = new IO.MemoryStream()
+        m.Write("Hallo Welt".ToBytes())
+        print("len " + m.Length + " pos " + m.Position)
+        m.Position = 0
+        var c = new IO.MemoryStream()
+        m.CopyTo(c)
+        print(c.ToBuffer().ToString())
+        var d = new IO.MemoryStream("abc".ToBytes())
+        print(d.ReadByte() + " " + d.ReadByte() + " " + d.ReadByte() + " " + d.ReadByte())
+        d.Length = 1
+        print(d.ToBuffer().length)
+        """, new[] { "len 10 pos 10", "Hallo Welt", "97 98 99 -1", "1" });
+
+    CheckIo("destruct() schliesst den Stream, wenn der Besitzer endet", $$"""
+        print("offen " + __IOOpenCount())
+        {
+            var s = new IO.FileStream("{{ioFile}}")
+            print("offen " + __IOOpenCount())
+        }
+        print("offen " + __IOOpenCount())
+        try { var bad = new IO.FileStream("{{ioDirFwd}}/nope.txt") } catch (IO.FileNotFoundException e) { print("fehlgeschlagen") }
+        print("offen " + __IOOpenCount())
+        """, new[] { "offen 0", "offen 1", "offen 0", "fehlgeschlagen", "offen 0" });
+
+    CheckIo("eigener Stream (Basisklasse IO.Stream)", """
+        class Upper : IO.Stream {
+            var inner
+            construct(inner) { this.inner = inner }
+            bool CanWrite { get { return true } }
+            int Write(buffer, offset, count) {
+                var chunk = new byte[count]
+                for (var i = 0; i < count; i++) {
+                    var c = buffer[offset + i]
+                    if (c >= 97 && c <= 122) { c = c - 32 }
+                    chunk[i] = c
+                }
+                return this.inner.Write(chunk, 0, count)
+            }
+        }
+        var m = new IO.MemoryStream()
+        var u = new Upper(m)
+        u.Write("hallo".ToBytes())
+        print(m.ToBuffer().ToString())
+        """, new[] { "HALLO" });
+
+    CheckIo("Host-Richtlinie: DenyAll", $$"""
+        try { var x = new IO.FileStream("{{ioFile}}") } catch (IO.PermissionException e) { print("verweigert " + e.code) }
+        var m = new IO.MemoryStream()
+        print("Speicher-Streams gehen trotzdem " + m.CanWrite)
+        """, new[] { "verweigert 6", "Speicher-Streams gehen trotzdem True" }, fire.IO.Bridge.IoPolicy.DenyAll);
+
+    CheckIo("Host-Richtlinie: nur lesen innerhalb eines Verzeichnisses", $$"""
+        var ok = new IO.FileStream("{{ioFile}}")
+        print("lesen ok")
+        try { var x = new IO.FileStream("{{ioFile}}", IO.FileMode.Open, IO.FileAccess.ReadWrite) } catch (IO.PermissionException e) { print("schreiben " + e.code) }
+        try { var x = new IO.FileStream("{{ioDirFwd}}/../outside.txt") } catch (IO.PermissionException e) { print("ausserhalb " + e.code) }
+        """, new[] { "lesen ok", "schreiben 6", "ausserhalb 6" }, fire.IO.Bridge.IoPolicy.Rooted(ioDir, readOnly: true));
+
+    // ---- Schritt 2: Datei- und Verzeichnis-API ----
+    string apiDir = Path.Combine(ioDir, "api").Replace("\\", "/");
+    Directory.CreateDirectory(apiDir);
+
+    CheckIo("File: Text (UTF-8), Zeilen, Groesse, Zeit", $$"""
+        var d = "{{apiDir}}"
+        var f = IO.Path.Combine(d, "t.txt")
+        print(IO.File.Exists(f))
+        IO.File.WriteAllText(f, "Grüße\nzweite Zeile\r\ndritte")
+        print(IO.File.Exists(f) + " " + IO.File.Size(f))
+        print(IO.File.ReadAllText(f))
+        var lines = IO.File.ReadAllLines(f)
+        print(lines.count + " " + lines[0] + "|" + lines[1] + "|" + lines[2])
+        IO.File.AppendAllText(f, "\nvierte\n")
+        print(IO.File.ReadAllLines(f).count)
+        IO.File.WriteAllLines(f, lines)
+        print(IO.File.Size(f))
+        print(IO.File.ModifiedTime(f) > 1000000000s)
+        print(IO.File.ReadAllBytes(f).length)
+        IO.File.WriteAllBytes(f, "AB".ToBytes())
+        print(IO.File.ReadAllText(f))
+        """, new[] { "False", "True 28", "Grüße\nzweite Zeile\r\ndritte", "3 Grüße|zweite Zeile|dritte", "4", "28", "True", "28", "AB" });
+
+    CheckIo("File: Copy, Move, Delete und ihre Fehler", $$"""
+        var d = "{{apiDir}}"
+        var f = IO.Path.Combine(d, "src.txt")
+        IO.File.WriteAllText(f, "x")
+        var c = IO.Path.Combine(d, "copy.txt")
+        IO.File.Copy(f, c)
+        try { IO.File.Copy(f, c) } catch (IO.FileExistsException e) { print("Ziel existiert " + e.code) }
+        IO.File.Copy(f, c, true)
+        var m = IO.Path.Combine(d, "moved.txt")
+        IO.File.Move(c, m)
+        print(IO.File.Exists(c) + " " + IO.File.Exists(m))
+        IO.File.Delete(m)
+        IO.File.Delete(m)
+        print(IO.File.Exists(m))
+        try { IO.File.ReadAllText(IO.Path.Combine(d, "nope")) } catch (IO.FileNotFoundException e) { print("fehlt " + e.code) }
+        try { IO.File.Size(IO.Path.Combine(d, "nope")) } catch (IO.FileNotFoundException e) { print("fehlt " + e.code) }
+        """, new[] { "Ziel existiert 7", "False True", "False", "fehlt 3", "fehlt 3" });
+
+    CheckIo("ReadAllLines/GetFiles liefern eine List (foreach)", $$"""
+        var d = "{{apiDir}}"
+        IO.File.WriteAllLines(IO.Path.Combine(d, "l.txt"), ["eins", "zwei"])
+        foreach (line in IO.File.ReadAllLines(IO.Path.Combine(d, "l.txt"))) { print(line) }
+        foreach (name in IO.Directory.GetFiles(d, "l*")) { print(IO.Path.FileName(name)) }
+        """, new[] { "eins", "zwei", "l.txt" });
+
+    CheckIo("Directory und Path", $$"""
+        var d = "{{apiDir}}"
+        var sub = IO.Path.Combine(d, "a", "b")
+        print(IO.Directory.Exists(sub))
+        IO.Directory.Create(sub)
+        IO.Directory.Create(sub)
+        print(IO.Directory.Exists(sub))
+        IO.File.WriteAllText(IO.Path.Combine(sub, "x.txt"), "1")
+        IO.File.WriteAllText(IO.Path.Combine(sub, "y.log"), "2")
+        IO.File.WriteAllText(IO.Path.Combine(d, "a", "z.txt"), "3")
+        var files = IO.Directory.GetFiles(sub)
+        print(files.count + " " + IO.Path.FileName(files[0]) + " " + IO.Path.FileName(files[1]))
+        print(IO.Directory.GetFiles(sub, "*.txt").count)
+        print(IO.Directory.GetFiles(IO.Path.Combine(d, "a"), "*.txt", true).count)
+        print(IO.Path.FileName(IO.Directory.GetDirectories(IO.Path.Combine(d, "a"))[0]))
+        try { IO.Directory.Delete(IO.Path.Combine(d, "a")) } catch (IO.IOException e) { print("nicht leer") }
+        IO.Directory.Delete(IO.Path.Combine(d, "a"), true)
+        print(IO.Directory.Exists(IO.Path.Combine(d, "a")))
+        var p = "dir/sub/name.tar.gz"
+        print(IO.Path.FileName(p) + " " + IO.Path.Stem(p) + " " + IO.Path.Extension(p) + " " + IO.Path.Parent(p))
+        print(IO.Path.IsRooted(p) + " " + IO.Path.IsRooted(IO.Path.FullPath(p)))
+        print(IO.Path.Combine("a", "/abs") == "/abs" || IO.Path.Combine("a", "/abs") == "/abs")
+        try { IO.Directory.GetFiles(IO.Path.Combine(d, "gibtsnicht")) } catch (IO.DirectoryNotFoundException e) { print("kein Verzeichnis " + e.code) }
+        """, new[] { "False", "True", "2 x.txt y.log", "1", "2", "b", "nicht leer", "False", "name.tar.gz name.tar .gz dir/sub", "False True", "True", "kein Verzeichnis 4" });
+
+    CheckIo("Host-Richtlinie gilt auch fuer die API (nur lesen)", $$"""
+        var d = "{{apiDir}}"
+        var f = IO.Path.Combine(d, "src.txt")
+        print(IO.File.Exists(f))
+        try { IO.File.WriteAllText(IO.Path.Combine(d, "w.txt"), "x") } catch (IO.PermissionException e) { print("write " + e.code) }
+        try { IO.File.Delete(f) } catch (IO.PermissionException e) { print("delete " + e.code) }
+        try { IO.Directory.Create(IO.Path.Combine(d, "n")) } catch (IO.PermissionException e) { print("mkdir " + e.code) }
+        try { IO.Directory.GetFiles("/") } catch (IO.PermissionException e) { print("list " + e.code) }
+        try { IO.File.Copy(f, IO.Path.Combine(d, "k.txt")) } catch (IO.PermissionException e) { print("copy " + e.code) }
+        try { IO.File.Move(f, IO.Path.Combine(d, "k.txt")) } catch (IO.PermissionException e) { print("move " + e.code) }
+        print(IO.File.ReadAllText(f))
+        """, new[] { "True", "write 6", "delete 6", "mkdir 6", "list 6", "copy 6", "move 6", "x" }, fire.IO.Bridge.IoPolicy.Rooted(ioDir, readOnly: true));
+
+    // ---- Schritt 3: TextWriter / TextReader ----
+    string textDir = Path.Combine(ioDir, "text").Replace("\\", "/");
+    Directory.CreateDirectory(textDir);
+
+    CheckIo("TextWriter und TextReader: Zeilen, UTF-8, EndOfStream", $$"""
+        var f = "{{textDir}}/t.txt"
+        var w = new IO.TextWriter(f)
+        w.WriteLine("Grüße")
+        w.Write("zwei")
+        w.Write(" ")
+        w.Write(3)
+        w.WriteLine()
+        w.WriteLine("")
+        w.Write("ohne Ende")
+        w.Close()
+        print(IO.File.Size(f))
+        var r = new IO.TextReader(f)
+        var l = r.ReadLine()
+        while (l != undefined) { print("[" + l + "]"); l = r.ReadLine() }
+        print(r.EndOfStream)
+        r.Close()
+        """, new[] { "25", "[Grüße]", "[zwei 3]", "[]", "[ohne Ende]", "True" });
+
+    CheckIo("TextReader: foreach, ReadAll, ReadLines, Anhaengen, OpenText", $$"""
+        var f = "{{textDir}}/t.txt"
+        foreach (zeile in new IO.TextReader(f)) { print("f:" + zeile) }
+        var a = new IO.TextWriter(f, true)
+        a.WriteLine("!")
+        a.Close()
+        var rd = IO.File.OpenText(f)
+        print(rd.ReadAll())
+        rd.Close()
+        print(new IO.TextReader(f).ReadLines().count)
+        var cw = IO.File.CreateText(f)
+        cw.WriteLine("neu")
+        cw.Close()
+        var ap = IO.File.AppendText(f)
+        ap.WriteLine("mehr")
+        ap.Close()
+        print(IO.File.ReadAllLines(f).count)
+        """, new[] { "f:Grüße", "f:zwei 3", "f:", "f:ohne Ende", "Grüße\nzwei 3\n\nohne Ende!\n", "4", "2" });
+
+    CheckIo("TextReader: CRLF, leere Zeilen, fremder Stream, lange Eingabe", """
+        var m = new IO.MemoryStream("a\r\nb\n\nlast".ToBytes())
+        var r = new IO.TextReader(m, true)
+        print("[" + r.ReadLine() + "][" + r.ReadLine() + "][" + r.ReadLine() + "][" + r.ReadLine() + "][" + r.ReadLine() + "]")
+        r.Close()
+        print("Stream bleibt offen: " + !m.IsClosed)
+        var big = new IO.MemoryStream()
+        var tw = new IO.TextWriter(big, true)
+        for (var i = 0; i < 2000; i++) { tw.WriteLine("Zeile " + i + " äöü") }
+        tw.Flush()
+        big.Position = 0
+        var br = new IO.TextReader(big)
+        var n = 0
+        var last = ""
+        foreach (z in br) { n = n + 1; last = z }
+        print(n + " " + last)
+        br.Close()
+        print("Stream mitgeschlossen: " + big.IsClosed)
+        """, new[] { "[a][b][][last][undefined]", "Stream bleibt offen: True", "2000 Zeile 1999 äöü", "Stream mitgeschlossen: True" });
+
+    CheckIo("TextReader/TextWriter: destruct() schliesst, Fehler bleiben Exceptions", $$"""
+        {
+            var r = new IO.TextReader("{{textDir}}/t.txt")
+            var w = new IO.TextWriter("{{textDir}}/d.txt")
+            print("offen " + __IOOpenCount())
+        }
+        print("offen " + __IOOpenCount())
+        try { var x = new IO.TextReader("{{textDir}}/gibtsnicht.txt") } catch (IO.FileNotFoundException e) { print("fehlt") }
+        try { var w = new IO.TextWriter("{{textDir}}/x.txt"); w.Close(); w.WriteLine("z") } catch (IO.StreamClosedException e) { print("geschlossen") }
+        print("offen " + __IOOpenCount())
+        """, new[] { "offen 3", "offen 0", "fehlt", "geschlossen", "offen 0" });
+
+    // ---- Schritt 4: Stdio ----
+    var stdoutLines = new List<string>();
+    var stderrLines = new List<string>();
+    var stdinData = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("Anna\nBärbel\nrest1\nrest2"));
+    CheckIo("IO.Stdio: Ausgabe, Fehler, Eingabe, Streams", """
+        IO.Stdio.WriteLine("Hallo Welt")
+        IO.Stdio.Write("teil")
+        IO.Stdio.Write(1)
+        IO.Stdio.WriteLine(" ende")
+        IO.Stdio.Write("ohne Umbruch")
+        IO.Stdio.Flush()
+        IO.Stdio.ErrorLine("Fehler ä")
+        print("gelesen: " + IO.Stdio.ReadLine())
+        var w = new IO.TextWriter(IO.Stdio.Out(), true)
+        w.WriteLine("via TextWriter äöü")
+        w.Flush()
+        print(IO.Stdio.ReadLine())
+        print(IO.Stdio.ReadAll())
+        print(IO.Stdio.ReadLine())
+        IO.Stdio.Out().Close()
+        IO.Stdio.WriteLine("nach Close")
+        print("offen: " + __IOOpenCount())
+        """, new[] { "gelesen: Anna", "Bärbel", "rest1\nrest2", "undefined", "offen: 0" }, null,
+        fire.IO.Bridge.IoStdio.Custom(l => stdoutLines.Add(l), l => stderrLines.Add(l), stdinData));
+    Console.WriteLine(stdoutLines.SequenceEqual(new[] { "Hallo Welt", "teil1 ende", "ohne Umbruch", "via TextWriter äöü", "nach Close" })
+        && stderrLines.SequenceEqual(new[] { "Fehler ä" })
+        ? "OK: Stdio-Ausgabe/-Fehler landen beim Host (zeilenweise)"
+        : $"FEHLER: Stdio-Ausgabe: {string.Join(" | ", stdoutLines)} / Fehler: {string.Join(" | ", stderrLines)}");
+    if (!(stdoutLines.Count == 5 && stderrLines.Count == 1)) ioFailures++;
+
+    Directory.Delete(ioDir, true);
+    Console.WriteLine(ioFailures == 0 ? "Alle IO-Pruefungen bestanden." : $"FEHLER: {ioFailures} IO-Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Destruktoren: die ganze Klassenkette wird aufgeraeumt (abgeleitet zuerst) ===");
+
+string destructChainSample = """
+class Base {
+    destruct() { print("Base.destruct") }
+}
+class Middle : Base { }
+class Leaf : Middle {
+    destruct() { print("Leaf.destruct") }
+}
+{
+    var a = new Leaf()
+    var b = new Middle()
+}
+print("danach")
+""";
+
+try
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(destructChainSample);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    Console.WriteLine("Ausgabe (erwartet: Leaf.destruct / Base.destruct / Base.destruct - je Objekt, Reihenfolge der Objekte egal - dann danach):");
+    var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes);
+    vm.Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Enums in Namespaces: vollqualifizierter Zugriff ===");
+
+string namespacedEnumSample = """
+namespace Geo {
+    enum Kind { Round, Flat = 5, Sharp }
+}
+print(Geo.Kind.Round)
+print(Geo.Kind.Flat)
+print(Geo.Kind.Sharp)
+""";
+
+try
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(namespacedEnumSample);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    Console.WriteLine("Ausgabe (erwartet: 0 / 5 / 6):");
+    new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes).Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Felder eines nicht fertig konstruierten Objekts sind undefined (nicht false) ===");
+
+string halfConstructedSample = """
+class Base {
+    int handle
+    bool closed
+    construct(int h) { this.handle = h; this.closed = false }
+    destruct() { print("destruct: handle=" + this.handle + " undefined=" + (this.handle == undefined)) }
+}
+class Boom : Exception { }
+class Child : Base {
+    construct(int m) : base(Fail(m)) { }
+    static int Fail(int m) { throw new Boom() }
+}
+try { var x = new Child(1) } catch (Boom e) { print("gefangen") }
+print("ende")
+""";
+
+try
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(halfConstructedSample);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    Console.WriteLine("Ausgabe (erwartet: gefangen / destruct: handle=undefined undefined=True / ende):");
+    new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes).Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== foreach ueber Arrays und Puffer ===");
+
+string foreachArraySample = """
+var arr = [10, 20, 30]
+var sum = 0
+foreach (x in arr) { sum = sum + x }
+print(sum)
+foreach (b in "AB".ToBytes()) { print(b) }
+var names = new string[2]
+names[0] = "a"
+names[1] = "b"
+foreach (n in names) { print(n) }
+foreach (x in arr) { if (x == 20) { break } print("v" + x) }
+foreach (e in new int[0]) { print("nie") }
+print("ok")
+""";
+
+try
+{
+    var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, foreachArraySample));
+    var natives = NativeRegistry.CreateDefault();
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    Console.WriteLine("Ausgabe (erwartet: 60 / 65 / 66 / a / b / v10 / ok):");
+    new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes).Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Strings: Length, IndexOf, LastIndexOf, Substring & Co. ===");
+
+string stringSample = """
+int failures = 0
+var Check = func (name, actual, expected) => {
+    if (actual == expected) { print("OK: " + name) }
+    else { failures = failures + 1; print("FEHLER: " + name + " -> " + actual + " (erwartet " + expected + ")") }
+}
+string s = "Hello, World, again"
+Check("Length", s.Length, 19)
+Check("length (Alias)", s.length, 19)
+Check("Length leer", "".Length, 0)
+Check("IndexOf", s.IndexOf("o"), 4)
+Check("IndexOf ab Position", s.IndexOf("o", 5), 8)
+Check("IndexOf nicht gefunden", s.IndexOf("xyz"), -1)
+Check("IndexOf Zeichen", s.IndexOf('W'), 7)
+Check("LastIndexOf", s.LastIndexOf(","), 12)
+Check("LastIndexOf ab Position", s.LastIndexOf(",", 11), 5)
+Check("LastIndexOf nicht gefunden", s.LastIndexOf("xyz"), -1)
+Check("Substring(start)", s.Substring(14), "again")
+Check("Substring(start, count)", s.Substring(7, 5), "World")
+Check("Substring(Ende)", s.Substring(19), "")
+Check("Indexer", s[1], 'e')
+Check("CharAt", s.CharAt(0), 'H')
+Check("Contains", s.Contains("World"), true)
+Check("StartsWith", s.StartsWith("Hello"), true)
+Check("EndsWith", s.EndsWith("Hello"), false)
+Check("ToUpper", "abc".ToUpper(), "ABC")
+Check("ToLower", "ABC".ToLower(), "abc")
+Check("Trim", "  x  ".Trim(), "x")
+Check("TrimStart", "  x  ".TrimStart(), "x  ")
+Check("TrimEnd", "  x  ".TrimEnd(), "  x")
+Check("Replace", "a-b-c".Replace("-", "+"), "a+b+c")
+Check("PadLeft", "7".PadLeft(3, '0'), "007")
+Check("PadRight", "7".PadRight(3), "7  ")
+Check("Kette", "  a,b,c ".Trim().Split(",").Length, 3)
+var parts = "a,b,c".Split(",")
+var joined = ""
+foreach (p in parts) { joined = joined + p.ToUpper() }
+Check("Split + foreach", joined, "ABC")
+Check("Array.Length", [1, 2, 3].Length, 3)
+Check("Puffer.Length", "AB".ToBytes().Length, 2)
+
+int caught = 0
+try { s.Substring(30) } catch (IndexOutOfBoundsException e) { caught = caught + 1 }
+try { s.Substring(5, 100) } catch (IndexOutOfBoundsException e) { caught = caught + 1 }
+try { var c = s[99] } catch (IndexOutOfBoundsException e) { caught = caught + 1 }
+try { s.LastIndexOf("a", 50) } catch (IndexOutOfBoundsException e) { caught = caught + 1 }
+Check("Index-Ausnahmen", caught, 4)
+if (failures == 0) { print("Alle String-Pruefungen bestanden.") } else { print("FEHLER: " + failures) }
+""";
+
+try
+{
+    var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, stringSample));
+    var natives = NativeRegistry.CreateDefault();
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes).Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Strings: Editor-Vervollstaendigung ===");
+{
+    int failures = 0;
+    void Check(string title, string source, string expected, string forbidden = "")
+    {
+        int cursor = source.IndexOf('|');
+        source = source.Remove(cursor, 1);
+        var index = fire.Editor.ScriptSymbolIndex.Build(source);
+        var names = fire.Editor.CompletionEngine.GetSuggestions(source, cursor, index).Select(i => i.Text).ToList();
+        bool ok = expected.Split(',').All(names.Contains) && !forbidden.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(names.Contains);
+        if (!ok) failures++;
+        Console.WriteLine($"{(ok ? "OK" : "FEHLER")}: {title} -> {string.Join(", ", names.Take(8))}");
+    }
+    Check("string-Variable", "string s = \"abc\"\ns.|", "Length,IndexOf,LastIndexOf,Substring", "Bark,length");
+    Check("var s = Literal", "var s = \"abc\"\ns.|", "Length,IndexOf,Substring");
+    Check("Literal direkt", "\"abc\".|", "Length,Trim");
+    Check("Praefix", "var s = \"abc\"\ns.Sub|", "Substring", "Length");
+    Check("Kette Trim().", "var s = \"abc\"\ns.Trim().|", "Length,ToUpper");
+    Check("Split() liefert Array", "var s = \"a,b\"\ns.Split(\",\").|", "Length", "Substring");
+    Check("Array-Element ist string", "var s = \"a,b\"\nvar p = s.Split(\",\")\np[0].|", "Substring");
+    Check("foreach ueber Split", "var s = \"a,b\"\nforeach (p in s.Split(\",\")) { p.| }", "Substring");
+    Check("Length ist int", "var s = \"abc\"\nvar n = s.Length\nn.|", "ToChar");
+    Console.WriteLine(failures == 0 ? "Alle String-Vervollstaendigungs-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...) ===");
+{
+    int extFailures = 0;
+
+    List<string> RunExt(string script)
+    {
+        var lines = new List<string>();
+        var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, script));
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes);
+        vm.Run();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckExt(string title, string script, params string[] expected)
+    {
+        string[] actual;
+        try { actual = RunExt(script).ToArray(); }
+        catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
+        bool ok = actual.SequenceEqual(expected);
+        if (!ok) extFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+    }
+
+    // Der Fehlertext muss `fragment` enthalten (Parser-/Resolver-/Laufzeitfehler).
+    void CheckExtError(string title, string script, string fragment)
+    {
+        string actual;
+        try { actual = "kein Fehler: " + string.Join(" | ", RunExt(script)); }
+        catch (Exception ex) { actual = ex.Message; }
+        bool ok = actual.Contains(fragment);
+        if (!ok) extFailures++;
+        Console.WriteLine(ok ? $"OK: {title} -> {actual}" : $"FEHLER: {title}\n  erwartet: ...{fragment}...\n  erhalten: {actual}");
+    }
+
+    CheckExt("eigene Methoden auf string (this ist der Wert)", """
+        class extends string {
+            string Shout() { return this.ToUpper() + "!" }
+            bool IsBlank() { return this.Trim().Length == 0 }
+            string Twice() { return this + this }
+        }
+        var s = "hallo"
+        print(s.Shout())
+        print("abc".Twice())
+        print("  ".IsBlank())
+        print(s.Shout().Shout())
+        print(s)
+        """, "HALLO!", "abcabc", "True", "HALLO!!", "hallo");
+
+    CheckExt("Ueberladung nach Parameteranzahl und optionale Parameter", """
+        class extends string {
+            string Wrap() { return "[" + this + "]" }
+            string Wrap(string edge) { return edge + this + edge }
+            string Tag(string name = "b") { return "<" + name + ">" + this + "</" + name + ">" }
+        }
+        print("x".Wrap())
+        print("x".Wrap("*"))
+        print("x".Tag())
+        print("x".Tag("i"))
+        """, "[x]", "*x*", "<b>x</b>", "<i>x</i>");
+
+    CheckExt("int, char, bool und float erweitern", """
+        class extends int {
+            bool IsEven() { return this % 2 == 0 }
+            int Twice() { return this * 2 }
+        }
+        class extends char { bool IsVowel() { return "aeiou".Contains(this.ToLower()) } }
+        class extends bool { string Word() { if (this) { return "ja" } return "nein" } }
+        class extends float { float Half() { return this / 2.0 } }
+        int n = 21
+        print(n.IsEven())
+        print((n + 1).IsEven())
+        print(n.Twice())
+        print('E'.IsVowel())
+        print('x'.IsVowel())
+        print((n > 5).Word())
+        float f = 5.0
+        print(f.Half())
+        """, "False", "True", "42", "True", "False", "ja", "2.5");
+
+    CheckExt("mehrere Bloecke fuer denselben Typ und Namespaces werden zusammengefuehrt", """
+        class extends string { string A() { return "a" + this } }
+        namespace Util {
+            class extends string { string B() { return this + "b" } }
+        }
+        class extends string { string C() { return this.A().B() } }
+        print("x".C())
+        """, "axb");
+
+    CheckExt("private Hilfsmethode der Erweiterung", """
+        class extends string {
+            private string Quote() { return "'" + this + "'" }
+            string Quoted() { return this.Quote() }
+        }
+        print("q".Quoted())
+        try { print("q".Quote()) } catch (AccessDeniedException e) { print("verweigert") }
+        """, "'q'", "verweigert");
+
+    CheckExt("Ausnahme in der Erweiterung ist fangbar", """
+        class extends string {
+            string First() { return this.Substring(0, 1) }
+        }
+        print("abc".First())
+        try { print("".First()) } catch (IndexOutOfBoundsException e) { print("leer " + e.index) }
+        """, "a", "leer 1");
+
+    // Eine Erweiterung von string gilt nur für string - ein int kennt `Foo` nicht (kein Skript-, sondern ein VM-Fehler).
+    CheckExt("Erweiterung gilt nur fuer ihren Typ", """
+        class extends string { int Foo() { return 1 } }
+        print("s".Foo())
+        int i = 5
+        print(i.Foo())
+        """, "AUSNAHME: 'Foo' (0 Argument(e)) ist keine bekannte eingebaute Methode auf einem Wert vom Typ Int.");
+
+    CheckExt("char-Methoden des Prelude", """
+        char c = 'a'
+        print(c.IsLetter())
+        print(c.IsDigit())
+        print('7'.IsDigit())
+        print(' '.IsWhiteSpace())
+        print(c.IsLetterOrDigit())
+        print(c.IsUpper())
+        print(c.ToUpper())
+        print('Q'.ToLower())
+        print('Q'.IsUpper())
+        print('q'.IsLower())
+        print(c.ToInt())
+        print(c.ToString() + "b")
+        print(c.ToByte())
+        """, "True", "False", "True", "True", "True", "False", "A", "q", "True", "True", "97", "ab", "97");
+
+    // Die Methode wird über ihre ID gewählt, nicht über den Namen: die native Funktion ist direkt aufrufbar.
+    CheckExt("native Funktionen nehmen die Methoden-ID", $$"""
+        print({{fire.Standard.StringMethods.NativeName}}({{(int)fire.Standard.StringMethod.Substring}}, "hello", 1, 3))
+        print({{fire.Standard.StringMethods.NativeName}}({{(int)fire.Standard.StringMethod.ToUpper}}, "hello"))
+        print({{fire.Standard.CharMethods.NativeName}}({{(int)fire.Standard.CharMethod.IsDigit}}, '5'))
+        try { print({{fire.Standard.StringMethods.NativeName}}({{(int)fire.Standard.StringMethod.Substring}}, "hello", 9)) }
+        catch (IndexOutOfBoundsException e) { print("Index " + e.index + " Laenge " + e.length) }
+        """, "ell", "HELLO", "True", "Index 9 Laenge 5");
+
+    CheckExt("native Funktion: falsches Argument wird gemeldet", $$"""
+        print({{fire.Standard.StringMethods.NativeName}}(1, 5, "x"))
+        """, "AUSNAHME: __StringCall(id, text, ...) erwartet die Zeichenkette als zweites Argument.");
+
+    CheckExtError("Feld in Basistyp-Erweiterung", "class extends string { int count }", "nur Methoden");
+    CheckExtError("Property in Basistyp-Erweiterung", "class extends string { int Size { get { return 1 } } }", "Property 'Size' nicht erlaubt");
+    CheckExtError("Auto-Property in Basistyp-Erweiterung", "class extends int { int Size { get; set; } }", "nicht erlaubt");
+    CheckExtError("Konstruktor in Basistyp-Erweiterung", "class extends string { construct() { } }", "Konstruktor");
+    CheckExtError("Destruktor in Basistyp-Erweiterung", "class extends string { destruct() { } }", "Destruktor");
+    CheckExtError("statische Methode in Basistyp-Erweiterung", "class extends string { static int F() { return 1 } }", "statische Methode 'F'");
+    CheckExtError("Operator in Basistyp-Erweiterung", "class extends string { operator+(other) { return this } }", "Operatoren");
+    CheckExtError("byte nicht erweiterbar", "class extends byte { int F() { return 1 } }", "'byte' lässt sich nicht erweitern");
+    CheckExtError("unbekannte Klasse bleibt ein Fehler", "class extends Gibtsnicht { F() { } }", "nicht bekannt");
+    CheckExtError("doppelte Methode (Prelude + eigene)", "class extends string { int IndexOf(value) { return 0 } }", "IndexOf");
+
+    Console.WriteLine(extFailures == 0 ? "Alle Basistyp-Erweiterungs-Pruefungen bestanden." : $"FEHLER: {extFailures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Basistyp-Erweiterungen: Editor ===");
+{
+    int failures = 0;
+    void Check(string title, string source, string expected, string forbidden = "")
+    {
+        int cursor = source.IndexOf('|');
+        source = source.Remove(cursor, 1);
+        var index = fire.Editor.ScriptSymbolIndex.Build(source);
+        var names = fire.Editor.CompletionEngine.GetSuggestions(source, cursor, index).Select(i => i.Text).ToList();
+        bool ok = expected.Split(',', StringSplitOptions.RemoveEmptyEntries).All(names.Contains)
+            && !forbidden.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(names.Contains);
+        if (!ok) failures++;
+        Console.WriteLine($"{(ok ? "OK" : "FEHLER")}: {title} -> {string.Join(", ", names.Take(8))}");
+    }
+    const string userExt = "class extends string { string Shout() { return this.ToUpper() } }\nclass extends int { bool IsEven() { return true } }\n";
+    Check("eigene string-Methode", userExt + "var s = \"a\"\ns.|", "Shout,IndexOf,Length");
+    Check("eigene Methode in der Kette", userExt + "var s = \"a\"\ns.Shout().|", "Shout,Trim,Length");
+    Check("int-Erweiterung", userExt + "int n = 4\nn.|", "IsEven,ToChar", "Shout");
+    Check("char-Methoden aus dem Prelude", "char c = 'x'\nc.|", "IsDigit,IsLetter,ToUpper,ToByte", "Shout");
+    Check("Sammelklasse taucht nicht als Typ auf", userExt + "var x = |", "string", "$string,$int");
+    Check("Split-Kette liefert string", "var s = \"a,b\"\ns.Split(\",\")[0].|", "Substring,Trim");
+    Console.WriteLine(failures == 0 ? "Alle Basistyp-Editor-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Array als Rueckgabetyp (int[] Name(), leere Klammern) ===");
+{
+    int arrFailures = 0;
+
+    List<string> RunArr(string script)
+    {
+        var lines = new List<string>();
+        var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, script));
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes);
+        vm.Run();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckArr(string title, string script, params string[] expected)
+    {
+        string[] actual;
+        try { actual = RunArr(script).ToArray(); }
+        catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
+        bool ok = actual.SequenceEqual(expected);
+        if (!ok) arrFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+    }
+
+    void CheckArrError(string title, string script, string fragment)
+    {
+        string actual;
+        try { actual = "kein Fehler: " + string.Join(" | ", RunArr(script)); }
+        catch (Exception ex) { actual = ex.Message; }
+        bool ok = actual.Contains(fragment);
+        if (!ok) arrFailures++;
+        Console.WriteLine(ok ? $"OK: {title} -> {actual}" : $"FEHLER: {title}\n  erwartet: ...{fragment}...\n  erhalten: {actual}");
+    }
+
+    CheckArr("Methoden mit Array-Rueckgabetyp (int, Klasse, mehrdimensional, byte)", """
+        class Dog { string name; construct(string n) { this.name = n } }
+        class Kennel {
+            int[] Numbers() { return [1, 2, 3] }
+            Dog[] Dogs() { return [new Dog("Rex"), new Dog("Fido")] }
+            string[][] Grid() { return [["a", "b"], ["c"]] }
+            byte[] Bytes() { return "AB".ToBytes() }
+            int[8] Small() { return 7 }
+            static int[] Twice() { return [4, 4] }
+        }
+        var k = new Kennel()
+        print(k.Numbers().Length)
+        print(k.Numbers()[2])
+        foreach (d in k.Dogs()) { print(d.name) }
+        print(k.Grid()[0][1])
+        print(k.Bytes().Length)
+        print(k.Small())
+        print(Kennel.Twice().Length)
+        """, "3", "3", "Rex", "Fido", "b", "2", "7", "2");
+
+    CheckArr("Interface und Property mit Array-Typ", """
+        interface IHolder { int[] Items() }
+        class Holder : IHolder {
+            int[] Items() { return [5, 6] }
+            string[] Names { get { return ["x", "y", "z"] } }
+        }
+        var h = new Holder()
+        print(h.Items()[1])
+        print(new Holder().Names.Length)
+        """, "6", "3");
+
+    CheckArr("Prelude: Split liefert string[]", """
+        var parts = "a,b,c".Split(",")
+        print(parts.Length)
+        """, "3");
+
+    CheckArrError("Feld mit int[] Typ", "class A { int[] values }", "hinter dem Namen");
+    CheckArrError("Parameter mit int[] Typ", "class A { F(int[] p) { } }", "hinter dem Namen");
+    CheckArrError("lokale Variable mit int[] Typ", "int[] v = [1, 2]", "hinter dem Namen");
+    CheckArrError("extern mit Array-Rueckgabe", "extern int[] Foo()", "hinter dem Namen");
+    CheckArrError("unbekannte Klasse im Array-Rueckgabetyp", "class A { Gibtsnicht[] F() { return [] } }", "Gibtsnicht");
+    CheckArrError("byte[8] bleibt widerspruechlich", "class A { byte[8] F() { return 1 } }", "'byte' hat bereits");
+
+    Console.WriteLine(arrFailures == 0 ? "Alle Array-Rueckgabetyp-Pruefungen bestanden." : $"FEHLER: {arrFailures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Array als Rueckgabetyp: Editor ===");
+{
+    int failures = 0;
+    void Check(string title, string source, string expected, string forbidden = "")
+    {
+        int cursor = source.IndexOf('|');
+        source = source.Remove(cursor, 1);
+        var index = fire.Editor.ScriptSymbolIndex.Build(source);
+        var names = fire.Editor.CompletionEngine.GetSuggestions(source, cursor, index).Select(i => i.Text).ToList();
+        bool ok = expected.Split(',', StringSplitOptions.RemoveEmptyEntries).All(names.Contains)
+            && !forbidden.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(names.Contains);
+        if (!ok) failures++;
+        Console.WriteLine($"{(ok ? "OK" : "FEHLER")}: {title} -> {string.Join(", ", names.Take(8))}");
+    }
+    const string kennel = "class Dog { Bark() { } }\nclass Kennel {\n  Dog[] Dogs() { return [new Dog()] }\n  string[] Names() { return [\"a\"] }\n  int[8] Small() { return 1 }\n}\nvar k = new Kennel()\n";
+    Check("Element eines Array-Rueckgabetyps", kennel + "k.Dogs()[0].|", "Bark", "Length");
+    Check("Array-Rueckgabetyp hat Length", kennel + "k.Names().|", "Length", "Bark");
+    Check("Element eines string[]", kennel + "k.Names()[0].|", "Substring,Trim");
+    Check("Bitbreite ist kein Array", kennel + "k.Small().|", "ToChar", "Length");
+    Console.WriteLine(failures == 0 ? "Alle Array-Editor-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regressionsschutz) ===");
+{
+    int perfFailures = 0;
+
+    List<string> RunPerf(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, script));
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, executionMode: mode);
+        vm.Run();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    // Jedes Skript läuft in ALLEN drei Modi mit demselben erwarteten Ergebnis (Performance lässt die
+    // Zugriffs-/Grenzprüfungen weg - die Beispiele hier lösen sie deshalb nicht aus, außer wo `modes` es sagt).
+    void CheckPerf(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
+    {
+        foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            try { actual = RunPerf(script, mode).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) perfFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    // --- Value: Gleichheit und Arithmetik (kompaktes Layout, Schnellpfade)
+    CheckPerf("Gleichheit: Art, Einheit und Breite", """
+        print(1 == 1)
+        print(1 == 1.0)
+        print(5mm == 5)
+        print("a" == "a")
+        print('a' == 'a')
+        print(true == true)
+        print(1.5 == 1.5)
+        print(undefined == undefined)
+        print(1 != 2)
+        """, new[] { "True", "False", "True", "True", "True", "True", "True", "True", "True" });
+
+    CheckPerf("Arithmetik: int, float, gemischt, Einheiten", """
+        print(7 + 3)
+        print(7 - 10)
+        print(6 * 7)
+        print(7 / 2)
+        print(7 % 4)
+        print(2.5 + 1)
+        print(1 + 2.5)
+        print(7.5 / 2)
+        print(-7 % 3)
+        print(3mm + 4mm)
+        print(2 * 3mm)
+        print(6mm / 2)
+        print(1 < 2)
+        print(2 <= 2)
+        print(3 > 4)
+        print(4 >= 4.0)
+        print(1.5 < 1.6)
+        """, new[] { "10", "-3", "42", "3", "3", "3.5", "3.5", "3.75", "-1", "7mm", "6mm", "3mm", "True", "True", "False", "True", "True" });
+
+    CheckPerf("Division und Modulo durch 0 bleiben Fehler", """
+        var zero = 0
+        try { print(5 % zero) } catch (Exception e) { print("mod") }
+        print("weiter")
+        """, new[] { "AUSNAHME: Attempted to divide by zero." });
+
+    CheckPerf("Einheiten-Konflikt bleibt ein Fehler", """
+        print(1mm + 2)
+        """, new[] { "AUSNAHME: Einheiten inkompatibel: 'mm' kann nicht nach 'unitless' umgerechnet werden." });
+
+    // --- Stack und Scope-Slots wachsen
+    CheckPerf("tiefe Rekursion (Stack und Frames wachsen)", """
+        class R { static int Sum(int n) { if (n == 0) { return 0 } return n + R.Sum(n - 1) } }
+        print(R.Sum(1500))
+        """, new[] { "1125750" });
+
+    CheckPerf("viele lokale Variablen und langes Array-Literal", """
+        class T { static int G() { var a = 1; var b = 2; var c = 3; var d = 4; var e = 5; var f = 6; var g = 7; return a + b + c + d + e + f + g } }
+        print(T.G())
+        var arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        var s = 0
+        foreach (x in arr) { s = s + x }
+        print(s)
+        """, new[] { "28", "210" });
+
+    // --- Inline-Caches: eine Aufrufstelle, mehrere Klassen
+    CheckPerf("polymorphe Aufrufstelle: Klasse wechselt, Override, Feldzugriff", """
+        class A { int v; construct() { this.v = 1 } Who() { return "A" + this.v } }
+        class B : A { construct() : base() { this.v = 2 } Who() { return "B" + this.v } }
+        class C { int v; construct() { this.v = 3 } Who() { return "C" + this.v } }
+        var items = [new A(), new B(), new C(), new A(), new C(), new B()]
+        var text = ""
+        foreach (o in items) { text = text + o.Who() + "," + o.v + ";" }
+        print(text)
+        for (var i = 0; i < 6; i = i + 1) { items[i].v = i * 10 }
+        var sum = 0
+        foreach (o in items) { sum = sum + o.v }
+        print(sum)
+        """, new[] { "A1,1;B2,2;C3,3;A1,1;C3,3;B2,2;", "150" });
+
+    CheckPerf("Aufrufstelle: erst erlaubt, dann private Methode/Feld (Zugriffsschutz bleibt)", """
+        class Open { int f; Go() { return "offen" } construct() { this.f = 1 } }
+        class Closed { private int f; private Go() { return "zu" } construct() { this.f = 2 } }
+        var Probe = func (o) => {
+            try { return o.Go() } catch (AccessDeniedException e) { return "verweigert" }
+        }
+        var ProbeField = func (o) => {
+            try { return o.f } catch (AccessDeniedException e) { return "feld verweigert" }
+        }
+        var objs = [new Open(), new Closed(), new Open(), new Closed()]
+        for (var i = 0; i < 4; i = i + 1) { print(Probe(objs[i])); print(ProbeField(objs[i])) }
+        """, new[] { "offen", "1", "verweigert", "feld verweigert", "offen", "1", "verweigert", "feld verweigert" },
+        new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
+
+    CheckPerf("Feld mit Einheit: jede Zuweisung wird geprueft (auch nach dem ersten Erfolg)", """
+        class M { int len : mm = 0mm; construct() { this.len = 1mm } }
+        var m = new M()
+        for (var i = 0; i < 3; i = i + 1) { m.len = 5mm }
+        print(m.len)
+        try { m.len = 7 } catch (UnitMismatchException e) { print("Einheit") }
+        m.len = 6mm
+        print(m.len)
+        """, new[] { "5mm", "Einheit", "6mm" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
+
+    CheckPerf("Konstruktoren, Standardwerte, Lambdas, statische Aufrufe an einer Stelle", """
+        class P { int x; int y; construct(int x, int y = 5) { this.x = x; this.y = y } }
+        class Q { static int Twice(int a, int b = 2) { return a * b } }
+        var total = 0
+        for (var i = 0; i < 5; i = i + 1) {
+            var p = new P(i)
+            var q = new P(i, i)
+            total = total + p.x + p.y + q.y + Q.Twice(i) + Q.Twice(i, 3)
+        }
+        print(total)
+        var add = func (a, b) => { return a + b }
+        var inc = func (a) => { return a + 1 }
+        print(add(2, 3) + inc(4))
+        """, new[] { "95", "10" });
+
+    CheckPerf("Objekte: Ownership und Destruktor pro Schleifendurchlauf", """
+        class D { int id; construct(int id) { this.id = id } destruct() { print("d" + this.id) } }
+        for (var i = 0; i < 3; i = i + 1) { var d = new D(i) }
+        print("ende")
+        """, new[] { "d0", "d1", "d2", "ende" });
+
+    CheckPerf("Arrays: Lesen, Schreiben, Grenzen, byte-Puffer, Strings", """
+        var a = new int[3]
+        a[0] = 10; a[1] = 20; a[2] = a[0] + a[1]
+        print(a[2])
+        try { print(a[3]) } catch (IndexOutOfBoundsException e) { print("aussen") }
+        try { a[-1] = 1 } catch (IndexOutOfBoundsException e) { print("aussen2") }
+        var b = new byte[2]
+        b[1] = 200
+        print(b[1])
+        print("hey"[1])
+        """, new[] { "30", "aussen", "aussen2", "200", "e" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
+
+    Console.WriteLine(perfFailures == 0 ? "Alle VM-Optimierungs-Pruefungen bestanden." : $"FEHLER: {perfFailures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
+{
+    int cloneFailures = 0;
+
+    List<string> RunClone(string script)
+    {
+        var lines = new List<string>();
+        var program = Parser.ParseMultiple(Preprocessed(Directory.GetCurrentDirectory(), fire.Standard.Prelude.Source, script));
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes);
+        vm.Run();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckClone(string title, string script, params string[] expected)
+    {
+        string[] actual;
+        try { actual = RunClone(script).ToArray(); }
+        catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
+        bool ok = actual.SequenceEqual(expected);
+        if (!ok) cloneFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+    }
+
+    void CheckCloneError(string title, string script, string fragment)
+    {
+        string actual;
+        try { actual = "kein Fehler: " + string.Join(" | ", RunClone(script)); }
+        catch (Exception ex) { actual = ex.Message; }
+        bool ok = actual.Contains(fragment);
+        if (!ok) cloneFailures++;
+        Console.WriteLine(ok ? $"OK: {title} -> {actual}" : $"FEHLER: {title}\n  erwartet: ...{fragment}...\n  erhalten: {actual}");
+    }
+
+    const string cloneClasses = """
+        class Item {
+            int n
+            construct(int n) { this.n = n }
+            destruct() { print("~I" + this.n) }
+        }
+        class Box {
+            string name
+            int size
+            Item item
+            Box other
+            Item list[]
+            int Extra { get; set; }
+            construct(string name) { this.name = name; this.size = 1 }
+            destruct() { print("~B" + this.name) }
+        }
+
+        """;
+
+    CheckClone("flat: Objekt selbst und Werte kopiert, Referenzen bleiben", cloneClasses + """
+        var a = new Box("a")
+        a.item = new Item(1)
+        a.Extra = 5
+        var f = flat a
+        f.name = "f"
+        f.size = 7
+        f.Extra = 6
+        print(a.name + a.size + a.Extra)
+        print(f.name + f.size + f.Extra)
+        print(f.item == a.item)
+        print(f == a)
+        f.item.n = 9
+        print(a.item.n)
+        """, "a15", "f76", "True", "False", "9", "~Ba", "~I9", "~Bf");
+
+    CheckClone("copy: Tiefenkopie, Kopie ist unabhaengig", cloneClasses + """
+        var a = new Box("a")
+        a.item = new Item(1)
+        var d = copy a
+        d.item.n = 99
+        d.name = "d"
+        print(a.item.n + " " + d.item.n)
+        print(d.item == a.item)
+        print(a.name)
+        """, "1 99", "False", "a", "~Ba", "~I1", "~Bd", "~I99");
+
+    CheckClone("copy: gemeinsame Referenz bleibt gemeinsam, Zyklus bleibt Zyklus", cloneClasses + """
+        var shared = new Item(5)
+        var x = new Box("x")
+        x.item = shared
+        x.other = new Box("y")
+        x.other.item = shared
+        x.other.other = x
+        var c = copy x
+        print(c.item == c.other.item)
+        print(c.item == shared)
+        print(c.other.other == c)
+        print(c.other.other == x)
+        print(c.other != x.other)
+        """, "True", "False", "True", "False", "True", "~I5", "~Bx", "~By", "~Bx", "~By", "~I5");
+
+    CheckClone("Arrays: flat teilt die Elemente, copy kopiert sie; Array als Operand", cloneClasses + """
+        var b = new Box("arr")
+        b.list = [new Item(1), new Item(2)]
+        var f = flat b
+        var c = copy b
+        c.list[0].n = 10
+        f.list[1].n = 20
+        print(b.list[0].n + " " + b.list[1].n + " " + c.list[0].n)
+        print(f.list == b.list)
+        print(c.list == b.list)
+        var nums = [1, 2, 3]
+        var n1 = flat nums
+        var n2 = copy nums
+        n1[0] = 100
+        n2[1] = 200
+        print(nums[0] + " " + nums[1] + " " + n1[0] + " " + n2[1])
+        var bytes = "AB".ToBytes()
+        var b2 = copy bytes
+        b2[0] = 67
+        print(bytes[0] + " " + b2[0])
+        """, "1 20 10", "True", "False", "1 2 100 200", "65 67", "~Barr", "~I1", "~I20", "~Barr", "~Barr", "~I2", "~I10");
+
+    CheckClone("Werte: nichts zu kopieren", """
+        print(copy 5)
+        print(flat "text")
+        print(copy 2.5)
+        print(flat true)
+        var u = copy undefined
+        print(u == undefined)
+        """, "5", "text", "2.5", "True", "True");
+
+    CheckClone("Parameter: die Funktion arbeitet auf einer Kopie", cloneClasses + """
+        var Touch = func (b) => { b.name = "geaendert"; b.item.n = 77; return b.name }
+        var a = new Box("a")
+        a.item = new Item(1)
+        print(Touch(flat a))
+        print(a.name + " " + a.item.n)
+        a.name = "a"
+        a.item.n = 1
+        print(Touch(copy a))
+        print(a.name + " " + a.item.n)
+        """, "~Bgeaendert", "geaendert", "a 77", "~Bgeaendert", "~I77", "geaendert", "a 1", "~Ba", "~I1");
+
+    CheckClone("Owner: Kopie gehoert dem Scope und wird mit ihm zerstoert (Besitz bleibt erhalten)", cloneClasses + """
+        {
+            var a = new Box("a")
+            a.item = new Item(1)
+            var f = flat a
+            f.name = "f"
+            var d = copy a
+            d.name = "d"
+            print("|")
+        }
+        print("danach")
+        """, "|", "~Ba", "~I1", "~Bf", "~Bd", "~I1", "danach");
+
+    CheckClone("Owner: direkt einem Feld zugewiesen gehoert die Kopie dem Zielobjekt", cloneClasses + """
+        {
+            var src = new Box("src")
+            src.item = new Item(3)
+            var holder = new Box("holder")
+            holder.other = copy src
+            holder.other.name = "kopie"
+            holder.item = flat src.item
+            print("|")
+        }
+        print("danach")
+        """, "|", "~Bsrc", "~I3", "~Bholder", "~Bkopie", "~I3", "~I3", "danach");
+
+    CheckClone("Owner ausserhalb der Kopie: die Kopie gehoert dem Scope", cloneClasses + """
+        {
+            var owner = new Box("own")
+            owner.item = new Item(7)
+            var holder = new Box("holder")
+            holder.item = owner.item
+            var c = copy holder
+            c.item.n = 8
+            print(holder.item.n + " " + c.item.n)
+        }
+        print("danach")
+        """, "7 8", "~Bown", "~I7", "~Bholder", "~Bholder", "~I8", "danach");
+
+    CheckClone("Kopie laeuft ohne Konstruktor, der Destruktor laeuft fuer die Kopie", """
+        class K {
+            int v
+            construct(int v) { this.v = v; print("ctor") }
+            destruct() { print("dtor" + this.v) }
+        }
+        {
+            var k = new K(1)
+            var c = copy k
+            var f = flat k
+            c.v = 2
+            print("kopiert")
+        }
+        """, "ctor", "kopiert", "dtor1", "dtor2", "dtor1");
+
+    CheckClone("Kopie in Methode und return: Ownership geht an den Aufrufer", cloneClasses + """
+        class Maker { static Box Make(Box src) { var c = copy src; c.name = "made"; return c } }
+        var s = new Box("s")
+        s.item = new Item(4)
+        {
+            var m = Maker.Make(s)
+            print(m.name + " " + m.item.n)
+        }
+        print("danach")
+        """, "made 4", "~Bmade", "~I4", "danach", "~Bs", "~I4");
+
+    CheckClone("Actor: in der Tiefe geteilt", """
+        actor Counter { int n; construct() { this.n = 0 } Inc() { this.n = this.n + 1 } }
+        class Holder { Counter c; construct() { this.c = new Counter() } }
+        var h = new Holder()
+        var d = copy h
+        var f = flat h
+        print(d.c == h.c)
+        print(f.c == h.c)
+        """, "True", "True");
+
+    CheckCloneError("Actor als Operand", """
+        actor Counter { int n; construct() { this.n = 0 } }
+        var c = new Counter()
+        var d = copy c
+        """, "Actor");
+
+    CheckCloneError("zerstoertes Objekt", cloneClasses + """
+        var leaked = new Box("x")
+        {
+            var t = new Box("t")
+            leaked = t
+        }
+        var d = copy leaked
+        """, "zerstört");
+
+    CheckCloneError("Kopier-Praefix ohne Operand", "var x = copy", "Unerwartetes Token");
+
+    Console.WriteLine(cloneFailures == 0 ? "Alle Kopier-Pruefungen bestanden." : $"FEHLER: {cloneFailures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Kopieren: Editor ===");
+{
+    int failures = 0;
+    void Check(string title, string source, string expected, string forbidden = "")
+    {
+        int cursor = source.IndexOf('|');
+        source = source.Remove(cursor, 1);
+        var index = fire.Editor.ScriptSymbolIndex.Build(source);
+        var names = fire.Editor.CompletionEngine.GetSuggestions(source, cursor, index).Select(i => i.Text).ToList();
+        bool ok = expected.Split(',', StringSplitOptions.RemoveEmptyEntries).All(names.Contains)
+            && !forbidden.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(names.Contains);
+        if (!ok) failures++;
+        Console.WriteLine($"{(ok ? "OK" : "FEHLER")}: {title} -> {string.Join(", ", names.Take(8))}");
+    }
+    const string dogs = "class Dog { Bark() { } }\nclass Cat { Purr() { } }\nvar a = new Dog()\n";
+    Check("var d = copy a", dogs + "var d = copy a\nd.|", "Bark", "Purr");
+    Check("var f = flat a.Self", "class Dog { Bark() { } }\nclass Kennel { Dog dog }\nvar k = new Kennel()\nvar f = flat k.dog\nf.|", "Bark");
+    Check("copy/flat als Schluesselwoerter", "var x = 1\nco|", "copy");
+    Check("flat als Schluesselwort", "var x = 1\nfla|", "flat");
+    Console.WriteLine(failures == 0 ? "Alle Kopier-Editor-Pruefungen bestanden." : $"FEHLER: {failures} Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerstoert alles ===");
+{
+    int lifeFailures = 0;
+    var allModes = new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance };
+
+    List<string> RunLife(string script, VmExecutionMode mode, bool withIo = false, bool disposeIo = true)
+    {
+        var lines = new List<string>();
+        var sources = withIo
+            ? new[] { fire.Standard.Prelude.Source, fire.IO.Bridge.IoBridge.PreludeSource, script }
+            : new[] { fire.Standard.Prelude.Source, script };
+        var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var program = Parser.ParseMultiple(sources.Select(s => Preprocessor.Process(s, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        IDisposable? io = withIo ? fire.IO.Bridge.IoBridge.RegisterAll(natives) : null;
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, executionMode: mode);
+        vm.Run();
+        if (disposeIo) io?.Dispose();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckLife(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
+    {
+        foreach (var mode in modes ?? allModes)
+        {
+            string[] actual;
+            try { actual = RunLife(script, mode).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) lifeFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    const string lifeClasses = """
+        class Item {
+            int n
+            construct(int n) { this.n = n }
+            destruct() { print("~I" + this.n) }
+        }
+        class Box {
+            string name
+            Item item
+            Item extra
+            construct(string name) { this.name = name }
+            destruct() { print("~B" + this.name) }
+        }
+
+        """;
+
+    // ---- Kopien als Parameter: Scope der aufgerufenen Funktion
+    CheckLife("Parameter: die Kopie gehoert der aufgerufenen Funktion (auch static/Methode/Lambda)", lifeClasses + """
+        class F {
+            static Use(b) { b.name = "s"; print("in") }
+            static Keep(b) { return b }
+            Inst(b) { b.name = "m"; print("inst") }
+        }
+        var lam = func (b) => { b.name = "l"; print("lam") }
+        {
+            var a = new Box("a")
+            a.item = new Item(1)
+            F.Use(copy a)
+            print("|")
+            new F().Inst(flat a)
+            print("|")
+            lam(copy a)
+            print("|")
+            var k = F.Keep(copy a)
+            print("k")
+        }
+        print("ende")
+        """, new[] { "in", "~Bs", "~I1", "|", "inst", "~Bm", "|", "lam", "~Bl", "~I1", "|", "k", "~Ba", "~I1", "~Ba", "~I1", "ende" });
+
+    CheckLife("Parameter: dieselbe Aufrufstelle in der Schleife, Kopie jedes Mal neu", lifeClasses + """
+        class F { static int Bump(b) { b.item.n = b.item.n + 1; return b.item.n } }
+        var a = new Box("a")
+        a.item = new Item(1)
+        var total = 0
+        for (var i = 0; i < 3; i = i + 1) { total = total + F.Bump(copy a) }
+        print(total)
+        print(a.item.n)
+        """, new[] { "~Ba", "~I2", "~Ba", "~I2", "~Ba", "~I2", "6", "1", "~Ba", "~I1" });
+
+    CheckLife("Parameter: Konstruktor (TakeTo behaelt die Kopie) und base(...)", lifeClasses + """
+        class Keep { Item held; construct(i) { this.held = i; i.TakeTo(this) } }
+        class Base2 { construct(i) { print("base " + i.n) } }
+        class Derived : Base2 { construct(i) : base(copy i) { print("derived") } }
+        var t = new Item(4)
+        {
+            var k = new Keep(copy t)
+            print(k.held.n)
+            var d = new Derived(t)
+            print("d")
+        }
+        print("ende")
+        """, new[] { "4", "base 4", "~I4", "derived", "d", "~I4", "ende", "~I4" });
+
+    CheckLife("Parameter: auch bei Methoden von Basistypen (Erweiterung) und verschachtelten Aufrufen", """
+        class extends string { bool Has(x) { return this.Contains(x) } }
+        var Id = func (x) => { return x }
+        var Two = func (a, b) => { return a.n + b.n }
+        class N { int n; construct(int n) { this.n = n } }
+        print("abc".Has(copy "b"))
+        print(Two(copy new N(1), Id(copy new N(2))))
+        """, new[] { "True", "3" });
+
+    // ---- Kopie einem Objekt zugewiesen: das Objekt wird der Owner (wie TakeTo)
+    CheckLife("Zuweisung an ein Objekt: Feld, Feld-Initialisierer, bloßer Feldname", lifeClasses + """
+        var template = new Item(9)
+        class H {
+            Item init = new Item(1)
+            Item cp = copy template
+            Item later
+            Item bare
+            Setup() { bare = new Item(5) }
+            SetupCopy() { later = copy template }
+            destruct() { print("~H") }
+        }
+        {
+            var h = new H()
+            print("nach ctor")
+            h.Setup()
+            h.SetupCopy()
+            print("nach setup")
+        }
+        print("ende")
+        """, new[] { "nach ctor", "nach setup", "~H", "~I1", "~I9", "~I5", "~I9", "ende", "~I9" });
+
+    CheckLife("Zuweisung an ein Objekt, das schon zerstoert wird: die Kopie wird sofort mit zerstoert (wie TakeTo)", lifeClasses + """
+        var template = new Item(9)
+        class R { Item late; destruct() { this.late = copy template } }
+        {
+            var r = new R()
+        }
+        print("ende")
+        """, new[] { "~I9", "ende", "~I9" });
+
+    // ---- leave: sofort, und alles wird zerstoert
+    CheckLife("leave wirkt sofort und zerstoert auch die Objekte des globalen Scopes (finally laeuft)", lifeClasses + """
+        var g = new Item(1)
+        var f = func () => {
+            var local = new Item(2)
+            {
+                var inner = new Item(3)
+                leave
+            }
+            print("nie")
+        }
+        try {
+            f()
+        } finally {
+            print("finally")
+        }
+        print("nicht erreicht")
+        """, new[] { "~I3", "~I2", "finally", "~I1" });
+
+    CheckLife("leave: Kopien und verschachtelte Besitzer werden mit zerstoert", lifeClasses + """
+        var a = new Box("a")
+        a.item = new Item(1)
+        var c = copy a
+        c.name = "c"
+        leave
+        print("nie")
+        """, new[] { "~Ba", "~I1", "~Bc", "~I1" });
+
+    // ---- leave/terminate: der aufrufende Thread haelt sofort an; beide enden wie das normale Programmende
+    //      (Hauptprogramm wartet auf alle Fire-Threads, erst danach werden die globalen Destruktoren ausgefuehrt)
+    void CheckShutdown(string title, string script, string[] expected)
+    {
+        foreach (var mode in allModes)
+        {
+            string[] actual;
+            VM.ResetTerminateForTests();
+            try
+            {
+                var task = Task.Run(() => RunLife(script, mode).ToArray());
+                actual = task.Wait(TimeSpan.FromSeconds(20)) ? task.Result : new[] { "ZEITUEBERSCHREITUNG (haengt)" };
+            }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.InnerException?.Message ?? ex.Message }; }
+            VM.ResetTerminateForTests();
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) lifeFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    CheckShutdown("leave im Hauptprogramm wartet auf Fire-Threads, dann erst werden die Globals zerstoert", lifeClasses + """
+        var g = new Item(1)
+        fire {
+            var i = 0
+            while (i < 300000) { i = i + 1 }
+            print("thread fertig")
+        }
+        leave
+        print("nie")
+        """, new[] { "thread fertig", "~I1" });
+
+    CheckShutdown("terminate im Hauptprogramm stoppt Fire-Threads (finally laeuft), Globals zuletzt", lifeClasses + """
+        var g = new Item(1)
+        fire {
+            try { while (true) { } } finally { print("thread finally") }
+        }
+        var j = 0
+        while (j < 1000) { j = j + 1 }
+        terminate(5)
+        print("nie")
+        """, new[] { "thread finally", "~I1" });
+
+    CheckShutdown("terminate in einem Fire-Thread stoppt auch das Hauptprogramm; der Aufrufer fuehrt nichts mehr aus", lifeClasses + """
+        var g = new Item(1)
+        fire {
+            var k = 0
+            while (k < 1000) { k = k + 1 }
+            terminate(3)
+            print("nie im thread")
+        }
+        try { while (true) { } } finally { print("main finally") }
+        print("nie")
+        """, new[] { "main finally", "~I1" });
+
+    CheckShutdown("terminate: zwei Threads rufen es auf, beide halten sofort an", lifeClasses + """
+        var g = new Item(1)
+        fire { terminate(1); print("nie a") }
+        fire { terminate(2); print("nie b") }
+        var w = 0
+        while (w < 100000) { w = w + 1 }
+        print("nie main")
+        """, Array.Empty<string>().Concat(new[] { "~I1" }).ToArray());
+
+    CheckShutdown("terminate in einer Property (verschachtelte Ausfuehrung) haelt sofort an, danach geordnet (finally, Globals)", lifeClasses + """
+        class P {
+            int v {
+                get {
+                    print("im getter")
+                    terminate(1)
+                    print("nie getter")
+                    return 5
+                }
+            }
+        }
+        var g = new Item(1)
+        var p = new P()
+        try {
+            var x = p.v
+            print("nie x")
+        } finally {
+            print("finally")
+        }
+        print("nie")
+        """, new[] { "im getter", "finally", "~I1" });
+
+    CheckShutdown("leave in einer Property (verschachtelte Ausfuehrung) haelt sofort an", lifeClasses + """
+        class P {
+            int v {
+                get {
+                    leave
+                    print("nie getter")
+                    return 5
+                }
+            }
+        }
+        var g = new Item(1)
+        var p = new P()
+        var x = p.v
+        print("nie")
+        """, new[] { "~I1" });
+
+    {
+        // Ein offener FileStream: sein Destruktor schliesst ihn beim leave (der Inhalt ist danach vollstaendig auf der Platte).
+        string leaveFile = Path.Combine(Path.GetTempPath(), "fire-leave-" + Guid.NewGuid().ToString("N") + ".bin").Replace("\\", "/");
+        foreach (var mode in allModes)
+        {
+            string result;
+            try
+            {
+                var lines = RunLife($$"""
+                    #import "io"
+                    var w = new IO.FileStream("{{leaveFile}}", IO.FileMode.Create)
+                    w.Write("Hallo".ToBytes())
+                    var Work = func () => {
+                        var w2 = new IO.FileStream("{{leaveFile}}.2", IO.FileMode.Create)
+                        w2.Write("Zwei".ToBytes())
+                        leave
+                    }
+                    Work()
+                    print("nie")
+                    """, mode, withIo: true, disposeIo: false); // ohne Sicherheitsnetz: nur die Destruktoren schliessen
+                long size1 = File.Exists(leaveFile) ? new FileInfo(leaveFile).Length : -1;
+                long size2 = File.Exists(leaveFile + ".2") ? new FileInfo(leaveFile + ".2").Length : -1;
+                result = $"{string.Join(",", lines)}|{size1}|{size2}";
+            }
+            catch (Exception ex) { result = "AUSNAHME: " + ex.Message; }
+            finally
+            {
+                try { File.Delete(leaveFile); File.Delete(leaveFile + ".2"); } catch { }
+            }
+            bool ok = result == "|5|4";
+            if (!ok) lifeFailures++;
+            Console.WriteLine(ok ? $"OK: leave schliesst offene Streams [{mode}]" : $"FEHLER: leave schliesst offene Streams [{mode}]\n  erwartet: |5|4\n  erhalten: {result}");
+        }
+    }
+
+    {
+        // Das Sicherheitsnetz des Hosts (IoBridge.RegisterAll(...).Dispose()) schliesst, was am Ende noch offen ist -
+        // hier ein Stream im globalen Scope, der beim normalen Programmende nicht zerstoert wird.
+        string netFile = Path.Combine(Path.GetTempPath(), "fire-net-" + Guid.NewGuid().ToString("N") + ".bin").Replace("\\", "/");
+        string result;
+        try
+        {
+            RunLife($$"""
+                var w = new IO.FileStream("{{netFile}}", IO.FileMode.Create)
+                w.Write("Netz".ToBytes())
+                """, VmExecutionMode.Debug, withIo: true, disposeIo: true);
+            result = (File.Exists(netFile) ? new FileInfo(netFile).Length : -1).ToString();
+        }
+        catch (Exception ex) { result = "AUSNAHME: " + ex.Message; }
+        finally { try { File.Delete(netFile); } catch { } }
+        bool ok = result == "4";
+        if (!ok) lifeFailures++;
+        Console.WriteLine(ok ? "OK: Host-Sicherheitsnetz schliesst offene Streams" : $"FEHLER: Host-Sicherheitsnetz\n  erwartet: 4\n  erhalten: {result}");
+    }
+
+    // ---- normales Programmende raeumt den globalen Scope ab
+    CheckLife("Programmende: globale Objekte werden zerstoert (destruct laeuft)", lifeClasses + """
+        var a = new Box("a")
+        a.item = new Item(1)
+        var b = new Item(2)
+        print("ende")
+        """, new[] { "ende", "~Ba", "~I1", "~I2" });
+
+    CheckLife("Programmende: das Hauptprogramm wartet auf Fire-Threads, dann erst werden die Globals zerstoert", lifeClasses + """
+        var g = new Item(1)
+        fire {
+            var i = 0
+            while (i < 300000) { i = i + 1 }
+            print("thread fertig")
+        }
+        print("main fertig")
+        """, new[] { "main fertig", "thread fertig", "~I1" });
+
+    {
+        // Ein offener FileStream im globalen Scope wird beim normalen Ende vom Destruktor geschlossen (ohne Host-Sicherheitsnetz).
+        string endFile = Path.Combine(Path.GetTempPath(), "fire-end-" + Guid.NewGuid().ToString("N") + ".bin").Replace("\\", "/");
+        string result;
+        try
+        {
+            RunLife($$"""
+                var w = new IO.FileStream("{{endFile}}", IO.FileMode.Create)
+                w.Write("Ende".ToBytes())
+                """, VmExecutionMode.Debug, withIo: true, disposeIo: false);
+            result = (File.Exists(endFile) ? new FileInfo(endFile).Length : -1).ToString();
+        }
+        catch (Exception ex) { result = "AUSNAHME: " + ex.Message; }
+        finally { try { File.Delete(endFile); } catch { } }
+        bool ok = result == "4";
+        if (!ok) lifeFailures++;
+        Console.WriteLine(ok ? "OK: Programmende schliesst offene Streams (Destruktor)" : $"FEHLER: Programmende schliesst offene Streams\n  erwartet: 4\n  erhalten: {result}");
+    }
+
+    // ---- Signale von anderen Threads werden an den sicheren Punkten (Schleifen, Aufrufe) bemerkt
+    foreach (var mode in allModes)
+    {
+        foreach (var kind in new[] { "terminate", "leave" })
+        {
+            VM.ResetTerminateForTests();
+            var lines = new List<string>();
+            var natives = new NativeRegistry();
+            natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+            natives.RegisterBaseTypeNatives();
+            // Eine Schleife mit Aufruf und eine ohne - beide muessen unterbrechbar sein.
+            string script = lifeClasses + """
+                class L { static Tick(n) { return n + 1 } }
+                var g = new Item(1)
+                var i = 0
+                while (true) {
+                    i = L.Tick(i)
+                    var j = 0
+                    while (j < 1000) { j = j + 1 }
+                }
+                """;
+            var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, script }.Select(s => Preprocessor.Process(s, Directory.GetCurrentDirectory(), new HashSet<string>())).ToList());
+            var resolveResult = Resolver.Resolve(program, natives.Names);
+            var compiled = Compiler.Compile(program, resolveResult, natives);
+            var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, executionMode: mode);
+            var runner = Task.Run(() => vm.Run());
+            Thread.Sleep(100);
+            if (kind == "terminate") VM.RequestTerminate(Value.MakeInt(7)); else vm.RequestLeave();
+            bool finished = runner.Wait(TimeSpan.FromSeconds(10));
+            VM.ResetTerminateForTests();
+            // `leave` und `terminate` enden beide wie das normale Programmende: der globale Scope wird zerstoert (destruct laeuft).
+            string[] expected = new[] { "~I1" };
+            bool ok = finished && lines.SequenceEqual(expected);
+            if (!ok) lifeFailures++;
+            Console.WriteLine(ok ? $"OK: {kind} von einem anderen Thread beendet eine Endlosschleife [{mode}]"
+                                 : $"FEHLER: {kind} von einem anderen Thread [{mode}] - beendet: {finished}, Ausgabe: {string.Join(" | ", lines)}");
+        }
+    }
+
+    Console.WriteLine(lifeFailures == 0 ? "Alle Kopie/leave-Pruefungen bestanden." : $"FEHLER: {lifeFailures} Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Packer: eigenstaendige Datei (Bundle + Payload), Bridges nur bei Bedarf, Lader statt Costura
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Packer / Payload / Lader ===");
+    int packFailures = 0;
+    void PackCheck(bool ok, string what)
+    {
+        if (!ok) packFailures++;
+        Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
+    }
+
+    var baseDir = AppContext.BaseDirectory;
+
+    // 1) Pack-Plan: je Import nur die noetigen DLLs, nichts Unaufgeloestes.
+    PackagePlan Plan(params string[] imports) => PackagePlan.Create(imports, baseDir);
+    var planPrint = Plan(NativeImports.Print);
+    PackCheck(planPrint.Assemblies.ContainsKey("fire") && planPrint.Assemblies.ContainsKey("MemoryPack.Core"), "Plan: Kern (fire, MemoryPack) ist immer dabei");
+    PackCheck(!planPrint.Assemblies.Keys.Any(n => n.StartsWith("fire.Terminal") || n.StartsWith("fire.Device") || n.StartsWith("fire.IO") || n == "SDL3-CS" || n == "System.IO.Ports") && planPrint.Natives.Count == 0,
+        "Plan: ohne Import keine Bridge, keine nativen Bibliotheken");
+    var planIo = Plan(NativeImports.Print, NativeImports.IO);
+    PackCheck(planIo.Assemblies.ContainsKey("fire.IO.Bridge") && !planIo.Assemblies.ContainsKey("fire.Terminal.Bridge") && !planIo.Assemblies.ContainsKey("fire.Device.Bridge"),
+        "Plan: io bindet nur die IO-Bridge ein");
+    var planGfx = Plan(NativeImports.Print, NativeImports.Graphics);
+    PackCheck(new[] { "fire.Terminal.Bridge", "fire.Terminal", "fire.Terminal.Windows", "fire.Terminal.Sdl", "SDL3-CS" }.All(planGfx.Assemblies.ContainsKey) && !planGfx.Assemblies.ContainsKey("fire.IO.Bridge"),
+        "Plan: graphics bindet Terminal-Bridge samt Terminal/Windows/SDL ein (Abhaengigkeiten aus den Metadaten)");
+    var planDev = Plan(NativeImports.Print, NativeImports.Devices);
+    var planUi = Plan(NativeImports.Print, NativeImports.Graphics, NativeImports.Ui);
+    PackCheck(planUi.Assemblies.Keys.SequenceEqual(planGfx.Assemblies.Keys) && planUi.Unresolved.Count == 0, "Plan: ui bringt keine eigene DLL mit (reiner fire-Quelltext, graphics kommt ueber den Import)");
+    PackCheck(new[] { "fire.Device.Bridge", "fire.Device.Manager", "System.IO.Ports" }.All(planDev.Assemblies.ContainsKey) && !planDev.Assemblies.ContainsKey("SDL3-CS"),
+        "Plan: devices bindet Device-Bridge, Manager und System.IO.Ports ein");
+    PackCheck(planGfx.Unresolved.Count == 0 && planDev.Unresolved.Count == 0 && planIo.Unresolved.Count == 0 && planPrint.Unresolved.Count == 0,
+        "Plan: alle Verweise aufloesbar (Datei neben dem Compiler oder Teil des Frameworks)");
+    PackCheck(planGfx.Natives.Count == 0 || planGfx.Natives.ContainsKey("SDL3.dll") || planGfx.Natives.ContainsKey("libSDL3.so.0") || planGfx.Natives.ContainsKey("libSDL3.dylib"),
+        "Plan: graphics bringt SDL3 mit, wo es die Plattform gibt");
+    bool unknownImportRejected = false;
+    try { Plan("gibtsnicht"); } catch (InvalidOperationException) { unknownImportRejected = true; }
+    PackCheck(unknownImportRejected, "Plan: unbekannter Import wird abgelehnt statt still ignoriert");
+
+    // 2) Payload-Format: Rundlauf, Kompression, Integritaet, keine Marker-Suche.
+    var tmpDir = Path.Combine(Path.GetTempPath(), "fire-packtest-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(tmpDir);
+    try
+    {
+        var plFile = Path.Combine(tmpDir, "pl.bin");
+        var rnd = new Random(42);
+        var incompressible = new byte[5000]; rnd.NextBytes(incompressible);
+        var compressible = Enumerable.Repeat((byte)7, 20000).ToArray();
+        // Die alten Marker-Bytes (DA 1D) mitten im Inhalt duerfen nichts stoeren.
+        var withMarker = new byte[] { 1, 2, 0xDA, 0x1D, 3, 4, 0xDA, 0x1D };
+        using (var fs = new FileStream(plFile, FileMode.Create))
+        {
+            fs.Write(new byte[] { 0xDA, 0x1D, 9, 9, 0xDA, 0x1D });
+            PayloadFile.Append(fs, new[]
+            {
+                (PayloadKind.Program, "program", withMarker),
+                (PayloadKind.Assembly, "A", compressible),
+                (PayloadKind.Native, "n.dll", incompressible),
+            });
+        }
+        var reader = PayloadFile.Open(plFile);
+        PackCheck(reader != null && reader.Entries.Count == 3, "Payload: Index wird am Dateiende gefunden");
+        if (reader != null)
+        {
+            PackCheck(reader.Read(reader.Find(PayloadKind.Program, "program")!)!.SequenceEqual(withMarker), "Payload: Inhalt mit Marker-Bytes bleibt unversehrt");
+            var eA = reader.Find(PayloadKind.Assembly, "a")!;
+            PackCheck(eA.Compressed && eA.StoredLength < eA.RawLength / 10 && reader.Read(eA)!.SequenceEqual(compressible), "Payload: Brotli packt Kompressibles, Rundlauf stimmt");
+            var eN = reader.Find(PayloadKind.Native, "n.dll")!;
+            PackCheck(!eN.Compressed && reader.Read(eN)!.SequenceEqual(incompressible), "Payload: Unkomprimierbares wird roh gespeichert");
+
+            // Ein geflipptes Byte im gespeicherten Eintrag muss auffallen.
+            var bytes = File.ReadAllBytes(plFile);
+            bytes[(int)eN.Offset + 10] ^= 0xFF;
+            var badFile = Path.Combine(tmpDir, "bad.bin");
+            File.WriteAllBytes(badFile, bytes);
+            var badReader = PayloadFile.Open(badFile)!;
+            PackCheck(badReader.Read(badReader.Find(PayloadKind.Native, "n.dll")!) == null, "Payload: beschaedigter Eintrag wird erkannt (Pruefsumme)");
+        }
+        var plain = Path.Combine(tmpDir, "plain.bin");
+        File.WriteAllBytes(plain, new byte[1000]);
+        PackCheck(PayloadFile.Open(plain) == null, "Payload: Datei ohne Payload liefert null");
+
+        // 3) Lader: native Bibliothek wird aus dem Payload entpackt und geladen (Linux: die .so der Ports-Bibliothek
+        //    unter fremdem Namen, damit sie nicht ueber die normale Suche gefunden wird).
+        if (OperatingSystem.IsLinux())
+        {
+            var so = Directory.GetFiles(Path.Combine(baseDir, "runtimes", "linux-x64", "native"), "libSystem.IO.Ports.Native.so").FirstOrDefault();
+            if (so != null && System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64)
+            {
+                var loaderFile = Path.Combine(tmpDir, "loader.bin");
+                using (var fs = new FileStream(loaderFile, FileMode.Create))
+                    PayloadFile.Append(fs, new[] { (PayloadKind.Native, "libfiretestnative.so", File.ReadAllBytes(so)) });
+                PackCheck(PayloadLoader.Install(loaderFile), "Lader: Payload der eigenen Datei wird erkannt");
+                string result;
+                try { PackerNativeProbe.Call(); result = "geladen?"; }
+                catch (EntryPointNotFoundException) { result = "geladen"; }
+                catch (DllNotFoundException) { result = "nicht gefunden"; }
+                PackCheck(result == "geladen", "Lader: native Bibliothek wird aus dem Payload entpackt und gefunden");
+            }
+        }
+
+        // 4) Ende-zu-Ende: eigenstaendige Datei packen, AUSSERHALB des Compiler-Ordners starten.
+        var stubName = OperatingSystem.IsWindows() ? "fire.Runtime.exe" : "fire.Runtime";
+        if (File.Exists(Path.Combine(baseDir, stubName)))
+        {
+            string RunPacked(string source, string name, out long size, out PackagePlan? plan)
+            {
+                var exe = Path.Combine(tmpDir, name + (OperatingSystem.IsWindows() ? ".exe" : ""));
+                var linked = new Linker().CompileAndLink(new[] { source }, null, exe);
+                plan = PackagePlan.Create(linked.NativeImports, baseDir);
+                size = new FileInfo(exe).Length;
+                var psi = new System.Diagnostics.ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = tmpDir };
+                using var proc = System.Diagnostics.Process.Start(psi)!;
+                var output = proc.StandardOutput.ReadToEnd();
+                var error = proc.StandardError.ReadToEnd();
+                proc.WaitForExit(20000);
+                return proc.ExitCode == 0 ? output.Replace("\r\n", "\n") : $"EXIT {proc.ExitCode}: {output}{error}";
+            }
+
+            var outPrint = RunPacked("print(\"hallo\")\nprint(\"welt\")", "p_print", out var sizePrint, out _);
+            PackCheck(outPrint == "hallo\nwelt\n", $"Ende-zu-Ende: gepackte Datei laeuft allein (ohne DLLs daneben), Ausgabe: {outPrint.Trim()}");
+            var outIo = RunPacked("#import \"io\"\nIO.Stdio.WriteLine(\"io ok\")", "p_io", out var sizeIo, out _);
+            PackCheck(outIo == "io ok\n", $"Ende-zu-Ende: IO-Bridge wird zur Laufzeit aus der eigenen Datei geladen, Ausgabe: {outIo.Trim()}");
+            PackCheck(sizeIo > sizePrint, $"Groesse: mit io ({sizeIo} B) groesser als ohne Bridge ({sizePrint} B)");
+            var gfxSize = PackProgramSize("#import \"graphics\"\nprint(\"x\")");
+            PackCheck(gfxSize > sizeIo, $"Groesse: graphics ({gfxSize} B) ist die groesste Variante, print ({sizePrint} B) die kleinste");
+            // Ohne Payload (nackte Runtime) gibt es eine klare Meldung statt eines Absturzes.
+            var bare = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(baseDir, stubName)) { RedirectStandardError = true, RedirectStandardOutput = true })!;
+            var bareErr = bare.StandardError.ReadToEnd(); bare.WaitForExit(20000);
+            PackCheck(bare.ExitCode == 1 && bareErr.Contains("Payload"), "Ende-zu-Ende: nackte Runtime ohne Payload meldet das verstaendlich");
+
+            long PackProgramSize(string source)
+            {
+                var exe = Path.Combine(tmpDir, "size_probe" + (OperatingSystem.IsWindows() ? ".exe" : ""));
+                new Linker().CompileAndLink(new[] { source }, null, exe);
+                return new FileInfo(exe).Length;
+            }
+        }
+        else Console.WriteLine($"(uebersprungen: {stubName} liegt nicht im Testordner)");
+    }
+    finally
+    {
+        try { Directory.Delete(tmpDir, true); } catch (IOException) { }
+    }
+
+    Console.WriteLine(packFailures == 0 ? "Alle Packer-Pruefungen bestanden." : $"FEHLER: {packFailures} Packer-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Befehlszeile des Compilers (run / build)
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Befehlszeile: run / build ===");
+    int cliFailures = 0;
+    void CliCheck(bool ok, string what)
+    {
+        if (!ok) cliFailures++;
+        Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
+    }
+
+    var r1 = CommandLineParser.Parse(new[] { "run", "code1", "codeN" });
+    CliCheck(r1.Error == null && r1.Command == CommandKind.Run && r1.Files.SequenceEqual(new[] { "code1", "codeN" }) && r1.Mode == null, "run code1 codeN");
+    var r2 = CommandLineParser.Parse(new[] { "run", "code1", "codeN", "-m", "DEBUG" });
+    CliCheck(r2.Error == null && r2.Mode == VmExecutionMode.Debug && r2.Files.Count == 2, "run ... -m DEBUG");
+    CliCheck(CommandLineParser.Parse(new[] { "RUN", "a", "-m", "performance" }).Mode == VmExecutionMode.Performance, "Befehl und Modus ohne Beachtung der Gross-/Kleinschreibung");
+    CliCheck(CommandLineParser.Parse(new[] { "run", "--mode=release", "a" }).Mode == VmExecutionMode.Release, "--mode=release vor der Datei");
+    var b1 = CommandLineParser.Parse(new[] { "build", "code1", "codeN" });
+    CliCheck(b1.Error == null && b1.Command == CommandKind.Build && b1.OutputFile == "out.exe", "build ohne -o -> out.exe");
+    var b2 = CommandLineParser.Parse(new[] { "build", "code1", "codeN", "-o", "test.exe" });
+    CliCheck(b2.OutputFile == "test.exe" && b2.Files.SequenceEqual(new[] { "code1", "codeN" }), "build ... -o test.exe");
+    var b3 = CommandLineParser.Parse(new[] { "build", "-o", "x y.exe", "eins zwei.script", "\"drei vier.script\"" });
+    CliCheck(b3.OutputFile == "x y.exe" && b3.Files.SequenceEqual(new[] { "eins zwei.script", "drei vier.script" }), "Dateinamen mit Leerzeichen, -o vor den Dateien, umschliessende Anfuehrungszeichen entfernt");
+    CliCheck(CommandLineParser.Parse(Array.Empty<string>()).Command == CommandKind.Help && CommandLineParser.Parse(new[] { "--help" }).Command == CommandKind.Help, "ohne Argumente / --help -> Hilfe");
+    CliCheck(CommandLineParser.Parse(new[] { "laufen", "a" }).Error != null, "unbekannter Befehl ist ein Fehler");
+    CliCheck(CommandLineParser.Parse(new[] { "run" }).Error != null, "run ohne Datei ist ein Fehler");
+    CliCheck(CommandLineParser.Parse(new[] { "run", "a", "-m" }).Error != null && CommandLineParser.Parse(new[] { "run", "a", "-m", "TURBO" }).Error != null, "-m ohne/mit falschem Modus ist ein Fehler");
+    CliCheck(CommandLineParser.Parse(new[] { "run", "a", "-o", "x.exe" }).Error != null, "-o gibt es nur bei build");
+    CliCheck(CommandLineParser.Parse(new[] { "run", "a", "-x" }).Error != null, "unbekannte Option ist ein Fehler");
+
+    // Ende-zu-Ende ueber den Runner (ohne Prozess): build erzeugt die Datei, run liefert Exitcodes.
+    var cliDir = Path.Combine(Path.GetTempPath(), "fire-cli-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(cliDir);
+    try
+    {
+        var f1 = Path.Combine(cliDir, "eins.script");
+        var f2 = Path.Combine(cliDir, "zwei mit leer.script");
+        File.WriteAllText(f1, "class G { Hi() { print(\"hi\") } }\n");
+        File.WriteAllText(f2, "new G().Hi()\nterminate(5)\n");
+        var errW = new StringWriter();
+        var prevOut = Console.Out;
+        var capture = new StringWriter();
+        Console.SetOut(capture);
+        int code;
+        try { code = CommandLineRunner.Run(new[] { "run", f1, f2 }, capture, errW); }
+        finally { Console.SetOut(prevOut); VM.ResetTerminateForTests(); }
+        CliCheck(code == 5 && capture.ToString().Replace("\r", "") == "hi\n", $"run: zwei Dateien zu einem Programm, terminate(5) -> Exitcode 5 (Code {code}, Ausgabe '{capture.ToString().Trim()}')");
+
+        var bad = Path.Combine(cliDir, "bad.script");
+        File.WriteAllText(bad, "var x = \n");
+        var errBad = new StringWriter();
+        CliCheck(CommandLineRunner.Run(new[] { "run", bad }, new StringWriter(), errBad) == CommandLineRunner.ExitScriptError && errBad.ToString().Length > 0, "run: Kompilierfehler -> Exitcode 1 mit Meldung");
+        CliCheck(CommandLineRunner.Run(new[] { "run", Path.Combine(cliDir, "nix.script") }, new StringWriter(), new StringWriter()) == CommandLineRunner.ExitUsage, "run: fehlende Datei -> Exitcode 2");
+
+        var stubName = OperatingSystem.IsWindows() ? "fire.Runtime.exe" : "fire.Runtime";
+        if (File.Exists(Path.Combine(AppContext.BaseDirectory, stubName)))
+        {
+            var outFile = Path.Combine(cliDir, "gebaut.exe");
+            int bc = CommandLineRunner.Run(new[] { "build", f1, f2, "-o", outFile, "-m", "DEBUG" }, new StringWriter(), new StringWriter());
+            CliCheck(bc == 0 && File.Exists(outFile), "build -o: erzeugt die Datei");
+            var packed = File.Exists(outFile) ? Packer.UnpackProgram(outFile) : null;
+            CliCheck(packed != null && packed.ExecutionMode == VmExecutionMode.Debug, "build -m DEBUG: der Modus steckt im gepackten Programm");
+        }
+    }
+    finally { try { Directory.Delete(cliDir, true); } catch (IOException) { } }
+
+    Console.WriteLine(cliFailures == 0 ? "Alle Befehlszeilen-Pruefungen bestanden." : $"FEHLER: {cliFailures} Befehlszeilen-Pruefung(en) fehlgeschlagen.");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===");
+{
+    int fontFailures = 0;
+    void FontCheck(bool ok, string what)
+    {
+        if (!ok) fontFailures++;
+        Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
+    }
+
+    // Dieselbe Schrift, aber OHNE Bitmap-Zeilen: TerminalCanvas muss dann den allgemeinen Weg (IsPixelSet je Pixel) nehmen.
+    var slowFont = new PixelOnlyFont(new fire.Terminal.IntegratedGlyphFont());
+    var rng = new Random(7);
+    foreach (bool small in new[] { false, true })
+    {
+        var fastFont = new fire.Terminal.IntegratedGlyphFont(small);
+        var slow = new PixelOnlyFont(fastFont);
+        foreach (bool opaque in new[] { true, false })
+        {
+            var fbFast = new fire.Terminal.Framebuffer(203, 97); // krumme Groesse: Raster endet nicht am Rand, Texte ragen hinaus
+            var fbSlow = new fire.Terminal.Framebuffer(203, 97);
+            var fast = new fire.Terminal.TerminalCanvas(fbFast, fastFont);
+            var slowCanvas = new fire.Terminal.TerminalCanvas(fbSlow, slow);
+            foreach (var cv in new[] { fast, slowCanvas })
+            {
+                cv.Foreground = new fire.Terminal.PixelColor(200, 100, 50);
+                cv.Background = opaque ? new fire.Terminal.PixelColor(10, 20, 30) : null;
+                cv.Target.Clear(new fire.Terminal.PixelColor(1, 2, 3));
+            }
+            // Zeichen des ganzen Bereichs (auch > 255), an zufaelligen Positionen inkl. teilweise ausserhalb
+            for (int i = 0; i < 400; i++)
+            {
+                char ch = (char)rng.Next(0, 400);
+                int x = rng.Next(-12, 215), y = rng.Next(-16, 110);
+                fast.DrawGlyph(x, y, ch, fast.Foreground, fast.Background);
+                slowCanvas.DrawGlyph(x, y, ch, slowCanvas.Foreground, slowCanvas.Background);
+            }
+            // Print mit Umbruch und Scrollen
+            string text = string.Join("\n", Enumerable.Range(0, 40).Select(n => new string((char)('A' + n % 26), 10 + n % 40)));
+            fast.Locate(0, 0); fast.Print(text);
+            slowCanvas.Locate(0, 0); slowCanvas.Print(text);
+            FontCheck(fbFast.Pixels.SequenceEqual(fbSlow.Pixels),
+                $"{(small ? "8x8" : "8x14")} {(opaque ? "opak" : "transparent")}: Glyphen an beliebigen (auch ueberstehenden) Positionen und Print mit Umbruch/Scrollen identisch");
+        }
+    }
+
+    {
+        var fb = new fire.Terminal.Framebuffer(100, 40);
+        var cv = new fire.Terminal.TerminalCanvas(fb, new fire.Terminal.IntegratedGlyphFont());
+        cv.DrawText(3, 5, "Hallo", fire.Terminal.PixelColor.White);
+        FontCheck(cv.MeasureText("Hallo") == 5 * cv.CellWidth, "MeasureText: Zeichenzahl mal Zellbreite");
+        var fb2 = new fire.Terminal.Framebuffer(100, 40);
+        var cv2 = new fire.Terminal.TerminalCanvas(fb2, new fire.Terminal.IntegratedGlyphFont());
+        for (int i = 0; i < 5; i++) cv2.DrawGlyph(3 + i * cv2.CellWidth, 5, "Hallo"[i], fire.Terminal.PixelColor.White, null);
+        FontCheck(fb.Pixels.SequenceEqual(fb2.Pixels), "DrawText == DrawGlyph je Zeichen");
+        cv.Locate(0, 0); cv.Print("\u20AC\u4E2D"); // Zeichen ausserhalb der Tabelle: kein Absturz
+        FontCheck(true, "Zeichen > 255 werfen nicht");
+    }
+
+    Console.WriteLine(fontFailures == 0 ? "Alle Font-Pruefungen bestanden." : $"FEHLER: {fontFailures} Font-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// UI-Bibliothek (#import "ui"): headless - echte Framebuffer/Konsole/WindowManager, nur der Renderer ist eine Attrappe
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== UI-Bibliothek ===");
+    int uiFailures = 0;
+
+    IReadOnlyDictionary<string, RuntimeClass>? uiClasses = null;
+
+    // Fuehrt `script` mit Grafik-Prelude + UI-Prelude aus. Das Fenster laeuft ueber den echten WindowManager (Ereignis-Warteschlange
+    // inklusive), nur der Renderer ist `FakeRenderer`: `__TestEvent(typ, ...)` legt ein Ereignis ab, das das naechste Tick abholt,
+    // `__TestClose()` schliesst das Fenster.
+    List<string> RunUi(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.UI.Bridge.UiBridge.PreludeSource, script };
+        var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+
+        var renderer = new FakeRenderer();
+        var fbManager = new fire.Terminal.FramebufferManager();
+        var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
+        var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => renderer);
+        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, winManager);
+
+        natives.Register("__TestClose", args => { renderer.Closed = true; return Value.MakeUndefined(); });
+        natives.Register("__TestEvent", args =>
+        {
+            renderer.Push((int)args[0].AsInt(), args);
+            return Value.MakeUndefined();
+        });
+
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        uiClasses = compiled.Classes;
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
+        vm.Run();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckUi(string title, string script, string[] expected)
+    {
+        foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release })
+        {
+            string[] actual;
+            try { actual = RunUi(script, mode).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + CompileErrors.Describe(ex) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) uiFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    const string uiHead = """
+        // GetPixel liefert den Farbwert mit Vorzeichen (32 Bit); die Farben der UI-Bibliothek sind vorzeichenlose Werte
+        class Px { static int Get(console, int x, int y) { var v = console.GetPixel(x, y); if (v < 0) { v = v + 4294967296 } return v } }
+        var fb = new Framebuffer(320, 200)
+        var win = new Window(fb, "Test")
+        var ui = new UI.Root(fb, win)
+
+        """;
+
+    CheckUi("Button: Hover, Druecken, Klick (Abfrage per TakeClicked)", uiHead + """
+        var b = new UI.Button("OK", 10, 10, 80, 26)
+        ui.Add(b)
+        __TestEvent(9, 20.0, 20.0)
+        ui.Tick()
+        print("hover " + b.hover)
+        __TestEvent(8, 1, 20.0, 20.0)
+        ui.Tick()
+        print("pressed " + b.pressed)
+        __TestEvent(11, 1, 20.0, 20.0)
+        ui.Tick()
+        print("pressed " + b.pressed)
+        print("geklickt " + b.TakeClicked())
+        print("nochmal " + b.TakeClicked())
+        """, new[] { "hover True", "pressed True", "pressed False", "geklickt True", "nochmal False" });
+
+    CheckUi("Button: Loslassen ausserhalb klickt nicht", uiHead + """
+        var b = new UI.Button("OK", 10, 10, 80, 26)
+        ui.Add(b)
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(11, 1, 200.0, 150.0)
+        ui.Tick()
+        print("geklickt " + b.TakeClicked())
+        """, new[] { "geklickt False" });
+
+    CheckUi("Button: onClick-Lambda sieht die echten globalen Variablen", uiHead + """
+        var clicks = 0
+        var b = new UI.Button("OK", 10, 10, 80, 26)
+        b.onClick = func () => { clicks = clicks + 1 }
+        ui.Add(b)
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(11, 1, 20.0, 20.0)
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(11, 1, 20.0, 20.0)
+        ui.Tick()
+        print("clicks " + clicks)
+        """, new[] { "clicks 2" });
+
+    CheckUi("Zeichnen: Flaeche, Hover-Farbe, Text- und Rahmenpixel", uiHead + """
+        var b = new UI.Button("OK", 10, 10, 80, 26)
+        ui.Add(b)
+        ui.Draw()
+        var t = ui.theme
+        print("back " + (Px.Get(ui.console, 300, 190) == t.back))
+        print("face " + (Px.Get(ui.console, 12, 12) == t.face))
+        print("border " + (Px.Get(ui.console, 10, 10) == t.border))
+        var textPixels = 0
+        for (var y = 10; y < 36; y = y + 1) {
+            for (var x = 10; x < 90; x = x + 1) {
+                if (Px.Get(ui.console, x, y) == t.text) { textPixels = textPixels + 1 }
+            }
+        }
+        print("text " + (textPixels > 20))
+        __TestEvent(9, 20.0, 20.0)
+        ui.Tick()
+        ui.Draw()
+        print("hover " + (Px.Get(ui.console, 12, 12) == t.faceHover))
+        """, new[] { "back True", "face True", "border True", "text True", "hover True" });
+
+    CheckUi("CheckBox: Klick und Leertaste schalten um", uiHead + """
+        var c = new UI.CheckBox("Option", 10, 10)
+        ui.Add(c)
+        ui.Draw()
+        __TestEvent(8, 1, 15.0, 15.0)
+        __TestEvent(11, 1, 15.0, 15.0)
+        ui.Tick()
+        print("an " + c.isChecked + " " + c.TakeChanged())
+        __TestEvent(24, 32, 0)
+        ui.Tick()
+        print("aus " + c.isChecked)
+        """, new[] { "an True True", "aus False" });
+
+    CheckUi("TextBox: Fokus per Klick, Eingabe, Rueck-/Entf-Taste, Pfeile, Enter", uiHead + """
+        var t = new UI.TextBox("", 10, 10, 160, 24)
+        ui.Add(t)
+        ui.Draw()
+        __TestEvent(3, "Hallo")
+        ui.Tick()
+        print("ohne Fokus '" + t.text + "'")
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(11, 1, 20.0, 20.0)
+        __TestEvent(3, "Hallo")
+        ui.Tick()
+        print("eingegeben '" + t.text + "' caret " + t.caret)
+        __TestEvent(24, 8, 0)
+        ui.Tick()
+        print("rueck '" + t.text + "'")
+        __TestEvent(24, 1073741904, 0)
+        __TestEvent(24, 1073741904, 0)
+        __TestEvent(3, "X")
+        ui.Tick()
+        print("links+X '" + t.text + "' caret " + t.caret)
+        __TestEvent(24, 127, 0)
+        ui.Tick()
+        print("entf '" + t.text + "'")
+        __TestEvent(24, 1073741898, 0)
+        ui.Tick()
+        print("pos1 " + t.caret)
+        __TestEvent(24, 1073741901, 0)
+        ui.Tick()
+        print("ende " + t.caret)
+        __TestEvent(24, 13, 0)
+        ui.Tick()
+        print("enter " + t.TakeEntered() + " geaendert " + t.TakeChanged())
+        """, new[] { "ohne Fokus ''", "eingegeben 'Hallo' caret 5", "rueck 'Hall'", "links+X 'HaXll' caret 3", "entf 'HaXl'", "pos1 0", "ende 4", "enter True geaendert True" });
+
+    CheckUi("TextBox: Klick setzt die Einfuegemarke, maxLength, scrollt bei langem Text", uiHead + """
+        var t = new UI.TextBox("abcdef", 10, 10, 160, 24)
+        t.maxLength = 8
+        ui.Add(t)
+        ui.Draw()
+        __TestEvent(8, 1, 10.0 + 4.0 + 8.0 * 2.0 + 1.0, 20.0)
+        __TestEvent(11, 1, 10.0 + 4.0 + 8.0 * 2.0 + 1.0, 20.0)
+        ui.Tick()
+        print("caret " + t.caret)
+        __TestEvent(3, "123456")
+        ui.Tick()
+        print("max '" + t.text + "'")
+        t.SetText("0123456789012345678901234567890123456789")
+        ui.Draw()
+        print("scroll " + (t.scroll > 0) + " caret " + t.caret)
+        """, new[] { "caret 2", "max 'abcdef'", "scroll True caret 40" });
+
+    CheckUi("Tab wechselt den Fokus (Umschalt rueckwaerts), deaktivierte und unsichtbare werden uebersprungen", uiHead + """
+        var a = new UI.Button("A", 10, 10)
+        var b = new UI.Button("B", 10, 50)
+        var c = new UI.TextBox("", 10, 90)
+        var d = new UI.Button("D", 10, 130)
+        b.enabled = false
+        d.visible = false
+        ui.Add(a)
+        ui.Add(b)
+        ui.Add(c)
+        ui.Add(d)
+        __TestEvent(24, 9, 0)
+        ui.Tick()
+        print("1: " + a.focused + " " + c.focused)
+        __TestEvent(24, 9, 0)
+        ui.Tick()
+        print("2: " + a.focused + " " + c.focused)
+        __TestEvent(24, 9, 0)
+        ui.Tick()
+        print("3: " + a.focused + " " + c.focused)
+        __TestEvent(24, 9, 1)
+        ui.Tick()
+        print("zurueck: " + a.focused + " " + c.focused)
+        """, new[] { "1: True False", "2: False True", "3: True False", "zurueck: False True" });
+
+    CheckUi("Stack ordnet an; Panel verschachtelt Koordinaten; deaktiviert bekommt keine Klicks", uiHead + """
+        var panel = new UI.Panel(100, 20, 200, 160)
+        var stack = new UI.Stack(10, 10, 150, 120, false, 6, 4)
+        var b1 = new UI.Button("Eins", 0, 0, 100, 20)
+        var b2 = new UI.Button("Zwei", 0, 0, 100, 30)
+        stack.Add(b1)
+        stack.Add(b2)
+        panel.Add(stack)
+        ui.Add(panel)
+        ui.Draw()
+        print("b1 " + b1.ax + "," + b1.ay + " b2 " + b2.ax + "," + b2.ay)
+        __TestEvent(8, 1, 120.0, 44.0)
+        __TestEvent(11, 1, 120.0, 44.0)
+        ui.Tick()
+        print("b1 " + b1.TakeClicked() + " b2 " + b2.TakeClicked())
+        b2.enabled = false
+        __TestEvent(8, 1, 120.0, 65.0)
+        __TestEvent(11, 1, 120.0, 65.0)
+        ui.Tick()
+        print("b2 deaktiviert " + b2.TakeClicked())
+        """, new[] { "b1 114,34 b2 114,60", "b1 True b2 False", "b2 deaktiviert False" });
+
+    CheckUi("Elemente gehoeren ihrem Container: eine Hilfsfunktion darf sie anlegen", uiHead + """
+        class Helper {
+            static Build(root) {
+                var b = new UI.Button("Lokal", 10, 10, 80, 26)
+                root.Add(b)
+                var l = new UI.Label("Text", 10, 50)
+                root.Add(l)
+            }
+        }
+        Helper.Build(ui)
+        ui.Draw()
+        var first = ui.content.children[0]
+        print(first.text + " " + first.ax)
+        print(ui.content.children[1].width)
+        """, new[] { "Lokal 10", "32" });
+
+    CheckUi("Tick zeichnet, verarbeitet Ereignisse und liefert false, sobald das Fenster geschlossen wurde", uiHead + """
+        var b = new UI.Button("OK", 10, 10, 80, 26)
+        ui.Add(b)
+        print("offen " + ui.Tick())
+        print("gezeichnet " + (Px.Get(ui.console, 12, 12) == ui.theme.face))
+        __TestClose()
+        print("offen " + ui.Tick() + " geschlossen " + ui.closed)
+        """, new[] { "offen True", "gezeichnet True", "offen False geschlossen True" });
+
+    CheckUi("Window.NextEvent: Aufbau der Ereignisse, leere Warteschlange liefert undefined", uiHead + """
+        var w2 = new Window(fb, "zwei")
+        w2.EnableEvents()
+        print("leer " + (w2.NextEvent() == undefined))
+        __TestEvent(8, 2, 20.7, 30.2)
+        __TestEvent(3, "a")
+        w2.Tick()
+        var e1 = w2.NextEvent()
+        print(e1[0] + " " + e1[1] + " " + e1[2] + " " + e1[3])
+        var e2 = w2.NextEvent()
+        print(e2[0] + " " + e2[1])
+        print("danach " + (w2.NextEvent() == undefined))
+        """, new[] { "leer True", "8 2 20 30", "3 a", "danach True" });
+
+    Console.WriteLine(uiFailures == 0 ? "Alle UI-Pruefungen bestanden." : $"FEHLER: {uiFailures} UI-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Native Callbacks (Fenster-Ereignisse) laufen verschachtelt auf der VM des Threads: echte Globals, kein Kopieren
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Callbacks auf dem VM-Thread ===");
+    int cbFailures = 0;
+
+    // Wie RuntimeSession.CallLambda: der Host-Runner ruft FireRuntime.RunCallback; unbehandelte Callback-Fehler landen als "CB: ..." in der Ausgabe.
+    List<string> RunCb(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, script };
+        var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+
+        var renderer = new FakeRenderer();
+        VM? vm = null;
+        IReadOnlyDictionary<string, RuntimeClass>? classes = null;
+        var fbManager = new fire.Terminal.FramebufferManager();
+        var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
+        var winManager = new fire.Terminal.Windows.WindowManager(fbManager,
+            (l, v) => FireRuntime.RunCallback(l, v, natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode, vm),
+            () => renderer);
+        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, winManager);
+
+        var kept = new List<LambdaValue>();
+        natives.Register("__TestEvent", args => { renderer.Push((int)args[0].AsInt(), args); return Value.MakeUndefined(); });
+        natives.Register("__Keep", args => { kept.Add((LambdaValue)args[0].AsLambda()); return Value.MakeUndefined(); });
+        // fuehrt das gemerkte Lambda auf einem ANDEREN Thread ohne laufende VM aus (wie ein Host-Ereignis)
+        natives.Register("__RunKeptOnOtherThread", args =>
+        {
+            var t = new Thread(() => FireRuntime.RunCallback(kept[0], Array.Empty<Value>(), natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode, vm));
+            t.Start();
+            t.Join();
+            return Value.MakeUndefined();
+        });
+
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        classes = compiled.Classes;
+        VM.ResetTerminateForTests();
+        vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
+        vm.Run();
+        VM.ResetTerminateForTests();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckCb(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
+    {
+        foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            try { actual = RunCb(script, mode).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + CompileErrors.Describe(ex) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) cbFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    const string cbHead = """
+        class Exception { string message; construct(string message) { this.message = message } }
+        var fb = new Framebuffer(64, 64)
+        var win = new Window(fb, "t")
+
+        """;
+
+    CheckCb("Callback schreibt auf die echten Globals", cbHead + """
+        var counter = 0
+        win.RegisterMouseDown(func (int b, float x, float y) => { counter = counter + b })
+        __TestEvent(8, 2, 1.0, 1.0)
+        __TestEvent(8, 3, 1.0, 1.0)
+        win.Tick()
+        print("counter " + counter)
+        """, new[] { "counter 5" });
+
+    CheckCb("Objekte mit Lambda-Feld und Verweis auf Fremdes als Globals stoeren den Callback nicht", cbHead + """
+        class Holder { lambda cb; Framebuffer other }
+        var h = new Holder()
+        h.cb = func () => { }
+        h.other = fb
+        var hits = 0
+        win.RegisterMouseDown(func (int b, float x, float y) => { hits = hits + 1; h.other = undefined })
+        __TestEvent(8, 1, 1.0, 1.0)
+        win.Tick()
+        print("hits " + hits + " other " + (h.other == undefined))
+        """, new[] { "hits 1 other True" });
+
+    CheckCb("Unbehandelte Exception im Callback: gemeldet, Programm laeuft weiter, try/catch des Aufrufers sieht sie nicht", cbHead + """
+        win.RegisterMouseDown(func (int b, float x, float y) => { throw new Exception("boom") })
+        __TestEvent(8, 1, 1.0, 1.0)
+        try { win.Tick() } catch (e) { print("aeusserer catch") }
+        print("weiter " + (1 + 2))
+        try { throw new Exception("m") } catch (e) { print("catch " + e.message) }
+        """, new[] { "CB: Unbehandelte Exception vom Typ 'Exception': boom", "weiter 3", "catch m" });
+
+    CheckCb("Ein try/catch im Callback selbst faengt", cbHead + """
+        var caught = 0
+        win.RegisterMouseDown(func (int b, float x, float y) => {
+            try { throw new Exception("x") } catch (e) { caught = caught + 1 }
+        })
+        __TestEvent(8, 1, 1.0, 1.0)
+        win.Tick()
+        print("caught " + caught)
+        """, new[] { "caught 1" });
+
+    CheckCb("Callback in einer Funktion mit offenem try: der Fehler bricht nur den Callback ab", cbHead + """
+        win.RegisterMouseDown(func (int b, float x, float y) => { throw new Exception("boom") })
+        __TestEvent(8, 1, 1.0, 1.0)
+        class T {
+            static Step(w) {
+                try {
+                    w.Tick()
+                    print("nach Tick")
+                } catch (e) {
+                    print("falsch gefangen")
+                } finally {
+                    print("finally")
+                }
+            }
+        }
+        T.Step(win)
+        """, new[] { "CB: Unbehandelte Exception vom Typ 'Exception': boom", "nach Tick", "finally" });
+
+    // Der Performance-Modus prueft nichts: ein Zugriff ausserhalb des Arrays ist eine rohe C#-Ausnahme. Der Zustand der VM muss danach stimmen.
+    CheckCb("Rohe C#-Ausnahme im Callback (Performance): Zustand wiederhergestellt, Programm laeuft weiter", cbHead + """
+        win.RegisterMouseDown(func (int b, float x, float y) => { var z = new int[2]; z[5] = 1 })
+        __TestEvent(8, 1, 1.0, 1.0)
+        try { win.Tick(); print("nach Tick") } finally { print("finally") }
+        var sum = 0
+        for (var i = 0; i < 100; i = i + 1) { sum = sum + i }
+        print("sum " + sum)
+        """, new[] { "CB: Index was outside the bounds of the array.", "nach Tick", "finally", "sum 4950" }, new[] { VmExecutionMode.Performance });
+
+    CheckCb("leave im Callback beendet das Programm geordnet (Destruktoren laufen)", cbHead + """
+        class G { destruct() { print("~G") } }
+        var g = new G()
+        win.RegisterMouseDown(func (int b, float x, float y) => { leave })
+        __TestEvent(8, 1, 1.0, 1.0)
+        win.Tick()
+        print("nie")
+        """, new[] { "~G" });
+
+    CheckCb("terminate im Callback beendet das Programm geordnet", cbHead + """
+        class G { destruct() { print("~G") } }
+        var g = new G()
+        win.RegisterMouseDown(func (int b, float x, float y) => { terminate(3) })
+        __TestEvent(8, 1, 1.0, 1.0)
+        win.Tick()
+        print("nie")
+        """, new[] { "~G" });
+
+    CheckCb("Host-Thread-Callback wird dem Hauptprogramm eingereiht und automatisch an einem sicheren Punkt ausgefuehrt (echte Globals)", cbHead + """
+        var counter = 0
+        __Keep(func () => { counter = counter + 1; print("cb " + counter) })
+        __RunKeptOnOtherThread()
+        print("counter " + counter)
+        """, new[] { "cb 1", "counter 1" });
+
+    CheckCb("Mit #nosync wartet der Host-Thread-Callback auf `sync globals`", "#nosync\n" + cbHead + """
+        var counter = 0
+        __Keep(func () => { counter = counter + 1; print("cb " + counter) })
+        __RunKeptOnOtherThread()
+        print("vorher " + counter)
+        var n = sync globals
+        print("nachher " + counter + " " + n)
+        """, new[] { "vorher 0", "cb 1", "nachher 1 1" });
+
+    CheckCb("Host-Thread-Callback: eine unbehandelte Exception geht als Text an den Host, das Hauptprogramm laeuft weiter", cbHead + """
+        __Keep(func () => { throw new Exception("kaputt") })
+        __RunKeptOnOtherThread()
+        print("weiter")
+        """, new[] { "CB: Unbehandelte Exception vom Typ 'Exception': kaputt", "weiter" });
+
+    Console.WriteLine(cbFailures == 0 ? "Alle Callback-Pruefungen bestanden." : $"FEHLER: {cbFailures} Callback-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Globals und Fire-Threads: direktes Lesen, Schreiben in Sektionen (sync globals / sync global { } / fire global { })
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Globals und Fire-Threads ===");
+    int glFailures = 0;
+
+    List<string> RunGl(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var natives = NativeRegistry.CreateDefault();
+        natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        var program = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, script }
+            .Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase))).ToList());
+        var compiled = Compiler.Compile(program, Resolver.Resolve(program, natives.Names), natives);
+        VM.ResetTerminateForTests();
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
+        vm.Run();
+        VM.ResetTerminateForTests();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckGl(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
+    {
+        foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            try
+            {
+                var task = Task.Run(() => RunGl(script, mode).ToArray());
+                actual = task.Wait(TimeSpan.FromSeconds(30)) ? task.Result : new[] { "ZEITUEBERSCHREITUNG (haengt)" };
+            }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + (ex.InnerException != null ? CompileErrors.Describe(ex.InnerException) : ex.Message) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) glFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    CheckGl("Ein Thread schreibt ein Global: es wird erst bei `sync globals` des Hauptprogramms wirksam", """
+        var counter = 0
+        fire { counter = 5 }
+        var handled = 0
+        while (handled == 0) { handled = sync globals }
+        print("counter " + counter + " bearbeitet " + handled)
+        """, new[] { "counter 5 bearbeitet 1" });
+
+    CheckGl("Mit #nosync bleibt der Wert unveraendert, solange das Hauptprogramm nicht `sync globals` ruft", """
+        #nosync
+        var counter = 0
+        var seen = 0
+        fire { counter = 5 }
+        for (var i = 0; i < 200000; i = i + 1) { seen = seen + counter }
+        print("gesehen " + seen)
+        """, new[] { "gesehen 0" });
+
+    CheckGl("Standardmaessig arbeitet das Hauptprogramm die Warteschlange selbst ab (ohne `sync globals`)", """
+        var counter = 0
+        fire { counter = 5 }
+        var spins = 0
+        while (counter == 0 && spins < 100000000) { spins = spins + 1 }
+        print("counter " + counter)
+        """, new[] { "counter 5" });
+
+    CheckGl("Standardmaessig: `fire global` und Methodenaufrufe auf globalen Objekten werden ohne `sync globals` bearbeitet", """
+        class Box { int n; construct() { this.n = 0 } Add(int d) { this.n = this.n + d } }
+        var box = new Box()
+        var done = 0
+        fire { box.Add(2); box.Add(3); fire global { done = done + 1 } }
+        var spins = 0
+        while (done == 0 && spins < 100000000) { spins = spins + 1 }
+        print("n " + box.n + " done " + done)
+        """, new[] { "n 5 done 1" });
+
+    CheckGl("Mit #nosync bearbeitet nur `sync globals` die Warteschlange (Methodenaufruf wartet)", """
+        #nosync
+        class Box { int n; construct() { this.n = 0 } Add(int d) { this.n = this.n + d } }
+        var box = new Box()
+        var finished = 0
+        fire { box.Add(4) }
+        for (var i = 0; i < 300000; i = i + 1) { finished = finished + box.n }
+        print("vorher " + finished)
+        while (box.n == 0) { sync globals }
+        print("nachher " + box.n)
+        """, new[] { "vorher 0", "nachher 4" });
+
+    CheckGl("Ein Thread liest Globals direkt (kein Snapshot): er sieht spaetere Aenderungen des Hauptprogramms", """
+        var flag = 0
+        var done = 0
+        fire {
+            while (flag == 0) { }
+            sync global { done = done + 1 }
+        }
+        flag = 1
+        while (done == 0) { sync globals }
+        print("fertig " + done)
+        """, new[] { "fertig 1" });
+
+    CheckGl("Methoden auf globalen Objekten laufen atomar (4 Threads x 100 Aufrufe)", """
+        class Counter {
+            int n
+            construct() { this.n = 0 }
+            Inc() { var old = this.n; this.n = old + 1 }
+        }
+        var c = new Counter()
+        var done = 0
+        fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+        fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+        fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+        fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+        while (done < 4) { sync globals }
+        print("n " + c.n)
+        """, new[] { "n 400" });
+
+    CheckGl("`sync global { }`: Lesen-Aendern-Schreiben im Block ist atomar (4 Threads x 100)", """
+        var total = 0
+        var done = 0
+        fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+        fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+        fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+        fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+        while (done < 4) { sync globals }
+        print("total " + total)
+        """, new[] { "total 400" });
+
+    CheckGl("Der Block sieht die Locals des Threads", """
+        var total = 0
+        var done = 0
+        fire {
+            var step = 7
+            sync global { total = total + step }
+            done = 1
+        }
+        while (done == 0) { sync globals }
+        print("total " + total)
+        """, new[] { "total 7" });
+
+    CheckGl("`fire global { }`: der Thread wartet nicht, das Hauptprogramm fuehrt den Auftrag bei `sync globals` aus (taking als Wert)", """
+        var total = 0
+        var started = 0
+        fire {
+            var x = 7
+            fire global taking x { total = total + x }
+            fire global taking x { total = total + x * 10 }
+        }
+        while (total == 0) { sync globals }
+        while (total < 77) { sync globals }
+        print("total " + total)
+        """, new[] { "total 77" });
+
+    CheckGl("`fire global` mit einem Objekt als taking: der Auftrag bekommt eine Kopie", """
+        class Box { int v; construct(int v) { this.v = v } }
+        var seen = 0
+        fire {
+            var b = new Box(5)
+            fire global taking b { seen = seen + b.v }
+            b.v = 100
+        }
+        while (seen == 0) { sync globals }
+        print("seen " + seen)
+        """, new[] { "seen 5" });
+
+    CheckGl("Programmende ohne `sync globals`: wartende Threads werden bedient, dann erst werden die Globals zerstoert", """
+        class G { int v; construct() { this.v = 1 } destruct() { print("~G " + this.v) } }
+        var g = new G()
+        fire { g.v = 9 }
+        print("ende")
+        """, new[] { "ende", "~G 9" });
+
+    CheckGl("Eine Exception im Block beendet die Sektion (der Hauptthread haengt nicht)", """
+        class Exception { string message; construct(string message) { this.message = message } }
+        var total = 0
+        var done = 0
+        fire {
+            try { sync global { total = total + 1; throw new Exception("x") } } catch (e) { }
+            sync global { total = total + 10; done = 1 }
+        }
+        while (done == 0) { sync globals }
+        print("total " + total)
+        """, new[] { "total 11" });
+
+    CheckGl("Array der Globals: Thread liest live und schreibt Elemente (jedes Schreiben eine Sektion)", """
+        var arr = new int[5]
+        var done = 0
+        fire {
+            for (var i = 0; i < 5; i = i + 1) { arr[i] = i * 2 }
+            sync global { done = 1 }
+        }
+        while (done == 0) { sync globals }
+        var sum = 0
+        for (var i = 0; i < 5; i = i + 1) { sum = sum + arr[i] }
+        print("sum " + sum)
+        """, new[] { "sum 20" });
+
+    CheckGl("Statisches Feld: Thread schreibt, Hauptprogramm liest nach `sync globals`", """
+        class Cfg { static int hits = 0 }
+        var done = 0
+        fire { Cfg.hits = 3; sync global { done = 1 } }
+        while (done == 0) { sync globals }
+        print("hits " + Cfg.hits)
+        """, new[] { "hits 3" });
+
+    CheckGl("Ein Thread startet einen Thread; beide schreiben ueber Sektionen", """
+        var total = 0
+        var done = 0
+        fire {
+            sync global { total = total + 1 }
+            fire { sync global { total = total + 10; done = 1 } }
+        }
+        while (done == 0) { sync globals }
+        print("total " + total)
+        """, new[] { "total 11" });
+
+    CheckGl("Unbehandelte Exception im Hauptprogramm: ein auf eine Sektion wartender Thread haengt nicht", """
+        class Exception { string message; construct(string message) { this.message = message } }
+        class G { int v; construct() { this.v = 1 } }
+        var g = new G()
+        fire { g.v = 2 }
+        for (var i = 0; i < 100000; i = i + 1) { }
+        throw new Exception("kaputt")
+        """, new[] { "UNBEHANDELT: Unbehandelte Exception vom Typ 'Exception': kaputt" });
+
+    CheckGl("terminate in einem Thread beendet ein Hauptprogramm, das nur `sync globals` ausfuehrt", """
+        fire { terminate(1) }
+        while (true) { sync globals }
+        """, Array.Empty<string>());
+
+    CheckGl("`sync globals` liefert 0 ohne wartende Threads", """
+        print("n " + (sync globals))
+        """, new[] { "n 0" });
+
+    // ---- break/continue aus try/catch heraus (der Compiler meldet Handler ab und fuehrt das finally inline aus)
+    CheckGl("break aus try: das finally laeuft, die Schleife endet", """
+        var log = ""
+        for (var i = 0; i < 5; i = i + 1) {
+            try { if (i == 2) { break } log = log + i }
+            finally { log = log + "f" }
+        }
+        print(log)
+        """, new[] { "0f1ff" });
+
+    CheckGl("continue aus try mit Locals und verschachtelten Bloecken", """
+        var sum = 0
+        for (var i = 0; i < 6; i = i + 1) {
+            try { var x = i * 2; if (i % 2 == 0) { var y = 1; continue } sum = sum + x }
+            catch (e) { }
+        }
+        print(sum)
+        """, new[] { "18" });
+
+    CheckGl("break aus try meldet den Handler ab: eine spaetere Exception faengt der aeussere catch", """
+        class Exception { string message; construct(string message) { this.message = message } }
+        try {
+            while (true) { try { break } catch (e) { print("innen") } }
+            throw new Exception("aussen")
+        } catch (e) { print("gefangen " + e.message) }
+        """, new[] { "gefangen aussen" });
+
+    CheckGl("break aus catch (mit finally und eigenen Locals im catch)", """
+        class Exception { string message; construct(string message) { this.message = message } }
+        var log = ""
+        var i = 0
+        while (i < 5) {
+            i = i + 1
+            try { if (i == 3) { throw new Exception("drei") } log = log + i }
+            catch (e) { var m = e.message; log = log + m; break }
+            finally { log = log + "f" }
+        }
+        print(log + " " + i)
+        """, new[] { "1f2fdreif 3" });
+
+    CheckGl("continue aus catch", """
+        class Exception { string message; construct(string message) { this.message = message } }
+        var n = 0
+        for (var i = 0; i < 4; i = i + 1) {
+            try { throw new Exception("x") }
+            catch (e) { n = n + 1; continue }
+            n = n + 100
+        }
+        print(n)
+        """, new[] { "4" });
+
+    CheckGl("break aus zwei verschachtelten try: die finally laufen von innen nach aussen", """
+        var log = ""
+        while (true) {
+            try {
+                try { break } finally { log = log + "a" }
+            } finally { log = log + "b" }
+        }
+        print(log)
+        """, new[] { "ab" });
+
+    CheckGl("break in einer inneren Schleife im try beruehrt das aeussere try nicht", """
+        var log = ""
+        try {
+            for (var i = 0; i < 3; i = i + 1) { try { break } finally { log = log + "i" } }
+            log = log + "x"
+        } finally { log = log + "o" }
+        print(log)
+        """, new[] { "ixo" });
+
+    CheckGl("break/continue aus `sync global { }`: die Sektion wird freigegeben", """
+        var total = 0
+        var done = 0
+        fire {
+            for (var i = 0; i < 10; i = i + 1) {
+                sync global { if (i == 3) { break } total = total + 1 }
+            }
+            for (var j = 0; j < 4; j = j + 1) {
+                sync global { if (j % 2 == 0) { continue } total = total + 10 }
+            }
+            sync global { done = 1 }
+        }
+        while (done == 0) { sync globals }
+        print("total " + total)
+        """, new[] { "total 23" });
+
+    Console.WriteLine(glFailures == 0 ? "Alle Globals-Pruefungen bestanden." : $"FEHLER: {glFailures} Globals-Pruefung(en) fehlgeschlagen.");
+}
+
 static int CountOccurrences(string haystack, string needle)
 {
     int count = 0, idx = 0;
@@ -5061,4 +7959,61 @@ static int CountOccurrences(string haystack, string needle)
         idx += needle.Length;
     }
     return count;
+}
+
+static class PackerNativeProbe
+{
+    [System.Runtime.InteropServices.DllImport("libfiretestnative")] private static extern int Nonexistent();
+    public static int Call() => Nonexistent();
+}
+
+/// <summary>Schrift ohne Bitmap-Zeilen (nur IsPixelSet) - erzwingt den allgemeinen Zeichenweg von TerminalCanvas.</summary>
+sealed class PixelOnlyFont : fire.Terminal.IGlyphFont
+{
+    private readonly fire.Terminal.IntegratedGlyphFont _inner;
+    public PixelOnlyFont(fire.Terminal.IntegratedGlyphFont inner) { _inner = inner; }
+    public int GlyphWidth => _inner.GlyphWidth;
+    public int GlyphHeight => _inner.GlyphHeight;
+    public bool IsPixelSet(char c, int px, int py) => _inner.IsPixelSet(c, px, py);
+}
+
+/// <summary>Renderer-Attrappe fuer die UI-Tests: liefert die abgelegten Ereignisse beim naechsten PumpEvents, zeichnet nichts.</summary>
+sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
+{
+    private readonly List<fire.Terminal.Event.IEvent> _pending = new();
+    public bool Closed { get; set; }
+
+    public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle) { }
+    public void Present(fire.Terminal.Framebuffer framebuffer) { }
+    public void Dispose() { }
+
+    public fire.Terminal.WindowPumpResult PumpEvents()
+    {
+        var events = _pending.ToArray();
+        _pending.Clear();
+        return new fire.Terminal.WindowPumpResult { StillOpen = !Closed, Events = events };
+    }
+
+    /// <summary>Legt ein Ereignis ab: args[0] Typ, danach je nach Typ: Maus (taste, x, y) bzw. Bewegung (x, y), Taste (keycode, modifier), Text (text).</summary>
+    public void Push(int type, IReadOnlyList<Value> args)
+    {
+        var kind = (fire.Terminal.Event.EventType)type;
+        switch (kind)
+        {
+            case fire.Terminal.Event.EventType.MouseDown:
+            case fire.Terminal.Event.EventType.MouseUp:
+                _pending.Add(new fire.Terminal.Event.ClickEvent { Type = kind, Button = (int)args[1].AsInt(), X = (float)args[2].AsFloat(), Y = (float)args[3].AsFloat() });
+                break;
+            case fire.Terminal.Event.EventType.MouseMove:
+                _pending.Add(new fire.Terminal.Event.MotionEvent { Type = kind, X = (float)args[1].AsFloat(), Y = (float)args[2].AsFloat() });
+                break;
+            case fire.Terminal.Event.EventType.KeyDown:
+            case fire.Terminal.Event.EventType.KeyUp:
+                _pending.Add(new fire.Terminal.Event.KeyEvent { Type = kind, KeyCode = (int)args[1].AsInt(), Modifier = (int)args[2].AsInt() });
+                break;
+            case fire.Terminal.Event.EventType.TextInput:
+                _pending.Add(new fire.Terminal.Event.TextEvent { Type = kind, Text = args[1].AsString() });
+                break;
+        }
+    }
 }

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Eine kleine Oberflächen-Bibliothek, die in einem Framebuffer läuft (Schaltflächen, Beschriftungen, Kontrollkästchen,
+    Textfelder, Panels). Komplett in fire geschrieben (UiBridge.PreludeSource, `namespace UI`) und aufgebaut auf den
+    Klassen der Grafik-Brücke (Framebuffer, Console, Window) - enthält deshalb keine nativen Funktionen und
+    keine eigene DLL-Abhängigkeit. Aktiviert per `#import "ui"` (schaltet `graphics` automatisch mit zu).
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>fire.UI.Bridge</RootNamespace>
+    <AssemblyName>fire.UI.Bridge</AssemblyName>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+</Project>

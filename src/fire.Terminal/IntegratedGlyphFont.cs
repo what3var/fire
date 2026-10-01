@@ -6,7 +6,9 @@ using System.Threading.Tasks;
 
 namespace fire.Terminal
 {
-    public class IntegratedGlyphFont : IGlyphFont
+    /// <summary>Die eingebaute 8x14-/8x8-Bitmap-Schrift (CP437). Die Tabellen sind statisch (einmal je Prozess statt je Instanz)
+    /// und über <see cref="GetGlyphRows"/> zeilenweise lesbar - TerminalCanvas zeichnet damit ohne eine Abfrage pro Pixel.</summary>
+    public class IntegratedGlyphFont : IBitmapGlyphFont
     {
         private bool _smallFont;
 
@@ -24,12 +26,17 @@ namespace fire.Terminal
             _glyph = _smallFont ? Glyphs8x8 : Glyphs8x14;
         }
 
+        /// <summary>Zeichen außerhalb der 256 Zeichen der Tabelle (CP437) werden als '?' gezeichnet statt eine Ausnahme zu werfen.</summary>
+        private static char Clamp(char c) => c < 256 ? c : '?';
+
         public bool IsPixelSet(char c, int px, int py)
         {
-            return (_glyph[c][py] & (0x80 >> px)) != 0;
+            return (_glyph[Clamp(c)][py] & (0x80 >> px)) != 0;
         }
 
-        public byte[][] Glyphs8x14 =
+        public ReadOnlySpan<byte> GetGlyphRows(char c) => _glyph[Clamp(c)];
+
+        public static readonly byte[][] Glyphs8x14 =
             [
                 [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], // [] (0)
                 [0x00, 0x00, 0x7e, 0x81, 0xa5, 0x81, 0x81, 0xbd, 0x99, 0x81, 0x7e, 0x00, 0x00, 0x00], // [☺] (1)
@@ -289,7 +296,7 @@ namespace fire.Terminal
                 [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] // [ ] (255)
             ];
 
-        public byte[][] Glyphs8x8 = [
+        public static readonly byte[][] Glyphs8x8 = [
                 [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], // [] (0)
                 [0x7e, 0x81, 0xa5, 0x81, 0xbd, 0x99, 0x81, 0x7e], // [☺] (1)
                 [0x7e, 0xff, 0xdb, 0xff, 0xc3, 0xe7, 0xff, 0x7e], // [☻] (2)

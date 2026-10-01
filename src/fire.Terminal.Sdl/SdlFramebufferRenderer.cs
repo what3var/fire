@@ -56,9 +56,30 @@ namespace fire.Terminal.Sdl
 
         private int _internalHandle;
 
+        // Größe des dargestellten Framebuffers: Mausposition kommt von SDL in FENSTER-Koordinaten, das Fenster darf aber frei skaliert
+        // werden (der Framebuffer wird gestreckt) - Skripte bekommen die Position deshalb in Framebuffer-Pixeln.
+        private int _fbWidth;
+        private int _fbHeight;
+
+        private (float X, float Y) ToFramebuffer(float x, float y)
+        {
+            if (_window == IntPtr.Zero || _fbWidth <= 0 || !SDL.GetWindowSize(_window, out int w, out int h) || w <= 0 || h <= 0)
+                return (x, y);
+            return (x * _fbWidth / w, y * _fbHeight / h);
+        }
+
+        private (float X, float Y) ToFramebufferRelative(float dx, float dy)
+        {
+            var origin = ToFramebuffer(0, 0);
+            var moved = ToFramebuffer(dx, dy);
+            return (moved.X - origin.X, moved.Y - origin.Y);
+        }
+
         public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle)
         {
             _internalHandle = internalHandle;
+            _fbWidth = initialWidth;
+            _fbHeight = initialHeight;
 
             if (!SDL.Init(SDL.InitFlags.Video))
                 throw new InvalidOperationException($"SDL.Init fehlgeschlagen: {SDL.GetError()}");
@@ -73,6 +94,9 @@ namespace fire.Terminal.Sdl
                 throw new InvalidOperationException($"SDL.CreateWindowAndRenderer fehlgeschlagen: {SDL.GetError()}");
 
             SDL.SetRenderVSync(_renderer, 1);
+
+            // SDL3 liefert Texteingabe-Ereignisse (EventType.TextInput) erst, wenn sie für das Fenster eingeschaltet sind.
+            SDL.StartTextInput(_window);
         }
 
         public WindowPumpResult PumpEvents()
@@ -128,10 +152,11 @@ namespace fire.Terminal.Sdl
                             _ => Event.EventType.Unknown
                         };
 
+                        var clickPos = ToFramebuffer(ev.Button.X, ev.Button.Y);
                         var clickevent = new ClickEvent()
                         {
-                            X = ev.Button.X,
-                            Y = ev.Button.Y,
+                            X = clickPos.X,
+                            Y = clickPos.Y,
                             Button = (int)ev.Button.Button,
                             IsButtonDown = ev.Button.Down,
                             SourceHandle = _internalHandle,
@@ -142,11 +167,13 @@ namespace fire.Terminal.Sdl
                     case SDL.EventType.MouseMotion:
                         eventType = Event.EventType.MouseMove;
 
+                        var movePos = ToFramebuffer(ev.Motion.X, ev.Motion.Y);
+                        var moveRel = ToFramebufferRelative(ev.Motion.XRel, ev.Motion.YRel);
                         var moveevent = new MotionEvent()
                         {
                             ButtonState = (int)ev.Motion.State,
-                            X = ev.Motion.X,
-                            Y = ev.Motion.Y,
+                            X = movePos.X,
+                            Y = movePos.Y,
                             //Xrel = ev.Motion.XRel,
                             //Yrel = ev.Motion.YRel,
                             SourceHandle = _internalHandle,
@@ -158,8 +185,8 @@ namespace fire.Terminal.Sdl
                             ButtonState = (int)ev.Motion.State,
                             //X = ev.Motion.X,
                             //Y = ev.Motion.Y,
-                            Xrel = ev.Motion.XRel,
-                            Yrel = ev.Motion.YRel,
+                            Xrel = moveRel.X,
+                            Yrel = moveRel.Y,
                             SourceHandle = _internalHandle,
                             Type = Event.EventType.MouseMoveRelative
                         };
@@ -168,12 +195,13 @@ namespace fire.Terminal.Sdl
                     case SDL.EventType.MouseWheel:
                         eventType = Event.EventType.MouseScroll;
 
+                        var wheelPos = ToFramebuffer(ev.Wheel.MouseX, ev.Wheel.MouseY);
                         var scrollevent = new ScrollEvent()
                         {
                             ScrollX = ev.Wheel.X,
                             ScrollY = ev.Wheel.Y,
-                            X = ev.Wheel.MouseX,
-                            Y = ev.Wheel.MouseY,
+                            X = wheelPos.X,
+                            Y = wheelPos.Y,
                             SourceHandle = _internalHandle,
                             Type = eventType
                         };
@@ -238,6 +266,8 @@ namespace fire.Terminal.Sdl
 
             _texWidth = width;
             _texHeight = height;
+            _fbWidth = width;
+            _fbHeight = height;
         }
 
         public void Dispose()

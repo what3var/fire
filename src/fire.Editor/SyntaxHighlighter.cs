@@ -64,7 +64,7 @@ namespace fire.Editor
             TokenType.With, TokenType.Extends,
             TokenType.Switch, TokenType.Case, TokenType.Default, TokenType.Break, TokenType.Continue,
             TokenType.Where,
-            TokenType.Fire, TokenType.Taking, TokenType.Sync, TokenType.Flat,
+            TokenType.Fire, TokenType.Taking, TokenType.Sync, TokenType.Flat, TokenType.Copy,
             TokenType.Operator,
             TokenType.Leave, TokenType.Terminate, TokenType.Actor, TokenType.Process,
             TokenType.True, TokenType.False, TokenType.Undefined,

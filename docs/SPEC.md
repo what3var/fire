@@ -117,6 +117,7 @@ Jede Objektinstanz (`class`) hat **genau einen Owner**: entweder einen Scope (Bl
 
 - Wird das neue Objekt **direkt einem Feld eines anderen Objekts zugewiesen** (`obj1.Foo = new Bar()`), ist der Owner sofort `obj1`.
 - In allen anderen Fällen (lokale Variable, Parameterwert, Ausdruck) ist der Owner der **aktuelle Scope**.
+- Das gilt auch für den Initialisierer eines Instanzfelds (`Item it = new Item(1)` im Klassenkörper) und für einen bloßen Feldnamen in einer Klasse (`feld = new X()` statt `this.feld = new X()`): das Objekt gehört der Instanz. (Früher gehörte es dort dem Initialisierer-/Methoden-Scope und wurde beim Verlassen zerstört, obwohl das Feld noch darauf zeigte.)
 - Dieselbe Regel gilt für Lambda-Werte: direkte Feldzuweisung → Owner ist das Objekt; sonst → aktueller Scope. Das `on`-Binding (this-Kontext, s. 4.2) ist davon unabhängig und ändert den Owner nicht.
 
 ### 2.2 Ownership-Transfer (Member-Funktionen auf Objektinstanzen)
@@ -124,6 +125,7 @@ Jede Objektinstanz (`class`) hat **genau einen Owner**: entweder einen Scope (Bl
 - `obj.TakeUpwards()` – Owner wird der Parent-Scope des aktuellen Owner-Scopes (nur sinnvoll, wenn aktueller Owner ein Scope ist).
 - `obj.TakeGlobal()` – Owner wird der globale Scope.
 - `obj.TakeTo(other)` – Owner wird `other` (eine Objektinstanz).
+- Alle drei sind eingebaute Methoden jeder Objektinstanz (eine Klasse, die eine gleichnamige Methode selbst deklariert, geht vor). Eine Funktion behält damit ein Objekt, das ihr gehört (z.B. eine als Parameter übergebene Kopie, 2.4): `param.TakeTo(this)`.
 - **Zyklenschutz:** `TakeTo(other)` prüft, ob `other` transitiv bereits ein "Nachfahre" (direkt oder indirekt im Besitz) von `obj` ist. Falls ja: Laufzeitfehler statt Zyklus im Ownership-Baum.
 - **Race mit laufender Löschung:** Befindet sich `other` (das Ziel von `TakeTo`) selbst gerade in Kaskadenlöschung (ihr eigener Owner wurde gerade zerstört, ihre `destruct()`-Kaskade läuft bereits), wird die Übergabe so behandelt, als wäre sie eine Sekunde *vor* Beginn dieser Löschung erfolgt: `obj` wird ebenfalls sofort in die laufende Kaskade aufgenommen und mitgelöscht (inkl. `destruct()`-Aufruf), statt als Waise mit einem halb-zerstörten Owner zurückzubleiben.
 - Variablen-Bindings (Name → Wert) selbst wandern **nicht** – nur Objekt-Ownership ist transferierbar.
@@ -131,7 +133,71 @@ Jede Objektinstanz (`class`) hat **genau einen Owner**: entweder einen Scope (Bl
 ### 2.3 Lebenszeit / Kaskadenlöschung
 
 - Wird ein Owner (Scope beim Verlassen, oder Objekt beim Löschen) zerstört, werden alle Objekte, deren Owner er noch ist, rekursiv mitzerstört (Kaskade). Dabei wird pro Objekt `destruct()` aufgerufen (s. 5.3).
+- **Programmende, `leave` und `terminate`:** Beim **normalen Ende** des Programms, bei `leave` und bei `terminate` wird der **globale Scope** wie jeder andere
+  Scope beim Verlassen freigegeben: `destruct()` läuft für alles, was ihm (transitiv) gehört, offene Streams werden also geschlossen. `leave` beendet
+  den **aufrufenden Thread**, `terminate` **alle Threads** (von überall auslösbar, das sanfte Ende für alles). Der Thread, der `leave`/`terminate` aufruft,
+  hält **sofort** an (keine weitere Anweisung, in jedem Ausführungsmodus, auch mitten in einer Property/einem Destruktor/einer Operator-Überladung); danach werden seine
+  offenen Scopes abgewickelt und `finally`-Blöcke laufen. Das Hauptprogramm **wartet an seinem Ende auf alle laufenden
+  `fire`-Threads** (sie können per `sync` in seine Objekte zurückschreiben; das gilt auch nach `leave`/`terminate`), erst danach werden seine Globals zerstört - die
+  globalen Destruktoren laufen also nach dem Ende des letzten Threads. Ein Fire-Thread zerstört an seinem
+  Ende nur Objekte, die er selbst angelegt hat - Kopien von Objekten des Hauptprogramms (Globals-Schnappschuss, `taking`) bleiben unberührt, damit sie z.B. kein
+  geteiltes Handle schließen. Eine unbehandelte Exception wickelt die offenen Scopes ab, gibt den globalen Scope aber nicht frei. Als
+  Sicherheitsnetz schließt der Host am Ende außerdem alle Streams, die noch offen sind (`IoBridge.RegisterAll(...).Dispose()`). Ein Destruktor sollte nie
+  werfen: ein unbehandelter Fehler darin beendet das Programm (die `IO`-Destruktoren verschlucken deshalb IO-Fehler).
 - **Ausnahme `return`:** Wird aus einem lokalen Scope eine Objektinstanz per `return` zurückgegeben, *und* war dieser Scope ihr Owner, geht das Ownership implizit an den aufrufenden/Parent-Scope über (kein Kaskadenlöschen in diesem Fall).
+
+### 2.4 Kopieren: `flat` und `copy`
+
+```
+var a = new Box("a")
+a.item = new Item(1)
+
+var f = flat a        // flache Kopie: neues Box-Objekt, a.item wird geteilt
+var d = copy a        // Tiefenkopie: neues Box-Objekt UND neues Item
+holder.other = copy a // direkt einem Feld zugewiesen: die Kopie gehört holder (wie bei `new`, 2.1)
+Work(flat a)          // auch als Argument
+```
+
+`flat` und `copy` sind Präfixe vor einem Ausdruck (`copy a.b` kopiert `a.b`) und als Wort reserviert - `copy` ist damit
+kein Bezeichner mehr, `flat` war es schon (`sync flat`).
+
+**`flat x`** kopiert das Objekt selbst samt seiner Felder (auch der Backing-Felder von Auto-Properties). Wertartige Felder
+(`bool`/`int`/`float`/`char`/`string`/`undefined`) werden als Wert übernommen, alles Referenzartige - Objekte, Arrays, Puffer,
+Lambdas, Pointer - bleibt **dieselbe Referenz wie im Original**.
+
+**`copy x`** ist eine Tiefenkopie: jede vom Operanden aus über Felder und Array-Elemente erreichbare Instanz wird genau **einmal**
+kopiert. Kommt dieselbe Instanz (oder dasselbe Array) wieder vor - gemeinsam genutzt oder zyklisch -, zeigt die Kopie auf die
+schon gemachte Kopie: die Struktur des Originals (Teilen, Zyklen) bleibt erhalten.
+
+**Owner.** Die Kopie ist ein neues Objekt und bekommt einen Owner, abhängig davon, wohin sie geht:
+- **Als Argument** eines Aufrufs (`f(copy a)`, `obj.M(flat a)`, `new X(copy a)`, `base(copy a)`, Lambda-Aufruf): die Kopie gehört dem **Scope der
+  aufgerufenen Funktion** und wird mit deren Ende zerstört - es sei denn, die Funktion gibt sie zurück (dann geht sie an den Aufrufer, 2.3) oder
+  behält sie mit `param.TakeTo(...)`/`TakeGlobal()` (2.2). Das gilt auch für Konstruktoren: `construct(i) { this.held = i }` allein reicht nicht,
+  `i.TakeTo(this)` gehört dazu. Bei einer **nativen** Funktion (`print(copy a)`) und bei Nachrichten an einen Actor gibt es keine solche Scope - dort gehört die
+  Kopie dem aktuellen Scope. Die Kopie wird erst **beim Aufruf** angelegt, nachdem alle Argumente ausgewertet sind (`f(copy a, a.Inc())` kopiert also den
+  Stand nach `Inc()`); `flat`/`copy` als Argument ist für die ersten 16 Argumente möglich.
+- **An ein Objekt zugewiesen** (`obj.feld = copy x`, `this.feld = ...`, bloßer `feld = ...` in einer Klasse, Feld-Initialisierer `Item i = copy x`): das
+  Objekt wird der Owner, wie bei `copy.TakeTo(obj)` (2.2) - auch die Sonderregel gilt: ist das Zielobjekt schon in der Kaskadenlöschung, wird die Kopie
+  sofort mitzerstört.
+- **Sonst** (lokale Variable, Index-Zuweisung, Ausdruck): der aktuelle Scope.
+
+Bei `copy` gilt für die Instanzen darunter: war eine kopierte Instanz im Original im Besitz einer ebenfalls kopierten Instanz, gehört ihre Kopie deren
+Kopie (der Besitzbaum wird nachgebildet); alles andere - insbesondere Instanzen, die im Original jemand anderem gehören (ein Scope, ein Objekt außerhalb der
+Kopie) - gehört dem Owner der Wurzel-Kopie. So wird jede Kopie mit ihrem Owner zerstört (2.3), und die Originale bleiben unberührt.
+
+**Weitere Regeln**
+- Es läuft **kein Konstruktor** - die Feldwerte werden einfach übertragen. Der Destruktor läuft für die Kopie wie für jedes Objekt.
+  Vorsicht bei Objekten, die eine externe Ressource halten (z.B. einen `IO.FileStream` mit seinem Handle): die Kopie teilt sich den
+  Handle mit dem Original, beide schließen ihn beim Zerstören.
+- Ein **Actor** als Operand ist ein Fehler; ein Actor im Innern einer Kopie bleibt eine geteilte Referenz (Actor-Referenzen sind zum
+  Herumreichen da). Ebenso bleibt ein bereits zerstörtes Objekt im Innern eine geteilte Referenz; als Operand ist es ein Fehler.
+- Lambdas und Pointer werden in beiden Fällen geteilt, nicht kopiert.
+- Operanden ohne Inhalt (Zahl, Text, `true`, `undefined`) ergeben einfach sich selbst. Ein **Array** als Operand: `flat` legt ein neues
+  Array mit denselben Elementen an, `copy` kopiert auch die Elemente; ein **Puffer** (`byte[]`) wird in beiden Fällen byteweise kopiert.
+- `flat` kann zwischen Original und Kopie geteilte Referenzen hinterlassen, deren Besitzer das Original ist: wird das Original
+  zerstört (samt dem, was es besitzt), zeigt die flache Kopie auf zerstörte Objekte. Wer ein eigenständiges Gebilde braucht, nimmt `copy`.
+- Anders als `taking` (Kopie für einen Thread, lehnt jede Referenz aus dem Besitzbaum hinaus ab, `sync` schreibt zurück) ist das eine
+  gewöhnliche Kopie ohne Rückverknüpfung zum Original.
 
 ## 3. Einheiten (Units)
 
@@ -153,7 +219,7 @@ Jede Objektinstanz (`class`) hat **genau einen Owner**: entweder einen Scope (Bl
 - Da beide Positionen syntaktisch eindeutig unterscheidbar sind (Präfix vor einem Unary-Operanden, Suffix nach einem bereits geparsten Ausdruck), reicht ein einziges Lexer-Token (`Bang`); die Disambiguierung erfolgt im Parser über die Grammatikposition.
 - **`~ausdruck`** (nur Präfix) → bitweise Inversion.
 
-`var x : int` (nach dem Variablennamen) ist die **Typ**-Deklaration der Variable, unabhängig vom `:`-Einheiten-Operator an Werten – die Position (nach Variable vs. nach Wert) entscheidet über die Bedeutung.
+Den **Typ** einer Variable gibt man VOR dem Namen an (`int x`, `float y = 2.5`, `Foo f`); `var x` leitet ihn aus dem Wert ab. Ein `:` hinter dem Variablennamen (`var x : mm`) legt dagegen nur die **Einheit** fest (siehe „Einheiten-Deklarationen“) – `var x : int` als Typ-Deklaration gibt es nicht mehr.
 
 ### 3.2 Zieleinheit bei Operationen ("Anker-Regel")
 
@@ -165,8 +231,8 @@ Bei einer binären Operation zwischen Operanden mit Einheiten:
 - **Ketten mit mehr als zwei Operanden** (`a + b + c`) werden klassisch links-assoziativ ausgewertet: `(a + b) + c`. Die Anker-Regel wird bei jedem Teilschritt erneut angewendet, wobei das Zwischenergebnis (inkl. seiner bereits bestimmten Einheit) als linker Operand des nächsten Schritts gilt – es gibt also keine globale "alle Operanden auf einmal"-Betrachtung über die ganze Kette.
 
 ```
-var a : int = 5mm
-var b : float = undefined:km
+int a = 5mm
+float b = undefined:km
 
 var c = b + a:!     // a wird auto-coerced (Einheit+Typ), b ist Anker -> c : float:km
 var d = b: + a:!    // beide fordern Auto-Coercion -> kein Anker -> d : float:unitless
@@ -288,6 +354,10 @@ class Foo {
 }
 ```
 
+Bei einer abgeleiteten Klasse läuft die **ganze Kette** der Destruktoren: erst der
+der abgeleiteten Klasse, dann der jeder Basisklasse (wie in C#) - eine Klasse ohne eigenen
+`destruct()` räumt also trotzdem mit dem ihrer Basisklasse auf.
+
 ### 5.4 Methodenüberladung
 
 ```
@@ -345,12 +415,12 @@ Ein Parameter kann einen **Standardwert** bekommen (`= ausdruck`), der
 verwendet wird, wenn der Aufruf weniger Argumente liefert. Optionale
 Parameter müssen am **Ende** der Parameterliste zusammenhängen – kein
 Pflichtparameter nach einem optionalen. Gilt für Methoden, Konstruktoren
-und Lambdas gleichermaßen. Parameter können wie Variablen in zwei
-Reihenfolgen geschrieben werden: `Typ name` (bestehend) oder `name : Typ`
-(wie bei `var`) – beide optional gefolgt von `= Standardwert`:
+und Lambdas gleichermaßen. Ein Parameter wird wie eine Variable geschrieben:
+`Typ name` (der Typ vor dem Namen, wie bei `int x`), optional gefolgt von
+`= Standardwert`. Die frühere Schreibweise `name : Typ` gibt es nicht mehr.
 
 ```
-f(x : int = 42) { ... }   // äquivalent zu: f(int x = 42) { ... }
+f(int x = 42) { ... }
 ```
 
 Der Standardwert-Ausdruck sieht dabei nur seinen eigenen Kontext + global +
@@ -385,6 +455,39 @@ eine Erweiterung kann keine neue Klasse anlegen. Mehrere `class extends
 Name`-Blöcke für denselben Namen werden alle zusammengeführt. Das erlaubt
 z.B. eigene Zusatzmethoden für `List` aus der Standardbibliothek, ohne
 deren Quelltext selbst anfassen zu müssen.
+
+### 5.5.1 Basistypen erweitern (`class extends string`)
+
+```
+class extends string {
+    string Shout() { return this.ToUpper() + "!" }
+    bool IsBlank() { return this.Trim().Length == 0 }
+}
+
+class extends int {
+    bool IsEven() { return this % 2 == 0 }
+}
+
+print("hallo".Shout())      // HALLO!
+int n = 21
+print(n.IsEven())           // False
+```
+
+Auch die Basistypen `string`, `char`, `int`, `float` und `bool` lassen sich mit `class extends` erweitern.
+Innerhalb der Methoden ist `this` der **Wert selbst** (kein Objekt), sonst gilt alles wie bei
+Methoden (Überladung nach Parameteranzahl, optionale Parameter, `private`, Ausnahmen, Aufruf anderer
+Erweiterungsmethoden über `this.`). Mehrere Blöcke für denselben Typ - auch aus anderen Dateien oder
+Namespaces - werden zusammengeführt; die Erweiterung gilt für alle Werte dieses Typs.
+
+Erlaubt sind **nur Methoden**: ein Basiswert hat keinen Speicher, in dem ein Feld oder eine Property
+liegen könnte. Ein Feld, eine (Auto-)Property, ein Konstruktor/Destruktor, eine `static`-Methode
+(`string.Foo()` gibt es nicht) und eine Operator-Überladung sind ein Fehler bei der Übersetzung
+(„'class extends string': Feld 'x' nicht erlaubt …“). `byte` lässt sich nicht erweitern - ein `byte`
+ist zur Laufzeit ein `int`, also `class extends int`. Arrays und Puffer sind ebenfalls nicht erweiterbar.
+
+Die Methoden des Prelude für `string` und `char` (8.12) sind genau solche Erweiterungen. Eine eigene
+Methode mit demselben Namen und derselben Parameteranzahl wie eine bestehende ist - wie bei jeder Klasse -
+eine Doppeldefinition.
 
 ### 5.6 `with`-Statement
 
@@ -563,12 +666,10 @@ stehen; alle dazwischenliegenden Scopes werden dabei sauber geschlossen.
 - Eine verschachtelte Lambda "sieht" die Schleife einer umschließenden
   Funktion nicht – `break`/`continue` innerhalb einer Lambda sind nur
   gültig, wenn die Lambda SELBST eine Schleife umschließt.
-- `break`/`continue` dürfen **nicht** aus einem `try`/`catch`/`finally`
-  heraus verwendet werden, auch wenn die Schleife außerhalb des `try`
-  liegt – das ist ein Fehler. (Grund: die `catch`-Exception-Umgebung wird
-  von der Bytecode-VM selbst verwaltet, ein sauberer Sprung müsste dort
-  zusätzlich den registrierten Exception-Handler abmelden – das ist in
-  dieser Ausbaustufe bewusst nicht umgesetzt, siehe BYTECODE.md.)
+- `break`/`continue` dürfen aus dem `try`- und den `catch`-Blöcken heraus verwendet werden: der
+  Exception-Handler wird abgemeldet und ein vorhandenes `finally` läuft vor dem Sprung (bei mehreren
+  verschachtelten `try` von innen nach außen). Nur aus dem `finally`-Block selbst heraus sind sie ein
+  Fehler (eine Schleife IM `finally` darf natürlich `break`/`continue` benutzen).
 
 ### 5.11 Operator-Überladung
 
@@ -666,7 +767,7 @@ throw ausdruck;
 ```
 try {
     // ...
-} catch (e : ErrorType) {
+} catch (ErrorType e) {
     // nur wenn geworfener Wert Instanz von ErrorType oder einer Subklasse ist
 } catch (e) {
     // ungetypter catch-all, fängt alles Übrige
@@ -675,7 +776,7 @@ try {
 }
 ```
 
-- Mehrere `catch`-Blöcke werden der Reihe nach geprüft; ein getypter `catch (name : Type)` filtert per `is of`-Check, ein ungetypter `catch (name)` fängt alles. Bewusst dieselbe Reihenfolge (Name, dann optional Typ) wie bei `var name : Type` - nicht wie eine C#-Parameterdeklaration.
+- Mehrere `catch`-Blöcke werden der Reihe nach geprüft; ein getypter `catch (Type name)` filtert per `is of`-Check, ein ungetypter `catch (name)` fängt alles. Der Typ steht - wie bei jeder Deklaration (`int x`) - VOR dem Namen.
 - `finally` ist optional und läuft immer.
 
 ### 7.4 `catch` ohne `try` – impliziter Block-Scope-Catch
@@ -836,6 +937,19 @@ daran, ob direkt nach `try` eine `{` folgt (Block) oder nicht (Ausdruck).
 
 ### 8.1.4 Native Callbacks
 
+**Wo ein Callback läuft.** `FireRuntime.RunCallback(lambda, args, natives, classes, snapshotGlobals, onUnhandled)` entscheidet:
+
+- **Auf dem Thread einer laufenden VM** (der Normalfall: das Skript ruft selbst z.B. `Window.Tick`, und dabei feuern die Ereignisse) läuft das Lambda **verschachtelt auf dieser VM**
+  (`VM.CallLambdaInline`): mit den **echten globalen Variablen**, lesend und schreibend, wie jedes andere Lambda (4.2) - es gibt nichts zu isolieren, weil nichts nebenläufig ist. Objekte mit
+  Lambda-Feldern oder Verweisen auf fremde Objekte sind als Globals kein Problem, und `leave`/`terminate` im Callback wirken auf das Programm. Eine unbehandelte Exception im Callback bricht nur den
+  Callback ab (ein `try`/`catch` um den auslösenden Aufruf sieht sie nicht): sie geht als Text an `onUnhandled`, das Programm läuft weiter. Wie bei Destruktoren und Properties wird während eines
+  verschachtelten Callbacks nicht auf `leave`/`terminate` anderer Threads geprüft (erst danach).
+- **Auf einem Thread ohne laufende VM** (ein Host-Thread, z.B. ein Seriell-Ereignis) wäre der Zugriff auf die Globals ein Datenrennen: der Callback wird deshalb dem Hauptprogramm **eingereiht**
+  (`VM.PostCallback`, über `RunCallback(..., owner)`) und dort - automatisch an einem sicheren Punkt oder bei `sync globals`, mit `#nosync` nur dann - mit den echten Globals ausgeführt. Läuft das
+  Hauptprogramm nicht (mehr), gilt die isolierte Kopie wie unten beschrieben (`FireRuntime.CallCallback`).
+
+Der Rest dieses Abschnitts beschreibt diesen isolierten Fall.
+
 ```csharp
 // Host-seitige C#-Registrierung (RegisterCallback ist eine GEWÖHNLICHE
 // native Funktion - Lambdas sind bereits first-class Values, keine
@@ -964,9 +1078,9 @@ erzeugten Namen zurück.
 ### 8.2 Bitbreiten für `int`/`float`
 
 ```
-var a : int[8]        // 8 Bit
-var b : int[16]       // 16 Bit
-var c : int            // Default: höchste Genauigkeit (64 Bit)
+int[8] a        // 8 Bit
+int[16] b       // 16 Bit
+int c           // Default: höchste Genauigkeit (64 Bit)
 float[32] Compute(int[16] x) { ... }   // auch bei Parametern/Rückgabetypen
 ```
 
@@ -974,7 +1088,10 @@ Syntax: `[Bitbreite]` direkt hinter dem Basistyp (`int`/`float`), erlaubt
 sind `8`, `16`, `32`, `64`. Ohne Angabe gilt die höchste Genauigkeit (64 Bit,
 also int64 bzw. double). Diese Klammer steht bewusst direkt hinter dem *Typ*
 – im Gegensatz zu Array-Klammern, die hinter dem *Bezeichner* stehen (siehe
-8.4), dadurch gibt es keine Mehrdeutigkeit.
+8.4), dadurch gibt es keine Mehrdeutigkeit. Ein **Array-Rückgabetyp** (8.4.1)
+hat keinen Bezeichner, hinter den die Klammern könnten: dort stehen *leere*
+Klammern hinter dem Typ (`int[]`) - eine Bitbreite hat immer eine Zahl
+(`int[8]`), das unterscheidet beide.
 
 **Kopierverhalten:** Wird ein Wert in eine Variable/einen Parameter mit
 geringerer deklarierter Bitbreite kopiert, wird abgeschnitten (`Value.TruncateTo`):
@@ -991,7 +1108,7 @@ nachhalten) ist noch nicht verdrahtet – nächste Ausbaustufe.
 
 ```
 unsafe {
-    var p : int[32]* = &x
+    int[32]* p = &x
     var y = *p
     p = p + 1        // Pointer-Arithmetik
 }
@@ -1036,7 +1153,7 @@ hintereinander ergeben ein mehrdimensionales Array (Rang = Anzahl Gruppen).
 `new Type[sizeExpr]` alloziert ein Array. Der Elementtyp hier ist bewusst nur
 ein Basisname (ohne eigene Bitbreiten-Klammer, aus demselben
 Kollisionsgrund) – eine bestimmte Elementbreite legt man stattdessen über den
-deklarierten Variablentyp fest (`var a : int[16] = new int[10]`).
+deklarierten Variablentyp fest (`int[16] a = new int[10]`).
 
 **Implementiert**: Laufzeit-Repräsentation (`Values.ScriptArray`, fest
 allozierte `Value[]`, Elemente `undefined`-initialisiert), Indexzugriff
@@ -1068,6 +1185,26 @@ Ausdruck statt Literal) wird nicht geprüft.
 Für `List` (siehe Prelude) gibt es dieselbe Idee über eine zweite
 Konstruktor-Überladung: `new List([1, 2, 3, 4])` kopiert die Array-Elemente
 einzeln über `Add()` in eine neue Liste.
+
+### 8.4.1 Arrays als Rückgabetyp
+
+```
+class Kennel {
+    int[] Numbers() { return [1, 2, 3] }
+    Dog[] Dogs() { ... }
+    string[][] Grid() { ... }        // mehrere Klammerpaare: Array von Arrays
+    byte[] Bytes() { return "AB".ToBytes() }
+    int[8][] Small() { ... }         // Array aus 8-Bit-Ganzzahlen (Bitbreite + leere Klammern)
+}
+interface IHolder { int[] Items() }
+```
+
+Eine Methode, ein Interface-Eintrag oder eine Property darf ein Array liefern: `Typ[] Name(...)`, mit **leeren**
+Klammern hinter dem Typ. Nur dort - überall, wo ein Bezeichner da ist, bleiben die Klammern dahinter
+(`int werte[]`); `int[] werte` als Feld, Parameter oder Variable ist ein Fehler mit genau diesem Hinweis, ebenso
+ein Array-Rückgabetyp bei `extern` (die native Schnittstelle kennt keine Skript-Arrays). Wie jeder Rückgabetyp wird
+er nicht zur Laufzeit erzwungen, der Resolver prüft nur, dass der Typname existiert; der Editor nutzt ihn für die
+Typ-Herleitung (`k.Dogs()[0].` schlägt die Mitglieder von `Dog` vor, `k.Numbers().` `Length`).
 
 ### 8.5 `IEnumerable`/`IEnumerator` & `interface`
 
@@ -1103,7 +1240,10 @@ class List : IEnumerable {
 - `foreach (x in collection)` (SPEC 5) läuft über `GetEnumerator()`/
   `MoveNext()`/`GetCurrent()` – rein per NAMENS-Dispatch, funktioniert also
   auch auf jeder anderen Klasse mit denselben drei Methoden, nicht nur auf
-  `IEnumerable`-Instanzen im formalen Sinn.
+  `IEnumerable`-Instanzen im formalen Sinn. Auch ein **Array** (`[1, 2, 3]`,
+  `new string[3]`) und ein **Byte-Puffer** sind direkt durchlaufbar
+  (`foreach (x in arr)`) - die VM liefert dafür einen `ListEnumerator` der
+  Prelude (ohne Prelude bleibt es bei einem Fehler).
 - `IEnumerable`/`IEnumerator`/`List`/`ListEnumerator` sowie
   `IndexOutOfBoundsException` sind Teil der **Prelude**
   (`Standard/Prelude.cs`) – bewusst in ScriptLang selbst geschrieben statt
@@ -1334,7 +1474,7 @@ Ein `byte`-Puffer ist ein eigener Laufzeit-Typ (`Values.ByteBuffer`,
 `ByteBuffer` ist ein echtes, kompaktes `byte[]`, gedacht für Binärdaten aus
 IO (seriell, Netzwerk, Dateien).
 
-`byte` als **skalarer Typ** (z.B. `var b : byte = 5`) ist dagegen KEIN
+`byte` als **skalarer Typ** (z.B. `byte b = 5`) ist dagegen KEIN
 eigener `ValueKind`, sondern reines Parser-Sugar für `int[8]` (eine
 explizite Bitbreite direkt nach `byte` ist deshalb ein Fehler, sie wäre
 redundant) - ein einzelnes Element eines Puffers (`buf[i]`) ist also
@@ -1398,6 +1538,196 @@ eine RuntimeClass greift. Diese Konvertierungen sind deshalb ganz normale
 Methodenaufrufe, keine Operatoren/Sondersyntax - `SPEC 5.11`s Operator-
 Überladung bleibt davon unberührt (unterschiedliche Opcodes: `CallMethod`
 hier, `BinaryNumericOrOperator` dort).
+
+### 8.11 Streams und Dateizugriff (`#import "io"`)
+
+`#import "io"` schaltet den Namespace `IO` frei (Bridge `fire.IO.Bridge`, wie `graphics`/
+`devices`: native Funktionen `__IO...` plus ein fire-Prelude). Alles liegt in `namespace IO`,
+damit es nicht mit eigenen Klassen wie `File` oder `Stream` kollidiert; ein Enum in einem
+Namespace ist nur **vollqualifiziert** erreichbar (`IO.FileMode.Create`).
+
+Aufbau: Streams (`IO.FileStream`, `IO.MemoryStream`, eigene Streams), Datei-/Verzeichnis-API
+(`IO.File`, `IO.Directory`, `IO.Path`, `IO.Utf8`), Text (`IO.TextReader`, `IO.TextWriter`) und
+Standardein-/-ausgabe (`IO.Stdio`) - alles unten beschrieben.
+
+```
+#import "io"
+
+var w = new IO.FileStream("out.bin", IO.FileMode.Create)   // ohne access: Open->Read, Append->Write, sonst ReadWrite
+w.Write("Hallo".ToBytes())          // Write(buffer) / Write(buffer, offset, count) -> Anzahl Bytes
+w.WriteByte(33)
+w.Close()                           // ein zweites Close() ist wirkungslos
+
+var r = new IO.FileStream("out.bin")             // IO.FileMode.Open, IO.FileAccess.Read
+var head = r.ReadBytes(3)           // bis zu 3 Bytes als neuer Puffer (kürzer am Ende)
+var b = r.ReadByte()                // 0..255, -1 am Ende
+r.Seek(-1, IO.SeekOrigin.End)       // -> neue Position;  r.Position = 0 geht auch
+var rest = r.ReadAll()              // alles bis zum Ende als Puffer
+```
+
+| Mitglied | Bedeutung |
+|---|---|
+| `Read(buffer[, offset, count])` | liest in einen Puffer, liefert die Anzahl (0 = Ende) |
+| `Write(buffer[, offset, count])` | schreibt aus einem Puffer, liefert die Anzahl |
+| `ReadByte()` / `WriteByte(v)` | einzelnes Byte (`ReadByte` -1 am Ende) |
+| `ReadBytes(n)` / `ReadAll()` / `CopyTo(ziel)` | Hilfen, aufgebaut auf `Read`/`Write` |
+| `Position`, `Length` | Property (lesen/setzen); nur bei `CanSeek` |
+| `Seek(offset, origin)` | `IO.SeekOrigin.Begin/Current/End`, liefert die neue Position |
+| `CanRead`/`CanWrite`/`CanSeek`, `IsClosed` | Fähigkeiten |
+| `Flush()`, `Close()` | |
+| `MemoryStream.ToBuffer()` | der gesamte Inhalt als Puffer; `new IO.MemoryStream(buffer)` startet mit einer Kopie |
+| `FileStream.Name` | der Pfad, wie angegeben |
+
+`IO.FileMode`: `Open` (muss existieren), `Create` (anlegen/leeren), `CreateNew` (muss neu
+sein), `OpenOrCreate`, `Append`. `IO.FileAccess`: `Read`, `Write`, `ReadWrite`.
+
+**Datei- und Verzeichnis-API.** Statische Methoden, immer mit dem Namespace geschrieben
+(`IO.File.Exists(...)`, ein statischer Zugriff wird nur über den exakt geschriebenen Namen
+aufgelöst).
+
+```
+var f = IO.Path.Combine("daten", "notizen.txt")
+IO.Directory.Create("daten")
+IO.File.WriteAllText(f, "Grüße\nzweite Zeile")
+foreach (line in IO.File.ReadAllLines(f)) { print(line) }   // eine List von Strings (.count, [i])
+print(IO.File.Size(f) + " Bytes, geändert " + IO.File.ModifiedTime(f))   // Sekunden seit 1970 mit Einheit s
+IO.File.Copy(f, "backup.txt", true)
+foreach (name in IO.Directory.GetFiles("daten", "*.txt")) { print(IO.Path.FileName(name)) }
+```
+
+| Klasse | Methoden |
+|---|---|
+| `IO.File` | `Exists`, `Size`, `ModifiedTime`, `Delete` (eine fehlende Datei ist kein Fehler), `Copy(quelle, ziel, overwrite = false)`, `Move(quelle, ziel, overwrite = false)`, `ReadAllBytes`, `WriteAllBytes`, `AppendAllBytes`, `ReadAllText`, `WriteAllText`, `AppendAllText`, `ReadAllLines` (liefert eine `List`), `WriteAllLines` (List oder Array) |
+| `IO.Directory` | `Exists`, `Create` (auch Zwischenverzeichnisse, ein vorhandenes ist kein Fehler), `Delete(pfad, recursive = false)`, `GetFiles(pfad, pattern = "*", recursive = false)`, `GetDirectories(...)` (vollständige Pfade als sortierte `List`), `Current()` |
+| `IO.Path` | `Combine(a, b[, c])` (ein absoluter Teil verwirft alles davor), `FileName`, `Stem`, `Extension` (mit Punkt), `Parent`, `FullPath`, `Temp()`, `IsRooted`, `Separator()` |
+| `IO.Utf8` | `GetBytes(text)`, `GetString(buffer[, offset, count])` |
+
+Text ist **UTF-8** (`string.ToBytes()` ist dagegen nur ASCII): geschrieben ohne Byte-Order-Mark,
+gelesen mit Entfernung eines BOM, ungültige Folgen werden zu U+FFFD. `WriteAllLines` schließt jede
+Zeile mit `\n` ab, `ReadAllLines` erkennt `\n`, `\r\n` und `\r` (ein abschließender Umbruch
+erzeugt keine leere letzte Zeile). Jeder Pfad geht vor dem Zugriff durch die `IoPolicy` (Lesen:
+`Exists`/`Size`/`ModifiedTime`/`Copy`-Quelle; Schreiben: `Create`/`Copy`-Ziel/`Move`-Ziel;
+Löschen: `Delete`/`Move`-Quelle; Auflisten: `GetFiles`/`GetDirectories`); ein abgelehnter Zugriff
+ist `IO.PermissionException` (Code 6), auch bei `Exists` - eine Abfrage darf nicht verraten, was
+es außerhalb des erlaubten Bereichs gibt. `IO.Path` selbst ist reine Textverarbeitung ohne
+Dateizugriff. `Copy`/`Move` auf ein vorhandenes Ziel ohne `overwrite` wirft
+`IO.FileExistsException`, ein fehlendes Verzeichnis `IO.DirectoryNotFoundException`.
+
+**Text (`IO.TextReader`, `IO.TextWriter`).** UTF-8, zeilenweise, auf Dateien oder beliebigen Streams:
+
+```
+var out = new IO.TextWriter("log.txt")            // überschreibt; ("log.txt", true) hängt an
+out.WriteLine("Grüße")
+out.Write("Wert: ")
+out.Write(42)                                      // Zahlen usw. werden als Text geschrieben
+out.Close()
+
+foreach (zeile in new IO.TextReader("log.txt")) { print(zeile) }   // Zeile für Zeile
+
+var reader = IO.File.OpenText("log.txt")           // auch CreateText / AppendText
+var erste = reader.ReadLine()                      // undefined am Ende
+var rest = reader.ReadAll()                        // der Rest als ein String
+reader.Close()
+```
+
+`new IO.TextReader(quelle[, leaveOpen])` / `new IO.TextWriter(ziel[, flag])`: bei einem **Pfad**
+öffnen sie die Datei selbst (Writer: `flag` = append); bei einem **Stream** (`IO.IStream`) lesen/
+schreiben sie darauf und **schließen ihn mit**, außer `leaveOpen`/`flag` ist true. Zeilen enden mit
+`\n` oder `\r\n` (das `\r` gehört nicht zur Zeile), geschrieben wird `\n`. `TextReader`: `ReadLine()`,
+`ReadAll()`, `ReadLines()` (List), `EndOfStream`, `foreach`. Beide schließen sich in `destruct()`
+und werfen `IO.StreamClosedException`, wenn man nach `Close()` weitermacht.
+
+**Standardein-/-ausgabe (`IO.Stdio`).** `IO.Stdio.Write(x)`, `WriteLine(x)`, `ErrorWrite(x)`,
+`ErrorLine(x)`, `Flush()`, `ReadLine()` (undefined am Ende), `ReadAll()`; `In()`/`Out()`/`Err()`
+liefern sie als Stream (z.B. `new IO.TextWriter(IO.Stdio.Out(), true)`), `Close()` darauf ändert
+nichts. **Wohin** das führt, bestimmt der Host: die echte Konsole (Vorgabe, `IoStdio.SystemConsole`)
+oder Rückruffunktionen (`IoStdio.Custom(ausgabe, fehler, eingabe)` - der Editor leitet sie in sein
+Ausgabefenster, die Eingabe ist dort leer). Ausgabe läuft immer als UTF-8; beim `Custom`-Ziel wird
+zeilenweise weitergegeben, eine unvollständige Zeile bleibt bis zum Umbruch oder `Flush()` liegen.
+`ReadLine`/`ReadAll` lesen gepuffert - nicht mit rohen Lesezugriffen auf `In()` mischen. (Anders als
+`print` gibt es hier keinen automatischen Zeilenumbruch.)
+
+**Aufräumen:** `NativeStream.destruct()` schließt das Handle, wenn der Besitzer-Scope endet
+(siehe 2 und 5.3) - ein vergessenes `Close()` bleibt nicht offen.
+
+**Eigene Streams:** `IO.IStream` (`Read`, `Write`, `Flush`, `Close`) ist die kleinste
+Schnittstelle; bequemer leitet man von `IO.Stream` ab, überschreibt `Read`/`Write` (und
+`CanRead`/`CanWrite`/`Position`/... was unterstützt wird) - `ReadByte`, `ReadBytes`, `ReadAll`,
+`CopyTo` funktionieren dann automatisch.
+
+**Fehler** sind fangbare Exceptions, alle von `IO.IOException` (Felder `message`, `code`):
+`IO.FileNotFoundException` (3), `IO.DirectoryNotFoundException` (4), `IO.FileExistsException`
+(7), `IO.StreamClosedException` (2), `IO.PermissionException` (5 = Betriebssystem, 6 =
+Richtlinie des Hosts), sonst `IO.IOException` (1 ungültiges Argument, 8 nicht unterstützt,
+9 sonstiges). Die Namen vermeiden bewusst `AccessDeniedException`, das die VM selbst für
+Zugriffsmodifikatoren wirft.
+
+**Sicherheit: der HOST entscheidet.** Das Skript kann nichts einschränken oder aufweichen:
+`RuntimeSession.Build(..., ioPolicy)` bekommt eine `IoPolicy` (`AllowAll` = Vorgabe, `DenyAll`,
+`Rooted(verzeichnis, readOnly)` oder eine eigene Ableitung). Jeder Pfad wird vor dem Öffnen
+vollständig normalisiert (`Path.GetFullPath`, also ohne `..`) geprüft; ein abgelehnter Zugriff
+wird zu `IO.PermissionException`. Symbolische Links werden nicht aufgelöst (ein Link innerhalb
+eines erlaubten Verzeichnisses, der nach außen zeigt, führt heraus). `MemoryStream` ist von der
+Richtlinie nicht betroffen.
+
+**Threads:** die Handle-Tabelle ist nebenläufigkeitssicher, jeder Zugriff auf einen Stream ist
+gesperrt; der Fehlerstatus (`__IOLastError`) gilt pro Thread. Lesen blockiert den aufrufenden
+VM-Thread (für Hintergrundarbeit `fire { ... }`).
+
+### 8.12 Strings und Zeichen: `Length`, Suche, Teilstrings
+
+Ein `string` ist eine **unveränderliche** Folge von 16-Bit-Zeichen (`char`); alle Positionen zählen in
+solchen Einheiten, Vergleiche und Suchen sind **ordinal** (groß/klein zählt, keine Kultur).
+
+Die Methoden stehen im **Prelude** als Erweiterung des Basistyps (`class extends string { ... }`, 5.5.1)
+und rufen jeweils die **eine** native Funktion `__StringCall(id, text, argumente...)` auf; für `char` ebenso
+`__CharCall(id, zeichen)`. Die Methode wird über ihre **ID** gewählt (`StringMethod`/`CharMethod` in
+`fire.Standard`, feste Zahlen), nicht über den Namen - kein Zeichenkettenvergleich in der VM. Den fire-Text
+`class extends string { ... }` erzeugt `StringMethods.PreludeSource` aus einer Tabelle, die IDs stehen also
+nur in C#. Ohne Prelude gibt es diese Methoden nicht.
+
+Nicht im Prelude, sondern von der VM selbst kommen die Properties `Length` (auch bei Arrays und
+Puffern; `length` ist ein Alias) und die Indexierung `s[i]` (liefert ein `char`; Zuweisung ist ein Fehler).
+Eine Property kann eine Erweiterung nicht definieren (5.5.1).
+
+```
+string s = "Hello, World, again"
+print(s.Length)                 // 19   (`s.length` ist ein Alias)
+print(s.IndexOf("o"))           // 4    -1, wenn nichts gefunden wird
+print(s.IndexOf("o", 5))        // 8    Suche ab Position 5
+print(s.LastIndexOf(","))       // 12   von hinten
+print(s.Substring(7, 5))        // "World";  Substring(14) = "again"
+print(s[1])                     // 'e'
+foreach (p in "a,b,c".Split(",")) { print(p) }
+```
+
+| `string` | Bedeutung |
+|---|---|
+| `IndexOf(x[, start])` | erste Position von `x` (string oder char) ab `start`, sonst -1 |
+| `LastIndexOf(x[, start])` | letzte Position von `x`; mit `start` beginnt die Rückwärtssuche dort (`0 <= start < Length`) |
+| `Substring(start[, count])` | Teilstring; ohne `count` bis zum Ende (`Substring(Length)` = `""`) |
+| `CharAt(i)` / `s[i]` | das Zeichen an Position `i` |
+| `Contains(x)`, `StartsWith(x)`, `EndsWith(x)` | `bool` |
+| `ToUpper()`, `ToLower()` | invariante Groß-/Kleinschreibung |
+| `Trim()`, `TrimStart()`, `TrimEnd()` | Leerraum entfernen |
+| `Replace(alt, neu)` | ersetzt alle Vorkommen (leeres `alt` lässt den String unverändert) |
+| `Split(trenner)` | Array von Strings (leerer Trenner: der ganze String als einziges Element) |
+| `PadLeft(breite[, füll])`, `PadRight(...)` | auf Mindestbreite auffüllen (Standard: Leerzeichen) |
+
+| `char` | Bedeutung |
+|---|---|
+| `IsDigit()`, `IsLetter()`, `IsLetterOrDigit()`, `IsWhiteSpace()`, `IsUpper()`, `IsLower()` | Unicode-Klassifizierung der einzelnen 16-Bit-Einheit, `bool` |
+| `ToUpper()`, `ToLower()` | invariant, liefert ein `char` |
+| `ToString()`, `ToInt()` | als string bzw. als Zahlenwert der Codeeinheit |
+
+(`ToByte()` und `ToUnicode(n)` bei `char`, `ToBytes()`/`ToUnicode(n)` bei `string` und `ToChar()` bei `int`
+bleiben die eingebauten Konvertierungen aus 8.10.)
+
+Eine Position außerhalb des erlaubten Bereichs wirft `IndexOutOfBoundsException` (Text beginnt mit
+„String-Index“). Das Ergebnis von `Split` ist ein Array und deshalb per `foreach` durchlaufbar.
+Der Editor kennt diese Methoden aus dem Prelude (und auch die eigenen Erweiterungen des Nutzers): `text.`
+schlägt sie vor, und die Typen der Ergebnisse (`Trim()` → string, `Split()` → string[], `IndexOf()` → int,
+…) laufen durch Methodenketten.
 
 ## 9. Offene Punkte
 

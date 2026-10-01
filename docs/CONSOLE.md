@@ -84,6 +84,25 @@ zusammen geparst (`Standard.Prelude.Source + GraphicsBridge.PreludeSource
 + nutzerSkript`, dann `Parser.Parse(...)`): die Standardbibliothek, die
 Grafik-Brücke, und das eigentliche Nutzer-Skript.
 
+### Zeichnen mit Pixel-Koordinaten, Text, Mausposition, Ereignis-Warteschlange
+
+- **Text schnell:** `TerminalCanvas.DrawGlyph`/`Print` schreiben ein Zeichen zeilenweise (eine Schrift mit `IBitmapGlyphFont`, z.B. `IntegratedGlyphFont`): pro Bitmap-Zeile
+  ein Tabellenzugriff (`GlyphMasks`, Masken für vier Pixel je `Vector128`) und ein `ConditionalSelect` statt einer Abfrage je Pixel - ca. 30 ns statt 370 ns pro Zeichen (80x30 Zeichen: ~0,07 ms
+  statt ~0,9 ms). Liegt die Zelle nicht vollständig im Framebuffer oder hat die Schrift keine Bitmap-Zeilen, bleibt der pixelweise Weg (`IsPixelSet` + `SetPixel` mit Clipping). Zeichen
+  außerhalb der 256 der Tabelle werden als `?` gezeichnet. `Framebuffer.FillRect` füllt zeilenweise per `Span.Fill`.
+- **`Console`-Methoden mit Pixel-Koordinaten** (Bridge): `FillRect`, `DrawRect`, `DrawLine`, `DrawText(x, y, text, color, background)`, `CellWidth()`, `CellHeight()`. Die Farben dieser Methoden sind
+  ROHE Werte (`r + g*256 + b*65536 + a*16777216`, Alpha 255 = deckend), keine Palette-Indizes wie bei `SetColor`; ein Hintergrund mit Alpha 0 (z.B. `0`) ist transparent. `GetPixel` liefert den Wert als
+  32-Bit-Zahl MIT Vorzeichen (deckende Farben also negativ).
+- **Mausposition in Framebuffer-Pixeln:** SDL meldet Fenster-Koordinaten, das Fenster darf aber skaliert werden (der Framebuffer wird gestreckt); `SdlFramebufferRenderer` rechnet Position und Bewegung
+  auf Framebuffer-Pixel um. Texteingabe (`SDL.StartTextInput`) ist eingeschaltet.
+- **Ereignisse abfragen statt Callback:** Ein `Window`-Callback läuft auf einer eigenen VM mit einer ISOLIERTEN KOPIE der globalen Variablen (SPEC 8.1.4) - Objekte mit Lambdas oder Verweisen auf
+  fremde Objekte lassen sich dabei nicht kopieren, und Änderungen am Original gehen verloren. Deshalb gibt es daneben `Window.EnableEvents()` und `Window.NextEvent()`: die Ereignisse, die `Tick`
+  abholt, landen zusätzlich in einer Warteschlange (`WindowManager.EnableEventQueue`/`NextEvent`, höchstens 4096), und das Skript holt sie im Hauptprogramm ab. Ein Ereignis ist ein Array: `[0]` der
+  Typ (`EventType`), der Rest je Typ - `MouseDown`/`MouseUp` `[typ, taste, x, y]`, `MouseMove` `[typ, x, y, tasten]`, `MouseScroll` `[typ, scrollX, scrollY, x, y]`, `KeyDown`/`KeyUp`
+  `[typ, keycode, scancode, modifier, wiederholt]`, `TextInput` `[typ, text]`, `Close` `[typ]`; Positionen sind ganze Pixel. `WindowManager` nimmt dafür optional eine Renderer-Fabrik entgegen
+  (`Func<IFramebufferRenderer>`, Vorgabe SDL) - so lassen sich Fenster ohne SDL testen.
+- Die Oberflächen-Bibliothek `#import "ui"` baut darauf auf, siehe `docs/UI.md`.
+
 ## Drei unabhängig verwaltete Ressourcenarten, jede über eine eigene ID
 
 Der zentrale Architekturpunkt dieser Ausbaustufe: **Framebuffer**, **Konsolen**

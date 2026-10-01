@@ -1,9 +1,13 @@
 using fire.Bytecode;
 using fire.Device.Bridge;
+using fire.IO.Bridge;
 using fire.Runtime;
 using fire.Terminal.Bridge;
+using fire.UI.Bridge;
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace fire.Compiler
 {
@@ -29,8 +33,41 @@ namespace fire.Compiler
         {
             "graphics" => NativeImports.Graphics,
             "devices" => NativeImports.Devices,
+            "io" => NativeImports.IO,
+            "ui" => NativeImports.Ui,
             _ => throw new Exception($"'{name}' ist keine bekannte Erweiterung."),
         };
+
+        /// <summary>Der fire-Quelltext der Prelude der Erweiterung `importName`
+        /// (Name aus `#import "name"`, Groß-/Kleinschreibung egal), null bei
+        /// einer unbekannten Erweiterung.</summary>
+        /// <summary>Die Erweiterungen, die `importKey` (Schlüssel aus <see cref="NativeImports"/>) selbst mitbringt: `ui` baut auf
+        /// `graphics` auf und schaltet es mit zu. Jede Stelle, die ein `#import` auswertet, trägt alle Schlüssel daraus ein.</summary>
+        public static IEnumerable<string> WithDependencies(string importKey)
+        {
+            if (importKey == NativeImports.Ui) yield return NativeImports.Graphics;
+            yield return importKey;
+        }
+
+        public static string? TrySourceFor(string importName) => importName.ToLowerInvariant() switch
+        {
+            "graphics" => GraphicsBridge.PreludeSource,
+            "devices" => DeviceBridge.PreludeSource,
+            "io" => IoBridge.PreludeSource,
+            "ui" => UiBridge.PreludeSource,
+            _ => null,
+        };
+
+        private static readonly Regex ImportDirective =
+            new("^[ \\t]*#import[ \\t]+\"([^\"\\r\\n]+)\"", RegexOptions.Compiled | RegexOptions.Multiline);
+
+        /// <summary>Die Namen aller `#import "name"`-Zeilen in `source` (rein
+        /// TEXTUELL erkannt, ohne den Präprozessor zu bemühen - für den
+        /// Editor, der auf unverarbeitetem, evtl. gerade erst getipptem Text
+        /// arbeitet). Unbekannte Namen sind enthalten - prüfen mit
+        /// <see cref="TrySourceFor"/>.</summary>
+        public static IEnumerable<string> FindImportNames(string source) =>
+            ImportDirective.Matches(source).Select(m => m.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>Setzt die Preludes aller in `nativeImports` enthaltenen
         /// Erweiterungen (jeweils durch `preprocess` vorverarbeitet) direkt
@@ -52,10 +89,24 @@ namespace fire.Compiler
                 inserted++;
             }
 
+            if (nativeImports.Contains(NativeImports.Ui))
+            {
+                // reiner fire-Quelltext auf den Klassen der Grafik-Brücke: keine nativen Funktionen
+                processedSources.Insert(1, preprocess(UiBridge.PreludeSource));
+                inserted++;
+            }
+
             if (nativeImports.Contains(NativeImports.Devices))
             {
                 processedSources.Insert(1, preprocess(DeviceBridge.PreludeSource));
                 DeviceBridge.RegisterStubs(natives);
+                inserted++;
+            }
+
+            if (nativeImports.Contains(NativeImports.IO))
+            {
+                processedSources.Insert(1, preprocess(IoBridge.PreludeSource));
+                IoBridge.RegisterStubs(natives);
                 inserted++;
             }
 

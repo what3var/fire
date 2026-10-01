@@ -131,7 +131,7 @@ namespace fire.Compiler
             return assemblyInfo;
         }
 
-        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string? outname = null)
+        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string? outname = null, VmExecutionMode? executionModeOverride = null)
         {
             var assemblyInfo = new AssemblyInfo();
             var natives = new NativeRegistry();
@@ -140,6 +140,7 @@ namespace fire.Compiler
             var firstUserSource = 1;
 
             natives.Register("print", args => Value.MakeUndefined());
+            natives.RegisterBaseTypeNatives();
 
             nativeImports.Add(NativeImports.Print);
 
@@ -153,7 +154,7 @@ namespace fire.Compiler
             {
                 if (args[0].Kind == ValueKind.String)
                 {
-                    nativeImports.Add(ImportedPreludes.ParseImportName(args[0].AsString()));
+                    foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(args[0].AsString()))) nativeImports.Add(key);
                     return null;
                 }
                 throw new Exception($"Falsche Argumente für 'import'-Direktive.");
@@ -273,23 +274,30 @@ namespace fire.Compiler
             var resolveResult = Resolver.Resolve(program, natives.Names);
             var compiled = Compiler.Compile(program, resolveResult, natives);
 
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource);
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode);
 
-            var outdir = Path.GetDirectoryName(Environment.ProcessPath);
-
-            if (!string.IsNullOrEmpty(outname) && !string.IsNullOrEmpty(outdir))
+            if (!string.IsNullOrEmpty(outname))
             {
-                var tempfile = Path.Combine(outdir, "tempout.a");
-                Packer.PackProgram(linkedProgram, tempfile);
-
+                // Icon und Versionsinfo gehören in den apphost, BEVOR er zum Bundle wird (siehe Packer.PackProgram).
                 var verInfo = assemblyInfo.ToVersionInfo();
+                var tempfile = outname + ".tmp";
+                try
+                {
+                    Packer.PackProgram(linkedProgram, tempfile, apphost =>
+                    {
+                        if (!OperatingSystem.IsWindows()) return; // PeResourceEditor nutzt Win32-APIs
 
-                PeResourceEditor.SetVersionInfo(tempfile, verInfo);
+                        PeResourceEditor.SetVersionInfo(apphost, verInfo);
 
-                if (File.Exists(assemblyInfo.IconPath))
-                    PeResourceEditor.SetIcon(tempfile, assemblyInfo.IconPath);
-
-                File.Copy(tempfile, outname, true);
+                        if (File.Exists(assemblyInfo.IconPath))
+                            PeResourceEditor.SetIcon(apphost, assemblyInfo.IconPath);
+                    });
+                    File.Move(tempfile, outname, true);
+                }
+                finally
+                {
+                    if (File.Exists(tempfile)) File.Delete(tempfile);
+                }
             }
             return linkedProgram;
         }

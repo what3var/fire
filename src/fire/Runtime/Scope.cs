@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using fire.Values;
 
@@ -31,13 +32,26 @@ namespace fire.Runtime
         // Variable deklariert und kein Objekt besitzt (der häufigste Fall
         // bei einfachen Schleifenkörpern) - spart zwei von drei Allokationen
         // pro Scope in genau diesem, sehr heißen Pfad.
-        private List<Value>? _slots;
+        // Slots als Array mit Zähler statt List<Value>: eine Scope entsteht bei JEDEM Aufruf und jedem
+        // Schleifendurchlauf, und List<T> bringt pro Instanz ein Extra-Objekt sowie Versionszähler mit.
+        private Value[]? _slots;
+        private int _slotCount;
         private List<ObjectInstance>? _owned;
 
         public Scope(Scope? parent, bool isGlobal = false)
         {
             Parent = parent;
             IsGlobal = isGlobal;
+        }
+
+        /// <summary>Scope mit bereits belegten Slots: `slots` gehört ab jetzt dieser Scope, die ersten `count`
+        /// Einträge sind die Parameter (der Aufrufer hat sie direkt vom Stack hineinkopiert, statt sie über ein
+        /// Zwischenarray und einzelne DefineSlot-Aufrufe zu verteilen); der Rest ist Platz für lokale Variablen.</summary>
+        public Scope(Scope? parent, Value[] slots, int count)
+        {
+            Parent = parent;
+            _slots = slots;
+            _slotCount = count;
         }
 
         // -----------------------------------------------------------
@@ -49,26 +63,51 @@ namespace fire.Runtime
         /// hat) und gibt seinen Index zurück.</summary>
         public int DefineSlot(Value initialValue)
         {
-            var slots = _slots ??= new List<Value>();
-            slots.Add(initialValue);
-            return slots.Count - 1;
+            var slots = _slots;
+            if (slots == null)
+                _slots = slots = new Value[4];
+            else if (_slotCount == slots.Length)
+            {
+                Array.Resize(ref _slots, slots.Length * 2);
+                slots = _slots;
+            }
+            slots[_slotCount] = initialValue;
+            return _slotCount++;
         }
 
         /// <summary>GetSlot/SetSlot werden nur mit einem Index aufgerufen, der
         /// aus einer vorherigen DefineSlot-Reihenfolge stammt (siehe
         /// Resolver/Compiler - der Index ist zur Kompilierzeit fest bekannt) -
-        /// `_slots` ist an dieser Stelle deshalb garantiert bereits belegt,
-        /// kein Null-Check nötig (bewusst kein zusätzlicher Branch im Hot
-        /// Path für einen Zustand, der bei korrekt kompiliertem Bytecode nie
-        /// eintreten kann - ein `null`-Zugriff hier wäre ohnehin ein
-        /// VM-/Compiler-Bug, siehe Values.VmInvariantViolationException-Doku
-        /// für dieselbe Unterscheidung bei Value.RequireKind).</summary>
-        public Value GetSlot(int index) => _slots![index];
-        public void SetSlot(int index, Value value) => _slots![index] = value;
+        /// `_slots` ist an dieser Stelle deshalb garantiert bereits belegt.
+        /// Ein Index jenseits der definierten Slots ist ein VM-/Compiler-Bug
+        /// (siehe Values.VmInvariantViolationException-Doku) und wirft wie
+        /// bisher.</summary>
+        public Value GetSlot(int index)
+        {
+            if ((uint)index >= (uint)_slotCount) ThrowBadSlot(index);
+            return _slots![index];
+        }
+
+        /// <summary>Referenz auf einen Slot (für die VM: ein Slot wird direkt auf den Stack kopiert bzw. vom Stack
+        /// überschrieben, ohne Zwischenkopien). Gleiche Bereichsprüfung wie GetSlot.</summary>
+        public ref Value SlotRef(int index)
+        {
+            if ((uint)index >= (uint)_slotCount) ThrowBadSlot(index);
+            return ref _slots![index];
+        }
+
+        public void SetSlot(int index, Value value)
+        {
+            if ((uint)index >= (uint)_slotCount) ThrowBadSlot(index);
+            _slots![index] = value;
+        }
+
+        private void ThrowBadSlot(int index) =>
+            throw new System.ArgumentOutOfRangeException(nameof(index), $"Slot {index} ist nicht definiert (Slots: {_slotCount}).");
 
         /// <summary>Anzahl belegter Slots - für Debug-/Inspektionszwecke (siehe
         /// VM.DebugLocals), von der normalen Ausführung selbst nicht gebraucht.</summary>
-        public int SlotCount => _slots?.Count ?? 0;
+        public int SlotCount => _slotCount;
 
         /// <summary>Läuft `depth` Elternschritte nach oben - depth entspricht exakt
         /// dem, was der Resolver in ResolvedRef.Local(depth, slot) ermittelt hat.</summary>
@@ -84,11 +123,35 @@ namespace fire.Runtime
         // IOwner
         // -----------------------------------------------------------
         public IReadOnlyList<ObjectInstance> OwnedObjects => (IReadOnlyList<ObjectInstance>?)_owned ?? System.Array.Empty<ObjectInstance>();
-        public void AddOwned(ObjectInstance obj) => (_owned ??= new List<ObjectInstance>()).Add(obj);
+        /// <summary>Besitzt diese Scope Objekte? Verlassen ist sonst ein reines Umhängen des Parent-Zeigers
+        /// (siehe VM.Step, ExitScope).</summary>
+        public bool HasOwned => _owned != null;
+
+        /// <summary>Gesetzt für den globalen Scope des Hauptprogramms, sobald ein `fire`-Thread läuft (siehe GlobalsBroker): jedes Objekt,
+        /// das ihm gehört - auch eines, das erst später entsteht - gehört dann zum geteilten Bereich (siehe
+        /// ObjectInstance.MarkGlobalsDomain).</summary>
+        public ThreadShareLock? SharingLock { get; set; }
+
+        public void AddOwned(ObjectInstance obj)
+        {
+            (_owned ??= new List<ObjectInstance>()).Add(obj);
+            if (SharingLock != null) obj.MarkGlobalsDomain(SharingLock);
+        }
         public void RemoveOwned(ObjectInstance obj) => _owned?.Remove(obj);
 
         /// <summary>Wird beim Verlassen des Scopes aufgerufen: zerstört
         /// kaskadierend alle noch von diesem Scope besessenen Objekte.</summary>
+        /// <summary>Wie <see cref="Release"/>, aber nur für Objekte, die `filter` bejaht - die übrigen bleiben im Besitz dieser Scope
+        /// (für das Ende eines Fire-Threads: seine Globals-Schnappschüsse und `taking`-Kopien sind Kopien von Objekten des
+        /// Hauptprogramms und dürfen dort keine Destruktoren auslösen, z.B. ein geteiltes Handle schließen).</summary>
+        public void ReleaseWhere(IDestructRunner runner, Func<ObjectInstance, bool> filter)
+        {
+            if (_owned == null) return;
+            foreach (var obj in _owned.ToArray())
+                if (filter(obj)) obj.Destroy(runner);
+            _owned.RemoveAll(o => o.IsDestroyed);
+        }
+
         public void Release(IDestructRunner runner)
         {
             if (_owned == null) return; // nichts zu tun - der häufigste Fall bei einfachen Blöcken/Schleifenkörpern

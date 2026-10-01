@@ -22,7 +22,13 @@ namespace fire.Standard
     /// </summary>
     public static class Prelude
     {
-        public const string Source = """
+        /// <summary>Der Prelude: die Kernklassen unten in fire, dazu die Erweiterungen der Basistypen
+        /// `string` und `char` (`class extends string { ... }`, SPEC 5.5.1/8.12), die aus den
+        /// Methoden-Tabellen in <see cref="StringMethods"/>/<see cref="CharMethods"/> erzeugt werden,
+        /// damit die Methoden-IDs im fire-Text nicht von Hand gepflegt werden müssen.</summary>
+        public static readonly string Source = CoreSource + StringMethods.PreludeSource + CharMethods.PreludeSource;
+
+        private const string CoreSource = """
             class IndexOutOfBoundsException : Exception {
                 string message
                 int index

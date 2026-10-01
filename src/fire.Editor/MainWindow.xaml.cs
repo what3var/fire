@@ -4,9 +4,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.ComponentModel;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
+using AvalonDock.Layout;
+using AvalonDock.Layout.Serialization;
 using fire.Compiler;
 using fire.Compiler.Assembly;
 using fire.Utilities;
@@ -45,9 +51,25 @@ namespace fire.Editor
         // sobald ThreadPaused für den betroffenen Thread feuert.
         private bool _isBusy;
 
+        // Andockbare Bereiche (AvalonDock), nach ContentId (siehe MainWindow.xaml). Nach dem Laden eines Layouts
+        // ersetzt AvalonDock die Layout-Elemente durch neue - deshalb hier nie die XAML-Objekte selbst merken,
+        // sondern nach jedem Laden neu einsammeln (siehe DeserializeLayout).
+        private Dictionary<string, LayoutContent> _panels = new();
+
+        // Das Layout aus dem XAML (Vorgabe) - für "Layout zurücksetzen" und als Rückfall, falls ein gespeichertes
+        // Layout nicht geladen werden kann.
+        private string _defaultLayout = "";
+        private bool _layoutLoaded;
+
+        private List<ErrorListItem> _errors = new();
+
         public MainWindow()
         {
             InitializeComponent();
+
+            CollectPanels();
+            _defaultLayout = SerializeLayout();
+            Loaded += (_, _) => LoadLayout();
 
             // Bewusst ein explizit registrierter Handler (siehe unten,
             // Window_PreviewKeyDown) statt eines OnPreviewKeyDown-Overrides -
@@ -118,6 +140,26 @@ namespace fire.Editor
             mnuRunDebug.IsChecked = session.ExecutionMode == Runtime.VmExecutionMode.Debug;
             mnuRunRelease.IsChecked = session.ExecutionMode == Runtime.VmExecutionMode.Release;
             mnuRunPerformance.IsChecked = session.ExecutionMode == Runtime.VmExecutionMode.Performance;
+
+            _updatingModeUi = true;
+            cmbMode.SelectedIndex = session.ExecutionMode switch
+            {
+                Runtime.VmExecutionMode.Debug => 0,
+                Runtime.VmExecutionMode.Release => 1,
+                _ => 2,
+            };
+            _updatingModeUi = false;
+        }
+
+        // Verhindert, dass das programmatische Setzen der Auswahl (UpdateExecutionModeSelection) den Modus erneut setzt.
+        private bool _updatingModeUi;
+
+        private void cmbMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_updatingModeUi || cmbMode.SelectedItem is not ComboBoxItem { Tag: string tag }) return;
+
+            _session.ExecutionMode = Enum.Parse<Runtime.VmExecutionMode>(tag);
+            UpdateExecutionModeSelection(_session);
         }
 
         /// <summary>Übergangslösung, solange dieses Fenster immer nur EINE
@@ -143,25 +185,203 @@ namespace fire.Editor
         private void UpdateErrorPanel()
         {
             var diagnostics = EditorControl.Diagnostics;
-            var errorlist = diagnostics.Select(d => d.ToString()).ToList();
+            string file = EditorControl.FilePath == null ? "(unbenannt)" : Path.GetFileName(EditorControl.FilePath);
+            var items = diagnostics.Select(d => new ErrorListItem("Fehler", d.Message, file, d.Line)).ToList();
 
             Dispatcher.Invoke(() =>
             {
-                ErrorList.ItemsSource = errorlist;
-                ErrorPanelHeader.Text = diagnostics.Count == 0
-                    ? "Fehler (keine)"
-                    : $"Fehler ({diagnostics.Count})";
+                _errors = items;
+                ApplyErrorFilter();
             });
         }
 
-        private void ErrorList_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        /// <summary>Zeigt die Fehlerliste gemäß dem Filterknopf (Fehler ein/aus) und hält eine vom Nutzer gewählte
+        /// Sortierung über die ständigen Neuberechnungen hinweg.</summary>
+        private void ApplyErrorFilter()
         {
-            var diagnostics = EditorControl.Diagnostics;
-            if (ErrorList.SelectedIndex < 0 || ErrorList.SelectedIndex >= diagnostics.Count) return;
-            int line = diagnostics[ErrorList.SelectedIndex].Line;
-            EditorControl.ScrollToLine(line);
-            EditorControl.SetCaretByLineColumn(Math.Max(0, line - 1), 0);
+            int count = _errors.Count;
+            ErrorCountText.Text = count == 1 ? "1 Fehler" : $"{count} Fehler";
+            if (_panels.TryGetValue("errors", out var panel))
+                panel.Title = count == 0 ? "Fehlerliste" : $"Fehlerliste ({count})";
+
+            var sorts = ErrorGrid.Columns
+                .Where(c => c.SortDirection != null)
+                .Select(c => (Path: c.SortMemberPath, Direction: c.SortDirection!.Value))
+                .ToList();
+
+            var shown = ErrorFilterButton.IsChecked == true ? _errors : new List<ErrorListItem>();
+            ErrorGrid.ItemsSource = shown;
+
+            var view = CollectionViewSource.GetDefaultView(shown);
+            view.SortDescriptions.Clear();
+            foreach (var (path, direction) in sorts)
+                if (!string.IsNullOrEmpty(path)) view.SortDescriptions.Add(new SortDescription(path, direction));
+        }
+
+        private void ErrorFilter_Click(object sender, RoutedEventArgs e) => ApplyErrorFilter();
+
+        private void ErrorGrid_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            // Nur ein Doppelklick auf eine ZEILE springt (nicht einer auf die Spaltenüberschrift).
+            var element = e.OriginalSource as DependencyObject;
+            while (element != null && element is not DataGridRow)
+                element = element is Visual or System.Windows.Media.Media3D.Visual3D
+                    ? VisualTreeHelper.GetParent(element)
+                    : LogicalTreeHelper.GetParent(element);
+            if (element == null || ErrorGrid.SelectedItem is not ErrorListItem item) return;
+
+            EditorControl.ScrollToLine(item.Line);
+            EditorControl.SetCaretByLineColumn(Math.Max(0, item.Line - 1), 0);
             EditorControl.Focus();
+        }
+
+        /// <summary>Die kleine Symbolleiste der Fehlerliste braucht den "Überlauf"-Pfeil nicht.</summary>
+        private void ToolBar_HideOverflow(object sender, RoutedEventArgs e)
+        {
+            if (sender is not ToolBar toolBar) return;
+            if (toolBar.Template.FindName("OverflowGrid", toolBar) is FrameworkElement overflow)
+                overflow.Visibility = Visibility.Collapsed;
+            if (toolBar.Template.FindName("MainPanelBorder", toolBar) is FrameworkElement border)
+                border.Margin = new Thickness(0);
+        }
+
+        // -----------------------------------------------------------
+        // Andockbare Bereiche (AvalonDock): Ansicht-Menü und gespeichertes Layout
+        // -----------------------------------------------------------
+
+        private static string LayoutFilePath =>
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "fire", "editor-layout.xml");
+
+        /// <summary>Sammelt die Layout-Elemente des aktuellen Layouts nach ContentId (nur sichtbare; ausgeblendete
+        /// kennt AvalonDock hier nicht - nach dem Laden eines Layouts liefert die Callback-Variante in
+        /// <see cref="DeserializeLayout"/> alle).</summary>
+        private void CollectPanels()
+        {
+            _panels = DockManager.Layout.Descendents().OfType<LayoutContent>()
+                .Where(c => !string.IsNullOrEmpty(c.ContentId))
+                .ToDictionary(c => c.ContentId!);
+        }
+
+        private string SerializeLayout()
+        {
+            var writer = new StringWriter();
+            new XmlLayoutSerializer(DockManager).Serialize(writer);
+            return writer.ToString();
+        }
+
+        /// <summary>Die Inhalte der Bereiche, nach ContentId - im gespeicherten Layout steht nur die ContentId, nicht der
+        /// Inhalt.</summary>
+        private Dictionary<string, object> PanelContents() => new()
+        {
+            ["editor"] = EditorControl,
+            ["output"] = OutputBox,
+            ["errors"] = ErrorPanelContent,
+            ["debugger"] = DebuggerPanel,
+        };
+
+        private void DeserializeLayout(TextReader reader)
+        {
+            var contents = PanelContents();
+            var panels = new Dictionary<string, LayoutContent>();
+
+            // Die Inhalte hängen noch an den bisherigen Layout-Elementen; ein Element kann nur einen Besitzer haben.
+            foreach (var panel in _panels.Values) panel.Content = null;
+
+            var serializer = new XmlLayoutSerializer(DockManager);
+            serializer.LayoutSerializationCallback += (_, args) =>
+            {
+                if (args.Model.ContentId != null && contents.TryGetValue(args.Model.ContentId, out var content))
+                {
+                    args.Content = content;
+                    panels[args.Model.ContentId] = args.Model;
+                }
+                else
+                {
+                    args.Cancel = true; // ein Bereich, den es in dieser Version nicht mehr gibt
+                }
+            };
+            serializer.Deserialize(reader);
+            _panels = panels;
+        }
+
+        private void LoadLayout()
+        {
+            if (_layoutLoaded) return;
+            _layoutLoaded = true;
+            if (!File.Exists(LayoutFilePath)) return;
+
+            try
+            {
+                using var reader = new StreamReader(LayoutFilePath);
+                DeserializeLayout(reader);
+            }
+            catch (Exception ex)
+            {
+                // Ein beschädigtes oder zu altes Layout darf den Editor nicht unbenutzbar machen.
+                System.Diagnostics.Debug.WriteLine(ex);
+                RestoreDefaultLayout();
+            }
+        }
+
+        private void SaveLayout()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(LayoutFilePath)!);
+                new XmlLayoutSerializer(DockManager).Serialize(LayoutFilePath);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(ex); // nicht speicherbar (z.B. schreibgeschütztes Profil): kein Grund, das Schließen zu stören
+            }
+        }
+
+        private void RestoreDefaultLayout()
+        {
+            try
+            {
+                DeserializeLayout(new StringReader(_defaultLayout));
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(ex);
+                UpdateStatus("Das Layout konnte nicht zurückgesetzt werden.");
+            }
+        }
+
+        protected override void OnClosing(CancelEventArgs e)
+        {
+            base.OnClosing(e);
+            if (!e.Cancel) SaveLayout();
+        }
+
+        private void ResetLayout_Click(object sender, RoutedEventArgs e)
+        {
+            RestoreDefaultLayout();
+            try { File.Delete(LayoutFilePath); } catch (IOException) { }
+        }
+
+        private void ViewMenu_SubmenuOpened(object sender, RoutedEventArgs e)
+        {
+            foreach (var item in mnuView.Items.OfType<MenuItem>())
+                if (item.Tag is string id && _panels.TryGetValue(id, out var panel))
+                    item.IsChecked = panel is not LayoutAnchorable anchorable || anchorable.IsVisible;
+        }
+
+        private void ViewPanel_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not MenuItem { Tag: string id } || !_panels.TryGetValue(id, out var panel)) return;
+            if (panel is not LayoutAnchorable anchorable) return;
+
+            if (anchorable.IsVisible)
+            {
+                anchorable.Hide();
+            }
+            else
+            {
+                anchorable.Show();
+                anchorable.IsActive = true;
+            }
         }
 
         private void OnThreadSelected(DebugThreadContext chosen)

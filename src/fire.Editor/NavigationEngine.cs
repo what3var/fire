@@ -62,31 +62,38 @@ namespace fire.Editor
                 string? className = receiver == "this"
                     ? index.EnclosingClassAt(offset)
                     : index.TryResolveDeclaredType(offset, receiver);
-                if (className == null && index.Classes.ContainsKey(receiver))
-                    className = receiver; // 'ClassName.Member' (unüblich, aber abgedeckt)
+                // 'ClassName.Member' (unüblich, aber abgedeckt) - der Klassenname
+                // wie geschrieben, auch aus einem anderen Namespace/per #using.
+                className ??= index.TryFindClass(receiver, offset);
 
                 if (className != null)
                 {
                     var member = index.MembersOf(className).FirstOrDefault(m => m.Name == identifier && m.DeclLine > 0);
                     if (member != null)
                     {
-                        bool fromPrelude = index.Classes.TryGetValue(className, out var ownerClass) && ownerClass.IsFromPrelude;
+                        // Ob das MITGLIED aus der Prelude stammt (auch ein geerbtes
+                        // einer Prelude-Basisklasse), nicht die angeklickte Klasse.
+                        bool fromPrelude = !ReferenceEquals(member.Source, index);
                         return new NavigationTarget(null, member.DeclLine, fromPrelude);
                     }
                 }
 
-                if (index.EnumDeclLines.TryGetValue(receiver, out var enumLine)
-                    && index.EnumMembers.TryGetValue(receiver, out var enumMembers)
+                string? receiverEnum = index.TryFindEnum(receiver, offset);
+                if (receiverEnum != null
+                    && index.EnumDeclLines.TryGetValue(receiverEnum, out var enumLine)
+                    && index.EnumMembers.TryGetValue(receiverEnum, out var enumMembers)
                     && enumMembers.Contains(identifier))
                     return new NavigationTarget(null, enumLine); // Enum selbst - einzelne Mitglieder haben keine eigene Zeile
 
                 return null;
             }
 
-            if (index.Classes.TryGetValue(identifier, out var cls) && cls.DeclLine > 0)
+            string? classKey = index.TryFindClass(identifier, offset);
+            if (classKey != null && index.Classes.TryGetValue(classKey, out var cls) && cls.DeclLine > 0)
                 return new NavigationTarget(null, cls.DeclLine, cls.IsFromPrelude);
 
-            if (index.EnumDeclLines.TryGetValue(identifier, out var directEnumLine))
+            string? enumKey = index.TryFindEnum(identifier, offset);
+            if (enumKey != null && index.EnumDeclLines.TryGetValue(enumKey, out var directEnumLine))
                 return new NavigationTarget(null, directEnumLine);
 
             string? enclosing = index.EnclosingClassAt(offset);
@@ -95,7 +102,7 @@ namespace fire.Editor
                 var member = index.MembersOf(enclosing).FirstOrDefault(m => m.Name == identifier && m.DeclLine > 0);
                 if (member != null)
                 {
-                    bool fromPrelude = index.Classes.TryGetValue(enclosing, out var enclosingClass) && enclosingClass.IsFromPrelude;
+                    bool fromPrelude = !ReferenceEquals(member.Source, index);
                     return new NavigationTarget(null, member.DeclLine, fromPrelude);
                 }
             }
@@ -140,21 +147,28 @@ namespace fire.Editor
         {
             if (receiver != null)
             {
-                if (otherIndex.Classes.TryGetValue(receiver, out var receiverClass) && !receiverClass.IsFromPrelude)
+                // Ohne Offset-Kontext: der Name wie geschrieben (evtl. über die
+                // #using der anderen Datei, oder als einziger Treffer).
+                string? receiverKey = otherIndex.TryFindClass(receiver, -1);
+                if (receiverKey != null && otherIndex.Classes.TryGetValue(receiverKey, out var receiverClass) && !receiverClass.IsFromPrelude)
                 {
-                    var member = otherIndex.MembersOf(receiver).FirstOrDefault(m => m.Name == identifier && m.DeclLine > 0);
+                    var member = otherIndex.MembersOf(receiverKey).FirstOrDefault(m => m.Name == identifier && m.DeclLine > 0);
                     if (member != null) return member.DeclLine;
                 }
-                if (otherIndex.EnumDeclLines.TryGetValue(receiver, out var enumLine)
-                    && otherIndex.EnumMembers.TryGetValue(receiver, out var enumMembers)
+                string? receiverEnum = otherIndex.TryFindEnum(receiver, -1);
+                if (receiverEnum != null
+                    && otherIndex.EnumDeclLines.TryGetValue(receiverEnum, out var enumLine)
+                    && otherIndex.EnumMembers.TryGetValue(receiverEnum, out var enumMembers)
                     && enumMembers.Contains(identifier))
                     return enumLine;
                 return null;
             }
 
-            if (otherIndex.Classes.TryGetValue(identifier, out var cls) && cls.DeclLine > 0 && !cls.IsFromPrelude)
+            string? classKey = otherIndex.TryFindClass(identifier, -1);
+            if (classKey != null && otherIndex.Classes.TryGetValue(classKey, out var cls) && cls.DeclLine > 0 && !cls.IsFromPrelude)
                 return cls.DeclLine;
-            if (otherIndex.EnumDeclLines.TryGetValue(identifier, out var directEnumLine))
+            string? enumKey = otherIndex.TryFindEnum(identifier, -1);
+            if (enumKey != null && otherIndex.EnumDeclLines.TryGetValue(enumKey, out var directEnumLine))
                 return directEnumLine;
 
             return null;

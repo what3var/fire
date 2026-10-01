@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -26,6 +26,9 @@
          Klassenhierarchie, Highlighting per DocumentColorizingTransformer
          OHNE Dokument-Neuaufbau. -->
     <PackageReference Include="AvalonEdit" Version="6.3.0.90" />
+    <!-- Andockbare Bereiche (Fenster per Ziehen an jede Seite, als Registerkarten, schwebend oder automatisch ausblendend). -->
+    <PackageReference Include="Dirkster.AvalonDock" Version="4.72.1" />
+    <PackageReference Include="Dirkster.AvalonDock.Themes.VS2013" Version="4.72.1" />
     <PackageReference Include="PropertyChanged.Fody" Version="4.1.0" PrivateAssets="All" />
   </ItemGroup>
 

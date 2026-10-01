@@ -39,6 +39,22 @@ namespace fire.Compiler
 
         protected NativeRegistry? nativeRegistry { get; set; }
 
+        /// <summary>Sicherheitsnetz des Hosts (siehe IoBridge.RegisterAll): schließt alle Streams, die ein Skript offen
+        /// gelassen hat. Wer die VM selbst treibt (z.B. der Step-Debugger), ruft das nach dem Lauf auf.</summary>
+        protected IDisposable? IoResources { get; set; }
+
+        public void CloseHostResources() => IoResources?.Dispose();
+
+        /// <summary>Führt das Programm auf dem aufrufenden Thread bis zum Ende aus (normales Ende, `leave`,
+        /// `terminate` oder unbehandelte Exception, siehe <see cref="VM.UnhandledException"/>) und schließt danach die
+        /// vom Skript offen gelassenen Handles.</summary>
+        public void Run()
+        {
+            if (VirtualMachine == null) return;
+            try { VirtualMachine.Run(); }
+            finally { CloseHostResources(); }
+        }
+
         
         private RuntimeSession(CompiledProgram compiledProgram)
         {
@@ -59,10 +75,8 @@ namespace fire.Compiler
 
         public void CallLambda(LambdaValue lambda, Value[] args)
         {
-            var snapshot = VirtualMachine.SnapshotGlobals();
-
-            FireRuntime.CallCallback(lambda, args, nativeRegistry, CompiledProgram.Classes, snapshot,
-                ex => Console.WriteLine($"(unbehandelte Exception im Callback: {ex.Message})"));
+            FireRuntime.RunCallback(lambda, args, nativeRegistry, CompiledProgram.Classes, () => VirtualMachine.SnapshotGlobals(),
+                message => Console.WriteLine($"(unbehandelte Exception im Callback: {message})"), owner: VirtualMachine);
         }
 
         /// <summary>Baut die DirectiveRegistry, die reale Programme (siehe
@@ -93,7 +107,7 @@ namespace fire.Compiler
             {
                 if (args[0].Kind == ValueKind.String)
                 {
-                    onImport?.Invoke(ImportedPreludes.ParseImportName(args[0].AsString()));
+                    foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(args[0].AsString()))) onImport?.Invoke(key);
                     return null;
                 }
                 throw new Exception($"Falsche Argumente für 'import'-Direktive.");
@@ -101,12 +115,12 @@ namespace fire.Compiler
             return registry;
         }
 
-        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null)
+        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null)
         {
             var linker = new Linker();
             var natives = new NativeRegistry();
 
-            var linkedProgram = linker.CompileAndLink(sources, debugWriter, outname);
+            var linkedProgram = linker.CompileAndLink(sources, debugWriter, outname, executionMode);
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Print))
             {
@@ -115,6 +129,7 @@ namespace fire.Compiler
                 else
                     natives.Register("print", args => debugWriter(args));
             }
+            natives.RegisterBaseTypeNatives();
 
             FramebufferManager? fbManager = null;
             ConsoleManager? consoleManager = null;
@@ -132,12 +147,20 @@ namespace fire.Compiler
                 GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager);
             }
 
+            // `ioPolicy`: was Skripte im Dateisystem anfassen dürfen, `ioStdio`: wohin
+            // IO.Stdio führt - beides entscheidet der HOST (siehe IoPolicy/IoStdio),
+            // Vorgabe: alles erlaubt, echte Konsole.
+            IDisposable? ioResources = null;
+            if (linkedProgram.NativeImports.Contains(NativeImports.IO))
+                ioResources = fire.IO.Bridge.IoBridge.RegisterAll(natives, ioPolicy, ioStdio);
+
             var globalScope = new Scope(null, isGlobal: true);
             
             var mainVm = new VM(linkedProgram.Program.TopLevel, globalScope, natives, linkedProgram.Program.Classes,
-                externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: executionMode);
+                externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: linkedProgram.ExecutionMode);
 
             session.SetVM(mainVm, windowManager, globalScope, natives, fbManager, consoleManager, linkedProgram.FirstUserSource);
+            session.IoResources = ioResources;
 
             return session;
         }

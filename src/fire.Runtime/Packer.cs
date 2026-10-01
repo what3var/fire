@@ -1,195 +1,144 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.IO.Compression;
 using System.Linq;
-using System.Reflection;
-using System.Security.Cryptography;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace fire.Runtime
 {
+    /// <summary>
+    /// Erzeugt die ausführbare Datei eines Fire-Programms - eine einzelne, eigenständige Datei:
+    ///
+    ///   1. Start-Stück: der apphost (fire.Runtime.exe) samt fire.Runtime.dll und runtimeconfig.json als .NET-Bundle
+    ///      (siehe BundleWriter). Das ist alles, was der .NET-Host zum Starten braucht, und bewusst winzig.
+    ///   2. Payload dahinter (siehe PayloadFile, einzeln Brotli-gepackt): das Programm selbst, der Kern (fire.dll,
+    ///      MemoryPack) und - nur wenn das Programm sie per `#import` braucht - die jeweiligen Bridge-DLLs samt
+    ///      Abhängigkeiten und nativen Bibliotheken (siehe PackagePlan).
+    ///
+    /// Beim Start liest die Runtime ihre NativeImports und lädt die DLLs bei Bedarf aus der eigenen Datei nach (siehe
+    /// PayloadLoader); früher erledigte das Costura/Fody, eingebettet wurde dabei aber immer alles.
+    ///
+    /// Der Packer selbst läuft im Compiler/Editor, dessen Ordner die fertigen DLLs und den apphost enthält.
+    /// </summary>
     public class Packer
     {
-        string runtimeAssembly = "fire.Runtime.exe";
-        int copyBlockSize = 4096;
-        byte[] markerBytes = [0xDA, 0x1D];
+        /// <summary>Dateiname des apphost neben dem Compiler (Windows: fire.Runtime.exe, sonst ohne Endung).</summary>
+        private static string StubFileName => OperatingSystem.IsWindows() ? "fire.Runtime.exe" : "fire.Runtime";
 
-        int markerSearchStart = 0;
-
-        public byte[]? Unpack(string inFile)
+        /// <summary>Packt `program` zu einer eigenständigen Datei `outName`.
+        /// `customizeApphost`: wird vor dem Bündeln mit dem Pfad einer Kopie des apphost aufgerufen, um z.B. Icon und
+        /// Versionsinfo zu setzen. Das muss VOR dem Bündeln geschehen, weil das Ändern der PE-Ressourcen die Datei
+        /// verschiebt und damit den Header-Offset des Bundles ungültig machen würde.
+        /// Gibt die Pack-Planung zurück (welche DLLs eingebunden wurden).</summary>
+        public static PackagePlan PackProgram(LinkedProgram program, string outName, Action<string>? customizeApphost = null, string? baseDir = null)
         {
-            using var fsIn = new FileStream(inFile, FileMode.Open, FileAccess.Read,
-                FileShare.ReadWrite);
+            baseDir ??= AppContext.BaseDirectory;
 
-            var markerPos = FindMarkerIndex(fsIn, markerBytes);
+            var stubPath = Path.Combine(baseDir, StubFileName);
+            var runtimeDll = Path.Combine(baseDir, "fire.Runtime.dll");
+            var runtimeConfig = Path.Combine(baseDir, "fire.Runtime.runtimeconfig.json");
+            foreach (var required in new[] { stubPath, runtimeDll, runtimeConfig })
+                if (!File.Exists(required))
+                    throw new FileNotFoundException($"Zum Packen fehlt '{Path.GetFileName(required)}' im Ordner des Compilers ({baseDir}).", required);
 
-            if (markerPos == null)
-                return null;
+            var plan = PackagePlan.Create(program.NativeImports, baseDir);
+            if (plan.Unresolved.Count > 0)
+                throw new InvalidOperationException("Zum Packen fehlen Abhängigkeiten im Ordner des Compilers: " + string.Join(", ", plan.Unresolved));
 
-            Debug.Print($"Found marker at {markerPos:X}");
-
-            fsIn.Seek(markerPos.Value + 2, SeekOrigin.Begin);
-
-            var hashLengthHeader = new byte[4];
-
-            fsIn.ReadExactly(hashLengthHeader, 0, 4);
-
-            var hashLength = bytetoint(hashLengthHeader);
-
-            var hash = new byte[hashLength];
-
-            fsIn.ReadExactly(hash, 0, hashLength);
-
-            var binLengthHeader = new byte[4];
-
-            fsIn.ReadExactly(binLengthHeader, 0, 4);
-
-            var binLength = bytetoint(binLengthHeader);
-
-            var bin = new byte[binLength];
-
-            var index = 0;
-
-            while (fsIn.Position < fsIn.Length && index < binLength)
-            {
-                var remaining = binLength - index;
-
-                var remainingFileLen = fsIn.Length - fsIn.Position;
-
-                if (remainingFileLen < remaining)
-                    remaining = (int)remainingFileLen;
-
-                index += fsIn.Read(bin, index, remaining);
-            }
-
-            using var sha256Hash = SHA256.Create();
-
-            var newHash = sha256Hash.ComputeHash(bin);
-
-            fsIn.Close();
-
-            if (!hash.SequenceEqual(newHash))
-                return null;
-
-            return bin;
-        }
-
-        public void Pack(byte[] bin, string outFile)
-        {
-            using var fsIn = new FileStream(Path.Combine(Path.GetDirectoryName(Environment.ProcessPath), runtimeAssembly), 
-                FileMode.Open, 
-                FileAccess.Read,
-                FileShare.ReadWrite);
-            
-            var runtime = new byte[fsIn.Length];
-            
-            var index = 0;
-
-            while (index < fsIn.Length)
-            {
-                index += fsIn.Read(runtime, index, copyBlockSize);
-            }
-
-            using var fsOut = new FileStream(outFile, FileMode.Create, FileAccess.Write);
-            using var sha256Hash = SHA256.Create();
-
-            var hash = sha256Hash.ComputeHash(bin);
-            var hashLengthHeader = inttobyte(hash.Length);
-            var binLengthHeader = inttobyte(bin.Length);
-
-            fsOut.Write(runtime, 0, runtime.Length);
-            fsOut.Write(markerBytes, 0, markerBytes.Length);
-            fsOut.Write(hashLengthHeader, 0, hashLengthHeader.Length);
-            fsOut.Write(hash, 0, hash.Length);
-            fsOut.Write(binLengthHeader, 0, binLengthHeader.Length);
-            fsOut.Write(bin, 0, bin.Length);
-
-            fsOut.Flush();
-
-            fsOut.Close();
-            fsIn.Close();
-        }
-
-        public static byte[] inttobyte(int value)
-        {
-            var result = new byte[4];
-            result = [(byte)(value), (byte)(value >> 8), (byte)(value >> 16), (byte)(value >> 24)];
-            return result;
-        }
-
-        public static int bytetoint(byte[] invalue)
-        {
-            return (invalue[0]) | (invalue[1] << 8) | (invalue[2] << 16) | (invalue[3] << 24);
-        }
-
-
-        public static void PackProgram(LinkedProgram program, string outName)
-        {
+            // apphost kopieren und ggf. anpassen (Icon/Version).
+            var tempStub = outName + "." + Guid.NewGuid().ToString("N") + ".stub";
             try
             {
-                var packer = new Packer();
+                File.Copy(stubPath, tempStub, true);
+                customizeApphost?.Invoke(tempStub);
+                var apphost = File.ReadAllBytes(tempStub);
 
-                Debug.WriteLine(string.Join(",", program.Program.TopLevel.Code));
-                var bin = MemoryPack.MemoryPackSerializer.Serialize(program);
-
-                Debug.WriteLine($"Serialized {bin.Length} bytes.");
-
-                packer.Pack(bin, outName);
-
-                Debug.WriteLine($"Wrote {outName} to disk");
+                var bundle = new List<BundleWriter.BundleFile>
+                {
+                    new("fire.Runtime.dll", BundleWriter.FileType.Assembly, File.ReadAllBytes(runtimeDll)),
+                    new("fire.Runtime.runtimeconfig.json", BundleWriter.FileType.RuntimeConfigJson, File.ReadAllBytes(runtimeConfig)),
+                };
+                BundleWriter.Write(apphost, bundle, outName);
             }
-            catch (Exception ex)
+            finally
             {
-                Debug.WriteLine(ex);
+                try { File.Delete(tempStub); } catch (IOException) { }
             }
+
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(outName, File.GetUnixFileMode(outName) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+
+            var items = new List<(PayloadKind, string, byte[])>
+            {
+                (PayloadKind.Program, "program", MemoryPack.MemoryPackSerializer.Serialize(program)),
+            };
+            foreach (var (name, path) in plan.Assemblies)
+                items.Add((PayloadKind.Assembly, name, File.ReadAllBytes(path)));
+            foreach (var (name, path) in plan.Natives)
+                items.Add((PayloadKind.Native, name, File.ReadAllBytes(path)));
+
+            // Das Programm ist klein und ändert sich bei jedem Build: schnell packen. Die DLLs sind bei jedem Build dieselben:
+            // einmal mit höchster Stufe packen und danach aus dem Cache nehmen.
+            using (var fs = new FileStream(outName, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                PayloadFile.Append(fs, items, (kind, data) =>
+                    kind == PayloadKind.Program
+                        ? PayloadFile.Compress(data, CompressionLevel.Optimal)
+                        : CompressCached(data));
+
+            return plan;
         }
 
+        /// <summary>Packt `data` mit der höchsten Brotli-Stufe (mehrere Sekunden für eine große DLL) und merkt sich das
+        /// Ergebnis unter seiner SHA-256-Prüfsumme in einem Cache-Ordner: jeder weitere Build mit derselben DLL liest nur
+        /// noch die fertige Datei. Geht der Cache nicht (kein Schreibrecht), wird schnell (`Optimal`) gepackt, statt jeden
+        /// Build Sekunden zu verlieren.</summary>
+        private static byte[] CompressCached(byte[] data)
+        {
+            string file;
+            try
+            {
+                var dir = Path.Combine(Path.GetTempPath(), "fire-pack-cache");
+                Directory.CreateDirectory(dir);
+                file = Path.Combine(dir, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data)) + ".br");
+                if (File.Exists(file))
+                    return File.ReadAllBytes(file);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return PayloadFile.Compress(data, CompressionLevel.Optimal);
+            }
+
+            var packed = PayloadFile.Compress(data, CompressionLevel.SmallestSize);
+            try
+            {
+                var tmp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                File.WriteAllBytes(tmp, packed);
+                File.Move(tmp, file, overwrite: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            return packed;
+        }
+
+        /// <summary>Liest das Programm aus einer gepackten Datei (für Tests/Werkzeuge; die Runtime selbst nutzt den
+        /// PayloadLoader). Setzt voraus, dass fire.dll und MemoryPack geladen werden können.</summary>
         public static LinkedProgram? UnpackProgram(string fileName)
         {
-            var packer = new Packer();
-
-            var bin = packer.Unpack(fileName);
-
-            if (bin == null)
-                return null;
-
-            var program = MemoryPack.MemoryPackSerializer.Deserialize<LinkedProgram>(bin);
-
-            if (program == null)
-                return null;
-
-            program.Program.RelinkAfterDeserialize();
-
-            return program;
+            var reader = PayloadFile.Open(fileName);
+            var entry = reader?.Find(PayloadKind.Program, "program");
+            var bin = entry == null ? null : reader!.Read(entry);
+            return bin == null ? null : Deserialize(bin);
         }
 
-        private long? FindMarkerIndex(Stream fileStream, byte[] marker)
+        /// <summary>Wandelt die Programm-Bytes aus dem Payload zurück (eigene Methode, damit fire.dll/MemoryPack erst
+        /// beim Aufruf geladen werden, nicht schon beim Laden des Packers).</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        public static LinkedProgram? Deserialize(byte[] bin)
         {
-            //using var reader = new StreamReader(fileStream);
-
-            fileStream.Seek(markerSearchStart, SeekOrigin.Begin);
-            
-            while (fileStream.Position < fileStream.Length)
-            {
-                long? matchPosition = null;
-
-                for (int j = 0; j < marker.Length; j++)
-                {
-                    if (fileStream.ReadByte() != marker[j])
-                    {
-                        matchPosition = null;
-                        break;
-                    }
-                    else if (j == 0)
-                    {
-                        matchPosition = fileStream.Position - 1;
-                    }
-                }
-                if (matchPosition != null) return matchPosition;
-            }
-
-            return null;
+            var program = MemoryPack.MemoryPackSerializer.Deserialize<LinkedProgram>(bin);
+            if (program == null) return null;
+            program.Program.RelinkAfterDeserialize();
+            return program;
         }
     }
 }

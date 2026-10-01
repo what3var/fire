@@ -222,7 +222,23 @@ fire {
   und den Thread am Beenden hindern.
 - Läuft beim Verlassen durch alle offenen `finally`-Blöcke (korrektes
   Aufräumen/Destruktoren), endet dann still am Rand des jeweiligen
-  Fire-Blocks.
+  Fire-Blocks. Danach wird der **globale Scope** freigegeben (`destruct()`
+  für alles, was ihm gehört - offene Streams werden so geschlossen; in einem
+  Fire-Thread nur für Objekte, die er selbst angelegt hat, nicht für seine
+  Kopien von Objekten des Hauptprogramms). Im **Hauptprogramm** wartet `leave`
+  dafür - wie das normale Programmende - erst auf alle laufenden Fire-Threads.
+  Das Verlassen wirkt **sofort**, unabhängig vom Ausführungsmodus: der aufrufende
+  Thread geht direkt in einen `Halt`, auch mitten in einer Property, einem
+  Destruktor oder einer Operator-Überladung (dort wird das geordnete Abwickeln
+  nachgeholt, sobald die Verschachtelung zurück ist).
+- **Prüfpunkte:** Signale (`terminate`, eine zugestellte Fire-Thread-Exception,
+  `leave` per API) werden nicht vor jeder Instruktion geprüft, sondern an den
+  sicheren Punkten - Schleifen-Rücksprung, Aufruf, nach einem nativen Aufruf und
+  beim `leave`/`terminate` selbst - mit einem einzigen Vergleich eines globalen
+  Signalzählers (siehe VM.PollSignals). Das Beenden ist keine C#-Exception,
+  sondern Zustandsumschaltung (Sprung auf einen `Halt`-Chunk), damit es sich nach
+  C++ ohne Exceptions übertragen lässt (docs/PORTING.md). Eine Exception aus
+  einem anderen Thread in einen laufenden Thread zu werfen ist ohnehin nicht möglich.
 - **Muss nirgendwo zugestellt werden** - kein `catch threads(...)` nötig,
   kein Fehler. Ein `leave` ist ein gewollter, sauberer Ausstieg; das
   Programm läuft normal weiter, der Thread ist einfach zu seinem
@@ -289,7 +305,16 @@ catch terminate(v)
   mitten in einem `finally` abgeschnitten, nur weil ein anderer (z.B. der
   Main-Thread) schneller fertig war.
 - Aufrufbar von **jedem** Thread (Main oder Fire) - ein Not-Aus muss von
-  überall auslösbar sein.
+  überall auslösbar sein. Der aufrufende Thread geht dabei - wie bei `leave` -
+  **sofort** in einen `Halt`, auch wenn ein anderer Thread `terminate` schon
+  ausgelöst hat (kein weiterer Befehl nach dem Aufruf).
+- **Sanftes Ende für alles:** Nach dem Abwickeln aller Threads (`finally`,
+  Destruktoren der Scopes) läuft das Ende wie beim normalen Programmende: das
+  Hauptprogramm wartet auf den letzten Fire-Thread und zerstört **danach** den
+  globalen Scope (`destruct()` der Globals, offene Streams werden geschlossen);
+  jeder Fire-Thread zerstört zuvor seine eigenen Objekte. Der
+  `catch terminate(v)`-Handler läuft auf dem Main-Thread direkt nach dessen
+  eigenem Abwickeln, also VOR dem Zerstören der Globals.
 - **Erster Aufruf gewinnt**: wird `terminate` gleichzeitig von mehreren
   Threads mit unterschiedlichen Werten aufgerufen, gewinnt der erste, der
   das globale Signal setzt - alle weiteren `terminate`-Aufrufe werden zu
@@ -304,15 +329,48 @@ catch terminate(v)
 
 ## 7. Globale Variablen
 
-**Implementierungsstand: umgesetzt** (siehe Abschnitt 8 sowie Resolving.
-Resolver.ResolveFireStmt/Runtime.FireRuntime.FireVmTaking).
+**Implementierungsstand: umgesetzt** (Runtime.GlobalsBroker, siehe BYTECODE.md Abschnitt 33).
 
-- **Lesen erlaubt** aus einem Fire-Thread heraus, aber nur als **Snapshot
-  zum Fire-Zeitpunkt** (nicht live/aktuell).
-- **Schreiben verboten** - ein Zuweisungsversuch auf eine globale Variable
-  aus einem Fire-Thread heraus ist ein Fehler. Jede Änderung an globalem
-  Zustand muss explizit über `sync`/Actor-Nachrichten kommuniziert werden,
-  genau wie bei normalen Objekten.
+Die globalen Variablen gehören dem **Hauptprogramm** (seiner VM). Fire-Threads arbeiten nach dem **DoEvents-Prinzip** mit ihnen - es gibt
+keinen Snapshot und keine Kopie mehr:
+
+- **Lesen direkt.** Ein Fire-Thread liest Globals live (auch Felder von Objekten, Array-Elemente, statische Felder), geschützt durch einen
+  gemeinsamen Lock. Beim ersten `fire` wird alles, was die Globals erreicht (Objekte samt Besitz, Felder, Arrays, statische Felder), in den
+  **geteilten Bereich** aufgenommen (Locking aktiv); was dem globalen Scope später gehört, kommt automatisch dazu. Ohne `fire` kostet das nichts.
+  Nicht geschützt sind Objekte, die von den Globals nur über einen Verweis erreichbar werden, nachdem das erste `fire` schon lief (sie sind dann
+  weder besessen noch beim Start erreichbar gewesen).
+- **Schreiben nur in einer Sektion.** Jede Änderung am geteilten Bereich - Zuweisung an ein Global, Feldzuweisung an ein globales Objekt,
+  Array-Element, statisches Feld - ist aus einem Fire-Thread nur innerhalb einer **Sektion** möglich. Jede einzelne dieser Änderungen meldet sich
+  selbst an (der Thread wartet), oder man fasst mehrere in `sync global { ... }` zusammen. Die Sektion wird erst erteilt, wenn das
+  Hauptprogramm **`sync globals`** ausführt: es arbeitet die Anmeldungen der Reihe nach (FIFO) ab, immer nur EINE zugleich, während es selbst
+  wartet. Es gibt also genau einen Schreiber zur Zeit, und der Zustand ist für das Hauptprogramm jederzeit klar. Einfache Werte werden
+  genauso überschrieben wie Objekte.
+- **Methodenaufrufe** eines Fire-Threads auf ein Objekt des geteilten Bereichs laufen als Ganzes in einer Sektion (auch deren Lesen-Ändern-
+  Schreiben ist damit atomar). Statische Methoden und Methoden von Objekten, die dem Thread selbst gehören, nicht.
+- **`sync globals`** ist ein Ausdruck (liefert die Anzahl der bearbeiteten Einträge) und gilt im Hauptprogramm; in einem Fire-Thread liefert es 0.
+  Wer es nie aufruft, lässt die Threads an ihrer ersten Änderung warten - das ist der Vertrag. Am **Programmende** (auch nach `leave`/`terminate`)
+  bedient das Hauptprogramm die Warteschlange, solange Threads leben, und zerstört erst danach seine Globals; endet es, bevor ein Thread
+  fertig ist (z.B. durch eine unbehandelte Exception), werden wartende und künftige Sektionen sofort gewährt.
+- **`sync global { ... }`** (Fire-Thread): der Block läuft als eine Sektion, mit den echten Globals UND den Locals des Threads; Lesen-Ändern-
+  Schreiben ist atomar. Er wird intern zu `try { ... } finally { Sektion beenden }` - `break`/`continue` daraus heraus sind erlaubt (das `finally`
+  gibt die Sektion dabei frei). Im Hauptprogramm ist der Block einfach ein Block.
+- **`fire global { ... } [taking X ...]`**: wie `sync global`, aber ohne Warten: der Thread reiht einen **Auftrag** ein (ein Lambda mit den
+  `taking`-Werten als Parametern, Objekte als Kopie) und läuft sofort weiter. Das Hauptprogramm führt ihn beim nächsten `sync globals` mit den
+  echten Globals aus; eine unbehandelte Exception darin geht wie die eines Fire-Threads an `catch threads`. Der Block sieht die Locals des
+  Threads nicht (nur die `taking`-Erfassungen) und kein `this`. Im Hauptprogramm ist es ein Auftrag an sich selbst für das nächste `sync globals`.
+- **Grenzen:** Ein Zeiger (`&`) auf ein Global ist im Thread nicht möglich. `x++` auf ein Array-Element der Globals braucht einen
+  `sync global`-Block. Mit der Direktive `#noshadow` sieht der Thread keine Globals.
+- **Automatisches Abarbeiten (Standard).** Das Hauptprogramm arbeitet die Warteschlange (Sektionen der Fire-Threads, `fire global`-Aufträge,
+  Host-Callbacks) **selbst** ab, ohne dass es `sync globals` schreibt: an seinen sicheren Punkten (dieselben, an denen `leave`/`terminate` anderer
+  Threads wirken) und damit auch direkt nach einem nativen Aufruf wie `Window.Tick` (DoEvents-Prinzip). Wer bewusst eine Stelle festlegen will,
+  an der sich Globals ändern dürfen, schreibt `#nosync` an den Programmanfang: dann arbeitet **nur** `sync globals` (und das Programmende) die
+  Warteschlange ab. Zu beachten: die automatische Variante kann zwischen zwei beliebigen Anweisungen eingreifen (nicht in Destruktoren, Properties
+  und anderen verschachtelten Ausführungen), ein Wert, den das Hauptprogramm gerade gelesen hat, kann sich also danach ändern - wer das nicht will,
+  nutzt `#nosync`.
+- **Host-Callbacks.** Ein Callback von einem fremden Thread (z.B. ein Seriell-Ereignis) läuft nicht mehr auf einer isolierten Kopie, sondern wird dem
+  Hauptprogramm eingereiht (`VM.PostCallback`) und dort mit den echten Globals ausgeführt - automatisch oder bei `sync globals` (`#nosync`). Eine
+  unbehandelte Exception darin geht als Text an den Host. Läuft das Hauptprogramm nicht (mehr), gilt weiter die isolierte Kopie. Callbacks, die beim
+  Programmende noch eingereiht sind, verfallen.
 
 ## 8. Offene Implementierungspunkte (bewusst hier vermerkt, nicht vergessen)
 
@@ -354,28 +412,20 @@ Resolver.ResolveFireStmt/Runtime.FireRuntime.FireVmTaking).
   (`OpCode.CallMethod`) prüft auf eine Mailbox; `CallBaseMethod`/
   Konstruktions-Pfade laufen synchron durch, wie bei normalen Klassen -
   sonst könnte z.B. eine Actor-Konstruktor-Kette nie fertig laufen.
-- **Fire-Block sieht jetzt echte Hauptprogramm-Globals, read-only** (siehe
-  Resolving.Resolver.ResolveFireStmt/Runtime.FireRuntime.FireVmTaking) -
-  entspricht jetzt Abschnitt 7 ("Globals: lesbar als Snapshot"). Beim
-  Betreten eines `fire`-Blocks wird JEDE Hauptprogramm-Variable unter
-  ihrem eigenen Namen sichtbar, an DENSELBEN Slots wie im Hauptprogramm -
-  der Laufzeit-Snapshot wird SYNCHRON auf dem AUFRUFENDEN Thread gelesen
-  (primitive Werte direkt, Objekte als isolierte Tiefenkopie wie bei
-  `taking`), BEVOR der neue Thread startet - ein lazy Zugriff auf die
-  lebendige Scope-Instanz von dort aus wäre ein Daten-Wettlauf gewesen.
-  Ein Schreibzugriff auf ein Hauptprogramm-Global wird zur Compile-Zeit
-  abgelehnt (`'x' ist 'readonly' ...`) - eine `taking`/`with`-Erfassung
-  MIT DEMSELBEN NAMEN schattiert den Schnappschuss ganz normal und bleibt
-  dabei selbst schreibbar (kein Widerspruch: die Erfassung ist dann
-  gemeint, nicht das gleichnamige Global). Per **`#noshadow`**-Direktive
+- **Fire-Block sieht die echten Hauptprogramm-Globals** (siehe
+  Abschnitt 7 und Resolving.Resolver.ResolveFireStmt/Runtime.FireRuntime.FireVmTaking).
+  Beim Betreten eines `fire`-Blocks wird JEDE Hauptprogramm-Variable unter
+  ihrem eigenen Namen sichtbar, an DENSELBEN Slots wie im Hauptprogramm - lesend
+  direkt (kein Snapshot mehr), schreibend über Sektionen (Abschnitt 7).
+  Eine `taking`/`with`-Erfassung MIT DEMSELBEN NAMEN schattiert das
+  gleichnamige Global ganz normal (die Erfassung ist dann gemeint). Die
+  Slots der Erfassungen liegen hinter denen der Globals im privaten Scope des Threads. Per **`#noshadow`**-Direktive
   (Ast.NoShadowDirective, wirkt fürs GANZE Programm, unabhängig davon, VOR
   oder NACH welchem `fire`-Block sie als Top-Level-Anweisung steht - MUSS
   dafür aber eine Top-Level-Anweisung sein, nicht verschachtelt in einer
   Klasse/Methode) komplett abschaltbar - dann verhält sich jeder
-  `fire`-Block wieder wie vor Einführung des Snapshots (nur `taking`/
-  `with`, keine andere Hauptprogramm-Variable sichtbar) UND der
-  Laufzeit-Snapshot wird gar nicht erst gebaut (kein Overhead, auch nicht
-  für Objekt-Globals, die sonst per `ObjectCopier.Take` kopiert würden).
+  `fire`-Block wieder wie vor Einführung der Globals-Sicht (nur `taking`/
+  `with`, keine andere Hauptprogramm-Variable sichtbar).
 - **`return` innerhalb eines `fire`-Blocks** wird abgelehnt (wie außerhalb
   jeder Funktion) - konsistent mit "keine Rückgabewerte" (Abschnitt 1).
 

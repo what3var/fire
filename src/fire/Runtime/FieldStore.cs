@@ -40,6 +40,15 @@ namespace fire.Runtime
         {
             _rtClass = rtClass;
             _known = new Value[rtClass?.FieldIndex.Count ?? 0];
+
+            // `default(Value)` ist `false` (ValueKind.Bool = 0) - ein deklariertes Feld,
+            // das noch nichts zugewiesen bekam, ist aber `undefined`. Sichtbar wird das
+            // bei einem Objekt, dessen Konstruktor abbricht, bevor die Feld-
+            // Initialisierer liefen (z.B. Exception beim Auswerten der base(...)-
+            // Argumente): sein destruct() darf dann `undefined` sehen, nicht ein
+            // erfundenes `false`.
+            for (int i = 0; i < _known.Length; i++)
+                _known[i] = Value.MakeUndefined();
         }
 
         public Value this[string name]
@@ -62,6 +71,11 @@ namespace fire.Runtime
                 (_extra ??= new Dictionary<string, Value>())[name] = value;
             }
         }
+
+        /// <summary>Direkter Zugriff auf ein DEKLARIERTES Feld über seinen Index (siehe RuntimeClass.FieldIndex) -
+        /// für die Inline-Caches der VM, die den Index schon kennen.</summary>
+        public Value GetAt(int index) => _known[index];
+        public void SetAt(int index, Value value) => _known[index] = value;
 
         public bool TryGetValue(string name, out Value value)
         {

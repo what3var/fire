@@ -541,8 +541,17 @@ namespace fire.Compiler
             // generischen Klassen.
             if (me.Target is SelfClassExpr) return _currentClass?.Name;
 
+            string? className = DottedName(me.Target);
+            return className != null && IsKnownClassName(className) ? className : null;
+        }
+
+        /// <summary>Der punktierte Name, den `target` als reine Bezeichner-Kette
+        /// schreibt (`A`, `Geometry.Circle`), oder `null`, wenn es keine
+        /// solche Kette ist (Aufruf, Index, `this`, ...).</summary>
+        private static string? DottedName(Expr target)
+        {
             var pathSegments = new List<string>();
-            Expr current = me.Target;
+            Expr current = target;
             while (current is MemberExpr innerMe)
             {
                 pathSegments.Add(innerMe.Name);
@@ -551,9 +560,7 @@ namespace fire.Compiler
             if (current is not IdentifierExpr rootId) return null;
             pathSegments.Add(rootId.Name);
             pathSegments.Reverse();
-
-            string className = string.Join(".", pathSegments);
-            return IsKnownClassName(className) ? className : null;
+            return string.Join(".", pathSegments);
         }
 
         /// <summary>Prüft bei `new Name&lt;Arg1,...&gt;(...)` (siehe Ast.NewExpr.
@@ -847,6 +854,9 @@ namespace fire.Compiler
                     // eingesammelt - hier nichts mehr zu tun.
                     break;
 
+                case NoSyncDirective:
+                    break; // wirkt erst zur Laufzeit (siehe Compiler.Compile: SetAutoSync)
+
                 case VarDeclStmt vd:
                     if (vd.Initializer != null) ResolveExpr(vd.Initializer);
                     if (vd.Type != null) ValidateTypeRef(vd.Type, vd.Line);
@@ -885,7 +895,9 @@ namespace fire.Compiler
                 case WhileStmt ws:
                     ResolveExpr(ws.Condition);
                     _loopDepth++;
+                    int savedFinallyDepth = _tryDepth; _tryDepth = 0;
                     ResolveStmtAsScope(ws.Body);
+                    _tryDepth = savedFinallyDepth;
                     _loopDepth--;
                     break;
 
@@ -915,22 +927,27 @@ namespace fire.Compiler
                     if (_loopDepth == 0)
                         throw new ResolverException("'break' außerhalb einer Schleife ('while'/'for'/'foreach')", bs.Line);
                     if (_tryDepth > 0)
-                        throw new ResolverException(
-                            "'break' kann nicht aus einem 'try'/'catch'/'finally' heraus verwendet werden " +
-                            "(Einschränkung dieser Ausbaustufe - siehe BYTECODE.md)", bs.Line);
+                        throw new ResolverException("'break' kann nicht aus einem 'finally'-Block heraus verwendet werden (Einschränkung dieser Ausbaustufe - siehe BYTECODE.md)", bs.Line);
                     break;
 
                 case ContinueStmt cs:
                     if (_loopDepth == 0)
                         throw new ResolverException("'continue' außerhalb einer Schleife ('while'/'for'/'foreach')", cs.Line);
                     if (_tryDepth > 0)
-                        throw new ResolverException(
-                            "'continue' kann nicht aus einem 'try'/'catch'/'finally' heraus verwendet werden " +
-                            "(Einschränkung dieser Ausbaustufe - siehe BYTECODE.md)", cs.Line);
+                        throw new ResolverException("'continue' kann nicht aus einem 'finally'-Block heraus verwendet werden (Einschränkung dieser Ausbaustufe - siehe BYTECODE.md)", cs.Line);
                     break;
 
                 case FireStmt fireStmt:
                     ResolveFireStmt(fireStmt);
+                    break;
+
+                case SectionEnterStmt:
+                case SectionExitStmt:
+                    break;
+
+                case PostGlobalStmt postGlobal:
+                    foreach (var arg in postGlobal.Args) ResolveExpr(arg);
+                    ResolveLambda(postGlobal.Lambda);
                     break;
 
                 case LeaveStmt:
@@ -1032,7 +1049,9 @@ namespace fire.Compiler
             if (fs.Condition != null) ResolveExpr(fs.Condition);
             if (fs.Increment != null) ResolveExpr(fs.Increment);
             _loopDepth++;
+            int savedFinallyDepth = _tryDepth; _tryDepth = 0;
             ResolveStmtAsScope(fs.Body);
+            _tryDepth = savedFinallyDepth;
             _loopDepth--;
             PopScope();
         }
@@ -1043,23 +1062,18 @@ namespace fire.Compiler
             PushScope();
             Define(fe.VarName, fe.Line);
             _loopDepth++;
+            int savedFinallyDepth = _tryDepth; _tryDepth = 0;
             ResolveStmtAsScope(fe.Body);
+            _tryDepth = savedFinallyDepth;
             _loopDepth--;
             PopScope();
         }
 
-        /// <summary>`break`/`continue` dürfen (siehe ResolveStmt) nicht aus
-        /// einem `try`/`catch`/`finally` heraus verwendet werden - deshalb
-        /// wird `_tryDepth` hier für ALLE drei Teile hochgezählt (nicht nur
-        /// den Try-Block selbst). Bewusste Einschränkung: die VM verwaltet
-        /// den registrierten Exception-Handler UND die try-eigenen Scopes
-        /// über eigene Opcodes (RegisterHandler/UnregisterHandler) - ein
-        /// `break`/`continue`-Sprung, der das sauber mit abräumt, wäre ein
-        /// riskanteres, deutlich größeres Stück Arbeit, das hier bewusst
-        /// nicht mit angegangen wird (siehe BYTECODE.md).</summary>
+        /// <summary>`break`/`continue` dürfen aus dem `try`- und den `catch`-Blöcken heraus verwendet werden (der Compiler räumt Handler und
+        /// Scopes ab und führt ein vorhandenes `finally` vorher aus, siehe Compiler.CompileBreakOrContinue) - aber nicht aus dem `finally`-Block
+        /// selbst: `_tryDepth` zählt deshalb nur noch die umgebenden `finally`-Blöcke (je Schleife neu).</summary>
         private void ResolveTry(TryStmt t)
         {
-            _tryDepth++;
             ResolveBlockNewScope(t.TryBlock);
 
             foreach (var c in t.Catches)
@@ -1075,8 +1089,12 @@ namespace fire.Compiler
                 PopScope();
             }
 
-            if (t.Finally != null) ResolveBlockNewScope(t.Finally);
-            _tryDepth--;
+            if (t.Finally != null)
+            {
+                _tryDepth++;
+                ResolveBlockNewScope(t.Finally);
+                _tryDepth--;
+            }
         }
 
         // -----------------------------------------------------------
@@ -1376,10 +1394,16 @@ namespace fire.Compiler
                     // (wie ein Klassenname auch nicht durch eine Variable
                     // verschattet werden kann) - dieselbe Namenskollision wäre
                     // ohnehin verwirrend und in der Praxis leicht vermeidbar.
-                    if (me.Target is IdentifierExpr enumId && _enums.TryGetValue(enumId.Name, out var enumMembers))
+                    // Auch ein Enum in einem Namespace ist so erreichbar, dann aber
+                    // vollqualifiziert ('Geometry.Kind.Round') - wie beim
+                    // statischen Klassenzugriff (siehe TryResolveStaticMemberAccess)
+                    // zählt NUR der exakt geschriebene Name, keine `#using`-/
+                    // Namespace-Auflösung.
+                    string? enumName = DottedName(me.Target);
+                    if (enumName != null && _enums.TryGetValue(enumName, out var enumMembers))
                     {
                         if (!enumMembers.TryGetValue(me.Name, out long enumValue))
-                            throw new ResolverException($"'{enumId.Name}' hat kein Mitglied '{me.Name}'", me.Line);
+                            throw new ResolverException($"'{enumName}' hat kein Mitglied '{me.Name}'", me.Line);
                         _refs[me] = new ResolvedRef.EnumMember(enumValue);
                         break;
                     }
@@ -1495,6 +1519,9 @@ namespace fire.Compiler
 
                 case SyncExpr syncExpr:
                     ResolveExpr(syncExpr.Target);
+                    break;
+
+                case SyncGlobalsExpr:
                     break;
 
                 case TryProcessExpr tryProcessExpr:
@@ -1666,8 +1693,9 @@ namespace fire.Compiler
             if (!_noShadowGlobals)
                 foreach (var (name, slot) in _globalScope.Slots)
                 {
+                    // Ein Fire-Thread darf Globals ändern (docs/THREADING_DESIGN.md Abschnitt 7): einzelne Zuweisungen laufen als Sektion, die
+                    // das Hauptprogramm bei `sync globals` erteilt - deshalb hier kein Schreibschutz mehr.
                     _current.Slots[name] = slot;
-                    _current.ReadonlySlots.Add(name);
                 }
 
             // taking/with - bekommen NEUE, EIGENE Slots ab hier (direkt

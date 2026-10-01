@@ -74,7 +74,7 @@ namespace fire.Editor
                 var nativeImports = new HashSet<string>();
                 foreach (var name in extraImports)
                 {
-                    try { nativeImports.Add(ImportedPreludes.ParseImportName(name)); }
+                    try { foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name))) nativeImports.Add(key); }
                     catch (Exception) { /* unbekannte Erweiterung - meldet deren eigene Datei */ }
                 }
 
@@ -148,9 +148,6 @@ namespace fire.Editor
             return diagnostics.OrderBy(d => d.Line).ToList();
         }
 
-        private static readonly Regex ImportDirective =
-            new("^[ \\t]*#import[ \\t]+\"([^\"\\r\\n]+)\"", RegexOptions.Compiled | RegexOptions.Multiline);
-
         private static readonly Regex UnknownClassOrType =
             new(@"^(?:Unbekannte Klasse|Unbekannter Typ) '([^']+)'", RegexOptions.Compiled);
 
@@ -190,7 +187,7 @@ namespace fire.Editor
         {
             var importsElsewhere = otherProjectFiles
                 .Where(other => !string.IsNullOrWhiteSpace(other))
-                .SelectMany(other => ImportDirective.Matches(other).Select(m => m.Groups[1].Value))
+                .SelectMany(ImportedPreludes.FindImportNames)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
@@ -204,8 +201,14 @@ namespace fire.Editor
                 ScriptSymbolIndex index;
                 try { index = ScriptSymbolIndex.Build(other); }
                 catch { continue; }
-                foreach (var name in index.Classes.Keys)
-                    knownElsewhere.Add(name);
+                // Der Name kann in `source` qualifiziert (`Geometry.Circle`) ODER -
+                // über den aktuellen Namespace/ein `#using` - einfach (`Circle`)
+                // geschrieben sein.
+                foreach (var cls in index.Classes.Values)
+                {
+                    knownElsewhere.Add(cls.Name);
+                    knownElsewhere.Add(cls.SimpleName);
+                }
             }
             if (knownElsewhere.Count == 0) return diagnostics;
 

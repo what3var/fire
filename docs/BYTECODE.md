@@ -267,7 +267,7 @@ müsste.
 **Wichtige Voraussetzung**: `IndexOutOfBoundsException` lebt in der Prelude
 (wie `List`/`IEnumerable`) - ein Programm, das mit `Parser.Parse(...)`
 (ohne Prelude) kompiliert wird, kennt diesen Klassennamen NICHT. Das wirft
-schon beim Resolven eines `catch (e : IndexOutOfBoundsException)` einen
+schon beim Resolven eines `catch (IndexOutOfBoundsException e)` einen
 klaren Fehler ("Unbekannter Exception-Typ"), lange bevor überhaupt ein
 Index verletzt wird - sobald irgendwo im Programm `catch` auf diesen Typ
 lauern soll (nicht nur beim tatsächlichen Werfen!), muss also `Parser.
@@ -1272,3 +1272,369 @@ vermerkt statt umgesetzt):
   im Body neu berechnen müssen - ein Fehler dabei bricht Variablenauflösung
   auf eine schwer zu findende Art, deshalb hier nicht leichtfertig
   angegangen.
+
+## 23. IO-Bridge (`#import "io"`) und zwei Sprachänderungen dazu
+
+`src/fire.IO.Bridge`: dasselbe Muster wie `GraphicsBridge`/`DeviceBridge` - `IoBridge.RegisterAll`
+(echt) / `RegisterStubs` (nur Namen, für Linker und Live-Diagnostik über `ImportedPreludes`),
+`IoBridge.PreludeSource` (fire, `namespace IO`), `NativeImports.IO = "io"`. Streams sind
+Handles (`ConcurrentDictionary<int, StreamEntry>` pro `RegisterAll`, jeder Stream mit eigener
+Sperre); jede native Funktion meldet einen Fehler mit `-1` und merkt sich Code/Meldung pro Thread
+(`[ThreadStatic]`, `__IOLastError`/`__IOLastErrorMessage`) - der Prelude wirft daraus die typisierte
+Exception (`IOErrors.Throw`). `ReadByte` liefert -2 am Ende (-1 = Fehler). Die `IoPolicy` des Hosts
+(`AllowAll`/`DenyAll`/`Rooted`) wird vor jedem `FileOpen` mit dem vollständigen Pfad befragt;
+`RuntimeSession.Build` (Compiler- und Runtime-Fassung) nimmt sie als optionalen Parameter.
+
+`FileStream`/`MemoryStream` übergeben ihrer Basis `NativeStream` zuerst `-1` und öffnen im eigenen
+Konstruktor-Body: scheitert das Öffnen, ist das Objekt trotzdem vollständig aufgebaut und sein
+`destruct()` schließt nichts. (Scheitert ein Konstruktor dagegen schon beim Auswerten der
+Basis-Argumente, haben die Felder nur den Standardwert `false`.)
+
+Datei-API (`IoFileSystem.cs`, `IoHost` ist `partial`): jeder Skript-Pfad läuft durch `Authorize`
+(`Path.GetFullPath` + `IoPolicy.IsAllowed`), `OnPath` fängt .NET-Fehler (`FailFrom`). Listen kommen als
+`ScriptArray` von Strings zurück, Zeiten als `int` mit der Einheit `s`, Text über `Utf8Encode`/
+`Utf8Decode`/`SplitLines`. `IO.File`/`IO.Directory`/`IO.Path`/`IO.Utf8` sind statische fire-Klassen
+im Prelude (die Ganzdatei-Funktionen bauen auf `FileStream` auf).
+
+Text/Stdio: `TextReader` liest in 4096-Byte-Blöcken vom Stream und sucht Zeilenenden mit dem nativen
+`BufferIndexOf` (ein Byte-Lauf in fire wäre zu langsam), Zeilen über Blockgrenzen sammelt ein
+`MemoryStream`; UTF-8 ist zeilenweise sicher, weil `0x0A` in Mehrbyte-Folgen nie vorkommt. Der Host
+gibt `IoStdio` mit (`SystemConsole` oder `Custom(...)` mit einem `LineCallbackStream`, der über
+Chunk-Grenzen dekodiert); die drei Standardstreams sind pro `RegisterAll` einmalig, ihre Handles
+`Permanent` (ein `Close()` aus dem Skript schließt sie nicht), Ausgabe/Eingabe laufen über
+`StdWrite`/`StdReadLine`/`StdReadAll`.
+
+Dafür waren Änderungen an der Sprache nötig:
+- **Destruktor-Kette:** `VM.RunDestructor` ruft die Destruktoren der ganzen Klassenkette (abgeleitete
+  Klasse zuerst, dann jede Basisklasse) - vorher nur den der konkreten Klasse, eine abgeleitete
+  Klasse ohne eigenen `destruct()` hätte den ihrer Basis also nie ausgeführt.
+- **Enums in Namespaces:** `Resolver` erkennt `Name.Mitglied` jetzt auch für einen punktierten Namen
+  (`IO.FileMode.Create`, `DottedName`) - wie beim statischen Klassenzugriff zählt nur der exakt
+  geschriebene Name. Und `class X : Namespace.Basis` akzeptiert einen qualifizierten Basisnamen.
+- **Felder vor der Konstruktion:** `FieldStore` belegt deklarierte Felder mit `undefined` statt mit
+  `default(Value)` (= `false`). Bricht ein Konstruktor ab, bevor die Feld-Initialisierer liefen (z.B. eine
+  Exception beim Auswerten der `base(...)`-Argumente), sieht ein `destruct()` `undefined`, kein erfundenes
+  `false`.
+- **`foreach` über Arrays/Puffer:** `CallMethod` auf einem Array/Puffer mit `GetEnumerator()` konstruiert
+  (`ConstructNested`) einen `ListEnumerator` der Prelude über die Elemente.
+- **Statische Property-Setter:** `SetStaticField` fällt auf die statische `set_`-Methode zurück (wie
+  `GetStaticField` auf `get_`).
+
+## 24. Basistyp-Erweiterungen (`class extends string`) und die String-/Char-Methoden
+
+**Parser.** `class extends <string|char|int|float|bool>` (Schlüsselwort statt Bezeichner,
+`ParseClassExtensionDecl`) wird wie jede Erweiterung als `ClassExtensionDecl` geparst, danach aber sofort
+geprüft (`ValidateBaseTypeExtensionMember`): nur `MethodDecl`, weder `static` noch `operator`/`GetIndex`/
+`SetIndex`; sonst `ParseException` (Feld/Property/Konstruktor/Destruktor/static/Operator; `byte` und andere
+Typen werden abgelehnt). `MergeClassExtensions` hat keine `ClassDecl`, in die es mergen könnte - es sammelt
+alle Blöcke desselben Basistyps in **eine synthetische `ClassDecl`** mit dem Namen `$string`, `$char`, ...
+(`fire.Standard.BaseTypeExtensions.ClassName`; `$` kann kein Bezeichner enthalten, es kollidiert also nie mit
+einer Nutzerklasse). Resolver, Compiler und Linker sehen eine ganz normale Klasse ohne Sonderfall.
+
+**VM.** Der Konstruktor legt `_baseTypeClasses` an (Array, indiziert mit `(int)ValueKind`; gefüllt aus
+`_classes` über `BaseTypeExtensions.ClassNameFor`). `CallMethod` auf einem Nicht-Objekt sucht dort zuerst
+die Methode (`FindMethodWithAccess`, dann `CheckArity`/`FillDefaultArgs` wie bei Objekten) und ruft sie mit
+dem Wert selbst als `this` (`_currentThis` ist ein geboxter `Value`, `LoadThis` kannte das schon); erst wenn
+keine Erweiterungsmethode passt, kommt `TryCallBuiltinMethod` (Konvertierungen aus 8.10). `SetFieldOnThis`
+auf so einem `this` scheitert - ein Basiswert hat keine Felder.
+
+**Native Funktionen.** `fire.Standard.StringMethods`/`CharMethods` (im Kernprojekt `fire`, nicht in
+`fire.Runtime`): je eine `NativeFunction` (`__StringCall`, `__CharCall`), deren erstes Argument die Methoden-ID
+(`enum StringMethod`/`CharMethod`, feste Zahlen) und das zweite der Wert ist; `switch` über die ID,
+Argumentzahl je Fall geprüft. `NativeRegistry.RegisterBaseTypeNatives()` registriert beide und muss in
+**jeder** Registry direkt hinter `print` stehen (Linker, beide `RuntimeSession.Build`, `CreateDefault`) - native
+Funktionen werden über ihren Index aufgerufen, und Kompilier- und Laufzeit-Registry müssen dieselbe
+Reihenfolge haben. Der fire-Text des Prelude (`class extends string { int IndexOf(value) { return
+__StringCall(1, this, value) } ... }`) wird aus einer Signaturtabelle erzeugt (`PreludeSource`);
+`Prelude.Source` ist deshalb `static readonly` (Kernklassen + beide Erweiterungen).
+
+**Fehler aus nativen Funktionen.** Ein ungültiger Index wirft `NativeIndexOutOfRangeException(index, length,
+what)`; `VM.CallNativeGuarded` (bewusst eine eigene Methode statt try/catch mitten in `Execute`) fängt sie am
+`CallNative`-Aufruf und macht daraus per `ThrowIndexOutOfBounds` die fangbare `IndexOutOfBoundsException`
+(„String-Index …“). Nicht abgefangen bleiben andere .NET-Fehler (falsche Argumenttypen an der nativen
+Funktion) - sie sind Programmierfehler, keine Skript-Exceptions.
+
+**Weiter in der VM statt im Prelude:** `Length`/`length` (`GetField` auf String/Array/Puffer), `s[i]`
+(`ArrayGet` liefert ein `char`, `ArraySet` auf einem String wirft) - eine Erweiterung darf keine Property
+definieren.
+
+**Editor.** `ScriptSymbolIndex.HarvestClassExtension` legt für ein Basistyp-Schlüsselwort ebenfalls die
+Sammelklasse `$string` an (aus dem Prelude-Index UND dem Dokument, sie werden wie bei `class extends List`
+zusammengeführt); `CompletionEngine` und `ScriptSymbolIndex.MemberType` lesen für Primitive daraus Methoden und
+Rückgabetypen (`BuiltinMembers.ExtensionClassOf`). `BuiltinMembers` enthält nur noch, was die VM selbst
+liefert (`Length`, `ToBytes()`, Puffer-Mitglieder), plus einen Typ-Hinweis für `Split` (ein Array-Rückgabetyp
+lässt sich in fire nicht hinschreiben). Die Sammelklassen erscheinen nicht als Typen in der
+Vervollständigung. "Zu Definition springen" erkennt Prelude-Mitglieder jetzt an der Herkunft des Mitglieds
+(`MemberInfo.Source`) statt am Flag der Klasse - wichtig, sobald eine Klasse (`$string`) Mitglieder aus
+Prelude UND Nutzerdokument hat.
+
+**Kosten.** Ein Aufruf wie `s.IndexOf("o")` läuft jetzt über einen fire-Frame plus die native Funktion statt
+über einen direkten `switch` in der VM; im Debug-Modus gemessen etwa 30 % langsamer als die frühere
+VM-eingebaute Fassung (300 000 × `IndexOf` + `Length`, dann 300 000 × `Substring(..).Length`: 3,0 s statt
+2,3 s). Der Namensvergleich ist es nicht - er steckt nur noch im normalen Methoden-Lookup der Klasse.
+
+## 25. Array-Rückgabetypen (`int[] Name()`)
+
+`TypeRef` hat das Feld `ArrayRank` (Anzahl leerer Klammerpaare, Vorgabe 0). `Parser.ParseTypeRef(allowArray)` liest
+`[` `]` hinter Basisname/Bitbreite/`*`; `[8]` (mit Zahl) bleibt die Bitbreite (`NextIsEmptyBrackets` unterscheidet,
+`byte[]` ist erlaubt, `byte[8]` nicht). `allowArray` ist nur bei Methoden-/Property-/Interface-Rückgabetypen gesetzt;
+sonst (Variable, Parameter, `extern`) wirft `ParseArrayTypeSuffix` einen Fehler mit dem Hinweis auf `Typ name[]`, bei
+Feldern erst nach dem Namen (Klassenmitglieder wissen vorher nicht, ob eine Methode folgt). `NextLooksLikeTypeThenName`
+überspringt leere Klammerpaare hinter einem Klassennamen (`Dog[] Name`; `Name[] Name` kommt in keinem Ausdruck vor).
+Resolver, Compiler und VM lesen `ArrayRank` nicht - Rückgabetypen werden nur auf existierende Typnamen geprüft.
+Editor: `HarvestMember` überspringt die Klammern und setzt `MemberInfo.TypeIsArray` (für Methoden und Properties =
+Elementtyp + Array), `TypeOfMember` macht daraus `TypeKind.Array`. Das Prelude nutzt es für `string[] Split(...)`.
+
+## 26. VM-Performance und das Benchmark-Projekt
+
+**Messen.** `src/fire.Benchmarks` (`dotnet run -c Release --project src/fire.Benchmarks -- --mode all`) führt neun kleine
+fire-Programme aus (`loop`, `float`, `fib`, `method`, `array`, `string`, `alloc`, `lambda`, `list`; Beschreibung mit `--list`),
+misst nur `VM.Run()` (1 Aufwärmlauf, dann `--runs N`, Ausgabe: kleinste und mittlere Zeit) und zeigt das Ergebnis jedes
+Programms. **Regressionsschutz:** `--save datei` speichert diese Ergebnisse, `--check datei` prüft sie später (Exit-Code 1
+bei Abweichung) - eine Optimierung darf sie nie ändern. `--file x.fire` misst ein eigenes Skript. Die Zeiten schwanken auf
+geteilten Rechnern stark (±20 %); für Vergleiche zwei Builds abwechselnd laufen lassen und jeweils das Minimum nehmen.
+
+**Ergebnis** (Modus Performance, 4-Kern-Xeon 2,1 GHz, kleinste Zeit in ms):
+
+| | vorher | nachher |
+|---|---:|---:|
+| loop (1,5 Mio. Iterationen) | 4542 | 216 |
+| float | 2293 | 114 |
+| fib(23) | 212 | 18 |
+| method (250 000 Aufrufe) | 1099 | 74 |
+| array | 3356 | 150 |
+| string | 319 | 33 |
+| alloc (60 000 Objekte) | 562 | 62 |
+| lambda | 816 | 67 |
+| list | 836 | 57 |
+| **Summe** | **14035** | **791** |
+
+Alle Ergebnisse (und die komplette Testsuite) sind unverändert. Was den Unterschied macht, in der Reihenfolge der Wirkung:
+
+1. **`Execute()` nicht pro Instruktion aufrufen.** Die Methode ist riesig und hat sehr viele lokale Variablen (v.a. `Value`-
+   Structs mit Referenzen); der JIT nullt ihren Stackframe bei JEDEM Aufruf. Das war der größte Einzelposten. Jetzt gibt es
+   `Step(op)` mit den häufigsten Opcodes direkt ausgeschrieben (Laden/Speichern, Rechnen, Vergleichen, Springen, Scopes) -
+   `[AggressiveInlining]`, es steckt also in `Run()`, `RunNestedUntil()` und `StepInstruction()` selbst; alles andere geht an
+   `Execute()`. Die schweren Fälle (Aufrufe, Feldzugriffe, `new`, Arrays, ...) sind eigene Methoden `Op<Name>()` (Schnellpfad)
+   und `Op<Name>Slow(...)` (der bisherige Code, unverändert). **Regel für Änderungen:** häufige Opcodes gehören in `Step`
+   bzw. eine `Op*`-Methode, nicht als neuer `case` mit vielen Locals in `Execute`.
+2. **`Value` von 64 auf 24 Byte** (`Kind`, `Width`, ein `long` für Int/Float-Bits/Bool/Char und EINE Referenz für
+   String/Objekt/`Unit`). Ein Value wird bei jedem Stack-Zugriff kopiert.
+3. **Arrays statt `List<T>`** für Werte-Stack (`_stack`/`_sp`), Code und Konstanten (`Chunk.CodeArray`/`ConstantsArray`, beim
+   Bauen verworfen, danach fest) und Scope-Slots (`Scope`, Parameter werden beim Aufruf direkt vom Stack hineinkopiert:
+   `VM.EnterCall`).
+4. **Rechnen ohne Umwege:** `Unit.Equals`/`Value.Add` & Co. erkennen "dieselbe Einheit-Instanz" (meist `Unit.Unitless`) per
+   Referenzvergleich; `Value.Try*InPlace` überschreiben den linken Operanden direkt im Stack. Kein Schnellpfad, wenn die
+   Einheiten verschieden sind, `%`/`/` durch 0 oder ein Objekt links steht - dann läuft der bisherige Weg samt Ausnahmen.
+5. **Inline-Caches** (`Bytecode.SiteCache`, `Chunk.SiteCaches`, indiziert mit dem Byte-Offset des Opcodes) für
+   `CallMethod`, `CallStaticMethod`, `GetField`, `SetField`, `SetFieldOnThis` und `NewObject`: die Stelle merkt sich Klasse des
+   Empfängers und Ziel (Methode bzw. Feld-Index) und überspringt beim nächsten Mal die Dictionary-Lookups (Klassenname,
+   Methodenname+Arity, Feldname). Ein Eintrag entsteht erst, nachdem die langsame Route ALLE Prüfungen bestanden hat
+   (Zugriffsmodifikator, Argumentanzahl, Einheiten-Vorgabe eines Feldes - ein Feld `int x : mm` wird deshalb nie gecacht),
+   und gilt nur für dieselbe Empfängerklasse; ein Objekt mit Actor-Postfach oder Thread-Lock (`ThreadLock != null`) geht
+   immer den langsamen Weg. Einträge sind unveränderlich und werden als Ganzes ersetzt (Threads teilen sich die Chunks).
+6. Kleinteiliges: `Array`-`Get`/`Set` mit gültigem int-Index ohne Umweg, `ObjectInstance` legt seine Besitz-Liste erst bei
+   Bedarf an.
+
+**Offen / Ideen** (nicht gemacht, weil sie Semantik berühren oder wenig bringen): Scopes von Schleifenkörpern ohne
+Deklarationen weglassen (würde die Besitz-/Destruktor-Zeitpunkte von in dem Block erzeugten Objekten verschieben, Resolver und
+Compiler müssten sich einig sein), Superinstruktionen im Compiler (`LoadLocal+LoadConst+Add`), eine Ein-Element-Besitzliste
+in `Scope` (spart bei `new` in Schleifen zwei Allokationen), die Signalprüfung pro Instruktion im Debug-Modus
+(`CheckShutdownSignals` fragt eine `ConcurrentQueue` ab), `_frames` als Array.
+
+## 27. Kopier-Präfixe `flat x` / `copy x`
+
+**Parser/AST.** `copy` ist ein neues Schlüsselwort (`TokenType.Copy`), `flat` gab es schon (`sync flat`). `ParseUnary` liest
+`flat`/`copy` als Präfix und erzeugt ein `UnaryExpr` mit den neuen `UnaryOp.FlatCopy`/`DeepCopy` (Operand wieder ein Unary-Ausdruck;
+`sync flat x` liest sein `flat` in `ParseSync` selbst und kommt hier nie an). Der Resolver braucht nichts Eigenes (er löst den Operanden auf).
+
+**Compiler/VM.** Zwei neue Opcodes, hinter `Halt` angehängt (damit alle bisherigen Zahlenwerte stabil bleiben): `CopyValue u8 flags`
+(bit0 = tief; pop Quelle, push Kopie, Owner = aktueller Scope) und `CopyValueOwned u8 flags` (pop Quelle, pop Owner-Objekt, push Kopie) -
+letzteren erzeugt `CompileAssign` genau dort, wo es auch `NewObjectOwned` erzeugt (`obj.feld = copy x`; eine bloße `feld = copy x` im Innern
+einer Klasse gehört wie bei `new` dem Scope). Beide laufen über `Execute` (kein heißer Pfad); die Arbeit macht `Runtime.ObjectCloner.Clone`.
+
+**ObjectCloner.** `flat`: neue `ObjectInstance` (gleiche Klasse, Owner wie übergeben) und Feld für Feld übertragen (`Snapshot` unter dem
+Baum-Lock, falls das Objekt an einem `taking`-Thread hängt). `copy` (`DeepCopier`) in drei Phasen: (1) Entdecken - alles über Felder/Array-
+Elemente Erreichbare mit Feld-Schnappschüssen sammeln (Stack statt Rekursion, Actors und Zerstörtes bleiben draußen); (2) Anlegen - die
+Wurzel zuerst, danach jede Instanz unter der Kopie ihres Besitzers, sofern der mitkopiert wird (Rekursion über die Besitzer endet, der Besitzbaum
+ist zyklenfrei), sonst unter dem Wurzel-Owner; (3) Füllen - Feldwerte über die Identitätstabellen (`_copies`, `_arrayCopies`, `_bufferCopies`)
+abbilden; ein Array trägt sich vor dem Füllen ein, darf sich also selbst enthalten. Ein Array als Operand läuft durch dieselben Phasen ohne
+Wurzel-Instanz.
+
+**Editor.** `copy` steht in der Keyword-Liste und im Syntax-Highlighter; `EvalExprRangeCore` überspringt das Präfix, `var d = copy a` hat also den
+Typ von `a`.
+
+## 28. Kopien als Argument/Zuweisung (Owner), `leave`, `TakeTo`
+
+**`CopyArgs`-Präfix.** `Compiler.CompileArgs` wertet bei einem Aufruf, der eine Scope für die aufgerufene Funktion erzeugt (Lambda, Methode, `static`, `base.`,
+`new`, `base(...)`), ein Argument `flat x`/`copy x` nur als `x` aus und sammelt eine Maske (2 Bit je Argument, höchstens 16); `EmitCopyArgsPrefix` schreibt
+`CopyArgs lo hi` DIREKT vor den Aufruf-Opcode. Jeder dieser Opcodes holt die Maske sofort zu Beginn ab (`VM.TakeCopyMask`, sie gelangt so nie an einen späteren Aufruf) und
+wendet sie an, sobald die Scope der aufgerufenen Funktion steht (`ApplyCopyMask`: `ObjectCloner.Clone(slot, scope, deep)`) - auch in den Inline-Cache-Schnellpfaden
+(`EnterCall(..., copyMask)`). Aufrufe ohne Scope (eingebaute Methoden, Actor-Nachrichten) kopieren auf dem Stack mit dem aktuellen Scope als Owner
+(`ApplyCopyMaskToArgs`); native Funktionen bekommen vom Compiler gar kein Präfix, dort bleibt es `CopyValue`.
+
+**Zuweisung an ein Objekt.** `Compiler.IsOwnedCreation`/`TryCompileOwnedCreation` fassen `new`, `flat` und `copy` zusammen: der künftige Owner liegt schon auf dem Stack
+(`Dup` bei `obj.feld = ...`, `LoadThis` bei einem bloßen Feldnamen und im Instanzfeld-Initialisierer), danach `NewObjectOwned` bzw. `CopyValueOwned`. `CopyValueOwned` läuft über
+`ObjectCloner.CloneOwnedBy` - ist der Owner schon zerstört, entsteht die Kopie in einer Wegwerf-Scope, die sofort freigegeben wird (Verhalten wie `TakeTo`, SPEC 2.2).
+Der Instanzfeld-Initialisierer (`CompileFieldInitProto`) und ein bloßer Feldname in `CompileAssign` gehörten bisher der Initialisierer-/Methoden-Scope: das `new` darin wurde
+beim Verlassen zerstört, obwohl das Feld darauf zeigte - jetzt gehört es der Instanz (SPEC 2.1).
+
+**`TakeTo`/`TakeUpwards`/`TakeGlobal`** (SPEC 2.2) waren nur in C# vorhanden. `VM.TryCallOwnershipMethod` macht sie zu eingebauten Methoden jedes Objekts (greift nur, wenn die Klasse
+nichts Gleichnamiges deklariert, also nach dem Methoden-Lookup).
+
+**`leave`.** `Leave`/`Terminate` rufen `ForceShutdownCheck()` (setzt den Instruktionszähler auf "fällig"), damit `Run()` das Signal vor der nächsten Instruktion prüft statt erst nach
+dem Prüfintervall (Release 16, Performance 4096). `UnwindForShutdown(destroyGlobalScope: true)` gibt bei `leave` nach dem Abwickeln der Frames auch `_globalScope` frei; `terminate`
+und die Abwicklung nach einer unbehandelten Exception lassen den globalen Scope wie bisher aus.
+
+**Host-Sicherheitsnetz.** `IoBridge.RegisterAll` gibt ein `IDisposable` zurück (`IoHost.Dispose` schließt alle noch offenen, nicht-permanenten Streams); die Sessions halten es
+(`IoResources`), `Runtime.Session.Run()` ruft es nach dem Lauf, `RuntimeSession.CloseHostResources()` ist für Hosts, die die VM selbst treiben (der Step-Debugger `DebugSession` ruft es, sobald alle Threads des Laufs beendet sind, und in `Reset()` bei einem abgebrochenen Lauf; höchstens einmal je Lauf).
+
+## 29. Shutdown-Signale an sicheren Punkten, Programmende räumt ab
+
+**Prüfung.** `Run()` fragt nichts mehr pro Instruktion ab. Jedes Signal (`RequestLeave`, `RequestTerminate`, eine eingereihte Fire-Thread-Exception) erhöht den globalen Zähler
+`s_signalEpoch` (`RaiseSignal`); jede VM merkt sich den zuletzt gesehenen Stand (`_seenEpoch`). Die sicheren Punkte rufen `PollSignals()` (ein `Volatile.Read` und ein Vergleich):
+Rücksprung-`Jump` (Ziel ≤ aktuelle Position, d.h. jede Schleife), Beginn von `Call`/`CallMethod`/`CallStaticMethod`/`NewObject`, und - als `PollSignalsAfterOp` - nach
+`CallNative`/`CallTryableNative`/`CallExtern` (eine native Funktion darf `leave` auslösen) sowie in den Opcodes `Leave`/`Terminate` selbst. Nur bei einer Abweichung läuft die eigentliche
+Prüfung `CheckShutdownSignals`; sie liegt mitten in einer Instruktion, deshalb rechnet `PollSignalsSlow` mit `_ip--` auf die Instruktionsgrenze (ein dort genesteter `catch threads`-Handler
+kehrt an die richtige Stelle zurück). In verschachtelten Ausführungen (`_nestedDepth > 0`: Destruktor, Operator-Überladung, Property) wird nicht geprüft, das Signal bleibt stehen.
+Debug/Release/Performance unterscheiden sich dadurch nicht mehr (`ShutdownCheckInterval` ist weg).
+
+**Beenden ohne Exception.** `StopExecution()` setzt `_stopExecutionRequested` und stellt Chunk/ip auf `StopChunk` (nur `Halt`); die aufrufende Instruktion kehrt sofort zurück
+(`if (PollSignals()) return;`, wie nach `ThrowException`), `Run()` liest das `Halt` und endet. Verschachtelte Schleifen, `StepInstruction` und `CallLambdaEntry` prüfen das Flag weiterhin
+(sie sind nicht der heiße Pfad); `RunDestructor` und die `RunNestedUntil`-Aufrufer verwerfen den Rückgabewert nur, wenn nicht gestoppt wurde (`PopNestedResult`), und ein Destruktor, der
+die VM beendet, bricht die restliche Kaskade ab. (Eine Ausnahme als Abbruchweg wurde bewusst nicht gewählt, siehe docs/PORTING.md.)
+
+**Programmende.** Beim `Halt` der Hauptschleife (nicht beim `Halt` des `StopChunk`) wird der globale Scope freigegeben (`ReleaseGlobalScopeAtEnd`): das Hauptprogramm (jede VM, die kein
+Fire-Thread ist) wartet vorher mit `FireRuntime.WaitForAllFireThreads()` auf alle lebenden Fire-Threads (`FireRuntime.Fire` zählt sie), ein Fire-Thread gibt nur Objekte ohne `SyncOrigin`
+frei (`Scope.ReleaseWhere`; Globals-Schnappschuss und `taking`-Kopien sind Kopien von Objekten des Hauptprogramms und dürfen z.B. kein geteiltes Handle schließen). `leave` tut dasselbe
+(`UnwindForShutdown(destroyGlobalScope: true)`), `terminate` und die Abwicklung nach unbehandelter Exception nicht. `VM.DestroyGlobalsAtEnd = false` schaltet es für Hosts ab, die die
+Objekte nach dem Lauf noch verwenden (die Thread-Tests tun das); im Einzelschritt (`StepInstruction`) wird ohne Warten freigegeben. Die IO-Destruktoren (`NativeStream`, `TextReader`,
+`TextWriter`) verschlucken IO-Fehler, weil ein Destruktor nie werfen soll.
+
+## 30. Packer: eigenständige Datei, Bridges nur bei Bedarf, eigener Lader (kein Costura/Fody mehr)
+
+**Ergebnis.** `Linker.CompileAndLink(..., outname)` erzeugt EINE Datei, die ohne daneben liegende DLLs läuft. Sie besteht aus
+1. dem **Start-Stück**: `fire.Runtime.exe` (apphost) + `fire.Runtime.dll` + `fire.Runtime.runtimeconfig.json` als .NET-Single-File-Bundle (Format v6, `BundleWriter`; dasselbe Layout wie
+   `dotnet publish -p:PublishSingleFile=true` für framework-abhängige Apps, selbst geschrieben, damit der Compiler kein SDK braucht). Mehr braucht der .NET-Host nicht; der Host liest nur ab dem im apphost
+   eingetragenen Header-Offset, Daten dahinter stören nicht. Es läuft weiterhin eine installierte .NET-8-Runtime vor (framework-abhängig).
+2. dem **Payload** dahinter (`PayloadFile`): Programm (MemoryPack), Kern (`fire.dll`, `MemoryPack.Core`) und - NUR bei entsprechendem `#import` - die Bridge-DLLs samt Abhängigkeiten und nativen Bibliotheken. Jeder
+   Eintrag ist einzeln Brotli-gepackt (nur wenn es etwas bringt) und trägt eine SHA-256-Prüfsumme. Stufe: das Programm mit `Optimal` (Millisekunden), die DLLs mit `SmallestSize`
+   (Qualität 11, für SDL3-CS.dll ~3 s) - aber nur einmal: das Ergebnis liegt im Cache `%TEMP%/fire-pack-cache/<SHA-256 der DLL>.br`, jeder weitere Build liest es nur (Build ~0,3 s statt 1,6-5 s). Ohne Schreibrecht
+   auf den Cache wird schnell (`Optimal`) gepackt. Layout: `[Einträge][Index][Fuß: int64 Index-Offset, int32 Index-Länge, "FIREPAK1"]` - gelesen wird über den
+   Fuß, die frühere Marker-Suche (`DA 1D`) gibt es nicht mehr.
+
+**Welche DLLs.** `PackagePlan.Create(nativeImports, baseDir)`: Kern immer; je Import die Einstiegs-Assemblies (`graphics`: `fire.Terminal.Bridge`/`.Windows`/`.Sdl` + natives SDL3; `devices`: `fire.Device.Bridge`/
+`fire.Device.Manager` (+ `libSystem.IO.Ports.Native` außerhalb von Windows); `io`: `fire.IO.Bridge`; `print`: nichts). Der Rest folgt aus den Assembly-Verweisen der DLLs (System.Reflection.Metadata): alles, was neben
+dem Compiler liegt und nicht zum .NET-Framework gehört, kommt mit. Plattform-Unterordner (`runtimes/win/lib/...`, `runtimes/unix/lib/...`) haben Vorrang vor dem Hauptordner (System.IO.Ports liefert dort
+nur eine Attrappe). `PackagePlan.Unresolved` (Verweis ohne Datei und nicht im Framework) lässt `Packer.PackProgram` mit einer Fehlermeldung abbrechen statt eine kaputte Datei zu erzeugen. Native Bibliotheken
+werden nur für die Plattform des Compilers eingebunden (passend zum apphost, den er mitbringt).
+
+**Laden zur Laufzeit.** `Program.cs` ruft nur `Bootstrap.Start()`: `PayloadLoader.Install()` öffnet den Payload der eigenen Datei (`Environment.ProcessPath`) und hängt `AssemblyLoadContext.Default.Resolving`
+(verwaltete DLLs, `LoadFromStream`) und `ResolvingUnmanagedDll` (native Bibliotheken) ein; erst danach läuft `Bootstrap.Run` (`[NoInlining]`), der als Erstes `fire.dll` braucht. Die Ereignisse feuern erst,
+wenn der Standard-Kontext eine Assembly nicht findet, also genau beim ersten echten Gebrauch - eine nicht eingebundene Bridge wird nie angefasst. Native DLLs (Windows kann keine aus dem Speicher laden) werden einmal nach
+`%TEMP%/fire-native/<Prüfsumme>/` geschrieben (über eine Zwischendatei + `File.Move`, also auch bei gleichzeitigen Starts sicher) und von dort geladen; spätere Starts nutzen die Kopie.
+
+**Regel für `fire.Runtime`.** Der JIT löst einen Typ schon beim Übersetzen einer Methode auf, die ihn in Signatur, lokaler Variable oder Aufruf erwähnt. Deshalb steht jeder Zugriff auf Bridge-Typen in
+`Session.RegisterGraphics/RegisterDevices/RegisterIo` (`[MethodImpl(NoInlining)]`, nur betreten wenn der Import da ist); `Session` selbst hat keine Bridge-Typen in Feldern/Properties/Parametern (die früheren
+Properties `WindowManager`/`FramebufferManager`/`ConsoleManager` und die Parameter `ioPolicy`/`ioStdio` von `Session.Build` sind entfallen - Hosts mit eigener Policy nutzen `fire.Compiler.RuntimeSession`). Ebenso
+darf `Main` keinen Typ aus `fire.dll` erwähnen. Neue Bridge = Eintrag in `PackagePlan.Imports` + eigene `Register...`-Methode.
+
+**Icon/Version.** `PeResourceEditor` ändert die PE-Ressourcen und verschiebt damit Dateiinhalt: das geschieht jetzt auf einer Kopie des apphost VOR dem Bündeln (`PackProgram(..., customizeApphost)`), sonst wäre
+der Header-Offset des Bundles ungültig. Geschrieben wird erst in `<outname>.tmp`, dann umbenannt. Die Runtime liest ihr Programm aus der eigenen Datei (früher hart `tempout.exe` neben der Runtime).
+
+**Größen (Linux-Build, Richtwerte).** Nur `print` ~300 KB, `io` ~320 KB, `devices` ~350 KB, `graphics` ~700 KB (Windows zusätzlich komprimiertes SDL3.dll). Noch kleiner ginge es, wenn auch die VM (`fire.Runtime.dll`,
+~80-100 KB, im Bundle unkomprimiert) in den Payload wanderte und das Start-Stück nur aus einer winzigen Bootstrap-Assembly bestünde.
+
+**Tests.** Suite-Block "Packer / Payload / Lader": Plan je Import, Payload-Rundlauf inkl. Marker-Bytes im Inhalt, Kompression, Prüfsummenfehler, nativer Lader (Linux), Ende-zu-Ende (packen, außerhalb des
+Compiler-Ordners starten: `print`, `io`; Größenreihenfolge; nackte Runtime meldet fehlenden Payload).
+
+**Nachtrag: `leave`/`terminate` enden wie das normale Programmende, der Aufrufer hält sofort.** `leave`/`terminate` rufen `ShutdownSelfNow()`: die eigene VM geht unabhängig vom Signalzähler
+sofort in den Halt (auch wenn `terminate` schon von einem anderen Thread gesetzt war). Die Abwicklung (`CheckShutdownSignals` -> `UnwindForShutdown`) gibt den globalen Scope nicht mehr selbst frei, sondern
+setzt `_shutdownReleasePending`; am Halt (`Run`, im Einzelschritt `StepInstruction`) läuft dann wie beim normalen Ende `ReleaseGlobalScopeAtEnd` - das Hauptprogramm wartet also auch nach `leave`/`terminate` auf alle
+Fire-Threads, und jeder Fire-Thread zerstört vorher seine eigenen Objekte (nur nach einer unbehandelten Exception bleibt der globale Scope stehen). Der Stopp-Zustand (`_stopExecutionRequested`) wird dafür kurz aufgehoben
+(`ReleaseGlobalScopeAfterStop`), weil `RunDestructor` in ihm nichts mehr ausführt. In einer VERSCHACHTELTEN Ausführung (Destruktor, Property, Operator, Callback) hält die VM sofort an und merkt sich
+`_shutdownDeferred`; `FinishDeferredShutdown()` (am Halt in `Run`, in `StepInstruction`, in `CallLambdaEntry`) wickelt dann nach, sobald `_nestedDepth` wieder 0 ist.
+
+## 31. Font-Rendering, Pixel-Text, Ereignis-Warteschlange und die UI-Bibliothek
+
+**Font.** `IBitmapGlyphFont.GetGlyphRows(char)` (Bitmap-Zeilen zu je ≤ 8 Bit) + `GlyphMasks.Table` (256 Zeilen x 2 `Vector128<uint>`-Masken): `TerminalCanvas.DrawGlyph` schreibt eine 8 Pixel
+breite Zeile mit zwei `ConditionalSelect` (opak) bzw. Lesen-Auswählen-Schreiben (transparent, leere Zeilen übersprungen) direkt in `Framebuffer.Pixels`; die Zelle muss vollständig im Target liegen, sonst der
+pixelweise Weg. Spalten/Zeilen-Raster und Zellgröße sind einmal berechnet (`UpdateGrid`), `DrawGlyph` ist `AggressiveOptimization` (kein Warten auf das Hochstufen). Messung (80x30 Zeichen):
+opak 370 -> 32 ns/Zeichen, transparent 270 -> 26 ns/Zeichen. Der Test-Block "Font-Rendering" vergleicht schnellen und allgemeinen Weg Pixel für Pixel (beide Schriftgrößen, opak/transparent, Positionen
+über den Rand hinaus, Scrollen). `IntegratedGlyphFont`: Tabellen statisch, Zeichen > 255 als `?`.
+
+**Pixel-Text.** `TerminalCanvas.DrawText/MeasureText`, `ConsoleManager.DrawText/GetCellWidth/GetCellHeight`, in der Bridge `Console.FillRect/DrawRect/DrawLine/DrawText/CellWidth/CellHeight` (rohe Farben).
+
+**Ereignisse.** `WindowManager.EnableEventQueue/NextEvent/EncodeEvent` (siehe `docs/CONSOLE.md`), `Window.EnableEvents()/NextEvent()`. `SdlFramebufferRenderer` rechnet die Mausposition von Fenster- auf
+Framebuffer-Koordinaten um (`SDL.GetWindowSize`) und startet die Texteingabe. `WindowManager(framebuffers, runner, rendererFactory)`.
+
+**Warum Abfrage statt Callback.** `Session.CallLambda` -> `FireRuntime.CallCallback` kopiert für JEDES Ereignis alle globalen Objekte (`ObjectCopier.Take`, außerdem wird dabei auf deren Baum
+Thread-Sharing aktiviert); ein Objekt mit Lambda-Feld oder mit einem Verweis auf ein fremdes Objekt wirft dabei `TakingViolationException` (der Callback schlägt fehl, SPEC 8.1.4 beschreibt das so). Ein Widget-Baum
+mit `onClick`-Lambdas wäre davon betroffen, deshalb holt `UI.Root.Tick` die Ereignisse per Warteschlange im Hauptprogramm ab.
+
+**UI.** `src/fire.UI.Bridge` (`UiBridge.PreludeSource`, `namespace UI`, siehe `docs/UI.md`); `NativeImports.Ui = "ui"`, `ImportedPreludes.WithDependencies("ui") = graphics + ui` (Linker, Editor-Diagnose und
+`CreateProjectDirectiveRegistry` tragen alle Schlüssel ein), `PackagePlan` kennt `ui` ohne eigene DLL. Innerhalb eines Namespace sind statische Klassen nur vollqualifiziert erreichbar (`UI.Color.Rgb`), Felder
+brauchen einen Typ (`Element hoverElement`), ein Lambda-Feld ruft man über eine lokale Variable (`var callback = this.onClick`, `callback()`), nicht als `this.onClick()`. Tests: Suite-Block "UI-Bibliothek".
+
+## 32. Native Callbacks laufen verschachtelt auf der VM des Threads
+
+`Session.CallLambda` (Runtime- und Compiler-Fassung) ruft `FireRuntime.RunCallback`. Auf dem Thread einer laufenden VM (`VM.CurrentThreadVm`, wird am Ende von `Run` wieder null; im Debugger zusätzlich `!IsHalted`) führt
+`VM.CallLambdaInline` das Lambda verschachtelt aus (`RunNestedUntil`): Frame auf den Aufrufer-Zustand, neuer Scope mit dem globalen Scope als Parent, `this` = `OnTarget`. Die Globals sind die echten, nichts wird kopiert,
+kein Thread-Sharing aktiviert. Für eine unbehandelte Exception im Callback gibt es eine `CallbackBoundary` (Frame-Tiefe, Scope, Handler-Untergrenze, Stackhöhe des Aufrufers): `ThrowException` sucht nur Handler über der
+Untergrenze (die try/catch des Aufrufers sind für den Callback unsichtbar); findet es keinen, wickelt es bis zur Grenze ab (`UnwindTo`), stellt die Stackhöhe wieder her und merkt sich die Exception in `_callbackError`,
+die `CallLambdaInline` an den Host zurückgibt (Text an `onUnhandled`, Programm läuft weiter). Eine rohe C#-Ausnahme (z.B. Performance-Modus ohne Prüfungen) stellt den Aufrufer-Zustand im `catch` wieder her und wird vom
+Host gemeldet; `RunNestedUntil` gibt `_nestedDepth` jetzt auch dann wieder frei (`finally`). `leave`/`terminate` im Callback laufen über den bekannten Weg (`_shutdownDeferred`, `FinishDeferredShutdown`).
+`WindowManager.Tick` kopiert die Callback-Liste je Ereignis (`ToList`), ein Callback darf Ereignisse an-/abmelden. Ohne laufende VM auf dem Thread bleibt es beim isolierten `FireRuntime.CallCallback` mit Kopie.
+Tests: Suite-Block "Callbacks auf dem VM-Thread".
+
+## 33. Globals und Fire-Threads: Broker, Sektionen, `sync globals`
+
+Siehe docs/THREADING_DESIGN.md Abschnitt 7 für das Verhalten. Umsetzung:
+
+**`GlobalsBroker`** (`fire.Runtime/GlobalsBroker.cs`): entsteht im Hauptprogramm beim ersten `fire`/`fire global` (`VM.EnsureOwnerBroker`), hält den globalen Scope des Hauptprogramms, den gemeinsamen
+`ThreadShareLock` und eine FIFO-Warteschlange aus `SectionRequest` (ein Thread wartet auf `Granted`, das Hauptprogramm wartet danach auf `Done`) und `JobRequest` (`fire global`). `Drain()` ist
+`sync globals`. `Close()` (am Ende von `VM.Run` des Besitzers) gewährt wartende und künftige Sektionen sofort. `FireRuntime.WaitForAllFireThreads(broker)` bedient die Warteschlange, solange Threads leben
+(`WakeWaitingOwner` weckt es), und `FireRuntime.FireVmTaking` hängt den Thread per `VM.AttachToGlobals` an; ein `finally` ruft `ReleaseGlobalsSections` (Sicherheitsnetz gegen ein hängendes Hauptprogramm).
+
+**Geteilter Bereich.** `ShareGlobals` (beim ersten `fire`) markiert alles, was die Globals erreicht: Objekte per `ObjectInstance.MarkGlobalsDomain` (setzt `InGlobalsDomain`, aktiviert den Baum-Lock, rekursiv über den Besitz),
+Arrays per `ScriptArray.IsShared`, dazu die statischen Felder. `Scope.SharingLock` (globaler Scope) und `ObjectInstance.AddOwned` geben das an jedes später besessene Objekt weiter. Die Schnellpfade für Feldzugriffe
+sind für gesperrte Objekte ohnehin aus (`ThreadLock != null`), die Array-Schnellpfade prüfen zusätzlich `IsShared`. Benchmarks vor/nach: kein messbarer Unterschied (837/852 ms vs. 848/839 ms, Performance).
+
+**Thread-Seite.** Slots `< _sharedCount` der Globals gehen in `LoadGlobal`/`StoreGlobal`/`DeclareLocal`-Nachbarn über den Broker (`LoadSharedGlobal` unter dem Lock, `StoreSharedGlobal` in einer Sektion); der private `_globalScope`
+enthält Platzhalter für diese Slots und dahinter die `taking`/`with`-Erfassungen. Sektionen sind in `_sectionDepth` gezählt (`EnterGlobalsSection`/`ExitGlobalsSection`); in einer schon erteilten Sektion laufen alle
+Schreibzugriffe direkt (unter dem Lock). Eingebaut in: `OpSetFieldSlow` (Objekt im geteilten Bereich), `OpCallMethod` (Schnellpfad nur, wenn das Objekt nicht im geteilten Bereich liegt oder die Sektion gehalten wird;
+sonst `CallGlobalsMethodInSection` über `CallMethodNested`), Array-Zugriffe (`TryGetSharedElement`/`TrySetSharedElement`), statische Felder, `IncDecIndex`. Ein Array, das ein Thread über die Globals erreicht, wird dabei
+nachträglich als geteilt markiert (`MarkShared`). Das Hauptprogramm schreibt nach dem ersten `fire` Globals und Deklarationen unter dem Lock (`StoreOwnerGlobal`/`DeclareOwnerGlobal`).
+
+**Syntax.** Opcodes `SyncGlobals`, `SectionEnter`, `SectionExit`, `PostGlobal` (am Ende von `OpCode`). Der Parser entzuckert `sync global { B }` zu `SectionEnter; try { B } finally { SectionExit }` (`TryStmt.IsSyncSection`
+nur für die Fehlermeldung bei `break`/`continue`) und `fire global { B } taking x` zu `PostGlobalStmt(Lambda(x) => B, [x])`, das der Resolver wie ein Lambda (Globals sichtbar, Locals des Aufrufers nicht) und der Compiler als
+Argumente + Lambda + `PostGlobal n` behandelt. `PostGlobal` kopiert Objekt-Argumente tief (`ObjectCloner.Clone`, Besitzer ein Halter-Scope, den das Hauptprogramm nach dem Lauf freigibt); ein Fehler im Auftrag geht wie
+der eines Fire-Threads an die Warteschlange der Thread-Exceptions (`catch threads`). Der Resolver schützt die Globals in einem `fire`-Block nicht mehr (`ReadonlySlots` entfällt für die Schatten-Einträge).
+
+Tests: Suite-Block "Globals und Fire-Threads" (14 Fälle in drei Modi: direktes Lesen, atomare Methoden und Blöcke, Locals im Block, `fire global` mit Wert/Objekt, Programmende ohne `sync globals`, Exception im Block, Arrays,
+statische Felder, verschachtelte Threads).
+
+
+## 34. Automatisches Abarbeiten, `#nosync`, Host-Callbacks in der Warteschlange
+
+Siehe docs/THREADING_DESIGN.md Abschnitt 7. Umsetzung (alles in `VM.cs`, Besitzer = Hauptprogramm-VM):
+
+- `SyncGlobalsNow()` (= `sync globals`) liefert `DrainInbound()` + `GlobalsBroker.Drain()`.
+- `PostCallback(lambda, args, onUnhandled)` (threadsicher, von jedem Thread) reiht ein `InboundCallback` in eine `ConcurrentQueue` und hebt das Signal; es liefert false, wenn die VM nicht läuft (`_acceptingCallbacks`
+  ist nur während `Run()`/Einzelschritt gesetzt). `FireRuntime.RunCallback(..., owner)` nimmt diesen Weg für Threads ohne VM und fällt sonst auf die isolierte Kopie zurück; beide `RuntimeSession.CallLambda` übergeben
+  die Haupt-VM.
+- `GlobalsBroker.EnterSection`/`PostJob` rufen `VM.RaiseSignal()` (globale Epoche), damit der Besitzer es an seinem nächsten sicheren Punkt bemerkt.
+- `AutoSyncNow()` (nicht in verschachtelter Ausführung, nur bei `_autoSync`) wird von `PollSignalsAfterOp` und `PollSignalsSlow` gerufen, also an denselben Punkten wie die Shutdown-Signale, und im Einzelschritt
+  nach jeder Instruktion (`StepInstruction`). Kein Mehraufwand im Normalfall: dieselbe Epochen-Prüfung wie bisher (Benchmark vor/nach 852/866 ms vs. 854/855 ms, Performance).
+- `#nosync` = `NoSyncDirective` (AST) -> der Compiler setzt am Programmanfang `SetAutoSync 0` -> `_autoSync = false`.
+
+Tests: Suite-Blöcke "Callbacks auf dem VM-Thread" (Host-Thread-Callback automatisch/`#nosync`/Exception) und "Globals und Fire-Threads" (Standard-Automatik, `fire global` ohne `sync globals`, `#nosync`).
+
+## 35. `break`/`continue` aus `try`/`catch` heraus
+
+Löst die Einschränkung aus Abschnitt 17 auf (Resolver: `_tryDepth` zählt nur noch umgebende `finally`-Blöcke, je Schleife neu). Der Compiler führt einen `_tryStack` (`TryCompileContext`: Phase Try/Catch, Scope-Tiefe außerhalb,
+Anzahl offener Schleifen beim Betreten); die von der VM erzeugte Catch-Scope zählt in `_currentScopeDepth` mit. `CompileBreakOrContinue` geht die `try`s der aktuellen Schleife von innen nach außen durch: Scopes bis zur Tiefe des
+`try` schließen, im Try-Teil `UnregisterHandler`, im Catch-Teil `ClearPendingResume` + `ExitScope` (wie am normalen catch-Ende), dann das `finally` **inline** (Handler sind schon abgemeldet, ein Fehler darin propagiert normal) -
+zuletzt die restlichen Scopes bis zum Schleifenkörper und der Sprung. Aus dem `finally` selbst bleibt `break`/`continue` ein Resolver-Fehler (das `finally` wird zusätzlich als eigene Funktion für den Ausnahmepfad
+kompiliert, dort gibt es die Schleife nicht). Das gilt auch für `sync global { }` (intern `try`/`finally`). Tests: Suite-Block "Globals und Fire-Threads" (8 Fälle: finally, Locals, Handler-Abmeldung, catch, verschachtelt,
+innere Schleife, Sektion) und der Resolver-Test "break in finally".

@@ -121,7 +121,20 @@ namespace fire.Bytecode
                 Console.WriteLine(args.Length > 0 ? args[0].ToString() : "");
                 return Value.MakeUndefined();
             });
+            registry.RegisterBaseTypeNatives();
             return registry;
+        }
+
+        /// <summary>Registriert die nativen Funktionen, auf die der Prelude die Methoden der
+        /// Basistyp-Erweiterungen (`class extends string/char`, SPEC 5.5.1, 8.12) abbildet - je EINE
+        /// Funktion pro Basistyp, die Methode wählt ihr erstes Argument (eine ID). MUSS in jeder
+        /// Registry stehen, mit der ein Programm samt Prelude kompiliert/ausgeführt wird, und zwar
+        /// an derselben Stelle der Reihenfolge wie beim Kompilieren (native Funktionen werden über ihren
+        /// Index angesprungen) - deshalb überall direkt hinter `print`.</summary>
+        public void RegisterBaseTypeNatives()
+        {
+            Register(fire.Standard.StringMethods.NativeName, fire.Standard.StringMethods.Call);
+            Register(fire.Standard.CharMethods.NativeName, fire.Standard.CharMethods.Call);
         }
     }
 }

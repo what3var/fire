@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using fire.Ast;
 using fire.Bytecode;
+using fire.Standard;
 using fire.Runtime;
 using fire.Values;
 
@@ -122,14 +123,38 @@ namespace fire.Runtime
 
     public sealed class VM : IDestructRunner
     {
-        private Chunk _currentChunk;
+        // Der gerade laufende Chunk samt Array-Kopien von Code/Konstanten (siehe Chunk.CodeArray) - jede
+        // Zuweisung an _currentChunk (Aufruf, Return, Exception-Sprung, ...) aktualisiert sie mit.
+        private Chunk _chunk;
+        private byte[] _code;
+        private Value[] _constants;
+        private Chunk _currentChunk
+        {
+            get => _chunk;
+            set
+            {
+                _chunk = value;
+                _code = value.CodeArray;
+                _constants = value.ConstantsArray;
+            }
+        }
         private readonly Scope _globalScope;
         private readonly NativeRegistry _natives;
         private readonly ExternRegistry _externs;
         private readonly IReadOnlyDictionary<string, RuntimeClass> _classes;
         private readonly IReadOnlyDictionary<string, ExternSignature> _externSignatures;
 
-        private readonly List<Value> _stack = new();
+        /// <summary>Die Sammelklassen der Basistyp-Erweiterungen (`class extends string { ... }`, SPEC
+        /// 5.5.1), indiziert über `(int)ValueKind` - ein Array statt eines Namens-Lookups, weil CallMethod
+        /// für JEDEN Methodenaufruf auf einem Nicht-Objekt hier nachsieht. `null` = für diese Werteart gibt
+        /// es keine Erweiterung.</summary>
+        private readonly RuntimeClass?[] _baseTypeClasses;
+
+        // Der Werte-Stack: ein Array mit Stackzeiger statt einer List<Value> (kein Versionszähler, keine
+        // doppelte Bereichsprüfung, kein Nullen beim Entfernen) - Push/Pop sind der heißeste Pfad der VM.
+        private int _copyArgMask; // gesetzt vom Präfix CopyArgs, abgeholt vom nächsten Aufruf-Opcode (TakeCopyMask)
+        private Value[] _stack = new Value[256];
+        private int _sp;
         private readonly Stack<CallFrame> _frames = new();
         private readonly List<ActiveHandler> _handlers = new();
         private readonly Dictionary<ObjectInstance, PendingResume> _pendingResumes = new();
@@ -148,8 +173,8 @@ namespace fire.Runtime
         // -----------------------------------------------------------
         // leave/terminate (docs/THREADING_DESIGN.md Abschnitt 6) - kooperative
         // Prüfpunkte statt echter Unterbrechung: jede laufende VM-Instanz
-        // bemerkt ein Signal spätestens an der nächsten Instruktion (siehe
-        // Run()) und wickelt sich dann selbst sauber ab (UnwindForShutdown),
+        // bemerkt ein Signal spätestens am nächsten sicheren Punkt (siehe
+        // PollSignals) und wickelt sich dann selbst sauber ab (UnwindForShutdown),
         // OHNE dabei irgendeinen normalen `catch`/`catch(e)` zu durchlaufen -
         // beide Signale werden absichtlich NIE gegen HandlerTemplate.Catches
         // geprüft, sie laufen nur durch etwaige `finally`-Blöcke hindurch.
@@ -186,7 +211,11 @@ namespace fire.Runtime
         /// Grundlage einer nativen Brücken-Funktion wie `__leave()`, siehe
         /// Program.cs-Test, solange es noch keine echte `leave`-Sprachsyntax
         /// gibt).</summary>
-        public void RequestLeave() => _leaveRequested = true;
+        public void RequestLeave()
+        {
+            _leaveRequested = true;
+            RaiseSignal();
+        }
 
         /// <summary>Globaler Not-Aus (siehe THREADING_DESIGN.md 6.3) - "erster
         /// Aufruf gewinnt", alle weiteren werden zu No-Ops.</summary>
@@ -198,6 +227,7 @@ namespace fire.Runtime
                 _terminateValue = value;
                 _terminateRequested = true;
             }
+            RaiseSignal();
         }
 
         /// <summary>Nur für Tests/eine frische Programmausführung gedacht -
@@ -283,6 +313,284 @@ namespace fire.Runtime
         /// noch durchführt.</summary>
         private bool _stopExecutionRequested;
 
+        /// <summary>`leave`/`terminate` hat diese VM beendet: am Halt wird wie beim normalen Programmende der globale Scope
+        /// freigegeben (das Hauptprogramm wartet vorher auf alle Fire-Threads) - anders als nach einer unbehandelten Exception.</summary>
+        private bool _shutdownReleasePending;
+
+        /// <summary>`leave`/`terminate` wurde in einer VERSCHACHTELTEN Ausführung (Destruktor, Property, Operator, Callback)
+        /// aufgerufen: die VM hält dort sofort an (Halt), das geordnete Abwickeln (finally, Destruktoren) holt
+        /// <see cref="FinishDeferredShutdown"/> nach, sobald die Verschachtelung zurück ist.</summary>
+        private bool _shutdownDeferred;
+
+        /// <summary>Ein Lambda, das ein nativer Aufruf auf DIESER VM verschachtelt ausführt (siehe <see cref="CallLambdaInline"/>): wo es
+        /// begonnen hat - Frame-Tiefe, Scope und Stackhöhe des Aufrufers und wie viele Handler der Aufrufer schon registriert hat
+        /// (ein `throw` im Callback darf die try/catch des Aufrufers nicht sehen).</summary>
+        private readonly record struct CallbackBoundary(int FrameDepth, Scope Scope, int HandlerFloor, int StackPointer);
+        private readonly Stack<CallbackBoundary> _callbackBoundaries = new();
+        private ObjectInstance? _callbackError;
+
+        // -----------------------------------------------------------
+        // Globale Variablen und Fire-Threads (docs/THREADING_DESIGN.md Abschnitt 7, Runtime.GlobalsBroker)
+        // -----------------------------------------------------------
+
+        /// <summary>Im Hauptprogramm: gesetzt, sobald zum ersten Mal ein `fire` (oder `fire global`) läuft. Ab dann schreibt diese VM Globals
+        /// unter dem Baum-Lock (Fire-Threads lesen sie gleichzeitig).</summary>
+        private GlobalsBroker? _ownerBroker;
+
+        /// <summary>In einem Fire-Thread: die Vermittlung zum Hauptprogramm. Die Globals-Slots 0 bis `_sharedCount` - 1 sind die echten
+        /// Globals des Hauptprogramms (Lesen direkt, Schreiben in einer Sektion); darüber liegen die eigenen (taking/with, Top-Level-Variablen
+        /// des Blocks) im privaten `_globalScope`.</summary>
+        private GlobalsBroker? _threadBroker;
+        private int _sharedCount;
+
+        /// <summary>Tiefe der Sektion, die dieser Thread gerade hält (0 = keine). Verschachtelte Zugriffe (eine Methode, die `this.x = ...`
+        /// schreibt, in einer schon erteilten Sektion) laufen direkt.</summary>
+        private int _sectionDepth;
+        private object? _sectionHandle;
+
+        /// <summary>Hängt diese (Fire-Thread-)VM an die Globals des Hauptprogramms an (siehe FireRuntime.FireVmTaking).</summary>
+        internal void AttachToGlobals(GlobalsBroker broker, int sharedGlobalCount)
+        {
+            _threadBroker = broker;
+            _sharedCount = sharedGlobalCount;
+        }
+
+        private GlobalsBroker EnsureOwnerBroker()
+        {
+            if (_ownerBroker != null) return _ownerBroker;
+            var broker = new GlobalsBroker(this, _globalScope);
+            _ownerBroker = broker;
+            ShareGlobals(broker);
+            return broker;
+        }
+
+        /// <summary>Nimmt alles, was die Globals erreichen (Objekte samt Besitz, Felder, Arrays, statische Felder), in den geteilten Bereich auf.</summary>
+        private void ShareGlobals(GlobalsBroker broker)
+        {
+            var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            foreach (var owned in _globalScope.OwnedObjects.ToArray())
+                ShareValue(Value.MakeClassRef(owned), broker.Lock, seen);
+            for (int i = 0; i < _globalScope.SlotCount; i++)
+                ShareValue(_globalScope.GetSlot(i), broker.Lock, seen);
+            foreach (var rc in _classes.Values)
+                foreach (var staticValue in rc.StaticFieldValues.Values.ToArray())
+                    ShareValue(staticValue, broker.Lock, seen);
+        }
+
+        private static void ShareValue(Value value, ThreadShareLock treeLock, HashSet<object> seen)
+        {
+            if (value.Kind == ValueKind.Class)
+            {
+                var obj = (ObjectInstance)value.AsObjectRef();
+                if (!seen.Add(obj)) return;
+                obj.MarkGlobalsDomain(treeLock);
+                foreach (var field in obj.Fields.ToArray()) ShareValue(field.Value, treeLock, seen);
+                foreach (var child in obj.OwnedObjects.ToArray()) ShareValue(Value.MakeClassRef(child), treeLock, seen);
+            }
+            else if (value.Kind == ValueKind.Array)
+            {
+                var array = value.AsArray();
+                if (!seen.Add(array)) return;
+                array.IsShared = true;
+                foreach (var item in array.Items) ShareValue(item, treeLock, seen);
+            }
+        }
+
+        /// <summary>Ein Array, das ein Fire-Thread über die Globals erreicht: ab jetzt geteilt (Elementzugriffe unter dem Lock).</summary>
+        private static void MarkShared(Value value)
+        {
+            if (value.Kind != ValueKind.Array) return;
+            var array = value.AsArray();
+            if (array.IsShared) return;
+            array.IsShared = true;
+            foreach (var item in array.Items) MarkShared(item);
+        }
+
+        /// <summary>Meldet den Thread für eine Sektion an (oder zählt nur hoch, wenn er schon eine hält). Erst wenn das Hauptprogramm bei
+        /// `sync globals` die Sektion erteilt, kehrt der Aufruf zurück.</summary>
+        private void EnterGlobalsSection()
+        {
+            if (_sectionDepth++ == 0) _sectionHandle = _threadBroker!.EnterSection();
+        }
+
+        private void ExitGlobalsSection()
+        {
+            if (--_sectionDepth == 0)
+            {
+                var handle = _sectionHandle;
+                _sectionHandle = null;
+                _threadBroker!.ExitSection(handle);
+            }
+        }
+
+        /// <summary>Sicherheitsnetz am Ende eines Fire-Threads: eine noch gehaltene Sektion wird freigegeben, sonst wartet das Hauptprogramm ewig.</summary>
+        internal void ReleaseGlobalsSections()
+        {
+            if (_threadBroker == null || _sectionDepth == 0) return;
+            _sectionDepth = 0;
+            var handle = _sectionHandle;
+            _sectionHandle = null;
+            _threadBroker.ExitSection(handle);
+        }
+
+        private bool NeedsSection(ObjectInstance obj) => _threadBroker != null && _sectionDepth == 0 && obj.InGlobalsDomain;
+
+        private Value LoadSharedGlobal(int slot)
+        {
+            var broker = _threadBroker!;
+            Value value;
+            broker.Lock.Enter();
+            try { value = slot < broker.Scope.SlotCount ? broker.Scope.GetSlot(slot) : Value.MakeUndefined(); }
+            finally { broker.Lock.Exit(); }
+            MarkShared(value);
+            return value;
+        }
+
+        private void StoreSharedGlobal(int slot, Value value)
+        {
+            var broker = _threadBroker!;
+            EnterGlobalsSection();
+            try
+            {
+                broker.Lock.Enter();
+                try
+                {
+                    if (slot >= broker.Scope.SlotCount)
+                        throw new InvalidOperationException("Diese globale Variable ist im Hauptprogramm noch nicht deklariert worden.");
+                    broker.Scope.SetSlot(slot, value);
+                }
+                finally { broker.Lock.Exit(); }
+            }
+            finally { ExitGlobalsSection(); }
+        }
+
+        /// <summary>Hauptprogramm, nach dem ersten `fire`: Schreiben der Globals unter dem Lock (Fire-Threads lesen gleichzeitig).</summary>
+        private void StoreOwnerGlobal(int slot, Value value)
+        {
+            var broker = _ownerBroker!;
+            broker.Lock.Enter();
+            try { _globalScope.SetSlot(slot, value); }
+            finally { broker.Lock.Exit(); }
+        }
+
+        private void DeclareOwnerGlobal(Value value)
+        {
+            var broker = _ownerBroker!;
+            broker.Lock.Enter();
+            try { _globalScope.DefineSlot(value); }
+            finally { broker.Lock.Exit(); }
+        }
+
+        /// <summary>Ein Element eines geteilten Arrays lesen: im Fire-Thread unter dem Lock, im Hauptprogramm (einziger Schreiber) direkt.</summary>
+        private bool TryGetSharedElement(ScriptArray array, long index, out Value value)
+        {
+            var broker = _threadBroker;
+            if (broker == null) return array.TryGet(index, out value);
+            broker.Lock.Enter();
+            try { return array.TryGet(index, out value); }
+            finally { broker.Lock.Exit(); }
+        }
+
+        /// <summary>Ein Element eines geteilten Arrays schreiben: im Fire-Thread in einer Sektion, überall unter dem Lock.</summary>
+        private bool TrySetSharedElement(ScriptArray array, long index, Value value)
+        {
+            var broker = _threadBroker ?? _ownerBroker;
+            if (broker == null) return array.TrySet(index, value);
+            bool inThread = _threadBroker != null;
+            if (inThread) EnterGlobalsSection();
+            try
+            {
+                broker.Lock.Enter();
+                try { return array.TrySet(index, value); }
+                finally { broker.Lock.Exit(); }
+            }
+            finally { if (inThread) ExitGlobalsSection(); }
+        }
+
+        /// <summary>Methodenaufruf eines Fire-Threads auf ein Objekt des geteilten Bereichs: die Methode läuft, solange der Thread die Sektion
+        /// hält, als Ganzes - auch ihr Lesen-Ändern-Schreiben ist damit atomar.</summary>
+        private Value? CallGlobalsMethodInSection(ObjectInstance obj, string methodName, Value[] args)
+        {
+            EnterGlobalsSection();
+            try
+            {
+                var rc = ResolveClass(obj.ClassName);
+                if (rc.FindMethodWithAccess(methodName, args.Length).Item1 == null && TryCallOwnershipMethod(obj, methodName, args))
+                    return Value.MakeUndefined();
+                return CallMethodNested(obj, methodName, args);
+            }
+            finally { ExitGlobalsSection(); }
+        }
+
+        /// <summary>`sync globals` im Hauptprogramm: arbeitet ab, was Fire-Threads angemeldet haben (Sektionen erteilen, Aufträge ausführen) und
+        /// was Host-Threads als Callback eingereiht haben. Liefert die Anzahl der Einträge.</summary>
+        private int SyncGlobalsNow() => DrainInbound() + (_ownerBroker?.Drain() ?? 0);
+
+        // ---- Callbacks von Host-Threads (z.B. ein Seriell-Ereignis): sie laufen NICHT auf dem fremden Thread, sondern werden hier eingereiht
+        // und vom Hauptprogramm ausgeführt - bei `sync globals` oder (ohne `#nosync`) automatisch an einem sicheren Punkt. So sehen sie die echten
+        // Globals, und es gibt keinen nebenläufigen Zugriff darauf.
+
+        private readonly record struct InboundCallback(LambdaValue Lambda, Value[] Args, Action<string>? OnUnhandled);
+        private readonly System.Collections.Concurrent.ConcurrentQueue<InboundCallback> _inbound = new();
+        private volatile bool _acceptingCallbacks;
+
+        /// <summary>Soll das Hauptprogramm die Warteschlange an sicheren Punkten selbst abarbeiten? Vorgabe ja; `#nosync` schaltet es ab.</summary>
+        private bool _autoSync = true;
+
+        /// <summary>Nimmt ein Callback eines BELIEBIGEN Threads entgegen (threadsicher) und reiht es für diese VM ein. false, wenn die VM nicht (mehr)
+        /// läuft - dann hat der Aufrufer einen anderen Weg zu wählen.</summary>
+        public bool PostCallback(LambdaValue lambda, Value[] args, Action<string>? onUnhandled)
+        {
+            if (!_acceptingCallbacks) return false;
+            _inbound.Enqueue(new InboundCallback(lambda, args, onUnhandled));
+            RaiseSignal();
+            FireRuntime.WakeWaitingOwner();
+            return true;
+        }
+
+        private int DrainInbound()
+        {
+            int handled = 0;
+            while (_inbound.TryDequeue(out var callback))
+            {
+                handled++;
+                try
+                {
+                    var error = CallLambdaInline(callback.Lambda, callback.Args);
+                    if (error != null) callback.OnUnhandled?.Invoke(new UncaughtScriptException(error).Message);
+                }
+                catch (Exception ex)
+                {
+                    callback.OnUnhandled?.Invoke(ex.Message);
+                }
+                if (_stopExecutionRequested) break;
+            }
+            return handled;
+        }
+
+        /// <summary>Automatisches Abarbeiten an einem sicheren Punkt (nicht in verschachtelter Ausführung, nicht mit `#nosync`): erst Host-Callbacks, dann
+        /// die Sektionen und Aufträge der Fire-Threads. true, wenn das Programm dabei beendet wurde (`leave`/`terminate` in einem Auftrag).</summary>
+        private bool AutoSyncNow()
+        {
+            if (!_autoSync || _nestedDepth > 0) return false;
+            if (!_inbound.IsEmpty) DrainInbound();
+            if (!_stopExecutionRequested && _ownerBroker != null && _ownerBroker.HasPending) _ownerBroker.Drain();
+            return _stopExecutionRequested;
+        }
+
+        /// <summary>Führt einen `fire global`-Auftrag auf dieser (der Besitzer-)VM aus. Eine unbehandelte Exception darin wird wie die eines
+        /// Fire-Threads behandelt: sie geht an das Hauptprogramm (`catch threads`), sonst bricht es ab.</summary>
+        internal void RunGlobalsJob(LambdaValue lambda, Value[] args)
+        {
+            var error = CallLambdaInline(lambda, args);
+            if (error != null)
+            {
+                _pendingThreadExceptions.Enqueue(error);
+                RaiseSignal();
+            }
+        }
+        // (Nur noch in den VERSCHACHTELTEN Schleifen und im Einzelschritt geprüft - Run() liest nach StopExecution() das Halt.)
+
         public VM(
             Chunk chunk,
             Scope globalScope,
@@ -301,58 +609,211 @@ namespace fire.Runtime
             _externs = externs ?? new ExternRegistry();
             _externSignatures = externSignatures ?? new Dictionary<string, ExternSignature>();
             _currentScope = globalScope;
+            _baseTypeClasses = new RuntimeClass?[Enum.GetValues<ValueKind>().Length];
+            foreach (var kind in Enum.GetValues<ValueKind>())
+                if (BaseTypeExtensions.ClassNameFor(kind) is { } extensionClassName
+                    && _classes.TryGetValue(extensionClassName, out var extensionClass))
+                    _baseTypeClasses[(int)kind] = extensionClass;
             IsMainThreadVm = isMainThreadVm;
             IsFireThreadVm = isFireThreadVm;
             ExecutionMode = executionMode;
         }
 
-        /// <summary>Siehe VmExecutionMode-Doku - steuert u.a. wie oft
-        /// CheckShutdownSignals läuft (ShutdownCheckInterval) und ob
+        /// <summary>Siehe VmExecutionMode-Doku - steuert u.a., ob
         /// ArrayGet/ArraySet/Puffer-Zugriffe ihre Bounds-Prüfung überspringen
         /// (siehe die jeweiligen Opcode-Handler).</summary>
         public VmExecutionMode ExecutionMode { get; }
 
-        /// <summary>Alle wie viele Instruktionen CheckShutdownSignals in
-        /// Run() tatsächlich läuft (siehe dort) - 1 bedeutet "vor jeder
-        /// Instruktion" (Debug, unverändertes bisheriges Verhalten). Reine
-        /// Zahlenwerte statt eines Schaltverhaltens pro Fall, damit Run()
-        /// selbst einfach bleibt (ein Modulo-Vergleich statt einer
-        /// Fallunterscheidung nach ExecutionMode in der heißesten Schleife
-        /// der gesamten VM).</summary>
-        private int ShutdownCheckInterval => ExecutionMode switch
-        {
-            VmExecutionMode.Debug => 1,
-            VmExecutionMode.Release => 16,
-            VmExecutionMode.Performance => 4096,
-            _ => 1,
-        };
+        // -----------------------------------------------------------
+        // Shutdown-Signale: Prüfung nur an sicheren Punkten, Beenden über den Halt-Chunk
+        // -----------------------------------------------------------
+        //
+        // Signale kommen meist von ANDEREN Threads (`terminate`, eine unbehandelte Fire-Thread-Exception für den
+        // Main-Thread) - in einen laufenden Thread lässt sich keine Ausnahme "hineinwerfen", er muss sie selbst
+        // bemerken. Das passiert nicht mehr vor jeder Instruktion, sondern nur an den sicheren Punkten (Schleifen-
+        // Rücksprung, Aufruf, `leave`/`terminate`), und dort mit EINEM Vergleich: jedes Signal erhöht den globalen
+        // Zähler `s_signalEpoch`, jede VM merkt sich den zuletzt gesehenen Stand (`_seenEpoch`) - nur bei einer
+        // Abweichung läuft die eigentliche Prüfung (CheckShutdownSignals).
+        //
+        // Das BEENDEN ist bewusst keine C#-Ausnahme (docs/PORTING.md, "VM-interner Kontrollfluss": in einer C++-Fassung
+        // ohne Exceptions gäbe es dafür keine Entsprechung), sondern reine Zustandsumschaltung wie beim Sprung in einen
+        // `catch`: StopExecution() stellt Chunk/ip auf einen Chunk, der nur aus `Halt` besteht - Run() liest als Nächstes
+        // dieses `Halt` und kehrt zurück, ohne dass irgendeine Instruktion ein Stop-Flag abfragen müsste.
 
-        private long _instructionsSinceShutdownCheck;
+        private static int s_signalEpoch;
+        private int _seenEpoch = int.MinValue;
+
+        /// <summary>Tiefe der verschachtelten Ausführungen (RunNestedUntil) - darin wird nicht auf Signale geprüft (wie bisher).</summary>
+        private int _nestedDepth;
+
+        /// <summary>Der Chunk, auf den StopExecution() umschaltet: nur ein `Halt`.</summary>
+        private static readonly Chunk StopChunk = BuildStopChunk();
+
+        private static Chunk BuildStopChunk()
+        {
+            var chunk = new Chunk();
+            chunk.EmitOp(OpCode.Halt);
+            return chunk;
+        }
+
+        internal static void RaiseSignal() => System.Threading.Interlocked.Increment(ref s_signalEpoch);
+
+        /// <summary>Beendet die Ausführung dieser VM: merkt den Stopp vor und springt auf den Halt-Chunk. Aufrufer müssen danach
+        /// sofort aus ihrer Instruktion zurückkehren (wie nach ThrowException).</summary>
+        /// <summary>Verwirft den (bedeutungslosen) Rückgabewert einer verschachtelten Ausführung - außer die VM wurde dabei
+        /// beendet (unbehandelte Exception): dann hat der Aufruf nichts zurückgegeben.</summary>
+        private void PopNestedResult()
+        {
+            if (!_stopExecutionRequested) Pop();
+        }
+
+        private void StopExecution()
+        {
+            _stopExecutionRequested = true;
+            _currentChunk = StopChunk;
+            _ip = 0;
+        }
+
+        /// <summary>Sicherer Punkt: hat sich seit dem letzten Mal ein Signal gemeldet (ein Vergleich, sonst nichts)? Liefert true,
+        /// wenn die VM dadurch beendet wurde - die aufrufende Instruktion muss dann sofort zurückkehren.</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private bool PollSignals() =>
+            _seenEpoch != System.Threading.Volatile.Read(ref s_signalEpoch) && PollSignalsSlow();
+
+        /// <summary>Wie <see cref="PollSignals"/>, aber NACH einer vollständig ausgeführten Instruktion (`_ip` steht schon an der nächsten
+        /// Instruktionsgrenze) - für native Aufrufe: eine native Funktion darf `leave`/`terminate` auslösen (z.B. `VM.RequestLeave`), das muss
+        /// sofort danach wirken.</summary>
+        private void PollSignalsAfterOp()
+        {
+            if (_seenEpoch == System.Threading.Volatile.Read(ref s_signalEpoch) || _nestedDepth > 0) return;
+            _seenEpoch = System.Threading.Volatile.Read(ref s_signalEpoch);
+            if (CheckShutdownSignals()) StopExecution();
+            else AutoSyncNow(); // Host-Callbacks und Fire-Threads, die auf das Hauptprogramm warten (siehe `#nosync`)
+        }
+
+        private bool PollSignalsSlow()
+        {
+            // In einer verschachtelten Ausführung (Destruktor, Operator-Überladung, Property, ...) wird nicht geprüft - wie
+            // bisher; das Signal bleibt stehen und gilt am nächsten sicheren Punkt außerhalb.
+            if (_nestedDepth > 0) return false;
+            _seenEpoch = System.Threading.Volatile.Read(ref s_signalEpoch);
+
+            // Der Aufruf kommt aus dem Innern einer Instruktion, deren Opcode schon gelesen ist: für einen evtl. genesteten
+            // Handler muss `_ip` auf die Instruktionsgrenze zeigen, damit dessen Rücksprung an der richtigen Stelle landet.
+            _ip--;
+            if (CheckShutdownSignals())
+            {
+                StopExecution();
+                return true;
+            }
+            _ip++;
+            // Host-Callbacks und Fire-Threads, die auf das Hauptprogramm warten (siehe `#nosync`): an der Stelle, die der Aufrufer gleich
+            // fortsetzt, läuft die Abarbeitung verschachtelt und kehrt unverändert hierher zurück.
+            return AutoSyncNow();
+        }
+
+        /// <summary>Der `leave`-/`terminate`-Aufruf der eigenen VM: sie geht SOFORT in den Halt, unabhängig davon, ob das Signal
+        /// schon länger anliegt (z.B. `terminate` ist bereits von einem anderen Thread ausgelöst worden - der Aufrufer darf trotzdem
+        /// keine weitere Anweisung ausführen). Der Opcode hat keine Operanden, `_ip - 1` ist also die Instruktionsgrenze.</summary>
+        private void ShutdownSelfNow()
+        {
+            _seenEpoch = System.Threading.Volatile.Read(ref s_signalEpoch);
+            if (_nestedDepth > 0)
+            {
+                // Mitten in einem Destruktor/einer Property/einem Operator/Callback: hier nur anhalten (die Aufrufer kennen das
+                // vom Stopp durch eine unbehandelte Exception), das Abwickeln folgt in FinishDeferredShutdown.
+                _shutdownDeferred = true;
+                StopExecution();
+                return;
+            }
+            _ip--;
+            CheckShutdownSignals();
+            StopExecution();
+        }
+
+        /// <summary>Holt das Abwickeln eines in verschachtelter Ausführung ausgelösten `leave`/`terminate` nach (siehe
+        /// <see cref="_shutdownDeferred"/>). true = es wurde etwas getan, die VM steht danach wieder auf dem Halt-Chunk.</summary>
+        private bool FinishDeferredShutdown()
+        {
+            if (!_shutdownDeferred || _nestedDepth > 0) return false;
+            _shutdownDeferred = false;
+            _stopExecutionRequested = false; // die verschachtelten Läufe beim Abwickeln (finally, Destruktoren) müssen wieder laufen dürfen
+            _currentChunk = StopChunk;
+            _ip = 0;
+            CheckShutdownSignals();
+            StopExecution();
+            return true;
+        }
 
         public void Run()
         {
             _currentThreadVm = this;
+            _acceptingCallbacks = true;
+            try { RunLoop(); }
+            finally
+            {
+                _acceptingCallbacks = false; // Host-Callbacks nehmen danach den anderen Weg
+                _currentThreadVm = null; // ein später auf diesem Thread feuernder Callback sucht keine beendete VM
+                _ownerBroker?.Close();   // kein Besitzer mehr: wartende Fire-Threads werden freigegeben
+            }
+        }
+
+        private void RunLoop()
+        {
             _ip = 0;
-            int interval = ShutdownCheckInterval;
 
             while (true)
             {
-                if (interval <= 1 || ++_instructionsSinceShutdownCheck >= interval)
-                {
-                    _instructionsSinceShutdownCheck = 0;
-                    if (CheckShutdownSignals()) return;
-                }
                 var op = (OpCode)ReadByte();
-                if (op == OpCode.Halt) return;
-                Execute(op);
-
-                // _stopExecutionRequested wird von ThrowException gesetzt,
-                // wenn eine Exception UNBEHANDELT bleibt (kein passender
-                // catch/finally-Handler mehr aktiv - der Stack ist dann
-                // bereits vollständig abgewickelt/geleert).
-                if (_stopExecutionRequested) return;
+                if (op == OpCode.Halt)
+                {
+                    // Ein in verschachtelter Ausführung aufgerufenes leave/terminate wird erst jetzt geordnet abgewickelt;
+                    // danach steht wieder der Halt-Chunk da und das nächste Lesen landet erneut hier.
+                    if (FinishDeferredShutdown()) continue;
+                    // Normales Ende oder geordnetes leave/terminate (nicht der Halt-Chunk einer unbehandelten Exception).
+                    if (!_stopExecutionRequested || _shutdownReleasePending) ReleaseGlobalScopeAtEnd();
+                    return;
+                }
+                Step(op);
             }
         }
+
+        /// <summary>Normales Programmende (oder Ende eines Threads): der globale Scope wird wie jeder andere Scope beim
+        /// Verlassen freigegeben - `destruct()` läuft für alles, was ihm gehört, offene Streams werden geschlossen.
+        /// Das Hauptprogramm wartet vorher auf alle noch laufenden Fire-Threads (sie können per `sync` in seine Objekte
+        /// zurückschreiben). Ein Host, der den Zustand NACH dem Lauf noch braucht (Tests, Inspektion), schaltet das mit
+        /// <see cref="DestroyGlobalsAtEnd"/> ab.</summary>
+        private void ReleaseGlobalScopeAtEnd()
+        {
+            bool afterShutdown = _shutdownReleasePending;
+            _shutdownReleasePending = false;
+            if (!DestroyGlobalsAtEnd) return;
+            if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(_ownerBroker); // das Hauptprogramm (jede VM, die kein Fire-Thread ist); währenddessen bedient es die Warteschlange der Threads
+            ReleaseGlobalScopeAfterStop(afterShutdown);
+        }
+
+        /// <summary>Gibt den globalen Scope frei; nach einem leave/terminate steht die VM schon im Stopp-Zustand, in dem
+        /// Destruktoren nicht mehr laufen (siehe RunDestructor) - er wird dafür kurz aufgehoben.</summary>
+        private void ReleaseGlobalScopeAfterStop(bool afterShutdown)
+        {
+            if (!afterShutdown) { ReleaseGlobalScope(); return; }
+            _stopExecutionRequested = false;
+            try { ReleaseGlobalScope(); }
+            finally { _stopExecutionRequested = true; }
+        }
+
+        /// <summary>Gibt den globalen Scope frei. Bei einem Fire-Thread sind die Objekte mit `SyncOrigin` Kopien von Objekten des
+        /// Hauptprogramms (Globals-Schnappschuss, `taking`) - sie bleiben unberührt, nur was der Thread selbst angelegt hat wird
+        /// zerstört.</summary>
+        private void ReleaseGlobalScope()
+        {
+            if (IsFireThreadVm) _globalScope.ReleaseWhere(this, o => o.SyncOrigin == null);
+            else _globalScope.Release(this);
+        }
+
+        /// <summary>Soll das normale Programmende den globalen Scope freigeben (Vorgabe: ja)? `false` für Hosts, die die
+        /// Objekte nach dem Lauf noch lesen oder weiterverwenden (z.B. Tests, die danach Threads auf ihnen arbeiten lassen).</summary>
+        public bool DestroyGlobalsAtEnd { get; set; } = true;
 
         /// <summary>Der kooperative Prüfpunkt für `leave`/`terminate` (siehe
         /// Feld-Doku oben) - bewusst vor JEDER einzelnen Instruktion geprüft
@@ -363,11 +824,6 @@ namespace fire.Runtime
         /// Overhead je relevant werden sollte.</summary>
         private bool CheckShutdownSignals()
         {
-            // Bereits SELBST abgewickelt (siehe ThrowException) - nur noch
-            // sauber stoppen, der aktuelle _ip/_currentChunk-Zustand ist ab
-            // hier bedeutungslos und wird nicht mehr verwendet.
-            if (_stopExecutionRequested) return true;
-
             // Nur der Main-Thread verarbeitet zugestellte Fire-Thread-
             // Exceptions (siehe HandleDeliveredThreadException) - läuft dabei
             // GENESTET (wie RunFinallyNested), der Main-Thread macht danach
@@ -375,13 +831,15 @@ namespace fire.Runtime
             if (IsMainThreadVm)
                 while (_pendingThreadExceptions.TryDequeue(out var excInstance))
                 {
-                    HandleDeliveredThreadException(excInstance);
-                    if (_stopExecutionRequested) return true;
+                    if (HandleDeliveredThreadException(excInstance)) return true;
                 }
 
+            // `terminate` und `leave` enden beide wie das normale Programmende: Scopes abwickeln (finally, Destruktoren),
+            // danach - am Halt, nach dem Ende aller Fire-Threads - den globalen Scope freigeben (siehe _shutdownReleasePending).
             if (_terminateRequested)
             {
                 UnwindForShutdown();
+                _shutdownReleasePending = true;
                 if (IsMainThreadVm) RunTerminateHandlerIfAny();
                 return true;
             }
@@ -389,6 +847,7 @@ namespace fire.Runtime
             {
                 _leaveRequested = false;
                 UnwindForShutdown();
+                _shutdownReleasePending = true;
                 return true;
             }
             return false;
@@ -408,7 +867,7 @@ namespace fire.Runtime
         /// diese eine VM-Instanz) und `terminate` (jede VM-Instanz bemerkt
         /// das globale Signal an ihrem eigenen nächsten Prüfpunkt und wickelt
         /// sich GENAUSO ab - nur die Auslösung unterscheidet sich).</summary>
-        private void UnwindForShutdown()
+        private void UnwindForShutdown(bool destroyGlobalScope = false)
         {
             while (_handlers.Count > 0)
             {
@@ -421,6 +880,7 @@ namespace fire.Runtime
             }
 
             UnwindTo(0, _globalScope);
+            if (destroyGlobalScope) ReleaseGlobalScope();
         }
 
         /// <summary>Führt einen zugestellten, unbehandelten Fire-Thread-
@@ -430,7 +890,7 @@ namespace fire.Runtime
         /// leave/terminate). Kein passender Handler registriert -> kompletter
         /// Programmabbruch, wie eine unbehandelte Exception im Main-Thread
         /// selbst (docs/THREADING_DESIGN.md 6.2).</summary>
-        private void HandleDeliveredThreadException(ObjectInstance excInstance)
+        private bool HandleDeliveredThreadException(ObjectInstance excInstance)
         {
             var handlerProto = FindGlobalThreadsCatch(excInstance);
             if (handlerProto == null)
@@ -440,8 +900,7 @@ namespace fire.Runtime
                 // MUSS danach sofort stoppen, statt evtl. weitere in der
                 // Warteschlange stehende Exceptions noch zu verarbeiten.
                 UnhandledException = excInstance;
-                _stopExecutionRequested = true;
-                return;
+                return true;
             }
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
@@ -457,7 +916,8 @@ namespace fire.Runtime
             _ip = 0;
 
             RunNestedUntil(targetDepth);
-            Pop(); // Rückgabewert des Handler-Protos unbenutzt, wie RunFinallyNested/RunDestructor.
+            PopNestedResult(); // Rückgabewert des Handler-Protos unbenutzt, wie RunFinallyNested/RunDestructor.
+            return false;
         }
 
         /// <summary>`catch threads(...)`-Auflösung - exakt wie FindMatchingCatch
@@ -500,7 +960,7 @@ namespace fire.Runtime
             _ip = 0;
 
             RunNestedUntil(targetDepth);
-            Pop();
+            PopNestedResult();
         }
 
         /// <summary>`process X`/`try process X` (siehe Ast.ProcessStmt/
@@ -540,7 +1000,7 @@ namespace fire.Runtime
             _ip = 0;
 
             RunNestedUntil(targetDepth);
-            Pop(); // Rückgabewert unbenutzt, siehe Doku oben.
+            PopNestedResult(); // Rückgabewert unbenutzt, siehe Doku oben.
             return true;
         }
 
@@ -592,15 +1052,22 @@ namespace fire.Runtime
                 _currentThreadVm = this;
                 _ip = 0;
                 _steppingStarted = true;
+                _acceptingCallbacks = true;
             }
 
             var op = (OpCode)ReadByte();
             if (op == OpCode.Halt)
             {
+                // Wie Run(): das normale Ende räumt den globalen Scope ab - im Einzelschritt ohne auf Threads zu warten (der Debugger hält sie evtl. an).
+                if ((!_stopExecutionRequested || _shutdownReleasePending) && DestroyGlobalsAtEnd) ReleaseGlobalScopeAfterStop(_shutdownReleasePending);
+                _shutdownReleasePending = false;
                 IsHalted = true;
+                _acceptingCallbacks = false;
                 return false;
             }
-            Execute(op);
+            Step(op);
+            if (_autoSync && _nestedDepth == 0 && !_stopExecutionRequested && (!_inbound.IsEmpty || (_ownerBroker != null && _ownerBroker.HasPending)))
+                AutoSyncNow();
 
             // Eine unbehandelte Skript-Exception wird seit UnhandledException
             // (siehe dort) nicht mehr geworfen, sondern nur noch GESETZT -
@@ -612,7 +1079,12 @@ namespace fire.Runtime
             // passiert, statt sauber zu stoppen.
             if (_stopExecutionRequested)
             {
+                FinishDeferredShutdown();
+                // leave/terminate enden wie das normale Programmende (ohne auf Threads zu warten, der Debugger hält sie evtl. an).
+                if (_shutdownReleasePending && DestroyGlobalsAtEnd) ReleaseGlobalScopeAfterStop(true);
+                _shutdownReleasePending = false;
                 IsHalted = true;
+                _acceptingCallbacks = false;
                 return false;
             }
 
@@ -692,7 +1164,7 @@ namespace fire.Runtime
         /// <summary>Unveränderlicher Blick auf den aktuellen Wert-Stack - rein
         /// zur Inspektion, keine Kopie (Werte selbst sind ohnehin unveränderliche
         /// Structs).</summary>
-        public IReadOnlyList<Value> DebugStackSnapshot => _stack;
+        public IReadOnlyList<Value> DebugStackSnapshot => new ArraySegment<Value>(_stack, 0, _sp);
 
         /// <summary>Aktuelle Aufruf-Tiefe (Anzahl aktiver CallFrames) - für eine
         /// einfache Anzeige "wie tief verschachtelt bin ich gerade".</summary>
@@ -784,13 +1256,20 @@ namespace fire.Runtime
         /// Destruktoren auslöst.</summary>
         private void RunNestedUntil(int targetFrameDepth)
         {
+            _nestedDepth++;
+            try { RunNestedLoop(targetFrameDepth); }
+            finally { _nestedDepth--; } // auch bei einer C#-Ausnahme (z.B. im Performance-Modus ohne Prüfungen) wieder freigeben
+        }
+
+        private void RunNestedLoop(int targetFrameDepth)
+        {
             while (_frames.Count >= targetFrameDepth)
             {
                 var op = (OpCode)ReadByte();
                 if (op == OpCode.Halt)
                     throw new InvalidOperationException(
                         "Unerwarteter Halt in verschachtelter Ausführung (z.B. während eines Destruktor-Aufrufs).");
-                Execute(op);
+                Step(op);
 
                 // Wie Run() (siehe dort für die ausführliche Begründung) -
                 // eine unbehandelte Exception setzt _stopExecutionRequested
@@ -813,26 +1292,1606 @@ namespace fire.Runtime
         /// deklariert), mit 'this' = dem zu zerstörenden Objekt.</summary>
         public void RunDestructor(ObjectInstance instance)
         {
-            var rc = ResolveClass(instance.ClassName);
-            if (rc.Destructor == null) return;
+            // Die Destruktoren der GANZEN Klassenkette, abgeleitete Klasse
+            // zuerst, dann jede Basisklasse (wie in C#) - eine Basisklasse, die
+            // Ressourcen hält (z.B. einen Datei-Handle) räumt sie so auch für
+            // abgeleitete Klassen auf, die selbst keinen destruct() haben.
+            if (_stopExecutionRequested) return;
+            for (var rc = ResolveClass(instance.ClassName); rc != null; rc = rc.Base)
+            {
+                if (rc.Destructor == null) continue;
+
+                _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+                int targetDepth = _frames.Count;
+
+                var scope = new Scope(_globalScope);
+                _currentThis = instance;
+                _currentScope = scope;
+                _currentChunk = rc.Destructor.Chunk;
+                _ip = 0;
+
+                RunNestedUntil(targetDepth);
+
+                // Das abschließende RETURN des Destruktor-Bodys pusht seinen (hier
+                // bedeutungslosen) Rückgabewert auf den Werte-Stack - anders als bei
+                // einem normalen Call/CallMethod/etc. gibt es hier aber keinen
+                // Ausdruckskontext, der ihn abholt. Ohne dieses Pop würde der Stack
+                // bei jeder Destruktor-Ausführung um einen Wert "verwachsen".
+                PopNestedResult();
+                if (_stopExecutionRequested) return; // ein Destruktor hat die VM beendet (unbehandelte Exception) - nichts mehr aufrufen
+            }
+        }
+
+        /// <summary>Führt EINE Instruktion aus. Die häufigsten (Laden/Speichern, Grundrechenarten, Vergleiche,
+        /// Sprünge, Scopes) sind hier direkt ausgeschrieben, alles andere geht an <see cref="Execute"/>.
+        /// Der Grund für die Trennung: Execute ist eine riesige Methode mit sehr vielen lokalen Variablen, und
+        /// deren Stackframe wird bei JEDEM Aufruf neu genullt - das kostete pro Instruktion ein Vielfaches
+        /// der eigentlichen Arbeit. Diese Methode hat fast keine Locals und bleibt billig. Jeder Fall hier
+        /// verhält sich exakt wie sein Gegenstück in Execute; wo ein Fall nicht zutrifft (z.B. ein Objekt als
+        /// linker Operand mit Operator-Überladung, eine Scope mit Besitz), fällt er nach Execute durch.</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private void Step(OpCode op)
+        {
+            switch (op)
+            {
+                case OpCode.LoadConst:
+                    Push(_constants[ReadU16()]);
+                    return;
+
+                case OpCode.Pop:
+                    _sp--;
+                    return;
+
+                case OpCode.Dup:
+                    Push(_stack[_sp - 1]);
+                    return;
+
+                case OpCode.LoadLocal:
+                {
+                    int depth = ReadU16(); int slot = ReadU16();
+                    if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
+                    _stack[_sp] = _currentScope.GetAncestor(depth).SlotRef(slot);
+                    _sp++;
+                    return;
+                }
+
+                case OpCode.StoreLocal:
+                {
+                    int depth = ReadU16(); int slot = ReadU16();
+                    _currentScope.GetAncestor(depth).SlotRef(slot) = _stack[_sp - 1];
+                    return;
+                }
+
+                case OpCode.LoadGlobal:
+                {
+                    int slot = ReadU16();
+                    if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
+                    if (slot < _sharedCount) { _stack[_sp] = LoadSharedGlobal(slot); _sp++; return; } // Fire-Thread: die echten Globals
+                    _stack[_sp] = _globalScope.SlotRef(slot);
+                    _sp++;
+                    return;
+                }
+
+                case OpCode.StoreGlobal:
+                {
+                    int slot = ReadU16();
+                    if (slot < _sharedCount) { StoreSharedGlobal(slot, _stack[_sp - 1]); return; }
+                    if (_ownerBroker != null) { StoreOwnerGlobal(slot, _stack[_sp - 1]); return; }
+                    _globalScope.SlotRef(slot) = _stack[_sp - 1];
+                    return;
+                }
+
+                case OpCode.DeclareLocal:
+                    if (_ownerBroker != null && ReferenceEquals(_currentScope, _globalScope)) { DeclareOwnerGlobal(Pop()); return; }
+                    _currentScope.DefineSlot(Pop());
+                    return;
+
+                // Binäre Operatoren: der linke Operand liegt bei _sp-2, der rechte bei _sp-1; das Ergebnis
+                // ersetzt beide. Ein Objekt links (Operator-Überladung) geht durch nach Execute.
+                case OpCode.Add:
+                    if (Value.TryAddInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Add(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    break;
+                case OpCode.Sub:
+                    if (Value.TrySubtractInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Subtract(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    break;
+                case OpCode.Mul:
+                    if (Value.TryMultiplyInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Multiply(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    break;
+                case OpCode.Div:
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Divide(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    break;
+                case OpCode.Mod:
+                    if (Value.TryModuloInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Modulo(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    break;
+                case OpCode.Eq:
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.ValuesEqual(_stack[_sp - 2], _stack[_sp - 1]))); return; }
+                    break;
+                case OpCode.NotEq:
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(!Value.ValuesEqual(_stack[_sp - 2], _stack[_sp - 1]))); return; }
+                    break;
+                case OpCode.Lt:
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 0)) { _sp--; return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) < 0)); return; }
+                    break;
+                case OpCode.LtEq:
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 1)) { _sp--; return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) <= 0)); return; }
+                    break;
+                case OpCode.Gt:
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 2)) { _sp--; return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) > 0)); return; }
+                    break;
+                case OpCode.GtEq:
+                    if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 3)) { _sp--; return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) >= 0)); return; }
+                    break;
+
+                case OpCode.CallMethod:
+                    OpCallMethod();
+                    return;
+
+                case OpCode.CallStaticMethod:
+                    OpCallStaticMethod();
+                    return;
+
+                case OpCode.Call:
+                    OpCall();
+                    return;
+
+                case OpCode.Return:
+                    OpReturn();
+                    return;
+
+                case OpCode.GetField:
+                    OpGetField();
+                    return;
+
+                case OpCode.SetField:
+                    OpSetField();
+                    return;
+
+                case OpCode.LoadThis:
+                    OpLoadThis();
+                    return;
+
+                case OpCode.SetFieldOnThis:
+                    OpSetFieldOnThis();
+                    return;
+
+                case OpCode.NewObject:
+                    OpNewObject();
+                    return;
+
+                case OpCode.GetStaticField:
+                    OpGetStaticField();
+                    return;
+
+                case OpCode.SetStaticField:
+                    OpSetStaticField();
+                    return;
+
+                case OpCode.ArrayGet:
+                    OpArrayGet();
+                    return;
+
+                case OpCode.ArraySet:
+                    OpArraySet();
+                    return;
+
+                case OpCode.IncDecIndex:
+                    OpIncDecIndex();
+                    return;
+
+                case OpCode.NewArray:
+                    OpNewArray();
+                    return;
+
+                case OpCode.MakeArrayLiteral:
+                    OpMakeArrayLiteral();
+                    return;
+
+                case OpCode.CallNative:
+                    OpCallNative();
+                    return;
+
+                case OpCode.MakeLambda:
+                    OpMakeLambda();
+                    return;
+
+                case OpCode.CallBaseMethod:
+                    OpCallBaseMethod();
+                    return;
+
+                case OpCode.NewObjectOwned:
+                    OpNewObjectOwned();
+                    return;
+
+                case OpCode.ConstructBase:
+                    OpConstructBase();
+                    return;
+
+                case OpCode.CallProtoWithThis:
+                    OpCallProtoWithThis();
+                    return;
+
+                case OpCode.Neg:
+                    _stack[_sp - 1] = Value.Negate(_stack[_sp - 1]);
+                    return;
+                case OpCode.LogicalNot:
+                    _stack[_sp - 1] = Value.LogicalNot(_stack[_sp - 1]);
+                    return;
+
+                case OpCode.Jump:
+                {
+                    // Ein Rücksprung (Schleife) ist ein sicherer Punkt für Shutdown-Signale (siehe PollSignals); `_ip` zeigt hier
+                    // noch auf den Operanden, PollSignalsSlow rechnet mit der Instruktionsgrenze davor.
+                    int target = _code[_ip] | (_code[_ip + 1] << 8);
+                    if (target <= _ip && PollSignals()) return;
+                    _ip = target;
+                    return;
+                }
+
+                case OpCode.JumpIfFalse:
+                {
+                    int addr = ReadU16();
+                    if (!Pop().AsBool()) _ip = addr;
+                    return;
+                }
+
+                case OpCode.JumpIfFalsePeek:
+                {
+                    int addr = ReadU16();
+                    if (!_stack[_sp - 1].AsBool()) _ip = addr;
+                    return;
+                }
+
+                case OpCode.JumpIfTruePeek:
+                {
+                    int addr = ReadU16();
+                    if (_stack[_sp - 1].AsBool()) _ip = addr;
+                    return;
+                }
+
+                case OpCode.EnterScope:
+                    _currentScope = new Scope(_currentScope);
+                    return;
+
+                case OpCode.ExitScope:
+                {
+                    var scope = _currentScope;
+                    if (scope.HasOwned) break; // Release kann Destruktoren ausführen - der ausführliche Pfad
+                    _currentScope = scope.Parent
+                        ?? throw new InvalidOperationException("ExitScope auf dem globalen Scope aufgerufen.");
+                    return;
+                }
+            }
+
+            Execute(op);
+        }
+
+        /// <summary>Ersetzt die obersten ZWEI Stack-Werte durch `result` (Ergebnis einer binären Operation).</summary>
+        private void ReplaceTwoWith(Value result)
+        {
+            _sp--;
+            _stack[_sp - 1] = result;
+        }
+
+        private void OpIncDecIndex()
+        {
+        {
+            bool isIncrement = ReadByte() != 0;
+            bool isPrefix = ReadByte() != 0;
+            var indexVal = Pop();
+            var target = Pop();
+            long idx = indexVal.AsInt();
+
+            if (target.Kind == ValueKind.Array)
+            {
+                var arr = target.AsArray();
+                if (arr.IsShared && _threadBroker != null && _sectionDepth == 0)
+                    throw new InvalidOperationException(
+                        "'++'/'--' auf ein Array-Element der Globals ist in einem Fire-Thread nur innerhalb von 'sync global { ... }' möglich (Lesen und Schreiben müssen zusammen geschehen).");
+                if (!arr.TryGet(idx, out var oldVal))
+                {
+                    ThrowIndexOutOfBounds(idx, arr.Length);
+                    return;
+                }
+                var newVal = isIncrement ? Value.Add(oldVal, Value.MakeInt(1)) : Value.Subtract(oldVal, Value.MakeInt(1));
+                if (arr.IsShared) TrySetSharedElement(arr, idx, newVal); else arr.TrySet(idx, newVal);
+                Push(isPrefix ? newVal : oldVal);
+            }
+            else if (target.Kind == ValueKind.Buffer)
+            {
+                var buf = target.AsBuffer();
+                if (!buf.TryGet(idx, out byte oldByte))
+                {
+                    ThrowIndexOutOfBounds(idx, buf.Length);
+                    return;
+                }
+                byte newByte = (byte)(isIncrement ? oldByte + 1 : oldByte - 1);
+                buf.TrySet(idx, newByte);
+                Push(Value.MakeInt(isPrefix ? newByte : oldByte, width: NumericWidth.W8));
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"'++'/'--' auf einem Index-Ziel erwartet ein Array oder einen Byte-Puffer, nicht {target.Kind}.");
+            }
+            return;
+        }
+        }
+
+        private void OpCallNative()
+        {
+        {
+            int nativeIdx = ReadU16();
+            int argCount = ReadByte();
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+            if (CallNativeGuarded(nativeIdx, args, out Value nativeResult))
+                Push(nativeResult);
+            PollSignalsAfterOp();
+            return;
+        }
+        }
+
+        private void OpMakeLambda()
+        {
+        {
+            int protoIdx = ReadU16();
+            bool hasOnTarget = ReadByte() != 0;
+            var proto = _currentChunk.Functions[protoIdx];
+            object? onTarget = hasOnTarget ? BoxValueForOnTarget(Pop()) : null;
+            var lambdaValue = new LambdaValue(proto, onTarget);
+            Push(Value.MakeLambda(lambdaValue));
+            return;
+        }
+        }
+
+        // -----------------------------------------------------------
+        // Inline-Caches der Aufrufstellen (siehe Bytecode.SiteCache)
+        // -----------------------------------------------------------
+
+        /// <summary>Platz für lokale Variablen, den eine Aufruf-Scope über die Parameter hinaus gleich
+        /// mitbekommt (spart das Vergrößern des Slot-Arrays bei den ersten `var`s im Body).</summary>
+        private const int SlotSlack = 4;
+
+        /// <summary>Wechselt in den Aufruf von `proto`: die obersten `argCount` Stack-Werte werden direkt als
+        /// Parameter-Slots der neuen Scope übernommen und (zusammen mit dem darunterliegenden Empfänger/Callee, falls
+        /// `dropBelow`) vom Stack genommen. Nur für Aufrufe mit EXAKT passender Argumentanzahl (kein Standardwert nötig).</summary>
+        private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null, int copyMask = 0)
+        {
+            var slots = new Value[argCount + SlotSlack];
+            Array.Copy(_stack, _sp - argCount, slots, 0, argCount);
+            _sp -= argCount + (dropBelow ? 1 : 0);
+
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, constructed));
+            _currentThis = newThis;
+            _currentScope = new Scope(_globalScope, slots, argCount);
+            if (copyMask != 0) ApplyCopyMask(_currentScope, copyMask);
+            _currentChunk = proto.Chunk;
+            _ip = 0;
+        }
+
+        // -----------------------------------------------------------
+        // `flat x` / `copy x` als Argument (SPEC 2.4, Opcode CopyArgs)
+        // -----------------------------------------------------------
+
+        /// <summary>Die Kopier-Maske, die das Präfix `CopyArgs` für den Aufruf-Opcode hinterlegt hat - hier gelesen UND
+        /// gelöscht (jeder Aufruf-Opcode holt sie gleich zu Beginn ab, damit sie nie an einen späteren Aufruf gerät).</summary>
+        private int TakeCopyMask()
+        {
+            int mask = _copyArgMask;
+            _copyArgMask = 0;
+            return mask;
+        }
+
+        /// <summary>Kopiert die markierten Parameter einer frisch aufgebauten Aufruf-Scope: die Kopie gehört dieser Scope
+        /// (wird also mit dem Verlassen der Funktion zerstört, außer die Funktion gibt sie zurück oder übergibt sie per TakeTo).</summary>
+        private void ApplyCopyMask(Scope scope, int mask)
+        {
+            if (mask == 0) return;
+            for (int i = 0; i < 16; i++)
+            {
+                int bits = (mask >> (2 * i)) & 3;
+                if (bits == 0) continue;
+                scope.SlotRef(i) = ObjectCloner.Clone(scope.SlotRef(i), scope, deep: bits == 2);
+            }
+        }
+
+        /// <summary>Für Aufrufe OHNE Funktions-Scope (eingebaute Methoden, Actor-Nachrichten): die Kopie gehört dem
+        /// aktuellen Scope, wie bei einer gewöhnlichen Kopie.</summary>
+        private void ApplyCopyMaskToArgs(Value[] args, int mask)
+        {
+            for (int i = 0; i < args.Length && i < 16; i++)
+            {
+                int bits = (mask >> (2 * i)) & 3;
+                if (bits != 0) args[i] = ObjectCloner.Clone(args[i], _currentScope, deep: bits == 2);
+            }
+        }
+
+        private void StoreSite(int site, SiteCache entry) => _chunk.EnsureSiteCaches()[site] = entry;
+
+        private SiteCache? LookupSite(int site) => _chunk.SiteCaches?[site];
+
+        private void OpCall()
+        {
+        {
+            if (PollSignals()) return;
+            int argCount = ReadByte();
+            int copyMask = TakeCopyMask();
+
+            // Schnellpfad: ein Lambda mit genau dieser Parameterzahl (kein Standardwert nötig).
+            if (_stack[_sp - 1 - argCount] is { Kind: ValueKind.Lambda } fastCallee
+                && fastCallee.AsLambda() is LambdaValue fastLambda
+                && fastLambda.Proto.ParamCount == argCount)
+            {
+                EnterCall(fastLambda.Proto, argCount, dropBelow: true, fastLambda.OnTarget, copyMask: copyMask);
+                return;
+            }
+
+            OpCallSlow(argCount, copyMask);
+            return;
+        }
+        }
+
+        private void OpCallSlow(int argCount, int copyMask)
+        {
+        {
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+            var calleeVal = Pop();
+
+            if (calleeVal.Kind != ValueKind.Lambda)
+                throw new InvalidOperationException(
+                    $"Aufruf eines Werts vom Typ {calleeVal.Kind}, der kein Lambda ist.");
+
+            var lambda = (LambdaValue)calleeVal.AsLambda();
+            CheckArity(lambda.Proto, args.Length);
+            args = FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-            int targetDepth = _frames.Count;
 
-            var scope = new Scope(_globalScope);
-            _currentThis = instance;
-            _currentScope = scope;
-            _currentChunk = rc.Destructor.Chunk;
+            var funcScope = new Scope(_globalScope);
+            foreach (var a in args) funcScope.DefineSlot(a);
+            ApplyCopyMask(funcScope, copyMask);
+
+            _currentThis = lambda.OnTarget;
+            _currentScope = funcScope;
+            _currentChunk = lambda.Proto.Chunk;
             _ip = 0;
+            return;
+        }
+        }
 
-            RunNestedUntil(targetDepth);
+        private void OpReturn()
+        {
+        {
+            var retVal = Pop();
 
-            // Das abschließende RETURN des Destruktor-Bodys pusht seinen (hier
-            // bedeutungslosen) Rückgabewert auf den Werte-Stack - anders als bei
-            // einem normalen Call/CallMethod/etc. gibt es hier aber keinen
-            // Ausdruckskontext, der ihn abholt. Ohne dieses Pop würde der Stack
-            // bei jeder Destruktor-Ausführung um einen Wert "verwachsen".
-            Pop();
+            // SPEC 2.3: Wird eine Objektinstanz zurückgegeben, deren
+            // Owner der gerade verlassene Scope ist, geht das Ownership
+            // an den AUFRUFENDEN Scope über (nicht einfach '.Parent' -
+            // Funktions-/Methoden-Scopes haben als Parent immer global,
+            // das wäre hier nicht die gewünschte "eine Ebene höher").
+            // Ohne das würde das zurückgegebene Objekt durch das gleich
+            // folgende Release() des eigenen Scopes sofort mit zerstört.
+            if (retVal.Kind == ValueKind.Class && _frames.Count > 0)
+            {
+                var retInstance = (ObjectInstance)retVal.AsObjectRef();
+                if (ReferenceEquals(retInstance.Owner, _currentScope))
+                    retInstance.ReparentTo(_frames.Peek().ReturnScope);
+            }
+
+            _currentScope.Release(this);
+
+            var frame = _frames.Pop();
+            _currentChunk = frame.ReturnChunk;
+            _ip = frame.ReturnIp;
+            _currentScope = frame.ReturnScope;
+            _currentThis = frame.ReturnThis;
+
+            Push(frame.ConstructedInstance != null
+                ? Value.MakeClassRef(frame.ConstructedInstance)
+                : retVal);
+            return;
+        }
+        }
+
+        private void OpNewObject()
+        {
+            if (PollSignals()) return;
+            int site = _ip - 1;
+            int classNameIdx = ReadU16();
+            int argCount = ReadByte();
+            int copyMask = TakeCopyMask();
+
+            // Schnellpfad (Inline-Cache): Klasse und Konstruktor dieser Stelle sind bekannt, Zugriffs- und
+            // Argumentprüfung schon bestanden.
+            if (LookupSite(site) is { Class: { } cachedClass, Proto: { } cachedCtor })
+            {
+                var created = new ObjectInstance(cachedClass.Name, _currentScope, cachedClass);
+                if (cachedClass.IsActor) created.Mailbox = new ActorMailbox();
+                EnterCall(cachedCtor, argCount, dropBelow: false, newThis: created, constructed: created, copyMask: copyMask);
+                return;
+            }
+            OpNewObjectSlow(site, classNameIdx, argCount, copyMask);
+        }
+
+        private void OpNewObjectSlow(int site, int classNameIdx, int argCount, int copyMask)
+        {
+        {
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+
+            var rc = ResolveClass(_constants[classNameIdx].AsString());
+            var ctorProto = rc.FindConstructor(args.Length)
+                ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+            if (ExecutionMode != VmExecutionMode.Performance
+                && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
+            {
+                ThrowAccessDenied(
+                    $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorProto.Access ?? AccessModifier.Public)} und von hier aus nicht aufrufbar.");
+                return;
+            }
+
+            if (ctorProto.ParamCount == argCount)
+                StoreSite(site, new SiteCache(rc, ctorProto, 0));
+            var instance = new ObjectInstance(rc.Name, _currentScope, rc);
+            if (rc.IsActor) instance.Mailbox = new ActorMailbox();
+            args = FillDefaultArgs(ctorProto, args, instance);
+            BeginConstruction(instance, ctorProto, args, copyMask);
+            return;
+        }
+        }
+
+        private void OpNewObjectOwned()
+        {
+        {
+            int classNameIdx = ReadU16();
+            int argCount = ReadByte();
+            int copyMask = TakeCopyMask();
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+            var owner = RequireObjectInstance(Pop(), "Objekt-Erzeugung mit Owner");
+
+            var rc = ResolveClass(_constants[classNameIdx].AsString());
+            var ctorProto = rc.FindConstructor(args.Length)
+                ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+            if (ExecutionMode != VmExecutionMode.Performance
+                && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
+            {
+                ThrowAccessDenied(
+                    $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorProto.Access ?? AccessModifier.Public)} und von hier aus nicht aufrufbar.");
+                return;
+            }
+
+            var instance = new ObjectInstance(rc.Name, owner, rc);
+            if (rc.IsActor) instance.Mailbox = new ActorMailbox();
+            args = FillDefaultArgs(ctorProto, args, instance);
+            BeginConstruction(instance, ctorProto, args, copyMask);
+            return;
+        }
+        }
+
+        private void OpConstructBase()
+        {
+        {
+            int classNameIdx = ReadU16();
+            int argCount = ReadByte();
+            int copyMask = TakeCopyMask();
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+
+            var rc = ResolveClass(_constants[classNameIdx].AsString());
+            var ctorProto = rc.FindConstructor(args.Length)
+                ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+            args = FillDefaultArgs(ctorProto, args, _currentThis);
+
+            // Dieselbe Instanz wird weiter konstruiert - 'this' bleibt
+            // unverändert (wird trotzdem in den Frame geschrieben, damit
+            // RETURN einheitlich wiederherstellen kann).
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+
+            var baseScope = new Scope(_globalScope);
+            foreach (var a in args) baseScope.DefineSlot(a);
+            ApplyCopyMask(baseScope, copyMask);
+
+            _currentScope = baseScope;
+            _currentChunk = ctorProto.Chunk;
+            _ip = 0;
+            return;
+        }
+        }
+
+        private void OpGetField()
+        {
+        {
+            int site = _ip - 1;
+            int fieldNameIdx = ReadU16();
+
+            // Schnellpfad (Inline-Cache): Objekt derselben Klasse wie zuvor, Feld liegt an bekanntem Index.
+            if (_stack[_sp - 1] is { Kind: ValueKind.Class } cachedTarget
+                && LookupSite(site) is { } fieldEntry
+                && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
+                && ReferenceEquals(cachedObj.RtClass, fieldEntry.Class)
+                && cachedObj.ThreadLock == null)
+            {
+                _stack[_sp - 1] = cachedObj.Fields.GetAt(fieldEntry.FieldIndex);
+                return;
+            }
+
+            OpGetFieldSlow(site, fieldNameIdx);
+            return;
+        }
+        }
+
+        private void OpGetFieldSlow(int site, int fieldNameIdx)
+        {
+        {
+            string fieldName = _constants[fieldNameIdx].AsString();
+            var target = Pop();
+
+            // `Length` ist die Schreibweise der Eigenschaften (wie bei `string`),
+            // `length` die ältere - beide bei Array/Puffer/String gleichwertig.
+            if (target.Kind == ValueKind.String)
+            {
+                if (fieldName is "Length" or "length")
+                {
+                    Push(Value.MakeInt(target.AsString().Length));
+                    return;
+                }
+                throw new InvalidOperationException($"Zeichenketten haben kein Feld '{fieldName}' (nur 'Length').");
+            }
+
+            if (target.Kind == ValueKind.Array)
+            {
+                if (fieldName is "Length" or "length")
+                {
+                    Push(Value.MakeInt(target.AsArray().Length));
+                    return;
+                }
+                throw new InvalidOperationException($"Arrays haben kein Feld '{fieldName}' (nur 'Length').");
+            }
+
+            if (target.Kind == ValueKind.Buffer)
+            {
+                var buf = target.AsBuffer();
+                if (fieldName is "Length" or "length")
+                {
+                    Push(Value.MakeInt(buf.Length));
+                    return;
+                }
+                if (fieldName == "littleEndian")
+                {
+                    Push(Value.MakeBool(buf.Order == ByteOrder.Little));
+                    return;
+                }
+                throw new InvalidOperationException(
+                    $"Byte-Puffer haben kein Feld '{fieldName}' (nur 'Length', 'littleEndian').");
+            }
+
+            var obj = RequireObjectInstance(target, "Feldzugriff");
+            if (obj.TryGetFieldLocked(fieldName, out var val))
+            {
+                if (_threadBroker != null && obj.InGlobalsDomain) MarkShared(val); // ein Array des geteilten Bereichs
+                if (ExecutionMode != VmExecutionMode.Performance && obj.RtClass != null)
+                {
+                    var fieldAccess = obj.RtClass.FindFieldAccess(fieldName);
+                    if (fieldAccess is (var declaringRcGet, var accessGet) && !IsMemberAccessAllowed(declaringRcGet, accessGet))
+                    {
+                        ThrowAccessDenied(
+                            $"Feld '{fieldName}' von '{declaringRcGet.Name}' ist {DescribeAccess(accessGet)} " +
+                            "und von hier aus nicht zugreifbar.");
+                        return;
+                    }
+                }
+                if (obj.RtClass != null && obj.ThreadLock == null && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int getIndex))
+                    StoreSite(site, new SiteCache(obj.RtClass, null, getIndex));
+                Push(val);
+                return;
+            }
+
+            // Kein Feld dieses Namens - Property-Getter versuchen
+            // (Namenskonvention 'get_'+Name, siehe Ast.PropertyDecl).
+            // Properties haben absichtlich NIE einen eigenen Fields-
+            // Eintrag, landen also immer hier.
+            var rcGet = ResolveClass(obj.ClassName);
+            if (rcGet.FindMethod("get_" + fieldName, 0) != null)
+            {
+                var result = CallMethodNested(obj, "get_" + fieldName, Array.Empty<Value>());
+                if (result != null) Push(result.Value);
+                return;
+            }
+
+            throw new InvalidOperationException(
+                $"Feld '{fieldName}' existiert nicht auf einer Instanz von '{obj.ClassName}' " +
+                $"(auch keine 'get_{fieldName}'-Property).");
+        }
+        }
+
+        private void OpSetField()
+        {
+        {
+            int site = _ip - 1;
+            int fieldNameIdx = ReadU16();
+
+            // Schnellpfad (Inline-Cache, siehe OpGetField): Objekt derselben Klasse wie zuvor.
+            if (_stack[_sp - 2] is { Kind: ValueKind.Class } cachedTarget
+                && LookupSite(site) is { } fieldEntry
+                && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
+                && ReferenceEquals(cachedObj.RtClass, fieldEntry.Class)
+                && cachedObj.ThreadLock == null)
+            {
+                var assigned = _stack[_sp - 1];
+                cachedObj.Fields.SetAt(fieldEntry.FieldIndex, assigned);
+                _sp--;
+                _stack[_sp - 1] = assigned;
+                return;
+            }
+
+            OpSetFieldSlow(site, fieldNameIdx);
+            return;
+        }
+        }
+
+        private void OpSetFieldSlow(int site, int fieldNameIdx)
+        {
+            // Ein Fire-Thread ändert ein Objekt des geteilten Bereichs nur in einer Sektion (siehe GlobalsBroker).
+            if (_threadBroker != null && _sectionDepth == 0
+                && _stack[_sp - 2] is { Kind: ValueKind.Class } sectionTarget
+                && ((ObjectInstance)sectionTarget.AsObjectRef()).InGlobalsDomain)
+            {
+                EnterGlobalsSection();
+                try { OpSetFieldSlowCore(site, fieldNameIdx); }
+                finally { ExitGlobalsSection(); }
+                return;
+            }
+            OpSetFieldSlowCore(site, fieldNameIdx);
+        }
+
+        private void OpSetFieldSlowCore(int site, int fieldNameIdx)
+        {
+        {
+            string fieldName = _constants[fieldNameIdx].AsString();
+            var value = Pop();
+            var obj = RequireObjectInstance(Pop(), "Feldzuweisung");
+
+            if (obj.HasFieldLocked(fieldName))
+            {
+                bool hasUnitRule = false;
+                if (ExecutionMode != VmExecutionMode.Performance && obj.RtClass != null)
+                {
+                    var fieldAccess = obj.RtClass.FindFieldAccess(fieldName);
+                    if (fieldAccess is (var declaringRcSet, var accessSet) && !IsMemberAccessAllowed(declaringRcSet, accessSet))
+                    {
+                        ThrowAccessDenied(
+                            $"Feld '{fieldName}' von '{declaringRcSet.Name}' ist {DescribeAccess(accessSet)} " +
+                            "und von hier aus nicht zugreifbar.");
+                        return;
+                    }
+
+                    // SPEC "Einheiten-Deklarationen" - Feldzugriff ist
+                    // grundsätzlich dynamisch (die tatsächliche Klasse
+                    // steht erst hier, zur Laufzeit, fest), deshalb
+                    // anders als bei lokalen/globalen Variablen KEINE
+                    // Compile-Zeit-Prüfung möglich (siehe Compiler.
+                    // CompileClassBody-Kommentar) - die Prüfung selbst
+                    // ist aber inhaltlich identisch zu OpCode.CheckUnit.
+                    string? requiredUnitName = obj.RtClass.FindFieldRequiredUnit(fieldName);
+                    if (requiredUnitName != null)
+                    {
+                        hasUnitRule = true; // jede Zuweisung muss die Einheit prüfen - nicht cachen
+                        var requiredUnit = Values.Unit.Parse(requiredUnitName);
+                        var actualUnit = value.Unit ?? Values.Unit.Unitless;
+                        if (!actualUnit.Equals(requiredUnit))
+                        {
+                            ThrowUnitMismatch(requiredUnitName, actualUnit);
+                            return;
+                        }
+                    }
+                }
+                if (!hasUnitRule && obj.RtClass != null && obj.ThreadLock == null
+                    && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
+                    StoreSite(site, new SiteCache(obj.RtClass, null, setIndex));
+                obj.SetFieldLocked(fieldName, value);
+                Push(value);
+                return;
+            }
+
+            // Kein existierendes Feld dieses Namens - Property-Setter
+            // versuchen (Namenskonvention 'set_'+Name).
+            var rcSet = ResolveClass(obj.ClassName);
+            if (rcSet.FindMethod("set_" + fieldName, 1) != null)
+            {
+                var result = CallMethodNested(obj, "set_" + fieldName, new[] { value });
+                // Rückgabewert des Setters selbst unbenutzt - eine
+                // Zuweisung wertet immer zum ZUGEWIESENEN Wert aus,
+                // nicht zu dem, was der Setter zurückgibt. null ==
+                // per Exception umgeleitet (siehe CallMethodNested-
+                // Doku) - dann NICHT pushen.
+                if (result != null) Push(value);
+                return;
+            }
+
+            // Eine gleichnamige Property MIT Getter, aber OHNE Setter,
+            // existiert - das ist ein Fehler, KEIN "neues Feld anlegen"
+            // (sonst würde die Property ab hier unbemerkt durch ein
+            // gleichnamiges Feld überschattet, auch für künftige
+            // Lesezugriffe über GetField, das Felder vor Properties
+            // prüft).
+            if (rcSet.FindMethod("get_" + fieldName, 0) != null)
+                throw new InvalidOperationException(
+                    $"Property '{fieldName}' auf '{obj.ClassName}' hat keinen Setter (nur 'get').");
+
+            // Weder existierendes Feld noch Property - wie bisher:
+            // neues Feld einfach anlegen (dynamische Sprache, keine
+            // Vorab-Deklarationspflicht für Felder).
+            obj.SetFieldLocked(fieldName, value);
+            Push(value);
+            return;
+        }
+        }
+
+        private void OpLoadThis()
+        {
+            Push(_currentThis switch
+            {
+                null => throw new InvalidOperationException("'this' ist an dieser Stelle nicht gebunden."),
+                ObjectInstance oi => Value.MakeClassRef(oi),
+                Value v => v,
+                _ => throw new InvalidOperationException("Unerwarteter 'this'-Wert."),
+            });
+            return;
+        }
+
+        private void OpSetFieldOnThis()
+        {
+            int site = _ip - 1;
+            int fieldNameIdx = ReadU16();
+
+            // Schnellpfad (Inline-Cache, siehe OpSetField): `this` hat dieselbe Klasse wie zuvor.
+            if (_currentThis is ObjectInstance fastThis
+                && LookupSite(site) is { } thisEntry
+                && ReferenceEquals(fastThis.RtClass, thisEntry.Class)
+                && fastThis.ThreadLock == null)
+            {
+                fastThis.Fields.SetAt(thisEntry.FieldIndex, _stack[--_sp]);
+                return;
+            }
+            OpSetFieldOnThisSlow(site, fieldNameIdx);
+        }
+
+        private void OpSetFieldOnThisSlow(int site, int fieldNameIdx)
+        {
+        {
+            string fieldName = _constants[fieldNameIdx].AsString();
+            var value = Pop();
+            if (_currentThis is not ObjectInstance oi)
+                throw new InvalidOperationException("SetFieldOnThis ohne gebundene ObjectInstance als 'this'.");
+
+            // SPEC "Einheiten-Deklarationen" - dieselbe Prüfung wie in
+            // SetField (siehe dort für die Begründung, warum das zur
+            // Laufzeit statt zur Compile-Zeit passiert). Dieser Opcode
+            // wird für die Feld-INITIALISIERER selbst benutzt (siehe
+            // Compiler.CompileConstructorProto) - `int x : mm = 5`
+            // würde ohne diese Prüfung hier den ersten, deklarierten
+            // Wert komplett ungeprüft durchlassen.
+            bool hasUnitRule = false;
+            if (ExecutionMode != VmExecutionMode.Performance && oi.RtClass != null)
+            {
+                string? requiredUnitName = oi.RtClass.FindFieldRequiredUnit(fieldName);
+                if (requiredUnitName != null)
+                {
+                    hasUnitRule = true; // jede Zuweisung muss die Einheit prüfen - nicht cachen
+                    var requiredUnit = Values.Unit.Parse(requiredUnitName);
+                    var actualUnit = value.Unit ?? Values.Unit.Unitless;
+                    if (!actualUnit.Equals(requiredUnit))
+                    {
+                        ThrowUnitMismatch(requiredUnitName, actualUnit);
+                        return;
+                    }
+                }
+            }
+
+            if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null
+                && oi.RtClass.FieldIndex.TryGetValue(fieldName, out int thisIndex))
+                StoreSite(site, new SiteCache(oi.RtClass, null, thisIndex));
+            oi.SetFieldLocked(fieldName, value);
+            return;
+        }
+        }
+
+        private void OpCallMethod()
+        {
+        {
+            if (PollSignals()) return;
+            int site = _ip - 1;
+            int methodNameIdx = ReadU16();
+            int argCount = ReadByte();
+            int copyMask = TakeCopyMask();
+
+            // Schnellpfad (Inline-Cache, siehe SiteCache): ein Objekt derselben Klasse wie beim letzten Aufruf
+            // dieser Stelle - Methode, Zugriffs- und Argumentprüfung sind schon erledigt.
+            if (_stack[_sp - 1 - argCount] is { Kind: ValueKind.Class } cachedTarget
+                && LookupSite(site) is { Proto: { } cachedMethod } siteEntry
+                && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
+                && ReferenceEquals(cachedObj.RtClass, siteEntry.Class)
+                && cachedObj.Mailbox == null
+                && (_threadBroker == null || _sectionDepth > 0 || !cachedObj.InGlobalsDomain))
+            {
+                EnterCall(cachedMethod, argCount, dropBelow: true, cachedObj, copyMask: copyMask);
+                return;
+            }
+
+            OpCallMethodSlow(site, methodNameIdx, argCount, copyMask);
+            return;
+        }
+        }
+
+        private void OpCallMethodSlow(int site, int methodNameIdx, int argCount, int copyMask)
+        {
+        {
+            string methodName = _constants[methodNameIdx].AsString();
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+            var target = Pop();
+
+            // Eingebaute Methoden auf primitiven Werten (String/Char/
+            // Int(als byte)/Buffer, siehe TryCallBuiltinMethod, SPEC
+            // 8.10) - GETRENNT vom normalen Klassen-Methodenaufruf
+            // unten, da ein primitiver Wert keine ObjectInstance ist
+            // und nie eine war (RequireObjectInstance würde hier
+            // sonst fälschlich ablehnen).
+            if (target.Kind != ValueKind.Class)
+            {
+                // `foreach (x in array)` / `foreach (b in buffer)`: ein Array/Puffer ist
+                // keine Objektinstanz mit eigenem GetEnumerator() - hier ein
+                // ListEnumerator der Prelude darüber (dieselbe Klasse, die `List`
+                // benutzt; sie liest nur `items[index]`/`count`). Ohne Prelude (reine
+                // Kernprogramme) bleibt es beim Fehler unten.
+                if (methodName == "GetEnumerator" && args.Length == 0
+                    && target.Kind is ValueKind.Array or ValueKind.Buffer
+                    && _classes.TryGetValue("ListEnumerator", out var enumeratorClass))
+                {
+                    long itemCount = target.Kind == ValueKind.Array ? target.AsArray().Length : target.AsBuffer().Length;
+                    var enumerator = ConstructNested(enumeratorClass, new[] { target, Value.MakeInt(itemCount) });
+                    Push(Value.MakeClassRef(enumerator));
+                    return;
+                }
+
+                // Methoden aus einer Basistyp-Erweiterung (`class extends string { ... }`,
+                // SPEC 5.5.1 - z.B. IndexOf/Substring im Prelude): wie ein Objekt-Aufruf, nur
+                // ist `this` der Wert selbst. Vor den fest eingebauten Konvertierungen unten.
+                if (_baseTypeClasses[(int)target.Kind] is { } extensionRc)
+                {
+                    var (extProto, extDeclaringRc, extAccess) = extensionRc.FindMethodWithAccess(methodName, args.Length);
+                    if (extProto != null)
+                    {
+                        if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(extDeclaringRc!, extAccess))
+                        {
+                            ThrowAccessDenied(
+                                $"Methode '{methodName}' der Erweiterung von '{extensionRc.Name.Substring(1)}' ist " +
+                                $"{DescribeAccess(extAccess)} und von hier aus nicht aufrufbar.");
+                            return;
+                        }
+                        CheckArity(extProto, args.Length);
+                        args = FillDefaultArgs(extProto, args, target);
+
+                        _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+                        var extScope = new Scope(_globalScope);
+                        foreach (var a in args) extScope.DefineSlot(a);
+                        ApplyCopyMask(extScope, copyMask);
+
+                        _currentThis = target;
+                        _currentScope = extScope;
+                        _currentChunk = extProto.Chunk;
+                        _ip = 0;
+                        return;
+                    }
+                }
+
+                if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
+                if (TryCallBuiltinMethod(target, methodName, args, out Value builtinResult))
+                {
+                    Push(builtinResult);
+                    return;
+                }
+                throw new InvalidOperationException(
+                    $"'{methodName}' ({args.Length} Argument(e)) ist keine bekannte eingebaute Methode " +
+                    $"auf einem Wert vom Typ {target.Kind}.");
+            }
+
+            var obj = (ObjectInstance)target.AsObjectRef();
+
+            // Actor-Ziel (siehe Runtime.ObjectInstance.Mailbox-Doku):
+            // JEDER Methodenaufruf wird zu einer asynchronen Nachricht
+            // statt eines direkten Aufrufs, unabhängig vom rufenden
+            // Thread - dieser Aufruf selbst liefert 'undefined' und
+            // läuft normal weiter (kein Sprung in irgendeinen Chunk).
+            if (obj.Mailbox != null)
+            {
+                if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
+                obj.Mailbox.Enqueue(new ActorMessage(methodName, args));
+                Push(Value.MakeUndefined());
+                return;
+            }
+
+            // Fire-Thread ruft eine Methode eines Objekts des geteilten Bereichs: sie läuft als Ganzes in einer Sektion (atomar).
+            if (NeedsSection(obj))
+            {
+                if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
+                var sectionResult = CallGlobalsMethodInSection(obj, methodName, args);
+                if (sectionResult != null) Push(sectionResult.Value); // null: eine Exception hat den Ablauf umgeleitet
+                return;
+            }
+
+            var rc = ResolveClass(obj.ClassName);
+            var (proto, declaringRcCall, accessCall) = rc.FindMethodWithAccess(methodName, args.Length);
+            if (proto == null)
+            {
+                // Die Ownership-Übergabe (SPEC 2.2) ist für jedes Objekt da, ohne dass die Klasse sie deklariert.
+                if (TryCallOwnershipMethod(obj, methodName, args))
+                {
+                    Push(Value.MakeUndefined());
+                    return;
+                }
+                throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
+            }
+            if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
+            {
+                ThrowAccessDenied(
+                    $"Methode '{methodName}' von '{declaringRcCall!.Name}' ist {DescribeAccess(accessCall)} " +
+                    "und von hier aus nicht aufrufbar.");
+                return;
+            }
+            CheckArity(proto, args.Length);
+            if (proto.ParamCount == argCount && obj.RtClass != null)
+                StoreSite(site, new SiteCache(obj.RtClass, proto, 0));
+            args = FillDefaultArgs(proto, args, obj);
+
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+            var scope = new Scope(_globalScope);
+            foreach (var a in args) scope.DefineSlot(a);
+            ApplyCopyMask(scope, copyMask);
+
+            _currentThis = obj;
+            _currentScope = scope;
+            _currentChunk = proto.Chunk;
+            _ip = 0;
+            return;
+        }
+        }
+
+        /// <summary>`obj.TakeUpwards()`, `obj.TakeGlobal()`, `obj.TakeTo(other)` (SPEC 2.2): eingebaute Methoden jedes Objekts, die
+        /// nur greifen, wenn die Klasse nichts Gleichnamiges deklariert. Liefert false, wenn `name`/Argumentzahl keine davon ist.</summary>
+        private bool TryCallOwnershipMethod(ObjectInstance obj, string name, Value[] args)
+        {
+            switch (name)
+            {
+                case "TakeUpwards" when args.Length == 0:
+                    obj.TakeUpwards();
+                    return true;
+                case "TakeGlobal" when args.Length == 0:
+                    obj.TakeGlobal(_globalScope);
+                    return true;
+                case "TakeTo" when args.Length == 1:
+                    obj.TakeTo(RequireObjectInstance(args[0], "TakeTo"), this);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private void OpCallBaseMethod()
+        {
+        {
+            string baseClassName = _constants[ReadU16()].AsString();
+            string methodName = _constants[ReadU16()].AsString();
+            int argCount = ReadByte();
+            int copyMask = TakeCopyMask();
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+
+            var rc = ResolveClass(baseClassName);
+            var (proto, declaringRcBase, accessBase) = rc.FindMethodWithAccess(methodName, args.Length);
+            if (proto == null)
+                throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
+            if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcBase!, accessBase))
+            {
+                ThrowAccessDenied(
+                    $"Methode '{methodName}' von '{declaringRcBase!.Name}' ist {DescribeAccess(accessBase)} " +
+                    "und von hier aus nicht aufrufbar.");
+                return;
+            }
+            CheckArity(proto, args.Length);
+            args = FillDefaultArgs(proto, args, _currentThis);
+
+            // 'this' bleibt dasselbe Objekt (nicht-virtueller Aufruf).
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+            var scope = new Scope(_globalScope);
+            foreach (var a in args) scope.DefineSlot(a);
+            ApplyCopyMask(scope, copyMask);
+
+            _currentScope = scope;
+            _currentChunk = proto.Chunk;
+            _ip = 0;
+            return;
+        }
+        }
+
+        private void OpGetStaticField()
+        {
+        {
+            // SPEC "Statische Mitglieder" - kein Objekt auf dem Stack
+            // (der Klassenname steht schon als Konstante im Bytecode,
+            // siehe Resolver.TryResolveStaticMemberAccess/Compiler),
+            // die eigentliche Speicherstelle liegt direkt auf der
+            // RuntimeClass (siehe FindStaticFieldOwner - teilt sich
+            // ggf. mit einer Basisklasse dieselbe Speicherstelle).
+            string className = _constants[ReadU16()].AsString();
+            string fieldName = _constants[ReadU16()].AsString();
+            var staticRc = ResolveClass(className);
+            var owner = staticRc.FindStaticFieldOwner(fieldName);
+
+            if (owner == null)
+            {
+                // Kein statisches Feld dieses Namens - Property-
+                // Getter versuchen (Namenskonvention 'get_'+Name,
+                // genau wie bei GetField), diesmal als STATISCHER
+                // Aufruf (keine Instanz).
+                if (staticRc.FindMethod("get_" + fieldName, 0) is { IsStatic: true })
+                {
+                    var result = CallStaticMethodNested(staticRc, "get_" + fieldName, Array.Empty<Value>());
+                    if (result != null) Push(result.Value);
+                    return;
+                }
+                throw new InvalidOperationException(
+                    $"'{className}' hat kein statisches Feld '{fieldName}' (auch keine statische " +
+                    $"'get_{fieldName}'-Property).");
+            }
+
+            if (ExecutionMode != VmExecutionMode.Performance)
+            {
+                var fieldAccess = owner.FindFieldAccess(fieldName);
+                if (fieldAccess is (var declaringRc, var access) && !IsMemberAccessAllowed(declaringRc, access))
+                {
+                    ThrowAccessDenied(
+                        $"Statisches Feld '{fieldName}' von '{declaringRc.Name}' ist {DescribeAccess(access)} " +
+                        "und von hier aus nicht zugreifbar.");
+                    return;
+                }
+            }
+
+            Value staticVal;
+            var staticBroker = _threadBroker;
+            if (staticBroker == null)
+            {
+                staticVal = owner.StaticFieldValues.TryGetValue(fieldName, out var plain) ? plain : Value.MakeUndefined();
+            }
+            else
+            {
+                // Fire-Thread: statische Felder sind Teil des geteilten Bereichs - Lesen unter dem Lock
+                staticBroker.Lock.Enter();
+                try { staticVal = owner.StaticFieldValues.TryGetValue(fieldName, out var shared) ? shared : Value.MakeUndefined(); }
+                finally { staticBroker.Lock.Exit(); }
+                MarkShared(staticVal);
+            }
+            Push(staticVal);
+            return;
+        }
+        }
+
+        private void OpSetStaticField()
+        {
+        {
+            string setClassName = _constants[ReadU16()].AsString();
+            string setFieldName = _constants[ReadU16()].AsString();
+            var setValue = Pop();
+            var setRc = ResolveClass(setClassName);
+            var setOwner = setRc.FindStaticFieldOwner(setFieldName);
+
+            if (setOwner == null)
+            {
+                // Kein statisches Feld dieses Namens - statischen
+                // Property-Setter versuchen (Namenskonvention
+                // 'set_'+Name, Gegenstück zum Getter-Fallback in
+                // GetStaticField, siehe auch SetField).
+                if (setRc.FindMethod("set_" + setFieldName, 1) is { IsStatic: true })
+                {
+                    var setterResult = CallStaticMethodNested(setRc, "set_" + setFieldName, new[] { setValue });
+                    // Eine Zuweisung wertet zum ZUGEWIESENEN Wert aus,
+                    // nicht zum Rückgabewert des Setters. null == per
+                    // Exception umgeleitet - dann NICHT pushen.
+                    if (setterResult != null) Push(setValue);
+                    return;
+                }
+                throw new InvalidOperationException(
+                    $"'{setClassName}' hat kein statisches Feld '{setFieldName}' (auch keine statische " +
+                    $"'set_{setFieldName}'-Property).");
+            }
+
+            if (ExecutionMode != VmExecutionMode.Performance)
+            {
+                var fieldAccess = setOwner.FindFieldAccess(setFieldName);
+                if (fieldAccess is (var declaringRc, var access) && !IsMemberAccessAllowed(declaringRc, access))
+                {
+                    ThrowAccessDenied(
+                        $"Statisches Feld '{setFieldName}' von '{declaringRc.Name}' ist {DescribeAccess(access)} " +
+                        "und von hier aus nicht zugreifbar.");
+                    return;
+                }
+
+                // SPEC "Einheiten-Deklarationen" - inhaltlich identisch
+                // zu SetField, siehe dort.
+                string? requiredUnitName = setOwner.FindFieldRequiredUnit(setFieldName);
+                if (requiredUnitName != null)
+                {
+                    var requiredUnit = Values.Unit.Parse(requiredUnitName);
+                    var actualUnit = setValue.Unit ?? Values.Unit.Unitless;
+                    if (!actualUnit.Equals(requiredUnit))
+                    {
+                        ThrowUnitMismatch(requiredUnitName, actualUnit);
+                        return;
+                    }
+                }
+            }
+
+            var staticWriteBroker = _threadBroker ?? _ownerBroker;
+            if (staticWriteBroker == null)
+            {
+                setOwner.StaticFieldValues[setFieldName] = setValue;
+            }
+            else
+            {
+                // Statische Felder gehören zum geteilten Bereich: ein Fire-Thread schreibt in einer Sektion, überall unter dem Lock
+                bool staticInThread = _threadBroker != null;
+                if (staticInThread) EnterGlobalsSection();
+                try
+                {
+                    staticWriteBroker.Lock.Enter();
+                    try { setOwner.StaticFieldValues[setFieldName] = setValue; }
+                    finally { staticWriteBroker.Lock.Exit(); }
+                }
+                finally { if (staticInThread) ExitGlobalsSection(); }
+            }
+            Push(setValue);
+            return;
+        }
+        }
+
+        private void OpCallStaticMethod()
+        {
+        {
+            if (PollSignals()) return;
+            int site = _ip - 1;
+            int classNameIdx = ReadU16();
+            int methodNameIdx = ReadU16();
+            int callArgCount = ReadByte();
+            int copyMask = TakeCopyMask();
+
+            // Schnellpfad: dieselbe Stelle hat sich schon einmal aufgelöst (Klasse/Methode stehen als Konstanten
+            // im Bytecode fest, siehe SiteCache) - kein Lookup nach Klassen- und Methodenname mehr.
+            if (LookupSite(site) is { Proto: { } cachedStatic })
+            {
+                EnterCall(cachedStatic, callArgCount, dropBelow: false, newThis: null, copyMask: copyMask);
+                return;
+            }
+
+            OpCallStaticMethodSlow(site, classNameIdx, methodNameIdx, callArgCount, copyMask);
+            return;
+        }
+        }
+
+        private void OpCallStaticMethodSlow(int site, int classNameIdx, int methodNameIdx, int callArgCount, int copyMask)
+        {
+        {
+            string callClassName = _constants[classNameIdx].AsString();
+            string callMethodName = _constants[methodNameIdx].AsString();
+            var callArgs = new Value[callArgCount];
+            for (int i = callArgCount - 1; i >= 0; i--) callArgs[i] = Pop();
+
+            var callRc = ResolveClass(callClassName);
+            var (callProto, declaringRcCall, accessCall) = callRc.FindMethodWithAccess(callMethodName, callArgs.Length);
+            if (callProto == null)
+                throw new InvalidOperationException(DescribeMethodNotFound(callRc, callMethodName, callArgs.Length));
+            if (!callProto.IsStatic)
+                throw new InvalidOperationException(
+                    $"'{callMethodName}' auf '{callClassName}' ist keine statische Methode - " +
+                    $"über 'ClassName.{callMethodName}(...)' nur für 'static'-Methoden aufrufbar.");
+            if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
+            {
+                ThrowAccessDenied(
+                    $"Statische Methode '{callMethodName}' von '{declaringRcCall!.Name}' ist " +
+                    $"{DescribeAccess(accessCall)} und von hier aus nicht aufrufbar.");
+                return;
+            }
+            CheckArity(callProto, callArgs.Length);
+            callArgs = FillDefaultArgs(callProto, callArgs, null);
+
+            if (callProto.ParamCount == callArgCount)
+                StoreSite(site, new SiteCache(null, callProto, 0));
+
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+            var callScope = new Scope(_globalScope);
+            foreach (var a in callArgs) callScope.DefineSlot(a);
+            ApplyCopyMask(callScope, copyMask);
+
+            // Explizit KEIN 'this' (anders als oben bei CallBaseMethod,
+            // das die aufrufende Instanz beibehält) - der Resolver
+            // verbietet 'this'/'super' im Körper einer statischen
+            // Methode bereits (siehe Resolver.ResolveExpr/ThisExpr),
+            // das hier ist die zusätzliche Laufzeit-Absicherung dafür.
+            _currentThis = null;
+            _currentScope = callScope;
+            _currentChunk = callProto.Chunk;
+            _ip = 0;
+            return;
+        }
+        }
+
+        private void OpCallProtoWithThis()
+        {
+        {
+            int protoIdx = ReadU16();
+            int argCount = ReadByte();
+            var args = new Value[argCount];
+            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+            var thisVal = Pop();
+            var proto = _currentChunk.Functions[protoIdx];
+            CheckArity(proto, args.Length);
+
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+            var scope = new Scope(_globalScope);
+            foreach (var a in args) scope.DefineSlot(a);
+
+            _currentThis = thisVal.Kind == ValueKind.Class ? thisVal.AsObjectRef() : (object)thisVal;
+            _currentScope = scope;
+            _currentChunk = proto.Chunk;
+            _ip = 0;
+            return;
+        }
+        }
+
+        private void OpNewArray()
+        {
+        {
+            long size = Pop().AsInt();
+            if (size < 0)
+                throw new InvalidOperationException($"Ungültige Array-Größe {size}.");
+            Push(Value.MakeArray(new ScriptArray((int)size)));
+            return;
+        }
+        }
+
+        private void OpMakeArrayLiteral()
+        {
+        {
+            int count = ReadU16();
+            var arr = new ScriptArray(count);
+            for (int i = count - 1; i >= 0; i--)
+                arr.Items[i] = Pop();
+            Push(Value.MakeArray(arr));
+            return;
+        }
+        }
+
+        private void OpArrayGet()
+        {
+            // Schnellpfad: Array mit int-Index im gültigen Bereich (alles andere - auch der Fehlerfall - unten).
+            ref Value fastTarget = ref _stack[_sp - 2];
+            ref Value fastIndex = ref _stack[_sp - 1];
+            if (fastTarget.Kind == ValueKind.Array && fastIndex.Kind == ValueKind.Int)
+            {
+                var fastArray = fastTarget.AsArray();
+                var items = fastArray.Items;
+                long i = fastIndex.AsInt();
+                if ((ulong)i < (ulong)items.Length && !fastArray.IsShared)
+                {
+                    fastTarget = items[i];
+                    _sp--;
+                    return;
+                }
+            }
+            OpArrayGetSlow();
+        }
+
+        private void OpArrayGetSlow()
+        {
+        {
+            var indexVal = Pop();
+            var target = Pop();
+
+            if (target.Kind == ValueKind.Array && target.AsArray().IsShared)
+            {
+                // Array des geteilten Bereichs (siehe GlobalsBroker): ein Fire-Thread liest es unter dem Lock
+                long sharedIdx = indexVal.AsInt();
+                if (TryGetSharedElement(target.AsArray(), sharedIdx, out var sharedValue))
+                {
+                    if (_threadBroker != null) MarkShared(sharedValue);
+                    Push(sharedValue);
+                }
+                else ThrowIndexOutOfBounds(sharedIdx, target.AsArray().Length);
+            }
+            else if (target.Kind == ValueKind.Array)
+            {
+                if (ExecutionMode == VmExecutionMode.Performance)
+                {
+                    // Siehe VmExecutionMode.Performance-Doku - KEINE
+                    // Bounds-Prüfung, ein ungültiger Index führt zu
+                    // einer rohen .NET-IndexOutOfRangeException statt
+                    // einer fangbaren Skript-Exception.
+                    Push(target.AsArray().GetUnchecked(indexVal.AsInt()));
+                }
+                else
+                {
+                    long idx = indexVal.AsInt();
+                    if (target.AsArray().TryGet(idx, out var v))
+                        Push(v);
+                    else
+                        // Macht einen ungültigen Index zu einer echten,
+                        // fangbaren Skript-Exception statt eines rohen
+                        // C#-Fehlers - KEIN Push hier, ThrowIndexOutOfBounds
+                        // hat _currentChunk/_ip bereits umgeleitet.
+                        ThrowIndexOutOfBounds(idx, target.AsArray().Length);
+                }
+            }
+            else if (target.Kind == ValueKind.Buffer)
+            {
+                // Liefert IMMER int[8] (Width W8, siehe Values.NumericWidth) -
+                // 'byte' ist reines Typ-Sugar für int[8] (SPEC 8.10),
+                // kein eigener ValueKind, ein einzelnes Byte ist deshalb
+                // einfach ein normaler int-Wert mit dieser Breite.
+                if (ExecutionMode == VmExecutionMode.Performance)
+                {
+                    byte bFast = target.AsBuffer().GetUnchecked(indexVal.AsInt());
+                    Push(Value.MakeInt(bFast, width: NumericWidth.W8));
+                }
+                else
+                {
+                    long idx = indexVal.AsInt();
+                    if (target.AsBuffer().TryGet(idx, out byte b))
+                        Push(Value.MakeInt(b, width: NumericWidth.W8));
+                    else
+                        ThrowIndexOutOfBounds(idx, target.AsBuffer().Length);
+                }
+            }
+            else if (target.Kind == ValueKind.String)
+            {
+                // `s[i]` liest das Zeichen an Index i (nur lesend - Zeichenketten sind
+                // unveränderlich, siehe ArraySet).
+                long idx = indexVal.AsInt();
+                string text = target.AsString();
+                if (idx >= 0 && idx < text.Length)
+                    Push(Value.MakeChar(text[(int)idx]));
+                else
+                    ThrowIndexOutOfBounds(idx, text.Length, "String-Index");
+            }
+            else if (target.Kind == ValueKind.Class)
+            {
+                // '[]'-Operator-Überladung per Namenskonvention (wie
+                // GetEnumerator/MoveNext/GetCurrent bei foreach): eine
+                // Klasse mit einer GetIndex(i)-Methode wird für Lesezugriffe
+                // benutzt - rein dynamisch, funktioniert auf jeder Klasse
+                // mit passender Methode, nicht nur auf 'List'.
+                var obj = (ObjectInstance)target.AsObjectRef();
+                var result = CallMethodNested(obj, "GetIndex", new[] { indexVal });
+                // null == GetIndex() wurde durch eine geworfene Exception
+                // verlassen (siehe CallMethodNested-Doku) - dann NICHT
+                // pushen, die Ausführung läuft bereits anderswo weiter.
+                if (result != null) Push(result.Value);
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Index-Zugriff ('[]') auf einem Wert vom Typ {target.Kind} nicht möglich " +
+                    "(weder Array noch eine Klasse mit 'GetIndex'-Methode).");
+            }
+            return;
+        }
+        }
+
+        private void OpArraySet()
+        {
+            // Schnellpfad wie bei OpArrayGet.
+            ref Value fastTarget = ref _stack[_sp - 3];
+            ref Value fastIndex = ref _stack[_sp - 2];
+            if (fastTarget.Kind == ValueKind.Array && fastIndex.Kind == ValueKind.Int)
+            {
+                var fastArray = fastTarget.AsArray();
+                var items = fastArray.Items;
+                long i = fastIndex.AsInt();
+                if ((ulong)i < (ulong)items.Length && !fastArray.IsShared)
+                {
+                    var assigned = _stack[_sp - 1];
+                    items[i] = assigned;
+                    _sp -= 2;
+                    _stack[_sp - 1] = assigned;
+                    return;
+                }
+            }
+            OpArraySetSlow();
+        }
+
+        private void OpArraySetSlow()
+        {
+        {
+            var value = Pop();
+            var indexVal = Pop();
+            var target = Pop();
+
+            if (target.Kind == ValueKind.Array && target.AsArray().IsShared)
+            {
+                // Array des geteilten Bereichs: ein Fire-Thread ändert es nur in einer Sektion, überall unter dem Lock
+                long sharedIdx = indexVal.AsInt();
+                if (TrySetSharedElement(target.AsArray(), sharedIdx, value)) Push(value);
+                else ThrowIndexOutOfBounds(sharedIdx, target.AsArray().Length);
+            }
+            else if (target.Kind == ValueKind.Array)
+            {
+                if (ExecutionMode == VmExecutionMode.Performance)
+                {
+                    target.AsArray().SetUnchecked(indexVal.AsInt(), value);
+                    Push(value);
+                }
+                else
+                {
+                    long idx = indexVal.AsInt();
+                    if (target.AsArray().TrySet(idx, value))
+                        Push(value);
+                    else
+                        // Kein Push hier - ThrowIndexOutOfBounds hat
+                        // _currentChunk/_ip bereits umgeleitet, ein
+                        // zusätzlicher Push würde den Stack dort verschieben.
+                        ThrowIndexOutOfBounds(idx, target.AsArray().Length);
+                }
+            }
+            else if (target.Kind == ValueKind.Buffer)
+            {
+                if (value.Kind != ValueKind.Int)
+                    throw new InvalidOperationException(
+                        $"Byte-Puffer-Zuweisung erwartet einen int-Wert (byte = int[8]), nicht {value.Kind}.");
+                if (ExecutionMode == VmExecutionMode.Performance)
+                {
+                    target.AsBuffer().SetUnchecked(indexVal.AsInt(), (byte)value.AsInt());
+                    Push(value);
+                }
+                else
+                {
+                    long idx = indexVal.AsInt();
+                    if (target.AsBuffer().TrySet(idx, (byte)value.AsInt()))
+                        Push(value);
+                    else
+                        ThrowIndexOutOfBounds(idx, target.AsBuffer().Length);
+                }
+            }
+            else if (target.Kind == ValueKind.Class)
+            {
+                var obj = (ObjectInstance)target.AsObjectRef();
+                var result = CallMethodNested(obj, "SetIndex", new[] { indexVal, value }); // Rückgabewert unbenutzt
+                // null == SetIndex() wurde durch eine geworfene Exception
+                // verlassen (siehe CallMethodNested-Doku) - dann NICHT
+                // pushen, die Ausführung läuft bereits anderswo weiter.
+                if (result != null) Push(value);
+            }
+            else if (target.Kind == ValueKind.String)
+            {
+                throw new InvalidOperationException(
+                    "Zeichenketten sind unveränderlich - 's[i] = ...' ist nicht möglich " +
+                    "(Replace/Substring liefern eine neue Zeichenkette).");
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Index-Zuweisung ('[]=') auf einem Wert vom Typ {target.Kind} nicht möglich " +
+                    "(weder Array noch eine Klasse mit 'SetIndex'-Methode).");
+            }
+            return;
+        }
         }
 
         private void Execute(OpCode op)
@@ -840,7 +2899,7 @@ namespace fire.Runtime
             switch (op)
             {
                 case OpCode.LoadConst:
-                    Push(_currentChunk.Constants[ReadU16()]);
+                    Push(_constants[ReadU16()]);
                     break;
 
                 case OpCode.Pop:
@@ -872,44 +2931,8 @@ namespace fire.Runtime
                 }
 
                 case OpCode.IncDecIndex:
-                {
-                    bool isIncrement = ReadByte() != 0;
-                    bool isPrefix = ReadByte() != 0;
-                    var indexVal = Pop();
-                    var target = Pop();
-                    long idx = indexVal.AsInt();
-
-                    if (target.Kind == ValueKind.Array)
-                    {
-                        var arr = target.AsArray();
-                        if (!arr.TryGet(idx, out var oldVal))
-                        {
-                            ThrowIndexOutOfBounds(idx, arr.Length);
-                            break;
-                        }
-                        var newVal = isIncrement ? Value.Add(oldVal, Value.MakeInt(1)) : Value.Subtract(oldVal, Value.MakeInt(1));
-                        arr.TrySet(idx, newVal);
-                        Push(isPrefix ? newVal : oldVal);
-                    }
-                    else if (target.Kind == ValueKind.Buffer)
-                    {
-                        var buf = target.AsBuffer();
-                        if (!buf.TryGet(idx, out byte oldByte))
-                        {
-                            ThrowIndexOutOfBounds(idx, buf.Length);
-                            break;
-                        }
-                        byte newByte = (byte)(isIncrement ? oldByte + 1 : oldByte - 1);
-                        buf.TrySet(idx, newByte);
-                        Push(Value.MakeInt(isPrefix ? newByte : oldByte, width: NumericWidth.W8));
-                    }
-                    else
-                    {
-                        throw new InvalidOperationException(
-                            $"'++'/'--' auf einem Index-Ziel erwartet ein Array oder einen Byte-Puffer, nicht {target.Kind}.");
-                    }
+                    OpIncDecIndex();
                     break;
-                }
 
                 case OpCode.LoadLocal:
                 {
@@ -926,15 +2949,24 @@ namespace fire.Runtime
                 }
 
                 case OpCode.LoadGlobal:
-                    Push(_globalScope.GetSlot(ReadU16()));
+                    {
+                        int loadSlot = ReadU16();
+                        Push(loadSlot < _sharedCount ? LoadSharedGlobal(loadSlot) : _globalScope.GetSlot(loadSlot));
+                    }
                     break;
 
                 case OpCode.StoreGlobal:
-                    _globalScope.SetSlot(ReadU16(), Peek());
+                    {
+                        int storeSlot = ReadU16();
+                        if (storeSlot < _sharedCount) StoreSharedGlobal(storeSlot, Peek());
+                        else if (_ownerBroker != null) StoreOwnerGlobal(storeSlot, Peek());
+                        else _globalScope.SetSlot(storeSlot, Peek());
+                    }
                     break;
 
                 case OpCode.DeclareLocal:
-                    _currentScope.DefineSlot(Pop());
+                    if (_ownerBroker != null && ReferenceEquals(_currentScope, _globalScope)) DeclareOwnerGlobal(Pop());
+                    else _currentScope.DefineSlot(Pop());
                     break;
 
                 case OpCode.Add: BinaryNumericOrOperator(Value.Add, "operator+"); break;
@@ -951,7 +2983,7 @@ namespace fire.Runtime
 
                 case OpCode.FormatValue:
                 {
-                    string format = _currentChunk.Constants[ReadU16()].AsString();
+                    string format = _constants[ReadU16()].AsString();
                     var v = Pop();
                     Push(Value.MakeString(v.Format(format)));
                     break;
@@ -1043,14 +3075,8 @@ namespace fire.Runtime
                     break;
 
                 case OpCode.CallNative:
-                {
-                    int nativeIdx = ReadU16();
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-                    Push(_natives[nativeIdx](args));
+                    OpCallNative();
                     break;
-                }
 
                 case OpCode.CallTryableNative:
                 {
@@ -1064,6 +3090,7 @@ namespace fire.Runtime
                     // einen Wurf; das Skript sieht dafür einfach 'undefined'.
                     bool success = _natives.TryableAt(tryableIdx)(args, out Value tryResult);
                     Push(success ? tryResult : Value.MakeUndefined());
+                    PollSignalsAfterOp();
                     break;
                 }
 
@@ -1071,7 +3098,7 @@ namespace fire.Runtime
                 {
                     int nameIdx = ReadU16();
                     int argCount = ReadByte();
-                    string externName = _currentChunk.Constants[nameIdx].AsString();
+                    string externName = _constants[nameIdx].AsString();
 
                     var scriptArgs = new Value[argCount];
                     for (int i = argCount - 1; i >= 0; i--) scriptArgs[i] = Pop();
@@ -1110,544 +3137,92 @@ namespace fire.Runtime
                     }
 
                     Push(MarshalResultIn(nativeResult));
+                    PollSignalsAfterOp();
                     break;
                 }
 
                 case OpCode.MakeLambda:
-                {
-                    int protoIdx = ReadU16();
-                    bool hasOnTarget = ReadByte() != 0;
-                    var proto = _currentChunk.Functions[protoIdx];
-                    object? onTarget = hasOnTarget ? BoxValueForOnTarget(Pop()) : null;
-                    var lambdaValue = new LambdaValue(proto, onTarget);
-                    Push(Value.MakeLambda(lambdaValue));
+                    OpMakeLambda();
                     break;
-                }
 
                 case OpCode.Call:
-                {
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-                    var calleeVal = Pop();
-
-                    if (calleeVal.Kind != ValueKind.Lambda)
-                        throw new InvalidOperationException(
-                            $"Aufruf eines Werts vom Typ {calleeVal.Kind}, der kein Lambda ist.");
-
-                    var lambda = (LambdaValue)calleeVal.AsLambda();
-                    CheckArity(lambda.Proto, args.Length);
-                    args = FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
-
-                    _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-
-                    var funcScope = new Scope(_globalScope);
-                    foreach (var a in args) funcScope.DefineSlot(a);
-
-                    _currentThis = lambda.OnTarget;
-                    _currentScope = funcScope;
-                    _currentChunk = lambda.Proto.Chunk;
-                    _ip = 0;
+                    OpCall();
                     break;
-                }
 
                 case OpCode.Return:
-                {
-                    var retVal = Pop();
-
-                    // SPEC 2.3: Wird eine Objektinstanz zurückgegeben, deren
-                    // Owner der gerade verlassene Scope ist, geht das Ownership
-                    // an den AUFRUFENDEN Scope über (nicht einfach '.Parent' -
-                    // Funktions-/Methoden-Scopes haben als Parent immer global,
-                    // das wäre hier nicht die gewünschte "eine Ebene höher").
-                    // Ohne das würde das zurückgegebene Objekt durch das gleich
-                    // folgende Release() des eigenen Scopes sofort mit zerstört.
-                    if (retVal.Kind == ValueKind.Class && _frames.Count > 0)
-                    {
-                        var retInstance = (ObjectInstance)retVal.AsObjectRef();
-                        if (ReferenceEquals(retInstance.Owner, _currentScope))
-                            retInstance.ReparentTo(_frames.Peek().ReturnScope);
-                    }
-
-                    _currentScope.Release(this);
-
-                    var frame = _frames.Pop();
-                    _currentChunk = frame.ReturnChunk;
-                    _ip = frame.ReturnIp;
-                    _currentScope = frame.ReturnScope;
-                    _currentThis = frame.ReturnThis;
-
-                    Push(frame.ConstructedInstance != null
-                        ? Value.MakeClassRef(frame.ConstructedInstance)
-                        : retVal);
+                    OpReturn();
                     break;
-                }
 
                 case OpCode.NewObject:
+                    OpNewObject();
+                    break;
+
+                case OpCode.NewObjectOwned:
+                    OpNewObjectOwned();
+                    break;
+
+                case OpCode.CopyValue:
                 {
-                    int classNameIdx = ReadU16();
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-
-                    var rc = ResolveClass(_currentChunk.Constants[classNameIdx].AsString());
-                    var ctorProto = rc.FindConstructor(args.Length)
-                        ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
-                    if (ExecutionMode != VmExecutionMode.Performance
-                        && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
-                    {
-                        ThrowAccessDenied(
-                            $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorProto.Access ?? AccessModifier.Public)} und von hier aus nicht aufrufbar.");
-                        break;
-                    }
-
-                    var instance = new ObjectInstance(rc.Name, _currentScope, rc);
-                    if (rc.IsActor) instance.Mailbox = new ActorMailbox();
-                    args = FillDefaultArgs(ctorProto, args, instance);
-                    BeginConstruction(instance, ctorProto, args);
+                    // `flat x` / `copy x` (SPEC 2.4) - die Kopie gehört dem aktuellen Scope (SPEC 2.1).
+                    bool deep = (ReadByte() & 1) != 0;
+                    var source = Pop();
+                    Push(ObjectCloner.Clone(source, _currentScope, deep));
                     break;
                 }
 
-                case OpCode.NewObjectOwned:
+                case OpCode.CopyArgs:
                 {
-                    int classNameIdx = ReadU16();
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-                    var owner = RequireObjectInstance(Pop(), "Objekt-Erzeugung mit Owner");
+                    int lo = ReadU16();
+                    int hi = ReadU16();
+                    _copyArgMask = lo | (hi << 16);
+                    break;
+                }
 
-                    var rc = ResolveClass(_currentChunk.Constants[classNameIdx].AsString());
-                    var ctorProto = rc.FindConstructor(args.Length)
-                        ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
-                    if (ExecutionMode != VmExecutionMode.Performance
-                        && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
-                    {
-                        ThrowAccessDenied(
-                            $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorProto.Access ?? AccessModifier.Public)} und von hier aus nicht aufrufbar.");
-                        break;
-                    }
-
-                    var instance = new ObjectInstance(rc.Name, owner, rc);
-                    if (rc.IsActor) instance.Mailbox = new ActorMailbox();
-                    args = FillDefaultArgs(ctorProto, args, instance);
-                    BeginConstruction(instance, ctorProto, args);
+                case OpCode.CopyValueOwned:
+                {
+                    // Direkt einem Feld zugewiesen: die Kopie gehört dem Zielobjekt (wie NewObjectOwned).
+                    bool deep = (ReadByte() & 1) != 0;
+                    var source = Pop();
+                    var owner = RequireObjectInstance(Pop(), "Kopie mit Owner");
+                    Push(ObjectCloner.CloneOwnedBy(source, owner, deep, this));
                     break;
                 }
 
                 case OpCode.ConstructBase:
-                {
-                    int classNameIdx = ReadU16();
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-
-                    var rc = ResolveClass(_currentChunk.Constants[classNameIdx].AsString());
-                    var ctorProto = rc.FindConstructor(args.Length)
-                        ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
-                    args = FillDefaultArgs(ctorProto, args, _currentThis);
-
-                    // Dieselbe Instanz wird weiter konstruiert - 'this' bleibt
-                    // unverändert (wird trotzdem in den Frame geschrieben, damit
-                    // RETURN einheitlich wiederherstellen kann).
-                    _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-
-                    var baseScope = new Scope(_globalScope);
-                    foreach (var a in args) baseScope.DefineSlot(a);
-
-                    _currentScope = baseScope;
-                    _currentChunk = ctorProto.Chunk;
-                    _ip = 0;
+                    OpConstructBase();
                     break;
-                }
 
                 case OpCode.GetField:
-                {
-                    string fieldName = _currentChunk.Constants[ReadU16()].AsString();
-                    var target = Pop();
-
-                    if (target.Kind == ValueKind.Array)
-                    {
-                        if (fieldName == "length")
-                        {
-                            Push(Value.MakeInt(target.AsArray().Length));
-                            break;
-                        }
-                        throw new InvalidOperationException($"Arrays haben kein Feld '{fieldName}' (nur 'length').");
-                    }
-
-                    if (target.Kind == ValueKind.Buffer)
-                    {
-                        var buf = target.AsBuffer();
-                        if (fieldName == "length")
-                        {
-                            Push(Value.MakeInt(buf.Length));
-                            break;
-                        }
-                        if (fieldName == "littleEndian")
-                        {
-                            Push(Value.MakeBool(buf.Order == ByteOrder.Little));
-                            break;
-                        }
-                        throw new InvalidOperationException(
-                            $"Byte-Puffer haben kein Feld '{fieldName}' (nur 'length', 'littleEndian').");
-                    }
-
-                    var obj = RequireObjectInstance(target, "Feldzugriff");
-                    if (obj.TryGetFieldLocked(fieldName, out var val))
-                    {
-                        if (ExecutionMode != VmExecutionMode.Performance && obj.RtClass != null)
-                        {
-                            var fieldAccess = obj.RtClass.FindFieldAccess(fieldName);
-                            if (fieldAccess is (var declaringRcGet, var accessGet) && !IsMemberAccessAllowed(declaringRcGet, accessGet))
-                            {
-                                ThrowAccessDenied(
-                                    $"Feld '{fieldName}' von '{declaringRcGet.Name}' ist {DescribeAccess(accessGet)} " +
-                                    "und von hier aus nicht zugreifbar.");
-                                break;
-                            }
-                        }
-                        Push(val);
-                        break;
-                    }
-
-                    // Kein Feld dieses Namens - Property-Getter versuchen
-                    // (Namenskonvention 'get_'+Name, siehe Ast.PropertyDecl).
-                    // Properties haben absichtlich NIE einen eigenen Fields-
-                    // Eintrag, landen also immer hier.
-                    var rcGet = ResolveClass(obj.ClassName);
-                    if (rcGet.FindMethod("get_" + fieldName, 0) != null)
-                    {
-                        var result = CallMethodNested(obj, "get_" + fieldName, Array.Empty<Value>());
-                        if (result != null) Push(result.Value);
-                        break;
-                    }
-
-                    throw new InvalidOperationException(
-                        $"Feld '{fieldName}' existiert nicht auf einer Instanz von '{obj.ClassName}' " +
-                        $"(auch keine 'get_{fieldName}'-Property).");
-                }
+                    OpGetField();
+                    break;
 
                 case OpCode.SetField:
-                {
-                    string fieldName = _currentChunk.Constants[ReadU16()].AsString();
-                    var value = Pop();
-                    var obj = RequireObjectInstance(Pop(), "Feldzuweisung");
-
-                    if (obj.HasFieldLocked(fieldName))
-                    {
-                        if (ExecutionMode != VmExecutionMode.Performance && obj.RtClass != null)
-                        {
-                            var fieldAccess = obj.RtClass.FindFieldAccess(fieldName);
-                            if (fieldAccess is (var declaringRcSet, var accessSet) && !IsMemberAccessAllowed(declaringRcSet, accessSet))
-                            {
-                                ThrowAccessDenied(
-                                    $"Feld '{fieldName}' von '{declaringRcSet.Name}' ist {DescribeAccess(accessSet)} " +
-                                    "und von hier aus nicht zugreifbar.");
-                                break;
-                            }
-
-                            // SPEC "Einheiten-Deklarationen" - Feldzugriff ist
-                            // grundsätzlich dynamisch (die tatsächliche Klasse
-                            // steht erst hier, zur Laufzeit, fest), deshalb
-                            // anders als bei lokalen/globalen Variablen KEINE
-                            // Compile-Zeit-Prüfung möglich (siehe Compiler.
-                            // CompileClassBody-Kommentar) - die Prüfung selbst
-                            // ist aber inhaltlich identisch zu OpCode.CheckUnit.
-                            string? requiredUnitName = obj.RtClass.FindFieldRequiredUnit(fieldName);
-                            if (requiredUnitName != null)
-                            {
-                                var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                                var actualUnit = value.Unit ?? Values.Unit.Unitless;
-                                if (!actualUnit.Equals(requiredUnit))
-                                {
-                                    ThrowUnitMismatch(requiredUnitName, actualUnit);
-                                    break;
-                                }
-                            }
-                        }
-                        obj.SetFieldLocked(fieldName, value);
-                        Push(value);
-                        break;
-                    }
-
-                    // Kein existierendes Feld dieses Namens - Property-Setter
-                    // versuchen (Namenskonvention 'set_'+Name).
-                    var rcSet = ResolveClass(obj.ClassName);
-                    if (rcSet.FindMethod("set_" + fieldName, 1) != null)
-                    {
-                        var result = CallMethodNested(obj, "set_" + fieldName, new[] { value });
-                        // Rückgabewert des Setters selbst unbenutzt - eine
-                        // Zuweisung wertet immer zum ZUGEWIESENEN Wert aus,
-                        // nicht zu dem, was der Setter zurückgibt. null ==
-                        // per Exception umgeleitet (siehe CallMethodNested-
-                        // Doku) - dann NICHT pushen.
-                        if (result != null) Push(value);
-                        break;
-                    }
-
-                    // Eine gleichnamige Property MIT Getter, aber OHNE Setter,
-                    // existiert - das ist ein Fehler, KEIN "neues Feld anlegen"
-                    // (sonst würde die Property ab hier unbemerkt durch ein
-                    // gleichnamiges Feld überschattet, auch für künftige
-                    // Lesezugriffe über GetField, das Felder vor Properties
-                    // prüft).
-                    if (rcSet.FindMethod("get_" + fieldName, 0) != null)
-                        throw new InvalidOperationException(
-                            $"Property '{fieldName}' auf '{obj.ClassName}' hat keinen Setter (nur 'get').");
-
-                    // Weder existierendes Feld noch Property - wie bisher:
-                    // neues Feld einfach anlegen (dynamische Sprache, keine
-                    // Vorab-Deklarationspflicht für Felder).
-                    obj.SetFieldLocked(fieldName, value);
-                    Push(value);
+                    OpSetField();
                     break;
-                }
 
                 case OpCode.LoadThis:
-                    Push(_currentThis switch
-                    {
-                        null => throw new InvalidOperationException("'this' ist an dieser Stelle nicht gebunden."),
-                        ObjectInstance oi => Value.MakeClassRef(oi),
-                        Value v => v,
-                        _ => throw new InvalidOperationException("Unerwarteter 'this'-Wert."),
-                    });
+                    OpLoadThis();
                     break;
 
                 case OpCode.SetFieldOnThis:
-                {
-                    string fieldName = _currentChunk.Constants[ReadU16()].AsString();
-                    var value = Pop();
-                    if (_currentThis is not ObjectInstance oi)
-                        throw new InvalidOperationException("SetFieldOnThis ohne gebundene ObjectInstance als 'this'.");
-
-                    // SPEC "Einheiten-Deklarationen" - dieselbe Prüfung wie in
-                    // SetField (siehe dort für die Begründung, warum das zur
-                    // Laufzeit statt zur Compile-Zeit passiert). Dieser Opcode
-                    // wird für die Feld-INITIALISIERER selbst benutzt (siehe
-                    // Compiler.CompileConstructorProto) - `int x : mm = 5`
-                    // würde ohne diese Prüfung hier den ersten, deklarierten
-                    // Wert komplett ungeprüft durchlassen.
-                    if (ExecutionMode != VmExecutionMode.Performance && oi.RtClass != null)
-                    {
-                        string? requiredUnitName = oi.RtClass.FindFieldRequiredUnit(fieldName);
-                        if (requiredUnitName != null)
-                        {
-                            var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                            var actualUnit = value.Unit ?? Values.Unit.Unitless;
-                            if (!actualUnit.Equals(requiredUnit))
-                            {
-                                ThrowUnitMismatch(requiredUnitName, actualUnit);
-                                break;
-                            }
-                        }
-                    }
-
-                    oi.SetFieldLocked(fieldName, value);
+                    OpSetFieldOnThis();
                     break;
-                }
 
                 case OpCode.CallMethod:
-                {
-                    string methodName = _currentChunk.Constants[ReadU16()].AsString();
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-                    var target = Pop();
-
-                    // Eingebaute Methoden auf primitiven Werten (String/Char/
-                    // Int(als byte)/Buffer, siehe TryCallBuiltinMethod, SPEC
-                    // 8.10) - GETRENNT vom normalen Klassen-Methodenaufruf
-                    // unten, da ein primitiver Wert keine ObjectInstance ist
-                    // und nie eine war (RequireObjectInstance würde hier
-                    // sonst fälschlich ablehnen).
-                    if (target.Kind != ValueKind.Class)
-                    {
-                        if (TryCallBuiltinMethod(target, methodName, args, out Value builtinResult))
-                        {
-                            Push(builtinResult);
-                            break;
-                        }
-                        throw new InvalidOperationException(
-                            $"'{methodName}' ({args.Length} Argument(e)) ist keine bekannte eingebaute Methode " +
-                            $"auf einem Wert vom Typ {target.Kind}.");
-                    }
-
-                    var obj = (ObjectInstance)target.AsObjectRef();
-
-                    // Actor-Ziel (siehe Runtime.ObjectInstance.Mailbox-Doku):
-                    // JEDER Methodenaufruf wird zu einer asynchronen Nachricht
-                    // statt eines direkten Aufrufs, unabhängig vom rufenden
-                    // Thread - dieser Aufruf selbst liefert 'undefined' und
-                    // läuft normal weiter (kein Sprung in irgendeinen Chunk).
-                    if (obj.Mailbox != null)
-                    {
-                        obj.Mailbox.Enqueue(new ActorMessage(methodName, args));
-                        Push(Value.MakeUndefined());
-                        break;
-                    }
-
-                    var rc = ResolveClass(obj.ClassName);
-                    var (proto, declaringRcCall, accessCall) = rc.FindMethodWithAccess(methodName, args.Length);
-                    if (proto == null)
-                        throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
-                    if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
-                    {
-                        ThrowAccessDenied(
-                            $"Methode '{methodName}' von '{declaringRcCall!.Name}' ist {DescribeAccess(accessCall)} " +
-                            "und von hier aus nicht aufrufbar.");
-                        break;
-                    }
-                    CheckArity(proto, args.Length);
-                    args = FillDefaultArgs(proto, args, obj);
-
-                    _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-                    var scope = new Scope(_globalScope);
-                    foreach (var a in args) scope.DefineSlot(a);
-
-                    _currentThis = obj;
-                    _currentScope = scope;
-                    _currentChunk = proto.Chunk;
-                    _ip = 0;
+                    OpCallMethod();
                     break;
-                }
 
                 case OpCode.CallBaseMethod:
-                {
-                    string baseClassName = _currentChunk.Constants[ReadU16()].AsString();
-                    string methodName = _currentChunk.Constants[ReadU16()].AsString();
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-
-                    var rc = ResolveClass(baseClassName);
-                    var (proto, declaringRcBase, accessBase) = rc.FindMethodWithAccess(methodName, args.Length);
-                    if (proto == null)
-                        throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
-                    if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcBase!, accessBase))
-                    {
-                        ThrowAccessDenied(
-                            $"Methode '{methodName}' von '{declaringRcBase!.Name}' ist {DescribeAccess(accessBase)} " +
-                            "und von hier aus nicht aufrufbar.");
-                        break;
-                    }
-                    CheckArity(proto, args.Length);
-                    args = FillDefaultArgs(proto, args, _currentThis);
-
-                    // 'this' bleibt dasselbe Objekt (nicht-virtueller Aufruf).
-                    _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-                    var scope = new Scope(_globalScope);
-                    foreach (var a in args) scope.DefineSlot(a);
-
-                    _currentScope = scope;
-                    _currentChunk = proto.Chunk;
-                    _ip = 0;
+                    OpCallBaseMethod();
                     break;
-                }
 
                 case OpCode.GetStaticField:
-                {
-                    // SPEC "Statische Mitglieder" - kein Objekt auf dem Stack
-                    // (der Klassenname steht schon als Konstante im Bytecode,
-                    // siehe Resolver.TryResolveStaticMemberAccess/Compiler),
-                    // die eigentliche Speicherstelle liegt direkt auf der
-                    // RuntimeClass (siehe FindStaticFieldOwner - teilt sich
-                    // ggf. mit einer Basisklasse dieselbe Speicherstelle).
-                    string className = _currentChunk.Constants[ReadU16()].AsString();
-                    string fieldName = _currentChunk.Constants[ReadU16()].AsString();
-                    var staticRc = ResolveClass(className);
-                    var owner = staticRc.FindStaticFieldOwner(fieldName);
-
-                    if (owner == null)
-                    {
-                        // Kein statisches Feld dieses Namens - Property-
-                        // Getter versuchen (Namenskonvention 'get_'+Name,
-                        // genau wie bei GetField), diesmal als STATISCHER
-                        // Aufruf (keine Instanz).
-                        if (staticRc.FindMethod("get_" + fieldName, 0) is { IsStatic: true })
-                        {
-                            var result = CallStaticMethodNested(staticRc, "get_" + fieldName, Array.Empty<Value>());
-                            if (result != null) Push(result.Value);
-                            break;
-                        }
-                        throw new InvalidOperationException(
-                            $"'{className}' hat kein statisches Feld '{fieldName}' (auch keine statische " +
-                            $"'get_{fieldName}'-Property).");
-                    }
-
-                    if (ExecutionMode != VmExecutionMode.Performance)
-                    {
-                        var fieldAccess = owner.FindFieldAccess(fieldName);
-                        if (fieldAccess is (var declaringRc, var access) && !IsMemberAccessAllowed(declaringRc, access))
-                        {
-                            ThrowAccessDenied(
-                                $"Statisches Feld '{fieldName}' von '{declaringRc.Name}' ist {DescribeAccess(access)} " +
-                                "und von hier aus nicht zugreifbar.");
-                            break;
-                        }
-                    }
-
-                    Push(owner.StaticFieldValues.TryGetValue(fieldName, out var staticVal) ? staticVal : Value.MakeUndefined());
+                    OpGetStaticField();
                     break;
-                }
 
                 case OpCode.SetStaticField:
-                {
-                    string setClassName = _currentChunk.Constants[ReadU16()].AsString();
-                    string setFieldName = _currentChunk.Constants[ReadU16()].AsString();
-                    var setValue = Pop();
-                    var setRc = ResolveClass(setClassName);
-                    var setOwner = setRc.FindStaticFieldOwner(setFieldName);
-
-                    if (setOwner == null)
-                    {
-                        // Kein statisches Feld dieses Namens - statischen
-                        // Property-Setter versuchen (Namenskonvention
-                        // 'set_'+Name, Gegenstück zum Getter-Fallback in
-                        // GetStaticField, siehe auch SetField).
-                        if (setRc.FindMethod("set_" + setFieldName, 1) is { IsStatic: true })
-                        {
-                            var setterResult = CallStaticMethodNested(setRc, "set_" + setFieldName, new[] { setValue });
-                            // Eine Zuweisung wertet zum ZUGEWIESENEN Wert aus,
-                            // nicht zum Rückgabewert des Setters. null == per
-                            // Exception umgeleitet - dann NICHT pushen.
-                            if (setterResult != null) Push(setValue);
-                            break;
-                        }
-                        throw new InvalidOperationException(
-                            $"'{setClassName}' hat kein statisches Feld '{setFieldName}' (auch keine statische " +
-                            $"'set_{setFieldName}'-Property).");
-                    }
-
-                    if (ExecutionMode != VmExecutionMode.Performance)
-                    {
-                        var fieldAccess = setOwner.FindFieldAccess(setFieldName);
-                        if (fieldAccess is (var declaringRc, var access) && !IsMemberAccessAllowed(declaringRc, access))
-                        {
-                            ThrowAccessDenied(
-                                $"Statisches Feld '{setFieldName}' von '{declaringRc.Name}' ist {DescribeAccess(access)} " +
-                                "und von hier aus nicht zugreifbar.");
-                            break;
-                        }
-
-                        // SPEC "Einheiten-Deklarationen" - inhaltlich identisch
-                        // zu SetField, siehe dort.
-                        string? requiredUnitName = setOwner.FindFieldRequiredUnit(setFieldName);
-                        if (requiredUnitName != null)
-                        {
-                            var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                            var actualUnit = setValue.Unit ?? Values.Unit.Unitless;
-                            if (!actualUnit.Equals(requiredUnit))
-                            {
-                                ThrowUnitMismatch(requiredUnitName, actualUnit);
-                                break;
-                            }
-                        }
-                    }
-
-                    setOwner.StaticFieldValues[setFieldName] = setValue;
-                    Push(setValue);
+                    OpSetStaticField();
                     break;
-                }
 
                 case OpCode.SetStaticFieldOnInit:
                 {
@@ -1658,8 +3233,8 @@ namespace fire.Runtime
                     // SetFieldOnThis bei Instanzfeldern. Einheiten-Prüfung
                     // bleibt (wie bei SetFieldOnThis) trotzdem bestehen - die
                     // gilt unabhängig davon, WER schreibt.
-                    string initClassName = _currentChunk.Constants[ReadU16()].AsString();
-                    string initFieldName = _currentChunk.Constants[ReadU16()].AsString();
+                    string initClassName = _constants[ReadU16()].AsString();
+                    string initFieldName = _constants[ReadU16()].AsString();
                     var initValue = Pop();
                     var initRc = ResolveClass(initClassName);
                     var initOwner = initRc.FindStaticFieldOwner(initFieldName);
@@ -1687,67 +3262,12 @@ namespace fire.Runtime
                 }
 
                 case OpCode.CallStaticMethod:
-                {
-                    string callClassName = _currentChunk.Constants[ReadU16()].AsString();
-                    string callMethodName = _currentChunk.Constants[ReadU16()].AsString();
-                    int callArgCount = ReadByte();
-                    var callArgs = new Value[callArgCount];
-                    for (int i = callArgCount - 1; i >= 0; i--) callArgs[i] = Pop();
-
-                    var callRc = ResolveClass(callClassName);
-                    var (callProto, declaringRcCall, accessCall) = callRc.FindMethodWithAccess(callMethodName, callArgs.Length);
-                    if (callProto == null)
-                        throw new InvalidOperationException(DescribeMethodNotFound(callRc, callMethodName, callArgs.Length));
-                    if (!callProto.IsStatic)
-                        throw new InvalidOperationException(
-                            $"'{callMethodName}' auf '{callClassName}' ist keine statische Methode - " +
-                            $"über 'ClassName.{callMethodName}(...)' nur für 'static'-Methoden aufrufbar.");
-                    if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
-                    {
-                        ThrowAccessDenied(
-                            $"Statische Methode '{callMethodName}' von '{declaringRcCall!.Name}' ist " +
-                            $"{DescribeAccess(accessCall)} und von hier aus nicht aufrufbar.");
-                        break;
-                    }
-                    CheckArity(callProto, callArgs.Length);
-                    callArgs = FillDefaultArgs(callProto, callArgs, null);
-
-                    _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-                    var callScope = new Scope(_globalScope);
-                    foreach (var a in callArgs) callScope.DefineSlot(a);
-
-                    // Explizit KEIN 'this' (anders als oben bei CallBaseMethod,
-                    // das die aufrufende Instanz beibehält) - der Resolver
-                    // verbietet 'this'/'super' im Körper einer statischen
-                    // Methode bereits (siehe Resolver.ResolveExpr/ThisExpr),
-                    // das hier ist die zusätzliche Laufzeit-Absicherung dafür.
-                    _currentThis = null;
-                    _currentScope = callScope;
-                    _currentChunk = callProto.Chunk;
-                    _ip = 0;
+                    OpCallStaticMethod();
                     break;
-                }
 
                 case OpCode.CallProtoWithThis:
-                {
-                    int protoIdx = ReadU16();
-                    int argCount = ReadByte();
-                    var args = new Value[argCount];
-                    for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-                    var thisVal = Pop();
-                    var proto = _currentChunk.Functions[protoIdx];
-                    CheckArity(proto, args.Length);
-
-                    _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-                    var scope = new Scope(_globalScope);
-                    foreach (var a in args) scope.DefineSlot(a);
-
-                    _currentThis = thisVal.Kind == ValueKind.Class ? thisVal.AsObjectRef() : (object)thisVal;
-                    _currentScope = scope;
-                    _currentChunk = proto.Chunk;
-                    _ip = 0;
+                    OpCallProtoWithThis();
                     break;
-                }
 
                 case OpCode.AddressOfLocal:
                 {
@@ -1759,13 +3279,15 @@ namespace fire.Runtime
                 case OpCode.AddressOfGlobal:
                 {
                     int slot = ReadU16();
+                    if (slot < _sharedCount)
+                        throw new InvalidOperationException("Ein Fire-Thread kann keinen Zeiger auf eine globale Variable des Hauptprogramms nehmen ('&').");
                     Push(Value.MakePointer(new ScopeSlotPointerTarget(_globalScope, slot)));
                     break;
                 }
 
                 case OpCode.AddressOfField:
                 {
-                    string fieldName = _currentChunk.Constants[ReadU16()].AsString();
+                    string fieldName = _constants[ReadU16()].AsString();
                     var obj = RequireObjectInstance(Pop(), "Address-of auf Feld");
                     Push(Value.MakePointer(new FieldPointerTarget(obj, fieldName)));
                     break;
@@ -1788,23 +3310,12 @@ namespace fire.Runtime
                 }
 
                 case OpCode.NewArray:
-                {
-                    long size = Pop().AsInt();
-                    if (size < 0)
-                        throw new InvalidOperationException($"Ungültige Array-Größe {size}.");
-                    Push(Value.MakeArray(new ScriptArray((int)size)));
+                    OpNewArray();
                     break;
-                }
 
                 case OpCode.MakeArrayLiteral:
-                {
-                    int count = ReadU16();
-                    var arr = new ScriptArray(count);
-                    for (int i = count - 1; i >= 0; i--)
-                        arr.Items[i] = Pop();
-                    Push(Value.MakeArray(arr));
+                    OpMakeArrayLiteral();
                     break;
-                }
 
                 case OpCode.MakeBuffer:
                 {
@@ -1816,137 +3327,12 @@ namespace fire.Runtime
                 }
 
                 case OpCode.ArrayGet:
-                {
-                    var indexVal = Pop();
-                    var target = Pop();
-
-                    if (target.Kind == ValueKind.Array)
-                    {
-                        if (ExecutionMode == VmExecutionMode.Performance)
-                        {
-                            // Siehe VmExecutionMode.Performance-Doku - KEINE
-                            // Bounds-Prüfung, ein ungültiger Index führt zu
-                            // einer rohen .NET-IndexOutOfRangeException statt
-                            // einer fangbaren Skript-Exception.
-                            Push(target.AsArray().GetUnchecked(indexVal.AsInt()));
-                        }
-                        else
-                        {
-                            long idx = indexVal.AsInt();
-                            if (target.AsArray().TryGet(idx, out var v))
-                                Push(v);
-                            else
-                                // Macht einen ungültigen Index zu einer echten,
-                                // fangbaren Skript-Exception statt eines rohen
-                                // C#-Fehlers - KEIN Push hier, ThrowIndexOutOfBounds
-                                // hat _currentChunk/_ip bereits umgeleitet.
-                                ThrowIndexOutOfBounds(idx, target.AsArray().Length);
-                        }
-                    }
-                    else if (target.Kind == ValueKind.Buffer)
-                    {
-                        // Liefert IMMER int[8] (Width W8, siehe Values.NumericWidth) -
-                        // 'byte' ist reines Typ-Sugar für int[8] (SPEC 8.10),
-                        // kein eigener ValueKind, ein einzelnes Byte ist deshalb
-                        // einfach ein normaler int-Wert mit dieser Breite.
-                        if (ExecutionMode == VmExecutionMode.Performance)
-                        {
-                            byte bFast = target.AsBuffer().GetUnchecked(indexVal.AsInt());
-                            Push(Value.MakeInt(bFast, width: NumericWidth.W8));
-                        }
-                        else
-                        {
-                            long idx = indexVal.AsInt();
-                            if (target.AsBuffer().TryGet(idx, out byte b))
-                                Push(Value.MakeInt(b, width: NumericWidth.W8));
-                            else
-                                ThrowIndexOutOfBounds(idx, target.AsBuffer().Length);
-                        }
-                    }
-                    else if (target.Kind == ValueKind.Class)
-                    {
-                        // '[]'-Operator-Überladung per Namenskonvention (wie
-                        // GetEnumerator/MoveNext/GetCurrent bei foreach): eine
-                        // Klasse mit einer GetIndex(i)-Methode wird für Lesezugriffe
-                        // benutzt - rein dynamisch, funktioniert auf jeder Klasse
-                        // mit passender Methode, nicht nur auf 'List'.
-                        var obj = (ObjectInstance)target.AsObjectRef();
-                        var result = CallMethodNested(obj, "GetIndex", new[] { indexVal });
-                        // null == GetIndex() wurde durch eine geworfene Exception
-                        // verlassen (siehe CallMethodNested-Doku) - dann NICHT
-                        // pushen, die Ausführung läuft bereits anderswo weiter.
-                        if (result != null) Push(result.Value);
-                    }
-                    else
-                    {
-                        throw new InvalidOperationException(
-                            $"Index-Zugriff ('[]') auf einem Wert vom Typ {target.Kind} nicht möglich " +
-                            "(weder Array noch eine Klasse mit 'GetIndex'-Methode).");
-                    }
+                    OpArrayGet();
                     break;
-                }
 
                 case OpCode.ArraySet:
-                {
-                    var value = Pop();
-                    var indexVal = Pop();
-                    var target = Pop();
-
-                    if (target.Kind == ValueKind.Array)
-                    {
-                        if (ExecutionMode == VmExecutionMode.Performance)
-                        {
-                            target.AsArray().SetUnchecked(indexVal.AsInt(), value);
-                            Push(value);
-                        }
-                        else
-                        {
-                            long idx = indexVal.AsInt();
-                            if (target.AsArray().TrySet(idx, value))
-                                Push(value);
-                            else
-                                // Kein Push hier - ThrowIndexOutOfBounds hat
-                                // _currentChunk/_ip bereits umgeleitet, ein
-                                // zusätzlicher Push würde den Stack dort verschieben.
-                                ThrowIndexOutOfBounds(idx, target.AsArray().Length);
-                        }
-                    }
-                    else if (target.Kind == ValueKind.Buffer)
-                    {
-                        if (value.Kind != ValueKind.Int)
-                            throw new InvalidOperationException(
-                                $"Byte-Puffer-Zuweisung erwartet einen int-Wert (byte = int[8]), nicht {value.Kind}.");
-                        if (ExecutionMode == VmExecutionMode.Performance)
-                        {
-                            target.AsBuffer().SetUnchecked(indexVal.AsInt(), (byte)value.AsInt());
-                            Push(value);
-                        }
-                        else
-                        {
-                            long idx = indexVal.AsInt();
-                            if (target.AsBuffer().TrySet(idx, (byte)value.AsInt()))
-                                Push(value);
-                            else
-                                ThrowIndexOutOfBounds(idx, target.AsBuffer().Length);
-                        }
-                    }
-                    else if (target.Kind == ValueKind.Class)
-                    {
-                        var obj = (ObjectInstance)target.AsObjectRef();
-                        var result = CallMethodNested(obj, "SetIndex", new[] { indexVal, value }); // Rückgabewert unbenutzt
-                        // null == SetIndex() wurde durch eine geworfene Exception
-                        // verlassen (siehe CallMethodNested-Doku) - dann NICHT
-                        // pushen, die Ausführung läuft bereits anderswo weiter.
-                        if (result != null) Push(value);
-                    }
-                    else
-                    {
-                        throw new InvalidOperationException(
-                            $"Index-Zuweisung ('[]=') auf einem Wert vom Typ {target.Kind} nicht möglich " +
-                            "(weder Array noch eine Klasse mit 'SetIndex'-Methode).");
-                    }
+                    OpArraySet();
                     break;
-                }
 
                 case OpCode.RegisterHandler:
                 {
@@ -1978,7 +3364,7 @@ namespace fire.Runtime
 
                 case OpCode.IsOfType:
                 {
-                    string typeName = _currentChunk.Constants[ReadU16()].AsString();
+                    string typeName = _constants[ReadU16()].AsString();
                     var v = Pop();
                     Push(Value.MakeBool(IsOfType(v, typeName)));
                     break;
@@ -2084,7 +3470,7 @@ namespace fire.Runtime
                     // Im Performance-Modus übersprungen - wie jede andere
                     // "zusätzliche Sicherheit statt Geschwindigkeit"-Prüfung in
                     // dieser VM (Zugriffsmodifikatoren, Array-/Puffer-Bounds).
-                    string requiredUnitName = _currentChunk.Constants[ReadU16()].AsString();
+                    string requiredUnitName = _constants[ReadU16()].AsString();
                     if (ExecutionMode != VmExecutionMode.Performance)
                     {
                         var checkedValue = Peek();
@@ -2122,24 +3508,11 @@ namespace fire.Runtime
                     var takingValues = new Value[takingCount];
                     for (int i = takingCount - 1; i >= 0; i--) takingValues[i] = Pop();
 
-                    // Read-only-Snapshot ALLER Hauptprogramm-Globals (siehe
-                    // Resolving.Resolver.ResolveFireStmt/Runtime.FireRuntime.
-                    // FireVmTaking-Doku) - MUSS hier, SYNCHRON auf DIESEM
-                    // (dem aufrufenden) Thread gelesen werden, BEVOR der neue
-                    // Thread überhaupt gestartet wird - ein späteres, lazy
-                    // Lesen AUS dem neuen Thread heraus wäre ein echter
-                    // Daten-Wettlauf mit diesem, hier weiterlaufenden Thread.
-                    // `globalSlotCount` kann GRÖSSER sein als der aktuelle
-                    // Füllstand von `_globalScope` (steht dieses `fire` VOR
-                    // später im Quelltext folgenden globalen `var`-
-                    // Deklarationen, wurden die zu DIESEM Zeitpunkt der
-                    // Ausführung noch nicht erreicht) - mit `undefined`
-                    // aufgefüllt, damit die vom Compiler fest vergebenen
-                    // Folge-Slots (taking/with) immer an der erwarteten
-                    // Position landen.
-                    var globalSnapshot = new Value[globalSlotCount];
-                    for (int i = 0; i < globalSlotCount; i++)
-                        globalSnapshot[i] = i < _globalScope.SlotCount ? _globalScope.GetSlot(i) : Value.MakeUndefined();
+                    // Die Globals des Hauptprogramms werden NICHT kopiert: der Thread liest sie direkt (unter dem Lock) und ändert sie nur in
+                    // einer Sektion, die das Hauptprogramm bei `sync globals` erteilt (siehe Runtime.GlobalsBroker). Beim ersten `fire`
+                    // wird dafür alles, was die Globals erreichen, in den geteilten Bereich aufgenommen (Locking aktiv). Ein Thread, der selbst
+                    // `fire` ausführt, reicht seine Verbindung weiter.
+                    var broker = IsFireThreadVm ? _threadBroker : EnsureOwnerBroker();
 
                     var fireProto = _currentChunk.Functions[protoIdx];
                     // Der neue Fire-Thread erbt den ExecutionMode DIESER VM -
@@ -2148,8 +3521,42 @@ namespace fire.Runtime
                     // in welchem Modus das Hauptprogramm selbst läuft (siehe
                     // VmExecutionMode-Doku).
                     FireRuntime.FireVmTaking(
-                        fireProto.Chunk, _natives, _classes, globalSnapshot, takingValues, withValue,
+                        fireProto.Chunk, _natives, _classes, broker, globalSlotCount, takingValues, withValue,
                         executionMode: ExecutionMode);
+                    break;
+                }
+
+                case OpCode.SyncGlobals:
+                    Push(Value.MakeInt(SyncGlobalsNow()));
+                    break;
+
+                case OpCode.SetAutoSync:
+                    _autoSync = ReadByte() != 0;
+                    break;
+
+                case OpCode.SectionEnter:
+                    if (_threadBroker != null) EnterGlobalsSection(); // im Hauptprogramm: wirkungslos (es ist selbst der Besitzer)
+                    break;
+
+                case OpCode.SectionExit:
+                    if (_threadBroker != null && _sectionDepth > 0) ExitGlobalsSection();
+                    break;
+
+                case OpCode.PostGlobal:
+                {
+                    int jobArgCount = ReadByte();
+                    var jobLambda = (LambdaValue)Pop().AsLambda();
+                    var jobArgs = new Value[jobArgCount];
+                    for (int i = jobArgCount - 1; i >= 0; i--) jobArgs[i] = Pop();
+
+                    // Die Argumente gehören dem Auftrag, nicht diesem Thread: Objekte werden tief kopiert, ihr Besitzer ist ein Halter-Scope, den
+                    // das Hauptprogramm nach dem Lauf freigibt.
+                    var holder = new Scope(null);
+                    for (int i = 0; i < jobArgs.Length; i++)
+                        if (jobArgs[i].Kind == ValueKind.Class) jobArgs[i] = ObjectCloner.Clone(jobArgs[i], holder, deep: true);
+
+                    var postBroker = IsFireThreadVm ? _threadBroker! : EnsureOwnerBroker();
+                    postBroker.PostJob(jobLambda, jobArgs, holder);
                     break;
                 }
 
@@ -2181,17 +3588,17 @@ namespace fire.Runtime
                 }
 
                 case OpCode.Leave:
-                    // Setzt nur das Flag (siehe VM.RequestLeave) - die
-                    // eigentliche Abwicklung passiert am NÄCHSTEN Prüfpunkt
-                    // (CheckShutdownSignals, am Anfang der nächsten
-                    // Schleifen-Iteration in Run()), nicht sofort hier.
+                    // Der aufrufende Thread geht sofort in den Halt (ShutdownSelfNow) - nach `leave` läuft keine Anweisung mehr.
                     RequestLeave();
+                    ShutdownSelfNow();
                     break;
 
                 case OpCode.Terminate:
                 {
+                    // Auch wenn ein anderer Thread schneller war (erster Aufruf gewinnt): dieser Thread hält hier an.
                     var terminateValue = Pop();
                     RequestTerminate(terminateValue);
+                    ShutdownSelfNow();
                     break;
                 }
 
@@ -2199,7 +3606,7 @@ namespace fire.Runtime
                 {
                     int protoIdx = ReadU16();
                     bool hasType = ReadByte() != 0;
-                    string? typeName = hasType ? _currentChunk.Constants[ReadU16()].AsString() : null;
+                    string? typeName = hasType ? _constants[ReadU16()].AsString() : null;
                     GlobalHandlers.RegisterThreadsCatch(typeName, _currentChunk.Functions[protoIdx]);
                     break;
                 }
@@ -2536,12 +3943,13 @@ namespace fire.Runtime
             return BitConverter.ToDouble(buf, 0);
         }
 
-        private void BeginConstruction(ObjectInstance instance, FunctionProto ctorProto, Value[] args)
+        private void BeginConstruction(ObjectInstance instance, FunctionProto ctorProto, Value[] args, int copyMask = 0)
         {
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, instance));
 
             var ctorScope = new Scope(_globalScope);
             foreach (var a in args) ctorScope.DefineSlot(a);
+            if (copyMask != 0) ApplyCopyMask(ctorScope, copyMask);
 
             _currentThis = instance;
             _currentScope = ctorScope;
@@ -2567,7 +3975,9 @@ namespace fire.Runtime
             // mit-zerstört, bevor der catch-Block sie lesen kann.
             excInstance.TakeGlobal(_globalScope);
 
-            while (_handlers.Count > 0)
+            // In einem verschachtelten Callback (CallLambdaInline) gehören die Handler bis zur Untergrenze dem Aufrufer.
+            int handlerFloor = _callbackBoundaries.Count > 0 ? _callbackBoundaries.Peek().HandlerFloor : 0;
+            while (_handlers.Count > handlerFloor)
             {
                 var handler = _handlers[^1];
                 _handlers.RemoveAt(_handlers.Count - 1);
@@ -2602,6 +4012,17 @@ namespace fire.Runtime
                     RunFinallyNested(handler.Chunk.Functions[protoIdx]);
             }
 
+            // Unbehandelt in einem Callback: nur der Callback bricht ab (Abwickeln bis zu seinem Aufrufer, dort hört CallLambdaInline
+            // den Fehler ab) - das Programm läuft weiter, und der Aufrufer des Callbacks sieht keine Ausnahme (SPEC 8.1.4).
+            if (_callbackBoundaries.Count > 0)
+            {
+                var boundary = _callbackBoundaries.Peek();
+                UnwindTo(boundary.FrameDepth, boundary.Scope);
+                _sp = boundary.StackPointer;
+                _callbackError = excInstance;
+                return;
+            }
+
             // Kein Handler in DIESER VM-Instanz hat gematcht. Auf einem
             // Fire-Thread (nicht dem Main-Thread) heißt das laut Design NICHT
             // "Programm abbrechen", sondern "diesen Thread sauber beenden und
@@ -2611,8 +4032,10 @@ namespace fire.Runtime
             if (IsFireThreadVm)
             {
                 _pendingThreadExceptions.Enqueue(excInstance);
+                RaiseSignal();
+                // Der globale Scope bleibt stehen: die Exception gehört ihm (TakeGlobal oben) und wird noch an den Main-Thread zugestellt.
                 UnwindForShutdown(); // _handlers ist an dieser Stelle ohnehin schon leer, siehe Schleife oben - äquivalent zu UnwindTo(0, _globalScope), aber ein Aufruf statt Code-Duplikat.
-                _stopExecutionRequested = true;
+                StopExecution();
                 return;
             }
 
@@ -2621,7 +4044,7 @@ namespace fire.Runtime
             // geworfen, Run() kehrt gleich danach über den nächsten
             // CheckShutdownSignals-Prüfpunkt ganz normal zurück).
             UnhandledException = excInstance;
-            _stopExecutionRequested = true;
+            StopExecution();
         }
 
         /// <summary>Friert den aktuellen Ausführungszustand ein, indem die
@@ -2766,7 +4189,7 @@ namespace fire.Runtime
             _ip = 0;
 
             RunNestedUntil(targetDepth);
-            Pop(); // bedeutungsloser Rückgabewert des finally-Protos, siehe RunDestructor
+            PopNestedResult(); // bedeutungsloser Rückgabewert des finally-Protos, siehe RunDestructor
         }
 
         /// <summary>Ruft eine Methode auf `obj` verschachtelt auf (siehe
@@ -2806,6 +4229,66 @@ namespace fire.Runtime
             return snapshot;
         }
 
+        /// <summary>Führt ein Lambda, das ein NATIVER Aufruf dieser VM auslöst (z.B. ein Fenster-Ereignis, das `Window.Tick` liefert),
+        /// verschachtelt auf dieser VM aus: es sieht die echten globalen Variablen (lesend UND schreibend, wie jedes Lambda, SPEC 4.2),
+        /// ohne Kopie und ohne Thread-Sperren, und `leave`/`terminate` darin wirken auf dieses Programm. Nur aufrufen, wenn der Aufruf
+        /// auf dem Thread dieser VM geschieht (`VM.CurrentThreadVm`). Liefert null, wenn das Lambda normal endete (oder das Programm
+        /// beendet wurde), sonst die unbehandelte Exception des Lambdas - die den Aufrufer NICHT unterbricht: wie bei jedem Callback
+        /// meldet sie der Host, das Programm läuft weiter.</summary>
+        public ObjectInstance? CallLambdaInline(LambdaValue lambda, Value[] args)
+        {
+            CheckArity(lambda.Proto, args.Length);
+            args = FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
+
+            int frameDepth = _frames.Count;
+            var callerScope = _currentScope;
+            int stackPointer = _sp;
+
+            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+            int targetDepth = _frames.Count;
+            _callbackBoundaries.Push(new CallbackBoundary(frameDepth, callerScope, _handlers.Count, stackPointer));
+            _callbackError = null;
+
+            var funcScope = new Scope(_globalScope);
+            foreach (var a in args) funcScope.DefineSlot(a);
+
+            _currentThis = lambda.OnTarget;
+            _currentScope = funcScope;
+            _currentChunk = lambda.Proto.Chunk;
+            _ip = 0;
+
+            try
+            {
+                RunNestedUntil(targetDepth);
+            }
+            catch
+            {
+                // Eine C#-Ausnahme mitten im Callback (z.B. ein Zugriff außerhalb des Arrays im Performance-Modus, der nichts prüft):
+                // den Zustand des Aufrufers wiederherstellen, damit das Programm weiterlaufen kann, und die Ausnahme dem Host melden.
+                while (_frames.Count > frameDepth + 1) _frames.Pop();
+                var callerFrame = _frames.Pop();
+                _currentChunk = callerFrame.ReturnChunk;
+                _ip = callerFrame.ReturnIp;
+                _currentScope = callerFrame.ReturnScope;
+                _currentThis = callerFrame.ReturnThis;
+                _sp = stackPointer;
+                var floor = _callbackBoundaries.Pop().HandlerFloor;
+                while (_handlers.Count > floor) _handlers.RemoveAt(_handlers.Count - 1);
+                throw;
+            }
+            _callbackBoundaries.Pop();
+
+            // `leave`/`terminate` im Callback: das Programm ordentlich abwickeln (beim Zurückkehren in die Hauptschleife steht der Halt).
+            if (_shutdownDeferred) FinishDeferredShutdown();
+
+            var error = _callbackError;
+            _callbackError = null;
+            if (error != null) return error;
+
+            PopNestedResult(); // der (unbenutzte) Rückgabewert des Lambdas
+            return null;
+        }
+
         /// <summary>Ruft eine Lambda als die EINZIGE Ausführung DIESER VM-
         /// Instanz auf - anders als CallMethodNested (verschachtelt in ein
         /// bereits laufendes Hauptprogramm) für eine FRISCH dafür angelegte
@@ -2839,6 +4322,20 @@ namespace fire.Runtime
             _ip = 0;
 
             RunNestedUntil(targetDepth);
+
+            // `leave`/`terminate` im Callback: sauber abwickeln (kein Fehler, der Callback liefert nichts).
+            if (_shutdownDeferred)
+            {
+                FinishDeferredShutdown();
+                return Value.MakeUndefined();
+            }
+
+            // Ein unbehandelter Fehler im Callback beendet die VM (StopExecution): der Host bekommt ihn als Ausnahme, die er
+            // bewusst fangen kann (siehe FireRuntime.CallCallback) - statt dass hier ein Rückgabewert fehlt.
+            if (_stopExecutionRequested)
+                throw UnhandledException != null
+                    ? new UncaughtScriptException(UnhandledException)
+                    : new InvalidOperationException("Der Callback wurde vorzeitig beendet.");
 
             return Pop();
         }
@@ -2977,6 +4474,26 @@ namespace fire.Runtime
             return instance;
         }
 
+        /// <summary>Ruft eine native Funktion auf. Meldet sie einen ungültigen Index
+        /// (<see cref="NativeIndexOutOfRangeException"/>, z.B. `"abc".Substring(9)`), wird daraus eine
+        /// fangbare `IndexOutOfBoundsException` des Skripts und `false` geliefert (KEIN Ergebnis pushen -
+        /// die Ausführung läuft schon im Handler weiter). Eigene Methode statt try/catch mitten in
+        /// Execute, damit dessen Register-Zuteilung unberührt bleibt.</summary>
+        private bool CallNativeGuarded(int nativeIdx, Value[] args, out Value result)
+        {
+            try
+            {
+                result = _natives[nativeIdx](args);
+                return true;
+            }
+            catch (NativeIndexOutOfRangeException ex)
+            {
+                result = default;
+                ThrowIndexOutOfBounds(ex.Index, ex.Length, ex.What);
+                return false;
+            }
+        }
+
         /// <summary>Baut eine `IndexOutOfBoundsException`-Instanz (Prelude) und
         /// wirft sie ganz normal über ThrowException - macht einen ungültigen
         /// Array-Index zu einer echten, per `try`/`catch` fangbaren Skript-
@@ -2985,10 +4502,10 @@ namespace fire.Runtime
         /// ScriptArray/ByteBuffer.TryGet/TrySet `false` liefert (bewusst kein
         /// throw/catch dort selbst - siehe ScriptArray-Doku, C++-Portier-
         /// barkeit).</summary>
-        private void ThrowIndexOutOfBounds(long index, int length)
+        private void ThrowIndexOutOfBounds(long index, int length, string what = "Array-Index")
         {
             var rc = ResolveClass("IndexOutOfBoundsException");
-            string msg = $"Array-Index {index} außerhalb des gültigen Bereichs (Länge {length}).";
+            string msg = $"{what} {index} außerhalb des gültigen Bereichs (Länge {length}).";
             var args = new[] { Value.MakeString(msg), Value.MakeInt(index), Value.MakeInt(length) };
             var instance = ConstructNested(rc, args);
             ThrowException(Value.MakeClassRef(instance));
@@ -3328,24 +4845,24 @@ namespace fire.Runtime
         // -----------------------------------------------------------
         // Stack- & Code-Zugriff
         // -----------------------------------------------------------
-        private void Push(Value v) => _stack.Add(v);
-
-        private Value Pop()
+        private void Push(Value v)
         {
-            var v = _stack[^1];
-            _stack.RemoveAt(_stack.Count - 1);
-            return v;
+            if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
+            _stack[_sp++] = v;
         }
 
-        private Value Peek() => _stack[^1];
+        private Value Pop() => _stack[--_sp];
 
-        private byte ReadByte() => _currentChunk.Code[_ip++];
+        private Value Peek() => _stack[_sp - 1];
+
+        private byte ReadByte() => _code[_ip++];
 
         private int ReadU16()
         {
-            int lo = _currentChunk.Code[_ip++];
-            int hi = _currentChunk.Code[_ip++];
-            return lo | (hi << 8);
+            var code = _code;
+            int ip = _ip;
+            _ip = ip + 2;
+            return code[ip] | (code[ip + 1] << 8);
         }
     }
 }

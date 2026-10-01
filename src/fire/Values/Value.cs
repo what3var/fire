@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 
 namespace fire.Values
 {
@@ -11,72 +12,78 @@ namespace fire.Values
     /// </summary>
     public readonly struct Value : IEquatable<Value>
     {
+        // Speicherlayout: 24 Byte (Kind 4 + Width 4 + Bits 8 + Referenz 8) - ein Value wird bei JEDEM
+        // Stack-Zugriff kopiert, die frühere Fassung mit je einem eigenen Feld pro Werteart (long, double,
+        // bool, char, string, object + Unit) war 64 Byte groß.
+        //   _bits: Int = der Wert, Float = die IEEE-754-Bits des double, Bool = 0/1, Char = der Zeichencode.
+        //   _ref:  String = die Zeichenkette, Class/Lambda/Pointer/Array/Buffer = das Objekt,
+        //          Int/Float/Undefined = die Unit (nie beides gleichzeitig - eine Zahl hat keine Objekt-
+        //          referenz und ein Objekt keine Einheit).
         public ValueKind Kind { get; }
-        public Unit? Unit { get; }
 
         /// <summary>Nur für Int/Float relevant (SPEC "APIs & Bitbreiten"). Default
         /// ist immer die höchste Genauigkeit (W64).</summary>
         public NumericWidth Width { get; }
 
-        private readonly long _intValue;
-        private readonly double _floatValue;
-        private readonly bool _boolValue;
-        private readonly char _charValue;
-        private readonly string? _stringValue;
-        private readonly object? _objectRef; // Referenz auf ObjectInstance (Runtime-Schicht)
+        private readonly long _bits;
+        private readonly object? _ref;
 
-        private Value(ValueKind kind, Unit? unit, long i, double f, bool b, char c, string? s, object? obj,
-            NumericWidth width = NumericWidth.W64)
+        /// <summary>Die Einheit - nur Int/Float/Undefined tragen eine (sonst <c>null</c>).</summary>
+        public Unit? Unit => Kind is ValueKind.Int or ValueKind.Float or ValueKind.Undefined
+            ? Unsafe.As<Unit?>(_ref)
+            : null;
+
+        private long _intValue => _bits;
+        private double _floatValue => BitConverter.Int64BitsToDouble(_bits);
+        private bool _boolValue => _bits != 0;
+        private char _charValue => (char)_bits;
+
+        private Value(ValueKind kind, long bits, object? reference, NumericWidth width = NumericWidth.W64)
         {
             Kind = kind;
-            Unit = unit;
-            _intValue = i;
-            _floatValue = f;
-            _boolValue = b;
-            _charValue = c;
-            _stringValue = s;
-            _objectRef = obj;
             Width = width;
+            _bits = bits;
+            _ref = reference;
         }
 
         // ---------------------------------------------------------------
         // Factories
         // ---------------------------------------------------------------
         public static Value MakeBool(bool value) =>
-            new(ValueKind.Bool, null, 0, 0, value, '\0', null, null);
+            new(ValueKind.Bool, value ? 1 : 0, null);
 
         public static Value MakeInt(long value, Unit? unit = null, NumericWidth width = NumericWidth.W64) =>
-            new(ValueKind.Int, unit ?? Values.Unit.Unitless, value, 0, false, '\0', null, null, width);
+            new(ValueKind.Int, value, unit ?? Values.Unit.Unitless, width);
 
         public static Value MakeFloat(double value, Unit? unit = null, NumericWidth width = NumericWidth.W64) =>
-            new(ValueKind.Float, unit ?? Values.Unit.Unitless, 0, value, false, '\0', null, null, width);
+            new(ValueKind.Float, BitConverter.DoubleToInt64Bits(value), unit ?? Values.Unit.Unitless, width);
 
         public static Value MakeChar(char value) =>
-            new(ValueKind.Char, null, 0, 0, false, value, null, null);
+            new(ValueKind.Char, value, null);
 
         public static Value MakeString(string value) =>
-            new(ValueKind.String, null, 0, 0, false, '\0', value, null);
+            new(ValueKind.String, 0, value);
 
         public static Value MakeUndefined(Unit? unit = null) =>
-            new(ValueKind.Undefined, unit ?? Values.Unit.Unitless, 0, 0, false, '\0', null, null);
+            new(ValueKind.Undefined, 0, unit ?? Values.Unit.Unitless);
 
         public static Value MakeClassRef(object objectInstance) =>
-            new(ValueKind.Class, null, 0, 0, false, '\0', null, objectInstance);
+            new(ValueKind.Class, 0, objectInstance);
 
         // Lose typisiert (object) aus demselben Grund wie MakeClassRef: Values
         // bleibt unabhängig von der Runtime-Schicht (Runtime.LambdaValue), die
         // Runtime-Schicht hängt von Values ab, nicht umgekehrt.
         public static Value MakeLambda(object lambdaValue) =>
-            new(ValueKind.Lambda, null, 0, 0, false, '\0', null, lambdaValue);
+            new(ValueKind.Lambda, 0, lambdaValue);
 
         public static Value MakePointer(PointerTarget target) =>
-            new(ValueKind.Pointer, null, 0, 0, false, '\0', null, target);
+            new(ValueKind.Pointer, 0, target);
 
         public static Value MakeArray(ScriptArray array) =>
-            new(ValueKind.Array, null, 0, 0, false, '\0', null, array);
+            new(ValueKind.Array, 0, array);
 
         public static Value MakeBuffer(ByteBuffer buffer) =>
-            new(ValueKind.Buffer, null, 0, 0, false, '\0', null, buffer);
+            new(ValueKind.Buffer, 0, buffer);
 
         // ---------------------------------------------------------------
         // Accessors (werfen bei falschem Kind)
@@ -108,37 +115,37 @@ namespace fire.Values
         public string AsString()
         {
             RequireKind(ValueKind.String);
-            return _stringValue!;
+            return Unsafe.As<string>(_ref)!;
         }
 
         public object AsObjectRef()
         {
             RequireKind(ValueKind.Class);
-            return _objectRef!;
+            return _ref!;
         }
 
         public object AsLambda()
         {
             RequireKind(ValueKind.Lambda);
-            return _objectRef!;
+            return _ref!;
         }
 
         public PointerTarget AsPointer()
         {
             RequireKind(ValueKind.Pointer);
-            return (PointerTarget)_objectRef!;
+            return Unsafe.As<PointerTarget>(_ref)!;
         }
 
         public ScriptArray AsArray()
         {
             RequireKind(ValueKind.Array);
-            return (ScriptArray)_objectRef!;
+            return Unsafe.As<ScriptArray>(_ref)!;
         }
 
         public ByteBuffer AsBuffer()
         {
             RequireKind(ValueKind.Buffer);
-            return (ByteBuffer)_objectRef!;
+            return Unsafe.As<ByteBuffer>(_ref)!;
         }
 
         /// <summary>Interne Invariante, keine behandelbare Laufzeitbedingung
@@ -205,8 +212,80 @@ namespace fire.Values
         // Operanden lebt im Evaluator, da sie Syntax-Info (":"/"!" im
         // Ausdruck) benötigt, die dem Value selbst nicht vorliegt.)
         // ---------------------------------------------------------------
+        // Schnellpfad der Grundrechenarten: beide Operanden Zahlen mit DERSELBEN Einheit-Instanz (der Normalfall:
+        // `Unit.Unitless`) - dann entfallen Einheitenvergleich und Kindprüfungen, das Ergebnis ist mit dem des
+        // allgemeinen Pfads identisch (Einheit des linken Operanden, Breite W64).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool BothNumericSameUnit(in Value a, in Value b) =>
+            a.Kind is ValueKind.Int or ValueKind.Float && b.Kind is ValueKind.Int or ValueKind.Float
+            && ReferenceEquals(a._ref, b._ref);
+
+        // "In place"-Varianten der Schnellpfade für die VM (siehe VM.Step): das Ergebnis überschreibt den linken
+        // Operanden direkt im Stack, ohne Value-Kopien durch Argumente und Rückgabewert. Liefern false, wenn der
+        // Schnellpfad nicht zutrifft (andere Einheit/Art, Division durch 0, ...) - dann rechnet der Aufrufer über
+        // den allgemeinen Weg und bekommt dessen Ergebnis bzw. dessen Ausnahme.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TryAddInPlace(ref Value a, in Value b)
+        {
+            if (!BothNumericSameUnit(a, b)) return false;
+            a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
+                ? new Value(ValueKind.Int, a._bits + b._bits, a._ref)
+                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() + b.ToDouble()), a._ref);
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TrySubtractInPlace(ref Value a, in Value b)
+        {
+            if (!BothNumericSameUnit(a, b)) return false;
+            a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
+                ? new Value(ValueKind.Int, a._bits - b._bits, a._ref)
+                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() - b.ToDouble()), a._ref);
+            return true;
+        }
+
+        /// <summary>Nur für zwei Werte OHNE Einheit (dieselbe `Unitless`-Instanz) - sonst entsteht eine Produkt-Einheit.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TryMultiplyInPlace(ref Value a, in Value b)
+        {
+            if (!BothNumericSameUnit(a, b) || !ReferenceEquals(a._ref, Values.Unit.Unitless)) return false;
+            a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
+                ? new Value(ValueKind.Int, a._bits * b._bits, a._ref)
+                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() * b.ToDouble()), a._ref);
+            return true;
+        }
+
+        /// <summary>Nur int % int mit Divisor != 0 (sonst wirft der allgemeine Weg wie bisher).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TryModuloInPlace(ref Value a, in Value b)
+        {
+            if (a.Kind != ValueKind.Int || b.Kind != ValueKind.Int || !ReferenceEquals(a._ref, b._ref) || b._bits == 0 || b._bits == -1)
+                return false;
+            a = new Value(ValueKind.Int, a._bits % b._bits, a._ref);
+            return true;
+        }
+
+        /// <summary>Vergleich zweier Zahlen mit derselben Einheit-Instanz: `kind` 0 = `&lt;`, 1 = `&lt;=`, 2 = `&gt;`, 3 = `&gt;=`.
+        /// Verglichen wird wie Compare() als double.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TryCompareInPlace(ref Value a, in Value b, int kind)
+        {
+            if (!BothNumericSameUnit(a, b)) return false;
+            int c = a.ToDouble().CompareTo(b.ToDouble());
+            bool result = kind switch { 0 => c < 0, 1 => c <= 0, 2 => c > 0, _ => c >= 0 };
+            a = MakeBool(result);
+            return true;
+        }
+
         public static Value Add(Value a, Value b)
         {
+            if (BothNumericSameUnit(a, b))
+            {
+                if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
+                    return new Value(ValueKind.Int, a._bits + b._bits, a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() + b.ToDouble()), a._ref);
+            }
+
             if (a.Kind == ValueKind.Pointer && b.Kind == ValueKind.Int)
                 return a.OffsetPointer(b._intValue);
 
@@ -229,6 +308,13 @@ namespace fire.Values
 
         public static Value Subtract(Value a, Value b)
         {
+            if (BothNumericSameUnit(a, b))
+            {
+                if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
+                    return new Value(ValueKind.Int, a._bits - b._bits, a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() - b.ToDouble()), a._ref);
+            }
+
             if (a.Kind == ValueKind.Pointer && b.Kind == ValueKind.Int)
                 return a.OffsetPointer(-b._intValue);
             if (a.Kind == ValueKind.Pointer && b.Kind == ValueKind.Pointer)
@@ -257,6 +343,13 @@ namespace fire.Values
 
         public static Value Modulo(Value a, Value b)
         {
+            if (BothNumericSameUnit(a, b))
+            {
+                if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
+                    return new Value(ValueKind.Int, a._bits % b._bits, a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() % b.ToDouble()), a._ref);
+            }
+
             RequireNumeric(a); RequireNumeric(b);
             RequireSameUnit(a, b);
 
@@ -267,6 +360,14 @@ namespace fire.Values
 
         public static Value Divide(Value a, Value b)
         {
+            // Beide ohne Einheit (dieselbe `Unitless`-Instanz): Ergebnis ohne Einheit, wie Unit.Divide.
+            if (BothNumericSameUnit(a, b) && ReferenceEquals(a._ref, Values.Unit.Unitless))
+            {
+                if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
+                    return new Value(ValueKind.Int, a._bits / b._bits, a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() / b.ToDouble()), a._ref);
+            }
+
             RequireNumeric(a); RequireNumeric(b);
             var resultUnit = Values.Unit.Divide(a.Unit ?? Values.Unit.Unitless, b.Unit ?? Values.Unit.Unitless);
 
@@ -277,6 +378,14 @@ namespace fire.Values
 
         public static Value Multiply(Value a, Value b)
         {
+            // Beide ohne Einheit (dieselbe `Unitless`-Instanz): Ergebnis ohne Einheit, wie Unit.Multiply.
+            if (BothNumericSameUnit(a, b) && ReferenceEquals(a._ref, Values.Unit.Unitless))
+            {
+                if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
+                    return new Value(ValueKind.Int, a._bits * b._bits, a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() * b.ToDouble()), a._ref);
+            }
+
             RequireNumeric(a); RequireNumeric(b);
             var resultUnit = Values.Unit.Multiply(a.Unit ?? Values.Unit.Unitless, b.Unit ?? Values.Unit.Unitless);
 
@@ -449,6 +558,9 @@ namespace fire.Values
         /// übereinstimmender Einheit (wie Add/Subtract).</summary>
         public static int Compare(Value a, Value b)
         {
+            if (BothNumericSameUnit(a, b))
+                return a.ToDouble().CompareTo(b.ToDouble());
+
             RequireNumeric(a); RequireNumeric(b);
             RequireSameUnit(a, b);
             return a.ToDouble().CompareTo(b.ToDouble());
@@ -462,6 +574,7 @@ namespace fire.Values
 
         private static void RequireSameUnit(Value a, Value b)
         {
+            if (ReferenceEquals(a._ref, b._ref) && a.Kind is ValueKind.Int or ValueKind.Float) return;
             var ua = a.Unit ?? Values.Unit.Unitless;
             var ub = b.Unit ?? Values.Unit.Unitless;
             if (!ua.Equals(ub))
@@ -469,16 +582,37 @@ namespace fire.Values
         }
 
         // ---------------------------------------------------------------
-        public bool Equals(Value other) => Kind == other.Kind
-            && _intValue == other._intValue
-            && _floatValue.Equals(other._floatValue)
-            && _boolValue == other._boolValue
-            && _charValue == other._charValue
-            && _stringValue == other._stringValue
-            && Equals(_objectRef, other._objectRef);
+        // Gleichheit ignoriert Einheit und Bitbreite (wie bisher) und vergleicht je Werteart nur das, was
+        // sie tatsächlich hält.
+        public bool Equals(Value other)
+        {
+            if (Kind != other.Kind) return false;
+            switch (Kind)
+            {
+                case ValueKind.Int:
+                case ValueKind.Bool:
+                case ValueKind.Char:
+                    return _bits == other._bits;
+                case ValueKind.Float:
+                    return _floatValue.Equals(other._floatValue);
+                case ValueKind.Undefined:
+                    return true;
+                case ValueKind.String:
+                    return (string?)_ref == (string?)other._ref;
+                default:
+                    return Equals(_ref, other._ref);
+            }
+        }
 
         public override bool Equals(object? obj) => obj is Value v && Equals(v);
-        public override int GetHashCode() => HashCode.Combine(Kind, _intValue, _floatValue, _boolValue, _charValue, _stringValue, _objectRef);
+
+        public override int GetHashCode() => Kind switch
+        {
+            ValueKind.Int or ValueKind.Bool or ValueKind.Char => HashCode.Combine(Kind, _bits),
+            ValueKind.Float => HashCode.Combine(Kind, _floatValue),
+            ValueKind.Undefined => HashCode.Combine(Kind),
+            _ => HashCode.Combine(Kind, _ref),
+        };
 
         public override string ToString() => Kind switch
         {
@@ -486,8 +620,8 @@ namespace fire.Values
             ValueKind.Int => Unit is { IsUnitless: false } u ? $"{_intValue}{u}" : _intValue.ToString(),
             ValueKind.Float => Unit is { IsUnitless: false } u2 ? $"{_floatValue}{u2}" : _floatValue.ToString(),
             ValueKind.Char => _charValue.ToString(),
-            ValueKind.String => _stringValue ?? "",
-            ValueKind.Class => $"<object {_objectRef}>",
+            ValueKind.String => Unsafe.As<string>(_ref) ?? "",
+            ValueKind.Class => $"<object {_ref}>",
             ValueKind.Lambda => "<lambda>",
             ValueKind.Pointer => "<pointer>",
             ValueKind.Array => "<array>",

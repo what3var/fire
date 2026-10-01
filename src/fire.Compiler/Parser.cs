@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using fire.Ast;
 using fire.Lexing;
+using fire.Standard;
 using fire.Values;
 
 namespace fire.Compiler
@@ -241,12 +242,26 @@ namespace fire.Compiler
         public static List<Stmt> MergeClassExtensions(IReadOnlyList<Stmt> program)
         {
             var extensions = new List<ClassExtensionDecl>();
+            var baseTypeExtensions = new Dictionary<string, List<ClassExtensionDecl>>();
             var rest = new List<Stmt>();
             foreach (var stmt in program)
             {
-                if (stmt is ClassExtensionDecl ext) extensions.Add(ext);
+                // `class extends string { ... }`: kein ClassDecl, in das man mergen könnte - alle
+                // Erweiterungen desselben Basistyps werden unten zu EINER Sammelklasse (siehe
+                // BaseTypeExtensions).
+                if (stmt is ClassExtensionDecl baseExt
+                    && BaseTypeExtensions.IsExtendable(baseExt.TargetRef.BaseName))
+                {
+                    if (!baseTypeExtensions.TryGetValue(baseExt.TargetRef.BaseName, out var list))
+                        baseTypeExtensions[baseExt.TargetRef.BaseName] = list = new List<ClassExtensionDecl>();
+                    list.Add(baseExt);
+                }
+                else if (stmt is ClassExtensionDecl ext) extensions.Add(ext);
                 else rest.Add(stmt);
             }
+            foreach (var (typeName, list) in baseTypeExtensions)
+                rest.Add(new ClassDecl(list[0].Source, list[0].Line, BaseTypeExtensions.ClassName(typeName), null,
+                    list.SelectMany(e => e.Members).ToList()));
             if (extensions.Count == 0) return rest;
 
             // TargetRef.ResolveBaseName (SPEC "Namespaces") braucht die Menge
@@ -376,6 +391,8 @@ namespace fire.Compiler
             if (Check(TokenType.With)) return ParseWithStmt();
             if (Check(TokenType.Switch)) return ParseSwitchStmt();
             if (Check(TokenType.Fire)) return ParseFireStmt();
+            if (Check(TokenType.Sync) && PeekAt(1).Type == TokenType.Identifier && PeekAt(1).Lexeme == "global" && PeekAt(2).Type == TokenType.LBrace)
+                return ParseSyncGlobalBlock();
             if (Check(TokenType.Break))
             {
                 int breakLine = Advance().Line;
@@ -645,7 +662,7 @@ namespace fire.Compiler
         /// Klammern (die enthalten nur die Parametertypen), das macht die
         /// Grammatik unzweideutig ohne Trennzeichen zwischen Rückgabe- und
         /// Parametertypen zu brauchen.</summary>
-        private TypeRef ParseTypeRef()
+        private TypeRef ParseTypeRef(bool allowArray = false)
         {
             string baseName = ParseTypeAnnotationName();
             var namespaces = CurrentNamespaces();
@@ -665,16 +682,18 @@ namespace fire.Compiler
             // oder zu überschreiben.
             if (baseName == "byte")
             {
-                if (Check(TokenType.LBracket))
+                if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
                     throw Error("'byte' hat bereits eine feste Breite von 8 Bit - kein zusätzliches '[...]' danach", Peek());
                 int bytePointerDepth = 0;
                 while (Match(TokenType.Star)) bytePointerDepth++;
-                return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces);
+                return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
             }
 
+            // `[8]` = Bitbreite; leere Klammern `[]` gehören zum Array-Rückgabetyp (siehe unten).
             int? width = null;
-            if (Match(TokenType.LBracket))
+            if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
             {
+                Advance();
                 var widthTok = Expect(TokenType.IntLiteral, "Erwarte Bitbreite (8/16/32/64)");
                 width = (int)(long)widthTok.LiteralValue!;
                 Expect(TokenType.RBracket, "Erwarte ']' nach Bitbreite");
@@ -683,7 +702,31 @@ namespace fire.Compiler
             int pointerDepth = 0;
             while (Match(TokenType.Star)) pointerDepth++;
 
-            return new TypeRef(baseName, width, pointerDepth, Namespaces: namespaces);
+            return new TypeRef(baseName, width, pointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
+        }
+
+        /// <summary>Steht als nächstes `[` `]` (leere Klammern)? Das ist ein Array-Typ
+        /// (`int[]`), keine Bitbreite (`int[8]`).</summary>
+        private bool NextIsEmptyBrackets() =>
+            Check(TokenType.LBracket) && PeekAt(1).Type == TokenType.RBracket;
+
+        /// <summary>Liest die leeren Klammerpaare eines Array-TYPS (`int[]`, `Dog[][]`) und liefert ihre
+        /// Anzahl. Nur dort erlaubt, wo der Typ keinen Bezeichner hat, hinter dem die Klammern stünden
+        /// (Rückgabetypen) - überall sonst gilt `Typ name[]`, und der Fehler sagt das.</summary>
+        private int ParseArrayTypeSuffix(bool allowArray)
+        {
+            int rank = 0;
+            while (NextIsEmptyBrackets())
+            {
+                if (!allowArray)
+                    throw Error(
+                        "Ein Array schreibt man bei Variablen, Feldern und Parametern mit den Klammern hinter dem Namen " +
+                        "('int werte[]'); 'int[]' als Typ gibt es nur als Rückgabetyp einer Methode oder Property", Peek());
+                Advance(); // '['
+                Advance(); // ']'
+                rank++;
+            }
+            return rank;
         }
 
         /// <summary>Optionale `&lt;Param1,...,ParamN&gt;`-Parameterliste nach
@@ -761,6 +804,10 @@ namespace fire.Compiler
 
             int offset = 1;
             while (PeekAt(offset).Type == TokenType.Dot && PeekAt(offset + 1).Type == TokenType.Identifier)
+                offset += 2;
+            // `Dog[] Name`: leere Klammern hinter dem Typnamen (Array-Rückgabetyp) - wie zwei Bezeichner
+            // hintereinander kommt `Name[] Name` in keinem gültigen Ausdruck vor.
+            while (PeekAt(offset).Type == TokenType.LBracket && PeekAt(offset + 1).Type == TokenType.RBracket)
                 offset += 2;
             return PeekAt(offset).Type == TokenType.Identifier;
         }
@@ -896,11 +943,18 @@ namespace fire.Compiler
                 return new NoShadowDirective(_sourceIndex, line);
             }
 
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "nosync")
+            {
+                Advance();
+                ExpectStatementTerminator();
+                return new NoSyncDirective(_sourceIndex, line);
+            }
+
             // '#using' ist ab jetzt reine Preprocessor-Angelegenheit (siehe
             // Preprocessing.Preprocessor.ProcessInner/ProcessedSource) - eine
             // '#using'-Zeile wird dort schon erkannt und aus dem Text entfernt,
             // der Parser sieht sie nie mehr. Kein Fall dafür hier mehr nötig.
-            throw Error($"Unbekannte Präprozessor-Direktive '#{Peek().Lexeme}' (bekannt: '#extern \"libName\"', '#noshadow')", Peek());
+            throw Error($"Unbekannte Präprozessor-Direktive '#{Peek().Lexeme}' (bekannt: '#extern \"libName\"', '#noshadow', '#nosync')", Peek());
         }
 
         private Stmt ParseUnsafeStmt()
@@ -1103,9 +1157,42 @@ namespace fire.Compiler
             if (Check(TokenType.Identifier) && PeekAt(1).Type == TokenType.LParen)
                 return ParseFireCallForm(line);
 
+            // `fire global { ... }`: Auftrag für das Hauptprogramm statt eines neuen Threads (docs/THREADING_DESIGN.md Abschnitt 7)
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "global" && (PeekAt(1).Type == TokenType.LBrace || PeekAt(1).Type == TokenType.Taking))
+                return ParseFireGlobal(line);
+
             var (takingCaptures, withVarName, withSource) = ParseFireTakingWithClauses();
             var body = ParseBlock();
             return new FireStmt(_sourceIndex, line, takingCaptures, withVarName, withSource, body);
+        }
+
+        /// <summary>`sync global { ... }` (docs/THREADING_DESIGN.md Abschnitt 7): ein Block, der mit exklusivem Zugriff auf die Globals läuft.
+        /// Entzuckert zu `SectionEnter; try { Body } finally { SectionExit }` - die Sektion endet so auch bei `throw` im Block.</summary>
+        private Stmt ParseSyncGlobalBlock()
+        {
+            int line = Peek().Line;
+            Expect(TokenType.Sync, "Erwarte 'sync'");
+            Advance(); // 'global'
+            var body = ParseBlock();
+            var exit = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt> { new SectionExitStmt(_sourceIndex, line) });
+            return new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt>
+            {
+                new SectionEnterStmt(_sourceIndex, line),
+                new TryStmt(_sourceIndex, line, body, new List<CatchClause>(), exit, IsSyncSection: true),
+            });
+        }
+
+        /// <summary>`fire global { ... } [taking X ...]` - siehe Ast.PostGlobalStmt.</summary>
+        private Stmt ParseFireGlobal(int line)
+        {
+            Advance(); // 'global'
+            var (captures, withVarName, _) = ParseFireTakingWithClauses();
+            if (withVarName != null)
+                throw Error("'with' gibt es bei 'fire global' nicht", Peek());
+            var body = ParseBlock();
+            var parameters = captures.Select(c => new LambdaParam(c.VarName, null, new List<Expr?>(), null)).ToList();
+            var lambda = new LambdaExpr(line, parameters, null, body);
+            return new PostGlobalStmt(_sourceIndex, line, lambda, captures.Select(c => c.Source).ToList());
         }
 
         /// <summary>`taking X`/`with actorA`, in beliebiger Reihenfolge, `with`
@@ -1309,7 +1396,9 @@ namespace fire.Compiler
             {
                 do
                 {
-                    string baseName = Expect(TokenType.Identifier, "Erwarte Basisklassen-/Interface-Namen").Lexeme;
+                    // Auch qualifiziert ('Geometry.Shape' - eine Basisklasse in einem
+                    // anderen Namespace, siehe SPEC "Namespaces").
+                    string baseName = ParseDottedName("Basisklassen-/Interface-Namen");
                     baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces));
                 } while (Match(TokenType.Comma));
             }
@@ -1481,7 +1570,17 @@ namespace fire.Compiler
         private Stmt ParseClassExtensionDecl(int line)
         {
             Expect(TokenType.Extends, "Erwarte 'extends'");
-            string targetName = Expect(TokenType.Identifier, "Erwarte Namen der zu erweiternden Klasse").Lexeme;
+
+            // Ein Basistyp (`string`, `char`, ...) ist ein Schlüsselwort, kein Bezeichner - die
+            // Erweiterung eines Basistyps (SPEC 5.5.1) darf NUR Methoden enthalten.
+            bool isBaseType = TypeKeywords.Contains(Peek().Type) && Peek().Type != TokenType.Class && Peek().Type != TokenType.Undefined;
+            string targetName = isBaseType
+                ? Advance().Lexeme
+                : Expect(TokenType.Identifier, "Erwarte Namen der zu erweiternden Klasse").Lexeme;
+            if (isBaseType && !BaseTypeExtensions.IsExtendable(targetName))
+                throw Error(targetName == "byte"
+                    ? "'byte' lässt sich nicht erweitern - ein byte ist zur Laufzeit ein int, erweitere 'int'"
+                    : $"'{targetName}' lässt sich nicht erweitern", Previous());
             var targetRef = new TypeRef(targetName, null, 0, Namespaces: CurrentNamespaces());
             Expect(TokenType.LBrace, "Erwarte '{' nach 'class extends " + targetName + "'");
 
@@ -1490,7 +1589,39 @@ namespace fire.Compiler
                 members.AddRange(ParseClassMember());
             Expect(TokenType.RBrace, "Erwarte '}' am Ende der Erweiterung");
 
+            if (isBaseType)
+                foreach (var member in members)
+                    ValidateBaseTypeExtensionMember(targetName, member);
+
             return new ClassExtensionDecl(_sourceIndex, line, targetRef, members);
+        }
+
+        /// <summary>Eine Erweiterung eines Basistyps (`class extends string { ... }`) darf nur
+        /// gewöhnliche Instanzmethoden enthalten: ein Basiswert hat keinen Speicher für Felder/Properties,
+        /// keinen Konstruktor/Destruktor und (VM.BinaryNumericOrOperator prüft nur Objekte) keine
+        /// Operator-Überladung; `static` hätte keinen Aufrufweg (`string.Foo()` gibt es nicht).</summary>
+        private static void ValidateBaseTypeExtensionMember(string typeName, Stmt member)
+        {
+            string prefix = $"'class extends {typeName}': ";
+            switch (member)
+            {
+                case MethodDecl { IsStatic: true } m:
+                    throw new ParseException(prefix + $"statische Methode '{m.Name}' nicht erlaubt - Erweiterungen von Basistypen bestehen nur aus Instanzmethoden.", m.Line, 1);
+                case MethodDecl m when m.Name.StartsWith("operator", StringComparison.Ordinal) || m.Name is "GetIndex" or "SetIndex":
+                    throw new ParseException(prefix + "Operatoren lassen sich für Basistypen nicht überladen.", m.Line, 1);
+                case MethodDecl:
+                    return;
+                case FieldDecl f:
+                    throw new ParseException(prefix + $"Feld '{f.Name}' nicht erlaubt - Erweiterungen von Basistypen dürfen nur Methoden enthalten.", f.Line, 1);
+                case PropertyDecl p:
+                    throw new ParseException(prefix + $"Property '{p.Name}' nicht erlaubt - Erweiterungen von Basistypen dürfen nur Methoden enthalten.", p.Line, 1);
+                case ConstructorDecl c:
+                    throw new ParseException(prefix + "ein Konstruktor ist nicht erlaubt - Erweiterungen von Basistypen dürfen nur Methoden enthalten.", c.Line, 1);
+                case DestructorDecl d:
+                    throw new ParseException(prefix + "ein Destruktor ist nicht erlaubt - Erweiterungen von Basistypen dürfen nur Methoden enthalten.", d.Line, 1);
+                default:
+                    throw new ParseException(prefix + "nur Methoden sind erlaubt.", member.Line, 1);
+            }
         }
 
         /// <summary>`namespace Name { Mitglieder... }` bzw. `namespace A.B { ... }`
@@ -1552,7 +1683,7 @@ namespace fire.Compiler
                 int mLine = Peek().Line;
                 TypeRef? returnType = null;
                 if (NextLooksLikeTypeThenName())
-                    returnType = ParseTypeRef();
+                    returnType = ParseTypeRef(allowArray: true);
                 string methodName = Expect(TokenType.Identifier, "Erwarte Methodennamen").Lexeme;
                 var parms = ParseParamList();
                 ExpectStatementTerminator();
@@ -1767,7 +1898,9 @@ namespace fire.Compiler
             }
             else if (NextLooksLikeTypeThenName())
             {
-                type = ParseTypeRef();
+                // `int[] Name()`: ein Array-Rückgabetyp (Methode/Property) - bei einem FELD fängt das der
+                // Check unten ab (dort stehen die Klammern hinter dem Namen).
+                type = ParseTypeRef(allowArray: true);
             }
 
             string name = Expect(TokenType.Identifier, "Erwarte Feld- oder Methodennamen").Lexeme;
@@ -1803,6 +1936,11 @@ namespace fire.Compiler
                         Peek());
                 return ParsePropertyBody(line, type, name, access, isStatic);
             }
+
+            if (type is { ArrayRank: > 0 })
+                throw Error(
+                    "Ein Array-Feld schreibt man mit den Klammern hinter dem Namen ('int werte[]'); " +
+                    "'int[]' als Typ gibt es nur als Rückgabetyp einer Methode oder Property", Previous());
 
             var arrayRanks = ParseArrayRanks();
 
@@ -2267,6 +2405,15 @@ namespace fire.Compiler
                 return new IncDecExpr(opTok.Line, target, isIncrement, IsPrefix: true);
             }
 
+            // `flat x` / `copy x` (SPEC 2.4): Kopier-Präfixe - der Operand ist wieder ein Unary-Ausdruck,
+            // `copy a.b` kopiert also `a.b`, `copy a + b` ist `(copy a) + b`. (`sync flat x` liest sein `flat`
+            // selbst, siehe ParseSync - es kommt hier nie an.)
+            if (Check(TokenType.Flat) || Check(TokenType.Copy))
+            {
+                var copyTok = Advance();
+                return new UnaryExpr(copyTok.Line, copyTok.Type == TokenType.Flat ? UnaryOp.FlatCopy : UnaryOp.DeepCopy, ParseUnary());
+            }
+
             if (Check(TokenType.Minus) || Check(TokenType.Bang) || Check(TokenType.Tilde)
                 || Check(TokenType.Star) || Check(TokenType.Amp))
             {
@@ -2355,6 +2502,13 @@ namespace fire.Compiler
             int line = Peek().Line;
             bool isTry = Match(TokenType.Try);
             Expect(TokenType.Sync, "Erwarte 'sync'");
+            // `sync globals`: das Hauptprogramm arbeitet die Warteschlange seiner Fire-Threads ab
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "globals")
+            {
+                if (isTry) throw Error("'try sync globals' gibt es nicht", Peek());
+                Advance();
+                return new SyncGlobalsExpr(line);
+            }
             bool isFlat = Match(TokenType.Flat);
             var target = ParsePostfix();
             return new SyncExpr(line, isTry, isFlat, target);
