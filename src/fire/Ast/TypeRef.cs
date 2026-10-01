@@ -13,13 +13,14 @@ namespace fire.Ast
     /// wäre, ist bewusst nicht unterstützt (SPEC-Grenze dieser Ausbaustufe).
     /// `IsSelector`: `lambda property&lt;T&gt; name` - die übergebene Lambda wählt ein Mitglied aus (`c => c.radius`); der Parameter
     /// enthält im Körper stattdessen die Reflection dieses Mitglieds (siehe docs/DESIGN_LAMBDA_REFLECTION_PROBE.md); `ParamTypeNames`
-    /// enthält dann genau den Namen `T`.
+    /// enthält dann genau den Namen `T`. `FieldOnly`: `lambda field<T> name` - wie `property`, aber das gewählte Mitglied muss ein FELD sein
+    /// (`lambda property<T>` nimmt Felder und Properties).
     /// Nur die ANZAHL der Parameter wird zur Laufzeit geprüft (VM.
     /// CheckLambdaSignature) - die einzelnen Typnamen sind rein informativ,
     /// da eine dynamisch typisierte Lambda ihre Parameter-TYPEN nicht
     /// verlässlich vorab offenlegt.</summary>
     [MemoryPackable]
-    public sealed partial record LambdaSignature(string? ReturnTypeName, IReadOnlyList<string> ParamTypeNames, bool IsSelector = false);
+    public sealed partial record LambdaSignature(string? ReturnTypeName, IReadOnlyList<string> ParamTypeNames, bool IsSelector = false, bool FieldOnly = false);
 
     /// <summary>
     /// Ein Typ-Verweis: Basisname (Basistyp-Keyword oder Klassenname), optionale

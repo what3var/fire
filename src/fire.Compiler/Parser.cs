@@ -686,13 +686,13 @@ namespace fire.Compiler
             if (baseName == "lambda")
             {
                 // `lambda property<T>`: ein Selektor (siehe LambdaSignature.IsSelector)
-                if (Check(TokenType.Identifier) && Peek().Lexeme == "property" && PeekAt(1).Type == TokenType.Lt)
+                if (Check(TokenType.Identifier) && Peek().Lexeme is "property" or "field" && PeekAt(1).Type == TokenType.Lt)
                 {
-                    Advance(); // 'property'
+                    bool fieldOnly = Advance().Lexeme == "field"; // 'property' bzw. 'field'
                     Advance(); // '<'
                     string targetType = ParseTypeAnnotationName();
-                    Expect(TokenType.Gt, "Erwarte '>' nach dem Typ von 'lambda property<...>'");
-                    return new TypeRef("lambda", null, 0, new LambdaSignature(null, new List<string> { targetType }, IsSelector: true), namespaces);
+                    Expect(TokenType.Gt, $"Erwarte '>' nach dem Typ von 'lambda {(fieldOnly ? "field" : "property")}<...>'");
+                    return new TypeRef("lambda", null, 0, new LambdaSignature(null, new List<string> { targetType }, IsSelector: true, FieldOnly: fieldOnly), namespaces);
                 }
                 return new TypeRef("lambda", null, 0, ParseLambdaSignature(returnTypeName: null), namespaces);
             }
@@ -1610,7 +1610,7 @@ namespace fire.Compiler
                 members.AddRange(ParseClassMember());
             Expect(TokenType.RBrace, "Erwarte '}' am Ende der Erweiterung");
 
-            if (isBaseType)
+            if (isBaseType || BaseTypeExtensions.IsExtendable(targetName))
                 foreach (var member in members)
                     ValidateBaseTypeExtensionMember(targetName, member);
 

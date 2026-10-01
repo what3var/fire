@@ -128,28 +128,40 @@ namespace fire.Compiler
 
         private enum TryPhase { Try, Catch }
 
-        /// <summary>Ein gerade kompiliertes `try` (Try- oder Catch-Teil) - Grundlage dafür, dass `break`/`continue` den Handler abräumen und das
-        /// `finally` ausführen. `OuterDepth` = Scope-Tiefe außerhalb des `try`, `LoopCount` = Schleifen, die beim Betreten schon offen waren.</summary>
+        /// <summary>Ein gerade kompiliertes `try` (Try- oder Catch-Teil) - Grundlage dafür, dass `break`/`continue` den Handler abräumen und über das
+        /// `finally` laufen. `OuterDepth` = Scope-Tiefe außerhalb des `try`, `LoopCount` = Schleifen, die beim Betreten schon offen waren.</summary>
         private sealed class TryCompileContext
         {
             public TryStmt Stmt = null!;
             public TryPhase Phase;
             public int OuterDepth;
             public int LoopCount;
+
+            /// <summary>Stellen (Operanden von `Jump`), die in den `finally`-Block springen und noch auf seine Adresse warten.</summary>
+            public readonly List<int> FinallyJumpPatches = new();
+
+            /// <summary>Je Sprung-Art (`break`/`continue`), die den `try` verlässt: die Stellen (Operanden von `PushJump`), die auf die Adresse des Ausgangs-Stücks
+            /// hinter dem `finally` warten (siehe CompileTry).</summary>
+            public readonly List<int> BreakStubPatches = new();
+            public readonly List<int> ContinueStubPatches = new();
         }
 
         private readonly List<TryCompileContext> _tryStack = new();
 
-        /// <summary>Gemeinsame Kompilierung für `break`/`continue`: verlässt zuerst alle `try`/`catch`-Blöcke, die seit dem Schleifenkörper
-        /// offen sind (von innen nach außen: Scopes schließen, Handler abmelden bzw. Catch-Zustand verwerfen, `finally` inline ausführen),
-        /// schließt dann die restlichen Scopes und springt unbedingt - die Adresse wird in der passenden Liste (Break-/ContinueJumpPatchAddrs)
-        /// gesammelt und beim Fertigkompilieren der jeweiligen Schleife aufgelöst.</summary>
+        /// <summary>Alles, was ein Block auf dem Operanden-Stack liegen lässt, solange er läuft (von unten nach oben): ein `foreach` seinen Enumerator (1),
+        /// ein `finally`-Block seinen Abschluss (2). Ein `return` darin nimmt sie vor der Rückkehr weg (Swap + Pop je Eintrag), sonst blieben sie
+        /// unter dem Rückgabewert liegen und verschöben die Operanden des Aufrufers.</summary>
+        private readonly List<int> _residents = new();
+
+        /// <summary>Gemeinsame Kompilierung für `break`/`continue`: verlässt von innen nach außen alle `try`/`catch`-Blöcke, die seit dem Schleifenkörper offen
+        /// sind (Scopes schließen, Handler abmelden bzw. Catch-Zustand verwerfen). Trifft es dabei auf ein `try` MIT `finally`, springt es nicht selbst
+        /// weiter, sondern in dessen `finally` (Abschluss "Sprung"); nach dem `finally` setzt ein Ausgangs-Stück hinter dem `try` die Reise fort (es ist
+        /// derselbe `break`/`continue`, nur von außerhalb des `try` übersetzt, siehe CompileTry). Sonst schließt es die restlichen Scopes und springt - die
+        /// Adresse kommt in die passende Liste (Break-/ContinueJumpPatchAddrs) und wird beim Fertigkompilieren der Schleife aufgelöst.</summary>
         private void CompileBreakOrContinue(bool isBreak)
         {
             var ctx = _loopStack.Peek();
             int depth = _currentScopeDepth;      // tatsächliche Tiefe am Sprung; `_currentScopeDepth` selbst bleibt unverändert
-            int savedDepth = _currentScopeDepth;
-            var savedTryStack = _tryStack.ToArray();
 
             for (int k = _tryStack.Count - 1; k >= 0 && _tryStack[k].LoopCount == _loopStack.Count; k--)
             {
@@ -163,25 +175,26 @@ namespace fire.Compiler
                 }
                 else
                 {
-                    // wie am normalen Ende des catch-Blocks: Wurfstellen-Zustand verwerfen, Catch-Scope schließen
+                    // wie am normalen Ende des catch-Blocks: Wurfstellen-Zustand verwerfen, Catch-Scope schließen, das finally-only-Handler abmelden
                     _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(0);
                     _chunk.EmitOp(OpCode.ClearPendingResume);
                     _chunk.EmitOp(OpCode.ExitScope);
                     depth--;
+                    if (t.Stmt.Finally != null) _chunk.EmitOp(OpCode.UnregisterHandler);
                 }
 
                 if (t.Stmt.Finally != null)
                 {
-                    // das finally läuft hier inline, außerhalb dieses try (Handler sind schon abgemeldet)
-                    _tryStack.RemoveRange(k, _tryStack.Count - k);
-                    _currentScopeDepth = depth;
-                    CompileBlockNewScope(t.Stmt.Finally);
+                    // in das finally dieses `try`: danach geht es am Ausgangs-Stück hinter dem `try` weiter
+                    _chunk.EmitOp(OpCode.PushJump);
+                    (isBreak ? t.BreakStubPatches : t.ContinueStubPatches).Add(_chunk.Here);
+                    _chunk.EmitU16(0);
+                    _chunk.EmitOp(OpCode.Jump);
+                    t.FinallyJumpPatches.Add(_chunk.Here);
+                    _chunk.EmitU16(0);
+                    return;
                 }
             }
-
-            _tryStack.Clear();
-            _tryStack.AddRange(savedTryStack);
-            _currentScopeDepth = savedDepth;
 
             for (; depth > ctx.ScopeDepthAtLoopBodyStart; depth--) _chunk.EmitOp(OpCode.ExitScope);
             _chunk.EmitOp(OpCode.Jump);
@@ -372,7 +385,7 @@ namespace fire.Compiler
         private static string TypeText(TypeRef? type, int extraArrayRank = 0)
         {
             if (type == null || type.IsInferred) return "";
-            string text = type.LambdaSignature is { IsSelector: true } sel ? "lambda property<" + string.Join(", ", sel.ParamTypeNames) + ">" : type.ToString();
+            string text = type.LambdaSignature is { IsSelector: true } sel ? "lambda " + (sel.FieldOnly ? "field" : "property") + "<" + string.Join(", ", sel.ParamTypeNames) + ">" : type.ToString();
             return text + string.Concat(Enumerable.Repeat("[]", type.ArrayRank + extraArrayRank));
         }
 
@@ -462,11 +475,13 @@ namespace fire.Compiler
             // Interface-Namen in BaseRefs werden hier ignoriert - Interfaces
             // brauchen keine eigene Laufzeit-Repräsentation (rein dynamischer
             // Methodenaufruf per Name), die Erfüllung hat schon der Resolver geprüft.
+            var interfaceNames = new HashSet<string>(program.OfType<InterfaceDecl>().Select(i => i.Name));
             foreach (var rc in classes.Values)
             {
                 foreach (var baseRef in rc.Decl.BaseRefs ?? Array.Empty<TypeRef>())
                 {
-                    string n = baseRef.ResolveBaseName(name => name == "Exception" || classes.ContainsKey(name));
+                    string n = baseRef.ResolveBaseName(name => name == "Exception" || classes.ContainsKey(name) || interfaceNames.Contains(name));
+                    if (interfaceNames.Contains(n)) { rc.Interfaces.Add(n); continue; }
                     if (n != "Exception" && !classes.TryGetValue(n, out _)) continue;
                     if (n == "Exception") break; // keine RuntimeClass verfügbar -> Base bleibt null
                     rc.Base = classes[n];
@@ -683,7 +698,7 @@ namespace fire.Compiler
                     inner._chunk.EmitU16((ushort)i);
                     inner._chunk.EmitOp(OpCode.CallStaticMethod);
                     inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString("Reflect")));
-                    inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString("SelectorOf")));
+                    inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(sig.FieldOnly ? "FieldSelectorOf" : "SelectorOf")));
                     inner._chunk.EmitByte(1);
                     inner._chunk.EmitOp(OpCode.StoreLocal);
                     inner._chunk.EmitU16(0);
@@ -1043,10 +1058,10 @@ namespace fire.Compiler
                             _chunk.EmitU16(0);
                             _chunk.EmitOp(OpCode.ClearPendingResume);
                         }
-                    // Die Enumeratoren der umgebenden `foreach` liegen unter dem Rückgabewert auf dem Stack: sonst blieben sie dort liegen und
-                    // verschöben die Operanden des Aufrufers (`1 + f()` mit einem `return` im `foreach` von `f`).
-                    foreach (var loop in _loopStack)
-                        if (loop.IsForeach)
+                    // Bewohner des Stacks (die Enumeratoren der umgebenden `foreach`, die Abschlüsse der umgebenden `finally`-Blöcke) liegen unter dem
+                    // Rückgabewert: sonst blieben sie dort liegen und verschöben die Operanden des Aufrufers (`1 + f()` mit einem `return` im `foreach` von `f`).
+                    for (int r = _residents.Count - 1; r >= 0; r--)
+                        for (int n = 0; n < _residents[r]; n++)
                         {
                             _chunk.EmitOp(OpCode.Swap);
                             _chunk.EmitOp(OpCode.Pop);
@@ -1340,6 +1355,7 @@ namespace fire.Compiler
 
             var ctx = new LoopCompileContext { ScopeDepthAtLoopBodyStart = _currentScopeDepth, IsForeach = true };
             _loopStack.Push(ctx);
+            _residents.Add(1); // der Enumerator liegt, solange die Schleife läuft, auf dem Stack
 
             int loopStart = _chunk.Here;
             _chunk.EmitOp(OpCode.Dup);
@@ -1373,6 +1389,7 @@ namespace fire.Compiler
             foreach (var addr in ctx.BreakJumpPatchAddrs) _chunk.PatchU16(addr, loopEnd);
             _chunk.EmitOp(OpCode.Pop); // Enumerator-Referenz verwerfen
 
+            _residents.RemoveAt(_residents.Count - 1);
             _loopStack.Pop();
         }
 
@@ -1467,14 +1484,8 @@ namespace fire.Compiler
 
         private void CompileTry(TryStmt t)
         {
-            FunctionProto? finallyProto = t.Finally != null
-                ? CompileMethodProto(_enclosingClass, Array.Empty<LambdaParam>(), t.Finally, AccessModifier.Private)
-                : null;
-
-            var template = new HandlerTemplate
-            {
-                FinallyProtoIdx = finallyProto != null ? _chunk.AddFunctionProto(finallyProto) : null,
-            };
+            bool hasFinally = t.Finally != null;
+            var template = new HandlerTemplate();
             int templateIdx = _chunk.AddHandlerTemplate(template);
 
             _chunk.EmitOp(OpCode.RegisterHandler);
@@ -1486,6 +1497,7 @@ namespace fire.Compiler
             _tryStack.RemoveAt(_tryStack.Count - 1);
 
             _chunk.EmitOp(OpCode.UnregisterHandler);
+            if (hasFinally) _chunk.EmitOp(OpCode.EnterFinallyNormal); // Abschluss "normal"
 
             _chunk.EmitOp(OpCode.Jump);
             var jumpsToFinallyOrEnd = new List<int> { _chunk.Here };
@@ -1517,6 +1529,13 @@ namespace fire.Compiler
 
                 _chunk.EmitOp(OpCode.ExitScope); // gibt die von der VM erzeugte Exception-Scope wieder frei
 
+                // Mit finally war während des catch-Blocks ein finally-only-Handler aktiv (siehe VM.ThrowException): jetzt abmelden
+                if (hasFinally)
+                {
+                    _chunk.EmitOp(OpCode.UnregisterHandler);
+                    _chunk.EmitOp(OpCode.EnterFinallyNormal);
+                }
+
                 _chunk.EmitOp(OpCode.Jump);
                 jumpsToFinallyOrEnd.Add(_chunk.Here);
                 _chunk.EmitU16(0);
@@ -1524,8 +1543,33 @@ namespace fire.Compiler
 
             int finallyOrEndAddr = _chunk.Here;
             foreach (var addr in jumpsToFinallyOrEnd) _chunk.PatchU16(addr, finallyOrEndAddr);
+            if (!hasFinally) return;
 
-            if (t.Finally != null) CompileBlockNewScope(t.Finally);
+            // EIN finally-Block für alle Wege hinein (normal, break/continue, return, Exception, leave/terminate): oben auf dem Stack liegt der
+            // Abschluss (Nutzlast, Art), den EndFinally am Ende auswertet. Im Block selbst ist er ein Bewohner des Stacks (siehe _residents).
+            template.FinallyAddr = finallyOrEndAddr;
+            foreach (var addr in tryContext.FinallyJumpPatches) _chunk.PatchU16(addr, finallyOrEndAddr);
+
+            _residents.Add(2);
+            CompileBlockNewScope(t.Finally!);
+            _residents.RemoveAt(_residents.Count - 1);
+            _chunk.EmitOp(OpCode.EndFinally);
+
+            // Ausgangs-Stücke für ein `break`/`continue`, das über dieses finally lief: hier, hinter dem `try` (Scope-Tiefe und `_tryStack` stimmen
+            // schon), geht derselbe Sprung von außen weiter - über ein weiteres `finally` oder direkt zum Ziel. Die normale Ausführung überspringt sie.
+            if (tryContext.BreakStubPatches.Count > 0 || tryContext.ContinueStubPatches.Count > 0)
+            {
+                _chunk.EmitOp(OpCode.Jump);
+                int skipStubs = _chunk.Here;
+                _chunk.EmitU16(0);
+                foreach (var (isBreak, patches) in new[] { (true, tryContext.BreakStubPatches), (false, tryContext.ContinueStubPatches) })
+                {
+                    if (patches.Count == 0) continue;
+                    foreach (var addr in patches) _chunk.PatchU16(addr, _chunk.Here);
+                    CompileBreakOrContinue(isBreak);
+                }
+                _chunk.PatchU16(skipStubs, _chunk.Here);
+            }
         }
 
         // -----------------------------------------------------------

@@ -1721,8 +1721,47 @@ Höhe des `try`, egal wie tief und mitten in welchem Ausdruck geworfen wurde. `r
 - Ein `return` mitten in einem `try` ließ den Handler des `try` registriert: eine spätere, fremde Exception sprang in die längst beendete Funktion (das Programm endete still). `OpReturn` meldet jetzt die Handler seines Frames ab (`FrameDepthAtEntry >= _frames.Count`, nicht unter der Callback-Grenze).
 - Ein `return` im `catch` ließ die beim Werfen eingefrorene Wurfstelle samt Scopes liegen: der Compiler verwirft sie vor dem `Return` (`ClearPendingResume` auf die Exception-Variable im `catch`-Scope, Tiefe aus `_tryStack`).
 
-**Noch offen (gefunden, nicht angefasst):** `finally` ist an zwei Stellen unvollständig. (1) Ein `return` im `try` führt das `finally` nicht aus (der Handler wird nur abgemeldet). (2) Läuft das `finally` auf dem Ausnahmepfad (die Exception geht an
+**Zu `finally` siehe Abschnitt 40 (behoben).** Ursprünglich offen: `finally` war an zwei Stellen unvollständig. (1) Ein `return` im `try` führt das `finally` nicht aus (der Handler wird nur abgemeldet). (2) Läuft das `finally` auf dem Ausnahmepfad (die Exception geht an
 diesem `try` vorbei nach außen), ist es ein eigenständig übersetzter Proto (`RunFinallyNested`) und sieht die lokalen Variablen der Funktion nicht - ein Zugriff darauf wirft einen internen Fehler. Außerdem läuft das `finally` nicht, wenn die Exception aus dem `catch`-Block selbst kommt. Die
 saubere Lösung ist ein Landeplatz im selben Chunk (inline kompiliertes `finally` + `Rethrow`) statt des separaten Protos, plus inline-Kopien an `return`.
 
 Tests: Suite-Block "Lambda-Captures und LINQ" (vier Fälle: `foreach`-Exception mit `return` im `catch`, Exception aus tieferen Aufrufen mit halb ausgewerteten Ausdrücken, `return` im `try`, `resume()` mit Operanden).
+
+## 40. `finally`: ein Block, ein Abschlusswert
+
+**Vorher.** Das `finally` gab es zweimal: inline für den normalen Weg und als eigener Proto (`HandlerTemplate.FinallyProtoIdx`) für den Ausnahmepfad. Der Proto lief in einem frischen Scope und sah die lokalen Variablen nicht (ein Zugriff warf einen internen
+Fehler); bei `return` im `try` lief gar kein `finally`, ebenso nicht bei einer Exception aus dem `catch`-Block; `break`/`continue` brauchten inline-Kopien.
+
+**Jetzt: genau EINE Kopie** im Chunk (`HandlerTemplate.FinallyAddr`). Jeder Weg in den Block legt vorher einen **Abschlusswert** (Nutzlast, Art) auf den Operanden-Stack, am Ende wertet `EndFinally` ihn aus:
+
+| Art | Weg hinein | `EndFinally` tut |
+|---|---|---|
+| 0 normal | `try`/`catch` laufen durch (`EnterFinallyNormal`) | läuft weiter |
+| 1 Exception | `ThrowException`: der Handler hat keinen passenden `catch` (oder ist ein finally-only-Handler) | wirft die Exception erneut (sucht weiter außen) |
+| 2 return | `DoReturn` findet einen offenen Handler mit `finally` in diesem Frame | setzt das `return` fort (`DoReturn`, das ein weiteres `finally` findet oder zurückkehrt) |
+| 3 Sprung | `break`/`continue` (`PushJump addr`) | springt zur Adresse (ein Ausgangs-Stück hinter dem `try`) |
+| 4 verschachtelt | `leave`/`terminate` (`RunFinallyInlineNested`) | kehrt zum Aufrufer zurück, die Abwicklung geht weiter |
+
+- **Eintritt mit Scope und Stack.** Auf jedem Eintritt steht der Scope des `try` (`handler.TargetScope`, über `UnwindTo` bzw. die `ExitScope`s des Compilers) und der Stack auf `handler.StackPointer` plus dem Abschlusswert - der `finally`-Block ist an derselben Stelle übersetzt, an der der Resolver ihn aufgelöst hat, also sehen
+  seine Zugriffe die richtigen Slots.
+- **`catch` mit `finally`.** Greift ein `catch`, bleibt für dessen Dauer ein **finally-only**-Handler (`ActiveHandler.FinallyOnly`) registriert: eine Exception aus dem `catch`-Block (oder `return`/`break` daraus) läuft so ebenfalls durchs `finally`. Der Compiler meldet ihn am Ende des `catch`
+  (und bei `break`/`continue`) ab; `PendingResume.HandlerCount` lässt `resume()` alles darüber verwerfen.
+- **`return`.** Ein Opcode `ReturnTry` ist nicht nötig: `DoReturn` (jedes `Return`) sieht ohnehin nach den Handlern des eigenen Frames (`FrameDepthAtEntry >= _frames.Count`, ein Vergleich) und entscheidet dynamisch - so zählt auch ein `return` tief in verschachtelten `try`/`catch`/`foreach`. Handler ohne `finally` werden
+  abgemeldet. Ein zurückgegebenes Objekt, das einem der beim Eintritt verlassenen Scopes gehört, geht vorher an den Aufrufer (wie bei `Return`). Der Rückgabewert liegt als Nutzlast auf dem Stack, ein `finally`, das die Variable danach ändert, ändert ihn nicht.
+- **`break`/`continue` über ein `finally`.** `CompileBreakOrContinue` verlässt von innen nach außen alle `try`/`catch` bis zum ersten `try` MIT `finally`, schließt Scopes und meldet Handler ab, legt `PushJump <Ausgangs-Stück>` und springt ins `finally`. `CompileTry` übersetzt hinter `EndFinally` je Sprung-Art ein
+  Ausgangs-Stück: derselbe `break`/`continue`, von außerhalb des `try` aus (Scope-Tiefe und `_tryStack` stimmen dort schon) - das trifft ein weiteres `finally` weiter außen oder springt direkt zum Schleifenziel. Die normale Ausführung überspringt die Stücke.
+- **Bewohner des Stacks (`_residents`).** Ein `foreach` hält seinen Enumerator (1), ein `finally`-Block seinen Abschlusswert (2) auf dem Stack; ein `return` darin räumt beide mit `Swap; Pop` je Eintrag weg (ersetzt die frühere Enumerator-Zählung). Gilt auch für ein `return` im `finally` selbst.
+- **`leave`/`terminate`** (`UnwindForShutdown`): jeder offene Handler mit `finally` läuft über `RunFinallyInlineNested` (frame-weise verschachtelt, Abschluss 4).
+
+Geändert/entfernt: `HandlerTemplate.FinallyProtoIdx` und der separat übersetzte finally-Proto samt `RunFinallyNested`; neue Opcodes `EnterFinallyNormal`, `PushJump`, `EndFinally`. Die Sperre für `break`/`continue` AUS dem `finally` heraus (Resolver) bleibt.
+Tests: Suite-Block "Lambda-Captures und LINQ" (zwei Fälle: alle Wege, Locals, Objekte, resume, Exception im finally) und die bestehenden `leave`/`terminate`-Tests.
+
+## 41. Arrays als `IEnumerable`, `lambda field<T>`, `SelectProperty`/`SelectField`, `##`
+
+- **Arrays:** `class extends array` (`BaseTypeExtensions`: Name `array` -> Art `Array` -> Sammelklasse `$array`, wie `string`; der Parser validiert die Mitglieder, auch wenn `array` kein Schlüsselwort ist). Der Methodenaufruf auf einem Array sucht erst die Erweiterung, dann die eingebauten Methoden;
+  `GetEnumerator()` bleibt eingebaut (läuft auch ohne Prelude). `IsOfType`: Array/Puffer erfüllen `IEnumerable`. Die LINQ-Prelude erzeugt dieselben Operatoren für `List` und `array` (`Extension(target, toListExpression)`), `Linq.Iter` ist nur noch `source.GetEnumerator()`.
+- **Interfaces in `is of`:** `RuntimeClass.Interfaces` (der Compiler trägt die in `class X : Basis, IFoo` genannten Interfaces ein), `InstanceMatchesClassName` prüft sie auf jeder Stufe der Basisklassen-Kette; der Resolver lässt Interface-Namen bei `is of` zu.
+- **`lambda field<T>`:** `LambdaSignature.FieldOnly`; der Compiler ruft für den Parameter `Reflect.FieldSelectorOf` statt `SelectorOf` (setzt `Selector.FieldOnly`); `Selector.CheckKind` prüft per `__refl_member_kind(obj, name)` ("field"/"property"/"method"/undefined), sobald es ein Objekt gibt.
+- **`Query.SelectProperty(lambda property<class> sel)` / `SelectField(lambda field<class> sel)`:** Projektion per Selektor; sie halten nur den Pfad (Namen), nicht den `Selector` (der gehört dem Aufruf und wäre danach zerstört), und lesen über `Linq.GetPath` (Reflection, also mit deren Zugriffsregeln). `#import "linq"` schaltet `reflection` mit
+  (`WithDependencies`). Eine Überladung `Select(...)` je nach Selektor-Art gibt es nicht: Überladungen unterscheiden sich in dieser Sprache nur nach der Parameterzahl (die Auflösung ist je (Klasse, Name, Anzahl) gecacht), `Select(fn)` bleibt die allgemeine Projektion.
+- **`##`:** der Lexer liefert für `##` das Token `NotEq` (`#` allein bleibt Xor/Direktive); `operator!=`-Überladungen gelten damit auch für `##`.

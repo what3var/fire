@@ -128,10 +128,21 @@ namespace fire.Standard
             class Selector {
                 class Path
                 string Name
+                bool FieldOnly
 
                 construct(class path) {
                     this.Path = path
                     this.Name = path[path.length - 1]
+                    this.FieldOnly = false
+                }
+
+                // `lambda field<T>`: das gewählte Mitglied muss ein Feld sein (geprüft, sobald es ein Objekt gibt)
+                CheckKind(class parent) {
+                    if (this.FieldOnly) {
+                        var kind = __refl_member_kind(parent, this.Name)
+                        if (kind != "field") { throw new ReflectionException(Reflect.NotAField(this.Name, kind) + " (erwartet: lambda field<...>)") }
+                    }
+                    return parent
                 }
 
                 // Das Objekt, dem das gewählte Mitglied gehört (bei `p => p.address.city` ist das `p.address`)
@@ -140,12 +151,12 @@ namespace fire.Standard
                     for (var i = 0; i < this.Path.length - 1; i = i + 1) { o = Reflect.Get(o, this.Path[i]) }
                     return o
                 }
-                Get(class obj) { return Reflect.Get(this.Parent(obj), this.Name) }
-                Set(class obj, class value) { Reflect.Set(this.Parent(obj), this.Name, value) }
-                Describe(class obj) { return Type.Of(this.Parent(obj)).Find(this.Name) }
+                Get(class obj) { return Reflect.Get(this.CheckKind(this.Parent(obj)), this.Name) }
+                Set(class obj, class value) { Reflect.Set(this.CheckKind(this.Parent(obj)), this.Name, value) }
+                Describe(class obj) { return Type.Of(this.CheckKind(this.Parent(obj))).Find(this.Name) }
 
                 // Probe auf das gewählte Mitglied (kind: "changed" oder "changing"); Silence entfernt sie wieder
-                Probe(class obj, string kind, class handler) { return Reflect.Probe(this.Parent(obj), this.Name, kind, handler) }
+                Probe(class obj, string kind, class handler) { return Reflect.Probe(this.CheckKind(this.Parent(obj)), this.Name, kind, handler) }
                 Silence(class obj) { Reflect.Silence(this.Parent(obj), this.Name) }
             }
 
@@ -168,6 +179,19 @@ namespace fire.Standard
                 static SelectorOf(class l) {
                     if (l is of Selector) { return l }
                     return new Selector(__refl_selector_path(l))
+                }
+
+                // Meldung für ein Mitglied, das kein Feld ist (kind: "property", "method" oder undefined)
+                static NotAField(string name, class kind) {
+                    if (kind == undefined) { return "'" + name + "' ist kein Mitglied" }
+                    return "'" + name + "' ist kein Feld, sondern " + kind
+                }
+
+                // Dasselbe für `lambda field<T>`: das Mitglied muss ein Feld sein
+                static FieldSelectorOf(class l) {
+                    var s = Reflect.SelectorOf(l)
+                    s.FieldOnly = true
+                    return s
                 }
             }
             """;

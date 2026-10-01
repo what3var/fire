@@ -642,10 +642,10 @@ namespace fire.Compiler
             if (tr.LambdaSignature is { IsSelector: true } selector)
             {
                 if (!_classes.ContainsKey("Reflect"))
-                    throw new ResolverException("'lambda property<...>' (Selektor) braucht die Reflection-Bibliothek: #import \"reflection\"", line);
+                    throw new ResolverException($"'lambda {(selector.FieldOnly ? "field" : "property")}<...>' (Selektor) braucht die Reflection-Bibliothek: #import \"reflection\"", line);
                 foreach (var target in selector.ParamTypeNames)
                     if (!PrimitiveTypeNames.Contains(target) && !_currentTypeParamNames.ContainsKey(target) && !IsKnownClassName(target))
-                        throw new ResolverException($"Unbekannter Typ '{target}' in 'lambda property<{target}>'", line);
+                        throw new ResolverException($"Unbekannter Typ '{target}' in 'lambda {(selector.FieldOnly ? "field" : "property")}<{target}>'", line);
                 return;
             }
             if (PrimitiveTypeNames.Contains(tr.BaseName)) return;
@@ -1412,7 +1412,8 @@ namespace fire.Compiler
 
                 case IsOfExpr iof:
                     ResolveExpr(iof.Operand);
-                    ValidateTypeName(iof.TypeRef, iof.Line);
+                    // `wert is of IFoo`: auch ein Interface ist als Typ erlaubt (die Klasse nennt es in `class X : IFoo`)
+                    if (!_interfaces.ContainsKey(iof.TypeRef.BaseName)) ValidateTypeName(iof.TypeRef, iof.Line);
                     break;
 
                 case IsFromExpr ifr:

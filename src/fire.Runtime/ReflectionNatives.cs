@@ -28,6 +28,7 @@ namespace fire.Runtime
                 ? Value.MakeBool(Vm().ReflectHas((ObjectInstance)a[0].AsObjectRef(), a[1].AsString()))
                 : Value.MakeBool(false));
             natives.Register("__refl_selector_path", a => SelectorPath(a[0]));
+            natives.Register("__refl_member_kind", a => MemberKind(a[0], a[1].AsString()));
             natives.Register("__refl_probe", a => Probe(a[0], a[1], a[2].AsString(), a[3]));
             natives.Register("__refl_silence", a => Silence(a[0], a[1]));
             natives.Register("__refl_silence_handle", a => SilenceHandle(a[0]));
@@ -154,6 +155,20 @@ namespace fire.Runtime
         {
             var vm = Vm();
             return vm.TrySilenceValue(handle, out string error) ? Value.MakeUndefined() : vm.ReflectFail(error);
+        }
+
+        /// <summary>"field" (ein Feld der Instanz), "property" (Accessor), "method" oder undefined - ohne einen Wert zu lesen.</summary>
+        private static Value MemberKind(Value obj, string name)
+        {
+            if (obj.Kind != ValueKind.Class) return Value.MakeUndefined();
+            var instance = (ObjectInstance)obj.AsObjectRef();
+            if (instance.HasFieldLocked(name)) return Str("field");
+            var rc = Vm().ReflectFindClass(instance.ClassName);
+            if (rc == null) return Value.MakeUndefined();
+            if (rc.FindMethod("get_" + name, 0) != null || rc.FindMethod("set_" + name, 1) != null) return Str("property");
+            for (var c = rc; c != null; c = c.Base)
+                if (c.Methods.ContainsKey(name)) return Str("method");
+            return Value.MakeUndefined();
         }
 
         private static Value SelectorPath(Value l)

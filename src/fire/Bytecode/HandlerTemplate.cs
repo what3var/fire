@@ -23,6 +23,9 @@ namespace fire.Bytecode
     public sealed partial class HandlerTemplate
     {
         public List<(string? TypeName, int CatchAddr)> Catches { get; set; } = new();
-        public int? FinallyProtoIdx { get; set; }
+        /// <summary>Adresse des `finally`-Blocks im SELBEN Chunk (nur eine Kopie des Blocks, mit Zugriff auf alle lokalen Variablen), oder null.
+        /// Er wird auf jedem Weg betreten, der den `try` verlässt - normal, per `break`/`continue`, `return`, Exception oder `leave`/`terminate` -
+        /// mit einem Abschlusswert (Nutzlast, Art) oben auf dem Operanden-Stack, den `EndFinally` am Ende auswertet (siehe OpCode.EndFinally).</summary>
+        public int? FinallyAddr { get; set; }
     }
 }

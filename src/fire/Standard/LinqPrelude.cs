@@ -18,7 +18,7 @@ namespace fire.Standard
         /// <summary>Operatoren, die `List` zusätzlich direkt bekommt: Name und Parameteranzahlen (Überladung nach Anzahl).</summary>
         private static readonly (string Name, int[] Arities)[] ListOperators =
         {
-            ("Where", new[] { 1 }), ("Select", new[] { 1 }), ("SelectMany", new[] { 1 }), ("Take", new[] { 1 }), ("Skip", new[] { 1 }),
+            ("Where", new[] { 1 }), ("Select", new[] { 1 }), ("SelectProperty", new[] { 1 }), ("SelectField", new[] { 1 }), ("SelectMany", new[] { 1 }), ("Take", new[] { 1 }), ("Skip", new[] { 1 }),
             ("TakeWhile", new[] { 1 }), ("SkipWhile", new[] { 1 }), ("Concat", new[] { 1 }), ("Zip", new[] { 2 }), ("OrderBy", new[] { 1 }),
             ("OrderByDescending", new[] { 1 }), ("Reverse", new[] { 0 }), ("Distinct", new[] { 0 }),
             ("ToArray", new[] { 0 }), ("First", new[] { 0, 1 }), ("FirstOrDefault", new[] { 1, 2 }), ("Last", new[] { 0 }),
@@ -27,11 +27,13 @@ namespace fire.Standard
             ("Contains", new[] { 1 }), ("ForEach", new[] { 1 }), ("Join", new[] { 1 }),
         };
 
-        public static readonly string Source = CoreSource + ListExtension();
+        public static readonly string Source = CoreSource + Extension("List", "new List(this.ToArray())") + Extension("array", "new List(this)");
 
-        private static string ListExtension()
+        /// <summary>`class extends List` / `class extends array`: dieselben Operatoren direkt auf der Sammlung (Arrays nehmen die Erweiterung eines Basistyps,
+        /// SPEC 5.5.1; `this` ist dort das Array selbst).</summary>
+        private static string Extension(string target, string toListExpression)
         {
-            var sb = new StringBuilder("\nclass extends List {\n");
+            var sb = new StringBuilder($"\nclass extends {target} {{\n");
             foreach (var (name, arities) in ListOperators)
             {
                 foreach (int arity in arities)
@@ -40,7 +42,7 @@ namespace fire.Standard
                     sb.Append($"    {name}({parameters}) {{ return Linq.From(this).{name}({parameters}) }}\n");
                 }
             }
-            sb.Append("    ToList() { return new List(this.ToArray()) }\n");
+            sb.Append($"    ToList() {{ return {toListExpression} }}\n");
             sb.Append("}\n");
             return sb.ToString();
         }
@@ -213,10 +215,20 @@ namespace fire.Standard
             }
 
             class Linq {
-                // Ein Enumerator für Arrays UND Objekte mit GetEnumerator()
-                static Iter(class source) {
-                    if (source is of class) { return source.GetEnumerator() }
-                    return new ListEnumerator(source, source.length)
+                // Ein Enumerator für alles Durchlaufbare: Objekte mit GetEnumerator() und Arrays (die ebenfalls IEnumerable sind)
+                static Iter(class source) { return source.GetEnumerator() }
+
+                // Liest die Mitgliedskette `path` (Namen von außen nach innen) von `obj` - über die Reflection, also mit deren Zugriffsregeln
+                static GetPath(class obj, class path, bool fieldOnly) {
+                    var o = obj
+                    for (var i = 0; i < path.length; i = i + 1) {
+                        if (fieldOnly && i == path.length - 1) {
+                            var kind = __refl_member_kind(o, path[i])
+                            if (kind != "field") { throw new ReflectionException(Reflect.NotAField(path[i], kind)) }
+                        }
+                        o = Reflect.Get(o, path[i])
+                    }
+                    return o
                 }
 
                 static From(class source) {
@@ -289,6 +301,19 @@ namespace fire.Standard
                 Select(lambda<int> fn) {
                     var f = this.factory
                     return new Query(() => new LinqSelectEnumerator(f(), fn))
+                }
+                // Projektion auf ein Mitglied, gewählt per Selektor: `list.SelectProperty(p => p.name)` (Feld oder Property) bzw.
+                // `list.SelectField(p => p.name)` (nur ein Feld) - die Lambda muss eine reine Mitgliedskette sein (siehe `lambda property<T>`).
+                // Anders als `Select(fn)` prüft das Mitglied-Zugriffsregeln der Reflection und meldet ein falsches Mitglied als ReflectionException.
+                SelectProperty(lambda property<class> sel) {
+                    var f = this.factory
+                    var path = sel.Path
+                    return new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, false)))
+                }
+                SelectField(lambda field<class> sel) {
+                    var f = this.factory
+                    var path = sel.Path
+                    return new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, true)))
                 }
                 SelectMany(lambda<int> fn) {
                     var f = this.factory

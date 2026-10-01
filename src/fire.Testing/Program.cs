@@ -7985,7 +7985,13 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
         natives.RegisterBaseTypeNatives();
         var sources = new List<string> { fire.Standard.Prelude.Source };
-        if (script.Contains("#import \"linq\"")) sources.Add(fire.Standard.LinqPrelude.Source);
+        if (script.Contains("#import \"linq\""))
+        {
+            // linq bringt reflection mit (SelectProperty/SelectField)
+            fire.Runtime.ReflectionNatives.Register(natives);
+            sources.Add(fire.Standard.ReflectionPrelude.Source);
+            sources.Add(fire.Standard.LinqPrelude.Source);
+        }
         sources.Add(script);
         var program = Parser.ParseMultiple(sources
             .Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase),
@@ -8211,6 +8217,122 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         }
         T.Run()
         """, new[] { "16", "306" });
+
+    CheckLq("finally: EINE Kopie fuer alle Wege - normal, Exception, return (auch im catch/foreach), break/continue, Fehler im catch; sieht die Locals", excHead + """
+        class T {
+            static N() { var x = 1; try { x = x + 1 } finally { print("N fin x=" + x) } return x }
+            static P() { var x = 5; try { throw new Exception("p") } finally { print("P fin x=" + x) } }
+            static R() { var x = 7; try { return x } finally { print("R fin x=" + x); x = 99 } }
+            static RC() { var y = 3; try { throw new Exception("c") } catch (e) { return y + 1 } finally { print("RC fin y=" + y) } }
+            static CE() { try { throw new Exception("a") } catch (e) { throw new Exception("b") } finally { print("CE fin") } }
+            static RR() { try { try { return 1 } finally { print("inner") } } finally { print("outer") } }
+            static RF(class l) { try { foreach (x in l) { return x } } finally { print("RF fin") } return 0 }
+            static FR() { try { return 1 } finally { return 2 } }
+            static Run() {
+                print(1 + T.N() + 1)
+                try { T.P() } catch (e) { print("caught " + e.message) }
+                print(1 + T.R() + 1)
+                print(1 + T.RC() + 1)
+                try { T.CE() } catch (e) { print("caught " + e.message) }
+                print(10 + T.RR() + 10)
+                print(10 + T.RF([4, 5]) + 10)
+                print(10 + T.FR() + 10)
+                var log = ""
+                for (var i = 0; i < 4; i = i + 1) {
+                    try {
+                        if (i == 1) { continue }
+                        if (i == 3) { break }
+                        log = log + "b" + i
+                    } finally { log = log + "f" + i }
+                }
+                print(log)
+                var log2 = ""
+                var n = 0
+                while (true) {
+                    n = n + 1
+                    try {
+                        try { if (n == 2) { break } log2 = log2 + "t" + n }
+                        finally { log2 = log2 + "i" + n }
+                    } finally { log2 = log2 + "o" + n }
+                }
+                print(log2)
+                var log3 = ""
+                for (var j = 0; j < 3; j = j + 1) {
+                    try { throw new Exception("x") } catch (e) { if (j == 1) { continue } log3 = log3 + "c" + j } finally { log3 = log3 + "f" + j }
+                }
+                print(log3)
+                try { try { throw new Exception("in") } finally { print("f1") } } catch (e) { print("out " + e.message) }
+                print(2 * T.N() + 3)
+            }
+        }
+        T.Run()
+        """, new[] { "N fin x=2", "4", "P fin x=5", "caught p", "R fin x=7", "9", "RC fin y=3", "6", "CE fin", "caught b", "inner", "outer", "21", "RF fin", "24", "22", "b0f0f1b2f2f3", "t1i1o1i2o2", "c0f0f1c2f2", "f1", "out in", "N fin x=2", "7" });
+
+    CheckLq("finally: zurueckgegebene Objekte ueberleben, resume() durch ein finally, Exception im finally ersetzt die erste", excHead + """
+        class Box { int n; construct(int n) { this.n = n } destruct() { print("~Box " + this.n) } }
+        class T {
+            static Make() { try { var b = new Box(5); return b } finally { print("mk fin") } }
+            static Make2() { var keep = new Box(6); try { return keep } finally { print("mk2 fin") } }
+            static Resume() { try { return 1 + (throw new Exception("r")) } catch (e) { e.resume(10) } finally { print("res fin") } }
+            static Replace() { try { throw new Exception("first") } finally { throw new Exception("second") } }
+            static Run() {
+                var b = T.Make()
+                print(b.n)
+                var c = T.Make2()
+                print(c.n)
+                print(T.Resume())
+                try { T.Replace() } catch (e) { print(e.message) }
+            }
+        }
+        T.Run()
+        """, new[] { "mk fin", "5", "mk2 fin", "6", "res fin", "11", "second", "~Box 5", "~Box 6" });
+
+    CheckLq("Arrays sind IEnumerable: is of, GetEnumerator, foreach, fluent LINQ direkt auf dem Array (class extends array)", linqHead + """
+        class Bag : IEnumerable { GetEnumerator() { return new ListEnumerator([1, 2], 2) } }
+        class T {
+            static Count(class src) { var n = 0; foreach (x in src) { n = n + 1 } return n }
+            static Run() {
+                var arr = [5, 3, 8, 1]
+                print(arr is of IEnumerable)
+                print(new Bag() is of IEnumerable)
+                print(5 is of IEnumerable)
+                var e = arr.GetEnumerator()
+                e.MoveNext()
+                print(e.GetCurrent() + " " + T.Count(arr))
+                print(arr.Where(x => x > 2).Select(x => x * 10).Join(","))
+                print(arr.OrderBy(x => x).ToList().count + " " + arr.Sum() + " " + arr.Count(x => x > 2) + " " + arr.First() + " " + arr.Any(x => x > 7))
+                print(Linq.From(new Bag()).Select(x => x + 1).Join(","))
+            }
+        }
+        T.Run()
+        """, new[] { "True", "True", "False", "5 4", "50,30,80", "4 17 3 5 True", "2,3" });
+
+    CheckLq("SelectProperty/SelectField: Projektion per Selektor (Feld oder Property bzw. nur Feld), Fehler als ReflectionException", linqHead + """
+        class Item { string name; int price; int Double { get { return this.price * 2 } } construct(string n, int p) { this.name = n; this.price = p } }
+        class T {
+            static Run() {
+                var items = [new Item("a", 3), new Item("b", 1)]
+                print(items.SelectProperty(p => p.name).Join(",") + " " + items.SelectProperty(p => p.Double).Join(",") + " " + items.SelectField(p => p.price).Join(","))
+                var l = new List(items)
+                print(l.SelectField(p => p.name).Join("") + " " + l.OrderBy(p => p.price).SelectProperty(p => p.name).Join(""))
+                try { items.SelectField(p => p.Double).ToList() } catch (e) { print("1 " + e.message) }
+                try { items.SelectProperty(p => p.nope).ToList() } catch (e) { print("2 " + e.message) }
+                try { items.SelectProperty(p => p.price + 1) } catch (e) { print("3 " + e.message) }
+            }
+        }
+        T.Run()
+        """, new[]
+        {
+            "a,b 6,2 3,1", "ab ba",
+            "1 'Double' ist kein Feld, sondern property",
+            "2 'Item' hat kein lesbares Mitglied 'nope'.",
+            "3 Die Lambda ist kein Selektor: sie braucht genau einen Parameter, und ihr Körper darf nur eine Mitgliedskette darauf sein (`c => c.radius`, `p => p.address.city`).",
+        });
+
+    CheckLq("## ist ein Synonym fuer !=", """
+        var x = 5
+        print((1 ## 2) + " " + (2 ## 2) + " " + (true ## false) + " " + ("a" ## "a") + " " + (x ## 5 || x ## 4) + " " + (6 # 3))
+        """, new[] { "True False True False True 5" });
 
     Console.WriteLine(lqFailures == 0 ? "Alle Lambda-/LINQ-Pruefungen bestanden." : $"FEHLER: {lqFailures} Lambda-/LINQ-Pruefung(en) fehlgeschlagen.");
 }
@@ -8547,6 +8669,18 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             "Die Art einer Probe ist \"changed\" oder \"changing\", erhalten: \"gestern\".",
             "Der Handler einer Probe darf höchstens 4 Parameter haben (Objekt, Name, alt, neu), hat 5.",
         }, debugRelease);
+
+    CheckRf("lambda field<T>: der Selektor muss ein FELD waehlen (lambda property<T> nimmt Felder und Properties)", """
+        class C { int v; int P { get { return 7 } } construct() { this.v = 1 } }
+        class W {
+            static F(lambda field<C> s, C c) { return s.Name + "=" + s.Get(c) }
+            static G(lambda property<C> s, C c) { return s.Name + "=" + s.Get(c) }
+        }
+        var c = new C()
+        print(W.F(x => x.v, c) + " " + W.G(x => x.v, c) + " " + W.G(x => x.P, c))
+        try { W.F(x => x.P, c) } catch (e) { print("1 " + e.message) }
+        try { W.F(x => x.nope, c) } catch (e) { print("2 " + e.message) }
+        """, new[] { "v=1 v=1 P=7", "1 'P' ist kein Feld, sondern property (erwartet: lambda field<...>)", "2 'nope' ist kein Mitglied (erwartet: lambda field<...>)" });
 
     Console.WriteLine(rfFailures == 0 ? "Alle Reflection-Pruefungen bestanden." : $"FEHLER: {rfFailures} Reflection-Pruefung(en) fehlgeschlagen.");
 }

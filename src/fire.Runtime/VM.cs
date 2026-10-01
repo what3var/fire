@@ -68,8 +68,12 @@ namespace fire.Runtime
         /// hat (angefangene Ausdrücke, die Enumeratoren eines `foreach`, Operanden tieferer Aufrufe), wird für ein mögliches `resume()` beiseitegelegt.</summary>
         public readonly int StackPointer;
 
-        public ActiveHandler(Chunk chunk, int frameDepthAtEntry, Scope targetScope, HandlerTemplate template, int stackPointer)
+        /// <summary>Während eines `catch`-Blocks bleibt nur das `finally` des `try` aktiv (der `catch` selbst fängt keine weitere Exception desselben `try`).</summary>
+        public readonly bool FinallyOnly;
+
+        public ActiveHandler(Chunk chunk, int frameDepthAtEntry, Scope targetScope, HandlerTemplate template, int stackPointer, bool finallyOnly = false)
         {
+            FinallyOnly = finallyOnly;
             Chunk = chunk;
             FrameDepthAtEntry = frameDepthAtEntry;
             TargetScope = targetScope;
@@ -122,10 +126,14 @@ namespace fire.Runtime
         public readonly SavedContinuation Continuation;
         public readonly ActiveHandler Handler;
 
-        public PendingResume(SavedContinuation continuation, ActiveHandler handler)
+        /// <summary>Anzahl der aktiven Handler, als der `catch` begann (ohne das finally-only des `try`): `resume()` verwirft alles darüber.</summary>
+        public readonly int HandlerCount;
+
+        public PendingResume(SavedContinuation continuation, ActiveHandler handler, int handlerCount)
         {
             Continuation = continuation;
             Handler = handler;
+            HandlerCount = handlerCount;
         }
     }
 
@@ -883,8 +891,8 @@ namespace fire.Runtime
                 _handlers.RemoveAt(_handlers.Count - 1);
 
                 UnwindTo(handler.FrameDepthAtEntry, handler.TargetScope);
-                if (handler.Template.FinallyProtoIdx is int protoIdx)
-                    RunFinallyNested(handler.Chunk.Functions[protoIdx]);
+                if (handler.Template.FinallyAddr is int finallyAddr)
+                    RunFinallyInlineNested(handler.Chunk, finallyAddr);
             }
 
             UnwindTo(0, _globalScope);
@@ -1807,18 +1815,42 @@ namespace fire.Runtime
         }
         }
 
-        private void OpReturn()
-        {
-        {
-            var retVal = Pop();
+        // Abschluss-Arten, die ein `finally`-Block oben auf dem Operanden-Stack vorfindet (Nutzlast, Art) - siehe OpCode.EndFinally
+        private const int FinallyNormal = 0, FinallyThrow = 1, FinallyReturn = 2, FinallyJump = 3, FinallyNestedReturn = 4;
 
-            // Ein `return` mitten in einem `try` lässt dessen Handler registriert: er würde danach eine fremde Exception abfangen (mit einer Adresse
-            // in einer längst beendeten Funktion). Die Handler dieses Frames werden hier abgemeldet (die der Aufrufer, unterhalb, bleiben).
+        private void OpReturn() => DoReturn(Pop());
+
+        /// <summary>Beendet die aktuelle Funktion mit `retVal`. Liegt dabei noch ein `try` mit `finally` dieses Frames offen (auch ein `catch`-Block, der
+        /// noch zu einem solchen `try` gehört), wird nicht zurückgekehrt, sondern erst sein `finally` ausgeführt (Abschluss "return"): dessen `EndFinally`
+        /// ruft diese Methode erneut auf, bis kein `finally` mehr offen ist. Handler ohne `finally` werden einfach abgemeldet.</summary>
+        private void DoReturn(Value retVal)
+        {
+        {
             if (_handlers.Count > 0)
             {
                 int handlerFloor = _callbackBoundaries.Count > 0 ? _callbackBoundaries.Peek().HandlerFloor : 0;
                 while (_handlers.Count > handlerFloor && _handlers[^1].FrameDepthAtEntry >= _frames.Count)
+                {
+                    var handler = _handlers[^1];
                     _handlers.RemoveAt(_handlers.Count - 1);
+                    if (handler.Template.FinallyAddr is not int finallyAddr) continue;
+
+                    // Ein zurückgegebenes Objekt, das einem der Scopes gehört, die gleich verlassen werden, geht an den Aufrufer (wie unten bei `Return`)
+                    if (retVal.Kind == ValueKind.Class && _frames.Count > 0)
+                    {
+                        var retInstance = (ObjectInstance)retVal.AsObjectRef();
+                        if (retInstance.Owner is Scope ownerScope)
+                            for (var sc = _currentScope; sc != null && !ReferenceEquals(sc, handler.TargetScope); sc = sc.Parent)
+                                if (ReferenceEquals(sc, ownerScope)) { retInstance.ReparentTo(_frames.Peek().ReturnScope); break; }
+                    }
+                    UnwindTo(handler.FrameDepthAtEntry, handler.TargetScope);
+                    if (_sp > handler.StackPointer) _sp = handler.StackPointer;
+                    Push(retVal);
+                    Push(Value.MakeInt(FinallyReturn));
+                    _currentChunk = handler.Chunk;
+                    _ip = finallyAddr;
+                    return;
+                }
             }
 
             // SPEC 2.3: Wird eine Objektinstanz zurückgegeben, deren
@@ -3425,6 +3457,47 @@ namespace fire.Runtime
                     _handlers.RemoveAt(_handlers.Count - 1);
                     break;
 
+                case OpCode.EnterFinallyNormal:
+                    Push(Value.MakeUndefined());
+                    Push(Value.MakeInt(FinallyNormal));
+                    break;
+
+                case OpCode.PushJump:
+                    Push(Value.MakeInt(ReadU16()));
+                    Push(Value.MakeInt(FinallyJump));
+                    break;
+
+                case OpCode.EndFinally:
+                {
+                    int kind = (int)Pop().AsInt();
+                    var payload = Pop();
+                    switch (kind)
+                    {
+                        case FinallyNormal:
+                            break;
+                        case FinallyThrow:
+                            ThrowException(payload);
+                            break;
+                        case FinallyReturn:
+                            DoReturn(payload);
+                            break;
+                        case FinallyJump:
+                            _ip = (int)payload.AsInt();
+                            break;
+                        case FinallyNestedReturn:
+                        {
+                            // Ende eines verschachtelt gestarteten finally (leave/terminate, siehe RunFinallyInlineNested): zurück zum Aufrufer
+                            var frame = _frames.Pop();
+                            _currentChunk = frame.ReturnChunk;
+                            _ip = frame.ReturnIp;
+                            _currentScope = frame.ReturnScope;
+                            _currentThis = frame.ReturnThis;
+                            break;
+                        }
+                    }
+                    break;
+                }
+
                 case OpCode.Throw:
                 {
                     var thrown = Pop();
@@ -3502,6 +3575,7 @@ namespace fire.Runtime
                     // dort keinen passenden catch mehr und UnregisterHandler am
                     // Ende des try-Blocks entfernt versehentlich einen fremden
                     // Eintrag.
+                    while (_handlers.Count > pending.HandlerCount) _handlers.RemoveAt(_handlers.Count - 1);
                     _handlers.Add(pending.Handler);
 
                     Push(resumeValue); // das ist der Wert, zu dem 'throw' jetzt auswertet
@@ -4065,7 +4139,7 @@ namespace fire.Runtime
                 var handler = _handlers[^1];
                 _handlers.RemoveAt(_handlers.Count - 1);
 
-                int? matchedAddr = FindMatchingCatch(handler.Template, excInstance);
+                int? matchedAddr = handler.FinallyOnly ? null : FindMatchingCatch(handler.Template, excInstance);
 
                 if (matchedAddr != null)
                 {
@@ -4076,7 +4150,7 @@ namespace fire.Runtime
                     // zerstört, solange nicht klar ist, ob resume() aufgerufen
                     // wird oder nicht (siehe ClearPendingResume).
                     var continuation = CaptureContinuation(handler.FrameDepthAtEntry);
-                    _pendingResumes[excInstance] = new PendingResume(continuation, handler);
+                    _pendingResumes[excInstance] = new PendingResume(continuation, handler, _handlers.Count);
 
                     // Der `catch` beginnt auf der Stack-Höhe des `try`: die Operanden der Wurfstelle (z.B. der Enumerator eines `foreach`, aus dem
                     // geworfen wurde, oder halb ausgewertete Ausdrücke des Aufrufers tieferer Frames) bleiben nicht als Leichen liegen und
@@ -4087,6 +4161,10 @@ namespace fire.Runtime
                         Array.Copy(_stack, handler.StackPointer, continuation.Stack, 0, continuation.Stack.Length);
                         _sp = handler.StackPointer;
                     }
+
+                    // Hat der `try` ein `finally`, bleibt es für die Dauer des `catch`-Blocks aktiv (eine Exception AUS dem catch muss es auslösen)
+                    if (handler.Template.FinallyAddr != null)
+                        _handlers.Add(new ActiveHandler(handler.Chunk, handler.FrameDepthAtEntry, handler.TargetScope, handler.Template, handler.StackPointer, finallyOnly: true));
 
                     var catchScope = new Scope(handler.TargetScope);
                     catchScope.DefineSlot(exceptionValue);
@@ -4101,8 +4179,17 @@ namespace fire.Runtime
                 // möglich), also ganz normal destruktiv abwickeln.
                 UnwindTo(handler.FrameDepthAtEntry, handler.TargetScope);
 
-                if (handler.Template.FinallyProtoIdx is int protoIdx)
-                    RunFinallyNested(handler.Chunk.Functions[protoIdx]);
+                // Die Exception geht an diesem `try` vorbei - sein `finally` läuft (im selben Chunk, mit den lokalen Variablen), und `EndFinally`
+                // wirft sie danach weiter (Abschluss "Exception"). Die Operanden der Wurfstelle verfallen (kein resume() über ein finally hinweg).
+                if (handler.Template.FinallyAddr is int finallyAddr)
+                {
+                    if (_sp > handler.StackPointer) _sp = handler.StackPointer;
+                    Push(exceptionValue);
+                    Push(Value.MakeInt(FinallyThrow));
+                    _currentChunk = handler.Chunk;
+                    _ip = finallyAddr;
+                    return;
+                }
             }
 
             // Unbehandelt in einem Callback: nur der Callback bricht ab (Abwickeln bis zu seinem Aufrufer, dort hört CallLambdaInline
@@ -4214,7 +4301,7 @@ namespace fire.Runtime
             if (typeName == "Exception") return true;
             if (!_classes.TryGetValue(instance.ClassName, out var rc)) return false;
             for (; rc != null; rc = rc.Base)
-                if (rc.Name == typeName) return true;
+                if (rc.Name == typeName || rc.Interfaces.Contains(typeName)) return true;
             return false;
         }
 
@@ -4233,6 +4320,8 @@ namespace fire.Runtime
                 case "undefined": return v.Kind == ValueKind.Undefined;
                 case "class": return v.Kind == ValueKind.Class;
             }
+            // Arrays und Puffer sind durchlaufbar (GetEnumerator, foreach): sie erfüllen das Interface IEnumerable der Prelude
+            if (v.Kind is ValueKind.Array or ValueKind.Buffer && typeName == "IEnumerable") return true;
             if (v.Kind != ValueKind.Class) return false;
             return InstanceMatchesClassName((ObjectInstance)v.AsObjectRef(), typeName);
         }
@@ -4268,21 +4357,19 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Führt einen finally-Block verschachtelt aus (wie
-        /// RunDestructor) - für den Fall, dass eine Exception an einem Handler
-        /// vorbei nach außen propagiert, dessen finally aber trotzdem laufen
-        /// muss, bevor die Suche nach einem passenden Handler weitergeht.</summary>
-        private void RunFinallyNested(FunctionProto proto)
+        /// <summary>Führt einen `finally`-Block im Chunk `chunk` an `addr` verschachtelt aus (für `leave`/`terminate`, die jedes offene `finally` ablaufen lassen,
+        /// ohne zurückzukehren): wie ein Aufruf, der Block selbst läuft im Scope des `try`; sein `EndFinally` (Abschluss 4) kehrt hierher zurück.</summary>
+        private void RunFinallyInlineNested(Chunk chunk, int addr)
         {
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
             int targetDepth = _frames.Count;
 
-            _currentScope = new Scope(_globalScope);
-            _currentChunk = proto.Chunk;
-            _ip = 0;
+            Push(Value.MakeUndefined());
+            Push(Value.MakeInt(FinallyNestedReturn));
+            _currentChunk = chunk;
+            _ip = addr;
 
             RunNestedUntil(targetDepth);
-            PopNestedResult(); // bedeutungsloser Rückgabewert des finally-Protos, siehe RunDestructor
         }
 
         /// <summary>Ruft eine Methode auf `obj` verschachtelt auf (siehe

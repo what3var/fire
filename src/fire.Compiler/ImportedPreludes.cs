@@ -48,6 +48,7 @@ namespace fire.Compiler
         public static IEnumerable<string> WithDependencies(string importKey)
         {
             if (importKey == NativeImports.Ui) yield return NativeImports.Graphics;
+            if (importKey == NativeImports.Linq) yield return NativeImports.Reflection; // SelectProperty/SelectField arbeiten mit Selektoren
             yield return importKey;
         }
 

@@ -75,6 +75,9 @@ namespace fire.Bytecode
         /// <summary>Deklarierte Typen/Signaturen für die Reflection (nur wenn das Programm `#import "reflection"` nutzt), sonst null.</summary>
         public ClassMeta? Meta { get; set; }
 
+        /// <summary>Die Interfaces, die diese Klasse in `class X : Basis, IFoo` nennt (für `wert is of IFoo`; geerbte kommen über die Basisklassen-Kette).</summary>
+        public List<string> Interfaces { get; set; } = new();
+
         /// <summary>Klasse der Reflection-Bibliothek (`Reflect`, `Type`, `Member`, `Selector`): für die Zugriffsprüfung zählt der Aufrufer DAVOR.</summary>
         public bool IsReflectionHelper { get; set; }
 

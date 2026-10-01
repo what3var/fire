@@ -55,7 +55,7 @@ Von locker (weit oben) nach fest bindend (weit unten):
 |                         bitweises Oder     (nur int)
 #                         bitweises Exklusiv-Oder (nur int - NICHT '^', das ist Potenz)
 &                         bitweises Und      (nur int)
-== !=                     Gleichheit
+== != ##                  Gleichheit (`##` ist ein Synonym für `!=`)
 < <= > >=                 Vergleich
 << >>                     Bit-Schiebeoperatoren (nur int)
 + -                       Addition/Subtraktion
@@ -513,7 +513,8 @@ Erlaubt sind **nur Methoden**: ein Basiswert hat keinen Speicher, in dem ein Fel
 liegen könnte. Ein Feld, eine (Auto-)Property, ein Konstruktor/Destruktor, eine `static`-Methode
 (`string.Foo()` gibt es nicht) und eine Operator-Überladung sind ein Fehler bei der Übersetzung
 („'class extends string': Feld 'x' nicht erlaubt …“). `byte` lässt sich nicht erweitern - ein `byte`
-ist zur Laufzeit ein `int`, also `class extends int`. Arrays und Puffer sind ebenfalls nicht erweiterbar.
+ist zur Laufzeit ein `int`, also `class extends int`. Für **Arrays** gibt es `class extends array { ... }` (ein Bezeichner, kein Schlüsselwort; `this` ist das Array, es gelten dieselben Regeln: nur Instanzmethoden) - so bekommt jedes
+Array z.B. die LINQ-Operatoren (`#import "linq"`). Puffer sind nicht erweiterbar.
 
 Die Methoden des Prelude für `string` und `char` (8.12) sind genau solche Erweiterungen. Eine eigene
 Methode mit demselben Namen und derselben Parameteranzahl wie eine bestehende ist - wie bei jeder Klasse -
@@ -760,7 +761,7 @@ Methoden-Infrastruktur funktioniert deshalb automatisch mit.
 ## 6. Prüf-Operatoren: `is in`, `is of`, `is from`
 
 - **`wert is in einheit`** → `bool`. Prüft, ob `wert` (int/float/undefined) eine zu `einheit` dimensional kompatible Einheit trägt (siehe 3.4), unabhängig von Präfix/Skalierungsfaktor. Beispiel: `5mm is in m` → `true`, `5mm is in kg` → `false`.
-- **`wert is of Typ`** → `bool`. Prüft die Typzugehörigkeit **rekursiv**: bei Basistypen einfacher Kind-Vergleich; bei `class`-Instanzen wird die Vererbungskette nach oben durchsucht (Instanz selbst oder eine ihrer Elternklassen entspricht `Typ`). Beispiel: `a is of float`.
+- **`wert is of Typ`** → `bool`. Prüft die Typzugehörigkeit **rekursiv**: bei Basistypen einfacher Kind-Vergleich; bei `class`-Instanzen wird die Vererbungskette nach oben durchsucht (Instanz selbst oder eine ihrer Elternklassen entspricht `Typ`). Beispiel: `a is of float`. Auch ein **Interface** ist als Typ erlaubt (`wert is of IEnumerable`): wahr, wenn die Klasse (oder eine Basisklasse) es in `class X : IFoo` nennt; **Arrays und Puffer** erfüllen `IEnumerable`.
 - **`objekt is from ownerAusdruck`** → `bool`. Prüft, ob der aktuelle Owner von `objekt` genau `ownerAusdruck` ist (direkter Owner-Vergleich). Beispiel: `obj is from objList`.
 - **`objekt is under ownerAusdruck`** → `bool`. Wie `is from`, aber **transitiv**: prüft, ob `ownerAusdruck` irgendwo in der Ownership-Kette oberhalb von `objekt` liegt (direkter Owner, dessen Owner, usw., beliebig tief).
 
@@ -807,7 +808,9 @@ try {
 ```
 
 - Mehrere `catch`-Blöcke werden der Reihe nach geprüft; ein getypter `catch (Type name)` filtert per `is of`-Check, ein ungetypter `catch (name)` fängt alles. Der Typ steht - wie bei jeder Deklaration (`int x`) - VOR dem Namen.
-- `finally` ist optional und läuft immer.
+- `finally` ist optional und läuft **immer**, auf jedem Weg, der den `try` verlässt: normal, nach einem `catch`, bei einer Exception, die an diesem `try` vorbeigeht (auch aus einem `catch`-Block heraus), bei `return`
+  (auch im `try`/`catch`/in einem `foreach` darin), bei `break`/`continue` und bei `leave`/`terminate`. Der Block sieht die lokalen Variablen der Funktion. Ein `return` im `finally` ersetzt den Rückgabewert, eine `throw`
+  darin ersetzt die ursprüngliche Exception; `break`/`continue` aus dem `finally` heraus sind ein Fehler. Der Rückgabewert eines `return` im `try` steht fest, bevor das `finally` läuft (ändert es die Variable, bleibt er).
 
 ### 7.4 `catch` ohne `try` – impliziter Block-Scope-Catch
 
@@ -1267,6 +1270,7 @@ class List : IEnumerable {
 - Ein `interface` deklariert nur Methodensignaturen (keine Felder, kein
   Konstruktor), ähnlich `extern`, nur eben für klasseninterne Verträge statt
   native Funktionen.
+- **Arrays und Byte-Puffer sind `IEnumerable`:** `arr.GetEnumerator()` liefert einen Enumerator (`ListEnumerator`), `arr is of IEnumerable` ist wahr, und alles, was eine `IEnumerable` verarbeitet (`foreach`, `Linq.From`, eigene Methoden), nimmt sie an.
 - `foreach (x in collection)` (SPEC 5) läuft über `GetEnumerator()`/
   `MoveNext()`/`GetCurrent()` – rein per NAMENS-Dispatch, funktioniert also
   auch auf jeder anderen Klasse mit denselben drei Methoden, nicht nur auf
@@ -1789,7 +1793,7 @@ t.Find("radius").Get(circle)            // Member.Get/Set/Call(obj, ...)
 - **Grenzen:** Statische Mitglieder stehen in der Beschreibung, lassen sich aber nicht über `Reflect` lesen/schreiben/aufrufen. `Reflect.New` baut über eine verschachtelte Ausführung: wirft ein Konstruktor eine Exception, ist das ein
   interner Fehler statt einer fangbaren Exception. Dynamisch angelegte Felder (ohne Deklaration) erscheinen nicht in `Type`, `Reflect.Has` kennt sie.
 
-#### Selektoren: `lambda property<T> name`
+#### Selektoren: `lambda property<T> name` und `lambda field<T> name`
 
 Ein Parameter mit dem Typ `lambda property<T>` nimmt eine Lambda entgegen, die ein Mitglied **auswählt**; im Körper enthält der Parameter dann die **Reflection des gewählten Mitglieds** (einen `Selector`), nicht die Lambda:
 
@@ -1805,7 +1809,8 @@ Watch.Show(c => c.radius, myCircle)
 ```
 
 `Selector`: `Name` (das gewählte Mitglied), `Path` (alle Namen, bei `p => p.address.city`: `address`, `city`), `Parent(obj)`, `Get(obj)`, `Set(obj, wert)`, `Describe(obj)` (das `Member`). Die Lambda muss genau einen Parameter haben, und ihr
-Körper darf nur eine **Mitgliedskette auf diesem Parameter** sein; alles andere ist eine `ReflectionException` ("Die Lambda ist kein Selektor ..."). Wird ein schon umgewandelter Selektor an einen weiteren `lambda property<T>`-Parameter
+Körper darf nur eine **Mitgliedskette auf diesem Parameter** sein; alles andere ist eine `ReflectionException` ("Die Lambda ist kein Selektor ..."). **`lambda field<T> name`** ist dasselbe, verlangt aber, dass das gewählte Mitglied ein **Feld** ist (`lambda property<T>` nimmt Felder und Properties): sonst `ReflectionException` ("'P' ist kein Feld, sondern property ..."),
+sobald es ein Objekt gibt (`Get`/`Set`/`Describe`/`Probe`). Wird ein schon umgewandelter Selektor an einen weiteren `lambda property<T>`-Parameter
 weitergereicht, bleibt er unverändert. Das `T` ist Dokumentation/Prüfung gegen den Klassennamen im Resolver; die Instanz wird zur Laufzeit nicht gegen `T` geprüft. Ohne `#import "reflection"` ist der Typ ein Fehler.
 
 ### 8.14 `probe` und `silence`
