@@ -36,6 +36,26 @@
                 <Separator/>
                 <MenuItem Header="_Beenden" Click="Exit_Click"/>
             </MenuItem>
+            <!-- Wirkt auf das aktive Dokument; die Einträge werden beim Öffnen des Menüs ein-/ausgeschaltet (siehe EditMenu_SubmenuOpened). -->
+            <MenuItem Header="_Bearbeiten" SubmenuOpened="EditMenu_SubmenuOpened">
+                <MenuItem Header="_Rückgängig" x:Name="mnuUndo" Click="Undo_Click" InputGestureText="Strg+Z"/>
+                <MenuItem Header="_Wiederholen" x:Name="mnuRedo" Click="Redo_Click" InputGestureText="Strg+Y"/>
+                <Separator/>
+                <MenuItem Header="A_usschneiden" x:Name="mnuCut" Click="Cut_Click" InputGestureText="Strg+X"/>
+                <MenuItem Header="_Kopieren" x:Name="mnuCopy" Click="Copy_Click" InputGestureText="Strg+C"/>
+                <MenuItem Header="_Einfügen" x:Name="mnuPaste" Click="Paste_Click" InputGestureText="Strg+V"/>
+                <MenuItem Header="_Löschen" x:Name="mnuDelete" Click="Delete_Click" InputGestureText="Entf"/>
+                <Separator/>
+                <MenuItem Header="_Alles auswählen" Click="SelectAll_Click" InputGestureText="Strg+A"/>
+                <Separator/>
+                <MenuItem Header="_Suchen..." Click="Find_Click" InputGestureText="Strg+F"/>
+                <MenuItem Header="_Weitersuchen" Click="FindNext_Click" InputGestureText="F3"/>
+                <MenuItem Header="_Rückwärts suchen" Click="FindPrevious_Click" InputGestureText="Umschalt+F3"/>
+                <MenuItem Header="_Gehe zu Zeile..." Click="GoToLine_Click" InputGestureText="Strg+G"/>
+                <Separator/>
+                <MenuItem Header="Zu _Definition springen" x:Name="mnuGoToDefinition" Click="GoToDefinition_Click" InputGestureText="F12 / Strg+Klick"/>
+                <MenuItem Header="_Kommentar umschalten" x:Name="mnuToggleComment" Click="ToggleComment_Click" InputGestureText="Strg+Umschalt+C"/>
+            </MenuItem>
             <MenuItem Header="_Ausführen">
                 <MenuItem Header="_Starten/Neu kompilieren" Click="Run_Click" InputGestureText="F5"/>
                 <MenuItem Header="Standalone erstellen..." Click="Build_Click"/>

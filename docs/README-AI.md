@@ -216,6 +216,20 @@ Der **Markdown-Editor** ist AvalonEdit mit Zeilenumbruch und einer Live-Vorschau
 - Bearbeiten: Symbolleiste und Kürzel (Strg+B fett, Strg+I kursiv, Strg+E Code, Strg+K Link, Strg+H Überschriftenebene wechseln), Aufzählung/Nummerierung/Zitat/Code-Block/Tabelle einfügen, Enter am Ende
   eines Listenpunkts setzt die Liste fort (leerer Punkt beendet sie).
 
+### Bearbeiten-Menü, Kontextmenü, Zu Definition springen
+
+**Bearbeiten-Menü** (wirkt auf das aktive Dokument, über `IDocumentView`; Einträge werden beim Öffnen ein-/ausgeschaltet): Rückgängig/Wiederholen, Ausschneiden/Kopieren/Einfügen/Löschen, Alles auswählen,
+Suchen (Strg+F, AvalonEdits `SearchPanel`; Weitersuchen F3, rückwärts Umschalt+F3 - ohne Ersetzen), Gehe zu Zeile (Strg+G), Zu Definition springen (F12), Kommentar umschalten (Strg+Umschalt+C, `//` je Zeile). Die
+gemeinsamen Teile liegen in `EditorCommands`. **Kontextmenüs** (Rechtsklick setzt den Cursor unter die Maus, außer in einer Auswahl): im Skript-Editor Zu Definition (nur aktiv, wenn es ein Ziel gibt), die
+Standard-Einträge, Kommentar, Haltepunkt; im Markdown-Editor Fett/Kursiv/Code/Link/Überschrift plus die Standard-Einträge.
+
+**Zu Definition springen** (Strg+Klick, F12, Menü): `NavigationEngine.TryResolve` arbeitet auf dem `ScriptSymbolIndex`. Typnamen (auch `Geo.Circle`, hinter `new`, in Deklarationen, Basisklassen), Klassen-/Enum-/Namespace-
+Mitglieder und Mitglieder hergeleiteter Empfänger (`a.B().c`, `var x = new T()`, statische Aufrufe, `class extends string`) werden aufgelöst - dieselbe Typherleitung wie die Vervollständigung (`ResolveReceiver`).
+Ziele in einer **Prelude** (Standardbibliothek ODER die einer per `#import` zugeschalteten Erweiterung wie `graphics`/`time`/`linq`; `NavigationTarget.PreludeName`, Quelltext über `ScriptSymbolIndex.PreludeSourceOf`)
+öffnen ein schreibgeschütztes `FileViewerWindow` (pro Prelude nur EIN Fenster, weitere Sprünge bewegen es). Früher hatten die Erweiterungs-Preludes keine Definitionszeilen (kein Sprung möglich), und Enums aus Preludes
+sprangen auf eine falsche Zeile im eigenen Dokument. Ziele in einer `#include`-Datei öffnen einen Tab (`ScriptEditorControl.OpenFileRequested`). Das Ansichtsfenster ist jetzt wie der Editor ein AvalonEdit-
+`TextEditor` (zuverlässige Textpositionen für Strg+Klick auch dort, Zeilennummern, Suchen) statt einer RichTextBox.
+
 ## Stand der Implementierung
 
 - [x] `docs/SPEC.md` – Sprachspezifikation

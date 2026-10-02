@@ -697,6 +697,81 @@ namespace fire.Editor
 
         private void CloseDocument_Click(object sender, RoutedEventArgs e) => ActiveDocument?.Layout.Close();
 
+        // -----------------------------------------------------------
+        // Bearbeiten-Menü (wirkt auf das aktive Dokument)
+        // -----------------------------------------------------------
+
+        private void EditMenu_SubmenuOpened(object sender, RoutedEventArgs e)
+        {
+            var view = ActiveDocument?.View;
+            mnuUndo.IsEnabled = view?.CanUndo == true;
+            mnuRedo.IsEnabled = view?.CanRedo == true;
+            mnuCut.IsEnabled = mnuCopy.IsEnabled = mnuDelete.IsEnabled = view?.HasSelection == true;
+            mnuPaste.IsEnabled = view != null && EditorCommands.ClipboardHasText();
+            mnuGoToDefinition.IsEnabled = ActiveScript?.CanGoToDefinition() == true;
+            mnuToggleComment.IsEnabled = ActiveScript != null;
+        }
+
+        private void Undo_Click(object sender, RoutedEventArgs e) => ActiveDocument?.View.Undo();
+        private void Redo_Click(object sender, RoutedEventArgs e) => ActiveDocument?.View.Redo();
+        private void Cut_Click(object sender, RoutedEventArgs e) => ActiveDocument?.View.Cut();
+        private void Copy_Click(object sender, RoutedEventArgs e) => ActiveDocument?.View.Copy();
+        private void Paste_Click(object sender, RoutedEventArgs e) => ActiveDocument?.View.Paste();
+        private void Delete_Click(object sender, RoutedEventArgs e) => ActiveDocument?.View.Delete();
+        private void SelectAll_Click(object sender, RoutedEventArgs e) => ActiveDocument?.View.SelectAll();
+        private void Find_Click(object sender, RoutedEventArgs e) => ActiveDocument?.View.Find();
+        private void FindNext_Click(object sender, RoutedEventArgs e) => ActiveDocument?.View.FindNext();
+        private void FindPrevious_Click(object sender, RoutedEventArgs e) => ActiveDocument?.View.FindPrevious();
+
+        private void GoToDefinition_Click(object sender, RoutedEventArgs e)
+        {
+            if (ActiveScript is { } script) script.GoToDefinition();
+            else UpdateStatus("Zu Definition springen gibt es nur in Skript-Tabs.");
+        }
+
+        private void ToggleComment_Click(object sender, RoutedEventArgs e) => ActiveScript?.ToggleComment();
+
+        private void GoToLine_Click(object sender, RoutedEventArgs e)
+        {
+            if (ActiveDocument is not { } doc) return;
+            if (PromptLine(doc.View.GetCaretLine(), doc.View.LineCount) is { } line) doc.View.GoToLine(line);
+        }
+
+        /// <summary>Kleiner Eingabedialog "Gehe zu Zeile" (null = abgebrochen/ungültig).</summary>
+        private int? PromptLine(int current, int max)
+        {
+            var box = new TextBox { Text = current.ToString(), MinWidth = 220, Margin = new Thickness(0, 4, 0, 10) };
+            var ok = new Button { Content = "OK", IsDefault = true, MinWidth = 70, Margin = new Thickness(0, 0, 8, 0) };
+            var cancel = new Button { Content = "Abbrechen", IsCancel = true, MinWidth = 70 };
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            buttons.Children.Add(ok);
+            buttons.Children.Add(cancel);
+            var panel = new StackPanel { Margin = new Thickness(14) };
+            panel.Children.Add(new TextBlock { Text = $"Zeilennummer (1 - {max}):" });
+            panel.Children.Add(box);
+            panel.Children.Add(buttons);
+
+            var dialog = new Window
+            {
+                Title = "Gehe zu Zeile",
+                Content = panel,
+                SizeToContent = SizeToContent.WidthAndHeight,
+                ResizeMode = ResizeMode.NoResize,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                ShowInTaskbar = false,
+            };
+            int? result = null;
+            ok.Click += (_, _) =>
+            {
+                if (int.TryParse(box.Text.Trim(), out int n)) { result = n; dialog.DialogResult = true; }
+                else box.SelectAll();
+            };
+            dialog.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
+            dialog.ShowDialog();
+            return result;
+        }
+
         private void ToggleMarkdownPreview_Click(object sender, RoutedEventArgs e) => ActiveDocument?.Markdown?.TogglePreview();
 
         // -----------------------------------------------------------
@@ -764,6 +839,13 @@ namespace fire.Editor
 
             if (doc.Script is { } script)
             {
+                // Strg+Klick auf ein #include bzw. ein Symbol aus einer eingebundenen Datei: Datei in einem Tab öffnen.
+                script.OpenFileRequested += (path, line) =>
+                {
+                    if (OpenFile(path) is { } target)
+                        // Erst nach dem ersten Layout des (evtl. neuen) Tabs, sonst kann der Editor noch nicht scrollen.
+                        Dispatcher.BeginInvoke(new Action(() => target.View.GoToLine(line)), DispatcherPriority.Loaded);
+                };
                 script.DiagnosticsChanged += () =>
                 {
                     if (ReferenceEquals(ActiveDocument, doc)) UpdateErrorPanel();
@@ -975,6 +1057,10 @@ namespace fire.Editor
                     SaveAll_Click(this, e); e.Handled = true; break;
                 case Key.S when ctrl:
                     Save_Click(this, e); e.Handled = true; break;
+                case Key.G when ctrl:
+                    GoToLine_Click(this, e); e.Handled = true; break;
+                case Key.F12 when ActiveScript != null && !shift && !ctrl:
+                    GoToDefinition_Click(this, e); e.Handled = true; break;
                 case Key.W when ctrl:
                     CloseDocument_Click(this, e); e.Handled = true; break;
                 case Key.V when ctrl && shift && ActiveDocument?.Markdown != null:

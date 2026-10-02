@@ -54,6 +54,18 @@ namespace fire.Editor
             Editor.TextChanged += Editor_TextChanged;
             Editor.TextArea.Caret.PositionChanged += (_, _) => CaretLineChanged?.Invoke(GetCaretLine());
             Editor.PreviewKeyDown += Editor_PreviewKeyDown;
+            Editor.PreviewMouseRightButtonDown += (_, e) => Editor.PlaceCaretForContextMenu(e);
+
+            _searchPanel = ICSharpCode.AvalonEdit.Search.SearchPanel.Install(Editor);
+            Editor.ContextMenu = EditorCommands.BuildMenu(new List<EditorCommands.Entry?>
+            {
+                new() { Header = "_Fett", Gesture = "Strg+B", Execute = () => Wrap("**") },
+                new() { Header = "_Kursiv", Gesture = "Strg+I", Execute = () => Wrap("*") },
+                new() { Header = "_Code", Gesture = "Strg+E", Execute = () => Wrap("`") },
+                new() { Header = "_Link", Gesture = "Strg+K", Execute = InsertLink },
+                new() { Header = "_Überschrift (Ebene wechseln)", Gesture = "Strg+H", Execute = CycleHeading },
+                null,
+            }.Concat(EditorCommands.StandardEntries(Editor, Find)).ToList());
 
             _renderer.LinkClicked = HandleLink;
 
@@ -74,6 +86,35 @@ namespace fire.Editor
         public string GetText() => Editor.Text;
         public int GetCaretLine() => Editor.TextArea.Caret.Line;
         public void FocusEditor() => Editor.Focus();
+
+        // -----------------------------------------------------------
+        // Bearbeiten (Menü des Hauptfensters, Kontextmenü)
+        // -----------------------------------------------------------
+
+        private ICSharpCode.AvalonEdit.Search.SearchPanel? _searchPanel;
+
+        public bool CanUndo => Editor.Document.UndoStack.CanUndo;
+        public bool CanRedo => Editor.Document.UndoStack.CanRedo;
+        public bool HasSelection => Editor.SelectionLength > 0;
+        public int LineCount => Editor.Document.LineCount;
+
+        public void Undo() { Editor.Undo(); Editor.Focus(); }
+        public void Redo() { Editor.Redo(); Editor.Focus(); }
+        public void Cut() { Editor.Cut(); Editor.Focus(); }
+        public void Copy() { Editor.Copy(); Editor.Focus(); }
+        public void Paste() { Editor.Paste(); Editor.Focus(); }
+        public void Delete() { Editor.Delete(); Editor.Focus(); }
+        public void SelectAll() { Editor.SelectAll(); Editor.Focus(); }
+        public void GoToLine(int line) => Editor.GoToLine(line);
+
+        public void Find()
+        {
+            Editor.Focus();
+            _searchPanel?.Open();
+        }
+
+        public void FindNext() => _searchPanel?.FindNext();
+        public void FindPrevious() => _searchPanel?.FindPrevious();
         public void MarkSaved() => SetModified(false);
 
         public void ResetTo(string text, string? filePath)
@@ -303,29 +344,10 @@ namespace fire.Editor
             Editor.Focus();
         }
 
-        /// <summary>Die vom Cursor/der Auswahl berührten Zeilen.</summary>
-        private List<DocumentLine> SelectedLines()
-        {
-            var doc = Editor.Document;
-            int a = Editor.SelectionStart;
-            int b = Editor.SelectionStart + Editor.SelectionLength;
-            var first = doc.GetLineByOffset(a);
-            var last = doc.GetLineByOffset(b);
-            // Eine Auswahl, die genau am Anfang einer Folgezeile endet, zählt diese nicht mit.
-            if (b > a && b == last.Offset && last.LineNumber > first.LineNumber) last = last.PreviousLine;
-            var lines = new List<DocumentLine>();
-            for (var l = first; l != null; l = l.NextLine)
-            {
-                lines.Add(l);
-                if (l == last) break;
-            }
-            return lines;
-        }
-
         private void TogglePrefix(Func<int, string> prefixFor, Regex existing)
         {
             var doc = Editor.Document;
-            var lines = SelectedLines();
+            var lines = Editor.SelectedLines();
             bool allHave = lines.All(l => existing.IsMatch(doc.GetText(l.Offset, l.Length)) || doc.GetText(l.Offset, l.Length).Trim().Length == 0);
             bool anyText = lines.Any(l => doc.GetText(l.Offset, l.Length).Trim().Length > 0);
             doc.BeginUpdate();

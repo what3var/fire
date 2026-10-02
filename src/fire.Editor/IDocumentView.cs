@@ -27,5 +27,24 @@ namespace fire.Editor
         void MarkSaved();
 
         void FocusEditor();
+
+        // Bearbeiten-Menü (siehe MainWindow) - wirkt immer auf das AKTIVE Dokument.
+        bool CanUndo { get; }
+        bool CanRedo { get; }
+        bool HasSelection { get; }
+        void Undo();
+        void Redo();
+        void Cut();
+        void Copy();
+        void Paste();
+        void Delete();
+        void SelectAll();
+        void Find();
+        void FindNext();
+        void FindPrevious();
+        int LineCount { get; }
+
+        /// <summary>Springt in Zeile `line` (1-basiert) und setzt den Fokus in den Editor.</summary>
+        void GoToLine(int line);
     }
 }

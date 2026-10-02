@@ -8,14 +8,18 @@ namespace fire.Editor
     /// RELATIVE Pfad aus einer `#include`-Zeile - MainWindow löst ihn
     /// relativ zum Verzeichnis der jeweils anzeigenden Datei auf (siehe
     /// dort, kennt als einzige Stelle den tatsächlichen Dateipfad).
-    /// `IsPrelude`: true, wenn das Ziel in der eingebauten Standard-
-    /// bibliothek liegt (siehe ScriptSymbolIndex.MergeInPrelude) - dann ist
+    /// `PreludeName`: gesetzt, wenn das Ziel in einer eingebauten Prelude
+    /// liegt (Standardbibliothek oder eine per `#import` zugeschaltete
+    /// Erweiterung, siehe ScriptSymbolIndex.PreludeSourceOf) - dann ist
     /// `FilePath` IMMER null (kein echter Dateipfad vorhanden) und `Line`
     /// bezieht sich auf den PRELUDE-Quelltext, NICHT auf das aktuelle
-    /// Dokument; der Aufrufer muss in diesem Fall MainWindow.
-    /// ShowPreludeSource(line) statt eines normalen Sprungs im
-    /// Haupteditor verwenden.</summary>
-    public sealed record NavigationTarget(string? FilePath, int Line, bool IsPrelude = false);
+    /// Dokument; der Aufrufer zeigt in diesem Fall die Prelude in einem
+    /// schreibgeschützten Fenster (FileViewerWindow.ShowPrelude) statt eines
+    /// normalen Sprungs im Editor.</summary>
+    public sealed record NavigationTarget(string? FilePath, int Line, string? PreludeName = null)
+    {
+        public bool IsPrelude => PreludeName != null;
+    }
 
     /// <summary>
     /// Bestimmt, wohin ein Klick auf eine bestimmte Zeichen-Position im
@@ -53,12 +57,35 @@ namespace fire.Editor
             var include = index.IncludeDirectives.FirstOrDefault(d => d.Line == line);
             if (include != null) return new NavigationTarget(include.RelativePath, 1);
 
-            var extracted = ExtractIdentifierAndReceiver(source, offset);
-            if (extracted == null) return null;
-            var (identifier, receiver) = extracted.Value;
+            string? identifier = ReadIdentifierAt(source, offset, out int idStart);
+            if (identifier == null) return null;
+            string? receiver = ReadIdentifierBeforeDot(source, idStart);
+            // Hinter einem ')' / ']' (`a.B().c`) kennt ReadIdentifierBeforeDot keinen Namen - der Punkt zählt trotzdem.
+            if (receiver == null && idStart > 0 && source[idStart - 1] == '.') receiver = "";
 
             if (receiver != null)
             {
+                // Erst über die volle Typherleitung der Vervollständigung (`a.B().c.`, `var x = new T()`,
+                // Namespaces, statische Aufrufe ...), dann über die einfache Auflösung des Empfängers.
+                // `Geo.Circle` / `A.B.Circle` als Typname (z.B. hinter `new` oder in einer Deklaration): der geschriebene
+                // Pfad, vollqualifiziert oder über #using.
+                string? dotted = ReadDottedNameBefore(source, idStart - 1);
+                if (dotted != null)
+                {
+                    string qualified = dotted + "." + identifier;
+                    string? qualifiedClass = index.TryFindClass(qualified, offset);
+                    if (qualifiedClass != null && index.Classes.TryGetValue(qualifiedClass, out var qc) && qc.DeclLine > 0)
+                        return new NavigationTarget(null, qc.DeclLine, qc.PreludeName);
+                    string? qualifiedEnum = index.TryFindEnum(qualified, offset);
+                    if (qualifiedEnum != null && index.EnumDeclLines.ContainsKey(qualifiedEnum))
+                        return EnumTarget(index, qualifiedEnum);
+                }
+
+                var type = index.ResolveReceiver(idStart - 1);
+                var viaType = ResolveMemberOfType(index, type, identifier);
+                if (viaType != null) return viaType;
+                if (receiver.Length == 0) return null;
+
                 string? className = receiver == "this"
                     ? index.EnclosingClassAt(offset)
                     : index.TryResolveDeclaredType(offset, receiver);
@@ -68,46 +95,91 @@ namespace fire.Editor
 
                 if (className != null)
                 {
-                    var member = index.MembersOf(className).FirstOrDefault(m => m.Name == identifier && m.DeclLine > 0);
-                    if (member != null)
-                    {
-                        // Ob das MITGLIED aus der Prelude stammt (auch ein geerbtes
-                        // einer Prelude-Basisklasse), nicht die angeklickte Klasse.
-                        bool fromPrelude = !ReferenceEquals(member.Source, index);
-                        return new NavigationTarget(null, member.DeclLine, fromPrelude);
-                    }
+                    var member = FindMember(index, className, identifier);
+                    if (member != null) return MemberTarget(index, member);
                 }
 
                 string? receiverEnum = index.TryFindEnum(receiver, offset);
-                if (receiverEnum != null
-                    && index.EnumDeclLines.TryGetValue(receiverEnum, out var enumLine)
-                    && index.EnumMembers.TryGetValue(receiverEnum, out var enumMembers)
-                    && enumMembers.Contains(identifier))
-                    return new NavigationTarget(null, enumLine); // Enum selbst - einzelne Mitglieder haben keine eigene Zeile
+                if (receiverEnum != null && enumMembersContain(index, receiverEnum, identifier))
+                    return EnumTarget(index, receiverEnum);
 
                 return null;
             }
 
             string? classKey = index.TryFindClass(identifier, offset);
             if (classKey != null && index.Classes.TryGetValue(classKey, out var cls) && cls.DeclLine > 0)
-                return new NavigationTarget(null, cls.DeclLine, cls.IsFromPrelude);
+                return new NavigationTarget(null, cls.DeclLine, cls.PreludeName);
 
             string? enumKey = index.TryFindEnum(identifier, offset);
-            if (enumKey != null && index.EnumDeclLines.TryGetValue(enumKey, out var directEnumLine))
-                return new NavigationTarget(null, directEnumLine);
+            if (enumKey != null && index.EnumDeclLines.ContainsKey(enumKey))
+                return EnumTarget(index, enumKey);
 
             string? enclosing = index.EnclosingClassAt(offset);
             if (enclosing != null)
             {
-                var member = index.MembersOf(enclosing).FirstOrDefault(m => m.Name == identifier && m.DeclLine > 0);
-                if (member != null)
-                {
-                    bool fromPrelude = !ReferenceEquals(member.Source, index);
-                    return new NavigationTarget(null, member.DeclLine, fromPrelude);
-                }
+                var member = FindMember(index, enclosing, identifier);
+                if (member != null) return MemberTarget(index, member);
             }
 
             return null;
+        }
+
+        private static bool enumMembersContain(ScriptSymbolIndex index, string enumKey, string name) =>
+            index.EnumMembers.TryGetValue(enumKey, out var members) && members.Contains(name);
+
+        /// <summary>Das Mitglied `name` der Klasse `className` (auch ein geerbtes), mit bekannter Deklarationszeile.</summary>
+        private static MemberInfo? FindMember(ScriptSymbolIndex index, string className, string name) =>
+            index.MembersOf(className).FirstOrDefault(m => m.Name == name && m.DeclLine > 0);
+
+        /// <summary>Ziel eines Mitglieds: stammt es aus einer Prelude (auch ein geerbtes einer Prelude-Basisklasse), ist das
+        /// Ziel dort - nicht in der angeklickten Klasse.</summary>
+        private static NavigationTarget MemberTarget(ScriptSymbolIndex index, MemberInfo member) =>
+            new(null, member.DeclLine, member.Source?.PreludeName);
+
+        /// <summary>Ziel eines Enums (einzelne Mitglieder haben keine eigene Zeile).</summary>
+        private static NavigationTarget EnumTarget(ScriptSymbolIndex index, string enumKey)
+        {
+            index.EnumPreludes.TryGetValue(enumKey, out var prelude);
+            return new NavigationTarget(null, index.EnumDeclLines[enumKey], prelude);
+        }
+
+        /// <summary>Das Mitglied `identifier` zu einem hergeleiteten Empfänger-Typ (siehe ScriptSymbolIndex.ResolveReceiver).</summary>
+        private static NavigationTarget? ResolveMemberOfType(ScriptSymbolIndex index, ExprType type, string identifier)
+        {
+            switch (type.Kind)
+            {
+                case TypeKind.Instance:
+                case TypeKind.Static:
+                    {
+                        var member = FindMember(index, type.Name!, identifier);
+                        return member == null ? null : MemberTarget(index, member);
+                    }
+                case TypeKind.Enum:
+                    return enumMembersContain(index, type.Name!, identifier) && index.EnumDeclLines.ContainsKey(type.Name!)
+                        ? EnumTarget(index, type.Name!) : null;
+                case TypeKind.Namespace:
+                    {
+                        // `Geometry.Circle`: eine Klasse/ein Enum im Namespace.
+                        string full = type.Name + "." + identifier;
+                        if (index.Classes.TryGetValue(full, out var cls) && cls.DeclLine > 0)
+                            return new NavigationTarget(null, cls.DeclLine, cls.PreludeName);
+                        if (index.EnumDeclLines.ContainsKey(full)) return EnumTarget(index, full);
+                        return null;
+                    }
+                case TypeKind.Primitive:
+                case TypeKind.Array:
+                    {
+                        // Methoden aus `class extends string { ... }` (Prelude und eigene Erweiterungen).
+                        if (BuiltinMembers.ExtensionClassOf(type) is { } key && index.Classes.ContainsKey(key))
+                        {
+                            var member = FindMember(index, key, identifier);
+                            if (member != null) return MemberTarget(index, member);
+                        }
+                        return null;
+                    }
+                default:
+                    return null;
+            }
         }
 
         /// <summary>Bezeichner + (falls vorhanden) der Empfänger vor einem
@@ -199,6 +271,19 @@ namespace fire.Editor
             if (char.IsDigit(source[start])) return null; // beginnt mit Ziffer - kein gültiger Bezeichner
             idStart = start;
             return source.Substring(start, end - start);
+        }
+
+        /// <summary>Der durch Punkte verbundene Bezeichner-Pfad unmittelbar vor `dotIdx` (dem '.'): `A.B` für `A.B.Name`,
+        /// null wenn davor kein reiner Pfad steht (z.B. `f().Name`).</summary>
+        private static string? ReadDottedNameBefore(string source, int dotIdx)
+        {
+            int end = dotIdx;
+            int start = end;
+            while (start > 0 && (IsIdentChar(source[start - 1]) || source[start - 1] == '.')) start--;
+            if (start >= end) return null;
+            string path = source.Substring(start, end - start);
+            if (path.StartsWith('.') || path.EndsWith('.') || path.Contains("..") || char.IsDigit(path[0])) return null;
+            return path;
         }
 
         private static string? ReadIdentifierBeforeDot(string source, int idStart)

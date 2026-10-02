@@ -1,6 +1,7 @@
 <Window x:Class="fire.Editor.FileViewerWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:avalonedit="http://icsharpcode.net/sharpdevelop/avalonedit"
         Title="Datei ansehen" Height="700" Width="900"
         FontFamily="Segoe UI">
     <DockPanel>
@@ -12,11 +13,11 @@
             </StackPanel>
         </Border>
 
-        <RichTextBox x:Name="Viewer"
-                     FontFamily="Consolas" FontSize="14"
-                     IsReadOnly="True"
-                     VerticalScrollBarVisibility="Auto"
-                     HorizontalScrollBarVisibility="Auto"
-                     PreviewMouseLeftButtonDown="Viewer_PreviewMouseLeftButtonDown"/>
+        <avalonedit:TextEditor x:Name="Viewer"
+                               FontFamily="Consolas" FontSize="14"
+                               IsReadOnly="True"
+                               ShowLineNumbers="True"
+                               VerticalScrollBarVisibility="Auto"
+                               HorizontalScrollBarVisibility="Auto"/>
     </DockPanel>
 </Window>
