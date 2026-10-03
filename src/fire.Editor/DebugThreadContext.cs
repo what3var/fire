@@ -234,31 +234,12 @@ namespace fire.Editor
         /// Knopfdruck auf einem BELIEBIGEN Thread (siehe DebugSession.
         /// Continue).</summary>
         public static Func<VM, bool> MakeContinueStep(ISet<(int SourceIndex, int Line)> breakpoints, Func<bool> isPauseRequested) =>
-            vm =>
-            {
-                var lastLocation = vm.CurrentLocation;
-                while (vm.StepInstruction())
-                {
-                    if (isPauseRequested()) return true;
-                    var location = vm.CurrentLocation;
-                    if (location != lastLocation)
-                    {
-                        lastLocation = location;
-                        if (breakpoints.Contains(location)) return true;
-                    }
-                }
-                return false;
-            };
+            vm => vm.RunUntilBreakpoint(breakpoints, isPauseRequested);
 
         /// <summary>Wie VM.StepInstruction in einer Schleife bis zum
         /// Programmende, aber ebenfalls kooperativ unterbrechbar (siehe
         /// MakeContinueStep-Doku) - Grundlage für "Bis Ende durchlaufen".</summary>
         public static Func<VM, bool> MakeRunToCompletionStep(Func<bool> isPauseRequested) =>
-            vm =>
-            {
-                while (vm.StepInstruction())
-                    if (isPauseRequested()) return true;
-                return false;
-            };
+            vm => vm.RunUntilEnd(isPauseRequested);
     }
 }

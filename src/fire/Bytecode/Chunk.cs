@@ -82,16 +82,26 @@ namespace fire.Bytecode
         /// Byte-Offset `ip` gehört ((0, 0), wenn keine Zeileninformation
         /// vorhanden ist, z.B. für programmatisch/ohne Compiler gebaute
         /// Chunks).</summary>
-        public (int SourceIndex, int Line) GetLocation(int ip)
+        public (int SourceIndex, int Line) GetLocation(int ip) => GetLocationRange(ip, out _, out _);
+
+        /// <summary>Wie <see cref="GetLocation"/>, liefert aber zusätzlich den Byte-Bereich [start, endExclusive), in dem
+        /// dieselbe Stelle gilt - wer viele aufeinanderfolgende Offsets abfragt (der Debugger beim Weiterlaufen), muss
+        /// nur beim Verlassen dieses Bereichs neu nachschlagen. Die Tabelle ist nach Offset sortiert (MarkLine hängt
+        /// immer am aktuellen Code-Ende an): binäre Suche statt eines Durchlaufs vom Anfang bei jeder Abfrage.</summary>
+        public (int SourceIndex, int Line) GetLocationRange(int ip, out int start, out int endExclusive)
         {
-            int resultSource = 0, resultLine = 0;
-            foreach (var (offset, sourceIndex, line) in _lineTable)
+            var table = _lineTable;
+            int lo = 0, hi = table.Count - 1, found = -1;
+            while (lo <= hi)
             {
-                if (offset > ip) break;
-                resultSource = sourceIndex;
-                resultLine = line;
+                int mid = (lo + hi) >> 1;
+                if (table[mid].Offset <= ip) { found = mid; lo = mid + 1; }
+                else hi = mid - 1;
             }
-            return (resultSource, resultLine);
+
+            start = found < 0 ? 0 : table[found].Offset;
+            endExclusive = found + 1 < table.Count ? table[found + 1].Offset : int.MaxValue;
+            return found < 0 ? (0, 0) : (table[found].SourceIndex, table[found].Line);
         }
 
         // Debug-Namen für lokale Variablen: (Tiefe relativ zur jeweiligen

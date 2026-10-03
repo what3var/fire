@@ -80,15 +80,18 @@ namespace fire.Runtime
                     natives.Register("print", args => VM.StringifyForPrint(args) is { } shown ? debugWriter(shown) : Value.MakeUndefined());
             }
             natives.RegisterBaseTypeNatives();
+
+            var session = new Session(linkedProgram.Program);
+
+            // WICHTIG: native Funktionen werden über ihren INDEX angesprungen - die Reihenfolge der Registrierung muss
+            // exakt der beim Übersetzen entsprechen (siehe ImportedPreludes.Insert): graphics, reflection, time, devices, io.
+            if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
+                RegisterGraphics(session, natives);
+
             if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
                 ReflectionNatives.Register(natives);
             if (linkedProgram.NativeImports.Contains(NativeImports.Time))
                 TimeNatives.Register(natives);
-
-            var session = new Session(linkedProgram.Program);
-
-            if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
-                RegisterGraphics(session, natives);
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Devices))
                 session.DeviceResources = RegisterDevices(natives);

@@ -587,16 +587,36 @@ namespace fire.Editor
             }
         }
 
-        private void Run_Click(object sender, RoutedEventArgs e) => CompileAndPrepare(null);
+        /// <summary>F5 wie in Visual Studio: kompiliert, wenn nötig (noch nichts kompiliert, gestoppt oder das Programm ist
+        /// beendet), und führt dann bis zum nächsten Haltepunkt aus. Jeder weitere F5-Druck setzt die Ausführung bis zum
+        /// nächsten Haltepunkt fort; ist das Programm beendet, startet F5 es neu.</summary>
+        private void Run_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isBusy) return; // läuft gerade - es gibt nichts fortzusetzen
+            if ((_session.Vm == null || _session.IsFinished) && !CompileAndPrepare(null)) return;
+            if (_session.Vm == null) return;
+            BeginStep();
+            _session.Continue(BreakpointLocations(_debugDocument));
+        }
 
-        private void CompileAndPrepare(string? filename)
+        /// <summary>Strg+F5: kompiliert IMMER neu (auch mitten in einer Sitzung - ein laufendes Programm wird beendet) und
+        /// startet dann wie F5 bis zum ersten Haltepunkt.</summary>
+        private void Restart_Click(object sender, RoutedEventArgs e)
+        {
+            if (!CompileAndPrepare(null) || _session.Vm == null) return;
+            BeginStep();
+            _session.Continue(BreakpointLocations(_debugDocument));
+        }
+
+        /// <summary>Kompiliert das aktive Skript (verwirft die bisherige Sitzung). false bei Fehler oder wenn kein Skript aktiv ist.</summary>
+        private bool CompileAndPrepare(string? filename)
         {
             // Kompiliert wird NUR das aktive Dokument (mehrere Dateien: per #include einbinden).
             var doc = ActiveDocument;
             if (doc?.Script is not { } script)
             {
                 UpdateStatus(doc == null ? "Kein Dokument geöffnet." : "Das aktive Dokument ist kein Skript - zum Ausführen einen Skript-Tab wählen.");
-                return;
+                return false;
             }
 
             OutputBox.Clear();
@@ -612,11 +632,12 @@ namespace fire.Editor
                 UpdateStatus($"Kompilierfehler: {_session.CompileError}");
                 MessageBox.Show(_session.CompileError, "Kompilierfehler",
                     MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
+                return false;
             }
 
             UpdateStatus("Kompiliert - bereit für Einzelschritt/Weiter/Bis Ende.");
             _debugger.Refresh(BreakpointDescriptions());
+            return true;
         }
 
         private void Step_Click(object sender, RoutedEventArgs e)
@@ -642,13 +663,8 @@ namespace fire.Editor
             _session.StepOut();
         }
 
-        private void Continue_Click(object sender, RoutedEventArgs e)
-        {
-            if (_session.Vm == null) CompileAndPrepare(null);
-            if (_session.Vm == null || _isBusy) return;
-            BeginStep();
-            _session.Continue(BreakpointLocations(_debugDocument));
-        }
+        /// <summary>F8: dasselbe wie F5 (bis zum nächsten Haltepunkt fortsetzen).</summary>
+        private void Continue_Click(object sender, RoutedEventArgs e) => Run_Click(sender, e);
 
         private void RunToEnd_Click(object sender, RoutedEventArgs e)
         {
@@ -1151,7 +1167,7 @@ namespace fire.Editor
             switch (key)
             {
                 case Key.F5 when ctrl:
-                    RunToEnd_Click(this, e); e.Handled = true; break;
+                    Restart_Click(this, e); e.Handled = true; break;
                 case Key.F5 when shift:
                     Stop_Click(this, e); e.Handled = true; break;
                 case Key.F5:

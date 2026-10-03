@@ -138,11 +138,9 @@ namespace fire.Compiler
                     natives.Register("print", args => VM.StringifyForPrint(args) is { } shown ? debugWriter(shown) : Value.MakeUndefined());
             }
             natives.RegisterBaseTypeNatives();
-            if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
-                ReflectionNatives.Register(natives);
-            if (linkedProgram.NativeImports.Contains(NativeImports.Time))
-                TimeNatives.Register(natives);
 
+            // WICHTIG: native Funktionen werden über ihren INDEX angesprungen - die Reihenfolge der Registrierung muss
+            // exakt der beim Übersetzen entsprechen (siehe ImportedPreludes.Insert): graphics, reflection, time, devices, io.
             FramebufferManager? fbManager = null;
             ConsoleManager? consoleManager = null;
             WindowManager? windowManager = null;
@@ -159,18 +157,23 @@ namespace fire.Compiler
                 GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager);
             }
 
-            // `ioPolicy`: was Skripte im Dateisystem anfassen dürfen, `ioStdio`: wohin
-            // IO.Stdio führt - beides entscheidet der HOST (siehe IoPolicy/IoStdio),
-            // Vorgabe: alles erlaubt, echte Konsole.
-            IDisposable? ioResources = null;
-            if (linkedProgram.NativeImports.Contains(NativeImports.IO))
-                ioResources = fire.IO.Bridge.IoBridge.RegisterAll(natives, ioPolicy, ioStdio);
+            if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
+                ReflectionNatives.Register(natives);
+            if (linkedProgram.NativeImports.Contains(NativeImports.Time))
+                TimeNatives.Register(natives);
 
             // `deviceManager`: der Manager des Hosts (z.B. der geteilte des Editors, siehe DeviceManager.IsShared); ohne
             // Angabe bekommt das Programm einen eigenen mit den eingebauten Treibern, der nach dem Lauf freigegeben wird.
             IDisposable? deviceResources = null;
             if (linkedProgram.NativeImports.Contains(NativeImports.Devices))
                 deviceResources = fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager ?? fire.Device.Manager.DeviceManager.DeviceManager.CreateDefault());
+
+            // `ioPolicy`: was Skripte im Dateisystem anfassen dürfen, `ioStdio`: wohin
+            // IO.Stdio führt - beides entscheidet der HOST (siehe IoPolicy/IoStdio),
+            // Vorgabe: alles erlaubt, echte Konsole.
+            IDisposable? ioResources = null;
+            if (linkedProgram.NativeImports.Contains(NativeImports.IO))
+                ioResources = fire.IO.Bridge.IoBridge.RegisterAll(natives, ioPolicy, ioStdio);
 
             var globalScope = new Scope(null, isGlobal: true);
             

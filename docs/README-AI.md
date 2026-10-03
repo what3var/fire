@@ -49,13 +49,14 @@ dotnet run
   Tokenisieren (keine zweite, eigene Tokenisierung) - Kommentare werden
   zusätzlich per einfacher Lücken-Suche erkannt, da der Lexer sie beim
   Tokenisieren selbst überspringt.
-- **Step-Debugger, thread-fähig**: F5 kompiliert (inkl. Prelude) und
-  bereitet die VM vor, F10 führt eine Quelltextzeile aus ("Step Over" -
+- **Step-Debugger, thread-fähig**: **F5 wie in Visual Studio** - kompiliert, wenn nötig (noch nichts kompiliert, gestoppt oder das Programm
+  ist beendet), und führt dann bis zum nächsten Haltepunkt aus; jeder weitere F5-Druck setzt bis zum nächsten Haltepunkt fort, ist das Programm
+  beendet, startet F5 es neu (F8 macht dasselbe). **Strg+F5** kompiliert IMMER neu (auch mitten in einer Sitzung) und startet dann wie F5,
+  Umschalt+F5 stoppt. F10 führt eine Quelltextzeile aus ("Step Over" -
   läuft nicht in tiefer verschachtelte Aufrufe hinein), F11 dasselbe als
   "Step Into" (springt bei einem Aufruf auf dessen erste Zeile), Shift+F11
   verlässt die aktuelle Funktion ("Step Out"), F9 setzt/entfernt einen
-  Haltepunkt auf der Cursor-Zeile, F8 läuft bis zum nächsten Haltepunkt,
-  Strg+F5 läuft bis zum Ende durch. Zeigt Aufruftiefe, Wert-Stack, `this`
+  Haltepunkt auf der Cursor-Zeile; "Bis Ende durchlaufen" (Menü) ignoriert Haltepunkte. Zeigt Aufruftiefe, Wert-Stack, `this`
   (falls gebunden) und eine nach Scope-Ebene gegliederte Baumsicht der
   aktiven Scope-Kette an (aktiver/innerster Block zuerst, dann
   umschließende Ebenen bis zur Funktionsgrenze, dann Global).

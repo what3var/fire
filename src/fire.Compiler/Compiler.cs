@@ -1268,6 +1268,10 @@ namespace fire.Compiler
 
             CompileScopedBody(s.Body);
 
+            // Rücksprung und Schleifenende gehören zur Zeile des `while` (nicht zur letzten Zeile des Bodys) - sonst hielte der
+            // Debugger nach dem Verlassen der Schleife noch einmal in der letzten Zeile des Bodys an (Haltepunkt dort!).
+            _chunk.MarkLine(CurrentSourceIndex, s.Line);
+
             // 'continue' springt hierher - direkt vor den Rücksprung zur
             // Condition-Prüfung (für 'while' inhaltlich dasselbe wie
             // 'Jump loopStart' direkt, aber als eigene Adresse gehalten, damit
@@ -1308,6 +1312,11 @@ namespace fire.Compiler
             }
 
             CompileScopedBody(s.Body);
+
+            // Increment, Rücksprung und Schleifenende gehören zur Zeile des `for` (nicht zur letzten Zeile des Bodys): so zeigt der
+            // Debugger beim Schritt über das Ende des Bodys die `for`-Zeile, und nach dem Verlassen der Schleife hält ein Haltepunkt
+            // im Body nicht noch einmal an.
+            _chunk.MarkLine(CurrentSourceIndex, s.Line);
 
             // 'continue' springt HIERHER - VOR das Increment, damit das bei
             // einem 'continue' trotzdem noch läuft (sonst würde z.B.
@@ -1385,6 +1394,7 @@ namespace fire.Compiler
             _chunk.EmitOp(OpCode.Jump);
             _chunk.EmitU16(loopStart);
 
+            _chunk.MarkLine(CurrentSourceIndex, fs.Line); // das Schleifenende gehört zur Zeile des `foreach` (siehe CompileFor)
             int loopEnd = _chunk.Here;
             _chunk.PatchU16(endJumpAt, loopEnd);
             foreach (var addr in ctx.BreakJumpPatchAddrs) _chunk.PatchU16(addr, loopEnd);

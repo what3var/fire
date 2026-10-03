@@ -149,36 +149,12 @@ namespace fire.Terminal
                 var pixels = target.Pixels;
                 int stride = target.Width;
                 uint fg = foreground.Packed;
-                var masks = GlyphMasks.Table;
 
-                if (cw == 8)
+                if (cw == 8 && rows.Length >= ch)
                 {
-                    // 8 Pixel = 2 Vektoren zu je 4 Pixeln: ein Tabellenzugriff liefert die Masken für eine ganze Zeile (siehe
-                    // GlyphMasks), ConditionalSelect wählt je Pixel Vorder- oder Hintergrund - ohne Schleife über die Pixel.
-                    var fgv = Vector128.Create(fg);
-                    if (background is PixelColor bgColor)
-                    {
-                        var bgv = Vector128.Create(bgColor.Packed);
-                        for (int gy = 0; gy < ch; gy++)
-                        {
-                            ref uint dst = ref pixels[(y + gy) * stride + x];
-                            int m = rows[gy] * 2;
-                            Vector128.ConditionalSelect(masks[m], fgv, bgv).StoreUnsafe(ref dst);
-                            Vector128.ConditionalSelect(masks[m + 1], fgv, bgv).StoreUnsafe(ref dst, 4);
-                        }
-                    }
-                    else
-                    {
-                        for (int gy = 0; gy < ch; gy++)
-                        {
-                            int bits = rows[gy];
-                            if (bits == 0) continue; // leere Zeile: nichts zu schreiben
-                            ref uint dst = ref pixels[(y + gy) * stride + x];
-                            int m = bits * 2;
-                            Vector128.ConditionalSelect(masks[m], fgv, Vector128.LoadUnsafe(ref dst)).StoreUnsafe(ref dst);
-                            Vector128.ConditionalSelect(masks[m + 1], fgv, Vector128.LoadUnsafe(ref dst, 4)).StoreUnsafe(ref dst, 4);
-                        }
-                    }
+                    ref uint origin = ref pixels[y * stride + x];
+                    if (background is PixelColor bgColor) GlyphBlitter.BlitOpaque(ref origin, stride, ch, rows, fg, bgColor.Packed);
+                    else GlyphBlitter.BlitTransparent(ref origin, stride, ch, rows, fg);
                     return;
                 }
 
@@ -220,7 +196,40 @@ namespace fire.Terminal
         /// <summary>Zeichnet `text` ab (x, y) in PIXELN, ein Zeichen nach dem anderen (kein Umbruch, kein Cursor; '\n' und
         /// '\r' werden wie jedes Zeichen der Schrift gezeichnet). Die Basis für Oberflächen, die Text an beliebigen Pixeln
         /// brauchen statt im Zellenraster.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)] // schleifenreich und heiß: gleich voll optimiert übersetzen, nicht erst nach dem Hochstufen
         public void DrawText(int x, int y, string text, PixelColor foreground, PixelColor? background = null)
+        {
+            int cw = CellWidth, ch = CellHeight;
+            var target = Target;
+
+            // Schnellpfad: liegt der ganze Text im Puffer und hat die Schrift 8 Pixel breite Bitmap-Zeilen, werden Schrift und Randprüfung
+            // einmal für den ganzen Text erledigt, nicht je Zeichen.
+            if (Font is IBitmapGlyphFont bitmapFont && cw == 8 && text.Length > 0
+                && x >= 0 && y >= 0 && y + ch <= target.Height && (long)x + (long)cw * text.Length <= target.Width)
+            {
+                int stride = target.Width;
+                uint fg = foreground.Packed;
+                ref uint cell = ref target.Pixels[y * stride + x];
+                foreach (char c in text)
+                {
+                    var rows = bitmapFont.GetGlyphRows(c);
+                    if (rows.Length < ch)
+                    {
+                        // Ungewöhnliche Schrift (zu wenige Zeilen): zeichenweise auf dem allgemeinen Weg
+                        DrawTextSlow(x, y, text, foreground, background);
+                        return;
+                    }
+                    if (background is PixelColor bgColor) GlyphBlitter.BlitOpaque(ref cell, stride, ch, rows, fg, bgColor.Packed);
+                    else GlyphBlitter.BlitTransparent(ref cell, stride, ch, rows, fg);
+                    cell = ref Unsafe.Add(ref cell, 8);
+                }
+                return;
+            }
+
+            DrawTextSlow(x, y, text, foreground, background);
+        }
+
+        private void DrawTextSlow(int x, int y, string text, PixelColor foreground, PixelColor? background)
         {
             int cw = CellWidth;
             foreach (char c in text)
@@ -299,11 +308,96 @@ namespace fire.Terminal
             FillRect(x, y, w, h, Palette.GetColor(paletteIndex));
     }
 
+    /// <summary>Schreibt die Zeilen eines 8 Pixel breiten Zeichens in den Pixelpuffer - ohne Bereichsprüfung: der Aufrufer hat
+    /// sichergestellt, dass die ganze Zelle (8 Pixel x `ch` Zeilen) im Puffer liegt. Je Zeile ein Tabellenzugriff für die Pixelmaske
+    /// (siehe GlyphMasks) und eine Vektor-Auswahl Vorder-/Hintergrund: mit AVX2 8 Pixel auf einmal, sonst zweimal 4.</summary>
+    internal static class GlyphBlitter
+    {
+        /// <summary>Nur die gesetzten Pixel werden geschrieben (Hintergrund bleibt).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void BlitTransparent(ref uint origin, int stride, int ch, ReadOnlySpan<byte> rows, uint fg)
+        {
+            ref byte rowBits = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(rows);
+            if (Vector256.IsHardwareAccelerated)
+            {
+                var fgv = Vector256.Create(fg);
+                ref Vector256<uint> masks = ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(GlyphMasks.Table256);
+                for (int gy = 0; gy < ch; gy++)
+                {
+                    int bits = Unsafe.Add(ref rowBits, gy);
+                    if (bits == 0) continue; // leere Zeile: nichts zu schreiben
+                    ref uint dst = ref Unsafe.Add(ref origin, gy * stride);
+                    Vector256.ConditionalSelect(Unsafe.Add(ref masks, bits), fgv, Vector256.LoadUnsafe(ref dst)).StoreUnsafe(ref dst);
+                }
+            }
+            else
+            {
+                var fgv = Vector128.Create(fg);
+                ref Vector128<uint> masks = ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(GlyphMasks.Table);
+                for (int gy = 0; gy < ch; gy++)
+                {
+                    int bits = Unsafe.Add(ref rowBits, gy);
+                    if (bits == 0) continue;
+                    ref uint dst = ref Unsafe.Add(ref origin, gy * stride);
+                    Vector128.ConditionalSelect(Unsafe.Add(ref masks, bits * 2), fgv, Vector128.LoadUnsafe(ref dst)).StoreUnsafe(ref dst);
+                    Vector128.ConditionalSelect(Unsafe.Add(ref masks, bits * 2 + 1), fgv, Vector128.LoadUnsafe(ref dst, 4)).StoreUnsafe(ref dst, 4);
+                }
+            }
+        }
+
+        /// <summary>Die ganze Zelle wird geschrieben: gesetzte Pixel in `fg`, die anderen in `bg`.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void BlitOpaque(ref uint origin, int stride, int ch, ReadOnlySpan<byte> rows, uint fg, uint bg)
+        {
+            ref byte rowBits = ref System.Runtime.InteropServices.MemoryMarshal.GetReference(rows);
+            if (Vector256.IsHardwareAccelerated)
+            {
+                var fgv = Vector256.Create(fg);
+                var bgv = Vector256.Create(bg);
+                ref Vector256<uint> masks = ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(GlyphMasks.Table256);
+                for (int gy = 0; gy < ch; gy++)
+                {
+                    ref uint dst = ref Unsafe.Add(ref origin, gy * stride);
+                    Vector256.ConditionalSelect(Unsafe.Add(ref masks, (int)Unsafe.Add(ref rowBits, gy)), fgv, bgv).StoreUnsafe(ref dst);
+                }
+            }
+            else
+            {
+                var fgv = Vector128.Create(fg);
+                var bgv = Vector128.Create(bg);
+                ref Vector128<uint> masks = ref System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference(GlyphMasks.Table);
+                for (int gy = 0; gy < ch; gy++)
+                {
+                    ref uint dst = ref Unsafe.Add(ref origin, gy * stride);
+                    int m = Unsafe.Add(ref rowBits, gy) * 2;
+                    Vector128.ConditionalSelect(Unsafe.Add(ref masks, m), fgv, bgv).StoreUnsafe(ref dst);
+                    Vector128.ConditionalSelect(Unsafe.Add(ref masks, m + 1), fgv, bgv).StoreUnsafe(ref dst, 4);
+                }
+            }
+        }
+    }
+
     /// <summary>Für jede Bitmap-Zeile (0-255) die Pixelmasken als zwei Vektoren zu je vier Pixeln (Bit 7 = erstes Pixel): ein gesetztes
     /// Bit ist 0xFFFFFFFF, ein leeres 0. Einmal je Prozess berechnet (8 KB), danach genügt ein Tabellenzugriff je Zeile.</summary>
     internal static class GlyphMasks
     {
         internal static readonly Vector128<uint>[] Table = Build();
+
+        /// <summary>Dieselben Masken als EIN Vektor zu acht Pixeln je Bitmap-Zeile (für AVX2).</summary>
+        internal static readonly Vector256<uint>[] Table256 = Build256();
+
+        private static Vector256<uint>[] Build256()
+        {
+            var table = new Vector256<uint>[256];
+            for (int bits = 0; bits < 256; bits++)
+            {
+                Span<uint> lanes = stackalloc uint[8];
+                for (int px = 0; px < 8; px++)
+                    lanes[px] = (bits & (0x80 >> px)) != 0 ? 0xFFFFFFFFu : 0u;
+                table[bits] = Vector256.Create(lanes[0], lanes[1], lanes[2], lanes[3], lanes[4], lanes[5], lanes[6], lanes[7]);
+            }
+            return table;
+        }
 
         private static Vector128<uint>[] Build()
         {

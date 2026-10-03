@@ -39,6 +39,25 @@ namespace fire.Bytecode
         /// (`c => c.radius`, `p => p.address.city`), die Namen von außen nach innen - sonst null. Grundlage des Lambda-Typs `selector`.</summary>
         public string[]? SelectorPath { get; set; }
 
+        private NativeForwarder? _forwarder;
+        private bool _forwarderChecked;
+
+        /// <summary>Ist die Methode eine reine Weiterleitung an eine native Funktion (siehe NativeForwarder), sonst null.
+        /// Wird beim ersten Bedarf aus dem Bytecode ermittelt (nicht serialisiert).</summary>
+        [MemoryPackIgnore]
+        public NativeForwarder? Forwarder
+        {
+            get
+            {
+                if (!_forwarderChecked)
+                {
+                    _forwarder = NativeForwarder.TryCreate(Chunk, ParamCount);
+                    _forwarderChecked = true;
+                }
+                return _forwarder;
+            }
+        }
+
         public FunctionProto(Chunk chunk, int paramCount, AccessModifier? access, IReadOnlyList<FunctionProto?>? paramDefaults = null, bool isStatic = false)
         {
             Chunk = chunk;

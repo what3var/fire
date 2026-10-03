@@ -23,11 +23,18 @@ namespace fire.Bytecode
         /// <summary>Der Feld-Index in <c>FieldStore</c> (Feldzugriffe).</summary>
         public readonly int FieldIndex;
 
-        public SiteCache(RuntimeClass? @class, FunctionProto? proto, int fieldIndex)
+        /// <summary>Ist die Methode eine reine Weiterleitung an eine native Funktion (siehe NativeForwarder), die
+        /// Weiterleitung samt dem Index ihres Feldes (<c>ForwarderFieldIndex</c>) in dieser Klasse - sonst null.</summary>
+        public readonly NativeForwarder? Forwarder;
+        public readonly int ForwarderFieldIndex;
+
+        public SiteCache(RuntimeClass? @class, FunctionProto? proto, int fieldIndex, NativeForwarder? forwarder = null, int forwarderFieldIndex = -1)
         {
             Class = @class;
             Proto = proto;
             FieldIndex = fieldIndex;
+            Forwarder = forwarder;
+            ForwarderFieldIndex = forwarderFieldIndex;
         }
     }
 }

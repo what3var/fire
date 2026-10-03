@@ -1780,3 +1780,23 @@ Tests: Suite-Block "Lambda-Captures und LINQ" (zwei Fälle: alle Wege, Locals, O
 
 Tests: Suite-Block "Lambda-Captures und LINQ" (`on`-Lambdas, TimeSpan, DateTime, `ToString()`, `Sleep` mit Zeitspanne/Zeitwert/Millisekunden, automatisches Abarbeiten während `Sleep`, `#nosync`, `terminate` beendet `Sleep`). **Nebenbei:** der Globals-Test "Ein Thread schreibt ein Global ..." hing gelegentlich
 (30-s-Zeitüberschreitung): das automatische Abarbeiten konnte die Anmeldung des Threads vor dem ersten `sync globals` erledigen, dessen Rückgabewert dann dauerhaft 0 blieb - ein Fehler des Tests, nicht der Laufzeit; er läuft jetzt mit `#nosync`.
+
+## 43. Geschwindigkeit: Weiterleitung an native Funktionen, schneller Debugger-Lauf, Zeilentabelle
+
+**Native Funktionen werden nicht über Namen aufgerufen.** Der Compiler setzt jeden Aufruf einer nativen Funktion (`__GRPHConDrawText`, ...) beim Übersetzen in `CallNative <Index>`; ein Aufruf kostet zur Laufzeit etwa 50 ns
+(Argument-Array, Delegate). Ein Wechsel von Namen auf eine Aufzählung würde daran nichts ändern. Was Skripte mit den Brücken (Grafik, Geräte, Dateien) langsam machte, waren die fire-Methoden DAVOR.
+
+**`NativeForwarder`.** Alle Methoden der Brücken-Preludes sind gleich gebaut: `DrawText(...) { __GRPHConDrawText(this.id, ...) }`. Ein solcher Aufruf kostete ~230-400 ns (Scope, Slot-Array, Frame, Rückkehr), mehr als die native Funktion selbst. `NativeForwarder.TryCreate` erkennt
+das Muster am fertigen Bytecode (`LoadThis; GetField f; LoadLocal 0,0..n-1; CallNative i, n+1; Return | Pop; LoadConst undefined; Return`), `FunctionProto.Forwarder` merkt es sich (nicht serialisiert), und der Schnellpfad von `OpCallMethod`
+(Inline-Cache, `SiteCache.Forwarder`/`ForwarderFieldIndex`) ruft die native Funktion direkt auf: Argumente vom Stack, das Feld über den gecachten Index. Voraussetzungen wie beim normalen Schnellpfad (gleiche Klasse, kein Actor, kein Thread-Lock) plus
+keine `flat`/`copy`-Argumente. `Console.CellWidth()` fiel von ~275 auf ~30 ns. Beim Debuggen wird ein solcher Aufruf nicht mehr "betreten" (die Methode steht in der Prelude).
+
+**Reihenfolge der nativen Funktionen.** Native Funktionen werden über ihren Index angesprungen - die Registrierung zur Laufzeit muss der beim Übersetzen (`ImportedPreludes.Insert`: graphics, reflection, time, devices, io) exakt entsprechen. Die beiden
+Sitzungen (`fire.Compiler.RuntimeSession`, `fire.Runtime.Session`) hatten graphics hinter reflection/time registriert: `#import "graphics"` zusammen mit `"time"` rief die falsche Funktion auf (Test "Alle Erweiterungen in einem Programm").
+
+**Debugger-Lauf (F5).** Der Editor führte "Weiter" als Schleife `StepInstruction()` + `CurrentLocation` + Delegate je Instruktion aus, und `Chunk.GetLocation` durchsuchte die Zeilentabelle LINEAR vom Anfang. Bei einem Skript mit einigen
+hundert Zeilen war der Lauf dadurch ~7x langsamer als `Run()`. Jetzt: `Chunk.GetLocation(Range)` sucht binär, `VM.RunUntilBreakpoint`/`RunUntilEnd` sind eigene, voll optimierte Schleifen (`StepInstruction` in `BeginStepping`/`FinishAtHalt`/`AfterStep` zerlegt),
+die nur beim Verlassen des Byte-Bereichs einer Zeile nachschlagen, die Pause-Anforderung alle 256 Instruktionen prüfen und die Warteschlangen der Fire-Threads nur bei einem neuen Signal (`s_signalEpoch`) abfragen. Ergebnis: auf Höhe von `Run()`.
+Dazu eine Korrektur der Zeilentabelle: Increment/Rücksprung/Ende einer `for`-Schleife (und das Ende von `while`/`foreach`) gehören zur Zeile der Schleife, nicht zur letzten Zeile des Bodys - ein Haltepunkt im Body hielt sonst nach dem Verlassen der Schleife noch einmal an.
+
+**Text.** `TerminalCanvas.DrawText` prüft Schrift und Rand einmal für den ganzen Text und zeichnet über `GlyphBlitter` (AVX2: eine Pixelzeile des Zeichens = ein 256-Bit-Zugriff, ohne Bereichsprüfungen; sonst zweimal 128 Bit); pixelgenau wie vorher.

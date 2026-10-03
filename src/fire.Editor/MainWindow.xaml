@@ -57,14 +57,15 @@
                 <MenuItem Header="_Kommentar umschalten" x:Name="mnuToggleComment" Click="ToggleComment_Click" InputGestureText="Strg+Umschalt+C"/>
             </MenuItem>
             <MenuItem Header="_Ausführen">
-                <MenuItem Header="_Starten/Neu kompilieren" Click="Run_Click" InputGestureText="F5"/>
+                <MenuItem Header="_Starten / Weiter (bis Haltepunkt)" Click="Run_Click" InputGestureText="F5"/>
+                <MenuItem Header="_Neu kompilieren und starten" Click="Restart_Click" InputGestureText="Ctrl+F5"/>
                 <MenuItem Header="Standalone erstellen..." Click="Build_Click"/>
                 <Separator/>
                 <MenuItem Header="Einzelschritt (_Step Over)" Click="Step_Click" InputGestureText="F10"/>
                 <MenuItem Header="Einzelschritt (Step _Into)" Click="StepInto_Click" InputGestureText="F11"/>
                 <MenuItem Header="Aktuelle Funktion verlassen (Step _Out)" Click="StepOut_Click" InputGestureText="Shift+F11"/>
-                <MenuItem Header="_Weiter (bis Haltepunkt)" Click="Continue_Click" InputGestureText="F8"/>
-                <MenuItem Header="Bis _Ende durchlaufen" Click="RunToEnd_Click" InputGestureText="Ctrl+F5"/>
+                <MenuItem Header="_Weiter (wie F5)" Click="Continue_Click" InputGestureText="F8"/>
+                <MenuItem Header="Bis _Ende durchlaufen (ohne Haltepunkte)" Click="RunToEnd_Click"/>
                 <MenuItem Header="_Stopp" Click="Stop_Click" InputGestureText="Shift+F5"/>
                 <Separator/>
                 <MenuItem Header="Debug" IsCheckable="True" x:Name="mnuRunDebug" Click="mnuRunDebug_Click"/>
@@ -118,16 +119,16 @@
             </ToolBar>
 
             <ToolBar Band="0" BandIndex="1" ToolTip="Ausführen">
-                <Button Click="Run_Click" ToolTip="Starten/Neu kompilieren (F5)">
+                <Button Click="Run_Click" ToolTip="Starten / Weiter bis zum nächsten Haltepunkt (F5) - kompiliert bei Bedarf, startet nach Programmende neu">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Style="{StaticResource GlyphText}" Text="&#xE768;" Foreground="#107C10"/>
-                        <TextBlock Style="{StaticResource ToolbarButtonText}" Text="Starten"/>
+                        <TextBlock Style="{StaticResource ToolbarButtonText}" Text="Starten / Weiter"/>
                     </StackPanel>
                 </Button>
-                <Button Click="Continue_Click" ToolTip="Weiter bis Haltepunkt (F8)">
-                    <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="Weiter"/>
+                <Button Click="Restart_Click" ToolTip="Neu kompilieren und starten (Ctrl+F5)">
+                    <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="Neu starten"/>
                 </Button>
-                <Button Click="RunToEnd_Click" ToolTip="Bis Ende durchlaufen (Ctrl+F5)">
+                <Button Click="RunToEnd_Click" ToolTip="Bis Ende durchlaufen, ohne an Haltepunkten anzuhalten">
                     <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="Bis Ende"/>
                 </Button>
                 <Button Click="Stop_Click" ToolTip="Stopp (Shift+F5)">

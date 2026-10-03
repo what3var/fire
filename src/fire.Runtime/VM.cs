@@ -1057,42 +1057,50 @@ namespace fire.Runtime
         public bool StepInstruction()
         {
             if (IsHalted) return false;
-            if (!_steppingStarted)
-            {
-                // Wie Run() (siehe dort) - _currentThreadVm muss auch beim
-                // schrittweisen Debuggen korrekt auf DIESE Instanz zeigen,
-                // sonst würde jede native Brücke, die sich darauf verlässt
-                // (siehe CurrentThreadVm-Doku), beim Einzelschritt-Debuggen
-                // fälschlich null sehen, obwohl eindeutig EINE VM-Instanz
-                // gerade aktiv ist.
-                _currentThreadVm = this;
-                _ip = 0;
-                _steppingStarted = true;
-                _acceptingCallbacks = true;
-            }
+            if (!_steppingStarted) BeginStepping();
 
             var op = (OpCode)ReadByte();
-            if (op == OpCode.Halt)
-            {
-                // Wie Run(): das normale Ende räumt den globalen Scope ab - im Einzelschritt ohne auf Threads zu warten (der Debugger hält sie evtl. an).
-                if ((!_stopExecutionRequested || _shutdownReleasePending) && DestroyGlobalsAtEnd) ReleaseGlobalScopeAfterStop(_shutdownReleasePending);
-                _shutdownReleasePending = false;
-                IsHalted = true;
-                _acceptingCallbacks = false;
-                return false;
-            }
+            if (op == OpCode.Halt) return FinishAtHalt();
             Step(op);
-            if (_autoSync && _nestedDepth == 0 && !_stopExecutionRequested && (!_inbound.IsEmpty || (_ownerBroker != null && _ownerBroker.HasPending)))
+            return AfterStep();
+        }
+
+        /// <summary>Der erste Schritt: wie Run() (siehe dort) - _currentThreadVm muss auch beim schrittweisen Debuggen korrekt auf DIESE
+        /// Instanz zeigen, sonst würde jede native Brücke, die sich darauf verlässt (siehe CurrentThreadVm-Doku), beim Einzelschritt-Debuggen
+        /// fälschlich null sehen, obwohl eindeutig EINE VM-Instanz gerade aktiv ist.</summary>
+        private void BeginStepping()
+        {
+            _currentThreadVm = this;
+            _ip = 0;
+            _steppingStarted = true;
+            _acceptingCallbacks = true;
+        }
+
+        /// <summary>`Halt` gelesen: wie Run() räumt das normale Ende den globalen Scope ab - im Einzelschritt ohne auf Threads zu warten (der
+        /// Debugger hält sie evtl. an). Liefert false (beendet).</summary>
+        private bool FinishAtHalt()
+        {
+            if ((!_stopExecutionRequested || _shutdownReleasePending) && DestroyGlobalsAtEnd) ReleaseGlobalScopeAfterStop(_shutdownReleasePending);
+            _shutdownReleasePending = false;
+            IsHalted = true;
+            _acceptingCallbacks = false;
+            return false;
+        }
+
+        /// <summary>Nach jeder Instruktion im Einzelschritt: Warteschlangen abarbeiten (Fire-Threads, Host-Callbacks) und ein Programmende
+        /// durch `leave`/`terminate`/unbehandelte Exception bemerken. false = beendet.</summary>
+        private bool AfterStep()
+        {
+            // Nur wenn seit dem letzten sicheren Punkt ein Signal eingegangen ist (jedes Einreihen löst eines aus, siehe RaiseSignal):
+            // die Abfrage der Warteschlangen bei JEDER Instruktion war der größte Posten der Einzelschritt-Schleife.
+            if (_autoSync && _seenEpoch != System.Threading.Volatile.Read(ref s_signalEpoch) && _nestedDepth == 0 && !_stopExecutionRequested
+                && (!_inbound.IsEmpty || (_ownerBroker != null && _ownerBroker.HasPending)))
                 AutoSyncNow();
 
-            // Eine unbehandelte Skript-Exception wird seit UnhandledException
-            // (siehe dort) nicht mehr geworfen, sondern nur noch GESETZT -
-            // Run() bemerkt das über CheckShutdownSignals (hier bewusst NICHT
-            // aufgerufen, siehe Feld-Doku), beim schrittweisen Debuggen muss
-            // das deshalb HIER explizit geprüft werden, sonst würde
-            // StepLine/StepInto/StepOut/Continue (alle bauen auf dieser
-            // Methode auf) einfach immer weiterlaufen, als wäre nichts
-            // passiert, statt sauber zu stoppen.
+            // Eine unbehandelte Skript-Exception wird seit UnhandledException (siehe dort) nicht mehr geworfen, sondern nur noch GESETZT -
+            // Run() bemerkt das über CheckShutdownSignals (hier bewusst NICHT aufgerufen, siehe Feld-Doku), beim schrittweisen Debuggen
+            // muss das deshalb HIER explizit geprüft werden, sonst würde StepLine/StepInto/StepOut/Continue (alle bauen auf dieser
+            // Methode auf) einfach immer weiterlaufen, als wäre nichts passiert, statt sauber zu stoppen.
             if (_stopExecutionRequested)
             {
                 FinishDeferredShutdown();
@@ -1105,6 +1113,62 @@ namespace fire.Runtime
             }
 
             return true;
+        }
+
+        /// <summary>Läuft bis zu einem Haltepunkt, einer Pause-Anforderung oder dem Programmende (der "Weiter"-Lauf des
+        /// Debuggers). true = angehalten (am Haltepunkt oder auf Anforderung, es gibt noch etwas auszuführen), false = beendet.
+        ///
+        /// Schnell, weil nur an einem Zeilenwechsel nachgeschlagen wird: die Stelle gilt für den ganzen Byte-Bereich ihrer
+        /// Zeile (siehe Chunk.GetLocationRange), und die Pause-Abfrage kommt nur alle 256 Instruktionen. Ein Haltepunkt
+        /// zählt nur beim EINTRITT in seine Zeile, nicht bei jeder Instruktion darin - und nicht für die Zeile, auf der der Lauf beginnt.</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)] // eine lange Schleife: gleich voll optimiert übersetzen
+        public bool RunUntilBreakpoint(ISet<(int SourceIndex, int Line)> breakpoints, Func<bool> isPauseRequested)
+        {
+            if (IsHalted) return false;
+            if (!_steppingStarted) BeginStepping();
+
+            var last = CurrentLocation;
+            Chunk? rangeChunk = null;
+            int rangeStart = 0, rangeEnd = 0, counter = 0;
+
+            while (true)
+            {
+                var op = (OpCode)ReadByte();
+                if (op == OpCode.Halt) return FinishAtHalt();
+                Step(op);
+                if (!AfterStep()) return false;
+
+                if ((++counter & 255) == 0 && isPauseRequested()) return true;
+
+                if (!ReferenceEquals(_currentChunk, rangeChunk) || _ip < rangeStart || _ip >= rangeEnd)
+                {
+                    var location = _currentChunk.GetLocationRange(_ip, out rangeStart, out rangeEnd);
+                    rangeChunk = _currentChunk;
+                    if (location != last)
+                    {
+                        last = location;
+                        if (breakpoints.Contains(location)) return true;
+                    }
+                }
+            }
+        }
+
+        /// <summary>Läuft bis zum Programmende oder einer Pause-Anforderung ("Bis Ende durchlaufen"). true = angehalten, false = beendet.</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+        public bool RunUntilEnd(Func<bool> isPauseRequested)
+        {
+            if (IsHalted) return false;
+            if (!_steppingStarted) BeginStepping();
+
+            int counter = 0;
+            while (true)
+            {
+                var op = (OpCode)ReadByte();
+                if (op == OpCode.Halt) return FinishAtHalt();
+                Step(op);
+                if (!AfterStep()) return false;
+                if ((++counter & 255) == 0 && isPauseRequested()) return true;
+            }
         }
 
         /// <summary>Führt Instruktionen aus, bis entweder die aktuelle
@@ -2319,6 +2383,20 @@ namespace fire.Runtime
                 && cachedObj.Mailbox == null
                 && (_threadBroker == null || _sectionDepth > 0 || !cachedObj.InGlobalsDomain))
             {
+                // Methode, die nur eine native Funktion mit `this.feld` und ihren Parametern aufruft (alle Methoden der
+                // Brücken-Preludes): direkt die native Funktion aufrufen, ohne Scope/Frame (siehe NativeForwarder).
+                if (siteEntry.Forwarder is { } forwarder && copyMask == 0 && cachedObj.ThreadLock == null)
+                {
+                    var nativeArgs = new Value[argCount + 1];
+                    nativeArgs[0] = cachedObj.Fields.GetAt(siteEntry.ForwarderFieldIndex);
+                    Array.Copy(_stack, _sp - argCount, nativeArgs, 1, argCount);
+                    _sp -= argCount + 1; // Argumente und Empfänger
+                    if (CallNativeGuarded(forwarder.NativeIndex, nativeArgs, out Value forwarded))
+                        Push(forwarder.ReturnsResult ? forwarded : Value.MakeUndefined());
+                    PollSignalsAfterOp();
+                    return;
+                }
+
                 EnterCall(cachedMethod, argCount, dropBelow: true, cachedObj, copyMask: copyMask);
                 return;
             }
@@ -2446,7 +2524,13 @@ namespace fire.Runtime
             }
             CheckArity(proto, args.Length);
             if (proto.ParamCount == argCount && obj.RtClass != null)
-                StoreSite(site, new SiteCache(obj.RtClass, proto, 0));
+            {
+                var forwarder = proto.Forwarder;
+                int forwarderField = -1;
+                if (forwarder != null && !obj.RtClass.FieldIndex.TryGetValue(forwarder.FieldName, out forwarderField))
+                    forwarder = null;
+                StoreSite(site, new SiteCache(obj.RtClass, proto, 0, forwarder, forwarderField));
+            }
             args = FillDefaultArgs(proto, args, obj);
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
