@@ -1,3 +1,5 @@
+using System;
+
 namespace fire.Terminal
 {
     /// <summary>
@@ -32,6 +34,10 @@ namespace fire.Terminal
             FillDefaults();
         }
 
+        /// <summary>Wird bei JEDER Änderung der Palette erhöht - ein Framebuffer im Palette-Modus erkennt daran, dass sein sichtbares Abbild
+        /// neu berechnet werden muss (siehe Framebuffer.Resolve), auch wenn sich kein einziger Index geändert hat.</summary>
+        public int Version { get; private set; }
+
         /// <summary>Überschreibt Palette-Index `index` mit einem neuen
         /// 32-Bit-Farbwert - wirkt sich sofort auf alles aus, was diesen
         /// Index danach per <see cref="GetColor"/> nachschlägt (z.B. bereits
@@ -39,9 +45,58 @@ namespace fire.Terminal
         /// selbst keinen Palette-Index speichert, sondern schon beim
         /// Zeichnen zu einer konkreten PixelColor aufgelöst wurde - siehe
         /// TerminalCanvas.SetPixel(byte)-Überladungen).</summary>
-        public void SetColor(byte index, int color) => _entries[index] = color;
+        public void SetColor(byte index, int color)
+        {
+            _entries[index] = color;
+            Version++;
+        }
 
         public PixelColor GetColor(byte index) => new PixelColor(unchecked((uint)_entries[index]));
+
+        /// <summary>Der Eintrag als gepackter Wert (R im niedrigsten Byte), ohne den Umweg über PixelColor.</summary>
+        public uint GetPacked(byte index) => unchecked((uint)_entries[index]);
+
+        /// <summary>Kopiert alle 256 Einträge (gepackt) nach `destination` (mindestens 256 Plätze).</summary>
+        public void CopyPacked(Span<uint> destination)
+        {
+            for (int i = 0; i < 256; i++) destination[i] = unchecked((uint)_entries[i]);
+        }
+
+        /// <summary>Setzt die ersten `colors.Length` Einträge (höchstens 256) auf einmal; die übrigen bleiben unverändert.</summary>
+        public void SetAll(ReadOnlySpan<uint> colors)
+        {
+            int n = Math.Min(colors.Length, 256);
+            for (int i = 0; i < n; i++) _entries[i] = unchecked((int)colors[i]);
+            Version++;
+        }
+
+        /// <summary>Stellt die Standard-Belegung wieder her (siehe Klassen-Doku).</summary>
+        public void ResetToDefaults()
+        {
+            FillDefaults();
+            Version++;
+        }
+
+        /// <summary>Der Index der Farbe, die `color` am nächsten kommt (kleinster Abstand der Kanäle R, G, B im Quadrat; der Alpha-Wert zählt
+        /// nicht). Bei gleichem Abstand gewinnt der kleinere Index; eine exakt vorhandene Farbe wird sofort gefunden.</summary>
+        public byte FindNearest(PixelColor color)
+        {
+            int r = color.R, g = color.G, b = color.B;
+            int best = 0, bestDistance = int.MaxValue;
+            for (int i = 0; i < 256; i++)
+            {
+                uint packed = unchecked((uint)_entries[i]);
+                int dr = (int)(packed & 0xFF) - r, dg = (int)((packed >> 8) & 0xFF) - g, db = (int)((packed >> 16) & 0xFF) - b;
+                int distance = dr * dr + dg * dg + db * db;
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = i;
+                    if (distance == 0) break;
+                }
+            }
+            return (byte)best;
+        }
 
         private void FillDefaults()
         {

@@ -245,6 +245,7 @@ namespace fire.Terminal.Sdl
 
         public void Present(Framebuffer framebuffer)
         {
+            framebuffer.Resolve(); // Palette-Framebuffer: Pixels aus Indizes und Palette berechnen (im RGBA-Modus ein No-op)
             EnsureTexture(framebuffer.Width, framebuffer.Height);
 
             unsafe
