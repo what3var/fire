@@ -33,6 +33,7 @@ namespace fire.Terminal.Bridge
         public const string FramebufferPrefix = "__GRPHFb";
         public const string ConsolePrefix = "__GRPHCon";
         public const string WindowPrefix = "__GRPHWin";
+        public const string SlicerPrefix = "__GRPHSlc";
 
         /// <summary>Ungültige/fehlgeschlagene Erzeugung - IdManager vergibt
         /// echte IDs immer ab 1 aufwärts (siehe dort), -1 ist deshalb als
@@ -52,6 +53,7 @@ namespace fire.Terminal.Bridge
             natives.RegisterGroup(FramebufferPrefix, BuildFramebufferFunctions(framebuffers, readFile));
             natives.RegisterGroup(ConsolePrefix, BuildConsoleFunctions(consoles));
             natives.RegisterGroup(WindowPrefix, BuildWindowFunctions(windows));
+            natives.RegisterGroup(SlicerPrefix, BuildSlicerFunctions(framebuffers));
         }
 
         public static void RegisterStubs(
@@ -60,6 +62,7 @@ namespace fire.Terminal.Bridge
             natives.RegisterGroup(FramebufferPrefix, BuildFramebufferFunctionStubs());
             natives.RegisterGroup(ConsolePrefix, BuildConsoleFunctionStubs());
             natives.RegisterGroup(WindowPrefix, BuildWindowFunctionStubs());
+            natives.RegisterGroup(SlicerPrefix, new Dictionary<string, NativeFunction> { ["Slice"] = args => Value.MakeUndefined() /*STUB*/ });
         }
 
         private static Dictionary<string, NativeFunction> BuildFramebufferFunctionStubs()
@@ -87,6 +90,7 @@ namespace fire.Terminal.Bridge
                 ["LastError"] = args => Value.MakeUndefined() /*STUB*/,
                 ["GetTransparentIndex"] = args => Value.MakeUndefined() /*STUB*/,
                 ["SetTransparentIndex"] = args => Value.MakeUndefined() /*STUB*/,
+                ["ToMask"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 
@@ -94,6 +98,9 @@ namespace fire.Terminal.Bridge
         [ThreadStatic] private static string? t_lastError;
 
         private static int I(Value v) => (int)v.AsInt();
+
+        /// <summary>Eine Zahl als double (ein Skript darf `3` statt `3.0` übergeben).</summary>
+        private static double D(Value v) => v.Kind == ValueKind.Float ? v.AsFloat() : v.AsInt();
 
         /// <summary>-1 (oder weniger) = "wie das Bild", sonst der Farbmodus.</summary>
         private static ColorMode? ModeArg(Value v)
@@ -174,6 +181,48 @@ namespace fire.Terminal.Bridge
                 {
                     mgr.SetTransparentIndex(I(args[0]), I(args[1]));
                     return Value.MakeUndefined();
+                },
+                ["ToMask"] = args => LoadGuarded(() => mgr.CreateMask(I(args[0]), I(args[1]), args[2].AsBool(), I(args[3]))),
+            };
+        }
+
+        /// <summary>Die Bahnen des ImageSlicer für fire: ein Array je Bahn `[art, geschlossen, punkte]` (art 0 = Fill, 1 = Outline; punkte = flaches Array
+        /// `[x0, y0, x1, y1, ...]` in mm). Bei ungültigen Argumenten -1 (Grund: LastError); die Prelude macht daraus `Slicer.Slice`.</summary>
+        private static Dictionary<string, NativeFunction> BuildSlicerFunctions(FramebufferManager mgr)
+        {
+            return new Dictionary<string, NativeFunction>
+            {
+                ["Slice"] = args =>
+                {
+                    t_lastError = null;
+                    try
+                    {
+                        double tolerance = D(args[5]);
+                        var paths = mgr.Slice(I(args[0]), D(args[1]), D(args[2]), D(args[3]), (FillStrategy)I(args[4]),
+                            tolerance < 0 ? double.NaN : tolerance, args[6].AsBool());
+                        var result = new ScriptArray(paths.Count);
+                        for (int i = 0; i < paths.Count; i++)
+                        {
+                            var path = paths[i];
+                            var points = new ScriptArray(path.Points.Count * 2);
+                            for (int j = 0; j < path.Points.Count; j++)
+                            {
+                                points.Items[2 * j] = Value.MakeFloat(path.Points[j].X);
+                                points.Items[2 * j + 1] = Value.MakeFloat(path.Points[j].Y);
+                            }
+                            var entry = new ScriptArray(3);
+                            entry.Items[0] = Value.MakeInt((int)path.Kind);
+                            entry.Items[1] = Value.MakeBool(path.Closed);
+                            entry.Items[2] = Value.MakeArray(points);
+                            result.Items[i] = Value.MakeArray(entry);
+                        }
+                        return Value.MakeArray(result);
+                    }
+                    catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException)
+                    {
+                        t_lastError = ex.Message.Split('\n')[0];
+                        return Value.MakeInt(InvalidHandle);
+                    }
                 },
             };
         }
@@ -539,10 +588,94 @@ namespace fire.Terminal.Bridge
                     }
                 }
 
+                // Die Maske dieses Bildes als NEUER Palette-Framebuffer gleicher Größe: Index 1 (weiß) = dieses Pixel soll ausgefräst werden (siehe Slicer),
+                // Index 0 (schwarz) nicht. Pixel mit geringerer Deckkraft als alphaThreshold zählen nie; sonst entscheidet die Helligkeit gegen threshold
+                // (0-255): darkIsRemoved = dunkle Pixel werden ausgefräst, false = helle.
+                Framebuffer ToMask(int threshold = 128, bool darkIsRemoved = true, int alphaThreshold = 128) {
+                    var mask = new Framebuffer(0, 0, -2)
+                    mask.id = __GRPHFbToMask(this.id, threshold, darkIsRemoved, alphaThreshold)
+                    if (mask.id < 0) {
+                        throw new GraphicsException(__GRPHFbLastError())
+                    }
+                    return mask
+                }
+
                 // Palette-Framebuffer: der Index, der in einem Bild als durchsichtig gilt (GIF/PNG), -1 = keiner. Console.Blit mit BlitMode.Transparent überspringt ihn.
                 int TransparentIndex {
                     get { return __GRPHFbGetTransparentIndex(this.id) }
                     set { __GRPHFbSetTransparentIndex(this.id, value) }
+                }
+            }
+
+            // Art einer Werkzeugbahn: Fill = Ausräumen der Fläche, Outline = Schlichtkontur am Rand.
+            enum PathKind {
+                Fill = 0,
+                Outline = 1
+            }
+
+            // Wie das Innere einer Fläche ausgeräumt wird: Contour = konzentrische, konturparallele Bahnen (von innen nach außen), ZigZag = waagerechte
+            // Zickzack-Bahnen plus Randkontur, OutlineOnly = nur die Randkontur.
+            enum FillStrategy {
+                Contour = 0,
+                ZigZag = 1,
+                OutlineOnly = 2
+            }
+
+            // Eine Werkzeugbahn (Linienzug der Werkzeugmitte) in Millimetern.
+            class ToolPath {
+                int kind          // PathKind
+                bool closed       // true: der letzte Punkt ist mit dem ersten verbunden
+                points            // flaches Array [x0, y0, x1, y1, ...]
+
+                construct(int kind, bool closed, points) {
+                    this.kind = kind
+                    this.closed = closed
+                    this.points = points
+                }
+
+                int Count() { return this.points.length / 2 }
+                float X(int index) { return this.points[index * 2] }
+                float Y(int index) { return this.points[index * 2 + 1] }
+            }
+
+            // Zerlegt eine Maske (siehe Framebuffer.ToMask) in Werkzeugbahnen mit fester Linienstärke: Euklidische Distanztransformation, die Werkzeugmitte
+            // darf nur dort liegen, wo der Abstand zum Rand mindestens der Linienradius ist; die Isolinie dort ist die Randkontur (subpixelgenau), das Innere
+            // wird mit Bahnen im Abstand StepOver gefüllt. Alle Koordinaten in Millimetern, die Mitte des Werkzeugs.
+            class Slicer {
+                float lineWidth        // Linienstärke bzw. Werkzeugdurchmesser in mm
+                float pixelSize        // Kantenlänge eines Pixels der Maske in mm (z.B. 25.4 / dpi)
+                float overlap = 0.5    // Überlappung benachbarter Bahnen als Anteil der Linienstärke (0 bis 0.95); ab 0.5 bleiben bei Contour keine Restinseln
+                int strategy = 0       // FillStrategy (Vorgabe Contour)
+                float simplifyTolerance = -1.0   // Toleranz der Punktreduktion in mm; negativ = automatisch (1/4 Pixel), 0 = keine
+                bool flipY = true      // true: Y zeigt nach oben (Maschinenkoordinaten), false: wie im Bild nach unten
+
+                construct(float lineWidth, float pixelSize) {
+                    if (lineWidth <= 0 || pixelSize <= 0) {
+                        throw new GraphicsException("Linienstärke und Pixelgröße müssen größer als 0 sein.")
+                    }
+                    this.lineWidth = lineWidth
+                    this.pixelSize = pixelSize
+                }
+
+                // Abstand zwischen benachbarten Bahnen in mm
+                float StepOver { get { return this.lineWidth * (1.0 - this.overlap) } }
+
+                // Liefert eine List von ToolPath (leer, wenn keine Stelle breit genug für die Linienstärke ist). Die Maske: ein Framebuffer, dessen gesetzte Pixel
+                // (Palette: Index ungleich 0, RGBA: sichtbar und nicht schwarz) ausgefräst werden - meist von Framebuffer.ToMask.
+                Slice(Framebuffer mask) {
+                    if (this.overlap < 0 || this.overlap > 0.95) {
+                        throw new GraphicsException("Die Überlappung muss zwischen 0 und 0.95 liegen.")
+                    }
+                    var raw = __GRPHSlcSlice(mask.id, this.lineWidth, this.pixelSize, this.overlap, this.strategy, this.simplifyTolerance, this.flipY)
+                    if (raw is of int) {
+                        throw new GraphicsException(__GRPHFbLastError())
+                    }
+                    var paths = new List()
+                    for (var i = 0; i < raw.length; i = i + 1) {
+                        var entry = raw[i]
+                        paths.Add(new ToolPath(entry[0], entry[1], entry[2]))
+                    }
+                    return paths
                 }
             }
 

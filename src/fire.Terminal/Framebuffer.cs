@@ -129,6 +129,42 @@ namespace fire.Terminal
         }
 
         // -----------------------------------------------------------
+        // Maske für den ImageSlicer
+        // -----------------------------------------------------------
+
+        /// <summary>Ein NEUER Palette-Framebuffer gleicher Größe, der die Maske dieses Bildes enthält: Index 1 (weiß) = dieses Pixel soll ausgefräst werden,
+        /// Index 0 (schwarz, zugleich <see cref="TransparentIndex"/>) = nicht. Ein Pixel mit geringerer Deckkraft als `alphaThreshold` zählt nie;
+        /// sonst entscheidet die Helligkeit (0,299 R + 0,587 G + 0,114 B) gegen `threshold`: `darkIsRemoved` = dunkle Pixel werden ausgefräst, sonst helle.
+        /// Bei einem Palette-Bild wird die Palette je Eintrag nur einmal bewertet.</summary>
+        public Framebuffer ToMask(byte threshold = 128, bool darkIsRemoved = true, byte alphaThreshold = 128)
+        {
+            var mask = new Framebuffer(Width, Height, ColorMode.Indexed);
+            mask.Palette.SetColor(0, unchecked((int)PixelColor.Black.Packed));
+            mask.Palette.SetColor(1, unchecked((int)PixelColor.White.Packed));
+            mask.TransparentIndex = 0;
+
+            byte Decide(uint packed)
+            {
+                if ((packed >> 24) < alphaThreshold) return 0;
+                double lum = 0.299 * (packed & 0xFF) + 0.587 * ((packed >> 8) & 0xFF) + 0.114 * ((packed >> 16) & 0xFF);
+                bool dark = lum < threshold;
+                return (darkIsRemoved ? dark : !dark) ? (byte)1 : (byte)0;
+            }
+
+            if (Indices != null)
+            {
+                var table = new byte[256];
+                for (int i = 0; i < 256; i++) table[i] = Decide(Palette.GetPacked((byte)i));
+                for (int i = 0; i < Indices.Length; i++) mask.Indices![i] = table[Indices[i]];
+            }
+            else
+                for (int i = 0; i < Pixels.Length; i++) mask.Indices![i] = Decide(Pixels[i]);
+
+            mask.MarkDirty();
+            return mask;
+        }
+
+        // -----------------------------------------------------------
         // Zeichnen mit einer aufgelösten Farbe (siehe ResolveBrush)
         // -----------------------------------------------------------
 

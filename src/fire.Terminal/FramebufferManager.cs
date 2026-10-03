@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace fire.Terminal
 {
@@ -51,6 +52,14 @@ namespace fire.Terminal
             }
             return id;
         }
+
+        /// <summary>Ein neuer Palette-Framebuffer mit der Maske des Bildes `id` (siehe Framebuffer.ToMask); liefert seine ID.</summary>
+        public int CreateMask(int id, int threshold, bool darkIsRemoved, int alphaThreshold) =>
+            _framebuffers.Create(_framebuffers.Get(id).ToMask((byte)Math.Clamp(threshold, 0, 255), darkIsRemoved, (byte)Math.Clamp(alphaThreshold, 0, 255)));
+
+        /// <summary>Zerlegt die Maske `id` in Werkzeugbahnen (siehe ImageSlicer).</summary>
+        public List<ToolPath> Slice(int id, double lineWidth, double pixelSize, double overlap, FillStrategy strategy, double simplifyTolerance, bool flipY) =>
+            new ImageSlicer(lineWidth, pixelSize) { Overlap = overlap, Strategy = strategy, SimplifyTolerance = simplifyTolerance, FlipY = flipY }.Slice(_framebuffers.Get(id));
 
         public int GetTransparentIndex(int id) => _framebuffers.Get(id).TransparentIndex;
         public void SetTransparentIndex(int id, int index) => _framebuffers.Get(id).TransparentIndex = Math.Clamp(index, -1, 255);

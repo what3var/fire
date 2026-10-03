@@ -219,6 +219,31 @@ Aus fire (`#import "graphics"`):
   `ReadBytes()`/`WriteBytes(puffer)` lesen und schreiben den ganzen Inhalt im selben Format (siehe "Byteweiser Framebuffer-Zugriff").
 - Fehler sind `ImageException` (eine `GraphicsException`): unbekanntes Format, beschädigt, Datei nicht lesbar oder nicht erlaubt, falsche Pufferlänge.
 
+## Slicer: Bild -> Maske -> Werkzeugbahnen
+
+Zerlegt ein Bild in Linien fester Stärke (Fräs-/Plotterbahnen). `ImageSlicer` (C#, `fire.Terminal`, Algorithmus aus `ImageToToolpath`) arbeitet auf einer Maske: Euklidische Distanztransformation (Felzenszwalb/Huttenlocher), die Werkzeugmitte darf nur dort liegen, wo der Abstand zum Rand
+mindestens der Linienradius ist; die Isolinie auf diesem Niveau ist die Randkontur (subpixelgenau per Marching Squares, Douglas-Peucker-Reduktion), das Innere wird mit Bahnen im Abstand `StepOver = Linienstärke * (1 - Overlap)` gefüllt. Alle Koordinaten sind Millimeter und beschreiben die Werkzeugmitte.
+
+Aus fire (`#import "graphics"`):
+
+```
+var bild = Framebuffer.FromFile("logo.png")
+var maske = bild.ToMask()                    // NEUER Palette-Framebuffer: Index 1 (weiß) = ausfräsen, Index 0 (schwarz) = nicht
+var slicer = new Slicer(3.0, 0.1)            // 3-mm-Fräser, 0,1 mm je Pixel
+slicer.overlap = 0.5
+slicer.strategy = FillStrategy.Contour       // Contour | ZigZag | OutlineOnly
+var bahnen = slicer.Slice(maske)             // eine List von ToolPath
+foreach (b in bahnen) { print(b.kind + " " + b.closed + " " + b.Count()) ; print(b.X(0) + "," + b.Y(0)) }
+```
+
+- `Framebuffer.ToMask(threshold = 128, darkIsRemoved = true, alphaThreshold = 128)`: Pixel mit geringerer Deckkraft als `alphaThreshold` zählen nie; sonst entscheidet die Helligkeit `0,299 R + 0,587 G + 0,114 B` gegen `threshold` (dunkle Pixel werden ausgefräst, mit `darkIsRemoved = false` die hellen). Bei einem Palette-Bild wird jeder Palette-Eintrag nur einmal bewertet.
+  Die Maske ist ein gewöhnlicher Framebuffer (auch mit `Blit`/`GetPixelIndex` benutzbar, Index 0 ist ihr `TransparentIndex`).
+- `Slicer(linienstaerke, pixelgroesse)` mit den Feldern `overlap` (0 bis 0.95, Vorgabe 0.5; ab 0.5 bleiben bei `Contour` keine Restinseln), `strategy`, `simplifyTolerance` (mm; negativ = automatisch 1/4 Pixel, 0 = keine Reduktion), `flipY` (Vorgabe true: Y nach oben wie bei Maschinenkoordinaten, von der Bildhöhe gezählt) und der Eigenschaft `StepOver`.
+  `Slice(maske)` nimmt jeden Framebuffer als Maske (Palette: Index ungleich 0; RGBA: sichtbar und nicht schwarz) und liefert eine `List` von `ToolPath` - leer, wenn keine Stelle breit genug für die Linienstärke ist. Bei `Contour` kommen die Innenringe von innen nach außen, bei `ZigZag` waagerechte Zweipunktbahnen (abwechselnd links/rechts), zuletzt immer die Randkontur als Schlichtbahn.
+- `ToolPath`: `kind` (`PathKind.Fill`/`PathKind.Outline`), `closed`, `points` (flaches Array `[x0, y0, x1, y1, ...]`), `Count()`, `X(i)`, `Y(i)`.
+- Ein Wert außerhalb des Bereichs (Linienstärke/Pixelgröße <= 0, Überlappung außerhalb von 0 bis 0.95) ist eine `GraphicsException`.
+- Der frühere `SdlMaskLoader` entfällt: geladen wird mit `Framebuffer.FromFile`/`FromImage` (PNG, BMP, GIF), die Maske kommt aus `ToMask`.
+
 ## Byteweiser Framebuffer-Zugriff
 
 `FramebufferManager` bietet sowohl byteweisen als auch blockweisen Zugriff

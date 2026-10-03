@@ -8112,6 +8112,36 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(Px.Get(d, 0, 0) == 4278190335)
         """, new[] { "True", "True", "True", "True", "True", "True", "True", "True" });
 
+    CheckGf("Slicer aus fire: ToMask, Slicer.Slice liefert eine List von ToolPath, Fehler als GraphicsException", gfHead + """
+        var img = new Framebuffer(120, 70)
+        var con = new Console(img)
+        con.FillRect(0, 0, 120, 70, 4294967295)
+        con.FillRect(10, 10, 100, 50, 4278190080)
+        var mask = img.ToMask()
+        print(mask.Mode() + " " + mask.Width() + "x" + mask.Height() + " " + mask.ReadByte(0) + " " + mask.ReadByte(20 * 120 + 20))
+        var slicer = new Slicer(1, 0.1)
+        slicer.flipY = false
+        print(slicer.StepOver)
+        var paths = slicer.Slice(mask)
+        print(paths.count)
+        var outline = paths[paths.count - 1]
+        var minX = 1000.0
+        var maxX = 0.0
+        for (var i = 0; i < outline.Count(); i = i + 1) {
+            if (outline.X(i) < minX) { minX = outline.X(i) }
+            if (outline.X(i) > maxX) { maxX = outline.X(i) }
+        }
+        print((outline.kind == PathKind.Outline) + " " + outline.closed + " " + (minX > 1.44 && minX < 1.56) + " " + (maxX > 10.44 && maxX < 10.56))
+        slicer.strategy = FillStrategy.OutlineOnly
+        print(slicer.Slice(mask).count)
+        slicer.lineWidth = 50
+        print(slicer.Slice(mask).count)
+        try { var bad = new Slicer(0, 1) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
+        slicer.overlap = 0.99
+        try { slicer.Slice(mask) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
+        foreach (p in new Slicer(1, 0.1).Slice(mask)) { print(p.kind) }
+        """, new[] { "1 120x70 0 1", "0.5", "4", "True True True True", "1", "0", "True Linienstärke und Pixelgröße müssen größer als 0 sein.", "True Die Überlappung muss zwischen 0 und 0.95 liegen.", "0", "0", "0", "1" });
+
     // ---- Echte Dateien ueber die Sitzung des Hosts: die IoPolicy entscheidet, was Framebuffer.FromFile lesen darf ----
     {
         string imgDir = Path.Combine(Path.GetTempPath(), "fire-img-" + Guid.NewGuid().ToString("N"));
@@ -8158,6 +8188,94 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     }
 
     Console.WriteLine(gfFailures == 0 ? "Alle Grafik-aus-fire-Pruefungen bestanden." : $"FEHLER: {gfFailures} Grafik-aus-fire-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Slicer: Maske aus einem Framebuffer (ToMask) in Werkzeugbahnen zerlegen
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Slicer: ToMask und Werkzeugbahnen ===");
+    int slFailures = 0;
+    void SlCheck(bool ok, string what)
+    {
+        if (!ok) slFailures++;
+        Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
+    }
+
+    // ---- ToMask ----
+    {
+        var rgba = new fire.Terminal.Framebuffer(4, 1);
+        rgba.SetPixel(0, 0, fire.Terminal.PixelColor.FromRgb(10, 10, 10));      // dunkel
+        rgba.SetPixel(1, 0, fire.Terminal.PixelColor.FromRgb(240, 240, 240));   // hell
+        rgba.SetPixel(2, 0, new fire.Terminal.PixelColor(0, 0, 0, 10));         // dunkel, aber fast durchsichtig
+        rgba.SetPixel(3, 0, fire.Terminal.PixelColor.FromRgb(0, 255, 0));       // Gruen: Helligkeit 150
+        var dark = rgba.ToMask();
+        SlCheck(dark.IsIndexed && dark.Width == 4 && dark.Height == 1 && dark.Indices!.SequenceEqual(new byte[] { 1, 0, 0, 0 }), "ToMask: dunkle Pixel werden ausgefraest, helle und fast durchsichtige nicht");
+        SlCheck(dark.Palette.GetPacked(0) == fire.Terminal.PixelColor.Black.Packed && dark.Palette.GetPacked(1) == fire.Terminal.PixelColor.White.Packed && dark.TransparentIndex == 0, "ToMask: Palette schwarz/weiss, Index 0 durchsichtig");
+        SlCheck(rgba.ToMask(darkIsRemoved: false).Indices!.SequenceEqual(new byte[] { 0, 1, 0, 1 }), "ToMask: darkIsRemoved = false (helle Pixel, durchsichtige nie)");
+        SlCheck(rgba.ToMask(threshold: 200).Indices![3] == 1 && rgba.ToMask(threshold: 100).Indices![3] == 0, "ToMask: Schwelle gegen die Helligkeit 0,299 R + 0,587 G + 0,114 B (Gruen = 150)");
+        SlCheck(rgba.ToMask(alphaThreshold: 5).Indices![2] == 1, "ToMask: Alpha-Schwelle");
+
+        var pal = new fire.Terminal.Framebuffer(3, 1, fire.Terminal.ColorMode.Indexed);
+        pal.Palette.SetColor(5, unchecked((int)fire.Terminal.PixelColor.FromRgb(5, 5, 5).Packed));
+        pal.Palette.SetColor(6, unchecked((int)fire.Terminal.PixelColor.FromRgb(250, 250, 250).Packed));
+        pal.Indices![0] = 5; pal.Indices[1] = 6; pal.Indices[2] = 5;
+        SlCheck(pal.ToMask().Indices!.SequenceEqual(new byte[] { 1, 0, 1 }), "ToMask aus einem Palette-Bild: ueber die Farben der Palette");
+    }
+
+    // ---- Slicer ----
+    fire.Terminal.Framebuffer Rect(int w, int h, int x0, int y0, int x1, int y1)
+    {
+        var fb = new fire.Terminal.Framebuffer(w, h, fire.Terminal.ColorMode.Indexed);
+        fb.FillRect(x0, y0, x1 - x0, y1 - y0, fb.ResolveBrush(fire.Terminal.Paint.FromIndex(1)));
+        return fb;
+    }
+    {
+        // 100 x 50 Pixel zu 0,1 mm = 10 x 5 mm, Fraeser 1 mm: die Werkzeugmitte darf 0,5 mm vom Rand weg sein
+        var mask = Rect(120, 70, 10, 10, 110, 60);
+        var slicer = new fire.Terminal.ImageSlicer(1.0, 0.1) { FlipY = false };
+        var paths = slicer.Slice(mask);
+        SlCheck(paths.Count == 4 && paths.Take(3).All(p => p.Kind == fire.Terminal.PathKind.Fill) && paths[3].Kind == fire.Terminal.PathKind.Outline && paths.All(p => p.Closed),
+            $"Contour: drei Innenringe (innen zuerst), dann die Randkontur ({paths.Count} Bahnen)");
+        var outline = paths[3].Points;
+        double minX = outline.Min(p => p.X), maxX = outline.Max(p => p.X), minY = outline.Min(p => p.Y), maxY = outline.Max(p => p.Y);
+        SlCheck(Math.Abs(minX - 1.5) < 0.06 && Math.Abs(maxX - 10.5) < 0.06 && Math.Abs(minY - 1.5) < 0.06 && Math.Abs(maxY - 5.5) < 0.06,
+            $"Randkontur: das Rechteck 1,0-11,0 x 1,0-6,0 mm um den Fraeserradius 0,5 mm nach innen ({minX:0.00}..{maxX:0.00} x {minY:0.00}..{maxY:0.00})");
+        SlCheck(outline.Count <= 8, $"die Punktreduktion macht aus der Kontur wenige Ecken ({outline.Count} Punkte)");
+        double innerMin = paths[0].Points.Min(p => p.X);
+        SlCheck(innerMin > minX + 1.4, $"die Ringe liegen nach innen versetzt (innerster Ring {innerMin:0.00} mm, Randkontur {minX:0.00} mm)");
+
+        var flipped = new fire.Terminal.ImageSlicer(1.0, 0.1).Slice(mask);   // FlipY ist die Vorgabe
+        var fo = flipped[3].Points;
+        SlCheck(Math.Abs(fo.Min(p => p.Y) - (7.0 - 5.5)) < 0.06 && Math.Abs(fo.Max(p => p.Y) - (7.0 - 1.5)) < 0.06, "FlipY (Vorgabe): Y nach oben, von der Bildhoehe 7 mm gezaehlt");
+
+        var only = new fire.Terminal.ImageSlicer(1.0, 0.1) { Strategy = fire.Terminal.FillStrategy.OutlineOnly }.Slice(mask);
+        SlCheck(only.Count == 1 && only[0].Kind == fire.Terminal.PathKind.Outline, "OutlineOnly: nur die Randkontur");
+        var zig = new fire.Terminal.ImageSlicer(1.0, 0.1) { Strategy = fire.Terminal.FillStrategy.ZigZag, FlipY = false }.Slice(mask);
+        SlCheck(zig.Count > 4 && zig.Last().Kind == fire.Terminal.PathKind.Outline && zig.Take(zig.Count - 1).All(p => !p.Closed && p.Points.Count == 2), $"ZigZag: waagerechte Bahnen, dann die Randkontur ({zig.Count} Bahnen)");
+        var ys = zig.Take(zig.Count - 1).Select(p => p.Points[0].Y).Distinct().OrderBy(y => y).ToList();
+        SlCheck(ys.Count >= 8 && ys[1] - ys[0] > 0.45 && ys[1] - ys[0] < 0.55, "ZigZag: Zeilenabstand = Bahnabstand 0,5 mm");
+
+        var tight = new fire.Terminal.ImageSlicer(1.0, 0.1) { Overlap = 0.0 }.Slice(mask);
+        SlCheck(tight.Count < paths.Count + 1 && tight.Count >= 2, "Overlap 0: weniger Ringe (Abstand = Linienstaerke)");
+    }
+    SlCheck(new fire.Terminal.ImageSlicer(1.0, 0.1).Slice(Rect(60, 40, 10, 10, 15, 30)).Count == 0, "zu schmale Flaeche (0,5 mm bei 1 mm Fraeser): keine Bahnen");
+    SlCheck(new fire.Terminal.ImageSlicer(1.0, 0.1).Slice(new fire.Terminal.Framebuffer(20, 20, fire.Terminal.ColorMode.Indexed)).Count == 0, "leere Maske: keine Bahnen");
+    {
+        // zwei getrennte Flaechen und ein Loch: ein Ring um das Loch
+        var fb = new fire.Terminal.Framebuffer(200, 80, fire.Terminal.ColorMode.Indexed);
+        var one = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(1)); var zero = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(0));
+        fb.FillRect(10, 10, 60, 60, one); fb.FillRect(110, 10, 80, 60, one); fb.FillRect(130, 30, 20, 20, zero);
+        var outlines = new fire.Terminal.ImageSlicer(1.0, 0.1) { Strategy = fire.Terminal.FillStrategy.OutlineOnly }.Slice(fb);
+        SlCheck(outlines.Count == 3 && outlines.All(p => p.Closed), "zwei Flaechen, eine mit Loch: drei geschlossene Randkonturen");
+        var rgbaMask = new fire.Terminal.Framebuffer(200, 80);
+        for (int y = 0; y < 80; y++) for (int x = 0; x < 200; x++) if (fb.GetRaw(x, y) != 0) rgbaMask.SetPixel(x, y, fire.Terminal.PixelColor.White);
+        SlCheck(new fire.Terminal.ImageSlicer(1.0, 0.1) { Strategy = fire.Terminal.FillStrategy.OutlineOnly }.Slice(rgbaMask).Count == 3, "ein RGBA-Framebuffer als Maske (sichtbar und nicht schwarz = ausfraesen)");
+    }
+    try { new fire.Terminal.ImageSlicer(0, 0.1); SlCheck(false, "Linienstaerke 0 wird abgelehnt"); } catch (ArgumentOutOfRangeException) { SlCheck(true, "Linienstaerke 0 wird abgelehnt"); }
+
+    Console.WriteLine(slFailures == 0 ? "Alle Slicer-Pruefungen bestanden." : $"FEHLER: {slFailures} Slicer-Pruefung(en) fehlgeschlagen.");
 }
 
 // ---------------------------------------------------------------------------
