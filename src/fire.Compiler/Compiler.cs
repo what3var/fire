@@ -1249,6 +1249,10 @@ namespace fire.Compiler
         /// stimmen Slot-/Tiefen-Nummern nicht mehr überein.</summary>
         private void CompileScopedBody(Stmt body)
         {
+            // Ein leerer Block `{ }` deklariert nichts und führt nichts aus: sein EnterScope/ExitScope-Paar wäre reine Zeitverschwendung
+            // (bei einer Schleife je Durchlauf). Der Resolver legt für ihn zwar eine Scope an, aber ohne Variablen - die Tiefen der
+            // übrigen Zugriffe ändern sich dadurch nicht.
+            if (body is Stmt.BlockStmt { Statements.Count: 0 }) return;
             EmitEnterScope();
             if (body is Stmt.BlockStmt block)
                 foreach (var s in block.Statements) CompileStmt(s);

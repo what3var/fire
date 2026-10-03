@@ -35,8 +35,13 @@ Umwege in eine kurze Sequenz nativer Instruktionen übersetzen lassen
 | `JumpIfFalse` | u16 addr | cond=pop; if !cond: ip = addr |
 | `JumpIfFalsePeek` | u16 addr | cond=peek; if !cond: ip = addr (kein Pop, für `&&`) |
 | `JumpIfTruePeek` | u16 addr | cond=peek; if cond: ip = addr (kein Pop, für `\|\|`) |
-| `EnterScope` | – | CurrentScope = new Scope(CurrentScope) |
-| `ExitScope` | – | CurrentScope.Release(...); CurrentScope = Parent |
+| `EnterScope` | – | CurrentScope = neue (bzw. aus dem Pool wiederverwendete, siehe Abschnitt 44) Scope(CurrentScope) |
+| `ExitScope` | – | CurrentScope.Release(...); CurrentScope = Parent; die Scope geht ggf. in den Pool zurück |
+| `StoreLocalPop` | u16 depth, u16 slot | `StoreLocal` + `Pop` in einer Instruktion (Abschnitt 44) |
+| `StoreGlobalPop` | u16 slot | `StoreGlobal` + `Pop` |
+| `JumpIfNotLt`/`JumpIfNotLtEq`/`JumpIfNotGt`/`JumpIfNotGtEq`/`JumpIfNotEq`/`JumpIfNotNotEq` | u16 addr | pop b, pop a; springt, wenn `a OP b` NICHT gilt (= `Lt` + `JumpIfFalse` usw.) |
+| `ArithLocalConstPop` | u16 depth, u16 slot, u16 constIdx, u8 sub | Variable (+|-)= Constants[constIdx], ohne Ergebnis auf dem Stack (`i = i + 1`, `i++`) |
+| `ArithGlobalConstPop` | u16 slot, u16 constIdx, u8 sub | dasselbe für eine globale Variable |
 | `CallNative` | u16 nativeIdx, u8 argCount | ruft eine registrierte native Funktion auf |
 | `CallExtern` | u16 nameIdx, u8 argCount | ruft eine per Host verlinkte extern-Funktion auf (siehe Abschnitt 12) |
 | `MakeLambda` | u16 protoIdx, u8 hasOnTarget | erzeugt einen LambdaValue aus Functions[protoIdx] (pop On-Target-Wert falls hasOnTarget≠0) |
@@ -1800,3 +1805,35 @@ die nur beim Verlassen des Byte-Bereichs einer Zeile nachschlagen, die Pause-Anf
 Dazu eine Korrektur der Zeilentabelle: Increment/Rücksprung/Ende einer `for`-Schleife (und das Ende von `while`/`foreach`) gehören zur Zeile der Schleife, nicht zur letzten Zeile des Bodys - ein Haltepunkt im Body hielt sonst nach dem Verlassen der Schleife noch einmal an.
 
 **Text.** `TerminalCanvas.DrawText` prüft Schrift und Rand einmal für den ganzen Text und zeichnet über `GlyphBlitter` (AVX2: eine Pixelzeile des Zeichens = ein 256-Bit-Zugriff, ohne Bereichsprüfungen; sonst zweimal 128 Bit); pixelgenau wie vorher.
+
+## 44. Geschwindigkeit der VM: verschmolzene Instruktionen, Scope-Pool, Objekterzeugung
+
+Ausgangspunkt war eine Messung mit einem eigenen Benchmark (Schleifen, Aufrufe, `new`, Rekursion; Minimum über mehrere Runden und Prozessläufe). Die Zahlen sind ns je Schleifendurchlauf bzw. je Aufruf, vorher -> nachher
+(gleiche Maschine, `Performance`-Modus): leere Schleife 104 -> 63, `while` mit Block 82 -> 40, `if/else` im Schleifenkörper 201 -> 100, leere Methode 180 -> 110, Methode mit Feldzugriff 229 -> 145, `new P()` 407 -> 200, `new P2(i, 2)` 659 -> 235, `fib` rekursiv 167 -> 105.
+
+**Verschmolzene Instruktionen.** Der Compiler ersetzt beim Emittieren häufige Folgen durch eine Instruktion (Opcodes siehe Tabelle oben): `StoreLocal`+`Pop` -> `StoreLocalPop` (eine Zuweisung als Anweisung), Vergleich+`JumpIfFalse` -> `JumpIfNotLt` usw. (`if`/`while`/`for`),
+`x = x + c`/`x++`/`x--` auf einer Variablen -> `ArithLocalConstPop`/`ArithGlobalConstPop`. `Chunk.EndsWithOp`/`ReplaceLastOp` verschmelzen nur, wenn kein Sprungziel hinter dem letzten Opcode liegt (`Chunk.Here` merkt jede abgefragte Stelle). Die VM hat für jede verschmolzene Instruktion einen
+Schnellpfad (Zahlen gleicher Einheit); alles andere (Strings, Einheiten, Objekte mit Operator-Überladung, Fehler, Globals im Fire-Thread) läuft über denselben Code wie die einzelnen Instruktionen - dasselbe Ergebnis, dieselben Exceptions.
+
+**Scope-Pool (`VM._scopePool`).** Jeder Block, Schleifendurchlauf und Aufruf legte eine `Scope` samt Slot-Array an. `EnterScope`/`EnterCall` nehmen jetzt eine Scope aus einem kleinen Pool (je VM, 256 Plätze), `ExitScope`/`return` geben sie zurück. Wiederverwendet wird nur, was nichts
+mehr erreichen kann (`Scope.CanRecycle`): die Scope stammt aus dem Pool (nie die globale oder eine, die anderer Code angelegt hat), sie besitzt kein Objekt mehr, und kein Pointer zeigt auf einen ihrer Slots (`ScopeSlotPointerTarget` ruft `MarkEscaped`). Handler, Rücksprung-Frames, Callback-Grenzen
+und gespeicherte Fortsetzungen verweisen nur auf Scopes, die noch aktiv sind; `UnwindTo` (Exceptions) und der Abbau fortsetzbarer Exceptions geben Scopes nie zurück. `Recycle` vergisst die Werte (sonst hielte der Pool Objekte am Leben).
+
+**`return` gibt ALLE Scopes des Aufrufs frei** (Fehlerkorrektur, die das Pooling vorausgesetzt hat): bisher zerstörte ein `return` mitten in verschachtelten Blöcken nur die Objekte des INNERSTEN Scopes - die der umgebenden `if`/`for`/`try`-Blöcke und der Funktion blieben liegen (kein `destruct()`).
+`DoReturn` verlässt jetzt alle Scopes bis zur Funktions-Scope (deren Parent der globale Scope ist), innerster zuerst, und ein zurückgegebenes Objekt, das einem davon gehört, geht an den Aufrufer (`OwnsWithinCall`). Test-Block "Scope-Verwaltung".
+
+**Objekterzeugung.** Eine `new`-Anweisung kostete vor allem Nebensächliches:
+- *Feld-Vorbelegung.* Der Konstruktor rief für JEDES Feld den Initialisierer-Proto auf (ein voller Aufruf mit Scope, auch für `int x` ohne Initialisierer). Jetzt lädt er eine Konstante direkt (`LoadConst; SetFieldOnThis`), und ein Feld ohne Initialisierer wird übersprungen (es steht nach dem Anlegen schon auf `undefined`) -
+  außer es konnte vorher etwas in das Feld schreiben (eine Basisklasse hat ihren Konstruktor ausgeführt, ein früherer Initialisierer mit Aufruf): dann setzt ein explizites `undefined` es wie bisher zurück. Echte Ausdrücke bleiben Aufrufe (`CallProtoWithThis`, jetzt ohne Argument-Array und mit Pool-Scope).
+- *Besitz (`OwnedSet`).* Scope und Objekt halten das ERSTE besessene Objekt direkt, erst ab dem zweiten gibt es eine Liste; die Zerstörung braucht im Einzelfall keine Kopie (`ToArray`). Reihenfolge wie bisher: Erzeugungsreihenfolge, ein Objekt erst selbst (`destruct()`), dann seine Kinder.
+- *Zerstörte Objekte vergessen ihren Owner* (`DeadOwner`), sonst würde eine Scope, die einmal ein Objekt besaß, für immer von diesem referenziert und könnte nicht wiederverwendet werden. Nebenwirkung: `TakeUpwards` & Co. auf einem schon zerstörten Objekt melden jetzt einen Ownership-Fehler statt still weiterzumachen.
+- *Destruktoren.* `ObjectInstance.Destroy` ruft den Runner nur auf, wenn die Klassenkette einen Destruktor hat (`RuntimeClass.HasDestructorInChain`); `RunDestructor` nimmt `RtClass` statt eines Namens-Lookups und eine Pool-Scope; `ExitScope` mit Besitz läuft nicht mehr über die große `Execute`-Methode.
+- `ObjectInstance.Id` (von nichts gelesen) wird erst beim ersten Lesen vergeben - keine atomare Zählung je `new`.
+- Ein leerer Block `{ }` als Schleifen-/`if`-Körper erzeugt kein `EnterScope`/`ExitScope`-Paar mehr.
+
+**Gemessen, aber nicht übernommen.** *Tiered Compilation:* `TieredPGO=0`, `TieredCompilation=0`, `TC_QuickJitForLoops=0`, `TC_CallCountingDelayMs=0` und `[AggressiveOptimization]` auf `RunLoop` wurden gegen die Vorgabe gemessen (kalt = erste Runde eines frischen Prozesses, warm = Minimum über 7 Runden).
+Keine Einstellung gewinnt durchgängig: ohne PGO wird die Rekursion doppelt so langsam, ohne Tiered Compilation startet der Prozess ~280 ms später, `AggressiveOptimization` verbessert die erste Runde um ~15 %, kostet aber warm bei Objekt-Schleifen ~10 %. Es bleibt bei den Standardeinstellungen
+(`RunUntilBreakpoint`/`RunUntilEnd`, die F5-Schleifen des Editors, sind weiterhin `AggressiveOptimization`). `[SkipLocalsInit]` bringt hier nichts: der Stack-Rahmen der Schleife enthält `Value` (mit Objektverweis) und wird deshalb ohnehin genullt.
+
+**Was als Nächstes die meiste Zeit kostet.** Jede Instruktion kostet noch ~8-12 ns, obwohl der Rumpf klein ist: `_ip`, `_sp`, `_stack`, `_currentScope` liegen als Felder der VM im Speicher, und jede Instruktion liest/schreibt sie über eine abhängige Kette (Store-to-Load-Weiterleitung). Eine Schleife mit
+diesen Zuständen in lokalen Variablen (nur für die häufigen Instruktionen, alles andere über die bestehende `Step`/`Execute`-Kette) würde das voraussichtlich etwa halbieren; das ist ein größerer, eigener Umbau.
