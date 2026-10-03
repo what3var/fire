@@ -317,6 +317,13 @@ namespace fire.Compiler
                 compiler._chunk.EmitByte(0);
             }
 
+            // `#timeout wert`: ebenfalls gleich am Anfang (der Wert ist ein Ausdruck ohne Bezug auf Variablen, z.B. `10s`)
+            foreach (var timeout in program.OfType<TimeoutDirective>())
+            {
+                compiler.CompileExpr(timeout.Value);
+                compiler._chunk.EmitOp(OpCode.SetTimeout);
+            }
+
             // SPEC "Statische Mitglieder": statische Feld-Initialisierer
             // laufen GENAU EINMAL, vor dem eigentlichen Programm (anders als
             // Instanzfelder, die bei JEDER `new`-Konstruktion neu laufen) -
@@ -480,7 +487,8 @@ namespace fire.Compiler
             {
                 foreach (var baseRef in rc.Decl.BaseRefs ?? Array.Empty<TypeRef>())
                 {
-                    string n = baseRef.ResolveBaseName(name => name == "Exception" || classes.ContainsKey(name) || interfaceNames.Contains(name));
+                    bool Known(string name) => name == "Exception" || classes.ContainsKey(name) || interfaceNames.Contains(name);
+                    string n = baseRef.TypeArgCount == 0 ? baseRef.ResolveBaseName(Known) : GenericClassNames.ResolveNewTarget(baseRef, baseRef.TypeArgCount, Known);
                     if (interfaceNames.Contains(n)) { rc.Interfaces.Add(n); continue; }
                     if (n != "Exception" && !classes.TryGetValue(n, out _)) continue;
                     if (n == "Exception") break; // keine RuntimeClass verfügbar -> Base bleibt null
@@ -1009,6 +1017,9 @@ namespace fire.Compiler
 
                 case NoSyncDirective:
                     break; // siehe Compile: `SetAutoSync 0` steht schon am Programmanfang
+
+                case TimeoutDirective:
+                    break; // siehe Compile: `SetTimeout` steht schon am Programmanfang
 
                 case NoShadowDirective:
                     // Wie NoOpStmt - bereits vom Resolver in einem Vorab-Pass

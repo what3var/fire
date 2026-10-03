@@ -192,17 +192,23 @@ namespace fire.Compiler
         /// neben nicht-generisch" ist bewusst erlaubt.</summary>
         private static List<Stmt> DisambiguateGenericClasses(List<Stmt> program)
         {
+            // Klassen und Interfaces haben getrennte Namenstabellen: `Command` und `Command<T>` kollidieren, `ICommand` und `ICommand<T>` ebenso
             var nonGenericNames = new HashSet<string>();
+            var nonGenericInterfaces = new HashSet<string>();
             foreach (var stmt in program)
-                if (stmt is ClassDecl cd && (cd.TypeParams == null || cd.TypeParams.Count == 0))
-                    nonGenericNames.Add(cd.Name);
-            if (nonGenericNames.Count == 0) return program;
+            {
+                if (stmt is ClassDecl cd && (cd.TypeParams == null || cd.TypeParams.Count == 0)) nonGenericNames.Add(cd.Name);
+                if (stmt is InterfaceDecl id && (id.TypeParams == null || id.TypeParams.Count == 0)) nonGenericInterfaces.Add(id.Name);
+            }
+            if (nonGenericNames.Count == 0 && nonGenericInterfaces.Count == 0) return program;
 
             var result = new List<Stmt>(program.Count);
             foreach (var stmt in program)
             {
                 if (stmt is ClassDecl { TypeParams.Count: > 0 } generic && nonGenericNames.Contains(generic.Name))
                     result.Add(generic with { Name = GenericClassNames.Mangle(generic.Name, generic.TypeParams!.Count) });
+                else if (stmt is InterfaceDecl { TypeParams.Count: > 0 } genericInterface && nonGenericInterfaces.Contains(genericInterface.Name))
+                    result.Add(genericInterface with { Name = GenericClassNames.Mangle(genericInterface.Name, genericInterface.TypeParams!.Count) });
                 else
                     result.Add(stmt);
             }
@@ -972,11 +978,19 @@ namespace fire.Compiler
                 return new NoSyncDirective(_sourceIndex, line);
             }
 
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "timeout")
+            {
+                Advance();
+                var value = ParseExpression();
+                ExpectStatementTerminator();
+                return new TimeoutDirective(_sourceIndex, line, value);
+            }
+
             // '#using' ist ab jetzt reine Preprocessor-Angelegenheit (siehe
             // Preprocessing.Preprocessor.ProcessInner/ProcessedSource) - eine
             // '#using'-Zeile wird dort schon erkannt und aus dem Text entfernt,
             // der Parser sieht sie nie mehr. Kein Fall dafür hier mehr nötig.
-            throw Error($"Unbekannte Präprozessor-Direktive '#{Peek().Lexeme}' (bekannt: '#extern \"libName\"', '#noshadow', '#nosync')", Peek());
+            throw Error($"Unbekannte Präprozessor-Direktive '#{Peek().Lexeme}' (bekannt: '#extern \"libName\"', '#noshadow', '#nosync', '#timeout wert')", Peek());
         }
 
         private Stmt ParseUnsafeStmt()
@@ -1421,7 +1435,10 @@ namespace fire.Compiler
                     // Auch qualifiziert ('Geometry.Shape' - eine Basisklasse in einem
                     // anderen Namespace, siehe SPEC "Namespaces").
                     string baseName = ParseDottedName("Basisklassen-/Interface-Namen");
-                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces));
+                    // `class Home : Command<IDevice>`: die Typ-Argumente werden (wie überall) nicht ausgewertet, nur ihre ANZAHL wählt die generische
+                    // Klasse bzw. das generische Interface dieses Namens (siehe GenericClassNames.ResolveNewTarget).
+                    int typeArgCount = ParseOptionalTypeParamNames().Count;
+                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces, TypeArgCount: typeArgCount));
                 } while (Match(TokenType.Comma));
             }
 
@@ -1697,6 +1714,9 @@ namespace fire.Compiler
             int line = Peek().Line;
             Expect(TokenType.Interface, "Erwarte 'interface'");
             string name = Expect(TokenType.Identifier, "Erwarte Interface-Namen").Lexeme;
+            // `interface ICommand<T> { ... }`: generisch wie eine Klasse (siehe ParseClassOrActorDecl); wie dort zählt nur Name und Anzahl der Typ-Parameter
+            var typeParamNames = ParseOptionalTypeParamNames();
+            var typeParams = typeParamNames.Count > 0 ? ParseWhereClauses(typeParamNames, line) : null;
             Expect(TokenType.LBrace, "Erwarte '{' nach Interface-Kopf");
 
             var methods = new List<InterfaceMethodSig>();
@@ -1713,7 +1733,7 @@ namespace fire.Compiler
             }
             Expect(TokenType.RBrace, "Erwarte '}' am Ende des Interface");
 
-            return new InterfaceDecl(_sourceIndex, line, QualifyDeclName(name), methods);
+            return new InterfaceDecl(_sourceIndex, line, QualifyDeclName(name), methods, typeParams);
         }
 
         /// <summary>`enum Name { A, B = 5, C }` - siehe Ast.EnumDecl-Doku für die

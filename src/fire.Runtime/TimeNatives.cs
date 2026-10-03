@@ -107,6 +107,33 @@ namespace fire.Runtime
         /// <summary>`[-][d.]hh:mm:ss[.fffffff]` wie .NET.</summary>
         private static string SpanText(long ticks) => TimeSpan.FromTicks(ticks).ToString("c", CultureInfo.InvariantCulture);
 
+        /// <summary>Eine Zeitangabe als Ticks, wie sie `Sleep` versteht: eine `TimeSpan`, ein Wert mit Zeiteinheit (`500ms`, `2s`) oder eine Zahl in Millisekunden.
+        /// `false` mit Fehlertext, wenn es nichts davon ist.</summary>
+        internal static bool TryTimeTicks(Value arg, out long ticks, out string error)
+        {
+            ticks = 0;
+            error = "";
+            if (arg.Kind == ValueKind.Class)
+            {
+                var obj = (ObjectInstance)arg.AsObjectRef();
+                if (!obj.TryGetFieldLocked("ticks", out var field) || field.Kind != ValueKind.Int) { error = $"erwartet eine TimeSpan, erhalten: {obj.ClassName}."; return false; }
+                ticks = field.AsInt();
+                return true;
+            }
+            if (arg.Kind is ValueKind.Int or ValueKind.Float)
+            {
+                if (arg.Unit is { IsUnitless: false } unit)
+                {
+                    try { ticks = (long)Math.Round(Num(arg) * unit.ConversionFactorTo(Unit.Parse("s")) * TicksPerSecond); return true; }
+                    catch (Exception) { error = $"'{unit}' ist keine Zeiteinheit."; return false; }
+                }
+                ticks = (long)Math.Round(Num(arg) * TicksPerMillisecond); // eine Zahl ohne Einheit: Millisekunden
+                return true;
+            }
+            error = $"erwartet eine TimeSpan, einen Zeitwert oder Millisekunden, erhalten: {arg.Kind}.";
+            return false;
+        }
+
         /// <summary>`Sleep(zeit)`: `zeit` ist eine `TimeSpan`, ein Wert mit Zeiteinheit (`Sleep(500ms)`) oder eine Zahl (Millisekunden).</summary>
         private static Value Sleep(Value[] a)
         {
