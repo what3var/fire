@@ -265,7 +265,7 @@ auf die rohen Pixel-Daten:
   gestreckt/gestaucht.
 - **Kein eigenes Alpha-Blending.** `Framebuffer.SetPixel`/`FillRect`
   schreiben ein Zielpixel immer vollständig, es wird nichts gemischt.
-- **SDL-Texturformat passend zu `PixelColor`.** `SDL.PixelFormat.RGBA8888`
+- **SDL-Texturformat passend zu `PixelColor`.** `SDL.PixelFormat.ABGR8888` (SDL nennt gepackte Formate nach der Bit-Reihenfolge des Worts; auf Little-Endian ist das die Byte-Reihenfolge R,G,B,A, früher stand hier ARGB8888 und vertauschte Rot und Blau)
   (in SDL3 der Name für das gepackte 32-Bit-RGBA-Format) - "R,G,B,A in genau
   dieser Byte-Reihenfolge im Speicher", passend zu `PixelColor.Packed`.
 

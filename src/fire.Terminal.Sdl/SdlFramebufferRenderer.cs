@@ -20,13 +20,10 @@ namespace fire.Terminal.Sdl
     ///
     /// Zeichnet den Framebuffer als STREAMING-Textur (SDL.TextureAccess.
     /// Streaming, jeden Frame per SDL.UpdateTexture neu hochgeladen) im
-    /// Format SDL.PixelFormat.RGBA8888 (in SDL3 der Name für das gepackte
-    /// 32-Bit-RGBA-Format - hieß in früheren SDL3-Vorabversionen "RGBA32",
-    /// wurde aber vor dem finalen Release in "RGBA8888" umbenannt) - passend
-    /// zu PixelColor.Packed (siehe dortige Doku): "RGBA8888" bedeutet bei
-    /// SDL "R,G,B,A in genau dieser Byte-Reihenfolge im Speicher", der
-    /// Framebuffer-Inhalt kann dadurch ohne jede Umrechnung direkt
-    /// hochgeladen werden.
+    /// Format SDL.PixelFormat.ABGR8888: SDL benennt die gepackten Formate nach der Bit-Reihenfolge des 32-Bit-WORTS (höchstes Byte zuerst),
+    /// auf Little-Endian liegen die Bytes also umgekehrt im Speicher. PixelColor.Packed hat R im niedrigsten Byte (Speicherreihenfolge
+    /// R,G,B,A) - das ist ABGR8888 (= SDL_PIXELFORMAT_RGBA32 auf Little-Endian). Mit ARGB8888 waren Rot und Blau vertauscht; der Framebuffer-Inhalt
+    /// wird ohne Umrechnung hochgeladen.
     ///
     /// Kopiert die Textur per SDL.RenderTexture (in SDL3 der Nachfolger von
     /// SDL2s SDL_RenderCopy) mit `dstrect = NULL` auf das gesamte aktuelle
@@ -271,7 +268,7 @@ namespace fire.Terminal.Sdl
 
             _texture = SDL.CreateTexture(
                 _renderer,
-                SDL.PixelFormat.ARGB8888,
+                SDL.PixelFormat.ABGR8888, // Speicherreihenfolge R,G,B,A (PixelColor.Packed): auf Little-Endian ABGR8888, nicht ARGB8888 (das vertauschte Rot und Blau)
                 SDL.TextureAccess.Streaming,
                 width, height);
             if (_texture == IntPtr.Zero)
