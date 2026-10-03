@@ -37,6 +37,7 @@ Umwege in eine kurze Sequenz nativer Instruktionen übersetzen lassen
 | `JumpIfTruePeek` | u16 addr | cond=peek; if cond: ip = addr (kein Pop, für `\|\|`) |
 | `EnterScope` | – | CurrentScope = neue (bzw. aus dem Pool wiederverwendete, siehe Abschnitt 44) Scope(CurrentScope) |
 | `ExitScope` | – | CurrentScope.Release(...); CurrentScope = Parent; die Scope geht ggf. in den Pool zurück |
+| `SetTimeout` | – | pop v; setzt die Standard-Wartezeit der Warte-Funktionen (`#timeout`, am Programmanfang emittiert; v: Zeitwert oder Millisekunden) |
 | `StoreLocalPop` | u16 depth, u16 slot | `StoreLocal` + `Pop` in einer Instruktion (Abschnitt 44) |
 | `StoreGlobalPop` | u16 slot | `StoreGlobal` + `Pop` |
 | `JumpIfNotLt`/`JumpIfNotLtEq`/`JumpIfNotGt`/`JumpIfNotGtEq`/`JumpIfNotEq`/`JumpIfNotNotEq` | u16 addr | pop b, pop a; springt, wenn `a OP b` NICHT gilt (= `Lt` + `JumpIfFalse` usw.) |
@@ -1837,3 +1838,14 @@ Keine Einstellung gewinnt durchgängig: ohne PGO wird die Rekursion doppelt so l
 
 **Was als Nächstes die meiste Zeit kostet.** Jede Instruktion kostet noch ~8-12 ns, obwohl der Rumpf klein ist: `_ip`, `_sp`, `_stack`, `_currentScope` liegen als Felder der VM im Speicher, und jede Instruktion liest/schreibt sie über eine abhängige Kette (Store-to-Load-Weiterleitung). Eine Schleife mit
 diesen Zuständen in lokalen Variablen (nur für die häufigen Instruktionen, alles andere über die bestehende `Step`/`Execute`-Kette) würde das voraussichtlich etwa halbieren; das ist ein größerer, eigener Umbau.
+
+## 45. Befehlsebene der Geräte, `#timeout`, generische Basisklassen und Interfaces
+
+- **Empfangspuffer (`ReceiveBuffer`).** Die Brücke hält je Gerät die empfangenen Pakete in der Reihenfolge ihres Eintreffens. `ReadString`/`Read` holen das nächste Paket (nach einem `WaitFor` den Rest des angebrochenen), `TryConsumeThrough(muster)`
+  sucht die Bytefolge über die Paketgrenzen hinweg und schneidet hinter dem ersten Treffer ab. `IDevice.Write(byte[])` (neu, neben `SendCommand(string)`) schreibt rohe Bytes; `LoopbackDevice` echot sie wie Befehle.
+- **Warten ohne taub zu sein.** `WaitFor*` ist KEIN blockierender nativer Aufruf: die Brücke bekommt vom Host eine `WaitUntilFunction` (`DeviceBridge.RegisterAll(..., waitUntil)`, die Sitzungen übergeben `VM.WaitUntil`), die in kurzen Stücken wartet und dazwischen
+  `PollSignalsAfterOp` ausführt (wie `Sleep`): `leave`/`terminate` beenden das Warten sofort, die Warteschlange des Hauptprogramms läuft. Ohne Host (Tests der Brücke) wird gepollt. Die Zeitangabe versteht `TimeNatives.TryTimeTicks` (TimeSpan, Zeitwert, Millisekunden).
+- **`#timeout`.** `Parser` -> `TimeoutDirective(Expr)`, `Compiler.Compile` emittiert den Ausdruck und `SetTimeout` am Programmanfang (nach `SetAutoSync`), die VM setzt `VM.DefaultTimeout` (statisch, damit Fire-Threads es sehen; der VM-Konstruktor eines Hauptprogramms setzt es auf 30 s zurück).
+- **Generische Basisklassen und Interfaces.** `TypeRef.TypeArgCount` trägt die ANZAHL der Typ-Argumente einer Basisklassen-/Interface-Angabe (`class Home : Command<IDevice>`); `Resolver.ResolveBaseRef` und die Basisverknüpfung des Compilers lösen sie über
+  `GenericClassNames.ResolveNewTarget` auf (wie `new Name<...>`). `InterfaceDecl.TypeParams` macht Interfaces generisch; `Parser.DisambiguateGenericClasses` gibt einem generischen Interface neben einem nicht-generischen gleichen Namens den Schlüssel `Name`N`. Ein Interface
+  darf als Parametertyp stehen (`Resolver.ValidateTypeName`). `Command`/`Command<T>`/`ICommand`/`ICommand<T>` stehen in der Standard-Prelude.

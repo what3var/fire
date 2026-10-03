@@ -130,7 +130,7 @@ namespace fire.Runtime
             // Ein eigener Manager mit den eingebauten Treibern; er gehört dem Programm und wird nach dem Lauf freigegeben.
             var deviceManager = fire.Device.Manager.DeviceManager.DeviceManager.CreateDefault();
 
-            return fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager);
+            return fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager, VM.WaitUntil);
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]

@@ -38,6 +38,12 @@ namespace fire.Ast
     /// Programm (der Compiler emittiert dafür ganz am Anfang `SetAutoSync 0`); muss eine Top-Level-Anweisung sein.</summary>
     public sealed record NoSyncDirective(int Source, int Line) : Stmt(Source, Line);
 
+    /// <summary>`#timeout wert` (z.B. `#timeout 10s`, `#timeout 500ms`, `#timeout 2000`): die Wartezeit, die Warte-Funktionen ohne eigene Zeitangabe
+    /// verwenden (`Device.WaitFor`/`WaitForString`; ohne die Direktive 30 Sekunden). `wert`: ein Zeitwert (`10s`), eine `TimeSpan` ist hier nicht möglich (die
+    /// Direktive wird ganz am Programmanfang ausgewertet) oder eine Zahl in Millisekunden - wie bei `Sleep`. Der Compiler emittiert dafür ganz am Anfang
+    /// `SetTimeout`; muss eine Top-Level-Anweisung sein.</summary>
+    public sealed record TimeoutDirective(int Source, int Line, Expr Value) : Stmt(Source, Line);
+
     /// <summary>Ein einzelnes Enum-Mitglied. ValueExpr fehlt -> Wert ist der
     /// des Vorgängers + 1 (0 beim ersten Mitglied) - klassisches C-artiges
     /// Auto-Increment. Wenn gesetzt, MUSS ValueExpr ein Int-Literal sein (vom
@@ -290,7 +296,8 @@ namespace fire.Ast
         int Line, TypeRef? ReturnType, string Name, IReadOnlyList<LambdaParam> Params);
 
     public sealed record InterfaceDecl(
-        int Source, int Line, string Name, IReadOnlyList<InterfaceMethodSig> Methods) : Stmt(Source, Line);
+        int Source, int Line, string Name, IReadOnlyList<InterfaceMethodSig> Methods,
+        IReadOnlyList<TypeParam>? TypeParams = null) : Stmt(Source, Line);
 
     // ---------------------------------------------------------------
     // Native Anbindung / unsafe (SPEC "APIs & Bitbreiten & Pointer")

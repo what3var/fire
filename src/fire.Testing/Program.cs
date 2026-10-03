@@ -9156,13 +9156,13 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(d.IsConnected())
         d.EnsureConnected().EnsureConnected()
         print(d.IsConnected)
-        print(d.SendCommand("hallo"))
+        print(d.DoCommand("hallo"))
         var tries = 0
         while (!d.HasData() && tries < 200) { Sleep(TimeSpan.FromMilliseconds(10)); tries = tries + 1 }
-        print(d.ReadData())
+        print(d.ReadString())
         d.Disconnect()
         print(d.IsConnected)
-        print(d.SendCommand("weg"))
+        print(d.DoCommand("weg"))
         """, new[] { "loopback:echo", "False", "False", "True", "True", "hallo\n", "False", "False" }, defaultId: "loopback:echo");
 
     CheckDev("IsShared: Geraet und Manager eines geteilten Managers melden es, ein eigener Manager nicht", """
@@ -9203,10 +9203,154 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     CheckDev("Paketverfolgung: gesendete und empfangene Pakete werden mitgeschnitten", """
         #import "devices"
         var d = Device.Default.EnsureConnected()
-        d.SendCommand("ab")
+        d.DoCommand("ab")
         while (!d.HasData()) { }
-        print(d.ReadData())
+        print(d.ReadString())
         """, new[] { "ab\n" }, defaultId: "loopback:echo");
+
+    // ---- Befehlsebene: Write/Read, WaitFor, Command ----
+    CheckDev("Write/Read: rohe Bytes hinaus, als Puffer zurueck; WriteString ohne Zeilenende, ReadString als Text", """
+        #import "devices"
+        var d = Device.Default.EnsureConnected()
+        var data = new byte[4]
+        data[0] = 1
+        data[1] = 200
+        data[2] = 0
+        data[3] = 255
+        print(d.Write(data))
+        while (!d.HasData()) { }
+        var back = d.Read()
+        print(back.length + " " + back[0] + " " + back[1] + " " + back[2] + " " + back[3])
+        print(d.Read().length)
+        print(d.WriteString("abc"))
+        while (!d.HasData()) { }
+        print("[" + d.ReadString() + "]")
+        print("[" + d.ReadString() + "]")
+        d.Disconnect()
+        print(d.Write(data))
+        print(d.WriteString("x"))
+        """, new[] { "True", "4 1 200 0 255", "0", "True", "[abc]", "[]", "False", "False" }, defaultId: "loopback:echo");
+
+    CheckDev("WaitForString: ueber Paketgrenzen, schneidet den Puffer hinter dem Treffer ab, dasselbe Muster zweimal hintereinander", """
+        #import "devices"
+        var d = Device.Default.EnsureConnected()
+        d.WriteString("ok")
+        d.WriteString("ay-ab-ab-ende")
+        print(d.WaitForString("kay"))
+        print(d.WaitForString("ab"))
+        print(d.WaitForString("ab"))
+        print(d.WaitForString("ab", 150))
+        print(d.WaitForString("ende"))
+        print("[" + d.ReadString() + "]")
+        d.WriteString("xyz")
+        print(d.WaitForString(""))
+        print(d.WaitForString("z"))
+        print("[" + d.ReadString() + "]")
+        """, new[] { "True", "True", "True", "False", "True", "[]", "True", "True", "[]" }, defaultId: "loopback:echo");
+
+    CheckDev("WaitForString: was vor dem Treffer lag, ist verbraucht; was danach kam, bleibt lesbar", """
+        #import "devices"
+        var d = Device.Default.EnsureConnected()
+        d.WriteString("vorspann|nutzlast")
+        print(d.WaitForString("|"))
+        print("[" + d.ReadString() + "]")
+        d.WriteString("eins")
+        d.WriteString("zwei")
+        print(d.WaitForString("ei"))
+        print("[" + d.ReadString() + "]")
+        print("[" + d.ReadString() + "]")
+        """, new[] { "True", "[nutzlast]", "True", "[ns]", "[zwei]" }, defaultId: "loopback:echo");
+
+    CheckDev("WaitFor mit Bytes: Muster mit Nullbytes, ueber Pakete", """
+        #import "devices"
+        var d = Device.Default.EnsureConnected()
+        var a = new byte[3]
+        a[0] = 9
+        a[1] = 0
+        a[2] = 7
+        var b = new byte[3]
+        b[0] = 0
+        b[1] = 7
+        b[2] = 5
+        d.Write(a)
+        d.Write(b)
+        var pattern = new byte[3]
+        pattern[0] = 0
+        pattern[1] = 7
+        pattern[2] = 0
+        print(d.WaitFor(pattern))
+        var rest = d.Read()
+        print(rest.length + " " + rest[0] + " " + rest[1])
+        """, new[] { "True", "2 7 5" }, defaultId: "loopback:echo");
+
+    CheckDev("WaitForString: Wartezeit als Zeitwert, Millisekunden und TimeSpan; Ablauf liefert false; ungueltige Wartezeit ist eine DeviceArgumentException", """
+        #import "devices"
+        #import "time"
+        var d = Device.Default.EnsureConnected()
+        var t0 = DateTime.Now()
+        print(d.WaitForString("nie", 120ms))
+        print(d.WaitForString("nie", 120))
+        print(d.WaitForString("nie", TimeSpan.FromMilliseconds(120)))
+        var ms = (DateTime.Now() - t0).TotalMilliseconds
+        print((ms >= 330) + " " + (ms < 5000))
+        try { d.WaitForString("a", "x") } catch (e) { print((e is of DeviceArgumentException) + " " + e.message) }
+        """, new[] { "False", "False", "False", "True True", "True Ungültige Wartezeit (erwartet: TimeSpan, Zeitwert wie 5s oder Millisekunden)" }, defaultId: "loopback:echo");
+
+    CheckDev("#timeout: die Standard-Wartezeit ohne eigene Zeitangabe (sonst 30 Sekunden)", """
+        #import "devices"
+        #import "time"
+        #timeout 200ms
+        var d = Device.Default.EnsureConnected()
+        var t0 = DateTime.Now()
+        print(d.WaitForString("nie"))
+        var ms = (DateTime.Now() - t0).TotalMilliseconds
+        print((ms >= 190) + " " + (ms < 5000))
+        """, new[] { "False", "True True" }, defaultId: "loopback:echo");
+
+    CheckDev("WaitFor bei getrenntem Geraet endet sofort mit false", """
+        #import "devices"
+        #import "time"
+        var d = Device.Default.EnsureConnected()
+        d.Disconnect()
+        var t0 = DateTime.Now()
+        print(d.WaitForString("x", 20s))
+        print((DateTime.Now() - t0).TotalMilliseconds < 3000)
+        """, new[] { "False", "True" }, defaultId: "loopback:echo");
+
+    CheckDev("DoCommand: Text als Zeile, Command<IDevice> mit dem Geraet als Kontext, abgeleitete Befehle, DoCommands", """
+        #import "devices"
+        var d = Device.Default.EnsureConnected()
+        print(d.DoCommand("M105"))
+        print(d.WaitForString("M105\n"))
+
+        var hello = new Command<IDevice>()
+        hello.Command = dev => { return dev.WriteString("hallo;") }
+        print(d.DoCommand(hello))
+        print(d.WaitForString("hallo;"))
+
+        class Ping : Command<IDevice> {
+            Execute(IDevice context) { return context.WriteString("ping;") }
+        }
+        print(d.DoCommand(new Ping()))
+        print(d.WaitForString("ping;"))
+
+        var list = new List()
+        list.Add(new Ping())
+        list.Add(hello)
+        print(d.DoCommands(list))
+        print(d.WaitForString("ping;hallo;"))
+        print(d.DoCommands([new Ping(), new Ping()]))
+        print(d.WaitForString("ping;ping;"))
+
+        var failing = new Command<IDevice>(dev => false)
+        var counted = new Command<IDevice>(dev => { dev.WriteString("nie;") })
+        print(d.DoCommands([failing, counted]))
+        print(d.WaitForString("nie;", 100))
+        print(d.DoCommand(new Command<IDevice>()))
+        d.Disconnect()
+        print(d.DoCommand(hello))
+        print(d.DoCommand("weg"))
+        """, new[] { "True", "True", "True", "True", "True", "True", "True", "True", "True", "True", "False", "False", "True", "False", "False" }, defaultId: "loopback:echo");
 
     // Paketverfolgung direkt am Manager (ohne Skript)
     {
@@ -10636,6 +10780,51 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         }
         T.Run()
         """, new[] { "~m0", "~e1", "~m1", "~m2", "31" });
+
+    // ---- Command/ICommand der Standard-Prelude, generische Basisklassen und Interfaces, Interfaces als Parametertyp ----
+
+    CheckSc("Command, Command<T>: Lambda als Rumpf, Konstruktor mit Lambda, ohne Lambda geschieht nichts", """
+        var a = new Command(() => 5)
+        print(a.Execute())
+        var b = new Command<int>(x => x + 1)
+        print(b.Execute(9))
+        var e = new Command<string>()
+        e.Command = s => s + "!"
+        print(e.Execute("hi"))
+        print(new Command().Execute())
+        print(new Command<int>().Execute(1))
+        """, new[] { "5", "10", "hi!", "undefined", "undefined" });
+
+    CheckSc("class X : Command<T> - eine generische Basisklasse mit Typ-Argumenten, Execute ueberschreiben, Lambda erben", """
+        class Twice : Command<int> {
+            Execute(int context) { return context * 2 }
+        }
+        class Plus : Command<int> {
+            construct(int n) { this.Command = x => x + n }
+        }
+        print(new Twice().Execute(4))
+        print(new Plus(10).Execute(4))
+        var c = new Command<int>()
+        print(c is of Command)
+        """, new[] { "8", "14", "False" });
+
+    CheckSc("Generisches Interface neben dem nicht-generischen gleichen Namens, Implementierung wird geprueft", """
+        interface IBox { Open() }
+        interface IBox<T> { Open(T key) }
+        class Plain : IBox { Open() { return "auf" } }
+        class Locked<T> : IBox<T> { Open(T key) { return "mit " + key } }
+        class Tagged : Locked<int> { }
+        print(new Plain().Open())
+        print(new Locked<int>().Open(7))
+        print(new Tagged().Open(8))
+        """, new[] { "auf", "mit 7", "mit 8" });
+
+    CheckSc("Interfaces als Typ eines Parameters", """
+        interface IShape { Area() }
+        class Sq : IShape { Area() { return 4 } }
+        class User { static Use(IShape s) { return s.Area() } }
+        print(User.Use(new Sq()))
+        """, new[] { "4" });
 
     Console.WriteLine(scFailures == 0 ? "Alle Scope-Pruefungen bestanden." : $"FEHLER: {scFailures} Scope-Pruefung(en) fehlgeschlagen.");
 }

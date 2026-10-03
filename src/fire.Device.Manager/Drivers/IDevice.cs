@@ -31,5 +31,8 @@ namespace fire.Device.Manager.Drivers
 
         /// <summary>Sendet `command` (mit Zeilenende). false, wenn nicht verbunden - nichts wurde gesendet.</summary>
         bool SendCommand(string command);
+
+        /// <summary>Sendet `data` genau so, wie sie sind (kein Zeilenende, keine Umkodierung). false, wenn nicht verbunden - nichts wurde gesendet.</summary>
+        bool Write(byte[] data);
     }
 }

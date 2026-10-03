@@ -24,8 +24,9 @@ namespace fire.Device.Bridge
     /// PollyPocket), ein Aufruf mitten in eine laufende VM hinein wäre von
     /// dort aus nicht sicher synchronisierbar. Stattdessen sammelt diese
     /// Brücke jedes empfangene Byte-Paket PRO Gerät in einer eigenen,
-    /// nebenläufigkeitssicheren Warteschlange (siehe RegisterAll) - fire-
-    /// Code fragt aktiv ab (Device.HasData()/ReadData()), aus einem
+    /// nebenläufigkeitssicheren Empfangspuffer (siehe <see cref="ReceiveBuffer"/>) - fire-
+    /// Code fragt aktiv ab (Device.HasData()/ReadString()/Read()) oder wartet
+    /// auf bestimmte Zeichen (WaitForString/WaitFor), aus einem
     /// eigenen 'fire { }'-Hintergrund-Thread heraus, falls gewünscht.
     /// </summary>
     public static class DeviceBridge
@@ -50,11 +51,30 @@ namespace fire.Device.Bridge
         /// die Empfangs-Haken von den Geräten (ein geteilter Manager überlebt den Lauf, die Haken dürfen es nicht) und
         /// gibt einen NICHT geteilten Manager frei (trennt die Geräte). Ein geteilter Manager bleibt unberührt -
         /// ein Skript kann ihn und seine Geräte nicht zerstören.</summary>
-        public static IDisposable RegisterAll(NativeRegistry natives, DeviceManager manager)
+        /// <summary>Wartet, bis die Bedingung wahr wird, höchstens `timeout` (undefined = die Standard-Wartezeit des Programms); true, wenn sie wahr wurde.
+        /// Der Host liefert hier ein Warten, das `leave`/`terminate` des Programms beachtet (siehe VM.WaitUntil); ohne Angabe wird einfach gepollt
+        /// (Zeitangaben dann nur als Zahl in Millisekunden). Wirft ArgumentException bei einer ungültigen Zeitangabe.</summary>
+        public delegate bool WaitUntilFunction(Func<bool> condition, Value timeout);
+
+        private static bool DefaultWaitUntil(Func<bool> condition, Value timeout)
         {
-            // Pro Geräte-Handle eine eigene Warteschlange empfangener
-            // Byte-Pakete (siehe Klassendoku) - und welche Handles schon
-            // "angeschlossen" sind (OnRawDataReceived gehookt), damit ein
+            long milliseconds = 30_000;
+            if (timeout.Kind is ValueKind.Int or ValueKind.Float) milliseconds = (long)(timeout.Kind == ValueKind.Int ? timeout.AsInt() : timeout.AsFloat());
+            else if (timeout.Kind != ValueKind.Undefined) throw new ArgumentException("Ungültige Wartezeit: erwartet Millisekunden.");
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            while (!condition())
+            {
+                if (stopwatch.ElapsedMilliseconds >= milliseconds) return false;
+                System.Threading.Thread.Sleep(2);
+            }
+            return true;
+        }
+
+        public static IDisposable RegisterAll(NativeRegistry natives, DeviceManager manager, WaitUntilFunction? waitUntil = null)
+        {
+            waitUntil ??= DefaultWaitUntil;
+            // Pro Geräte-Handle ein eigener Empfangspuffer (siehe ReceiveBuffer) - und
+            // welche Handles schon "angeschlossen" sind (OnRawDataReceived gehookt), damit ein
             // Gerät nicht bei jedem einzelnen nativen Aufruf erneut gehookt
             // wird (das würde denselben Callback mehrfach registrieren und
             // jedes empfangene Paket ebenso oft vervielfachen). Beides
@@ -62,7 +82,7 @@ namespace fire.Device.Bridge
             // HashSet) - native Funktionen können auch aus MEHREREN
             // gleichzeitig laufenden 'fire {}'-Threads heraus aufgerufen
             // werden, nicht nur vom Hauptthread.
-            var receiveQueues = new ConcurrentDictionary<int, ConcurrentQueue<byte[]>>();
+            var receiveQueues = new ConcurrentDictionary<int, ReceiveBuffer>();
             var hookedHandles = new ConcurrentDictionary<int, byte>(); // Wert ungenutzt - dient nur als nebenläufigkeitssicheres Set
             var hooks = new ConcurrentBag<(IDevice Device, Action<byte[]> Handler)>();
 
@@ -73,13 +93,13 @@ namespace fire.Device.Bridge
 
                 if (hookedHandles.TryAdd(handle, 0))
                 {
-                    var queue = new ConcurrentQueue<byte[]>();
+                    var queue = new ReceiveBuffer();
                     receiveQueues[handle] = queue;
                     // WICHTIG: läuft auf dem Hintergrund-Thread DES GERÄTS
                     // (siehe SerialDevice.PollyPocket), NICHT auf dem
                     // VM-Thread - deshalb hier nur ein simples, threadsicheres
-                    // Enqueue, KEIN Zugriff auf irgendetwas VM-Seitiges.
-                    Action<byte[]> handler = bytes => queue.Enqueue(bytes);
+                    // Anhängen, KEIN Zugriff auf irgendetwas VM-Seitiges.
+                    Action<byte[]> handler = bytes => queue.Add(bytes);
                     device.OnRawDataReceived += handler;
                     hooks.Add((device, handler));
                 }
@@ -87,7 +107,7 @@ namespace fire.Device.Bridge
             }
 
             natives.RegisterGroup(ManagerPrefix, BuildManagerFunctions(manager));
-            natives.RegisterGroup(DevicePrefix, BuildDeviceFunctions(manager, ResolveDevice, receiveQueues));
+            natives.RegisterGroup(DevicePrefix, BuildDeviceFunctions(manager, ResolveDevice, receiveQueues, waitUntil));
 
             return new Cleanup(manager, hooks);
         }
@@ -160,14 +180,20 @@ namespace fire.Device.Bridge
                 ["TestAvailability"] = args => Value.MakeUndefined(),
                 ["Connect"] = args => Value.MakeUndefined(),
                 ["Disconnect"] = args => Value.MakeUndefined(),
-                ["SendCommand"] = args => Value.MakeUndefined(),
+                ["DoCommand"] = args => Value.MakeUndefined(),
                 ["HasData"] = args => Value.MakeUndefined(),
-                ["ReadData"] = args => Value.MakeUndefined(),
+                ["ReadString"] = args => Value.MakeUndefined(),
+                // WICHTIG: neue Funktionen immer ANS ENDE, in BuildDeviceFunctions in derselben Reihenfolge (Index = Position).
+                ["Read"] = args => Value.MakeUndefined(),
+                ["WriteString"] = args => Value.MakeUndefined(),
+                ["Write"] = args => Value.MakeUndefined(),
+                ["WaitForString"] = args => Value.MakeUndefined(),
+                ["WaitFor"] = args => Value.MakeUndefined(),
             };
         }
 
         private static Dictionary<string, NativeFunction> BuildDeviceFunctions(
-            DeviceManager manager, System.Func<int, IDevice?> resolve, ConcurrentDictionary<int, ConcurrentQueue<byte[]>> receiveQueues)
+            DeviceManager manager, System.Func<int, IDevice?> resolve, ConcurrentDictionary<int, ReceiveBuffer> receiveQueues, WaitUntilFunction waitUntil)
         {
             return new Dictionary<string, NativeFunction>
             {
@@ -195,7 +221,8 @@ namespace fire.Device.Bridge
                     catch { /* absichtlich verschluckt - Trennen soll nie fehlschlagen können */ }
                     return Value.MakeUndefined();
                 },
-                ["SendCommand"] = args =>
+                // Eine Zeile senden (mit Zeilenende, in der Kodierung des Treibers); ob ein Befehlsobjekt oder ein Text ankommt, entscheidet die Prelude.
+                ["DoCommand"] = args =>
                 {
                     var device = resolve((int)args[0].AsInt());
                     if (device == null) return Value.MakeBool(false);
@@ -204,26 +231,67 @@ namespace fire.Device.Bridge
                 },
                 ["HasData"] = args =>
                 {
-                    resolve((int)args[0].AsInt()); // stellt sicher, dass die Queue existiert (siehe RegisterAll)
-                    return Value.MakeBool(receiveQueues.TryGetValue((int)args[0].AsInt(), out var q) && !q.IsEmpty);
+                    resolve((int)args[0].AsInt()); // stellt sicher, dass der Puffer existiert (siehe RegisterAll)
+                    return Value.MakeBool(receiveQueues.TryGetValue((int)args[0].AsInt(), out var q) && q.HasData);
                 },
-                ["ReadData"] = args =>
+                ["ReadString"] = args =>
                 {
                     // Latin1 (ISO-8859-1) statt UTF-8: bildet JEDEN Byte-Wert
                     // 0..255 verlustfrei auf GENAU ein Zeichen ab - anders als
                     // UTF-8 (das Mehrbyte-Folgen für alles über 127 erwartet
                     // und bei zufälligen Binärdaten leicht ungültige Folgen
                     // erzeugt) verträgt sich das sowohl mit reinem Text
-                    // (der übliche Fall bei einem SendCommand(string)-
-                    // basierten Protokoll) als auch mit rohen Binärdaten -
-                    // fire-Code kann bei Bedarf mit `str[i]` byteweise
-                    // zurückrechnen.
+                    // (der übliche Fall bei einem zeilenbasierten Protokoll)
+                    // als auch mit rohen Binärdaten - fire-Code kann bei
+                    // Bedarf mit `str[i]` byteweise zurückrechnen.
                     resolve((int)args[0].AsInt());
-                    if (!receiveQueues.TryGetValue((int)args[0].AsInt(), out var q) || !q.TryDequeue(out var bytes))
-                        return Value.MakeString("");
-                    return Value.MakeString(System.Text.Encoding.Latin1.GetString(bytes));
+                    var bytes = receiveQueues.TryGetValue((int)args[0].AsInt(), out var q) ? q.TakePacket() : null;
+                    return Value.MakeString(bytes == null ? "" : System.Text.Encoding.Latin1.GetString(bytes));
                 },
+                // WICHTIG: dieselbe REIHENFOLGE wie in BuildDeviceStubs - der Compiler legt Funktionen nach Position fest.
+                ["Read"] = args =>
+                {
+                    resolve((int)args[0].AsInt());
+                    var bytes = receiveQueues.TryGetValue((int)args[0].AsInt(), out var q) ? q.TakePacket() : null;
+                    return Value.MakeBuffer(new ByteBuffer(bytes ?? Array.Empty<byte>(), ByteConversions.HostByteOrder));
+                },
+                // Wie ReadString/WaitForString: ein Zeichen = ein Byte (Latin1); für UTF-8-Text `text.ToBytes()` und Write
+                ["WriteString"] = args =>
+                {
+                    var device = resolve((int)args[0].AsInt());
+                    if (device == null) return Value.MakeBool(false);
+                    try { return Value.MakeBool(device.Write(System.Text.Encoding.Latin1.GetBytes(args[1].AsString()))); }
+                    catch { return Value.MakeBool(false); }
+                },
+                ["Write"] = args =>
+                {
+                    var device = resolve((int)args[0].AsInt());
+                    if (device == null) return Value.MakeBool(false);
+                    try { return Value.MakeBool(device.Write((byte[])args[1].AsBuffer().Bytes.Clone())); }
+                    catch { return Value.MakeBool(false); }
+                },
+                // 1 = gefunden (der Puffer ist dahinter abgeschnitten), 0 = Zeit abgelaufen / Gerät getrennt / Programm beendet, -1 = ungültige Wartezeit
+                ["WaitForString"] = args => WaitFor((int)args[0].AsInt(), System.Text.Encoding.Latin1.GetBytes(args[1].AsString()), args[2]),
+                ["WaitFor"] = args => WaitFor((int)args[0].AsInt(), args[1].AsBuffer().Bytes, args[2]),
             };
+
+            Value WaitFor(int handle, byte[] pattern, Value timeout)
+            {
+                var device = resolve(handle);
+                if (device == null || !receiveQueues.TryGetValue(handle, out var buffer)) return Value.MakeInt(0);
+                bool found = false;
+                try
+                {
+                    // Ein getrenntes Gerät liefert nichts mehr: nach einem letzten Blick in den Puffer endet das Warten sofort.
+                    waitUntil(() =>
+                    {
+                        if (buffer.TryConsumeThrough(pattern)) { found = true; return true; }
+                        return !device.IsConnected;
+                    }, timeout);
+                }
+                catch (ArgumentException) { return Value.MakeInt(-1); }
+                return Value.MakeInt(found ? 1 : 0);
+            }
         }
 
         /// <summary>fire-Quelltext, der die per <see cref="RegisterAll"/>
@@ -257,7 +325,33 @@ namespace fire.Device.Bridge
                 }
             }
 
-            class Device {
+            // Eine ungültige Angabe an einer Geräte-Funktion (z.B. eine Wartezeit, die keine Zeitangabe ist).
+            class DeviceArgumentException : Exception {
+                string message
+
+                construct(string message) {
+                    this.message = message
+                }
+            }
+
+            // Was ein Gerät auf Befehlsebene kann: Befehle (Text oder Command-Objekte) senden, Bytes und Text schreiben und lesen, auf Zeichen warten.
+            // `Command<IDevice>` ist ein Befehl, den DoCommand mit dem Gerät als Kontext ausführt.
+            interface IDevice {
+                string Identifier()
+                bool Connect()
+                Disconnect()
+                DoCommand(command)
+                DoCommands(commands)
+                bool HasData()
+                string ReadString()
+                Read()
+                bool WriteString(string text)
+                bool Write(data)
+                bool WaitForString(string text, timeout)
+                bool WaitFor(data, timeout)
+            }
+
+            class Device : IDevice {
                 int handle
 
                 construct(int handle) {
@@ -299,7 +393,7 @@ namespace fire.Device.Bridge
                 bool Connect() { return __DEVConnect(this.handle) }
 
                 // Verbindet nur, wenn noch nicht verbunden; wirft DeviceConnectionException, wenn das nicht klappt.
-                // Liefert das Gerät selbst zurück (Device.Default.EnsureConnected().SendCommand("...")).
+                // Liefert das Gerät selbst zurück (Device.Default.EnsureConnected().DoCommand("...")).
                 Device EnsureConnected() {
                     if (!__DEVIsConnected(this.handle)) {
                         if (!__DEVConnect(this.handle)) {
@@ -309,10 +403,62 @@ namespace fire.Device.Bridge
                     return this
                 }
                 Disconnect() { __DEVDisconnect(this.handle) }
-                bool SendCommand(string command) { return __DEVSendCommand(this.handle, command) }
 
+                // Sendet einen Befehl. Ein Text geht als Zeile (mit Zeilenende, in der Kodierung des Geräts) hinaus; `false`, wenn das Gerät nicht verbunden ist.
+                // Ein Befehlsobjekt (`Command<IDevice>`, davon abgeleitet oder jedes Objekt mit `Execute(Gerät)`) wird mit dem Gerät als Kontext ausgeführt
+                // (`befehl.Execute(this)`); das Ergebnis ist `false`, wenn Execute `false` liefert, sonst `true`.
+                bool DoCommand(command) {
+                    if (command is of string) {
+                        return __DEVDoCommand(this.handle, command)
+                    }
+                    var result = command.Execute(this)
+                    if (result is of bool) {
+                        return result
+                    }
+                    return true
+                }
+
+                // Führt die Befehle (ein Array, eine List, irgendetwas, das sich mit foreach durchlaufen lässt) der Reihe nach aus und hört beim ersten
+                // auf, der `false` liefert (z.B. weil das Gerät nicht verbunden ist). `true`, wenn alle gelaufen sind.
+                bool DoCommands(commands) {
+                    foreach (c in commands) {
+                        if (!this.DoCommand(c)) {
+                            return false
+                        }
+                    }
+                    return true
+                }
+
+                // Empfangene Daten: ein Paket nach dem anderen (nach einem WaitFor der Rest des angebrochenen Pakets). HasData sagt, ob etwas da ist.
                 bool HasData() { return __DEVHasData(this.handle) }
-                string ReadData() { return __DEVReadData(this.handle) }
+                // Als Text: ein Zeichen je Byte (Latin1); "" wenn nichts da ist
+                string ReadString() { return __DEVReadString(this.handle) }
+                // Als Bytes (ein byte-Puffer); leer, wenn nichts da ist
+                Read() { return __DEVRead(this.handle) }
+
+                // Schreibt genau diese Zeichen bzw. Bytes, OHNE Zeilenende; `false`, wenn nicht verbunden. WriteString: ein Zeichen je Byte (Latin1), für
+                // UTF-8 `text.ToBytes()` mit Write.
+                bool WriteString(string text) { return __DEVWriteString(this.handle, text) }
+                bool Write(data) { return __DEVWrite(this.handle, data) }
+
+                // Wartet, bis die Zeichen bzw. Bytes im Empfangspuffer auftauchen, und schneidet den Puffer dahinter ab: alles davor und der Treffer sind
+                // verbraucht, was danach kam, bleibt (auch ein zweites Vorkommen - dasselbe WaitFor kann direkt nochmal gelingen). Auch über Paketgrenzen hinweg.
+                // `timeout`: eine TimeSpan, ein Zeitwert (`5s`, `500ms`) oder Millisekunden; ohne Angabe das `#timeout` des Programms, sonst 30 Sekunden.
+                // `true`, wenn sie kamen; `false` nach Ablauf der Zeit, bei getrenntem Gerät oder wenn das Programm beendet wird.
+                bool WaitForString(string text, timeout = undefined) {
+                    var r = __DEVWaitForString(this.handle, text, timeout)
+                    if (r < 0) {
+                        throw new DeviceArgumentException("Ungültige Wartezeit (erwartet: TimeSpan, Zeitwert wie 5s oder Millisekunden)")
+                    }
+                    return r == 1
+                }
+                bool WaitFor(data, timeout = undefined) {
+                    var r = __DEVWaitFor(this.handle, data, timeout)
+                    if (r < 0) {
+                        throw new DeviceArgumentException("Ungültige Wartezeit (erwartet: TimeSpan, Zeitwert wie 5s oder Millisekunden)")
+                    }
+                    return r == 1
+                }
             }
 
             class DeviceManagerFacade {

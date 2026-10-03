@@ -174,7 +174,7 @@ namespace fire.Compiler
             // Angabe bekommt das Programm einen eigenen mit den eingebauten Treibern, der nach dem Lauf freigegeben wird.
             IDisposable? deviceResources = null;
             if (linkedProgram.NativeImports.Contains(NativeImports.Devices))
-                deviceResources = fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager ?? fire.Device.Manager.DeviceManager.DeviceManager.CreateDefault());
+                deviceResources = fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager ?? fire.Device.Manager.DeviceManager.DeviceManager.CreateDefault(), VM.WaitUntil);
 
             // `ioPolicy`: was Skripte im Dateisystem anfassen dürfen, `ioStdio`: wohin
             // IO.Stdio führt - beides entscheidet der HOST (siehe IoPolicy/IoStdio),
