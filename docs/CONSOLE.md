@@ -79,6 +79,10 @@ demselben Muster wie die eingebaute `IndexOutOfBoundsException` (SPEC 8.5).
 `destruct()` gibt die Manager-Ressource automatisch frei, wenn das Skript-
 Objekt vom Ownership-Modell zerstört wird.
 
+Seit den Farbmodi und Bildern kennt die Prelude zusätzlich `enum ColorMode`, `enum BlitMode`, `GraphicsException` und `ImageException` und erweitert `Framebuffer` (Modus, Rohdaten, Palette, `FromFile`/`FromImage`/`FromPixels`) und `Console` (Formen, `Blit`).
+Die statischen Fabrikmethoden legen den Framebuffer über einen leeren Rahmen an (`new Framebuffer(0, 0, -2)`, intern) und setzen dessen `id`; schlägt eine native Bild-Funktion fehl, liefert sie `-1` und der Grund steht in `__GRPHFbLastError()`, aus dem die Prelude die Exception macht
+(wie bei den IO-Funktionen mit Fehlercodes). Neue native Funktionen stehen immer AM ENDE ihrer Gruppe (Reihenfolge = Index, Stubs und echte Funktionen in derselben Reihenfolge).
+
 Ein kombiniertes Programm besteht damit aus drei Teilen, konkateniert und
 zusammen geparst (`Standard.Prelude.Source + GraphicsBridge.PreludeSource
 + nutzerSkript`, dann `Parser.Parse(...)`): die Standardbibliothek, die
@@ -90,9 +94,9 @@ Grafik-Brücke, und das eigentliche Nutzer-Skript.
   ein Tabellenzugriff (`GlyphMasks`, Masken für vier Pixel je `Vector128`) und ein `ConditionalSelect` statt einer Abfrage je Pixel - ca. 30 ns statt 370 ns pro Zeichen (80x30 Zeichen: ~0,07 ms
   statt ~0,9 ms). Liegt die Zelle nicht vollständig im Framebuffer oder hat die Schrift keine Bitmap-Zeilen, bleibt der pixelweise Weg (`IsPixelSet` + `SetPixel` mit Clipping). Zeichen
   außerhalb der 256 der Tabelle werden als `?` gezeichnet. `Framebuffer.FillRect` füllt zeilenweise per `Span.Fill`.
-- **`Console`-Methoden mit Pixel-Koordinaten** (Bridge): `FillRect`, `DrawRect`, `DrawLine`, `DrawText(x, y, text, color, background)`, `CellWidth()`, `CellHeight()`. Die Farben dieser Methoden sind
-  ROHE Werte (`r + g*256 + b*65536 + a*16777216`, Alpha 255 = deckend), keine Palette-Indizes wie bei `SetColor`; ein Hintergrund mit Alpha 0 (z.B. `0`) ist transparent. `GetPixel` liefert den Wert als
-  32-Bit-Zahl MIT Vorzeichen (deckende Farben also negativ).
+- **`Console`-Methoden mit Pixel-Koordinaten** (Bridge): `SetPixel`, `FillRect`, `DrawRect`, `DrawLine`, `DrawText(x, y, text, color, background)`, `CellWidth()`, `CellHeight()` und die Formen des Abschnitts "Mehr Zeichenfunktionen".
+  Eine Farbe ist eine Zahl: **0 bis 255 ist ein Palette-Index, jede andere ein direkter Wert** (`r + g*256 + b*65536 + a*16777216`, Alpha 255 = deckend) - siehe "Farbmodi und Farbangaben". Beim HINTERGRUND von `DrawText` ist `0`
+  (und jeder direkte Wert mit Alpha 0) "transparent"; einen Palette-Index als Textuntergrund gibt es dort nicht (vorher ein Rechteck füllen). `GetPixel` liefert die Farbe als 32-Bit-Zahl MIT Vorzeichen (deckende Farben also negativ).
 - **Mausposition in Framebuffer-Pixeln:** SDL meldet Fenster-Koordinaten, das Fenster darf aber skaliert werden (der Framebuffer wird gestreckt); `SdlFramebufferRenderer` rechnet Position und Bewegung
   auf Framebuffer-Pixel um. Texteingabe (`SDL.StartTextInput`) ist eingeschaltet.
 - **Ereignisse abfragen statt Callback:** Ein `Window`-Callback läuft auf einer eigenen VM mit einer ISOLIERTEN KOPIE der globalen Variablen (SPEC 8.1.4) - Objekte mit Lambdas oder Verweisen auf
@@ -154,19 +158,73 @@ Fenster umzuhängen, ohne die Konsole/den Inhalt neu aufzubauen.
   sondern eine nachvollziehbare, garantiert korrekte Formel; da die Palette
   ohnehin frei überschreibbar ist, zählt das für die Defaults mehr als
   historische Exaktheit.
-- Jede `TerminalCanvas` (und damit jede "Konsole") hat ihre **eigene**
-  Palette (wie Cursor/Farben, nicht geteilt).
+- Die Palette gehört dem **Framebuffer** (`Framebuffer.Palette`), nicht der Konsole: mehrere Konsolen auf demselben Framebuffer teilen sie, und bei einem Palette-Framebuffer IST sie die Farbtabelle des Bildes.
+  (Früher hatte jede `TerminalCanvas` eine eigene; wer die Konsole auf einen anderen Framebuffer umhängt, bekommt dessen Palette.)
 - **Zwei Überladungen** für Color/SetPixel/DrawLine/DrawRect/FillRect: eine
   nimmt einen direkten `PixelColor`/`int`-Wert, eine einen `byte`-
   Palette-Index (schlägt intern in der Palette nach). Über `ConsoleManager`
   heißen die Index-Varianten `...ByIndex` (z.B. `SetPixelByIndex`), da C#
   hier keine reine Überladung nach Rückgabetyp/ID-Signatur zulässt.
 
+## Farbmodi und Farbangaben (`ColorMode`, `Paint`, `Brush`)
+
+Ein Framebuffer hat einen **Farbmodus** (`new Framebuffer(w, h, ColorMode.Rgba | ColorMode.Palette)` in fire, `ColorMode.Rgba | Indexed` in C#):
+
+- **`Rgba`** (Vorgabe): 4 Byte je Pixel (R, G, B, A), jede Farbe direkt.
+- **`Palette`** (`ColorMode.Indexed`): 1 Byte je Pixel, ein Index in die 256-Farben-`Palette` des Framebuffers (wie VGA-Modus 13h). Wer einen Palette-Eintrag ändert, ändert die Farbe ALLER Pixel mit diesem Index
+  (Paletten-Animation). Das sichtbare Abbild (`Framebuffer.Pixels`, was die Renderer lesen) wird erst bei Bedarf aus den Indizes und der Palette berechnet (`Framebuffer.Resolve()`, vom Fenster und vom SDL-Renderer vor
+  dem Anzeigen aufgerufen, nur wenn sich etwas geändert hat); `Framebuffer.Indices` ist die Index-Ebene (nach direktem Schreiben `MarkDirty()`). `Framebuffer.TransparentIndex` merkt den durchsichtigen Index eines geladenen Bildes.
+
+Welche Farbe ein Aufruf meint, sagt die **Farbangabe** (`Paint`): **eine Zahl von 0 bis 255 ist ein Palette-Index, jede andere ein direkter RGBA-Wert** - dieselbe Regel wie schon bei `Console.SetColor`. Der Framebuffer löst sie für sich auf (`ResolveBrush`
+-> `Brush`): in einem RGBA-Framebuffer wird ein Index über die Palette zur Farbe, in einem Palette-Framebuffer ein direkter Wert auf den nächsten Eintrag der Palette abgebildet (kleinster Abstand in R, G, B; Alpha zählt nicht,
+`Palette.FindNearest`). So zeichnet jeder Aufruf in jedem Modus, und ein RGBA-Framebuffer kann nach Belieben mit Palette-Indizes arbeiten ("hybrid"). Ein Palette-Index bleibt bis zum Zeichnen ein Index: `Console.SetColor(14, 1)`
+färbt NEU gezeichneten Text um, wenn man die Palette danach ändert. Bereits gezeichnete Pixel eines RGBA-Framebuffers ändern sich nicht (sie speichern Farben), die eines Palette-Framebuffers schon.
+
+**Änderung gegenüber früher:** `FillRect`/`DrawRect`/`DrawLine`/`DrawText`/`SetPixel` behandelten jede Zahl als direkten Wert; jetzt sind 0-255 Palette-Indizes. Ein direkter Wert mit nur dem niedrigsten Byte (Alpha 0, R beliebig, G = B = 0) war ohnehin
+durchsichtig und nicht sinnvoll als Farbe; `0` (Schwarz) ist jetzt Palette-Eintrag 0 (deckendes Schwarz) statt durchsichtigem Schwarz. `Console.SetColor(vordergrund, hintergrund)` war defekt (der Hintergrund wurde falsch aufgelöst) und folgt jetzt derselben Regel.
+
+**Palette aus fire** (`Framebuffer`): `GetPaletteColor(i)` (vorzeichenlose Zahl), `SetPaletteColor(i, farbe)`, `SetPaletteRgb(i, r, g, b)`, `ReadPalette(mitAlpha = false)` / `WritePalette(puffer)` als Puffer (768 Byte R,G,B oder 1024 Byte R,G,B,A), `TransparentIndex`.
+Ein falscher Index oder eine falsche Pufferlänge ist eine `GraphicsException`.
+
+## Mehr Zeichenfunktionen
+
+Alle in Pixel-Koordinaten, am Rand still beschnitten, in beiden Farbmodi mit denselben Pixeln (`Shapes`, ganzzahlig, ohne Fließkomma; `TerminalCanvas.DrawCircle` & Co., `Console` in fire):
+
+- **Kreis, Ellipse:** `DrawCircle(cx, cy, r, farbe)`, `FillCircle`, `DrawEllipse(cx, cy, rx, ry, farbe)`, `FillEllipse`. Die Fläche ist die Menge der Pixel um die Mitte mit `(2dx)^2/(2rx+1)^2 + (2dy)^2/(2ry+1)^2 <= 1` (beim Kreis `dx^2 + dy^2 <= r^2 + r`);
+  Linie und Füllung kommen aus denselben Zeilen, die Linie ist also lückenlos und liegt genau auf dem Rand der Fläche. Radius 0 = ein Pixel; ein negativer Radius zeichnet nichts; Radien über 16384 werden begrenzt (`Shapes.MaxRadius`).
+- **Dreieck, Polygon:** `DrawTriangle`/`FillTriangle` (sechs Koordinaten), `DrawPolygon(punkte, farbe, geschlossen = true)` / `FillPolygon(punkte, farbe)` mit `punkte` = Array `[x0, y0, x1, y1, ...]`. Gefüllt wird nach der Even-Odd-Regel (ein Pentagramm
+  hat ein leeres Zentrum), die Randpixel gehören zur Fläche. Zu wenige Punkte zeichnen höchstens einen Strich, nie eine Ausnahme.
+- **Fläche füllen:** `FloodFill(x, y, farbe)` füllt die 4er-zusammenhängende Fläche, die die Farbe (den Index) des Startpixels hat; `FloodFillBorder(x, y, farbe, rand)` füllt bis zu Pixeln der Farbe `rand` (wie `PAINT` in QBasic). Zeilenweise mit eigenem Stapel, also
+  auch für ganze Bildschirme ohne Rekursionstiefe.
+- **Kopieren (`Blit`):** `Blit(quelle, x, y, modus = 0, schluessel = -1)` kopiert einen anderen Framebuffer (z.B. ein geladenes Bild), `BlitRegion(quelle, sx, sy, sw, sh, dx, dy, ...)` einen Ausschnitt, `BlitScaled(quelle, sx, sy, sw, sh, dx, dy, dw, dh, ...)` skaliert auf
+  `dw x dh` (nächster Nachbar; eine NEGATIVE Breite/Höhe spiegelt). `BlitMode`: `Copy` (alles), `Transparent` (durchsichtige Quellpixel bleiben aus: RGBA-Quelle Alpha 0, Palette-Quelle der Farbschlüssel `schluessel` bzw. der `TransparentIndex` des Bildes),
+  `Blend` (halbdurchsichtige RGBA-Pixel werden nach Alpha mit dem Ziel gemischt; in einem Palette-Ziel zählt Alpha ab 128 als deckend). Über die Farbmodi hinweg: Palette -> RGBA über die Palette der Quelle; RGBA -> Palette auf den nächsten Eintrag der Ziel-Palette;
+  Palette -> Palette direkt, wenn beide Paletten gleich sind, sonst über den nächsten Eintrag (wer ein Bild mit seiner eigenen Palette auf den Schirm bringen will, übernimmt vorher dessen Palette: `schirm.WritePalette(bild.ReadPalette(true))`). Derselbe Framebuffer als Quelle und Ziel ist erlaubt.
+- `GetPixelIndex(x, y)`: der Palette-Index des Pixels (RGBA: der nächste Eintrag).
+
+## Bilder laden
+
+`ImageDecoder.Decode(bytes)` (C#, plattformunabhängig, keine Fremdbibliothek) erkennt **PNG, BMP und GIF** an den ersten Bytes (nicht an der Endung) und liefert ein `ImageData`: entweder **indiziert** (Indizes + Palette bis 256 Farben + `TransparentIndex`) oder **Truecolor** (RGBA je Pixel).
+- **PNG:** alle Farbarten (Grau, RGB, Palette, Grau+Alpha, RGBA) in 1, 2, 4, 8 und 16 Bit, Adam7-Verschränkung, `tRNS` (Palette, Grau-/RGB-Schlüssel), Prüfsummen. 16 Bit wird auf 8 Bit gekürzt. Palette-Bilder bleiben indiziert, Grau und alles andere wird Truecolor.
+- **BMP:** 1, 4, 8 Bit mit Palette (auch RLE4/RLE8) -> indiziert; 16, 24, 32 Bit (auch mit Bitmasken, 32 Bit mit unbenutztem Alpha-Byte = deckend) -> Truecolor; von oben oder unten; OS/2-Kopfzeile.
+- **GIF:** das ERSTE Bild (eine Animation liefert ihr erstes Einzelbild), LZW, verschränkt, Transparenz; immer indiziert. Größe des logischen Bildschirms.
+- Fehler (unbekannt, abgeschnitten, Prüfsumme, absurde Größe über 64 Millionen Pixel, nicht unterstützte Variante) sind `ImageFormatException`; beschädigte Dateien lösen nie eine andere Ausnahme aus (Test: 3360 zufällig veränderte Dateien).
+
+Aus fire (`#import "graphics"`):
+- `Framebuffer.FromFile(pfad, modus = -1)` und `Framebuffer.FromImage(puffer, modus = -1)` (ein `byte`-Puffer mit den Bytes einer Bilddatei, z.B. aus `IO.File.ReadAllBytes` oder einem Stream) legen einen NEUEN Framebuffer in der Größe des Bildes an. `modus -1`: wie das Bild -
+  indiziert (PNG mit Palette, GIF, BMP bis 8 Bit) wird ein **Palette-Framebuffer mit der Palette der Datei**, alles andere **RGBA**. `ColorMode.Rgba`/`ColorMode.Palette` erzwingt einen Modus: ein indiziertes Bild in einen RGBA-Framebuffer wird über seine Palette aufgelöst, ein Truecolor-Bild in einen
+  Palette-Framebuffer je Pixel auf den nächsten Eintrag der Standard-Palette abgebildet (ohne eigene Palette zu berechnen, Alpha geht dabei verloren).
+- `FromFile` liest nur, was die **`IoPolicy` des Hosts** (`IoPolicy`, siehe `docs/BYTECODE.md` Abschnitt 23) zum Lesen erlaubt, wie `IO.File`; `GraphicsBridge.RegisterAll(..., readFile)` nimmt dafür eine Lesefunktion entgegen (Vorgabe: die Datei einfach lesen). Das Bild muss nicht per `#import "io"` geladen werden.
+- `Framebuffer.FromPixels(breite, hoehe, puffer, modus = 0, palette = undefined)`: ein Framebuffer aus rohen Pixeln, zeilenweise von oben nach unten - `Rgba` `breite*hoehe*4` Byte (R, G, B, A je Pixel), `Palette` `breite*hoehe` Byte (je Pixel ein Index) und optional eine Palette (768 oder 1024 Byte).
+  `ReadBytes()`/`WriteBytes(puffer)` lesen und schreiben den ganzen Inhalt im selben Format (siehe "Byteweiser Framebuffer-Zugriff").
+- Fehler sind `ImageException` (eine `GraphicsException`): unbekanntes Format, beschädigt, Datei nicht lesbar oder nicht erlaubt, falsche Pufferlänge.
+
 ## Byteweiser Framebuffer-Zugriff
 
 `FramebufferManager` bietet sowohl byteweisen als auch blockweisen Zugriff
 auf die rohen Pixel-Daten:
 
+- Im **Palette-Modus** ist ein Byte ein Pixel: der Palette-Index (Offset = `y * Breite + x`), `ReadBytes`/`WriteBytes` haben `Breite * Hoehe` Byte; der Rest dieses Abschnitts beschreibt den RGBA-Modus.
 - `ReadByte(id, offset)` / `WriteByte(id, offset, value)` - IMMER korrekt
   (manuell pro Kanal geschoben/maskiert, unabhängig von der Host-Endianness).
   Byte-Offset 0 = R des ersten Pixels, 1 = G, 2 = B, 3 = A, 4 = R des

@@ -1,4 +1,4 @@
-// Erzeugt mit Pillow bzw. eigenen Schreibern (Skript siehe docs/BYTECODE.md Abschnitt Bilder) - nicht von Hand bearbeiten.
+// Erzeugt von GenImageFixtures.py (Pillow und eigene Schreiber) - nicht von Hand bearbeiten.
 static class ImageFixtures
 {
     public static byte[] Get(string name) => System.Convert.FromBase64String(Data[name]);

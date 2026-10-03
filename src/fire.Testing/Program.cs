@@ -7577,6 +7577,22 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(31, 15) == 44, "ConsoleManager.Blit kopiert einen anderen Framebuffer");
     }
 
+    // ---- Fenster: Tick rechnet das sichtbare Abbild eines Palette-Framebuffers aus (Resolve), bevor der Renderer es bekommt ----
+    {
+        var mgr = new fire.Terminal.FramebufferManager();
+        int fbId = mgr.CreateFramebuffer(8, 4, IDX);
+        var fb = mgr.GetFramebuffer(fbId);
+        var wm = new fire.Terminal.Windows.WindowManager(mgr, (l, v) => { }, () => new FakeRenderer());
+        int win = wm.CreateWindow(fbId, "Test");
+        fb.Plot(2, 1, Idx(fb, 9));
+        wm.Tick(win);
+        GfxCheck(fb.Pixels[1 * 8 + 2] == fb.Palette.GetPacked(9) && fb.Pixels[0] == fb.Palette.GetPacked(0), "Window.Tick: Palette-Framebuffer wird vor dem Anzeigen aufgeloest");
+        fb.Palette.SetColor(9, unchecked((int)fire.Terminal.PixelColor.FromRgb(7, 8, 9).Packed));
+        wm.Tick(win);
+        GfxCheck(fb.Pixels[1 * 8 + 2] == fire.Terminal.PixelColor.FromRgb(7, 8, 9).Packed, "Window.Tick nach einer Palette-Aenderung (ohne dass sich ein Index aenderte)");
+        wm.DestroyWindow(win);
+    }
+
     Console.WriteLine(gfxFailures == 0 ? "Alle Grafik-Pruefungen bestanden." : $"FEHLER: {gfxFailures} Grafik-Pruefung(en) fehlgeschlagen.");
 }
 
@@ -7809,6 +7825,339 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     }
 
     Console.WriteLine(imgFailures == 0 ? "Alle Bild-Pruefungen bestanden." : $"FEHLER: {imgFailures} Bild-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Grafik aus fire: Farbmodi, Bilder laden, Zeichenfunktionen (Console/Framebuffer der Grafik-Prelude)
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Grafik aus fire: Farbmodi, Bilder, Zeichenfunktionen ===");
+    int gfFailures = 0;
+
+    uint ImgPal(int i) => (uint)((i * 40 + 10) % 256) | (uint)(((i * 70 + 20) % 256) << 8) | (uint)(((i * 110 + 30) % 256) << 16) | 0xFF000000u;
+
+    List<string> RunGf(string script, VmExecutionMode mode, Func<string, byte[]>? reader = null)
+    {
+        var lines = new List<string>();
+        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, script };
+        var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase))).ToList());
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        var fbManager = new fire.Terminal.FramebufferManager();
+        var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
+        var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => new FakeRenderer());
+        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, winManager, reader ?? (path => ImageFixtures.Get(path)));
+        // die Bytes einer Testdatei als Puffer, und ein Puffer mit Unsinn
+        natives.Register("__TestImage", args => Value.MakeBuffer(new ByteBuffer(ImageFixtures.Get(args[0].AsString()), ByteConversions.HostByteOrder)));
+        natives.Register("__TestGarbage", args => Value.MakeBuffer(new ByteBuffer(System.Text.Encoding.ASCII.GetBytes("kein Bild"), ByteConversions.HostByteOrder)));
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
+        vm.Run();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckGf(string title, string script, string[] expected, Func<string, byte[]>? reader = null)
+    {
+        foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            try { actual = RunGf(script, mode, reader).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + CompileErrors.Describe(ex) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) gfFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    // Die erwarteten Pixelzahlen der Zeichenfunktionen aus dem Kern selbst (dessen Form pruefen die Grafik-Tests oben): hier geht es um die
+    // Anbindung aus fire, in beiden Farbmodi
+    string GfDrawExpected()
+    {
+        var fb = new fire.Terminal.Framebuffer(40, 40);
+        var five = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(5));
+        var zero = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(0));
+        var four = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(4));
+        int Count() { int n = 0; for (int y = 0; y < 40; y++) for (int x = 0; x < 40; x++) if (fb.GetRaw(x, y) == five.Rgba) n++; return n; }
+        var counts = new List<int>();
+        void Reset() => fb.FillRect(0, 0, 40, 40, zero);
+        fire.Terminal.Shapes.FillCircle(fb, 20, 20, 3, five); counts.Add(Count()); Reset();
+        fire.Terminal.Shapes.Circle(fb, 20, 20, 10, five); counts.Add(Count()); Reset();
+        fire.Terminal.Shapes.FillEllipse(fb, 20, 20, 8, 3, five); counts.Add(Count()); Reset();
+        fire.Terminal.Shapes.FillTriangle(fb, 2, 2, 22, 2, 2, 22, five); counts.Add(Count()); Reset();
+        fire.Terminal.Shapes.FillPolygon(fb, new[] { 5, 5, 15, 5, 15, 12, 5, 12 }, five); counts.Add(Count()); Reset();
+        fire.Terminal.Shapes.Rect(fb, 5, 5, 10, 10, five); fire.Terminal.Shapes.FloodFill(fb, 8, 8, five); counts.Add(Count()); Reset();
+        fire.Terminal.Shapes.Polygon(fb, new[] { 2, 2, 30, 2, 30, 30 }, five, closed: false); counts.Add(Count()); Reset();
+        fire.Terminal.Shapes.Rect(fb, 5, 5, 10, 10, four); fire.Terminal.Shapes.FloodFillBorder(fb, 8, 8, five, four); counts.Add(Count());
+        return string.Join(" ", counts);
+    }
+
+    // GetPixel liefert den Farbwert mit Vorzeichen (32 Bit)
+    const string gfHead = """
+        #import "graphics"
+        class Px { static int Get(console, int x, int y) { var v = console.GetPixel(x, y); if (v < 0) { v = v + 4294967296 } return v } }
+        """;
+
+    CheckGf("Framebuffer-Modus: Rgba (Vorgabe) und Palette, Rohdatengroesse, Palette-Zugriff", gfHead + """
+        var rgba = new Framebuffer(8, 4)
+        var pal = new Framebuffer(8, 4, ColorMode.Palette)
+        print(rgba.Mode() + " " + rgba.ByteCount() + " " + pal.Mode() + " " + pal.ByteCount())
+        pal.SetPaletteRgb(9, 1, 2, 3)
+        print(pal.GetPaletteColor(9))
+        pal.SetPaletteColor(10, 4278190080 + 65536 * 30 + 256 * 20 + 10)
+        print(pal.GetPaletteColor(10))
+        var bytes = pal.ReadPalette()
+        print(bytes.length + " " + bytes[27] + " " + bytes[28] + " " + bytes[29] + " " + pal.ReadPalette(true).length)
+        var all = new byte[768]
+        for (var i = 0; i < 768; i = i + 1) { all[i] = i % 256 }
+        pal.WritePalette(all)
+        print(pal.GetPaletteColor(1))
+        pal.TransparentIndex = 7
+        print(pal.TransparentIndex + " " + rgba.TransparentIndex)
+        """, new[] { "0 128 1 32", "4278387201", (4278190080L + 30 * 65536 + 20 * 256 + 10).ToString(), "768 1 2 3 1024", (4278190080L + 5 * 65536 + 4 * 256 + 3).ToString(), "7 -1" });
+
+    CheckGf("Farbangaben: 0-255 = Palette-Index, sonst direkter Wert - in beiden Farbmodi", gfHead + """
+        var rgba = new Framebuffer(16, 8)
+        var pal = new Framebuffer(16, 8, ColorMode.Palette)
+        var a = new Console(rgba)
+        var b = new Console(pal)
+        a.FillRect(0, 0, 4, 4, 9)
+        b.FillRect(0, 0, 4, 4, 9)
+        print(Px.Get(a, 1, 1) == rgba.GetPaletteColor(9))
+        print(b.GetPixelIndex(1, 1))
+        a.FillRect(4, 0, 4, 4, 4278190335)
+        b.FillRect(4, 0, 4, 4, 4278190335)
+        print(Px.Get(a, 5, 1) == 4278190335)
+        print(b.GetPixelIndex(5, 1))
+        print(a.GetPixelIndex(5, 1) == b.GetPixelIndex(5, 1))
+        b.SetPixel(10, 6, 77)
+        print(pal.ReadByte(6 * 16 + 10))
+        a.SetPixel(10, 6, 77)
+        print(Px.Get(a, 10, 6) == rgba.GetPaletteColor(77))
+        pal.SetPaletteRgb(9, 10, 20, 30)
+        print(Px.Get(b, 1, 1))
+        """, new[] { "True", "9", "True", "196", "True", "77", "True", (4278190080L + 30 * 65536 + 20 * 256 + 10).ToString() });
+
+    CheckGf("Palette-Animation: ein Palette-Eintrag aendern faerbt alle Pixel mit diesem Index um (nur im Palette-Framebuffer)", gfHead + """
+        var rgba = new Framebuffer(8, 8)
+        var pal = new Framebuffer(8, 8, ColorMode.Palette)
+        var a = new Console(rgba)
+        var b = new Console(pal)
+        a.FillRect(0, 0, 8, 8, 5)
+        b.FillRect(0, 0, 8, 8, 5)
+        var before = Px.Get(a, 3, 3)
+        pal.SetPaletteRgb(5, 200, 100, 50)
+        rgba.SetPaletteRgb(5, 200, 100, 50)
+        print(Px.Get(b, 3, 3) == 4278190080 + 50 * 65536 + 100 * 256 + 200)
+        print(Px.Get(a, 3, 3) == before)
+        """, new[] { "True", "True" });
+
+    CheckGf("Text in einem Palette-Framebuffer: Print und DrawText mit Palette-Indizes", gfHead + """
+        var fb = new Framebuffer(80, 28, ColorMode.Palette)
+        var con = new Console(fb)
+        con.SetColor(14, 1)
+        con.Clear()
+        con.Print("Hi")
+        var fg = 0
+        var bg = 0
+        for (var y = 0; y < 14; y = y + 1) { for (var x = 0; x < 16; x = x + 1) {
+            if (con.GetPixelIndex(x, y) == 14) { fg = fg + 1 }
+            if (con.GetPixelIndex(x, y) == 1) { bg = bg + 1 }
+        } }
+        print((fg > 10) + " " + (fg + bg == 16 * 14))
+        con.DrawText(0, 14, "T", 12, 0)
+        var t = 0
+        for (var y = 14; y < 28; y = y + 1) { for (var x = 0; x < 8; x = x + 1) { if (con.GetPixelIndex(x, y) == 12) { t = t + 1 } } }
+        print(t > 5)
+        print(con.GetPixelIndex(40, 20) == 1)
+        """, new[] { "True True", "True", "True" });
+
+    CheckGf("Zeichenfunktionen: Kreis, Ellipse, Dreieck, Polygon, FloodFill (gleiche Pixel in beiden Farbmodi)", gfHead + """
+        class Draw {
+            static Count(console, int w, int h) {
+                var n = 0
+                for (var y = 0; y < h; y = y + 1) { for (var x = 0; x < w; x = x + 1) { if (console.GetPixelIndex(x, y) == 5) { n = n + 1 } } }
+                return n
+            }
+            static Run(int mode) {
+                var fb = new Framebuffer(40, 40, mode)
+                var con = new Console(fb)
+                con.FillCircle(20, 20, 3, 5)
+                var circle = Draw.Count(con, 40, 40)
+                con.FillRect(0, 0, 40, 40, 0)
+                con.DrawCircle(20, 20, 10, 5)
+                var ring = Draw.Count(con, 40, 40)
+                con.FillRect(0, 0, 40, 40, 0)
+                con.FillEllipse(20, 20, 8, 3, 5)
+                var ellipse = Draw.Count(con, 40, 40)
+                con.FillRect(0, 0, 40, 40, 0)
+                con.FillTriangle(2, 2, 22, 2, 2, 22, 5)
+                var tri = Draw.Count(con, 40, 40)
+                con.FillRect(0, 0, 40, 40, 0)
+                con.FillPolygon([5, 5, 15, 5, 15, 12, 5, 12], 5)
+                var rect = Draw.Count(con, 40, 40)
+                con.FillRect(0, 0, 40, 40, 0)
+                con.DrawRect(5, 5, 10, 10, 5)
+                con.FloodFill(8, 8, 5)
+                var flood = Draw.Count(con, 40, 40)
+                con.FillRect(0, 0, 40, 40, 0)
+                con.DrawPolygon([2, 2, 30, 2, 30, 30], 5, false)
+                var open = Draw.Count(con, 40, 40)
+                con.FillRect(0, 0, 40, 40, 0)
+                con.DrawRect(5, 5, 10, 10, 4)
+                con.FloodFillBorder(8, 8, 5, 4)
+                var border = Draw.Count(con, 40, 40)
+                return circle + " " + ring + " " + ellipse + " " + tri + " " + rect + " " + flood + " " + open + " " + border
+            }
+        }
+        print(Draw.Run(ColorMode.Rgba))
+        print(Draw.Run(ColorMode.Palette))
+        """, new[] { GfDrawExpected(), GfDrawExpected() });
+
+    CheckGf("Bilder: FromImage (Dateiinhalt im Puffer): Palette-Bild -> Palette-Framebuffer, Truecolor -> RGBA, Modus erzwingen", gfHead + """
+        var p = Framebuffer.FromImage(__TestImage("png_pal4"))
+        print(p.Mode() + " " + p.Width() + "x" + p.Height() + " " + p.GetPaletteColor(1))
+        var t = Framebuffer.FromImage(__TestImage("png_rgba8"))
+        print(t.Mode() + " " + t.ByteCount() + " " + t.ReadByte(0) + "," + t.ReadByte(1) + "," + t.ReadByte(2) + "," + t.ReadByte(3))
+        var forced = Framebuffer.FromImage(__TestImage("png_pal4"), ColorMode.Rgba)
+        print(forced.Mode() + " " + forced.ByteCount())
+        var g = Framebuffer.FromImage(__TestImage("pil_gif_trans"))
+        print(g.Mode() + " " + (g.TransparentIndex >= 0))
+        var bm = Framebuffer.FromImage(__TestImage("pil_bmp_rgb24"))
+        print(bm.Mode() + " " + bm.Width())
+        var q = Framebuffer.FromImage(__TestImage("png_rgb8"), ColorMode.Palette)
+        print(q.Mode() + " " + q.ByteCount())
+        """, new[] { $"1 13x7 {ImgPal(1)}", "0 364 3,5,0,0", "0 364", "1 True", "0 13", "1 91" });
+
+    CheckGf("Bilder: FromFile liest ueber den Leser des Hosts (Richtlinie), Fehler sind ImageException", gfHead + """
+        var fb = Framebuffer.FromFile("png_pal8")
+        print(fb.Mode() + " " + fb.Width())
+        try { Framebuffer.FromFile("fehlt.png") } catch (e) { print((e is of ImageException) + " " + e.message) }
+        try { Framebuffer.FromFile("verboten.png") } catch (e) { print((e is of ImageException) + " " + e.message) }
+        try { Framebuffer.FromImage(__TestGarbage()) } catch (e) { print((e is of ImageException) + " " + e.message) }
+        try { Framebuffer.FromImage(__TestImage("png_rgb8"), 7) } catch (e) { print(e is of ImageException) }
+        print("weiter")
+        """, new[] { "1 13", "True Datei nicht da: fehlt.png", "True verboten: verboten.png", "True Unbekanntes Bildformat (erwartet: PNG, BMP oder GIF).", "True", "weiter" },
+        reader: path => path switch
+        {
+            "fehlt.png" => throw new System.IO.FileNotFoundException("Datei nicht da: " + path),
+            "verboten.png" => throw new UnauthorizedAccessException("verboten: " + path),
+            _ => ImageFixtures.Get(path),
+        });
+
+    CheckGf("Rohpixel: FromPixels (RGBA und Palette mit Palette), ReadBytes/WriteBytes, falsche Groessen", gfHead + """
+        var raw = new byte[16]
+        for (var i = 0; i < 16; i = i + 1) { raw[i] = i * 10 }
+        var a = Framebuffer.FromPixels(2, 2, raw)
+        print(a.Mode() + " " + a.ReadByte(5) + " " + a.ReadBytes().length)
+        var idx = new byte[6]
+        for (var i = 0; i < 6; i = i + 1) { idx[i] = i + 1 }
+        var pal = new byte[768]
+        pal[3] = 11
+        pal[4] = 22
+        pal[5] = 33
+        var b = Framebuffer.FromPixels(3, 2, idx, ColorMode.Palette, pal)
+        print(b.Mode() + " " + b.ReadByte(4) + " " + b.GetPaletteColor(1))
+        var back = b.ReadBytes()
+        back[0] = 99
+        b.WriteBytes(back)
+        print(b.ReadByte(0))
+        try { Framebuffer.FromPixels(2, 2, idx) } catch (e) { print("falsche Groesse: " + (e is of ImageException)) }
+        try { b.WriteBytes(raw) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
+        try { b.WritePalette(raw) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
+        try { b.SetPaletteColor(256, 0) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
+        try { print(b.GetPaletteColor(-1)) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
+        print(b.ReadByte(0))
+        """, new[] { "0 50 16", $"1 5 {4278190080L + 33 * 65536 + 22 * 256 + 11}", "99", "falsche Groesse: True",
+            "True Erwarte genau 6 Byte, erhalten 16.",
+            "True Eine Palette hat 768 (RGB) oder 1024 (RGBA) Byte, erhalten 16.",
+            "True Palette-Index 256 außerhalb von 0-255.",
+            "True Palette-Index -1 außerhalb von 0-255.", "99" });
+
+    CheckGf("Blit: geladenes Bild in einen anderen Framebuffer (auch ueber die Farbmodi), Ausschnitt, Skalierung, Spiegelung, Transparenz", gfHead + """
+        var img = Framebuffer.FromImage(__TestImage("png_pal4"))
+        var rgba = new Framebuffer(30, 20)
+        var a = new Console(rgba)
+        a.Blit(img, 2, 3)
+        print(Px.Get(a, 2, 3) == img.GetPaletteColor(img.ReadByte(0)))
+        print(Px.Get(a, 14, 9) == img.GetPaletteColor(img.ReadByte(6 * 13 + 12)))
+        var pal = new Framebuffer(30, 20, ColorMode.Palette)
+        pal.WritePalette(img.ReadPalette(true))
+        var b = new Console(pal)
+        b.Blit(img, 0, 0)
+        print(pal.ReadByte(5) == img.ReadByte(5))
+        b.BlitRegion(img, 3, 2, 4, 3, 20, 10)
+        print(pal.ReadByte(10 * 30 + 20) == img.ReadByte(2 * 13 + 3))
+        b.BlitScaled(img, 0, 0, 13, 7, 0, 10, 26, 7)
+        print(pal.ReadByte(10 * 30 + 2) == img.ReadByte(1))
+        b.BlitScaled(img, 0, 0, 13, 7, 13, 0, -13, 7)
+        print(pal.ReadByte(13) == img.ReadByte(12) && pal.ReadByte(25) == img.ReadByte(0))
+        var bg = new Framebuffer(13, 7, ColorMode.Palette)
+        var c = new Console(bg)
+        c.FillRect(0, 0, 13, 7, 200)
+        var sprite = Framebuffer.FromImage(__TestImage("pil_gif_trans"))
+        c.Blit(sprite, 0, 0, BlitMode.Transparent)
+        var kept = 0
+        for (var i = 0; i < 91; i = i + 1) { if (bg.ReadByte(i) == 200) { kept = kept + 1 } }
+        print(kept > 0 && kept < 91)
+        var tc = Framebuffer.FromImage(__TestImage("png_rgba8"))
+        var dst = new Framebuffer(13, 7)
+        var d = new Console(dst)
+        d.FillRect(0, 0, 13, 7, 4278190335)
+        d.Blit(tc, 0, 0, BlitMode.Transparent)
+        print(Px.Get(d, 0, 0) == 4278190335)
+        """, new[] { "True", "True", "True", "True", "True", "True", "True", "True" });
+
+    // ---- Echte Dateien ueber die Sitzung des Hosts: die IoPolicy entscheidet, was Framebuffer.FromFile lesen darf ----
+    {
+        string imgDir = Path.Combine(Path.GetTempPath(), "fire-img-" + Guid.NewGuid().ToString("N"));
+        string otherDir = Path.Combine(Path.GetTempPath(), "fire-img-other-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(imgDir);
+        Directory.CreateDirectory(otherDir);
+        try
+        {
+            string png = Path.Combine(imgDir, "bild.png").Replace("\\", "/");
+            File.WriteAllBytes(png, ImageFixtures.Get("png_pal8"));
+            string script = $$"""
+                #import "graphics"
+                try {
+                    var fb = Framebuffer.FromFile("{{png}}")
+                    print("geladen " + fb.Mode() + " " + fb.Width() + "x" + fb.Height())
+                } catch (e) { print((e is of ImageException) + " " + e.message) }
+                """;
+            List<string> Session(fire.IO.Bridge.IoPolicy? policy)
+            {
+                var lines = new List<string>();
+                var session = fire.Compiler.RuntimeSession.Build(new[] { script }, VmExecutionMode.Release,
+                    args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); }, ioPolicy: policy);
+                session.Run();
+                return lines;
+            }
+            void CheckSession(string what, fire.IO.Bridge.IoPolicy? policy, Func<string, bool> ok)
+            {
+                string result;
+                try { result = string.Join("|", Session(policy)); }
+                catch (Exception ex) { result = "AUSNAHME: " + ex.Message; }
+                bool good = ok(result);
+                if (!good) gfFailures++;
+                Console.WriteLine(good ? $"OK: {what}" : $"FEHLER: {what}\n  erhalten: {result}");
+            }
+            CheckSession("FromFile ohne Richtlinie (alles erlaubt)", null, r => r == "geladen 1 13x7");
+            CheckSession("FromFile mit Richtlinie, die das Verzeichnis erlaubt", fire.IO.Bridge.IoPolicy.Rooted(imgDir, readOnly: true), r => r == "geladen 1 13x7");
+            CheckSession("FromFile mit DenyAll: ImageException mit dem Grund der Richtlinie", fire.IO.Bridge.IoPolicy.DenyAll, r => r == "True Dateizugriff ist für dieses Programm nicht erlaubt.");
+            CheckSession("FromFile ausserhalb des erlaubten Verzeichnisses: ImageException", fire.IO.Bridge.IoPolicy.Rooted(otherDir), r => r.StartsWith("True "));
+        }
+        finally
+        {
+            try { Directory.Delete(imgDir, true); Directory.Delete(otherDir, true); } catch { }
+        }
+    }
+
+    Console.WriteLine(gfFailures == 0 ? "Alle Grafik-aus-fire-Pruefungen bestanden." : $"FEHLER: {gfFailures} Grafik-aus-fire-Pruefung(en) fehlgeschlagen.");
 }
 
 // ---------------------------------------------------------------------------

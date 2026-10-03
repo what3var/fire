@@ -4,6 +4,7 @@ using fire.Terminal;
 using fire.Terminal.Event;
 using fire.Terminal.Windows;
 using fire.Values;
+using System;
 using System.Collections.Generic;
 using System.Net.WebSockets;
 
@@ -43,10 +44,12 @@ namespace fire.Terminal.Bridge
         /// HandleUnavailableException (siehe dort).</summary>
         public const int InvalidHandle = -1;
 
+        /// <summary>`readFile`: wie `Framebuffer.FromFile` an die Bytes einer Datei kommt (der Host entscheidet, was ein Skript lesen darf, siehe IoPolicy) -
+        /// ohne Angabe wird die Datei einfach gelesen.</summary>
         public static void RegisterAll(
-            NativeRegistry natives, FramebufferManager framebuffers, ConsoleManager consoles, WindowManager windows)
+            NativeRegistry natives, FramebufferManager framebuffers, ConsoleManager consoles, WindowManager windows, Func<string, byte[]>? readFile = null)
         {
-            natives.RegisterGroup(FramebufferPrefix, BuildFramebufferFunctions(framebuffers));
+            natives.RegisterGroup(FramebufferPrefix, BuildFramebufferFunctions(framebuffers, readFile));
             natives.RegisterGroup(ConsolePrefix, BuildConsoleFunctions(consoles));
             natives.RegisterGroup(WindowPrefix, BuildWindowFunctions(windows));
         }
@@ -69,25 +72,107 @@ namespace fire.Terminal.Bridge
                 ["Height"] = args => Value.MakeUndefined() /*STUB*/,
                 ["ReadByte"] = args => Value.MakeUndefined() /*STUB*/,
                 ["WriteByte"] = args => Value.MakeUndefined() /*STUB*/,
+                // WICHTIG: neue Funktionen immer ANS ENDE, in BuildFramebufferFunctions in derselben Reihenfolge (Index = Position).
+                ["Mode"] = args => Value.MakeUndefined() /*STUB*/,
+                ["ByteCount"] = args => Value.MakeUndefined() /*STUB*/,
+                ["ReadBytes"] = args => Value.MakeUndefined() /*STUB*/,
+                ["WriteBytes"] = args => Value.MakeUndefined() /*STUB*/,
+                ["GetPaletteColor"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetPaletteColor"] = args => Value.MakeUndefined() /*STUB*/,
+                ["ReadPalette"] = args => Value.MakeUndefined() /*STUB*/,
+                ["WritePalette"] = args => Value.MakeUndefined() /*STUB*/,
+                ["LoadImage"] = args => Value.MakeUndefined() /*STUB*/,
+                ["LoadFile"] = args => Value.MakeUndefined() /*STUB*/,
+                ["FromPixels"] = args => Value.MakeUndefined() /*STUB*/,
+                ["LastError"] = args => Value.MakeUndefined() /*STUB*/,
+                ["GetTransparentIndex"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetTransparentIndex"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 
-        private static Dictionary<string, NativeFunction> BuildFramebufferFunctions(FramebufferManager mgr)
+        /// <summary>Der Fehlertext der letzten fehlgeschlagenen Bild-Funktion dieses Threads (siehe LastError).</summary>
+        [ThreadStatic] private static string? t_lastError;
+
+        private static int I(Value v) => (int)v.AsInt();
+
+        /// <summary>-1 (oder weniger) = "wie das Bild", sonst der Farbmodus.</summary>
+        private static ColorMode? ModeArg(Value v)
         {
+            long m = v.AsInt();
+            return m < 0 ? null : (ColorMode)m;
+        }
+
+        /// <summary>Führt eine Bild-Funktion aus, die einen Framebuffer anlegt: der Fehlertext geht an LastError, das Ergebnis ist dann InvalidHandle
+        /// (die Prelude wirft daraus eine fangbare ImageException).</summary>
+        private static Value LoadGuarded(Func<int> action)
+        {
+            t_lastError = null;
+            try { return Value.MakeInt(action()); }
+            catch (Exception ex)
+            {
+                t_lastError = ex.Message;
+                return Value.MakeInt(InvalidHandle);
+            }
+        }
+
+        /// <summary>Führt eine Aktion aus, die an unpassenden Argumenten scheitern darf (Größe, Bereich): der Fehlertext geht an LastError, das Ergebnis ist false.</summary>
+        private static bool Succeeded(Action action)
+        {
+            t_lastError = null;
+            try { action(); return true; }
+            catch (Exception ex) when (ex is ArgumentException)
+            {
+                t_lastError = ex.Message.Split('\n')[0].Replace(" (Parameter 'data')", "").Replace(" (Parameter 'index')", "");
+                return false;
+            }
+        }
+
+        private static byte[] DefaultReadFile(string path) => System.IO.File.ReadAllBytes(System.IO.Path.GetFullPath(path));
+
+        private static Dictionary<string, NativeFunction> BuildFramebufferFunctions(FramebufferManager mgr, Func<string, byte[]>? readFile)
+        {
+            var reader = readFile ?? DefaultReadFile;
             return new Dictionary<string, NativeFunction>
             {
                 ["Create"] = args =>
                 {
-                    try { return Value.MakeInt(mgr.CreateFramebuffer((int)args[0].AsInt(), (int)args[1].AsInt())); }
+                    try { return Value.MakeInt(mgr.CreateFramebuffer(I(args[0]), I(args[1]), args.Length > 2 ? (ColorMode)I(args[2]) : ColorMode.Rgba)); }
                     catch { return Value.MakeInt(InvalidHandle); }
                 },
-                ["Destroy"] = args => Value.MakeBool(mgr.DestroyFramebuffer((int)args[0].AsInt())),
-                ["Width"] = args => Value.MakeInt(mgr.GetWidth((int)args[0].AsInt())),
-                ["Height"] = args => Value.MakeInt(mgr.GetHeight((int)args[0].AsInt())),
-                ["ReadByte"] = args => Value.MakeInt(mgr.ReadByte((int)args[0].AsInt(), (int)args[1].AsInt())),
+                ["Destroy"] = args => Value.MakeBool(mgr.DestroyFramebuffer(I(args[0]))),
+                ["Width"] = args => Value.MakeInt(mgr.GetWidth(I(args[0]))),
+                ["Height"] = args => Value.MakeInt(mgr.GetHeight(I(args[0]))),
+                ["ReadByte"] = args => Value.MakeInt(mgr.ReadByte(I(args[0]), I(args[1]))),
                 ["WriteByte"] = args =>
                 {
-                    mgr.WriteByte((int)args[0].AsInt(), (int)args[1].AsInt(), (byte)args[2].AsInt());
+                    mgr.WriteByte(I(args[0]), I(args[1]), (byte)args[2].AsInt());
+                    return Value.MakeUndefined();
+                },
+                // WICHTIG: neue Funktionen immer ANS ENDE, in BuildFramebufferFunctionStubs in derselben Reihenfolge (Index = Position).
+                ["Mode"] = args => Value.MakeInt((int)mgr.GetMode(I(args[0]))),
+                ["ByteCount"] = args => Value.MakeInt(mgr.GetByteCount(I(args[0]))),
+                ["ReadBytes"] = args => Value.MakeBuffer(new ByteBuffer(mgr.ReadBytes(I(args[0])), ByteConversions.HostByteOrder)),
+                // false bei unpassenden Daten (Grund: LastError), die Prelude macht daraus eine GraphicsException
+                ["WriteBytes"] = args => Value.MakeBool(Succeeded(() => mgr.WriteBytes(I(args[0]), args[1].AsBuffer().Bytes))),
+                // Palette-Farben sind VORZEICHENLOSE Werte (r + g*256 + b*65536 + a*16777216), anders als GetPixel; -1 bei ungültigem Index
+                ["GetPaletteColor"] = args =>
+                {
+                    long color = -1;
+                    return Succeeded(() => color = (uint)mgr.GetPaletteColor(I(args[0]), I(args[1]))) ? Value.MakeInt(color) : Value.MakeInt(-1);
+                },
+                ["SetPaletteColor"] = args => Value.MakeBool(Succeeded(() => mgr.SetPaletteColor(I(args[0]), I(args[1]), I(args[2])))),
+                ["ReadPalette"] = args => Value.MakeBuffer(new ByteBuffer(mgr.ReadPalette(I(args[0]), args[1].AsBool()), ByteConversions.HostByteOrder)),
+                ["WritePalette"] = args => Value.MakeBool(Succeeded(() => mgr.WritePalette(I(args[0]), args[1].AsBuffer().Bytes))),
+                // Bilder: liefern die ID des neuen Framebuffers oder InvalidHandle (Grund: LastError)
+                ["LoadImage"] = args => LoadGuarded(() => mgr.LoadImage(args[0].AsBuffer().Bytes, ModeArg(args[1]))),
+                ["LoadFile"] = args => LoadGuarded(() => mgr.LoadImage(reader(args[0].AsString()), ModeArg(args[1]))),
+                ["FromPixels"] = args => LoadGuarded(() => mgr.CreateFromPixels(I(args[0]), I(args[1]), args[2].AsBuffer().Bytes, (ColorMode)I(args[3]),
+                    args.Length > 4 && args[4].Kind == ValueKind.Buffer ? args[4].AsBuffer().Bytes : null)),
+                ["LastError"] = args => Value.MakeString(t_lastError ?? string.Empty),
+                ["GetTransparentIndex"] = args => Value.MakeInt(mgr.GetTransparentIndex(I(args[0]))),
+                ["SetTransparentIndex"] = args =>
+                {
+                    mgr.SetTransparentIndex(I(args[0]), I(args[1]));
                     return Value.MakeUndefined();
                 },
             };
@@ -111,6 +196,19 @@ namespace fire.Terminal.Bridge
                 ["DrawText"] = args => Value.MakeUndefined() /*STUB*/,
                 ["CellWidth"] = args => Value.MakeUndefined() /*STUB*/,
                 ["CellHeight"] = args => Value.MakeUndefined() /*STUB*/,
+                // WICHTIG: neue Funktionen immer ANS ENDE, in BuildConsoleFunctions in derselben Reihenfolge (Index = Position).
+                ["GetPixelIndex"] = args => Value.MakeUndefined() /*STUB*/,
+                ["DrawCircle"] = args => Value.MakeUndefined() /*STUB*/,
+                ["FillCircle"] = args => Value.MakeUndefined() /*STUB*/,
+                ["DrawEllipse"] = args => Value.MakeUndefined() /*STUB*/,
+                ["FillEllipse"] = args => Value.MakeUndefined() /*STUB*/,
+                ["DrawTriangle"] = args => Value.MakeUndefined() /*STUB*/,
+                ["FillTriangle"] = args => Value.MakeUndefined() /*STUB*/,
+                ["DrawPolygon"] = args => Value.MakeUndefined() /*STUB*/,
+                ["FillPolygon"] = args => Value.MakeUndefined() /*STUB*/,
+                ["FloodFill"] = args => Value.MakeUndefined() /*STUB*/,
+                ["FloodFillBorder"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Blit"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 
@@ -173,7 +271,75 @@ namespace fire.Terminal.Bridge
                 },
                 ["CellWidth"] = args => Value.MakeInt(mgr.GetCellWidth((int)args[0].AsInt())),
                 ["CellHeight"] = args => Value.MakeInt(mgr.GetCellHeight((int)args[0].AsInt())),
+                // WICHTIG: neue Funktionen immer ANS ENDE, in BuildConsoleFunctionStubs in derselben Reihenfolge (Index = Position).
+                // Farben: eine Zahl 0-255 ist ein Palette-Index, jede andere ein direkter Wert (siehe Paint.FromArgument).
+                ["GetPixelIndex"] = args => Value.MakeInt(mgr.GetPixelIndex(I(args[0]), I(args[1]), I(args[2]))),
+                ["DrawCircle"] = args =>
+                {
+                    mgr.DrawCircle(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]));
+                    return Value.MakeUndefined();
+                },
+                ["FillCircle"] = args =>
+                {
+                    mgr.FillCircle(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]));
+                    return Value.MakeUndefined();
+                },
+                ["DrawEllipse"] = args =>
+                {
+                    mgr.DrawEllipse(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]));
+                    return Value.MakeUndefined();
+                },
+                ["FillEllipse"] = args =>
+                {
+                    mgr.FillEllipse(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]));
+                    return Value.MakeUndefined();
+                },
+                ["DrawTriangle"] = args =>
+                {
+                    mgr.DrawTriangle(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]), I(args[7]));
+                    return Value.MakeUndefined();
+                },
+                ["FillTriangle"] = args =>
+                {
+                    mgr.FillTriangle(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]), I(args[7]));
+                    return Value.MakeUndefined();
+                },
+                ["DrawPolygon"] = args =>
+                {
+                    mgr.DrawPolygon(I(args[0]), ReadPoints(args[1]), I(args[2]), args[3].AsBool());
+                    return Value.MakeUndefined();
+                },
+                ["FillPolygon"] = args =>
+                {
+                    mgr.FillPolygon(I(args[0]), ReadPoints(args[1]), I(args[2]));
+                    return Value.MakeUndefined();
+                },
+                ["FloodFill"] = args =>
+                {
+                    mgr.FloodFill(I(args[0]), I(args[1]), I(args[2]), I(args[3]));
+                    return Value.MakeUndefined();
+                },
+                ["FloodFillBorder"] = args =>
+                {
+                    mgr.FloodFillBorder(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]));
+                    return Value.MakeUndefined();
+                },
+                ["Blit"] = args =>
+                {
+                    mgr.Blit(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]), I(args[7]), I(args[8]), I(args[9]), I(args[10]), I(args[11]));
+                    return Value.MakeUndefined();
+                },
             };
+        }
+
+        /// <summary>Die Punkte eines Polygons aus einem Skript-Array `[x0, y0, x1, y1, ...]` (Kommazahlen werden abgeschnitten; ein ungerades letztes Element zählt nicht).</summary>
+        private static int[] ReadPoints(Value array)
+        {
+            var items = array.AsArray().Items;
+            var points = new int[items.Length - items.Length % 2];
+            for (int i = 0; i < points.Length; i++)
+                points[i] = items[i].Kind == ValueKind.Float ? (int)items[i].AsFloat() : (int)items[i].AsInt();
+            return points;
         }
 
         private static Dictionary<string, NativeFunction> BuildWindowFunctions(WindowManager mgr)
@@ -251,24 +417,133 @@ namespace fire.Terminal.Bridge
                 }
             }
 
+            // Wie ein Framebuffer seine Pixel speichert: Rgba = 4 Byte je Pixel (jede Farbe direkt), Palette = 1 Byte je Pixel (Index in eine
+            // 256-Farben-Palette; ein Palette-Eintrag ändern färbt alle Pixel mit diesem Index um).
+            enum ColorMode {
+                Rgba = 0,
+                Palette = 1
+            }
+
+            // Wie Console.Blit mit durchsichtigen Pixeln umgeht: Copy kopiert alles, Transparent lässt durchsichtige Pixel der Quelle aus (RGBA: Alpha 0,
+            // Palette: der Farbschlüssel bzw. der TransparentIndex des Bildes), Blend mischt halbdurchsichtige RGBA-Pixel nach ihrem Alpha-Wert.
+            enum BlitMode {
+                Copy = 0,
+                Transparent = 1,
+                Blend = 2
+            }
+
+            // Ein Grafik-Aufruf mit unpassenden Daten (z.B. ein Puffer falscher Größe, ein Palette-Index außerhalb von 0-255).
+            class GraphicsException : Exception {
+                string message
+
+                construct(string message) {
+                    this.message = message
+                }
+            }
+
+            // Ein Bild konnte nicht geladen werden (unbekanntes Format, beschädigt, Datei nicht lesbar oder nicht erlaubt).
+            class ImageException : GraphicsException {
+                construct(string message) : base(message) { }
+            }
+
             class Framebuffer {
                 int id
 
-                construct(int width, int height) {
-                    this.id = __GRPHFbCreate(width, height)
-                    if (this.id == -1) {
-                        throw new HandleUnavailableException("Framebuffer konnte nicht erstellt werden.")
+                // mode: ColorMode.Rgba (Vorgabe) oder ColorMode.Palette. (mode -2 ist intern: ein leerer Rahmen für die Fabrikmethoden unten.)
+                construct(int width, int height, int mode = 0) {
+                    if (mode == -2) {
+                        this.id = 0
+                    } else {
+                        this.id = __GRPHFbCreate(width, height, mode)
+                        if (this.id == -1) {
+                            throw new HandleUnavailableException("Framebuffer konnte nicht erstellt werden.")
+                        }
                     }
                 }
 
                 destruct() {
-                    __GRPHFbDestroy(this.id)
+                    if (this.id > 0) {
+                        __GRPHFbDestroy(this.id)
+                    }
+                }
+
+                // Ein Bild laden: PNG, BMP oder GIF - als Inhalt einer Datei (FromImage: ein byte-Puffer mit den Bytes der Datei) oder von einem Pfad
+                // (FromFile; der Host entscheidet, was gelesen werden darf). Der Framebuffer hat die Größe des Bildes. mode -1 (Vorgabe): wie das Bild -
+                // ein Bild mit Palette (PNG mit Palette, GIF, BMP bis 8 Bit) wird ein Palette-Framebuffer mit der Palette der Datei, alles andere
+                // RGBA; ColorMode.Rgba / ColorMode.Palette erzwingt einen Modus (ein RGBA-Bild wird dann auf die Standard-Palette abgebildet).
+                // Fehler: ImageException.
+                static Framebuffer FromImage(data, int mode = -1) {
+                    var fb = new Framebuffer(0, 0, -2)
+                    fb.id = __GRPHFbLoadImage(data, mode)
+                    if (fb.id < 0) {
+                        throw new ImageException(__GRPHFbLastError())
+                    }
+                    return fb
+                }
+
+                static Framebuffer FromFile(string path, int mode = -1) {
+                    var fb = new Framebuffer(0, 0, -2)
+                    fb.id = __GRPHFbLoadFile(path, mode)
+                    if (fb.id < 0) {
+                        throw new ImageException(__GRPHFbLastError())
+                    }
+                    return fb
+                }
+
+                // Rohe Pixel aus einem byte-Puffer, zeilenweise von oben nach unten: ColorMode.Rgba width*height*4 Byte (R, G, B, A je Pixel),
+                // ColorMode.Palette width*height Byte (ein Index je Pixel) und optional eine Palette (768 Byte RGB oder 1024 Byte RGBA).
+                static Framebuffer FromPixels(int width, int height, pixels, int mode = 0, palette = undefined) {
+                    var fb = new Framebuffer(0, 0, -2)
+                    fb.id = __GRPHFbFromPixels(width, height, pixels, mode, palette)
+                    if (fb.id < 0) {
+                        throw new ImageException(__GRPHFbLastError())
+                    }
+                    return fb
                 }
 
                 int Width() { return __GRPHFbWidth(this.id) }
                 int Height() { return __GRPHFbHeight(this.id) }
+                int Mode() { return __GRPHFbMode(this.id) }
+
+                // Rohdaten: RGBA 4 Byte je Pixel (R, G, B, A), Palette 1 Byte je Pixel (der Index); ByteCount() ist die Größe.
+                int ByteCount() { return __GRPHFbByteCount(this.id) }
                 int ReadByte(int offset) { return __GRPHFbReadByte(this.id, offset) }
                 WriteByte(int offset, int value) { __GRPHFbWriteByte(this.id, offset, value) }
+                ReadBytes() { return __GRPHFbReadBytes(this.id) }
+                WriteBytes(data) {
+                    if (!__GRPHFbWriteBytes(this.id, data)) {
+                        throw new GraphicsException(__GRPHFbLastError())
+                    }
+                }
+
+                // Die 256-Farben-Palette (bei einem Palette-Framebuffer ist sie die Farbtabelle des Bildes, bei einem RGBA-Framebuffer löst sie Palette-Indizes
+                // auf, die man als Farbe angibt). Farben sind r + g*256 + b*65536 + a*16777216 (Alpha 255 = deckend).
+                int GetPaletteColor(int index) {
+                    var color = __GRPHFbGetPaletteColor(this.id, index)
+                    if (color < 0) {
+                        throw new GraphicsException(__GRPHFbLastError())
+                    }
+                    return color
+                }
+                SetPaletteColor(int index, int color) {
+                    if (!__GRPHFbSetPaletteColor(this.id, index, color)) {
+                        throw new GraphicsException(__GRPHFbLastError())
+                    }
+                }
+                SetPaletteRgb(int index, int r, int g, int b) { this.SetPaletteColor(index, r + g * 256 + b * 65536 + 255 * 16777216) }
+                // 768 Byte (R, G, B je Eintrag) oder mit withAlpha 1024 Byte (R, G, B, A)
+                ReadPalette(bool withAlpha = false) { return __GRPHFbReadPalette(this.id, withAlpha) }
+                WritePalette(data) {
+                    if (!__GRPHFbWritePalette(this.id, data)) {
+                        throw new GraphicsException(__GRPHFbLastError())
+                    }
+                }
+
+                // Palette-Framebuffer: der Index, der in einem Bild als durchsichtig gilt (GIF/PNG), -1 = keiner. Console.Blit mit BlitMode.Transparent überspringt ihn.
+                int TransparentIndex {
+                    get { return __GRPHFbGetTransparentIndex(this.id) }
+                    set { __GRPHFbSetTransparentIndex(this.id, value) }
+                }
             }
 
             class Console {
@@ -292,8 +567,8 @@ namespace fire.Terminal.Bridge
                 SetPixel(int x, int y, int color) { __GRPHConSetPixel(this.id, x, y, color) }
                 int GetPixel(int x, int y) { return __GRPHConGetPixel(this.id, x, y) }
 
-                // Farben der folgenden Methoden sind ROHE Werte: r + g*256 + b*65536 + a*16777216 (a = 255 deckend; siehe
-                // UI.Color.Rgb) - keine Palette-Indizes wie bei SetColor. Positionen/Größen in PIXELN.
+                // Farben: eine Zahl von 0 bis 255 ist ein Palette-Index, jede andere ein direkter Wert r + g*256 + b*65536 + a*16777216
+                // (a = 255 deckend; siehe UI.Color.Rgb). Positionen/Größen in PIXELN.
                 FillRect(int x, int y, int w, int h, int color) { __GRPHConFillRect(this.id, x, y, w, h, color) }
                 DrawRect(int x, int y, int w, int h, int color) { __GRPHConDrawRect(this.id, x, y, w, h, color) }
                 DrawLine(int x0, int y0, int x1, int y1, int color) { __GRPHConDrawLine(this.id, x0, y0, x1, y1, color) }
@@ -301,6 +576,45 @@ namespace fire.Terminal.Bridge
                 DrawText(int x, int y, string text, int color, int background) { __GRPHConDrawText(this.id, x, y, text, color, background) }
                 int CellWidth() { return __GRPHConCellWidth(this.id) }
                 int CellHeight() { return __GRPHConCellHeight(this.id) }
+
+                // Farben aller Zeichenfunktionen: eine Zahl von 0 bis 255 ist ein Index der Palette des Framebuffers, jede andere ein direkter Wert
+                // (r + g*256 + b*65536 + a*16777216). In einem Palette-Framebuffer wird ein direkter Wert auf den nächsten Palette-Eintrag abgebildet.
+                // Alles wird am Rand des Framebuffers beschnitten.
+
+                // Der Palette-Index des Pixels (RGBA-Framebuffer: der Eintrag, der seiner Farbe am nächsten kommt)
+                int GetPixelIndex(int x, int y) { return __GRPHConGetPixelIndex(this.id, x, y) }
+
+                // Kreis um (cx, cy) mit Radius r, Ellipse mit den Halbachsen rx (waagerecht) und ry (senkrecht); Fill... füllt die Fläche samt Rand
+                DrawCircle(int cx, int cy, int r, int color) { __GRPHConDrawCircle(this.id, cx, cy, r, color) }
+                FillCircle(int cx, int cy, int r, int color) { __GRPHConFillCircle(this.id, cx, cy, r, color) }
+                DrawEllipse(int cx, int cy, int rx, int ry, int color) { __GRPHConDrawEllipse(this.id, cx, cy, rx, ry, color) }
+                FillEllipse(int cx, int cy, int rx, int ry, int color) { __GRPHConFillEllipse(this.id, cx, cy, rx, ry, color) }
+
+                DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, int color) { __GRPHConDrawTriangle(this.id, x0, y0, x1, y1, x2, y2, color) }
+                FillTriangle(int x0, int y0, int x1, int y1, int x2, int y2, int color) { __GRPHConFillTriangle(this.id, x0, y0, x1, y1, x2, y2, color) }
+
+                // points: ein Array [x0, y0, x1, y1, ...]. DrawPolygon verbindet den letzten mit dem ersten Punkt (closed = false: nur der Linienzug);
+                // FillPolygon füllt nach der Even-Odd-Regel (sich überschneidende Teile bleiben leer).
+                DrawPolygon(points, int color, bool closed = true) { __GRPHConDrawPolygon(this.id, points, color, closed) }
+                FillPolygon(points, int color) { __GRPHConFillPolygon(this.id, points, color) }
+
+                // Füllt die zusammenhängende Fläche mit der Farbe des Pixels (x, y) mit `color`. FloodFillBorder füllt stattdessen bis zu Pixeln der
+                // Farbe `border` (wie PAINT in QBasic).
+                FloodFill(int x, int y, int color) { __GRPHConFloodFill(this.id, x, y, color) }
+                FloodFillBorder(int x, int y, int color, int border) { __GRPHConFloodFillBorder(this.id, x, y, color, border) }
+
+                // Kopiert einen anderen Framebuffer (z.B. ein geladenes Bild) hierher, auch zwischen den Farbmodi (siehe BlitMode). Blit: das ganze Bild mit
+                // der linken oberen Ecke bei (x, y); BlitRegion: der Ausschnitt (sx, sy, sw, sh) nach (dx, dy); BlitScaled: dazu auf die Größe dw x dh gebracht
+                // (nächster Nachbar; eine NEGATIVE Breite/Höhe spiegelt). `key`: bei einem Palette-Bild der durchsichtige Index (-1 = sein TransparentIndex).
+                Blit(Framebuffer source, int x, int y, int mode = 0, int key = -1) {
+                    __GRPHConBlit(this.id, source.id, 0, 0, source.Width(), source.Height(), x, y, source.Width(), source.Height(), mode, key)
+                }
+                BlitRegion(Framebuffer source, int sx, int sy, int sw, int sh, int dx, int dy, int mode = 0, int key = -1) {
+                    __GRPHConBlit(this.id, source.id, sx, sy, sw, sh, dx, dy, sw, sh, mode, key)
+                }
+                BlitScaled(Framebuffer source, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode = 0, int key = -1) {
+                    __GRPHConBlit(this.id, source.id, sx, sy, sw, sh, dx, dy, dw, dh, mode, key)
+                }
             }
 
             class Window {

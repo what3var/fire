@@ -156,8 +156,15 @@ namespace fire.Terminal
         /// (nur die Glyph-Pixel werden geschrieben), sonst wird die ganze Zelle übermalt. Liegt die Zelle vollständig im Target
         /// und hat die Schrift Bitmap-Zeilen (<see cref="IBitmapGlyphFont"/>), gehen die Pixel zeilenweise ohne Abfrage und ohne
         /// Randprüfung direkt in den Puffer; sonst (Rand des Puffers, andere Schrift) pixelweise mit Clipping.</summary>
-        public void DrawGlyph(int x, int y, char c, PixelColor foreground, PixelColor? background) =>
+        public void DrawGlyph(int x, int y, char c, PixelColor foreground, PixelColor? background)
+        {
+            if (!Target.IsIndexed)
+            {
+                DrawGlyphResolved(x, y, c, new Brush(foreground.Packed, 0), background.HasValue, new Brush(background.GetValueOrDefault().Packed, 0));
+                return;
+            }
             DrawGlyph(x, y, c, (Paint)foreground, background is PixelColor b ? (Paint?)b : null);
+        }
 
         public void DrawGlyph(int x, int y, char c, Paint foreground, Paint? background)
         {
@@ -263,8 +270,15 @@ namespace fire.Terminal
         /// <summary>Zeichnet `text` ab (x, y) in PIXELN, ein Zeichen nach dem anderen (kein Umbruch, kein Cursor; '\n' und
         /// '\r' werden wie jedes Zeichen der Schrift gezeichnet). Die Basis für Oberflächen, die Text an beliebigen Pixeln
         /// brauchen statt im Zellenraster.</summary>
-        public void DrawText(int x, int y, string text, PixelColor foreground, PixelColor? background = null) =>
+        public void DrawText(int x, int y, string text, PixelColor foreground, PixelColor? background = null)
+        {
+            if (!Target.IsIndexed) // der häufigste Fall (RGBA, direkte Farben): ohne Umweg über die Farbauflösung
+            {
+                DrawTextResolved(x, y, text, new Brush(foreground.Packed, 0), background.HasValue, new Brush(background.GetValueOrDefault().Packed, 0));
+                return;
+            }
             DrawText(x, y, text, (Paint)foreground, background is PixelColor b ? (Paint?)b : null);
+        }
 
         public void DrawText(int x, int y, string text, Paint foreground, Paint? background)
         {
@@ -286,7 +300,7 @@ namespace fire.Terminal
                 && x >= 0 && y >= 0 && y + ch <= target.Height && (long)x + (long)cw * text.Length <= target.Width)
             {
                 int stride = target.Width;
-                uint fg = foreground.Rgba;
+                uint fg = foreground.Rgba, bg = background.Rgba;
                 ref uint cell = ref target.Pixels[y * stride + x];
                 foreach (char c in text)
                 {
@@ -297,7 +311,7 @@ namespace fire.Terminal
                         DrawTextSlow(x, y, text, foreground, hasBackground, background);
                         return;
                     }
-                    if (hasBackground) GlyphBlitter.BlitOpaque(ref cell, stride, ch, rows, fg, background.Rgba);
+                    if (hasBackground) GlyphBlitter.BlitOpaque(ref cell, stride, ch, rows, fg, bg);
                     else GlyphBlitter.BlitTransparent(ref cell, stride, ch, rows, fg);
                     cell = ref Unsafe.Add(ref cell, 8);
                 }

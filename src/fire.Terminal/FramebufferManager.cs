@@ -23,6 +23,38 @@ namespace fire.Terminal
 
         public ColorMode GetMode(int id) => _framebuffers.Get(id).Mode;
 
+        // -----------------------------------------------------------
+        // Bilder laden (siehe ImageDecoder): als Dateiinhalt oder als rohe Pixel
+        // -----------------------------------------------------------
+
+        /// <summary>Dekodiert eine Bilddatei aus Bytes (PNG, BMP, GIF) in einen NEUEN Framebuffer und liefert seine ID. `mode` null = wie das Bild
+        /// (indiziert -> Palette-Framebuffer, Truecolor -> RGBA), sonst erzwungen (siehe ImageData.ToFramebuffer). Wirft ImageFormatException.</summary>
+        public int LoadImage(byte[] data, ColorMode? mode = null) =>
+            _framebuffers.Create(ImageDecoder.Decode(data).ToFramebuffer(mode));
+
+        /// <summary>Ein neuer Framebuffer aus rohen Pixeln: RGBA-Modus `width*height*4` Byte (R, G, B, A je Pixel), Palette-Modus `width*height` Byte
+        /// (ein Index je Pixel) und optional eine Palette (768 Byte RGB oder 1024 Byte RGBA, wie WritePalette). Zeilenweise von oben nach unten.</summary>
+        public int CreateFromPixels(int width, int height, byte[] pixels, ColorMode mode, byte[]? palette = null)
+        {
+            var fb = new Framebuffer(width, height, mode);
+            int expected = fb.Indices != null ? fb.Indices.Length : fb.Pixels.Length * 4;
+            if (pixels.Length != expected)
+                throw new ArgumentException($"Erwarte genau {expected} Byte ({width}x{height}, {(mode == ColorMode.Indexed ? "1 Byte" : "4 Byte")} je Pixel), erhalten {pixels.Length}.", nameof(pixels));
+            if (fb.Indices != null) Buffer.BlockCopy(pixels, 0, fb.Indices, 0, pixels.Length);
+            else Buffer.BlockCopy(pixels, 0, fb.Pixels, 0, pixels.Length);
+            fb.MarkDirty();
+            int id = _framebuffers.Create(fb);
+            if (palette != null)
+            {
+                try { WritePalette(id, palette); }
+                catch { _framebuffers.Destroy(id); throw; }
+            }
+            return id;
+        }
+
+        public int GetTransparentIndex(int id) => _framebuffers.Get(id).TransparentIndex;
+        public void SetTransparentIndex(int id, int index) => _framebuffers.Get(id).TransparentIndex = Math.Clamp(index, -1, 255);
+
         public bool DestroyFramebuffer(int id) => _framebuffers.Destroy(id);
 
         /// <summary>Für C#-seitige Weiterverwendung (z.B. ConsoleManager/
