@@ -7581,6 +7581,237 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 }
 
 // ---------------------------------------------------------------------------
+// Bilder: PNG, BMP, GIF dekodieren (Testdateien von Pillow und eigenen Schreibern, siehe ImageFixtures)
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Bilder: PNG, BMP, GIF ===");
+    int imgFailures = 0;
+    void ImgCheck(bool ok, string what)
+    {
+        if (!ok) imgFailures++;
+        Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
+    }
+
+    const int IW = 13, IH = 7;
+    // dieselben Formeln wie im Erzeugerskript
+    uint Rgb(int x, int y) => (uint)((x * 19 + 3) % 256) | (uint)(((y * 35 + 5) % 256) << 8) | (uint)((((x * 7 + y * 13) * 3) % 256) << 16);
+    uint Alpha(int x, int y) => (uint)((x * 37 + y * 91) % 256);
+    uint PalEntry(int i) => (uint)((i * 40 + 10) % 256) | (uint)(((i * 70 + 20) % 256) << 8) | (uint)(((i * 110 + 30) % 256) << 16) | 0xFF000000u;
+    int PalIndex(int x, int y, int n) => (x * 5 + y * 3) % n;
+    uint Opaque(uint c) => c | 0xFF000000u;
+    uint Gray(uint v) => v | (v << 8) | (v << 16);
+
+    fire.Terminal.ImageData Load(string name) => fire.Terminal.ImageDecoder.Decode(ImageFixtures.Get(name));
+    bool Truecolor(string name, Func<int, int, uint> expected, string? format = null)
+    {
+        try
+        {
+            var img = Load(name);
+            if (img.IsIndexed || img.Width != IW || img.Height != IH || (format != null && img.Format != format)) return false;
+            for (int y = 0; y < IH; y++) for (int x = 0; x < IW; x++)
+                if (img.Pixels![y * IW + x] != expected(x, y)) return false;
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
+    // indiziert: die FARBE jedes Pixels stimmt (Indizes duerfen ein Encoder umnummerieren), optional die Indizes selbst
+    bool Indexed(string name, Func<int, int, uint> expectedColor, bool exactIndices = false, int n = 0, string? format = null)
+    {
+        try
+        {
+            var img = Load(name);
+            if (!img.IsIndexed || img.Width != IW || img.Height != IH || (format != null && img.Format != format)) return false;
+            for (int y = 0; y < IH; y++) for (int x = 0; x < IW; x++)
+            {
+                int pos = y * IW + x;
+                if (img.Palette![img.Indices![pos]] != expectedColor(x, y)) return false;
+                if (exactIndices && img.Indices[pos] != PalIndex(x, y, n)) return false;
+            }
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
+
+    // ---- PNG: eigener Encoder (alle Farbarten und Tiefen, alle Zeilenfilter) ----
+    ImgCheck(Truecolor("png_rgba8", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24), "PNG"), "PNG RGBA 8 Bit (alle fuenf Zeilenfilter, IDAT in zwei Chunks)");
+    ImgCheck(Truecolor("png_rgb8", (x, y) => Opaque(Rgb(x, y))), "PNG RGB 8 Bit");
+    ImgCheck(Truecolor("png_rgba16", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "PNG RGBA 16 Bit (auf 8 Bit gekuerzt)");
+    ImgCheck(Truecolor("png_rgb16", (x, y) => Opaque(Rgb(x, y))), "PNG RGB 16 Bit");
+    ImgCheck(Truecolor("png_gray8", (x, y) => Opaque(Gray(Rgb(x, y) & 0xFF))), "PNG Grau 8 Bit");
+    ImgCheck(Truecolor("png_gray16", (x, y) => Opaque(Gray(Rgb(x, y) & 0xFF))), "PNG Grau 16 Bit");
+    ImgCheck(Truecolor("png_graya8", (x, y) => Gray(Rgb(x, y) & 0xFF) | (Alpha(x, y) << 24)), "PNG Grau+Alpha 8 Bit");
+    ImgCheck(Truecolor("png_graya16", (x, y) => Gray(Rgb(x, y) & 0xFF) | (Alpha(x, y) << 24)), "PNG Grau+Alpha 16 Bit");
+    foreach (var (d, mul) in new[] { (1, 255u), (2, 85u), (4, 17u) })
+        ImgCheck(Truecolor($"png_gray{d}", (x, y) => Opaque(Gray((uint)((x * 3 + y) % (1 << d)) * mul))), $"PNG Grau {d} Bit");
+    ImgCheck(Truecolor("png_gray4_adam7", (x, y) => Opaque(Gray((uint)((x * 3 + y) % 16) * 17u))), "PNG Grau 4 Bit, verschraenkt (Adam7)");
+    ImgCheck(Truecolor("png_rgba8_adam7", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "PNG RGBA verschraenkt (Adam7)");
+    ImgCheck(Truecolor("png_rgb16_adam7", (x, y) => Opaque(Rgb(x, y))), "PNG RGB 16 Bit verschraenkt");
+    ImgCheck(Truecolor("png_gray8_key", (x, y) => (x == 0 ? 0u : 0xFF000000u) | Gray(Rgb(x, y) & 0xFF)), "PNG Grau mit tRNS-Schluessel (Pixel dieses Grauwerts durchsichtig)");
+    ImgCheck(Truecolor("png_rgb8_key", (x, y) => (x == 0 && y == 0 ? 0u : 0xFF000000u) | Rgb(x, y)), "PNG RGB mit tRNS-Schluessel");
+    {
+        var one = Load("png_rgb8_1x1_adam7");
+        ImgCheck(one.Width == 1 && one.Height == 1 && one.Pixels![0] == Opaque(Rgb(5, 5)), "PNG 1x1 verschraenkt (leere Durchgaenge)");
+        var small = Load("png_rgb8_3x2_adam7");
+        bool ok = small.Width == 3 && small.Height == 2;
+        for (int y = 0; y < 2 && ok; y++) for (int x = 0; x < 3; x++) ok &= small.Pixels![y * 3 + x] == Opaque(Rgb(x, y));
+        ImgCheck(ok, "PNG 3x2 verschraenkt (nicht alle Durchgaenge besetzt)");
+    }
+    foreach (var (d, n) in new[] { (1, 2), (2, 4), (4, 16), (8, 11) })
+        ImgCheck(Indexed($"png_pal{d}", (x, y) => PalEntry(PalIndex(x, y, n)), true, n, "PNG") && Load($"png_pal{d}").TransparentIndex == -1, $"PNG Palette {d} Bit: indiziert, Indizes und Palette stimmen");
+    ImgCheck(Indexed("png_pal2_adam7", (x, y) => PalEntry(PalIndex(x, y, 4)), true, 4), "PNG Palette 2 Bit verschraenkt");
+    {
+        var t = Load("png_pal8_trns");
+        ImgCheck(t.IsIndexed && t.TransparentIndex == 1 && (t.Palette![1] >> 24) == 0 && (t.Palette[2] >> 24) == 128 && (t.Palette[3] >> 24) == 255, "PNG Palette mit tRNS: durchsichtiger Index und Alpha je Eintrag");
+    }
+
+    // ---- PNG: Pillow ----
+    ImgCheck(Truecolor("pil_png_rgba", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "Pillow-PNG RGBA");
+    ImgCheck(Truecolor("pil_png_rgba_optimized", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "Pillow-PNG RGBA (optimiert, adaptive Filter)");
+    ImgCheck(Truecolor("pil_png_rgb", (x, y) => Opaque(Rgb(x, y))), "Pillow-PNG RGB");
+    ImgCheck(Truecolor("pil_png_gray", (x, y) => Opaque(Gray(Rgb(x, y) & 0xFF))), "Pillow-PNG Grau");
+    ImgCheck(Truecolor("pil_png_bilevel", (x, y) => Opaque(Gray((x + y) % 3 == 0 ? 255u : 0u))), "Pillow-PNG schwarzweiss (1 Bit)");
+    ImgCheck(Indexed("pil_png_pal", (x, y) => PalEntry(PalIndex(x, y, 11)), true, 11), "Pillow-PNG Palette");
+    ImgCheck(Indexed("pil_png_pal_bits4", (x, y) => PalEntry(PalIndex(x, y, 11)), true, 11), "Pillow-PNG Palette 4 Bit");
+    {
+        var t = Load("pil_png_pal_trns");
+        ImgCheck(t.IsIndexed && t.TransparentIndex == 3 && (t.Palette![3] >> 24) == 0, "Pillow-PNG Palette mit Transparenz");
+    }
+
+    // ---- BMP ----
+    ImgCheck(Indexed("pil_bmp_pal8", (x, y) => PalEntry(PalIndex(x, y, 11)), true, 11, "BMP"), "Pillow-BMP 8 Bit mit Palette");
+    ImgCheck(Truecolor("pil_bmp_rgb24", (x, y) => Opaque(Rgb(x, y)), "BMP"), "Pillow-BMP 24 Bit");
+    ImgCheck(Truecolor("pil_bmp_rgba32", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "Pillow-BMP 32 Bit mit Alpha");
+    ImgCheck(Indexed("pil_bmp_bilevel", (x, y) => Opaque(Gray((x + y) % 3 == 0 ? 255u : 0u))), "Pillow-BMP 1 Bit schwarzweiss");
+    ImgCheck(Indexed("pil_bmp_gray8", (x, y) => Opaque(Gray(Rgb(x, y) & 0xFF))), "Pillow-BMP 8 Bit Graustufen");
+    ImgCheck(Indexed("bmp_pal4", (x, y) => PalEntry(PalIndex(x, y, 16)), true, 16), "BMP 4 Bit mit Palette");
+    ImgCheck(Indexed("bmp_pal4_topdown", (x, y) => PalEntry(PalIndex(x, y, 16)), true, 16), "BMP 4 Bit, Zeilen von oben nach unten (negative Hoehe)");
+    ImgCheck(Indexed("bmp_pal1", (x, y) => PalEntry(PalIndex(x, y, 2)), true, 2), "BMP 1 Bit mit Palette");
+    {
+        var part = Load("bmp_pal8_partial");
+        ImgCheck(Indexed("bmp_pal8_partial", (x, y) => PalEntry(PalIndex(x, y, 5)), true, 5) && part.Palette![5] == 0xFF000000u, "BMP 8 Bit mit nur 5 Palette-Eintraegen (Rest deckendes Schwarz)");
+    }
+    ImgCheck(Truecolor("bmp_rgb24_topdown", (x, y) => Opaque(Rgb(x, y))), "BMP 24 Bit von oben nach unten");
+    ImgCheck(Truecolor("bmp_rgb32_alpha", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "BMP 32 Bit (BI_RGB) mit Alpha-Byte");
+    ImgCheck(Truecolor("bmp_rgb32_noalpha", (x, y) => Opaque(Rgb(x, y))), "BMP 32 Bit mit unbenutztem Alpha-Byte (0) = deckend");
+    ImgCheck(Truecolor("bmp_rgb555", (x, y) => { uint c = Rgb(x, y); return Opaque((((c & 0xFF) >> 3) * 255 / 31) | (((c >> 8 & 0xFF) >> 3) * 255 / 31) << 8 | (((c >> 16 & 0xFF) >> 3) * 255 / 31) << 16); }), "BMP 16 Bit 5-5-5");
+    ImgCheck(Truecolor("bmp_rgb565", (x, y) => { uint c = Rgb(x, y); return Opaque((((c & 0xFF) >> 3) * 255 / 31) | (((c >> 8 & 0xFF) >> 2) * 255 / 63) << 8 | (((c >> 16 & 0xFF) >> 3) * 255 / 31) << 16); }), "BMP 16 Bit 5-6-5 (Bitmasken)");
+    ImgCheck(Truecolor("bmp_rgba32_masks", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "BMP 32 Bit mit Bitmasken und Alpha");
+    ImgCheck(Truecolor("bmp_os2_rgb24", (x, y) => Opaque(Rgb(x, y))), "BMP OS/2-Kopfzeile 24 Bit");
+    ImgCheck(Indexed("bmp_os2_pal8", (x, y) => PalEntry(PalIndex(x, y, 7)), true, 7), "BMP OS/2-Kopfzeile 8 Bit mit Palette (3-Byte-Eintraege)");
+    ImgCheck(Indexed("bmp_rle8", (x, y) => PalEntry(PalIndex(x, y, 9)), true, 9), "BMP RLE8 (Wiederholungen, absolute Laeufe, Zeilenende)");
+    ImgCheck(Indexed("bmp_rle4", (x, y) => PalEntry(PalIndex(x, y, 16)), true, 16), "BMP RLE4");
+
+    // ---- GIF ----
+    ImgCheck(Indexed("pil_gif_pal", (x, y) => PalEntry(PalIndex(x, y, 11)), false, 0, "GIF") && Load("pil_gif_pal").TransparentIndex == -1, "Pillow-GIF: Farben stimmen");
+    ImgCheck(Indexed("pil_gif_interlaced", (x, y) => PalEntry(PalIndex(x, y, 11))), "Pillow-GIF verschraenkt");
+    {
+        var g = Load("pil_gif_trans");
+        bool ok = g.IsIndexed && g.TransparentIndex >= 0;
+        for (int y = 0; y < IH && ok; y++) for (int x = 0; x < IW; x++)
+            ok &= (g.Indices![y * IW + x] == g.TransparentIndex) == (PalIndex(x, y, 11) == 2);
+        ImgCheck(ok, "Pillow-GIF mit Transparenz: genau die Pixel des durchsichtigen Index");
+    }
+    ImgCheck(Indexed("pil_gif_anim", (x, y) => PalEntry(PalIndex(x, y, 11))), "Pillow-GIF-Animation: das erste Einzelbild");
+    {
+        var big = Load("pil_gif_big");
+        bool ok = big.Width == 40 && big.Height == 30 && big.IsIndexed;
+        for (int y = 0; y < 30 && ok; y++) for (int x = 0; x < 40; x++)
+            ok &= big.Palette![big.Indices![y * 40 + x]] == PalEntry((x * 7 + y * 11 + x * y) % 64);
+        ImgCheck(ok, "Pillow-GIF 40x30 mit 64 Farben, verschraenkt (LZW mit Wachstum der Codebreite)");
+    }
+
+    // ---- Fehler: unbekannt, leer, abgeschnitten, beschaedigt ----
+    void MustFail(string what, byte[] data)
+    {
+        try { fire.Terminal.ImageDecoder.Decode(data); ImgCheck(false, what + ": haette scheitern muessen"); }
+        catch (fire.Terminal.ImageFormatException) { ImgCheck(true, what); }
+        catch (Exception ex) { ImgCheck(false, what + ": falsche Ausnahme " + ex.GetType().Name); }
+    }
+    MustFail("leere Daten werden abgelehnt", new byte[0]);
+    MustFail("unbekanntes Format wird abgelehnt", System.Text.Encoding.ASCII.GetBytes("Das ist kein Bild, sondern Text."));
+    foreach (var name in new[] { "png_rgba8", "png_pal4", "png_rgba8_adam7", "pil_png_pal", "pil_bmp_rgba32", "bmp_rle8", "bmp_pal4", "pil_gif_big" })
+    {
+        var full = ImageFixtures.Get(name);
+        bool allFailed = true;
+        for (int cut = 1; cut < full.Length; cut += Math.Max(1, full.Length / 40))
+        {
+            try { fire.Terminal.ImageDecoder.Decode(full[..cut]); allFailed = false; }   // ein abgeschnittenes Bild darf (GIF) lenient fehlen, aber nie eine fremde Ausnahme werfen
+            catch (fire.Terminal.ImageFormatException) { }
+            catch (Exception) { allFailed = false; ImgCheck(false, $"abgeschnittene {name} wirft eine fremde Ausnahme (bei {cut} Byte)"); }
+        }
+        if (name != "pil_gif_big" && name != "bmp_rle8") ImgCheck(allFailed, $"abgeschnittene {name} (mehrere Laengen) scheitert mit ImageFormatException");
+        else ImgCheck(true, $"abgeschnittene {name}: nur ImageFormatException oder ein lenient dekodiertes Bild");
+    }
+    {
+        var bad = (byte[])ImageFixtures.Get("png_rgb8").Clone();
+        bad[bad.Length / 2] ^= 0xFF;
+        MustFail("PNG mit beschaedigten Daten (Pruefsumme)", bad);
+        var noEnd = ImageFixtures.Get("png_rgb8")[..^12];
+        MustFail("PNG ohne IEND", noEnd);
+        var big = (byte[])ImageFixtures.Get("png_rgb8").Clone();
+        big[16] = 0x7F; // Breite ~2 Milliarden: CRC-Fehler UND zu gross - in jedem Fall ImageFormatException
+        MustFail("PNG mit absurder Breite", big);
+        var zero = (byte[])ImageFixtures.Get("pil_bmp_rgb24").Clone();
+        zero[18] = zero[19] = zero[20] = zero[21] = 0;
+        MustFail("BMP mit Breite 0", zero);
+        var hugeBmp = (byte[])ImageFixtures.Get("pil_bmp_rgb24").Clone();
+        hugeBmp[21] = 0x7F; hugeBmp[19] = 0x7F;
+        MustFail("BMP mit absurder Groesse", hugeBmp);
+        var badBpp = (byte[])ImageFixtures.Get("pil_bmp_rgb24").Clone();
+        badBpp[28] = 7;
+        MustFail("BMP mit unbekannter Farbtiefe", badBpp);
+        var gifNoImage = System.Text.Encoding.ASCII.GetBytes("GIF89a").Concat(new byte[] { 2, 0, 2, 0, 0, 0, 0, 0x3B }).ToArray();
+        MustFail("GIF ohne Bild", gifNoImage);
+    }
+
+    // ---- Zufaellig beschaedigte Dateien: nie eine fremde Ausnahme, nie ein Haenger ----
+    {
+        var rng2 = new Random(11);
+        bool clean = true; int tried = 0;
+        foreach (var name in ImageFixtures.Data.Keys)
+        {
+            var original = ImageFixtures.Get(name);
+            for (int round = 0; round < 60; round++)
+            {
+                var copy = (byte[])original.Clone();
+                int flips = 1 + rng2.Next(3);
+                for (int f = 0; f < flips; f++) copy[rng2.Next(copy.Length)] = (byte)rng2.Next(256);
+                tried++;
+                try { fire.Terminal.ImageDecoder.Decode(copy); }
+                catch (fire.Terminal.ImageFormatException) { }
+                catch (Exception ex) { clean = false; Console.WriteLine($"  {name}: {ex.GetType().Name}: {ex.Message}"); }
+            }
+        }
+        ImgCheck(clean, $"{tried} zufaellig beschaedigte Dateien: nur Erfolg oder ImageFormatException");
+    }
+
+    // ---- Framebuffer aus einem Bild ----
+    {
+        var gif = Load("pil_gif_trans");
+        var fb = gif.ToFramebuffer();
+        ImgCheck(fb.IsIndexed && fb.Width == IW && fb.TransparentIndex == gif.TransparentIndex && fb.Palette.GetPacked(5) == gif.Palette![5] && fb.Indices![10] == gif.Indices![10], "ToFramebuffer: indiziert -> Palette-Framebuffer mit Palette der Datei und Transparenz-Index");
+        fb.Resolve();
+        ImgCheck(fb.Pixels[10] == gif.Palette[gif.Indices[10]], "ToFramebuffer: das sichtbare Abbild stimmt");
+        var asRgba = gif.ToFramebuffer(fire.Terminal.ColorMode.Rgba);
+        ImgCheck(!asRgba.IsIndexed && Enumerable.Range(0, IW * IH).All(i => asRgba.Pixels[i] == gif.Palette[gif.Indices[i]]), "ToFramebuffer: indiziert, erzwungen RGBA -> ueber die Palette aufgeloest");
+        var png = Load("png_rgba8");
+        var rgbaFb = png.ToFramebuffer();
+        ImgCheck(!rgbaFb.IsIndexed && rgbaFb.Pixels.SequenceEqual(png.Pixels!), "ToFramebuffer: Truecolor -> RGBA-Framebuffer");
+        var quant = png.ToFramebuffer(fire.Terminal.ColorMode.Indexed);
+        bool nearestOk = quant.IsIndexed;
+        for (int i = 0; i < IW * IH && nearestOk; i++)
+        {
+            var c = new fire.Terminal.PixelColor(png.Pixels![i] | 0xFF000000u);
+            nearestOk &= quant.Indices![i] == quant.Palette.FindNearest(c);
+        }
+        ImgCheck(nearestOk, "ToFramebuffer: Truecolor, erzwungen Palette -> je Pixel der naechste Eintrag der Standard-Palette");
+    }
+
+    Console.WriteLine(imgFailures == 0 ? "Alle Bild-Pruefungen bestanden." : $"FEHLER: {imgFailures} Bild-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
 // UI-Bibliothek (#import "ui"): headless - echte Framebuffer/Konsole/WindowManager, nur der Renderer ist eine Attrappe
 // ---------------------------------------------------------------------------
 {
