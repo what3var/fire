@@ -7460,6 +7460,21 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print("danach " + (w2.NextEvent() == undefined))
         """, new[] { "leer True", "8 2 20 30", "3 a", "danach True" });
 
+    // VSync: Vorgabe an (Tick wartet auf die Bildwiederholung), per Property abschaltbar - auch in einer abgeleiteten Fensterklasse
+    CheckUi("Window.VSync: Vorgabe an, per Property ein-/ausschaltbar (auch in einer abgeleiteten Klasse)", """
+        var fb2 = new Framebuffer(8, 8)
+        var w2 = new Window(fb2, "VSync")
+        print(w2.VSync)
+        w2.VSync = false
+        print(w2.VSync)
+        w2.VSync = true
+        print(w2.VSync)
+        class MyWin : Window { construct(Framebuffer b, string t) : base(b, t) { } }
+        var w3 = new MyWin(fb2, "abgeleitet")
+        w3.VSync = false
+        print(w3.VSync)
+        """, new[] { "True", "False", "True", "False" });
+
     Console.WriteLine(uiFailures == 0 ? "Alle UI-Pruefungen bestanden." : $"FEHLER: {uiFailures} UI-Pruefung(en) fehlgeschlagen.");
 }
 
@@ -9234,6 +9249,7 @@ sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
     private readonly List<fire.Terminal.Event.IEvent> _pending = new();
     public bool Closed { get; set; }
 
+    public bool VSync { get; set; } = true;
     public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle) { }
     public void Present(fire.Terminal.Framebuffer framebuffer) { }
     public void Dispose() { }

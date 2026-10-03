@@ -53,6 +53,18 @@ namespace fire.Terminal.Sdl
         private int _texHeight;
         private bool _quit;
         private bool _disposed;
+        private bool _vsync = true;
+
+        /// <inheritdoc/>
+        public bool VSync
+        {
+            get => _vsync;
+            set
+            {
+                _vsync = value;
+                if (_renderer != IntPtr.Zero) SDL.SetRenderVSync(_renderer, value ? 1 : 0);
+            }
+        }
 
         private int _internalHandle;
 
@@ -93,7 +105,7 @@ namespace fire.Terminal.Sdl
                     SDL.WindowFlags.Resizable, out _window, out _renderer))
                 throw new InvalidOperationException($"SDL.CreateWindowAndRenderer fehlgeschlagen: {SDL.GetError()}");
 
-            SDL.SetRenderVSync(_renderer, 1);
+            SDL.SetRenderVSync(_renderer, _vsync ? 1 : 0);
 
             // SDL3 liefert Texteingabe-Ereignisse (EventType.TextInput) erst, wenn sie für das Fenster eingeschaltet sind.
             SDL.StartTextInput(_window);

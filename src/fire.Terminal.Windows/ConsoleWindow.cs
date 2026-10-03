@@ -45,6 +45,13 @@ namespace fire.Terminal.Windows
             _renderer = renderer ?? new SdlFramebufferRenderer();
         }
 
+        /// <summary>Wartet jedes Tick auf die Bildwiederholung des Monitors? (siehe IFramebufferRenderer.VSync)</summary>
+        public bool VSync
+        {
+            get => _renderer.VSync;
+            set => _renderer.VSync = value;
+        }
+
         public void Open(int handle, string title = "fire Console")
         {
             if (_opened) return;

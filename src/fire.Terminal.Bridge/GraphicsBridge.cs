@@ -208,7 +208,14 @@ namespace fire.Terminal.Bridge
                     mgr.RegisterCallback(winId, eventType, callback);
 
                     return Value.MakeBool(true);
-                }
+                },
+                // WICHTIG: neue Funktionen immer ANS ENDE, in BuildWindowFunctionStubs in derselben Reihenfolge (Index = Position).
+                ["SetVSync"] = args =>
+                {
+                    mgr.SetVSync((int)args[0].AsInt(), args[1].AsBool());
+                    return Value.MakeUndefined();
+                },
+                ["GetVSync"] = args => Value.MakeBool(mgr.GetVSync((int)args[0].AsInt())),
             };
         }
         
@@ -222,6 +229,8 @@ namespace fire.Terminal.Bridge
                 ["EnableEvents"] = args => Value.MakeUndefined() /*STUB*/,
                 ["NextEvent"] = args => Value.MakeUndefined() /*STUB*/,
                 ["RegisterEvent"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetVSync"] = args => Value.MakeUndefined() /*STUB*/,
+                ["GetVSync"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 
@@ -308,7 +317,16 @@ namespace fire.Terminal.Bridge
                     __GRPHWinDestroy(this.id)
                 }
 
+                // Holt die Ereignisse ab und zeigt den aktuellen Inhalt des Framebuffers. Mit VSync (Vorgabe) wartet jedes Tick auf die
+                // Bildwiederholung des Monitors (60 Hz = 16,7 ms): ideal für Animationen und Warteschleifen (`while (win.Tick()) { ... }`),
+                // aber eine Zeichenschleife mit einem Tick je Durchlauf braucht dann 256 x 16,7 ms = 4,3 s. Wer viel zeichnet und nur
+                // gelegentlich anzeigen will, ruft Tick seltener auf oder setzt `win.VSync = false` (Tick kehrt dann sofort zurück).
                 bool Tick() { return __GRPHWinTick(this.id) }
+
+                bool VSync {
+                    get { return __GRPHWinGetVSync(this.id) }
+                    set { __GRPHWinSetVSync(this.id, value) }
+                }
 
                 // Abfrage-Stil statt Callbacks: EnableEvents() schaltet eine Warteschlange ein, danach holt man nach jedem Tick
                 // mit NextEvent() ein Ereignis nach dem anderen ab (undefined, wenn keins mehr ansteht). Das Ereignis ist ein

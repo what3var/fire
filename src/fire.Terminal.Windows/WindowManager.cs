@@ -144,6 +144,10 @@ namespace fire.Terminal.Windows
         /// ID-basierten Oberflächen-APIs.</summary>
         public ConsoleWindow GetWindow(int id) => _windows.Get(id);
 
+        public bool GetVSync(int id) => _windows.Get(id).VSync;
+
+        public void SetVSync(int id, bool enabled) => _windows.Get(id).VSync = enabled;
+
         /// <summary>Ein einzelner Zyklus für EIN Fenster (siehe
         /// ConsoleWindow.Tick) - liefert false, wenn das Fenster vom Nutzer
         /// geschlossen wurde (der Aufrufer sollte dann üblicherweise
