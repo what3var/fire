@@ -9368,6 +9368,80 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(T.G())
         """, new[] { "~c", "~b", "fin", "~a", "1", "~gb", "~gc", "~ga", "2" });
 
+    // ---- Wiederverwendung von Scopes: nichts darf auf eine Scope zeigen, die gleich einem anderen Block gehoert ----
+
+    CheckSc("Pointer auf eine Lokale ueberlebt das Verlassen der Funktion/des Blocks, auch wenn danach viele Scopes wiederverwendet werden", """
+        class T {
+            static Ptr(int v) { var x = v; unsafe { var p = &x; return p } }
+            static Busy(int n) { var s = 0; for (var i = 0; i < n; i = i + 1) { var t = i * 3; s = s + T.Add(t, 1) } return s }
+            static Add(int a, int b) { var r = a + b; return r }
+        }
+        unsafe {
+            var p1 = T.Ptr(11)
+            var p2 = T.Ptr(22)
+            var ptrs = [p1, p1, p1]
+            for (var i = 0; i < 3; i = i + 1) { var v = i * 10; ptrs[i] = &v }
+            print(T.Busy(50))
+            print(*p1 + " " + *p2)
+            print(*ptrs[0] + " " + *ptrs[1] + " " + *ptrs[2])
+            *p1 = 99
+            *ptrs[1] = 77
+            print(T.Busy(10))
+            print(*p1 + " " + *p2 + " " + *ptrs[0] + " " + *ptrs[1] + " " + *ptrs[2])
+        }
+        """, new[] { "3725", "11 22", "0 10 20", "145", "99 22 0 77 20" });
+
+    CheckSc("Rekursion, Parameter, Lokale und Lambda-Captures bleiben je Aufruf unabhaengig (wiederverwendete Scopes sind sauber)", """
+        class T {
+            static Fib(int n) { if (n < 2) { return n } var a = T.Fib(n - 1); var b = T.Fib(n - 2); return a + b }
+            static Even(int n) { if (n == 0) { return true } return T.Odd(n - 1) }
+            static Odd(int n) { if (n == 0) { return false } return T.Even(n - 1) }
+            static MakeAdder(int n) { var k = n * 2; return x => x + k }
+            static Sum(int n) { var local = [n]; if (n == 0) { return 0 } return local[0] + T.Sum(n - 1) }
+            static Locals() { var a; var b; var c = 3; return "" + a + "," + b + "," + c }
+        }
+        print(T.Fib(15))
+        print(T.Even(10) + " " + T.Odd(10))
+        var f = T.MakeAdder(1)
+        var g = T.MakeAdder(10)
+        print(T.Fib(10))
+        print(f(1) + " " + g(1))
+        print(T.Sum(100))
+        print(T.Locals())
+        print(T.Locals())
+        """, new[] { "610", "True False", "55", "3 21", "5050", "undefined,undefined,3", "undefined,undefined,3" });
+
+    CheckSc("Exceptions durch viele Aufrufe/Bloecke: danach arbeiten die wiederverwendeten Scopes unveraendert weiter", "class Exception { string message; construct(string message) { this.message = message } }\n" + """
+        class T {
+            static Deep(int n) { var a = n * 2; if (n == 0) { throw new Exception("bottom") } var r = T.Deep(n - 1); return r + a }
+            static Run() {
+                var total = 0
+                for (var i = 0; i < 4; i = i + 1) {
+                    var local = i + 100
+                    try { T.Deep(3) } catch (e) { total = total + local }
+                }
+                print(total)
+                var sum = 0
+                for (var j = 0; j < 3; j = j + 1) { var w = j; if (w > 0) { var z = w * 2; sum = sum + z } }
+                print(sum)
+            }
+        }
+        T.Run()
+        """, new[] { "406", "6" });
+
+    CheckSc("Objekte in Schleifenkoerpern werden je Durchlauf zerstoert, Bloecke ohne Objekte daneben bleiben unberuehrt", scHead + """
+        class T {
+            static Run() {
+                var n = 0
+                for (var i = 0; i < 3; i = i + 1) {
+                    if (i % 2 == 0) { var o = new D("o" + i); n = n + 1 } else { var k = i * 10; n = n + k }
+                }
+                print(n)
+            }
+        }
+        T.Run()
+        """, new[] { "~o0", "~o2", "12" });
+
     Console.WriteLine(scFailures == 0 ? "Alle Scope-Pruefungen bestanden." : $"FEHLER: {scFailures} Scope-Pruefung(en) fehlgeschlagen.");
 }
 

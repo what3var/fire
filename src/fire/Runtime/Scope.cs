@@ -21,7 +21,10 @@ namespace fire.Runtime
     /// </summary>
     public sealed class Scope : IOwner
     {
-        public Scope? Parent { get; }
+        // Veränderlich nur wegen der Wiederverwendung (siehe Reinit/Recycle): eine Scope wird nach dem Verlassen vom Pool der VM
+        // erneut ausgegeben und bekommt dann einen neuen Parent.
+        private Scope? _parent;
+        public Scope? Parent => _parent;
         public bool IsGlobal { get; }
 
         // Bewusst NULL statt vorab angelegter leerer Listen (siehe
@@ -40,7 +43,7 @@ namespace fire.Runtime
 
         public Scope(Scope? parent, bool isGlobal = false)
         {
-            Parent = parent;
+            _parent = parent;
             IsGlobal = isGlobal;
         }
 
@@ -49,9 +52,68 @@ namespace fire.Runtime
         /// Zwischenarray und einzelne DefineSlot-Aufrufe zu verteilen); der Rest ist Platz für lokale Variablen.</summary>
         public Scope(Scope? parent, Value[] slots, int count)
         {
-            Parent = parent;
+            _parent = parent;
             _slots = slots;
             _slotCount = count;
+        }
+
+        // -----------------------------------------------------------
+        // Wiederverwendung (Pool der VM)
+        //
+        // Jeder Block, jede Schleifeniteration und jeder Aufruf legt eine Scope an - und die allermeisten besitzen weder Objekte noch
+        // werden sie jemals von außen referenziert. Die VM gibt solche Scopes beim Verlassen in einen Pool zurück und reicht sie beim
+        // nächsten Betreten wieder aus (samt ihrem Slot-Array), statt jedes Mal zwei Objekte neu anzulegen.
+        //
+        // Wiederverwendbar ist eine Scope nur, solange NICHTS sonst auf sie zeigen kann:
+        //  - sie stammt aus dem Pool (`IsPooled`: nur diese Scopes werden zurückgegeben, nie die globale oder von anderem Code angelegte),
+        //  - sie hat nie ein Objekt besessen (`_owned` bleibt null; ein zerstörtes Objekt behält seinen Owner, siehe ObjectInstance),
+        //  - kein Pointer zeigt auf einen ihrer Slots (`MarkEscaped`, gesetzt von ScopeSlotPointerTarget).
+        // -----------------------------------------------------------
+        private bool _pooled;
+        private bool _escaped;
+
+        /// <summary>Eine neue Scope für den Pool der VM: wird beim Verlassen (ExitScope/return) zurückgegeben, falls sie dann noch wiederverwendbar ist.</summary>
+        public static Scope CreatePooled(Scope? parent) => new Scope(parent) { _pooled = true };
+
+        /// <summary>Kann diese Scope jetzt in den Pool zurück (siehe oben)?</summary>
+        public bool CanRecycle => _pooled && !_escaped && _owned == null;
+
+        /// <summary>Ein Pointer auf einen Slot dieser Scope existiert (ScopeSlotPointerTarget): die Scope darf nie wiederverwendet werden,
+        /// der Pointer bliebe sonst auf die Variablen eines ganz anderen Blocks gerichtet.</summary>
+        public void MarkEscaped() => _escaped = true;
+
+        /// <summary>Gibt die Scope wieder aus (vom Pool genommen): neuer Parent, leer.</summary>
+        public void Reinit(Scope? parent)
+        {
+            _parent = parent;
+            _pooled = true;
+        }
+
+        /// <summary>Wie <see cref="Reinit"/> für einen Aufruf: sorgt für ein Slot-Array mit mindestens `capacity` Plätzen (das vorhandene wird
+        /// weiterverwendet, wenn es reicht) und belegt die ersten `paramCount` Slots - der Aufrufer kopiert die Parameter direkt hinein
+        /// (siehe <see cref="SlotArray"/>).</summary>
+        public void ReinitForCall(Scope? parent, int paramCount, int capacity)
+        {
+            _parent = parent;
+            _pooled = true;
+            if (_slots == null || _slots.Length < capacity) _slots = new Value[capacity];
+            _slotCount = paramCount;
+        }
+
+        /// <summary>Das rohe Slot-Array (nur für die VM direkt nach <see cref="ReinitForCall"/>: Parameter hineinkopieren).</summary>
+        public Value[] SlotArray => _slots!;
+
+        /// <summary>Räumt eine verlassene Scope für die Wiederverwendung auf: die Werte werden vergessen (sonst hielte der Pool Objekte am
+        /// Leben), Parent und Pool-Kennzeichen zurückgesetzt. Nur aufrufen, wenn <see cref="CanRecycle"/> gilt.</summary>
+        public void Recycle()
+        {
+            if (_slotCount > 0)
+            {
+                Array.Clear(_slots!, 0, _slotCount);
+                _slotCount = 0;
+            }
+            _parent = null;
+            _pooled = false;
         }
 
         // -----------------------------------------------------------

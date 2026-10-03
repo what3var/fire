@@ -1653,7 +1653,7 @@ namespace fire.Runtime
                 }
 
                 case OpCode.EnterScope:
-                    _currentScope = new Scope(_currentScope);
+                    _currentScope = RentScope(_currentScope);
                     return;
 
                 case OpCode.ExitScope:
@@ -1662,6 +1662,7 @@ namespace fire.Runtime
                     if (scope.HasOwned) break; // Release kann Destruktoren ausführen - der ausführliche Pfad
                     _currentScope = scope.Parent
                         ?? throw new InvalidOperationException("ExitScope auf dem globalen Scope aufgerufen.");
+                    if (scope.CanRecycle) ReturnScopeToPool(scope);
                     return;
                 }
 
@@ -1884,14 +1885,16 @@ namespace fire.Runtime
         private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null, int copyMask = 0, Value[]? captures = null)
         {
             int captureCount = captures?.Length ?? 0;
-            var slots = new Value[argCount + captureCount + SlotSlack];
+            int paramCount = argCount + captureCount;
+            var scope = RentCallScope(paramCount + SlotSlack, paramCount);
+            var slots = scope.SlotArray;
             Array.Copy(_stack, _sp - argCount, slots, 0, argCount);
             if (captureCount != 0) Array.Copy(captures!, 0, slots, argCount, captureCount); // Lambda-Captures direkt hinter den Parametern
             _sp -= argCount + (dropBelow ? 1 : 0);
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, constructed));
             _currentThis = newThis;
-            _currentScope = new Scope(_globalScope, slots, argCount + captureCount);
+            _currentScope = scope;
             if (copyMask != 0) ApplyCopyMask(_currentScope, copyMask);
             _currentChunk = proto.Chunk;
             _ip = 0;
@@ -2015,9 +2018,45 @@ namespace fire.Runtime
             {
                 var parent = scope.Parent;
                 scope.Release(this);
+                if (scope.CanRecycle) ReturnScopeToPool(scope);
                 if (parent == null || parent.IsGlobal) return;
                 scope = parent;
             }
+        }
+
+        // -----------------------------------------------------------
+        // Pool der Scopes (siehe Scope.CanRecycle): Blöcke, Schleifendurchläufe und Aufrufe legen sonst bei jedem Eintritt eine Scope
+        // samt Slot-Array neu an. Der Pool gehört der VM (jede VM läuft auf genau einem Thread) und ist klein - tiefe Rekursion
+        // erzeugt darüber hinaus einfach neue Scopes, die der GC wieder einsammelt.
+        // -----------------------------------------------------------
+        private const int ScopePoolMax = 256;
+        private readonly Scope[] _scopePool = new Scope[ScopePoolMax];
+        private int _scopePoolCount;
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private Scope RentScope(Scope parent)
+        {
+            if (_scopePoolCount == 0) return Scope.CreatePooled(parent);
+            var scope = _scopePool[--_scopePoolCount];
+            scope.Reinit(parent);
+            return scope;
+        }
+
+        /// <summary>Eine Scope für einen Aufruf mit Platz für `capacity` Slots, die ersten `paramCount` belegt (die Parameter kopiert der Aufrufer in <see cref="Scope.SlotArray"/>).</summary>
+        private Scope RentCallScope(int capacity, int paramCount)
+        {
+            Scope scope;
+            if (_scopePoolCount == 0) scope = Scope.CreatePooled(null);
+            else scope = _scopePool[--_scopePoolCount];
+            scope.ReinitForCall(_globalScope, paramCount, capacity);
+            return scope;
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private void ReturnScopeToPool(Scope scope)
+        {
+            scope.Recycle();
+            if (_scopePoolCount < ScopePoolMax) _scopePool[_scopePoolCount++] = scope;
         }
 
         /// <summary>Beendet die aktuelle Funktion mit `retVal`. Liegt dabei noch ein `try` mit `finally` dieses Frames offen (auch ein `catch`-Block, der
@@ -3390,7 +3429,7 @@ namespace fire.Runtime
                 }
 
                 case OpCode.EnterScope:
-                    _currentScope = new Scope(_currentScope);
+                    _currentScope = RentScope(_currentScope);
                     break;
 
                 case OpCode.ExitScope:
