@@ -1994,6 +1994,32 @@ namespace fire.Runtime
 
         private void OpReturn() => DoReturn(Pop());
 
+        /// <summary>Gehört `candidate` zu den Scopes des laufenden Aufrufs (von der aktuellen Scope aufwärts bis einschließlich der
+        /// Funktions-Scope, deren Parent der globale Scope ist)?</summary>
+        private bool OwnsWithinCall(Scope candidate)
+        {
+            for (var scope = _currentScope; scope != null; scope = scope.Parent)
+            {
+                if (ReferenceEquals(scope, candidate)) return true;
+                if (scope.Parent == null || scope.Parent.IsGlobal) return false; // die Funktions-Scope war die letzte
+            }
+            return false;
+        }
+
+        /// <summary>Verlässt beim `return` ALLE Scopes des Aufrufs (innerster zuerst bis zur Funktions-Scope): die Objekte, die ihnen
+        /// gehören, werden zerstört. Ohne das blieben die Objekte der umgebenden Blöcke (`if`/`for`/`try` um das `return`) ewig liegen.</summary>
+        private void ReleaseCallScopes()
+        {
+            var scope = _currentScope;
+            while (true)
+            {
+                var parent = scope.Parent;
+                scope.Release(this);
+                if (parent == null || parent.IsGlobal) return;
+                scope = parent;
+            }
+        }
+
         /// <summary>Beendet die aktuelle Funktion mit `retVal`. Liegt dabei noch ein `try` mit `finally` dieses Frames offen (auch ein `catch`-Block, der
         /// noch zu einem solchen `try` gehört), wird nicht zurückgekehrt, sondern erst sein `finally` ausgeführt (Abschluss "return"): dessen `EndFinally`
         /// ruft diese Methode erneut auf, bis kein `finally` mehr offen ist. Handler ohne `finally` werden einfach abgemeldet.</summary>
@@ -2034,14 +2060,16 @@ namespace fire.Runtime
             // das wäre hier nicht die gewünschte "eine Ebene höher").
             // Ohne das würde das zurückgegebene Objekt durch das gleich
             // folgende Release() des eigenen Scopes sofort mit zerstört.
+            // Das gilt für JEDEN Scope dieses Aufrufs (innerster Block bis Funktions-Scope): ein `return` mitten in verschachtelten
+            // Blöcken verlässt sie alle auf einmal.
             if (retVal.Kind == ValueKind.Class && _frames.Count > 0)
             {
                 var retInstance = (ObjectInstance)retVal.AsObjectRef();
-                if (ReferenceEquals(retInstance.Owner, _currentScope))
+                if (retInstance.Owner is Scope retOwner && OwnsWithinCall(retOwner))
                     retInstance.ReparentTo(_frames.Peek().ReturnScope);
             }
 
-            _currentScope.Release(this);
+            ReleaseCallScopes();
 
             var frame = _frames.Pop();
             _currentChunk = frame.ReturnChunk;

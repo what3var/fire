@@ -9216,6 +9216,161 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     Console.WriteLine(rfFailures == 0 ? "Alle Reflection-Pruefungen bestanden." : $"FEHLER: {rfFailures} Reflection-Pruefung(en) fehlgeschlagen.");
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------
+// Scope-Verwaltung: return aus verschachtelten Bloecken, Wiederverwendung von Scopes (Pooling)
+// ---------------------------------------------------------------------------------------------------------------------------
+{
+    Console.WriteLine("=== Scope-Verwaltung (return aus verschachtelten Bloecken, Wiederverwendung) ===");
+    int scFailures = 0;
+
+    List<string> RunSc(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var natives = NativeRegistry.CreateDefault();
+        natives.Register("print", args =>
+        {
+            var shown = VM.StringifyForPrint(args);
+            if (shown != null) lock (lines) lines.Add(shown[0].ToString());
+            return Value.MakeUndefined();
+        });
+        natives.RegisterBaseTypeNatives();
+        var sources = new List<string> { fire.Standard.Prelude.Source, script };
+        var program = Parser.ParseMultiple(sources
+            .Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                fire.Compiler.RuntimeSession.CreateProjectDirectiveRegistry())).ToList());
+        var compiled = Compiler.Compile(program, Resolver.Resolve(program, natives.Names), natives);
+        VM.ResetTerminateForTests();
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
+        vm.Run();
+        VM.ResetTerminateForTests();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckSc(string title, string script, string[] expected)
+    {
+        foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            try { actual = RunSc(script, mode).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + CompileErrors.Describe(ex) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) scFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    const string scHead = """
+        class D {
+            string n
+            construct(string n) { this.n = n }
+            destruct() { print("~" + this.n) }
+        }
+        """;
+
+    CheckSc("return aus verschachtelten Bloecken zerstoert die Objekte ALLER verlassenen Scopes (innerster zuerst)", scHead + """
+        class T {
+            static F() {
+                var a = new D("a")
+                if (true) {
+                    var b = new D("b")
+                    if (true) {
+                        var c = new D("c")
+                        return 1
+                    }
+                }
+                return 0
+            }
+        }
+        print("vor")
+        T.F()
+        print("nach")
+        """, new[] { "vor", "~c", "~b", "~a", "nach" });
+
+    CheckSc("return eines Objekts aus einem aeusseren Block: es geht an den Aufrufer, die uebrigen werden zerstoert", scHead + """
+        class T {
+            static Make() {
+                var keep = new D("k")
+                if (true) {
+                    var tmp = new D("t")
+                    if (true) { return keep }
+                }
+                return keep
+            }
+            static Run() {
+                var x = T.Make()
+                print("got " + x.n)
+            }
+        }
+        T.Run()
+        print("ende")
+        """, new[] { "~t", "got k", "~k", "ende" });
+
+    CheckSc("return mitten in for/foreach/while: Objekte der Schleifenkoerper und der Schleifenvariablen werden zerstoert", scHead + """
+        class T {
+            static FindFor() {
+                var outer = new D("outer")
+                for (var i = 0; i < 5; i = i + 1) {
+                    var o = new D("f" + i)
+                    if (i == 1) { return i }
+                }
+                return -1
+            }
+            static FindForeach() {
+                var items = [1, 2, 3]
+                foreach (x in items) {
+                    var o = new D("e" + x)
+                    if (x == 2) { return x }
+                }
+                return -1
+            }
+            static FindWhile() {
+                var k = 0
+                while (true) {
+                    var o = new D("w" + k)
+                    if (k == 1) { return k }
+                    k = k + 1
+                }
+            }
+        }
+        print(T.FindFor())
+        print(T.FindForeach())
+        print(T.FindWhile())
+        """, new[] { "~f0", "~f1", "~outer", "1", "~e1", "~e2", "2", "~w0", "~w1", "1" });
+
+    CheckSc("return im try/catch/finally in verschachtelten Bloecken: jedes Objekt genau einmal zerstoert", scHead + "class Exception { string message; construct(string message) { this.message = message } }\n" + """
+        class T {
+            static F() {
+                var a = new D("a")
+                try {
+                    var b = new D("b")
+                    if (true) {
+                        var c = new D("c")
+                        return 1
+                    }
+                } finally { print("fin") }
+                return 0
+            }
+            static G() {
+                var a = new D("ga")
+                try {
+                    var b = new D("gb")
+                    throw new Exception("x")
+                } catch (e) {
+                    var c = new D("gc")
+                    if (true) { return 2 }
+                }
+                return 0
+            }
+        }
+        print(T.F())
+        print(T.G())
+        """, new[] { "~c", "~b", "fin", "~a", "1", "~gb", "~gc", "~ga", "2" });
+
+    Console.WriteLine(scFailures == 0 ? "Alle Scope-Pruefungen bestanden." : $"FEHLER: {scFailures} Scope-Pruefung(en) fehlgeschlagen.");
+}
+
 static int CountOccurrences(string haystack, string needle)
 {
     int count = 0, idx = 0;
