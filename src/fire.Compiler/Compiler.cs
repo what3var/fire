@@ -973,8 +973,7 @@ namespace fire.Compiler
                     break;
 
                 case ExprStmt es:
-                    CompileExpr(es.Expression);
-                    _chunk.EmitOp(OpCode.Pop);
+                    CompileDiscardedExpr(es.Expression);
                     break;
 
                 case NoOpStmt:
@@ -1230,12 +1229,97 @@ namespace fire.Compiler
             EmitExitScope();
         }
 
+        /// <summary>Emittiert `JumpIfFalse` mit Platzhalter-Adresse und liefert die Stelle der Adresse zum späteren Patchen. Steht davor
+        /// ein Vergleich (`Lt`, `LtEq`, `Gt`, `GtEq`, `Eq`, `NotEq`) ohne Sprungziel dahinter, werden beide zu EINER Instruktion
+        /// (`JumpIfNotLt` usw.) verschmolzen: dasselbe Ergebnis, ein Dispatch und kein Bool auf dem Stack.</summary>
+        private int EmitJumpIfFalse()
+        {
+            foreach (var (compare, fused) in new[]
+            {
+                (OpCode.Lt, OpCode.JumpIfNotLt), (OpCode.LtEq, OpCode.JumpIfNotLtEq), (OpCode.Gt, OpCode.JumpIfNotGt),
+                (OpCode.GtEq, OpCode.JumpIfNotGtEq), (OpCode.Eq, OpCode.JumpIfNotEq), (OpCode.NotEq, OpCode.JumpIfNotNotEq),
+            })
+            {
+                if (!_chunk.EndsWithOp(compare, 0)) continue;
+                _chunk.ReplaceLastOp(fused);
+                int fusedAt = _chunk.Here;
+                _chunk.EmitU16(0);
+                return fusedAt;
+            }
+
+            _chunk.EmitOp(OpCode.JumpIfFalse);
+            int at = _chunk.Here;
+            _chunk.EmitU16(0);
+            return at;
+        }
+
+        /// <summary>Ein Ausdruck, dessen Wert verworfen wird (Ausdrucksanweisung, `for`-Increment). Häufige Fälle werden zu EINER
+        /// Instruktion: `x++`/`x--`/`x = x + c`/`x = x - c` auf einer Variable ohne geforderte Einheit, und eine Zuweisung an eine
+        /// Variable (`StoreLocal`/`StoreGlobal` + `Pop` = `StoreLocalPop`/`StoreGlobalPop`).</summary>
+        private void CompileDiscardedExpr(Expr expr)
+        {
+            if (TryCompileArithOnVariable(expr)) return;
+
+            CompileExpr(expr);
+
+            if (_chunk.EndsWithOp(OpCode.StoreLocal, 4)) { _chunk.ReplaceLastOp(OpCode.StoreLocalPop); return; }
+            if (_chunk.EndsWithOp(OpCode.StoreGlobal, 2)) { _chunk.ReplaceLastOp(OpCode.StoreGlobalPop); return; }
+            _chunk.EmitOp(OpCode.Pop);
+        }
+
+        /// <summary>`x++`, `x--`, `x = x + c`, `x = x - c` (c ein Zahlenliteral) auf einer lokalen oder globalen Variable ohne geforderte
+        /// Einheit, deren Ergebnis niemand braucht: ArithLocalConstPop/ArithGlobalConstPop.</summary>
+        private bool TryCompileArithOnVariable(Expr expr)
+        {
+            IdentifierExpr? target;
+            Value constant;
+            bool subtract;
+
+            switch (expr)
+            {
+                case IncDecExpr { Target: IdentifierExpr incTarget } incDec:
+                    target = incTarget;
+                    constant = Value.MakeInt(1);
+                    subtract = !incDec.IsIncrement;
+                    break;
+
+                case AssignExpr { Target: IdentifierExpr assignTarget, Value: BinaryExpr { Op: BinaryOp.Add or BinaryOp.Sub, Left: IdentifierExpr left, Right: LiteralExpr literal } binary }
+                    when left.Name == assignTarget.Name && literal.Value.Kind is ValueKind.Int or ValueKind.Float
+                         && _refs.TryGetValue(left, out var leftRef) && _refs.TryGetValue(assignTarget, out var targetRef) && leftRef.Equals(targetRef):
+                    target = assignTarget;
+                    constant = literal.Value;
+                    subtract = binary.Op == BinaryOp.Sub;
+                    break;
+
+                default:
+                    return false;
+            }
+
+            if (!_refs.TryGetValue(target, out var reference)) return false;
+            switch (reference)
+            {
+                case ResolvedRef.Local { RequiredUnit: null } local:
+                    _chunk.EmitOp(OpCode.ArithLocalConstPop);
+                    _chunk.EmitU16(local.Depth);
+                    _chunk.EmitU16(local.Slot);
+                    _chunk.EmitU16(_chunk.AddConstant(constant));
+                    _chunk.EmitByte(subtract ? (byte)1 : (byte)0);
+                    return true;
+                case ResolvedRef.Global { RequiredUnit: null } global:
+                    _chunk.EmitOp(OpCode.ArithGlobalConstPop);
+                    _chunk.EmitU16(global.Slot);
+                    _chunk.EmitU16(_chunk.AddConstant(constant));
+                    _chunk.EmitByte(subtract ? (byte)1 : (byte)0);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private void CompileIf(IfStmt s)
         {
             CompileExpr(s.Condition);
-            _chunk.EmitOp(OpCode.JumpIfFalse);
-            int elseJumpAt = _chunk.Here;
-            _chunk.EmitU16(0); // Platzhalter, wird unten gepatcht
+            int elseJumpAt = EmitJumpIfFalse(); // Platzhalter, wird unten gepatcht
 
             CompileScopedBody(s.Then);
 
@@ -1262,9 +1346,7 @@ namespace fire.Compiler
 
             int loopStart = _chunk.Here;
             CompileExpr(s.Condition);
-            _chunk.EmitOp(OpCode.JumpIfFalse);
-            int endJumpAt = _chunk.Here;
-            _chunk.EmitU16(0);
+            int endJumpAt = EmitJumpIfFalse();
 
             CompileScopedBody(s.Body);
 
@@ -1306,9 +1388,7 @@ namespace fire.Compiler
             if (s.Condition != null)
             {
                 CompileExpr(s.Condition);
-                _chunk.EmitOp(OpCode.JumpIfFalse);
-                endJumpAt = _chunk.Here;
-                _chunk.EmitU16(0);
+                endJumpAt = EmitJumpIfFalse();
             }
 
             CompileScopedBody(s.Body);
@@ -1326,10 +1406,7 @@ namespace fire.Compiler
             foreach (var addr in ctx.ContinueJumpPatchAddrs) _chunk.PatchU16(addr, continueTarget);
 
             if (s.Increment != null)
-            {
-                CompileExpr(s.Increment);
-                _chunk.EmitOp(OpCode.Pop);
-            }
+                CompileDiscardedExpr(s.Increment);
 
             _chunk.EmitOp(OpCode.Jump);
             _chunk.EmitU16(loopStart);

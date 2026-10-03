@@ -277,6 +277,20 @@ namespace fire.Values
             return true;
         }
 
+        /// <summary>Schnellpfad der verschmolzenen Vergleichssprünge (VM: JumpIfNotLt usw.): vergleicht zwei Zahlen gleicher Einheit
+        /// (`kind`: 0 &lt;, 1 &lt;=, 2 &gt;, 3 &gt;=) und liefert false, wenn der Schnellpfad nicht zutrifft. Zwei Ganzzahlen werden als
+        /// Ganzzahlen verglichen, alles andere wie <see cref="Compare"/> als double.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TryCompareFast(in Value a, in Value b, int kind, out bool result)
+        {
+            if (!BothNumericSameUnit(a, b)) { result = false; return false; }
+            int c = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
+                ? a._bits.CompareTo(b._bits)
+                : a.ToDouble().CompareTo(b.ToDouble());
+            result = kind switch { 0 => c < 0, 1 => c <= 0, 2 => c > 0, _ => c >= 0 };
+            return true;
+        }
+
         public static Value Add(Value a, Value b)
         {
             if (BothNumericSameUnit(a, b))

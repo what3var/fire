@@ -158,6 +158,21 @@ namespace fire.Bytecode
         SilenceValue,   //                : pop Wert; ein Probe-Handle (int) entfernt diese Probe, ein Objekt alle seine Proben
         MakeLambdaCapturing, // u16 protoIdx, u8 hasOnTarget, u8 captureCount : wie MakeLambda; darunter liegen captureCount KOPIERTE Werte (Stack: c0..cn-1, [onTarget]),
                         //                  die der Lambda-Aufruf als Slots hinter den Parametern in den neuen Scope legt (Lambda-Captures, SPEC 4.2)
+
+        // ------------------------------------------------------------------------------------------------
+        // Verschmolzene Instruktionen (Compiler: Chunk.EndsWithOp/ReplaceLastOp und die Ausdrucksanweisungen) - jede ersetzt eine
+        // feste Folge gewöhnlicher Instruktionen mit exakt demselben Ergebnis, spart aber den mehrfachen Dispatch.
+        // ------------------------------------------------------------------------------------------------
+        StoreLocalPop,  // u16 depth, u16 slot : StoreLocal + Pop (Ausdrucksanweisung `x = ...`): schreibt den obersten Wert und nimmt ihn vom Stack
+        StoreGlobalPop, // u16 slot            : StoreGlobal + Pop
+        JumpIfNotLt,    // u16 addr            : Lt + JumpIfFalse - vergleicht die zwei obersten Werte, springt wenn NICHT a < b (beide werden verbraucht)
+        JumpIfNotLtEq,  // u16 addr            : LtEq + JumpIfFalse
+        JumpIfNotGt,    // u16 addr            : Gt + JumpIfFalse
+        JumpIfNotGtEq,  // u16 addr            : GtEq + JumpIfFalse
+        JumpIfNotEq,    // u16 addr            : Eq + JumpIfFalse
+        JumpIfNotNotEq, // u16 addr            : NotEq + JumpIfFalse
+        ArithLocalConstPop,  // u16 depth, u16 slot, u16 constIdx, u8 sub : `x = x + c` / `x++` (sub = 0) bzw. `x = x - c` / `x--` (sub = 1) auf einer lokalen Variable als Anweisung
+        ArithGlobalConstPop, // u16 slot, u16 constIdx, u8 sub            : dasselbe für eine globale Variable
     }
 
     /// <summary>Zieltyp für CoerceType/CoerceTypeDynamic - entspricht genau den

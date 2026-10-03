@@ -1664,9 +1664,119 @@ namespace fire.Runtime
                         ?? throw new InvalidOperationException("ExitScope auf dem globalen Scope aufgerufen.");
                     return;
                 }
+
+                // ---- Verschmolzene Instruktionen (siehe OpCode.StoreLocalPop ff.) ----
+
+                case OpCode.StoreLocalPop:
+                {
+                    int depth = ReadU16(); int slot = ReadU16();
+                    _currentScope.GetAncestor(depth).SlotRef(slot) = _stack[--_sp];
+                    return;
+                }
+
+                case OpCode.StoreGlobalPop:
+                {
+                    int slot = ReadU16();
+                    var value = _stack[_sp - 1];
+                    if (slot < _sharedCount) StoreSharedGlobal(slot, value);
+                    else if (_ownerBroker != null) StoreOwnerGlobal(slot, value);
+                    else _globalScope.SlotRef(slot) = value;
+                    _sp--;
+                    return;
+                }
+
+                case OpCode.JumpIfNotLt:
+                case OpCode.JumpIfNotLtEq:
+                case OpCode.JumpIfNotGt:
+                case OpCode.JumpIfNotGtEq:
+                {
+                    int addr = ReadU16();
+                    int kind = op - OpCode.JumpIfNotLt; // Lt, LtEq, Gt, GtEq liegen in dieser Reihenfolge hintereinander
+                    bool result;
+                    if (!Value.TryCompareFast(in _stack[_sp - 2], in _stack[_sp - 1], kind, out result))
+                    {
+                        // Schnellpfad trifft nicht zu (andere Einheit/Art, Objekt mit Operator-Überladung ...): der gewöhnliche Vergleich
+                        ExecuteCompareSlow(kind switch { 0 => OpCode.Lt, 1 => OpCode.LtEq, 2 => OpCode.Gt, _ => OpCode.GtEq });
+                        result = _stack[--_sp].AsBool();
+                    }
+                    else _sp -= 2;
+                    if (!result) _ip = addr;
+                    return;
+                }
+
+                case OpCode.JumpIfNotEq:
+                case OpCode.JumpIfNotNotEq:
+                {
+                    int addr = ReadU16();
+                    bool equal;
+                    if (_stack[_sp - 2].Kind != ValueKind.Class)
+                    {
+                        equal = Value.ValuesEqual(_stack[_sp - 2], _stack[_sp - 1]);
+                        _sp -= 2;
+                    }
+                    else
+                    {
+                        ExecuteCompareSlow(op == OpCode.JumpIfNotEq ? OpCode.Eq : OpCode.NotEq);
+                        equal = _stack[--_sp].AsBool();
+                        if (op == OpCode.JumpIfNotNotEq) equal = !equal; // das Ergebnis war `a != b`; unten wird `a == b` erwartet
+                    }
+                    // JumpIfNotEq springt, wenn a == b NICHT gilt; JumpIfNotNotEq, wenn a != b NICHT gilt (also a == b)
+                    if (op == OpCode.JumpIfNotEq ? !equal : equal) _ip = addr;
+                    return;
+                }
+
+                case OpCode.ArithLocalConstPop:
+                {
+                    int depth = ReadU16(); int slot = ReadU16(); int constIdx = ReadU16(); bool subtract = ReadByte() != 0;
+                    ref Value variable = ref _currentScope.GetAncestor(depth).SlotRef(slot);
+                    if (subtract ? Value.TrySubtractInPlace(ref variable, in _constants[constIdx]) : Value.TryAddInPlace(ref variable, in _constants[constIdx]))
+                        return;
+                    ArithSlow(depth, slot, constIdx, subtract);
+                    return;
+                }
+
+                case OpCode.ArithGlobalConstPop:
+                {
+                    int slot = ReadU16(); int constIdx = ReadU16(); bool subtract = ReadByte() != 0;
+                    // Fire-Threads und ein Hauptprogramm mit laufenden Threads lesen/schreiben Globals über den Broker: gewöhnlicher Weg
+                    if (slot < _sharedCount || _ownerBroker != null) { ArithGlobalSlow(slot, constIdx, subtract); return; }
+                    ref Value variable = ref _globalScope.SlotRef(slot);
+                    if (subtract ? Value.TrySubtractInPlace(ref variable, in _constants[constIdx]) : Value.TryAddInPlace(ref variable, in _constants[constIdx]))
+                        return;
+                    ArithGlobalSlow(slot, constIdx, subtract);
+                    return;
+                }
             }
 
             Execute(op);
+        }
+
+        /// <summary>Langsamer Weg der verschmolzenen Vergleichssprünge: der Vergleich `op` über die zwei obersten Stack-Werte, genau wie
+        /// die gewöhnliche Instruktion (auch mit Operator-Überladung); das Ergebnis liegt danach oben auf dem Stack.</summary>
+        private void ExecuteCompareSlow(OpCode op) => Step(op);
+
+        /// <summary>Langsamer Weg von `x = x + c`/`x++` auf einer Lokalen: gewöhnliches Laden, Rechnen (Strings, Einheiten, Fehler) und Speichern.</summary>
+        private void ArithSlow(int depth, int slot, int constIdx, bool subtract)
+        {
+            Push(_currentScope.GetAncestor(depth).SlotRef(slot));
+            Push(_constants[constIdx]);
+            Step(subtract ? OpCode.Sub : OpCode.Add);
+            _currentScope.GetAncestor(depth).SlotRef(slot) = _stack[--_sp];
+        }
+
+        /// <summary>Wie <see cref="ArithSlow"/> für eine globale Variable (auch über den Broker der Fire-Threads).</summary>
+        private void ArithGlobalSlow(int slot, int constIdx, bool subtract)
+        {
+            if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
+            if (slot < _sharedCount) _stack[_sp] = LoadSharedGlobal(slot); else _stack[_sp] = _globalScope.SlotRef(slot);
+            _sp++;
+            Push(_constants[constIdx]);
+            Step(subtract ? OpCode.Sub : OpCode.Add);
+            var value = _stack[_sp - 1];
+            if (slot < _sharedCount) StoreSharedGlobal(slot, value);
+            else if (_ownerBroker != null) StoreOwnerGlobal(slot, value);
+            else _globalScope.SlotRef(slot) = value;
+            _sp--;
         }
 
         /// <summary>Ersetzt die obersten ZWEI Stack-Werte durch `result` (Ergebnis einer binären Operation).</summary>

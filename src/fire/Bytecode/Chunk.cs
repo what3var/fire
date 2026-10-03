@@ -202,7 +202,29 @@ namespace fire.Bytecode
             _codeArray = null;
             Code.Add(b);
         }
-        public void EmitOp(OpCode op) => EmitByte((byte)op);
+        public void EmitOp(OpCode op)
+        {
+            _lastOpStart = Code.Count;
+            EmitByte((byte)op);
+        }
+
+        // Für das Verschmelzen von Instruktionen beim Übersetzen (siehe EndsWithOp): wo der zuletzt emittierte Opcode beginnt
+        // und an welcher Stelle zuletzt ein Sprungziel/Patch-Punkt abgefragt wurde (jede Marke entsteht über `Here`).
+        [MemoryPackIgnore] private int _lastOpStart = -1;
+        [MemoryPackIgnore] private int _lastHere = -1;
+
+        /// <summary>Ist `op` (mit `operandBytes` Operandenbytes) die zuletzt emittierte Instruktion, und zeigt KEIN Sprungziel hinter sie?
+        /// Nur dann darf der Compiler sie zusammen mit der nächsten zu einer verschmolzenen Instruktion machen: eine Marke hinter ihr
+        /// würde nach dem Verschmelzen mitten in die neue Instruktion zeigen.</summary>
+        public bool EndsWithOp(OpCode op, int operandBytes) =>
+            _lastOpStart >= 0 && _lastOpStart == Code.Count - 1 - operandBytes && Code[_lastOpStart] == (byte)op && _lastHere != Code.Count;
+
+        /// <summary>Ersetzt den Opcode der zuletzt emittierten Instruktion (gleiche Operanden) - nach einem erfolgreichen EndsWithOp.</summary>
+        public void ReplaceLastOp(OpCode op)
+        {
+            _codeArray = null;
+            Code[_lastOpStart] = (byte)op;
+        }
 
         public void EmitU16(int value)
         {
@@ -224,6 +246,13 @@ namespace fire.Bytecode
         /// <summary>Aktuelle Schreibposition - als Sprungziel oder als Ausgangspunkt
         /// für ein späteres PatchU16 nützlich.</summary>
         [MemoryPackIgnore]
-        public int Here => Code.Count;
+        public int Here
+        {
+            get
+            {
+                _lastHere = Code.Count;
+                return Code.Count;
+            }
+        }
     }
 }
