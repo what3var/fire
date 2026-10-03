@@ -1809,7 +1809,7 @@ Dazu eine Korrektur der Zeilentabelle: Increment/Rücksprung/Ende einer `for`-Sc
 ## 44. Geschwindigkeit der VM: verschmolzene Instruktionen, Scope-Pool, Objekterzeugung
 
 Ausgangspunkt war eine Messung mit einem eigenen Benchmark (Schleifen, Aufrufe, `new`, Rekursion; Minimum über mehrere Runden und Prozessläufe). Die Zahlen sind ns je Schleifendurchlauf bzw. je Aufruf, vorher -> nachher
-(gleiche Maschine, `Performance`-Modus): leere Schleife 104 -> 63, `while` mit Block 82 -> 40, `if/else` im Schleifenkörper 201 -> 100, leere Methode 180 -> 110, Methode mit Feldzugriff 229 -> 145, `new P()` 407 -> 200, `new P2(i, 2)` 659 -> 235, `fib` rekursiv 167 -> 105.
+(gleiche Maschine, `Performance`-Modus; die Maschine schwankt um etwa ±20 %, angegeben ist jeweils das beste von mehreren Läufen): leere Schleife 104 -> 63, `while` mit Block 82 -> 40, `if/else` im Schleifenkörper 201 -> 100, leere Methode 180 -> 110, Methode mit Feldzugriff 229 -> 145, `new P()` 407 -> 200, `new P2(i, 2)` 659 -> 235, `fib` rekursiv 167 -> 105.
 
 **Verschmolzene Instruktionen.** Der Compiler ersetzt beim Emittieren häufige Folgen durch eine Instruktion (Opcodes siehe Tabelle oben): `StoreLocal`+`Pop` -> `StoreLocalPop` (eine Zuweisung als Anweisung), Vergleich+`JumpIfFalse` -> `JumpIfNotLt` usw. (`if`/`while`/`for`),
 `x = x + c`/`x++`/`x--` auf einer Variablen -> `ArithLocalConstPop`/`ArithGlobalConstPop`. `Chunk.EndsWithOp`/`ReplaceLastOp` verschmelzen nur, wenn kein Sprungziel hinter dem letzten Opcode liegt (`Chunk.Here` merkt jede abgefragte Stelle). Die VM hat für jede verschmolzene Instruktion einen
