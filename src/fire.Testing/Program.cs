@@ -7973,6 +7973,204 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 }
 
 // ---------------------------------------------------------------------------
+// Geraete: geteilter DeviceManager, Standardgeraet, EnsureConnected, IsShared, Paketverfolgung, Paketprotokoll
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Geraete ===");
+    int devFailures = 0;
+
+    fire.Device.Manager.DeviceManager.DeviceManager NewLoopbackManager(bool shared)
+    {
+        var manager = new fire.Device.Manager.DeviceManager.DeviceManager { IsShared = shared };
+        manager.RegisterDriver(new fire.Device.Manager.Drivers.Loopback.LoopbackDriver());
+        manager.RefreshDevices(true);
+        return manager;
+    }
+
+    List<string> RunDev(string script, fire.Device.Manager.DeviceManager.DeviceManager manager, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        VM.ResetTerminateForTests();
+        var session = fire.Compiler.RuntimeSession.Build(new[] { script }, mode, args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); }, deviceManager: manager);
+        session.Run();
+        VM.ResetTerminateForTests();
+        if (session.VirtualMachine!.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(session.VirtualMachine.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckDev(string title, string script, string[] expected, bool shared = true, string? defaultId = null,
+        Action<fire.Device.Manager.DeviceManager.DeviceManager>? after = null)
+    {
+        foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            var manager = NewLoopbackManager(shared);
+            manager.DefaultIdentifier = defaultId;
+            try
+            {
+                var task = Task.Run(() => RunDev(script, manager, mode).ToArray());
+                actual = task.Wait(TimeSpan.FromSeconds(30)) ? task.Result : new[] { "ZEITUEBERSCHREITUNG (haengt)" };
+            }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + (ex.InnerException != null ? CompileErrors.Describe(ex.InnerException) : ex.Message) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (ok && after != null)
+            {
+                try { after(manager); }
+                catch (Exception ex) { ok = false; actual = new[] { "NACHPRUEFUNG: " + ex.Message }; }
+            }
+            if (!ok) devFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+            manager.Shutdown();
+        }
+    }
+
+    CheckDev("Ohne Standardgeraet: HasDefault ist false, Device.Default wirft DeviceNotFoundException", """
+        #import "devices"
+        print(Device.HasDefault)
+        try {
+            var d = Device.Default
+            print("kein Fehler")
+        } catch (DeviceNotFoundException e) {
+            print("keins: " + e.message)
+        }
+        """, new[] { "False", "keins: Kein Standardgerät gewählt" });
+
+    CheckDev("Standardgeraet: Device.Default, IsConnected (Property und Methode), EnsureConnected, Senden/Empfangen", """
+        #import "devices"
+        #import "time"
+        var d = Device.Default
+        print(d.Identifier())
+        print(d.IsConnected)
+        print(d.IsConnected())
+        d.EnsureConnected().EnsureConnected()
+        print(d.IsConnected)
+        print(d.SendCommand("hallo"))
+        var tries = 0
+        while (!d.HasData() && tries < 200) { Sleep(TimeSpan.FromMilliseconds(10)); tries = tries + 1 }
+        print(d.ReadData())
+        d.Disconnect()
+        print(d.IsConnected)
+        print(d.SendCommand("weg"))
+        """, new[] { "loopback:echo", "False", "False", "True", "True", "hallo\n", "False", "False" }, defaultId: "loopback:echo");
+
+    CheckDev("IsShared: Geraet und Manager eines geteilten Managers melden es, ein eigener Manager nicht", """
+        #import "devices"
+        var m = new DeviceManagerFacade()
+        print(m.IsShared())
+        print(m.GetByIdentifier("loopback:echo").IsShared)
+        """, new[] { "True", "True" }, shared: true);
+    CheckDev("IsShared: ein nicht geteilter Manager meldet false", """
+        #import "devices"
+        var m = new DeviceManagerFacade()
+        print(m.IsShared())
+        print(m.GetByIdentifier("loopback:echo").IsShared)
+        """, new[] { "False", "False" }, shared: false);
+
+    CheckDev("Geteilter Manager ueberlebt den Lauf: verbundenes Geraet bleibt verbunden, Manager ist nicht abgebaut", """
+        #import "devices"
+        Device.Default.EnsureConnected()
+        print("verbunden")
+        """, new[] { "verbunden" }, shared: true, defaultId: "loopback:echo", after: m =>
+        {
+            if (m.DeviceCount != 1) throw new Exception("Geraet verschwunden");
+            if (!m.GetDeviceByHandle(m.GetHandleByIdentifier("loopback:echo")!.Value)!.IsConnected) throw new Exception("Verbindung wurde getrennt");
+            m.Dispose(); // wirkungslos bei geteiltem Manager
+            if (m.DeviceCount != 1) throw new Exception("Dispose hat den geteilten Manager abgebaut");
+        });
+
+    CheckDev("Eigener Manager wird nach dem Lauf freigegeben (Geraete getrennt)", """
+        #import "devices"
+        var d = new DeviceManagerFacade().GetByIdentifier("loopback:echo")
+        d.EnsureConnected()
+        print(d.IsConnected)
+        """, new[] { "True" }, shared: false, after: m =>
+        {
+            if (m.DeviceCount != 0) throw new Exception("Manager nicht abgebaut");
+        });
+
+    CheckDev("Paketverfolgung: gesendete und empfangene Pakete werden mitgeschnitten", """
+        #import "devices"
+        var d = Device.Default.EnsureConnected()
+        d.SendCommand("ab")
+        while (!d.HasData()) { }
+        print(d.ReadData())
+        """, new[] { "ab\n" }, defaultId: "loopback:echo");
+
+    // Paketverfolgung direkt am Manager (ohne Skript)
+    {
+        var manager = NewLoopbackManager(true);
+        var captured = new List<fire.Device.Manager.DeviceManager.PacketRecord>();
+        manager.PacketCaptured += p => { lock (captured) captured.Add(p); };
+        var device = manager.GetDeviceByHandle(manager.GetHandleByIdentifier("loopback:echo")!.Value)!;
+        device.Connect();
+        device.SendCommand("ping");
+        for (int i = 0; i < 200 && captured.Count < 2; i++) Thread.Sleep(10);
+        bool ok;
+        lock (captured)
+            ok = captured.Count == 2
+                && captured[0].Direction == fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice
+                && captured[1].Direction == fire.Device.Manager.DeviceManager.PacketDirection.DeviceToHost
+                && captured.All(c => c.DeviceIdentifier == "loopback:echo" && System.Text.Encoding.UTF8.GetString(c.Data) == "ping\n");
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Paketverfolgung am Manager: Senden und Empfangen werden in Reihenfolge mitgeschnitten" : "FEHLER: Paketverfolgung am Manager");
+
+        // Zustandsaenderungen
+        var states = new List<bool>();
+        manager.DeviceStateChanged += slot => { lock (states) states.Add(slot.Device.IsConnected); };
+        device.Disconnect();
+        device.Connect();
+        ok = states.SequenceEqual(new[] { false, true });
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: DeviceStateChanged meldet Trennen und Verbinden" : "FEHLER: DeviceStateChanged: " + string.Join(",", states));
+
+        // Standardgeraet
+        int changes = 0;
+        manager.DefaultChanged += () => changes++;
+        manager.DefaultIdentifier = "loopback:echo";
+        manager.DefaultIdentifier = "loopback:echo";
+        ok = changes == 1 && manager.DefaultHandle == manager.GetHandleByIdentifier("loopback:echo");
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Standardgeraet: DefaultChanged feuert nur bei einer Aenderung, DefaultHandle passt" : "FEHLER: Standardgeraet");
+
+        // Treiber entfernen
+        ok = manager.RemoveDriver("loopback") && manager.DeviceCount == 0 && manager.DefaultHandle == null;
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: RemoveDriver entfernt Treiber samt Geraeten" : "FEHLER: RemoveDriver");
+        manager.Shutdown();
+    }
+
+    // Paketprotokoll: Speichern und Laden verlustfrei
+    {
+        var t0 = new DateTime(2026, 10, 3, 12, 0, 0, 123, DateTimeKind.Utc).AddTicks(4567);
+        var packets = new List<fire.Device.Manager.DeviceManager.PacketRecord>
+        {
+            new(t0, "serial:COM3", fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice, System.Text.Encoding.UTF8.GetBytes("M105\n")),
+            new(t0.AddMilliseconds(30), "serial:COM3", fire.Device.Manager.DeviceManager.PacketDirection.DeviceToHost, new byte[] { 0x00, 0xFF, 0x7F, 0xC3, 0xA4 }),
+            new(t0.AddMilliseconds(40), "serial:COM3", fire.Device.Manager.DeviceManager.PacketDirection.DeviceToHost, Array.Empty<byte>()),
+        };
+        var text = fire.Device.Manager.DeviceManager.PacketLog.Serialize(packets);
+        var back = fire.Device.Manager.DeviceManager.PacketLog.Parse(text);
+        bool ok = back.Count == 3 && Enumerable.Range(0, 3).All(i =>
+            back[i].Time == packets[i].Time && back[i].Direction == packets[i].Direction && back[i].DeviceIdentifier == packets[i].DeviceIdentifier && back[i].Data.SequenceEqual(packets[i].Data));
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Paketprotokoll: Speichern und Laden ist verlustfrei (Zeit, Richtung, Geraet, Binaerdaten, leeres Paket)" : "FEHLER: Paketprotokoll Roundtrip\n" + text);
+
+        string[] bad = { "x\tH2D\ta\t00", "2026-10-03T12:00:00Z\tUP\ta\t00", "2026-10-03T12:00:00Z\tH2D\ta\tZZ", "nur eine Spalte" };
+        ok = bad.All(b =>
+        {
+            try { fire.Device.Manager.DeviceManager.PacketLog.Parse(b); return false; }
+            catch (FormatException) { return true; }
+        });
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Paketprotokoll: fehlerhafte Zeilen werden mit FormatException abgelehnt" : "FEHLER: Paketprotokoll nimmt fehlerhafte Zeilen an");
+    }
+
+    Console.WriteLine(devFailures == 0 ? "Alle Geraete-Pruefungen bestanden." : $"FEHLER: {devFailures} Geraete-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
 // Lambda-Captures, Kurzsyntax `x => ...` und die Abfrage-Bibliothek (#import "linq")
 // ---------------------------------------------------------------------------
 {
