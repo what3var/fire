@@ -73,11 +73,27 @@
                 <Separator/>
                 <MenuItem Header="_Haltepunkt umschalten (aktuelle Zeile)" Click="ToggleBreakpoint_Click" InputGestureText="F9"/>
             </MenuItem>
+            <MenuItem Header="_Geräte">
+                <MenuItem Header="Geräte _suchen" Click="DevicesSearch_Click"/>
+                <MenuItem Header="_Verbinden" Click="DevicesConnect_Click"/>
+                <MenuItem Header="_Trennen" Click="DevicesDisconnect_Click"/>
+                <Separator/>
+                <MenuItem Header="Als _Standardgerät festlegen" Click="DevicesSetDefault_Click"/>
+                <MenuItem Header="Standardgerät _aufheben" Click="DevicesClearDefault_Click"/>
+                <Separator/>
+                <MenuItem Header="_Paketverfolgung öffnen" Click="DevicesTrace_Click"/>
+                <Separator/>
+                <MenuItem Header="Simuliertes _Loopback-Gerät anzeigen" x:Name="mnuLoopback" IsCheckable="True" Click="DevicesLoopback_Click"
+                          ToolTip="Ein Echo-Gerät ohne Hardware (loopback:echo) zum Ausprobieren von Skripten und der Paketverfolgung"/>
+            </MenuItem>
             <!-- Haken = Fenster ist sichtbar (wird beim Öffnen des Menüs aktualisiert, siehe ViewMenu_SubmenuOpened). -->
             <MenuItem Header="_Ansicht" x:Name="mnuView" SubmenuOpened="ViewMenu_SubmenuOpened">
                 <MenuItem Header="_Ausgabe" Tag="output" Click="ViewPanel_Click"/>
                 <MenuItem Header="_Fehlerliste" Tag="errors" Click="ViewPanel_Click"/>
-                <MenuItem Header="_Debugger" Tag="debugger" Click="ViewPanel_Click"/>
+                <MenuItem Header="_Threads" Tag="threads" Click="ViewPanel_Click"/>
+                <MenuItem Header="_Scope" Tag="scope" Click="ViewPanel_Click"/>
+                <MenuItem Header="S_tack" Tag="stack" Click="ViewPanel_Click"/>
+                <MenuItem Header="_Geräte" Tag="devices" Click="ViewPanel_Click"/>
                 <Separator/>
                 <MenuItem Header="Markdown-_Vorschau ein/aus" Click="ToggleMarkdownPreview_Click" InputGestureText="Ctrl+Umschalt+V"/>
                 <Separator/>
@@ -141,7 +157,13 @@
                 </Button>
             </ToolBar>
 
-            <ToolBar Band="0" BandIndex="3" ToolTip="Erstellen">
+            <ToolBar Band="0" BandIndex="3" ToolTip="Standardgerät">
+                <TextBlock Text="Standardgerät:" VerticalAlignment="Center" Margin="2,0,4,0"/>
+                <ComboBox x:Name="cmbDefaultDevice" Width="170" SelectionChanged="cmbDefaultDevice_SelectionChanged"
+                          ToolTip="Das Gerät, das ein Skript als Device.Default bekommt"/>
+            </ToolBar>
+
+            <ToolBar Band="0" BandIndex="4" ToolTip="Erstellen">
                 <TextBlock Text="Modus:" VerticalAlignment="Center" Margin="2,0,4,0"/>
                 <ComboBox x:Name="cmbMode" Width="100" SelectionChanged="cmbMode_SelectionChanged"
                           ToolTip="Ausführungsmodus: Debug, Release oder Performance">
@@ -234,12 +256,25 @@
                                     </DataGrid>
                                 </DockPanel>
                             </ad:LayoutAnchorable>
+
+                            <ad:LayoutAnchorable ContentId="threads" Title="Threads" CanFloat="True">
+                                <local:ThreadsPanelControl x:Name="DebugThreadsPanel"/>
+                            </ad:LayoutAnchorable>
+
+                            <ad:LayoutAnchorable ContentId="scope" Title="Scope" CanFloat="True">
+                                <local:ScopePanelControl x:Name="DebugScopePanel"/>
+                            </ad:LayoutAnchorable>
+
+                            <ad:LayoutAnchorable ContentId="stack" Title="Stack" CanFloat="True">
+                                <local:StackPanelControl x:Name="DebugStackPanel"/>
+                            </ad:LayoutAnchorable>
                         </ad:LayoutAnchorablePane>
                     </ad:LayoutPanel>
 
+                    <!-- Die Geräte-Übersicht liegt rechts und ist standardmäßig eingeklappt (siehe MainWindow-Konstruktor: AutoHide). -->
                     <ad:LayoutAnchorablePane DockWidth="320">
-                        <ad:LayoutAnchorable ContentId="debugger" Title="Debugger" CanFloat="True">
-                            <local:DebuggerPanelControl x:Name="DebuggerPanel"/>
+                        <ad:LayoutAnchorable ContentId="devices" Title="Geräte" CanFloat="True">
+                            <local:DevicesPanelControl x:Name="DevicesPanel"/>
                         </ad:LayoutAnchorable>
                     </ad:LayoutAnchorablePane>
                 </ad:LayoutPanel>

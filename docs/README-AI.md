@@ -183,13 +183,31 @@ vollwertiges Debugger-/IDE-Feature-Set):
 
 ### Andockbare Bereiche, Fehlerliste, Symbolleisten (`MainWindow`)
 
-Die Bereiche des Editors (Dokument-Tabs, Ausgabe, Fehlerliste, Debugger) liegen in einem `DockingManager` der NuGet-Bibliothek **Dirkster.AvalonDock** (+ Theme `Vs2013Light`): per Ziehen an den Titeln an jede
+Die Bereiche des Editors (Dokument-Tabs, Ausgabe, Fehlerliste, Threads, Scope, Stack, Geräte) liegen in einem `DockingManager` der NuGet-Bibliothek **Dirkster.AvalonDock** (+ Theme `Vs2013Light`): per Ziehen an den Titeln an jede
 Seite andockbar, als Registerkarten stapelbar, frei schwebend oder automatisch ausblendend. Menü "Ansicht" blendet Bereiche wieder ein, "Layout zurücksetzen" stellt die Vorgabe wieder her. Das Layout wird beim
 Schließen nach `%AppData%/fire/editor-layout.xml` gespeichert und beim Start geladen (`XmlLayoutSerializer`, Schlüssel = `ContentId` aus `MainWindow.xaml`; ein nicht ladbares Layout fällt still auf die Vorgabe
 zurück). Nach dem Laden sind die Layout-Elemente neue Objekte - deshalb merkt sich `MainWindow` sie in `_panels` (aus dem Serializer-Callback) statt der XAML-Objekte.
 
 Die Fehlerliste ist ein `DataGrid` (Symbol, Beschreibung, Datei, Zeile; Spalten verschieb-/vergrößer-/sortierbar, Doppelklick auf eine Zeile springt in den Editor, Filterknopf "n Fehler"); die Zeilen sind
 `ErrorListItem`. Symbolleisten (Datei, Ausführen, Debuggen, Modus/Erstellen) rufen dieselben Handler wie Menü und Tastenkürzel; der Modus (Debug/Release/Performance) ist eine ComboBox, die mit dem Menü synchron bleibt.
+
+### Debugger-Bereiche, Geräte-Übersicht, Paketverfolgung
+
+Der frühere Debugger-Bereich ist aufgeteilt: **Threads** (ListView: aktiver Thread markiert, Name, Zustand, aktuelle Zeile, Aufruftiefe; Knopf "Aktiven Thread anhalten", Haltepunkt-Liste), **Scope** (Baum) und **Stack**
+(Liste) sind eigene Tabs im unteren Bereich (`ThreadsPanelControl`/`ScopePanelControl`/`StackPanelControl`, gebündelt von `DebuggerPanels`). Ein gespeichertes Layout aus einer älteren Version, dem diese Bereiche
+fehlen, wird durch das Standard-Layout ersetzt.
+
+Rechts liegt die **Geräte-Übersicht** (`DevicesPanelControl`, standardmäßig eingeklappt: am Rand ausgeblendet, `LayoutAnchorable.ToggleAutoHide`; Menü "Ansicht > Geräte" dockt sie an). Ein Baum zeigt je Treiber die gefundenen
+Geräte mit Statussymbol (● verbunden, ○ verfügbar, ◌ ungeprüft, ✖ nicht verfügbar) und ★ am Standardgerät. Symbolleiste: Suchen (Verfügbarkeit aller Geräte prüfen, Hintergrund-Thread), Verbinden, Trennen,
+Paketverfolgung; dasselbe im Kontextmenü (plus "Als Standardgerät festlegen"/"aufheben") und im Menü "Geräte". Die Auswahl "Standardgerät" in der Symbolleiste setzt dasselbe. Beim Start werden die Geräte schnell aufgelistet.
+Der Menüpunkt "Simuliertes Loopback-Gerät anzeigen" blendet `loopback:echo` ein (zum Ausprobieren ohne Hardware).
+
+`EditorDeviceService` besitzt den GETEILTEN `DeviceManager` des Editors (siehe SPEC 8.16), reicht ihn an `DebugSession.DeviceManager` weiter (-> `RuntimeSession.Build(..., deviceManager:)`) und speichert
+Standardgerät und Simulationsgerät in `%AppData%/fire/editor-devices.txt`.
+
+**Paketverfolgung** (`PacketTraceControl`, wie Wireshark): ein Dokument-Tab je Gerät (Doppelklick auf ein Gerät oder "Paketverfolgung"), der gesendete und empfangene Pakete mitschneidet - Spalten Nummer, Zeit,
+Richtung (Host → Gerät blau / Gerät → Host grün), Gerät, Bytes, Inhalt. Der Inhalt ist umschaltbar: **Hex** (Bytes durch Leerzeichen getrennt) oder **Text** (UTF-8, Steuerzeichen als `\r \n \xNN`). Aufzeichnen an/aus, Leeren,
+Autoscroll. Der Tab ist ein `IDocumentView`: Speichern/Speichern unter schreibt eine `.fplog`-Datei (Format siehe SPEC 8.16), Öffnen lädt sie (nicht live) - ungespeicherte Pakete fragt das Schließen ab.
 
 ### Mehrere Dokumente in Tabs, Markdown-Editor (`MainWindow`, `MarkdownEditorControl`)
 

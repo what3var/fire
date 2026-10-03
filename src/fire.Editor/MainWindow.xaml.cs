@@ -39,6 +39,8 @@ namespace fire.Editor
     public partial class MainWindow : Window
     {
         private readonly DebugSession _session = new();
+        private readonly EditorDeviceService _devices = new();
+        private DebuggerPanels _debugger = null!;
 
         private AssemblyInfo _scriptAssemblyInfo;
 
@@ -76,21 +78,36 @@ namespace fire.Editor
         /// <summary>Ein geöffneter Tab. `Layout` wird nach jedem Laden eines
         /// Layouts ausgetauscht (siehe DeserializeLayout) - die View
         /// (Editor-Control) bleibt dieselbe.</summary>
+        private enum DocumentKind
+        {
+            /// <summary>Ein fire-Skript.</summary>
+            Script,
+            /// <summary>Ein Markdown-Dokument.</summary>
+            Markdown,
+            /// <summary>Ein Paketprotokoll (live aufgezeichnet oder aus einer .fplog-Datei geladen).</summary>
+            PacketLog,
+        }
+
         private sealed class OpenDocument
         {
             public required string Id { get; init; }
             public required IDocumentView View { get; init; }
-            public required bool IsMarkdown { get; init; }
+            public required DocumentKind Kind { get; init; }
             public required int Number { get; init; }
+
+            /// <summary>Name, solange es keine Datei gibt (statt "Unbenannt N"), z.B. "Pakete serial:COM3".</summary>
+            public string? UntitledName { get; init; }
             public LayoutDocument Layout { get; set; } = null!;
 
+            public bool IsMarkdown => Kind == DocumentKind.Markdown;
             public ScriptEditorControl? Script => View as ScriptEditorControl;
             public MarkdownEditorControl? Markdown => View as MarkdownEditorControl;
+            public PacketTraceControl? Trace => View as PacketTraceControl;
 
             /// <summary>Dateiname bzw. "Unbenannt N" (Markdown: mit .md).</summary>
             public string DisplayName => View.FilePath != null
                 ? Path.GetFileName(View.FilePath)
-                : IsMarkdown ? $"Unbenannt {Number}.md" : $"Unbenannt {Number}";
+                : UntitledName ?? (IsMarkdown ? $"Unbenannt {Number}.md" : $"Unbenannt {Number}");
         }
 
         private readonly List<OpenDocument> _documents = new();
@@ -114,15 +131,21 @@ namespace fire.Editor
         /// <summary>Das aktive Dokument, falls es ein fire-Skript ist.</summary>
         private ScriptEditorControl? ActiveScript => ActiveDocument?.Script;
 
-        private static bool IsMarkdownPath(string path)
+        private static DocumentKind KindOfPath(string path)
         {
             string ext = Path.GetExtension(path).ToLowerInvariant();
-            return ext is ".md" or ".markdown" or ".mdown";
+            if (ext is ".md" or ".markdown" or ".mdown") return DocumentKind.Markdown;
+            if (ext == fire.Device.Manager.DeviceManager.PacketLog.FileExtension) return DocumentKind.PacketLog;
+            return DocumentKind.Script;
         }
 
         public MainWindow()
         {
             InitializeComponent();
+
+            // Die Geräte-Übersicht startet eingeklappt (am rechten Rand ausgeblendet) - vor dem Sichern des Standard-Layouts.
+            if (DockManager.Layout.Descendents().OfType<LayoutAnchorable>().FirstOrDefault(a => a.ContentId == "devices") is { } devicesPane)
+                devicesPane.ToggleAutoHide();
 
             CollectPanels();
             _defaultLayout = SerializeLayout();
@@ -138,8 +161,19 @@ namespace fire.Editor
             // garantiert.
             AddHandler(PreviewKeyDownEvent, new KeyEventHandler(Window_PreviewKeyDown), handledEventsToo: true);
 
-            DebuggerPanel.AttachSession(_session);
-            DebuggerPanel.ThreadSelected += OnThreadSelected;
+            _debugger = new DebuggerPanels(DebugThreadsPanel, DebugScopePanel, DebugStackPanel);
+            _debugger.AttachSession(_session);
+            _debugger.ThreadSelected += OnThreadSelected;
+
+            // Der geteilte DeviceManager des Editors: alle Skripte benutzen ihn gemeinsam (siehe EditorDeviceService).
+            _session.DeviceManager = _devices.Manager;
+            DevicesPanel.Attach(_devices);
+            DevicesPanel.StatusMessage += UpdateStatus;
+            DevicesPanel.OpenTraceRequested += OpenTrace;
+            _devices.Manager.DevicesChanged += () => Dispatcher.BeginInvoke(new Action(RefreshDefaultDeviceCombo));
+            _devices.Manager.DefaultChanged += () => Dispatcher.BeginInvoke(new Action(RefreshDefaultDeviceCombo));
+            mnuLoopback.IsChecked = _devices.LoopbackEnabled;
+            RefreshDefaultDeviceCombo();
 
             _session.OutputWritten += OnScriptOutput;
             // WICHTIG: InvokeAsync (nicht-blockierend), NICHT Invoke -
@@ -152,7 +186,7 @@ namespace fire.Editor
             // Dispatcher.Invoke hier würde in diesem Fall zu einem echten
             // Deadlock führen (Fire-Thread wartet auf den UI-Thread, der
             // UI-Thread wartet transitiv auf den Fire-Thread).
-            _session.ThreadAdded += ctx => Dispatcher.InvokeAsync(() => DebuggerPanel.Refresh(BreakpointDescriptions()));
+            _session.ThreadAdded += ctx => Dispatcher.InvokeAsync(() => _debugger.Refresh(BreakpointDescriptions()));
             _session.ThreadPaused += ctx => Dispatcher.InvokeAsync(() =>
             {
                 // Nur wenn der GERADE ANGEZEIGTE (aktive) Thread betroffen
@@ -161,7 +195,7 @@ namespace fire.Editor
                 // weiterlaufender Fire-Thread, der gerade z.B. einen
                 // Haltepunkt erreicht, aktualisiert erstmal nur seinen
                 // eigenen Eintrag in der Threads-Liste.
-                DebuggerPanel.Refresh(BreakpointDescriptions());
+                _debugger.Refresh(BreakpointDescriptions());
                 if (ReferenceEquals(ctx, _session.ActiveThread))
                 {
                     _isBusy = false;
@@ -186,6 +220,7 @@ namespace fire.Editor
             {
                 foreach (var arg in Environment.GetCommandLineArgs().Skip(1))
                     if (File.Exists(arg)) OpenFile(arg);
+                _ = _devices.RefreshAsync(fastScan: true); // Geräte auflisten (schnell); die Verfügbarkeitsprüfung macht "Suchen"
                 if (_documents.Count == 0)
                     NewScript("// Willkommen im fire-Editor\nprint(\"Hallo, Welt!\")\n");
             };
@@ -333,7 +368,10 @@ namespace fire.Editor
         {
             ["output"] = OutputBox,
             ["errors"] = ErrorPanelContent,
-            ["debugger"] = DebuggerPanel,
+            ["threads"] = DebugThreadsPanel,
+            ["scope"] = DebugScopePanel,
+            ["stack"] = DebugStackPanel,
+            ["devices"] = DevicesPanel,
         };
 
         private void DeserializeLayout(TextReader reader)
@@ -403,7 +441,9 @@ namespace fire.Editor
             {
                 using var reader = new StreamReader(LayoutFilePath);
                 DeserializeLayout(reader);
-                if (!DockManager.Layout.Descendents().OfType<LayoutDocumentPane>().Any()) RestoreDefaultLayout();
+                // Ein Layout aus einer älteren Version (ohne die neuen Bereiche) oder ohne Dokumentbereich ist unbrauchbar: Standard.
+                if (!DockManager.Layout.Descendents().OfType<LayoutDocumentPane>().Any() || !PanelContents().Keys.All(_panels.ContainsKey))
+                    RestoreDefaultLayout();
             }
             catch (Exception ex)
             {
@@ -450,6 +490,7 @@ namespace fire.Editor
                 if (!ConfirmClose(doc)) { e.Cancel = true; return; }
             }
             SaveLayout();
+            _devices.Shutdown(); // trennt die Geräte; nur der Besitzer darf den geteilten Manager abbauen
         }
 
         private void ResetLayout_Click(object sender, RoutedEventArgs e)
@@ -470,7 +511,13 @@ namespace fire.Editor
             if (sender is not MenuItem { Tag: string id } || !_panels.TryGetValue(id, out var panel)) return;
             if (panel is not LayoutAnchorable anchorable) return;
 
-            if (anchorable.IsVisible)
+            if (anchorable.IsAutoHidden)
+            {
+                // Eingeklappt (am Rand ausgeblendet): das Menü holt den Bereich heraus und dockt ihn an.
+                anchorable.ToggleAutoHide();
+                anchorable.IsActive = true;
+            }
+            else if (anchorable.IsVisible)
             {
                 anchorable.Hide();
             }
@@ -491,7 +538,7 @@ namespace fire.Editor
             // gesperrt bleiben.
             _isBusy = false;
             ShowDebugLine(chosen.IsFinished ? null : chosen.Vm.CurrentLine);
-            DebuggerPanel.Refresh(BreakpointDescriptions());
+            _debugger.Refresh(BreakpointDescriptions());
             UpdateStatus(chosen.IsFinished
                 ? $"{chosen.Name}: beendet."
                 : $"{chosen.Name}: angehalten in Zeile {chosen.Vm.CurrentLine}.");
@@ -569,7 +616,7 @@ namespace fire.Editor
             }
 
             UpdateStatus("Kompiliert - bereit für Einzelschritt/Weiter/Bis Ende.");
-            DebuggerPanel.Refresh(BreakpointDescriptions());
+            _debugger.Refresh(BreakpointDescriptions());
         }
 
         private void Step_Click(object sender, RoutedEventArgs e)
@@ -628,7 +675,7 @@ namespace fire.Editor
             _session.Reset();
             _isBusy = false;
             ShowDebugLine(null);
-            DebuggerPanel.Refresh(BreakpointDescriptions());
+            _debugger.Refresh(BreakpointDescriptions());
             UpdateStatus("Gestoppt.");
         }
 
@@ -648,7 +695,7 @@ namespace fire.Editor
                 ShowDebugLine(line);
                 UpdateStatus($"Angehalten in Zeile {line}.");
             }
-            DebuggerPanel.Refresh(BreakpointDescriptions());
+            _debugger.Refresh(BreakpointDescriptions());
         }
 
         private void ToggleBreakpoint_Click(object sender, RoutedEventArgs e)
@@ -663,6 +710,10 @@ namespace fire.Editor
 
         private const string ScriptFilter = "fire-Dateien (*.script;*.fi;*.fic)|*.script;*.fi;*.fic";
         private const string MarkdownFilter = "Markdown (*.md;*.markdown)|*.md;*.markdown";
+        private const string PacketLogFilter = "Paketprotokolle (*.fplog)|*.fplog";
+
+        private static string SafeFileName(string name) =>
+            string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ' ' ? '-' : c));
 
         private void New_Click(object sender, RoutedEventArgs e) => NewScript("");
 
@@ -673,7 +724,7 @@ namespace fire.Editor
             var dlg = new OpenFileDialog
             {
                 Multiselect = true,
-                Filter = "Alle Dokumente|*.script;*.fi;*.fic;*.md;*.markdown|" + ScriptFilter + "|" + MarkdownFilter + "|Alle Dateien (*.*)|*.*",
+                Filter = "Alle Dokumente|*.script;*.fi;*.fic;*.md;*.markdown;*.fplog|" + ScriptFilter + "|" + MarkdownFilter + "|" + PacketLogFilter + "|Alle Dateien (*.*)|*.*",
             };
             if (dlg.ShowDialog() != true) return;
             foreach (var file in dlg.FileNames) OpenFile(file);
@@ -775,12 +826,71 @@ namespace fire.Editor
         private void ToggleMarkdownPreview_Click(object sender, RoutedEventArgs e) => ActiveDocument?.Markdown?.TogglePreview();
 
         // -----------------------------------------------------------
+        // Geräte (Menü, Standardgerät-Auswahl, Paketverfolgung)
+        // -----------------------------------------------------------
+
+        private void DevicesSearch_Click(object sender, RoutedEventArgs e) => _ = DevicesPanel.SearchAsync();
+        private void DevicesConnect_Click(object sender, RoutedEventArgs e) => _ = DevicesPanel.ConnectSelectedAsync();
+        private void DevicesDisconnect_Click(object sender, RoutedEventArgs e) => _ = DevicesPanel.DisconnectSelectedAsync();
+        private void DevicesSetDefault_Click(object sender, RoutedEventArgs e) => DevicesPanel.SetSelectedAsDefault();
+        private void DevicesClearDefault_Click(object sender, RoutedEventArgs e) => DevicesPanel.ClearDefault();
+        private void DevicesTrace_Click(object sender, RoutedEventArgs e) => DevicesPanel.OpenTraceForSelected();
+
+        private void DevicesLoopback_Click(object sender, RoutedEventArgs e)
+        {
+            _devices.LoopbackEnabled = mnuLoopback.IsChecked;
+            UpdateStatus(_devices.LoopbackEnabled ? "Simuliertes Gerät 'loopback:echo' aktiv." : "Simuliertes Gerät entfernt.");
+        }
+
+        // Verhindert, dass das programmatische Füllen der Auswahl das Standardgerät erneut setzt.
+        private bool _updatingDefaultUi;
+        private const string NoDefaultText = "(keins)";
+
+        /// <summary>Füllt die Standardgerät-Auswahl der Symbolleiste: "(keins)", alle gefundenen Geräte und - falls es nicht
+        /// (mehr) gefunden wird - das gewählte Standardgerät.</summary>
+        private void RefreshDefaultDeviceCombo()
+        {
+            _updatingDefaultUi = true;
+            try
+            {
+                string? current = _devices.Manager.DefaultIdentifier;
+                var items = new List<string> { NoDefaultText };
+                items.AddRange(_devices.Manager.GetSlots().Select(s => s.Identifier));
+                if (current != null && !items.Contains(current)) items.Add(current);
+                cmbDefaultDevice.ItemsSource = items;
+                cmbDefaultDevice.SelectedItem = current ?? NoDefaultText;
+            }
+            finally { _updatingDefaultUi = false; }
+        }
+
+        private void cmbDefaultDevice_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_updatingDefaultUi || cmbDefaultDevice.SelectedItem is not string chosen) return;
+            _devices.Manager.DefaultIdentifier = chosen == NoDefaultText ? null : chosen;
+        }
+
+        /// <summary>Öffnet die Paketverfolgung des Geräts `identifier` in einem Tab (eine bereits offene wird nur nach vorn geholt).</summary>
+        private void OpenTrace(string identifier)
+        {
+            var existing = _documents.FirstOrDefault(d => d.Trace is { } t && t.DeviceIdentifier == identifier);
+            if (existing != null)
+            {
+                Activate(existing);
+                return;
+            }
+
+            var doc = CreateDocument(DocumentKind.PacketLog, "", null, untitledName: $"Pakete {identifier}");
+            doc.Trace!.Attach(_devices.Manager, identifier);
+            UpdateStatus($"Paketverfolgung für {identifier} gestartet.");
+        }
+
+        // -----------------------------------------------------------
         // Dokumente anlegen/öffnen/speichern/schließen
         // -----------------------------------------------------------
 
-        private OpenDocument NewScript(string text) => CreateDocument(false, text, null);
+        private OpenDocument NewScript(string text) => CreateDocument(DocumentKind.Script, text, null);
 
-        private OpenDocument NewMarkdown(string text) => CreateDocument(true, text, null);
+        private OpenDocument NewMarkdown(string text) => CreateDocument(DocumentKind.Markdown, text, null);
 
         /// <summary>Öffnet eine Datei in einem neuen Tab (Skript oder Markdown nach Endung) - ist sie schon offen, wird
         /// nur dorthin gewechselt.</summary>
@@ -804,27 +914,32 @@ namespace fire.Editor
             }
 
             // Ein noch unberührtes, leeres "Unbenannt"-Dokument (z.B. das Willkommens-Skript) wird dabei ersetzt.
-            var pristine = _documents.Count == 1 && _documents[0].View.FilePath == null && !_documents[0].View.IsModified
+            var pristine = _documents.Count == 1 && _documents[0].Kind != DocumentKind.PacketLog
+                && _documents[0].View.FilePath == null && !_documents[0].View.IsModified
                 ? _documents[0] : null;
 
-            var doc = CreateDocument(IsMarkdownPath(full), text, full);
+            var doc = CreateDocument(KindOfPath(full), text, full);
             if (pristine != null) pristine.Layout.Close();
             UpdateStatus($"Geöffnet: {full}");
             return doc;
         }
 
-        private OpenDocument CreateDocument(bool markdown, string text, string? path)
+        private OpenDocument CreateDocument(DocumentKind kind, string text, string? path, string? untitledName = null)
         {
-            IDocumentView view;
-            if (markdown) view = new MarkdownEditorControl();
-            else view = new ScriptEditorControl();
+            IDocumentView view = kind switch
+            {
+                DocumentKind.Markdown => new MarkdownEditorControl(),
+                DocumentKind.PacketLog => new PacketTraceControl(),
+                _ => new ScriptEditorControl(),
+            };
 
             var doc = new OpenDocument
             {
                 Id = Guid.NewGuid().ToString("N"),
                 View = view,
-                IsMarkdown = markdown,
+                Kind = kind,
                 Number = path == null ? ++_documentCounter : 0,
+                UntitledName = untitledName,
             };
 
             view.ResetTo(text, path);
@@ -853,7 +968,7 @@ namespace fire.Editor
                 script.BreakpointsChanged += () =>
                 {
                     if (ReferenceEquals(doc, _debugDocument)) _session.UpdateBreakpoints(BreakpointLocations(doc));
-                    DebuggerPanel.Refresh(BreakpointDescriptions());
+                    _debugger.Refresh(BreakpointDescriptions());
                 };
             }
 
@@ -899,6 +1014,7 @@ namespace fire.Editor
 
         private void OnDocumentClosed(OpenDocument doc)
         {
+            doc.Trace?.Detach();
             _documents.Remove(doc);
             if (ReferenceEquals(_active, doc)) _active = null;
             if (ReferenceEquals(_debugDocument, doc))
@@ -929,7 +1045,7 @@ namespace fire.Editor
             Title = WindowTitle(doc);
             CaretText.Text = doc == null ? "" : $"Zeile {doc.View.GetCaretLine()}";
             UpdateErrorPanel();
-            DebuggerPanel.Refresh(BreakpointDescriptions());
+            _debugger.Refresh(BreakpointDescriptions());
         }
 
         /// <summary>Fragt bei ungespeicherten Änderungen nach (Speichern/Verwerfen/Abbrechen). false = Schließen abbrechen.</summary>
@@ -953,11 +1069,14 @@ namespace fire.Editor
         {
             var dlg = new SaveFileDialog
             {
-                Filter = doc.IsMarkdown
-                    ? MarkdownFilter + "|Alle Dateien (*.*)|*.*"
-                    : "fire-Dateien (*.script)|*.script|" + ScriptFilter + "|Alle Dateien (*.*)|*.*",
-                FileName = doc.View.FilePath ?? "",
-                DefaultExt = doc.IsMarkdown ? ".md" : ".script",
+                Filter = doc.Kind switch
+                {
+                    DocumentKind.Markdown => MarkdownFilter + "|Alle Dateien (*.*)|*.*",
+                    DocumentKind.PacketLog => PacketLogFilter + "|Alle Dateien (*.*)|*.*",
+                    _ => "fire-Dateien (*.script)|*.script|" + ScriptFilter + "|Alle Dateien (*.*)|*.*",
+                },
+                FileName = doc.View.FilePath ?? (doc.Kind == DocumentKind.PacketLog ? SafeFileName(doc.DisplayName) : ""),
+                DefaultExt = doc.Kind switch { DocumentKind.Markdown => ".md", DocumentKind.PacketLog => fire.Device.Manager.DeviceManager.PacketLog.FileExtension, _ => ".script" },
                 AddExtension = true,
             };
             if (dlg.ShowDialog() != true) return false;

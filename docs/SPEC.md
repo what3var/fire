@@ -1889,6 +1889,42 @@ Sleep(500ms)                                      // oder Sleep(dauer), Sleep(25
 **`ToString()` bei Ausgabe und Verkettung.** Hat ein Objekt eine parameterlose Methode `ToString()`, benutzt sie `print(objekt)`, `"text" + objekt`, `objekt + "text"` (hat die Klasse einen `operator+`, gilt dieser, `DateTime`/`TimeSpan` behandeln eine Zeichenkette dort selbst) und `$"{objekt}"`. Eine
 Exception in `ToString()` läuft zum umgebenden `catch`. Ohne `ToString()` bleibt die alte Darstellung (`<object ...>`).
 
+### 8.16 Geräte (`#import "devices"`)
+
+Die Erweiterung steuert Geräte über den **DeviceManager** (`src/fire.Device.Manager`: Treiber, Geräte, Handles; `src/fire.Device.Bridge`: fire-Klassen). Ein Gerät hat eine Kennung `treiber:anschluss`
+(`serial:COM3`, `loopback:echo`). Der Treiber `serial` (115200 Baud, zeilenweise `SendCommand`) ist eingebaut; `loopback` ist ein simuliertes Echo-Gerät ohne Hardware.
+
+```
+#import "devices"
+
+var d = Device.Default.EnsureConnected()   // Standardgerät des Hosts, verbindet bei Bedarf
+d.SendCommand("M105")
+while (!d.HasData()) { }
+print(d.ReadData())                        // Latin1: ein Zeichen je Byte
+```
+
+| Mitglied | Bedeutung |
+|---|---|
+| `Device.Default` (static Property) | das vom Host gewählte Standardgerät; wirft `DeviceNotFoundException`, wenn keins gewählt ist (z.B. in einem eigenständigen Programm) |
+| `Device.HasDefault` (static Property) | ist ein Standardgerät gewählt? |
+| `IsConnected` (Property; die Methode `IsConnected()` bleibt) | verbunden? |
+| `IsShared` (Property) | gehört das Gerät einem geteilten Manager (des Editors)? |
+| `Connect()` / `Disconnect()` | verbinden (`bool`) / trennen |
+| `EnsureConnected()` | verbindet nur, wenn nötig; wirft `DeviceConnectionException`, wenn das scheitert; liefert das Gerät selbst (verkettbar) |
+| `SendCommand(text)` | sendet eine Zeile; `false`, wenn nicht verbunden |
+| `HasData()` / `ReadData()` | empfangene Pakete abholen (eine Warteschlange je Gerät) |
+| `Identifier()`, `PortName()`, `Availability()`, `TestAvailability()` | Kennung, Anschluss, Verfügbarkeit (0 = nicht verfügbar, 1 = ungeprüft, 2 = verfügbar) |
+| `DeviceManagerFacade` | `Refresh(fastScan)`, `Count()`, `GetAt(i)`, `GetByHandle(h)`, `GetByIdentifier(id)`, `IsShared()` |
+
+**Geteilter DeviceManager.** Läuft ein Skript im Editor, benutzt es den gemeinsamen Manager des Editors (`DeviceManager.IsShared`): Geräte und offene Verbindungen überleben den Lauf, mehrere Skripte hintereinander arbeiten mit
+denselben Geräten. Ein Skript kann weder den Manager noch ein geteiltes Gerät zerstören (es gibt keine Funktion dafür; `DeviceManager.Dispose()` ist bei einem geteilten Manager wirkungslos, nur der Besitzer baut ihn über `Shutdown()` ab).
+Ein eigenständiges Programm (oder `fire.Compiler run`) bekommt einen eigenen, nicht geteilten Manager mit den eingebauten Treibern, der nach dem Lauf freigegeben (Geräte getrennt) wird. Empfangs-Haken eines Laufs werden am Ende gelöst.
+
+**Standardgerät.** Der Host setzt `DeviceManager.DefaultIdentifier`; im Editor per Rechtsklick im Geräte-Baum ("Als Standardgerät") oder über die Auswahl in der Symbolleiste (bleibt über Neustarts erhalten).
+
+**Paketverfolgung.** Der Manager hängt sich an `IDevice.OnRawDataSent`/`OnRawDataReceived` und meldet jedes Paket über `DeviceManager.PacketCaptured` (`PacketRecord`: Zeit, Gerät, Richtung, Bytes) - egal ob Skript oder Host gesendet hat.
+Protokolle speichert `PacketLog` als Textdatei `.fplog` (Kopfzeile `# fire-packetlog 1`, je Paket eine Zeile: UTC-Zeit, `H2D`/`D2H`, Kennung, Hexbytes, durch Tabulator getrennt; verlustfrei).
+
 ## 9. Offene Punkte
 
 Der einzige frühere Punkt hier – die Methoden-Deklarationssyntax

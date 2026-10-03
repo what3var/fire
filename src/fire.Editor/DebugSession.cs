@@ -66,6 +66,10 @@ namespace fire.Editor
         /// nach einem erfolgreichen Compile()-Aufruf gültig (vorher 0).</summary>
         public int FirstUserSourceIndex { get; private set; }
 
+        /// <summary>Der geteilte DeviceManager des Hosts, den Skripte mit `#import "devices"` benutzen (null: jedes Skript
+        /// bekommt einen eigenen). Der Host setzt ihn einmal, siehe EditorDeviceService.</summary>
+        public fire.Device.Manager.DeviceManager.DeviceManager? DeviceManager { get; set; }
+
         public event Action<string>? OutputWritten;
 
         /// <summary>Ein neuer Fire-Thread ist entstanden - KANN auf dessen
@@ -128,7 +132,7 @@ namespace fire.Editor
                     string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
                     OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {line}" : line);
                 }),
-                basePath: basePath);
+                basePath: basePath, deviceManager: DeviceManager);
 
                 ActiveExecutionMode = ExecutionMode;
                 _session = session;
