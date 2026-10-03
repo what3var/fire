@@ -648,6 +648,19 @@ namespace fire.Compiler
             return defaults;
         }
 
+        /// <summary>Besteht der Initialisierer-Proto nur aus `LoadConst c; Return` (ein Literal oder kein Initialisierer: `undefined`)?
+        /// Dann liefert er `c` ohne jede Nebenwirkung, und der Konstruktor kann `c` direkt setzen, statt ihn aufzurufen.</summary>
+        private static bool TryGetConstantInitializer(FunctionProto proto, out Value constant)
+        {
+            constant = default;
+            var code = proto.Chunk.Code;
+            if (code.Count != 4 || code[0] != (byte)OpCode.LoadConst || code[3] != (byte)OpCode.Return) return false;
+            int idx = code[1] | (code[2] << 8);
+            if (idx >= proto.Chunk.Constants.Count) return false;
+            constant = proto.Chunk.Constants[idx];
+            return true;
+        }
+
         private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer, bool isStatic = false)
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
@@ -910,8 +923,22 @@ namespace fire.Compiler
                 inner._chunk.EmitOp(OpCode.Pop); // Platzhalter-Rückgabewert des Basis-Konstruktors verwerfen
             }
 
+            // Ein Feld mit konstantem (oder fehlendem) Initialisierer braucht keinen Aufruf des Initialisierer-Protos: der Wert wird direkt
+            // geladen. Ein Feld ohne Initialisierer steht nach dem Anlegen ohnehin auf `undefined` und braucht gar nichts - es sei denn, davor
+            // konnte schon etwas auf `this` zugreifen (der Konstruktor einer Basisklasse, der Initialisierer eines früheren Felds mit Aufruf):
+            // dann setzt das explizite `undefined` ein dort geschriebenes Feld wie bisher zurück.
+            bool fieldsMayBeTouched = rc.Base != null;
             foreach (var (fieldName, initProto) in rc.Fields)
             {
+                if (TryGetConstantInitializer(initProto, out var constant))
+                {
+                    if (!fieldsMayBeTouched && constant.Kind == ValueKind.Undefined) continue;
+                    inner.EmitLoadConst(constant);
+                    inner._chunk.EmitOp(OpCode.SetFieldOnThis);
+                    inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(fieldName)));
+                    continue;
+                }
+
                 int protoIdx = inner._chunk.AddFunctionProto(initProto);
                 inner._chunk.EmitOp(OpCode.LoadThis);
                 inner._chunk.EmitOp(OpCode.CallProtoWithThis);
@@ -919,6 +946,7 @@ namespace fire.Compiler
                 inner._chunk.EmitByte(0);
                 inner._chunk.EmitOp(OpCode.SetFieldOnThis);
                 inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(fieldName)));
+                fieldsMayBeTouched = true;
             }
 
             if (ctor != null)

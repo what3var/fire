@@ -45,16 +45,28 @@ namespace fire.Runtime
         public IOwner Owner { get; private set; }
         public FieldStore Fields { get; }
 
-        // Erst beim ersten besessenen Kind angelegt - die meisten Objekte besitzen keins.
-        private List<ObjectInstance>? _owned;
+        // Die besessenen Kinder (siehe OwnedSet): die meisten Objekte besitzen keins, die übrigen meist genau eins.
+        private OwnedSet _owned;
         private bool _destroyed;
 
         public bool IsDestroyed => _destroyed;
 
-        /// <summary>Eindeutige, monoton steigende Erzeugungs-ID - siehe
-        /// ThreadShareLock.Order-Doku (Grundlage einer künftigen globalen
-        /// Lock-Reihenfolge über mehrere Bäume hinweg).</summary>
-        public long Id { get; } = System.Threading.Interlocked.Increment(ref _nextId);
+        /// <summary>Eindeutige, monoton steigende ID - siehe ThreadShareLock.Order-Doku (Grundlage einer künftigen globalen
+        /// Lock-Reihenfolge über mehrere Bäume hinweg). Wird erst beim ERSTEN Lesen vergeben (die atomare Zählung bei jedem
+        /// `new` wäre für ein Feld, das kaum jemand liest, ein spürbarer Posten der Objekterzeugung): die Reihenfolge der IDs
+        /// ist die des ersten Zugriffs, nicht die der Erzeugung.</summary>
+        public long Id
+        {
+            get
+            {
+                long id = System.Threading.Volatile.Read(ref _id);
+                if (id != 0) return id;
+                long fresh = System.Threading.Interlocked.Increment(ref _nextId);
+                id = System.Threading.Interlocked.CompareExchange(ref _id, fresh, 0);
+                return id != 0 ? id : fresh;
+            }
+        }
+        private long _id;
         private static long _nextId;
 
         /// <summary>Null, solange dieses Objekt nie (direkt oder als
@@ -98,9 +110,8 @@ namespace fire.Runtime
             InGlobalsDomain = true;
             ThreadLock ??= treeLock;
             RefreshGuard();
-            if (_owned != null)
-                foreach (var child in _owned)
-                    child.MarkGlobalsDomain(ThreadLock);
+            for (int i = 0; i < _owned.Count; i++)
+                _owned[i].MarkGlobalsDomain(ThreadLock);
         }
 
         /// <summary>Versteckte Rückverknüpfung zum Original, falls DIESES
@@ -148,9 +159,8 @@ namespace fire.Runtime
             if (ThreadLock != null) return;
             ThreadLock = treeLock;
             RefreshGuard();
-            if (_owned != null)
-                foreach (var child in _owned)
-                    child.ActivateThreadSharing(treeLock);
+            for (int i = 0; i < _owned.Count; i++)
+                _owned[i].ActivateThreadSharing(treeLock);
         }
 
         /// <summary>Liest ein Feld unter dem Baum-Lock, falls dieses Objekt
@@ -193,15 +203,15 @@ namespace fire.Runtime
         // -----------------------------------------------------------
         // IOwner (Felder dieser Instanz können selbst wieder Objekte besitzen)
         // -----------------------------------------------------------
-        public IReadOnlyList<ObjectInstance> OwnedObjects => (IReadOnlyList<ObjectInstance>?)_owned ?? System.Array.Empty<ObjectInstance>();
+        public IReadOnlyList<ObjectInstance> OwnedObjects => _owned.AsList();
         public void AddOwned(ObjectInstance obj)
         {
-            (_owned ??= new List<ObjectInstance>()).Add(obj);
+            _owned.Add(obj);
             // Ein neuer Besitz in einem geteilten Baum gehört sofort dazu (sonst wäre er ohne Sperre lesbar).
             if (InGlobalsDomain) obj.MarkGlobalsDomain(ThreadLock!);
             else if (ThreadLock != null) obj.ActivateThreadSharing(ThreadLock);
         }
-        public void RemoveOwned(ObjectInstance obj) => _owned?.Remove(obj);
+        public void RemoveOwned(ObjectInstance obj) => _owned.Remove(obj);
 
         // -----------------------------------------------------------
         // Ownership-Transfer: TakeUpwards / TakeGlobal / TakeTo (SPEC 2.2)
@@ -264,9 +274,9 @@ namespace fire.Runtime
         /// Grundlage des Zyklenschutzes bei TakeTo.</summary>
         private bool IsAncestorOf(ObjectInstance candidate)
         {
-            if (_owned == null) return false;
-            foreach (var child in _owned)
+            for (int i = 0; i < _owned.Count; i++)
             {
+                var child = _owned[i];
                 if (ReferenceEquals(child, candidate)) return true;
                 if (child.IsAncestorOf(candidate)) return true;
             }
@@ -314,12 +324,15 @@ namespace fire.Runtime
             // Proben leben mit dem Objekt
             if (Probes != null) ProbeRegistry.Forget(Probes.RemoveAll());
 
-            runner.RunDestructor(this);
+            // Ohne Destruktor in der Klassenkette gibt es nichts auszuführen (ein Objekt ohne RuntimeClass kennt die Kette nicht: der Runner entscheidet)
+            if (RtClass == null || RtClass.HasDestructorInChain())
+                runner.RunDestructor(this);
 
-            if (_owned == null) return;
-            foreach (var child in _owned.ToArray())
-                child.Destroy(runner);
-            _owned.Clear();
+            _owned.DestroyAll(runner);
+
+            // Ein zerstörtes Objekt gehört niemandem mehr: sein bisheriger Owner (meist eine Scope, die gleich wiederverwendet wird)
+            // darf nicht länger auf es zeigen. `Owner` bleibt nie null - ein Platzhalter nimmt Anfragen an den toten Besitzer entgegen.
+            Owner = DeadOwner.Instance;
         }
     }
 }

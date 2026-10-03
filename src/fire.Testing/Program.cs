@@ -9442,6 +9442,106 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         T.Run()
         """, new[] { "~o0", "~o2", "12" });
 
+    // ---- Objekterzeugung: Feld-Vorbelegung ohne Aufruf, Besitz ohne Listen, Zerstoerung ----
+
+    CheckSc("Feld-Vorbelegung: Konstanten, fehlende Initialisierer (undefined), Ausdruecke und Initialisierer mit this", """
+        class A {
+            int a = 3
+            string s = "q"
+            bool b = true
+            float f = 1.5
+            int none
+            int c = 2 + 3
+            int d = this.a * 2
+            string t
+            int neg = -4
+        }
+        var o = new A()
+        print(o.a + " " + o.s + " " + o.b + " " + o.f + " " + o.c + " " + o.d + " " + o.neg)
+        print(o.none == undefined)
+        print(o.t == undefined)
+        """, new[] { "3 q True 1.5 5 6 -4", "True", "True" });
+
+    CheckSc("Feld-Vorbelegung mit Basisklasse: was der Basis-Konstruktor in ein Feld der abgeleiteten Klasse schreibt, wird von dessen Initialisierer wie bisher ueberschrieben", """
+        class B {
+            construct() { this.Setup() }
+            Setup() { }
+        }
+        class D : B {
+            int x
+            int y = 5
+            string s = "init"
+            int z
+            Setup() { this.x = 99; this.y = 7; this.z = 8 }
+        }
+        var d = new D()
+        print((d.x == undefined) + " " + d.y + " " + d.s + " " + (d.z == undefined))
+        """, new[] { "True 5 init True" });
+
+    CheckSc("Feld-Initialisierer mit Aufruf setzt ein spaeteres Feld ohne Initialisierer zurueck (wie bisher)", """
+        class A {
+            int a = this.Init()
+            int b
+            Init() { this.b = 41; return 1 }
+        }
+        var o = new A()
+        print(o.a + " " + (o.b == undefined))
+        """, new[] { "1 True" });
+
+    CheckSc("Objekte einer Scope werden in der Reihenfolge ihrer Erzeugung zerstoert; ein Objekt mit eigenen Kindern erst selbst, dann die Kinder", scHead + """
+        class P {
+            D k1 = new D("k1")
+            D k2 = new D("k2")
+            D k3 = new D("k3")
+            destruct() { print("~P") }
+        }
+        class T {
+            static Run() {
+                var x = new D("1")
+                var y = new D("2")
+                var p = new P()
+                var z = new D("3")
+                print("ende")
+            }
+        }
+        T.Run()
+        """, new[] { "ende", "~1", "~2", "~P", "~k1", "~k2", "~k3", "~3" });
+
+    CheckSc("TakeUpwards haengt ein Objekt an die umgebende Scope (hier die der Schleife): es ueberlebt den Block, nicht die Schleife", scHead + """
+        class T {
+            static Run() {
+                var keep
+                for (var i = 0; i < 3; i = i + 1) {
+                    var a = new D("a" + i)
+                    var b = new D("b" + i)
+                    if (i == 1) { b.TakeUpwards(); keep = b }
+                }
+                print("nach der Schleife " + keep.n)
+                var u = 0
+                for (var j = 0; j < 3; j = j + 1) { var w = j; u = u + w }
+                print(u + " " + keep.n)
+            }
+        }
+        T.Run()
+        print("ende")
+        """, new[] { "~a0", "~b0", "~a1", "~a2", "~b2", "~b1", "nach der Schleife b1", "3 b1", "ende" });
+
+    CheckSc("Destruktoren in Schleifen mit gemischten Bloecken (mit/ohne Objekte) und verschachtelten Aufrufen", scHead + """
+        class T {
+            static Make(int i) { var d = new D("m" + i); return d }
+            static Run() {
+                var n = 0
+                for (var i = 0; i < 3; i = i + 1) {
+                    var d = T.Make(i)
+                    if (i == 1) { var e = new D("e" + i); n = n + 1 }
+                    n = n + 10
+                }
+                print(n)
+            }
+        }
+        T.Run()
+        """, new[] { "~m0", "~e1", "~m1", "~m2", "31" });
+
     Console.WriteLine(scFailures == 0 ? "Alle Scope-Pruefungen bestanden." : $"FEHLER: {scFailures} Scope-Pruefung(en) fehlgeschlagen.");
 }
 

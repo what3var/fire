@@ -1377,14 +1377,14 @@ namespace fire.Runtime
             // Ressourcen hält (z.B. einen Datei-Handle) räumt sie so auch für
             // abgeleitete Klassen auf, die selbst keinen destruct() haben.
             if (_stopExecutionRequested) return;
-            for (var rc = ResolveClass(instance.ClassName); rc != null; rc = rc.Base)
+            for (var rc = instance.RtClass ?? ResolveClass(instance.ClassName); rc != null; rc = rc.Base)
             {
                 if (rc.Destructor == null) continue;
 
                 _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
                 int targetDepth = _frames.Count;
 
-                var scope = new Scope(_globalScope);
+                var scope = RentCallScope(SlotSlack, 0);
                 _currentThis = instance;
                 _currentScope = scope;
                 _currentChunk = rc.Destructor.Chunk;
@@ -1659,7 +1659,7 @@ namespace fire.Runtime
                 case OpCode.ExitScope:
                 {
                     var scope = _currentScope;
-                    if (scope.HasOwned) break; // Release kann Destruktoren ausführen - der ausführliche Pfad
+                    if (scope.HasOwned) { ExitScopeOwning(); return; } // Release kann Destruktoren ausführen - der ausführliche Weg
                     _currentScope = scope.Parent
                         ?? throw new InvalidOperationException("ExitScope auf dem globalen Scope aufgerufen.");
                     if (scope.CanRecycle) ReturnScopeToPool(scope);
@@ -1778,6 +1778,16 @@ namespace fire.Runtime
             else if (_ownerBroker != null) StoreOwnerGlobal(slot, value);
             else _globalScope.SlotRef(slot) = value;
             _sp--;
+        }
+
+        /// <summary>Verlässt die aktuelle Scope und zerstört dabei die Objekte, die ihr gehören (Destruktoren laufen verschachtelt).</summary>
+        private void ExitScopeOwning()
+        {
+            var scope = _currentScope;
+            scope.Release(this);
+            _currentScope = scope.Parent
+                ?? throw new InvalidOperationException("ExitScope auf dem globalen Scope aufgerufen.");
+            if (scope.CanRecycle) ReturnScopeToPool(scope);
         }
 
         /// <summary>Ersetzt die obersten ZWEI Stack-Werte durch `result` (Ergebnis einer binären Operation).</summary>
@@ -2995,15 +3005,28 @@ namespace fire.Runtime
         {
             int protoIdx = ReadU16();
             int argCount = ReadByte();
-            var args = new Value[argCount];
-            for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-            var thisVal = Pop();
             var proto = _currentChunk.Functions[protoIdx];
-            CheckArity(proto, args.Length);
+            Scope scope;
+            Value thisVal;
+            if (argCount == 0)
+            {
+                // Feld-Initialisierer (keine Parameter): kein Argument-Array, Scope aus dem Pool
+                thisVal = Pop();
+                CheckArity(proto, 0);
+                _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+                scope = RentCallScope(SlotSlack, 0);
+            }
+            else
+            {
+                var args = new Value[argCount];
+                for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
+                thisVal = Pop();
+                CheckArity(proto, args.Length);
 
-            _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
-            var scope = new Scope(_globalScope);
-            foreach (var a in args) scope.DefineSlot(a);
+                _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
+                scope = RentCallScope(argCount + SlotSlack, argCount);
+                Array.Copy(args, scope.SlotArray, argCount);
+            }
 
             _currentThis = thisVal.Kind == ValueKind.Class ? thisVal.AsObjectRef() : (object)thisVal;
             _currentScope = scope;
@@ -3433,9 +3456,7 @@ namespace fire.Runtime
                     break;
 
                 case OpCode.ExitScope:
-                    _currentScope.Release(this);
-                    _currentScope = _currentScope.Parent
-                        ?? throw new InvalidOperationException("ExitScope auf dem globalen Scope aufgerufen.");
+                    ExitScopeOwning();
                     break;
 
                 case OpCode.CallNative:

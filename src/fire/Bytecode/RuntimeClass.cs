@@ -244,6 +244,15 @@ namespace fire.Bytecode
 
         public FunctionProto? Destructor { get; set; }
 
+        /// <summary>Hat diese Klasse oder eine ihrer Basisklassen einen Destruktor? Ohne einen gibt es beim Zerstören eines Objekts nichts
+        /// auszuführen (siehe ObjectInstance.Destroy) - die Kette ist kurz, eine Abfrage kostet nur ein paar Zeigerzugriffe.</summary>
+        public bool HasDestructorInChain()
+        {
+            for (var rc = this; rc != null; rc = rc.Base)
+                if (rc.Destructor != null) return true;
+            return false;
+        }
+
         public RuntimeClass(string name, ClassDecl decl)
         {
             Name = name;

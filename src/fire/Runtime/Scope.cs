@@ -27,19 +27,15 @@ namespace fire.Runtime
         public Scope? Parent => _parent;
         public bool IsGlobal { get; }
 
-        // Bewusst NULL statt vorab angelegter leerer Listen (siehe
-        // DefineSlot/AddOwned) - JEDE Blockausführung (z.B. jeder einzelne
-        // Schleifendurchlauf, siehe Compiler.CompileScopedBody: ein
-        // EnterScope/ExitScope-Paar PRO Iteration) legt sonst zwei leere
-        // List<T>-Instanzen an, selbst wenn der Block gar keine lokale
-        // Variable deklariert und kein Objekt besitzt (der häufigste Fall
-        // bei einfachen Schleifenkörpern) - spart zwei von drei Allokationen
-        // pro Scope in genau diesem, sehr heißen Pfad.
+        // Bewusst NULL statt vorab angelegter leerer Arrays (siehe DefineSlot) - JEDE Blockausführung (z.B. jeder einzelne
+        // Schleifendurchlauf, siehe Compiler.CompileScopedBody: ein EnterScope/ExitScope-Paar PRO Iteration) bräuchte sonst
+        // ein Slot-Array, selbst wenn der Block gar keine lokale Variable deklariert (der häufigste Fall bei einfachen
+        // Schleifenkörpern). Besessene Objekte: siehe OwnedSet (das erste ohne Listenobjekt).
         // Slots als Array mit Zähler statt List<Value>: eine Scope entsteht bei JEDEM Aufruf und jedem
         // Schleifendurchlauf, und List<T> bringt pro Instanz ein Extra-Objekt sowie Versionszähler mit.
         private Value[]? _slots;
         private int _slotCount;
-        private List<ObjectInstance>? _owned;
+        private OwnedSet _owned;
 
         public Scope(Scope? parent, bool isGlobal = false)
         {
@@ -66,7 +62,8 @@ namespace fire.Runtime
         //
         // Wiederverwendbar ist eine Scope nur, solange NICHTS sonst auf sie zeigen kann:
         //  - sie stammt aus dem Pool (`IsPooled`: nur diese Scopes werden zurückgegeben, nie die globale oder von anderem Code angelegte),
-        //  - sie hat nie ein Objekt besessen (`_owned` bleibt null; ein zerstörtes Objekt behält seinen Owner, siehe ObjectInstance),
+        //  - sie besitzt kein Objekt mehr (ein zerstörtes Objekt vergisst seinen Owner, siehe ObjectInstance.Destroy; ein weitergegebenes
+        //    hat längst einen neuen),
         //  - kein Pointer zeigt auf einen ihrer Slots (`MarkEscaped`, gesetzt von ScopeSlotPointerTarget).
         // -----------------------------------------------------------
         private bool _pooled;
@@ -76,7 +73,7 @@ namespace fire.Runtime
         public static Scope CreatePooled(Scope? parent) => new Scope(parent) { _pooled = true };
 
         /// <summary>Kann diese Scope jetzt in den Pool zurück (siehe oben)?</summary>
-        public bool CanRecycle => _pooled && !_escaped && _owned == null;
+        public bool CanRecycle => _pooled && !_escaped && _owned.IsEmpty;
 
         /// <summary>Ein Pointer auf einen Slot dieser Scope existiert (ScopeSlotPointerTarget): die Scope darf nie wiederverwendet werden,
         /// der Pointer bliebe sonst auf die Variablen eines ganz anderen Blocks gerichtet.</summary>
@@ -184,10 +181,10 @@ namespace fire.Runtime
         // -----------------------------------------------------------
         // IOwner
         // -----------------------------------------------------------
-        public IReadOnlyList<ObjectInstance> OwnedObjects => (IReadOnlyList<ObjectInstance>?)_owned ?? System.Array.Empty<ObjectInstance>();
-        /// <summary>Besitzt diese Scope Objekte? Verlassen ist sonst ein reines Umhängen des Parent-Zeigers
+        public IReadOnlyList<ObjectInstance> OwnedObjects => _owned.AsList();
+        /// <summary>Besitzt diese Scope gerade Objekte? Verlassen ist sonst ein reines Umhängen des Parent-Zeigers
         /// (siehe VM.Step, ExitScope).</summary>
-        public bool HasOwned => _owned != null;
+        public bool HasOwned => !_owned.IsEmpty;
 
         /// <summary>Gesetzt für den globalen Scope des Hauptprogramms, sobald ein `fire`-Thread läuft (siehe GlobalsBroker): jedes Objekt,
         /// das ihm gehört - auch eines, das erst später entsteht - gehört dann zum geteilten Bereich (siehe
@@ -196,32 +193,28 @@ namespace fire.Runtime
 
         public void AddOwned(ObjectInstance obj)
         {
-            (_owned ??= new List<ObjectInstance>()).Add(obj);
+            _owned.Add(obj);
             if (SharingLock != null) obj.MarkGlobalsDomain(SharingLock);
         }
-        public void RemoveOwned(ObjectInstance obj) => _owned?.Remove(obj);
+        public void RemoveOwned(ObjectInstance obj) => _owned.Remove(obj);
 
-        /// <summary>Wird beim Verlassen des Scopes aufgerufen: zerstört
-        /// kaskadierend alle noch von diesem Scope besessenen Objekte.</summary>
         /// <summary>Wie <see cref="Release"/>, aber nur für Objekte, die `filter` bejaht - die übrigen bleiben im Besitz dieser Scope
         /// (für das Ende eines Fire-Threads: seine Globals-Schnappschüsse und `taking`-Kopien sind Kopien von Objekten des
         /// Hauptprogramms und dürfen dort keine Destruktoren auslösen, z.B. ein geteiltes Handle schließen).</summary>
         public void ReleaseWhere(IDestructRunner runner, Func<ObjectInstance, bool> filter)
         {
-            if (_owned == null) return;
-            foreach (var obj in _owned.ToArray())
+            if (_owned.IsEmpty) return;
+            var all = _owned.ToArray();
+            foreach (var obj in all)
                 if (filter(obj)) obj.Destroy(runner);
-            _owned.RemoveAll(o => o.IsDestroyed);
+            _owned.RemoveDestroyed();
         }
 
+        /// <summary>Wird beim Verlassen des Scopes aufgerufen: zerstört kaskadierend alle noch von diesem Scope besessenen Objekte.</summary>
         public void Release(IDestructRunner runner)
         {
-            if (_owned == null) return; // nichts zu tun - der häufigste Fall bei einfachen Blöcken/Schleifenkörpern
-            // Kopie, da Destroy() während der Iteration _owned weiterer Objekte
-            // verändern kann (verschachtelte Kaskaden).
-            foreach (var obj in _owned.ToArray())
-                obj.Destroy(runner);
-            _owned.Clear();
+            if (_owned.IsEmpty) return; // nichts zu tun - der häufigste Fall bei einfachen Blöcken/Schleifenkörpern
+            _owned.DestroyAll(runner);
         }
     }
 }
