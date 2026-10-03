@@ -46,7 +46,7 @@ namespace fire.Editor
     /// (Caret.Line, DocumentLine.LineNumber, ...) - die Umrechnung an der
     /// 0-basierten SetCaretByLineColumn-Grenze ist die einzige Stelle, die
     /// das berücksichtigen muss.</summary>
-    public partial class ScriptEditorControl : UserControl
+    public partial class ScriptEditorControl : UserControl, IDocumentView
     {
         /// <summary>Der Dateipfad dieses Editors, falls schon einmal
         /// gespeichert/geöffnet - `null` für ein neues, ungespeichertes
@@ -83,7 +83,32 @@ namespace fire.Editor
         /// Variante (LiveDiagnostics.AnalyzeInProject), damit eine gültige
         /// Referenz auf eine Klasse aus einer ANDEREN Projektdatei nicht
         /// fälschlich als Fehler markiert wird.</summary>
-        public Func<string, List<Diagnostic>> DiagnosticsProvider { get; set; } = LiveDiagnostics.Analyze;
+        public Func<string, List<Diagnostic>> DiagnosticsProvider { get; set; }
+
+        /// <summary>Verzeichnis dieses Dokuments (für relative `#include`-
+        /// Pfade) - `null` solange noch nie gespeichert/geöffnet (dann gilt
+        /// das Arbeitsverzeichnis).</summary>
+        public string? BaseDirectory => FilePath == null ? null : Path.GetDirectoryName(Path.GetFullPath(FilePath));
+
+        /// <summary>Wahr, sobald der Text seit dem Laden/letzten Speichern
+        /// geändert wurde (für den Stern im Tab-Titel und die Rückfrage beim
+        /// Schließen).</summary>
+        public bool IsModified { get; private set; }
+
+        /// <summary>Feuert, wenn sich IsModified geändert hat.</summary>
+        public event Action? ModifiedChanged;
+
+        /// <summary>Der Host hat den aktuellen Text gespeichert.</summary>
+        public void MarkSaved() => SetModified(false);
+
+        private void SetModified(bool value)
+        {
+            if (IsModified == value) return;
+            IsModified = value;
+            ModifiedChanged?.Invoke();
+        }
+
+        private bool _loading;
 
         /// <summary>Feuert, wann immer sich Diagnostics geändert hat - der
         /// Host zeigt das i.d.R. in einer eigenen Fehlerliste an.</summary>
@@ -135,6 +160,8 @@ namespace fire.Editor
         {
             InitializeComponent();
 
+            DiagnosticsProvider = source => LiveDiagnostics.Analyze(source, BaseDirectory);
+
             Editor.TextArea.TextView.LineTransformers.Add(_colorizer);
             Editor.TextArea.TextView.BackgroundRenderers.Add(_lineBackground);
             // Index 0 = ganz links, also vor der (von ShowLineNumbers="True"
@@ -148,6 +175,10 @@ namespace fire.Editor
             Editor.TextArea.TextEntered += Editor_TextEntered;
             Editor.PreviewMouseLeftButtonDown += Editor_PreviewMouseLeftButtonDown;
             Editor.PreviewKeyDown += Editor_PreviewKeyDown;
+            Editor.PreviewMouseRightButtonDown += Editor_PreviewMouseRightButtonDown;
+
+            _searchPanel = ICSharpCode.AvalonEdit.Search.SearchPanel.Install(Editor);
+            Editor.ContextMenu = BuildContextMenu();
 
             _highlightTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
             _highlightTimer.Tick += (_, _) =>
@@ -164,6 +195,7 @@ namespace fire.Editor
             };
 
             SetText(string.Empty);
+            IsModified = false;
         }
 
         // -----------------------------------------------------------
@@ -192,13 +224,17 @@ namespace fire.Editor
             _highlightedLine = null;
             _lineBackground.HighlightedLine = null;
             RefreshBreakpointDisplay();
-            SetText(text);
+            _loading = true;
+            try { SetText(text); }
+            finally { _loading = false; }
+            SetModified(false);
             BreakpointsChanged?.Invoke();
             DiagnosticsChanged?.Invoke();
         }
 
         private void Editor_TextChanged(object? sender, EventArgs e)
         {
+            if (!_loading) SetModified(true);
             _diagnosticsTimer.Stop();
             _diagnosticsTimer.Start();
             _highlightTimer.Stop();
@@ -237,6 +273,16 @@ namespace fire.Editor
             if (e.Key == Key.Space && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
             {
                 ShowOrUpdateCompletion(closeIfEmpty: true);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.F12 && Keyboard.Modifiers == ModifierKeys.None)
+            {
+                GoToDefinition();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.C && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift)) // layoutunabhängig (Strg+/ gibt es auf deutschen Tastaturen nicht)
+            {
+                ToggleComment();
                 e.Handled = true;
             }
         }
@@ -357,19 +403,33 @@ namespace fire.Editor
             if (pos == null) return;
 
             int offset = Editor.Document.GetOffset(pos.Value.Location);
+            if (GoToDefinitionAt(offset)) e.Handled = true;
+        }
+
+        /// <summary>Wohin ein Sprung zur Definition an `offset` führen würde, null = nirgends.</summary>
+        private NavigationTarget? FindDefinitionAt(int offset)
+        {
             string source = Editor.Text;
             var index = ScriptSymbolIndex.Build(source);
-
-            var target = NavigationEngine.TryResolve(source, offset, index)
+            return NavigationEngine.TryResolve(source, offset, index)
                 ?? TryResolveAcrossIncludes(source, offset, index);
-            if (target == null) return;
+        }
 
-            e.Handled = true;
+        /// <summary>Springt zur Definition des Symbols unter dem Cursor (F12, Menü "Zu Definition springen").</summary>
+        public void GoToDefinition() => GoToDefinitionAt(Editor.CaretOffset);
 
-            if (target.IsPrelude)
+        /// <summary>Gibt es zum Symbol unter dem Cursor eine Definition? (für das Menü)</summary>
+        public bool CanGoToDefinition() => FindDefinitionAt(Editor.CaretOffset) != null;
+
+        private bool GoToDefinitionAt(int offset)
+        {
+            var target = FindDefinitionAt(offset);
+            if (target == null) return false;
+
+            if (target.PreludeName != null)
             {
-                ShowPreludeSource(target.Line);
-                return;
+                ShowPreludeSource(target.PreludeName, target.Line);
+                return true;
             }
 
             if (target.FilePath == null)
@@ -377,26 +437,79 @@ namespace fire.Editor
                 SetCaretByLineColumn(target.Line - 1, 0);
                 ScrollToLine(target.Line);
                 Editor.Focus();
-                return;
+                return true;
             }
 
             OpenFileViewer(target.FilePath, target.Line);
+            return true;
         }
 
-        /// <summary>Zeigt die eingebaute Standardbibliothek (Prelude, siehe
-        /// fire.Standard.Prelude/ScriptSymbolIndex.MergeInPrelude) in
-        /// einem schreibgeschützten FileViewerWindow-Popup an, zu `line`
-        /// gescrollt - für "zu Definition springen" auf `List`/
-        /// `IEnumerable`/etc., die NICHT im aktuellen Dokument selbst
-        /// stehen (siehe NavigationTarget.IsPrelude). Kein echter Dateipfad
-        /// vorhanden (siehe FileViewerWindow.LoadSource), deshalb ein
-        /// eigener Titel statt eines Dateinamens.</summary>
-        private void ShowPreludeSource(int line)
+        // -----------------------------------------------------------
+        // Kontextmenü (Rechtsklick)
+        // -----------------------------------------------------------
+
+        private int _contextOffset;
+
+        private void Editor_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
         {
-            var viewer = new FileViewerWindow();
-            viewer.LoadSource("Standardbibliothek (Prelude)", fire.Standard.Prelude.Source, line);
-            viewer.Show();
+            _contextOffset = Editor.PlaceCaretForContextMenu(e);
         }
+
+        private ContextMenu BuildContextMenu()
+        {
+            var entries = new List<EditorCommands.Entry?>
+            {
+                new() { Header = "Zu _Definition springen", Gesture = "F12 / Strg+Klick", Execute = () => GoToDefinitionAt(_contextOffset), Enabled = () => FindDefinitionAt(_contextOffset) != null },
+                null,
+            };
+            entries.AddRange(EditorCommands.StandardEntries(Editor, Find));
+            entries.Add(null);
+            entries.Add(new() { Header = "_Kommentar umschalten", Gesture = "Strg+Umschalt+C", Execute = ToggleComment });
+            entries.Add(new() { Header = "_Haltepunkt umschalten", Gesture = "F9", Execute = ToggleBreakpointAtCaret });
+            return EditorCommands.BuildMenu(entries);
+        }
+
+        /// <summary>Schaltet `//` vor den Zeilen der Auswahl (bzw. der Cursor-Zeile) ein oder aus.</summary>
+        public void ToggleComment()
+        {
+            var doc = Editor.Document;
+            var lines = Editor.SelectedLines();
+            var texts = lines.Select(l => doc.GetText(l.Offset, l.Length)).ToList();
+            var filled = Enumerable.Range(0, lines.Count).Where(k => texts[k].Trim().Length > 0).ToList();
+            if (filled.Count == 0) return;
+
+            bool allCommented = filled.All(k => texts[k].TrimStart().StartsWith("//"));
+            int indent = filled.Min(k => texts[k].Length - texts[k].TrimStart().Length);
+
+            doc.BeginUpdate();
+            try
+            {
+                for (int k = lines.Count - 1; k >= 0; k--)
+                {
+                    if (!filled.Contains(k)) continue;
+                    int lead = texts[k].Length - texts[k].TrimStart().Length;
+                    if (allCommented)
+                    {
+                        int len = texts[k].Substring(lead).StartsWith("// ") ? 3 : 2;
+                        doc.Remove(lines[k].Offset + lead, len);
+                    }
+                    else
+                    {
+                        doc.Insert(lines[k].Offset + indent, "// ");
+                    }
+                }
+            }
+            finally { doc.EndUpdate(); }
+            Editor.Focus();
+        }
+
+        /// <summary>Zeigt eine eingebaute Prelude (Standardbibliothek oder die einer per
+        /// `#import` zugeschalteten Erweiterung, siehe ScriptSymbolIndex.PreludeSourceOf) in einem
+        /// schreibgeschützten Fenster, zu `line` gescrollt - für "zu Definition springen" auf
+        /// `List`/`Framebuffer`/etc., die NICHT im aktuellen Dokument selbst stehen. Pro Prelude
+        /// gibt es nur EIN Fenster, weitere Sprünge benutzen es wieder.</summary>
+        private void ShowPreludeSource(string preludeName, int line) =>
+            FileViewerWindow.ShowPrelude(preludeName, line, Window.GetWindow(this));
 
         /// <summary>Fällt auf jede per `#include` in DIESEM Dokument
         /// eingebundene Datei zurück, wenn NavigationEngine.TryResolve im
@@ -435,6 +548,11 @@ namespace fire.Editor
         /// includes-Rückfall oben - oder noch der ROHE relative Pfad direkt
         /// aus einer `#include`-Zeile, siehe NavigationTarget-Doku) in einem
         /// neuen FileViewerWindow-Popup, zu `line` gescrollt.</summary>
+        /// <summary>Ein Sprung führt in eine ANDERE Datei (z.B. per `#include`): der Host öffnet sie
+        /// in einem Tab und springt zur Zeile (Parameter: vollständiger Pfad, 1-basierte Zeile).
+        /// Ohne Abonnent zeigt ein schreibgeschütztes Fenster die Datei.</summary>
+        public event Action<string, int>? OpenFileRequested;
+
         private void OpenFileViewer(string pathFromTarget, int line)
         {
             string resolved = pathFromTarget;
@@ -449,6 +567,12 @@ namespace fire.Editor
                 }
                 string? dir = Path.GetDirectoryName(FilePath);
                 resolved = Path.GetFullPath(Path.Combine(dir ?? ".", pathFromTarget));
+            }
+
+            if (OpenFileRequested != null)
+            {
+                OpenFileRequested.Invoke(resolved, line);
+                return;
             }
 
             var viewer = new FileViewerWindow { Owner = Window.GetWindow(this) };
@@ -480,6 +604,37 @@ namespace fire.Editor
         public void ScrollToLine(int line) => Editor.ScrollToLine(line);
 
         public new void Focus() => Editor.Focus();
+
+        public void FocusEditor() => Editor.Focus();
+
+        // -----------------------------------------------------------
+        // Bearbeiten (Menü des Hauptfensters, Kontextmenü)
+        // -----------------------------------------------------------
+
+        private ICSharpCode.AvalonEdit.Search.SearchPanel? _searchPanel;
+
+        public bool CanUndo => Editor.Document.UndoStack.CanUndo;
+        public bool CanRedo => Editor.Document.UndoStack.CanRedo;
+        public bool HasSelection => Editor.SelectionLength > 0;
+        public int LineCount => Editor.Document.LineCount;
+
+        public void Undo() { Editor.Undo(); Editor.Focus(); }
+        public void Redo() { Editor.Redo(); Editor.Focus(); }
+        public void Cut() { Editor.Cut(); Editor.Focus(); }
+        public void Copy() { Editor.Copy(); Editor.Focus(); }
+        public void Paste() { Editor.Paste(); Editor.Focus(); }
+        public void Delete() { Editor.Delete(); Editor.Focus(); }
+        public void SelectAll() { Editor.SelectAll(); Editor.Focus(); }
+        public void GoToLine(int line) => Editor.GoToLine(line);
+
+        public void Find()
+        {
+            Editor.Focus();
+            _searchPanel?.Open();
+        }
+
+        public void FindNext() => _searchPanel?.FindNext();
+        public void FindPrevious() => _searchPanel?.FindPrevious();
 
         // -----------------------------------------------------------
         // Haltepunkte (Rand-Klick oder F9 im Host, siehe

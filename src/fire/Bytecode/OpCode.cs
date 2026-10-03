@@ -149,6 +149,30 @@ namespace fire.Bytecode
         SetAutoSync,    // u8 on        : `#nosync` (on = 0) schaltet das automatische Abarbeiten der Warteschlange an sicheren Punkten ab (wird am Programmanfang emittiert)
         PostGlobal,     // u8 argCount   : `fire global { ... }`: pop Lambda, pop argCount Argumente; reiht das Lambda (Objekt-Argumente als Kopie)
                         //                  als Auftrag für das Hauptprogramm ein, der bei dessen nächstem `sync globals` läuft; der Aufrufer wartet nicht
+        EnterFinallyNormal, //            : pusht den Abschluss "normal" (undefined, 0) - davor steht der normale Eintritt in einen finally-Block
+        PushJump,       // u16 addr      : pusht den Abschluss "Sprung" (addr, 3): `break`/`continue` aus einem try mit finally - nach dem finally geht es zu addr
+        EndFinally,     //               : pop Art, pop Nutzlast: 0 normal (weiter), 1 Exception erneut werfen, 2 `return` fortsetzen, 3 Sprung zu Nutzlast,
+                        //                 4 Rückkehr aus einem verschachtelt gestarteten finally (leave/terminate)
+        Probe,          // u16 nameConstIdx, u8 flags (1 = changing, 2 = alle Mitglieder) : pop Handler, pop Objekt; legt die Probe an, pusht ihr Handle (int)
+        SilenceMember,  // u16 nameConstIdx, u8 wildcard : pop Objekt; entfernt die Proben dieses Mitglieds (wildcard: alle des Objekts)
+        SilenceValue,   //                : pop Wert; ein Probe-Handle (int) entfernt diese Probe, ein Objekt alle seine Proben
+        MakeLambdaCapturing, // u16 protoIdx, u8 hasOnTarget, u8 captureCount : wie MakeLambda; darunter liegen captureCount KOPIERTE Werte (Stack: c0..cn-1, [onTarget]),
+                        //                  die der Lambda-Aufruf als Slots hinter den Parametern in den neuen Scope legt (Lambda-Captures, SPEC 4.2)
+
+        // ------------------------------------------------------------------------------------------------
+        // Verschmolzene Instruktionen (Compiler: Chunk.EndsWithOp/ReplaceLastOp und die Ausdrucksanweisungen) - jede ersetzt eine
+        // feste Folge gewöhnlicher Instruktionen mit exakt demselben Ergebnis, spart aber den mehrfachen Dispatch.
+        // ------------------------------------------------------------------------------------------------
+        StoreLocalPop,  // u16 depth, u16 slot : StoreLocal + Pop (Ausdrucksanweisung `x = ...`): schreibt den obersten Wert und nimmt ihn vom Stack
+        StoreGlobalPop, // u16 slot            : StoreGlobal + Pop
+        JumpIfNotLt,    // u16 addr            : Lt + JumpIfFalse - vergleicht die zwei obersten Werte, springt wenn NICHT a < b (beide werden verbraucht)
+        JumpIfNotLtEq,  // u16 addr            : LtEq + JumpIfFalse
+        JumpIfNotGt,    // u16 addr            : Gt + JumpIfFalse
+        JumpIfNotGtEq,  // u16 addr            : GtEq + JumpIfFalse
+        JumpIfNotEq,    // u16 addr            : Eq + JumpIfFalse
+        JumpIfNotNotEq, // u16 addr            : NotEq + JumpIfFalse
+        ArithLocalConstPop,  // u16 depth, u16 slot, u16 constIdx, u8 sub : `x = x + c` / `x++` (sub = 0) bzw. `x = x - c` / `x--` (sub = 1) auf einer lokalen Variable als Anweisung
+        ArithGlobalConstPop, // u16 slot, u16 constIdx, u8 sub            : dasselbe für eine globale Variable
     }
 
     /// <summary>Zieltyp für CoerceType/CoerceTypeDynamic - entspricht genau den

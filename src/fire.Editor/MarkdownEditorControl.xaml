@@ -1,0 +1,71 @@
+<UserControl x:Class="fire.Editor.MarkdownEditorControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:avalonedit="http://icsharpcode.net/sharpdevelop/avalonedit">
+    <DockPanel>
+        <ToolBar DockPanel.Dock="Top" Loaded="ToolBar_HideOverflow">
+            <Button Click="Bold_Click" ToolTip="Fett (Strg+B)" MinWidth="24">
+                <TextBlock FontWeight="Bold" Text="F"/>
+            </Button>
+            <Button Click="Italic_Click" ToolTip="Kursiv (Strg+I)" MinWidth="24">
+                <TextBlock FontStyle="Italic" Text="K"/>
+            </Button>
+            <Button Click="Strike_Click" ToolTip="Durchgestrichen" MinWidth="24">
+                <TextBlock TextDecorations="Strikethrough" Text="D"/>
+            </Button>
+            <Button Click="InlineCode_Click" ToolTip="Code (Strg+E)" MinWidth="24">
+                <TextBlock FontFamily="Consolas" Text="&lt;/&gt;"/>
+            </Button>
+            <Separator/>
+            <Button Click="Heading_Click" ToolTip="Überschrift: Ebene wechseln (Strg+H)" MinWidth="24">
+                <TextBlock FontWeight="Bold" Text="H"/>
+            </Button>
+            <Button Click="BulletList_Click" ToolTip="Aufzählung" MinWidth="24">
+                <TextBlock Text="&#x2022;&#x2261;"/>
+            </Button>
+            <Button Click="NumberedList_Click" ToolTip="Nummerierte Liste" MinWidth="24">
+                <TextBlock Text="1."/>
+            </Button>
+            <Button Click="Quote_Click" ToolTip="Zitat" MinWidth="24">
+                <TextBlock Text="&#x201C;"/>
+            </Button>
+            <Button Click="CodeBlock_Click" ToolTip="Code-Block" MinWidth="24">
+                <TextBlock FontFamily="Consolas" Text="{}{ }"/>
+            </Button>
+            <Button Click="Link_Click" ToolTip="Link (Strg+K)" MinWidth="24">
+                <TextBlock Text="Link"/>
+            </Button>
+            <Button Click="Table_Click" ToolTip="Tabelle einfügen" MinWidth="24">
+                <TextBlock Text="Tabelle"/>
+            </Button>
+            <Separator/>
+            <ToggleButton x:Name="PreviewToggle" IsChecked="True" Click="PreviewToggle_Click" ToolTip="Vorschau ein-/ausblenden (Strg+Umschalt+V)">
+                <TextBlock Text="Vorschau"/>
+            </ToggleButton>
+        </ToolBar>
+
+        <Grid x:Name="ContentGrid">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="EditorColumn" Width="*"/>
+                <ColumnDefinition x:Name="SplitterColumn" Width="Auto"/>
+                <ColumnDefinition x:Name="PreviewColumn" Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <avalonedit:TextEditor x:Name="Editor" Grid.Column="0"
+                                   FontFamily="Consolas" FontSize="14"
+                                   WordWrap="True"
+                                   ShowLineNumbers="False"
+                                   HorizontalScrollBarVisibility="Disabled"
+                                   VerticalScrollBarVisibility="Auto"
+                                   Padding="6,4"/>
+
+            <GridSplitter x:Name="Splitter" Grid.Column="1" Width="5"
+                          HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+
+            <FlowDocumentScrollViewer x:Name="Preview" Grid.Column="2"
+                                      IsToolBarVisible="False"
+                                      VerticalScrollBarVisibility="Auto"
+                                      Background="White"/>
+        </Grid>
+    </DockPanel>
+</UserControl>

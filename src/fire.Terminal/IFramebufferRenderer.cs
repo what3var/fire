@@ -32,5 +32,12 @@ namespace fire.Terminal
         /// beim letzten Aufruf wird automatisch unterstützt (kein erneutes
         /// Initialize nötig).</summary>
         void Present(Framebuffer framebuffer);
+
+        /// <summary>Wartet <see cref="Present"/> auf die Bildwiederholung des Monitors (vertikale Synchronisation)? Vorgabe: ja.
+        /// Dann dauert jeder Zyklus (ConsoleWindow.Tick) bis zu einer Bildperiode (60 Hz: 16,7 ms) - gleichmäßig und ohne
+        /// Rechenlast für Animationen und Warteschleifen, aber 256 Ticks in einer Zeichenschleife brauchen über vier Sekunden,
+        /// auch wenn das Zeichnen selbst nur Millisekunden dauert. Ohne VSync kehrt Present sofort zurück.
+        /// Darf vor dem Öffnen des Fensters gesetzt werden.</summary>
+        bool VSync { get; set; }
     }
 }

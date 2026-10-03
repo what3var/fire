@@ -1,7 +1,7 @@
 # ScriptLang – Interpreter (WIP)
 
 Objektorientierte Skriptsprache mit ownership-basiertem Scope-Modell,
-eingeschränkten Lambda-Closures und einem Zahlensystem mit physikalischen
+Lambda-Captures (Werte-Kopien) und einem Zahlensystem mit physikalischen
 Einheiten. Siehe `docs/SPEC.md` für die vollständige Sprachspezifikation und
 `docs/BYTECODE.md` für die Bytecode-ISA (Compiler + Stack-VM).
 
@@ -49,13 +49,14 @@ dotnet run
   Tokenisieren (keine zweite, eigene Tokenisierung) - Kommentare werden
   zusätzlich per einfacher Lücken-Suche erkannt, da der Lexer sie beim
   Tokenisieren selbst überspringt.
-- **Step-Debugger, thread-fähig**: F5 kompiliert (inkl. Prelude) und
-  bereitet die VM vor, F10 führt eine Quelltextzeile aus ("Step Over" -
+- **Step-Debugger, thread-fähig**: **F5 wie in Visual Studio** - kompiliert, wenn nötig (noch nichts kompiliert, gestoppt oder das Programm
+  ist beendet), und führt dann bis zum nächsten Haltepunkt aus; jeder weitere F5-Druck setzt bis zum nächsten Haltepunkt fort, ist das Programm
+  beendet, startet F5 es neu (F8 macht dasselbe). **Strg+F5** kompiliert IMMER neu (auch mitten in einer Sitzung) und startet dann wie F5,
+  Umschalt+F5 stoppt. F10 führt eine Quelltextzeile aus ("Step Over" -
   läuft nicht in tiefer verschachtelte Aufrufe hinein), F11 dasselbe als
   "Step Into" (springt bei einem Aufruf auf dessen erste Zeile), Shift+F11
   verlässt die aktuelle Funktion ("Step Out"), F9 setzt/entfernt einen
-  Haltepunkt auf der Cursor-Zeile, F8 läuft bis zum nächsten Haltepunkt,
-  Strg+F5 läuft bis zum Ende durch. Zeigt Aufruftiefe, Wert-Stack, `this`
+  Haltepunkt auf der Cursor-Zeile; "Bis Ende durchlaufen" (Menü) ignoriert Haltepunkte. Zeigt Aufruftiefe, Wert-Stack, `this`
   (falls gebunden) und eine nach Scope-Ebene gegliederte Baumsicht der
   aktiven Scope-Kette an (aktiver/innerster Block zuerst, dann
   umschließende Ebenen bis zur Funktionsgrenze, dann Global).
@@ -183,13 +184,70 @@ vollwertiges Debugger-/IDE-Feature-Set):
 
 ### Andockbare Bereiche, Fehlerliste, Symbolleisten (`MainWindow`)
 
-Die Bereiche des Editors (Editor, Ausgabe, Fehlerliste, Debugger) liegen in einem `DockingManager` der NuGet-Bibliothek **Dirkster.AvalonDock** (+ Theme `Vs2013Light`): per Ziehen an den Titeln an jede
+Die Bereiche des Editors (Dokument-Tabs, Ausgabe, Fehlerliste, Threads, Scope, Stack, Geräte) liegen in einem `DockingManager` der NuGet-Bibliothek **Dirkster.AvalonDock** (+ Theme `Vs2013Light`): per Ziehen an den Titeln an jede
 Seite andockbar, als Registerkarten stapelbar, frei schwebend oder automatisch ausblendend. Menü "Ansicht" blendet Bereiche wieder ein, "Layout zurücksetzen" stellt die Vorgabe wieder her. Das Layout wird beim
 Schließen nach `%AppData%/fire/editor-layout.xml` gespeichert und beim Start geladen (`XmlLayoutSerializer`, Schlüssel = `ContentId` aus `MainWindow.xaml`; ein nicht ladbares Layout fällt still auf die Vorgabe
 zurück). Nach dem Laden sind die Layout-Elemente neue Objekte - deshalb merkt sich `MainWindow` sie in `_panels` (aus dem Serializer-Callback) statt der XAML-Objekte.
 
 Die Fehlerliste ist ein `DataGrid` (Symbol, Beschreibung, Datei, Zeile; Spalten verschieb-/vergrößer-/sortierbar, Doppelklick auf eine Zeile springt in den Editor, Filterknopf "n Fehler"); die Zeilen sind
 `ErrorListItem`. Symbolleisten (Datei, Ausführen, Debuggen, Modus/Erstellen) rufen dieselben Handler wie Menü und Tastenkürzel; der Modus (Debug/Release/Performance) ist eine ComboBox, die mit dem Menü synchron bleibt.
+
+### Debugger-Bereiche, Geräte-Übersicht, Paketverfolgung
+
+Der frühere Debugger-Bereich ist aufgeteilt: **Threads** (ListView: aktiver Thread markiert, Name, Zustand, aktuelle Zeile, Aufruftiefe; Knopf "Aktiven Thread anhalten", Haltepunkt-Liste), **Scope** (Baum) und **Stack**
+(Liste) sind eigene Tabs im unteren Bereich (`ThreadsPanelControl`/`ScopePanelControl`/`StackPanelControl`, gebündelt von `DebuggerPanels`). Ein gespeichertes Layout aus einer älteren Version, dem diese Bereiche
+fehlen, wird durch das Standard-Layout ersetzt.
+
+Rechts liegt die **Geräte-Übersicht** (`DevicesPanelControl`, standardmäßig eingeklappt: am Rand ausgeblendet, `LayoutAnchorable.ToggleAutoHide`; Menü "Ansicht > Geräte" dockt sie an). Ein Baum zeigt je Treiber die gefundenen
+Geräte mit Statussymbol (● verbunden, ○ verfügbar, ◌ ungeprüft, ✖ nicht verfügbar) und ★ am Standardgerät. Symbolleiste: Suchen (Verfügbarkeit aller Geräte prüfen, Hintergrund-Thread), Verbinden, Trennen,
+Paketverfolgung; dasselbe im Kontextmenü (plus "Als Standardgerät festlegen"/"aufheben") und im Menü "Geräte". Die Auswahl "Standardgerät" in der Symbolleiste setzt dasselbe. Beim Start werden die Geräte schnell aufgelistet.
+Der Menüpunkt "Simuliertes Loopback-Gerät anzeigen" blendet `loopback:echo` ein (zum Ausprobieren ohne Hardware).
+
+`EditorDeviceService` besitzt den GETEILTEN `DeviceManager` des Editors (siehe SPEC 8.16), reicht ihn an `DebugSession.DeviceManager` weiter (-> `RuntimeSession.Build(..., deviceManager:)`) und speichert
+Standardgerät und Simulationsgerät in `%AppData%/fire/editor-devices.txt`.
+
+**Paketverfolgung** (`PacketTraceControl`, wie Wireshark): ein Dokument-Tab je Gerät (Doppelklick auf ein Gerät oder "Paketverfolgung"), der gesendete und empfangene Pakete mitschneidet - Spalten Nummer, Zeit,
+Richtung (Host → Gerät blau / Gerät → Host grün), Gerät, Bytes, Inhalt. Der Inhalt ist umschaltbar: **Hex** (Bytes durch Leerzeichen getrennt) oder **Text** (UTF-8, Steuerzeichen als `\r \n \xNN`). Aufzeichnen an/aus, Leeren,
+Autoscroll. Der Tab ist ein `IDocumentView`: Speichern/Speichern unter schreibt eine `.fplog`-Datei (Format siehe SPEC 8.16), Öffnen lädt sie (nicht live) - ungespeicherte Pakete fragt das Schließen ab.
+
+### Mehrere Dokumente in Tabs, Markdown-Editor (`MainWindow`, `MarkdownEditorControl`)
+
+Der Dokumentbereich des `DockingManager` enthält beliebig viele Tabs, zur Laufzeit angelegt (`MainWindow.CreateDocument`): fire-Skripte (`ScriptEditorControl`) und Markdown-Dokumente
+(`MarkdownEditorControl`); beide implementieren `IDocumentView` (Pfad, `IsModified`/`ModifiedChanged`, `ResetTo`, `GetText`, `MarkSaved`, Cursor-Zeile). Ein Tab-Titel trägt einen `*`, solange ungespeichert
+(Rückfrage beim Schließen des Tabs/Fensters: Speichern/Verwerfen/Abbrechen). Dateien öffnen über Menü (Mehrfachauswahl), Drag&Drop aufs Fenster oder Kommandozeile; die Endung (`.md`/`.markdown`) entscheidet
+über den Editor-Typ. Ist eine Datei schon offen, wird nur zu ihrem Tab gewechselt; ein noch unberührtes "Unbenannt"-Dokument wird beim Öffnen ersetzt.
+
+**Alles wirkt nur auf das AKTIVE Dokument** (`ActiveDocument`, nachgeführt über `LayoutContent.IsActiveChanged`): Ausführen/Debuggen/Standalone-Build, Haltepunkte, Fehlerliste, Buildeinstellungen, Zeilenanzeige,
+Fenstertitel. Zur Quellen-Sammlung des Compilers gehört nur der Text des aktiven Skripts (`Compile(new[] { text }, ...)`); mehrere Dateien übersetzt man per `#include`. Relative `#include`-Pfade beziehen sich dabei
+auf den Ordner der aktiven Datei (`Linker.BasePath`, durchgereicht über `RuntimeSession.Build(..., basePath)`/`DebugSession.Compile(..., basePath)`; ohne Datei: Arbeitsverzeichnis) - dasselbe gilt für die
+Live-Diagnostik (`LiveDiagnostics.Analyze(source, basePath)`). Ein laufendes/angehaltenes Programm bleibt an SEIN Skript gebunden (`_debugDocument`: gelbe Zeile, Haltepunkte), auch wenn man den Tab wechselt;
+beim Anhalten wird sein Tab nach vorn geholt, beim Schließen des Tabs wird der Lauf beendet. Ist ein Markdown-Tab aktiv, melden Ausführen/Haltepunkt/Buildeinstellungen das nur in der Statuszeile.
+
+Das Layout (`editor-layout.xml`) speichert auch die Tab-Positionen, die aber nur innerhalb einer Sitzung wiederhergestellt werden ("Layout zurücksetzen" lässt offene Tabs im Dokumentbereich; beim Programmstart
+werden nicht mehr vorhandene Tabs ignoriert, fehlt der Dokumentbereich ganz, gilt das Standard-Layout).
+
+Der **Markdown-Editor** ist AvalonEdit mit Zeilenumbruch und einer Live-Vorschau daneben (umschaltbar, Strg+Umschalt+V, 300 ms entprellt, Scroll-Position bleibt erhalten):
+- `MarkdownParser` (rein, ohne WPF): Überschriften (`#`, Setext), Absätze mit hartem Umbruch, **fett**/*kursiv*/~~durchgestrichen~~/`Code`, Links, Bilder, `<autolinks>`, Zitate, verschachtelte (nummerierte) Listen,
+  Aufgabenlisten `- [x]`, Code-Blöcke (``` und ~~~), Trennlinien, Pipe-Tabellen mit Ausrichtung; rohes HTML wird nicht interpretiert.
+- `MarkdownRenderer` baut daraus ein `FlowDocument`. Code-Blöcke mit Sprache `fire` werden mit dem echten Lexer eingefärbt (`SyntaxHighlighter`, wie im Skript-Editor). Bilder nur aus lokalen Dateien (relativ zum
+  Dokument; kein Netzwerkzugriff beim bloßen Ansehen). Ein Klick auf einen Link öffnet `http(s)`/`mailto` im Browser, ein relativer Link auf eine vorhandene Datei öffnet diese in einem neuen Tab.
+- `MarkdownColorizer` hebt die Syntax im Quelltext hervor (Überschriften größer, fett/kursiv, Code, Links, Zitate, Listenmarken; Code-Blöcke grau hinterlegt, `fire`-Blöcke farbig).
+- Bearbeiten: Symbolleiste und Kürzel (Strg+B fett, Strg+I kursiv, Strg+E Code, Strg+K Link, Strg+H Überschriftenebene wechseln), Aufzählung/Nummerierung/Zitat/Code-Block/Tabelle einfügen, Enter am Ende
+  eines Listenpunkts setzt die Liste fort (leerer Punkt beendet sie).
+
+### Bearbeiten-Menü, Kontextmenü, Zu Definition springen
+
+**Bearbeiten-Menü** (wirkt auf das aktive Dokument, über `IDocumentView`; Einträge werden beim Öffnen ein-/ausgeschaltet): Rückgängig/Wiederholen, Ausschneiden/Kopieren/Einfügen/Löschen, Alles auswählen,
+Suchen (Strg+F, AvalonEdits `SearchPanel`; Weitersuchen F3, rückwärts Umschalt+F3 - ohne Ersetzen), Gehe zu Zeile (Strg+G), Zu Definition springen (F12), Kommentar umschalten (Strg+Umschalt+C, `//` je Zeile). Die
+gemeinsamen Teile liegen in `EditorCommands`. **Kontextmenüs** (Rechtsklick setzt den Cursor unter die Maus, außer in einer Auswahl): im Skript-Editor Zu Definition (nur aktiv, wenn es ein Ziel gibt), die
+Standard-Einträge, Kommentar, Haltepunkt; im Markdown-Editor Fett/Kursiv/Code/Link/Überschrift plus die Standard-Einträge.
+
+**Zu Definition springen** (Strg+Klick, F12, Menü): `NavigationEngine.TryResolve` arbeitet auf dem `ScriptSymbolIndex`. Typnamen (auch `Geo.Circle`, hinter `new`, in Deklarationen, Basisklassen), Klassen-/Enum-/Namespace-
+Mitglieder und Mitglieder hergeleiteter Empfänger (`a.B().c`, `var x = new T()`, statische Aufrufe, `class extends string`) werden aufgelöst - dieselbe Typherleitung wie die Vervollständigung (`ResolveReceiver`).
+Ziele in einer **Prelude** (Standardbibliothek ODER die einer per `#import` zugeschalteten Erweiterung wie `graphics`/`time`/`linq`; `NavigationTarget.PreludeName`, Quelltext über `ScriptSymbolIndex.PreludeSourceOf`)
+öffnen ein schreibgeschütztes `FileViewerWindow` (pro Prelude nur EIN Fenster, weitere Sprünge bewegen es). Früher hatten die Erweiterungs-Preludes keine Definitionszeilen (kein Sprung möglich), und Enums aus Preludes
+sprangen auf eine falsche Zeile im eigenen Dokument. Ziele in einer `#include`-Datei öffnen einen Tab (`ScriptEditorControl.OpenFileRequested`). Das Ansichtsfenster ist jetzt wie der Editor ein AvalonEdit-
+`TextEditor` (zuverlässige Textpositionen für Strg+Klick auch dort, Zeilennummern, Suchen) statt einer RichTextBox.
 
 ## Stand der Implementierung
 
@@ -232,6 +290,11 @@ Weitere, danach vorgeschlagene Ausbaustufen:
 - [x] Konstruktor-Überladung – wie Methodenüberladung, aber ohne Basisklassen-Kette (siehe `docs/SPEC.md` Abschnitt 5.4)
 - [x] Optionale Parameter mit Standardwert (`f(int x = 42)`) – für Methoden, Konstruktoren UND Lambdas, am Ende zusammenhängend (siehe `docs/SPEC.md` Abschnitt 5.4.1, `docs/BYTECODE.md` Abschnitt 16)
 - [x] `switch`-Statement mit Vergleichsoperatoren (`case <= 1:`, `case default:`) – reiner Parser-Zucker, desugart zu einer If/Else-if-Kette, kein Fallthrough (siehe `docs/SPEC.md` Abschnitt 5.7, `docs/BYTECODE.md` Abschnitt 16)
+- [x] Lambda-Kurzsyntax (`x => ...`), Captures (Kopie der benutzten äußeren Locals, SPEC 4.2.1) und die Abfrage-Bibliothek `#import "linq"` (`Linq.From(...).Where(...).Select(...)`, auch direkt auf `List`) – siehe `docs/BYTECODE.md` Abschnitt 36; Entwurf für Reflection/`selector`/`probe`/`silence` in `docs/DESIGN_LAMBDA_REFLECTION_PROBE.md`
+- [x] Reflection `#import "reflection"` (`Type.Of`, `Member`, `Reflect.Get/Set/Call/New`, Selektoren `lambda field|property|member|method|selector<T>`; respektiert private/readonly/Einheiten) – siehe `docs/SPEC.md` 8.13, `docs/BYTECODE.md` Abschnitt 37; als Nebenwirkung: `catch` in gepackten Programmen (MemoryPack-Fehler in `HandlerTemplate`) repariert
+- [x] `#import "time"`: `DateTime`, `TimeSpan`, `Sleep(zeit)` (arbeitet währenddessen die Warteschlange ab); `ToString()` bei `print`/Verkettung/Interpolation; unqualifizierte Mitglieder in `on`-Lambdas – `docs/SPEC.md` 8.15, `docs/BYTECODE.md` Abschnitt 42
+- [x] `finally` auf jedem Weg (normal, Exception, `return`, `break`/`continue`, `leave`/`terminate`, auch aus dem `catch`) mit einer Kopie und Zugriff auf die lokalen Variablen – `docs/BYTECODE.md` Abschnitt 40; Arrays als `IEnumerable` (`class extends array`), `SelectMember`/`SelectProperty`/`SelectField`, `##` für `!=` – Abschnitt 41
+- [x] `probe`/`silence` – Handler für Schreibzugriffe auf Mitglieder (`probe cfg.volume changed { ... }`, `changing` mit Veto, `silence h`), auch per Reflection – siehe `docs/SPEC.md` 8.14, `docs/BYTECODE.md` Abschnitt 38
 - [x] Streams und Dateizugriff (`#import "io"`, `namespace IO`) – `IO.FileStream`/`IO.MemoryStream`/eigene Streams (`IO.IStream`, Basisklasse `IO.Stream`), typisierte Exceptions, `destruct()` schließt das Handle, Sicherheitsrichtlinie (`IoPolicy`) legt der HOST fest; dazu `IO.File`/`IO.Directory`/`IO.Path`/`IO.Utf8` (Datei- und Verzeichnis-API, UTF-8-Text), `IO.TextReader`/`IO.TextWriter` und `IO.Stdio` (Ziel bestimmt der Host: `IoStdio`) – siehe `docs/SPEC.md` Abschnitt 8.11, `docs/BYTECODE.md` Abschnitt 23
 - [x] Shutdown-Signale nur noch an sicheren Punkten (Schleifen-Rücksprung, Aufruf, nach nativem Aufruf; ein Zähler-Vergleich) statt vor jeder Instruktion, Beenden über den Halt-Chunk statt Exception (docs/PORTING.md); das normale Programmende gibt den globalen Scope frei (Hauptprogramm wartet vorher auf Fire-Threads, Fire-Threads zerstören nur eigene Objekte, `VM.DestroyGlobalsAtEnd`) – siehe `docs/BYTECODE.md` Abschnitt 29, `docs/SPEC.md` 2.3
 - [x] Kopie-Owner und `leave`: `f(copy a)` gehört der aufgerufenen Funktion (Präfix `CopyArgs`), `obj.feld = copy x`/Feld-Initialisierer/bloßer Feldname gehört dem Objekt (wie `TakeTo`; das gilt jetzt auch für `new` dort), `TakeTo`/`TakeUpwards`/`TakeGlobal` sind aus Skripten aufrufbar; `leave` wirkt sofort in allen Modi und zerstört auch den globalen Scope, Host schließt übrige IO-Handles (`IoResources`) – siehe `docs/SPEC.md` 2.1–2.4, `docs/BYTECODE.md` Abschnitt 28

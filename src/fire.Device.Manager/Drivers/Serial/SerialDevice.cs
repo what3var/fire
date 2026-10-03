@@ -18,9 +18,13 @@ namespace fire.Device.Manager.Drivers.Serial
 
         public bool IsConnected { get; private set; }
 
-        protected bool _isDisconnecting;
+        protected volatile bool _isDisconnecting;
 
         public Action<byte[]>? OnRawDataReceived { get; set; }
+
+        public Action<byte[]>? OnRawDataSent { get; set; }
+
+        public event Action? StateChanged;
 
         public string? PortName => _portName;
 
@@ -41,8 +45,23 @@ namespace fire.Device.Manager.Drivers.Serial
             Availability = DeviceAvailability.Unchecked;
         }
 
+        private void RaiseStateChanged()
+        {
+            try { StateChanged?.Invoke(); }
+            catch (Exception ex) { Debug.WriteLine(ex); } // ein fehlerhafter Beobachter darf das Gerät nicht stören
+        }
+
         public DeviceAvailability TestAvailability()
         {
+            // Ein verbundenes Gerät hält seinen Port offen - ein zweites Öffnen würde fehlschlagen und es
+            // fälschlich als "nicht verfügbar" melden.
+            if (IsConnected)
+            {
+                Availability = DeviceAvailability.Available;
+                return Availability;
+            }
+
+            var previous = Availability;
             var serialPort = new SerialPort(_portName, 115200);
 
             try
@@ -63,6 +82,7 @@ namespace fire.Device.Manager.Drivers.Serial
                 serialPort.Dispose();
             }
 
+            if (Availability != previous) RaiseStateChanged();
             return Availability;
         }
 
@@ -84,8 +104,11 @@ namespace fire.Device.Manager.Drivers.Serial
             _isDisconnecting = false;
             _serialPort = new SerialPort(_portName,115200);
             _serialPort.Open();
-            StartPolling();
+            // Erst "verbunden", DANN der Lese-Thread: seine Schleife läuft nur solange IsConnected gilt.
             IsConnected = true;
+            Availability = DeviceAvailability.Available;
+            StartPolling();
+            RaiseStateChanged();
         }
 
         public void Disconnect()
@@ -97,25 +120,43 @@ namespace fire.Device.Manager.Drivers.Serial
 
         protected void DisconnectInternal()
         {
-            if (_serialPort?.IsOpen == true)
+            bool wasConnected = IsConnected;
+            var port = _serialPort;
+            _serialPort = null;
+            IsConnected = false;
+
+            try
             {
-                _serialPort.Close();
-                _serialPort = null;
-                IsConnected = false;
+                if (port?.IsOpen == true) port.Close();
             }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+            }
+            finally
+            {
+                port?.Dispose();
+            }
+
+            if (wasConnected) RaiseStateChanged();
         }
 
-        public void SendCommand(string command)
+        public bool SendCommand(string command)
         {
-            if (_serialPort?.IsOpen == true)
-            {
-                _serialPort.WriteLine(command);
-            }
+            var port = _serialPort;
+            if (port?.IsOpen != true) return false;
+
+            // Wie SerialPort.WriteLine (Text + NewLine in der Kodierung des Ports), aber als Bytes, damit die
+            // Paketverfolgung genau sieht, was auf die Leitung geht.
+            var bytes = port.Encoding.GetBytes(command + port.NewLine);
+            port.Write(bytes, 0, bytes.Length);
+            OnRawDataSent?.Invoke(bytes);
+            return true;
         }
 
         protected void StartPolling()
         {
-            _portThread = new Thread(() => PollyPocket().Wait());
+            _portThread = new Thread(() => PollyPocket().Wait()) { IsBackground = true, Name = $"serial-{_portName}" };
             _portThread.Start();
         }
 
@@ -125,11 +166,13 @@ namespace fire.Device.Manager.Drivers.Serial
             {
                 while (!_isDisconnecting && IsConnected)
                 {
-                    if (_serialPort?.BytesToRead > 0)
+                    var port = _serialPort;
+                    if (port != null && port.BytesToRead > 0)
                     {
-                        var buffer = new byte[_serialPort.BytesToRead];
-                        _serialPort.Read(buffer, 0, buffer.Length);
-                        OnRawDataReceived?.Invoke(buffer);
+                        var buffer = new byte[port.BytesToRead];
+                        int read = port.Read(buffer, 0, buffer.Length);
+                        if (read < buffer.Length) Array.Resize(ref buffer, read);
+                        if (read > 0) OnRawDataReceived?.Invoke(buffer);
                     }
 
                     Thread.Sleep(10);
@@ -137,7 +180,12 @@ namespace fire.Device.Manager.Drivers.Serial
             }
             catch(Exception ex)
             {
-                Console.WriteLine($"Error in PollyPocket: {ex.Message}");
+                // Port weg (Gerät abgezogen o.ä.): als Verbindungsverlust melden - außer wir trennen selbst gerade.
+                if (!_isDisconnecting)
+                {
+                    Debug.WriteLine($"Error in PollyPocket: {ex.Message}");
+                    DisconnectInternal();
+                }
             }
         }
 

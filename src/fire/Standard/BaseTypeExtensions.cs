@@ -31,6 +31,7 @@ namespace fire.Standard
                 case "int": kind = ValueKind.Int; return true;
                 case "float": kind = ValueKind.Float; return true;
                 case "bool": kind = ValueKind.Bool; return true;
+                case "array": kind = ValueKind.Array; return true; // `class extends array { ... }`: Methoden für JEDES Array (kein Schlüsselwort, ein Bezeichner)
                 default: kind = default; return false;
             }
         }
@@ -49,6 +50,7 @@ namespace fire.Standard
             ValueKind.Int => "$int",
             ValueKind.Float => "$float",
             ValueKind.Bool => "$bool",
+            ValueKind.Array => "$array",
             _ => null,
         };
 

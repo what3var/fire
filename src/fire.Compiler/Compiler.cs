@@ -89,6 +89,8 @@ namespace fire.Compiler
         private sealed class LoopCompileContext
         {
             public int ScopeDepthAtLoopBodyStart;
+            /// <summary>`foreach` hält seinen Enumerator auf dem Operanden-Stack: ein `return` mitten darin muss ihn mit entfernen.</summary>
+            public bool IsForeach;
             public readonly List<int> BreakJumpPatchAddrs = new();
             public readonly List<int> ContinueJumpPatchAddrs = new();
         }
@@ -126,28 +128,40 @@ namespace fire.Compiler
 
         private enum TryPhase { Try, Catch }
 
-        /// <summary>Ein gerade kompiliertes `try` (Try- oder Catch-Teil) - Grundlage dafür, dass `break`/`continue` den Handler abräumen und das
-        /// `finally` ausführen. `OuterDepth` = Scope-Tiefe außerhalb des `try`, `LoopCount` = Schleifen, die beim Betreten schon offen waren.</summary>
+        /// <summary>Ein gerade kompiliertes `try` (Try- oder Catch-Teil) - Grundlage dafür, dass `break`/`continue` den Handler abräumen und über das
+        /// `finally` laufen. `OuterDepth` = Scope-Tiefe außerhalb des `try`, `LoopCount` = Schleifen, die beim Betreten schon offen waren.</summary>
         private sealed class TryCompileContext
         {
             public TryStmt Stmt = null!;
             public TryPhase Phase;
             public int OuterDepth;
             public int LoopCount;
+
+            /// <summary>Stellen (Operanden von `Jump`), die in den `finally`-Block springen und noch auf seine Adresse warten.</summary>
+            public readonly List<int> FinallyJumpPatches = new();
+
+            /// <summary>Je Sprung-Art (`break`/`continue`), die den `try` verlässt: die Stellen (Operanden von `PushJump`), die auf die Adresse des Ausgangs-Stücks
+            /// hinter dem `finally` warten (siehe CompileTry).</summary>
+            public readonly List<int> BreakStubPatches = new();
+            public readonly List<int> ContinueStubPatches = new();
         }
 
         private readonly List<TryCompileContext> _tryStack = new();
 
-        /// <summary>Gemeinsame Kompilierung für `break`/`continue`: verlässt zuerst alle `try`/`catch`-Blöcke, die seit dem Schleifenkörper
-        /// offen sind (von innen nach außen: Scopes schließen, Handler abmelden bzw. Catch-Zustand verwerfen, `finally` inline ausführen),
-        /// schließt dann die restlichen Scopes und springt unbedingt - die Adresse wird in der passenden Liste (Break-/ContinueJumpPatchAddrs)
-        /// gesammelt und beim Fertigkompilieren der jeweiligen Schleife aufgelöst.</summary>
+        /// <summary>Alles, was ein Block auf dem Operanden-Stack liegen lässt, solange er läuft (von unten nach oben): ein `foreach` seinen Enumerator (1),
+        /// ein `finally`-Block seinen Abschluss (2). Ein `return` darin nimmt sie vor der Rückkehr weg (Swap + Pop je Eintrag), sonst blieben sie
+        /// unter dem Rückgabewert liegen und verschöben die Operanden des Aufrufers.</summary>
+        private readonly List<int> _residents = new();
+
+        /// <summary>Gemeinsame Kompilierung für `break`/`continue`: verlässt von innen nach außen alle `try`/`catch`-Blöcke, die seit dem Schleifenkörper offen
+        /// sind (Scopes schließen, Handler abmelden bzw. Catch-Zustand verwerfen). Trifft es dabei auf ein `try` MIT `finally`, springt es nicht selbst
+        /// weiter, sondern in dessen `finally` (Abschluss "Sprung"); nach dem `finally` setzt ein Ausgangs-Stück hinter dem `try` die Reise fort (es ist
+        /// derselbe `break`/`continue`, nur von außerhalb des `try` übersetzt, siehe CompileTry). Sonst schließt es die restlichen Scopes und springt - die
+        /// Adresse kommt in die passende Liste (Break-/ContinueJumpPatchAddrs) und wird beim Fertigkompilieren der Schleife aufgelöst.</summary>
         private void CompileBreakOrContinue(bool isBreak)
         {
             var ctx = _loopStack.Peek();
             int depth = _currentScopeDepth;      // tatsächliche Tiefe am Sprung; `_currentScopeDepth` selbst bleibt unverändert
-            int savedDepth = _currentScopeDepth;
-            var savedTryStack = _tryStack.ToArray();
 
             for (int k = _tryStack.Count - 1; k >= 0 && _tryStack[k].LoopCount == _loopStack.Count; k--)
             {
@@ -161,25 +175,26 @@ namespace fire.Compiler
                 }
                 else
                 {
-                    // wie am normalen Ende des catch-Blocks: Wurfstellen-Zustand verwerfen, Catch-Scope schließen
+                    // wie am normalen Ende des catch-Blocks: Wurfstellen-Zustand verwerfen, Catch-Scope schließen, das finally-only-Handler abmelden
                     _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(0);
                     _chunk.EmitOp(OpCode.ClearPendingResume);
                     _chunk.EmitOp(OpCode.ExitScope);
                     depth--;
+                    if (t.Stmt.Finally != null) _chunk.EmitOp(OpCode.UnregisterHandler);
                 }
 
                 if (t.Stmt.Finally != null)
                 {
-                    // das finally läuft hier inline, außerhalb dieses try (Handler sind schon abgemeldet)
-                    _tryStack.RemoveRange(k, _tryStack.Count - k);
-                    _currentScopeDepth = depth;
-                    CompileBlockNewScope(t.Stmt.Finally);
+                    // in das finally dieses `try`: danach geht es am Ausgangs-Stück hinter dem `try` weiter
+                    _chunk.EmitOp(OpCode.PushJump);
+                    (isBreak ? t.BreakStubPatches : t.ContinueStubPatches).Add(_chunk.Here);
+                    _chunk.EmitU16(0);
+                    _chunk.EmitOp(OpCode.Jump);
+                    t.FinallyJumpPatches.Add(_chunk.Here);
+                    _chunk.EmitU16(0);
+                    return;
                 }
             }
-
-            _tryStack.Clear();
-            _tryStack.AddRange(savedTryStack);
-            _currentScopeDepth = savedDepth;
 
             for (; depth > ctx.ScopeDepthAtLoopBodyStart; depth--) _chunk.EmitOp(OpCode.ExitScope);
             _chunk.EmitOp(OpCode.Jump);
@@ -251,6 +266,10 @@ namespace fire.Compiler
         /// Lambda-/Konstruktor-Bodys), wird von Compile() am Ende
         /// ausgewertet.</summary>
         private readonly List<CompilerException> _errors;
+
+        /// <summary>Nutzt das Programm die Reflection-Bibliothek (`#import "reflection"`)? Dann schreibt der Compiler die deklarierten Typen als
+        /// <see cref="ClassMeta"/> mit und markiert die Klassen der Bibliothek.</summary>
+        private bool Reflection => _natives.Has(fire.Standard.ReflectionPrelude.MembersNative);
 
         /// <summary>Für die Kompilierung eines Lambda-/Methoden-/Konstruktor-Bodys
         /// in einen eigenen Chunk (FunctionProto): teilt sich die Resolver-
@@ -362,12 +381,87 @@ namespace fire.Compiler
         // -----------------------------------------------------------
         // Klassen (Vorab-Pass: Name -> RuntimeClass, analog zum Resolver)
         // -----------------------------------------------------------
+        /// <summary>Der Typ so, wie er im Quelltext stand (`int`, `Circle`, `lambda<int>`, `float[]`), "" ohne Angabe.</summary>
+        private static string TypeText(TypeRef? type, int extraArrayRank = 0)
+        {
+            if (type == null || type.IsInferred) return "";
+            string text = type.LambdaSignature is { IsSelector: true } sel ? "lambda " + sel.SelectorKind + "<" + string.Join(", ", sel.ParamTypeNames) + ">" : type.ToString();
+            return text + string.Concat(Enumerable.Repeat("[]", type.ArrayRank + extraArrayRank));
+        }
+
+        private static string AccessText(AccessModifier access) => access switch
+        {
+            AccessModifier.Private => "private",
+            AccessModifier.Protected => "protected",
+            _ => "public",
+        };
+
+        /// <summary>Die Reflection-Metadaten einer Klasse: was die Laufzeit sonst nicht behält (Typnamen, Parameternamen, `readonly`, Property-Form).</summary>
+        private static ClassMeta BuildClassMeta(ClassDecl cd)
+        {
+            var meta = new ClassMeta();
+            if (cd.BaseRefs != null)
+                foreach (var b in cd.BaseRefs) meta.BaseNames.Add(b.BaseName);
+
+            static void AddParams(MemberMeta m, IReadOnlyList<LambdaParam> parms)
+            {
+                foreach (var p in parms)
+                {
+                    m.ParamNames.Add(p.Name);
+                    m.ParamTypes.Add(TypeText(p.Type, p.ArrayRanks.Count));
+                }
+            }
+
+            foreach (var member in cd.Members)
+            {
+                switch (member)
+                {
+                    case FieldDecl f:
+                        meta.Members.Add(new MemberMeta
+                        {
+                            Name = f.Name, Kind = "field", TypeName = TypeText(f.Type, f.ArrayRanks.Count), Access = AccessText(f.Access),
+                            IsStatic = f.IsStatic, IsReadonly = f.IsReadonly, Unit = f.Type?.Unit ?? "",
+                        });
+                        break;
+                    case PropertyDecl pd:
+                        meta.Members.Add(new MemberMeta
+                        {
+                            Name = pd.Name, Kind = "property", TypeName = TypeText(pd.Type), Access = AccessText(pd.Access),
+                            IsStatic = pd.IsStatic, CanRead = pd.Getter != null, CanWrite = pd.Setter != null, Unit = pd.Type?.Unit ?? "",
+                        });
+                        break;
+                    case MethodDecl md:
+                        {
+                            var m = new MemberMeta { Name = md.Name, Kind = "method", TypeName = TypeText(md.ReturnType), Access = AccessText(md.Access), IsStatic = md.IsStatic };
+                            AddParams(m, md.Params);
+                            meta.Members.Add(m);
+                            break;
+                        }
+                    case ConstructorDecl ctor:
+                        {
+                            var m = new MemberMeta { Name = cd.Name, Kind = "constructor", Access = AccessText(ctor.Access) };
+                            AddParams(m, ctor.Params);
+                            meta.Members.Add(m);
+                            break;
+                        }
+                }
+            }
+            return meta;
+        }
+
         private Dictionary<string, RuntimeClass> CompileClasses(IReadOnlyList<Stmt> program)
         {
             var classes = new Dictionary<string, RuntimeClass>();
             foreach (var stmt in program)
                 if (stmt is ClassDecl cd)
+                {
                     classes[cd.Name] = new RuntimeClass(cd.Name, cd);
+                    if (Reflection)
+                    {
+                        classes[cd.Name].Meta = BuildClassMeta(cd);
+                        classes[cd.Name].IsReflectionHelper = fire.Standard.ReflectionPrelude.HelperClasses.Contains(cd.Name);
+                    }
+                }
 
             // Basis-Verknüpfung getrennt, da Basisklassen im Quelltext später
             // stehen können als die abgeleitete Klasse (Vorwärtsreferenz). Der
@@ -381,11 +475,13 @@ namespace fire.Compiler
             // Interface-Namen in BaseRefs werden hier ignoriert - Interfaces
             // brauchen keine eigene Laufzeit-Repräsentation (rein dynamischer
             // Methodenaufruf per Name), die Erfüllung hat schon der Resolver geprüft.
+            var interfaceNames = new HashSet<string>(program.OfType<InterfaceDecl>().Select(i => i.Name));
             foreach (var rc in classes.Values)
             {
                 foreach (var baseRef in rc.Decl.BaseRefs ?? Array.Empty<TypeRef>())
                 {
-                    string n = baseRef.ResolveBaseName(name => name == "Exception" || classes.ContainsKey(name));
+                    string n = baseRef.ResolveBaseName(name => name == "Exception" || classes.ContainsKey(name) || interfaceNames.Contains(name));
+                    if (interfaceNames.Contains(n)) { rc.Interfaces.Add(n); continue; }
                     if (n != "Exception" && !classes.TryGetValue(n, out _)) continue;
                     if (n == "Exception") break; // keine RuntimeClass verfügbar -> Base bleibt null
                     rc.Base = classes[n];
@@ -552,6 +648,19 @@ namespace fire.Compiler
             return defaults;
         }
 
+        /// <summary>Besteht der Initialisierer-Proto nur aus `LoadConst c; Return` (ein Literal oder kein Initialisierer: `undefined`)?
+        /// Dann liefert er `c` ohne jede Nebenwirkung, und der Konstruktor kann `c` direkt setzen, statt ihn aufzurufen.</summary>
+        private static bool TryGetConstantInitializer(FunctionProto proto, out Value constant)
+        {
+            constant = default;
+            var code = proto.Chunk.Code;
+            if (code.Count != 4 || code[0] != (byte)OpCode.LoadConst || code[3] != (byte)OpCode.Return) return false;
+            int idx = code[1] | (code[2] << 8);
+            if (idx >= proto.Chunk.Constants.Count) return false;
+            constant = proto.Chunk.Constants[idx];
+            return true;
+        }
+
         private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer, bool isStatic = false)
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
@@ -593,6 +702,24 @@ namespace fire.Compiler
             {
                 var sig = parms[i].Type?.LambdaSignature;
                 if (sig == null) continue;
+                if (sig.IsSelector)
+                {
+                    // `lambda member<T> name` (und field/property/selector): der Parameter wird durch die Reflection des gewählten Mitglieds
+                    // ersetzt: name = Reflect.SelectorOf(name, "member")
+                    inner._chunk.EmitOp(OpCode.LoadLocal);
+                    inner._chunk.EmitU16(0);
+                    inner._chunk.EmitU16((ushort)i);
+                    inner.EmitLoadConst(Value.MakeString(sig.SelectorKind));
+                    inner._chunk.EmitOp(OpCode.CallStaticMethod);
+                    inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString("Reflect")));
+                    inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString("SelectorOf")));
+                    inner._chunk.EmitByte(2);
+                    inner._chunk.EmitOp(OpCode.StoreLocal);
+                    inner._chunk.EmitU16(0);
+                    inner._chunk.EmitU16((ushort)i);
+                    inner._chunk.EmitOp(OpCode.Pop);
+                    continue;
+                }
                 inner._chunk.EmitOp(OpCode.LoadLocal);
                 inner._chunk.EmitU16(0);
                 inner._chunk.EmitU16((ushort)i);
@@ -796,8 +923,22 @@ namespace fire.Compiler
                 inner._chunk.EmitOp(OpCode.Pop); // Platzhalter-Rückgabewert des Basis-Konstruktors verwerfen
             }
 
+            // Ein Feld mit konstantem (oder fehlendem) Initialisierer braucht keinen Aufruf des Initialisierer-Protos: der Wert wird direkt
+            // geladen. Ein Feld ohne Initialisierer steht nach dem Anlegen ohnehin auf `undefined` und braucht gar nichts - es sei denn, davor
+            // konnte schon etwas auf `this` zugreifen (der Konstruktor einer Basisklasse, der Initialisierer eines früheren Felds mit Aufruf):
+            // dann setzt das explizite `undefined` ein dort geschriebenes Feld wie bisher zurück.
+            bool fieldsMayBeTouched = rc.Base != null;
             foreach (var (fieldName, initProto) in rc.Fields)
             {
+                if (TryGetConstantInitializer(initProto, out var constant))
+                {
+                    if (!fieldsMayBeTouched && constant.Kind == ValueKind.Undefined) continue;
+                    inner.EmitLoadConst(constant);
+                    inner._chunk.EmitOp(OpCode.SetFieldOnThis);
+                    inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(fieldName)));
+                    continue;
+                }
+
                 int protoIdx = inner._chunk.AddFunctionProto(initProto);
                 inner._chunk.EmitOp(OpCode.LoadThis);
                 inner._chunk.EmitOp(OpCode.CallProtoWithThis);
@@ -805,6 +946,7 @@ namespace fire.Compiler
                 inner._chunk.EmitByte(0);
                 inner._chunk.EmitOp(OpCode.SetFieldOnThis);
                 inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(fieldName)));
+                fieldsMayBeTouched = true;
             }
 
             if (ctor != null)
@@ -859,8 +1001,7 @@ namespace fire.Compiler
                     break;
 
                 case ExprStmt es:
-                    CompileExpr(es.Expression);
-                    _chunk.EmitOp(OpCode.Pop);
+                    CompileDiscardedExpr(es.Expression);
                     break;
 
                 case NoOpStmt:
@@ -935,6 +1076,24 @@ namespace fire.Compiler
                 case ReturnStmt rs:
                     if (rs.Value != null) CompileExpr(rs.Value);
                     else EmitLoadConst(Value.MakeUndefined());
+                    // Ein `return` im `catch`: die beim Werfen eingefrorene Wurfstelle (siehe ClearPendingResume) wird verworfen, wie am normalen Ende
+                    // des catch-Blocks - sonst bliebe sie samt ihrer Scopes liegen. Die Exception-Variable liegt im catch-Scope (Slot 0).
+                    for (int k = _tryStack.Count - 1; k >= 0; k--)
+                        if (_tryStack[k].Phase == TryPhase.Catch)
+                        {
+                            _chunk.EmitOp(OpCode.LoadLocal);
+                            _chunk.EmitU16((ushort)(_currentScopeDepth - (_tryStack[k].OuterDepth + 1)));
+                            _chunk.EmitU16(0);
+                            _chunk.EmitOp(OpCode.ClearPendingResume);
+                        }
+                    // Bewohner des Stacks (die Enumeratoren der umgebenden `foreach`, die Abschlüsse der umgebenden `finally`-Blöcke) liegen unter dem
+                    // Rückgabewert: sonst blieben sie dort liegen und verschöben die Operanden des Aufrufers (`1 + f()` mit einem `return` im `foreach` von `f`).
+                    for (int r = _residents.Count - 1; r >= 0; r--)
+                        for (int n = 0; n < _residents[r]; n++)
+                        {
+                            _chunk.EmitOp(OpCode.Swap);
+                            _chunk.EmitOp(OpCode.Pop);
+                        }
                     _chunk.EmitOp(OpCode.Return);
                     break;
 
@@ -978,6 +1137,17 @@ namespace fire.Compiler
 
                 case SectionExitStmt:
                     _chunk.EmitOp(OpCode.SectionExit);
+                    break;
+
+                case SilenceStmt silence:
+                    CompileExpr(silence.Target);
+                    if (silence.MemberForm)
+                    {
+                        _chunk.EmitOp(OpCode.SilenceMember);
+                        _chunk.EmitU16(silence.Member != null ? _chunk.AddConstant(Value.MakeString(silence.Member)) : 0);
+                        _chunk.EmitByte(silence.Member == null ? (byte)1 : (byte)0);
+                    }
+                    else _chunk.EmitOp(OpCode.SilenceValue);
                     break;
 
                 case PostGlobalStmt postGlobal:
@@ -1079,6 +1249,10 @@ namespace fire.Compiler
         /// stimmen Slot-/Tiefen-Nummern nicht mehr überein.</summary>
         private void CompileScopedBody(Stmt body)
         {
+            // Ein leerer Block `{ }` deklariert nichts und führt nichts aus: sein EnterScope/ExitScope-Paar wäre reine Zeitverschwendung
+            // (bei einer Schleife je Durchlauf). Der Resolver legt für ihn zwar eine Scope an, aber ohne Variablen - die Tiefen der
+            // übrigen Zugriffe ändern sich dadurch nicht.
+            if (body is Stmt.BlockStmt { Statements.Count: 0 }) return;
             EmitEnterScope();
             if (body is Stmt.BlockStmt block)
                 foreach (var s in block.Statements) CompileStmt(s);
@@ -1087,12 +1261,97 @@ namespace fire.Compiler
             EmitExitScope();
         }
 
+        /// <summary>Emittiert `JumpIfFalse` mit Platzhalter-Adresse und liefert die Stelle der Adresse zum späteren Patchen. Steht davor
+        /// ein Vergleich (`Lt`, `LtEq`, `Gt`, `GtEq`, `Eq`, `NotEq`) ohne Sprungziel dahinter, werden beide zu EINER Instruktion
+        /// (`JumpIfNotLt` usw.) verschmolzen: dasselbe Ergebnis, ein Dispatch und kein Bool auf dem Stack.</summary>
+        private int EmitJumpIfFalse()
+        {
+            foreach (var (compare, fused) in new[]
+            {
+                (OpCode.Lt, OpCode.JumpIfNotLt), (OpCode.LtEq, OpCode.JumpIfNotLtEq), (OpCode.Gt, OpCode.JumpIfNotGt),
+                (OpCode.GtEq, OpCode.JumpIfNotGtEq), (OpCode.Eq, OpCode.JumpIfNotEq), (OpCode.NotEq, OpCode.JumpIfNotNotEq),
+            })
+            {
+                if (!_chunk.EndsWithOp(compare, 0)) continue;
+                _chunk.ReplaceLastOp(fused);
+                int fusedAt = _chunk.Here;
+                _chunk.EmitU16(0);
+                return fusedAt;
+            }
+
+            _chunk.EmitOp(OpCode.JumpIfFalse);
+            int at = _chunk.Here;
+            _chunk.EmitU16(0);
+            return at;
+        }
+
+        /// <summary>Ein Ausdruck, dessen Wert verworfen wird (Ausdrucksanweisung, `for`-Increment). Häufige Fälle werden zu EINER
+        /// Instruktion: `x++`/`x--`/`x = x + c`/`x = x - c` auf einer Variable ohne geforderte Einheit, und eine Zuweisung an eine
+        /// Variable (`StoreLocal`/`StoreGlobal` + `Pop` = `StoreLocalPop`/`StoreGlobalPop`).</summary>
+        private void CompileDiscardedExpr(Expr expr)
+        {
+            if (TryCompileArithOnVariable(expr)) return;
+
+            CompileExpr(expr);
+
+            if (_chunk.EndsWithOp(OpCode.StoreLocal, 4)) { _chunk.ReplaceLastOp(OpCode.StoreLocalPop); return; }
+            if (_chunk.EndsWithOp(OpCode.StoreGlobal, 2)) { _chunk.ReplaceLastOp(OpCode.StoreGlobalPop); return; }
+            _chunk.EmitOp(OpCode.Pop);
+        }
+
+        /// <summary>`x++`, `x--`, `x = x + c`, `x = x - c` (c ein Zahlenliteral) auf einer lokalen oder globalen Variable ohne geforderte
+        /// Einheit, deren Ergebnis niemand braucht: ArithLocalConstPop/ArithGlobalConstPop.</summary>
+        private bool TryCompileArithOnVariable(Expr expr)
+        {
+            IdentifierExpr? target;
+            Value constant;
+            bool subtract;
+
+            switch (expr)
+            {
+                case IncDecExpr { Target: IdentifierExpr incTarget } incDec:
+                    target = incTarget;
+                    constant = Value.MakeInt(1);
+                    subtract = !incDec.IsIncrement;
+                    break;
+
+                case AssignExpr { Target: IdentifierExpr assignTarget, Value: BinaryExpr { Op: BinaryOp.Add or BinaryOp.Sub, Left: IdentifierExpr left, Right: LiteralExpr literal } binary }
+                    when left.Name == assignTarget.Name && literal.Value.Kind is ValueKind.Int or ValueKind.Float
+                         && _refs.TryGetValue(left, out var leftRef) && _refs.TryGetValue(assignTarget, out var targetRef) && leftRef.Equals(targetRef):
+                    target = assignTarget;
+                    constant = literal.Value;
+                    subtract = binary.Op == BinaryOp.Sub;
+                    break;
+
+                default:
+                    return false;
+            }
+
+            if (!_refs.TryGetValue(target, out var reference)) return false;
+            switch (reference)
+            {
+                case ResolvedRef.Local { RequiredUnit: null } local:
+                    _chunk.EmitOp(OpCode.ArithLocalConstPop);
+                    _chunk.EmitU16(local.Depth);
+                    _chunk.EmitU16(local.Slot);
+                    _chunk.EmitU16(_chunk.AddConstant(constant));
+                    _chunk.EmitByte(subtract ? (byte)1 : (byte)0);
+                    return true;
+                case ResolvedRef.Global { RequiredUnit: null } global:
+                    _chunk.EmitOp(OpCode.ArithGlobalConstPop);
+                    _chunk.EmitU16(global.Slot);
+                    _chunk.EmitU16(_chunk.AddConstant(constant));
+                    _chunk.EmitByte(subtract ? (byte)1 : (byte)0);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private void CompileIf(IfStmt s)
         {
             CompileExpr(s.Condition);
-            _chunk.EmitOp(OpCode.JumpIfFalse);
-            int elseJumpAt = _chunk.Here;
-            _chunk.EmitU16(0); // Platzhalter, wird unten gepatcht
+            int elseJumpAt = EmitJumpIfFalse(); // Platzhalter, wird unten gepatcht
 
             CompileScopedBody(s.Then);
 
@@ -1119,11 +1378,13 @@ namespace fire.Compiler
 
             int loopStart = _chunk.Here;
             CompileExpr(s.Condition);
-            _chunk.EmitOp(OpCode.JumpIfFalse);
-            int endJumpAt = _chunk.Here;
-            _chunk.EmitU16(0);
+            int endJumpAt = EmitJumpIfFalse();
 
             CompileScopedBody(s.Body);
+
+            // Rücksprung und Schleifenende gehören zur Zeile des `while` (nicht zur letzten Zeile des Bodys) - sonst hielte der
+            // Debugger nach dem Verlassen der Schleife noch einmal in der letzten Zeile des Bodys an (Haltepunkt dort!).
+            _chunk.MarkLine(CurrentSourceIndex, s.Line);
 
             // 'continue' springt hierher - direkt vor den Rücksprung zur
             // Condition-Prüfung (für 'while' inhaltlich dasselbe wie
@@ -1159,12 +1420,15 @@ namespace fire.Compiler
             if (s.Condition != null)
             {
                 CompileExpr(s.Condition);
-                _chunk.EmitOp(OpCode.JumpIfFalse);
-                endJumpAt = _chunk.Here;
-                _chunk.EmitU16(0);
+                endJumpAt = EmitJumpIfFalse();
             }
 
             CompileScopedBody(s.Body);
+
+            // Increment, Rücksprung und Schleifenende gehören zur Zeile des `for` (nicht zur letzten Zeile des Bodys): so zeigt der
+            // Debugger beim Schritt über das Ende des Bodys die `for`-Zeile, und nach dem Verlassen der Schleife hält ein Haltepunkt
+            // im Body nicht noch einmal an.
+            _chunk.MarkLine(CurrentSourceIndex, s.Line);
 
             // 'continue' springt HIERHER - VOR das Increment, damit das bei
             // einem 'continue' trotzdem noch läuft (sonst würde z.B.
@@ -1174,10 +1438,7 @@ namespace fire.Compiler
             foreach (var addr in ctx.ContinueJumpPatchAddrs) _chunk.PatchU16(addr, continueTarget);
 
             if (s.Increment != null)
-            {
-                CompileExpr(s.Increment);
-                _chunk.EmitOp(OpCode.Pop);
-            }
+                CompileDiscardedExpr(s.Increment);
 
             _chunk.EmitOp(OpCode.Jump);
             _chunk.EmitU16(loopStart);
@@ -1211,8 +1472,9 @@ namespace fire.Compiler
             EmitCallMethodByName("GetEnumerator", 0);
             // Stack: [enumerator]
 
-            var ctx = new LoopCompileContext { ScopeDepthAtLoopBodyStart = _currentScopeDepth };
+            var ctx = new LoopCompileContext { ScopeDepthAtLoopBodyStart = _currentScopeDepth, IsForeach = true };
             _loopStack.Push(ctx);
+            _residents.Add(1); // der Enumerator liegt, solange die Schleife läuft, auf dem Stack
 
             int loopStart = _chunk.Here;
             _chunk.EmitOp(OpCode.Dup);
@@ -1241,11 +1503,13 @@ namespace fire.Compiler
             _chunk.EmitOp(OpCode.Jump);
             _chunk.EmitU16(loopStart);
 
+            _chunk.MarkLine(CurrentSourceIndex, fs.Line); // das Schleifenende gehört zur Zeile des `foreach` (siehe CompileFor)
             int loopEnd = _chunk.Here;
             _chunk.PatchU16(endJumpAt, loopEnd);
             foreach (var addr in ctx.BreakJumpPatchAddrs) _chunk.PatchU16(addr, loopEnd);
             _chunk.EmitOp(OpCode.Pop); // Enumerator-Referenz verwerfen
 
+            _residents.RemoveAt(_residents.Count - 1);
             _loopStack.Pop();
         }
 
@@ -1340,14 +1604,8 @@ namespace fire.Compiler
 
         private void CompileTry(TryStmt t)
         {
-            FunctionProto? finallyProto = t.Finally != null
-                ? CompileMethodProto(_enclosingClass, Array.Empty<LambdaParam>(), t.Finally, AccessModifier.Private)
-                : null;
-
-            var template = new HandlerTemplate
-            {
-                FinallyProtoIdx = finallyProto != null ? _chunk.AddFunctionProto(finallyProto) : null,
-            };
+            bool hasFinally = t.Finally != null;
+            var template = new HandlerTemplate();
             int templateIdx = _chunk.AddHandlerTemplate(template);
 
             _chunk.EmitOp(OpCode.RegisterHandler);
@@ -1359,6 +1617,7 @@ namespace fire.Compiler
             _tryStack.RemoveAt(_tryStack.Count - 1);
 
             _chunk.EmitOp(OpCode.UnregisterHandler);
+            if (hasFinally) _chunk.EmitOp(OpCode.EnterFinallyNormal); // Abschluss "normal"
 
             _chunk.EmitOp(OpCode.Jump);
             var jumpsToFinallyOrEnd = new List<int> { _chunk.Here };
@@ -1390,6 +1649,13 @@ namespace fire.Compiler
 
                 _chunk.EmitOp(OpCode.ExitScope); // gibt die von der VM erzeugte Exception-Scope wieder frei
 
+                // Mit finally war während des catch-Blocks ein finally-only-Handler aktiv (siehe VM.ThrowException): jetzt abmelden
+                if (hasFinally)
+                {
+                    _chunk.EmitOp(OpCode.UnregisterHandler);
+                    _chunk.EmitOp(OpCode.EnterFinallyNormal);
+                }
+
                 _chunk.EmitOp(OpCode.Jump);
                 jumpsToFinallyOrEnd.Add(_chunk.Here);
                 _chunk.EmitU16(0);
@@ -1397,8 +1663,33 @@ namespace fire.Compiler
 
             int finallyOrEndAddr = _chunk.Here;
             foreach (var addr in jumpsToFinallyOrEnd) _chunk.PatchU16(addr, finallyOrEndAddr);
+            if (!hasFinally) return;
 
-            if (t.Finally != null) CompileBlockNewScope(t.Finally);
+            // EIN finally-Block für alle Wege hinein (normal, break/continue, return, Exception, leave/terminate): oben auf dem Stack liegt der
+            // Abschluss (Nutzlast, Art), den EndFinally am Ende auswertet. Im Block selbst ist er ein Bewohner des Stacks (siehe _residents).
+            template.FinallyAddr = finallyOrEndAddr;
+            foreach (var addr in tryContext.FinallyJumpPatches) _chunk.PatchU16(addr, finallyOrEndAddr);
+
+            _residents.Add(2);
+            CompileBlockNewScope(t.Finally!);
+            _residents.RemoveAt(_residents.Count - 1);
+            _chunk.EmitOp(OpCode.EndFinally);
+
+            // Ausgangs-Stücke für ein `break`/`continue`, das über dieses finally lief: hier, hinter dem `try` (Scope-Tiefe und `_tryStack` stimmen
+            // schon), geht derselbe Sprung von außen weiter - über ein weiteres `finally` oder direkt zum Ziel. Die normale Ausführung überspringt sie.
+            if (tryContext.BreakStubPatches.Count > 0 || tryContext.ContinueStubPatches.Count > 0)
+            {
+                _chunk.EmitOp(OpCode.Jump);
+                int skipStubs = _chunk.Here;
+                _chunk.EmitU16(0);
+                foreach (var (isBreak, patches) in new[] { (true, tryContext.BreakStubPatches), (false, tryContext.ContinueStubPatches) })
+                {
+                    if (patches.Count == 0) continue;
+                    foreach (var addr in patches) _chunk.PatchU16(addr, _chunk.Here);
+                    CompileBreakOrContinue(isBreak);
+                }
+                _chunk.PatchU16(skipStubs, _chunk.Here);
+            }
         }
 
         // -----------------------------------------------------------
@@ -1581,6 +1872,14 @@ namespace fire.Compiler
                     CompileLambda(lam);
                     break;
 
+                case ProbeExpr probe:
+                    CompileExpr(probe.Target);
+                    CompileExpr(probe.Handler);
+                    _chunk.EmitOp(OpCode.Probe);
+                    _chunk.EmitU16(probe.Member != null ? _chunk.AddConstant(Value.MakeString(probe.Member)) : 0);
+                    _chunk.EmitByte((byte)((probe.IsChanging ? 1 : 0) | (probe.Member == null ? 2 : 0)));
+                    break;
+
                 case SyncGlobalsExpr:
                     _chunk.EmitOp(OpCode.SyncGlobals);
                     break;
@@ -1639,12 +1938,31 @@ namespace fire.Compiler
         /// Auswertung DIESER LambdaExpr zur Laufzeit (MakeLambda) erzeugt einen
         /// neuen LambdaValue, der denselben Proto wiederverwendet - nur das
         /// 'on'-Target kann sich pro Auswertung unterscheiden.</summary>
+        /// <summary>`c => c.radius` / `p => p.address.city`: ein Parameter, der Körper nur eine Mitgliedskette darauf - die Namen von außen nach innen.</summary>
+        private static string[]? TrySelectorPath(LambdaExpr lambda)
+        {
+            if (lambda.Params.Count != 1 || lambda.Body.Statements.Count != 1 || lambda.Body.Statements[0] is not ReturnStmt { Value: { } value })
+                return null;
+            var path = new List<string>();
+            while (value is MemberExpr member)
+            {
+                path.Add(member.Name);
+                value = member.Target;
+            }
+            if (path.Count == 0 || value is not IdentifierExpr root || root.Name != lambda.Params[0].Name) return null;
+            path.Reverse();
+            return path.ToArray();
+        }
+
         private void CompileLambda(LambdaExpr lambda)
         {
             var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames, _errors);
             inner._chunk.OwnerClass = _enclosingClass;
             for (int i = 0; i < lambda.Params.Count; i++)
                 inner._chunk.MarkLocalName(0, i, lambda.Params[i].Name);
+            if (_refs.TryGetValue(lambda, out var nameRef) && nameRef is ResolvedRef.LambdaCaptures named)
+                for (int i = 0; i < named.Variables.Count; i++)
+                    inner._chunk.MarkLocalName(0, lambda.Params.Count + i, named.Variables[i].Name);
             EmitLambdaParamChecks(inner, lambda.Params);
             foreach (var stmt in lambda.Body.Statements)
                 inner.CompileStmt(stmt);
@@ -1654,15 +1972,34 @@ namespace fire.Compiler
             inner._chunk.EmitOp(OpCode.Return);
 
             var proto = new FunctionProto(inner._chunk, lambda.Params.Count, AccessModifier.Public, CompileParamDefaults(_enclosingClass, lambda.Params));
+            if (Reflection) proto.SelectorPath = TrySelectorPath(lambda);
             int protoIdx = _chunk.AddFunctionProto(proto);
+
+            // Lambda-Captures (SPEC 4.2): die Werte der benutzten äußeren Locals werden JETZT geladen (Kopie), im umschließenden Scope.
+            var captures = _refs.TryGetValue(lambda, out var captureRef) && captureRef is ResolvedRef.LambdaCaptures lc ? lc.Variables : null;
+            if (captures != null)
+            {
+                if (captures.Count > 255) throw new NotSupportedException("Eine Lambda kann höchstens 255 äußere Variablen erfassen.");
+                foreach (var captured in captures) CompileExpr(captured);
+            }
 
             bool hasOnTarget = lambda.OnTarget != null;
             if (hasOnTarget)
                 CompileExpr(lambda.OnTarget!); // im UMSCHLIESSENDEN (aktuellen) Scope, nicht im Lambda-Scope
 
-            _chunk.EmitOp(OpCode.MakeLambda);
-            _chunk.EmitU16(protoIdx);
-            _chunk.EmitByte(hasOnTarget ? (byte)1 : (byte)0);
+            if (captures != null)
+            {
+                _chunk.EmitOp(OpCode.MakeLambdaCapturing);
+                _chunk.EmitU16(protoIdx);
+                _chunk.EmitByte(hasOnTarget ? (byte)1 : (byte)0);
+                _chunk.EmitByte((byte)captures.Count);
+            }
+            else
+            {
+                _chunk.EmitOp(OpCode.MakeLambda);
+                _chunk.EmitU16(protoIdx);
+                _chunk.EmitByte(hasOnTarget ? (byte)1 : (byte)0);
+            }
         }
 
         /// <summary>Aufrufe registrierter nativer Funktionen (`print(...)` usw.)

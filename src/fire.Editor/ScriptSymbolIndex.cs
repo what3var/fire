@@ -151,7 +151,12 @@ namespace fire.Editor
         /// NavigationEngine/MainWindow.ShowPreludeSource) statt im
         /// Hauptdokument zu einer (dort gar nicht existierenden) Zeile zu
         /// scrollen.</summary>
-        public bool IsFromPrelude { get; set; }
+        public bool IsFromPrelude => PreludeName != null;
+
+        /// <summary>Aus welcher Prelude die Klasse stammt: <see cref="ScriptSymbolIndex.StandardPreludeName"/>
+        /// für die Standardbibliothek, sonst der Name der Erweiterung (`graphics`, `time`, ...);
+        /// null = steht im bearbeiteten Dokument selbst.</summary>
+        public string? PreludeName { get; set; }
 
         /// <summary>true bei einem `interface` (nur Signaturen, nie mit `new`
         /// instanziierbar).</summary>
@@ -199,6 +204,23 @@ namespace fire.Editor
         /// Definition springen", siehe NavigationEngine).</summary>
         public Dictionary<string, int> EnumDeclLines { get; } = new();
 
+        /// <summary>Aus welcher Prelude ein Enum stammt (Schlüssel wie <see cref="EnumDeclLines"/>); fehlt bei Enums des Dokuments.</summary>
+        public Dictionary<string, string> EnumPreludes { get; } = new();
+
+        /// <summary>Name der Standardbibliothek in <see cref="ClassInfo.PreludeName"/>.</summary>
+        public const string StandardPreludeName = "standard";
+
+        /// <summary>Wie die Prelude heißt, die DIESER Index beschreibt (null = ein normales Dokument).</summary>
+        public string? PreludeName { get; private set; }
+
+        /// <summary>Der Quelltext der Prelude `preludeName` (für die Anzeige beim Springen), null wenn unbekannt.</summary>
+        public static string? PreludeSourceOf(string preludeName) =>
+            preludeName == StandardPreludeName ? fire.Standard.Prelude.Source : ImportedPreludes.TrySourceFor(preludeName);
+
+        /// <summary>Anzeigename einer Prelude für Fenstertitel.</summary>
+        public static string PreludeTitleOf(string preludeName) =>
+            preludeName == StandardPreludeName ? "Standardbibliothek (Prelude)" : $"Prelude '{preludeName}'";
+
         /// <summary>Alle irgendwo im Dokument gesehenen Bezeichner-Namen
         /// (Variablen, Parameter, Felder, ...) - unscharfer, aber robuster
         /// Fallback für die allgemeine Bezeichner-Vervollständigung, wenn
@@ -217,7 +239,6 @@ namespace fire.Editor
         private readonly List<Token> _tokens = new();
         private readonly string _source = string.Empty;
         private readonly int[] _lineStarts;
-        private bool _suppressDeclLines;
 
         /// <summary>Alle im Dokument deklarierten Namespaces (vollqualifiziert,
         /// samt aller Vorstufen: `A.B` legt auch `A` an).</summary>
@@ -265,7 +286,11 @@ namespace fire.Editor
         private static IEnumerable<string> FindUsings(string source) =>
             UsingLine.Matches(source).Select(m => m.Groups[1].Value).Distinct();
 
-        public static ScriptSymbolIndex Build(string source)
+        public static ScriptSymbolIndex Build(string source) => Build(source, Array.Empty<string>());
+
+        /// <summary>Wie Build(source); `extraImports` gelten zusätzlich zu den `#import`-Zeilen in `source` als
+        /// zugeschaltet (z.B. wenn eine Prelude angezeigt wird, die selbst von einer anderen Erweiterung abhängt).</summary>
+        public static ScriptSymbolIndex Build(string source, IEnumerable<string> extraImports)
         {
             List<Token> tokens;
             try
@@ -285,10 +310,19 @@ namespace fire.Editor
             // Preludes der per '#import' zugeschalteten Erweiterungen (siehe
             // ImportedPreludes) - `Framebuffer`/`Device`/... sollen genauso
             // vervollständigt werden wie die Standardbibliothek.
-            foreach (var importName in ImportedPreludes.FindImportNames(source))
+            var merged = new HashSet<string>();
+            foreach (var name in ImportedPreludes.FindImportNames(source).Concat(extraImports))
             {
-                var importIndex = ImportedPreludeIndex(importName);
-                if (importIndex != null) index.MergeInPrelude(importIndex);
+                // `#import "ui"` bringt `graphics` mit, `linq` bringt `reflection` mit (siehe ImportedPreludes.WithDependencies).
+                IEnumerable<string> keys;
+                try { keys = ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name)).ToList(); }
+                catch (Exception) { continue; } // unbekannte Erweiterung - meldet die Diagnostik
+                foreach (var key in keys)
+                {
+                    if (!merged.Add(key)) continue;
+                    var importIndex = ImportedPreludeIndex(key);
+                    if (importIndex != null) index.MergeInPrelude(importIndex);
+                }
             }
             return index;
         }
@@ -329,7 +363,7 @@ namespace fire.Editor
                     // die eigenen Erweiterungs-Mitglieder bleiben zusätzlich
                     // erhalten (nur EINGEFÜGT, nicht ersetzt).
                     existing.DeclLine = preludeClass.DeclLine;
-                    existing.IsFromPrelude = true;
+                    existing.PreludeName = preludeClass.PreludeName;
                     existing.BaseName ??= preludeClass.BaseName;
                     existing.Members.AddRange(preludeClass.Members);
                 }
@@ -347,6 +381,7 @@ namespace fire.Editor
                 {
                     EnumMembers[name] = members;
                     if (prelude.EnumDeclLines.TryGetValue(name, out var line)) EnumDeclLines[name] = line;
+                    if (prelude.PreludeName != null) EnumPreludes[name] = prelude.PreludeName;
                 }
             foreach (var name in prelude.AllDeclaredNames)
                 AllDeclaredNames.Add(name);
@@ -360,7 +395,7 @@ namespace fire.Editor
         /// Dokument gemischt wird.</summary>
         private static readonly System.Lazy<ScriptSymbolIndex> PreludeIndex = new(() =>
         {
-            var index = Build(fire.Standard.Prelude.Source, isPrelude: true);
+            var index = Build(fire.Standard.Prelude.Source, StandardPreludeName);
             return index;
         });
 
@@ -368,16 +403,16 @@ namespace fire.Editor
 
         /// <summary>Der Index der Prelude einer per `#import "name"`
         /// zugeschalteten Erweiterung (einmalig gebaut und gemerkt), null
-        /// bei einem unbekannten Namen. OHNE Definitionszeilen (siehe
-        /// DeclLineOf): deren Quelltext lässt sich im Editor nirgends
-        /// anzeigen.</summary>
+        /// bei einem unbekannten Namen. Die Definitionszeilen beziehen sich auf
+        /// den Prelude-Quelltext (<see cref="PreludeSourceOf"/>), den der Editor
+        /// beim Springen in einem eigenen Fenster zeigt.</summary>
         private static ScriptSymbolIndex? ImportedPreludeIndex(string importName)
         {
             lock (ImportedPreludeIndexes)
             {
                 if (ImportedPreludeIndexes.TryGetValue(importName, out var cached)) return cached;
                 string? preludeSource = ImportedPreludes.TrySourceFor(importName);
-                var index = preludeSource == null ? null : Build(preludeSource, isPrelude: true, suppressDeclLines: true);
+                var index = preludeSource == null ? null : Build(preludeSource, importName.ToLowerInvariant());
                 ImportedPreludeIndexes[importName] = index;
                 return index;
             }
@@ -388,7 +423,7 @@ namespace fire.Editor
         /// MergeInPrelude(), die Prelude braucht sich ja nicht selbst
         /// einzumischen) und markiert danach jede gefundene Klasse als
         /// IsFromPrelude.</summary>
-        private static ScriptSymbolIndex Build(string source, bool isPrelude, bool suppressDeclLines = false)
+        private static ScriptSymbolIndex Build(string source, string preludeName)
         {
             List<Token> tokens;
             try
@@ -400,11 +435,10 @@ namespace fire.Editor
                 tokens = new List<Token>();
             }
 
-            var index = new ScriptSymbolIndex(source, tokens) { _suppressDeclLines = suppressDeclLines };
+            var index = new ScriptSymbolIndex(source, tokens) { PreludeName = preludeName };
             index.Harvest();
-            if (isPrelude)
-                foreach (var classInfo in index.Classes.Values)
-                    classInfo.IsFromPrelude = true;
+            foreach (var classInfo in index.Classes.Values)
+                classInfo.PreludeName = preludeName;
             return index;
         }
 
@@ -517,12 +551,8 @@ namespace fire.Editor
             _pendingExtensions.Clear();
         }
 
-        /// <summary>Die Zeile, die ein Symbol als Definitionsort bekommt - 0
-        /// bei einem Index, dessen Zeilen nirgends angezeigt werden können
-        /// (die Preludes zugeschalteter Erweiterungen, siehe
-        /// BuildImportedPrelude), damit "zu Definition springen" dort nicht
-        /// zu einer Zeile eines FREMDEN Quelltexts springt.</summary>
-        private int DeclLineOf(Token token) => _suppressDeclLines ? 0 : token.Line;
+        /// <summary>Die Zeile, die ein Symbol als Definitionsort bekommt.</summary>
+        private static int DeclLineOf(Token token) => token.Line;
 
         private void AddMember(ClassInfo info, MemberInfo member)
         {

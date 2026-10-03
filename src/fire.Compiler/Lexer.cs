@@ -577,7 +577,10 @@ namespace fire.Compiler
                 case '}': return Tok(TokenType.RBrace, "}", line, col, newlineBefore);
                 case '[': return Tok(TokenType.LBracket, "[", line, col, newlineBefore);
                 case ']': return Tok(TokenType.RBracket, "]", line, col, newlineBefore);
-                case '#': return Tok(TokenType.Hash, "#", line, col, newlineBefore);
+                case '#':
+                    // `##` ist ein Synonym für `!=` (`#` allein ist das bitweise Xor bzw. der Anfang einer Direktive)
+                    if (Match('#')) return Tok(TokenType.NotEq, "##", line, col, newlineBefore);
+                    return Tok(TokenType.Hash, "#", line, col, newlineBefore);
 
                 case '/':
                     return Tok(TokenType.Slash, "/", line, col, newlineBefore);

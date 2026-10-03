@@ -170,9 +170,9 @@ catch (ResolverException ex)
 }
 
 Console.WriteLine();
-Console.WriteLine("=== Resolver-Test (muss fehlschlagen: Lambda sieht Block-Scope nicht) ===");
+Console.WriteLine("=== Resolver-Test (Lambda erfasst Block-Locals als Kopie; ein Name aus einem anderen Block bleibt unbekannt) ===");
 
-string resolverSampleInvalid = """
+string resolverSampleCapture = """
 {
     var blockOnlyLocal = 42
     var lam = func () => {
@@ -183,9 +183,29 @@ string resolverSampleInvalid = """
 
 try
 {
-    var program = Parser.Parse(resolverSampleInvalid);
-    Resolver.Resolve(program);
-    Console.WriteLine("FEHLER: hätte ResolverException werfen müssen (Lambda sieht Block-Scope nicht)");
+    Resolver.Resolve(Parser.Parse(resolverSampleCapture));
+    Console.WriteLine("OK - die Lambda erfasst 'blockOnlyLocal' (Capture).");
+}
+catch (ResolverException ex)
+{
+    Console.WriteLine($"FEHLER: unerwarteter Resolver-Fehler: {ex.Message}");
+}
+
+string resolverSampleInvalid = """
+{
+    var blockOnlyLocal = 42
+}
+{
+    var lam = func () => {
+        return blockOnlyLocal
+    }
+}
+""";
+
+try
+{
+    Resolver.Resolve(Parser.Parse(resolverSampleInvalid));
+    Console.WriteLine("FEHLER: hätte ResolverException werfen müssen (Name aus einem anderen Block)");
 }
 catch (ResolverException ex)
 {
@@ -7440,6 +7460,21 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print("danach " + (w2.NextEvent() == undefined))
         """, new[] { "leer True", "8 2 20 30", "3 a", "danach True" });
 
+    // VSync: Vorgabe an (Tick wartet auf die Bildwiederholung), per Property abschaltbar - auch in einer abgeleiteten Fensterklasse
+    CheckUi("Window.VSync: Vorgabe an, per Property ein-/ausschaltbar (auch in einer abgeleiteten Klasse)", """
+        var fb2 = new Framebuffer(8, 8)
+        var w2 = new Window(fb2, "VSync")
+        print(w2.VSync)
+        w2.VSync = false
+        print(w2.VSync)
+        w2.VSync = true
+        print(w2.VSync)
+        class MyWin : Window { construct(Framebuffer b, string t) : base(b, t) { } }
+        var w3 = new MyWin(fb2, "abgeleitet")
+        w3.VSync = false
+        print(w3.VSync)
+        """, new[] { "True", "False", "True", "False" });
+
     Console.WriteLine(uiFailures == 0 ? "Alle UI-Pruefungen bestanden." : $"FEHLER: {uiFailures} UI-Pruefung(en) fehlgeschlagen.");
 }
 
@@ -7669,7 +7704,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         }
     }
 
+    // Mit #nosync: sonst koennte das automatische Abarbeiten die Anmeldung des Threads vor dem ersten `sync globals` erledigen, dessen Rueckgabe bliebe 0
     CheckGl("Ein Thread schreibt ein Global: es wird erst bei `sync globals` des Hauptprogramms wirksam", """
+        #nosync
         var counter = 0
         fire { counter = 5 }
         var handled = 0
@@ -7950,6 +7987,1564 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     Console.WriteLine(glFailures == 0 ? "Alle Globals-Pruefungen bestanden." : $"FEHLER: {glFailures} Globals-Pruefung(en) fehlgeschlagen.");
 }
 
+// ---------------------------------------------------------------------------
+// Geraete: geteilter DeviceManager, Standardgeraet, EnsureConnected, IsShared, Paketverfolgung, Paketprotokoll
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Geraete ===");
+    int devFailures = 0;
+
+    fire.Device.Manager.DeviceManager.DeviceManager NewLoopbackManager(bool shared)
+    {
+        var manager = new fire.Device.Manager.DeviceManager.DeviceManager { IsShared = shared };
+        manager.RegisterDriver(new fire.Device.Manager.Drivers.Loopback.LoopbackDriver());
+        manager.RefreshDevices(true);
+        return manager;
+    }
+
+    List<string> RunDev(string script, fire.Device.Manager.DeviceManager.DeviceManager manager, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        VM.ResetTerminateForTests();
+        var session = fire.Compiler.RuntimeSession.Build(new[] { script }, mode, args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); }, deviceManager: manager);
+        session.Run();
+        VM.ResetTerminateForTests();
+        if (session.VirtualMachine!.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(session.VirtualMachine.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckDev(string title, string script, string[] expected, bool shared = true, string? defaultId = null,
+        Action<fire.Device.Manager.DeviceManager.DeviceManager>? after = null)
+    {
+        foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            var manager = NewLoopbackManager(shared);
+            manager.DefaultIdentifier = defaultId;
+            try
+            {
+                var task = Task.Run(() => RunDev(script, manager, mode).ToArray());
+                actual = task.Wait(TimeSpan.FromSeconds(30)) ? task.Result : new[] { "ZEITUEBERSCHREITUNG (haengt)" };
+            }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + (ex.InnerException != null ? CompileErrors.Describe(ex.InnerException) : ex.Message) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (ok && after != null)
+            {
+                try { after(manager); }
+                catch (Exception ex) { ok = false; actual = new[] { "NACHPRUEFUNG: " + ex.Message }; }
+            }
+            if (!ok) devFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+            manager.Shutdown();
+        }
+    }
+
+    CheckDev("Ohne Standardgeraet: HasDefault ist false, Device.Default wirft DeviceNotFoundException", """
+        #import "devices"
+        print(Device.HasDefault)
+        try {
+            var d = Device.Default
+            print("kein Fehler")
+        } catch (DeviceNotFoundException e) {
+            print("keins: " + e.message)
+        }
+        """, new[] { "False", "keins: Kein Standardgerät gewählt" });
+
+    CheckDev("Standardgeraet: Device.Default, IsConnected (Property und Methode), EnsureConnected, Senden/Empfangen", """
+        #import "devices"
+        #import "time"
+        var d = Device.Default
+        print(d.Identifier())
+        print(d.IsConnected)
+        print(d.IsConnected())
+        d.EnsureConnected().EnsureConnected()
+        print(d.IsConnected)
+        print(d.SendCommand("hallo"))
+        var tries = 0
+        while (!d.HasData() && tries < 200) { Sleep(TimeSpan.FromMilliseconds(10)); tries = tries + 1 }
+        print(d.ReadData())
+        d.Disconnect()
+        print(d.IsConnected)
+        print(d.SendCommand("weg"))
+        """, new[] { "loopback:echo", "False", "False", "True", "True", "hallo\n", "False", "False" }, defaultId: "loopback:echo");
+
+    CheckDev("IsShared: Geraet und Manager eines geteilten Managers melden es, ein eigener Manager nicht", """
+        #import "devices"
+        var m = new DeviceManagerFacade()
+        print(m.IsShared())
+        print(m.GetByIdentifier("loopback:echo").IsShared)
+        """, new[] { "True", "True" }, shared: true);
+    CheckDev("IsShared: ein nicht geteilter Manager meldet false", """
+        #import "devices"
+        var m = new DeviceManagerFacade()
+        print(m.IsShared())
+        print(m.GetByIdentifier("loopback:echo").IsShared)
+        """, new[] { "False", "False" }, shared: false);
+
+    CheckDev("Geteilter Manager ueberlebt den Lauf: verbundenes Geraet bleibt verbunden, Manager ist nicht abgebaut", """
+        #import "devices"
+        Device.Default.EnsureConnected()
+        print("verbunden")
+        """, new[] { "verbunden" }, shared: true, defaultId: "loopback:echo", after: m =>
+        {
+            if (m.DeviceCount != 1) throw new Exception("Geraet verschwunden");
+            if (!m.GetDeviceByHandle(m.GetHandleByIdentifier("loopback:echo")!.Value)!.IsConnected) throw new Exception("Verbindung wurde getrennt");
+            m.Dispose(); // wirkungslos bei geteiltem Manager
+            if (m.DeviceCount != 1) throw new Exception("Dispose hat den geteilten Manager abgebaut");
+        });
+
+    CheckDev("Eigener Manager wird nach dem Lauf freigegeben (Geraete getrennt)", """
+        #import "devices"
+        var d = new DeviceManagerFacade().GetByIdentifier("loopback:echo")
+        d.EnsureConnected()
+        print(d.IsConnected)
+        """, new[] { "True" }, shared: false, after: m =>
+        {
+            if (m.DeviceCount != 0) throw new Exception("Manager nicht abgebaut");
+        });
+
+    CheckDev("Paketverfolgung: gesendete und empfangene Pakete werden mitgeschnitten", """
+        #import "devices"
+        var d = Device.Default.EnsureConnected()
+        d.SendCommand("ab")
+        while (!d.HasData()) { }
+        print(d.ReadData())
+        """, new[] { "ab\n" }, defaultId: "loopback:echo");
+
+    // Paketverfolgung direkt am Manager (ohne Skript)
+    {
+        var manager = NewLoopbackManager(true);
+        var captured = new List<fire.Device.Manager.DeviceManager.PacketRecord>();
+        manager.PacketCaptured += p => { lock (captured) captured.Add(p); };
+        var device = manager.GetDeviceByHandle(manager.GetHandleByIdentifier("loopback:echo")!.Value)!;
+        device.Connect();
+        device.SendCommand("ping");
+        for (int i = 0; i < 200 && captured.Count < 2; i++) Thread.Sleep(10);
+        bool ok;
+        lock (captured)
+            ok = captured.Count == 2
+                && captured[0].Direction == fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice
+                && captured[1].Direction == fire.Device.Manager.DeviceManager.PacketDirection.DeviceToHost
+                && captured.All(c => c.DeviceIdentifier == "loopback:echo" && System.Text.Encoding.UTF8.GetString(c.Data) == "ping\n");
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Paketverfolgung am Manager: Senden und Empfangen werden in Reihenfolge mitgeschnitten" : "FEHLER: Paketverfolgung am Manager");
+
+        // Zustandsaenderungen
+        var states = new List<bool>();
+        manager.DeviceStateChanged += slot => { lock (states) states.Add(slot.Device.IsConnected); };
+        device.Disconnect();
+        device.Connect();
+        ok = states.SequenceEqual(new[] { false, true });
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: DeviceStateChanged meldet Trennen und Verbinden" : "FEHLER: DeviceStateChanged: " + string.Join(",", states));
+
+        // Standardgeraet
+        int changes = 0;
+        manager.DefaultChanged += () => changes++;
+        manager.DefaultIdentifier = "loopback:echo";
+        manager.DefaultIdentifier = "loopback:echo";
+        ok = changes == 1 && manager.DefaultHandle == manager.GetHandleByIdentifier("loopback:echo");
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Standardgeraet: DefaultChanged feuert nur bei einer Aenderung, DefaultHandle passt" : "FEHLER: Standardgeraet");
+
+        // Treiber entfernen
+        ok = manager.RemoveDriver("loopback") && manager.DeviceCount == 0 && manager.DefaultHandle == null;
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: RemoveDriver entfernt Treiber samt Geraeten" : "FEHLER: RemoveDriver");
+        manager.Shutdown();
+    }
+
+    // Alle Erweiterungen zusammen: native Funktionen werden über ihren Index angesprungen, die Reihenfolge der Registrierung
+    // beim Übersetzen und beim Ausführen muss übereinstimmen (früher: graphics + time -> falsche Funktion)
+    CheckDev("Alle Erweiterungen in einem Programm (graphics, time, reflection, linq, devices, io)", """
+        #import "graphics"
+        #import "time"
+        #import "reflection"
+        #import "linq"
+        #import "devices"
+        #import "io"
+        var fb = new Framebuffer(8, 4)
+        print(fb.Width() + "x" + fb.Height())
+        print(DateTime.Now().Year > 2000)
+        print(Type.Of(fb).Name)
+        print(new DeviceManagerFacade().Count())
+        print(IO.File.Exists("/gibt/es/nicht"))
+        var con = new Console(fb)
+        con.FillRect(0, 0, 2, 2, 255)
+        print(con.GetPixel(1, 1))
+        """, new[] { "8x4", "True", "Framebuffer", "1", "False", "255" });
+
+    // Paketprotokoll: Speichern und Laden verlustfrei
+    {
+        var t0 = new DateTime(2026, 10, 3, 12, 0, 0, 123, DateTimeKind.Utc).AddTicks(4567);
+        var packets = new List<fire.Device.Manager.DeviceManager.PacketRecord>
+        {
+            new(t0, "serial:COM3", fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice, System.Text.Encoding.UTF8.GetBytes("M105\n")),
+            new(t0.AddMilliseconds(30), "serial:COM3", fire.Device.Manager.DeviceManager.PacketDirection.DeviceToHost, new byte[] { 0x00, 0xFF, 0x7F, 0xC3, 0xA4 }),
+            new(t0.AddMilliseconds(40), "serial:COM3", fire.Device.Manager.DeviceManager.PacketDirection.DeviceToHost, Array.Empty<byte>()),
+        };
+        var text = fire.Device.Manager.DeviceManager.PacketLog.Serialize(packets);
+        var back = fire.Device.Manager.DeviceManager.PacketLog.Parse(text);
+        bool ok = back.Count == 3 && Enumerable.Range(0, 3).All(i =>
+            back[i].Time == packets[i].Time && back[i].Direction == packets[i].Direction && back[i].DeviceIdentifier == packets[i].DeviceIdentifier && back[i].Data.SequenceEqual(packets[i].Data));
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Paketprotokoll: Speichern und Laden ist verlustfrei (Zeit, Richtung, Geraet, Binaerdaten, leeres Paket)" : "FEHLER: Paketprotokoll Roundtrip\n" + text);
+
+        string[] bad = { "x\tH2D\ta\t00", "2026-10-03T12:00:00Z\tUP\ta\t00", "2026-10-03T12:00:00Z\tH2D\ta\tZZ", "nur eine Spalte" };
+        ok = bad.All(b =>
+        {
+            try { fire.Device.Manager.DeviceManager.PacketLog.Parse(b); return false; }
+            catch (FormatException) { return true; }
+        });
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Paketprotokoll: fehlerhafte Zeilen werden mit FormatException abgelehnt" : "FEHLER: Paketprotokoll nimmt fehlerhafte Zeilen an");
+    }
+
+    Console.WriteLine(devFailures == 0 ? "Alle Geraete-Pruefungen bestanden." : $"FEHLER: {devFailures} Geraete-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Debugger-Lauf des Editors: VM.RunUntilBreakpoint/RunUntilEnd (F5), Zeilentabelle (binaere Suche), Native-Weiterleitung
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Debugger-Lauf ===");
+    int dbgFailures = 0;
+    void DbgCheck(bool ok, string title, string? detail = null)
+    {
+        if (!ok) dbgFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}{(detail != null ? "\n  " + detail : "")}");
+    }
+
+    (fire.Compiler.RuntimeSession Session, List<string> Lines) BuildDbg(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var session = fire.Compiler.RuntimeSession.Build(new[] { script }, mode, args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        return (session, lines);
+    }
+
+    foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+    {
+        // Schleifen (for/while/foreach): ein Haltepunkt in der letzten Zeile des Bodys trifft genau einmal je Durchlauf - nicht noch einmal
+        // beim Verlassen der Schleife. Dazu als Referenz die fruehere Schleife (StepInstruction + CurrentLocation je Instruktion):
+        // RunUntilBreakpoint muss an denselben Stellen anhalten.
+        foreach (var (kind, loopScript) in new[]
+        {
+            ("for", "var total = 0\nfor (var i = 0; i < 3; i = i + 1) {\n    total = total + i\n}\nprint(\"fertig \" + total)\n"),
+            ("while", "var total = 0\nvar i = 0\nwhile (i < 3) {\n    total = total + i\n    i = i + 1\n}\nprint(\"fertig \" + total)\n"),
+            ("foreach", "var total = 0\nvar items = [0, 1, 2]\nforeach (x in items) {\n    total = total + x\n}\nprint(\"fertig \" + total)\n"),
+        })
+        {
+            int bpLine = kind == "for" ? 3 : kind == "while" ? 5 : 4;
+            VM.ResetTerminateForTests();
+            var (refSession, refLines) = BuildDbg(loopScript, mode);
+            var refVm = refSession.VirtualMachine!;
+            var refBps = new HashSet<(int SourceIndex, int Line)> { (refSession.FirstUserSourceIndex, bpLine) };
+            int refHits = 0;
+            {
+                var lastLocation = refVm.CurrentLocation;
+                while (refVm.StepInstruction())
+                {
+                    var location = refVm.CurrentLocation;
+                    if (location != lastLocation) { lastLocation = location; if (refBps.Contains(location)) refHits++; }
+                }
+            }
+            VM.ResetTerminateForTests();
+
+            VM.ResetTerminateForTests();
+            var (session, lines) = BuildDbg(loopScript, mode);
+            var vm = session.VirtualMachine!;
+            var bps = new HashSet<(int SourceIndex, int Line)> { (session.FirstUserSourceIndex, bpLine) };
+            int hits = 0;
+            var lineAtHit = new List<int>();
+            while (vm.RunUntilBreakpoint(bps, () => false))
+            {
+                hits++;
+                lineAtHit.Add(vm.CurrentLine);
+                if (hits > 10) break;
+            }
+            DbgCheck(hits == 3 && hits == refHits && lineAtHit.All(l => l == bpLine) && lines.SequenceEqual(new[] { "fertig 3" }) && refLines.SequenceEqual(lines),
+                $"RunUntilBreakpoint ({kind}): Haltepunkt im Body trifft genau einmal je Durchlauf (wie die Einzelschritt-Schleife), danach laeuft das Programm zu Ende [{mode}]",
+                $"Treffer {hits} (Referenz {refHits}), Zeilen {string.Join(",", lineAtHit)}, Ausgabe {string.Join("|", lines)}");
+            VM.ResetTerminateForTests();
+        }
+    }
+
+    {
+        // Ohne Haltepunkt laeuft ein Programm in einem Zug zu Ende; ein Haltepunkt in der ERSTEN Zeile zaehlt beim Start nicht
+        VM.ResetTerminateForTests();
+        var (session, lines) = BuildDbg("print(\"a\")\nprint(\"b\")\n", VmExecutionMode.Debug);
+        var vm = session.VirtualMachine!;
+        bool stopped = vm.RunUntilBreakpoint(new HashSet<(int, int)> { (session.FirstUserSourceIndex, 1) }, () => false);
+        DbgCheck(!stopped && lines.SequenceEqual(new[] { "a", "b" }), "RunUntilBreakpoint: ein Haltepunkt auf der Startzeile haelt nicht sofort an, das Programm laeuft zu Ende");
+        VM.ResetTerminateForTests();
+    }
+
+    {
+        // Pause-Anforderung unterbricht eine Endlosschleife (RunUntilEnd und RunUntilBreakpoint)
+        foreach (var useBreakpointRun in new[] { false, true })
+        {
+            VM.ResetTerminateForTests();
+            var (session, _) = BuildDbg("var n = 0\nwhile (true) { n = n + 1 }\n", VmExecutionMode.Release);
+            var vm = session.VirtualMachine!;
+            volatile_bool pause = new();
+            var timer = Task.Run(() => { Thread.Sleep(100); pause.Value = true; });
+            var run = Task.Run(() => useBreakpointRun ? vm.RunUntilBreakpoint(new HashSet<(int, int)>(), () => pause.Value) : vm.RunUntilEnd(() => pause.Value));
+            bool finishedInTime = run.Wait(TimeSpan.FromSeconds(20));
+            DbgCheck(finishedInTime && run.Result, $"Pause-Anforderung haelt eine Endlosschleife an ({(useBreakpointRun ? "RunUntilBreakpoint" : "RunUntilEnd")})");
+            VM.ResetTerminateForTests();
+        }
+    }
+
+    {
+        // Zeilentabelle: binaere Suche liefert dieselben Stellen wie die Zeile jeder Instruktion erwarten laesst
+        VM.ResetTerminateForTests();
+        var (session, _) = BuildDbg("var a = 1\nvar b = 2\n\nvar c = a + b\nprint(c)\n", VmExecutionMode.Debug);
+        var chunk = session.CompiledProgram.TopLevel;
+        var seen = new List<int>();
+        int ip = 0, lastLine = -1;
+        for (; ip < chunk.Code.Count; ip++)
+        {
+            var (src, line) = chunk.GetLocation(ip);
+            if (src == session.FirstUserSourceIndex && line != lastLine) { seen.Add(line); lastLine = line; }
+        }
+        DbgCheck(seen.SequenceEqual(new[] { 1, 2, 4, 5 }), "Chunk.GetLocation (binaere Suche): die Zeilen des Programms in Reihenfolge", string.Join(",", seen));
+        var (s0, l0) = chunk.GetLocationRange(0, out int rs, out int re);
+        DbgCheck(rs == 0 && re > 0 && re < chunk.Code.Count, "Chunk.GetLocationRange: Bereich der ersten Stelle beginnt bei 0 und endet vor dem Chunk-Ende");
+    }
+
+    {
+        // Weiterleitung an native Funktionen (Methoden der Brücken-Preludes): gleiches Ergebnis wie der direkte Aufruf, auch mit Rueckgabewert
+        foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            VM.ResetTerminateForTests();
+            var (session, lines) = BuildDbg("""
+                #import "graphics"
+                var fb = new Framebuffer(16, 16)
+                var con = new Console(fb)
+                var viaMethod = 0
+                var direct = 0
+                for (var i = 0; i < 5; i = i + 1) {
+                    con.FillRect(i, 0, 1, 1, 255 + i)
+                    viaMethod = viaMethod + con.GetPixel(i, 0) + con.CellWidth()
+                    direct = direct + __GRPHConGetPixel(con.id, i, 0) + __GRPHConCellWidth(con.id)
+                }
+                print(viaMethod == direct)
+                print(viaMethod)
+                """, mode);
+            session.Run();
+            DbgCheck(lines.SequenceEqual(new[] { "True", "1325" }), $"Methoden der Grafik-Bruecke (Weiterleitung an native Funktionen) liefern dasselbe wie der direkte Aufruf [{mode}]", string.Join("|", lines));
+            VM.ResetTerminateForTests();
+        }
+    }
+
+    Console.WriteLine(dbgFailures == 0 ? "Alle Debugger-Lauf-Pruefungen bestanden." : $"FEHLER: {dbgFailures} Debugger-Lauf-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Lambda-Captures, Kurzsyntax `x => ...` und die Abfrage-Bibliothek (#import "linq")
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Lambda-Captures und LINQ ===");
+    int lqFailures = 0;
+
+    List<string> RunLq(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var natives = NativeRegistry.CreateDefault();
+        natives.Register("print", args =>
+        {
+            var shown = VM.StringifyForPrint(args);
+            if (shown != null) lock (lines) lines.Add(shown[0].ToString());
+            return Value.MakeUndefined();
+        });
+        natives.RegisterBaseTypeNatives();
+        var sources = new List<string> { fire.Standard.Prelude.Source };
+        if (script.Contains("#import \"linq\""))
+        {
+            // linq bringt reflection mit (SelectProperty/SelectField)
+            fire.Runtime.ReflectionNatives.Register(natives);
+            sources.Add(fire.Standard.ReflectionPrelude.Source);
+            sources.Add(fire.Standard.LinqPrelude.Source);
+        }
+        if (script.Contains("#import \"time\""))
+        {
+            fire.Runtime.TimeNatives.Register(natives);
+            sources.Add(fire.Standard.TimePrelude.Source);
+        }
+        sources.Add(script);
+        var program = Parser.ParseMultiple(sources
+            .Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                fire.Compiler.RuntimeSession.CreateProjectDirectiveRegistry())).ToList());
+        var compiled = Compiler.Compile(program, Resolver.Resolve(program, natives.Names), natives);
+        VM.ResetTerminateForTests();
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
+        vm.Run();
+        VM.ResetTerminateForTests();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckLq(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
+    {
+        foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            try { actual = RunLq(script, mode).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + CompileErrors.Describe(ex) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) lqFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    CheckLq("Kurzsyntax: x => ..., (a, b) => ..., () => ..., mit Block", """
+        var inc = x => x + 1
+        var add = (a, b) => a + b
+        var five = () => 5
+        var blk = x => { var t = x * 2; return t + 1 }
+        print(inc(1) + " " + add(2, 3) + " " + five() + " " + blk(4))
+        """, new[] { "2 5 5 9" });
+
+    CheckLq("func (...) on ziel => ...: das Ziel von `on` ist kein Kurzform-Lambda (Bezeichner und geklammert)", """
+        class W { string n; construct(string n) { this.n = n } Run(class f) { f(1, 2, 3) } }
+        var win = new W("w")
+        win.Run(func (x, y, b) on win => { print($"{x} {y} {b} {this.n}") })
+        win.Run(func (x, y, b) on (win) => print("paren " + this.n))
+        win.Run(func (x, y, b) on win => print("expr " + x))
+        var f = x => x + 1
+        print(f(1))
+        """, new[] { "1 2 3 w", "paren w", "expr 1", "2" });
+
+    CheckLq("func (...) on ziel => ...: Mitglieder des Ziels sind unqualifiziert sichtbar (lesen, schreiben, ++, Methoden)", """
+        class W { string n; int c; construct(string n) { this.n = n; this.c = 0 } Hello(string s) { return "hello " + s + " " + this.n } Run(class f) { f(1, 2, 3) } }
+        var win = new W("w")
+        win.Run(func (x, y, b) on win => { c = c + x; c++; print($"x: {x} y: {y} b: {b} n: {n} c: {c}"); print(Hello("a")) })
+        print(win.c)
+        var plain = func (x) => x + 1
+        print(plain(1))
+        """, new[] { "x: 1 y: 2 b: 3 n: w c: 2", "hello a w", "2", "2" });
+
+    const string timeHead = "#import \"time\"\nclass Exception { string message; construct(string message) { this.message = message } }\n";
+
+    CheckLq("TimeSpan: Fabriken, Komponenten, Summen, Vergleiche, Text", timeHead + """
+        var a = TimeSpan.FromSeconds(90)
+        var b = new TimeSpan(1, 2, 3, 4, 500)
+        print(a.ToString() + " " + a.TotalMinutes + " " + a.Minutes + " " + a.Seconds)
+        print(b.ToString() + " " + b.Days + " " + b.Hours + " " + b.Milliseconds)
+        print((a + b).ToString() + " | " + (b - a).ToString() + " | " + (a * 2).ToString() + " | " + (a / 3).ToString())
+        print((a < b) + " " + (a ## b) + " " + (a == TimeSpan.FromSeconds(90)) + " " + a.CompareTo(b) + " " + a.Negate().Abs().Equals(a))
+        print(TimeSpan.Of(1.5s).TotalMilliseconds + " " + TimeSpan.Of(250ms).TotalSeconds + " " + TimeSpan.Of(2).TotalMilliseconds + " " + TimeSpan.FromMinutes(2).TotalSeconds)
+        """, new[]
+        {
+            "00:01:30 1.5 1 30", "1.02:03:04.5000000 1 2 500",
+            "1.02:04:34.5000000 | 1.02:01:34.5000000 | 00:03:00 | 00:00:30",
+            "True True True -1 True",
+            "1500 0.25 2 120",
+        });
+
+    CheckLq("DateTime: Komponenten, Rechnen, Format, Parse, Differenz, Vergleiche, Unix", timeHead + """
+        var d = new DateTime(2024, 3, 15, 14, 30, 5)
+        var a = TimeSpan.FromSeconds(90)
+        print(d.ToString() + " " + d.Year + " " + d.Month + " " + d.Day + " " + d.DayOfWeek + " " + d.DayName() + " " + d.DayOfYear)
+        print(d.AddDays(20).ToString() + " | " + d.AddMonths(11).ToString("dd.MM.yyyy") + " | " + (d + a).ToString("HH:mm:ss") + " | " + d.AddYears(-1).Year)
+        var e = new DateTime(2024, 3, 17)
+        print((e - d).ToString() + " " + (e > d) + " " + (d - TimeSpan.FromHours(15)).ToString() + " " + (d ## e))
+        print(DateTime.Parse("2024-12-24 18:00").ToString() + " " + DateTime.IsLeapYear(2024) + " " + DateTime.DaysInMonth(2023, 2) + " " + (DateTime.TryParse("quatsch") == undefined))
+        print(d.Date().ToString() + " " + d.TimeOfDay().ToString())
+        print(DateTime.FromUnixSeconds(86400).ToString() + " " + DateTime.FromUnixSeconds(86400).ToUnixSeconds())
+        try { new DateTime(2024, 13, 1) } catch (x) { print("1 " + x.message) }
+        try { DateTime.Parse("quatsch") } catch (x) { print("2 " + x.message) }
+        print(DateTime.Now().Year >= 2024)
+        print(DateTime.UtcNow().Kind + " " + DateTime.Now().Kind)
+        """, new[]
+        {
+            "2024-03-15 14:30:05 2024 3 15 5 Friday 75",
+            "2024-04-04 14:30:05 | 15.02.2025 | 14:31:35 | 2023",
+            "1.09:29:55 True 2024-03-14 23:30:05 True",
+            "2024-12-24 18:00:00 True 28 True",
+            "2024-03-15 00:00:00 14:30:05",
+            "1970-01-02 00:00:00 86400",
+            "1 Ungültiges Datum/ungültige Zeit: 2024-13-1 0:0:0.0",
+            "2 Kein gültiges Datum: 'quatsch'",
+            "True",
+            "utc local",
+        });
+
+    CheckLq("Objekte mit ToString(): print, Textverkettung (beide Seiten), Interpolation; ohne ToString bleibt die alte Darstellung, eine Exception darin laeuft zum Aufrufer", timeHead + """
+        class P { string n; construct(string n) { this.n = n } ToString() { return "P(" + this.n + ")" } }
+        class Q { int x; construct() { this.x = 1 } }
+        class Bad { ToString() { throw new Exception("nein") } }
+        var d = new DateTime(2024, 3, 15, 14, 30, 5)
+        print(d)
+        print("jetzt: " + d + " / " + new P("x") + " / " + TimeSpan.FromSeconds(75))
+        print(d + " ist heute")
+        print($"{d} {new P("y")}")
+        print(new P("z"))
+        print(("q=" + new Q()).Length > 3)
+        try { print("b=" + new Bad()) } catch (e) { print("1 " + e.message) }
+        try { print(new Bad()) } catch (e) { print("2 " + e.message) }
+        print("ende")
+        """, new[]
+        {
+            "2024-03-15 14:30:05", "jetzt: 2024-03-15 14:30:05 / P(x) / 00:01:15", "2024-03-15 14:30:05 ist heute", "2024-03-15 14:30:05 P(y)",
+            "P(z)", "True", "1 nein", "2 nein", "ende",
+        });
+
+    CheckLq("Sleep: Zeitspanne, Zeitwert und Millisekunden; Dauer stimmt", timeHead + """
+        var t0 = DateTime.UtcNow()
+        Sleep(TimeSpan.FromMilliseconds(120))
+        Sleep(60ms)
+        Sleep(30)
+        var ms = (DateTime.UtcNow() - t0).TotalMilliseconds
+        print((ms >= 190) + " " + (ms < 2000))
+        try { Sleep("x") } catch (e) { print(e.message) }
+        """, new[] { "True True", "Sleep erwartet eine TimeSpan, einen Zeitwert oder Millisekunden, erhalten: String." });
+
+    CheckLq("Sleep arbeitet die Warteschlange ab (automatischer Globals-Sync); mit #nosync nicht; fire global-Auftraege auch", timeHead + """
+        var counter = 0
+        var jobs = 0
+        fire { sync global { counter = counter + 1 } }
+        fire { fire global { jobs = jobs + 10 } }
+        Sleep(400ms)
+        print("counter " + counter + " jobs " + jobs)
+        """, new[] { "counter 1 jobs 10" });
+
+    CheckLq("Sleep mit #nosync laesst die Warteschlange liegen, bis `sync globals` kommt", "#nosync\n" + timeHead + """
+        var counter = 0
+        fire { sync global { counter = counter + 1 } }
+        Sleep(300ms)
+        print("vorher " + counter)
+        var n = 0
+        while (counter == 0) { n = sync globals }
+        print("nachher " + counter)
+        """, new[] { "vorher 0", "nachher 1" });
+
+    CheckLq("terminate aus einem Thread beendet ein laufendes Sleep sofort", timeHead + """
+        fire { Sleep(100ms); terminate(3) }
+        Sleep(20s)
+        print("nie")
+        """, new string[0]);
+
+    CheckLq("Capture: ein lokaler Wert wird kopiert (spaetere Aenderungen sind unsichtbar)", """
+        class T {
+            static Run() {
+                var local = 3
+                var f = x => x > local
+                local = 10
+                print(f(5) + " " + f(2))
+            }
+        }
+        T.Run()
+        """, new[] { "True False" });
+
+    CheckLq("Capture: Parameter der umgebenden Methode, verschachtelte Lambdas, Schleifenvariable", """
+        class T {
+            static Make(int offset) { return x => x + offset }
+            static Run() {
+                var f = T.Make(100)
+                var nested = a => (b => a + b)
+                var fs = new List()
+                for (var i = 0; i < 3; i = i + 1) { var q = i * 10; fs.Add(() => q + i) }
+                var parts = ""
+                foreach (fn in fs) { parts = parts + fn() + " " }
+                print(f(1) + " " + nested(1)(2) + " " + parts)
+            }
+        }
+        T.Run()
+        """, new[] { "101 3 0 11 22 " });
+
+    CheckLq("Capture: eine Deklaration im Lambda verdeckt den gleichnamigen aeusseren Wert", """
+        class T {
+            static Run() {
+                var local = 3
+                var f = x => { var local = 100; return local + x }
+                print(f(1))
+            }
+        }
+        T.Run()
+        """, new[] { "101" });
+
+    CheckLq("Capture: Globals bleiben lebendig (kein Kopieren)", """
+        var g = 1
+        var f = () => g
+        g = 7
+        print(f())
+        """, new[] { "7" });
+
+    CheckLq("Capture: Zuweisung an den Capture ist ein Fehler", """
+        class T {
+            static Run() {
+                var n = 1
+                var f = () => { n = 2; return n }
+                print(f())
+            }
+        }
+        T.Run()
+        """, new[] { "AUSNAHME: 'n' ist im Lambda eine KOPIE der \u00e4u\u00dferen Variablen (Capture) und kann dort nicht zugewiesen werden (eine neue lokale Variable mit anderem Namen anlegen) (4)" });
+
+    CheckLq("Capture: ein Objekt wird als Referenz geteilt", """
+        class Box { int n; construct() { this.n = 0 } }
+        class T {
+            static Run() {
+                var b = new Box()
+                var bump = () => { b.n = b.n + 1 }
+                bump(); bump()
+                print(b.n)
+            }
+        }
+        T.Run()
+        """, new[] { "2" });
+
+    CheckLq("return mitten in einem foreach hinterlaesst nichts auf dem Stack", """
+        class T {
+            static First(class l) { foreach (x in l) { return x } return 0 }
+            static Run() {
+                var l = [5, 3]
+                print(10 + T.First(l) + T.First(l))
+            }
+        }
+        T.Run()
+        """, new[] { "20" });
+
+    const string linqHead = "#import \"linq\"\nclass P { string name; int price; construct(string n, int p) { this.name = n; this.price = p } }\n";
+
+    CheckLq("LINQ: Where/Select mit Capture, trage Auswertung, mehrfach durchlaufbar", linqHead + """
+        class T {
+            static Run() {
+                var limit = 2
+                var nums = new List([5, 3, 8, 1, 9, 2, 8])
+                var q = nums.Where(x => x > limit).Select(x => x * 10)
+                print(q.Join(",") + " | " + q.Count())
+                print(Linq.From([1, 2, 3, 4, 5, 6]).Where(x => x % 2 == 0).Select(x => x * x).Join(" "))
+            }
+        }
+        T.Run()
+        """, new[] { "50,30,80,90,80 | 5", "4 16 36" });
+
+    CheckLq("LINQ: Sortieren (stabil), Distinct, Reverse", linqHead + """
+        var nums = new List([5, 3, 8, 1, 9, 2, 8])
+        print(nums.OrderBy(x => x).Join(",") + " | " + nums.OrderByDescending(x => x).Join(",") + " | " + nums.Distinct().Count() + " | " + nums.Reverse().Join(","))
+        var ps = new List()
+        ps.Add(new P("a", 20)); ps.Add(new P("b", 10)); ps.Add(new P("c", 20)); ps.Add(new P("d", 10))
+        print(ps.OrderBy(p => p.price).Select(p => p.name).Join(""))
+        """, new[] { "1,2,3,5,8,8,9 | 9,8,8,5,3,2,1 | 6 | 8,2,9,1,8,3,5", "bdac" });
+
+    CheckLq("LINQ: Take/Skip/TakeWhile/SkipWhile/Concat/Zip/SelectMany/Range", linqHead + """
+        var nums = new List([5, 3, 8, 1, 9, 2, 8])
+        print(nums.Take(3).Join(",") + " | " + nums.Skip(5).Join(",") + " | " + nums.TakeWhile(x => x > 2).Join(",") + " | " + nums.SkipWhile(x => x > 2).Join(","))
+        print(Linq.Range(1, 3).Concat([7, 8]).Join(",") + " | " + Linq.Range(1, 3).Zip([10, 20, 30], (a, b) => a * b).Join(",") + " | " + Linq.Range(1, 3).SelectMany(x => Linq.Range(0, x)).Join(","))
+        """, new[] { "5,3,8 | 2,8 | 5,3,8 | 1,9,2,8", "1,2,3,7,8 | 10,40,90 | 0,0,1,0,1,2" });
+
+    CheckLq("LINQ: Abschluss-Operatoren (First/Last/Any/All/Count/Sum/Min/Max/Average/Aggregate/Contains/ElementAt)", linqHead + """
+        class T {
+            static Run() {
+                var nums = new List([5, 3, 8, 1, 9, 2, 8])
+                print(nums.First() + " " + nums.First(x => x > 5) + " " + nums.Last() + " " + nums.ElementAt(2))
+                print(nums.Any() + " " + nums.Any(x => x > 8) + " " + nums.All(x => x > 0) + " " + nums.Contains(9) + " " + nums.Count(x => x > 4))
+                print(nums.Sum() + " " + nums.Min() + " " + nums.Max() + " " + nums.Aggregate(0, (a, b) => a + b))
+                var ps = new List()
+                ps.Add(new P("a", 30)); ps.Add(new P("b", 10)); ps.Add(new P("c", 20))
+                print(ps.Sum(p => p.price) + " " + ps.Min(p => p.price) + " " + ps.Max(p => p.price) + " " + ps.Average(p => p.price) + " " + ps.FirstOrDefault(p => p.price > 100, "none"))
+            }
+        }
+        T.Run()
+        """, new[] { "5 8 8 8", "True True True True 4", "36 1 9 36", "60 10 30 20 none" });
+
+    CheckLq("LINQ: First auf einer leeren Folge wirft LinqEmptyException", linqHead + """
+        try { Linq.From([]).First() } catch (e) { print("leer: " + e.message) }
+        """, new[] { "leer: Die Folge enthaelt kein Element" });
+
+    CheckLq("LINQ: foreach ueber eine Abfrage, ToArray, Query auf einem Array", linqHead + """
+        var arr = Linq.From([3, 1, 2]).OrderBy(x => x).ToArray()
+        var s = ""
+        foreach (x in Linq.From(arr).Select(x => x * 2)) { s = s + x + " " }
+        print(arr.length + " " + s)
+        """, new[] { "3 2 4 6 " });
+
+    // ---- Operanden-Stack und Exceptions: was die Wurfstelle auf dem Stack hinterlaesst, darf den Aufrufer nicht verschieben
+    const string excHead = "class Exception { string message; construct(string message) { this.message = message } }\n";
+
+    CheckLq("Exception aus einem foreach, im selben try gefangen: keine Operanden-Leichen (catch mit return, Aufrufer mitten im Ausdruck)", excHead + """
+        class T {
+            static C(class l) { try { foreach (x in l) { throw new Exception("x") } } catch (e) { return 7 } return 0 }
+            static D(class l) { foreach (x in l) { try { throw new Exception("y") } catch (e) { return 8 } } return 0 }
+            static Run() {
+                print(10 + T.C([1, 2]) + 1)
+                print(10 + T.D([1, 2]) + 1)
+            }
+        }
+        T.Run()
+        """, new[] { "18", "19" });
+
+    CheckLq("Exception aus einer tieferen Funktion mit halb ausgewerteten Ausdruecken, weiter aussen gefangen", excHead + """
+        class T {
+            static Boom(int n) { return 100 + n + T.Fail() }
+            static Fail() { throw new Exception("boom") }
+            static Run() {
+                var total = 0
+                for (var i = 0; i < 3; i = i + 1) {
+                    try { total = total + 1 + T.Boom(i) } catch (e) { total = total + 1000 }
+                }
+                print(total + 5)
+            }
+        }
+        T.Run()
+        """, new[] { "3005" });
+
+    CheckLq("return mitten in einem try meldet seinen Handler ab (keine fremde Exception landet in der beendeten Funktion)", excHead + """
+        class T {
+            static A() { try { return 1 } catch (e) { return 2 } }
+            static Run() {
+                print(1 + T.A())
+                try { T.A(); throw new Exception("spaeter") } catch (e) { print("gefangen " + e.message) }
+                print(7 + T.A())
+            }
+        }
+        T.Run()
+        """, new[] { "2", "gefangen spaeter", "8" });
+
+    CheckLq("resume() setzt mit den Operanden der Wurfstelle fort (Stack wird beim catch beiseitegelegt und zurueckgespielt)", excHead + """
+        class T {
+            static Get() { return 10 + (throw new Exception("fehlt")) }
+            static Run() {
+                try { print(1 + T.Get()) } catch (e) { e.resume(5) }
+                var s = 0
+                try { foreach (x in [1, 2, 3]) { s = s + x + (throw new Exception("n")) } } catch (e) { e.resume(100) }
+                print(s)
+            }
+        }
+        T.Run()
+        """, new[] { "16", "306" });
+
+    CheckLq("finally: EINE Kopie fuer alle Wege - normal, Exception, return (auch im catch/foreach), break/continue, Fehler im catch; sieht die Locals", excHead + """
+        class T {
+            static N() { var x = 1; try { x = x + 1 } finally { print("N fin x=" + x) } return x }
+            static P() { var x = 5; try { throw new Exception("p") } finally { print("P fin x=" + x) } }
+            static R() { var x = 7; try { return x } finally { print("R fin x=" + x); x = 99 } }
+            static RC() { var y = 3; try { throw new Exception("c") } catch (e) { return y + 1 } finally { print("RC fin y=" + y) } }
+            static CE() { try { throw new Exception("a") } catch (e) { throw new Exception("b") } finally { print("CE fin") } }
+            static RR() { try { try { return 1 } finally { print("inner") } } finally { print("outer") } }
+            static RF(class l) { try { foreach (x in l) { return x } } finally { print("RF fin") } return 0 }
+            static FR() { try { return 1 } finally { return 2 } }
+            static Run() {
+                print(1 + T.N() + 1)
+                try { T.P() } catch (e) { print("caught " + e.message) }
+                print(1 + T.R() + 1)
+                print(1 + T.RC() + 1)
+                try { T.CE() } catch (e) { print("caught " + e.message) }
+                print(10 + T.RR() + 10)
+                print(10 + T.RF([4, 5]) + 10)
+                print(10 + T.FR() + 10)
+                var log = ""
+                for (var i = 0; i < 4; i = i + 1) {
+                    try {
+                        if (i == 1) { continue }
+                        if (i == 3) { break }
+                        log = log + "b" + i
+                    } finally { log = log + "f" + i }
+                }
+                print(log)
+                var log2 = ""
+                var n = 0
+                while (true) {
+                    n = n + 1
+                    try {
+                        try { if (n == 2) { break } log2 = log2 + "t" + n }
+                        finally { log2 = log2 + "i" + n }
+                    } finally { log2 = log2 + "o" + n }
+                }
+                print(log2)
+                var log3 = ""
+                for (var j = 0; j < 3; j = j + 1) {
+                    try { throw new Exception("x") } catch (e) { if (j == 1) { continue } log3 = log3 + "c" + j } finally { log3 = log3 + "f" + j }
+                }
+                print(log3)
+                try { try { throw new Exception("in") } finally { print("f1") } } catch (e) { print("out " + e.message) }
+                print(2 * T.N() + 3)
+            }
+        }
+        T.Run()
+        """, new[] { "N fin x=2", "4", "P fin x=5", "caught p", "R fin x=7", "9", "RC fin y=3", "6", "CE fin", "caught b", "inner", "outer", "21", "RF fin", "24", "22", "b0f0f1b2f2f3", "t1i1o1i2o2", "c0f0f1c2f2", "f1", "out in", "N fin x=2", "7" });
+
+    CheckLq("finally: zurueckgegebene Objekte ueberleben, resume() durch ein finally, Exception im finally ersetzt die erste", excHead + """
+        class Box { int n; construct(int n) { this.n = n } destruct() { print("~Box " + this.n) } }
+        class T {
+            static Make() { try { var b = new Box(5); return b } finally { print("mk fin") } }
+            static Make2() { var keep = new Box(6); try { return keep } finally { print("mk2 fin") } }
+            static Resume() { try { return 1 + (throw new Exception("r")) } catch (e) { e.resume(10) } finally { print("res fin") } }
+            static Replace() { try { throw new Exception("first") } finally { throw new Exception("second") } }
+            static Run() {
+                var b = T.Make()
+                print(b.n)
+                var c = T.Make2()
+                print(c.n)
+                print(T.Resume())
+                try { T.Replace() } catch (e) { print(e.message) }
+            }
+        }
+        T.Run()
+        """, new[] { "mk fin", "5", "mk2 fin", "6", "res fin", "11", "second", "~Box 5", "~Box 6" });
+
+    CheckLq("Arrays sind IEnumerable: is of, GetEnumerator, foreach, fluent LINQ direkt auf dem Array (class extends array)", linqHead + """
+        class Bag : IEnumerable { GetEnumerator() { return new ListEnumerator([1, 2], 2) } }
+        class T {
+            static Count(class src) { var n = 0; foreach (x in src) { n = n + 1 } return n }
+            static Run() {
+                var arr = [5, 3, 8, 1]
+                print(arr is of IEnumerable)
+                print(new Bag() is of IEnumerable)
+                print(5 is of IEnumerable)
+                var e = arr.GetEnumerator()
+                e.MoveNext()
+                print(e.GetCurrent() + " " + T.Count(arr))
+                print(arr.Where(x => x > 2).Select(x => x * 10).Join(","))
+                print(arr.OrderBy(x => x).ToList().count + " " + arr.Sum() + " " + arr.Count(x => x > 2) + " " + arr.First() + " " + arr.Any(x => x > 7))
+                print(Linq.From(new Bag()).Select(x => x + 1).Join(","))
+            }
+        }
+        T.Run()
+        """, new[] { "True", "True", "False", "5 4", "50,30,80", "4 17 3 5 True", "2,3" });
+
+    CheckLq("SelectMember/SelectProperty/SelectField: Projektion per Selektor (Feld oder Property / nur Property / nur Feld), Fehler als ReflectionException", linqHead + """
+        class Item { string name; int price; int Double { get { return this.price * 2 } } construct(string n, int p) { this.name = n; this.price = p } }
+        class T {
+            static Run() {
+                var items = [new Item("a", 3), new Item("b", 1)]
+                print(items.SelectMember(p => p.name).Join(",") + " " + items.SelectMember(p => p.Double).Join(",") + " " + items.SelectField(p => p.price).Join(",") + " " + items.SelectProperty(p => p.Double).Join(","))
+                var l = new List(items)
+                print(l.SelectField(p => p.name).Join("") + " " + l.OrderBy(p => p.price).SelectMember(p => p.name).Join(""))
+                try { items.SelectField(p => p.Double).ToList() } catch (e) { print("1 " + e.message) }
+                try { items.SelectProperty(p => p.price).ToList() } catch (e) { print("2 " + e.message) }
+                try { items.SelectMember(p => p.nope).ToList() } catch (e) { print("3 " + e.message) }
+                try { items.SelectMember(p => p.price + 1) } catch (e) { print("4 " + e.message) }
+            }
+        }
+        T.Run()
+        """, new[]
+        {
+            "a,b 6,2 3,1 6,2", "ab ba",
+            "1 'Double' ist eine Property, erwartet (lambda field<...>): ein Feld",
+            "2 'price' ist ein Feld, erwartet (lambda property<...>): eine Property",
+            "3 'nope' ist kein Mitglied",
+            "4 Die Lambda ist kein Selektor: sie braucht genau einen Parameter, und ihr Körper darf nur eine Mitgliedskette darauf sein (`c => c.radius`, `p => p.address.city`).",
+        });
+
+    CheckLq("## ist ein Synonym fuer !=", """
+        var x = 5
+        print((1 ## 2) + " " + (2 ## 2) + " " + (true ## false) + " " + ("a" ## "a") + " " + (x ## 5 || x ## 4) + " " + (6 # 3))
+        """, new[] { "True False True False True 5" });
+
+    Console.WriteLine(lqFailures == 0 ? "Alle Lambda-/LINQ-Pruefungen bestanden." : $"FEHLER: {lqFailures} Lambda-/LINQ-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Reflection (#import "reflection"): Typ-Beschreibungen, Get/Set/Call/New, Zugriffsregeln, Selektoren
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Reflection ===");
+    int rfFailures = 0;
+
+    List<string> RunRf(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var natives = NativeRegistry.CreateDefault();
+        natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        fire.Runtime.ReflectionNatives.Register(natives);
+        var sources = new List<string> { fire.Standard.Prelude.Source, fire.Standard.ReflectionPrelude.Source, script };
+        var program = Parser.ParseMultiple(sources
+            .Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                fire.Compiler.RuntimeSession.CreateProjectDirectiveRegistry())).ToList());
+        var compiled = Compiler.Compile(program, Resolver.Resolve(program, natives.Names), natives);
+        VM.ResetTerminateForTests();
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
+        vm.Run();
+        VM.ResetTerminateForTests();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    // Wie ein gepacktes Programm: kompilieren, serialisieren, wieder laden, mit der gepackten Runtime ausfuehren
+    List<string> RunRfPacked(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var linked = new fire.Compiler.Linker().CompileAndLink(new[] { script }, null, null, mode);
+        var restored = Packer.Deserialize(MemoryPack.MemoryPackSerializer.Serialize(linked))!;
+        VM.ResetTerminateForTests();
+        var session = fire.Runtime.Session.Build(restored, mode, args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        session.Run();
+        VM.ResetTerminateForTests();
+        return lines;
+    }
+
+    void CheckRf(string title, string script, string[] expected, VmExecutionMode[]? modes = null, bool packed = false)
+    {
+        foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            try { actual = (packed ? RunRfPacked(script, mode) : RunRf(script, mode)).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + CompileErrors.Describe(ex) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) rfFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    var debugRelease = new[] { VmExecutionMode.Debug, VmExecutionMode.Release };
+
+    const string shapes = """
+        class Shape {
+            string name
+            construct(string name) { this.name = name }
+            string Describe() { return "shape " + this.name }
+        }
+        class Circle : Shape {
+            float radius
+            private int secret
+            readonly int id
+            float w : mm = 5mm
+            construct(float radius) : base("circle") { this.radius = radius; this.secret = 42; this.id = 7 }
+            float Diameter { get { return this.radius * 2 } set { this.radius = value / 2 } }
+            float Area() { return this.radius * this.radius * 3 }
+            Scale(float f, int times) { this.radius = this.radius * f }
+            private Hidden() { return "hidden" }
+            int PeekSecret() { return Reflect.Get(this, "secret") }
+        }
+
+        """;
+
+    CheckRf("Type.Of: Name, Basisklasse, Mitglieder mit Art, Zugriff, Typ, Einheit, readonly, Herkunft", shapes + """
+        var t = Type.Of(new Circle(5.0))
+        print(t.Name + " : " + t.Base.Name)
+        foreach (m in t.All) { print(m.Kind + " " + m.Access + " " + m.TypeName + " " + m.Name + " " + m.ParamCount() + " " + m.DeclaredIn + " " + m.IsReadonly + " " + m.Unit) }
+        """, new[]
+        {
+            "Circle : Shape",
+            "field public float radius 0 Circle False ",
+            "field private int secret 0 Circle False ",
+            "field public int id 0 Circle True ",
+            "field public float w 0 Circle False mm",
+            "constructor public  Circle 1 Circle False ",
+            "property public float Diameter 0 Circle False ",
+            "method public float Area 0 Circle False ",
+            "method public  Scale 2 Circle False ",
+            "method private  Hidden 0 Circle False ",
+            "method public int PeekSecret 0 Circle False ",
+            "field public string name 0 Shape False ",
+            "method public string Describe 0 Shape False ",
+        });
+
+    CheckRf("Type: Find/Has/Fields/Properties/Methods/Interfaces, Named und IsSubclassOf", shapes + """
+        interface IThing { Ping() }
+        class Thing : Circle, IThing { construct() : base(1.0) { } Ping() { return 1 } }
+        var t = Type.Of("Thing")
+        print(t.Base.Name + " " + t.Interfaces.length + " " + t.Interfaces[0])
+        print(t.Fields().count + " " + t.Properties().count + " " + t.Methods().count + " " + t.Constructors().count)
+        print(t.Has("radius") + " " + t.Has("nope") + " " + t.Find("Diameter").CanWrite + " " + t.Find("Area").IsMethod())
+        print(t.IsSubclassOf(Type.Of("Shape")) + " " + Type.Of("Shape").IsSubclassOf(t) + " " + (Type.Named("Gibts") == undefined))
+        """, new[] { "Circle 1 IThing", "5 1 6 1", "True False True True", "True False True" }, debugRelease);
+
+    CheckRf("Get/Set/Call/New: Felder, Properties, geerbte Methoden, Konstruktion", shapes + """
+        var c = new Circle(5.0)
+        print(Reflect.Get(c, "radius"))
+        Reflect.Set(c, "radius", 6.0)
+        print(Reflect.Get(c, "Diameter") + " " + Reflect.Has(c, "Area") + " " + Reflect.Has(c, "nope"))
+        Reflect.Set(c, "Diameter", 20.0)
+        print(c.radius)
+        print(Reflect.Call(c, "Area", []) + " " + Reflect.Call(c, "Describe", []))
+        Reflect.Call(c, "Scale", [2.0, 1])
+        print(c.radius)
+        var c2 = Reflect.New("Circle", [2.0])
+        print(c2.radius + " " + c2.Describe())
+        var m = Type.Of(c).Find("radius")
+        m.Set(c, 1.5)
+        print(m.Get(c))
+        """, new[] { "5", "12 True False", "10", "300 shape circle", "20", "2 shape circle", "1.5" });
+
+    CheckRf("Zugriffsregeln: private/readonly/Einheit gelten auch fuer die Reflection (aus der Klasse selbst ist private erlaubt)", shapes + """
+        var c = new Circle(5.0)
+        try { Reflect.Get(c, "secret") } catch (e) { print("1 " + e.message) }
+        try { Reflect.Call(c, "Hidden", []) } catch (e) { print("2 " + e.message) }
+        try { Reflect.Set(c, "id", 9) } catch (e) { print("3 " + e.message) }
+        try { Reflect.Set(c, "w", 5.0) } catch (e) { print("4 Einheit") }
+        print(c.PeekSecret())
+        """, new[]
+        {
+            "1 Feld 'secret' von 'Circle' ist private und von hier aus nicht zugreifbar.",
+            "2 'Hidden' von 'Circle' ist private und von hier aus nicht zugreifbar.",
+            "3 Das Feld 'id' von 'Circle' ist 'readonly' und lässt sich nicht zuweisen.",
+            "4 Einheit",
+            "42",
+        }, debugRelease);
+
+    CheckRf("Fehler sind fangbare ReflectionExceptions; Exceptions aus Getter/Methode laufen zum aeusseren catch", """
+        class Exception { string message; construct(string message) { this.message = message } }
+        class P {
+            int n
+            int Age { get { throw new Exception("kein Alter") } }
+            Boom() { throw new Exception("boom") }
+        }
+        var p = new P()
+        try { Reflect.Get(p, "nope") } catch (e) { print("1 " + e.message) }
+        try { Reflect.Set(p, "Age", 1) } catch (e) { print("2 " + e.message) }
+        try { Reflect.Call(p, "Nope", []) } catch (e) { print("3 " + e.message) }
+        try { Reflect.Get(5, "x") } catch (e) { print("4 " + e.message) }
+        try { Reflect.New("Gibts", []) } catch (e) { print("5 " + e.message) }
+        try { Reflect.Get(p, "Age") } catch (e) { print("6 " + e.message) }
+        try { Reflect.Call(p, "Boom", []) } catch (e) { print("7 " + e.message) }
+        print("weiter")
+        """, new[]
+        {
+            "1 'P' hat kein lesbares Mitglied 'nope'.",
+            "2 Die Property 'Age' von 'P' hat keinen Setter (nur 'get').",
+            "3 'P' hat keine Methode 'Nope' mit 0 Parameter(n).",
+            "4 Reflect.Get: erwartet ein Objekt, erhalten: Int.",
+            "5 Unbekannte Klasse 'Gibts'.",
+            "6 kein Alter",
+            "7 boom",
+            "weiter",
+        });
+
+    CheckRf("Selektor: lambda member<T> enthaelt die Reflection des gewaehlten Mitglieds (Get/Set/Describe, verschachtelt, durchgereicht)", """
+        class Address { string city; construct(string c) { this.city = c } }
+        class Person { string name; Address address; construct(string n, Address a) { this.name = n; this.address = a } }
+        class W {
+            static Show(lambda member<Person> sel, Person p) {
+                print(sel.Name + "=" + sel.Get(p) + " " + sel.Describe(p).TypeName + " " + sel.Path.length)
+                sel.Set(p, "X")
+            }
+            static Pass(lambda member<Person> sel, Person p) { W.Show(sel, p) }
+        }
+        var p = new Person("Ann", new Address("Wien"))
+        W.Show(q => q.name, p)
+        W.Show(q => q.address.city, p)
+        W.Pass(q => q.address.city, p)
+        print(p.name + " " + p.address.city)
+        """, new[] { "name=Ann string 1", "city=Wien string 2", "city=X string 2", "X X" });
+
+    CheckRf("Selektor: eine Lambda, die keine reine Mitgliedskette ist, wird abgelehnt", """
+        class P { string name }
+        class W { static Show(lambda member<P> sel, P p) { print(sel.Name) } }
+        try { W.Show(q => q.name + "x", new P()) } catch (e) { print("1 " + e.message) }
+        try { W.Show(5, new P()) } catch (e) { print("2 " + e.message) }
+        """, new[]
+        {
+            "1 Die Lambda ist kein Selektor: sie braucht genau einen Parameter, und ihr Körper darf nur eine Mitgliedskette darauf sein (`c => c.radius`, `p => p.address.city`).",
+            "2 Ein Selektor ('lambda member<...>' o.ä.) erwartet eine Lambda wie `c => c.radius`, erhalten: Int.",
+        });
+
+    // gepackt: Metadaten und try/catch muessen die Serialisierung ueberleben (catch-Klauseln gingen frueher verloren)
+    CheckRf("Gepacktes Programm: Typ-Metadaten, Zugriffsregeln und try/catch ueberleben die Serialisierung", """
+        #import "reflection"
+        class Exception { string message; construct(string message) { this.message = message } }
+        class A { float r; private int s; construct() { this.r = 1.5; this.s = 3 } }
+        var t = Type.Of(new A())
+        foreach (m in t.All) { print(m.Access + " " + m.TypeName + " " + m.Name) }
+        try { Reflect.Get(new A(), "s") } catch (e) { print("privat") }
+        try { throw new Exception("x") } catch (e) { print("gefangen") }
+        """, new[] { "public float r", "private int s", "public  A", "privat", "gefangen" }, debugRelease, packed: true);
+
+    // ---- probe / silence
+    const string probeHead = """
+        class Exception { string message; construct(string message) { this.message = message } }
+        class C {
+            int v
+            string name
+            int Loud { get { return this.v * 2 } set { this.v = value / 2 } }
+            construct() { this.v = 1; this.name = "a" }
+        }
+
+        """;
+
+    CheckRf("probe changed: implizite Namen, nur bei geaendertem Wert, silence mit Handle", probeHead + """
+        var c = new C()
+        var h = probe c.v changed { print(name + " " + old + "->" + value + " " + sender.name) }
+        c.v = 5
+        c.v = 5
+        c.v++
+        silence h
+        c.v = 9
+        print(c.v)
+        """, new[] { "v 1->5 a", "v 5->6 a", "9" });
+
+    CheckRf("probe changing: ein Handler mit false bricht das Schreiben ab (Ausdrucksform mit Capture)", probeHead + """
+        class T {
+            static Run() {
+                var c = new C()
+                var limit = 100
+                probe c.v changing (o, n) => n <= limit
+                c.v = 50
+                c.v = 500
+                print(c.v)
+                var r = (c.v = 700)
+                print(r + " " + c.v)
+            }
+        }
+        T.Run()
+        """, new[] { "50", "700 50" });
+
+    CheckRf("probe: Handler-Argumente nach Parameterzahl (0, 1, 2, 3, 4)", probeHead + """
+        var c = new C()
+        probe c.v changed () => print("0")
+        probe c.v changed x => print("1 " + x)
+        probe c.v changed (a, b) => print("2 " + a + " " + b)
+        probe c.v changed (s, a, b) => print("3 " + s.v + " " + a + " " + b)
+        probe c.v changed (s, n, a, b) => print("4 " + n + " " + a + " " + b)
+        c.v = 2
+        """, new[] { "0", "1 2", "2 1 2", "3 2 1 2", "4 v 1 2" });
+
+    CheckRf("probe obj.*: alle Mitglieder; Properties feuern, die Writes im Setter ebenfalls; silence obj.* entfernt alle", probeHead + """
+        var c = new C()
+        probe c.* changed (s, n, a, b) => print(n + " " + a + "->" + b)
+        c.name = "b"
+        c.Loud = 20
+        silence c.*
+        c.name = "c"
+        c.v = 77
+        print("still")
+        """, new[] { "name a->b", "v 1->10", "Loud 2->20", "still" });
+
+    CheckRf("probe: Pfad (a.b.c), nur das Objekt mit Probe ist betroffen, eine schon gecachte Schreibstelle sieht die Probe", probeHead + """
+        class Holder { C c; construct() { this.c = new C() } }
+        class T { static Bump(C c) { c.v = c.v + 1 } }
+        var a = new C()
+        var b = new C()
+        T.Bump(a); T.Bump(b); T.Bump(a)
+        probe a.v changed (o, n) => print("a " + o + "->" + n)
+        T.Bump(a); T.Bump(b); T.Bump(a)
+        var h = new Holder()
+        probe h.c.v changing (o, n) => n < 3
+        h.c.v = 2
+        h.c.v = 9
+        print(h.c.v + " " + b.v)
+        """, new[] { "a 3->4", "a 4->5", "2 3" });
+
+    CheckRf("probe: ein Handler, der dasselbe Mitglied schreibt, loest sich nicht selbst aus", probeHead + """
+        var c = new C()
+        probe c.v changed { c.v = 0 }
+        c.v = 3
+        print(c.v)
+        """, new[] { "0" });
+
+    CheckRf("probe: Exceptions im Handler laufen zum Schreiber (changing bricht das Schreiben ab, changed kommt nach dem Schreiben)", probeHead + """
+        var c = new C()
+        probe c.v changing (o, n) => { throw new Exception("nein") }
+        try { c.v = 5 } catch (e) { print("1 " + e.message) }
+        print(c.v)
+        silence c
+        probe c.v changed (o, n) => { throw new Exception("danach") }
+        try { c.v = 6 } catch (e) { print("2 " + e.message) }
+        print(c.v)
+        print("weiter")
+        """, new[] { "1 nein", "1", "2 danach", "6", "weiter" });
+
+    CheckRf("probe/silence bleiben als Variablennamen nutzbar", """
+        var probe = 5
+        var silence = probe + 1
+        print(probe + " " + silence)
+        """, new[] { "5 6" });
+
+    CheckRf("Reflect.Probe/Silence, Selector.Probe, Handle und Fehler", probeHead + """
+        class W { static Watch(lambda member<C> s, C c) { return s.Probe(c, "changing", (o, n) => n < 10) } }
+        var c = new C()
+        var h = Reflect.Probe(c, "v", "changed", (o, n) => print("r " + o + " " + n))
+        c.v = 4
+        Reflect.SilenceHandle(h)
+        c.v = 5
+        W.Watch(x => x.v, c)
+        c.v = 50
+        print(c.v)
+        Reflect.SilenceAll(c)
+        c.v = 50
+        print(c.v)
+        try { Reflect.Probe(c, "nope", "changed", () => 1) } catch (e) { print(e.message) }
+        try { Reflect.Probe(c, "v", "gestern", () => 1) } catch (e) { print(e.message) }
+        try { Reflect.Probe(c, "v", "changed", (a, b, c, d, e) => 1) } catch (e) { print(e.message) }
+        """, new[]
+        {
+            "r 1 4", "5", "50",
+            "'C' hat kein Mitglied 'nope' - dort lässt sich keine Probe anmelden.",
+            "Die Art einer Probe ist \"changed\" oder \"changing\", erhalten: \"gestern\".",
+            "Der Handler einer Probe darf höchstens 4 Parameter haben (Objekt, Name, alt, neu), hat 5.",
+        }, debugRelease);
+
+    CheckRf("Selektor-Arten: field, property, member (Feld oder Property), method (nur Methode), selector (alles)", """
+        class C { int v; int P { get { return 7 } } Twice(int n) { return n * 2 } construct() { this.v = 1 } }
+        class W {
+            static F(lambda field<C> s, C c) { return s.Name + "=" + s.Get(c) }
+            static P(lambda property<C> s, C c) { return s.Name + "=" + s.Get(c) }
+            static M(lambda member<C> s, C c) { return s.Name + "=" + s.Get(c) }
+            static S(lambda selector<C> s, C c) { return s.Name + ":" + s.ActualKind(c) }
+            static Call(lambda selector<> s, C c) { return s.Call(c, [21]) }
+            static Meth(lambda method<C> s, C c) { return s.Name + "->" + s.Call(c, [4]) }
+            static GetOnly(lambda selector<C> s, C c) { return s.Get(c) }
+        }
+        var c = new C()
+        print(W.F(x => x.v, c) + " " + W.P(x => x.P, c) + " " + W.M(x => x.v, c) + " " + W.M(x => x.P, c))
+        print(W.S(x => x.v, c) + " " + W.S(x => x.P, c) + " " + W.S(x => x.Twice, c) + " " + W.Call(x => x.Twice, c))
+        try { W.F(x => x.P, c) } catch (e) { print("1 " + e.message) }
+        try { W.P(x => x.v, c) } catch (e) { print("2 " + e.message) }
+        try { W.M(x => x.Twice, c) } catch (e) { print("3 " + e.message) }
+        try { W.F(x => x.nope, c) } catch (e) { print("4 " + e.message) }
+        try { W.GetOnly(x => x.Twice, c) } catch (e) { print("5 " + e.message) }
+        try { W.Call(x => x.v, c) } catch (e) { print("6 " + e.message) }
+        print(W.Meth(x => x.Twice, c))
+        try { W.Meth(x => x.v, c) } catch (e) { print("7 " + e.message) }
+        try { W.Meth(x => x.P, c) } catch (e) { print("8 " + e.message) }
+        """, new[]
+        {
+            "v=1 P=7 v=1 P=7",
+            "v:field P:property Twice:method 42",
+            "1 'P' ist eine Property, erwartet (lambda field<...>): ein Feld",
+            "2 'v' ist ein Feld, erwartet (lambda property<...>): eine Property",
+            "3 'Twice' ist eine Methode, erwartet (lambda member<...>): ein Feld oder eine Property",
+            "4 'nope' ist kein Mitglied",
+            "5 'Twice' ist eine Methode - Call(obj, args) ruft sie auf",
+            "6 'v' ist keine Methode",
+            "Twice->8",
+            "7 'v' ist ein Feld, erwartet (lambda method<...>): eine Methode",
+            "8 'P' ist eine Property, erwartet (lambda method<...>): eine Methode",
+        });
+
+    Console.WriteLine(rfFailures == 0 ? "Alle Reflection-Pruefungen bestanden." : $"FEHLER: {rfFailures} Reflection-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Scope-Verwaltung: return aus verschachtelten Bloecken, Wiederverwendung von Scopes (Pooling)
+// ---------------------------------------------------------------------------------------------------------------------------
+{
+    Console.WriteLine("=== Scope-Verwaltung (return aus verschachtelten Bloecken, Wiederverwendung) ===");
+    int scFailures = 0;
+
+    List<string> RunSc(string script, VmExecutionMode mode)
+    {
+        var lines = new List<string>();
+        var natives = NativeRegistry.CreateDefault();
+        natives.Register("print", args =>
+        {
+            var shown = VM.StringifyForPrint(args);
+            if (shown != null) lock (lines) lines.Add(shown[0].ToString());
+            return Value.MakeUndefined();
+        });
+        natives.RegisterBaseTypeNatives();
+        var sources = new List<string> { fire.Standard.Prelude.Source, script };
+        var program = Parser.ParseMultiple(sources
+            .Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                fire.Compiler.RuntimeSession.CreateProjectDirectiveRegistry())).ToList());
+        var compiled = Compiler.Compile(program, Resolver.Resolve(program, natives.Names), natives);
+        VM.ResetTerminateForTests();
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
+        vm.Run();
+        VM.ResetTerminateForTests();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckSc(string title, string script, string[] expected)
+    {
+        foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            try { actual = RunSc(script, mode).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + CompileErrors.Describe(ex) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) scFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    const string scHead = """
+        class D {
+            string n
+            construct(string n) { this.n = n }
+            destruct() { print("~" + this.n) }
+        }
+        """;
+
+    CheckSc("return aus verschachtelten Bloecken zerstoert die Objekte ALLER verlassenen Scopes (innerster zuerst)", scHead + """
+        class T {
+            static F() {
+                var a = new D("a")
+                if (true) {
+                    var b = new D("b")
+                    if (true) {
+                        var c = new D("c")
+                        return 1
+                    }
+                }
+                return 0
+            }
+        }
+        print("vor")
+        T.F()
+        print("nach")
+        """, new[] { "vor", "~c", "~b", "~a", "nach" });
+
+    CheckSc("return eines Objekts aus einem aeusseren Block: es geht an den Aufrufer, die uebrigen werden zerstoert", scHead + """
+        class T {
+            static Make() {
+                var keep = new D("k")
+                if (true) {
+                    var tmp = new D("t")
+                    if (true) { return keep }
+                }
+                return keep
+            }
+            static Run() {
+                var x = T.Make()
+                print("got " + x.n)
+            }
+        }
+        T.Run()
+        print("ende")
+        """, new[] { "~t", "got k", "~k", "ende" });
+
+    CheckSc("return mitten in for/foreach/while: Objekte der Schleifenkoerper und der Schleifenvariablen werden zerstoert", scHead + """
+        class T {
+            static FindFor() {
+                var outer = new D("outer")
+                for (var i = 0; i < 5; i = i + 1) {
+                    var o = new D("f" + i)
+                    if (i == 1) { return i }
+                }
+                return -1
+            }
+            static FindForeach() {
+                var items = [1, 2, 3]
+                foreach (x in items) {
+                    var o = new D("e" + x)
+                    if (x == 2) { return x }
+                }
+                return -1
+            }
+            static FindWhile() {
+                var k = 0
+                while (true) {
+                    var o = new D("w" + k)
+                    if (k == 1) { return k }
+                    k = k + 1
+                }
+            }
+        }
+        print(T.FindFor())
+        print(T.FindForeach())
+        print(T.FindWhile())
+        """, new[] { "~f0", "~f1", "~outer", "1", "~e1", "~e2", "2", "~w0", "~w1", "1" });
+
+    CheckSc("return im try/catch/finally in verschachtelten Bloecken: jedes Objekt genau einmal zerstoert", scHead + "class Exception { string message; construct(string message) { this.message = message } }\n" + """
+        class T {
+            static F() {
+                var a = new D("a")
+                try {
+                    var b = new D("b")
+                    if (true) {
+                        var c = new D("c")
+                        return 1
+                    }
+                } finally { print("fin") }
+                return 0
+            }
+            static G() {
+                var a = new D("ga")
+                try {
+                    var b = new D("gb")
+                    throw new Exception("x")
+                } catch (e) {
+                    var c = new D("gc")
+                    if (true) { return 2 }
+                }
+                return 0
+            }
+        }
+        print(T.F())
+        print(T.G())
+        """, new[] { "~c", "~b", "fin", "~a", "1", "~gb", "~gc", "~ga", "2" });
+
+    // ---- Wiederverwendung von Scopes: nichts darf auf eine Scope zeigen, die gleich einem anderen Block gehoert ----
+
+    CheckSc("Pointer auf eine Lokale ueberlebt das Verlassen der Funktion/des Blocks, auch wenn danach viele Scopes wiederverwendet werden", """
+        class T {
+            static Ptr(int v) { var x = v; unsafe { var p = &x; return p } }
+            static Busy(int n) { var s = 0; for (var i = 0; i < n; i = i + 1) { var t = i * 3; s = s + T.Add(t, 1) } return s }
+            static Add(int a, int b) { var r = a + b; return r }
+        }
+        unsafe {
+            var p1 = T.Ptr(11)
+            var p2 = T.Ptr(22)
+            var ptrs = [p1, p1, p1]
+            for (var i = 0; i < 3; i = i + 1) { var v = i * 10; ptrs[i] = &v }
+            print(T.Busy(50))
+            print(*p1 + " " + *p2)
+            print(*ptrs[0] + " " + *ptrs[1] + " " + *ptrs[2])
+            *p1 = 99
+            *ptrs[1] = 77
+            print(T.Busy(10))
+            print(*p1 + " " + *p2 + " " + *ptrs[0] + " " + *ptrs[1] + " " + *ptrs[2])
+        }
+        """, new[] { "3725", "11 22", "0 10 20", "145", "99 22 0 77 20" });
+
+    CheckSc("Rekursion, Parameter, Lokale und Lambda-Captures bleiben je Aufruf unabhaengig (wiederverwendete Scopes sind sauber)", """
+        class T {
+            static Fib(int n) { if (n < 2) { return n } var a = T.Fib(n - 1); var b = T.Fib(n - 2); return a + b }
+            static Even(int n) { if (n == 0) { return true } return T.Odd(n - 1) }
+            static Odd(int n) { if (n == 0) { return false } return T.Even(n - 1) }
+            static MakeAdder(int n) { var k = n * 2; return x => x + k }
+            static Sum(int n) { var local = [n]; if (n == 0) { return 0 } return local[0] + T.Sum(n - 1) }
+            static Locals() { var a; var b; var c = 3; return "" + a + "," + b + "," + c }
+        }
+        print(T.Fib(15))
+        print(T.Even(10) + " " + T.Odd(10))
+        var f = T.MakeAdder(1)
+        var g = T.MakeAdder(10)
+        print(T.Fib(10))
+        print(f(1) + " " + g(1))
+        print(T.Sum(100))
+        print(T.Locals())
+        print(T.Locals())
+        """, new[] { "610", "True False", "55", "3 21", "5050", "undefined,undefined,3", "undefined,undefined,3" });
+
+    CheckSc("Exceptions durch viele Aufrufe/Bloecke: danach arbeiten die wiederverwendeten Scopes unveraendert weiter", "class Exception { string message; construct(string message) { this.message = message } }\n" + """
+        class T {
+            static Deep(int n) { var a = n * 2; if (n == 0) { throw new Exception("bottom") } var r = T.Deep(n - 1); return r + a }
+            static Run() {
+                var total = 0
+                for (var i = 0; i < 4; i = i + 1) {
+                    var local = i + 100
+                    try { T.Deep(3) } catch (e) { total = total + local }
+                }
+                print(total)
+                var sum = 0
+                for (var j = 0; j < 3; j = j + 1) { var w = j; if (w > 0) { var z = w * 2; sum = sum + z } }
+                print(sum)
+            }
+        }
+        T.Run()
+        """, new[] { "406", "6" });
+
+    CheckSc("Objekte in Schleifenkoerpern werden je Durchlauf zerstoert, Bloecke ohne Objekte daneben bleiben unberuehrt", scHead + """
+        class T {
+            static Run() {
+                var n = 0
+                for (var i = 0; i < 3; i = i + 1) {
+                    if (i % 2 == 0) { var o = new D("o" + i); n = n + 1 } else { var k = i * 10; n = n + k }
+                }
+                print(n)
+            }
+        }
+        T.Run()
+        """, new[] { "~o0", "~o2", "12" });
+
+    // ---- Objekterzeugung: Feld-Vorbelegung ohne Aufruf, Besitz ohne Listen, Zerstoerung ----
+
+    CheckSc("Feld-Vorbelegung: Konstanten, fehlende Initialisierer (undefined), Ausdruecke und Initialisierer mit this", """
+        class A {
+            int a = 3
+            string s = "q"
+            bool b = true
+            float f = 1.5
+            int none
+            int c = 2 + 3
+            int d = this.a * 2
+            string t
+            int neg = -4
+        }
+        var o = new A()
+        print(o.a + " " + o.s + " " + o.b + " " + o.f + " " + o.c + " " + o.d + " " + o.neg)
+        print(o.none == undefined)
+        print(o.t == undefined)
+        """, new[] { "3 q True 1.5 5 6 -4", "True", "True" });
+
+    CheckSc("Feld-Vorbelegung mit Basisklasse: was der Basis-Konstruktor in ein Feld der abgeleiteten Klasse schreibt, wird von dessen Initialisierer wie bisher ueberschrieben", """
+        class B {
+            construct() { this.Setup() }
+            Setup() { }
+        }
+        class D : B {
+            int x
+            int y = 5
+            string s = "init"
+            int z
+            Setup() { this.x = 99; this.y = 7; this.z = 8 }
+        }
+        var d = new D()
+        print((d.x == undefined) + " " + d.y + " " + d.s + " " + (d.z == undefined))
+        """, new[] { "True 5 init True" });
+
+    CheckSc("Feld-Initialisierer mit Aufruf setzt ein spaeteres Feld ohne Initialisierer zurueck (wie bisher)", """
+        class A {
+            int a = this.Init()
+            int b
+            Init() { this.b = 41; return 1 }
+        }
+        var o = new A()
+        print(o.a + " " + (o.b == undefined))
+        """, new[] { "1 True" });
+
+    CheckSc("Objekte einer Scope werden in der Reihenfolge ihrer Erzeugung zerstoert; ein Objekt mit eigenen Kindern erst selbst, dann die Kinder", scHead + """
+        class P {
+            D k1 = new D("k1")
+            D k2 = new D("k2")
+            D k3 = new D("k3")
+            destruct() { print("~P") }
+        }
+        class T {
+            static Run() {
+                var x = new D("1")
+                var y = new D("2")
+                var p = new P()
+                var z = new D("3")
+                print("ende")
+            }
+        }
+        T.Run()
+        """, new[] { "ende", "~1", "~2", "~P", "~k1", "~k2", "~k3", "~3" });
+
+    CheckSc("TakeUpwards haengt ein Objekt an die umgebende Scope (hier die der Schleife): es ueberlebt den Block, nicht die Schleife", scHead + """
+        class T {
+            static Run() {
+                var keep
+                for (var i = 0; i < 3; i = i + 1) {
+                    var a = new D("a" + i)
+                    var b = new D("b" + i)
+                    if (i == 1) { b.TakeUpwards(); keep = b }
+                }
+                print("nach der Schleife " + keep.n)
+                var u = 0
+                for (var j = 0; j < 3; j = j + 1) { var w = j; u = u + w }
+                print(u + " " + keep.n)
+            }
+        }
+        T.Run()
+        print("ende")
+        """, new[] { "~a0", "~b0", "~a1", "~a2", "~b2", "~b1", "nach der Schleife b1", "3 b1", "ende" });
+
+    CheckSc("Destruktoren in Schleifen mit gemischten Bloecken (mit/ohne Objekte) und verschachtelten Aufrufen", scHead + """
+        class T {
+            static Make(int i) { var d = new D("m" + i); return d }
+            static Run() {
+                var n = 0
+                for (var i = 0; i < 3; i = i + 1) {
+                    var d = T.Make(i)
+                    if (i == 1) { var e = new D("e" + i); n = n + 1 }
+                    n = n + 10
+                }
+                print(n)
+            }
+        }
+        T.Run()
+        """, new[] { "~m0", "~e1", "~m1", "~m2", "31" });
+
+    Console.WriteLine(scFailures == 0 ? "Alle Scope-Pruefungen bestanden." : $"FEHLER: {scFailures} Scope-Pruefung(en) fehlgeschlagen.");
+}
+
 static int CountOccurrences(string haystack, string needle)
 {
     int count = 0, idx = 0;
@@ -7983,6 +9578,7 @@ sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
     private readonly List<fire.Terminal.Event.IEvent> _pending = new();
     public bool Closed { get; set; }
 
+    public bool VSync { get; set; } = true;
     public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle) { }
     public void Present(fire.Terminal.Framebuffer framebuffer) { }
     public void Dispose() { }
@@ -8016,4 +9612,10 @@ sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
                 break;
         }
     }
+}
+
+sealed class volatile_bool
+{
+    private volatile bool _value;
+    public bool Value { get => _value; set => _value = value; }
 }

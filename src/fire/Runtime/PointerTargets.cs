@@ -18,6 +18,7 @@ namespace fire.Runtime
         {
             Scope = scope;
             Slot = slot;
+            scope.MarkEscaped(); // die Scope ist ab jetzt von außen erreichbar und wird nicht wiederverwendet (siehe Scope.CanRecycle)
         }
 
         public override Value Read() => Scope.GetSlot(Slot);

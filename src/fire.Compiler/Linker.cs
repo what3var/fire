@@ -17,6 +17,11 @@ namespace fire.Compiler
 {
     public class Linker
     {
+        /// <summary>Basisverzeichnis für relative `#include`/`#extern`-Pfade.
+        /// null = aktuelles Arbeitsverzeichnis. Der Editor setzt hier das
+        /// Verzeichnis der aktiven Datei.</summary>
+        public string? BasePath { get; set; }
+
         public static AssemblyInfo ExtractAssemblyInfo(IReadOnlyList<string> sources)
         {
             var assemblyInfo = new AssemblyInfo();
@@ -254,7 +259,7 @@ namespace fire.Compiler
 
             foreach (var source in inputSources)
             {
-                var processed = Preprocessor.Process(source, Directory.GetCurrentDirectory(), alreadyIncluded, registry);
+                var processed = Preprocessor.Process(source, (BasePath ?? Directory.GetCurrentDirectory()), alreadyIncluded, registry);
                 processedSources.Add(processed);
             }
 
@@ -264,7 +269,7 @@ namespace fire.Compiler
             // verschiebt den Start des Nutzer-Codes um eine Quelle.
             firstUserSource += ImportedPreludes.Insert(
                 nativeImports, natives, processedSources,
-                preludeSource => Preprocessor.Process(preludeSource, Directory.GetCurrentDirectory(), alreadyIncluded, registry));
+                preludeSource => Preprocessor.Process(preludeSource, (BasePath ?? Directory.GetCurrentDirectory()), alreadyIncluded, registry));
 
             // Kein activeUsings/usingsByStmt mehr nötig (SPEC "Namespaces") -
             // jede Typ-Referenz im AST trägt ihren eigenen Namespace-Kontext

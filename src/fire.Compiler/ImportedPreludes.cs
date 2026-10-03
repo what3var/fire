@@ -35,6 +35,9 @@ namespace fire.Compiler
             "devices" => NativeImports.Devices,
             "io" => NativeImports.IO,
             "ui" => NativeImports.Ui,
+            "linq" => NativeImports.Linq,
+            "reflection" => NativeImports.Reflection,
+            "time" => NativeImports.Time,
             _ => throw new Exception($"'{name}' ist keine bekannte Erweiterung."),
         };
 
@@ -46,6 +49,7 @@ namespace fire.Compiler
         public static IEnumerable<string> WithDependencies(string importKey)
         {
             if (importKey == NativeImports.Ui) yield return NativeImports.Graphics;
+            if (importKey == NativeImports.Linq) yield return NativeImports.Reflection; // SelectProperty/SelectField arbeiten mit Selektoren
             yield return importKey;
         }
 
@@ -55,6 +59,9 @@ namespace fire.Compiler
             "devices" => DeviceBridge.PreludeSource,
             "io" => IoBridge.PreludeSource,
             "ui" => UiBridge.PreludeSource,
+            "linq" => fire.Standard.LinqPrelude.Source,
+            "reflection" => fire.Standard.ReflectionPrelude.Source,
+            "time" => fire.Standard.TimePrelude.Source,
             _ => null,
         };
 
@@ -93,6 +100,27 @@ namespace fire.Compiler
             {
                 // reiner fire-Quelltext auf den Klassen der Grafik-Brücke: keine nativen Funktionen
                 processedSources.Insert(1, preprocess(UiBridge.PreludeSource));
+                inserted++;
+            }
+
+            if (nativeImports.Contains(NativeImports.Linq))
+            {
+                // reiner fire-Quelltext, keine nativen Funktionen
+                processedSources.Insert(1, preprocess(fire.Standard.LinqPrelude.Source));
+                inserted++;
+            }
+
+            if (nativeImports.Contains(NativeImports.Reflection))
+            {
+                processedSources.Insert(1, preprocess(fire.Standard.ReflectionPrelude.Source));
+                ReflectionNatives.Register(natives); // beim Übersetzen zählen nur die Namen (der Compiler schreibt daraufhin Typ-Metadaten mit)
+                inserted++;
+            }
+
+            if (nativeImports.Contains(NativeImports.Time))
+            {
+                processedSources.Insert(1, preprocess(fire.Standard.TimePrelude.Source));
+                TimeNatives.Register(natives); // beim Übersetzen zählen nur die Namen
                 inserted++;
             }
 

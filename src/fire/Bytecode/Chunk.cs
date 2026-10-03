@@ -82,16 +82,26 @@ namespace fire.Bytecode
         /// Byte-Offset `ip` gehört ((0, 0), wenn keine Zeileninformation
         /// vorhanden ist, z.B. für programmatisch/ohne Compiler gebaute
         /// Chunks).</summary>
-        public (int SourceIndex, int Line) GetLocation(int ip)
+        public (int SourceIndex, int Line) GetLocation(int ip) => GetLocationRange(ip, out _, out _);
+
+        /// <summary>Wie <see cref="GetLocation"/>, liefert aber zusätzlich den Byte-Bereich [start, endExclusive), in dem
+        /// dieselbe Stelle gilt - wer viele aufeinanderfolgende Offsets abfragt (der Debugger beim Weiterlaufen), muss
+        /// nur beim Verlassen dieses Bereichs neu nachschlagen. Die Tabelle ist nach Offset sortiert (MarkLine hängt
+        /// immer am aktuellen Code-Ende an): binäre Suche statt eines Durchlaufs vom Anfang bei jeder Abfrage.</summary>
+        public (int SourceIndex, int Line) GetLocationRange(int ip, out int start, out int endExclusive)
         {
-            int resultSource = 0, resultLine = 0;
-            foreach (var (offset, sourceIndex, line) in _lineTable)
+            var table = _lineTable;
+            int lo = 0, hi = table.Count - 1, found = -1;
+            while (lo <= hi)
             {
-                if (offset > ip) break;
-                resultSource = sourceIndex;
-                resultLine = line;
+                int mid = (lo + hi) >> 1;
+                if (table[mid].Offset <= ip) { found = mid; lo = mid + 1; }
+                else hi = mid - 1;
             }
-            return (resultSource, resultLine);
+
+            start = found < 0 ? 0 : table[found].Offset;
+            endExclusive = found + 1 < table.Count ? table[found + 1].Offset : int.MaxValue;
+            return found < 0 ? (0, 0) : (table[found].SourceIndex, table[found].Line);
         }
 
         // Debug-Namen für lokale Variablen: (Tiefe relativ zur jeweiligen
@@ -192,7 +202,29 @@ namespace fire.Bytecode
             _codeArray = null;
             Code.Add(b);
         }
-        public void EmitOp(OpCode op) => EmitByte((byte)op);
+        public void EmitOp(OpCode op)
+        {
+            _lastOpStart = Code.Count;
+            EmitByte((byte)op);
+        }
+
+        // Für das Verschmelzen von Instruktionen beim Übersetzen (siehe EndsWithOp): wo der zuletzt emittierte Opcode beginnt
+        // und an welcher Stelle zuletzt ein Sprungziel/Patch-Punkt abgefragt wurde (jede Marke entsteht über `Here`).
+        [MemoryPackIgnore] private int _lastOpStart = -1;
+        [MemoryPackIgnore] private int _lastHere = -1;
+
+        /// <summary>Ist `op` (mit `operandBytes` Operandenbytes) die zuletzt emittierte Instruktion, und zeigt KEIN Sprungziel hinter sie?
+        /// Nur dann darf der Compiler sie zusammen mit der nächsten zu einer verschmolzenen Instruktion machen: eine Marke hinter ihr
+        /// würde nach dem Verschmelzen mitten in die neue Instruktion zeigen.</summary>
+        public bool EndsWithOp(OpCode op, int operandBytes) =>
+            _lastOpStart >= 0 && _lastOpStart == Code.Count - 1 - operandBytes && Code[_lastOpStart] == (byte)op && _lastHere != Code.Count;
+
+        /// <summary>Ersetzt den Opcode der zuletzt emittierten Instruktion (gleiche Operanden) - nach einem erfolgreichen EndsWithOp.</summary>
+        public void ReplaceLastOp(OpCode op)
+        {
+            _codeArray = null;
+            Code[_lastOpStart] = (byte)op;
+        }
 
         public void EmitU16(int value)
         {
@@ -214,6 +246,13 @@ namespace fire.Bytecode
         /// <summary>Aktuelle Schreibposition - als Sprungziel oder als Ausgangspunkt
         /// für ein späteres PatchU16 nützlich.</summary>
         [MemoryPackIgnore]
-        public int Here => Code.Count;
+        public int Here
+        {
+            get
+            {
+                _lastHere = Code.Count;
+                return Code.Count;
+            }
+        }
     }
 }

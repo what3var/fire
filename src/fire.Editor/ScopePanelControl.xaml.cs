@@ -7,70 +7,26 @@ using fire.Values;
 
 namespace fire.Editor
 {
-    /// <summary>Ein eigenständiges, wiederverwendbares Debugger-Panel:
-    /// Threads-Liste, aufklappbarer Scope-Baum, Wert-Stack, Aufruftiefe/
-    /// aktuelle Zeile/Haltepunkte-Anzeige - arbeitet auf EINER DebugSession
-    /// (siehe AttachSession), kennt aber selbst NICHTS vom Editor/Kompilieren
-    /// (das bleibt Sache des Host-Fensters, siehe ScriptEditorControl-
-    /// Klassendoku für dasselbe Prinzip). Sowohl vom alten Einzeldatei-
-    /// Fenster (MainWindow) als auch vom neuen Tabbed-Projekt-Fenster
-    /// (ProjectWindow) genutzt.</summary>
-    public partial class DebuggerPanelControl : UserControl
+    /// <summary>Der Scope des aktiven Threads als Baum: `this`, die Scope-Kette der aktuellen Funktion (innerster Block
+    /// zuerst) und die Globals. Objekte und Arrays klappen lazy auf. Arbeitet auf EINER DebugSession (siehe
+    /// AttachSession), kennt sonst nichts vom Editor.</summary>
+    public partial class ScopePanelControl : UserControl
     {
         private DebugSession? _session;
 
-        /// <summary>Feuert, wenn der Nutzer in der Threads-Liste einen
-        /// ANDEREN als den bisher aktiven Thread auswählt - das Control hat
-        /// dabei bereits DebugSession.SelectThread aufgerufen (ein reiner
-        /// Session-Zustand, den es selbst verwaltet), der Host reagiert
-        /// darauf i.d.R. mit Editor-Hervorhebung/Scrollen zur neuen Zeile
-        /// und einer Status-Meldung - beides Dinge, die dieses Control
-        /// selbst nicht kennt (siehe Klassendoku).</summary>
-        public event Action<DebugThreadContext>? ThreadSelected;
-
-        // Index-parallel zu ThreadsList.ItemsSource (siehe RefreshThreadsList)
-        // - die Liste selbst zeigt nur formatierten Text an, die Auswahl wird
-        // über den Index auf dieses Parallel-Array zurückgemappt.
-        private List<DebugThreadContext> _threadListItems = new();
-
-        public DebuggerPanelControl()
+        public ScopePanelControl()
         {
             InitializeComponent();
         }
 
-        /// <summary>Verbindet dieses Control mit einer (neuen) DebugSession -
-        /// z.B. nach einem Neukompilieren, wenn der Host eine frische
-        /// DebugSession erzeugt hat. Ruft selbst KEIN Refresh() auf - der
-        /// Host tut das i.d.R. direkt im Anschluss.</summary>
         public void AttachSession(DebugSession session) => _session = session;
 
-        /// <summary>Baut Threads-Liste, Scope-Baum, Wert-Stack und die
-        /// Text-Anzeigen (Aufruftiefe/aktuelle Zeile/Haltepunkte) komplett
-        /// neu auf - vom Host nach JEDER Zustandsänderung aufzurufen (nach
-        /// Kompilieren, jedem Schritt, Stop, Thread-Wechsel).
-        /// `breakpointDescriptions` sind bereits fertig formatierte Einträge
-        /// für die Anzeige (z.B. nur "12" bei einer einzelnen Datei - siehe
-        /// MainWindow - oder "datei.script:12" bei mehreren - siehe
-        /// ProjectWindow) - die Haltepunkt-MENGE selbst verwaltet je ein
-        /// ScriptEditorControl, dieses Control weiß nichts über Dateien.</summary>
-        public void Refresh(IEnumerable<string> breakpointDescriptions)
+        /// <summary>Baut den Baum neu auf - nach jeder Zustandsänderung (Kompilieren, Schritt, Stopp, Thread-Wechsel).</summary>
+        public void Refresh()
         {
-            RefreshThreadsList();
-
-            var vm = _session?.Vm;
-            CallDepthText.Text = $"Aufruftiefe: {(vm?.DebugCallDepth.ToString() ?? "-")}";
-            CurrentLineText.Text = $"Aktuelle Zeile: {(vm != null ? vm.CurrentLine.ToString() : "-")}";
-            var descriptions = breakpointDescriptions.ToList();
-            BreakpointsText.Text = descriptions.Count == 0
-                ? "Haltepunkte: (keine - F9 auf der Cursor-Zeile)"
-                : "Haltepunkte: " + string.Join(", ", descriptions);
-
             ScopeTree.Items.Clear();
-            if (vm == null)
-            {
-                StackView.ItemsSource = null;
-                return;
-            }
+            var vm = _session?.Vm;
+            if (vm == null) return;
 
             // "this" ganz oben, falls an dieser Stelle gebunden - als echter
             // (aufklappbarer) Wert statt nur als Textzeile, siehe
@@ -104,45 +60,7 @@ namespace fire.Editor
             if (globals.Count == 0)
                 globalNode.Items.Add(new TreeViewItem { Header = "(leer)" });
             ScopeTree.Items.Add(globalNode);
-
-            StackView.ItemsSource = vm.DebugStackSnapshot
-                .Reverse()
-                .Select(v => v.ToString())
-                .ToList();
         }
-
-        private void RefreshThreadsList()
-        {
-            _threadListItems = _session?.Threads.ToList() ?? new List<DebugThreadContext>();
-            var active = _session?.ActiveThread;
-
-            ThreadsList.ItemsSource = _threadListItems.Select(t =>
-            {
-                string status = t.RuntimeError != null ? $"Fehler: {t.RuntimeError}"
-                    : t.IsFinished ? "beendet"
-                    : $"Zeile {t.Vm.CurrentLine}";
-                string marker = ReferenceEquals(t, active) ? "-> " : "   ";
-                return $"{marker}{t.Name} ({status})";
-            }).ToList();
-
-            int activeIndex = active != null ? _threadListItems.FindIndex(t => ReferenceEquals(t, active)) : -1;
-            if (activeIndex >= 0) ThreadsList.SelectedIndex = activeIndex;
-        }
-
-        private void ThreadsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            int index = ThreadsList.SelectedIndex;
-            if (index < 0 || index >= _threadListItems.Count || _session == null) return;
-
-            var chosen = _threadListItems[index];
-            if (ReferenceEquals(chosen, _session.ActiveThread)) return;
-
-            _session.SelectThread(chosen);
-            ThreadSelected?.Invoke(chosen);
-        }
-
-        private void PauseThread_Click(object sender, System.Windows.RoutedEventArgs e) =>
-            _session?.PauseActiveThread();
 
         // -----------------------------------------------------------
         // Feld-/Element-Anzeige für Objekte und Arrays im Scope-Baum (siehe

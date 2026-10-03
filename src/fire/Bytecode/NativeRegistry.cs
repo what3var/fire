@@ -105,6 +105,8 @@ namespace fire.Bytecode
                 ? idx
                 : throw new InvalidOperationException($"Keine 'tryable' native Funktion namens '{name}' registriert.");
 
+        public bool Has(string name) => _indexByName.ContainsKey(name);
+
         public bool IsTryable(string name) => _tryableIndexByName.ContainsKey(name);
 
         public IEnumerable<string> Names => _indexByName.Keys;

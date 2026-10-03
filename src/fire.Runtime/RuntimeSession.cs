@@ -42,11 +42,14 @@ namespace fire.Runtime
         /// (siehe IoBridge.RegisterAll). Der Destruktor von `IO.FileStream` &amp; Co. schließt sie normalerweise schon.</summary>
         protected IDisposable? IoResources { get; set; }
 
+        /// <summary>Räumt die Geräte-Brücke nach dem Lauf auf (siehe DeviceBridge.RegisterAll).</summary>
+        protected IDisposable? DeviceResources { get; set; }
+
         public void Run()
         {
             if (VirtualMachine == null) return;
             try { VirtualMachine.Run(); }
-            finally { IoResources?.Dispose(); }
+            finally { IoResources?.Dispose(); DeviceResources?.Dispose(); }
         }
 
         protected void SetVM(VM virtualMachine, Scope globalScope, NativeRegistry natives, int firstUserSourceIndex)
@@ -74,17 +77,24 @@ namespace fire.Runtime
                 if (debugWriter == null)
                     natives.Register("print", args => Value.MakeUndefined());
                 else
-                    natives.Register("print", args => debugWriter(args));
+                    natives.Register("print", args => VM.StringifyForPrint(args) is { } shown ? debugWriter(shown) : Value.MakeUndefined());
             }
             natives.RegisterBaseTypeNatives();
 
             var session = new Session(linkedProgram.Program);
 
+            // WICHTIG: native Funktionen werden über ihren INDEX angesprungen - die Reihenfolge der Registrierung muss
+            // exakt der beim Übersetzen entsprechen (siehe ImportedPreludes.Insert): graphics, reflection, time, devices, io.
             if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
                 RegisterGraphics(session, natives);
 
+            if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
+                ReflectionNatives.Register(natives);
+            if (linkedProgram.NativeImports.Contains(NativeImports.Time))
+                TimeNatives.Register(natives);
+
             if (linkedProgram.NativeImports.Contains(NativeImports.Devices))
-                RegisterDevices(natives);
+                session.DeviceResources = RegisterDevices(natives);
 
             // Dateisystem-/Stdio-Policy: die gepackte Runtime nutzt die Vorgabe (alles erlaubt, echte Konsole) -
             // Hosts mit eigener Policy (Editor) bauen ihre Session über fire.Compiler.RuntimeSession.
@@ -115,11 +125,12 @@ namespace fire.Runtime
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static void RegisterDevices(NativeRegistry natives)
+        private static IDisposable RegisterDevices(NativeRegistry natives)
         {
-            var deviceManager = new fire.Device.Manager.DeviceManager.DeviceManager();
+            // Ein eigener Manager mit den eingebauten Treibern; er gehört dem Programm und wird nach dem Lauf freigegeben.
+            var deviceManager = fire.Device.Manager.DeviceManager.DeviceManager.CreateDefault();
 
-            fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager);
+            return fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager);
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]

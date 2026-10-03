@@ -55,7 +55,7 @@ Von locker (weit oben) nach fest bindend (weit unten):
 |                         bitweises Oder     (nur int)
 #                         bitweises Exklusiv-Oder (nur int - NICHT '^', das ist Potenz)
 &                         bitweises Und      (nur int)
-== !=                     Gleichheit
+== != ##                  Gleichheit (`##` ist ein Synonym für `!=`)
 < <= > >=                 Vergleich
 << >>                     Bit-Schiebeoperatoren (nur int)
 + -                       Addition/Subtraktion
@@ -282,13 +282,43 @@ Jede sonstige, nicht erkannte Suffix-Zeichenfolge an einem Literal wird als **at
 
 ### 4.2 Lambdas
 
-- Eine Lambda sieht beim Namens-Lookup **nur ihren eigenen Scope und den globalen Scope** – keine Closure über dazwischenliegende Scopes.
+- Eine Lambda sieht beim Namens-Lookup **ihren eigenen Scope, den globalen Scope und Kopien der äußeren lokalen Werte, die ihr Körper benutzt** (Captures, siehe 4.2.1) – keine Closure über dazwischenliegende Scopes.
 - `on obj` bindet ein Objekt als `this`-Kontext, entweder bei Definition (`func (X) on obj => { ... }`) oder nachträglich bei Zuweisung (`var b = a on obj2;`, erzeugt einen neuen Lambda-Wert mit anderem `this`, `a` bleibt unverändert).
-- Membervariablen des gebundenen `this`-Objekts sind im Lambda-Body unqualifiziert sichtbar.
+- Membervariablen des gebundenen `this`-Objekts sind im Lambda-Body unqualifiziert sichtbar: bei einer Lambda mit `on ziel` (`func (x) on win => { n = n + x; Hello() }`) sind unbekannte Namen Mitglieder des Ziels - lesen, schreiben, `++` und Methodenaufrufe wirken wie mit `this.` davor (die Klasse steht erst zur Laufzeit fest, ein unbekannter Name ist dort ein Laufzeitfehler). Lokale Variablen, Parameter und Captures haben Vorrang. Eine Lambda ohne `on` kennt keine Mitglieder (ein unbekannter Name ist ein Übersetzungsfehler).
 - Ownership des Lambda-Werts folgt Abschnitt 2.1 (Feldzuweisung → Objekt-Owner, sonst Scope-Owner) – unabhängig vom `on`-Binding.
 - Für eine Typ-Annotation, die einen Lambda-Wert erwartet (Feld, Parameter, Rückgabetyp, `var`), steht der Typname **`lambda`** zur Verfügung, optional mit Signatur: `[RückgabeTyp] lambda[<ParamTyp1,...,ParamTypN>]`. Bewusst **nicht** `func` (das leitet einen Lambda-*Ausdruck* ein, `func (x) => ...`, und würde als Typname mit dieser Ausdrucks-Syntax kollidieren). Details siehe 4.3.
 
+### 4.2.1 Kurzsyntax und Captures
+
+**Kurzsyntax.** Neben `func (x) => ...` gibt es `x => ausdruck`, `(a, b) => ausdruck`, `() => ausdruck` und jeweils `=> { ... }` mit Block. Parameter dürfen
+wie sonst Typen/Standardwerte tragen (`(int a, int b) => a + b`); `on obj` gibt es nur bei der `func`-Form.
+
+**Captures.** Benutzt der Körper einer Lambda Namen, die im umschließenden Code **lokale Variablen oder Parameter** sind (Methodenparameter, `var` in Blöcken und
+Schleifen, Parameter einer umschließenden Lambda), werden deren **Werte beim Erzeugen der Lambda kopiert**:
+
+```
+class T {
+    static Run() {
+        var limit = 3
+        var f = x => x > limit          // limit wird kopiert
+        limit = 10
+        print(f(5))                     // True - die Lambda sieht weiter 3
+    }
+}
+```
+
+- Es wird der **Wert** kopiert, nicht die Variable: spätere Änderungen draußen sind drinnen unsichtbar und umgekehrt (es gibt keine geteilten, veränderlichen Variablen - auch
+  keine Schleifenvariablen-Falle: `for (...) { fs.Add(() => i) }` erfasst je Durchlauf den aktuellen Wert).
+- Eine **Zuweisung an einen Capture** im Lambda ist ein Fehler („ist im Lambda eine KOPIE …“); eine eigene Deklaration mit demselben Namen (`var limit = 100`) verdeckt ihn.
+- **Objekte** werden als Referenz kopiert (der Wert ist die Referenz): die Lambda sieht und verändert dasselbe Objekt. Es bleibt im Besitz seines ursprünglichen Owners - überlebt die Lambda
+  ihn, ist es danach zerstört. Eine eigene Kopie erzwingt man mit `copy x`/`flat x` in einer lokalen Variable davor.
+- **Globale** Variablen werden nicht kopiert, sie bleiben lebendig (`g = 7` ist in der Lambda sichtbar). Das gilt auch für Top-Level-Variablen.
+- `this` wird nicht erfasst (dafür `on this`). `fire global { }` erfasst nichts - dort gilt allein `taking`.
+- Nicht erfasst werden Namen, die kein Lokal des umschließenden Codes sind (Klassenmitglieder, Natives, Klassen): sie lösen wie bisher auf.
+
 ### 4.3 Lambda-Typen mit Signatur
+
+(`lambda member<T> name` & Co. - ein Selektor, der ein Mitglied eines Objekts auswählt - steht in 8.13.)
 
 ```
 class Runner {
@@ -483,7 +513,8 @@ Erlaubt sind **nur Methoden**: ein Basiswert hat keinen Speicher, in dem ein Fel
 liegen könnte. Ein Feld, eine (Auto-)Property, ein Konstruktor/Destruktor, eine `static`-Methode
 (`string.Foo()` gibt es nicht) und eine Operator-Überladung sind ein Fehler bei der Übersetzung
 („'class extends string': Feld 'x' nicht erlaubt …“). `byte` lässt sich nicht erweitern - ein `byte`
-ist zur Laufzeit ein `int`, also `class extends int`. Arrays und Puffer sind ebenfalls nicht erweiterbar.
+ist zur Laufzeit ein `int`, also `class extends int`. Für **Arrays** gibt es `class extends array { ... }` (ein Bezeichner, kein Schlüsselwort; `this` ist das Array, es gelten dieselben Regeln: nur Instanzmethoden) - so bekommt jedes
+Array z.B. die LINQ-Operatoren (`#import "linq"`). Puffer sind nicht erweiterbar.
 
 Die Methoden des Prelude für `string` und `char` (8.12) sind genau solche Erweiterungen. Eine eigene
 Methode mit demselben Namen und derselben Parameteranzahl wie eine bestehende ist - wie bei jeder Klasse -
@@ -730,7 +761,7 @@ Methoden-Infrastruktur funktioniert deshalb automatisch mit.
 ## 6. Prüf-Operatoren: `is in`, `is of`, `is from`
 
 - **`wert is in einheit`** → `bool`. Prüft, ob `wert` (int/float/undefined) eine zu `einheit` dimensional kompatible Einheit trägt (siehe 3.4), unabhängig von Präfix/Skalierungsfaktor. Beispiel: `5mm is in m` → `true`, `5mm is in kg` → `false`.
-- **`wert is of Typ`** → `bool`. Prüft die Typzugehörigkeit **rekursiv**: bei Basistypen einfacher Kind-Vergleich; bei `class`-Instanzen wird die Vererbungskette nach oben durchsucht (Instanz selbst oder eine ihrer Elternklassen entspricht `Typ`). Beispiel: `a is of float`.
+- **`wert is of Typ`** → `bool`. Prüft die Typzugehörigkeit **rekursiv**: bei Basistypen einfacher Kind-Vergleich; bei `class`-Instanzen wird die Vererbungskette nach oben durchsucht (Instanz selbst oder eine ihrer Elternklassen entspricht `Typ`). Beispiel: `a is of float`. Auch ein **Interface** ist als Typ erlaubt (`wert is of IEnumerable`): wahr, wenn die Klasse (oder eine Basisklasse) es in `class X : IFoo` nennt; **Arrays und Puffer** erfüllen `IEnumerable`.
 - **`objekt is from ownerAusdruck`** → `bool`. Prüft, ob der aktuelle Owner von `objekt` genau `ownerAusdruck` ist (direkter Owner-Vergleich). Beispiel: `obj is from objList`.
 - **`objekt is under ownerAusdruck`** → `bool`. Wie `is from`, aber **transitiv**: prüft, ob `ownerAusdruck` irgendwo in der Ownership-Kette oberhalb von `objekt` liegt (direkter Owner, dessen Owner, usw., beliebig tief).
 
@@ -777,7 +808,9 @@ try {
 ```
 
 - Mehrere `catch`-Blöcke werden der Reihe nach geprüft; ein getypter `catch (Type name)` filtert per `is of`-Check, ein ungetypter `catch (name)` fängt alles. Der Typ steht - wie bei jeder Deklaration (`int x`) - VOR dem Namen.
-- `finally` ist optional und läuft immer.
+- `finally` ist optional und läuft **immer**, auf jedem Weg, der den `try` verlässt: normal, nach einem `catch`, bei einer Exception, die an diesem `try` vorbeigeht (auch aus einem `catch`-Block heraus), bei `return`
+  (auch im `try`/`catch`/in einem `foreach` darin), bei `break`/`continue` und bei `leave`/`terminate`. Der Block sieht die lokalen Variablen der Funktion. Ein `return` im `finally` ersetzt den Rückgabewert, eine `throw`
+  darin ersetzt die ursprüngliche Exception; `break`/`continue` aus dem `finally` heraus sind ein Fehler. Der Rückgabewert eines `return` im `try` steht fest, bevor das `finally` läuft (ändert es die Variable, bleibt er).
 
 ### 7.4 `catch` ohne `try` – impliziter Block-Scope-Catch
 
@@ -1237,6 +1270,7 @@ class List : IEnumerable {
 - Ein `interface` deklariert nur Methodensignaturen (keine Felder, kein
   Konstruktor), ähnlich `extern`, nur eben für klasseninterne Verträge statt
   native Funktionen.
+- **Arrays und Byte-Puffer sind `IEnumerable`:** `arr.GetEnumerator()` liefert einen Enumerator (`ListEnumerator`), `arr is of IEnumerable` ist wahr, und alles, was eine `IEnumerable` verarbeitet (`foreach`, `Linq.From`, eigene Methoden), nimmt sie an.
 - `foreach (x in collection)` (SPEC 5) läuft über `GetEnumerator()`/
   `MoveNext()`/`GetCurrent()` – rein per NAMENS-Dispatch, funktioniert also
   auch auf jeder anderen Klasse mit denselben drei Methoden, nicht nur auf
@@ -1728,6 +1762,168 @@ Eine Position außerhalb des erlaubten Bereichs wirft `IndexOutOfBoundsException
 Der Editor kennt diese Methoden aus dem Prelude (und auch die eigenen Erweiterungen des Nutzers): `text.`
 schlägt sie vor, und die Typen der Ergebnisse (`Trim()` → string, `Split()` → string[], `IndexOf()` → int,
 …) laufen durch Methodenketten.
+
+### 8.13 Reflection (`#import "reflection"`)
+
+Klassen und ihre Mitglieder lassen sich zur Laufzeit beschreiben und über ihren **Namen** benutzen. Die Bibliothek ist reiner fire-Quelltext über ein paar native Funktionen
+(`fire.Standard.ReflectionPrelude`, `fire.Runtime.ReflectionNatives`); bei Programmen ohne den Import entsteht kein Mehraufwand, und der Compiler schreibt die Typ-Metadaten (`ClassMeta`) nur mit,
+wenn er sie braucht.
+
+```
+#import "reflection"
+
+var t = Type.Of(circle)                 // oder Type.Of("Circle"); Type.Named("Gibts") liefert undefined statt zu werfen
+print(t.Name + " : " + t.Base.Name)     // Circle : Shape
+foreach (m in t.All) { print(m.Kind + " " + m.Access + " " + m.TypeName + " " + m.Name) }
+
+Reflect.Get(circle, "radius")           Reflect.Set(circle, "Diameter", 20.0)      // Felder UND Properties
+Reflect.Call(circle, "Scale", [2.0, 1]) Reflect.New("Circle", [5.0])
+Reflect.Has(circle, "Area")
+t.Find("radius").Get(circle)            // Member.Get/Set/Call(obj, ...)
+```
+
+- **`Type`**: `Name`, `Base` (ein `Type` oder `undefined`), `IsActor`, `Interfaces` (Namen), `All` (alle `Member`, auch geerbte; eine abgeleitete Klasse verdeckt gleichnamige der Basis, Konstruktoren nur die eigenen),
+  `Fields()`/`Properties()`/`Methods()`/`Constructors()`, `Find(name)`/`Has(name)`, `IsSubclassOf(type)`, `New(args)`; `Type.Of(x)`, `Type.Named(name)`, `Type.Names()`.
+- **`Member`**: `Name`, `Kind` (`"field"`, `"property"`, `"method"`, `"constructor"`), `TypeName` (der deklarierte Typ wie im Quelltext, bei Methoden der Rückgabetyp, `""` ohne Angabe), `Access` (`"public"`/`"private"`/`"protected"`),
+  `IsStatic`, `IsReadonly`, `CanRead`/`CanWrite` (Properties), `Unit` (geforderte Einheit), `DeclaredIn`, `ParamNames`/`ParamTypes`, `ParamCount()`, dazu `Get(obj)`, `Set(obj, wert)`, `Call(obj, args)`.
+- **Regeln:** Reflection umgeht nichts, sie läuft durch dieselben Pfade wie normaler Code. `private`/`protected` gelten für den Code, der die Bibliothek **aufgerufen** hat (aus einer Methode der Klasse selbst ist `Reflect.Get(this, "secret")`
+  erlaubt, von außen nicht: `AccessDeniedException`; im Modus `Performance` entfällt die Prüfung wie überall); ein `readonly`-Feld lässt sich nicht zuweisen; Einheiten werden geprüft (`UnitMismatchException`); Property-Accessoren
+  laufen als normale Methoden (eine Exception darin läuft zum äußeren `catch`); für Objekte der Globals gelten die Sektionsregeln (THREADING_DESIGN.md Abschnitt 7).
+- **Fehler** sind fangbare **`ReflectionException`** (`message`): unbekanntes oder nicht lesbares/beschreibbares Mitglied, falsche Argumentzahl, kein Objekt, unbekannte Klasse.
+- **Grenzen:** Statische Mitglieder stehen in der Beschreibung, lassen sich aber nicht über `Reflect` lesen/schreiben/aufrufen. `Reflect.New` baut über eine verschachtelte Ausführung: wirft ein Konstruktor eine Exception, ist das ein
+  interner Fehler statt einer fangbaren Exception. Dynamisch angelegte Felder (ohne Deklaration) erscheinen nicht in `Type`, `Reflect.Has` kennt sie.
+
+#### Selektoren: `lambda member<T> name` (und `field`, `property`, `method`, `selector`)
+
+Ein Parameter mit einem Selektor-Typ nimmt eine Lambda entgegen, die ein Mitglied **auswählt**; im Körper enthält der Parameter dann die **Reflection des gewählten Mitglieds** (einen `Selector`), nicht die Lambda:
+
+```
+class Watch {
+    static Show(lambda member<Circle> sel, Circle c) {
+        print(sel.Name + " = " + sel.Get(c))       // radius = 5
+        sel.Set(c, 3.0)
+        print(sel.Describe(c).TypeName)             // float (das `Member`)
+    }
+}
+Watch.Show(c => c.radius, myCircle)
+```
+
+Fünf Arten, je nachdem, was die Lambda auswählen darf:
+
+| Typ | erlaubt |
+|---|---|
+| `lambda field<T>` | nur ein **Feld** |
+| `lambda property<T>` | nur eine **Property** |
+| `lambda member<T>` | ein Feld **oder** eine Property |
+| `lambda method<T>` | nur eine **Methode** |
+| `lambda selector<T>` | **alles**: Feld, Property und Methode |
+
+`T` ist der Klassenname, gegen den der Resolver prüft (`lambda selector<>` ohne Typ geht auch); die Instanz wird zur Laufzeit nicht gegen `T` geprüft. Passt das gewählte Mitglied nicht zur Art, ist das eine `ReflectionException`
+("'P' ist eine Property, erwartet (lambda field<...>): ein Feld") - sobald es ein Objekt gibt (`Get`/`Set`/`Call`/`Describe`/`Probe`).
+
+`Selector`: `Name` (das gewählte Mitglied), `Path` (alle Namen, bei `p => p.address.city`: `address`, `city`), `Kind` (die Art des Parametertyps), `Parent(obj)`, `ActualKind(obj)` (`"field"`, `"property"`, `"method"`), `Get(obj)`, `Set(obj, wert)`,
+`Call(obj, args)` (nur bei einer Methode, also mit `method<T>` oder `selector<T>`), `Describe(obj)` (das `Member`), `Probe`/`Silence` (nicht für Methoden). `Get`/`Set` auf einer Methode sind eine `ReflectionException` (dafür gibt es `Call`). Eine Methode wählt man ohne Aufruf: `x => x.Twice`.
+Die Lambda muss genau einen Parameter haben, und ihr Körper darf nur eine **Mitgliedskette auf diesem Parameter** sein; alles andere ist eine `ReflectionException` ("Die Lambda ist kein Selektor ..."). Wird ein schon umgewandelter Selektor an einen weiteren
+Selektor-Parameter weitergereicht, bleibt er unverändert (und behält die Art des ersten Parameters). Ohne `#import "reflection"` ist jeder Selektor-Typ ein Fehler.
+
+### 8.14 `probe` und `silence`
+
+Ein `probe` hängt einen Handler an **Schreibzugriffe auf ein Mitglied eines Objekts** - auch von außen, ohne die Klasse zu ändern. `silence` nimmt Proben wieder weg. Beides braucht keinen Import.
+
+```
+var h = probe cfg.volume changed { print(name + ": " + old + " -> " + value) }   // Block: implizite Namen sender, name, old, value
+probe cfg.volume changing (old, new) => new <= 100                              // false bricht das Schreiben ab
+probe player.stats.hp changed (o, v) => ui.Refresh(v)                           // Pfad: Objekt = player.stats, Mitglied = hp
+probe cfg.volume changed handlerLambda                                          // beliebiger Lambda-Wert
+probe cfg.* changed (s, n, a, b) => print(n + " " + a + "->" + b)               // alle Mitglieder
+
+silence h                // Handle (int) -> genau diese Probe
+silence cfg.volume       // alle Proben dieses Mitglieds
+silence cfg.*            // alle Proben des Objekts (ebenso: silence cfg)
+```
+
+- **Ziel:** `probe a.b.c ...` wertet `a.b` **einmal** aus; die Probe hängt an **diesem Objekt**, nicht am Slot (wird `a.b` später ersetzt, bleibt sie am alten Objekt). Das Mitglied muss existieren (Feld, Property oder Methode),
+  sonst ist es ein Fehler beim Anmelden. `probe ...` ist ein Ausdruck und liefert das Handle (`int`), als Statement wird es verworfen. `silence x` mit einem Objekt entfernt alle seine Proben; ein schon entferntes Handle ist kein Fehler.
+- **Handler:** der Block und `=> ausdruck` bekommen die vier Namen `sender` (das Objekt), `name` (das Mitglied), `old`, `value`; eine Lambda mit Parameterliste bekommt je nach **Anzahl** 0 nichts, 1 `(neu)`, 2 `(alt, neu)`,
+  3 `(Objekt, alt, neu)`, 4 `(Objekt, Name, alt, neu)` (mehr als 4 ist ein Fehler). Sie darf lokale Werte erfassen (4.2.1).
+- **Wann:** `changing` läuft **vor** dem Schreiben; liefert ein Handler `false`, wird nicht geschrieben (der Zuweisungsausdruck wertet trotzdem zum zugewiesenen Wert aus), die übrigen laufen nicht mehr. `changed` läuft **nach** dem
+  Schreiben und nur, wenn sich der Wert wirklich geändert hat (Vergleich wie `==`, Objekte per Referenz). Mehrere Proben laufen in der Reihenfolge ihrer Anmeldung.
+- **Was beobachtet wird:** Schreibzugriffe auf das Mitglied (`=`, `++`, `+=`, über Reflection) - bei Properties vor/nach dem Aufruf des Setters (alter Wert = Ergebnis des Getters, falls es einen gibt); schreibt der Setter selbst Felder, feuern auch
+  deren Proben. **Nicht** beobachtet: Änderungen *innerhalb* eines Objekts (`obj.list.Add(...)`, Array-Elemente), eine berechnete Property, deren Quelle sich ändert (dafür das Feld proben), und Schreibzugriffe von `sync`-Rückschreibungen.
+- **Ablauf:** synchron auf dem Thread des Schreibers (bei Objekten der Globals innerhalb der Sektion). Schreibt ein Handler dasselbe Mitglied desselben Objekts, feuert dafür nichts erneut. Eine Exception im Handler läuft zum
+  Schreiber: bei `changing` bleibt der Wert unverändert, bei `changed` ist er schon geschrieben. Proben leben mit dem Objekt (sein Ende entfernt sie).
+- **Kosten:** nur Objekte mit Probe nehmen den langsamen Schreibpfad; alle anderen behalten die schnellen Pfade unverändert.
+- **Schlüsselwörter:** `probe`, `silence`, `changed`, `changing` sind kontextabhängig (`probe`/`silence` nur, wenn direkt ein Bezeichner oder `this` folgt) - als Variablennamen bleiben sie nutzbar.
+- **Mit Reflection** (`#import "reflection"`, 8.13): `Reflect.Probe(obj, "name", "changed"|"changing", handler)`, `Reflect.ProbeAll`, `Reflect.Silence(obj, "name")`, `Reflect.SilenceAll(obj)`, `Reflect.SilenceHandle(h)`, `Member.Probe(obj, kind, handler)`
+  und `Selector.Probe(obj, kind, handler)`/`Selector.Silence(obj)` - z.B. `Watch(c => c.volume, cfg)` mit `lambda member<Cfg> sel` und `sel.Probe(cfg, "changed", ...)`.
+
+### 8.15 `DateTime`, `TimeSpan` und `Sleep` (`#import "time"`)
+
+Zeit wird in **Ticks** zu 100 ns gerechnet (wie in .NET); `DateTime` zählt ab 0001-01-01. Die Klassen sind in fire geschrieben (`fire.Standard.TimePrelude`) über wenige native Funktionen (`fire.Runtime.TimeNatives`); Fehler sind fangbare **`TimeException`**.
+
+```
+#import "time"
+
+var dauer = TimeSpan.FromSeconds(90)              // auch FromMilliseconds/FromMinutes/FromHours/FromDays/FromTicks, Zero(); new TimeSpan(h, m, s) / (d, h, m, s) / (d, h, m, s, ms)
+print(dauer)                                      // 00:01:30
+print(dauer.TotalMinutes + " " + dauer.Seconds)   // 1.5 30
+var w = TimeSpan.Of(250ms)                        // aus einem Wert mit Zeiteinheit, einer Zahl (ms) oder einer TimeSpan
+
+var jetzt = DateTime.Now()                        // UtcNow(), Today(); new DateTime(2024, 3, 15) / (y, m, d, h, mi, s) / (..., ms)
+var morgen = jetzt + TimeSpan.FromDays(1)
+print(morgen.ToString("dd.MM.yyyy HH:mm"))
+print(DateTime.Parse("2024-12-24 18:00") - jetzt)  // eine TimeSpan
+Sleep(500ms)                                      // oder Sleep(dauer), Sleep(250) (Millisekunden)
+```
+
+- **`TimeSpan`**: Fabriken (s.o.), `Of(wert)`; Komponenten `Days`/`Hours`/`Minutes`/`Seconds`/`Milliseconds` (ganzzahlig), `Total...` (Kommazahlen), `Ticks`; Rechnen `+`, `-`, `* zahl`, `/ zahl` (auch `Add`/`Subtract`/`Multiply`/`Divide`/`Negate`/`Abs`),
+  Vergleiche `< <= > >= == != ##`, `CompareTo`, `Equals`; `ToString()` liefert `[-][d.]hh:mm:ss[.fffffff]`.
+- **`DateTime`**: Komponenten `Year`/`Month`/`Day`/`Hour`/`Minute`/`Second`/`Millisecond`/`DayOfWeek` (0 = Sonntag)/`DayOfYear`/`Ticks`/`Kind`, `DayName()`/`MonthName()`, `Date()`, `TimeOfDay()`; Rechnen `dt + zeitspanne`, `dt - zeitspanne` (ein `DateTime`),
+  `dt - dt` (eine `TimeSpan`), `AddDays`/`AddHours`/`AddMinutes`/`AddSeconds`/`AddMilliseconds`/`AddTicks`/`AddMonths`/`AddYears`; Vergleiche wie bei `TimeSpan`; `ToString()` (`yyyy-MM-dd HH:mm:ss`) und `ToString(format)` mit den .NET-Zeitformaten (invariante Kultur);
+  `Parse(text)` (wirft `TimeException`), `TryParse(text)` (undefined), `DaysInMonth`, `IsLeapYear`, `FromUnixSeconds`/`ToUnixSeconds`. **`Kind`** ist `"local"` (`Now`, `Today`, Konstruktoren, `Parse`) oder `"utc"` (`UtcNow`, `FromUnixSeconds`); `ToUtc()`/`ToLocal()` wandeln. Vergleiche und
+  Differenzen setzen gleiche Art voraus. Zeitzonen jenseits von Lokal/UTC gibt es nicht.
+- **`Sleep(zeit)`** legt den Thread schlafen. `zeit` ist eine `TimeSpan`, ein Wert mit Zeiteinheit (`500ms`, `2s`, `1.5min`) oder eine Zahl (Millisekunden). Das Schlafen ist **nicht taub**: in kurzen Stücken läuft, was sonst an den sicheren Punkten läuft - `leave`/`terminate` beenden
+  es sofort, zugestellte Fire-Thread-Exceptions werden behandelt, und im Hauptprogramm arbeitet das **automatische Abarbeiten der Warteschlange** (Sektionen der Fire-Threads, `fire global`-Aufträge, Host-Callbacks, siehe THREADING_DESIGN.md Abschnitt 7; mit `#nosync` nur bei `sync globals`).
+  Ein neuer Eintrag in der Warteschlange weckt das Schlafen früher auf. Ein Callback oder Destruktor (verschachtelte Ausführung) schläft ohne diese Aufgaben.
+
+**`ToString()` bei Ausgabe und Verkettung.** Hat ein Objekt eine parameterlose Methode `ToString()`, benutzt sie `print(objekt)`, `"text" + objekt`, `objekt + "text"` (hat die Klasse einen `operator+`, gilt dieser, `DateTime`/`TimeSpan` behandeln eine Zeichenkette dort selbst) und `$"{objekt}"`. Eine
+Exception in `ToString()` läuft zum umgebenden `catch`. Ohne `ToString()` bleibt die alte Darstellung (`<object ...>`).
+
+### 8.16 Geräte (`#import "devices"`)
+
+Die Erweiterung steuert Geräte über den **DeviceManager** (`src/fire.Device.Manager`: Treiber, Geräte, Handles; `src/fire.Device.Bridge`: fire-Klassen). Ein Gerät hat eine Kennung `treiber:anschluss`
+(`serial:COM3`, `loopback:echo`). Der Treiber `serial` (115200 Baud, zeilenweise `SendCommand`) ist eingebaut; `loopback` ist ein simuliertes Echo-Gerät ohne Hardware.
+
+```
+#import "devices"
+
+var d = Device.Default.EnsureConnected()   // Standardgerät des Hosts, verbindet bei Bedarf
+d.SendCommand("M105")
+while (!d.HasData()) { }
+print(d.ReadData())                        // Latin1: ein Zeichen je Byte
+```
+
+| Mitglied | Bedeutung |
+|---|---|
+| `Device.Default` (static Property) | das vom Host gewählte Standardgerät; wirft `DeviceNotFoundException`, wenn keins gewählt ist (z.B. in einem eigenständigen Programm) |
+| `Device.HasDefault` (static Property) | ist ein Standardgerät gewählt? |
+| `IsConnected` (Property; die Methode `IsConnected()` bleibt) | verbunden? |
+| `IsShared` (Property) | gehört das Gerät einem geteilten Manager (des Editors)? |
+| `Connect()` / `Disconnect()` | verbinden (`bool`) / trennen |
+| `EnsureConnected()` | verbindet nur, wenn nötig; wirft `DeviceConnectionException`, wenn das scheitert; liefert das Gerät selbst (verkettbar) |
+| `SendCommand(text)` | sendet eine Zeile; `false`, wenn nicht verbunden |
+| `HasData()` / `ReadData()` | empfangene Pakete abholen (eine Warteschlange je Gerät) |
+| `Identifier()`, `PortName()`, `Availability()`, `TestAvailability()` | Kennung, Anschluss, Verfügbarkeit (0 = nicht verfügbar, 1 = ungeprüft, 2 = verfügbar) |
+| `DeviceManagerFacade` | `Refresh(fastScan)`, `Count()`, `GetAt(i)`, `GetByHandle(h)`, `GetByIdentifier(id)`, `IsShared()` |
+
+**Geteilter DeviceManager.** Läuft ein Skript im Editor, benutzt es den gemeinsamen Manager des Editors (`DeviceManager.IsShared`): Geräte und offene Verbindungen überleben den Lauf, mehrere Skripte hintereinander arbeiten mit
+denselben Geräten. Ein Skript kann weder den Manager noch ein geteiltes Gerät zerstören (es gibt keine Funktion dafür; `DeviceManager.Dispose()` ist bei einem geteilten Manager wirkungslos, nur der Besitzer baut ihn über `Shutdown()` ab).
+Ein eigenständiges Programm (oder `fire.Compiler run`) bekommt einen eigenen, nicht geteilten Manager mit den eingebauten Treibern, der nach dem Lauf freigegeben (Geräte getrennt) wird. Empfangs-Haken eines Laufs werden am Ende gelöst.
+
+**Standardgerät.** Der Host setzt `DeviceManager.DefaultIdentifier`; im Editor per Rechtsklick im Geräte-Baum ("Als Standardgerät") oder über die Auswahl in der Symbolleiste (bleibt über Neustarts erhalten).
+
+**Paketverfolgung.** Der Manager hängt sich an `IDevice.OnRawDataSent`/`OnRawDataReceived` und meldet jedes Paket über `DeviceManager.PacketCaptured` (`PacketRecord`: Zeit, Gerät, Richtung, Bytes) - egal ob Skript oder Host gesendet hat.
+Protokolle speichert `PacketLog` als Textdatei `.fplog` (Kopfzeile `# fire-packetlog 1`, je Paket eine Zeile: UTC-Zeit, `H2D`/`D2H`, Kennung, Hexbytes, durch Tabulator getrennt; verlustfrei).
 
 ## 9. Offene Punkte
 

@@ -219,6 +219,13 @@ auf die rohen Pixel-Daten:
   `TickAll()` bedient dabei beliebig viele gleichzeitig offene Fenster und
   räumt automatisch jedes auf, das der Nutzer währenddessen geschlossen hat.
 
+## VSync und die Dauer von `Tick`
+
+`Tick` zeigt den Framebuffer an. Mit **VSync** (Vorgabe, `IFramebufferRenderer.VSync`, im Skript `window.VSync`) wartet jedes Tick auf die Bildwiederholung des Monitors: bei 60 Hz dauert es 16,7 ms, egal wie wenig
+gezeichnet wurde. Das ist gewollt für Animationen (ein Durchlauf = ein Bild) und Warteschleifen (`while (win.Tick()) { ... }` belastet den Prozessor kaum), hat aber eine Falle: eine Zeichenschleife mit EINEM Tick je
+Durchlauf braucht bei 256 Durchläufen 256 x 16,7 ms = 4,3 s, obwohl das Zeichnen selbst nur wenige Millisekunden dauert (gemessen: 256 x `Print` + `Tick` ohne VSync in ~10 ms). Abhilfe: seltener `Tick` rufen (zum Beispiel
+einmal nach der Schleife) oder `win.VSync = false` setzen, dann kehrt `Tick` sofort zurück - bei einer Schleife, die dann ungebremst läuft; wer animiert, bremst sie selbst (`Sleep`) oder lässt VSync an.
+
 ## Bewusst noch NICHT Teil dieser Ausbaustufe
 
 - **Keine Anbindung an ScriptLang selbst** (keine neuen `NativeRegistry`-

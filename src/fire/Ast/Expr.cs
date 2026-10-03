@@ -40,13 +40,16 @@ namespace fire.Ast
     /// davon optional sind.</summary>
     public sealed record LambdaParam(string Name, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, Expr? DefaultValue = null);
 
+    // AutoCapture: äußere LOKALE Variablen, die der Körper benutzt, werden beim Erzeugen als Wert kopiert (SPEC 4.2);
+    // false für `fire global { }` (dort gilt allein `taking`).
     // Body ist entweder ein BlockStmt (mehrzeiliger Lambda-Body) oder ein
     // einzelnes ReturnStmt (Kurzform `=> ausdruck`, implizit als Return gewrappt).
     public sealed record LambdaExpr(
         int Line,
         IReadOnlyList<LambdaParam> Params,
         Expr? OnTarget,
-        Stmt.BlockStmt Body) : Expr(Line);
+        Stmt.BlockStmt Body,
+        bool AutoCapture = true) : Expr(Line);
 
     /// <summary>`sync X` / `try sync X` / `sync flat X` / `try sync flat X`
     /// (docs/THREADING_DESIGN.md Abschnitt 4) - ein AUSDRUCK (kein
@@ -64,6 +67,11 @@ namespace fire.Ast
     /// <summary>`sync globals` (docs/THREADING_DESIGN.md Abschnitt 7) - im Hauptprogramm: arbeitet ab, was die Fire-Threads an
     /// Änderungen der Globals angemeldet haben; liefert die Anzahl der bearbeiteten Einträge (int).</summary>
     public sealed record SyncGlobalsExpr(int Line) : Expr(Line);
+
+    /// <summary>`probe obj.member changed|changing handler` (docs/DESIGN_LAMBDA_REFLECTION_PROBE.md): meldet einen Handler für Schreibzugriffe auf das
+    /// Mitglied `Member` des Objekts `Target` an (`Member == null`: `probe obj.* ...`, alle Mitglieder). Wertet zum Probe-Handle (int) aus.
+    /// `Handler` ist eine Lambda (aus der Block-/`=>`-Kurzform oder ein beliebiger Lambda-Ausdruck).</summary>
+    public sealed record ProbeExpr(int Line, Expr Target, string? Member, bool IsChanging, Expr Handler) : Expr(Line);
 
     /// <summary>`try process X` (docs/THREADING_DESIGN.md Abschnitt 2) -
     /// nicht-blockierende Variante von Ast.ProcessStmt: liefert `true`, wenn

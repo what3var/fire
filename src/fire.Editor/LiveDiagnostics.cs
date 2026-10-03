@@ -55,13 +55,13 @@ namespace fire.Editor
     /// </summary>
     public static class LiveDiagnostics
     {
-        public static List<Diagnostic> Analyze(string source) => Analyze(source, Array.Empty<string>());
+        public static List<Diagnostic> Analyze(string source, string? basePath = null) => Analyze(source, Array.Empty<string>(), basePath);
 
         /// <summary>`extraImports`: Namen von Erweiterungen (wie in `#import
         /// "name"`), die zusätzlich zu den in `source` selbst
         /// vorkommenden als zugeschaltet gelten - siehe AnalyzeInProject.
         /// Unbekannte Namen werden ignoriert.</summary>
-        private static List<Diagnostic> Analyze(string source, IEnumerable<string> extraImports)
+        private static List<Diagnostic> Analyze(string source, IEnumerable<string> extraImports, string? basePath = null)
         {
             var diagnostics = new List<Diagnostic>();
             if (string.IsNullOrWhiteSpace(source)) return diagnostics;
@@ -70,7 +70,7 @@ namespace fire.Editor
             {
                 var natives = NativeRegistry.CreateDefault();
                 var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var cwd = System.IO.Directory.GetCurrentDirectory();
+                var cwd = basePath ?? System.IO.Directory.GetCurrentDirectory();
                 var nativeImports = new HashSet<string>();
                 foreach (var name in extraImports)
                 {
@@ -183,7 +183,7 @@ namespace fire.Editor
         /// wird dagegen ECHT mitgezählt - die Erweiterungen (und damit ihre
         /// Preludes, siehe ImportedPreludes) gelten im echten Compiler für
         /// das ganze Projekt, nicht pro Datei.</summary>
-        public static List<Diagnostic> AnalyzeInProject(string source, IReadOnlyList<string> otherProjectFiles)
+        public static List<Diagnostic> AnalyzeInProject(string source, IReadOnlyList<string> otherProjectFiles, string? basePath = null)
         {
             var importsElsewhere = otherProjectFiles
                 .Where(other => !string.IsNullOrWhiteSpace(other))
@@ -191,7 +191,7 @@ namespace fire.Editor
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var diagnostics = Analyze(source, importsElsewhere);
+            var diagnostics = Analyze(source, importsElsewhere, basePath);
             if (diagnostics.Count == 0 || otherProjectFiles.Count == 0) return diagnostics;
 
             var knownElsewhere = new HashSet<string>();

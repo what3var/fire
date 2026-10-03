@@ -639,6 +639,15 @@ namespace fire.Compiler
             // echter Typname zu validieren, der Typ wird ja aus dem
             // Initialisierer/Kontext hergeleitet (siehe TypeRef.IsInferred-Doku).
             if (tr.IsInferred) return;
+            if (tr.LambdaSignature is { IsSelector: true } selector)
+            {
+                if (!_classes.ContainsKey("Reflect"))
+                    throw new ResolverException($"'lambda {selector.SelectorKind}<...>' (Selektor) braucht die Reflection-Bibliothek: #import \"reflection\"", line);
+                foreach (var target in selector.ParamTypeNames)
+                    if (!PrimitiveTypeNames.Contains(target) && !_currentTypeParamNames.ContainsKey(target) && !IsKnownClassName(target))
+                        throw new ResolverException($"Unbekannter Typ '{target}' in 'lambda {selector.SelectorKind}<{target}>'", line);
+                return;
+            }
             if (PrimitiveTypeNames.Contains(tr.BaseName)) return;
             if (_currentTypeParamNames.ContainsKey(tr.BaseName)) return;
             if (!IsKnownClassName(ResolveTypeRef(tr)))
@@ -683,6 +692,10 @@ namespace fire.Compiler
             /// `: einheit` hatte - siehe Define/ResolveIdentifierRef.</summary>
             public readonly Dictionary<string, string> RequiredUnits = new();
 
+            /// <summary>Namen, die in DIESEM (Lambda-)Scope als Capture (Kopie einer äußeren Variablen) liegen - Zuweisung ist ein Fehler,
+            /// eine eigene Deklaration mit demselben Namen verdeckt sie (siehe Define).</summary>
+            public readonly HashSet<string> CaptureNames = new();
+
             public ResolverScope(ResolverScope? parent, bool isGlobal = false)
             {
                 Parent = parent;
@@ -696,7 +709,17 @@ namespace fire.Compiler
         private void Define(string name, int line, bool isReadonly = false, string? requiredUnit = null)
         {
             if (_current.Slots.ContainsKey(name))
-                throw new ResolverException($"'{name}' ist in diesem Scope bereits deklariert", line);
+            {
+                if (!_current.CaptureNames.Remove(name))
+                    throw new ResolverException($"'{name}' ist in diesem Scope bereits deklariert", line);
+                // Der Lambda-Körper deklariert selbst einen Namen, den der Resolver vorsorglich als Capture angelegt hat: die Deklaration verdeckt
+                // ihn (der Capture-Slot bleibt ungenutzt unter einem unzugänglichen Schlüssel, die Slot-Zählung bleibt lückenlos).
+                int captureSlot = _current.Slots[name];
+                _current.Slots.Remove(name);
+                _current.Slots["\u0001capture:" + name] = captureSlot;
+                _current.ReadonlySlots.Remove(name);
+                _current.RequiredUnits.Remove(name);
+            }
             _current.Slots[name] = _current.Slots.Count;
             if (isReadonly) _current.ReadonlySlots.Add(name);
             if (requiredUnit != null) _current.RequiredUnits[name] = requiredUnit;
@@ -751,6 +774,11 @@ namespace fire.Compiler
                 }
             }
 
+            // Eine Lambda mit `on ziel` (SPEC 4.2): die Mitglieder des gebundenen Objekts sind unqualifiziert sichtbar. Wessen Klasse das ist, steht
+            // erst zur Laufzeit fest - der Name wird dort wie `this.name` gelesen/geschrieben/aufgerufen (ein unbekannter Name ist dann ein Laufzeitfehler).
+            if (_inBoundLambda)
+                return new ResolvedRef.ImplicitThisMember();
+
             throw new ResolverException($"Unbekannter Bezeichner '{name}'", line);
         }
 
@@ -759,6 +787,18 @@ namespace fire.Compiler
         /// den Zuweisungs-Check in ResolveAssignTarget (der die Variable ja
         /// bereits per ResolveIdentifierRef erfolgreich aufgelöst hat, hier
         /// also immer fündig wird).</summary>
+        private bool IsCapturedVariable(string name)
+        {
+            var scope = _current;
+            while (scope != null)
+            {
+                if (scope.Slots.ContainsKey(name))
+                    return scope.CaptureNames.Contains(name);
+                scope = scope.Parent;
+            }
+            return false;
+        }
+
         private bool IsReadonlyVariable(string name)
         {
             var scope = _current;
@@ -943,6 +983,10 @@ namespace fire.Compiler
 
                 case SectionEnterStmt:
                 case SectionExitStmt:
+                    break;
+
+                case SilenceStmt silence:
+                    ResolveExpr(silence.Target);
                     break;
 
                 case PostGlobalStmt postGlobal:
@@ -1373,7 +1417,8 @@ namespace fire.Compiler
 
                 case IsOfExpr iof:
                     ResolveExpr(iof.Operand);
-                    ValidateTypeName(iof.TypeRef, iof.Line);
+                    // `wert is of IFoo`: auch ein Interface ist als Typ erlaubt (die Klasse nennt es in `class X : IFoo`)
+                    if (!_interfaces.ContainsKey(iof.TypeRef.BaseName)) ValidateTypeName(iof.TypeRef, iof.Line);
                     break;
 
                 case IsFromExpr ifr:
@@ -1521,6 +1566,11 @@ namespace fire.Compiler
                     ResolveExpr(syncExpr.Target);
                     break;
 
+                case ProbeExpr probe:
+                    ResolveExpr(probe.Target);
+                    ResolveExpr(probe.Handler);
+                    break;
+
                 case SyncGlobalsExpr:
                     break;
 
@@ -1572,6 +1622,10 @@ namespace fire.Compiler
             switch (target)
             {
                 case IdentifierExpr id:
+                    if (IsCapturedVariable(id.Name))
+                        throw new ResolverException(
+                            $"'{id.Name}' ist im Lambda eine KOPIE der äußeren Variablen (Capture) und kann dort nicht zugewiesen werden " +
+                            "(eine neue lokale Variable mit anderem Namen anlegen)", id.Line);
                     if (IsReadonlyVariable(id.Name))
                         throw new ResolverException(
                             $"'{id.Name}' ist 'readonly' und kann nach der Deklaration nicht mehr zugewiesen werden", id.Line);
@@ -1792,12 +1846,58 @@ namespace fire.Compiler
             _current = saved;
         }
 
+        /// <summary>Lambda-Captures (SPEC 4.2): Jeder Name, den der Körper benutzt und der im UMSCHLIESSENDEN Code eine lokale Variable (oder ein
+        /// Parameter) ist - nicht global, nicht Parameter der Lambda -, wird beim Erzeugen der Lambda als WERT kopiert und liegt im Lambda-Scope
+        /// als Slot direkt hinter den Parametern. Die Namen werden vorab über den ganzen Körper gesammelt (auch in verschachtelten Lambdas),
+        /// weil die Slot-Nummern feststehen müssen, bevor der Körper aufgelöst wird; ein zu viel erfasster Name (im Körper neu deklariert)
+        /// kostet nur eine Kopie, siehe Define.</summary>
+        private void DefineCaptures(LambdaExpr lambda, ResolverScope enclosing)
+        {
+            var names = new List<string>();
+            AstNames.Collect(lambda.Body, names, new HashSet<string>());
+            var paramNames = new HashSet<string>();
+            foreach (var p in lambda.Params) paramNames.Add(p.Name);
+
+            List<IdentifierExpr>? captures = null;
+            foreach (var name in names)
+            {
+                if (paramNames.Contains(name)) continue;
+                int depth = 0;
+                ResolverScope? found = null;
+                for (var scope = enclosing; scope != null && !scope.IsGlobal; scope = scope.Parent, depth++)
+                {
+                    if (scope.Slots.ContainsKey(name)) { found = scope; break; }
+                }
+                if (found == null) continue;
+
+                found.RequiredUnits.TryGetValue(name, out var requiredUnit);
+                var outer = new IdentifierExpr(lambda.Line, name);
+                _refs[outer] = new ResolvedRef.Local(depth, found.Slots[name], requiredUnit);
+                Define(name, lambda.Line, requiredUnit: requiredUnit);
+                _current.CaptureNames.Add(name);
+                (captures ??= new List<IdentifierExpr>()).Add(outer);
+            }
+            if (captures != null) _refs[lambda] = new ResolvedRef.LambdaCaptures(captures);
+        }
+
+        /// <summary>Steckt der gerade aufgelöste Code in einer Lambda mit `on ziel`? Dann sind unbekannte Namen Mitglieder des gebundenen Objekts.</summary>
+        private bool _inBoundLambda;
+
         private void ResolveLambda(LambdaExpr lambda)
+        {
+            bool savedBound = _inBoundLambda;
+            _inBoundLambda = lambda.OnTarget != null;
+            try { ResolveLambdaCore(lambda); }
+            finally { _inBoundLambda = savedBound; }
+        }
+
+        private void ResolveLambdaCore(LambdaExpr lambda)
         {
             if (lambda.OnTarget != null)
                 ResolveExpr(lambda.OnTarget);
 
             var saved = _current;
+            var enclosing = _current;
             _current = new ResolverScope(_globalScope);
 
             // Ein Lambda, das INNERHALB eines Konstruktors definiert wird, läuft
@@ -1825,6 +1925,8 @@ namespace fire.Compiler
                 Define(p.Name, lambda.Line, requiredUnit: p.Type?.Unit);
             }
 
+            if (lambda.AutoCapture) DefineCaptures(lambda, enclosing);
+
             int savedLoopDepth = _loopDepth;
             int savedTryDepth = _tryDepth;
             _loopDepth = 0;
@@ -1839,6 +1941,55 @@ namespace fire.Compiler
 
             _inConstructor = savedInConstructor;
             _current = saved;
+        }
+    }
+
+    /// <summary>Sammelt per Reflection alle Bezeichner (<see cref="IdentifierExpr"/>) unterhalb eines AST-Knotens, in der Reihenfolge des
+    /// ersten Auftretens - unabhängig davon, welche Knotentypen es gibt (neue Syntax braucht hier keine Pflege). Nur für den Resolver,
+    /// einmal je Lambda.</summary>
+    internal static class AstNames
+    {
+        private static readonly Dictionary<Type, System.Reflection.MemberInfo[]> Members = new();
+
+        public static void Collect(object? node, List<string> names, HashSet<string> seen)
+        {
+            switch (node)
+            {
+                case null:
+                case string:
+                    return;
+                case IdentifierExpr id:
+                    if (seen.Add(id.Name)) names.Add(id.Name);
+                    return;
+                case System.Collections.IEnumerable items:
+                    foreach (var item in items) Collect(item, names, seen);
+                    return;
+            }
+
+            var type = node.GetType();
+            if (type.IsPrimitive || type.IsEnum) return;
+            bool isAst = type.Namespace != null && type.Namespace.StartsWith("fire.Ast", StringComparison.Ordinal);
+            bool isTuple = type.IsGenericType && type.FullName!.StartsWith("System.ValueTuple", StringComparison.Ordinal);
+            if (!isAst && !isTuple) return;
+
+            System.Reflection.MemberInfo[] members;
+            lock (Members)
+            {
+                if (!Members.TryGetValue(type, out members!))
+                {
+                    var list = new List<System.Reflection.MemberInfo>();
+                    foreach (var p in type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+                        if (p.GetIndexParameters().Length == 0 && p.Name != "EqualityContract") list.Add(p);
+                    foreach (var f in type.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+                        list.Add(f);
+                    Members[type] = members = list.ToArray();
+                }
+            }
+            foreach (var m in members)
+            {
+                object? value = m is System.Reflection.PropertyInfo pi ? pi.GetValue(node) : ((System.Reflection.FieldInfo)m).GetValue(node);
+                Collect(value, names, seen);
+            }
         }
     }
 }

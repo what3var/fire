@@ -46,7 +46,7 @@ namespace fire.Runtime
             {
                 if (args.Length > 0)
                 {
-                    Console.WriteLine(args[0].AsString());
+                    Console.WriteLine(args[0].ToString());
                 }
                 return Value.MakeUndefined();
             });

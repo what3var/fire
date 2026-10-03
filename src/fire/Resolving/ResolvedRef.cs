@@ -18,6 +18,11 @@ namespace fire.Resolving
         /// globalen Scope. RequiredUnit: wie bei Local.</summary>
         public sealed record Global(int Slot, string? RequiredUnit = null) : ResolvedRef;
 
+        /// <summary>Wird für ein <see cref="fire.Ast.LambdaExpr"/> hinterlegt, das äußere lokale Variablen benutzt (Lambda-Captures,
+        /// SPEC 4.2): `Variables` sind synthetische Bezeichner, aufgelöst im UMSCHLIESSENDEN Scope - der Compiler lädt ihre Werte beim
+        /// Erzeugen der Lambda (Kopie); im Lambda-Scope liegen sie als Slots direkt hinter den Parametern.</summary>
+        public sealed record LambdaCaptures(IReadOnlyList<fire.Ast.IdentifierExpr> Variables) : ResolvedRef;
+
         /// <summary>Eine registrierte native Funktion (SPEC-fremd, reine Bytecode-
         /// Erweiterungsstelle, siehe Bytecode.NativeRegistry) - nur als direkter
         /// Aufruf `name(...)` gültig, nicht als Wert verwendbar oder zuweisbar.</summary>

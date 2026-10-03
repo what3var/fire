@@ -5,7 +5,8 @@
         xmlns:ad="https://github.com/Dirkster99/AvalonDock"
         xmlns:adt="clr-namespace:AvalonDock.Themes;assembly=AvalonDock.Themes.VS2013"
         Title="fire Editor" Height="820" Width="1300"
-        FontFamily="Segoe UI">
+        FontFamily="Segoe UI"
+        AllowDrop="True" PreviewDragOver="Window_PreviewDragOver" PreviewDrop="Window_PreviewDrop">
     <Window.Resources>
         <!-- Symbole der Symbolleisten: Segoe MDL2 Assets (ab Windows 10 vorhanden). Jeder Knopf hat zusätzlich
              einen Text oder ein ToolTip mit Tastenkürzel, falls ein Symbol auf einem System fehlt. -->
@@ -23,24 +24,48 @@
     <DockPanel>
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="_Datei">
-                <MenuItem Header="_Neu" Click="New_Click" InputGestureText="Ctrl+N"/>
+                <MenuItem Header="_Neues Skript" Click="New_Click" InputGestureText="Ctrl+N"/>
+                <MenuItem Header="Neues _Markdown-Dokument" Click="NewMarkdown_Click" InputGestureText="Ctrl+Umschalt+N"/>
                 <MenuItem Header="_Öffnen..." Click="Open_Click" InputGestureText="Ctrl+O"/>
                 <MenuItem Header="_Speichern" Click="Save_Click" InputGestureText="Ctrl+S"/>
                 <MenuItem Header="Speichern _unter..." Click="SaveAs_Click"/>
+                <MenuItem Header="_Alle speichern" Click="SaveAll_Click" InputGestureText="Ctrl+Umschalt+S"/>
+                <MenuItem Header="Dokument _schließen" Click="CloseDocument_Click" InputGestureText="Ctrl+W"/>
                 <Separator/>
                 <MenuItem Header="Buildeinstellungen" Click="BuildSettings_Click"/>
                 <Separator/>
                 <MenuItem Header="_Beenden" Click="Exit_Click"/>
             </MenuItem>
+            <!-- Wirkt auf das aktive Dokument; die Einträge werden beim Öffnen des Menüs ein-/ausgeschaltet (siehe EditMenu_SubmenuOpened). -->
+            <MenuItem Header="_Bearbeiten" SubmenuOpened="EditMenu_SubmenuOpened">
+                <MenuItem Header="_Rückgängig" x:Name="mnuUndo" Click="Undo_Click" InputGestureText="Strg+Z"/>
+                <MenuItem Header="_Wiederholen" x:Name="mnuRedo" Click="Redo_Click" InputGestureText="Strg+Y"/>
+                <Separator/>
+                <MenuItem Header="A_usschneiden" x:Name="mnuCut" Click="Cut_Click" InputGestureText="Strg+X"/>
+                <MenuItem Header="_Kopieren" x:Name="mnuCopy" Click="Copy_Click" InputGestureText="Strg+C"/>
+                <MenuItem Header="_Einfügen" x:Name="mnuPaste" Click="Paste_Click" InputGestureText="Strg+V"/>
+                <MenuItem Header="_Löschen" x:Name="mnuDelete" Click="Delete_Click" InputGestureText="Entf"/>
+                <Separator/>
+                <MenuItem Header="_Alles auswählen" Click="SelectAll_Click" InputGestureText="Strg+A"/>
+                <Separator/>
+                <MenuItem Header="_Suchen..." Click="Find_Click" InputGestureText="Strg+F"/>
+                <MenuItem Header="_Weitersuchen" Click="FindNext_Click" InputGestureText="F3"/>
+                <MenuItem Header="_Rückwärts suchen" Click="FindPrevious_Click" InputGestureText="Umschalt+F3"/>
+                <MenuItem Header="_Gehe zu Zeile..." Click="GoToLine_Click" InputGestureText="Strg+G"/>
+                <Separator/>
+                <MenuItem Header="Zu _Definition springen" x:Name="mnuGoToDefinition" Click="GoToDefinition_Click" InputGestureText="F12 / Strg+Klick"/>
+                <MenuItem Header="_Kommentar umschalten" x:Name="mnuToggleComment" Click="ToggleComment_Click" InputGestureText="Strg+Umschalt+C"/>
+            </MenuItem>
             <MenuItem Header="_Ausführen">
-                <MenuItem Header="_Starten/Neu kompilieren" Click="Run_Click" InputGestureText="F5"/>
+                <MenuItem Header="_Starten / Weiter (bis Haltepunkt)" Click="Run_Click" InputGestureText="F5"/>
+                <MenuItem Header="_Neu kompilieren und starten" Click="Restart_Click" InputGestureText="Ctrl+F5"/>
                 <MenuItem Header="Standalone erstellen..." Click="Build_Click"/>
                 <Separator/>
                 <MenuItem Header="Einzelschritt (_Step Over)" Click="Step_Click" InputGestureText="F10"/>
                 <MenuItem Header="Einzelschritt (Step _Into)" Click="StepInto_Click" InputGestureText="F11"/>
                 <MenuItem Header="Aktuelle Funktion verlassen (Step _Out)" Click="StepOut_Click" InputGestureText="Shift+F11"/>
-                <MenuItem Header="_Weiter (bis Haltepunkt)" Click="Continue_Click" InputGestureText="F8"/>
-                <MenuItem Header="Bis _Ende durchlaufen" Click="RunToEnd_Click" InputGestureText="Ctrl+F5"/>
+                <MenuItem Header="_Weiter (wie F5)" Click="Continue_Click" InputGestureText="F8"/>
+                <MenuItem Header="Bis _Ende durchlaufen (ohne Haltepunkte)" Click="RunToEnd_Click"/>
                 <MenuItem Header="_Stopp" Click="Stop_Click" InputGestureText="Shift+F5"/>
                 <Separator/>
                 <MenuItem Header="Debug" IsCheckable="True" x:Name="mnuRunDebug" Click="mnuRunDebug_Click"/>
@@ -49,11 +74,29 @@
                 <Separator/>
                 <MenuItem Header="_Haltepunkt umschalten (aktuelle Zeile)" Click="ToggleBreakpoint_Click" InputGestureText="F9"/>
             </MenuItem>
+            <MenuItem Header="_Geräte">
+                <MenuItem Header="Geräte _suchen" Click="DevicesSearch_Click"/>
+                <MenuItem Header="_Verbinden" Click="DevicesConnect_Click"/>
+                <MenuItem Header="_Trennen" Click="DevicesDisconnect_Click"/>
+                <Separator/>
+                <MenuItem Header="Als _Standardgerät festlegen" Click="DevicesSetDefault_Click"/>
+                <MenuItem Header="Standardgerät _aufheben" Click="DevicesClearDefault_Click"/>
+                <Separator/>
+                <MenuItem Header="_Paketverfolgung öffnen" Click="DevicesTrace_Click"/>
+                <Separator/>
+                <MenuItem Header="Simuliertes _Loopback-Gerät anzeigen" x:Name="mnuLoopback" IsCheckable="True" Click="DevicesLoopback_Click"
+                          ToolTip="Ein Echo-Gerät ohne Hardware (loopback:echo) zum Ausprobieren von Skripten und der Paketverfolgung"/>
+            </MenuItem>
             <!-- Haken = Fenster ist sichtbar (wird beim Öffnen des Menüs aktualisiert, siehe ViewMenu_SubmenuOpened). -->
             <MenuItem Header="_Ansicht" x:Name="mnuView" SubmenuOpened="ViewMenu_SubmenuOpened">
                 <MenuItem Header="_Ausgabe" Tag="output" Click="ViewPanel_Click"/>
                 <MenuItem Header="_Fehlerliste" Tag="errors" Click="ViewPanel_Click"/>
-                <MenuItem Header="_Debugger" Tag="debugger" Click="ViewPanel_Click"/>
+                <MenuItem Header="_Threads" Tag="threads" Click="ViewPanel_Click"/>
+                <MenuItem Header="_Scope" Tag="scope" Click="ViewPanel_Click"/>
+                <MenuItem Header="S_tack" Tag="stack" Click="ViewPanel_Click"/>
+                <MenuItem Header="_Geräte" Tag="devices" Click="ViewPanel_Click"/>
+                <Separator/>
+                <MenuItem Header="Markdown-_Vorschau ein/aus" Click="ToggleMarkdownPreview_Click" InputGestureText="Ctrl+Umschalt+V"/>
                 <Separator/>
                 <MenuItem Header="_Layout zurücksetzen" Click="ResetLayout_Click"/>
             </MenuItem>
@@ -61,8 +104,11 @@
 
         <ToolBarTray DockPanel.Dock="Top" IsLocked="False">
             <ToolBar Band="0" BandIndex="0" ToolTip="Datei">
-                <Button Click="New_Click" ToolTip="Neu (Ctrl+N)">
+                <Button Click="New_Click" ToolTip="Neues Skript (Ctrl+N)">
                     <TextBlock Style="{StaticResource GlyphText}" Text="&#xE7C3;"/>
+                </Button>
+                <Button Click="NewMarkdown_Click" ToolTip="Neues Markdown-Dokument (Ctrl+Umschalt+N)">
+                    <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="MD"/>
                 </Button>
                 <Button Click="Open_Click" ToolTip="Öffnen... (Ctrl+O)">
                     <TextBlock Style="{StaticResource GlyphText}" Text="&#xE8E5;"/>
@@ -73,16 +119,16 @@
             </ToolBar>
 
             <ToolBar Band="0" BandIndex="1" ToolTip="Ausführen">
-                <Button Click="Run_Click" ToolTip="Starten/Neu kompilieren (F5)">
+                <Button Click="Run_Click" ToolTip="Starten / Weiter bis zum nächsten Haltepunkt (F5) - kompiliert bei Bedarf, startet nach Programmende neu">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Style="{StaticResource GlyphText}" Text="&#xE768;" Foreground="#107C10"/>
-                        <TextBlock Style="{StaticResource ToolbarButtonText}" Text="Starten"/>
+                        <TextBlock Style="{StaticResource ToolbarButtonText}" Text="Starten / Weiter"/>
                     </StackPanel>
                 </Button>
-                <Button Click="Continue_Click" ToolTip="Weiter bis Haltepunkt (F8)">
-                    <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="Weiter"/>
+                <Button Click="Restart_Click" ToolTip="Neu kompilieren und starten (Ctrl+F5)">
+                    <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="Neu starten"/>
                 </Button>
-                <Button Click="RunToEnd_Click" ToolTip="Bis Ende durchlaufen (Ctrl+F5)">
+                <Button Click="RunToEnd_Click" ToolTip="Bis Ende durchlaufen, ohne an Haltepunkten anzuhalten">
                     <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="Bis Ende"/>
                 </Button>
                 <Button Click="Stop_Click" ToolTip="Stopp (Shift+F5)">
@@ -112,7 +158,13 @@
                 </Button>
             </ToolBar>
 
-            <ToolBar Band="0" BandIndex="3" ToolTip="Erstellen">
+            <ToolBar Band="0" BandIndex="3" ToolTip="Standardgerät">
+                <TextBlock Text="Standardgerät:" VerticalAlignment="Center" Margin="2,0,4,0"/>
+                <ComboBox x:Name="cmbDefaultDevice" Width="170" SelectionChanged="cmbDefaultDevice_SelectionChanged"
+                          ToolTip="Das Gerät, das ein Skript als Device.Default bekommt"/>
+            </ToolBar>
+
+            <ToolBar Band="0" BandIndex="4" ToolTip="Erstellen">
                 <TextBlock Text="Modus:" VerticalAlignment="Center" Margin="2,0,4,0"/>
                 <ComboBox x:Name="cmbMode" Width="100" SelectionChanged="cmbMode_SelectionChanged"
                           ToolTip="Ausführungsmodus: Debug, Release oder Performance">
@@ -151,11 +203,8 @@
             <ad:LayoutRoot>
                 <ad:LayoutPanel Orientation="Horizontal">
                     <ad:LayoutPanel Orientation="Vertical">
-                        <ad:LayoutDocumentPane>
-                            <ad:LayoutDocument ContentId="editor" Title="Editor" CanClose="False">
-                                <local:ScriptEditorControl x:Name="EditorControl"/>
-                            </ad:LayoutDocument>
-                        </ad:LayoutDocumentPane>
+                        <!-- Die Dokument-Tabs (Skripte und Markdown) werden zur Laufzeit angelegt, siehe MainWindow.CreateDocument. -->
+                        <ad:LayoutDocumentPane/>
 
                         <ad:LayoutAnchorablePane DockHeight="230">
                             <ad:LayoutAnchorable ContentId="output" Title="Ausgabe" CanFloat="True">
@@ -208,12 +257,25 @@
                                     </DataGrid>
                                 </DockPanel>
                             </ad:LayoutAnchorable>
+
+                            <ad:LayoutAnchorable ContentId="threads" Title="Threads" CanFloat="True">
+                                <local:ThreadsPanelControl x:Name="DebugThreadsPanel"/>
+                            </ad:LayoutAnchorable>
+
+                            <ad:LayoutAnchorable ContentId="scope" Title="Scope" CanFloat="True">
+                                <local:ScopePanelControl x:Name="DebugScopePanel"/>
+                            </ad:LayoutAnchorable>
+
+                            <ad:LayoutAnchorable ContentId="stack" Title="Stack" CanFloat="True">
+                                <local:StackPanelControl x:Name="DebugStackPanel"/>
+                            </ad:LayoutAnchorable>
                         </ad:LayoutAnchorablePane>
                     </ad:LayoutPanel>
 
+                    <!-- Die Geräte-Übersicht liegt rechts und ist standardmäßig eingeklappt (siehe MainWindow-Konstruktor: AutoHide). -->
                     <ad:LayoutAnchorablePane DockWidth="320">
-                        <ad:LayoutAnchorable ContentId="debugger" Title="Debugger" CanFloat="True">
-                            <local:DebuggerPanelControl x:Name="DebuggerPanel"/>
+                        <ad:LayoutAnchorable ContentId="devices" Title="Geräte" CanFloat="True">
+                            <local:DevicesPanelControl x:Name="DevicesPanel"/>
                         </ad:LayoutAnchorable>
                     </ad:LayoutAnchorablePane>
                 </ad:LayoutPanel>

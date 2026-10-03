@@ -35,8 +35,13 @@ Umwege in eine kurze Sequenz nativer Instruktionen übersetzen lassen
 | `JumpIfFalse` | u16 addr | cond=pop; if !cond: ip = addr |
 | `JumpIfFalsePeek` | u16 addr | cond=peek; if !cond: ip = addr (kein Pop, für `&&`) |
 | `JumpIfTruePeek` | u16 addr | cond=peek; if cond: ip = addr (kein Pop, für `\|\|`) |
-| `EnterScope` | – | CurrentScope = new Scope(CurrentScope) |
-| `ExitScope` | – | CurrentScope.Release(...); CurrentScope = Parent |
+| `EnterScope` | – | CurrentScope = neue (bzw. aus dem Pool wiederverwendete, siehe Abschnitt 44) Scope(CurrentScope) |
+| `ExitScope` | – | CurrentScope.Release(...); CurrentScope = Parent; die Scope geht ggf. in den Pool zurück |
+| `StoreLocalPop` | u16 depth, u16 slot | `StoreLocal` + `Pop` in einer Instruktion (Abschnitt 44) |
+| `StoreGlobalPop` | u16 slot | `StoreGlobal` + `Pop` |
+| `JumpIfNotLt`/`JumpIfNotLtEq`/`JumpIfNotGt`/`JumpIfNotGtEq`/`JumpIfNotEq`/`JumpIfNotNotEq` | u16 addr | pop b, pop a; springt, wenn `a OP b` NICHT gilt (= `Lt` + `JumpIfFalse` usw.) |
+| `ArithLocalConstPop` | u16 depth, u16 slot, u16 constIdx, u8 sub | Variable (+|-)= Constants[constIdx], ohne Ergebnis auf dem Stack (`i = i + 1`, `i++`) |
+| `ArithGlobalConstPop` | u16 slot, u16 constIdx, u8 sub | dasselbe für eine globale Variable |
 | `CallNative` | u16 nativeIdx, u8 argCount | ruft eine registrierte native Funktion auf |
 | `CallExtern` | u16 nameIdx, u8 argCount | ruft eine per Host verlinkte extern-Funktion auf (siehe Abschnitt 12) |
 | `MakeLambda` | u16 protoIdx, u8 hasOnTarget | erzeugt einen LambdaValue aus Functions[protoIdx] (pop On-Target-Wert falls hasOnTarget≠0) |
@@ -111,7 +116,8 @@ Präzision durch vorzeitige Ganzzahlrundung verloren (`500m` → `1km` statt
 
 Eine Lambda braucht - anders als klassische Closures - **keine Upvalues**:
 da sie ohnehin nur ihren eigenen Scope + global sieht (SPEC 4.2), reicht ein
-simpler eigener Adressraum. Konkret:
+simpler eigener Adressraum (äußere Locals kommen als KOPIERTE Werte hinzu, siehe
+Abschnitt 36). Konkret:
 
 - Der Compiler kompiliert jeden Lambda-Body **einmal** in einen eigenen
   `Chunk` (`FunctionProto`, in `Chunk.Functions` abgelegt), unabhängig davon,
@@ -1638,3 +1644,196 @@ Anzahl offener Schleifen beim Betreten); die von der VM erzeugte Catch-Scope zä
 zuletzt die restlichen Scopes bis zum Schleifenkörper und der Sprung. Aus dem `finally` selbst bleibt `break`/`continue` ein Resolver-Fehler (das `finally` wird zusätzlich als eigene Funktion für den Ausnahmepfad
 kompiliert, dort gibt es die Schleife nicht). Das gilt auch für `sync global { }` (intern `try`/`finally`). Tests: Suite-Block "Globals und Fire-Threads" (8 Fälle: finally, Locals, Handler-Abmeldung, catch, verschachtelt,
 innere Schleife, Sektion) und der Resolver-Test "break in finally".
+
+## 36. Lambda-Captures, Kurzsyntax, `return` im `foreach`, die Abfrage-Bibliothek
+
+**Captures (SPEC 4.2.1).** Resolver (`DefineCaptures`): vor dem Auflösen des Körpers sammelt `AstNames.Collect` per Reflection alle Bezeichner des Körpers (auch aus verschachtelten Lambdas, Interpolationen, `taking`-Quellen -
+neue Syntax braucht keine Pflege). Jeder, der im umschließenden Code ein **nicht-globaler** Name ist und kein Parameter der Lambda, wird als Slot direkt hinter den Parametern definiert (Slot-Nummern müssen vor dem Körper
+feststehen) und in `ResolverScope.CaptureNames` vermerkt; ein synthetischer `IdentifierExpr` je Capture wird im UMSCHLIESSENDEN Scope aufgelöst und als `ResolvedRef.LambdaCaptures` unter dem `LambdaExpr` in `_refs`
+hinterlegt (so braucht der Compiler keinen neuen Kanal). Deklariert der Körper selbst einen als Capture angelegten Namen, verschiebt `Define` den Capture-Slot unter einen unzugänglichen Schlüssel (Slot-Zählung bleibt
+lückenlos); `ResolveAssignTarget` lehnt Zuweisungen an einen Capture ab. `LambdaExpr.AutoCapture = false` (nur `fire global`) schaltet das ab.
+Compiler: lädt die Capture-Werte im umschließenden Scope und emittiert `MakeLambdaCapturing u16 proto, u8 hasOn, u8 count` (Stack: c0..cn-1, [onTarget]); ohne Captures bleibt es beim alten `MakeLambda`. VM: `LambdaValue.Captures`
+(`Value[]`); alle vier Aufrufwege legen sie hinter den Argumenten in den neuen Scope (`EnterCall(..., captures)` im Schnellpfad, `OpCallSlow`, `CallLambdaInline`, `CallLambdaEntry`) - `WithOnTarget` behält sie.
+Benchmarks vor/nach: kein Unterschied.
+
+**Kurzsyntax.** Parser: `Identifier =>` und `( ... ) =>` (Lookahead bis zur passenden `)`, `IsParenLambda`) laufen über `ParseLambdaTail`, wie die `func`-Form.
+
+**`return` im `foreach`.** `foreach` hält seinen Enumerator auf dem Operanden-Stack; ein `return` darin ließ ihn dort liegen und verschob Operanden des Aufrufers (`10 + f() + f()` mit `return` im `foreach` von `f` warf „Typ Class
+ist nicht numerisch“). Der Compiler emittiert jetzt vor dem `Return` je umgebendem `foreach` `Swap; Pop` (`LoopCompileContext.IsForeach`). Die Exception-Variante dazu (Exception aus einem `foreach` heraus, weiter außen gefangen) ist in Abschnitt 39 behoben.
+
+**`#import "linq"`** (`fire.Standard.LinqPrelude`, reiner fire-Quelltext wie die UI-Bibliothek, keine DLL): `Linq.From(quelle)`/`Linq.Range`/`Linq.Repeat` liefern eine `Query` (eine Fabrik-Lambda, die je Durchlauf einen frischen
+Enumerator liefert - nutzt selbst Captures); träge Operatoren `Where/Select/SelectMany/Take/Skip/TakeWhile/SkipWhile/Concat/Zip` als Enumerator-Klassen, eifrig `OrderBy/OrderByDescending` (stabiler Mergesort)/`Reverse/Distinct`,
+Abschluss `ToList/ToArray/First/FirstOrDefault/Last/ElementAt/Any/All/Count/Sum/Min/Max/Average/Aggregate/Contains/ForEach/Join` (Überladung nach Parameteranzahl). `List` bekommt dieselben Operatoren über `class extends List`
+(aus einer Tabelle erzeugt). Arrays: `Linq.From(array).…` (Arrays sind nicht erweiterbar). Leere Folgen: `LinqEmptyException`.
+
+Tests: Suite-Block "Lambda-Captures und LINQ" (Kurzsyntax, Capture-Semantik, Verdecken, Globals, Zuweisungsfehler, Objekte, `return` im `foreach`, LINQ in vier Gruppen) und der angepasste Resolver-Test.
+
+## 37. Reflection und Selektoren
+
+**Metadaten.** `ClassMeta`/`MemberMeta` (`fire/Bytecode/ClassMeta.cs`) hängen als `RuntimeClass.Meta` an jeder Klasse und halten, was die Laufzeit sonst verliert: deklarierte Typnamen (Feld, Property, Rückgabe, Parameter), Parameternamen,
+`readonly`, Property-Form (`CanRead`/`CanWrite`), `IsStatic`, Zugriff, Einheit, Basisnamen. Der Compiler (`BuildClassMeta`) schreibt sie nur mit, wenn die native Funktion `__refl_members` registriert ist (`#import "reflection"`,
+`Compiler.Reflection`) - ohne den Import bleibt alles wie vorher. MemoryPack serialisiert sie mit (gepackte Programme). Dieselbe Bedingung setzt `RuntimeClass.IsReflectionHelper` für `Reflect`, `Type`, `Member`, `Selector`.
+
+**Aufrufer für Zugriffsprüfungen.** `IsMemberAccessAllowed` nimmt `_currentChunk.OwnerClass`; ist das eine Reflection-Klasse, läuft `ReflectionCallerClass()` die `_frames` von oben nach unten ab und liefert die erste Klasse, die keine
+ist (der Code, der `Reflect.Get` & Co. aufgerufen hat, auch über `Member.Get` → `Reflect.Get`). Nur im Nicht-Public-Pfad, kein Mehraufwand sonst.
+
+**Zugriff nach Namen.** Die Langsam-Pfade von `GetField`/`SetField` sind in `GetFieldSlowCore(name, site)`/`SetFieldSlow(name, site)` herausgelöst (liefern `true`, wenn das Ergebnis auf dem Stack liegt, `false` bei einer in einen Handler umgeleiteten Exception;
+`site < 0` = kein Inline-Cache): die Opcodes und `VM.ReflectGet/ReflectSet` (`VM.Reflection.cs`, `partial class VM`) teilen sich damit Zugriffsprüfung, Einheiten, Property-Accessoren und die Sektionsregeln der Globals. `ReflectCall` ruft über
+`CallMethodNested` (bzw. `CallGlobalsMethodInSection`), `ReflectNew` über `ConstructNested` (mit Zugriffsprüfung am Konstruktor).
+
+**Native Funktionen mit Umleitung.** Löst eine native Funktion eine Exception aus (`ReflectFail` baut eine `ReflectionException` und ruft `ThrowException`), liegt die Ausführung schon im Handler: `_nativeRedirected` sagt
+`CallNativeGuarded`, dass kein Ergebnis zu pushen ist (wie bei `NativeIndexOutOfRangeException`). Dasselbe gilt, wenn ein Getter/eine Methode in einen äußeren Handler umgeleitet wird.
+
+**Selektoren.** `LambdaSignature.IsSelector` (Parser: `lambda field|property|member|selector<T>`, `SelectorKind`), `FunctionProto.SelectorPath` (`TrySelectorPath`: ein Parameter, Körper nur `ReturnStmt` einer `MemberExpr`-Kette auf ihm). `EmitLambdaParamChecks` emittiert für einen
+Selector-Parameter am Funktionsanfang `LoadLocal; CallStaticMethod Reflect.SelectorOf; StoreLocal; Pop` (der Parameter wird ersetzt); `Reflect.SelectorOf` baut über `__refl_selector_path` ein `Selector`-Objekt. Der Resolver verlangt die Klasse
+`Reflect` (sonst "braucht ... #import \"reflection\"") und kennt `T`.
+
+**Nebenbei behoben.** `HandlerTemplate.Catches` war eine Nur-Lese-Eigenschaft und wurde von MemoryPack nicht mitgeschrieben: in einem **gepackten** Programm gab es dadurch keine einzige `catch`-Klausel (eine Exception beendete das Programm
+still). Jetzt `{ get; set; }`; der Test "Gepacktes Programm ..." sichert es. Außerdem druckte `print` der gepackten Runtime nur Strings (`AsString`), jetzt wie die Befehlszeile jeden Wert.
+
+Tests: Suite-Block "Reflection" (Typ-Beschreibung, Find/Has/Interfaces, Get/Set/Call/New, Zugriffsregeln, Fehler und umgeleitete Exceptions, Selektoren inkl. Fehlerfälle, gepackter Rundlauf).
+
+## 38. `probe` / `silence`
+
+**Daten.** `ProbeTable` (`fire/Runtime/ProbeTable.cs`) je Objekt (`ObjectInstance.Probes`, meist null): Liste von `ProbeEntry` (Id, Mitglied oder null = alle, `changing`/`changed`, Handler-Lambda), threadsicher, plus die Menge der Mitglieder, deren Handler gerade laufen
+(Rekursionsschutz). `ProbeRegistry` ordnet Handle-Ids schwach ihrem Objekt zu (`silence h`). `ObjectInstance.Destroy` entfernt die Proben.
+
+**Schnellpfade.** `ObjectInstance.AccessGuard` (= `ThreadLock ?? Probes`, bei Änderung neu gesetzt) ersetzt den `ThreadLock == null`-Vergleich im Schreib-Schnellpfad von `SetField` und beim Eintragen in den Inline-Cache: ein Objekt mit Probe geht immer über `SetFieldSlow`.
+Lesezugriffe behalten ihren Schnellpfad. Eine schon gecachte Schreibstelle sieht eine später angemeldete Probe, weil der Vergleich am Objekt hängt, nicht am Cache-Eintrag. Benchmarks vor/nach: kein Unterschied.
+
+**Ablauf (`VM.Probe.cs`).** `SetFieldSlow` prüft zuerst `Probes?.Affects(name)` und ruft dann `SetFieldProbed`: alten Wert lesen (Feld, sonst Getter über `CallMethodNested`), `changing`-Handler der Reihe nach (`false` -> Stack `[obj, value]` -> `[value]`,
+kein Schreiben), Schreiben über `SetFieldSlowSections` (Zugriffsprüfung, Einheiten, Property-Setter, Sektionen der Globals), bei `!ValuesEqual(alt, neu)` die `changed`-Handler. Handler laufen über `CallLambdaNested` (wie `CallMethodNested`: eine Exception darin läuft zu
+den Handlern des Schreibers, `null` = umgeleitet -> der Op liefert `false`). Argumente nach Parameterzahl in `RunProbeHandler`. `TryProbeAdd`/`TrySilenceMember`/`TrySilenceValue` sind die gemeinsame Logik von Opcodes und Reflection.
+
+**Opcodes** (am Ende von `OpCode`): `Probe u16 name, u8 flags` (1 = changing, 2 = alle Mitglieder; Stack `obj, handler` -> `id`), `SilenceMember u16 name, u8 wildcard` (Stack `obj`), `SilenceValue` (Stack `x`).
+
+**Syntax.** `ProbeExpr` (Ausdruck, Wert = Handle), `SilenceStmt`. Parser: `probe`/`silence` nur, wenn direkt ein Bezeichner/`this` folgt (`IsProbeOperandNext`; als Statement vor der `Typ Name`-Erkennung, sonst würde `probe cfg` als Deklaration gelesen),
+`ParseProbePath` liest `a.b.c`/`a.b.*`/`a`; der Handler ist `{ ... }` oder `=> ausdruck` (implizite Parameter `sender, name, old, value` = 4 Parameter) oder `(...) =>` oder ein Ausdruck. Der Resolver löst Ziel und Handler auf, der Compiler emittiert Ziel, Handler, `Probe`.
+
+**Reflection.** Natives `__refl_probe/__refl_silence/__refl_silence_handle` (Fehler als `ReflectionException`), in der Prelude `Reflect.Probe/ProbeAll/Silence/SilenceAll/SilenceHandle`, `Member.Probe`, `Selector.Probe/Silence`.
+
+Tests: Suite-Block "Reflection" (9 Fälle zu probe/silence: implizite Namen und Gleichheitsprüfung, Veto mit Capture, Handler-Argumente nach Parameterzahl, `obj.*` mit Properties, Pfad und Cache-Stelle, Rekursion, Exceptions, Variablennamen, Reflection-API).
+
+## 39. Operanden-Stack bei Exceptions, `return` im `try`/`catch`
+
+**Der Fehler.** Eine Exception ließ den Operanden-Stack so liegen, wie die Wurfstelle ihn hinterlassen hatte (nötig, damit `resume()` dort fortsetzen kann): der Enumerator eines `foreach`, aus dem geworfen wurde, halb ausgewertete Ausdrücke
+und die Operanden tieferer Aufrufe blieben als Leichen unter den Werten des `catch`/der Aufrufer liegen und verschoben später deren Operanden (`10 + f()` mit einem `try { foreach (...) { throw } } catch { return 7 }` in `f` warf „Typ Class ist nicht numerisch“).
+
+**Die Lösung.** `ActiveHandler.StackPointer` hält die Stack-Höhe beim `RegisterHandler`. Greift ein `catch` (in `ThrowException`), legt die VM alles oberhalb davon in `SavedContinuation.Stack` beiseite und setzt `_sp` darauf zurück: der `catch` beginnt auf der
+Höhe des `try`, egal wie tief und mitten in welchem Ausdruck geworfen wurde. `resume()` setzt `_sp` wieder auf diese Höhe und spielt die Operanden zurück, danach den Ersatzwert (so läuft der `throw`-Ausdruck mitten in einem Ausdruck weiter).
+
+**Dazu behoben**, weil es dieselbe Gegend ist:
+- Ein `return` mitten in einem `try` ließ den Handler des `try` registriert: eine spätere, fremde Exception sprang in die längst beendete Funktion (das Programm endete still). `OpReturn` meldet jetzt die Handler seines Frames ab (`FrameDepthAtEntry >= _frames.Count`, nicht unter der Callback-Grenze).
+- Ein `return` im `catch` ließ die beim Werfen eingefrorene Wurfstelle samt Scopes liegen: der Compiler verwirft sie vor dem `Return` (`ClearPendingResume` auf die Exception-Variable im `catch`-Scope, Tiefe aus `_tryStack`).
+
+**Zu `finally` siehe Abschnitt 40 (behoben).** Ursprünglich offen: `finally` war an zwei Stellen unvollständig. (1) Ein `return` im `try` führt das `finally` nicht aus (der Handler wird nur abgemeldet). (2) Läuft das `finally` auf dem Ausnahmepfad (die Exception geht an
+diesem `try` vorbei nach außen), ist es ein eigenständig übersetzter Proto (`RunFinallyNested`) und sieht die lokalen Variablen der Funktion nicht - ein Zugriff darauf wirft einen internen Fehler. Außerdem läuft das `finally` nicht, wenn die Exception aus dem `catch`-Block selbst kommt. Die
+saubere Lösung ist ein Landeplatz im selben Chunk (inline kompiliertes `finally` + `Rethrow`) statt des separaten Protos, plus inline-Kopien an `return`.
+
+Tests: Suite-Block "Lambda-Captures und LINQ" (vier Fälle: `foreach`-Exception mit `return` im `catch`, Exception aus tieferen Aufrufen mit halb ausgewerteten Ausdrücken, `return` im `try`, `resume()` mit Operanden).
+
+## 40. `finally`: ein Block, ein Abschlusswert
+
+**Vorher.** Das `finally` gab es zweimal: inline für den normalen Weg und als eigener Proto (`HandlerTemplate.FinallyProtoIdx`) für den Ausnahmepfad. Der Proto lief in einem frischen Scope und sah die lokalen Variablen nicht (ein Zugriff warf einen internen
+Fehler); bei `return` im `try` lief gar kein `finally`, ebenso nicht bei einer Exception aus dem `catch`-Block; `break`/`continue` brauchten inline-Kopien.
+
+**Jetzt: genau EINE Kopie** im Chunk (`HandlerTemplate.FinallyAddr`). Jeder Weg in den Block legt vorher einen **Abschlusswert** (Nutzlast, Art) auf den Operanden-Stack, am Ende wertet `EndFinally` ihn aus:
+
+| Art | Weg hinein | `EndFinally` tut |
+|---|---|---|
+| 0 normal | `try`/`catch` laufen durch (`EnterFinallyNormal`) | läuft weiter |
+| 1 Exception | `ThrowException`: der Handler hat keinen passenden `catch` (oder ist ein finally-only-Handler) | wirft die Exception erneut (sucht weiter außen) |
+| 2 return | `DoReturn` findet einen offenen Handler mit `finally` in diesem Frame | setzt das `return` fort (`DoReturn`, das ein weiteres `finally` findet oder zurückkehrt) |
+| 3 Sprung | `break`/`continue` (`PushJump addr`) | springt zur Adresse (ein Ausgangs-Stück hinter dem `try`) |
+| 4 verschachtelt | `leave`/`terminate` (`RunFinallyInlineNested`) | kehrt zum Aufrufer zurück, die Abwicklung geht weiter |
+
+- **Eintritt mit Scope und Stack.** Auf jedem Eintritt steht der Scope des `try` (`handler.TargetScope`, über `UnwindTo` bzw. die `ExitScope`s des Compilers) und der Stack auf `handler.StackPointer` plus dem Abschlusswert - der `finally`-Block ist an derselben Stelle übersetzt, an der der Resolver ihn aufgelöst hat, also sehen
+  seine Zugriffe die richtigen Slots.
+- **`catch` mit `finally`.** Greift ein `catch`, bleibt für dessen Dauer ein **finally-only**-Handler (`ActiveHandler.FinallyOnly`) registriert: eine Exception aus dem `catch`-Block (oder `return`/`break` daraus) läuft so ebenfalls durchs `finally`. Der Compiler meldet ihn am Ende des `catch`
+  (und bei `break`/`continue`) ab; `PendingResume.HandlerCount` lässt `resume()` alles darüber verwerfen.
+- **`return`.** Ein Opcode `ReturnTry` ist nicht nötig: `DoReturn` (jedes `Return`) sieht ohnehin nach den Handlern des eigenen Frames (`FrameDepthAtEntry >= _frames.Count`, ein Vergleich) und entscheidet dynamisch - so zählt auch ein `return` tief in verschachtelten `try`/`catch`/`foreach`. Handler ohne `finally` werden
+  abgemeldet. Ein zurückgegebenes Objekt, das einem der beim Eintritt verlassenen Scopes gehört, geht vorher an den Aufrufer (wie bei `Return`). Der Rückgabewert liegt als Nutzlast auf dem Stack, ein `finally`, das die Variable danach ändert, ändert ihn nicht.
+- **`break`/`continue` über ein `finally`.** `CompileBreakOrContinue` verlässt von innen nach außen alle `try`/`catch` bis zum ersten `try` MIT `finally`, schließt Scopes und meldet Handler ab, legt `PushJump <Ausgangs-Stück>` und springt ins `finally`. `CompileTry` übersetzt hinter `EndFinally` je Sprung-Art ein
+  Ausgangs-Stück: derselbe `break`/`continue`, von außerhalb des `try` aus (Scope-Tiefe und `_tryStack` stimmen dort schon) - das trifft ein weiteres `finally` weiter außen oder springt direkt zum Schleifenziel. Die normale Ausführung überspringt die Stücke.
+- **Bewohner des Stacks (`_residents`).** Ein `foreach` hält seinen Enumerator (1), ein `finally`-Block seinen Abschlusswert (2) auf dem Stack; ein `return` darin räumt beide mit `Swap; Pop` je Eintrag weg (ersetzt die frühere Enumerator-Zählung). Gilt auch für ein `return` im `finally` selbst.
+- **`leave`/`terminate`** (`UnwindForShutdown`): jeder offene Handler mit `finally` läuft über `RunFinallyInlineNested` (frame-weise verschachtelt, Abschluss 4).
+
+Geändert/entfernt: `HandlerTemplate.FinallyProtoIdx` und der separat übersetzte finally-Proto samt `RunFinallyNested`; neue Opcodes `EnterFinallyNormal`, `PushJump`, `EndFinally`. Die Sperre für `break`/`continue` AUS dem `finally` heraus (Resolver) bleibt.
+Tests: Suite-Block "Lambda-Captures und LINQ" (zwei Fälle: alle Wege, Locals, Objekte, resume, Exception im finally) und die bestehenden `leave`/`terminate`-Tests.
+
+## 41. Arrays als `IEnumerable`, Selektor-Arten, `SelectMember`/`SelectProperty`/`SelectField`, `##`
+
+- **Arrays:** `class extends array` (`BaseTypeExtensions`: Name `array` -> Art `Array` -> Sammelklasse `$array`, wie `string`; der Parser validiert die Mitglieder, auch wenn `array` kein Schlüsselwort ist). Der Methodenaufruf auf einem Array sucht erst die Erweiterung, dann die eingebauten Methoden;
+  `GetEnumerator()` bleibt eingebaut (läuft auch ohne Prelude). `IsOfType`: Array/Puffer erfüllen `IEnumerable`. Die LINQ-Prelude erzeugt dieselben Operatoren für `List` und `array` (`Extension(target, toListExpression)`), `Linq.Iter` ist nur noch `source.GetEnumerator()`.
+- **Interfaces in `is of`:** `RuntimeClass.Interfaces` (der Compiler trägt die in `class X : Basis, IFoo` genannten Interfaces ein), `InstanceMatchesClassName` prüft sie auf jeder Stufe der Basisklassen-Kette; der Resolver lässt Interface-Namen bei `is of` zu.
+- **Selektor-Arten:** `LambdaSignature.SelectorKind` ("field", "property", "member", "method", "selector"; ersetzt das frühere `FieldOnly`). Der Compiler ruft für den Parameter `Reflect.SelectorOf(l, kind)`; `Selector.Kind` merkt sich die Art, `Selector.CheckKind` prüft per `__refl_member_kind(obj, name)` ("field"/"property"/"method"/undefined) und
+  `Reflect.KindAllowed` (field: Feld, property: Property, member: Feld oder Property, method: Methode, selector: alles), sobald es ein Objekt gibt. Methoden: `Selector.Call`; `Get`/`Set`/`Probe` darauf sind Fehler. `property` meint ausschließlich Properties (früher nahm es auch Felder: das ist jetzt `member`).
+- **`Query.SelectField` / `SelectProperty` / `SelectMember`** (`lambda field|property|member<class> sel`): Projektion per Selektor; sie halten nur den Pfad (Namen), nicht den `Selector` (der gehört dem Aufruf und wäre danach zerstört), und lesen über `Linq.GetPath(obj, path, kind)` (Reflection, also mit deren Zugriffsregeln). `#import "linq"` schaltet `reflection` mit
+  (`WithDependencies`). Eine Überladung `Select(...)` je nach Selektor-Art gibt es nicht: Überladungen unterscheiden sich in dieser Sprache nur nach der Parameterzahl (die Auflösung ist je (Klasse, Name, Anzahl) gecacht), `Select(fn)` bleibt die allgemeine Projektion.
+- **`##`:** der Lexer liefert für `##` das Token `NotEq` (`#` allein bleibt Xor/Direktive); `operator!=`-Überladungen gelten damit auch für `##`.
+
+## 42. `on`-Lambdas, `#import "time"`, `Sleep`, `ToString()` bei Ausgabe
+
+- **Unqualifizierte Mitglieder in `on`-Lambdas:** `Resolver._inBoundLambda` (gesetzt in `ResolveLambda` für eine Lambda mit `OnTarget`, je Lambda gesichert/zurückgesetzt): `ResolveIdentifierRef` liefert dort für einen sonst unbekannten Namen `ResolvedRef.ImplicitThisMember` - der Compiler
+  übersetzt das schon wie `this.name` (`LoadThis` + `GetField`/`SetField`/`CallMethod`, auch `++`). Locals, Parameter und Captures werden vorher gefunden, Klassenmitglieder im Klassenkontext ebenfalls.
+- **Zeit:** `NativeImports.Time` (`#import "time"`, keine DLL), `TimePrelude` (`TimeException`, `TimeSpan`, `DateTime` in fire), `TimeNatives` (`__time_*` über .NET-`DateTime`/`TimeSpan`, in Ticks; Fehler über `VM.NativeFail("TimeException", ...)`, die Verallgemeinerung von `ReflectFail`).
+  `TimeSpan` hält `ticks`, `DateTime` `ticks` und `kind`; Operatoren per `operator+` & Co. (die Prelude fängt bei `+` eine Zeichenkette selbst ab).
+- **`Sleep`:** native Funktion `Sleep(x)` (TimeSpan: das Feld `ticks`; Wert mit Zeiteinheit über `Unit.ConversionFactorTo("s")`; Zahl = Millisekunden) -> `VM.SleepTicks`: Schleife aus `PollSignalsAfterOp()` (Shutdown-Signale, Fire-Thread-Exceptions, `AutoSyncNow`, also die Warteschlange) und einem Warten
+  von höchstens 20 ms (`FireRuntime.WaitForWake`, das `WakeWaitingOwner` - jeder Eintrag in die Warteschlange - vorzeitig beendet), bis die Frist abläuft oder `_stopExecutionRequested` gesetzt ist.
+- **`ToString()` bei Ausgabe:** `VM.StringifyForText(v)` (parameterloses `ToString()` per `CallMethodNested`, `null` = in einen Handler umgeleitet). Eingehängt in `BinaryNumericOrOperator` für `+` (Text auf einer Seite, Objekt ohne `operator+` auf der anderen), in `FormatValue` (`$"{objekt}"`) und über
+  `VM.StringifyForPrint(args)` im `print` der beiden `RuntimeSession`-Fassungen (bei Umleitung setzt es `_nativeRedirected`). Der Schnellpfad von `Add` überspringt jetzt auch Objekte als rechten Operanden.
+
+Tests: Suite-Block "Lambda-Captures und LINQ" (`on`-Lambdas, TimeSpan, DateTime, `ToString()`, `Sleep` mit Zeitspanne/Zeitwert/Millisekunden, automatisches Abarbeiten während `Sleep`, `#nosync`, `terminate` beendet `Sleep`). **Nebenbei:** der Globals-Test "Ein Thread schreibt ein Global ..." hing gelegentlich
+(30-s-Zeitüberschreitung): das automatische Abarbeiten konnte die Anmeldung des Threads vor dem ersten `sync globals` erledigen, dessen Rückgabewert dann dauerhaft 0 blieb - ein Fehler des Tests, nicht der Laufzeit; er läuft jetzt mit `#nosync`.
+
+## 43. Geschwindigkeit: Weiterleitung an native Funktionen, schneller Debugger-Lauf, Zeilentabelle
+
+**Native Funktionen werden nicht über Namen aufgerufen.** Der Compiler setzt jeden Aufruf einer nativen Funktion (`__GRPHConDrawText`, ...) beim Übersetzen in `CallNative <Index>`; ein Aufruf kostet zur Laufzeit etwa 50 ns
+(Argument-Array, Delegate). Ein Wechsel von Namen auf eine Aufzählung würde daran nichts ändern. Was Skripte mit den Brücken (Grafik, Geräte, Dateien) langsam machte, waren die fire-Methoden DAVOR.
+
+**`NativeForwarder`.** Alle Methoden der Brücken-Preludes sind gleich gebaut: `DrawText(...) { __GRPHConDrawText(this.id, ...) }`. Ein solcher Aufruf kostete ~230-400 ns (Scope, Slot-Array, Frame, Rückkehr), mehr als die native Funktion selbst. `NativeForwarder.TryCreate` erkennt
+das Muster am fertigen Bytecode (`LoadThis; GetField f; LoadLocal 0,0..n-1; CallNative i, n+1; Return | Pop; LoadConst undefined; Return`), `FunctionProto.Forwarder` merkt es sich (nicht serialisiert), und der Schnellpfad von `OpCallMethod`
+(Inline-Cache, `SiteCache.Forwarder`/`ForwarderFieldIndex`) ruft die native Funktion direkt auf: Argumente vom Stack, das Feld über den gecachten Index. Voraussetzungen wie beim normalen Schnellpfad (gleiche Klasse, kein Actor, kein Thread-Lock) plus
+keine `flat`/`copy`-Argumente. `Console.CellWidth()` fiel von ~275 auf ~30 ns. Beim Debuggen wird ein solcher Aufruf nicht mehr "betreten" (die Methode steht in der Prelude).
+
+**Reihenfolge der nativen Funktionen.** Native Funktionen werden über ihren Index angesprungen - die Registrierung zur Laufzeit muss der beim Übersetzen (`ImportedPreludes.Insert`: graphics, reflection, time, devices, io) exakt entsprechen. Die beiden
+Sitzungen (`fire.Compiler.RuntimeSession`, `fire.Runtime.Session`) hatten graphics hinter reflection/time registriert: `#import "graphics"` zusammen mit `"time"` rief die falsche Funktion auf (Test "Alle Erweiterungen in einem Programm").
+
+**Debugger-Lauf (F5).** Der Editor führte "Weiter" als Schleife `StepInstruction()` + `CurrentLocation` + Delegate je Instruktion aus, und `Chunk.GetLocation` durchsuchte die Zeilentabelle LINEAR vom Anfang. Bei einem Skript mit einigen
+hundert Zeilen war der Lauf dadurch ~7x langsamer als `Run()`. Jetzt: `Chunk.GetLocation(Range)` sucht binär, `VM.RunUntilBreakpoint`/`RunUntilEnd` sind eigene, voll optimierte Schleifen (`StepInstruction` in `BeginStepping`/`FinishAtHalt`/`AfterStep` zerlegt),
+die nur beim Verlassen des Byte-Bereichs einer Zeile nachschlagen, die Pause-Anforderung alle 256 Instruktionen prüfen und die Warteschlangen der Fire-Threads nur bei einem neuen Signal (`s_signalEpoch`) abfragen. Ergebnis: auf Höhe von `Run()`.
+Dazu eine Korrektur der Zeilentabelle: Increment/Rücksprung/Ende einer `for`-Schleife (und das Ende von `while`/`foreach`) gehören zur Zeile der Schleife, nicht zur letzten Zeile des Bodys - ein Haltepunkt im Body hielt sonst nach dem Verlassen der Schleife noch einmal an.
+
+**Text.** `TerminalCanvas.DrawText` prüft Schrift und Rand einmal für den ganzen Text und zeichnet über `GlyphBlitter` (AVX2: eine Pixelzeile des Zeichens = ein 256-Bit-Zugriff, ohne Bereichsprüfungen; sonst zweimal 128 Bit); pixelgenau wie vorher.
+
+## 44. Geschwindigkeit der VM: verschmolzene Instruktionen, Scope-Pool, Objekterzeugung
+
+Ausgangspunkt war eine Messung mit einem eigenen Benchmark (Schleifen, Aufrufe, `new`, Rekursion; Minimum über mehrere Runden und Prozessläufe). Die Zahlen sind ns je Schleifendurchlauf bzw. je Aufruf, vorher -> nachher
+(gleiche Maschine, `Performance`-Modus; die Maschine schwankt um etwa ±20 %, angegeben ist jeweils das beste von mehreren Läufen): leere Schleife 104 -> 63, `while` mit Block 82 -> 40, `if/else` im Schleifenkörper 201 -> 100, leere Methode 180 -> 110, Methode mit Feldzugriff 229 -> 145, `new P()` 407 -> 200, `new P2(i, 2)` 659 -> 235, `fib` rekursiv 167 -> 105.
+
+**Verschmolzene Instruktionen.** Der Compiler ersetzt beim Emittieren häufige Folgen durch eine Instruktion (Opcodes siehe Tabelle oben): `StoreLocal`+`Pop` -> `StoreLocalPop` (eine Zuweisung als Anweisung), Vergleich+`JumpIfFalse` -> `JumpIfNotLt` usw. (`if`/`while`/`for`),
+`x = x + c`/`x++`/`x--` auf einer Variablen -> `ArithLocalConstPop`/`ArithGlobalConstPop`. `Chunk.EndsWithOp`/`ReplaceLastOp` verschmelzen nur, wenn kein Sprungziel hinter dem letzten Opcode liegt (`Chunk.Here` merkt jede abgefragte Stelle). Die VM hat für jede verschmolzene Instruktion einen
+Schnellpfad (Zahlen gleicher Einheit); alles andere (Strings, Einheiten, Objekte mit Operator-Überladung, Fehler, Globals im Fire-Thread) läuft über denselben Code wie die einzelnen Instruktionen - dasselbe Ergebnis, dieselben Exceptions.
+
+**Scope-Pool (`VM._scopePool`).** Jeder Block, Schleifendurchlauf und Aufruf legte eine `Scope` samt Slot-Array an. `EnterScope`/`EnterCall` nehmen jetzt eine Scope aus einem kleinen Pool (je VM, 256 Plätze), `ExitScope`/`return` geben sie zurück. Wiederverwendet wird nur, was nichts
+mehr erreichen kann (`Scope.CanRecycle`): die Scope stammt aus dem Pool (nie die globale oder eine, die anderer Code angelegt hat), sie besitzt kein Objekt mehr, und kein Pointer zeigt auf einen ihrer Slots (`ScopeSlotPointerTarget` ruft `MarkEscaped`). Handler, Rücksprung-Frames, Callback-Grenzen
+und gespeicherte Fortsetzungen verweisen nur auf Scopes, die noch aktiv sind; `UnwindTo` (Exceptions) und der Abbau fortsetzbarer Exceptions geben Scopes nie zurück. `Recycle` vergisst die Werte (sonst hielte der Pool Objekte am Leben).
+
+**`return` gibt ALLE Scopes des Aufrufs frei** (Fehlerkorrektur, die das Pooling vorausgesetzt hat): bisher zerstörte ein `return` mitten in verschachtelten Blöcken nur die Objekte des INNERSTEN Scopes - die der umgebenden `if`/`for`/`try`-Blöcke und der Funktion blieben liegen (kein `destruct()`).
+`DoReturn` verlässt jetzt alle Scopes bis zur Funktions-Scope (deren Parent der globale Scope ist), innerster zuerst, und ein zurückgegebenes Objekt, das einem davon gehört, geht an den Aufrufer (`OwnsWithinCall`). Test-Block "Scope-Verwaltung".
+
+**Objekterzeugung.** Eine `new`-Anweisung kostete vor allem Nebensächliches:
+- *Feld-Vorbelegung.* Der Konstruktor rief für JEDES Feld den Initialisierer-Proto auf (ein voller Aufruf mit Scope, auch für `int x` ohne Initialisierer). Jetzt lädt er eine Konstante direkt (`LoadConst; SetFieldOnThis`), und ein Feld ohne Initialisierer wird übersprungen (es steht nach dem Anlegen schon auf `undefined`) -
+  außer es konnte vorher etwas in das Feld schreiben (eine Basisklasse hat ihren Konstruktor ausgeführt, ein früherer Initialisierer mit Aufruf): dann setzt ein explizites `undefined` es wie bisher zurück. Echte Ausdrücke bleiben Aufrufe (`CallProtoWithThis`, jetzt ohne Argument-Array und mit Pool-Scope).
+- *Besitz (`OwnedSet`).* Scope und Objekt halten das ERSTE besessene Objekt direkt, erst ab dem zweiten gibt es eine Liste; die Zerstörung braucht im Einzelfall keine Kopie (`ToArray`). Reihenfolge wie bisher: Erzeugungsreihenfolge, ein Objekt erst selbst (`destruct()`), dann seine Kinder.
+- *Zerstörte Objekte vergessen ihren Owner* (`DeadOwner`), sonst würde eine Scope, die einmal ein Objekt besaß, für immer von diesem referenziert und könnte nicht wiederverwendet werden. Nebenwirkung: `TakeUpwards` & Co. auf einem schon zerstörten Objekt melden jetzt einen Ownership-Fehler statt still weiterzumachen.
+- *Destruktoren.* `ObjectInstance.Destroy` ruft den Runner nur auf, wenn die Klassenkette einen Destruktor hat (`RuntimeClass.HasDestructorInChain`); `RunDestructor` nimmt `RtClass` statt eines Namens-Lookups und eine Pool-Scope; `ExitScope` mit Besitz läuft nicht mehr über die große `Execute`-Methode.
+- `ObjectInstance.Id` (von nichts gelesen) wird erst beim ersten Lesen vergeben - keine atomare Zählung je `new`.
+- Ein leerer Block `{ }` als Schleifen-/`if`-Körper erzeugt kein `EnterScope`/`ExitScope`-Paar mehr.
+
+**Gemessen, aber nicht übernommen.** *Tiered Compilation:* `TieredPGO=0`, `TieredCompilation=0`, `TC_QuickJitForLoops=0`, `TC_CallCountingDelayMs=0` und `[AggressiveOptimization]` auf `RunLoop` wurden gegen die Vorgabe gemessen (kalt = erste Runde eines frischen Prozesses, warm = Minimum über 7 Runden).
+Keine Einstellung gewinnt durchgängig: ohne PGO wird die Rekursion doppelt so langsam, ohne Tiered Compilation startet der Prozess ~280 ms später, `AggressiveOptimization` verbessert die erste Runde um ~15 %, kostet aber warm bei Objekt-Schleifen ~10 %. Es bleibt bei den Standardeinstellungen
+(`RunUntilBreakpoint`/`RunUntilEnd`, die F5-Schleifen des Editors, sind weiterhin `AggressiveOptimization`). `[SkipLocalsInit]` bringt hier nichts: der Stack-Rahmen der Schleife enthält `Value` (mit Objektverweis) und wird deshalb ohnehin genullt.
+
+**Was als Nächstes die meiste Zeit kostet.** Jede Instruktion kostet noch ~8-12 ns, obwohl der Rumpf klein ist: `_ip`, `_sp`, `_stack`, `_currentScope` liegen als Felder der VM im Speicher, und jede Instruktion liest/schreibt sie über eine abhängige Kette (Store-to-Load-Weiterleitung). Eine Schleife mit
+diesen Zuständen in lokalen Variablen (nur für die häufigen Instruktionen, alles andere über die bestehende `Step`/`Execute`-Kette) würde das voraussichtlich etwa halbieren; das ist ein größerer, eigener Umbau.

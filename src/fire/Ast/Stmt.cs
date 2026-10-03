@@ -129,6 +129,10 @@ namespace fire.Ast
     /// <summary>Ende einer `sync global { ... }`-Sektion (siehe <see cref="SectionEnterStmt"/>).</summary>
     public sealed record SectionExitStmt(int Source, int Line) : Stmt(Source, Line);
 
+    /// <summary>`silence obj.member` / `silence obj.*` / `silence x`: entfernt Proben (siehe Ast.ProbeExpr). `MemberForm`: `Target` ist das Objekt und
+    /// `Member` das Mitglied (null = alle Proben des Objekts); sonst ist `Target` ein Ausdruck, der zu einem Probe-Handle oder einem Objekt auswertet.</summary>
+    public sealed record SilenceStmt(int Source, int Line, Expr Target, string? Member, bool MemberForm) : Stmt(Source, Line);
+
     /// <summary>`fire global { ... } [taking X ...]` (docs/THREADING_DESIGN.md Abschnitt 7): ein Auftrag für das Hauptprogramm, der bei
     /// dessen nächstem `sync globals` mit den echten Globals läuft, ohne dass der Aufrufer wartet. Der Parser macht den Block zu einem
     /// Lambda, dessen Parameter die `taking`-Erfassungen sind (sie werden beim Einreihen als Wert/Kopie übergeben) - das Lambda sieht

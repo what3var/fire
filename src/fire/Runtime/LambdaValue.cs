@@ -1,4 +1,5 @@
 using fire.Bytecode;
+using fire.Values;
 
 namespace fire.Runtime
 {
@@ -28,18 +29,23 @@ namespace fire.Runtime
 
         public IOwner? Owner { get; private set; }
 
-        public LambdaValue(FunctionProto proto, object? onTarget, IOwner? owner = null)
+        /// <summary>Beim Erzeugen KOPIERTE Werte der äußeren lokalen Variablen, die der Körper benutzt (Lambda-Captures, SPEC 4.2),
+        /// oder null. Beim Aufruf landen sie als Slots direkt hinter den Parametern.</summary>
+        public Value[]? Captures { get; }
+
+        public LambdaValue(FunctionProto proto, object? onTarget, IOwner? owner = null, Value[]? captures = null)
         {
             Proto = proto;
             OnTarget = onTarget;
             Owner = owner;
+            Captures = captures;
         }
 
         /// <summary>`a on obj2` - erzeugt einen NEUEN Lambda-Wert mit anderem
         /// this-Kontext; `a` selbst bleibt unverändert (SPEC 4.2). Derselbe Proto
         /// wird wiederverwendet (Ausführung, nicht Definition, ändert sich).</summary>
         public LambdaValue WithOnTarget(object? newTarget, IOwner? owner = null) =>
-            new(Proto, newTarget, owner);
+            new(Proto, newTarget, owner, Captures);
 
         internal void SetOwnerInternal(IOwner newOwner) => Owner = newOwner;
 

@@ -43,7 +43,15 @@ namespace fire.Compiler
         /// gelassen hat. Wer die VM selbst treibt (z.B. der Step-Debugger), ruft das nach dem Lauf auf.</summary>
         protected IDisposable? IoResources { get; set; }
 
-        public void CloseHostResources() => IoResources?.Dispose();
+        /// <summary>Räumt die Geräte-Brücke nach dem Lauf auf: löst die Empfangs-Haken und gibt einen NICHT geteilten
+        /// Manager frei (siehe DeviceBridge.RegisterAll).</summary>
+        protected IDisposable? DeviceResources { get; set; }
+
+        public void CloseHostResources()
+        {
+            IoResources?.Dispose();
+            DeviceResources?.Dispose();
+        }
 
         /// <summary>Führt das Programm auf dem aufrufenden Thread bis zum Ende aus (normales Ende, `leave`,
         /// `terminate` oder unbehandelte Exception, siehe <see cref="VM.UnhandledException"/>) und schließt danach die
@@ -115,9 +123,9 @@ namespace fire.Compiler
             return registry;
         }
 
-        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null)
+        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null, string? basePath = null, fire.Device.Manager.DeviceManager.DeviceManager? deviceManager = null)
         {
-            var linker = new Linker();
+            var linker = new Linker { BasePath = basePath };
             var natives = new NativeRegistry();
 
             var linkedProgram = linker.CompileAndLink(sources, debugWriter, outname, executionMode);
@@ -127,10 +135,12 @@ namespace fire.Compiler
                 if (debugWriter == null)
                     natives.Register("print", args => Value.MakeUndefined());
                 else
-                    natives.Register("print", args => debugWriter(args));
+                    natives.Register("print", args => VM.StringifyForPrint(args) is { } shown ? debugWriter(shown) : Value.MakeUndefined());
             }
             natives.RegisterBaseTypeNatives();
 
+            // WICHTIG: native Funktionen werden über ihren INDEX angesprungen - die Reihenfolge der Registrierung muss
+            // exakt der beim Übersetzen entsprechen (siehe ImportedPreludes.Insert): graphics, reflection, time, devices, io.
             FramebufferManager? fbManager = null;
             ConsoleManager? consoleManager = null;
             WindowManager? windowManager = null;
@@ -147,6 +157,17 @@ namespace fire.Compiler
                 GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager);
             }
 
+            if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
+                ReflectionNatives.Register(natives);
+            if (linkedProgram.NativeImports.Contains(NativeImports.Time))
+                TimeNatives.Register(natives);
+
+            // `deviceManager`: der Manager des Hosts (z.B. der geteilte des Editors, siehe DeviceManager.IsShared); ohne
+            // Angabe bekommt das Programm einen eigenen mit den eingebauten Treibern, der nach dem Lauf freigegeben wird.
+            IDisposable? deviceResources = null;
+            if (linkedProgram.NativeImports.Contains(NativeImports.Devices))
+                deviceResources = fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager ?? fire.Device.Manager.DeviceManager.DeviceManager.CreateDefault());
+
             // `ioPolicy`: was Skripte im Dateisystem anfassen dürfen, `ioStdio`: wohin
             // IO.Stdio führt - beides entscheidet der HOST (siehe IoPolicy/IoStdio),
             // Vorgabe: alles erlaubt, echte Konsole.
@@ -161,6 +182,7 @@ namespace fire.Compiler
 
             session.SetVM(mainVm, windowManager, globalScope, natives, fbManager, consoleManager, linkedProgram.FirstUserSource);
             session.IoResources = ioResources;
+            session.DeviceResources = deviceResources;
 
             return session;
         }

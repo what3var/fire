@@ -72,6 +72,15 @@ namespace fire.Bytecode
         /// RuntimeClass gesetzt (siehe Compiler.CompileClasses).</summary>
         public bool IsActor { get; set; }
 
+        /// <summary>Deklarierte Typen/Signaturen für die Reflection (nur wenn das Programm `#import "reflection"` nutzt), sonst null.</summary>
+        public ClassMeta? Meta { get; set; }
+
+        /// <summary>Die Interfaces, die diese Klasse in `class X : Basis, IFoo` nennt (für `wert is of IFoo`; geerbte kommen über die Basisklassen-Kette).</summary>
+        public List<string> Interfaces { get; set; } = new();
+
+        /// <summary>Klasse der Reflection-Bibliothek (`Reflect`, `Type`, `Member`, `Selector`): für die Zugriffsprüfung zählt der Aufrufer DAVOR.</summary>
+        public bool IsReflectionHelper { get; set; }
+
         public List<(string Name, FunctionProto Init)> Fields { get; }
 
         /// <summary>Zugriffsmodifikator jedes in DIESER Klasse selbst
@@ -234,6 +243,15 @@ namespace fire.Bytecode
         }
 
         public FunctionProto? Destructor { get; set; }
+
+        /// <summary>Hat diese Klasse oder eine ihrer Basisklassen einen Destruktor? Ohne einen gibt es beim Zerstören eines Objekts nichts
+        /// auszuführen (siehe ObjectInstance.Destroy) - die Kette ist kurz, eine Abfrage kostet nur ein paar Zeigerzugriffe.</summary>
+        public bool HasDestructorInChain()
+        {
+            for (var rc = this; rc != null; rc = rc.Base)
+                if (rc.Destructor != null) return true;
+            return false;
+        }
 
         public RuntimeClass(string name, ClassDecl decl)
         {

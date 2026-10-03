@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using fire.Bytecode;
@@ -45,7 +46,11 @@ namespace fire.Device.Bridge
             natives.RegisterGroup(DevicePrefix, BuildDeviceStubs());
         }
 
-        public static void RegisterAll(NativeRegistry natives, DeviceManager manager)
+        /// <summary>Registriert die Geräte-Funktionen für EINEN Programmlauf. Das Ergebnis räumt nach dem Lauf auf: es löst
+        /// die Empfangs-Haken von den Geräten (ein geteilter Manager überlebt den Lauf, die Haken dürfen es nicht) und
+        /// gibt einen NICHT geteilten Manager frei (trennt die Geräte). Ein geteilter Manager bleibt unberührt -
+        /// ein Skript kann ihn und seine Geräte nicht zerstören.</summary>
+        public static IDisposable RegisterAll(NativeRegistry natives, DeviceManager manager)
         {
             // Pro Geräte-Handle eine eigene Warteschlange empfangener
             // Byte-Pakete (siehe Klassendoku) - und welche Handles schon
@@ -59,6 +64,7 @@ namespace fire.Device.Bridge
             // werden, nicht nur vom Hauptthread.
             var receiveQueues = new ConcurrentDictionary<int, ConcurrentQueue<byte[]>>();
             var hookedHandles = new ConcurrentDictionary<int, byte>(); // Wert ungenutzt - dient nur als nebenläufigkeitssicheres Set
+            var hooks = new ConcurrentBag<(IDevice Device, Action<byte[]> Handler)>();
 
             IDevice? ResolveDevice(int handle)
             {
@@ -73,13 +79,36 @@ namespace fire.Device.Bridge
                     // (siehe SerialDevice.PollyPocket), NICHT auf dem
                     // VM-Thread - deshalb hier nur ein simples, threadsicheres
                     // Enqueue, KEIN Zugriff auf irgendetwas VM-Seitiges.
-                    device.OnRawDataReceived += bytes => queue.Enqueue(bytes);
+                    Action<byte[]> handler = bytes => queue.Enqueue(bytes);
+                    device.OnRawDataReceived += handler;
+                    hooks.Add((device, handler));
                 }
                 return device;
             }
 
             natives.RegisterGroup(ManagerPrefix, BuildManagerFunctions(manager));
             natives.RegisterGroup(DevicePrefix, BuildDeviceFunctions(manager, ResolveDevice, receiveQueues));
+
+            return new Cleanup(manager, hooks);
+        }
+
+        private sealed class Cleanup : IDisposable
+        {
+            private readonly DeviceManager _manager;
+            private readonly ConcurrentBag<(IDevice Device, Action<byte[]> Handler)> _hooks;
+
+            public Cleanup(DeviceManager manager, ConcurrentBag<(IDevice, Action<byte[]>)> hooks)
+            {
+                _manager = manager;
+                _hooks = hooks;
+            }
+
+            public void Dispose()
+            {
+                foreach (var (device, handler) in _hooks) device.OnRawDataReceived -= handler;
+                while (_hooks.TryTake(out _)) { }
+                _manager.Dispose(); // wirkungslos bei einem geteilten Manager
+            }
         }
 
         private static Dictionary<string, NativeFunction> BuildManagerStubs()
@@ -90,6 +119,8 @@ namespace fire.Device.Bridge
                 ["HandleForIdentifier"] = args => Value.MakeUndefined(),
                 ["Count"] = args => Value.MakeUndefined(),
                 ["HandleAt"] = args => Value.MakeUndefined(),
+                ["IsShared"] = args => Value.MakeUndefined(),
+                ["DefaultHandle"] = args => Value.MakeUndefined(),
             };
         }
 
@@ -111,6 +142,9 @@ namespace fire.Device.Bridge
                     long index = args[0].AsInt();
                     return Value.MakeInt(index >= 0 && index < handles.Count ? handles[(int)index] : InvalidHandle);
                 },
+                // WICHTIG: dieselbe REIHENFOLGE wie in BuildManagerStubs - der Compiler legt Funktionen nach Position fest.
+                ["IsShared"] = args => Value.MakeBool(manager.IsShared),
+                ["DefaultHandle"] = args => Value.MakeInt(manager.DefaultHandle ?? InvalidHandle),
             };
         }
 
@@ -119,6 +153,7 @@ namespace fire.Device.Bridge
             return new Dictionary<string, NativeFunction>
             {
                 ["Identifier"] = args => Value.MakeUndefined(),
+                ["IsShared"] = args => Value.MakeUndefined(),
                 ["IsConnected"] = args => Value.MakeUndefined(),
                 ["PortName"] = args => Value.MakeUndefined(),
                 ["Availability"] = args => Value.MakeUndefined(),
@@ -138,6 +173,7 @@ namespace fire.Device.Bridge
             {
                 ["Identifier"] = args =>
                     Value.MakeString(manager.GetIdentifierByHandle((int)args[0].AsInt()) ?? ""),
+                ["IsShared"] = args => Value.MakeBool(manager.GetSlotByIdentifier(manager.GetIdentifierByHandle((int)args[0].AsInt()) ?? "")?.IsShared ?? false),
                 ["IsConnected"] = args => Value.MakeBool(resolve((int)args[0].AsInt())?.IsConnected ?? false),
                 ["PortName"] = args => Value.MakeString(resolve((int)args[0].AsInt())?.PortName ?? ""),
                 ["Availability"] = args => Value.MakeInt((int)(resolve((int)args[0].AsInt())?.Availability ?? DeviceAvailability.Unavailable)),
@@ -163,7 +199,7 @@ namespace fire.Device.Bridge
                 {
                     var device = resolve((int)args[0].AsInt());
                     if (device == null) return Value.MakeBool(false);
-                    try { device.SendCommand(args[1].AsString()); return Value.MakeBool(true); }
+                    try { return Value.MakeBool(device.SendCommand(args[1].AsString())); }
                     catch { return Value.MakeBool(false); }
                 },
                 ["HasData"] = args =>
@@ -213,6 +249,14 @@ namespace fire.Device.Bridge
                 }
             }
 
+            class DeviceConnectionException : Exception {
+                string message
+
+                construct(string message) {
+                    this.message = message
+                }
+            }
+
             class Device {
                 int handle
 
@@ -220,8 +264,31 @@ namespace fire.Device.Bridge
                     this.handle = handle
                 }
 
+                // Ob der Host (z.B. der Editor) ein Standardgerät gewählt hat.
+                static bool HasDefault {
+                    get { return __DEVMgrDefaultHandle() != -1 }
+                }
+
+                // Das vom Host gewählte Standardgerät (im Editor: Geräte-Übersicht -> "Als Standard" oder die Auswahl in
+                // der Symbolleiste). Wirft DeviceNotFoundException, wenn keins gewählt ist (z.B. in einem eigenständigen Programm).
+                static Device Default {
+                    get {
+                        var h = __DEVMgrDefaultHandle()
+                        if (h == -1) {
+                            throw new DeviceNotFoundException("Kein Standardgerät gewählt")
+                        }
+                        return new Device(h)
+                    }
+                }
+
                 string Identifier() { return __DEVIdentifier(this.handle) }
+
+                // Verbunden? (Property; die gleichnamige Methode IsConnected() bleibt aus Kompatibilität bestehen.)
+                bool IsConnected { get { return __DEVIsConnected(this.handle) } }
                 bool IsConnected() { return __DEVIsConnected(this.handle) }
+
+                // Gehört das Gerät einem geteilten DeviceManager (des Editors)? Dann bleibt es über den Lauf hinaus bestehen.
+                bool IsShared { get { return __DEVIsShared(this.handle) } }
                 string PortName() { return __DEVPortName(this.handle) }
 
                 // 0 = Unavailable, 1 = Unchecked, 2 = Available (siehe
@@ -230,6 +297,17 @@ namespace fire.Device.Bridge
                 int TestAvailability() { return __DEVTestAvailability(this.handle) }
 
                 bool Connect() { return __DEVConnect(this.handle) }
+
+                // Verbindet nur, wenn noch nicht verbunden; wirft DeviceConnectionException, wenn das nicht klappt.
+                // Liefert das Gerät selbst zurück (Device.Default.EnsureConnected().SendCommand("...")).
+                Device EnsureConnected() {
+                    if (!__DEVIsConnected(this.handle)) {
+                        if (!__DEVConnect(this.handle)) {
+                            throw new DeviceConnectionException("Verbindung zu '" + __DEVIdentifier(this.handle) + "' fehlgeschlagen")
+                        }
+                    }
+                    return this
+                }
                 Disconnect() { __DEVDisconnect(this.handle) }
                 bool SendCommand(string command) { return __DEVSendCommand(this.handle, command) }
 
@@ -243,6 +321,9 @@ namespace fire.Device.Bridge
                 Refresh(bool fastScan) { __DEVMgrRefresh(fastScan) }
 
                 int Count() { return __DEVMgrCount() }
+
+                // Gehört der Manager dem Host (Editor) und wird von Skripten nur mitbenutzt?
+                bool IsShared() { return __DEVMgrIsShared() }
 
                 Device GetAt(int index) {
                     var h = __DEVMgrHandleAt(index)

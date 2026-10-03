@@ -363,6 +363,16 @@ namespace fire.Compiler
         // -----------------------------------------------------------
         private Stmt ParseStatement()
         {
+            // `probe a.b changed ...` / `silence a.b`: kontextabhängige Schlüsselwörter - nur wenn direkt ein Bezeichner/`this` folgt (zwei Namen
+            // hintereinander sind sonst nie ein gültiger Ausdruck), so bleiben `probe`/`silence` als Variablennamen nutzbar
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "silence" && IsProbeOperandNext()) return ParseSilence();
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "probe" && IsProbeOperandNext())
+            {
+                int probeLine = Peek().Line;
+                var probe = ParseProbe();
+                ExpectStatementTerminator();
+                return new ExprStmt(_sourceIndex, probeLine, probe);
+            }
             if (Check(TokenType.Var)) return ParseVarDecl();
             if (Check(TokenType.Readonly)) return ParseReadonlyDecl();
             if (Check(TokenType.Enum)) return ParseEnumDecl();
@@ -674,7 +684,19 @@ namespace fire.Compiler
             }
 
             if (baseName == "lambda")
+            {
+                // `lambda field|property|member|selector<T>`: ein Selektor (siehe LambdaSignature.IsSelector)
+                if (Check(TokenType.Identifier) && Peek().Lexeme is "field" or "property" or "member" or "method" or "selector" && PeekAt(1).Type == TokenType.Lt)
+                {
+                    string selectorKind = Advance().Lexeme; // 'field', 'property', 'member', 'method' oder 'selector'
+                    Advance(); // '<'
+                    var targetTypes = new List<string>();
+                    if (!Check(TokenType.Gt)) targetTypes.Add(ParseTypeAnnotationName()); // `lambda selector<>`: ohne Typ
+                    Expect(TokenType.Gt, $"Erwarte '>' nach dem Typ von 'lambda {selectorKind}<...>'");
+                    return new TypeRef("lambda", null, 0, new LambdaSignature(null, targetTypes, IsSelector: true, SelectorKind: selectorKind), namespaces);
+                }
                 return new TypeRef("lambda", null, 0, ParseLambdaSignature(returnTypeName: null), namespaces);
+            }
 
             // 'byte' ist reines Sugar für 'int[8]' (siehe SPEC 8.10) - eine
             // explizite Bitbreite DANACH wäre widersprüchlich/redundant und
@@ -1191,7 +1213,7 @@ namespace fire.Compiler
                 throw Error("'with' gibt es bei 'fire global' nicht", Peek());
             var body = ParseBlock();
             var parameters = captures.Select(c => new LambdaParam(c.VarName, null, new List<Expr?>(), null)).ToList();
-            var lambda = new LambdaExpr(line, parameters, null, body);
+            var lambda = new LambdaExpr(line, parameters, null, body, AutoCapture: false);
             return new PostGlobalStmt(_sourceIndex, line, lambda, captures.Select(c => c.Source).ToList());
         }
 
@@ -1589,7 +1611,7 @@ namespace fire.Compiler
                 members.AddRange(ParseClassMember());
             Expect(TokenType.RBrace, "Erwarte '}' am Ende der Erweiterung");
 
-            if (isBaseType)
+            if (isBaseType || BaseTypeExtensions.IsExtendable(targetName))
                 foreach (var member in members)
                     ValidateBaseTypeExtensionMember(targetName, member);
 
@@ -2514,8 +2536,15 @@ namespace fire.Compiler
             return new SyncExpr(line, isTry, isFlat, target);
         }
 
+        /// <summary>Gesetzt, solange das ZIEL von `on` einer `func`-Lambda gelesen wird (`func (x) on win => ...`): ein Bezeichner oder eine geklammerte
+        /// Angabe direkt davor darf dort nicht als Kurzform-Lambda (`win => ...`, `(win) => ...`) gelesen werden - das `=>` gehört zur `func`-Lambda.
+        /// ParsePrimary verbraucht das Flag mit dem ersten Primärausdruck.</summary>
+        private bool _suppressShortLambda;
+
         private Expr ParsePrimary()
         {
+            bool noShortLambda = _suppressShortLambda;
+            _suppressShortLambda = false;
             var tok = Peek();
 
             switch (tok.Type)
@@ -2605,6 +2634,13 @@ namespace fire.Compiler
                     return new LiteralExpr(tok.Line, Value.MakeUndefined());
 
                 case TokenType.Identifier:
+                    if (tok.Lexeme == "probe" && IsProbeOperandNext()) return ParseProbe();
+                    if (!noShortLambda && PeekAt(1).Type == TokenType.Arrow)
+                    {
+                        // Kurzform `x => ausdruck`
+                        Advance();
+                        return ParseLambdaTail(tok.Line, new List<LambdaParam> { new LambdaParam(tok.Lexeme, null, new List<Expr?>(), null) });
+                    }
                     Advance();
                     return new IdentifierExpr(tok.Line, tok.Lexeme);
 
@@ -2690,6 +2726,12 @@ namespace fire.Compiler
 
                 case TokenType.LParen:
                 {
+                    if (!noShortLambda && IsParenLambda())
+                    {
+                        // Kurzform `(a, b) => ausdruck` / `() => ausdruck`
+                        int lambdaLine = tok.Line;
+                        return ParseLambdaTail(lambdaLine, ParseParamList());
+                    }
                     Advance();
                     var inner = ParseExpression();
                     Expect(TokenType.RParen, "Erwarte ')' nach geklammertem Ausdruck");
@@ -2763,8 +2805,99 @@ namespace fire.Compiler
 
             Expr? onTarget = null;
             if (Match(TokenType.On))
+            {
+                _suppressShortLambda = true;
                 onTarget = ParsePostfix();
+                _suppressShortLambda = false;
+            }
 
+            return ParseLambdaTail(line, parms, onTarget);
+        }
+
+        /// <summary>Folgt auf das aktuelle Wort (`probe`/`silence`) ein Bezeichner oder `this`?</summary>
+        private bool IsProbeOperandNext() => PeekAt(1).Type is TokenType.Identifier or TokenType.This;
+
+        /// <summary>Liest `a.b.c` (auch `a.b.*`, `a`): liefert das Objekt-Ausdruck, das Mitglied (null bei `.*` und ohne Punkt) und ob ein Mitglied
+        /// angegeben war (`.name` oder `.*`).</summary>
+        private (Expr Target, string? Member, bool HasMember) ParseProbePath()
+        {
+            Expr target = ParsePrimary();
+            if (!Check(TokenType.Dot)) return (target, null, false);
+            string? member = null;
+            while (Check(TokenType.Dot))
+            {
+                Advance();
+                if (Check(TokenType.Star))
+                {
+                    var starTok = Advance();
+                    if (member != null) target = new MemberExpr(starTok.Line, target, member);
+                    member = null;
+                    break;
+                }
+                var nameTok = Expect(TokenType.Identifier, "Erwarte einen Mitgliedsnamen nach '.'");
+                if (member != null) target = new MemberExpr(nameTok.Line, target, member);
+                member = nameTok.Lexeme;
+            }
+            return (target, member, true);
+        }
+
+        /// <summary>`probe ziel changed|changing handler` - der Handler ist ein Block `{ ... }`, `=> ausdruck`, `(a, b) => ...` oder ein beliebiger
+        /// Lambda-Ausdruck. Block und `=> ausdruck` bekommen die impliziten Namen `sender`, `name`, `old`, `value` (4 Parameter, siehe VM.RunProbeHandler).</summary>
+        private Expr ParseProbe()
+        {
+            int line = Peek().Line;
+            Advance(); // 'probe'
+            var (target, member, hasMember) = ParseProbePath();
+            if (!hasMember)
+                throw Error("'probe' erwartet ein Mitglied: 'probe objekt.mitglied changed ...' (oder 'objekt.*' für alle)", Peek());
+            if (!Check(TokenType.Identifier) || Peek().Lexeme is not ("changed" or "changing"))
+                throw Error("Erwarte 'changed' oder 'changing' nach dem Ziel von 'probe'", Peek());
+            bool changing = Advance().Lexeme == "changing";
+
+            Expr handler;
+            if (Check(TokenType.LBrace))
+            {
+                var body = ParseBlock();
+                handler = new LambdaExpr(line, ImplicitProbeParams(), null, body);
+            }
+            else if (Check(TokenType.Arrow))
+                handler = ParseLambdaTail(line, ImplicitProbeParams());
+            else if (IsParenLambda())
+                handler = ParseLambdaTail(line, ParseParamList());
+            else
+                handler = ParseExpression();
+            return new ProbeExpr(line, target, member, changing, handler);
+        }
+
+        private static List<LambdaParam> ImplicitProbeParams() =>
+            new[] { "sender", "name", "old", "value" }.Select(n => new LambdaParam(n, null, new List<Expr?>(), null)).ToList();
+
+        /// <summary>`silence a.b` / `silence a.*` (Mitglied bzw. alle Proben des Objekts `a`) oder `silence x` (Probe-Handle bzw. Objekt).</summary>
+        private Stmt ParseSilence()
+        {
+            int line = Peek().Line;
+            Advance(); // 'silence'
+            var (target, member, hasMember) = ParseProbePath();
+            ExpectStatementTerminator();
+            return new SilenceStmt(_sourceIndex, line, target, member, hasMember);
+        }
+
+        /// <summary>Steht der aktuelle `(` am Anfang einer Kurzform-Lambda `(...) =>`? (Lookahead bis zur passenden `)`.)</summary>
+        private bool IsParenLambda()
+        {
+            int depth = 0;
+            for (int i = 0; ; i++)
+            {
+                var t = PeekAt(i);
+                if (t.Type == TokenType.Eof) return false;
+                if (t.Type == TokenType.LParen) depth++;
+                else if (t.Type == TokenType.RParen && --depth == 0) return PeekAt(i + 1).Type == TokenType.Arrow;
+            }
+        }
+
+        /// <summary>`=> ausdruck` bzw. `=> { ... }` einer Lambda (nach Parameterliste und optionalem `on`).</summary>
+        private Expr ParseLambdaTail(int line, List<LambdaParam> parms, Expr? onTarget = null)
+        {
             Expect(TokenType.Arrow, "Erwarte '=>' im Lambda");
 
             Stmt.BlockStmt body;
