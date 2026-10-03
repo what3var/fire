@@ -7184,6 +7184,1101 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 }
 
 // ---------------------------------------------------------------------------
+// Grafik: Farbmodi (RGBA / Palette), Farbangaben (Index oder direkter Wert), Zeichenfunktionen, Kopieren
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Grafik: Farbmodi, Zeichenfunktionen, Blit ===");
+    int gfxFailures = 0;
+    void GfxCheck(bool ok, string what)
+    {
+        if (!ok) gfxFailures++;
+        Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
+    }
+
+    var RGBA = fire.Terminal.ColorMode.Rgba;
+    var IDX = fire.Terminal.ColorMode.Indexed;
+    fire.Terminal.PixelColor Col(byte r, byte g, byte b) => new fire.Terminal.PixelColor(r, g, b);
+    fire.Terminal.Brush Idx(fire.Terminal.Framebuffer fb, int i) => fb.ResolveBrush(fire.Terminal.Paint.FromIndex((byte)i));
+
+    // Menge der gesetzten Pixel (Palette: Index != 0, RGBA: Wert != 0) als "x,y"-Menge
+    HashSet<(int, int)> Lit(fire.Terminal.Framebuffer fb)
+    {
+        var set = new HashSet<(int, int)>();
+        for (int y = 0; y < fb.Height; y++)
+            for (int x = 0; x < fb.Width; x++)
+                if (fb.GetRaw(x, y) != 0) set.Add((x, y));
+        return set;
+    }
+
+    // ---- Palette-Framebuffer: Indizes, Palette, Resolve ----
+    {
+        var fb = new fire.Terminal.Framebuffer(4, 3, IDX);
+        GfxCheck(fb.IsIndexed && fb.Indices != null && fb.Indices.Length == 12, "Palette-Framebuffer hat 1 Byte je Pixel");
+        fb.Plot(1, 1, new fire.Terminal.Brush(0, 9));
+        fb.Resolve();
+        GfxCheck(fb.Pixels[1 * 4 + 1] == fb.Palette.GetPacked(9) && fb.Pixels[0] == fb.Palette.GetPacked(0), "Resolve: Pixels = Palette[Index]");
+        fb.Palette.SetColor(9, unchecked((int)new fire.Terminal.PixelColor(1, 2, 3).Packed));
+        fb.Resolve();
+        GfxCheck(fb.Pixels[1 * 4 + 1] == new fire.Terminal.PixelColor(1, 2, 3).Packed, "Palette aendern faerbt alle Pixel mit diesem Index um (Resolve rechnet neu)");
+        fb.Indices![0] = 200; fb.MarkDirty(); fb.Resolve();
+        GfxCheck(fb.Pixels[0] == fb.Palette.GetPacked(200), "MarkDirty nach direktem Schreiben der Indizes");
+        GfxCheck(fb.GetPixel(0, 0).Packed == fb.Palette.GetPacked(200) && fb.GetIndex(0, 0) == 200, "GetPixel/GetIndex im Palette-Modus");
+        fb.Plot(-1, 0, new fire.Terminal.Brush(0, 5)); fb.Plot(4, 0, new fire.Terminal.Brush(0, 5)); fb.Plot(0, 3, new fire.Terminal.Brush(0, 5));
+        GfxCheck(fb.GetIndex(0, 0) == 200 && fb.GetRaw(-1, 0) == 0, "Plot ausserhalb: still beschnitten");
+
+        var rgba = new fire.Terminal.Framebuffer(2, 2);
+        GfxCheck(!rgba.IsIndexed && rgba.Indices == null && rgba.Mode == RGBA, "RGBA-Framebuffer hat keine Indizes");
+        rgba.Resolve(); // No-op
+        try { new fire.Terminal.Framebuffer(2, 2, (fire.Terminal.ColorMode)7); GfxCheck(false, "unbekannter Farbmodus wird abgelehnt"); }
+        catch (ArgumentOutOfRangeException) { GfxCheck(true, "unbekannter Farbmodus wird abgelehnt"); }
+    }
+
+    // ---- Farbangaben: Index ODER direkter Wert, aufgeloest je Framebuffer ----
+    {
+        var p = fire.Terminal.Paint.FromArgument(7);
+        GfxCheck(p.IsIndex && p.Index == 7 && fire.Terminal.Paint.FromArgument(255).IsIndex && !fire.Terminal.Paint.FromArgument(256).IsIndex, "Paint.FromArgument: 0-255 = Index, sonst direkter Wert");
+        GfxCheck(!fire.Terminal.Paint.FromArgument(unchecked((int)0xFF0000FFu)).IsIndex && fire.Terminal.Paint.FromArgument(unchecked((int)0xFF0000FFu)).Rgba == 0xFF0000FFu, "ein deckender Wert mit R=255 ist ein direkter Wert, kein Index");
+        GfxCheck(fire.Terminal.Paint.FromArgument((1L << 32) + 5).Index == 5, "nur die unteren 32 Bit zaehlen");
+
+        var rgba = new fire.Terminal.Framebuffer(2, 2);
+        var idx = new fire.Terminal.Framebuffer(2, 2, IDX);
+        var red = fire.Terminal.PixelColor.FromRgb(255, 0, 0);
+        var viaIndex = rgba.ResolveBrush(fire.Terminal.Paint.FromIndex(4));
+        GfxCheck(viaIndex.Rgba == rgba.Palette.GetPacked(4), "RGBA-Framebuffer: ein Index wird ueber die Palette zur Farbe");
+        GfxCheck(rgba.ResolveBrush(fire.Terminal.Paint.FromRgba(red)).Rgba == red.Packed, "RGBA-Framebuffer: ein direkter Wert bleibt");
+        GfxCheck(idx.ResolveBrush(fire.Terminal.Paint.FromIndex(4)).Index == 4, "Palette-Framebuffer: ein Index bleibt");
+        byte nearest = idx.ResolveBrush(fire.Terminal.Paint.FromRgba(fire.Terminal.PixelColor.FromRgb(250, 3, 3))).Index;
+        GfxCheck(idx.Palette.GetColor(nearest).R >= 200 && idx.Palette.GetColor(nearest).G <= 50 && idx.Palette.GetColor(nearest).B <= 50, "Palette-Framebuffer: ein direkter Wert wird der naechste Palette-Eintrag (rot -> rotlich)");
+        GfxCheck(idx.Palette.FindNearest(fire.Terminal.PixelColor.FromRgb(0, 0, 0)) == 0 && idx.Palette.FindNearest(idx.Palette.GetColor(200)) <= 200 && idx.Palette.GetPacked(idx.Palette.FindNearest(idx.Palette.GetColor(200))) == idx.Palette.GetPacked(200), "FindNearest findet eine exakt vorhandene Farbe");
+    }
+
+    // ---- Text und Rechtecke: Palette-Framebuffer == RGBA-Framebuffer mit denselben Palettenfarben ----
+    {
+        var font = new fire.Terminal.IntegratedGlyphFont();
+        var fbRgba = new fire.Terminal.Framebuffer(203, 97);
+        var fbIdx = new fire.Terminal.Framebuffer(203, 97, IDX);
+        var cRgba = new fire.Terminal.TerminalCanvas(fbRgba, font);
+        var cIdx = new fire.Terminal.TerminalCanvas(fbIdx, font);
+        foreach (var cv in new[] { cRgba, cIdx })
+        {
+            cv.SetColor(fire.Terminal.Paint.FromIndex(14), fire.Terminal.Paint.FromIndex(1));
+            cv.Clear();
+            cv.FillRect(5, 5, 40, 20, (byte)12);
+            cv.DrawRect(2, 2, 60, 30, (byte)10);
+            cv.DrawLine(0, 0, 202, 96, (byte)9);
+            cv.DrawText(7, 40, "Hallo Welt", fire.Terminal.Paint.FromIndex(15), null);
+            cv.DrawText(100, 80, "ragt hinaus", fire.Terminal.Paint.FromIndex(13), fire.Terminal.Paint.FromIndex(4));
+            cv.Locate(0, 0);
+            cv.Print(string.Join("\n", Enumerable.Range(0, 12).Select(n => new string((char)('A' + n % 26), 8 + n))));
+            cv.SetPixel(1, 1, (byte)200);
+            cv.FillRect(170, 2, 20, 10, (byte)12);
+        }
+        fbIdx.Resolve();
+        GfxCheck(fbRgba.Pixels.SequenceEqual(fbIdx.Pixels), "Clear/FillRect/DrawRect/DrawLine/DrawText/Print/Scrollen: Palette-Framebuffer zeigt dieselben Pixel wie der RGBA-Framebuffer");
+
+        // Bei einem Palette-Wechsel aendert sich der Palette-Framebuffer, der RGBA-Framebuffer nicht
+        fbIdx.Palette.SetColor(12, unchecked((int)fire.Terminal.PixelColor.FromRgb(1, 2, 3).Packed));
+        fbIdx.Resolve();
+        GfxCheck(fbIdx.GetPixel(175, 5).Packed == fire.Terminal.PixelColor.FromRgb(1, 2, 3).Packed && fbRgba.GetPixel(175, 5).Packed == fbRgba.Palette.GetPacked(12), "Palette-Animation wirkt nur im Palette-Framebuffer");
+
+        // die Palette gehoert dem Framebuffer, nicht der Konsole
+        GfxCheck(ReferenceEquals(cIdx.Palette, fbIdx.Palette), "TerminalCanvas.Palette ist die des Ziel-Framebuffers");
+
+        // Index-Farbe bleibt Index: eine spaetere Palette-Aenderung faerbt NEU gezeichneten Text um
+        cRgba.SetColor(fire.Terminal.Paint.FromIndex(3), null);
+        fbRgba.Palette.SetColor(3, unchecked((int)fire.Terminal.PixelColor.FromRgb(9, 8, 7).Packed));
+        cRgba.DrawText(0, 90, "x", fire.Terminal.Paint.FromIndex(3), null);
+        bool found = false;
+        for (int y = 90; y < 97 && !found; y++) for (int x = 0; x < 8; x++) if (fbRgba.GetPixel(x, y).Packed == fire.Terminal.PixelColor.FromRgb(9, 8, 7).Packed) { found = true; break; }
+        GfxCheck(found, "ein Palette-Index wird erst beim Zeichnen aufgeloest");
+    }
+
+    // ---- Kreis und Ellipse ----
+    {
+        foreach (var mode in new[] { RGBA, IDX })
+        {
+            for (int r = 0; r <= 12; r++)
+            {
+                var fb = new fire.Terminal.Framebuffer(60, 60, mode);
+                fire.Terminal.Shapes.FillCircle(fb, 30, 30, r, Idx(fb, 5));
+                var filled = Lit(fb);
+                var expected = new HashSet<(int, int)>();
+                for (int dy = -r; dy <= r; dy++) for (int dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r) expected.Add((30 + dx, 30 + dy));
+                if (!filled.SetEquals(expected)) { GfxCheck(false, $"FillCircle r={r} [{mode}]: Flaeche = {{dx^2+dy^2 <= r^2+r}}"); break; }
+                if (r == 12) GfxCheck(true, $"FillCircle r=0..12 [{mode}]: Flaeche = {{dx^2+dy^2 <= r^2+r}}");
+            }
+        }
+        var fbC = new fire.Terminal.Framebuffer(60, 60);
+        fire.Terminal.Shapes.FillCircle(fbC, 30, 30, 10, Idx(fbC, 5));
+        var area = Lit(fbC);
+        var fbO = new fire.Terminal.Framebuffer(60, 60);
+        fire.Terminal.Shapes.Circle(fbO, 30, 30, 10, Idx(fbO, 5));
+        var ring = Lit(fbO);
+        GfxCheck(ring.IsSubsetOf(area) && ring.Count > 30 && ring.Count < area.Count, "Circle: die Linie liegt in der Flaeche und ist ein Ring");
+        // der Ring ist 4-symmetrisch und schliesst die Flaeche ein: kein innerer Flaechenpunkt hat einen Nachbarn ausserhalb der Flaeche ohne selbst auf dem Ring zu liegen
+        bool symmetric = ring.All(p => ring.Contains((60 - p.Item1, p.Item2)) && ring.Contains((p.Item1, 60 - p.Item2)) && ring.Contains((p.Item2, p.Item1)));
+        GfxCheck(symmetric, "Circle: symmetrisch (Spiegelungen und Diagonale)");
+        bool closed = area.All(p => ring.Contains(p) || new[] { (1, 0), (-1, 0), (0, 1), (0, -1) }.All(d => area.Contains((p.Item1 + d.Item1, p.Item2 + d.Item2))));
+        GfxCheck(closed, "Circle: jedes Flaechenpixel am Rand liegt auf der Linie (keine Luecken)");
+
+        var fbE = new fire.Terminal.Framebuffer(80, 60);
+        fire.Terminal.Shapes.FillEllipse(fbE, 40, 30, 20, 8, Idx(fbE, 5));
+        var ell = Lit(fbE);
+        GfxCheck(ell.Contains((40 - 20, 30)) && ell.Contains((40 + 20, 30)) && ell.Contains((40, 30 - 8)) && ell.Contains((40, 30 + 8)) && !ell.Contains((40 - 21, 30)) && !ell.Contains((40, 30 + 9)),
+            "FillEllipse: Halbachsen rx=20, ry=8 treffen genau die Spitzen");
+        var fbE2 = new fire.Terminal.Framebuffer(80, 60);
+        fire.Terminal.Shapes.Ellipse(fbE2, 40, 30, 20, 8, Idx(fbE2, 5));
+        var ellRing = Lit(fbE2);
+        GfxCheck(ellRing.IsSubsetOf(ell) && ellRing.Contains((20, 30)) && ellRing.Contains((40, 22)) && !ellRing.Contains((40, 30)), "Ellipse: Linie in der Flaeche, Mitte frei");
+        var fbL = new fire.Terminal.Framebuffer(30, 30);
+        fire.Terminal.Shapes.Ellipse(fbL, 15, 15, 6, 0, Idx(fbL, 5));
+        GfxCheck(Lit(fbL).SetEquals(Enumerable.Range(9, 13).Select(x => (x, 15))), "Ellipse mit ry=0: eine waagerechte Linie");
+        var fbV = new fire.Terminal.Framebuffer(30, 30);
+        fire.Terminal.Shapes.FillEllipse(fbV, 15, 15, 0, 4, Idx(fbV, 5));
+        GfxCheck(Lit(fbV).SetEquals(Enumerable.Range(11, 9).Select(y => (15, y))), "FillEllipse mit rx=0: eine senkrechte Linie");
+        var fbN = new fire.Terminal.Framebuffer(30, 30);
+        fire.Terminal.Shapes.FillCircle(fbN, 15, 15, -1, Idx(fbN, 5));
+        fire.Terminal.Shapes.Circle(fbN, -100, -100, 20, Idx(fbN, 5));
+        fire.Terminal.Shapes.FillCircle(fbN, 15, 15, int.MaxValue, Idx(fbN, 5));
+        GfxCheck(true, "negativer Radius, Kreis ausserhalb und riesiger Radius werfen nicht");
+    }
+
+    // ---- Dreieck und Polygon ----
+    {
+        var fb = new fire.Terminal.Framebuffer(40, 40);
+        fire.Terminal.Shapes.FillTriangle(fb, 5, 5, 25, 5, 5, 25, Idx(fb, 5));
+        var tri = Lit(fb);
+        GfxCheck(tri.Contains((5, 5)) && tri.Contains((25, 5)) && tri.Contains((5, 25)) && tri.Contains((10, 10)) && !tri.Contains((20, 20)) && !tri.Contains((26, 5)) && !tri.Contains((4, 5)), "FillTriangle: Ecken und Inneres, nicht ausserhalb");
+        bool rows = true;
+        for (int y = 5; y <= 25; y++) { int n = tri.Count(p => p.Item2 == y); if (Math.Abs(n - (26 - (y - 5) - 5 + 1)) > 1) rows = false; }
+        GfxCheck(rows, "FillTriangle: Zeilenbreiten wie bei der Geraden (rechtwinkliges Dreieck)");
+        var fbT = new fire.Terminal.Framebuffer(40, 40);
+        fire.Terminal.Shapes.Triangle(fbT, 5, 5, 25, 5, 5, 25, Idx(fbT, 5));
+        var outline = Lit(fbT);
+        GfxCheck(outline.IsSubsetOf(tri) && !outline.Contains((10, 10)) && outline.Contains((15, 5)) && outline.Contains((5, 15)), "Triangle: nur der Umriss, in der Flaeche enthalten");
+
+        var fbR = new fire.Terminal.Framebuffer(40, 40);
+        fire.Terminal.Shapes.FillPolygon(fbR, new[] { 4, 6, 20, 6, 20, 15, 4, 15 }, Idx(fbR, 5));
+        var fbR2 = new fire.Terminal.Framebuffer(40, 40);
+        fbR2.FillRect(4, 6, 17, 10, Idx(fbR2, 5));
+        GfxCheck(Lit(fbR).SetEquals(Lit(fbR2)), "FillPolygon eines Rechtecks == FillRect (Randpixel gehoeren dazu)");
+
+        // Even-Odd: ein Stern aus einem Fuenfeck (Pentagramm) hat ein leeres Zentrum
+        var fbS = new fire.Terminal.Framebuffer(60, 60);
+        int[] star = { 30, 3, 47, 55, 3, 22, 57, 22, 13, 55 };
+        fire.Terminal.Shapes.FillPolygon(fbS, star, Idx(fbS, 5));
+        var starSet = Lit(fbS);
+        GfxCheck(starSet.Contains((30, 12)) && !starSet.Contains((30, 30)) && starSet.Count > 200, "FillPolygon: Even-Odd (das Zentrum eines Pentagramms bleibt leer)");
+
+        var fbP = new fire.Terminal.Framebuffer(40, 40);
+        fire.Terminal.Shapes.Polygon(fbP, new[] { 5, 5, 30, 5, 30, 30 }, Idx(fbP, 5), closed: false);
+        var open = Lit(fbP);
+        GfxCheck(open.Contains((30, 20)) && !open.Contains((15, 18)) && open.Count == 26 + 25, "Polygon offen: Kantenzug ohne Schlusslinie");
+        fire.Terminal.Shapes.Polygon(fbP, new int[0], Idx(fbP, 5));
+        fire.Terminal.Shapes.FillPolygon(fbP, new[] { 1, 1, 9, 9 }, Idx(fbP, 5));
+        fire.Terminal.Shapes.FillPolygon(fbP, new[] { 1, 1, 9, 9, 7 }, Idx(fbP, 5));
+        GfxCheck(true, "zu wenige Punkte / ungerade Punktzahl werfen nicht");
+
+        var fbBig = new fire.Terminal.Framebuffer(20, 20);
+        fire.Terminal.Shapes.FillTriangle(fbBig, -1000000, -1000000, 1000000, 5, 5, 1000000, Idx(fbBig, 5));
+        fire.Terminal.Shapes.Line(fbBig, int.MinValue, 0, int.MaxValue, 7, Idx(fbBig, 5));
+        GfxCheck(true, "riesige Koordinaten: kein Ueberlauf, kein Absturz");
+    }
+
+    // ---- Flaechenfuellung ----
+    {
+        foreach (var mode in new[] { RGBA, IDX })
+        {
+            var fb = new fire.Terminal.Framebuffer(30, 20, mode);
+            fire.Terminal.Shapes.Rect(fb, 5, 5, 15, 10, Idx(fb, 7));
+            fire.Terminal.Shapes.FloodFill(fb, 10, 10, Idx(fb, 3));
+            int inside = 0, outside = 0, wall = 0;
+            for (int y = 0; y < 20; y++) for (int x = 0; x < 30; x++)
+            {
+                var v = fb.GetIndex(x, y);
+                bool isIn = x > 5 && x < 19 && y > 5 && y < 14;
+                if (isIn && v == 3) inside++;
+                if (!isIn && v == 3) outside++;
+                if (v == 7) wall++;
+            }
+            GfxCheck(inside == 13 * 8 && outside == 0 && wall == 2 * 15 + 2 * 8, $"FloodFill fuellt genau das Innere des Rahmens [{mode}]");
+            fire.Terminal.Shapes.FloodFill(fb, 0, 0, Idx(fb, 3));
+            GfxCheck(fb.GetIndex(0, 0) == 3 && fb.GetIndex(29, 19) == 3 && fb.GetIndex(5, 5) == 7, $"FloodFill aussen: fuellt den Rest, der Rahmen bleibt [{mode}]");
+            fire.Terminal.Shapes.FloodFill(fb, 0, 0, Idx(fb, 3)); // schon gefuellt: nichts
+            fire.Terminal.Shapes.FloodFill(fb, -5, 100, Idx(fb, 3));
+        }
+        var fbB = new fire.Terminal.Framebuffer(20, 20, IDX);
+        fire.Terminal.Shapes.Rect(fbB, 2, 2, 10, 10, Idx(fbB, 7));
+        fire.Terminal.Shapes.Line(fbB, 4, 4, 9, 4, Idx(fbB, 2)); // eine andere Farbe im Innern
+        fire.Terminal.Shapes.FloodFillBorder(fbB, 5, 6, Idx(fbB, 3), Idx(fbB, 7));
+        GfxCheck(fbB.GetIndex(5, 4) == 3 && fbB.GetIndex(5, 6) == 3 && fbB.GetIndex(2, 2) == 7 && fbB.GetIndex(15, 15) == 0, "FloodFillBorder: fuellt bis zur Randfarbe, auch ueber andere Farben hinweg");
+        // grosse Flaeche: kein Stapelueberlauf
+        var fbHuge = new fire.Terminal.Framebuffer(600, 600, IDX);
+        fire.Terminal.Shapes.FloodFill(fbHuge, 0, 0, Idx(fbHuge, 4));
+        GfxCheck(fbHuge.GetIndex(599, 599) == 4 && fbHuge.GetIndex(300, 300) == 4, "FloodFill einer ganzen 600x600-Flaeche");
+        // Spirale: lange, verwinkelte Flaeche
+        var fbSp = new fire.Terminal.Framebuffer(64, 64);
+        for (int i = 2; i < 60; i += 4) fire.Terminal.Shapes.Rect(fbSp, i, i, 64 - 2 * i, 64 - 2 * i, Idx(fbSp, 7));
+        fire.Terminal.Shapes.FloodFill(fbSp, 0, 0, Idx(fbSp, 2));
+        GfxCheck(fbSp.GetIndex(1, 1) == 2 && fbSp.GetIndex(3, 3) == 0, "FloodFill bleibt hinter einer Wand");
+    }
+
+    // ---- Blit ----
+    {
+        // Quelle 4x4 (RGBA), jedes Pixel eindeutig
+        var src = new fire.Terminal.Framebuffer(4, 4);
+        for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++) src.SetPixel(x, y, new fire.Terminal.PixelColor((byte)(x * 10 + 10), (byte)(y * 10 + 10), 5, 255));
+        var dst = new fire.Terminal.Framebuffer(10, 10);
+        fire.Terminal.Blitter.Blit(dst, src, 3, 2);
+        GfxCheck(dst.GetPixel(3, 2).Packed == src.GetPixel(0, 0).Packed && dst.GetPixel(6, 5).Packed == src.GetPixel(3, 3).Packed && dst.GetPixel(2, 2).Packed == 0 && dst.GetPixel(7, 5).Packed == 0, "Blit: ganzes Bild an eine Position");
+
+        var d2 = new fire.Terminal.Framebuffer(10, 10);
+        fire.Terminal.Blitter.Blit(d2, src, 1, 1, 2, 2, 0, 0, 2, 2);
+        GfxCheck(d2.GetPixel(0, 0).Packed == src.GetPixel(1, 1).Packed && d2.GetPixel(1, 1).Packed == src.GetPixel(2, 2).Packed && d2.GetPixel(2, 0).Packed == 0, "Blit: Ausschnitt");
+
+        var d3 = new fire.Terminal.Framebuffer(10, 10);
+        fire.Terminal.Blitter.Blit(d3, src, 0, 0, 4, 4, 0, 0, 8, 8);
+        GfxCheck(d3.GetPixel(0, 0).Packed == src.GetPixel(0, 0).Packed && d3.GetPixel(1, 1).Packed == src.GetPixel(0, 0).Packed && d3.GetPixel(2, 2).Packed == src.GetPixel(1, 1).Packed && d3.GetPixel(7, 7).Packed == src.GetPixel(3, 3).Packed, "Blit: 2x vergroessert (nächster Nachbar)");
+        var d4 = new fire.Terminal.Framebuffer(10, 10);
+        fire.Terminal.Blitter.Blit(d4, src, 0, 0, 4, 4, 0, 0, 2, 2);
+        GfxCheck(d4.GetPixel(0, 0).Packed == src.GetPixel(1, 1).Packed || d4.GetPixel(0, 0).Packed == src.GetPixel(0, 0).Packed, "Blit: halbiert nimmt ein Quellpixel je Zielpixel");
+
+        var d5 = new fire.Terminal.Framebuffer(10, 10);
+        fire.Terminal.Blitter.Blit(d5, src, 0, 0, 4, 4, 0, 0, -4, 4);
+        GfxCheck(d5.GetPixel(0, 0).Packed == src.GetPixel(3, 0).Packed && d5.GetPixel(3, 3).Packed == src.GetPixel(0, 3).Packed, "Blit: negative Zielbreite spiegelt waagerecht");
+        var d6 = new fire.Terminal.Framebuffer(10, 10);
+        fire.Terminal.Blitter.Blit(d6, src, 0, 0, 4, 4, 0, 0, 4, -4);
+        GfxCheck(d6.GetPixel(0, 0).Packed == src.GetPixel(0, 3).Packed && d6.GetPixel(3, 3).Packed == src.GetPixel(3, 0).Packed, "Blit: negative Zielhoehe spiegelt senkrecht");
+
+        // Clipping: Ziel teilweise ausserhalb, Quelle ausserhalb, leere Groessen
+        var d7 = new fire.Terminal.Framebuffer(10, 10);
+        fire.Terminal.Blitter.Blit(d7, src, -2, -2);
+        fire.Terminal.Blitter.Blit(d7, src, 8, 8);
+        fire.Terminal.Blitter.Blit(d7, src, 2, 2, 100, 100, 0, 0, 4, 4);
+        fire.Terminal.Blitter.Blit(d7, src, 0, 0, 0, 0, 0, 0, 4, 4);
+        fire.Terminal.Blitter.Blit(d7, src, 0, 0, 4, 4, 0, 0, 0, 4);
+        fire.Terminal.Blitter.Blit(d7, src, -50, -50, 4, 4, 0, 0, 4, 4);
+        GfxCheck(d7.GetPixel(0, 0).Packed == src.GetPixel(2, 2).Packed && d7.GetPixel(9, 9).Packed == src.GetPixel(1, 1).Packed, "Blit: Beschneiden an Quelle und Ziel, leere Groessen werfen nicht");
+
+        // Transparent / Blend (RGBA-Quelle mit Alpha)
+        var sprite = new fire.Terminal.Framebuffer(2, 1);
+        sprite.SetPixel(0, 0, new fire.Terminal.PixelColor(200, 0, 0, 255));
+        sprite.SetPixel(1, 0, new fire.Terminal.PixelColor(0, 0, 0, 0));
+        var bg = new fire.Terminal.Framebuffer(2, 1);
+        bg.Clear(new fire.Terminal.PixelColor(10, 20, 30, 255));
+        fire.Terminal.Blitter.Blit(bg, sprite, 0, 0, fire.Terminal.BlitMode.Transparent);
+        GfxCheck(bg.GetPixel(0, 0).R == 200 && bg.GetPixel(1, 0).Packed == new fire.Terminal.PixelColor(10, 20, 30, 255).Packed, "Blit Transparent: Alpha-0-Pixel bleiben unberuehrt");
+        fire.Terminal.Blitter.Blit(bg, sprite, 0, 0, fire.Terminal.BlitMode.Copy);
+        GfxCheck(bg.GetPixel(1, 0).Packed == 0, "Blit Copy: kopiert auch durchsichtige Pixel");
+        var half = new fire.Terminal.Framebuffer(1, 1);
+        half.SetPixel(0, 0, new fire.Terminal.PixelColor(200, 100, 0, 128));
+        var base1 = new fire.Terminal.Framebuffer(1, 1);
+        base1.Clear(new fire.Terminal.PixelColor(0, 0, 100, 255));
+        fire.Terminal.Blitter.Blit(base1, half, 0, 0, fire.Terminal.BlitMode.Blend);
+        var mixed = base1.GetPixel(0, 0);
+        GfxCheck(Math.Abs(mixed.R - 100) <= 2 && Math.Abs(mixed.G - 50) <= 2 && Math.Abs(mixed.B - 50) <= 2 && mixed.A == 255, "Blit Blend: halbdurchsichtig wird nach Alpha gemischt");
+
+        // Palette-Quelle: Farbschluessel / TransparentIndex, ueber die Palette in einen RGBA-Framebuffer
+        var pal = new fire.Terminal.Framebuffer(3, 1, IDX);
+        pal.Indices![0] = 5; pal.Indices[1] = 0; pal.Indices[2] = 7; pal.MarkDirty();
+        var target = new fire.Terminal.Framebuffer(3, 1);
+        target.Clear(new fire.Terminal.PixelColor(1, 1, 1, 255));
+        fire.Terminal.Blitter.Blit(target, pal, 0, 0, fire.Terminal.BlitMode.Transparent, 0);
+        GfxCheck(target.GetPixel(0, 0).Packed == pal.Palette.GetPacked(5) && target.GetPixel(1, 0).R == 1 && target.GetPixel(2, 0).Packed == pal.Palette.GetPacked(7), "Blit Palette->RGBA mit Farbschluessel 0");
+        pal.TransparentIndex = 7;
+        var target2 = new fire.Terminal.Framebuffer(3, 1);
+        target2.Clear(new fire.Terminal.PixelColor(1, 1, 1, 255));
+        fire.Terminal.Blitter.Blit(target2, pal, 0, 0, fire.Terminal.BlitMode.Transparent);
+        GfxCheck(target2.GetPixel(2, 0).R == 1 && target2.GetPixel(1, 0).Packed == pal.Palette.GetPacked(0), "Blit Transparent nimmt ohne Farbschluessel den TransparentIndex der Quelle");
+
+        // Palette -> Palette: gleiche Palette = Indizes direkt; andere Palette = naechster Eintrag
+        var palDst = new fire.Terminal.Framebuffer(3, 1, IDX);
+        fire.Terminal.Blitter.Blit(palDst, pal, 0, 0);
+        GfxCheck(palDst.Indices!.SequenceEqual(pal.Indices), "Blit Palette->Palette (gleiche Palette): Indizes unveraendert");
+        var palDst2 = new fire.Terminal.Framebuffer(3, 1, IDX);
+        var shifted = new uint[256];
+        pal.Palette.CopyPacked(shifted);
+        palDst2.Palette.SetAll(shifted.Reverse().ToArray()); // Eintrag i hat dort die Farbe von 255-i
+        fire.Terminal.Blitter.Blit(palDst2, pal, 0, 0);
+        GfxCheck(palDst2.Palette.GetPacked(palDst2.Indices![0]) == pal.Palette.GetPacked(5) && palDst2.Palette.GetPacked(palDst2.Indices[2]) == pal.Palette.GetPacked(7), "Blit Palette->Palette (andere Palette): gleiche FARBE, anderer Index");
+
+        // RGBA -> Palette: naechster Eintrag der Ziel-Palette
+        var truecolor = new fire.Terminal.Framebuffer(2, 1);
+        truecolor.SetPixel(0, 0, fire.Terminal.PixelColor.FromRgb(255, 255, 255));
+        truecolor.SetPixel(1, 0, new fire.Terminal.PixelColor(0, 0, 0, 0));
+        var palTarget = new fire.Terminal.Framebuffer(2, 1, IDX);
+        palTarget.Indices![0] = 3; palTarget.Indices[1] = 3; palTarget.MarkDirty();
+        fire.Terminal.Blitter.Blit(palTarget, truecolor, 0, 0, fire.Terminal.BlitMode.Transparent);
+        GfxCheck(palTarget.Palette.GetColor(palTarget.Indices[0]).Packed == fire.Terminal.PixelColor.FromRgb(255, 255, 255).Packed && palTarget.Indices[1] == 3, "Blit RGBA->Palette: naechster Palette-Eintrag, Alpha 0 uebersprungen");
+
+        // gleicher Puffer, sich ueberlappend: wie eine Kopie
+        var self = new fire.Terminal.Framebuffer(8, 1);
+        for (int x = 0; x < 8; x++) self.SetPixel(x, 0, new fire.Terminal.PixelColor((byte)(x + 1), 0, 0, 255));
+        fire.Terminal.Blitter.Blit(self, self, 0, 0, 6, 1, 2, 0, 6, 1);
+        GfxCheck(Enumerable.Range(0, 8).Select(x => (int)self.GetPixel(x, 0).R).SequenceEqual(new[] { 1, 2, 1, 2, 3, 4, 5, 6 }), "Blit auf sich selbst (ueberlappend) liest vom Stand vor dem Kopieren");
+    }
+
+    // ---- Manager: Modus, Rohbytes, Palette ----
+    {
+        var mgr = new fire.Terminal.FramebufferManager();
+        int a = mgr.CreateFramebuffer(4, 2, IDX);
+        int b = mgr.CreateFramebuffer(4, 2);
+        GfxCheck(mgr.GetMode(a) == IDX && mgr.GetMode(b) == RGBA && mgr.GetByteCount(a) == 8 && mgr.GetByteCount(b) == 32, "FramebufferManager: Modus und Rohdatengroesse (1 bzw. 4 Byte je Pixel)");
+        mgr.WriteByte(a, 5, 77);
+        GfxCheck(mgr.ReadByte(a, 5) == 77 && mgr.GetFramebuffer(a).GetIndex(1, 1) == 77, "ReadByte/WriteByte im Palette-Modus: ein Byte = ein Index");
+        var bytes = Enumerable.Range(0, 8).Select(i => (byte)(i * 3)).ToArray();
+        mgr.WriteBytes(a, bytes);
+        GfxCheck(mgr.ReadBytes(a).SequenceEqual(bytes), "ReadBytes/WriteBytes im Palette-Modus");
+        try { mgr.WriteBytes(a, new byte[32]); GfxCheck(false, "WriteBytes mit falscher Laenge wird abgelehnt"); }
+        catch (ArgumentException) { GfxCheck(true, "WriteBytes mit falscher Laenge wird abgelehnt"); }
+        try { mgr.ReadByte(a, 8); GfxCheck(false, "ReadByte ausserhalb wird abgelehnt"); }
+        catch (ArgumentOutOfRangeException) { GfxCheck(true, "ReadByte ausserhalb wird abgelehnt"); }
+
+        mgr.SetPaletteColor(a, 10, unchecked((int)fire.Terminal.PixelColor.FromRgb(11, 22, 33).Packed));
+        var pal768 = mgr.ReadPalette(a);
+        GfxCheck(pal768.Length == 768 && pal768[30] == 11 && pal768[31] == 22 && pal768[32] == 33 && mgr.ReadPalette(a, true).Length == 1024, "ReadPalette: 768 Byte RGB bzw. 1024 Byte RGBA");
+        var newPal = new byte[768];
+        for (int i = 0; i < 256; i++) { newPal[i * 3] = (byte)i; newPal[i * 3 + 1] = (byte)(255 - i); newPal[i * 3 + 2] = 9; }
+        mgr.WritePalette(b, newPal);
+        var got = mgr.GetFramebuffer(b).Palette.GetColor(100);
+        GfxCheck(got.R == 100 && got.G == 155 && got.B == 9 && got.A == 255, "WritePalette (768 Byte RGB, Alpha 255)");
+        var rgbaPal = new byte[1024];
+        rgbaPal[4 * 7 + 3] = 40; rgbaPal[4 * 7] = 1;
+        mgr.WritePalette(b, rgbaPal);
+        GfxCheck(mgr.GetFramebuffer(b).Palette.GetColor(7).A == 40, "WritePalette (1024 Byte RGBA)");
+        try { mgr.WritePalette(b, new byte[100]); GfxCheck(false, "WritePalette mit falscher Laenge wird abgelehnt"); }
+        catch (ArgumentException) { GfxCheck(true, "WritePalette mit falscher Laenge wird abgelehnt"); }
+        try { mgr.SetPaletteColor(a, 256, 0); GfxCheck(false, "Palette-Index 256 wird abgelehnt"); }
+        catch (ArgumentOutOfRangeException) { GfxCheck(true, "Palette-Index 256 wird abgelehnt"); }
+
+        // ConsoleManager: Farbangaben als Zahlen
+        var cm = new fire.Terminal.ConsoleManager(mgr, new fire.Terminal.IntegratedGlyphFont());
+        int fbId = mgr.CreateFramebuffer(40, 20, IDX);
+        int con = cm.CreateConsole(fbId);
+        cm.FillRect(con, 0, 0, 10, 10, 9);
+        cm.SetPixel(con, 12, 12, 33);
+        cm.FillRect(con, 20, 0, 5, 5, unchecked((int)0xFF0000FFu)); // direkter Wert (rot) -> naechster Palette-Eintrag
+        GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(3, 3) == 9 && mgr.GetFramebuffer(fbId).GetIndex(12, 12) == 33 && cm.GetPixelIndex(con, 12, 12) == 33
+            && mgr.GetFramebuffer(fbId).Palette.GetColor(mgr.GetFramebuffer(fbId).GetIndex(22, 2)).R >= 170, "ConsoleManager: 0-255 = Palette-Index, sonst direkter Wert");
+        cm.SetColor(con, 14, 1);
+        cm.Print(con, "Hi");
+        GfxCheck(Enumerable.Range(0, 8).Any(x => Enumerable.Range(0, 14).Any(y => mgr.GetFramebuffer(fbId).GetIndex(x, y) == 14)), "ConsoleManager.SetColor mit Palette-Indizes (Print schreibt Index 14)");
+        cm.DrawText(con, 0, 10, "T", 15, 0);
+        GfxCheck(true, "DrawText mit Palette-Index und transparentem Hintergrund");
+        cm.FillCircle(con, 30, 12, 4, 6); cm.DrawCircle(con, 30, 12, 6, 7); cm.FillEllipse(con, 10, 15, 5, 2, 8); cm.DrawEllipse(con, 10, 15, 6, 3, 9);
+        cm.FillTriangle(con, 1, 1, 8, 1, 1, 8, 2); cm.DrawTriangle(con, 1, 1, 8, 1, 1, 8, 3);
+        cm.FillPolygon(con, new[] { 20, 10, 30, 10, 25, 18 }, 4); cm.DrawPolygon(con, new[] { 20, 10, 30, 10, 25, 18 }, 5, true);
+        cm.FloodFill(con, 35, 2, 6); cm.FloodFillBorder(con, 35, 2, 7, 6);
+        GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(30, 12) != 0, "ConsoleManager: Kreis/Ellipse/Dreieck/Polygon/FloodFill laufen im Palette-Framebuffer");
+        int src2 = mgr.CreateFramebuffer(4, 4, IDX);
+        mgr.GetFramebuffer(src2).FillRect(0, 0, 4, 4, mgr.GetFramebuffer(src2).ResolveBrush(fire.Terminal.Paint.FromIndex(44)));
+        cm.Blit(con, src2, 0, 0, 4, 4, 30, 14, 4, 4, 0, -1);
+        GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(31, 15) == 44, "ConsoleManager.Blit kopiert einen anderen Framebuffer");
+    }
+
+    // ---- Fenster: Tick rechnet das sichtbare Abbild eines Palette-Framebuffers aus (Resolve), bevor der Renderer es bekommt ----
+    {
+        var mgr = new fire.Terminal.FramebufferManager();
+        int fbId = mgr.CreateFramebuffer(8, 4, IDX);
+        var fb = mgr.GetFramebuffer(fbId);
+        var wm = new fire.Terminal.Windows.WindowManager(mgr, (l, v) => { }, () => new FakeRenderer());
+        int win = wm.CreateWindow(fbId, "Test");
+        fb.Plot(2, 1, Idx(fb, 9));
+        wm.Tick(win);
+        GfxCheck(fb.Pixels[1 * 8 + 2] == fb.Palette.GetPacked(9) && fb.Pixels[0] == fb.Palette.GetPacked(0), "Window.Tick: Palette-Framebuffer wird vor dem Anzeigen aufgeloest");
+        fb.Palette.SetColor(9, unchecked((int)fire.Terminal.PixelColor.FromRgb(7, 8, 9).Packed));
+        wm.Tick(win);
+        GfxCheck(fb.Pixels[1 * 8 + 2] == fire.Terminal.PixelColor.FromRgb(7, 8, 9).Packed, "Window.Tick nach einer Palette-Aenderung (ohne dass sich ein Index aenderte)");
+        wm.DestroyWindow(win);
+    }
+
+    Console.WriteLine(gfxFailures == 0 ? "Alle Grafik-Pruefungen bestanden." : $"FEHLER: {gfxFailures} Grafik-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Bilder: PNG, BMP, GIF dekodieren (Testdateien von Pillow und eigenen Schreibern, siehe ImageFixtures)
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Bilder: PNG, BMP, GIF ===");
+    int imgFailures = 0;
+    void ImgCheck(bool ok, string what)
+    {
+        if (!ok) imgFailures++;
+        Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
+    }
+
+    const int IW = 13, IH = 7;
+    // dieselben Formeln wie im Erzeugerskript
+    uint Rgb(int x, int y) => (uint)((x * 19 + 3) % 256) | (uint)(((y * 35 + 5) % 256) << 8) | (uint)((((x * 7 + y * 13) * 3) % 256) << 16);
+    uint Alpha(int x, int y) => (uint)((x * 37 + y * 91) % 256);
+    uint PalEntry(int i) => (uint)((i * 40 + 10) % 256) | (uint)(((i * 70 + 20) % 256) << 8) | (uint)(((i * 110 + 30) % 256) << 16) | 0xFF000000u;
+    int PalIndex(int x, int y, int n) => (x * 5 + y * 3) % n;
+    uint Opaque(uint c) => c | 0xFF000000u;
+    uint Gray(uint v) => v | (v << 8) | (v << 16);
+
+    fire.Terminal.ImageData Load(string name) => fire.Terminal.ImageDecoder.Decode(ImageFixtures.Get(name));
+    bool Truecolor(string name, Func<int, int, uint> expected, string? format = null)
+    {
+        try
+        {
+            var img = Load(name);
+            if (img.IsIndexed || img.Width != IW || img.Height != IH || (format != null && img.Format != format)) return false;
+            for (int y = 0; y < IH; y++) for (int x = 0; x < IW; x++)
+                if (img.Pixels![y * IW + x] != expected(x, y)) return false;
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
+    // indiziert: die FARBE jedes Pixels stimmt (Indizes duerfen ein Encoder umnummerieren), optional die Indizes selbst
+    bool Indexed(string name, Func<int, int, uint> expectedColor, bool exactIndices = false, int n = 0, string? format = null)
+    {
+        try
+        {
+            var img = Load(name);
+            if (!img.IsIndexed || img.Width != IW || img.Height != IH || (format != null && img.Format != format)) return false;
+            for (int y = 0; y < IH; y++) for (int x = 0; x < IW; x++)
+            {
+                int pos = y * IW + x;
+                if (img.Palette![img.Indices![pos]] != expectedColor(x, y)) return false;
+                if (exactIndices && img.Indices[pos] != PalIndex(x, y, n)) return false;
+            }
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
+
+    // ---- PNG: eigener Encoder (alle Farbarten und Tiefen, alle Zeilenfilter) ----
+    ImgCheck(Truecolor("png_rgba8", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24), "PNG"), "PNG RGBA 8 Bit (alle fuenf Zeilenfilter, IDAT in zwei Chunks)");
+    ImgCheck(Truecolor("png_rgb8", (x, y) => Opaque(Rgb(x, y))), "PNG RGB 8 Bit");
+    ImgCheck(Truecolor("png_rgba16", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "PNG RGBA 16 Bit (auf 8 Bit gekuerzt)");
+    ImgCheck(Truecolor("png_rgb16", (x, y) => Opaque(Rgb(x, y))), "PNG RGB 16 Bit");
+    ImgCheck(Truecolor("png_gray8", (x, y) => Opaque(Gray(Rgb(x, y) & 0xFF))), "PNG Grau 8 Bit");
+    ImgCheck(Truecolor("png_gray16", (x, y) => Opaque(Gray(Rgb(x, y) & 0xFF))), "PNG Grau 16 Bit");
+    ImgCheck(Truecolor("png_graya8", (x, y) => Gray(Rgb(x, y) & 0xFF) | (Alpha(x, y) << 24)), "PNG Grau+Alpha 8 Bit");
+    ImgCheck(Truecolor("png_graya16", (x, y) => Gray(Rgb(x, y) & 0xFF) | (Alpha(x, y) << 24)), "PNG Grau+Alpha 16 Bit");
+    foreach (var (d, mul) in new[] { (1, 255u), (2, 85u), (4, 17u) })
+        ImgCheck(Truecolor($"png_gray{d}", (x, y) => Opaque(Gray((uint)((x * 3 + y) % (1 << d)) * mul))), $"PNG Grau {d} Bit");
+    ImgCheck(Truecolor("png_gray4_adam7", (x, y) => Opaque(Gray((uint)((x * 3 + y) % 16) * 17u))), "PNG Grau 4 Bit, verschraenkt (Adam7)");
+    ImgCheck(Truecolor("png_rgba8_adam7", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "PNG RGBA verschraenkt (Adam7)");
+    ImgCheck(Truecolor("png_rgb16_adam7", (x, y) => Opaque(Rgb(x, y))), "PNG RGB 16 Bit verschraenkt");
+    ImgCheck(Truecolor("png_gray8_key", (x, y) => (x == 0 ? 0u : 0xFF000000u) | Gray(Rgb(x, y) & 0xFF)), "PNG Grau mit tRNS-Schluessel (Pixel dieses Grauwerts durchsichtig)");
+    ImgCheck(Truecolor("png_rgb8_key", (x, y) => (x == 0 && y == 0 ? 0u : 0xFF000000u) | Rgb(x, y)), "PNG RGB mit tRNS-Schluessel");
+    {
+        var one = Load("png_rgb8_1x1_adam7");
+        ImgCheck(one.Width == 1 && one.Height == 1 && one.Pixels![0] == Opaque(Rgb(5, 5)), "PNG 1x1 verschraenkt (leere Durchgaenge)");
+        var small = Load("png_rgb8_3x2_adam7");
+        bool ok = small.Width == 3 && small.Height == 2;
+        for (int y = 0; y < 2 && ok; y++) for (int x = 0; x < 3; x++) ok &= small.Pixels![y * 3 + x] == Opaque(Rgb(x, y));
+        ImgCheck(ok, "PNG 3x2 verschraenkt (nicht alle Durchgaenge besetzt)");
+    }
+    foreach (var (d, n) in new[] { (1, 2), (2, 4), (4, 16), (8, 11) })
+        ImgCheck(Indexed($"png_pal{d}", (x, y) => PalEntry(PalIndex(x, y, n)), true, n, "PNG") && Load($"png_pal{d}").TransparentIndex == -1, $"PNG Palette {d} Bit: indiziert, Indizes und Palette stimmen");
+    ImgCheck(Indexed("png_pal2_adam7", (x, y) => PalEntry(PalIndex(x, y, 4)), true, 4), "PNG Palette 2 Bit verschraenkt");
+    {
+        var t = Load("png_pal8_trns");
+        ImgCheck(t.IsIndexed && t.TransparentIndex == 1 && (t.Palette![1] >> 24) == 0 && (t.Palette[2] >> 24) == 128 && (t.Palette[3] >> 24) == 255, "PNG Palette mit tRNS: durchsichtiger Index und Alpha je Eintrag");
+    }
+
+    // ---- PNG: Pillow ----
+    ImgCheck(Truecolor("pil_png_rgba", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "Pillow-PNG RGBA");
+    ImgCheck(Truecolor("pil_png_rgba_optimized", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "Pillow-PNG RGBA (optimiert, adaptive Filter)");
+    ImgCheck(Truecolor("pil_png_rgb", (x, y) => Opaque(Rgb(x, y))), "Pillow-PNG RGB");
+    ImgCheck(Truecolor("pil_png_gray", (x, y) => Opaque(Gray(Rgb(x, y) & 0xFF))), "Pillow-PNG Grau");
+    ImgCheck(Truecolor("pil_png_bilevel", (x, y) => Opaque(Gray((x + y) % 3 == 0 ? 255u : 0u))), "Pillow-PNG schwarzweiss (1 Bit)");
+    ImgCheck(Indexed("pil_png_pal", (x, y) => PalEntry(PalIndex(x, y, 11)), true, 11), "Pillow-PNG Palette");
+    ImgCheck(Indexed("pil_png_pal_bits4", (x, y) => PalEntry(PalIndex(x, y, 11)), true, 11), "Pillow-PNG Palette 4 Bit");
+    {
+        var t = Load("pil_png_pal_trns");
+        ImgCheck(t.IsIndexed && t.TransparentIndex == 3 && (t.Palette![3] >> 24) == 0, "Pillow-PNG Palette mit Transparenz");
+    }
+
+    // ---- BMP ----
+    ImgCheck(Indexed("pil_bmp_pal8", (x, y) => PalEntry(PalIndex(x, y, 11)), true, 11, "BMP"), "Pillow-BMP 8 Bit mit Palette");
+    ImgCheck(Truecolor("pil_bmp_rgb24", (x, y) => Opaque(Rgb(x, y)), "BMP"), "Pillow-BMP 24 Bit");
+    ImgCheck(Truecolor("pil_bmp_rgba32", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "Pillow-BMP 32 Bit mit Alpha");
+    ImgCheck(Indexed("pil_bmp_bilevel", (x, y) => Opaque(Gray((x + y) % 3 == 0 ? 255u : 0u))), "Pillow-BMP 1 Bit schwarzweiss");
+    ImgCheck(Indexed("pil_bmp_gray8", (x, y) => Opaque(Gray(Rgb(x, y) & 0xFF))), "Pillow-BMP 8 Bit Graustufen");
+    ImgCheck(Indexed("bmp_pal4", (x, y) => PalEntry(PalIndex(x, y, 16)), true, 16), "BMP 4 Bit mit Palette");
+    ImgCheck(Indexed("bmp_pal4_topdown", (x, y) => PalEntry(PalIndex(x, y, 16)), true, 16), "BMP 4 Bit, Zeilen von oben nach unten (negative Hoehe)");
+    ImgCheck(Indexed("bmp_pal1", (x, y) => PalEntry(PalIndex(x, y, 2)), true, 2), "BMP 1 Bit mit Palette");
+    {
+        var part = Load("bmp_pal8_partial");
+        ImgCheck(Indexed("bmp_pal8_partial", (x, y) => PalEntry(PalIndex(x, y, 5)), true, 5) && part.Palette![5] == 0xFF000000u, "BMP 8 Bit mit nur 5 Palette-Eintraegen (Rest deckendes Schwarz)");
+    }
+    ImgCheck(Truecolor("bmp_rgb24_topdown", (x, y) => Opaque(Rgb(x, y))), "BMP 24 Bit von oben nach unten");
+    ImgCheck(Truecolor("bmp_rgb32_alpha", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "BMP 32 Bit (BI_RGB) mit Alpha-Byte");
+    ImgCheck(Truecolor("bmp_rgb32_noalpha", (x, y) => Opaque(Rgb(x, y))), "BMP 32 Bit mit unbenutztem Alpha-Byte (0) = deckend");
+    ImgCheck(Truecolor("bmp_rgb555", (x, y) => { uint c = Rgb(x, y); return Opaque((((c & 0xFF) >> 3) * 255 / 31) | (((c >> 8 & 0xFF) >> 3) * 255 / 31) << 8 | (((c >> 16 & 0xFF) >> 3) * 255 / 31) << 16); }), "BMP 16 Bit 5-5-5");
+    ImgCheck(Truecolor("bmp_rgb565", (x, y) => { uint c = Rgb(x, y); return Opaque((((c & 0xFF) >> 3) * 255 / 31) | (((c >> 8 & 0xFF) >> 2) * 255 / 63) << 8 | (((c >> 16 & 0xFF) >> 3) * 255 / 31) << 16); }), "BMP 16 Bit 5-6-5 (Bitmasken)");
+    ImgCheck(Truecolor("bmp_rgba32_masks", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "BMP 32 Bit mit Bitmasken und Alpha");
+    ImgCheck(Truecolor("bmp_os2_rgb24", (x, y) => Opaque(Rgb(x, y))), "BMP OS/2-Kopfzeile 24 Bit");
+    ImgCheck(Indexed("bmp_os2_pal8", (x, y) => PalEntry(PalIndex(x, y, 7)), true, 7), "BMP OS/2-Kopfzeile 8 Bit mit Palette (3-Byte-Eintraege)");
+    ImgCheck(Indexed("bmp_rle8", (x, y) => PalEntry(PalIndex(x, y, 9)), true, 9), "BMP RLE8 (Wiederholungen, absolute Laeufe, Zeilenende)");
+    ImgCheck(Indexed("bmp_rle4", (x, y) => PalEntry(PalIndex(x, y, 16)), true, 16), "BMP RLE4");
+
+    // ---- GIF ----
+    ImgCheck(Indexed("pil_gif_pal", (x, y) => PalEntry(PalIndex(x, y, 11)), false, 0, "GIF") && Load("pil_gif_pal").TransparentIndex == -1, "Pillow-GIF: Farben stimmen");
+    ImgCheck(Indexed("pil_gif_interlaced", (x, y) => PalEntry(PalIndex(x, y, 11))), "Pillow-GIF verschraenkt");
+    {
+        var g = Load("pil_gif_trans");
+        bool ok = g.IsIndexed && g.TransparentIndex >= 0;
+        for (int y = 0; y < IH && ok; y++) for (int x = 0; x < IW; x++)
+            ok &= (g.Indices![y * IW + x] == g.TransparentIndex) == (PalIndex(x, y, 11) == 2);
+        ImgCheck(ok, "Pillow-GIF mit Transparenz: genau die Pixel des durchsichtigen Index");
+    }
+    ImgCheck(Indexed("pil_gif_anim", (x, y) => PalEntry(PalIndex(x, y, 11))), "Pillow-GIF-Animation: das erste Einzelbild");
+    {
+        var big = Load("pil_gif_big");
+        bool ok = big.Width == 40 && big.Height == 30 && big.IsIndexed;
+        for (int y = 0; y < 30 && ok; y++) for (int x = 0; x < 40; x++)
+            ok &= big.Palette![big.Indices![y * 40 + x]] == PalEntry((x * 7 + y * 11 + x * y) % 64);
+        ImgCheck(ok, "Pillow-GIF 40x30 mit 64 Farben, verschraenkt (LZW mit Wachstum der Codebreite)");
+    }
+
+    // ---- Fehler: unbekannt, leer, abgeschnitten, beschaedigt ----
+    void MustFail(string what, byte[] data)
+    {
+        try { fire.Terminal.ImageDecoder.Decode(data); ImgCheck(false, what + ": haette scheitern muessen"); }
+        catch (fire.Terminal.ImageFormatException) { ImgCheck(true, what); }
+        catch (Exception ex) { ImgCheck(false, what + ": falsche Ausnahme " + ex.GetType().Name); }
+    }
+    MustFail("leere Daten werden abgelehnt", new byte[0]);
+    MustFail("unbekanntes Format wird abgelehnt", System.Text.Encoding.ASCII.GetBytes("Das ist kein Bild, sondern Text."));
+    foreach (var name in new[] { "png_rgba8", "png_pal4", "png_rgba8_adam7", "pil_png_pal", "pil_bmp_rgba32", "bmp_rle8", "bmp_pal4", "pil_gif_big" })
+    {
+        var full = ImageFixtures.Get(name);
+        bool allFailed = true;
+        for (int cut = 1; cut < full.Length; cut += Math.Max(1, full.Length / 40))
+        {
+            try { fire.Terminal.ImageDecoder.Decode(full[..cut]); allFailed = false; }   // ein abgeschnittenes Bild darf (GIF) lenient fehlen, aber nie eine fremde Ausnahme werfen
+            catch (fire.Terminal.ImageFormatException) { }
+            catch (Exception) { allFailed = false; ImgCheck(false, $"abgeschnittene {name} wirft eine fremde Ausnahme (bei {cut} Byte)"); }
+        }
+        if (name != "pil_gif_big" && name != "bmp_rle8") ImgCheck(allFailed, $"abgeschnittene {name} (mehrere Laengen) scheitert mit ImageFormatException");
+        else ImgCheck(true, $"abgeschnittene {name}: nur ImageFormatException oder ein lenient dekodiertes Bild");
+    }
+    {
+        var bad = (byte[])ImageFixtures.Get("png_rgb8").Clone();
+        bad[bad.Length / 2] ^= 0xFF;
+        MustFail("PNG mit beschaedigten Daten (Pruefsumme)", bad);
+        var noEnd = ImageFixtures.Get("png_rgb8")[..^12];
+        MustFail("PNG ohne IEND", noEnd);
+        var big = (byte[])ImageFixtures.Get("png_rgb8").Clone();
+        big[16] = 0x7F; // Breite ~2 Milliarden: CRC-Fehler UND zu gross - in jedem Fall ImageFormatException
+        MustFail("PNG mit absurder Breite", big);
+        var zero = (byte[])ImageFixtures.Get("pil_bmp_rgb24").Clone();
+        zero[18] = zero[19] = zero[20] = zero[21] = 0;
+        MustFail("BMP mit Breite 0", zero);
+        var hugeBmp = (byte[])ImageFixtures.Get("pil_bmp_rgb24").Clone();
+        hugeBmp[21] = 0x7F; hugeBmp[19] = 0x7F;
+        MustFail("BMP mit absurder Groesse", hugeBmp);
+        var badBpp = (byte[])ImageFixtures.Get("pil_bmp_rgb24").Clone();
+        badBpp[28] = 7;
+        MustFail("BMP mit unbekannter Farbtiefe", badBpp);
+        var gifNoImage = System.Text.Encoding.ASCII.GetBytes("GIF89a").Concat(new byte[] { 2, 0, 2, 0, 0, 0, 0, 0x3B }).ToArray();
+        MustFail("GIF ohne Bild", gifNoImage);
+    }
+
+    // ---- Zufaellig beschaedigte Dateien: nie eine fremde Ausnahme, nie ein Haenger ----
+    {
+        var rng2 = new Random(11);
+        bool clean = true; int tried = 0;
+        foreach (var name in ImageFixtures.Data.Keys)
+        {
+            var original = ImageFixtures.Get(name);
+            for (int round = 0; round < 60; round++)
+            {
+                var copy = (byte[])original.Clone();
+                int flips = 1 + rng2.Next(3);
+                for (int f = 0; f < flips; f++) copy[rng2.Next(copy.Length)] = (byte)rng2.Next(256);
+                tried++;
+                try { fire.Terminal.ImageDecoder.Decode(copy); }
+                catch (fire.Terminal.ImageFormatException) { }
+                catch (Exception ex) { clean = false; Console.WriteLine($"  {name}: {ex.GetType().Name}: {ex.Message}"); }
+            }
+        }
+        ImgCheck(clean, $"{tried} zufaellig beschaedigte Dateien: nur Erfolg oder ImageFormatException");
+    }
+
+    // ---- Framebuffer aus einem Bild ----
+    {
+        var gif = Load("pil_gif_trans");
+        var fb = gif.ToFramebuffer();
+        ImgCheck(fb.IsIndexed && fb.Width == IW && fb.TransparentIndex == gif.TransparentIndex && fb.Palette.GetPacked(5) == gif.Palette![5] && fb.Indices![10] == gif.Indices![10], "ToFramebuffer: indiziert -> Palette-Framebuffer mit Palette der Datei und Transparenz-Index");
+        fb.Resolve();
+        ImgCheck(fb.Pixels[10] == gif.Palette[gif.Indices[10]], "ToFramebuffer: das sichtbare Abbild stimmt");
+        var asRgba = gif.ToFramebuffer(fire.Terminal.ColorMode.Rgba);
+        ImgCheck(!asRgba.IsIndexed && Enumerable.Range(0, IW * IH).All(i => asRgba.Pixels[i] == gif.Palette[gif.Indices[i]]), "ToFramebuffer: indiziert, erzwungen RGBA -> ueber die Palette aufgeloest");
+        var png = Load("png_rgba8");
+        var rgbaFb = png.ToFramebuffer();
+        ImgCheck(!rgbaFb.IsIndexed && rgbaFb.Pixels.SequenceEqual(png.Pixels!), "ToFramebuffer: Truecolor -> RGBA-Framebuffer");
+        var quant = png.ToFramebuffer(fire.Terminal.ColorMode.Indexed);
+        bool nearestOk = quant.IsIndexed;
+        for (int i = 0; i < IW * IH && nearestOk; i++)
+        {
+            var c = new fire.Terminal.PixelColor(png.Pixels![i] | 0xFF000000u);
+            nearestOk &= quant.Indices![i] == quant.Palette.FindNearest(c);
+        }
+        ImgCheck(nearestOk, "ToFramebuffer: Truecolor, erzwungen Palette -> je Pixel der naechste Eintrag der Standard-Palette");
+    }
+
+    Console.WriteLine(imgFailures == 0 ? "Alle Bild-Pruefungen bestanden." : $"FEHLER: {imgFailures} Bild-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Grafik aus fire: Farbmodi, Bilder laden, Zeichenfunktionen (Console/Framebuffer der Grafik-Prelude)
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Grafik aus fire: Farbmodi, Bilder, Zeichenfunktionen ===");
+    int gfFailures = 0;
+
+    uint ImgPal(int i) => (uint)((i * 40 + 10) % 256) | (uint)(((i * 70 + 20) % 256) << 8) | (uint)(((i * 110 + 30) % 256) << 16) | 0xFF000000u;
+
+    List<string> RunGf(string script, VmExecutionMode mode, Func<string, byte[]>? reader = null)
+    {
+        var lines = new List<string>();
+        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, script };
+        var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase))).ToList());
+        var natives = new NativeRegistry();
+        natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
+        natives.RegisterBaseTypeNatives();
+        var fbManager = new fire.Terminal.FramebufferManager();
+        var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
+        var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => new FakeRenderer());
+        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, winManager, reader ?? (path => ImageFixtures.Get(path)));
+        // die Bytes einer Testdatei als Puffer, und ein Puffer mit Unsinn
+        natives.Register("__TestImage", args => Value.MakeBuffer(new ByteBuffer(ImageFixtures.Get(args[0].AsString()), ByteConversions.HostByteOrder)));
+        natives.Register("__TestGarbage", args => Value.MakeBuffer(new ByteBuffer(System.Text.Encoding.ASCII.GetBytes("kein Bild"), ByteConversions.HostByteOrder)));
+        var resolveResult = Resolver.Resolve(program, natives.Names);
+        var compiled = Compiler.Compile(program, resolveResult, natives);
+        var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, isMainThreadVm: true, executionMode: mode);
+        vm.Run();
+        if (vm.UnhandledException != null)
+            lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
+        return lines;
+    }
+
+    void CheckGf(string title, string script, string[] expected, Func<string, byte[]>? reader = null)
+    {
+        foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
+        {
+            string[] actual;
+            try { actual = RunGf(script, mode, reader).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + CompileErrors.Describe(ex) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) gfFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
+    // Die erwarteten Pixelzahlen der Zeichenfunktionen aus dem Kern selbst (dessen Form pruefen die Grafik-Tests oben): hier geht es um die
+    // Anbindung aus fire, in beiden Farbmodi
+    string GfDrawExpected()
+    {
+        var fb = new fire.Terminal.Framebuffer(40, 40);
+        var five = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(5));
+        var zero = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(0));
+        var four = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(4));
+        int Count() { int n = 0; for (int y = 0; y < 40; y++) for (int x = 0; x < 40; x++) if (fb.GetRaw(x, y) == five.Rgba) n++; return n; }
+        var counts = new List<int>();
+        void Reset() => fb.FillRect(0, 0, 40, 40, zero);
+        fire.Terminal.Shapes.FillCircle(fb, 20, 20, 3, five); counts.Add(Count()); Reset();
+        fire.Terminal.Shapes.Circle(fb, 20, 20, 10, five); counts.Add(Count()); Reset();
+        fire.Terminal.Shapes.FillEllipse(fb, 20, 20, 8, 3, five); counts.Add(Count()); Reset();
+        fire.Terminal.Shapes.FillTriangle(fb, 2, 2, 22, 2, 2, 22, five); counts.Add(Count()); Reset();
+        fire.Terminal.Shapes.FillPolygon(fb, new[] { 5, 5, 15, 5, 15, 12, 5, 12 }, five); counts.Add(Count()); Reset();
+        fire.Terminal.Shapes.Rect(fb, 5, 5, 10, 10, five); fire.Terminal.Shapes.FloodFill(fb, 8, 8, five); counts.Add(Count()); Reset();
+        fire.Terminal.Shapes.Polygon(fb, new[] { 2, 2, 30, 2, 30, 30 }, five, closed: false); counts.Add(Count()); Reset();
+        fire.Terminal.Shapes.Rect(fb, 5, 5, 10, 10, four); fire.Terminal.Shapes.FloodFillBorder(fb, 8, 8, five, four); counts.Add(Count());
+        return string.Join(" ", counts);
+    }
+
+    // GetPixel liefert den Farbwert mit Vorzeichen (32 Bit)
+    const string gfHead = """
+        #import "graphics"
+        class Px { static int Get(console, int x, int y) { var v = console.GetPixel(x, y); if (v < 0) { v = v + 4294967296 } return v } }
+        """;
+
+    CheckGf("Framebuffer-Modus: Rgba (Vorgabe) und Palette, Rohdatengroesse, Palette-Zugriff", gfHead + """
+        var rgba = new Framebuffer(8, 4)
+        var pal = new Framebuffer(8, 4, ColorMode.Palette)
+        print(rgba.Mode() + " " + rgba.ByteCount() + " " + pal.Mode() + " " + pal.ByteCount())
+        pal.SetPaletteRgb(9, 1, 2, 3)
+        print(pal.GetPaletteColor(9))
+        pal.SetPaletteColor(10, 4278190080 + 65536 * 30 + 256 * 20 + 10)
+        print(pal.GetPaletteColor(10))
+        var bytes = pal.ReadPalette()
+        print(bytes.length + " " + bytes[27] + " " + bytes[28] + " " + bytes[29] + " " + pal.ReadPalette(true).length)
+        var all = new byte[768]
+        for (var i = 0; i < 768; i = i + 1) { all[i] = i % 256 }
+        pal.WritePalette(all)
+        print(pal.GetPaletteColor(1))
+        pal.TransparentIndex = 7
+        print(pal.TransparentIndex + " " + rgba.TransparentIndex)
+        """, new[] { "0 128 1 32", "4278387201", (4278190080L + 30 * 65536 + 20 * 256 + 10).ToString(), "768 1 2 3 1024", (4278190080L + 5 * 65536 + 4 * 256 + 3).ToString(), "7 -1" });
+
+    CheckGf("Farbangaben: 0-255 = Palette-Index, sonst direkter Wert - in beiden Farbmodi", gfHead + """
+        var rgba = new Framebuffer(16, 8)
+        var pal = new Framebuffer(16, 8, ColorMode.Palette)
+        var a = new Console(rgba)
+        var b = new Console(pal)
+        a.FillRect(0, 0, 4, 4, 9)
+        b.FillRect(0, 0, 4, 4, 9)
+        print(Px.Get(a, 1, 1) == rgba.GetPaletteColor(9))
+        print(b.GetPixelIndex(1, 1))
+        a.FillRect(4, 0, 4, 4, 4278190335)
+        b.FillRect(4, 0, 4, 4, 4278190335)
+        print(Px.Get(a, 5, 1) == 4278190335)
+        print(b.GetPixelIndex(5, 1))
+        print(a.GetPixelIndex(5, 1) == b.GetPixelIndex(5, 1))
+        b.SetPixel(10, 6, 77)
+        print(pal.ReadByte(6 * 16 + 10))
+        a.SetPixel(10, 6, 77)
+        print(Px.Get(a, 10, 6) == rgba.GetPaletteColor(77))
+        pal.SetPaletteRgb(9, 10, 20, 30)
+        print(Px.Get(b, 1, 1))
+        """, new[] { "True", "9", "True", "196", "True", "77", "True", (4278190080L + 30 * 65536 + 20 * 256 + 10).ToString() });
+
+    CheckGf("Palette-Animation: ein Palette-Eintrag aendern faerbt alle Pixel mit diesem Index um (nur im Palette-Framebuffer)", gfHead + """
+        var rgba = new Framebuffer(8, 8)
+        var pal = new Framebuffer(8, 8, ColorMode.Palette)
+        var a = new Console(rgba)
+        var b = new Console(pal)
+        a.FillRect(0, 0, 8, 8, 5)
+        b.FillRect(0, 0, 8, 8, 5)
+        var before = Px.Get(a, 3, 3)
+        pal.SetPaletteRgb(5, 200, 100, 50)
+        rgba.SetPaletteRgb(5, 200, 100, 50)
+        print(Px.Get(b, 3, 3) == 4278190080 + 50 * 65536 + 100 * 256 + 200)
+        print(Px.Get(a, 3, 3) == before)
+        """, new[] { "True", "True" });
+
+    CheckGf("Text in einem Palette-Framebuffer: Print und DrawText mit Palette-Indizes", gfHead + """
+        var fb = new Framebuffer(80, 28, ColorMode.Palette)
+        var con = new Console(fb)
+        con.SetColor(14, 1)
+        con.Clear()
+        con.Print("Hi")
+        var fg = 0
+        var bg = 0
+        for (var y = 0; y < 14; y = y + 1) { for (var x = 0; x < 16; x = x + 1) {
+            if (con.GetPixelIndex(x, y) == 14) { fg = fg + 1 }
+            if (con.GetPixelIndex(x, y) == 1) { bg = bg + 1 }
+        } }
+        print((fg > 10) + " " + (fg + bg == 16 * 14))
+        con.DrawText(0, 14, "T", 12, 0)
+        var t = 0
+        for (var y = 14; y < 28; y = y + 1) { for (var x = 0; x < 8; x = x + 1) { if (con.GetPixelIndex(x, y) == 12) { t = t + 1 } } }
+        print(t > 5)
+        print(con.GetPixelIndex(40, 20) == 1)
+        """, new[] { "True True", "True", "True" });
+
+    CheckGf("Zeichenfunktionen: Kreis, Ellipse, Dreieck, Polygon, FloodFill (gleiche Pixel in beiden Farbmodi)", gfHead + """
+        class Draw {
+            static Count(console, int w, int h) {
+                var n = 0
+                for (var y = 0; y < h; y = y + 1) { for (var x = 0; x < w; x = x + 1) { if (console.GetPixelIndex(x, y) == 5) { n = n + 1 } } }
+                return n
+            }
+            static Run(int mode) {
+                var fb = new Framebuffer(40, 40, mode)
+                var con = new Console(fb)
+                con.FillCircle(20, 20, 3, 5)
+                var circle = Draw.Count(con, 40, 40)
+                con.FillRect(0, 0, 40, 40, 0)
+                con.DrawCircle(20, 20, 10, 5)
+                var ring = Draw.Count(con, 40, 40)
+                con.FillRect(0, 0, 40, 40, 0)
+                con.FillEllipse(20, 20, 8, 3, 5)
+                var ellipse = Draw.Count(con, 40, 40)
+                con.FillRect(0, 0, 40, 40, 0)
+                con.FillTriangle(2, 2, 22, 2, 2, 22, 5)
+                var tri = Draw.Count(con, 40, 40)
+                con.FillRect(0, 0, 40, 40, 0)
+                con.FillPolygon([5, 5, 15, 5, 15, 12, 5, 12], 5)
+                var rect = Draw.Count(con, 40, 40)
+                con.FillRect(0, 0, 40, 40, 0)
+                con.DrawRect(5, 5, 10, 10, 5)
+                con.FloodFill(8, 8, 5)
+                var flood = Draw.Count(con, 40, 40)
+                con.FillRect(0, 0, 40, 40, 0)
+                con.DrawPolygon([2, 2, 30, 2, 30, 30], 5, false)
+                var open = Draw.Count(con, 40, 40)
+                con.FillRect(0, 0, 40, 40, 0)
+                con.DrawRect(5, 5, 10, 10, 4)
+                con.FloodFillBorder(8, 8, 5, 4)
+                var border = Draw.Count(con, 40, 40)
+                return circle + " " + ring + " " + ellipse + " " + tri + " " + rect + " " + flood + " " + open + " " + border
+            }
+        }
+        print(Draw.Run(ColorMode.Rgba))
+        print(Draw.Run(ColorMode.Palette))
+        """, new[] { GfDrawExpected(), GfDrawExpected() });
+
+    CheckGf("Bilder: FromImage (Dateiinhalt im Puffer): Palette-Bild -> Palette-Framebuffer, Truecolor -> RGBA, Modus erzwingen", gfHead + """
+        var p = Framebuffer.FromImage(__TestImage("png_pal4"))
+        print(p.Mode() + " " + p.Width() + "x" + p.Height() + " " + p.GetPaletteColor(1))
+        var t = Framebuffer.FromImage(__TestImage("png_rgba8"))
+        print(t.Mode() + " " + t.ByteCount() + " " + t.ReadByte(0) + "," + t.ReadByte(1) + "," + t.ReadByte(2) + "," + t.ReadByte(3))
+        var forced = Framebuffer.FromImage(__TestImage("png_pal4"), ColorMode.Rgba)
+        print(forced.Mode() + " " + forced.ByteCount())
+        var g = Framebuffer.FromImage(__TestImage("pil_gif_trans"))
+        print(g.Mode() + " " + (g.TransparentIndex >= 0))
+        var bm = Framebuffer.FromImage(__TestImage("pil_bmp_rgb24"))
+        print(bm.Mode() + " " + bm.Width())
+        var q = Framebuffer.FromImage(__TestImage("png_rgb8"), ColorMode.Palette)
+        print(q.Mode() + " " + q.ByteCount())
+        """, new[] { $"1 13x7 {ImgPal(1)}", "0 364 3,5,0,0", "0 364", "1 True", "0 13", "1 91" });
+
+    CheckGf("Bilder: FromFile liest ueber den Leser des Hosts (Richtlinie), Fehler sind ImageException", gfHead + """
+        var fb = Framebuffer.FromFile("png_pal8")
+        print(fb.Mode() + " " + fb.Width())
+        try { Framebuffer.FromFile("fehlt.png") } catch (e) { print((e is of ImageException) + " " + e.message) }
+        try { Framebuffer.FromFile("verboten.png") } catch (e) { print((e is of ImageException) + " " + e.message) }
+        try { Framebuffer.FromImage(__TestGarbage()) } catch (e) { print((e is of ImageException) + " " + e.message) }
+        try { Framebuffer.FromImage(__TestImage("png_rgb8"), 7) } catch (e) { print(e is of ImageException) }
+        print("weiter")
+        """, new[] { "1 13", "True Datei nicht da: fehlt.png", "True verboten: verboten.png", "True Unbekanntes Bildformat (erwartet: PNG, BMP oder GIF).", "True", "weiter" },
+        reader: path => path switch
+        {
+            "fehlt.png" => throw new System.IO.FileNotFoundException("Datei nicht da: " + path),
+            "verboten.png" => throw new UnauthorizedAccessException("verboten: " + path),
+            _ => ImageFixtures.Get(path),
+        });
+
+    CheckGf("Rohpixel: FromPixels (RGBA und Palette mit Palette), ReadBytes/WriteBytes, falsche Groessen", gfHead + """
+        var raw = new byte[16]
+        for (var i = 0; i < 16; i = i + 1) { raw[i] = i * 10 }
+        var a = Framebuffer.FromPixels(2, 2, raw)
+        print(a.Mode() + " " + a.ReadByte(5) + " " + a.ReadBytes().length)
+        var idx = new byte[6]
+        for (var i = 0; i < 6; i = i + 1) { idx[i] = i + 1 }
+        var pal = new byte[768]
+        pal[3] = 11
+        pal[4] = 22
+        pal[5] = 33
+        var b = Framebuffer.FromPixels(3, 2, idx, ColorMode.Palette, pal)
+        print(b.Mode() + " " + b.ReadByte(4) + " " + b.GetPaletteColor(1))
+        var back = b.ReadBytes()
+        back[0] = 99
+        b.WriteBytes(back)
+        print(b.ReadByte(0))
+        try { Framebuffer.FromPixels(2, 2, idx) } catch (e) { print("falsche Groesse: " + (e is of ImageException)) }
+        try { b.WriteBytes(raw) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
+        try { b.WritePalette(raw) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
+        try { b.SetPaletteColor(256, 0) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
+        try { print(b.GetPaletteColor(-1)) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
+        print(b.ReadByte(0))
+        """, new[] { "0 50 16", $"1 5 {4278190080L + 33 * 65536 + 22 * 256 + 11}", "99", "falsche Groesse: True",
+            "True Erwarte genau 6 Byte, erhalten 16.",
+            "True Eine Palette hat 768 (RGB) oder 1024 (RGBA) Byte, erhalten 16.",
+            "True Palette-Index 256 außerhalb von 0-255.",
+            "True Palette-Index -1 außerhalb von 0-255.", "99" });
+
+    CheckGf("Blit: geladenes Bild in einen anderen Framebuffer (auch ueber die Farbmodi), Ausschnitt, Skalierung, Spiegelung, Transparenz", gfHead + """
+        var img = Framebuffer.FromImage(__TestImage("png_pal4"))
+        var rgba = new Framebuffer(30, 20)
+        var a = new Console(rgba)
+        a.Blit(img, 2, 3)
+        print(Px.Get(a, 2, 3) == img.GetPaletteColor(img.ReadByte(0)))
+        print(Px.Get(a, 14, 9) == img.GetPaletteColor(img.ReadByte(6 * 13 + 12)))
+        var pal = new Framebuffer(30, 20, ColorMode.Palette)
+        pal.WritePalette(img.ReadPalette(true))
+        var b = new Console(pal)
+        b.Blit(img, 0, 0)
+        print(pal.ReadByte(5) == img.ReadByte(5))
+        b.BlitRegion(img, 3, 2, 4, 3, 20, 10)
+        print(pal.ReadByte(10 * 30 + 20) == img.ReadByte(2 * 13 + 3))
+        b.BlitScaled(img, 0, 0, 13, 7, 0, 10, 26, 7)
+        print(pal.ReadByte(10 * 30 + 2) == img.ReadByte(1))
+        b.BlitScaled(img, 0, 0, 13, 7, 13, 0, -13, 7)
+        print(pal.ReadByte(13) == img.ReadByte(12) && pal.ReadByte(25) == img.ReadByte(0))
+        var bg = new Framebuffer(13, 7, ColorMode.Palette)
+        var c = new Console(bg)
+        c.FillRect(0, 0, 13, 7, 200)
+        var sprite = Framebuffer.FromImage(__TestImage("pil_gif_trans"))
+        c.Blit(sprite, 0, 0, BlitMode.Transparent)
+        var kept = 0
+        for (var i = 0; i < 91; i = i + 1) { if (bg.ReadByte(i) == 200) { kept = kept + 1 } }
+        print(kept > 0 && kept < 91)
+        var tc = Framebuffer.FromImage(__TestImage("png_rgba8"))
+        var dst = new Framebuffer(13, 7)
+        var d = new Console(dst)
+        d.FillRect(0, 0, 13, 7, 4278190335)
+        d.Blit(tc, 0, 0, BlitMode.Transparent)
+        print(Px.Get(d, 0, 0) == 4278190335)
+        """, new[] { "True", "True", "True", "True", "True", "True", "True", "True" });
+
+    CheckGf("Slicer aus fire: ToMask, Slicer.Slice liefert eine List von ToolPath, Fehler als GraphicsException", gfHead + """
+        var img = new Framebuffer(120, 70)
+        var con = new Console(img)
+        con.FillRect(0, 0, 120, 70, 4294967295)
+        con.FillRect(10, 10, 100, 50, 4278190080)
+        var mask = img.ToMask()
+        print(mask.Mode() + " " + mask.Width() + "x" + mask.Height() + " " + mask.ReadByte(0) + " " + mask.ReadByte(20 * 120 + 20))
+        var slicer = new Slicer(1, 0.1)
+        slicer.flipY = false
+        print(slicer.StepOver)
+        var paths = slicer.Slice(mask)
+        print(paths.count)
+        var outline = paths[paths.count - 1]
+        var minX = 1000.0
+        var maxX = 0.0
+        for (var i = 0; i < outline.Count(); i = i + 1) {
+            if (outline.X(i) < minX) { minX = outline.X(i) }
+            if (outline.X(i) > maxX) { maxX = outline.X(i) }
+        }
+        print((outline.kind == PathKind.Outline) + " " + outline.closed + " " + (minX > 1.44 && minX < 1.56) + " " + (maxX > 10.44 && maxX < 10.56))
+        slicer.strategy = FillStrategy.OutlineOnly
+        print(slicer.Slice(mask).count)
+        slicer.lineWidth = 50
+        print(slicer.Slice(mask).count)
+        try { var bad = new Slicer(0, 1) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
+        slicer.overlap = 0.99
+        try { slicer.Slice(mask) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
+        foreach (p in new Slicer(1, 0.1).Slice(mask)) { print(p.kind) }
+        """, new[] { "1 120x70 0 1", "0.5", "4", "True True True True", "1", "0", "True Linienstärke und Pixelgröße müssen größer als 0 sein.", "True Die Überlappung muss zwischen 0 und 0.95 liegen.", "0", "0", "0", "1" });
+
+    // ---- Echte Dateien ueber die Sitzung des Hosts: die IoPolicy entscheidet, was Framebuffer.FromFile lesen darf ----
+    {
+        string imgDir = Path.Combine(Path.GetTempPath(), "fire-img-" + Guid.NewGuid().ToString("N"));
+        string otherDir = Path.Combine(Path.GetTempPath(), "fire-img-other-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(imgDir);
+        Directory.CreateDirectory(otherDir);
+        try
+        {
+            string png = Path.Combine(imgDir, "bild.png").Replace("\\", "/");
+            File.WriteAllBytes(png, ImageFixtures.Get("png_pal8"));
+            string script = $$"""
+                #import "graphics"
+                try {
+                    var fb = Framebuffer.FromFile("{{png}}")
+                    print("geladen " + fb.Mode() + " " + fb.Width() + "x" + fb.Height())
+                } catch (e) { print((e is of ImageException) + " " + e.message) }
+                """;
+            List<string> Session(fire.IO.Bridge.IoPolicy? policy)
+            {
+                var lines = new List<string>();
+                var session = fire.Compiler.RuntimeSession.Build(new[] { script }, VmExecutionMode.Release,
+                    args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); }, ioPolicy: policy);
+                session.Run();
+                return lines;
+            }
+            void CheckSession(string what, fire.IO.Bridge.IoPolicy? policy, Func<string, bool> ok)
+            {
+                string result;
+                try { result = string.Join("|", Session(policy)); }
+                catch (Exception ex) { result = "AUSNAHME: " + ex.Message; }
+                bool good = ok(result);
+                if (!good) gfFailures++;
+                Console.WriteLine(good ? $"OK: {what}" : $"FEHLER: {what}\n  erhalten: {result}");
+            }
+            CheckSession("FromFile ohne Richtlinie (alles erlaubt)", null, r => r == "geladen 1 13x7");
+            CheckSession("FromFile mit Richtlinie, die das Verzeichnis erlaubt", fire.IO.Bridge.IoPolicy.Rooted(imgDir, readOnly: true), r => r == "geladen 1 13x7");
+            CheckSession("FromFile mit DenyAll: ImageException mit dem Grund der Richtlinie", fire.IO.Bridge.IoPolicy.DenyAll, r => r == "True Dateizugriff ist für dieses Programm nicht erlaubt.");
+            CheckSession("FromFile ausserhalb des erlaubten Verzeichnisses: ImageException", fire.IO.Bridge.IoPolicy.Rooted(otherDir), r => r.StartsWith("True "));
+        }
+        finally
+        {
+            try { Directory.Delete(imgDir, true); Directory.Delete(otherDir, true); } catch { }
+        }
+    }
+
+    Console.WriteLine(gfFailures == 0 ? "Alle Grafik-aus-fire-Pruefungen bestanden." : $"FEHLER: {gfFailures} Grafik-aus-fire-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Slicer: Maske aus einem Framebuffer (ToMask) in Werkzeugbahnen zerlegen
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Slicer: ToMask und Werkzeugbahnen ===");
+    int slFailures = 0;
+    void SlCheck(bool ok, string what)
+    {
+        if (!ok) slFailures++;
+        Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
+    }
+
+    // ---- ToMask ----
+    {
+        var rgba = new fire.Terminal.Framebuffer(4, 1);
+        rgba.SetPixel(0, 0, fire.Terminal.PixelColor.FromRgb(10, 10, 10));      // dunkel
+        rgba.SetPixel(1, 0, fire.Terminal.PixelColor.FromRgb(240, 240, 240));   // hell
+        rgba.SetPixel(2, 0, new fire.Terminal.PixelColor(0, 0, 0, 10));         // dunkel, aber fast durchsichtig
+        rgba.SetPixel(3, 0, fire.Terminal.PixelColor.FromRgb(0, 255, 0));       // Gruen: Helligkeit 150
+        var dark = rgba.ToMask();
+        SlCheck(dark.IsIndexed && dark.Width == 4 && dark.Height == 1 && dark.Indices!.SequenceEqual(new byte[] { 1, 0, 0, 0 }), "ToMask: dunkle Pixel werden ausgefraest, helle und fast durchsichtige nicht");
+        SlCheck(dark.Palette.GetPacked(0) == fire.Terminal.PixelColor.Black.Packed && dark.Palette.GetPacked(1) == fire.Terminal.PixelColor.White.Packed && dark.TransparentIndex == 0, "ToMask: Palette schwarz/weiss, Index 0 durchsichtig");
+        SlCheck(rgba.ToMask(darkIsRemoved: false).Indices!.SequenceEqual(new byte[] { 0, 1, 0, 1 }), "ToMask: darkIsRemoved = false (helle Pixel, durchsichtige nie)");
+        SlCheck(rgba.ToMask(threshold: 200).Indices![3] == 1 && rgba.ToMask(threshold: 100).Indices![3] == 0, "ToMask: Schwelle gegen die Helligkeit 0,299 R + 0,587 G + 0,114 B (Gruen = 150)");
+        SlCheck(rgba.ToMask(alphaThreshold: 5).Indices![2] == 1, "ToMask: Alpha-Schwelle");
+
+        var pal = new fire.Terminal.Framebuffer(3, 1, fire.Terminal.ColorMode.Indexed);
+        pal.Palette.SetColor(5, unchecked((int)fire.Terminal.PixelColor.FromRgb(5, 5, 5).Packed));
+        pal.Palette.SetColor(6, unchecked((int)fire.Terminal.PixelColor.FromRgb(250, 250, 250).Packed));
+        pal.Indices![0] = 5; pal.Indices[1] = 6; pal.Indices[2] = 5;
+        SlCheck(pal.ToMask().Indices!.SequenceEqual(new byte[] { 1, 0, 1 }), "ToMask aus einem Palette-Bild: ueber die Farben der Palette");
+    }
+
+    // ---- Slicer ----
+    fire.Terminal.Framebuffer Rect(int w, int h, int x0, int y0, int x1, int y1)
+    {
+        var fb = new fire.Terminal.Framebuffer(w, h, fire.Terminal.ColorMode.Indexed);
+        fb.FillRect(x0, y0, x1 - x0, y1 - y0, fb.ResolveBrush(fire.Terminal.Paint.FromIndex(1)));
+        return fb;
+    }
+    {
+        // 100 x 50 Pixel zu 0,1 mm = 10 x 5 mm, Fraeser 1 mm: die Werkzeugmitte darf 0,5 mm vom Rand weg sein
+        var mask = Rect(120, 70, 10, 10, 110, 60);
+        var slicer = new fire.Terminal.ImageSlicer(1.0, 0.1) { FlipY = false };
+        var paths = slicer.Slice(mask);
+        SlCheck(paths.Count == 4 && paths.Take(3).All(p => p.Kind == fire.Terminal.PathKind.Fill) && paths[3].Kind == fire.Terminal.PathKind.Outline && paths.All(p => p.Closed),
+            $"Contour: drei Innenringe (innen zuerst), dann die Randkontur ({paths.Count} Bahnen)");
+        var outline = paths[3].Points;
+        double minX = outline.Min(p => p.X), maxX = outline.Max(p => p.X), minY = outline.Min(p => p.Y), maxY = outline.Max(p => p.Y);
+        SlCheck(Math.Abs(minX - 1.5) < 0.06 && Math.Abs(maxX - 10.5) < 0.06 && Math.Abs(minY - 1.5) < 0.06 && Math.Abs(maxY - 5.5) < 0.06,
+            $"Randkontur: das Rechteck 1,0-11,0 x 1,0-6,0 mm um den Fraeserradius 0,5 mm nach innen ({minX:0.00}..{maxX:0.00} x {minY:0.00}..{maxY:0.00})");
+        SlCheck(outline.Count <= 8, $"die Punktreduktion macht aus der Kontur wenige Ecken ({outline.Count} Punkte)");
+        double innerMin = paths[0].Points.Min(p => p.X);
+        SlCheck(innerMin > minX + 1.4, $"die Ringe liegen nach innen versetzt (innerster Ring {innerMin:0.00} mm, Randkontur {minX:0.00} mm)");
+
+        var flipped = new fire.Terminal.ImageSlicer(1.0, 0.1).Slice(mask);   // FlipY ist die Vorgabe
+        var fo = flipped[3].Points;
+        SlCheck(Math.Abs(fo.Min(p => p.Y) - (7.0 - 5.5)) < 0.06 && Math.Abs(fo.Max(p => p.Y) - (7.0 - 1.5)) < 0.06, "FlipY (Vorgabe): Y nach oben, von der Bildhoehe 7 mm gezaehlt");
+
+        var only = new fire.Terminal.ImageSlicer(1.0, 0.1) { Strategy = fire.Terminal.FillStrategy.OutlineOnly }.Slice(mask);
+        SlCheck(only.Count == 1 && only[0].Kind == fire.Terminal.PathKind.Outline, "OutlineOnly: nur die Randkontur");
+        var zig = new fire.Terminal.ImageSlicer(1.0, 0.1) { Strategy = fire.Terminal.FillStrategy.ZigZag, FlipY = false }.Slice(mask);
+        SlCheck(zig.Count > 4 && zig.Last().Kind == fire.Terminal.PathKind.Outline && zig.Take(zig.Count - 1).All(p => !p.Closed && p.Points.Count == 2), $"ZigZag: waagerechte Bahnen, dann die Randkontur ({zig.Count} Bahnen)");
+        var ys = zig.Take(zig.Count - 1).Select(p => p.Points[0].Y).Distinct().OrderBy(y => y).ToList();
+        SlCheck(ys.Count >= 8 && ys[1] - ys[0] > 0.45 && ys[1] - ys[0] < 0.55, "ZigZag: Zeilenabstand = Bahnabstand 0,5 mm");
+
+        var tight = new fire.Terminal.ImageSlicer(1.0, 0.1) { Overlap = 0.0 }.Slice(mask);
+        SlCheck(tight.Count < paths.Count + 1 && tight.Count >= 2, "Overlap 0: weniger Ringe (Abstand = Linienstaerke)");
+    }
+    SlCheck(new fire.Terminal.ImageSlicer(1.0, 0.1).Slice(Rect(60, 40, 10, 10, 15, 30)).Count == 0, "zu schmale Flaeche (0,5 mm bei 1 mm Fraeser): keine Bahnen");
+    SlCheck(new fire.Terminal.ImageSlicer(1.0, 0.1).Slice(new fire.Terminal.Framebuffer(20, 20, fire.Terminal.ColorMode.Indexed)).Count == 0, "leere Maske: keine Bahnen");
+    {
+        // zwei getrennte Flaechen und ein Loch: ein Ring um das Loch
+        var fb = new fire.Terminal.Framebuffer(200, 80, fire.Terminal.ColorMode.Indexed);
+        var one = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(1)); var zero = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(0));
+        fb.FillRect(10, 10, 60, 60, one); fb.FillRect(110, 10, 80, 60, one); fb.FillRect(130, 30, 20, 20, zero);
+        var outlines = new fire.Terminal.ImageSlicer(1.0, 0.1) { Strategy = fire.Terminal.FillStrategy.OutlineOnly }.Slice(fb);
+        SlCheck(outlines.Count == 3 && outlines.All(p => p.Closed), "zwei Flaechen, eine mit Loch: drei geschlossene Randkonturen");
+        var rgbaMask = new fire.Terminal.Framebuffer(200, 80);
+        for (int y = 0; y < 80; y++) for (int x = 0; x < 200; x++) if (fb.GetRaw(x, y) != 0) rgbaMask.SetPixel(x, y, fire.Terminal.PixelColor.White);
+        SlCheck(new fire.Terminal.ImageSlicer(1.0, 0.1) { Strategy = fire.Terminal.FillStrategy.OutlineOnly }.Slice(rgbaMask).Count == 3, "ein RGBA-Framebuffer als Maske (sichtbar und nicht schwarz = ausfraesen)");
+    }
+    try { new fire.Terminal.ImageSlicer(0, 0.1); SlCheck(false, "Linienstaerke 0 wird abgelehnt"); } catch (ArgumentOutOfRangeException) { SlCheck(true, "Linienstaerke 0 wird abgelehnt"); }
+
+    Console.WriteLine(slFailures == 0 ? "Alle Slicer-Pruefungen bestanden." : $"FEHLER: {slFailures} Slicer-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
 // UI-Bibliothek (#import "ui"): headless - echte Framebuffer/Konsole/WindowManager, nur der Renderer ist eine Attrappe
 // ---------------------------------------------------------------------------
 {
@@ -8172,9 +9267,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(new DeviceManagerFacade().Count())
         print(IO.File.Exists("/gibt/es/nicht"))
         var con = new Console(fb)
-        con.FillRect(0, 0, 2, 2, 255)
+        con.FillRect(0, 0, 2, 2, 256)
         print(con.GetPixel(1, 1))
-        """, new[] { "8x4", "True", "Framebuffer", "1", "False", "255" });
+        """, new[] { "8x4", "True", "Framebuffer", "1", "False", "256" });
 
     // Paketprotokoll: Speichern und Laden verlustfrei
     {
@@ -8327,7 +9422,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
                 var viaMethod = 0
                 var direct = 0
                 for (var i = 0; i < 5; i = i + 1) {
-                    con.FillRect(i, 0, 1, 1, 255 + i)
+                    con.FillRect(i, 0, 1, 1, 256 + i)
                     viaMethod = viaMethod + con.GetPixel(i, 0) + con.CellWidth()
                     direct = direct + __GRPHConGetPixel(con.id, i, 0) + __GRPHConCellWidth(con.id)
                 }
@@ -8335,7 +9430,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
                 print(viaMethod)
                 """, mode);
             session.Run();
-            DbgCheck(lines.SequenceEqual(new[] { "True", "1325" }), $"Methoden der Grafik-Bruecke (Weiterleitung an native Funktionen) liefern dasselbe wie der direkte Aufruf [{mode}]", string.Join("|", lines));
+            DbgCheck(lines.SequenceEqual(new[] { "True", "1330" }), $"Methoden der Grafik-Bruecke (Weiterleitung an native Funktionen) liefern dasselbe wie der direkte Aufruf [{mode}]", string.Join("|", lines));
             VM.ResetTerminateForTests();
         }
     }
