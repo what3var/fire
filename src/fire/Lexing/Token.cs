@@ -66,6 +66,11 @@ namespace fire.Lexing
         public int Line { get; }
         public int Column { get; }
 
+        // Länge des Tokens im QUELLTEXT (in Zeichen). Bei Strings/Chars weicht sie von Lexeme.Length ab (Lexeme ist der Inhalt ohne
+        // Anführungszeichen und nach Escape-Verarbeitung; bei `$"..."` nur ein Platzhalter) - gebraucht für Editor-Hervorhebung.
+        // Vom Lexer in Tokenize gesetzt; 0 bei von Hand erzeugten Tokens.
+        public int Length { get; init; }
+
         // Nur für numerische Literale gesetzt: der direkt am Literal
         // anhängende Einheiten-Suffix ("mm", "km", ...), oder null/"" wenn keiner.
         public string? UnitSuffix { get; }

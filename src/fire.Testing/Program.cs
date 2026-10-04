@@ -106,6 +106,17 @@ foreach (var token in tokens)
     Console.WriteLine(token);
 }
 
+// Token.Length = Laenge im Quelltext (Editor-Hervorhebung): Anfuehrungszeichen, Escapes, `$"..."` und Char-Literale zaehlen mit.
+{
+    string src = "var a = \"x\\ny\" + $\"v{1}\" + 'c' + 42mm";
+    var lengths = new Lexer(src).Tokenize().Where(t => t.Type is TokenType.StringLiteral or TokenType.InterpolatedStringLiteral or TokenType.CharLiteral or TokenType.IntLiteral)
+        .Select(t => src.Substring(t.Column - 1, t.Length)).ToList();
+    var expectedTexts = new List<string> { "\"x\\ny\"", "$\"v{1}\"", "'c'", "42mm" };
+    bool ok = lengths.SequenceEqual(expectedTexts);
+    Console.WriteLine(ok ? "OK: Token.Length deckt String-/Char-/Zahl-Literale vollstaendig ab"
+        : $"FEHLER: Token.Length\n  erwartet: {string.Join(" | ", expectedTexts)}\n  erhalten: {string.Join(" | ", lengths)}");
+}
+
 Console.WriteLine();
 Console.WriteLine("=== Parser-Test ===");
 try

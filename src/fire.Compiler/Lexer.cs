@@ -116,7 +116,7 @@ namespace fire.Compiler
                     break;
                 }
 
-                int startLine = _line, startCol = _col;
+                int startLine = _line, startCol = _col, startPos = _pos;
                 char c = Peek();
                 Token tok;
 
@@ -133,7 +133,7 @@ namespace fire.Compiler
                 else
                     tok = ReadOperatorOrPunctuation(startLine, startCol, pendingNewline);
 
-                tokens.Add(tok);
+                tokens.Add(tok with { Length = _pos - startPos });
                 pendingNewline = false;
             }
             return tokens;

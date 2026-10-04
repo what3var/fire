@@ -101,7 +101,7 @@ namespace fire.Editor
 
                 int start = ToOffset(lineStarts, tok.Line, tok.Column);
                 if (start < 0 || start < lastEnd || start > source.Length) continue;
-                int length = Math.Min(tok.Lexeme.Length, source.Length - start);
+                int length = Math.Min(tok.Length > 0 ? tok.Length : tok.Lexeme.Length, source.Length - start);
 
                 ScanCommentsInGap(source, lastEnd, start, spans);
 
