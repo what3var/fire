@@ -43,6 +43,17 @@ namespace fire.Editor
             dict[ResourceKeys.FloatingToolWindowBackground] = shell;
             dict[ResourceKeys.NavigatorWindowBackground] = panel;
 
+            // Tab-Beschriftungen: Fokussiert (aktive Registerkarte) weiß, bei Hover und bei ausgewählten, aber nicht fokussierten
+            // Werkzeug-Registerkarten die Akzentfarbe. Ausgewählte Dokument-Registerkarten ohne Fokus hell statt des dunklen Standards.
+            var white = EditorTheme.Solid(Colors.White);
+            var light = EditorTheme.Solid(EditorTheme.TextColor);
+            dict[ResourceKeys.DocumentWellTabSelectedActiveText] = white;
+            dict[ResourceKeys.DocumentWellTabSelectedInactiveText] = light;
+            dict[ResourceKeys.DocumentWellTabUnselectedHoveredText] = accent;
+            dict[ResourceKeys.ToolWindowTabSelectedActiveText] = white;
+            dict[ResourceKeys.ToolWindowTabSelectedInactiveText] = accent;
+            dict[ResourceKeys.ToolWindowTabUnselectedHoveredText] = accent;
+
             // Akzentfarbe statt des Blaus des VS-Themas: aktive Registerkarten, Hover/Gedrückt-Zustände, Andock-Vorschau
             dict[ResourceKeys.ControlAccentColorKey] = EditorTheme.AccentColor;
             dict[ResourceKeys.ControlAccentBrushKey] = accent;

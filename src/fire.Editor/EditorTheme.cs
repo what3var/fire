@@ -31,7 +31,8 @@ namespace fire.Editor
         /// <summary>Etwas dunkler als der Editor: der Rahmen um die Bereiche (Hauptfenster, Docking), Kopfzeilen, Popups.</summary>
         public static readonly Brush DarkSurface = Solid(ShellColor);
         public static readonly Brush Border = Solid(BorderColor);
-        public static readonly Brush Text = Solid(0xF4, 0xF0, 0xF2);
+        public static readonly Color TextColor = Color.FromRgb(0xF4, 0xF0, 0xF2);
+        public static readonly Brush Text = Solid(TextColor);
         public static readonly Brush TextDim = Solid(0xA0, 0x94, 0xA8);
         public static readonly Brush LineNumber = Solid(0x7E, 0x73, 0x88);
 
