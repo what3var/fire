@@ -51,7 +51,7 @@ namespace fire.Editor
             dict[ResourceKeys.DocumentWellTabSelectedInactiveText] = light;
             dict[ResourceKeys.DocumentWellTabUnselectedHoveredText] = accent;
             dict[ResourceKeys.ToolWindowTabSelectedActiveText] = white;
-            dict[ResourceKeys.ToolWindowTabSelectedInactiveText] = accent;
+            dict[ResourceKeys.ToolWindowTabSelectedInactiveText] = EditorTheme.Solid(EditorTheme.AccentTextColor); // #B70052 wäre hier zu dunkel
             dict[ResourceKeys.ToolWindowTabUnselectedHoveredText] = accent;
 
             // Akzentfarbe statt des Blaus des VS-Themas: aktive Registerkarten, Hover/Gedrückt-Zustände, Andock-Vorschau
