@@ -8,6 +8,30 @@
                 <ui:ThemeResources />
                 <ui:FluentControlsResources UseCompactResources="False" />
             </ResourceDictionary.MergedDictionaries>
+
+            <!-- Farben der Inhalte der Bereiche: dieselbe wie im Editor (EditorTheme.PanelColor). Der Rahmen (Hauptfenster, Docking)
+                 ist dunkler (#1B181E), siehe MainWindow/FireDockTheme. -->
+            <SolidColorBrush x:Key="TextControlBackground" Color="#242028"/>
+            <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#242028"/>
+            <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#242028"/>
+            <SolidColorBrush x:Key="ListViewBackground" Color="#242028"/>
+            <SolidColorBrush x:Key="ListBoxBackground" Color="#242028"/>
+
+            <Style TargetType="TextBox" BasedOn="{StaticResource DefaultTextBoxStyle}">
+                <Setter Property="Background" Value="#242028"/>
+            </Style>
+            <Style TargetType="ListView" BasedOn="{StaticResource DefaultListViewStyle}">
+                <Setter Property="Background" Value="#242028"/>
+            </Style>
+            <Style TargetType="ListBox" BasedOn="{StaticResource DefaultListBoxStyle}">
+                <Setter Property="Background" Value="#242028"/>
+            </Style>
+            <Style TargetType="TreeView" BasedOn="{StaticResource DefaultTreeViewStyle}">
+                <Setter Property="Background" Value="#242028"/>
+            </Style>
+            <Style TargetType="DataGrid" BasedOn="{StaticResource DefaultDataGridStyle}">
+                <Setter Property="Background" Value="#242028"/>
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

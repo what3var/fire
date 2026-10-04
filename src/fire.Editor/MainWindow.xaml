@@ -3,10 +3,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:fire.Editor"
         xmlns:ad="https://github.com/Dirkster99/AvalonDock"
-        xmlns:adt="clr-namespace:AvalonDock.Themes.VS;assembly=AvalonDock.Themes.VS"
         xmlns:ui="http://schemas.modernwpf.com/2019"
         Title="spark" Height="820" Width="1300"
-        FontFamily="Segoe UI"
+        FontFamily="Segoe UI" Background="#1B181E"
         ui:WindowHelper.UseModernWindowStyle="True"
         AllowDrop="True" PreviewDragOver="Window_PreviewDragOver" PreviewDrop="Window_PreviewDrop" Icon="/Logo-64.png">
 
@@ -200,7 +199,7 @@
                      Die ContentId ist der Schlüssel, unter dem das Layout gespeichert wird (siehe SaveLayout/LoadLayout). -->
         <ad:DockingManager x:Name="DockManager" AllowMixedOrientation="True">
             <ad:DockingManager.Theme>
-                <adt:VS2026DarkTheme/>
+                <local:FireDockTheme/>
             </ad:DockingManager.Theme>
 
             <ad:LayoutRoot>
@@ -216,7 +215,7 @@
                                                  VerticalScrollBarVisibility="Auto"
                                                  HorizontalScrollBarVisibility="Auto"
                                                  TextWrapping="Wrap"
-                                                 Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0"/>
+                                                 Background="#242028" Foreground="#F4F0F2" BorderThickness="0"/>
                             </ad:LayoutAnchorable>
 
                             <ad:LayoutAnchorable ContentId="errors" Title="Fehlerliste" CanFloat="True">

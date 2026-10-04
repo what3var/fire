@@ -10,18 +10,25 @@ namespace fire.Editor
     /// Lila (Richtung Magenta), Weinrot, Orange und Gelb.</summary>
     internal static class EditorTheme
     {
-        private static Brush Solid(byte r, byte g, byte b, byte a = 255)
+        private static Brush Solid(byte r, byte g, byte b, byte a = 255) => Solid(Color.FromArgb(a, r, g, b));
+
+        internal static Brush Solid(Color color)
         {
-            var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+            var brush = new SolidColorBrush(color);
             brush.Freeze();
             return brush;
         }
 
         // ---- Fläche und Text ----
-        public static readonly Brush Background = Solid(0x24, 0x20, 0x28);
-        /// <summary>Etwas dunkler als der Editor: Kopfzeilen, Code-Blöcke in der Vorschau.</summary>
-        public static readonly Brush DarkSurface = Solid(0x1B, 0x18, 0x1F);
-        public static readonly Brush Border = Solid(0x3C, 0x35, 0x44);
+        public static readonly Color PanelColor = Color.FromRgb(0x24, 0x20, 0x28);
+        public static readonly Color ShellColor = Color.FromRgb(0x1B, 0x18, 0x1E);
+        public static readonly Color BorderColor = Color.FromRgb(0x3C, 0x35, 0x44);
+
+        /// <summary>Hintergrund des Editors und aller Inhalte der Bereiche (Textfelder, Listen, Tabellen, Bäume).</summary>
+        public static readonly Brush Background = Solid(PanelColor);
+        /// <summary>Etwas dunkler als der Editor: der Rahmen um die Bereiche (Hauptfenster, Docking), Kopfzeilen, Popups.</summary>
+        public static readonly Brush DarkSurface = Solid(ShellColor);
+        public static readonly Brush Border = Solid(BorderColor);
         public static readonly Brush Text = Solid(0xF4, 0xF0, 0xF2);
         public static readonly Brush TextDim = Solid(0xA0, 0x94, 0xA8);
         public static readonly Brush LineNumber = Solid(0x7E, 0x73, 0x88);

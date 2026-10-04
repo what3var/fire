@@ -3,9 +3,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:avalonedit="http://icsharpcode.net/sharpdevelop/avalonedit"
         Title="Datei ansehen" Height="700" Width="900"
-        FontFamily="Segoe UI" Background="#242028">
+        FontFamily="Segoe UI" Background="#1B181E">
     <DockPanel>
-        <Border DockPanel.Dock="Top" Background="#1B181F" BorderBrush="#3C3544" BorderThickness="0,0,0,1">
+        <Border DockPanel.Dock="Top" Background="#1B181E" BorderBrush="#3C3544" BorderThickness="0,0,0,1">
             <StackPanel Orientation="Horizontal" Margin="8,5">
                 <TextBlock x:Name="PathText" FontWeight="Bold" Foreground="#F4F0F2" VerticalAlignment="Center"/>
                 <TextBlock Text="  (schreibgeschützt - Strg+Klick springt zu Definition/Include)"
