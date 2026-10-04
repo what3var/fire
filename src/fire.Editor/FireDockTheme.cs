@@ -47,12 +47,13 @@ namespace fire.Editor
             // Werkzeug-Registerkarten die Akzentfarbe. Ausgewählte Dokument-Registerkarten ohne Fokus hell statt des dunklen Standards.
             var white = EditorTheme.Solid(Colors.White);
             var light = EditorTheme.Solid(EditorTheme.TextColor);
+            var accentText = EditorTheme.Solid(EditorTheme.AccentTextColor); // #B70052 selbst wäre auf dunklem Grund zu dunkel
             dict[ResourceKeys.DocumentWellTabSelectedActiveText] = white;
             dict[ResourceKeys.DocumentWellTabSelectedInactiveText] = light;
-            dict[ResourceKeys.DocumentWellTabUnselectedHoveredText] = accent;
+            dict[ResourceKeys.DocumentWellTabUnselectedHoveredText] = accentText;
             dict[ResourceKeys.ToolWindowTabSelectedActiveText] = white;
-            dict[ResourceKeys.ToolWindowTabSelectedInactiveText] = EditorTheme.Solid(EditorTheme.AccentTextColor); // #B70052 wäre hier zu dunkel
-            dict[ResourceKeys.ToolWindowTabUnselectedHoveredText] = accent;
+            dict[ResourceKeys.ToolWindowTabSelectedInactiveText] = accentText;
+            dict[ResourceKeys.ToolWindowTabUnselectedHoveredText] = accentText;
 
             // Akzentfarbe statt des Blaus des VS-Themas: aktive Registerkarten, Hover/Gedrückt-Zustände, Andock-Vorschau
             dict[ResourceKeys.ControlAccentColorKey] = EditorTheme.AccentColor;
@@ -60,7 +61,7 @@ namespace fire.Editor
             dict[ResourceKeys.DocumentWellTabSelectedActiveBackground] = accent;
             dict[ResourceKeys.ToolWindowTabSelectedActiveBackground] = accent;
             dict[ResourceKeys.AutoHideTabHoveredBorder] = accent;
-            dict[ResourceKeys.AutoHideTabHoveredText] = accent;
+            dict[ResourceKeys.AutoHideTabHoveredText] = accentText;
             dict[ResourceKeys.DocumentWellOverflowButtonHoveredGlyph] = accent;
             dict[ResourceKeys.DocumentWellOverflowButtonPressedBackground] = accent;
             dict[ResourceKeys.DocumentWellOverflowButtonPressedBorder] = accent;
