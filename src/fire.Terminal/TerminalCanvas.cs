@@ -40,13 +40,10 @@ namespace fire.Terminal
 
         public IGlyphFont Font { get; }
 
-        /// <summary>256-Farben-Palette dieser Canvas (siehe Palette-Doku) -
-        /// jede `byte`-Index-Überladung von Color/SetPixel/DrawLine/
-        /// DrawRect/FillRect schlägt hier nach, bevor sie zeichnet. Eine
-        /// eigene Instanz pro TerminalCanvas (nicht geteilt) - passend zum
-        /// bereits etablierten Muster, dass Cursor/Farben dem Grafikobjekt
-        /// selbst gehören, nicht dem jeweiligen Framebuffer.</summary>
-        public Palette Palette { get; } = new();
+        /// <summary>Die 256-Farben-Palette des aktuellen Ziel-Framebuffers (siehe Framebuffer.Palette): Palette-Indizes als Farbe (`byte`-Überladungen,
+        /// <see cref="Paint.FromIndex"/>) schlagen hier nach. Sie gehört dem Framebuffer, nicht der Canvas - mehrere Konsolen auf demselben
+        /// Framebuffer teilen sie, und im Palette-Modus IST sie die Farbtabelle des Bildes.</summary>
+        public Palette Palette => Target.Palette;
 
         // Zellgröße und Raster werden einmal berechnet (Framebuffer haben eine feste Größe, die Schrift ändert sich nicht) -
         // Print/Advance fragen sie für jedes Zeichen ab.
@@ -63,7 +60,16 @@ namespace fire.Terminal
         public int CursorRow { get; private set; }
         public int CursorColumn { get; private set; }
 
-        public PixelColor Foreground { get; set; } = PixelColor.White;
+        // Vorder-/Hintergrund als Farbangabe (Paint): ein Palette-Index bleibt ein Index (eine später geänderte Palette färbt neu gezeichneten Text um),
+        // ein direkter Wert bleibt ein direkter Wert. Aufgelöst wird erst beim Zeichnen, für den dann aktuellen Ziel-Framebuffer.
+        private Paint _foreground = Paint.FromRgba(PixelColor.White);
+        private Paint? _background = Paint.FromRgba(PixelColor.Black);
+
+        public PixelColor Foreground
+        {
+            get => ToColor(_foreground);
+            set => _foreground = Paint.FromRgba(value);
+        }
 
         /// <summary>null = TRANSPARENT: eine geschriebene Zelle überschreibt
         /// dann NUR die Glyph-Pixel selbst (Vordergrund), der vorhandene
@@ -72,7 +78,20 @@ namespace fire.Terminal
         /// reine "schreibe diese Pixel nicht"-Logik in PutChar. Ein
         /// gesetzter Wert übermalt dagegen immer die GESAMTE Zelle (siehe
         /// SPEC/CONSOLE.md "es werden immer ganze Zellen übermalt").</summary>
-        public PixelColor? Background { get; set; } = PixelColor.Black;
+        public PixelColor? Background
+        {
+            get => _background is Paint b ? ToColor(b) : null;
+            set => _background = value is PixelColor c ? Paint.FromRgba(c) : null;
+        }
+
+        /// <summary>Wie <see cref="Foreground"/>/<see cref="Background"/>, aber als Farbangabe (Palette-Index ODER direkter Wert); `background` null = transparent.</summary>
+        public void SetColor(Paint foreground, Paint? background)
+        {
+            _foreground = foreground;
+            _background = background;
+        }
+
+        private PixelColor ToColor(Paint p) => p.IsIndex ? Palette.GetColor((byte)p.Index) : new PixelColor(p.Rgba);
 
         public TerminalCanvas(Framebuffer target, IGlyphFont font)
         {
@@ -95,13 +114,17 @@ namespace fire.Terminal
             CursorColumn = Math.Clamp(column, 0, Math.Max(0, Columns - 1));
         }
 
+        /// <summary>Der Hintergrund als aufgelöste Farbe; ein transparenter Hintergrund zählt als Schwarz ("Bildschirm löschen" ohne jede Farbe
+        /// ergäbe keinen Sinn).</summary>
+        private Brush ClearBrush() => Target.ResolveBrush(_background ?? Paint.FromRgba(PixelColor.Black));
+
         /// <summary>Löscht den GESAMTEN aktuellen Target-Framebuffer mit der
         /// aktuellen Hintergrundfarbe (Transparent-Hintergrund zählt dabei
         /// als Schwarz, da "Bildschirm löschen" ohne jede Farbe keinen Sinn
         /// ergäbe) und setzt den Cursor auf (0, 0).</summary>
         public void Clear()
         {
-            Target.Clear(Background ?? PixelColor.Black);
+            Target.Clear(ClearBrush());
             CursorRow = 0;
             CursorColumn = 0;
         }
@@ -116,31 +139,52 @@ namespace fire.Terminal
         /// verloren, es gibt keinen Scrollback-Puffer (wie gefordert).</summary>
         public void Print(string text)
         {
+            var target = Target;
+            var fg = target.ResolveBrush(_foreground);
+            bool hasBg = _background is Paint;
+            var bg = hasBg ? target.ResolveBrush(_background!.Value) : default;
             foreach (char c in text)
             {
                 if (c == '\n') { NewLine(); continue; }
                 if (c == '\r') continue;
-                PutChar(c);
+                DrawGlyphResolved(CursorColumn * CellWidth, CursorRow * CellHeight, c, fg, hasBg, bg);
                 Advance();
             }
-        }
-
-        private void PutChar(char c)
-        {
-            int px = CursorColumn * CellWidth;
-            int py = CursorRow * CellHeight;
-            DrawGlyph(px, py, c, Foreground, Background);
         }
 
         /// <summary>Zeichnet Zeichen `c` mit der linken oberen Ecke bei (x, y) in PIXELN. `background` null = transparent
         /// (nur die Glyph-Pixel werden geschrieben), sonst wird die ganze Zelle übermalt. Liegt die Zelle vollständig im Target
         /// und hat die Schrift Bitmap-Zeilen (<see cref="IBitmapGlyphFont"/>), gehen die Pixel zeilenweise ohne Abfrage und ohne
         /// Randprüfung direkt in den Puffer; sonst (Rand des Puffers, andere Schrift) pixelweise mit Clipping.</summary>
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)] // heiß und schleifenreich: gleich voll optimiert übersetzen, nicht erst nach dem Hochstufen
         public void DrawGlyph(int x, int y, char c, PixelColor foreground, PixelColor? background)
+        {
+            if (!Target.IsIndexed)
+            {
+                DrawGlyphResolved(x, y, c, new Brush(foreground.Packed, 0), background.HasValue, new Brush(background.GetValueOrDefault().Packed, 0));
+                return;
+            }
+            DrawGlyph(x, y, c, (Paint)foreground, background is PixelColor b ? (Paint?)b : null);
+        }
+
+        public void DrawGlyph(int x, int y, char c, Paint foreground, Paint? background)
+        {
+            var target = Target;
+            var fg = target.ResolveBrush(foreground);
+            bool hasBg = background is Paint;
+            DrawGlyphResolved(x, y, c, fg, hasBg, hasBg ? target.ResolveBrush(background!.Value) : default);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)] // heiß und schleifenreich: gleich voll optimiert übersetzen, nicht erst nach dem Hochstufen
+        private void DrawGlyphResolved(int x, int y, char c, in Brush foreground, bool hasBackground, in Brush background)
         {
             int cw = CellWidth, ch = CellHeight;
             var target = Target;
+
+            if (target.IsIndexed)
+            {
+                DrawGlyphIndexed(x, y, c, foreground, hasBackground, background);
+                return;
+            }
 
             if (Font is IBitmapGlyphFont bitmapFont && cw <= 8
                 && x >= 0 && y >= 0 && x + cw <= target.Width && y + ch <= target.Height)
@@ -148,20 +192,20 @@ namespace fire.Terminal
                 var rows = bitmapFont.GetGlyphRows(c);
                 var pixels = target.Pixels;
                 int stride = target.Width;
-                uint fg = foreground.Packed;
+                uint fg = foreground.Rgba;
 
                 if (cw == 8 && rows.Length >= ch)
                 {
                     ref uint origin = ref pixels[y * stride + x];
-                    if (background is PixelColor bgColor) GlyphBlitter.BlitOpaque(ref origin, stride, ch, rows, fg, bgColor.Packed);
+                    if (hasBackground) GlyphBlitter.BlitOpaque(ref origin, stride, ch, rows, fg, background.Rgba);
                     else GlyphBlitter.BlitTransparent(ref origin, stride, ch, rows, fg);
                     return;
                 }
 
                 // Schmalere Schrift: pro Zeile eine kurze Schleife über die Bits.
-                if (background is PixelColor bgNarrow)
+                if (hasBackground)
                 {
-                    uint bg = bgNarrow.Packed, diff = bg ^ fg;
+                    uint bg = background.Rgba, diff = bg ^ fg;
                     for (int gy = 0; gy < ch; gy++)
                     {
                         var dst = pixels.AsSpan((y + gy) * stride + x, cw);
@@ -184,31 +228,79 @@ namespace fire.Terminal
                 return;
             }
 
-            // Allgemeiner Weg: jedes Pixel einzeln erfragen, SetPixel beschneidet am Rand.
-            if (background is PixelColor bgc)
-                target.FillRect(x, y, cw, ch, bgc);
+            // Allgemeiner Weg: jedes Pixel einzeln erfragen, Plot beschneidet am Rand.
+            if (hasBackground)
+                target.FillRect(x, y, cw, ch, background);
             for (int gy = 0; gy < ch; gy++)
                 for (int gx = 0; gx < cw; gx++)
                     if (Font.IsPixelSet(c, gx, gy))
-                        target.SetPixel(x + gx, y + gy, foreground);
+                        target.Plot(x + gx, y + gy, foreground);
+        }
+
+        /// <summary>Ein Zeichen in einen Palette-Framebuffer: die gesetzten Pixel (und mit Hintergrund die ganze Zelle) als Indizes. Ohne die
+        /// Vektor-Wege des RGBA-Puffers - ein Index je Pixel, mit Beschneidung am Rand.</summary>
+        private void DrawGlyphIndexed(int x, int y, char c, in Brush foreground, bool hasBackground, in Brush background)
+        {
+            int cw = CellWidth, ch = CellHeight;
+            var target = Target;
+            if (hasBackground) target.FillRect(x, y, cw, ch, background);
+
+            if (Font is IBitmapGlyphFont bitmapFont && cw <= 8)
+            {
+                var rows = bitmapFont.GetGlyphRows(c);
+                if (rows.Length >= ch)
+                {
+                    for (int gy = 0; gy < ch; gy++)
+                    {
+                        uint bits = rows[gy];
+                        if (bits == 0) continue;
+                        for (int gx = 0; gx < cw; gx++)
+                            if (((bits >> (7 - gx)) & 1u) != 0) target.Plot(x + gx, y + gy, foreground);
+                    }
+                    return;
+                }
+            }
+
+            for (int gy = 0; gy < ch; gy++)
+                for (int gx = 0; gx < cw; gx++)
+                    if (Font.IsPixelSet(c, gx, gy))
+                        target.Plot(x + gx, y + gy, foreground);
         }
 
         /// <summary>Zeichnet `text` ab (x, y) in PIXELN, ein Zeichen nach dem anderen (kein Umbruch, kein Cursor; '\n' und
         /// '\r' werden wie jedes Zeichen der Schrift gezeichnet). Die Basis für Oberflächen, die Text an beliebigen Pixeln
         /// brauchen statt im Zellenraster.</summary>
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)] // schleifenreich und heiß: gleich voll optimiert übersetzen, nicht erst nach dem Hochstufen
         public void DrawText(int x, int y, string text, PixelColor foreground, PixelColor? background = null)
+        {
+            if (!Target.IsIndexed) // der häufigste Fall (RGBA, direkte Farben): ohne Umweg über die Farbauflösung
+            {
+                DrawTextResolved(x, y, text, new Brush(foreground.Packed, 0), background.HasValue, new Brush(background.GetValueOrDefault().Packed, 0));
+                return;
+            }
+            DrawText(x, y, text, (Paint)foreground, background is PixelColor b ? (Paint?)b : null);
+        }
+
+        public void DrawText(int x, int y, string text, Paint foreground, Paint? background)
+        {
+            var target = Target;
+            var fg = target.ResolveBrush(foreground);
+            bool hasBg = background is Paint;
+            DrawTextResolved(x, y, text, fg, hasBg, hasBg ? target.ResolveBrush(background!.Value) : default);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)] // schleifenreich und heiß: gleich voll optimiert übersetzen, nicht erst nach dem Hochstufen
+        private void DrawTextResolved(int x, int y, string text, in Brush foreground, bool hasBackground, in Brush background)
         {
             int cw = CellWidth, ch = CellHeight;
             var target = Target;
 
             // Schnellpfad: liegt der ganze Text im Puffer und hat die Schrift 8 Pixel breite Bitmap-Zeilen, werden Schrift und Randprüfung
             // einmal für den ganzen Text erledigt, nicht je Zeichen.
-            if (Font is IBitmapGlyphFont bitmapFont && cw == 8 && text.Length > 0
+            if (!target.IsIndexed && Font is IBitmapGlyphFont bitmapFont && cw == 8 && text.Length > 0
                 && x >= 0 && y >= 0 && y + ch <= target.Height && (long)x + (long)cw * text.Length <= target.Width)
             {
                 int stride = target.Width;
-                uint fg = foreground.Packed;
+                uint fg = foreground.Rgba, bg = background.Rgba;
                 ref uint cell = ref target.Pixels[y * stride + x];
                 foreach (char c in text)
                 {
@@ -216,25 +308,25 @@ namespace fire.Terminal
                     if (rows.Length < ch)
                     {
                         // Ungewöhnliche Schrift (zu wenige Zeilen): zeichenweise auf dem allgemeinen Weg
-                        DrawTextSlow(x, y, text, foreground, background);
+                        DrawTextSlow(x, y, text, foreground, hasBackground, background);
                         return;
                     }
-                    if (background is PixelColor bgColor) GlyphBlitter.BlitOpaque(ref cell, stride, ch, rows, fg, bgColor.Packed);
+                    if (hasBackground) GlyphBlitter.BlitOpaque(ref cell, stride, ch, rows, fg, bg);
                     else GlyphBlitter.BlitTransparent(ref cell, stride, ch, rows, fg);
                     cell = ref Unsafe.Add(ref cell, 8);
                 }
                 return;
             }
 
-            DrawTextSlow(x, y, text, foreground, background);
+            DrawTextSlow(x, y, text, foreground, hasBackground, background);
         }
 
-        private void DrawTextSlow(int x, int y, string text, PixelColor foreground, PixelColor? background)
+        private void DrawTextSlow(int x, int y, string text, in Brush foreground, bool hasBackground, in Brush background)
         {
             int cw = CellWidth;
             foreach (char c in text)
             {
-                DrawGlyph(x, y, c, foreground, background);
+                DrawGlyphResolved(x, y, c, foreground, hasBackground, background);
                 x += cw;
             }
         }
@@ -254,58 +346,63 @@ namespace fire.Terminal
             CursorRow++;
             if (CursorRow >= Rows)
             {
-                Target.ScrollUp(CellHeight, Background ?? PixelColor.Black);
+                Target.ScrollUp(CellHeight, ClearBrush());
                 CursorRow = Rows - 1;
             }
         }
 
         // -----------------------------------------------------------
         // Rohe Grafikoperationen - dasselbe Target wie Print/Color/Locate,
-        // arbeiten aber in PIXEL- statt Zellen-Koordinaten.
+        // arbeiten aber in PIXEL- statt Zellen-Koordinaten. Jede Farbe ist
+        // eine Paint-Angabe (Palette-Index ODER direkter Wert) und wird für das
+        // Target aufgelöst; die PixelColor-/byte-Überladungen sind Kurzformen.
         // -----------------------------------------------------------
 
-        public void SetPixel(int x, int y, PixelColor color) => Target.SetPixel(x, y, color);
-
-        public void SetPixel(int x, int y, byte paletteIndex) => SetPixel(x, y, Palette.GetColor(paletteIndex));
+        public void SetPixel(int x, int y, Paint color) => Target.Plot(x, y, Target.ResolveBrush(color));
+        public void SetPixel(int x, int y, PixelColor color) => SetPixel(x, y, (Paint)color);
+        public void SetPixel(int x, int y, byte paletteIndex) => SetPixel(x, y, Paint.FromIndex(paletteIndex));
 
         public PixelColor GetPixel(int x, int y) => Target.GetPixel(x, y);
 
+        /// <summary>Der Palette-Index des Pixels (im RGBA-Framebuffer der Eintrag, der der Farbe am nächsten kommt).</summary>
+        public byte GetPixelIndex(int x, int y) => Target.GetIndex(x, y);
+
         /// <summary>Bresenham-Linienalgorithmus - keine externe Abhängigkeit,
         /// funktioniert identisch unabhängig vom Rendering-Backend.</summary>
-        public void DrawLine(int x0, int y0, int x1, int y1, PixelColor color)
-        {
-            int dx = Math.Abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
-            int dy = -Math.Abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
-            int err = dx + dy;
-            while (true)
-            {
-                Target.SetPixel(x0, y0, color);
-                if (x0 == x1 && y0 == y1) break;
-                int e2 = 2 * err;
-                if (e2 >= dy) { err += dy; x0 += sx; }
-                if (e2 <= dx) { err += dx; y0 += sy; }
-            }
-        }
+        public void DrawLine(int x0, int y0, int x1, int y1, Paint color) => Shapes.Line(Target, x0, y0, x1, y1, Target.ResolveBrush(color));
+        public void DrawLine(int x0, int y0, int x1, int y1, PixelColor color) => DrawLine(x0, y0, x1, y1, (Paint)color);
+        public void DrawLine(int x0, int y0, int x1, int y1, byte paletteIndex) => DrawLine(x0, y0, x1, y1, Paint.FromIndex(paletteIndex));
 
-        public void DrawLine(int x0, int y0, int x1, int y1, byte paletteIndex) =>
-            DrawLine(x0, y0, x1, y1, Palette.GetColor(paletteIndex));
+        public void DrawRect(int x, int y, int w, int h, Paint color) => Shapes.Rect(Target, x, y, w, h, Target.ResolveBrush(color));
+        public void DrawRect(int x, int y, int w, int h, PixelColor color) => DrawRect(x, y, w, h, (Paint)color);
+        public void DrawRect(int x, int y, int w, int h, byte paletteIndex) => DrawRect(x, y, w, h, Paint.FromIndex(paletteIndex));
 
-        public void DrawRect(int x, int y, int w, int h, PixelColor color)
-        {
-            if (w <= 0 || h <= 0) return;
-            DrawLine(x, y, x + w - 1, y, color);
-            DrawLine(x, y + h - 1, x + w - 1, y + h - 1, color);
-            DrawLine(x, y, x, y + h - 1, color);
-            DrawLine(x + w - 1, y, x + w - 1, y + h - 1, color);
-        }
+        public void FillRect(int x, int y, int w, int h, Paint color) => Target.FillRect(x, y, w, h, Target.ResolveBrush(color));
+        public void FillRect(int x, int y, int w, int h, PixelColor color) => FillRect(x, y, w, h, (Paint)color);
+        public void FillRect(int x, int y, int w, int h, byte paletteIndex) => FillRect(x, y, w, h, Paint.FromIndex(paletteIndex));
 
-        public void DrawRect(int x, int y, int w, int h, byte paletteIndex) =>
-            DrawRect(x, y, w, h, Palette.GetColor(paletteIndex));
+        // ---- Kreis, Ellipse, Dreieck, Polygon, Füllung, Kopieren (siehe Shapes/Blitter) ----
 
-        public void FillRect(int x, int y, int w, int h, PixelColor color) => Target.FillRect(x, y, w, h, color);
+        public void DrawCircle(int cx, int cy, int r, Paint color) => Shapes.Circle(Target, cx, cy, r, Target.ResolveBrush(color));
+        public void FillCircle(int cx, int cy, int r, Paint color) => Shapes.FillCircle(Target, cx, cy, r, Target.ResolveBrush(color));
+        public void DrawEllipse(int cx, int cy, int rx, int ry, Paint color) => Shapes.Ellipse(Target, cx, cy, rx, ry, Target.ResolveBrush(color));
+        public void FillEllipse(int cx, int cy, int rx, int ry, Paint color) => Shapes.FillEllipse(Target, cx, cy, rx, ry, Target.ResolveBrush(color));
 
-        public void FillRect(int x, int y, int w, int h, byte paletteIndex) =>
-            FillRect(x, y, w, h, Palette.GetColor(paletteIndex));
+        public void DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, Paint color) =>
+            Shapes.Triangle(Target, x0, y0, x1, y1, x2, y2, Target.ResolveBrush(color));
+        public void FillTriangle(int x0, int y0, int x1, int y1, int x2, int y2, Paint color) =>
+            Shapes.FillTriangle(Target, x0, y0, x1, y1, x2, y2, Target.ResolveBrush(color));
+
+        /// <summary>`points` = x0, y0, x1, y1, ... (ein ungerades letztes Element zählt nicht).</summary>
+        public void DrawPolygon(int[] points, Paint color, bool closed = true) => Shapes.Polygon(Target, points, Target.ResolveBrush(color), closed);
+        public void FillPolygon(int[] points, Paint color) => Shapes.FillPolygon(Target, points, Target.ResolveBrush(color));
+
+        public void FloodFill(int x, int y, Paint color) => Shapes.FloodFill(Target, x, y, Target.ResolveBrush(color));
+        public void FloodFill(int x, int y, Paint color, Paint border) =>
+            Shapes.FloodFillBorder(Target, x, y, Target.ResolveBrush(color), Target.ResolveBrush(border));
+
+        public void Blit(Framebuffer source, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, BlitMode mode = BlitMode.Copy, int colorKey = -1) =>
+            Blitter.Blit(Target, source, sx, sy, sw, sh, dx, dy, dw, dh, mode, colorKey);
     }
 
     /// <summary>Schreibt die Zeilen eines 8 Pixel breiten Zeichens in den Pixelpuffer - ohne Bereichsprüfung: der Aufrufer hat

@@ -154,6 +154,15 @@ namespace fire.Device.Manager.Drivers.Serial
             return true;
         }
 
+        public bool Write(byte[] data)
+        {
+            var port = _serialPort;
+            if (port?.IsOpen != true) return false;
+            port.Write(data, 0, data.Length);
+            OnRawDataSent?.Invoke((byte[])data.Clone());
+            return true;
+        }
+
         protected void StartPolling()
         {
             _portThread = new Thread(() => PollyPocket().Wait()) { IsBackground = true, Name = $"serial-{_portName}" };

@@ -352,8 +352,12 @@ namespace fire.Compiler
         /// "Bekannt" heißt hier: 'Exception' ODER eine bekannte Klasse ODER
         /// ein bekanntes Interface (anders als ResolveTypeRef, das nur
         /// Klassen kennt - eine Basis KANN ja auch ein Interface sein).</summary>
-        private string ResolveBaseRef(TypeRef tr) =>
-            tr.ResolveBaseName(n => n == "Exception" || _classes.ContainsKey(n) || _interfaces.ContainsKey(n));
+        private string ResolveBaseRef(TypeRef tr)
+        {
+            bool Known(string n) => n == "Exception" || _classes.ContainsKey(n) || _interfaces.ContainsKey(n);
+            // `class Home : Command<IDevice>`: die ANZAHL der Typ-Argumente wählt die generische Klasse/das generische Interface (siehe GenericClassNames)
+            return tr.TypeArgCount == 0 ? tr.ResolveBaseName(Known) : GenericClassNames.ResolveNewTarget(tr, tr.TypeArgCount, Known);
+        }
 
         private void CollectClasses(IReadOnlyList<Stmt> statements)
         {
@@ -650,7 +654,7 @@ namespace fire.Compiler
             }
             if (PrimitiveTypeNames.Contains(tr.BaseName)) return;
             if (_currentTypeParamNames.ContainsKey(tr.BaseName)) return;
-            if (!IsKnownClassName(ResolveTypeRef(tr)))
+            if (!IsKnownClassName(ResolveTypeRef(tr)) && !_interfaces.ContainsKey(ResolveBaseRef(tr)))
                 throw new ResolverException($"Unbekannter Typ '{tr.BaseName}'", line);
         }
 
@@ -896,6 +900,10 @@ namespace fire.Compiler
 
                 case NoSyncDirective:
                     break; // wirkt erst zur Laufzeit (siehe Compiler.Compile: SetAutoSync)
+
+                case TimeoutDirective td:
+                    ResolveExpr(td.Value);
+                    break; // wirkt erst zur Laufzeit (siehe Compiler.Compile: SetTimeout)
 
                 case VarDeclStmt vd:
                     if (vd.Initializer != null) ResolveExpr(vd.Initializer);

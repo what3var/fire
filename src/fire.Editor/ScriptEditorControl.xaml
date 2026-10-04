@@ -7,7 +7,6 @@
                                 FontFamily="Consolas" FontSize="14"
                                 ShowLineNumbers="True"
                                 HorizontalScrollBarVisibility="Auto"
-                                VerticalScrollBarVisibility="Auto"
-                                ToolTip="Strg+Klick auf eine Klasse/Methode springt zur Definition (auch über #include hinweg)"/>
+                                VerticalScrollBarVisibility="Auto" Background="#202024" Foreground="#F0F0F0"/>
     </Grid>
 </UserControl>

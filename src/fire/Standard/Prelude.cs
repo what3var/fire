@@ -61,6 +61,56 @@ namespace fire.Standard
                 }
             }
 
+            // Ein Befehl als Objekt: `Command` ohne, `Command<T>` mit einem Kontext (z.B. `Command<IDevice>` - ein Befehl, den `Device.DoCommand` mit dem
+            // Gerät als Kontext ausführt). Das Lambda `Command` ist der Rumpf; wer mehr braucht, leitet ab und überschreibt Execute (`class Home : Command<IDevice>`).
+            //   var home = new Command<IDevice>()
+            //   home.Command = d => { d.WriteString("G28\n") }
+            //   Device.Default.DoCommand(home)
+            interface ICommand {
+                Execute()
+            }
+
+            interface ICommand<T> {
+                Execute(T context)
+            }
+
+            class Command : ICommand {
+                lambda Command
+
+                construct() { }
+
+                construct(lambda command) {
+                    this.Command = command
+                }
+
+                // Ruft das Lambda auf; ohne Lambda geschieht nichts. Liefert dessen Ergebnis.
+                Execute() {
+                    var body = this.Command
+                    if (body == undefined) {
+                        return undefined
+                    }
+                    return body()
+                }
+            }
+
+            class Command<T> : ICommand<T> {
+                lambda<T> Command
+
+                construct() { }
+
+                construct(lambda<T> command) {
+                    this.Command = command
+                }
+
+                Execute(T context) {
+                    var body = this.Command
+                    if (body == undefined) {
+                        return undefined
+                    }
+                    return body(context)
+                }
+            }
+
             interface IEnumerator {
                 bool MoveNext()
                 class GetCurrent()

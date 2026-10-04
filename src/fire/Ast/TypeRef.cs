@@ -44,7 +44,7 @@ namespace fire.Ast
     /// siehe LambdaSignature-Doku und SPEC "Lambda-Typen mit Signatur".
     /// </summary>
     [MemoryPackable]
-    public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null, int ArrayRank = 0)
+    public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null, int ArrayRank = 0, int TypeArgCount = 0)
     {
         /// <summary>Sentinel für `BaseName`, wenn eine Deklaration `var`
         /// zusammen mit einer EXPLIZITEN Einheit, aber OHNE expliziten Typ

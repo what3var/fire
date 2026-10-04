@@ -631,6 +631,7 @@ namespace fire.Runtime
                     && _classes.TryGetValue(extensionClassName, out var extensionClass))
                     _baseTypeClasses[(int)kind] = extensionClass;
             IsMainThreadVm = isMainThreadVm;
+            if (isMainThreadVm) ResetDefaultTimeout(); // ein neues Programm beginnt wieder mit der Standard-Wartezeit (`#timeout` setzt sie neu)
             IsFireThreadVm = isFireThreadVm;
             ExecutionMode = executionMode;
         }
@@ -3980,6 +3981,15 @@ namespace fire.Runtime
                 case OpCode.SetAutoSync:
                     _autoSync = ReadByte() != 0;
                     break;
+
+                case OpCode.SetTimeout:
+                {
+                    var timeout = Pop();
+                    if (!TimeNatives.TryTimeTicks(timeout, out long timeoutTicks, out var timeoutError))
+                        throw new InvalidOperationException("#timeout " + timeoutError);
+                    SetDefaultTimeout(TimeSpan.FromTicks(timeoutTicks));
+                    break;
+                }
 
                 case OpCode.SectionEnter:
                     if (_threadBroker != null) EnterGlobalsSection(); // im Hauptprogramm: wirkungslos (es ist selbst der Besitzer)

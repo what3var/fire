@@ -173,6 +173,8 @@ namespace fire.Bytecode
         JumpIfNotNotEq, // u16 addr            : NotEq + JumpIfFalse
         ArithLocalConstPop,  // u16 depth, u16 slot, u16 constIdx, u8 sub : `x = x + c` / `x++` (sub = 0) bzw. `x = x - c` / `x--` (sub = 1) auf einer lokalen Variable als Anweisung
         ArithGlobalConstPop, // u16 slot, u16 constIdx, u8 sub            : dasselbe für eine globale Variable
+
+        SetTimeout,          //                     : pop v; `#timeout wert` setzt die Standard-Wartezeit der Warte-Funktionen (wird am Programmanfang emittiert)
     }
 
     /// <summary>Zieltyp für CoerceType/CoerceTypeDynamic - entspricht genau den

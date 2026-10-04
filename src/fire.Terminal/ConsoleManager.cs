@@ -63,65 +63,77 @@ namespace fire.Terminal
         public int GetCellWidth(int id) => _consoles.Get(id).CellWidth;
         public int GetCellHeight(int id) => _consoles.Get(id).CellHeight;
 
-        /// <summary>Text an einer PIXEL-Position (siehe TerminalCanvas.DrawText). Farben sind hier ROHE 32-Bit-Werte (R im
-        /// niedrigsten Byte, Alpha im höchsten - keine Palette-Indizes wie bei SetColor); ein Hintergrund mit Alpha 0 (z.B. 0)
-        /// bedeutet "transparent".</summary>
+        /// <summary>Text an einer PIXEL-Position (siehe TerminalCanvas.DrawText). Farben sind Zahlenwerte nach der Regel von <see cref="Paint.FromArgument"/>
+        /// (0-255 = Palette-Index, sonst direkter Wert: R im niedrigsten Byte, Alpha im höchsten). Beim HINTERGRUND bedeutet 0 (und jeder direkte Wert mit
+        /// Alpha 0) "transparent": nur die Zeichen-Pixel werden geschrieben; einen Palette-Index als Hintergrund gibt es hier nicht (vorher ein
+        /// Rechteck füllen).</summary>
         public void DrawText(int id, int x, int y, string text, int foreground, int background)
         {
-            var bg = new PixelColor(unchecked((uint)background));
-            _consoles.Get(id).DrawText(x, y, text, new PixelColor(unchecked((uint)foreground)), bg.A == 0 ? null : bg);
+            Paint? bg = null;
+            uint rawBackground = unchecked((uint)background);
+            if (rawBackground != 0 && (rawBackground & 0xFFFFFF00) == 0) bg = Paint.FromIndex((byte)rawBackground);
+            else if ((rawBackground >> 24) != 0) bg = Paint.FromRgba(rawBackground);
+            _consoles.Get(id).DrawText(x, y, text, Paint.FromArgument(foreground), bg);
         }
 
-        public void SetColor(int id, int foreground, int? background)
-        {
-            var c = _consoles.Get(id);
+        /// <summary>Vorder- und Hintergrundfarbe für Print (Zahlenwerte nach <see cref="Paint.FromArgument"/>: 0-255 = Palette-Index, sonst direkter Wert).</summary>
+        public void SetColor(int id, int foreground, int background) =>
+            _consoles.Get(id).SetColor(Paint.FromArgument(foreground), Paint.FromArgument(background));
 
-            if ((foreground & 0xFFFFFF00) == 0)
-                foreground = GetPaletteColor(id, (byte)foreground);
-
-            var hasBackground = false;
-            var bg = background ?? 0;
-
-            if (background is int && (bg & 0xFFFFFF00) == 0)
-            { 
-                background = GetPaletteColor(id, (byte)bg);
-                hasBackground = true;
-            }
-
-            c.Foreground = new PixelColor(unchecked((uint)foreground));
-            c.Background = hasBackground ? new PixelColor(unchecked((uint)bg)) : null;
-        }
-
-        public void SetPixel(int id, int x, int y, int color) =>
-            _consoles.Get(id).SetPixel(x, y, new PixelColor(unchecked((uint)color)));
+        public void SetPixel(int id, int x, int y, int color) => _consoles.Get(id).SetPixel(x, y, Paint.FromArgument(color));
 
         public void SetPixelByIndex(int id, int x, int y, byte paletteIndex) =>
             _consoles.Get(id).SetPixel(x, y, paletteIndex);
 
         public int GetPixel(int id, int x, int y) => _consoles.Get(id).GetPixel(x, y);
 
+        /// <summary>Der Palette-Index des Pixels (im Palette-Framebuffer der gespeicherte, sonst der nächstliegende Eintrag).</summary>
+        public int GetPixelIndex(int id, int x, int y) => _consoles.Get(id).GetPixelIndex(x, y);
+
         public void DrawLine(int id, int x0, int y0, int x1, int y1, int color) =>
-            _consoles.Get(id).DrawLine(x0, y0, x1, y1, new PixelColor(unchecked((uint)color)));
+            _consoles.Get(id).DrawLine(x0, y0, x1, y1, Paint.FromArgument(color));
 
         public void DrawLineByIndex(int id, int x0, int y0, int x1, int y1, byte paletteIndex) =>
             _consoles.Get(id).DrawLine(x0, y0, x1, y1, paletteIndex);
 
         public void DrawRect(int id, int x, int y, int w, int h, int color) =>
-            _consoles.Get(id).DrawRect(x, y, w, h, new PixelColor(unchecked((uint)color)));
+            _consoles.Get(id).DrawRect(x, y, w, h, Paint.FromArgument(color));
 
         public void DrawRectByIndex(int id, int x, int y, int w, int h, byte paletteIndex) =>
             _consoles.Get(id).DrawRect(x, y, w, h, paletteIndex);
 
         public void FillRect(int id, int x, int y, int w, int h, int color) =>
-            _consoles.Get(id).FillRect(x, y, w, h, new PixelColor(unchecked((uint)color)));
+            _consoles.Get(id).FillRect(x, y, w, h, Paint.FromArgument(color));
 
         public void FillRectByIndex(int id, int x, int y, int w, int h, byte paletteIndex) =>
             _consoles.Get(id).FillRect(x, y, w, h, paletteIndex);
 
-        /// <summary>Setzt Palette-Index `index` dieser Konsole auf einen
-        /// neuen 32-Bit-Farbwert (siehe Palette.SetColor-Doku) - jede
-        /// Konsole hat ihre EIGENE Palette (wie Cursor/Farben, siehe
-        /// TerminalCanvas.Palette-Doku).</summary>
+        // ---- Kreis, Ellipse, Dreieck, Polygon, Füllung, Kopieren ----
+
+        public void DrawCircle(int id, int cx, int cy, int r, int color) => _consoles.Get(id).DrawCircle(cx, cy, r, Paint.FromArgument(color));
+        public void FillCircle(int id, int cx, int cy, int r, int color) => _consoles.Get(id).FillCircle(cx, cy, r, Paint.FromArgument(color));
+        public void DrawEllipse(int id, int cx, int cy, int rx, int ry, int color) => _consoles.Get(id).DrawEllipse(cx, cy, rx, ry, Paint.FromArgument(color));
+        public void FillEllipse(int id, int cx, int cy, int rx, int ry, int color) => _consoles.Get(id).FillEllipse(cx, cy, rx, ry, Paint.FromArgument(color));
+
+        public void DrawTriangle(int id, int x0, int y0, int x1, int y1, int x2, int y2, int color) =>
+            _consoles.Get(id).DrawTriangle(x0, y0, x1, y1, x2, y2, Paint.FromArgument(color));
+        public void FillTriangle(int id, int x0, int y0, int x1, int y1, int x2, int y2, int color) =>
+            _consoles.Get(id).FillTriangle(x0, y0, x1, y1, x2, y2, Paint.FromArgument(color));
+
+        public void DrawPolygon(int id, int[] points, int color, bool closed) => _consoles.Get(id).DrawPolygon(points, Paint.FromArgument(color), closed);
+        public void FillPolygon(int id, int[] points, int color) => _consoles.Get(id).FillPolygon(points, Paint.FromArgument(color));
+
+        public void FloodFill(int id, int x, int y, int color) => _consoles.Get(id).FloodFill(x, y, Paint.FromArgument(color));
+        public void FloodFillBorder(int id, int x, int y, int color, int border) =>
+            _consoles.Get(id).FloodFill(x, y, Paint.FromArgument(color), Paint.FromArgument(border));
+
+        /// <summary>Kopiert einen Ausschnitt des Framebuffers `sourceFramebufferId` in den der Konsole (siehe <see cref="Blitter.Blit"/>).</summary>
+        public void Blit(int id, int sourceFramebufferId, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode, int colorKey) =>
+            _consoles.Get(id).Blit(_framebuffers.GetFramebuffer(sourceFramebufferId), sx, sy, sw, sh, dx, dy, dw, dh, (BlitMode)mode, colorKey);
+
+        /// <summary>Setzt Palette-Index `index` des Framebuffers dieser Konsole auf einen
+        /// neuen 32-Bit-Farbwert (siehe Palette.SetColor-Doku). Die Palette gehört dem
+        /// Framebuffer (siehe TerminalCanvas.Palette-Doku).</summary>
         public void SetPaletteColor(int id, byte index, int color) =>
             _consoles.Get(id).Palette.SetColor(index, color);
 

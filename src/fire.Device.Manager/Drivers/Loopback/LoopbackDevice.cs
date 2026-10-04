@@ -40,11 +40,13 @@ namespace fire.Device.Manager.Drivers.Loopback
             StateChanged?.Invoke();
         }
 
-        public bool SendCommand(string command)
+        public bool SendCommand(string command) => Write(Encoding.UTF8.GetBytes(command + "\n"));
+
+        public bool Write(byte[] data)
         {
             if (!IsConnected) return false;
 
-            var bytes = Encoding.UTF8.GetBytes(command + "\n");
+            var bytes = (byte[])data.Clone();
             OnRawDataSent?.Invoke(bytes);
             ThreadPool.QueueUserWorkItem(_ =>
             {

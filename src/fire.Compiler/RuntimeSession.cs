@@ -154,7 +154,15 @@ namespace fire.Compiler
                 consoleManager = new ConsoleManager(fbManager, font);
                 windowManager = new WindowManager(fbManager, (l,v) => session.CallLambda(l,v));
 
-                GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager);
+                // Bilddateien (Framebuffer.FromFile) liest das Programm nur, wo die IoPolicy des Hosts das Lesen erlaubt (wie IO.File)
+                var imagePolicy = ioPolicy ?? fire.IO.Bridge.IoPolicy.AllowAll;
+                GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager, path =>
+                {
+                    string fullPath = Path.GetFullPath(path);
+                    if (!imagePolicy.IsAllowed(fullPath, fire.IO.Bridge.IoAccess.Read, out var reason))
+                        throw new UnauthorizedAccessException(reason ?? $"Zugriff auf '{fullPath}' ist nicht erlaubt.");
+                    return File.ReadAllBytes(fullPath);
+                });
             }
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
@@ -166,7 +174,7 @@ namespace fire.Compiler
             // Angabe bekommt das Programm einen eigenen mit den eingebauten Treibern, der nach dem Lauf freigegeben wird.
             IDisposable? deviceResources = null;
             if (linkedProgram.NativeImports.Contains(NativeImports.Devices))
-                deviceResources = fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager ?? fire.Device.Manager.DeviceManager.DeviceManager.CreateDefault());
+                deviceResources = fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager ?? fire.Device.Manager.DeviceManager.DeviceManager.CreateDefault(), VM.WaitUntil);
 
             // `ioPolicy`: was Skripte im Dateisystem anfassen dürfen, `ioStdio`: wohin
             // IO.Stdio führt - beides entscheidet der HOST (siehe IoPolicy/IoStdio),

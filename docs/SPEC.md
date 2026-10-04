@@ -1270,6 +1270,15 @@ class List : IEnumerable {
 - Ein `interface` deklariert nur Methodensignaturen (keine Felder, kein
   Konstruktor), ähnlich `extern`, nur eben für klasseninterne Verträge statt
   native Funktionen.
+- Ein `interface` darf **generisch** sein (`interface ICommand<T> { Execute(T context) }`) und neben einem nicht-generischen gleichen Namens stehen (wie bei Klassen,
+  siehe 5.8); eine Klasse nennt es mit Typ-Argumenten (`class Command<T> : ICommand<T>`). Wie überall zählt nur Name und ANZAHL der Typ-Argumente.
+  Ebenso darf eine **Basisklasse** Typ-Argumente tragen: `class Home : Command<IDevice>` erbt von der generischen Klasse `Command<T>`. Ein Interface ist auch als **Typ eines
+  Parameters** erlaubt (`Use(IShape s)`).
+- **`Command`, `Command<T>`, `ICommand`, `ICommand<T>`** (Teil der Prelude): ein Befehl als Objekt. `Command` hat das Lambda-Feld `Command` und `Execute()`, das es
+  aufruft; `Command<T>` hat ein `lambda<T> Command` und `Execute(T context)`. Man weist das Lambda zu (`c.Command = d => { ... }`), übergibt es dem Konstruktor
+  (`new Command<IDevice>(d => ...)`) oder leitet ab und überschreibt `Execute` (`class Home : Command<IDevice> { Execute(IDevice context) { ... } }`). Ohne Lambda tut `Execute` nichts
+  (liefert `undefined`), sonst liefert es dessen Ergebnis. `Device.DoCommand`/`DoCommands` (8.16) führen solche Befehle mit dem Gerät als Kontext aus.
+  (Eine eigene Klasse namens `Command` kollidiert mit der Prelude-Klasse.)
 - **Arrays und Byte-Puffer sind `IEnumerable`:** `arr.GetEnumerator()` liefert einen Enumerator (`ListEnumerator`), `arr is of IEnumerable` ist wahr, und alles, was eine `IEnumerable` verarbeitet (`foreach`, `Linq.From`, eigene Methoden), nimmt sie an.
 - `foreach (x in collection)` (SPEC 5) läuft über `GetEnumerator()`/
   `MoveNext()`/`GetCurrent()` – rein per NAMENS-Dispatch, funktioniert also
@@ -1892,15 +1901,27 @@ Exception in `ToString()` läuft zum umgebenden `catch`. Ohne `ToString()` bleib
 ### 8.16 Geräte (`#import "devices"`)
 
 Die Erweiterung steuert Geräte über den **DeviceManager** (`src/fire.Device.Manager`: Treiber, Geräte, Handles; `src/fire.Device.Bridge`: fire-Klassen). Ein Gerät hat eine Kennung `treiber:anschluss`
-(`serial:COM3`, `loopback:echo`). Der Treiber `serial` (115200 Baud, zeilenweise `SendCommand`) ist eingebaut; `loopback` ist ein simuliertes Echo-Gerät ohne Hardware.
+(`serial:COM3`, `loopback:echo`). Der Treiber `serial` (115200 Baud) ist eingebaut; `loopback` ist ein simuliertes Echo-Gerät ohne Hardware (alles, was man sendet, kommt nach einigen Millisekunden zurück).
+
+Man arbeitet auf **Befehlsebene**: Text und Bytes senden, auf bestimmte Zeichen warten, Befehle als Objekte ausführen.
 
 ```
 #import "devices"
+#timeout 10s                                 // Standard-Wartezeit der Warte-Funktionen (sonst 30 Sekunden)
 
-var d = Device.Default.EnsureConnected()   // Standardgerät des Hosts, verbindet bei Bedarf
-d.SendCommand("M105")
-while (!d.HasData()) { }
-print(d.ReadData())                        // Latin1: ein Zeichen je Byte
+var d = Device.Default.EnsureConnected()     // Standardgerät des Hosts, verbindet bei Bedarf
+d.DoCommand("M105")                          // eine Zeile senden
+if (d.WaitForString("ok\n")) {               // wartet auf das Antwortende, schneidet den Puffer dahinter ab
+    print(d.ReadString())                    // was danach kam
+}
+
+d.WriteString("G28")                         // ohne Zeilenende
+d.Write(bytes)                               // rohe Bytes (ein byte-Puffer)
+d.WaitFor(bytes, 2s)                         // auf diese Bytes warten, höchstens 2 Sekunden
+
+var home = new Command<IDevice>(dev => { return dev.WriteString("G28\n") })
+d.DoCommand(home)                            // führt home.Execute(d) aus
+d.DoCommands([home, home])                   // mehrere, stoppt beim ersten, das false liefert
 ```
 
 | Mitglied | Bedeutung |
@@ -1911,10 +1932,25 @@ print(d.ReadData())                        // Latin1: ein Zeichen je Byte
 | `IsShared` (Property) | gehört das Gerät einem geteilten Manager (des Editors)? |
 | `Connect()` / `Disconnect()` | verbinden (`bool`) / trennen |
 | `EnsureConnected()` | verbindet nur, wenn nötig; wirft `DeviceConnectionException`, wenn das scheitert; liefert das Gerät selbst (verkettbar) |
-| `SendCommand(text)` | sendet eine Zeile; `false`, wenn nicht verbunden |
-| `HasData()` / `ReadData()` | empfangene Pakete abholen (eine Warteschlange je Gerät) |
+| `DoCommand(befehl)` | ein Text geht als Zeile hinaus (mit Zeilenende, in der Kodierung des Geräts; früher `SendCommand`); `false`, wenn nicht verbunden. Ein Befehlsobjekt (`Command<IDevice>`, abgeleitet davon oder jedes Objekt mit `Execute(Gerät)`) wird mit `befehl.Execute(gerät)` ausgeführt; das Ergebnis ist `false`, wenn `Execute` `false` liefert, sonst `true` |
+| `DoCommands(befehle)` | Array, `List` oder alles mit `foreach`: führt der Reihe nach aus, hört beim ersten `false` auf; `true`, wenn alle liefen |
+| `HasData()` | ist empfangenes Material da? |
+| `ReadString()` | das nächste empfangene Paket als Text, ein Zeichen je Byte (Latin1; früher `ReadData`); `""`, wenn nichts da ist |
+| `Read()` | dasselbe als `byte`-Puffer (leer, wenn nichts da ist) |
+| `WriteString(text)` | schreibt genau diese Zeichen, OHNE Zeilenende (ein Zeichen = ein Byte, Latin1; für UTF-8 `text.ToBytes()` und `Write`); `false`, wenn nicht verbunden |
+| `Write(puffer)` | schreibt rohe Bytes; `false`, wenn nicht verbunden |
+| `WaitForString(text, timeout)` / `WaitFor(puffer, timeout)` | siehe unten |
 | `Identifier()`, `PortName()`, `Availability()`, `TestAvailability()` | Kennung, Anschluss, Verfügbarkeit (0 = nicht verfügbar, 1 = ungeprüft, 2 = verfügbar) |
 | `DeviceManagerFacade` | `Refresh(fastScan)`, `Count()`, `GetAt(i)`, `GetByHandle(h)`, `GetByIdentifier(id)`, `IsShared()` |
+| `IDevice` | das Interface, das `Device` erfüllt (Typ-Argument und Parametertyp für `Command<IDevice>`) |
+
+**`WaitForString` / `WaitFor`.** Warten, bis die Zeichen bzw. Bytes im Empfangspuffer stehen - auch wenn sie in mehreren Paketen ankommen -, und schneiden den Puffer HINTER dem ersten Treffer ab: alles davor und der Treffer
+sind verbraucht, was danach kam, bleibt (mit `ReadString()`/`Read()` lesbar). Kommt dieselbe Folge zweimal, gelingt derselbe Aufruf deshalb zweimal hintereinander. Eine leere Folge gilt sofort als gefunden. Das Ergebnis ist `true`, wenn die
+Folge kam, `false` nach Ablauf der Wartezeit, wenn das Gerät getrennt ist (oder wird) oder das Programm beendet wird (`leave`/`terminate` wirken sofort, das Warten ist nicht taub wie bei `Sleep`; die Warteschlange des Hauptprogramms läuft weiter).
+`timeout` ist optional: eine `TimeSpan`, ein Zeitwert (`5s`, `500ms`) oder eine Zahl in Millisekunden (wie bei `Sleep`); ohne Angabe gilt das `#timeout` des Programms, sonst 30 Sekunden. Eine ungültige Angabe ist eine `DeviceArgumentException`.
+
+**`#timeout wert`** (Top-Level-Direktive wie `#nosync`, gilt fürs ganze Programm): setzt die Standard-Wartezeit der Warte-Funktionen. `wert` ist ein Zeitwert (`10s`, `500ms`, `2min`) oder eine Zahl in Millisekunden; der Ausdruck wird ganz am Anfang
+des Programms ausgewertet (er darf also keine Variablen benutzen) und gilt auch in den Fire-Threads. Ein neues Programm beginnt wieder mit 30 Sekunden.
 
 **Geteilter DeviceManager.** Läuft ein Skript im Editor, benutzt es den gemeinsamen Manager des Editors (`DeviceManager.IsShared`): Geräte und offene Verbindungen überleben den Lauf, mehrere Skripte hintereinander arbeiten mit
 denselben Geräten. Ein Skript kann weder den Manager noch ein geteiltes Gerät zerstören (es gibt keine Funktion dafür; `DeviceManager.Dispose()` ist bei einem geteilten Manager wirkungslos, nur der Besitzer baut ihn über `Shutdown()` ab).

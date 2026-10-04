@@ -74,6 +74,7 @@ namespace fire.Terminal.Windows
         {
             if (!_opened) return null;
             var result = _renderer.PumpEvents();
+            Framebuffer.Resolve(); // Palette-Framebuffer: Indizes -> sichtbare Farben (im RGBA-Modus ein No-op)
             _renderer.Present(Framebuffer);
             return result;
         }

@@ -1,8 +1,9 @@
-﻿Microsoft Visual Studio Solution File, Format Version 12.00
+
+Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
 VisualStudioVersion = 18.11.12202.211
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire", "src\fire\fire.csproj", "{AA91B1F0-A14A-462E-84C8-44D9DB01D116}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "fire", "src\fire\fire.csproj", "{AA91B1F0-A14A-462E-84C8-44D9DB01D116}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Editor", "src\fire.Editor\fire.Editor.csproj", "{1A89D1D1-4A8F-4535-8B04-DB5F1027F0B1}"
 EndProject
@@ -25,8 +26,6 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Device.Bridge", "src\fire.Device.Bridge\fire.Device.Bridge.csproj", "{913A699B-F8F3-E42F-A44C-9C0BAAC41BB3}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.IO.Bridge", "src\fire.IO.Bridge\fire.IO.Bridge.csproj", "{5C1B7E52-3D0A-4F6B-9A7E-2B8C1D4E6F90}"
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{1CE2AFF7-C2F8-4AF0-B36A-A8F8F7CE698C}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Benchmarks", "src\fire.Benchmarks\fire.Benchmarks.csproj", "{7858E7A3-1536-418A-B601-A4882C089599}"
 EndProject
@@ -100,9 +99,5 @@ Global
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {1FBEC386-7958-48B4-A4E7-130D10D34ADE}
-	EndGlobalSection
-	GlobalSection(NestedProjects) = preSolution
-		{7858E7A3-1536-418A-B601-A4882C089599} = {1CE2AFF7-C2F8-4AF0-B36A-A8F8F7CE698C}
-		{2897725B-75E8-4A90-877A-F70F0516156E} = {1CE2AFF7-C2F8-4AF0-B36A-A8F8F7CE698C}
 	EndGlobalSection
 EndGlobal
