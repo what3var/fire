@@ -1,22 +1,24 @@
+using AvalonDock.Core.Serialization;
+using AvalonDock.Layout;
+using AvalonDock.Serializer.Xml;
+using fire.Compiler;
+using fire.Compiler.Assembly;
+using fire.Utilities;
+using Microsoft.Win32;
+using ModernWpf.Controls;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
-using AvalonDock.Layout;
-using AvalonDock.Layout.Serialization;
-using fire.Compiler;
-using fire.Compiler.Assembly;
-using fire.Utilities;
-using Microsoft.Win32;
 
 namespace fire.Editor
 {
@@ -62,7 +64,7 @@ namespace fire.Editor
         // Andockbare Bereiche (AvalonDock), nach ContentId (siehe MainWindow.xaml). Nach dem Laden eines Layouts
         // ersetzt AvalonDock die Layout-Elemente durch neue - deshalb hier nie die XAML-Objekte selbst merken,
         // sondern nach jedem Laden neu einsammeln (siehe DeserializeLayout).
-        private Dictionary<string, LayoutContent> _panels = new();
+        private Dictionary<string, ISerializableLayoutContent> _panels = new();
 
         // Das Layout aus dem XAML (Vorgabe) - für "Layout zurücksetzen" und als Rückfall, falls ein gespeichertes
         // Layout nicht geladen werden kann.
@@ -142,7 +144,8 @@ namespace fire.Editor
         public MainWindow()
         {
             InitializeComponent();
-
+            //WindowTitleBar.SetExtendsContentIntoTitleBar(this, true);
+            //WindowTitleBar.SetIsIconVisible(this, false);
             // Die Geräte-Übersicht startet eingeklappt (am rechten Rand ausgeblendet) - vor dem Sichern des Standard-Layouts.
             if (DockManager.Layout.Descendents().OfType<LayoutAnchorable>().FirstOrDefault(a => a.ContentId == "devices") is { } devicesPane)
                 devicesPane.ToggleAutoHide();
@@ -224,6 +227,9 @@ namespace fire.Editor
                 if (_documents.Count == 0)
                     NewScript("// Willkommen im fire-Editor\nprint(\"Hallo, Welt!\")\n");
             };
+
+            //WindowTitleBar.SetExtendsContentIntoTitleBar(this, true);
+            //WindowTitleBar.SetIsIconVisible(this, false);
 
             UpdateStatus("Bereit.");
         }
@@ -350,7 +356,7 @@ namespace fire.Editor
         /// <see cref="DeserializeLayout"/> alle).</summary>
         private void CollectPanels()
         {
-            _panels = DockManager.Layout.Descendents().OfType<LayoutContent>()
+            _panels = DockManager.Layout.Descendents().OfType<ISerializableLayoutContent>()
                 .Where(c => !string.IsNullOrEmpty(c.ContentId))
                 .ToDictionary(c => c.ContentId!);
         }
@@ -377,7 +383,7 @@ namespace fire.Editor
         private void DeserializeLayout(TextReader reader)
         {
             var contents = PanelContents();
-            var panels = new Dictionary<string, LayoutContent>();
+            var panels = new Dictionary<string, ISerializableLayoutContent>();
             var documentsById = _documents.ToDictionary(d => "doc:" + d.Id);
             var restored = new HashSet<OpenDocument>();
 
@@ -1048,17 +1054,22 @@ namespace fire.Editor
         {
             doc.Layout.Title = doc.DisplayName + (doc.View.IsModified ? "*" : "");
             doc.Layout.ToolTip = doc.View.FilePath ?? doc.DisplayName;
-            if (ReferenceEquals(doc, ActiveDocument)) Title = WindowTitle(doc);
+            if (ReferenceEquals(doc, ActiveDocument)) UpdateWindowTitle(WindowTitle(doc));
         }
 
-        private static string WindowTitle(OpenDocument? doc) =>
-            doc == null ? "fire Editor" : $"{doc.DisplayName}{(doc.View.IsModified ? "*" : "")} - fire Editor";
+        private static string? WindowTitle(OpenDocument? doc) =>
+            doc == null ? null : $"{doc.DisplayName}{(doc.View.IsModified ? "*" : "")}";
+
+        private void UpdateWindowTitle(string? subtitle)
+        {
+            Title = subtitle != null ? $"spark • {subtitle}" : "spark";
+        }
 
         /// <summary>Aktualisiert alles, was vom aktiven Dokument abhängt: Fenstertitel, Zeilenanzeige, Fehlerliste, Haltepunkte im Debugger-Panel.</summary>
         private void RefreshActiveUi()
         {
             var doc = ActiveDocument;
-            Title = WindowTitle(doc);
+            UpdateWindowTitle(WindowTitle(doc));
             CaretText.Text = doc == null ? "" : $"Zeile {doc.View.GetCaretLine()}";
             UpdateErrorPanel();
             _debugger.Refresh(BreakpointDescriptions());

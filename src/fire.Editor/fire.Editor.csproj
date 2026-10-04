@@ -2,14 +2,33 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>fire.Editor</RootNamespace>
-    <AssemblyName>fire.Editor</AssemblyName>
+    <AssemblyName>spark</AssemblyName>
     <LangVersion>latest</LangVersion>
+    <AssemblyTitle>fire spark</AssemblyTitle>
+    <ApplicationIcon>Logo.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="icons\Material-DebugStepInto.png" />
+    <None Remove="icons\Material-DebugStepOut.png" />
+    <None Remove="icons\Material-DebugStepOver.png" />
+    <None Remove="icons\Material-PauseCircle.png" />
+    <None Remove="icons\Material-Play.png" />
+    <None Remove="icons\Material-PlayOutline.png" />
+    <None Remove="icons\Material-Restart.png" />
+    <None Remove="icons\Material-ScriptOutline.png" />
+    <None Remove="icons\Material-Stop.png" />
+    <None Remove="Logo-64.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Logo.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Greift per Projektreferenz direkt auf Lexer/Parser/Resolver/Compiler/VM
@@ -25,11 +44,27 @@
          zuverlässigen Zeichen-Offsets statt WPFs TextPointer/Paragraph-
          Klassenhierarchie, Highlighting per DocumentColorizingTransformer
          OHNE Dokument-Neuaufbau. -->
-    <PackageReference Include="AvalonEdit" Version="6.3.0.90" />
+    <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
     <!-- Andockbare Bereiche (Fenster per Ziehen an jede Seite, als Registerkarten, schwebend oder automatisch ausblendend). -->
-    <PackageReference Include="Dirkster.AvalonDock" Version="4.72.1" />
-    <PackageReference Include="Dirkster.AvalonDock.Themes.VS2013" Version="4.72.1" />
+    <PackageReference Include="Dirkster.AvalonDock" Version="5.0.1" />
+    <PackageReference Include="Dirkster.AvalonDock.Serializer.Xml" Version="5.0.1" />
+    <PackageReference Include="Dirkster.AvalonDock.Themes.Expression" Version="5.0.1" />
+    <PackageReference Include="Dirkster.AvalonDock.Themes.VS" Version="5.0.1" />
+    <PackageReference Include="ModernWpfUI" Version="1.0.0-rc.1" />
     <PackageReference Include="PropertyChanged.Fody" Version="4.1.0" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="icons\Material-DebugStepInto.png" />
+    <Resource Include="icons\Material-DebugStepOut.png" />
+    <Resource Include="icons\Material-DebugStepOver.png" />
+    <Resource Include="icons\Material-PauseCircle.png" />
+    <Resource Include="icons\Material-Play.png" />
+    <Resource Include="icons\Material-PlayOutline.png" />
+    <Resource Include="icons\Material-Restart.png" />
+    <Resource Include="icons\Material-ScriptOutline.png" />
+    <Resource Include="icons\Material-Stop.png" />
+    <Resource Include="Logo-64.png" />
   </ItemGroup>
 
 </Project>
