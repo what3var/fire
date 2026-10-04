@@ -18,13 +18,13 @@ namespace fire.Editor
     /// berechnet (siehe ComputeFencedLines).</summary>
     internal sealed class MarkdownColorizer : DocumentColorizingTransformer
     {
-        private static readonly Brush HeadingBrush = new SolidColorBrush(Color.FromRgb(0x1F, 0x4E, 0x9A)).AsFrozen();
-        private static readonly Brush MarkBrush = new SolidColorBrush(Color.FromRgb(0x99, 0x99, 0x99)).AsFrozen();
-        private static readonly Brush CodeBrush = new SolidColorBrush(Color.FromRgb(0xA3, 0x15, 0x15)).AsFrozen();
-        private static readonly Brush LinkBrush = new SolidColorBrush(Color.FromRgb(0x00, 0x66, 0xCC)).AsFrozen();
-        private static readonly Brush QuoteBrush = new SolidColorBrush(Color.FromRgb(0x55, 0x77, 0x55)).AsFrozen();
-        private static readonly Brush ListBrush = new SolidColorBrush(Color.FromRgb(0xC0, 0x50, 0x00)).AsFrozen();
-        private static readonly Brush FenceBackground = new SolidColorBrush(Color.FromRgb(0xF3, 0xF3, 0xF3)).AsFrozen();
+        private static readonly Brush HeadingBrush = new SolidColorBrush(Color.FromRgb(0xF2, 0x47, 0x9E)).AsFrozen();
+        private static readonly Brush MarkBrush = new SolidColorBrush(Color.FromRgb(0x8B, 0x7F, 0x93)).AsFrozen();
+        private static readonly Brush CodeBrush = new SolidColorBrush(Color.FromRgb(0xE5, 0x56, 0x6F)).AsFrozen();
+        private static readonly Brush LinkBrush = new SolidColorBrush(Color.FromRgb(0xC0, 0x6A, 0xDE)).AsFrozen();
+        private static readonly Brush QuoteBrush = new SolidColorBrush(Color.FromRgb(0xF9, 0xCB, 0x5C)).AsFrozen();
+        private static readonly Brush ListBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x91, 0x42)).AsFrozen();
+        private static readonly Brush FenceBackground = EditorTheme.CodeBlockBackground;
         private static readonly double[] HeadingScale = { 1.6, 1.4, 1.25, 1.15, 1.08, 1.0 };
 
         private static readonly Regex Heading = new(@"^ {0,3}(#{1,6})(\s|$)", RegexOptions.Compiled);

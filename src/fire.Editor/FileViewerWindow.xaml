@@ -3,13 +3,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:avalonedit="http://icsharpcode.net/sharpdevelop/avalonedit"
         Title="Datei ansehen" Height="700" Width="900"
-        FontFamily="Segoe UI">
+        FontFamily="Segoe UI" Background="#242028">
     <DockPanel>
-        <Border DockPanel.Dock="Top" Background="#F0F0F0" BorderBrush="#DDDDDD" BorderThickness="0,0,0,1">
+        <Border DockPanel.Dock="Top" Background="#1B181F" BorderBrush="#3C3544" BorderThickness="0,0,0,1">
             <StackPanel Orientation="Horizontal" Margin="8,5">
-                <TextBlock x:Name="PathText" FontWeight="Bold" VerticalAlignment="Center"/>
+                <TextBlock x:Name="PathText" FontWeight="Bold" Foreground="#F4F0F2" VerticalAlignment="Center"/>
                 <TextBlock Text="  (schreibgeschützt - Strg+Klick springt zu Definition/Include)"
-                           Foreground="#666666" VerticalAlignment="Center" FontSize="11"/>
+                           Foreground="#A094A8" VerticalAlignment="Center" FontSize="11"/>
             </StackPanel>
         </Border>
 

@@ -57,6 +57,7 @@ namespace fire.Editor
             Editor.PreviewMouseRightButtonDown += (_, e) => Editor.PlaceCaretForContextMenu(e);
 
             _searchPanel = ICSharpCode.AvalonEdit.Search.SearchPanel.Install(Editor);
+            EditorTheme.Apply(Editor, _searchPanel);
             Editor.ContextMenu = EditorCommands.BuildMenu(new List<EditorCommands.Entry?>
             {
                 new() { Header = "_Fett", Gesture = "Strg+B", Execute = () => Wrap("**") },

@@ -66,14 +66,14 @@ namespace fire.Editor
 
         internal static Brush BrushFor(HighlightCategory category) => category switch
         {
-            HighlightCategory.Keyword => Brushes.MediumBlue,
-            HighlightCategory.Type => Brushes.Teal,
-            HighlightCategory.String => Brushes.DarkGreen,
-            HighlightCategory.Char => Brushes.DarkGreen,
-            HighlightCategory.Number => Brushes.DarkOrange,
-            HighlightCategory.Comment => Brushes.Gray,
-            HighlightCategory.Identifier => Brushes.Black,
-            _ => Brushes.Black,
+            HighlightCategory.Keyword => EditorTheme.Magenta,
+            HighlightCategory.Type => EditorTheme.Purple,
+            HighlightCategory.String => EditorTheme.Yellow,
+            HighlightCategory.Char => EditorTheme.WineRed,
+            HighlightCategory.Number => EditorTheme.Orange,
+            HighlightCategory.Comment => EditorTheme.Comment,
+            HighlightCategory.Identifier => EditorTheme.Text,
+            _ => EditorTheme.Text,
         };
 
         /// <summary>Wie die alte RichTextBox-Fassung (SquigglyDecorations
@@ -124,8 +124,8 @@ namespace fire.Editor
     /// (KnownLayer.Background), statt Teil des Dokuments selbst zu sein.</summary>
     internal sealed class LineBackgroundRenderer : IBackgroundRenderer
     {
-        private static readonly Brush CurrentLineBrush = new SolidColorBrush(Color.FromArgb(90, 255, 215, 0)).AsFrozen();
-        private static readonly Brush BreakpointBrush = new SolidColorBrush(Color.FromArgb(60, 220, 20, 20)).AsFrozen();
+        private static readonly Brush CurrentLineBrush = EditorTheme.CurrentDebugLine;
+        private static readonly Brush BreakpointBrush = EditorTheme.BreakpointLine;
 
         public int? HighlightedLine { get; set; }
         public IReadOnlySet<int> Breakpoints { get; set; } = new HashSet<int>();
@@ -176,7 +176,7 @@ namespace fire.Editor
         protected override void OnRender(DrawingContext drawingContext)
         {
             var textView = TextView;
-            drawingContext.DrawRectangle(Brushes.WhiteSmoke, null, new Rect(0, 0, MarginWidth, RenderSize.Height));
+            drawingContext.DrawRectangle(EditorTheme.Background, null, new Rect(0, 0, MarginWidth, RenderSize.Height));
 
             if (textView == null || !textView.VisualLinesValid) return;
 
@@ -186,7 +186,7 @@ namespace fire.Editor
                 if (!Breakpoints.Contains(lineNumber)) continue;
 
                 double y = visualLine.VisualTop - textView.VerticalOffset + visualLine.Height / 2;
-                drawingContext.DrawEllipse(Brushes.Firebrick, null, new Point(MarginWidth / 2, y), 5, 5);
+                drawingContext.DrawEllipse(EditorTheme.BreakpointDot, null, new Point(MarginWidth / 2, y), 5, 5);
             }
         }
 

@@ -178,6 +178,7 @@ namespace fire.Editor
             Editor.PreviewMouseRightButtonDown += Editor_PreviewMouseRightButtonDown;
 
             _searchPanel = ICSharpCode.AvalonEdit.Search.SearchPanel.Install(Editor);
+            EditorTheme.Apply(Editor, _searchPanel);
             Editor.ContextMenu = BuildContextMenu();
 
             _highlightTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
@@ -342,6 +343,11 @@ namespace fire.Editor
 
             _completionWindow?.Close();
             var window = new CompletionWindow(Editor.TextArea) { StartOffset = start, EndOffset = offset };
+            window.Background = EditorTheme.DarkSurface;
+            window.Foreground = EditorTheme.Text;
+            window.BorderBrush = EditorTheme.Border;
+            window.CompletionList.ListBox.Background = EditorTheme.DarkSurface;
+            window.CompletionList.ListBox.Foreground = EditorTheme.Text;
             foreach (var item in items)
                 window.CompletionList.CompletionData.Add(new FireCompletionData(item));
 

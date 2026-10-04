@@ -17,7 +17,7 @@ namespace fire.Editor
     internal sealed class MarkdownRenderer
     {
         private static readonly FontFamily CodeFont = new("Consolas");
-        private static readonly Brush CodeBackground = new SolidColorBrush(Color.FromRgb(0xF3, 0xF3, 0xF3)).AsFrozen();
+        private static readonly Brush CodeBackground = EditorTheme.Background;
         private static readonly Brush InlineCodeBackground = new SolidColorBrush(Color.FromRgb(0xEA, 0xEA, 0xEA)).AsFrozen();
         private static readonly Brush LinkBrush = new SolidColorBrush(Color.FromRgb(0x00, 0x66, 0xCC)).AsFrozen();
         private static readonly Brush QuoteBar = new SolidColorBrush(Color.FromRgb(0xBB, 0xBB, 0xBB)).AsFrozen();
@@ -143,6 +143,7 @@ namespace fire.Editor
                 FontFamily = CodeFont,
                 FontSize = 13,
                 Background = CodeBackground,
+                Foreground = EditorTheme.Text,
                 Padding = new Thickness(8, 6, 8, 6),
                 Margin = new Thickness(0, 4, 0, 8),
                 LineHeight = double.NaN,

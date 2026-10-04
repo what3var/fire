@@ -7,6 +7,6 @@
                                 FontFamily="Consolas" FontSize="14"
                                 ShowLineNumbers="True"
                                 HorizontalScrollBarVisibility="Auto"
-                                VerticalScrollBarVisibility="Auto" Background="#202024" Foreground="#F0F0F0"/>
+                                VerticalScrollBarVisibility="Auto"/>
     </Grid>
 </UserControl>

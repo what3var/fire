@@ -34,7 +34,7 @@ namespace fire.Editor
             InitializeComponent();
             Viewer.TextArea.TextView.LineTransformers.Add(_colorizer);
             Viewer.TextArea.TextView.BackgroundRenderers.Add(_lineBackground);
-            ICSharpCode.AvalonEdit.Search.SearchPanel.Install(Viewer);
+            EditorTheme.Apply(Viewer, ICSharpCode.AvalonEdit.Search.SearchPanel.Install(Viewer));
             Viewer.PreviewMouseLeftButtonDown += Viewer_PreviewMouseLeftButtonDown;
         }
 
