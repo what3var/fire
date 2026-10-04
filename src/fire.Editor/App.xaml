@@ -5,12 +5,34 @@
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <ui:ThemeResources />
+                <ui:ThemeResources AccentColor="#B70052"/>
                 <ui:FluentControlsResources UseCompactResources="False" />
             </ResourceDictionary.MergedDictionaries>
 
             <!-- Farben der Inhalte der Bereiche: dieselbe wie im Editor (EditorTheme.PanelColor). Der Rahmen (Hauptfenster, Docking)
                  ist dunkler (#1B181E), siehe MainWindow/FireDockTheme. -->
+            <!-- Akzentfarbe #B70052 (EditorTheme.AccentColor). AccentColor oben färbt alles Abgeleitete; die Ressourcen hier sind die
+                 Stellen, an denen ModernWpf im dunklen Thema eine AUFGEHELLTE Variante nimmt (Light2) - sie sollen exakt die Akzentfarbe zeigen.
+                 Die Schlüssel müssen die Blätter sein, die die Vorlagen abfragen: ModernWpf verweist intern per StaticResource auf die
+                 AccentFillColor-Pinsel, ein Überschreiben von denen käme dort nicht an. -->
+            <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#B70052"/>
+            <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="#B70052" Opacity="0.9"/>
+            <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="#B70052" Opacity="0.8"/>
+            <SolidColorBrush x:Key="AppBarToggleButtonBackgroundChecked" Color="#B70052"/>
+            <SolidColorBrush x:Key="AppBarToggleButtonBackgroundCheckedPointerOver" Color="#B70052" Opacity="0.9"/>
+            <SolidColorBrush x:Key="AppBarToggleButtonBackgroundCheckedPressed" Color="#B70052" Opacity="0.8"/>
+            <SolidColorBrush x:Key="AccentButtonBackground" Color="#B70052"/>
+            <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="#B70052" Opacity="0.9"/>
+            <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="#B70052" Opacity="0.8"/>
+            <!-- Unterer Akzentrand der fokussierten Textfelder (wie ModernWpfs TextControlElevationBorderFocusedBrush, nur mit der Akzentfarbe) -->
+            <LinearGradientBrush x:Key="TextControlBorderBrushFocused" MappingMode="Absolute" StartPoint="0,0" EndPoint="0,2">
+                <LinearGradientBrush.RelativeTransform>
+                    <ScaleTransform ScaleY="-1" CenterY="0.5"/>
+                </LinearGradientBrush.RelativeTransform>
+                <GradientStop Offset="1.0" Color="#B70052"/>
+                <GradientStop Offset="1.0" Color="#12FFFFFF"/>
+            </LinearGradientBrush>
+
             <SolidColorBrush x:Key="TextControlBackground" Color="#242028"/>
             <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#242028"/>
             <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#242028"/>

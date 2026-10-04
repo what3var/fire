@@ -23,6 +23,8 @@ namespace fire.Editor
         public static readonly Color PanelColor = Color.FromRgb(0x24, 0x20, 0x28);
         public static readonly Color ShellColor = Color.FromRgb(0x1B, 0x18, 0x1E);
         public static readonly Color BorderColor = Color.FromRgb(0x3C, 0x35, 0x44);
+        /// <summary>Akzentfarbe der Oberfläche (AvalonDock-Tabs, aktive Knöpfe, Fokusrand der Textfelder) - in App.xaml dieselbe.</summary>
+        public static readonly Color AccentColor = Color.FromRgb(0xB7, 0x00, 0x52);
 
         /// <summary>Hintergrund des Editors und aller Inhalte der Bereiche (Textfelder, Listen, Tabellen, Bäume).</summary>
         public static readonly Brush Background = Solid(PanelColor);

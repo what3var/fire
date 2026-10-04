@@ -5,7 +5,7 @@
         xmlns:ad="https://github.com/Dirkster99/AvalonDock"
         xmlns:ui="http://schemas.modernwpf.com/2019"
         Title="spark" Height="820" Width="1300"
-        FontFamily="Segoe UI" Background="#1B181E"
+        FontFamily="Segoe UI"
         ui:WindowHelper.UseModernWindowStyle="True"
         AllowDrop="True" PreviewDragOver="Window_PreviewDragOver" PreviewDrop="Window_PreviewDrop" Icon="/Logo-64.png">
 

@@ -18,6 +18,7 @@ namespace fire.Editor
             var panel = EditorTheme.Solid(EditorTheme.PanelColor);
             var border = EditorTheme.Solid(EditorTheme.BorderColor);
             var header = EditorTheme.Solid(Color.FromRgb(0x2E, 0x29, 0x33)); // Titelleiste des aktiven Bereichs: etwas heller als der Rahmen
+            var accent = EditorTheme.Solid(EditorTheme.AccentColor);
 
             // Rahmen hinter allen Bereichen, Teiler, Menüs
             dict[ResourceKeys.Background] = shell;
@@ -41,6 +42,25 @@ namespace fire.Editor
             dict[ResourceKeys.FloatingDocumentWindowBackground] = shell;
             dict[ResourceKeys.FloatingToolWindowBackground] = shell;
             dict[ResourceKeys.NavigatorWindowBackground] = panel;
+
+            // Akzentfarbe statt des Blaus des VS-Themas: aktive Registerkarten, Hover/Gedrückt-Zustände, Andock-Vorschau
+            dict[ResourceKeys.ControlAccentColorKey] = EditorTheme.AccentColor;
+            dict[ResourceKeys.ControlAccentBrushKey] = accent;
+            dict[ResourceKeys.DocumentWellTabSelectedActiveBackground] = accent;
+            dict[ResourceKeys.ToolWindowTabSelectedActiveBackground] = accent;
+            dict[ResourceKeys.AutoHideTabHoveredBorder] = accent;
+            dict[ResourceKeys.AutoHideTabHoveredText] = accent;
+            dict[ResourceKeys.DocumentWellOverflowButtonHoveredGlyph] = accent;
+            dict[ResourceKeys.DocumentWellOverflowButtonPressedBackground] = accent;
+            dict[ResourceKeys.DocumentWellOverflowButtonPressedBorder] = accent;
+            dict[ResourceKeys.ToolWindowCaptionButtonActivePressedBackground] = accent;
+            dict[ResourceKeys.ToolWindowCaptionButtonActivePressedBorder] = accent;
+            dict[ResourceKeys.NavigatorWindowSelectedBackground] = accent;
+            dict[ResourceKeys.DockingButtonForegroundBrushKey] = accent;
+            dict[ResourceKeys.PreviewBoxBorderBrushKey] = accent;
+            var preview = new SolidColorBrush(EditorTheme.AccentColor) { Opacity = 0.5 };
+            preview.Freeze();
+            dict[ResourceKeys.PreviewBoxBackgroundBrushKey] = preview;
         }
     }
 }
