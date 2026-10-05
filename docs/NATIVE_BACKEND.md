@@ -68,25 +68,35 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   eigenen Objekte); ein zurückgegebenes Objekt, das dem verlassenen Scope gehörte, wandert zum Aufrufer (`transferOut`/`adopt`). Scopes ohne
   Objekte kosten nichts.
 * Objekte werden beim Zerstören **freigegeben**. Der Zugriff auf ein zerstörtes Objekt wird (anders als in der VM) nicht erkannt; mit
-  `-DFIRE_KEEP_DESTROYED` bleiben sie im Speicher (Fehlersuche). Die Tests laufen unter AddressSanitizer/UBSan.
+  `-DFIRE_KEEP_DESTROYED` bleiben sie im Speicher (Fehlersuche). Die Tests laufen unter AddressSanitizer/UBSan. `delete obj` und ein zweites `delete` auf
+  dasselbe Objekt sind deshalb nur für Objekte erlaubt, die danach nicht mehr berührt werden.
 
-### Speicher für Strings, Arrays und Puffer
+### Speicher: Besitz für Objekte, Arrays und Puffer, Zähler für Strings und Lambdas
 
-Diese Werte werden (anders als Objekte, die genau einen Besitzer haben) frei weitergegeben: `var t = s`, in Feldern und Arrays gespeichert,
-zurückgegeben. Es gibt keinen GC, also werden sie **referenzgezählt**:
-
-* **Speicherorte halten einen Zähler**: Variablen, Parameter, Felder, Array-Elemente und statische Felder (`retain` beim Speichern, `release` beim
-  Überschreiben, beim Verlassen des Scopes und beim Zerstören des Objekts/Arrays). Stack-Zwischenwerte halten nichts.
-* **Frische Werte** (Verkettung, Methoden von `string`, `new T[n]`, ...) kommen mit Zähler 1 in den **temporären Pool**; jeder Scope merkt sich dessen
-  Höhe beim Eintritt und gibt beim Verlassen alles darüber frei. Ein Zwischenwert lebt also bis zum Ende seines Scopes.
-* **`return`** hält den Rückgabewert mit einem Zähler fest, der Aufrufer übernimmt ihn in seinen Pool (`adopt`).
-* **Konstanten** liegen statisch und sind unsterblich (nie gezählt).
-* Der Pool ist ein einfaches Array statt einer verketteten Liste: derselbe Wert darf mehrfach darin stehen (ein Fehler dieser Art wurde
-  durch AddressSanitizer gefunden). Der Zähler-Code kostet nur dort etwas, wo ein Wert eine Referenz sein *kann*:
+* **Objekte, Arrays und Puffer haben genau einen Besitzer** (SPEC 2, 2.5) und werden mit ihm zerstört: sie hängen in derselben `OwnList` (gemeinsamer
+  Kopf `fire::Owned`: Vorgänger, Nachfolger, Besitzer, Art). `new int[n]`, Literale und `new byte[n]` kommen in die Liste des innersten Scopes, direkt einem
+  Feld zugewiesen (`OwnValue`) in die des Objekts; `return` gibt sie an den Aufrufer weiter (`transferOut`/`adopt`), `x.Take()`, `TakeUpwards`, `TakeGlobal`,
+  `TakeTo(obj)` und `delete x` sind kleine Laufzeitfunktionen (`ownMethod`, `deleteValue`). Die inneren Arrays von `new int[3][4]` und `[[1, 2], [3]]` hängen in
+  der Teileliste (`parts`) des äußeren. Es gibt **keine Zähler** für diese Werte.
+* **Handle-Tabelle gegen hängende Referenzen.** Ein zerstörtes Array darf nicht mehr benutzt werden (SPEC 2.5). In den geprüften Modi trägt der `Value` eines
+  Arrays/Puffers den Platz seines Kopfs in einer Tabelle von Generationen (`unit` = Platz, `reserved` = Generation); beim Zerstören bekommt der Platz eine neue
+  Generation, jeder Zugriff vergleicht (`leafAlive`: eine Ladung und ein Vergleich) und meldet sonst die fangbare `DestroyedException`, bevor freigegebener
+  Speicher berührt wird. Mit `#performance` definiert der Generator `FIRE_UNCHECKED`: keine Tabelle, keine Prüfung (undefiniert, wie in der VM-Doku).
+  **Objekte** haben (noch) kein Handle: der Zugriff auf ein zerstörtes Objekt wird nicht erkannt (die VM lässt ihn zu).
+* **Strings und Lambdas werden gezählt** (sie werden frei weitergegeben: `var t = s`, in Feldern und Arrays gespeichert, zurückgegeben):
+  * **Speicherorte halten einen Zähler**: Variablen, Parameter, Felder, Array-Elemente und statische Felder (`retain` beim Speichern, `release` beim
+    Überschreiben, beim Verlassen des Scopes und beim Zerstören des Objekts/Arrays). Stack-Zwischenwerte halten nichts.
+  * **Frische Werte** (Verkettung, Methoden von `string`, ...) kommen mit Zähler 1 in den **temporären Pool**; jeder Scope merkt sich dessen
+    Höhe beim Eintritt und gibt beim Verlassen alles darüber frei. Ein Zwischenwert lebt also bis zum Ende seines Scopes.
+  * **`return`** hält den Rückgabewert mit einem Zähler fest, der Aufrufer übernimmt ihn in seinen Pool (`adopt`).
+  * **Konstanten** liegen statisch und sind unsterblich (nie gezählt).
+  * Der Pool ist ein einfaches Array statt einer verketteten Liste: derselbe Wert darf mehrfach darin stehen (ein Fehler dieser Art wurde
+    durch AddressSanitizer gefunden).
 * **"Kann eine Referenz sein"** leitet der Generator für jede Variable und jeden Stack-Platz ab (Konstanten, Zahlenrechnung und Vergleiche sind
-  es nie; Parameter, Aufrufergebnisse, Feld- und Array-Lesungen schon). Nur dann entstehen `retain`/`release` und das stringfähige `addR`
-  statt `add`. Reine Zahlenschleifen sind deshalb so schnell wie zuvor. (Parameter gelten vorerst immer als "kann Referenz sein"; eine
-  Analyse aller Aufrufstellen kann das später einschränken.)
+  es nie; Parameter, Aufrufergebnisse, Feld- und Array-Lesungen schon). Nur dann entstehen `retain`/`release` (für Strings und Lambdas) und das stringfähige
+  `addR` statt `add`. Reine Zahlenschleifen sind deshalb so schnell wie zuvor.
+* `TakeUpwards` braucht den Elternscope: nutzt ein Programm die Methode, bekommt jeder Scope eine Liste und kennt seinen Eltern (`OwnList::parent`; ein
+  Funktions-Scope hat den globalen Scope als Eltern, wie in der VM).
 
 Bekannte Abweichungen zur VM: Unicode-Klassifizierung und Groß-/Kleinschreibung nur für Basic Latin, Latin-1, Griechisch und Kyrillisch
 (`char.IsDigit` nur ASCII-Ziffern); `print(objekt)` ohne `ToString()` schreibt `<object>`; das Zahlenformat `E` fehlt.
@@ -171,7 +181,8 @@ einzigen Maschine, keine Garantie.
   `.Length`, Indexierung, alle Methoden von `string` (`IndexOf`, `LastIndexOf`, `Substring`, `CharAt`, `Contains`, `StartsWith`, `EndsWith`,
   `ToUpper`, `ToLower`, `Trim*`, `Replace`, `Split`, `PadLeft`, `PadRight`) und von `char`
 * **Arrays und Puffer**: `new T[n]`, Literale, Zugriff und Zuweisung, `++` auf Elementen, `length`, verschachtelte (gezackte) Arrays,
-  `byte[]`, `foreach` über Arrays, Index-Methoden von Klassen (`GetIndex`/`SetIndex`) und damit `List` aus dem Prelude
+  `byte[]`, `foreach` über Arrays, Index-Methoden von Klassen (`GetIndex`/`SetIndex`) und damit `List` aus dem Prelude; als Teil des Besitzmodells
+  (SPEC 2.5): `Take()`, `TakeUpwards()`, `TakeGlobal()`, `TakeTo(obj)`, `delete x`, `DestroyedException`
 
 * **Lambdas**: `func (x) => ...`, Kurzschreibweisen, Captures als Kopie (SPEC 4.2.1), `on`-Ziel, verschachtelte Lambdas, Signaturprüfung
   (`lambda<...>`), Einheitenprüfung (`CheckUnit`). Ein Lambda ist ein referenzgezählter Wert (Funktionszeiger, kopierte Captures, `on`-Ziel); die

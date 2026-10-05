@@ -88,6 +88,8 @@ inline UnwindState g_unwind = {0, UW_NONE, nullptr, {}, 0, 0, {}};
 /// A run-time error that the language reports as an exception (see the exceptions section): the exception is thrown, or - when
 /// the program has no exceptions at all - it ends the program.
 inline Value indexError(const char* what, int64_t index, int64_t length);
+/// The use of a destroyed array or buffer (SPEC 2.5): a DestroyedException, or the end of the program when there are no exceptions.
+inline Value destroyedError(Value leaf);
 
 [[noreturn]] FIRE_COLD inline void fatal(const char* message) {
     std::fflush(stdout);
@@ -105,18 +107,19 @@ inline bool isNumeric(Value v) { return v.kind == K_Int || v.kind == K_Float; }
 inline Real toR(Value v) { return v.kind == K_Float ? v.f : (Real)v.i; }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Reference-counted heap values: strings (UTF-16, like the VM), arrays and byte buffers.
-//
-// The language has no garbage collector, but - unlike objects, which have exactly one owner - these values are shared freely
-// (`var t = s`, stored in fields and arrays, returned). So they are counted:
-//  * a *storage location* (variable, parameter, field, array element, static) holds one count of what it contains;
-//  * a stack temporary holds nothing: a fresh value is pushed on the *temporary pool* (count 1) and the scope that created it
-//    releases everything above its mark when it is left (so a temporary lives until the end of its scope);
-//  * `return` retains the value for the trip and the caller adopts it onto its pool (see `adopt`).
-// Constants live in static storage and are immortal (never counted).
+// Heap values. Two kinds of lifetime:
+//  * strings (UTF-16, like the VM) and lambdas are values that are shared freely (`var t = s`, stored in fields and arrays, returned).
+//    They are *counted*:
+//      - a *storage location* (variable, parameter, field, array element, static) holds one count of what it contains;
+//      - a stack temporary holds nothing: a fresh value is pushed on the *temporary pool* (count 1) and the scope that created it
+//        releases everything above its mark when it is left (so a temporary lives until the end of its scope);
+//      - `return` retains the value for the trip and the caller adopts it onto its pool (see `adopt`).
+//    Constants live in static storage and are immortal (never counted).
+//  * objects, arrays and byte buffers have exactly one *owner* (SPEC 2): a scope or another object. They are destroyed with it and
+//    never counted (see the ownership section).
 // ---------------------------------------------------------------------------------------------------------------------
 constexpr uint32_t IMMORTAL = 0xFFFFFFFFu;
-enum RefType : uint8_t { R_Str, R_Arr, R_Buf, R_Lam };
+enum RefType : uint8_t { R_Str, R_Lam };
 
 struct Ref {
     uint32_t rc;     // number of holders; IMMORTAL for constants
@@ -129,12 +132,6 @@ struct Str : Ref {
     const char16_t* data;
 };
 
-/// Fixed-size array of Values (elements start as `undefined`).
-struct alignas(alignof(Value)) Arr : Ref {
-    uint32_t length;
-    Value* items() { return reinterpret_cast<Value*>(this + 1); }
-};
-
 /// A lambda value: the function, the values it captured when it was created (copies, SPEC 4.2.1) and the `on` target (`this`).
 struct alignas(alignof(Value)) Lam : Ref {
     uint32_t nparams;
@@ -144,17 +141,108 @@ struct alignas(alignof(Value)) Lam : Ref {
     Value* caps() { return reinterpret_cast<Value*>(this + 1); }
 };
 
+// Owned values: the header they share. An owner is an OwnList (for a scope a local of the generated function, for an object the
+// `owned` list in its header); it holds its members in creation order, which is the order they are destroyed in.
+struct OwnList;
+enum OwnedKind : uint8_t { O_Object, O_Array, O_Buffer };
+
+struct Owned {
+    Owned* prev;
+    Owned* next;
+    OwnList* owner;    // the list this value is in; null while it travels as a return value to its new owner
+    uint32_t slot;     // arrays and buffers: the slot in the handle table (see below)
+    uint16_t gen;      // ... and its generation
+    uint8_t okind;     // OwnedKind
+    uint8_t flags;     // bit 0: destroyed (or being destroyed)
+};
+
+struct OwnList {
+    Owned* head;
+    Owned* tail;
+    uint32_t mark;     // scopes: height of the temporary pool when the scope was entered
+    OwnList* parent;   // scopes: the enclosing scope (TakeUpwards; set only when the program uses it)
+    Owned* holder;     // object lists: the object that owns the list (null for a scope)
+};
+
+/// Fixed-size array of Values (elements start as `undefined`). It owns the inner arrays that were made together with it
+/// (`new int[3][4]`, `[[1, 2], [3]]`), not the elements that are assigned later.
+struct alignas(alignof(Value)) Arr : Owned {
+    uint32_t length;
+    OwnList* parts;
+    Value* items() { return reinterpret_cast<Value*>(this + 1); }
+};
+
 /// Byte buffer (`byte[]`).
-struct Buf : Ref {
+struct Buf : Owned {
     uint32_t length;
     uint8_t* bytes() { return reinterpret_cast<uint8_t*>(this + 1); }
 };
 
-inline Value StrV(const Str* s) { Value r; r.kind = K_String; r.width = 0; r.reserved = 0; r.unit = 0; r.p = s; return r; }
-inline Value ArrV(Arr* a) { Value r; r.kind = K_Array; r.width = 0; r.reserved = 0; r.unit = 0; r.p = a; return r; }
-inline Value BufV(Buf* b) { Value r; r.kind = K_Buffer; r.width = 0; r.reserved = 0; r.unit = 0; r.p = b; return r; }
+// ---- Handles. A destroyed array or buffer must not be used any more (SPEC 2.5): in the checked modes a Value of an array or
+// buffer carries the slot of its header in a table of generations (`unit` = slot, `reserved` = generation); the slot of a destroyed
+// value gets a new generation, so a stale Value is recognized before the freed memory is touched. With FIRE_UNCHECKED
+// (`#performance`) there is no table and nothing is checked.
+#ifndef FIRE_UNCHECKED
+struct SlotTable {
+    uint16_t* gen;
+    uint32_t* freed;
+    uint32_t count, cap, nfree, freedCap;
+};
+inline SlotTable g_slots = {nullptr, nullptr, 0, 0, 0, 0};
 
-inline bool isRef(Value v) { return ((0x350u >> v.kind) & 1u) != 0; }  // String, Lambda, Array, Buffer
+[[noreturn]] FIRE_COLD inline void outOfMemory() { fatal("Out of memory."); }
+
+FIRE_COLD inline uint32_t slotGrow() {
+    uint32_t cap = g_slots.cap ? g_slots.cap * 2 : 256;
+    uint16_t* gen = static_cast<uint16_t*>(std::realloc(g_slots.gen, cap * sizeof(uint16_t)));
+    if (!gen) outOfMemory();
+    std::memset(gen + g_slots.cap, 0, (cap - g_slots.cap) * sizeof(uint16_t));
+    g_slots.gen = gen;
+    g_slots.cap = cap;
+    return cap;
+}
+inline void slotAcquire(Owned* o) {
+    uint32_t slot;
+    if (g_slots.nfree) slot = g_slots.freed[--g_slots.nfree];
+    else {
+        if (FIRE_UNLIKELY(g_slots.count == g_slots.cap)) slotGrow();
+        slot = g_slots.count++;
+    }
+    o->slot = slot;
+    o->gen = g_slots.gen[slot];
+}
+inline void slotRelease(Owned* o) {
+    uint32_t slot = o->slot;
+    g_slots.gen[slot] = (uint16_t)(g_slots.gen[slot] + 1);
+    if (g_slots.nfree == g_slots.freedCap) {
+        uint32_t cap = g_slots.freedCap ? g_slots.freedCap * 2 : 256;
+        uint32_t* freed = static_cast<uint32_t*>(std::realloc(g_slots.freed, cap * sizeof(uint32_t)));
+        if (!freed) outOfMemory();
+        g_slots.freed = freed;
+        g_slots.freedCap = cap;
+    }
+    g_slots.freed[g_slots.nfree++] = slot;
+}
+#else
+inline void slotAcquire(Owned* o) { o->slot = 0; o->gen = 0; }
+inline void slotRelease(Owned*) {}
+#endif
+
+/// Is the array or buffer behind this value still alive?
+inline bool leafAlive(Value v) {
+#ifdef FIRE_UNCHECKED
+    (void)v;
+    return true;
+#else
+    return FIRE_LIKELY(g_slots.gen[v.unit] == v.reserved);
+#endif
+}
+
+inline Value StrV(const Str* s) { Value r; r.kind = K_String; r.width = 0; r.reserved = 0; r.unit = 0; r.p = s; return r; }
+inline Value ArrV(Arr* a) { Value r; r.kind = K_Array; r.width = 0; r.reserved = a->gen; r.unit = a->slot; r.p = a; return r; }
+inline Value BufV(Buf* b) { Value r; r.kind = K_Buffer; r.width = 0; r.reserved = b->gen; r.unit = b->slot; r.p = b; return r; }
+
+inline bool isRef(Value v) { return ((0x50u >> v.kind) & 1u) != 0; }  // String, Lambda (counted values)
 inline Ref* refOf(Value v) { return static_cast<Ref*>(const_cast<void*>(v.p)); }
 inline const Str* strOf(Value v) { return static_cast<const Str*>(v.p); }
 inline Arr* arrOf(Value v) { return static_cast<Arr*>(const_cast<void*>(v.p)); }
@@ -402,29 +490,16 @@ inline int formatReal(Real v, char* out) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Objects and ownership (SPEC 2): every object has exactly one owner - a scope or another object - and is destroyed (its
-// destruct() runs, then everything it owns) when the owner is destroyed. An owner is an OwnList: for a scope a local of the
-// generated function, for an object the `owned` list in its header. Objects are freed when destroyed.
+// Objects and ownership (SPEC 2): every object, array and byte buffer has exactly one owner - a scope or another object - and is
+// destroyed (for an object its destruct() runs, then everything it owns) when the owner is destroyed. An owner is an OwnList: for
+// a scope a local of the generated function, for an object the `owned` list in its header. Destroyed values are freed.
 //
-// Differences to the VM: a reference to a destroyed object is not detected (the VM reports an error); compile with
-// -DFIRE_KEEP_DESTROYED to keep destroyed objects in memory and get the check.
+// Differences to the VM: a reference to a destroyed *object* is not detected (the VM keeps destroyed objects readable); a destroyed
+// array or buffer is (see the handles above).
 // ---------------------------------------------------------------------------------------------------------------------
-struct Obj;
-
-/// Doubly linked list of the objects an owner owns, in creation order (the order in which they are destroyed).
-struct OwnList {
-    Obj* head;       // objects, in creation order
-    Obj* tail;
-    uint32_t mark;   // height of the temporary pool when the scope was entered
-};
-
-struct alignas(alignof(Value)) Obj {
+struct alignas(alignof(Value)) Obj : Owned {
     uint32_t cls;      // class id (assigned by the generator)
-    uint32_t flags;    // bit 0: destroyed
     uint32_t nfields;
-    OwnList* owner;    // the list this object is in; null while it travels as a return value to its new owner
-    Obj* prev;
-    Obj* next;
     OwnList owned;     // what this object owns
     Value* fields() { return reinterpret_cast<Value*>(this + 1); }
 };
@@ -438,7 +513,7 @@ inline Obj* asObj(Value v) {
     return static_cast<Obj*>(const_cast<void*>(v.p));
 }
 
-inline void link(OwnList* list, Obj* o) {
+inline void link(OwnList* list, Owned* o) {
     o->owner = list;
     o->prev = list->tail;
     o->next = nullptr;
@@ -446,7 +521,7 @@ inline void link(OwnList* list, Obj* o) {
     list->tail = o;
 }
 
-inline void unlink(Obj* o) {
+inline void unlink(Owned* o) {
     OwnList* list = o->owner;
     if (!list) return;
     if (o->prev) o->prev->next = o->next; else list->head = o->next;
@@ -462,10 +537,15 @@ inline Value newObject(uint32_t cls, uint32_t fieldCount, OwnList* owner) {
     void* memory = std::malloc(sizeof(Obj) + fieldCount * sizeof(Value));
     if (FIRE_UNLIKELY(!memory)) allocFailed();
     Obj* o = static_cast<Obj*>(memory);
+    o->okind = O_Object;
+    o->slot = 0;
+    o->gen = 0;
     o->cls = cls;
     o->flags = 0;
     o->owned.head = o->owned.tail = nullptr;
     o->owned.mark = 0;
+    o->owned.parent = nullptr;
+    o->owned.holder = o;
     o->nfields = fieldCount;
     Value* f = o->fields();
     for (uint32_t i = 0; i < fieldCount; i++) f[i] = Undef();
@@ -474,6 +554,7 @@ inline Value newObject(uint32_t cls, uint32_t fieldCount, OwnList* owner) {
 }
 
 inline void destroyList(OwnList* list);
+inline void destroyLeaf(Owned* o);
 
 inline void destroy(Obj* o) {
     if (o->flags & 1) return;
@@ -495,14 +576,30 @@ inline void destroy(Obj* o) {
 
 /// Destroys everything on the list, in creation order, and empties it.
 inline void destroyList(OwnList* list) {
-    Obj* o = list->head;
+    Owned* o = list->head;
     list->head = list->tail = nullptr;
     while (o) {
-        Obj* next = o->next;
+        Owned* next = o->next;
         o->owner = nullptr;
-        destroy(o);
+        if (o->okind == O_Object) destroy(static_cast<Obj*>(o));
+        else destroyLeaf(o);
         o = next;
     }
+}
+
+/// An array or buffer is destroyed: what it holds is released, the inner arrays it owns are destroyed, its handle expires.
+inline void destroyLeaf(Owned* o) {
+    if (o->flags & 1) return;
+    o->flags |= 1;
+    if (o->owner) unlink(o);
+    if (o->okind == O_Array) {
+        Arr* a = static_cast<Arr*>(o);
+        Value* items = a->items();
+        for (uint32_t i = 0; i < a->length; i++) release(items[i]);
+        if (a->parts) { destroyList(a->parts); std::free(a->parts); }
+    }
+    slotRelease(o);
+    std::free(o);
 }
 
 /// Leaving a scope: destroys what it owns and lets go of the strings/arrays it created.
@@ -511,19 +608,23 @@ inline void leave(OwnList* list) {
     if (g_pool.top > list->mark) poolRelease(list->mark);
 }
 
-/// `return`: an object returned from the scope that owns it does not die with it; it goes to the caller (SPEC 2.3).
-inline void transferOut(Value v, OwnList* list) {
-    if (v.kind == K_Class) {
-        Obj* o = static_cast<Obj*>(const_cast<void*>(v.p));
-        if (o->owner == list) unlink(o);
-    }
+/// The header of an object, an array or a buffer (null for any other value, and for an array or buffer that is already destroyed).
+inline Owned* ownedOf(Value v) {
+    if (v.kind == K_Class) return static_cast<Owned*>(const_cast<void*>(v.p));
+    if ((v.kind == K_Array || v.kind == K_Buffer) && leafAlive(v)) return static_cast<Owned*>(const_cast<void*>(v.p));
+    return nullptr;
 }
 
-/// The caller takes over what came back from a call: an object without an owner, or a string/array/buffer that the callee
-/// retained for the trip (that count now belongs to the scope's list).
+/// `return`: an object (array, buffer) returned from the scope that owns it does not die with it; it goes to the caller (SPEC 2.3).
+inline void transferOut(Value v, OwnList* list) {
+    Owned* o = ownedOf(v);
+    if (o && o->owner == list) unlink(o);
+}
+
+/// The caller takes over what came back from a call: an object, array or buffer without an owner, or a string/lambda that the
+/// callee retained for the trip (that count now belongs to the scope's pool).
 inline void adopt(Value v, OwnList* list) {
-    if (v.kind == K_Class) {
-        Obj* o = static_cast<Obj*>(const_cast<void*>(v.p));
+    if (Owned* o = ownedOf(v)) {
         if (!o->owner) link(list, o);
     } else if (isRef(v)) {
         Ref* r = refOf(v);
@@ -540,10 +641,6 @@ inline void freeRef(Ref* r) {
         Lam* l = static_cast<Lam*>(r);
         Value* caps = l->caps();
         for (uint32_t i = 0; i < l->ncaps; i++) release(caps[i]);
-    } else if (r->type == R_Arr) {
-        Arr* a = static_cast<Arr*>(r);
-        Value* items = a->items();
-        for (uint32_t i = 0; i < a->length; i++) release(items[i]);
     }
     std::free(r);
 }
@@ -568,14 +665,18 @@ inline Str* allocStr(uint32_t length, OwnList* list) {
 }
 inline char16_t* strChars(Str* s) { return const_cast<char16_t*>(s->data); }
 
+/// A new array; it belongs to `list` (the innermost scope of the creator, or the object that it is assigned to directly).
 inline Arr* allocArr(uint32_t length, OwnList* list) {
     Arr* a = static_cast<Arr*>(std::malloc(sizeof(Arr) + (size_t)length * sizeof(Value)));
     if (FIRE_UNLIKELY(!a)) allocFailed();
-    a->type = R_Arr;
+    a->okind = O_Array;
+    a->flags = 0;
     a->length = length;
+    a->parts = nullptr;
     Value* items = a->items();
     for (uint32_t i = 0; i < length; i++) items[i] = Undef();
-    registerTemp(a, list);
+    slotAcquire(a);
+    link(list, a);
     return a;
 }
 
@@ -620,10 +721,12 @@ inline void checkUnit(Value v, uint32_t unit, Value expectedText) {
 inline Buf* allocBuf(uint32_t length, OwnList* list) {
     Buf* b = static_cast<Buf*>(std::malloc(sizeof(Buf) + length));
     if (FIRE_UNLIKELY(!b)) allocFailed();
-    b->type = R_Buf;
+    b->okind = O_Buffer;
+    b->flags = 0;
     b->length = length;
     std::memset(b->bytes(), 0, length);
-    registerTemp(b, list);
+    slotAcquire(b);
+    link(list, b);
     return b;
 }
 
@@ -1139,7 +1242,7 @@ inline Value indexError(const char* what, int64_t index, int64_t length) {
     char text[120];
     int n = std::snprintf(text, sizeof text, "%s %lld out of range (length %lld).", what, (long long)index, (long long)length);
 #ifdef FIRE_EXCEPTIONS
-    OwnList unused = {nullptr, nullptr, 0};
+    OwnList unused = {nullptr, nullptr, 0, nullptr, nullptr};
     Str* msg = allocStr((uint32_t)n, &unused);
     widenAscii(text, (uint32_t)n, strChars(msg));
     return throwValue(makeIndexError(StrV(msg), index, length));
@@ -1156,7 +1259,7 @@ inline void unitMismatch(Value v, Value expectedText) {
     uint32_t an = actualUnit ? utf8ToUtf16(g_unitNames[actualUnit], actualText, 80) : 0;
     if (!actualUnit) { const char* none = "(no unit)"; an = widenAscii(none, 9, actualText); }
     const Str* expected = strOf(expectedText);
-    OwnList unused = {nullptr, nullptr, 0};
+    OwnList unused = {nullptr, nullptr, 0, nullptr, nullptr};
     Str* msg = allocStr(15 + expected->length + 7 + an + 1, &unused);
     char16_t* d = strChars(msg);
     uint32_t n = widenAscii("Expected unit '", 15, d);
@@ -1173,6 +1276,22 @@ inline void unitMismatch(Value v, Value expectedText) {
 #endif
 }
 
+/// Generated: builds a DestroyedException (message) owned by the global scope.
+Value makeDestroyedError(Value message);
+
+inline Value destroyedError(Value leaf) {
+    const char* text = leaf.kind == K_Buffer ? "Access to a destroyed buffer." : "Access to a destroyed array.";
+#ifdef FIRE_EXCEPTIONS
+    OwnList unused = {nullptr, nullptr, 0, nullptr, nullptr};
+    uint32_t n = (uint32_t)std::strlen(text);
+    Str* msg = allocStr(n, &unused);
+    widenAscii(text, n, strChars(msg));
+    return throwValue(makeDestroyedError(StrV(msg)));
+#else
+    fatal(text);
+#endif
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Arrays and byte buffers
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1180,12 +1299,14 @@ inline void unitMismatch(Value v, Value expectedText) {
 /// `a[i]` for arrays, buffers and strings (objects with a GetIndex method are handled by the generated code).
 inline Value arrayGet(Value a, Value i) {
     if (FIRE_LIKELY(a.kind == K_Array && i.kind == K_Int)) {
+        if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
         Arr* arr = arrOf(a);
         if (FIRE_UNLIKELY((uint64_t)i.i >= arr->length)) return indexError("Array index", i.i, arr->length);
         return arr->items()[i.i];
     }
     if (i.kind != K_Int) fatal("An index must be an int.");
     if (a.kind == K_Buffer) {
+        if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
         Buf* b = bufOf(a);
         if ((uint64_t)i.i >= b->length) return indexError("Array index", i.i, b->length);
         return Int(b->bytes()[i.i]);
@@ -1201,6 +1322,7 @@ inline Value arrayGet(Value a, Value i) {
 /// `a[i] = v`; the array holds a count of the new element and lets go of the old one.
 inline void arraySet(Value a, Value i, Value v) {
     if (FIRE_LIKELY(a.kind == K_Array && i.kind == K_Int)) {
+        if (FIRE_UNLIKELY(!leafAlive(a))) { destroyedError(a); return; }
         Arr* arr = arrOf(a);
         if (FIRE_UNLIKELY((uint64_t)i.i >= arr->length)) { indexError("Array index", i.i, arr->length); return; }
         Value old = arr->items()[i.i];
@@ -1212,6 +1334,7 @@ inline void arraySet(Value a, Value i, Value v) {
     if (i.kind != K_Int) fatal("An index must be an int.");
     if (a.kind == K_Buffer) {
         if (v.kind != K_Int) fatal("Assigning to a byte buffer expects an int value.");
+        if (FIRE_UNLIKELY(!leafAlive(a))) { destroyedError(a); return; }
         Buf* b = bufOf(a);
         if ((uint64_t)i.i >= b->length) { indexError("Array index", i.i, b->length); return; }
         b->bytes()[i.i] = (uint8_t)v.i;
@@ -1259,11 +1382,13 @@ inline void requireRef(Value v, const char* name) {
 inline Value addressOfIndex(Value a, Value i) {
     if (i.kind != K_Int) fatal("An index must be an int.");
     if (a.kind == K_Array) {
+        if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
         Arr* arr = arrOf(a);
         if ((uint64_t)i.i >= arr->length) return indexError("Array index", i.i, arr->length);
         return PtrV(&arr->items()[i.i]);
     }
     if (a.kind == K_Buffer) {
+        if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
         Buf* b = bufOf(a);
         if ((uint64_t)i.i >= b->length) return indexError("Array index", i.i, b->length);
         return BytePtrV(&b->bytes()[i.i]);
@@ -1273,9 +1398,9 @@ inline Value addressOfIndex(Value a, Value i) {
 
 inline Value lengthOf(Value v, bool* ok) {
     *ok = true;
-    if (v.kind == K_Array) return Int(arrOf(v)->length);
+    if (v.kind == K_Array) { if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v); return Int(arrOf(v)->length); }
     if (v.kind == K_String) return Int(strOf(v)->length);
-    if (v.kind == K_Buffer) return Int(bufOf(v)->length);
+    if (v.kind == K_Buffer) { if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v); return Int(bufOf(v)->length); }
     *ok = false;
     return Undef();
 }
@@ -1288,6 +1413,117 @@ inline Value newArray(Value size, OwnList* list) {
 inline Value newBuffer(Value size, OwnList* list) {
     if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("A buffer size must be a non-negative int.");
     return BufV(allocBuf((uint32_t)size.i, list));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Ownership of arrays and buffers (SPEC 2.5): inner arrays, Take..., delete
+// ---------------------------------------------------------------------------------------------------------------------
+inline int64_t sizeArg(Value v) {
+    if (FIRE_UNLIKELY(v.kind != K_Int)) fatal("An array size must be an int.");
+    return v.i;
+}
+
+inline OwnList* newPartsList(Owned* holder) {
+    OwnList* parts = static_cast<OwnList*>(std::malloc(sizeof(OwnList)));
+    if (FIRE_UNLIKELY(!parts)) allocFailed();
+    *parts = {nullptr, nullptr, 0, nullptr, holder};
+    return parts;
+}
+
+inline void fillJagged(Arr* arr, const int64_t* sizes, int ranks, int level, OwnList* parts) {
+    for (uint32_t i = 0; i < arr->length; i++) {
+        Arr* inner = allocArr((uint32_t)sizes[level], parts);
+        arr->items()[i] = ArrV(inner);
+        if (level + 1 < ranks) fillJagged(inner, sizes, ranks, level + 1, parts);
+    }
+}
+
+/// `new T[a][b]...`: the inner arrays belong to the outer one.
+inline Value newJagged(const int64_t* sizes, int ranks, OwnList* list) {
+    for (int i = 0; i < ranks; i++)
+        if (sizes[i] < 0 || sizes[i] > 0x7FFFFFFF) fatal("An array size must be a non-negative int.");
+    Arr* outer = allocArr((uint32_t)sizes[0], list);
+    if (ranks > 1 && outer->length > 0) {
+        outer->parts = newPartsList(outer);
+        fillJagged(outer, sizes, ranks, 1, outer->parts);
+    }
+    return ArrV(outer);
+}
+
+/// An array that was made inside the expression of its outer array (`[[1, 2], [3]]`) belongs to it now.
+inline void attachPart(Value outer, Value inner) {
+    Owned* o = ownedOf(inner);
+    if (!o) return;
+    Arr* arr = arrOf(outer);
+    if (o->owner) unlink(o);
+    if (!arr->parts) arr->parts = newPartsList(arr);
+    link(arr->parts, o);
+}
+
+/// Gives an object, array or buffer to the object `target` (TakeTo, a direct field assignment): when the target is already being
+/// destroyed the value goes with it at once (SPEC 2.2); an object must not become an owner of itself or of its owners.
+inline void takeToObject(Owned* o, Obj* target) {
+    if (target->flags & 1) {
+        if (o->owner) unlink(o);
+        if (o->okind == O_Object) destroy(static_cast<Obj*>(o)); else destroyLeaf(o);
+        return;
+    }
+    if (o->okind == O_Object)
+        for (Owned* x = target;;) {
+            if (x == o) fatal("TakeTo: cycle detected - the target object is already owned (directly or transitively) by this object.");
+            OwnList* l = x->owner;
+            if (!l || !l->holder) break;
+            x = l->holder;
+        }
+    if (o->owner) unlink(o);
+    link(&target->owned, o);
+}
+
+/// `obj.field = new int[3]`: the array belongs to the object.
+inline Value ownValue(Value owner, Value v) {
+    if (Owned* o = ownedOf(v)) takeToObject(o, asObj(owner));
+    return v;
+}
+
+enum OwnMethod { OM_Take, OM_TakeUpwards, OM_TakeGlobal, OM_TakeTo };
+
+/// `x.Take()`, `x.TakeUpwards()`, `x.TakeGlobal()`, `x.TakeTo(obj)` on an object, an array or a buffer (SPEC 2.2).
+inline void ownMethod(int method, Value self, Value arg, OwnList* here) {
+    Owned* o = ownedOf(self);
+    if (!o) fatal("Take... is only possible for an object, an array or a buffer that is not destroyed.");
+    if (o->flags & 1) fatal("A destroyed value cannot change its owner.");
+    switch (method) {
+        case OM_Take:
+            if (o->owner) unlink(o);
+            link(here, o);
+            break;
+        case OM_TakeUpwards: {
+            OwnList* current = o->owner;
+            if (!current || current->holder) fatal("TakeUpwards is only valid if the current owner is a scope.");
+            if (!current->parent) fatal("TakeUpwards: the current scope has no parent scope (already global).");
+            unlink(o);
+            link(current->parent, o);
+            break;
+        }
+        case OM_TakeGlobal:
+            if (o->owner) unlink(o);
+            link(g_globalOwn, o);
+            break;
+        default:
+            takeToObject(o, asObj(arg));
+            break;
+    }
+}
+
+/// `delete x`: destroys the object (destructor, everything it owns), array or buffer at once.
+inline void deleteValue(Value v) {
+    if (v.kind == K_Class) {
+        Obj* o = static_cast<Obj*>(const_cast<void*>(v.p));
+        if (o->owner) unlink(o);
+        destroy(o);
+    } else if (v.kind == K_Array || v.kind == K_Buffer) {
+        if (Owned* o = ownedOf(v)) destroyLeaf(o);
+    } else fatal("'delete' expects an object, an array or a buffer.");
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

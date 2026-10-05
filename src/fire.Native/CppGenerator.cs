@@ -94,6 +94,10 @@ namespace fire.Native
         /// <summary>The program throws or catches exceptions: calls are followed by a check of the unwinding flag, and the exception hooks exist.</summary>
         private bool _usesExceptions;
         private readonly List<string> _excTypes = new();
+        /// <summary>The program uses TakeUpwards: every scope then knows its parent scope (and has an owner list).</summary>
+        private bool _usesTakeUpwards;
+        /// <summary>Something needs the list of the global scope from other functions (`g_globalOwn`): exceptions, TakeGlobal, TakeUpwards.</summary>
+        private bool _usesGlobalOwn;
         /// <summary>Methods (name, number of arguments) that a call site passes an address to (`ref` parameters): their dispatcher hands the value to the implementations without `ref`.</summary>
         private readonly HashSet<(string Name, int Argc)> _refCallSites = new();   // catch types, as numbered in the HandlerInfo tables
 
@@ -199,6 +203,16 @@ namespace fire.Native
             return false;
         }
 
+        /// <summary>The runtime enum of a built-in ownership method (SPEC 2.2), or null.</summary>
+        private static string? OwnMethodId(string name, int argc) => (name, argc) switch
+        {
+            ("Take", 0) => "OM_Take",
+            ("TakeUpwards", 0) => "OM_TakeUpwards",
+            ("TakeGlobal", 0) => "OM_TakeGlobal",
+            ("TakeTo", 1) => "OM_TakeTo",
+            _ => null,
+        };
+
         private bool AnyClassHasMethod(string name, int argc) => _classList.Any(c => c.Rc.FindMethodWithAccess(name, argc).Proto != null);
 
         private string Run()
@@ -225,6 +239,7 @@ namespace fire.Native
             sb.AppendLine($"#define FIRE_HAL_{_target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine($"#define FIRE_DEFAULT_STACK_BYTES {_target.DefaultStackBytes}");
             if (_usesExceptions) sb.AppendLine("#define FIRE_EXCEPTIONS 1");
+            if (_program.ExecutionMode == VmExecutionMode.Performance) sb.AppendLine("#define FIRE_UNCHECKED 1 // #performance: destroyed arrays and buffers are not detected");
             if (_program.FloatWidth == 32) sb.AppendLine("#define FIRE_FLOAT32 1 // #floatwidth 32: float is a 32-bit float, like in the VM");
             sb.AppendLine("#include \"fire_rt.hpp\"");
             sb.AppendLine("using namespace fire;");
@@ -302,6 +317,8 @@ namespace fire.Native
                 // run-time errors (index out of range) are thrown as this prelude class
                 var indexError = RegisterClass("IndexOutOfBoundsException");
                 if (indexError.Rc.FindConstructor(3) is { } indexCtor && indexCtor.ParamCount == 3) GetFunc(indexCtor, FuncKind.Ctor);
+                var destroyedError = RegisterClass("DestroyedException");
+                if (destroyedError.Rc.FindConstructor(1) is { } destroyedCtor && destroyedCtor.ParamCount == 1) GetFunc(destroyedCtor, FuncKind.Ctor);
                 var unitError = RegisterClass("UnitMismatchException");
                 if (unitError.Rc.FindConstructor(3) is { } unitCtor && unitCtor.ParamCount == 3) GetFunc(unitCtor, FuncKind.Ctor);
             }
@@ -346,7 +363,7 @@ namespace fire.Native
         {
             var parameters = new List<string> { "Value self" };
             parameters.AddRange(Enumerable.Range(0, argc).Select(i => $"Value a{i}"));
-            if (name == "GetEnumerator" && argc == 0) parameters.Add("OwnList* list");
+            if (name == "GetEnumerator" && argc == 0 || OwnMethodId(name, argc) != null) parameters.Add("OwnList* list");
             return $"static Value call_{Mangle(name)}_{argc}(" + string.Join(", ", parameters) + ")";
         }
 
@@ -364,7 +381,7 @@ namespace fire.Native
                 }
             var extensions = ExtensionMethods(name, argc).ToList();
             bool enumeratorOfArray = name == "GetEnumerator" && argc == 0 && _classes.ContainsKey("ListEnumerator");
-            if (byFunc.Count == 0 && extensions.Count == 0 && !enumeratorOfArray)
+            if (byFunc.Count == 0 && extensions.Count == 0 && !enumeratorOfArray && OwnMethodId(name, argc) == null)
                 throw new NativeNotSupportedException($"method '{name}' with {argc} argument(s): no class of the program and no base-type extension defines it (the built-in methods TakeTo, TakeUpwards and TakeGlobal are not supported yet)");
 
             // a call site that passes addresses: an implementation without `ref` for that position gets the value
@@ -408,7 +425,13 @@ namespace fire.Native
             }
             sb.AppendLine("        default: break;");
             sb.AppendLine("    }");
-            sb.AppendLine($"    fatal(\"Method '{name}' not found on this value.\");");
+            if (OwnMethodId(name, argc) is { } ownId)
+            {
+                // the built-in ownership method for everything that has no method of this name
+                sb.AppendLine($"    ownMethod({ownId}, self, {(argc == 1 ? "a0" : "Undef()")}, list);");
+                sb.AppendLine("    return Undef();");
+            }
+            else sb.AppendLine($"    fatal(\"Method '{name}' not found on this value.\");");
             sb.AppendLine("}");
             return sb.ToString();
         }
@@ -530,6 +553,12 @@ namespace fire.Native
                 sb.AppendLine("    }");
                 sb.AppendLine("}");
                 var indexClass = _classes.GetValueOrDefault("IndexOutOfBoundsException") ?? throw new NativeNotSupportedException("exceptions need the prelude class IndexOutOfBoundsException");
+                var destroyedClass = _classes.GetValueOrDefault("DestroyedException") ?? throw new NativeNotSupportedException("exceptions need the prelude class DestroyedException");
+                sb.AppendLine("Value makeDestroyedError(Value message) {");
+                sb.AppendLine($"    Value o = newObject({destroyedClass.Id}, {destroyedClass.Fields.Count}, g_globalOwn);");
+                sb.AppendLine($"    {_funcByProto[destroyedClass.Rc.FindConstructor(1)!].Name}(o, message);");
+                sb.AppendLine("    return o;");
+                sb.AppendLine("}");
                 var unitClass = _classes.GetValueOrDefault("UnitMismatchException") ?? throw new NativeNotSupportedException("exceptions need the prelude class UnitMismatchException");
                 sb.AppendLine("Value makeUnitError(Value message, Value expected, Value actual) {");
                 sb.AppendLine($"    Value o = newObject({unitClass.Id}, {unitClass.Fields.Count}, g_globalOwn);");
@@ -623,8 +652,9 @@ namespace fire.Native
 
         private void UseExceptions()
         {
-            if (_usesExceptions) return;
+            if (_usesExceptions && _usesGlobalOwn) return;
             _usesExceptions = true;
+            _usesGlobalOwn = true;
             _version++;
         }
 
@@ -676,7 +706,7 @@ namespace fire.Native
             entry[0] = start;
             // Parameters can be anything: assume they may be references (a call-site analysis could narrow this).
             for (int i = 0; i < f.ParamLike; i++) MarkVarRef(VarKey(f, $"P{i}"));
-            if (f.Kind == FuncKind.Main && _usesExceptions) f.NeedsList.Add(GlobalScope);   // thrown exceptions belong to the global scope
+            if (f.Kind == FuncKind.Main && _usesGlobalOwn) f.NeedsList.Add(GlobalScope);   // thrown exceptions, TakeGlobal and TakeUpwards need the list of the global scope
 
             var targets = new HashSet<int>();
             var work = new Stack<int>();
@@ -752,8 +782,9 @@ namespace fire.Native
             if (f.Root.MaxDepth > 0) sb.AppendLine("    Value " + string.Join(", ", Enumerable.Range(0, f.Root.MaxDepth).Select(i => $"s{i}")) + ";");
             var localsToDeclare = locals.Where(l => !(l.StartsWith("P") && int.Parse(l.AsSpan(1)) < f.ParamLike)).ToList();
             if (localsToDeclare.Count > 0) sb.AppendLine("    Value " + string.Join(", ", localsToDeclare.Select(l => l + " = Undef()")) + ";");
-            if (f.NeedsList.Count > 0) sb.AppendLine("    OwnList " + string.Join(", ", f.NeedsList.OrderBy(i => i).Select(i => ListName(i) + (i < 0 ? " = {nullptr, nullptr, poolMark()}" : " = {nullptr, nullptr, 0}"))) + ";");
-            if (f.Kind == FuncKind.Main && _usesExceptions) sb.AppendLine("    g_globalOwn = &OG;");
+            if (f.NeedsList.Count > 0) sb.AppendLine("    OwnList " + string.Join(", ", f.NeedsList.OrderBy(i => i).Select(i => ListName(i) + (i < 0 ? " = {nullptr, nullptr, poolMark(), nullptr, nullptr}" : " = {nullptr, nullptr, 0, nullptr, nullptr}"))) + ";");
+            if (f.Kind == FuncKind.Main && _usesGlobalOwn) sb.AppendLine("    g_globalOwn = &OG;");
+            if (f.Kind != FuncKind.Main && _usesTakeUpwards && f.NeedsList.Contains(FunctionScope)) sb.AppendLine("    OP.parent = g_globalOwn;   // the parent scope of a function scope is the global scope");
             // Parameters are variables: they hold what was passed.
             for (int i = 0; i < f.ParamLike; i++)
                 if (VarRef(VarKey(f, $"P{i}"))) sb.AppendLine($"    retain(P{i});");
@@ -783,7 +814,7 @@ namespace fire.Native
                 string catchVar = $"B{region.CatchScopeId}_0";
                 for (int i = 0; i < region.Catches.Count; i++)
                 {
-                    string init = (locals.Contains(catchVar) ? $"{catchVar} = e; " : "(void)e; ") + (f.NeedsList.Contains(region.CatchScopeId) ? $"{ListName(region.CatchScopeId)}.mark = poolMark(); " : "");
+                    string init = (locals.Contains(catchVar) ? $"{catchVar} = e; " : "(void)e; ") + (f.NeedsList.Contains(region.CatchScopeId) ? $"{ListName(region.CatchScopeId)}.mark = poolMark(); " + (_usesTakeUpwards ? $"{ListName(region.CatchScopeId)}.parent = &{ListName(region.Reg.Scopes[^1].Id)}; " : "") : "");
                     sb.AppendLine($"{inner}case {i}: {{ {init}goto L{region.Catches[i].Addr}; }}");
                 }
                 sb.AppendLine($"{inner}default: break;");
@@ -1200,8 +1231,21 @@ namespace fire.Native
                 case OpCode.JumpIfNotNotEq: return JumpIfNot("eq", true);
 
                 case OpCode.EnterScope:
-                    if (f.NeedsList.Contains(ins.Addr)) E($"{ListName(ins.Addr)}.mark = poolMark();");
+                {
+                    int parentId = st.Scopes[^1].Id;
+                    if (_usesTakeUpwards)
+                    {
+                        // TakeUpwards moves a value to the parent scope: both scopes need a list, the child knows the parent
+                        f.NeedsList.Add(ins.Addr);
+                        f.NeedsList.Add(parentId);
+                    }
+                    if (f.NeedsList.Contains(ins.Addr))
+                    {
+                        E($"{ListName(ins.Addr)}.mark = poolMark();");
+                        if (_usesTakeUpwards) E($"{ListName(ins.Addr)}.parent = &{ListName(parentId)};");
+                    }
                     st.Scopes.Add((ins.Addr, 0)); return Next();
+                }
                 case OpCode.ExitScope:
                 {
                     if (st.Scopes.Count <= 1) throw new NativeNotSupportedException($"ExitScope without scope at {ins.Addr} in {fn}");
@@ -1369,11 +1413,21 @@ namespace fire.Native
                     int argc = ins.A[1];
                     Need(argc + 1);
                     string method = Str(ins.A[0]);
-                    _dispatchers.Add((method, argc));
-                    if (ArgMask() != 0) _refCallSites.Add((method, argc));
                     string owner = OwnerList();
                     int slot = d - argc - 1;
-                    string extra = method == "GetEnumerator" && argc == 0 ? $", &{owner}" : "";
+                    if (OwnMethodId(method, argc) is { } ownMethodId && !AnyClassHasMethod(method, argc))
+                    {
+                        // the built-in ownership methods of objects, arrays and buffers (a class that declares one itself takes precedence)
+                        if (ownMethodId == "OM_TakeUpwards" && !_usesTakeUpwards) { _usesTakeUpwards = true; _usesGlobalOwn = true; _version++; }
+                        if (ownMethodId == "OM_TakeGlobal" && !_usesGlobalOwn) { _usesGlobalOwn = true; _version++; }
+                        E($"ownMethod({ownMethodId}, {S(slot)}, {(argc == 1 ? S(slot + 1) : "Undef()")}, &{owner});");
+                        E($"{S(slot)} = Undef();");
+                        SetR(slot, false);
+                        d = slot + 1; return Next();
+                    }
+                    _dispatchers.Add((method, argc));
+                    if (ArgMask() != 0) _refCallSites.Add((method, argc));
+                    string extra = method == "GetEnumerator" && argc == 0 || OwnMethodId(method, argc) != null ? $", &{owner}" : "";
                     E($"{S(slot)} = call_{Mangle(method)}_{argc}({S(slot)}{Args(d - argc, argc)}{extra});");
                     Check();
                     AdoptResult(slot);
@@ -1479,6 +1533,39 @@ namespace fire.Native
                     E($"{{ Arr* a = allocArr({count}, &{OwnerList()});{sbItems} {S(first)} = ArrV(a); }}");
                     d = first + 1; SetR(first, true); return Next();
                 }
+                case OpCode.MakeArrayLiteralParts:
+                {
+                    int count = ins.A[0];
+                    uint mask = (uint)ins.A[1] | ((uint)ins.A[2] << 16);
+                    Need(count);
+                    int first = d - count;
+                    var sbItems = new StringBuilder();
+                    for (int i = 0; i < count; i++) sbItems.Append($" a->items()[{i}] = {S(first + i)}; retain({S(first + i)});");
+                    // an array made inside the literal belongs to the outer array
+                    var parts = new StringBuilder();
+                    for (int i = 0; i < count; i++)
+                        if ((mask >> i & 1) != 0) parts.Append($" attachPart(ArrV(a), a->items()[{i}]);");
+                    E($"{{ Arr* a = allocArr({count}, &{OwnerList()});{sbItems}{parts} {S(first)} = ArrV(a); }}");
+                    d = first + 1; SetR(first, true); return Next();
+                }
+                case OpCode.NewJagged:
+                {
+                    int ranks = ins.A[0];
+                    Need(ranks);
+                    int first = d - ranks;
+                    var sizes = string.Join(", ", Enumerable.Range(first, ranks).Select(i => $"sizeArg({S(i)})"));
+                    E($"{{ const int64_t sz[{ranks}] = {{{sizes}}}; {S(first)} = newJagged(sz, {ranks}, &{OwnerList()}); }}");
+                    d = first + 1; SetR(first, true); return Next();
+                }
+                case OpCode.OwnValue:
+                    Need(2);
+                    E($"{S(d - 2)} = ownValue({S(d - 2)}, {S(d - 1)});");
+                    SetR(d - 2, true);
+                    d--; return Next();
+                case OpCode.Delete:
+                    Need(1);
+                    E($"deleteValue({S(d - 1)});");
+                    d--; return Next();
                 case OpCode.ArrayGet:
                     Need(2); E($"{S(d - 2)} = aget_g({S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); Check(); d--; SetR(d - 1, true); return Next();
                 case OpCode.ArraySet:
@@ -1541,6 +1628,7 @@ namespace fire.Native
                     UseExceptions();
                     int t = ins.A[0];
                     var region = GetRegion(f, t, st);
+                    if (_usesTakeUpwards && region.Catches.Count > 0) { f.NeedsList.Add(region.CatchScopeId); f.NeedsList.Add(st.Scopes[^1].Id); }
                     E(region.Catches.Count > 0 ? $"H{t}.fn = handlerTrampoline<decltype(C{t})>; H{t}.ctx = &C{t};" : $"H{t}.fn = nullptr; H{t}.ctx = nullptr;");
                     E($"H{t}.info = &HI_{fn}_{t}; pushHandler(&H{t});");
                     var edges = new List<(int, Flow)>();

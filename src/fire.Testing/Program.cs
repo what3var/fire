@@ -12493,6 +12493,154 @@ static int CountOccurrences(string haystack, string needle)
             c.Add(q)
             print(q)
             """),
+        ("Besitz: Arrays und Puffer (Scope, Feld, return, Take-Methoden, delete, zerstoerte Benutzung)", """
+            class Holder {
+                int data[]
+                construct() { this.data = [1, 2, 3] }
+                Fill() { var tmp = new int[2]; tmp[0] = 7; this.data = tmp; tmp.TakeTo(this) }
+                Bad() { var tmp = new int[2]; this.data = tmp }
+            }
+            class Res { string n; construct(string n) { this.n = n } destruct() { print("free " + this.n) } }
+            class Make {
+                static int[] Create() { var a = [4, 5, 6]; return a }
+                static int[] Pair() { var a = new int[2]; { var b = new int[1]; b.TakeUpwards(); a[0] = b[0] } return a }
+            }
+            var h = new Holder()
+            print(h.data[1])
+            h.Fill()
+            print(h.data[0])
+            var r = Make.Create()
+            print(r[2])
+            var p = Make.Pair()
+            print(p.length)
+            h.Bad()
+            try { print(h.data[0]) } catch (DestroyedException e) { print("destroyed: " + e.message) }
+            var x = [1, 2]
+            delete x
+            try { print(x[0]) } catch (e) { print("after delete: " + e.message) }
+            try { print(x.length) } catch (e) { print("len: " + e.message) }
+            var m = new int[2][3]
+            m[1][2] = 9
+            print(m[1][2])
+            delete m
+            try { print(m[0]) } catch (e) { print("matrix gone") }
+            var b = new byte[4]
+            b[1] = 5
+            b.TakeGlobal()
+            print(b[1])
+            {
+                var inner = [9, 9]
+                inner.Take()
+                var r2 = new Res("r2")
+                r2.Take()
+            }
+            print("end")
+            var rr = new Res("kept")
+            delete rr
+            print("last")
+            {
+                var tmp = [1]
+                tmp.TakeGlobal()
+                var g = tmp
+            }
+            print("done")
+            class Cell { int vals[]; construct() { this.vals = new int[3]; this.vals[0] = 5 } }
+            var c = new Cell()
+            print(c.vals[0])
+            var grid = [[1, 2], [3, 4]]
+            print(grid[1][0])
+            class Fn { static int[][] Make() { return [[7, 8], [9]] } }
+            print(Fn.Make()[0][1])
+            var words = "a,b,c".Split(",")
+            print(words.length)
+            """),
+        ("Besitz: Kaskade, TakeUpwards, TakeTo, innere Arrays, List-Wachstum, Ausnahmen", """
+            class Node {
+                string name
+                int items[]
+                construct(string n) { this.name = n; this.items = new int[2]; print("new " + n) }
+                destruct() { print("free " + this.name) }
+            }
+            class Keeper {
+                int store[]
+                Node kid
+                construct() { this.store = [1, 2, 3]; this.kid = new Node("kid") }
+            }
+            class Util {
+                static int[] Up() {
+                    var a = [7, 8]
+                    {
+                        var inner = new int[3]
+                        inner.TakeUpwards()
+                        inner[0] = 5
+                        a[0] = inner[0]
+                    }
+                    return a
+                }
+                static int Sum(int xs[]) { var t = 0; foreach (x in xs) { t = t + x } return t }
+            }
+            var k = new Keeper()
+            print(k.store[2])
+            var kept = k.store
+            delete k
+            try { print(kept[0]) } catch (DestroyedException e) { print("store died with its owner") }
+            var up = Util.Up()
+            print(up[0])
+            var big = new int[3][2]
+            big[2][1] = 4
+            print(big[2][1] + " " + big.length + " " + big[0].length)
+            var g = [[1, 2], [3, 4, 5]]
+            print(Util.Sum(g[1]))
+            var buf = new byte[3]
+            var holder = new Node("holder")
+            buf.TakeTo(holder)
+            holder.items.TakeGlobal()
+            print(buf.length)
+            delete holder
+            try { print(buf.length) } catch (e) { print("buffer died with holder") }
+            class Pool {
+                static int[] Make(int n) {
+                    var tmp = new int[n]
+                    for (var i = 0; i < n; i = i + 1) { tmp[i] = i * i }
+                    return tmp
+                }
+            }
+            var total = 0
+            for (var round = 0; round < 50; round = round + 1) {
+                var a = Pool.Make(20)
+                total = total + a[19]
+                var s = [a[1], a[2]]
+                total = total + s[1]
+            }
+            print(total)
+            var l = new List()
+            for (var i = 0; i < 40; i = i + 1) { l.Add(i) }
+            var sum = 0
+            foreach (v in l) { sum = sum + v }
+            print(sum + " " + l.count)
+            try {
+                var local = new int[4]
+                local[9] = 1
+            } catch (e) {
+                print("oob")
+            }
+            var cur = 0
+            {
+                var scratch = [1, 2]
+                scratch.Take()
+                cur = scratch[1]
+            }
+            print(cur)
+            """),
+        ("Besitz: #performance prueft zerstoerte Arrays nicht (FIRE_UNCHECKED), Ergebnis wie die VM", """
+            #performance
+            var a = new int[100]
+            for (var i = 0; i < 100; i = i + 1) { a[i] = i }
+            var m = new int[4][4]
+            m[3][3] = 9
+            var b = [[1, 2], [3]]
+            print(a[99] + m[3][3] + b[1][0])
+            """),
         ("Benchmark alloc", """
             class Point {
                 int x
@@ -12651,12 +12799,12 @@ static int CountOccurrences(string haystack, string needle)
         }
         try
         {
-            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "class P { int x\n construct() { this.x = 1 } }\nvar p = new P()\np.TakeGlobal()" }, null, null, VmExecutionMode.Release));
-            CheckNat("Eingebaute Methoden (TakeGlobal) werden abgelehnt", false, "keine Ausnahme");
+            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "class P { int v { get { return 5 } } }\nvar p = new P()\nprint(p.v)" }, null, null, VmExecutionMode.Release));
+            CheckNat("Properties werden abgelehnt", false, "keine Ausnahme");
         }
         catch (fire.Native.NativeNotSupportedException ex)
         {
-            CheckNat("Eingebaute Methoden (TakeGlobal) werden abgelehnt", ex.Message.Contains("TakeGlobal"), ex.Message);
+            CheckNat("Properties werden abgelehnt", ex.Message.Contains("property"), ex.Message);
         }
         try { Directory.Delete(workDir, true); } catch (IOException) { }
     }
