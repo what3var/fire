@@ -11284,6 +11284,174 @@ static int CountOccurrences(string haystack, string needle)
             class F { static float Mean(float a, float b) { return (a + b) / 2 } }
             print(F.Mean(0.1, 0.2))
             """),
+        ("Objekte: Klassen, Felder, Konstruktoren, Vererbung, Destruktoren, statische Felder", """
+            class Animal {
+                int id
+                int legs = 4
+                static int count = 0
+                construct(int id) { this.id = id; Animal.count = Animal.count + 1 }
+                destruct() { print(0 - this.id) }
+                Speak() { print(this.id) }
+                int Legs() { return this.legs }
+            }
+            class Dog : Animal {
+                int tricks
+                construct(int id) : base(id) { this.tricks = 2 }
+                Speak() { base.Speak(); print(100 + this.tricks) }
+            }
+            class Holder {
+                Dog pet
+                construct() { this.pet = new Dog(7) }
+            }
+            class Maker {
+                static Dog Make(int id) { var d = new Dog(id); return d }
+            }
+            var d = new Dog(1)
+            d.Speak()
+            print(d.Legs())
+            var h = new Holder()
+            h.pet.Speak()
+            {
+                var inner = new Animal(5)
+                inner.Speak()
+            }
+            var m = Maker.Make(9)
+            m.Speak()
+            print(Animal.count)
+            """),
+        ("Objekte: virtuelle Methoden und gleiche Feldnamen in verschiedenen Klassen", """
+            class Shape {
+                int w
+                int h
+                construct(int w, int h) { this.w = w; this.h = h }
+                int Area() { return 0 }
+                Describe() { print(this.Area()) }
+            }
+            class Rect : Shape {
+                construct(int w, int h) : base(w, h) { }
+                int Area() { return this.w * this.h }
+            }
+            class Square : Rect {
+                construct(int s) : base(s, s) { }
+            }
+            class Triangle : Shape {
+                construct(int w, int h) : base(w, h) { }
+                int Area() { return this.w * this.h / 2 }
+            }
+            class Other {
+                int pad
+                int w
+                construct() { this.pad = 1; this.w = 99 }
+                int Area() { return this.w }
+            }
+            var shapes = new Shape(3, 4)
+            shapes.Describe()
+            var r = new Rect(3, 4)
+            r.Describe()
+            var q = new Square(5)
+            q.Describe()
+            var t = new Triangle(6, 5)
+            t.Describe()
+            var o = new Other()
+            print(o.Area())
+            print(o.w)
+            print(q.w)
+            """),
+        ("Objekte: Besitz - Rueckgabe, Bloecke, Schleifen, break/continue, fruehes return", """
+            class Res {
+                int id
+                construct(int id) { this.id = id; print(this.id) }
+                destruct() { print(0 - this.id) }
+            }
+            class F {
+                static Res Make(int id) {
+                    var tmp = new Res(id + 1000)
+                    if (id > 5) {
+                        var inner = new Res(id + 2000)
+                        return new Res(id)
+                    }
+                    var kept = new Res(id)
+                    return kept
+                }
+                static int Early(int n) {
+                    var guard = new Res(n + 500)
+                    if (n > 0) { return n }
+                    return 0 - 1
+                }
+            }
+            var a = F.Make(1)
+            var b = F.Make(9)
+            print(F.Early(3))
+            print(F.Early(0))
+            for (var i = 0; i < 4; i = i + 1) {
+                var loopRes = new Res(10 + i)
+                if (i == 1) { continue }
+                if (i == 3) { break }
+                print(loopRes.id)
+            }
+            {
+                var x = new Res(70)
+                {
+                    var y = new Res(71)
+                }
+                print(1)
+            }
+            print(a.id + b.id)
+            """),
+        ("Objekte: Besitzer-Kaskade und verkettete Objekte", """
+            class Node {
+                int value
+                Node next
+                construct(int value) { this.value = value }
+                destruct() { print(0 - this.value) }
+                Add(int v) {
+                    if (this.next == undefined) { this.next = new Node(v) }
+                    else { this.next.Add(v) }
+                }
+                int Sum() {
+                    if (this.next == undefined) { return this.value }
+                    return this.value + this.next.Sum()
+                }
+            }
+            var head = new Node(1)
+            head.Add(2)
+            head.Add(3)
+            head.Add(4)
+            print(head.Sum())
+            {
+                var local = new Node(10)
+                local.Add(20)
+                print(local.Sum())
+            }
+            print(head.next.next.value)
+            """),
+        ("Benchmark method", """
+            class Counter {
+                int count
+                int step
+                construct() { this.count = 0; this.step = 2 }
+                Inc() { this.count = this.count + this.step }
+                int Get() { return this.count }
+            }
+            var c = new Counter()
+            for (var i = 0; i < 250000; i = i + 1) {
+                c.Inc()
+            }
+            print(c.Get())
+            """),
+        ("Benchmark alloc", """
+            class Point {
+                int x
+                int y
+                construct(int x, int y) { this.x = x; this.y = y }
+            }
+            var sum = 0
+            for (var i = 0; i < 60000; i = i + 1) {
+                var p = new Point(i, i + 1)
+                sum = sum + p.x + p.y
+            }
+            print(sum)
+            """),
         ("Benchmark loop", """
             var sum = 0
             for (var i = 0; i < 1500000; i = i + 1) {
@@ -11317,6 +11485,17 @@ static int CountOccurrences(string haystack, string needle)
         string workDir = Path.Combine(Path.GetTempPath(), "fire-native-test-" + Guid.NewGuid().ToString("N"));
         fire.Native.NativeRuntimeFiles.WriteTo(workDir);
 
+        // Memory errors in the generated code (ownership, freeing) must not slip through: run the cases under the sanitizers when the compiler has them.
+        string sanitize = "";
+        {
+            string probeFile = Path.Combine(workDir, "probe.cpp");
+            File.WriteAllText(probeFile, "int main() { return 0; }\n");
+            using var probe = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cxx, $"-fsanitize=address,undefined \"{probeFile}\" -o \"{probeFile}.bin\"") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false })!;
+            probe.StandardError.ReadToEnd(); probe.StandardOutput.ReadToEnd(); probe.WaitForExit();
+            if (probe.ExitCode == 0 && System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(probeFile + ".bin") { UseShellExecute = false, RedirectStandardError = true }) is { } run) { run.StandardError.ReadToEnd(); run.WaitForExit(); if (run.ExitCode == 0) sanitize = "-fsanitize=address,undefined -fno-sanitize-recover=undefined "; }
+        }
+        Console.WriteLine(sanitize.Length > 0 ? "(die Faelle laufen unter AddressSanitizer/UBSan)" : "(Sanitizer nicht verfuegbar)");
+
         // The VM runs sequentially: the precision of float is process-wide while a program runs.
         var vmResults = natCases.Select(c => { var text = vmOutput(c.Source); Value.SingleFloats = false; return text; }).ToArray();
 
@@ -11340,7 +11519,7 @@ static int CountOccurrences(string haystack, string needle)
                 return output + errTask.Result;
             }
 
-            string build = RunTool(cxx, $"-std=c++17 -O2 -Wall -Wextra \"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"", out int buildExit);
+            string build = RunTool(cxx, $"-std=c++17 -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"", out int buildExit);
             if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C++-Compiler: " + build);
             string actual = RunTool(exeFile, "", out int runExit);
             return (c.Name, expected, runExit == 0 ? actual : $"Exitcode {runExit}: {actual}");
@@ -11400,12 +11579,21 @@ static int CountOccurrences(string haystack, string needle)
         // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
         try
         {
-            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "class P { int x }\nvar p = new P()\nprint(1)" }, null, null, VmExecutionMode.Release));
+            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "var a = new int[3]\nprint(1)" }, null, null, VmExecutionMode.Release));
             CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt", false, "keine Ausnahme");
         }
         catch (fire.Native.NativeNotSupportedException ex)
         {
-            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (NewObject)", ex.Message.Contains("NewObject"), ex.Message);
+            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (NewArray)", ex.Message.Contains("NewArray"), ex.Message);
+        }
+        try
+        {
+            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "class P { int x\n construct() { this.x = 1 } }\nvar p = new P()\np.TakeGlobal()" }, null, null, VmExecutionMode.Release));
+            CheckNat("Eingebaute Methoden (TakeGlobal) werden abgelehnt", false, "keine Ausnahme");
+        }
+        catch (fire.Native.NativeNotSupportedException ex)
+        {
+            CheckNat("Eingebaute Methoden (TakeGlobal) werden abgelehnt", ex.Message.Contains("TakeGlobal"), ex.Message);
         }
         try { Directory.Delete(workDir, true); } catch (IOException) { }
     }

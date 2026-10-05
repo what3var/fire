@@ -324,4 +324,117 @@ inline Value print(Value v) {
     return Undef();
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Objects and ownership (SPEC 2): every object has exactly one owner - a scope or another object - and is destroyed (its
+// destruct() runs, then everything it owns) when the owner is destroyed. An owner is an OwnList: for a scope a local of the
+// generated function, for an object the `owned` list in its header. Objects are freed when destroyed.
+//
+// Differences to the VM: a reference to a destroyed object is not detected (the VM reports an error); compile with
+// -DFIRE_KEEP_DESTROYED to keep destroyed objects in memory and get the check.
+// ---------------------------------------------------------------------------------------------------------------------
+struct Obj;
+
+/// Doubly linked list of the objects an owner owns, in creation order (the order in which they are destroyed).
+struct OwnList {
+    Obj* head;
+    Obj* tail;
+};
+
+struct alignas(alignof(Value)) Obj {
+    uint32_t cls;      // class id (assigned by the generator)
+    uint32_t flags;    // bit 0: destroyed
+    OwnList* owner;    // the list this object is in; null while it travels as a return value to its new owner
+    Obj* prev;
+    Obj* next;
+    OwnList owned;     // what this object owns
+    Value* fields() { return reinterpret_cast<Value*>(this + 1); }
+};
+
+/// Runs the destructors of the object's class chain, derived class first (generated; empty if no class has one).
+void runDestructors(Obj* o);
+
+inline Value ObjV(Obj* o) { Value r; r.kind = K_Class; r.width = 0; r.reserved = 0; r.unit = 0; r.p = o; return r; }
+inline Obj* asObj(Value v) {
+    if (FIRE_UNLIKELY(v.kind != K_Class)) fatal("A member was accessed on something that is not an object.");
+    return static_cast<Obj*>(const_cast<void*>(v.p));
+}
+
+inline void link(OwnList* list, Obj* o) {
+    o->owner = list;
+    o->prev = list->tail;
+    o->next = nullptr;
+    if (list->tail) list->tail->next = o; else list->head = o;
+    list->tail = o;
+}
+
+inline void unlink(Obj* o) {
+    OwnList* list = o->owner;
+    if (!list) return;
+    if (o->prev) o->prev->next = o->next; else list->head = o->next;
+    if (o->next) o->next->prev = o->prev; else list->tail = o->prev;
+    o->prev = o->next = nullptr;
+    o->owner = nullptr;
+}
+
+FIRE_COLD inline void* allocFailed() { fatal("Out of memory."); }
+
+/// `new`: the object belongs to `owner` (the innermost scope of the creator, or - for `field = new X()` - the object that gets it).
+inline Value newObject(uint32_t cls, uint32_t fieldCount, OwnList* owner) {
+    void* memory = std::malloc(sizeof(Obj) + fieldCount * sizeof(Value));
+    if (FIRE_UNLIKELY(!memory)) allocFailed();
+    Obj* o = static_cast<Obj*>(memory);
+    o->cls = cls;
+    o->flags = 0;
+    o->owned.head = o->owned.tail = nullptr;
+    Value* f = o->fields();
+    for (uint32_t i = 0; i < fieldCount; i++) f[i] = Undef();
+    link(owner, o);
+    return ObjV(o);
+}
+
+inline void destroyList(OwnList* list);
+
+inline void destroy(Obj* o) {
+    if (o->flags & 1) return;
+    o->flags |= 1;
+    runDestructors(o);
+    destroyList(&o->owned);
+#ifndef FIRE_KEEP_DESTROYED
+    std::free(o);
+#endif
+}
+
+/// Destroys everything on the list, in creation order, and empties it.
+inline void destroyList(OwnList* list) {
+    Obj* o = list->head;
+    list->head = list->tail = nullptr;
+    while (o) {
+        Obj* next = o->next;
+        o->owner = nullptr;
+        destroy(o);
+        o = next;
+    }
+}
+
+/// Leaving a scope.
+inline void release(OwnList* list) {
+    if (list->head) destroyList(list);
+}
+
+/// `return`: an object returned from the scope that owns it does not die with it; it goes to the caller (SPEC 2.3).
+inline void transferOut(Value v, OwnList* list) {
+    if (v.kind == K_Class) {
+        Obj* o = static_cast<Obj*>(const_cast<void*>(v.p));
+        if (o->owner == list) unlink(o);
+    }
+}
+
+/// The caller takes over an object that came back from a call without an owner.
+inline void adopt(Value v, OwnList* list) {
+    if (v.kind == K_Class) {
+        Obj* o = static_cast<Obj*>(const_cast<void*>(v.p));
+        if (!o->owner) link(list, o);
+    }
+}
+
 }  // namespace fire

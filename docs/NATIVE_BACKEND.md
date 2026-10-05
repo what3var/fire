@@ -54,6 +54,22 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
 * **Der Generator lehnt ab, was er nicht kann** (`NativeNotSupportedException` mit dem Namen des Opcodes), er übersetzt nie
   mit anderer Semantik.
 
+### Wie Objekte übersetzt werden
+
+* **Klasse = Klassen-Id + Feldlayout** (Basisfelder zuerst, wie in der VM). Ein Objekt ist ein `fire::Obj` (Kopf mit Klassen-Id, Besitzer,
+  Geschwisterliste und der Liste der eigenen Objekte) mit den Feldern als `Value` dahinter. Der Zugriff läuft über kleine erzeugte
+  Hilfsfunktionen `gf_<feld>`/`sf_<feld>`: haben alle Klassen das Feld am selben Index (der Normalfall), ist es ein fester Index, sonst
+  entscheidet die Klassen-Id.
+* **Methodenaufruf** über eine erzeugte Weiche je (Name, Argumentzahl): die Klassen des Programms sind bekannt (geschlossene Welt), die
+  Weiche wählt nach Klassen-Id; gibt es nur eine Implementierung, wird sie direkt aufgerufen und der Compiler bettet sie ein.
+* **Ownership**: Jeder Scope, der Objekte besitzen kann (er erzeugt welche oder ruft etwas auf, das eines zurückgibt), bekommt eine lokale
+  `OwnList`. `new` hängt das Objekt in die Liste des innersten Scopes, `field = new X()` in die Liste des Objekts. Beim Verlassen des
+  Scopes und bei `return` werden die Listen von innen nach außen zerstört (Reihenfolge der Erzeugung, erst `destruct()`, dann die
+  eigenen Objekte); ein zurückgegebenes Objekt, das dem verlassenen Scope gehörte, wandert zum Aufrufer (`transferOut`/`adopt`). Scopes ohne
+  Objekte kosten nichts.
+* Objekte werden beim Zerstören **freigegeben**. Der Zugriff auf ein zerstörtes Objekt wird (anders als in der VM) nicht erkannt; mit
+  `-DFIRE_KEEP_DESTROYED` bleiben sie im Speicher (Fehlersuche). Die Tests laufen unter AddressSanitizer/UBSan.
+
 ### Regeln für die Runtime (gelernt)
 
 * **Alle Funktionen nehmen `Value` per Wert**, nie per Referenz, und die Fehlerpfade nur die Operandenarten. Eine Referenz auf eine
@@ -72,6 +88,8 @@ Rechner dieser Sitzung, g++ 13 `-O2`, VM im Modus *Performance*, Zeiten ohne Pro
 | `loop` (1,5 Mio. Iterationen, Int) | 158 ms | 1,9 ms | ~2,8 ms | ~55x |
 | `float` (600 000 Iterationen) | 99 ms | 3,4 ms | ~4,8 ms | ~20x |
 | `fib` (rekursiv, `Fib(23)`) | 29 ms | 0,27 ms | ~1,3 ms | ~22x |
+| `method` (250 000 Methodenaufrufe, Felder) | 59 ms | - | ~1,5-2,6 ms | ~25-40x |
+| `alloc` (60 000 Objekte erzeugen und freigeben) | 38 ms | - | ~1,7 ms | ~20x |
 
 *Handgeschrieben generisch* heißt: alles bleibt ein getaggter `Value`, so wie es der Generator erzeugt; mit nackten `int64`/`double`
 (Typinferenz) wird `fib` weitere ~4x schneller (`native/spike/spike.cpp`). Die Zahlen sind Momentaufnahmen von einer
@@ -85,11 +103,15 @@ einzigen Maschine, keine Garantie.
 * Lokale und globale Variablen, Blockscopes, verschmolzene Instruktionen (`StoreLocalPop`, `JumpIfNotLt`, `ArithLocalConstPop` ...)
 * `+ - * / %`, Bit-Operationen, Vergleiche, `&&`, `||`, `!`, `if`/`while`/`for`/`do`, `break`/`continue`
 * Statische Methoden (inkl. Rekursion), `print`
+* **Objekte**: Klassen mit Feldern und Feld-Initialisierern, Konstruktoren (inkl. `base(...)`), Methoden mit virtuellem Aufruf,
+  `base.Methode()`, statische Felder, Vererbung, Destruktoren (abgeleitete Klasse zuerst), **Ownership** (SPEC 2): Besitz durch Scopes und
+  Objekte, Kaskadenlöschung beim Verlassen eines Scopes und bei `return`, Übergabe eines zurückgegebenen Objekts an den Aufrufer
 * Einheiten: Rechnen und Vergleichen **gleicher** Einheiten
 * Float-Genauigkeit 32 oder 64 Bit (`#floatwidth`, `-f`), identisch zur VM
 
-Noch nicht (der Generator meldet es mit Namen): Objekte, Felder, Methoden, Konstruktoren, Arrays, Strings über `print` hinaus,
-Lambdas/Closures, Zeiger, Ausnahmen, Threads, Reflection, Einheiten-Algebra und implizites Einheiten-Coercing, `extern`, die Bridges.
+Noch nicht (der Generator meldet es mit Namen): Arrays, Strings über `print` hinaus, Lambdas/Closures, Zeiger, Ausnahmen,
+Threads, Reflection, Properties, Operator-Überladung, `copy`/`flat`, die eingebauten Objektmethoden (`TakeTo`, `TakeUpwards`,
+`TakeGlobal`), Standardargumente, Einheiten-Algebra und implizites Einheiten-Coercing, `extern`, die Bridges.
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes
 C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich sein.
