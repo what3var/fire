@@ -88,12 +88,14 @@ namespace fire.Native
         private readonly SortedSet<(string Name, int Argc)> _dispatchers = new();
         /// <summary>Operators (method names `operator+`, ...) that the program overloads and that an operation of it uses: each gets a wrapper `ov_...` (SPEC 5.11).</summary>
         private readonly SortedSet<string> _operators = new();
+        /// <summary>Class and interface names tested with `is of`: each gets a function `isof_...`.</summary>
+        private readonly SortedSet<string> _isOfTypes = new();
 
         /// <summary>What the operator wrapper does when the left operand is not an object with that overload: the built-in operation.</summary>
         private static readonly Dictionary<string, string> OperatorFallback = new()
         {
             ["operator+"] = "addR(a, b, list)", ["operator-"] = "sub(a, b)", ["operator*"] = "mul(a, b)", ["operator/"] = "divide(a, b)", ["operator%"] = "modulo(a, b)",
-            ["operator&"] = "bitAnd(a, b)", ["operator|"] = "bitOr(a, b)", ["operator#"] = "bitXor(a, b)", ["operator<<"] = "shl(a, b)", ["operator>>"] = "shr(a, b)",
+            ["operator^"] = "power(a, b)", ["operator&"] = "bitAnd(a, b)", ["operator|"] = "bitOr(a, b)", ["operator#"] = "bitXor(a, b)", ["operator<<"] = "shl(a, b)", ["operator>>"] = "shr(a, b)",
             ["operator=="] = "Bool(eq(a, b))", ["operator!="] = "Bool(!eq(a, b))", ["operator<"] = "Bool(lt(a, b))", ["operator<="] = "Bool(le(a, b))",
             ["operator>"] = "Bool(gt(a, b))", ["operator>="] = "Bool(ge(a, b))",
         };
@@ -267,14 +269,24 @@ namespace fire.Native
             if (_usesExceptions) sb.AppendLine("#define FIRE_EXCEPTIONS 1");
             if (_program.ExecutionMode == VmExecutionMode.Performance) sb.AppendLine("#define FIRE_UNCHECKED 1 // #performance: destroyed arrays and buffers are not detected");
             if (_program.FloatWidth == 32) sb.AppendLine("#define FIRE_FLOAT32 1 // #floatwidth 32: float is a 32-bit float, like in the VM");
+            // The unit table: the base symbols of all units of the program (sorted like the VM prints them) and one row per unit.
+            var dimNames = _units.SelectMany(u => u.Dimensions.Keys).Distinct().OrderBy(k => k).ToList();
+            sb.AppendLine($"#define FIRE_NDIMS {Math.Max(1, dimNames.Count)}");
             sb.AppendLine("#include \"fire_rt.hpp\"");
             sb.AppendLine("using namespace fire;");
             sb.AppendLine();
             sb.AppendLine("namespace fire {");
-            sb.Append("const char* const g_unitNames[] = {");
-            sb.Append(string.Join(", ", _units.Select(u => u.IsUnitless ? "\"\"" : CString(u.ToString()))));
-            sb.AppendLine("};");
+            sb.AppendLine($"const char* const g_dimNames[] = {{{(dimNames.Count == 0 ? "\"\"" : string.Join(", ", dimNames.Select(CString)))}}};");
             sb.AppendLine("}");
+            sb.AppendLine("static const UnitInit kUnitInit[] = {");
+            foreach (var u in _units)
+            {
+                var dims = dimNames.Count == 0 ? "0" : string.Join(", ", dimNames.Select(n => u.Dimensions.TryGetValue(n, out int e) ? e.ToString(CultureInfo.InvariantCulture) : "0"));
+                string display = u.DisplaySymbol is { } symbol ? CString(symbol) : "nullptr";
+                sb.AppendLine($"    {{{{{dims}}}, {DoubleLiteral(u.Scale, false)}, {display}}},");
+            }
+            sb.AppendLine("};");
+            sb.AppendLine("static const bool kUnitsReady = (unitsInit(kUnitInit, " + _units.Count + "), true);");
             sb.AppendLine();
             for (int i = 0; i < _strings.Count; i++)
             {
@@ -335,6 +347,15 @@ namespace fire.Native
                     sb.AppendLine("    }");
                 }
                 sb.AppendLine($"    return {OperatorFallback[method]};");
+                sb.AppendLine("}");
+            }
+            foreach (var typeName in _isOfTypes)
+            {
+                var ids = _classList.Where(c => ClassIs(c.Rc, typeName)).Select(c => c.Id).ToList();
+                sb.AppendLine($"static bool isof_{Mangle(typeName)}(Value v) {{");
+                if (typeName == "IEnumerable") sb.AppendLine("    if (v.kind == K_Array || v.kind == K_Buffer) return true;");
+                sb.AppendLine("    if (v.kind != K_Class) return false;");
+                sb.AppendLine(ids.Count == 0 ? "    return false;" : "    switch (asObj(v)->cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }");
                 sb.AppendLine("}");
             }
             sb.AppendLine(IndexHelpers());
@@ -1332,6 +1353,7 @@ namespace fire.Native
                     else { E($"{S(d - 2)} = add({S(d - 2)}, {S(d - 1)});"); d--; SetR(d - 1, false); }
                     return Next();
                 }
+                case OpCode.Power: return Binary("power", "operator^");
                 case OpCode.Sub: return Binary("sub", "operator-");
                 case OpCode.Mul: return Binary("mul", "operator*");
                 case OpCode.Div: return Binary("divide", "operator/");
@@ -1341,6 +1363,40 @@ namespace fire.Native
                 case OpCode.BitXor: return Binary("bitXor", "operator#");
                 case OpCode.ShiftLeft: return Binary("shl", "operator<<");
                 case OpCode.ShiftRight: return Binary("shr", "operator>>");
+                case OpCode.RotateUnderTop:
+                {
+                    Need(3);
+                    E($"{{ Value t = {S(d - 3)}; {S(d - 3)} = {S(d - 2)}; {S(d - 2)} = t; }}");
+                    bool lower = R(d - 3), middle = R(d - 2);
+                    SetR(d - 3, middle); SetR(d - 2, lower);
+                    return Next();
+                }
+                case OpCode.CoerceUnit:
+                    Need(1); E($"{S(d - 1)} = coerceUnit({S(d - 1)}, {UnitId(chunk.Units[ins.A[0]])});"); return Next();
+                case OpCode.CoerceUnitDynamic:
+                    Need(2); E($"{S(d - 1)} = coerceUnit({S(d - 1)}, unitOf({S(d - 2)}));"); return Next();
+                case OpCode.CoerceType:
+                    Need(1);
+                    E($"{S(d - 1)} = coerceType({S(d - 1)}, {(TypeTag)ins.A[0] switch { TypeTag.Bool => "K_Bool", TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", TypeTag.Char => "K_Char", _ => "K_String" }});");
+                    return Next();
+                case OpCode.CoerceTypeDynamic:
+                    Need(2); E($"{S(d - 1)} = coerceType({S(d - 1)}, {S(d - 2)}.kind);"); return Next();
+                case OpCode.IsInUnit:
+                    Need(1); E($"{S(d - 1)} = Bool(unitCompatible(unitOf({S(d - 1)}), {UnitId(chunk.Units[ins.A[0]])}));"); SetR(d - 1, false); return Next();
+                case OpCode.IsOfType:
+                {
+                    Need(1);
+                    string typeName = chunk.Constants[ins.A[0]].AsString();
+                    string test = typeName switch
+                    {
+                        "bool" => "K_Bool", "int" => "K_Int", "float" => "K_Float", "char" => "K_Char", "string" => "K_String", "undefined" => "K_Undefined", "class" => "K_Class", _ => "",
+                    };
+                    if (test.Length > 0) E($"{S(d - 1)} = Bool({S(d - 1)}.kind == {test});");
+                    else { _isOfTypes.Add(typeName); E($"{S(d - 1)} = Bool(isof_{Mangle(typeName)}({S(d - 1)}));"); }
+                    SetR(d - 1, false); return Next();
+                }
+                case OpCode.IsFrom:
+                    Need(2); E($"{S(d - 2)} = Bool(isFrom({S(d - 2)}, {S(d - 1)}, {(ins.A[0] != 0 ? "true" : "false")}));"); d--; SetR(d - 1, false); return Next();
                 case OpCode.Neg: return Unary("negate");
                 case OpCode.LogicalNot: return Unary("lnot");
                 case OpCode.BitNot: return Unary("bitNot");
@@ -1709,8 +1765,8 @@ namespace fire.Native
                 {
                     Need(1);
                     string spec = Str(ins.A[0]);
-                    if (spec.Length > 0 && "XDBFxdbf".IndexOf(spec[0]) < 0)
-                        throw new NativeNotSupportedException($"format specifier '{spec}' (supported: X, D, B, F)");
+                    if (spec.Length > 0 && "XDBFExdbfe".IndexOf(spec[0]) < 0)
+                        throw new NativeNotSupportedException($"format specifier '{spec}' (supported: X, D, B, F, E)");
                     E($"{S(d - 1)} = formatValue({S(d - 1)}, {Constant(chunk.Constants[ins.A[0]])}, &{OwnerList()});");
                     Check();
                     SetR(d - 1, true);

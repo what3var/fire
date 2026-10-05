@@ -52,6 +52,10 @@ namespace fire.Values
 
         public bool IsUnitless => Dimensions.Count == 0;
 
+        /// <summary>Das Symbol einer benannten Einheit (`mm`), null bei einer abgeleiteten (der native Backend schreibt es in seine Einheitentabelle).</summary>
+        [MemoryPackIgnore]
+        public string? DisplaySymbol => _displaySymbol;
+
         // ---------------------------------------------------------------
         // Eingebaute Präfixe (dezimal)
         // ---------------------------------------------------------------

@@ -13000,6 +13000,107 @@ static int CountOccurrences(string haystack, string needle)
             print(s.ToString())
             print(m + new Money(1))
             """),
+        ("Einheiten: Umrechnung, Algebra (m*m, m/s), Vergleiche, Coercing mit : und !", """
+            var a = 500mm
+            print(a + 2m)
+            print(2m + a)
+            print(a * 2m)
+            print(2m * 3m)
+            print(1m / 1mm)
+            print(3km / 2h)
+            print(2m < 300cm)
+            print(5kg:g)
+            print(1.5 * 2m)
+            print((2m * 3m * 4m))
+            print(7mm % 2m)
+            print(2m ^ 2m)
+            print(a == 500mm)
+            print(a == 0.5m)
+            print(1.5m + 100cm)
+            var x = 10m
+            var y = 3s
+            var v = x / y
+            print(v)
+            print(v * 6s)
+            print(5mm is in m)
+            print(5mm is in kg)
+            print(5 is of int)
+            var q = 7m
+            print(q:mm)
+            print(q:cm!)
+            var w = 5mm
+            print(w:cm)
+            var z = 5
+            print(z!float)
+            print(1.5km!int)
+            """),
+        ("is of / is in / is from / is under, Potenz, Typ-Coercing", """
+            interface Shape { }
+            class Animal { }
+            class Dog : Animal { }
+            class Sq : Shape { }
+            class Holder { Animal pet; Holder inner
+                construct() { this.pet = new Dog(); this.inner = new Holder2() } }
+            class Holder2 { Animal pet
+                construct() { this.pet = new Animal() } }
+            var d = new Dog()
+            var s = new Sq()
+            print(d is of Animal)
+            print(d is of Dog)
+            print(s is of Animal)
+            print(s is of Shape)
+            print(d is of class)
+            print(5 is of int)
+            print(5 is of float)
+            print(2.5 is of float)
+            print("x" is of string)
+            print([1, 2] is of IEnumerable)
+            print(undefined is of undefined)
+            print(5mm is in m)
+            print(5mm is in kg)
+            print(5 is in m)
+            print(3kg is in g)
+            var h = new Holder()
+            print(h.pet is from h)
+            print(h.inner is from h)
+            print(h.inner.pet is from h)
+            print(h.inner.pet is under h)
+            print(h.inner.pet is from h.inner)
+            print(h is from h.inner)
+            print(2 ^ 10)
+            print(2.0 ^ 0.5)
+            print(2 ^ -1)
+            print(3m ^ 2m)
+            var i = 7
+            print(i!float / 2)
+            print(i / 2)
+            var f = 7.5
+            print(f!int)
+            print(2.5!int)
+            print(3.5!int)
+            """),
+        ("Zahlenformat E und F, X, B im Zusammenspiel", """
+            var x = 12345.678
+            print($"{x:E}")
+            print($"{x:E2}")
+            print($"{x:e3}")
+            print($"{x:E0}")
+            var small = 0.000123
+            print($"{small:E3}")
+            var n = 42
+            print($"{n:E}")
+            print($"{n:E1}")
+            var z = 0.0
+            print($"{z:E2}")
+            print($"{x:F}")
+            print($"{x:F1}")
+            print($"{n:X4}")
+            print($"{n:B8}")
+            var big = 1500000000000.0 * 1000000000000.0
+            print($"{big:E2}")
+            var neg = -0.5
+            print($"{neg:E1}")
+            """),
         ("Besitz: #performance prueft zerstoerte Arrays nicht (FIRE_UNCHECKED), Ergebnis wie die VM", """
             #performance
             var a = new int[100]

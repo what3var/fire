@@ -52,8 +52,6 @@ struct Value {
 };
 static_assert(sizeof(Value) == 16, "Value must stay 16 bytes");
 
-/// Names of the units (symbol as printed after a number), index = Value::unit. Defined by the generated code.
-extern const char* const g_unitNames[];
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Construction
@@ -105,6 +103,194 @@ inline Value destroyedError(Value leaf);
 
 inline bool isNumeric(Value v) { return v.kind == K_Int || v.kind == K_Float; }
 inline Real toR(Value v) { return v.kind == K_Float ? v.f : (Real)v.i; }
+
+/// Real -> text like .NET Core 3.0+ `double.ToString()` / `float.ToString()`: shortest round-trip digits, positional
+/// notation for 1E-4 <= |x| < 1E17 (double) or 1E9 (float), otherwise `d.dddE+XX`.
+template <class T>
+inline int formatFloating(T v, char* out) {
+    if (std::isnan(v)) { std::memcpy(out, "NaN", 3); return 3; }
+    if (std::isinf(v)) { if (v < 0) { std::memcpy(out, "-Infinity", 9); return 9; } std::memcpy(out, "Infinity", 8); return 8; }
+    if (v == 0) { if (std::signbit(v)) { out[0] = '-'; out[1] = '0'; return 2; } out[0] = '0'; return 1; }
+
+    char sci[40];
+    auto r = std::to_chars(sci, sci + sizeof sci, v, std::chars_format::scientific);
+    *r.ptr = 0;
+    // sci = [-]d[.ddd]e[+-]XX
+    char digits[24] = {0}; int nd = 0; bool negative = false; const char* c = sci;
+    if (*c == '-') { negative = true; c++; }
+    for (; *c && *c != 'e'; c++) if (*c != '.') digits[nd++] = *c;
+    int exp10 = std::atoi(c + 1);
+
+    int n = 0;
+    if (negative) out[n++] = '-';
+    if (exp10 >= (sizeof(T) == 4 ? 9 : 17) || exp10 < -4) {
+        out[n++] = digits[0];
+        if (nd > 1) { out[n++] = '.'; for (int k = 1; k < nd; k++) out[n++] = digits[k]; }
+        out[n++] = 'E'; out[n++] = exp10 < 0 ? '-' : '+';
+        int e = exp10 < 0 ? -exp10 : exp10;
+        if (e < 10) out[n++] = '0';
+        n += std::snprintf(out + n, 8, "%d", e);
+        return n;
+    }
+    if (exp10 >= 0) {
+        for (int k = 0; k <= exp10; k++) out[n++] = k < nd ? digits[k] : '0';
+        if (nd > exp10 + 1) { out[n++] = '.'; for (int k = exp10 + 1; k < nd; k++) out[n++] = digits[k]; }
+    } else {
+        out[n++] = '0'; out[n++] = '.';
+        for (int k = 0; k < -exp10 - 1; k++) out[n++] = '0';
+        for (int k = 0; k < nd; k++) out[n++] = digits[k];
+    }
+    return n;
+}
+inline int formatReal(Real v, char* out) { return formatFloating<Real>(v, out); }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Units (SPEC 3): a unit is a vector of exponents over the base symbols of the program (`g_dimNames`: m, s, apples, ...) and a scale
+// factor to the base. `Value::unit` is the index into a table that grows at run time - `mm * mm` or `m / s` make new entries - and
+// is interned (same dimensions, scale and display text = same index). Two indices can still mean equal units (`unitEq`).
+// ---------------------------------------------------------------------------------------------------------------------
+#ifndef FIRE_NDIMS
+#define FIRE_NDIMS 1
+#endif
+/// The base symbols, in the order of the dimension vectors (sorted like the VM prints them). Defined by the generated code.
+extern const char* const g_dimNames[];
+
+struct UnitInit { int32_t dims[FIRE_NDIMS]; double scale; const char* display; };
+struct UnitDef {
+    int32_t dims[FIRE_NDIMS];
+    double scale;
+    const char* display;   // the symbol of a named unit (`mm`), null for a derived one
+    const char* name;      // Unit.ToString()
+};
+inline UnitDef* g_ud = nullptr;
+inline uint32_t g_udCount = 0, g_udCap = 0;
+
+inline bool unitDimsZero(const int32_t* dims) {
+    for (int i = 0; i < FIRE_NDIMS; i++) if (dims[i]) return false;
+    return true;
+}
+/// Unit.IsUnitless: no dimensions (whatever the scale).
+inline bool unitIsUnitless(uint32_t u) { return unitDimsZero(g_ud[u].dims); }
+/// The text printed after a number: nothing for a unit without dimensions.
+inline const char* unitSuffix(uint32_t u) { return unitIsUnitless(u) ? "" : g_ud[u].name; }
+
+/// Unit.ToString(): `m/s^2`, `(m*s)`, a symbol if the unit has one, `(×scale)` when the scale is not 1.
+inline char* unitBuildName(const int32_t* dims, double scale, const char* display) {
+    char buf[384];
+    size_t n = 0;
+    auto put = [&](const char* text) { for (; *text && n + 1 < sizeof buf; text++) buf[n++] = *text; };
+    if (unitDimsZero(dims)) put("unitless");
+    else if (display) put(display);
+    else {
+        int numerators = 0, denominators = 0;
+        char tmp[16];
+        for (int i = 0; i < FIRE_NDIMS; i++) {
+            if (dims[i] > 0) { if (numerators++) put("*"); put(g_dimNames[i]); if (dims[i] != 1) { std::snprintf(tmp, sizeof tmp, "^%d", (int)dims[i]); put(tmp); } }
+        }
+        if (!numerators) put("1");
+        for (int i = 0; i < FIRE_NDIMS; i++) if (dims[i] < 0) denominators++;
+        if (denominators) {
+            put("/");
+            if (denominators > 1) put("(");
+            int k = 0;
+            for (int i = 0; i < FIRE_NDIMS; i++)
+                if (dims[i] < 0) { if (k++) put("*"); put(g_dimNames[i]); if (dims[i] != -1) { std::snprintf(tmp, sizeof tmp, "^%d", (int)-dims[i]); put(tmp); } }
+            if (denominators > 1) put(")");
+        }
+        if (std::fabs(scale - 1.0) > 1e-12) {
+            char num[48];
+            put("(\xC3\x97");
+            int len = formatFloating<double>(scale, num);
+            num[len] = 0;
+            put(num);
+            put(")");
+        }
+    }
+    char* out = static_cast<char*>(std::malloc(n + 1));
+    if (!out) { std::fputs("fire runtime error: Out of memory.\n", stderr); std::exit(1); }
+    std::memcpy(out, buf, n);
+    out[n] = 0;
+    return out;
+}
+
+inline void unitsInit(const UnitInit* init, uint32_t count) {
+    g_udCap = count + 32;
+    g_ud = static_cast<UnitDef*>(std::malloc(sizeof(UnitDef) * g_udCap));
+    if (!g_ud) { std::fputs("fire runtime error: Out of memory.\n", stderr); std::exit(1); }
+    for (uint32_t i = 0; i < count; i++) {
+        std::memcpy(g_ud[i].dims, init[i].dims, sizeof g_ud[i].dims);
+        g_ud[i].scale = init[i].scale;
+        g_ud[i].display = init[i].display;
+        g_ud[i].name = unitBuildName(init[i].dims, init[i].scale, init[i].display);
+    }
+    g_udCount = count;
+}
+
+/// The index of the unit with these dimensions, scale and display text (made when it is new).
+inline uint32_t unitIntern(const int32_t* dims, double scale, const char* display) {
+    for (uint32_t i = 0; i < g_udCount; i++) {
+        const UnitDef& d = g_ud[i];
+        if (d.scale == scale && std::memcmp(d.dims, dims, sizeof d.dims) == 0 && ((d.display == nullptr) == (display == nullptr)) && (!display || std::strcmp(d.display, display) == 0)) return i;
+    }
+    if (g_udCount == g_udCap) {
+        g_udCap *= 2;
+        g_ud = static_cast<UnitDef*>(std::realloc(g_ud, sizeof(UnitDef) * g_udCap));
+        if (!g_ud) { std::fputs("fire runtime error: Out of memory.\n", stderr); std::exit(1); }
+    }
+    UnitDef& d = g_ud[g_udCount];
+    std::memcpy(d.dims, dims, sizeof d.dims);
+    d.scale = scale;
+    d.display = display;
+    d.name = unitBuildName(dims, scale, display);
+    return g_udCount++;
+}
+
+inline bool unitCompatible(uint32_t a, uint32_t b) { return a == b || std::memcmp(g_ud[a].dims, g_ud[b].dims, sizeof g_ud[a].dims) == 0; }
+/// Unit.Equals: same dimensions and the scales differ by less than 1e-12.
+inline bool unitEq(uint32_t a, uint32_t b) { return a == b || (unitCompatible(a, b) && std::fabs(g_ud[a].scale - g_ud[b].scale) < 1e-12); }
+
+[[noreturn]] FIRE_COLD inline void unitConflict(uint32_t from, uint32_t to) {
+    std::fflush(stdout);
+    std::fprintf(stderr, "Unhandled exception. fire.Values.UnitMismatchException: Incompatible units: '%s' cannot be converted to '%s'.\n", g_ud[from].name, g_ud[to].name);
+    std::exit(1);
+}
+/// Unit.ConversionFactorTo
+inline double unitFactor(uint32_t from, uint32_t to) {
+    if (!unitCompatible(from, to)) unitConflict(from, to);
+    return g_ud[from].scale / g_ud[to].scale;
+}
+
+/// Unit.Multiply / Unit.Divide: a unit without dimensions leaves the other one as it is; `mm * mm` is `mm^2`.
+inline uint32_t unitMul(uint32_t a, uint32_t b) {
+    if (unitIsUnitless(b)) return a;
+    if (unitIsUnitless(a)) return b;
+    const UnitDef& x = g_ud[a];
+    const UnitDef& y = g_ud[b];
+    int32_t dims[FIRE_NDIMS];
+    for (int i = 0; i < FIRE_NDIMS; i++) dims[i] = x.dims[i] + y.dims[i];
+    const char* display = nullptr;
+    if (x.display && y.display && std::strcmp(x.display, y.display) == 0) {
+        size_t l = std::strlen(x.display);
+        char* square = static_cast<char*>(std::malloc(l + 3));
+        if (!square) { std::fputs("fire runtime error: Out of memory.\n", stderr); std::exit(1); }
+        std::memcpy(square, x.display, l);
+        std::memcpy(square + l, "^2", 3);
+        display = square;
+    }
+    double scale = x.scale * y.scale;
+    uint32_t id = unitIntern(dims, scale, display);
+    if (display && g_ud[id].display != display) std::free(const_cast<char*>(display));   // an equal unit existed
+    return id;
+}
+inline uint32_t unitDiv(uint32_t a, uint32_t b) {
+    if (unitIsUnitless(b)) return a;
+    const UnitDef& x = g_ud[a];
+    const UnitDef& y = g_ud[b];
+    int32_t dims[FIRE_NDIMS];
+    for (int i = 0; i < FIRE_NDIMS; i++) dims[i] = x.dims[i] - y.dims[i];
+    return unitIntern(dims, x.scale / y.scale, nullptr);
+}
+
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Heap values. Two kinds of lifetime:
@@ -296,39 +482,96 @@ inline void poolRelease(uint32_t mark) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Arithmetic. Fast path: both numeric with the same unit. Unit conversion/algebra is not ported yet (slow path).
+// Arithmetic. Fast path: both numeric with the same unit. Different units (conversion, unit algebra: SPEC 3) go through the slow paths.
 // ---------------------------------------------------------------------------------------------------------------------
 // NOTE: every function takes its Values BY VALUE, never by reference (and the slow paths only the operand kinds). A
 // reference to a local that reaches a call that is not inlined makes the local "escape", and the C++ compiler then
 // keeps it - and, since the generated code reuses its stack temporaries s0..sN, all of them - in memory for the whole
 // function instead of in registers. That alone made generated loops ~10x slower.
-[[noreturn]] FIRE_COLD inline void opFailed(const char* op, bool bothNumeric) {
-    if (bothNumeric) unsupported("arithmetic on different units");
+[[noreturn]] FIRE_COLD inline void opFailed(const char* op) {
     std::fflush(stdout);
     std::fprintf(stderr, "fire runtime error: operator '%s' is not supported for these operands in the native backend yet\n", op);
     std::exit(1);
+}
+
+struct VPair { Value a, b; };
+
+/// Value.AlignUnits: operands of the same dimension but a different scale (`500mm + 2m`) are converted implicitly - two ints stay ints
+/// (the finer unit is the target while the converted value does not overflow, else the coarser one and the fraction is cut off), a float
+/// operand makes the right one a float in the unit of the left.
+FIRE_COLD inline VPair alignUnits(Value a, Value b) {
+    uint32_t ua = a.unit, ub = b.unit;
+    if (unitEq(ua, ub)) return {a, b};
+    if (!unitCompatible(ua, ub)) unitConflict(ua, ub);
+    if (a.kind == K_Int && b.kind == K_Int) {
+        bool aIsFine = g_ud[ua].scale <= g_ud[ub].scale;
+        Value& fine = aIsFine ? a : b;
+        Value& coarse = aIsFine ? b : a;
+        uint32_t uFine = aIsFine ? ua : ub, uCoarse = aIsFine ? ub : ua;
+        double up = (double)coarse.i * unitFactor(uCoarse, uFine);
+        if (up >= -9.2e18 && up <= 9.2e18) coarse = Int((int64_t)up, uFine);
+        else fine = Int((int64_t)((double)fine.i * unitFactor(uFine, uCoarse)), uCoarse);
+        return {a, b};
+    }
+    double factor = unitFactor(ub, ua);
+    b = Float((Real)((b.kind == K_Int ? (double)b.i : (double)b.f) * factor), ua);
+    return {a, b};
+}
+
+FIRE_COLD inline Value addUnits(Value a, Value b) {
+    VPair p = alignUnits(a, b);
+    if (p.a.kind == K_Int && p.b.kind == K_Int) return Int((int64_t)((uint64_t)p.a.i + (uint64_t)p.b.i), p.a.unit);
+    return Float(toR(p.a) + toR(p.b), p.a.unit);
+}
+FIRE_COLD inline Value subUnits(Value a, Value b) {
+    VPair p = alignUnits(a, b);
+    if (p.a.kind == K_Int && p.b.kind == K_Int) return Int((int64_t)((uint64_t)p.a.i - (uint64_t)p.b.i), p.a.unit);
+    return Float(toR(p.a) - toR(p.b), p.a.unit);
+}
+FIRE_COLD inline Value modUnits(Value a, Value b) {
+    VPair p = alignUnits(a, b);
+    if (p.a.kind == K_Int && p.b.kind == K_Int) {
+        if (FIRE_UNLIKELY(p.b.i == 0)) fatal("Division by zero.");
+        if (FIRE_UNLIKELY(p.b.i == -1)) return Int(0, p.a.unit);
+        return Int(p.a.i % p.b.i, p.a.unit);
+    }
+    return Float(std::fmod(toR(p.a), toR(p.b)), p.a.unit);
+}
+FIRE_COLD inline Value mulUnits(Value a, Value b) {
+    uint32_t u = unitMul(a.unit, b.unit);
+    if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i * (uint64_t)b.i), u);
+    return Float(toR(a) * toR(b), u);
+}
+FIRE_COLD inline Value divUnits(Value a, Value b) {
+    uint32_t u = unitDiv(a.unit, b.unit);
+    if (a.kind == K_Int && b.kind == K_Int) {
+        if (FIRE_UNLIKELY(b.i == 0)) fatal("Division by zero.");
+        if (FIRE_UNLIKELY(b.i == -1)) return Int((int64_t)(0 - (uint64_t)a.i), u);
+        return Int(a.i / b.i, u);
+    }
+    return Float(toR(a) / toR(b), u);
 }
 
 inline Value add(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i + (uint64_t)b.i), a.unit);
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) + toR(b), a.unit);
-    }
-    opFailed("+", isNumeric(a) && isNumeric(b));
+    } else if (isNumeric(a) && isNumeric(b)) return addUnits(a, b);
+    opFailed("+");
 }
 inline Value sub(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i - (uint64_t)b.i), a.unit);
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) - toR(b), a.unit);
-    }
-    opFailed("-", isNumeric(a) && isNumeric(b));
+    } else if (isNumeric(a) && isNumeric(b)) return subUnits(a, b);
+    opFailed("-");
 }
 inline Value mul(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == 0 && b.unit == 0)) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i * (uint64_t)b.i));
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) * toR(b));
-    }
-    opFailed("*", isNumeric(a) && isNumeric(b));
+    } else if (isNumeric(a) && isNumeric(b)) return mulUnits(a, b);
+    opFailed("*");
 }
 inline Value divide(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == 0 && b.unit == 0)) {
@@ -338,8 +581,8 @@ inline Value divide(Value a, Value b) {
             return Int(a.i / b.i);
         }
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) / toR(b));
-    }
-    opFailed("/", isNumeric(a) && isNumeric(b));
+    } else if (isNumeric(a) && isNumeric(b)) return divUnits(a, b);
+    opFailed("/");
 }
 inline Value modulo(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
@@ -349,9 +592,41 @@ inline Value modulo(Value a, Value b) {
             return Int(a.i % b.i, a.unit);
         }
         if (isNumeric(a) && isNumeric(b)) return Float(std::fmod(toR(a), toR(b)), a.unit);
-    }
-    opFailed("%", isNumeric(a) && isNumeric(b));
+    } else if (isNumeric(a) && isNumeric(b)) return modUnits(a, b);
+    opFailed("%");
 }
+/// `a ^ b` (power; `#` is the bitwise xor): ints multiply, a float or a negative exponent uses pow. The units must be equal.
+inline Value power(Value a, Value b) {
+    if (FIRE_UNLIKELY(!isNumeric(a) || !isNumeric(b))) opFailed("^");
+    if (FIRE_UNLIKELY(!unitEq(a.unit, b.unit))) unitConflict(a.unit, b.unit);
+    bool useFloat = a.kind == K_Float || b.kind == K_Float || (b.kind == K_Int && b.i < 0);
+    if (useFloat) return Float((Real)std::pow((double)toR(a), (double)toR(b)), a.unit);
+    uint64_t result = 1, base = (uint64_t)a.i;
+    for (int64_t i = 0; i < b.i; i++) result *= base;
+    return Int((int64_t)result, a.unit);
+}
+/// The unit a value carries (only numbers and `undefined` can have one).
+inline uint32_t unitOf(Value v) { return (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined) ? v.unit : 0; }
+
+/// `value:unit` - converts a number to another unit of the same dimension (Value.CoerceUnit); ints are rounded half to even.
+inline Value coerceUnit(Value v, uint32_t target) {
+    if (FIRE_UNLIKELY(!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined))) fatal("A value of this type carries no unit and cannot be converted.");
+    if (unitEq(v.unit, target)) return v;
+    double factor = unitFactor(v.unit, target);
+    if (v.kind == K_Int) return Int((int64_t)std::nearbyint((double)v.i * factor), target);
+    if (v.kind == K_Float) return Float((Real)((double)v.f * factor), target);
+    return Undef(target);
+}
+/// `value!type` - int and float into each other, `undefined` into a number (Value.CoerceType).
+inline Value coerceType(Value v, uint8_t target) {
+    if (v.kind == target) return v;
+    if (v.kind == K_Int && target == K_Float) return Float((Real)v.i, v.unit);
+    if (v.kind == K_Float && target == K_Int) return Int((int64_t)std::nearbyint((double)v.f), v.unit);
+    if (v.kind == K_Undefined && target == K_Int) return Int(0, v.unit);
+    if (v.kind == K_Undefined && target == K_Float) return Float(0, v.unit);
+    fatal("A value of this type cannot be coerced to the requested type.");
+}
+
 inline Value negate(Value v) {
     if (v.kind == K_Int) return Int((int64_t)(0 - (uint64_t)v.i), v.unit);
     if (v.kind == K_Float) return Float(-v.f, v.unit);
@@ -365,7 +640,7 @@ inline Value lnot(Value v) {
 #define FIRE_BITOP(NAME, OP, SYM)                                                              \
     inline Value NAME(Value a, Value b) {                                        \
         if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) fatal("'" SYM "' expects int."); \
-        if (FIRE_UNLIKELY(a.unit != b.unit)) unsupported("bit operation on different units");  \
+        if (FIRE_UNLIKELY(!unitEq(a.unit, b.unit))) unitConflict(a.unit, b.unit);                  \
         return Int(a.i OP b.i, a.unit);                                                        \
     }
 FIRE_BITOP(bitAnd, &, "&")
@@ -389,19 +664,20 @@ inline Value bitNot(Value v) {
 // Comparison
 // ---------------------------------------------------------------------------------------------------------------------
 /// -1, 0, 1 like Value.Compare (NaN sorts below everything, like double.CompareTo).
+inline int compareNumeric(Value a, Value b) {
+    if (a.kind == K_Int && b.kind == K_Int) return a.i < b.i ? -1 : (a.i > b.i ? 1 : 0);
+    Real x = toR(a), y = toR(b);
+    if (x < y) return -1;
+    if (x > y) return 1;
+    if (x == y) return 0;
+    if (std::isnan(x)) return std::isnan(y) ? 0 : -1;
+    return 1;
+}
 inline int compare(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
-        if (a.kind == K_Int && b.kind == K_Int) return a.i < b.i ? -1 : (a.i > b.i ? 1 : 0);
-        if (isNumeric(a) && isNumeric(b)) {
-            Real x = toR(a), y = toR(b);
-            if (x < y) return -1;
-            if (x > y) return 1;
-            if (x == y) return 0;
-            if (std::isnan(x)) return std::isnan(y) ? 0 : -1;
-            return 1;
-        }
-    }
-    opFailed("<", isNumeric(a) && isNumeric(b));
+        if (isNumeric(a) && isNumeric(b)) return compareNumeric(a, b);
+    } else if (isNumeric(a) && isNumeric(b)) { VPair p = alignUnits(a, b); return compareNumeric(p.a, p.b); }
+    opFailed("<");
 }
 inline bool lt(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
@@ -453,44 +729,6 @@ inline bool truthy(Value v) {
 // ---------------------------------------------------------------------------------------------------------------------
 // Output: formatting identical to Value.ToString() (invariant culture)
 // ---------------------------------------------------------------------------------------------------------------------
-/// Real -> text like .NET Core 3.0+ `double.ToString()` / `float.ToString()`: shortest round-trip digits, positional
-/// notation for 1E-4 <= |x| < 1E17 (double) or 1E9 (float), otherwise `d.dddE+XX`.
-inline int formatReal(Real v, char* out) {
-    if (std::isnan(v)) { std::memcpy(out, "NaN", 3); return 3; }
-    if (std::isinf(v)) { if (v < 0) { std::memcpy(out, "-Infinity", 9); return 9; } std::memcpy(out, "Infinity", 8); return 8; }
-    if (v == 0) { if (std::signbit(v)) { out[0] = '-'; out[1] = '0'; return 2; } out[0] = '0'; return 1; }
-
-    char sci[40];
-    auto r = std::to_chars(sci, sci + sizeof sci, v, std::chars_format::scientific);
-    *r.ptr = 0;
-    // sci = [-]d[.ddd]e[+-]XX
-    char digits[24] = {0}; int nd = 0; bool negative = false; const char* c = sci;
-    if (*c == '-') { negative = true; c++; }
-    for (; *c && *c != 'e'; c++) if (*c != '.') digits[nd++] = *c;
-    int exp10 = std::atoi(c + 1);
-
-    int n = 0;
-    if (negative) out[n++] = '-';
-    if (exp10 >= (sizeof(Real) == 4 ? 9 : 17) || exp10 < -4) {
-        out[n++] = digits[0];
-        if (nd > 1) { out[n++] = '.'; for (int k = 1; k < nd; k++) out[n++] = digits[k]; }
-        out[n++] = 'E'; out[n++] = exp10 < 0 ? '-' : '+';
-        int e = exp10 < 0 ? -exp10 : exp10;
-        if (e < 10) out[n++] = '0';
-        n += std::snprintf(out + n, 8, "%d", e);
-        return n;
-    }
-    if (exp10 >= 0) {
-        for (int k = 0; k <= exp10; k++) out[n++] = k < nd ? digits[k] : '0';
-        if (nd > exp10 + 1) { out[n++] = '.'; for (int k = exp10 + 1; k < nd; k++) out[n++] = digits[k]; }
-    } else {
-        out[n++] = '0'; out[n++] = '.';
-        for (int k = 0; k < -exp10 - 1; k++) out[n++] = '0';
-        for (int k = 0; k < nd; k++) out[n++] = digits[k];
-    }
-    return n;
-}
-
 // ---------------------------------------------------------------------------------------------------------------------
 // Objects and ownership (SPEC 2): every object, array and byte buffer has exactly one owner - a scope or another object - and is
 // destroyed (for an object its destruct() runs, then everything it owns) when the owner is destroyed. An owner is an OwnList: for
@@ -733,7 +971,7 @@ inline void unitMismatch(Value v, Value expectedText);
 /// CheckUnit: the value must have exactly this unit.
 inline void checkUnit(Value v, uint32_t unit, Value expectedText) {
     uint32_t actual = (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined) ? v.unit : 0;
-    if (FIRE_UNLIKELY(actual != unit)) unitMismatch(v, expectedText);
+    if (FIRE_UNLIKELY(!unitEq(actual, unit))) unitMismatch(v, expectedText);
 }
 
 inline Buf* allocBuf(uint32_t length, OwnList* list) {
@@ -800,7 +1038,7 @@ inline void pieceOf(Value v, Piece& out, OwnList* list) {
             break;
         }
         case K_Float: out.n = widenAscii(tmp, (uint32_t)formatReal(v.f, tmp), out.buf); break;
-        case K_Undefined: setPiece(out, "undefined"); if (v.unit) { out.buf[out.n++] = u':'; } break;
+        case K_Undefined: setPiece(out, "undefined"); if (v.unit && !unitIsUnitless(v.unit)) { out.buf[out.n++] = u':'; } break;
         case K_Class: {
             Value text;
             if (userToString(v, list, &text)) {
@@ -821,8 +1059,8 @@ inline void pieceOf(Value v, Piece& out, OwnList* list) {
         default: setPiece(out, "?"); return;
     }
     out.p = out.buf;
-    if (v.unit && (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined))
-        out.n += utf8ToUtf16(g_unitNames[v.unit], out.buf + out.n, 80 - out.n);
+    if (v.unit && (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined) && !unitIsUnitless(v.unit))
+        out.n += utf8ToUtf16(g_ud[v.unit].name, out.buf + out.n, 80 - out.n);
 }
 
 /// `a + b` when one side is a string: the other side is appended as its text.
@@ -849,7 +1087,8 @@ inline Value toStringValue(Value v, OwnList* list) {
 
 FIRE_COLD inline Value addSlow(Value a, Value b, OwnList* list) {
     if (a.kind == K_String || b.kind == K_String) return concat(a, b, list);
-    opFailed("+", isNumeric(a) && isNumeric(b));
+    if (isNumeric(a) && isNumeric(b)) return addUnits(a, b);
+    opFailed("+");
 }
 
 /// `+` for operands that may be strings (the generator uses `add` where both are known to be numbers).
@@ -1115,6 +1354,33 @@ inline Value formatValue(Value v, Value specV, OwnList* list) {
         uint32_t wn = widenAscii(text, (uint32_t)n, wide);
         return newStrFrom(wide, wn, list);
     }
+    if (letter == 'E') {
+        // scientific: `1.234560E+004` (six decimals by default, an exponent of at least three digits, `e` in lower case for `e`)
+        if (v.kind != K_Int && v.kind != K_Float) fatal("The format specifier expects a number.");
+        double d = (double)toR(v);
+        int prec = hasNumber ? (int)number : (spec->length == 1 ? 6 : -1);
+        if (prec < 0) fatal("Unknown format specifier.");
+        if (std::isnan(d)) n = std::snprintf(text, sizeof text, "NaN");
+        else if (std::isinf(d)) n = std::snprintf(text, sizeof text, d < 0 ? "-Infinity" : "Infinity");
+        else {
+            char raw[400];
+            int rn = std::snprintf(raw, sizeof raw, first == 'E' ? "%.*E" : "%.*e", prec, d);
+            if (rn < 0 || rn >= (int)sizeof raw - 4) fatal("The formatted number is too long.");
+            char* e = raw;
+            while (*e && *e != 'E' && *e != 'e') e++;
+            n = (int)(e - raw);
+            std::memcpy(text, raw, (size_t)n);
+            text[n++] = *e;
+            text[n++] = e[1];                      // the sign
+            int digits = (int)std::strlen(e + 2);
+            for (int i = digits; i < 3; i++) text[n++] = '0';
+            std::memcpy(text + n, e + 2, (size_t)digits);
+            n += digits;
+        }
+        char16_t wide[400];
+        uint32_t wn = widenAscii(text, (uint32_t)n, wide);
+        return newStrFrom(wide, wn, list);
+    }
     fatal("Unknown format specifier.");
 }
 
@@ -1274,7 +1540,7 @@ inline void unitMismatch(Value v, Value expectedText) {
 #ifdef FIRE_EXCEPTIONS
     uint32_t actualUnit = (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined) ? v.unit : 0;
     char16_t actualText[96];
-    uint32_t an = actualUnit ? utf8ToUtf16(g_unitNames[actualUnit], actualText, 80) : 0;
+    uint32_t an = actualUnit ? utf8ToUtf16(g_ud[actualUnit].name, actualText, 80) : 0;
     if (!actualUnit) { const char* none = "(no unit)"; an = widenAscii(none, 9, actualText); }
     const Str* expected = strOf(expectedText);
     OwnList unused = {nullptr, nullptr, 0, nullptr, nullptr};
@@ -1495,6 +1761,17 @@ inline void takeToObject(Owned* o, Obj* target) {
         }
     if (o->owner) unlink(o);
     link(&target->owned, o);
+}
+
+/// `object is from owner` / `object is under owner` (SPEC 6): the owner of the object is that object - directly, or anywhere up the chain.
+inline bool isFrom(Value operand, Value owner, bool transitive) {
+    if (FIRE_UNLIKELY(operand.kind != K_Class || owner.kind != K_Class)) fatal("'is from'/'is under' expects objects.");
+    Owned* target = asObj(owner);
+    for (OwnList* l = asObj(operand)->owner; l; l = l->holder->owner) {
+        if (l->holder == target) return true;
+        if (!transitive || !l->holder) return false;
+    }
+    return false;
 }
 
 /// `obj.field = <fresh value>`: the value belongs to the object - when it is still in the hands of this function (it has no owner or
