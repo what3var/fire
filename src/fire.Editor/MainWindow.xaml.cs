@@ -1487,8 +1487,99 @@ namespace fire.Editor
             script.SetText(textNew.ToString());
         }
 
+        /// <summary>The native build configuration that applies to the active script (the nearest fire.native.json, else the defaults) and where it is saved.</summary>
+        private fire.Native.NativeConfig LoadNativeConfig(out string savePath)
+        {
+            string? file = ActiveScript?.FilePath;
+            if (file == null)
+            {
+                savePath = Path.Combine(Directory.GetCurrentDirectory(), fire.Native.NativeConfig.FileName);
+                return new fire.Native.NativeConfig();
+            }
+            var config = fire.Native.NativeConfig.FindFor(file);
+            savePath = config.Path ?? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(file))!, fire.Native.NativeConfig.FileName);
+            return config;
+        }
+
+        private void NativeBuildSettings_Click(object sender, RoutedEventArgs e)
+        {
+            fire.Native.NativeConfig config;
+            string savePath;
+            try { config = LoadNativeConfig(out savePath); }
+            catch (fire.Native.NativeConfigException ex) { MessageBox.Show(this, ex.Message, "Native Build Settings", MessageBoxButton.OK, MessageBoxImage.Error); return; }
+            var dialog = new NativeBuildDialog(config, savePath) { Owner = this };
+            if (dialog.ShowDialog() != true) return;
+            try
+            {
+                dialog.Result.Save(savePath);
+                UpdateStatus($"Saved {savePath}");
+            }
+            catch (IOException ex)
+            {
+                MessageBox.Show(this, ex.Message, "Native Build Settings", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        /// <summary>Translates the active script to C++ for the configured target and builds it with the configured toolchain (or writes the files of a project).</summary>
+        private async void BuildNative_Click(object sender, RoutedEventArgs e)
+        {
+            if (ActiveScript is not { } script)
+            {
+                UpdateStatus("A native build needs a script tab.");
+                return;
+            }
+            fire.Native.NativeConfig config;
+            fire.Runtime.TargetProfile target;
+            fire.Native.ToolchainDef toolchain;
+            try
+            {
+                config = LoadNativeConfig(out _);
+                target = config.ResolveTarget();
+                toolchain = config.ResolveToolchain(target);
+            }
+            catch (fire.Native.NativeConfigException ex)
+            {
+                MessageBox.Show(this, ex.Message, "Build Native", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            string output;
+            if (toolchain.EffectiveKind == "files")
+            {
+                var folder = new OpenFolderDialog { Title = $"Folder for the project files ({target.Name})" };
+                if (folder.ShowDialog(this) != true) return;
+                output = folder.FolderName;
+            }
+            else
+            {
+                var dlg = new SaveFileDialog { Filter = "Programs (*.exe)|*.exe|All files (*.*)|*.*", FileName = target.Name == "windows" || OperatingSystem.IsWindows() ? "program.exe" : "program" };
+                if (dlg.ShowDialog(this) != true) return;
+                output = dlg.FileName;
+            }
+
+            string source = script.GetText();
+            string? baseDirectory = script.BaseDirectory;
+            var mode = _session.ExecutionMode;
+            UpdateStatus($"Building for {target.Name} ({toolchain.EffectiveKind})...");
+            var result = await System.Threading.Tasks.Task.Run(() =>
+                fire.Compiler.NativeBuilder.BuildSafe(new[] { source }, config, target, toolchain, output, mode, null, false, baseDirectory));
+            if (result.Ok)
+            {
+                UpdateStatus($"Built {result.Output} (native, {target.Name}).");
+                return;
+            }
+            UpdateStatus("The native build failed.");
+            MessageBox.Show(this, result.Log, "Build Native", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+
         private void Build_Click(object sender, RoutedEventArgs e)
         {
+            // "Build" follows the configuration: with the native engine it builds natively
+            try
+            {
+                if (string.Equals(LoadNativeConfig(out _).Engine, "native", StringComparison.OrdinalIgnoreCase)) { BuildNative_Click(sender, e); return; }
+            }
+            catch (fire.Native.NativeConfigException) { }
             var dlg = new SaveFileDialog { Filter = "Executable files (*.exe)|*.exe|All files (*.*)|*.*" };
             if (dlg.ShowDialog() != true) return;
 

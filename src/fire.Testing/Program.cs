@@ -13993,6 +13993,7 @@ static int CountOccurrences(string haystack, string needle)
     {
         string workDir = Path.Combine(Path.GetTempPath(), "fire-native-test-" + Guid.NewGuid().ToString("N"));
         fire.Native.NativeRuntimeFiles.WriteTo(workDir);
+        fire.Native.NativeRuntimeFiles.WriteSimulatorTo(Path.Combine(workDir, "sim"));
 
         // Memory errors in the generated code (ownership, freeing) must not slip through: run the cases under the sanitizers when the compiler has them.
         string sanitize = "";
@@ -14081,19 +14082,110 @@ static int CountOccurrences(string haystack, string needle)
         string espCpp = fire.Native.CppGenerator.Generate(espLinked, esp);
         CheckNat("esp32: Einstieg app_main statt main, Defines, 32-Bit-float",
             espCpp.Contains("extern \"C\" void app_main(void)") && !espCpp.Contains("int main()") && espCpp.Contains("#define FIRE_TARGET_ESP32 1")
-            && espCpp.Contains("#define FIRE_HAL_ESP32 1") && espCpp.Contains("#define FIRE_DEFAULT_STACK_BYTES 4096") && espCpp.Contains("#define FIRE_FLOAT32 1"));
+            && espCpp.Contains("#define FIRE_HAL_ESP32 1") && espCpp.Contains("#define FIRE_DEFAULT_STACK_BYTES 8192") && espCpp.Contains("#define FIRE_FLOAT32 1"));
         {
             string espFile = Path.Combine(workDir, "esp.cpp");
             File.WriteAllText(espFile, espCpp);
-            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cxx, $"-std=c++17 -Wall -Wextra -c \"{espFile}\" -I\"{workDir}\" -o \"{espFile}.o\"") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false })!;
+            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cxx, $"-std=c++17 -Wall -Wextra -c \"{espFile}\" -I\"{workDir}\" -I\"{Path.Combine(workDir, "sim")}\" -o \"{espFile}.o\"") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false })!;
             string espBuild = p.StandardError.ReadToEnd() + p.StandardOutput.ReadToEnd();
             p.WaitForExit();
             CheckNat("esp32: das erzeugte C++ uebersetzt ohne Warnung", p.ExitCode == 0 && !espBuild.Contains("warning"), espBuild);
         }
         var cliEsp = CommandLineParser.Parse(new[] { "native", "a.script", "-t", "esp32" });
         CheckNat("Befehlszeile: -t esp32 / unbekanntes Ziel / -t ausserhalb von native",
-            cliEsp.Error == null && cliEsp.Target == esp && CommandLineParser.Parse(new[] { "native", "a.script", "-t", "amiga" }).Error != null
+            cliEsp.Error == null && cliEsp.Target == esp && CommandLineParser.Parse(new[] { "native", "a.script", "-t", "amiga" }).TargetName == "amiga"
             && CommandLineParser.Parse(new[] { "run", "a.script", "-t", "esp32" }).Error != null && CommandLineParser.Parse(new[] { "native", "a.script" }).Target == null);
+
+        string RunProc(string tool, string arguments, string dir, out int exit)
+        {
+            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool, arguments)
+            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = dir })!;
+            var errTask = p.StandardError.ReadToEndAsync();
+            string output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit();
+            exit = p.ExitCode;
+            return output + errTask.Result;
+        }
+        // ---- Plattformschicht: dieselben Thread-Programme auf FreeRTOS (Tasks, Semaphoren) - hier auf dem Simulator (native/sim, pthreads)
+        {
+            string[] rtosCases = { "Actor: fire with", "Actor: mehrere", "sync: die Kopie", "sync: Arrays", "taking: der Thread", "terminate im Hauptprogramm", "catch threads()",
+                "Globals: sync global ist atomar", "Globals: fire global mit taking", "Thread startet Thread", "Globals: #nosync haelt", "leave aus einer Funktion" };
+            var rtosIndexes = Enumerable.Range(0, natCases.Length).Where(i => natCases[i].Name.StartsWith("Threads:") && rtosCases.Any(c => natCases[i].Name.Contains(c))).ToArray();
+            var rtosTasks = rtosIndexes.Select(index => Task.Run(() =>
+            {
+                string expected = vmResults[index];
+                string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos);
+                string file = Path.Combine(workDir, $"rtos{index}.cpp"), exe = Path.Combine(workDir, $"rtos{index}.bin");
+                // the board's startup code would call the entry point from a task; here main does
+                File.WriteAllText(file, cpp + "\nint main() { fire_start(); return 0; }\n");
+                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{file}\" -I\"{workDir}\" -I\"{Path.Combine(workDir, "sim")}\" -o \"{exe}\"", workDir, out int buildExit);
+                if (buildExit != 0 || build.Contains("warning:")) return (natCases[index].Name, expected, "C++-Compiler: " + build);
+                string actual = RunProc(exe, "", workDir, out _);   // (a FreeRTOS program has no exit code)
+                return (natCases[index].Name, expected, actual);
+            })).ToArray();
+            Task.WaitAll(rtosTasks);
+            foreach (var task in rtosTasks)
+            {
+                var (name, expected, actual) = task.Result;
+                CheckNat($"FreeRTOS == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (FreeRTOS):\n{actual}");
+            }
+            CheckNat("FreeRTOS: es gibt Faelle", rtosIndexes.Length >= 10, rtosIndexes.Length.ToString());
+        }
+
+        // ---- Zielkonfiguration (fire.native.json) und `build` mit dem nativen Motor
+        {
+            var config = fire.Native.NativeConfig.Parse("""
+                {
+                  // a comment, and a trailing comma
+                  "engine": "native", "target": "board",
+                  "targets": {
+                    "board": { "extends": "freertos", "includes": ["my_rtos.h"], "defines": ["BOARD_X=3", "FIRE_THREAD_PRIORITY=5"], "stackBytes": 6000,
+                               "entry": { "name": "board_main", "externC": false }, "toolchain": "mine" },
+                    "pc": { "platform": "posix", "compileArgs": ["-pthread"], },
+                  },
+                  "toolchains": { "mine": { "extends": "gcc", "optimization": "-O1", "args": ["-Wall"] } }
+                }
+                """);
+            var board = config.ResolveTarget();
+            CheckNat("Konfiguration: Ziel erbt vom eingebauten und ueberschreibt", board.Name == "board" && board.Native.Platform == "freertos" && board.FloatWidth == 32
+                && board.DefaultStackBytes == 6000 && board.Native.Includes.SequenceEqual(new[] { "my_rtos.h" }) && board.Native.Entry.Name == "board_main"
+                && !board.Native.Entry.ExternC && board.Native.Entry.Kind == fire.Runtime.EntryKind.Function && board.IsEmbedded);
+            var tc = config.ResolveToolchain(board);
+            CheckNat("Konfiguration: Toolchain erbt vom eingebauten", tc.EffectiveKind == "gcc" && tc.Optimization == "-O1" && tc.EffectiveCompiler == "g++" && tc.Std == "c++17" && tc.Args!.SequenceEqual(new[] { "-Wall" }));
+            bool unknownTarget = false;
+            try { config.ResolveTarget("amiga"); } catch (fire.Native.NativeConfigException) { unknownTarget = true; }
+            CheckNat("Konfiguration: unbekanntes Ziel wird abgelehnt, Standard ist der Rechner", unknownTarget && new fire.Native.NativeConfig().ResolveTarget() == TargetProfile.Host);
+            var roundTrip = fire.Native.NativeConfig.Parse(config.ToJson());
+            CheckNat("Konfiguration: speichern und wieder lesen", roundTrip.ResolveTarget("board").Native.Defines.SequenceEqual(new[] { "BOARD_X=3", "FIRE_THREAD_PRIORITY=5" }) && roundTrip.Engine == "native");
+            string boardCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release, null, board), board);
+            int incAt = boardCpp.IndexOf("#include <my_rtos.h>", StringComparison.Ordinal), platAt = boardCpp.IndexOf("#define FIRE_PLATFORM_HEADER \"platform/freertos/fire_platform.hpp\"", StringComparison.Ordinal);
+            CheckNat("Konfiguration: Defines, Includes vor der Plattform und Einsprung stehen im C++", boardCpp.Contains("#define BOARD_X 3") && incAt > 0 && platAt > incAt
+                && boardCpp.Contains("void board_main(void) {") && !boardCpp.Contains("extern \"C\" void board_main") && boardCpp.IndexOf("#define BOARD_X 3", StringComparison.Ordinal) < incAt);
+
+            // build --engine native through the command line runner: a program, and the files of a project
+            string dir = Path.Combine(workDir, "build");
+            Directory.CreateDirectory(dir);
+            string script = Path.Combine(dir, "hello.script");
+            File.WriteAllText(script, "var n = 0\nfire { sync global { n = 41 + 1 } }\nwhile (n == 0) { sync globals }\nprint(\"n \" + n)\n");
+            File.WriteAllText(Path.Combine(dir, "fire.native.json"), "{ \"engine\": \"native\", \"target\": \"" + TargetProfile.Host.Name + "\", \"toolchain\": \"" + (cxx.Contains("clang") ? "clang" : "gcc") + "\" }");
+            string exeOut = Path.Combine(dir, "hello.out");
+            var outW = new StringWriter(); var errW = new StringWriter();
+            int code = CommandLineRunner.Run(new[] { "build", script, "-o", exeOut }, outW, errW);
+            string ran = code == 0 ? RunProc(exeOut, "", dir, out _) : "";
+            CheckNat("build: der native Motor aus fire.native.json baut ein Programm", code == 0 && ran == "n 42\n", $"{code}\n{outW}\n{errW}\n{ran}");
+            string projectOut = Path.Combine(dir, "project");
+            var out2 = new StringWriter(); var err2 = new StringWriter();
+            int code2 = CommandLineRunner.Run(new[] { "build", script, "-t", "esp32", "-o", projectOut }, out2, err2);
+            CheckNat("build: Ziel esp32 schreibt die Dateien eines ESP-IDF-Komponenten", code2 == 0 && File.Exists(Path.Combine(projectOut, "fire_program.cpp")) && File.Exists(Path.Combine(projectOut, "fire_rt.hpp"))
+                && File.Exists(Path.Combine(projectOut, "platform", "esp32", "fire_platform.hpp")) && File.Exists(Path.Combine(projectOut, "platform", "freertos", "fire_platform.hpp"))
+                && File.ReadAllText(Path.Combine(projectOut, "CMakeLists.txt")).Contains("idf_component_register") && File.ReadAllText(Path.Combine(projectOut, "fire_program.cpp")).Contains("void app_main(void)"), $"{code2}\n{out2}\n{err2}");
+            var err3 = new StringWriter();
+            int code3 = CommandLineRunner.Run(new[] { "build", script, "-t", "amiga", "-o", Path.Combine(dir, "x") }, new StringWriter(), err3);
+            CheckNat("build: unbekanntes Ziel ist ein Fehler der Befehlszeile", code3 == CommandLineRunner.ExitUsage && err3.ToString().Contains("amiga"), err3.ToString());
+            var out4 = new StringWriter();
+            int code4 = CommandLineRunner.Run(new[] { "build", script, "--engine", "vm", "-o", Path.Combine(dir, "vm.exe") }, out4, new StringWriter());
+            CheckNat("build: --engine vm gewinnt gegen die Konfiguration", code4 == 0 && File.Exists(Path.Combine(dir, "vm.exe")));
+        }
 
         // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
         try

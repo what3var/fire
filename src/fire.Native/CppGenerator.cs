@@ -358,14 +358,22 @@ namespace fire.Native
             sb.AppendLine($"#define FIRE_TARGET_{_target.Name.ToUpperInvariant()} 1");
             sb.AppendLine($"#define FIRE_HAL_{_target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine($"#define FIRE_DEFAULT_STACK_BYTES {_target.DefaultStackBytes}");
+            // The target section: what the target configuration says - definitions, the headers that come before the platform package, and which package it is.
+            foreach (var define in _target.Native.Defines)
+            {
+                int eq = define.IndexOf('=');
+                sb.AppendLine(eq < 0 ? $"#define {define}" : $"#define {define.Substring(0, eq)} {define.Substring(eq + 1)}");
+            }
             if (_usesExceptions) sb.AppendLine("#define FIRE_EXCEPTIONS 1");
-            if (_usesThreads) sb.AppendLine("#define FIRE_THREADS 1   // compile with -pthread");
+            if (_usesThreads) sb.AppendLine("#define FIRE_THREADS 1");
             if (_usesReflection) sb.AppendLine("#define FIRE_REFLECTION 1");
             if (_program.ExecutionMode == VmExecutionMode.Performance) sb.AppendLine("#define FIRE_UNCHECKED 1 // #performance: destroyed arrays and buffers are not detected");
             if (_program.FloatWidth == 32) sb.AppendLine("#define FIRE_FLOAT32 1 // #floatwidth 32: float is a 32-bit float, like in the VM");
             // The unit table: the base symbols of all units of the program (sorted like the VM prints them) and one row per unit.
             var dimNames = _units.SelectMany(u => u.Dimensions.Keys).Distinct().OrderBy(k => k).ToList();
             sb.AppendLine($"#define FIRE_NDIMS {Math.Max(1, dimNames.Count)}");
+            foreach (var include in _target.Native.Includes) sb.AppendLine($"#include <{include}>");
+            sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.hpp\"");
             sb.AppendLine("#include \"fire_rt.hpp\"");
             sb.AppendLine("using namespace fire;");
             sb.AppendLine();
@@ -476,17 +484,20 @@ namespace fire.Native
 
             foreach (var f in _funcs) sb.AppendLine(f.Code);
             sb.AppendLine(main.Code);
-            if (_target.IsEmbedded)
+            // The entry point is the target configuration's: a process (`int main()`, the exit code is `terminate(n)`) or a function that the board's startup
+            // code calls once the scheduler runs (`app_main` in ESP-IDF; there is no process to end).
+            var entry = _target.Native.Entry;
+            string externC = entry.ExternC ? "extern \"C\" " : "";
+            if (entry.Kind == EntryKind.Function)
             {
-                // The board's startup code calls app_main (ESP-IDF) once FreeRTOS is running; there is no process to exit.
-                sb.AppendLine("extern \"C\" void app_main(void) {");
+                sb.AppendLine($"{externC}void {entry.Name}(void) {{");
                 sb.AppendLine("    fire_main();");
                 sb.AppendLine("    std::fflush(stdout);");
                 sb.AppendLine("}");
             }
             else
             {
-                sb.AppendLine("int main() {");
+                sb.AppendLine($"{externC}int {entry.Name}({(entry.Name == "main" ? "" : "void")}) {{");
                 sb.AppendLine("    fire_main();");
                 sb.AppendLine("    std::fflush(stdout);");
                 sb.AppendLine(_usesThreads ? "    return mainExitCode();   // `terminate(n)` gives the exit code" : _usesExceptions ? "    return g_unwind.active ? 1 : 0;   // an exception that nothing caught" : "    return 0;");
@@ -1041,7 +1052,7 @@ namespace fire.Native
 
         private void UseThreads()
         {
-            if (_target.IsEmbedded) throw new NativeNotSupportedException("fire threads are not supported on embedded targets yet");
+            if (!_target.Native.SupportsThreads) throw new NativeNotSupportedException($"fire threads are not supported by the platform '{_target.Native.Platform}'");
             if (!_usesThreads) { _usesThreads = true; _version++; }
             UseExceptions();   // leave and terminate unwind like an exception
         }
@@ -2444,7 +2455,7 @@ namespace fire.Native
                     var body = GetFunc(chunk.Functions[ins.A[0]], FuncKind.FireBody);
                     body.GlobalSlotCount = ins.A[1];
                     int first = d - argc;
-                    var sbf = new StringBuilder("{ OwnList* travel = newTravel(); Value av[" + Math.Max(1, argc) + "]; ");
+                    var sbf = new StringBuilder("{ OwnList* travel = newTravel(); Value av[" + Math.Max(1, argc) + "] = {}; ");
                     for (int i = 0; i < takingCount; i++) sbf.Append($"av[{i}] = takeCopy({S(first + i)}, travel); ");
                     if (hasWith) sbf.Append($"av[{takingCount}] = {S(first + takingCount)}; ");
                     sbf.Append($"ensureDomain(); fireThread({body.Name}, av, {argc}, travel); }}");

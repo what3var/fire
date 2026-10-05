@@ -37,6 +37,7 @@
                 <MenuItem Header="_Close Document" Click="CloseDocument_Click" InputGestureText="Ctrl+W"/>
                 <Separator/>
                 <MenuItem Header="Build Settings" Click="BuildSettings_Click"/>
+                <MenuItem Header="Native Build Settings..." Click="NativeBuildSettings_Click"/>
                 <Separator/>
                 <MenuItem Header="E_xit" Click="Exit_Click"/>
             </MenuItem>
@@ -64,6 +65,7 @@
                 <MenuItem Header="_Start / Continue (to next breakpoint)" Click="Run_Click" InputGestureText="F5"/>
                 <MenuItem Header="Re_compile and Start" Click="Restart_Click" InputGestureText="Ctrl+F5"/>
                 <MenuItem Header="Build Stan_dalone..." Click="Build_Click"/>
+                <MenuItem Header="Build _Native..." Click="BuildNative_Click"/>
                 <Separator/>
                 <MenuItem Header="Step _Over" Click="Step_Click" InputGestureText="F10"/>
                 <MenuItem Header="Step _Into" Click="StepInto_Click" InputGestureText="F11"/>

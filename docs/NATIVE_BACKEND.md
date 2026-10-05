@@ -285,9 +285,77 @@ einzigen Maschine, keine Garantie.
   Hauptprogramm auf seinem Strang mit den echten Globals ausführt (eine Ausnahme darin geht an `catch threads`).
   Abweichungen von der VM: Actor-Referenzen und Objekt-Argumente von Nachrichten gelten als Referenzen (ein Actor muss die Threads überleben, die ihn benutzen); `try sync`
   liefert nie `false` (es gibt nur einen Strang zur Zeit); ein `leave`/`terminate` in einem Destruktor/einer Property wirkt nativ erst an deren Ende; nach einem `leave` in
-  einem Thread zerstört dieser auch das, was er in `taking`-Kopien angelegt hat (die VM ließ es liegen); es gibt noch kein `Sleep`.
+  einem Thread zerstört dieser auch das, was er in `taking`-Kopien angelegt hat (die VM ließ es liegen); es gibt noch kein `Sleep`. Hosts brauchen `-pthread`
+(`compileArgs` des Ziels); auf FreeRTOS sind Fire-Threads Tasks (`threadStart`), eine kleine Stackgröße ist die häufigste Fehlerquelle (`FIRE_THREAD_STACK_BYTES`, `stackBytes`).
 
 Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), die Bridges.
+
+### Plattformschicht
+
+Alles, was vom Betriebssystem oder Board abhängt, steht **in einem Ordner je Plattform**: `native/platform/<name>/fire_platform.hpp`. Die Runtime (`fire_rt.hpp`) benutzt
+nur diese Schnittstelle (`fire::plat`):
+
+| | |
+|---|---|
+| `nowMs()` | monotone Uhr in Millisekunden |
+| `exitProcess(code)` | Programm beenden (hosted: `exit`/`_Exit`; FreeRTOS: `abort`, es gibt keinen Prozess) |
+| `Mutex`, `CondVar` (`wait`, `waitFor(ms)`, `notifyAll`, immer mit gehaltenem Mutex) | Sperren und Warten (GIL, Ereignisse, `process`, Sektionen) |
+| `threadStart(fn, arg, stackBytes)`, `threadJoin` | ein Fire-Thread |
+| `tlsGet/tlsSet` (nur mit `FIRE_TLS_STRUCT`) | ein Zeiger je Task, wo es kein `thread_local` gibt |
+
+Mitgelieferte Pakete: `std` (gemeinsame Basis der Hosts: `std::thread`, `std::mutex`, `std::condition_variable`), `posix` und `windows` (nehmen `std`; hier kommen später Dateisystem,
+Konsole, serielle Ports, Fenster hinzu), `freertos` (Tasks, Semaphoren; `CondVar` aus binären Semaphoren: jeder Wartende reiht seine eigene ein, `notifyAll` gibt alle frei)
+und `esp32` (nimmt `freertos`; Stack in Bytes, Kerne). Der Zustand eines Ausführungsstrangs (`g_unwind`, `g_handlers`, Pool, ...) ist eine Liste (`FIRE_THREAD_VARS`):
+auf Hosts `thread_local`-Variablen, mit `FIRE_TLS_STRUCT` Mitglieder einer Struktur, die am Task hängt (`vTaskSetThreadLocalStoragePointer`, Slot `FIRE_TLS_INDEX`, es muss
+`configNUM_THREAD_LOCAL_STORAGE_POINTERS` größer sein) und über Makros wie `g_unwind` erreichbar sind - Programme ohne Threads zahlen nichts.
+Einstellungen des FreeRTOS-Pakets (als `defines` der Zielkonfiguration): `FIRE_THREAD_STACK_BYTES` (Standard 8192), `FIRE_FREERTOS_STACK_BYTES` (der Stack wird in Bytes angegeben, ESP-IDF),
+`FIRE_THREAD_PRIORITY`, `FIRE_THREAD_CORE`, `FIRE_TLS_INDEX`.
+
+Eine eigene Plattform ist ein Ordner mit `fire_platform.hpp` (Vorlage: die mitgelieferten); die Zielkonfiguration nennt ihn (`platformPath`). Der **FreeRTOS-Simulator**
+(`native/sim`, auf pthreads; `NativeRuntimeFiles.WriteSimulatorTo`) erlaubt, ein FreeRTOS-Programm am PC zu probieren; die Tests lassen dieselben Thread-Programme darauf laufen
+(`FreeRTOS == VM`).
+
+### Zielkonfiguration (`fire.native.json`)
+
+Das erzeugte C++ hat oben einen **Zielabschnitt**, den die Konfiguration des Ziels bestimmt: die `defines`, die `includes` (z.B. die FreeRTOS-Header, vor dem Plattformpaket),
+`FIRE_PLATFORM_HEADER` (welches Paket) und am Ende der **Einsprung** (`int main()` als Prozess mit dem Exitcode von `terminate(n)`, oder eine Funktion, die der Startcode des Boards
+aus einem Task aufruft, z.B. `extern "C" void app_main(void)`). Alles andere liegt im Plattformpaket.
+
+Die Datei (gesucht ab dem Ordner der Quelle nach oben, oder `--config`) enthält, was `build` tut und welche Ziele und Toolchains es gibt:
+
+```json
+{
+  "engine": "native",            // "vm" (Standard) oder "native": was `build` erzeugt
+  "target": "my-board",          // Standardziel; sonst dieser Rechner
+  "toolchain": "gcc",            // Standard-Toolchain für Ziele ohne eigene; sonst die erste gefundene
+  "targets": {
+    "my-board": {
+      "extends": "freertos",     // eingebautes Ziel oder anderes aus dieser Datei; nur Abweichungen stehen hier
+      "includes": ["FreeRTOS.h", "task.h", "semphr.h"],
+      "defines": ["FIRE_THREAD_PRIORITY=3", "FIRE_THREAD_STACK_BYTES=6000"],
+      "entry": { "name": "board_fire_main", "kind": "function", "externC": true },
+      "floatWidth": 32, "stackBytes": 6000, "toolchain": "my-gcc"
+    }
+  },
+  "toolchains": {
+    "my-gcc": { "extends": "gcc", "compiler": "/opt/arm/bin/arm-none-eabi-g++", "optimization": "-Os", "args": ["-mcpu=cortex-m4"] }
+  }
+}
+```
+
+Felder eines Ziels: `extends`, `platform`, `platformPath`, `includes`, `defines` (`NAME` oder `NAME=WERT`), `entry` (`name`, `kind` = `process`|`function`, `externC`), `compileArgs`, `linkLibs`,
+`supportsThreads`, `floatWidth`, `stackBytes`, `symbols`, `imports`, `embedded`, `toolchain`. Eingebaute Ziele: `windows`, `linux`, `macos`, `esp32`, `freertos`.
+Toolchains (`kind`): `gcc`, `clang`, `msvc` (Compiler, Standard, Optimierung, Argumente, Bibliotheken, Include-Ordner), `custom` (`command` mit `{cpp}`, `{dir}`, `{out}`, `{args}`, `{libs}`) und
+`files` (schreibt nur die Quellen; `layout: "idf-component"` legt dazu eine `CMakeLists.txt` an, `buildCommand` läuft danach im Ordner, z.B. `idf.py build`). Eingebaut: `gcc`, `clang`, `msvc`,
+`files`, `esp-idf`. Die Zeilen mit `//` und Kommas am Ende sind erlaubt.
+
+### Bauen: `build` zeigt auf nativ
+
+`fire.Compiler build skript.script [-o ziel] [--engine vm|native] [-t ziel] [--toolchain name] [--config datei] [--keep]`: ohne `--engine` gilt das `engine` der Konfiguration (Standard `vm`: die
+eigenständige Datei mit der VM, wie bisher). Mit `native` wird für das Ziel übersetzt (`NativeBuilder`: C++ erzeugen, Runtime und Plattformpaket daneben legen) und mit der Toolchain gebaut;
+bei `files` ist `-o` ein Ordner. `fire.Compiler native ...` erzeugt weiter nur das C++ (samt Runtime und Plattformpaket des Ziels). Der Editor hat denselben Weg:
+**File > Native Build Settings...** (Engine, Ziel mit Plattform/Includes/Defines/Einsprung, Toolchain mit Compiler und Argumenten; speichert `fire.native.json` neben dem Skript), **Run > Build Native...**,
+und **Build** folgt dem `engine` der Konfiguration.
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes
 C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich sein.
@@ -299,7 +367,7 @@ C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich se
 2. **Ownership**: Scopes, die besitzende Objekte halten, behalten eine Laufzeit-Scope-Kette (für die Destruktor-Kaskade); alle anderen
    bleiben aufgelöst.
 3. ~~**Ausnahmen mit Resume**~~ - umgesetzt, siehe "Ausnahmen".
-4. ~~**Threads, `sync`, Safe-Points** (`leave`/`terminate`)~~ - umgesetzt für Hosts (`std::thread` + GIL), siehe "Threads"; FreeRTOS-Tasks folgen.
+4. ~~**Threads, `sync`, Safe-Points** (`leave`/`terminate`)~~ - umgesetzt (`std::thread` oder FreeRTOS-Tasks + GIL), siehe "Threads" und "Plattformschicht".
 5. **Bridges** (Variante A): eine C++-Implementierung mit C-ABI, die auch der C#-Editor per P/Invoke nutzt - IO und Time zuerst,
    dann Graphics (SDL3 ist ohnehin C), zuletzt Devices.
 6. **Optimierungen**: Typinferenz und Einheiten-Folding, Devirtualisierung (geschlossene Welt), Inlining, Scope-Elision.
@@ -321,10 +389,10 @@ Präprozessor lesen dasselbe:
 | `Name` | `--target`/`-t` auf der Befehlszeile | `esp32` |
 | `Symbols` | Symbole für `#if` (noch nicht gebaut) | `esp32`, `freertos` |
 | `FloatWidth` | Standard-Genauigkeit von `float` | 32 |
-| `DefaultStackBytes` | Standard-Stack eines `fire`-Threads | 4096 |
+| `DefaultStackBytes` | Standard-Stack eines `fire`-Threads | 8192 |
 | `Imports` | welche `#import`-Bibliotheken es dort gibt | print, io, devices, time, reflection, linq (kein `graphics`/`ui`) |
 | `HalPackage` | Plattformpaket der C++-Runtime | `esp32` |
-| `IsEmbedded` | Einstieg ist `app_main` statt `main` | ja |
+| `IsEmbedded` | kein Betriebssystem-Prozess (der Einsprung steht in `Native.Entry`: `app_main`) | ja |
 
 Eingebaut: `windows`, `linux`, `macos`, `esp32`; `TargetProfile.Host` ist das Ziel der VM im Editor.
 
@@ -335,7 +403,8 @@ Eingebaut: `windows`, `linux`, `macos`, `esp32`; `TargetProfile.Host` ist das Zi
   eingebettete Ziele den Einstieg `extern "C" void app_main(void)`. Die Plattformschicht der Runtime wählt später über diese Defines.
 * Befehlszeile: `fire.Compiler native skript.script -t esp32 -o main.cpp`.
 
-Zusätzliche Ziele (eigene Boards) sind ein Eintrag in dieser Tabelle; Profile aus einer Datei sind ein späterer Schritt.
+Zusätzliche Ziele (eigene Boards) stehen in der Zielkonfiguration `fire.native.json` (siehe "Zielkonfiguration"); `TargetProfile.Native` (`NativeTarget`) trägt dort, was der Bau braucht
+(Plattformpaket, Includes, Defines, Einsprung, Compiler-Argumente). Eingebaut ist auch `freertos` (jedes Board mit FreeRTOS; der Einsprung `fire_start` wird vom Board aus einem Task aufgerufen).
 
 ### Float-Genauigkeit - umgesetzt
 

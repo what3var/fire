@@ -1,0 +1,140 @@
+<Window x:Class="fire.Editor.NativeBuildDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Native Build Settings" Width="640" Height="680" MinWidth="560" MinHeight="520"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Grid Margin="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- what "Build" does, and where the settings are kept -->
+        <GroupBox Grid.Row="0" Header="Build" Margin="2">
+            <Grid Margin="4">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                <Label Grid.Row="0" Grid.Column="0" Content="Engine"/>
+                <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <RadioButton x:Name="rbEngineVm" Content="VM (self-contained file with the interpreter)" Margin="0,0,16,0"/>
+                    <RadioButton x:Name="rbEngineNative" Content="Native (C++ for the target, built with the toolchain)"/>
+                </StackPanel>
+                <Label Grid.Row="1" Grid.Column="0" Content="File"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" x:Name="txtConfigPath" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+            </Grid>
+        </GroupBox>
+
+        <TabControl Grid.Row="1" Margin="2,6,2,2">
+            <TabItem Header="Target">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="6">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <Label Content="Target" VerticalAlignment="Center"/>
+                            <ComboBox Grid.Column="1" x:Name="cmbTarget" SelectionChanged="Target_SelectionChanged" Margin="4,0"/>
+                            <Button Grid.Column="2" Content="New..." Click="NewTarget_Click" Padding="10,2"/>
+                        </Grid>
+                        <TextBlock x:Name="txtTargetHint" TextWrapping="Wrap" Margin="4,6" Opacity="0.7"/>
+
+                        <Grid Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Label Content="Platform package"/>
+                            <ComboBox Grid.Column="1" x:Name="cmbPlatform" IsEditable="True" ToolTip="The folder native/platform/&lt;name&gt; of the runtime: everything that depends on the operating system or the board"/>
+                            <Label Grid.Row="1" Content="Own platform folder"/>
+                            <DockPanel Grid.Row="1" Grid.Column="1">
+                                <Button DockPanel.Dock="Right" Content="..." Width="28" Click="BrowsePlatform_Click"/>
+                                <TextBox x:Name="txtPlatformPath" ToolTip="A folder with your own fire_platform.hpp; it is copied to platform/&lt;name&gt;/ next to the generated file"/>
+                            </DockPanel>
+                            <Label Grid.Row="2" Content="Float precision"/>
+                            <ComboBox Grid.Row="2" Grid.Column="1" x:Name="cmbFloat" HorizontalAlignment="Left" Width="80"><ComboBoxItem Content="32"/><ComboBoxItem Content="64"/></ComboBox>
+                            <Label Grid.Row="3" Content="Thread stack (bytes)"/>
+                            <TextBox Grid.Row="3" Grid.Column="1" x:Name="txtStack" HorizontalAlignment="Left" Width="100"/>
+                            <Label Grid.Row="4" Content="Threads"/>
+                            <CheckBox Grid.Row="4" Grid.Column="1" x:Name="chkThreads" Content="The platform package implements fire threads" VerticalAlignment="Center"/>
+                            <Label Grid.Row="5" Content="Embedded"/>
+                            <CheckBox Grid.Row="5" Grid.Column="1" x:Name="chkEmbedded" Content="A board without an operating system shell" VerticalAlignment="Center"/>
+                        </Grid>
+
+                        <GroupBox Header="Entry point" Margin="0,8,0,0">
+                            <Grid Margin="4">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="146"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                <Label Content="Function name"/>
+                                <TextBox Grid.Column="1" x:Name="txtEntryName"/>
+                                <Label Grid.Row="1" Content="Starts as"/>
+                                <ComboBox Grid.Row="1" Grid.Column="1" x:Name="cmbEntryKind" HorizontalAlignment="Left" Width="260">
+                                    <ComboBoxItem Content="Process (int main, exit code)"/><ComboBoxItem Content="Function (the board calls it from a task)"/>
+                                </ComboBox>
+                                <CheckBox Grid.Row="2" Grid.Column="1" x:Name="chkExternC" Content="extern &quot;C&quot; (the board's startup code is C)" Margin="0,4"/>
+                            </Grid>
+                        </GroupBox>
+
+                        <Label Content="Includes before the platform package (one per line, e.g. freertos/FreeRTOS.h)" Margin="0,8,0,0"/>
+                        <TextBox x:Name="txtIncludes" AcceptsReturn="True" Height="70" VerticalScrollBarVisibility="Auto" FontFamily="Consolas"/>
+                        <Label Content="Definitions (one per line: NAME or NAME=VALUE)"/>
+                        <TextBox x:Name="txtDefines" AcceptsReturn="True" Height="60" VerticalScrollBarVisibility="Auto" FontFamily="Consolas"/>
+                        <Label Content="Compiler arguments this platform always needs (one per line, e.g. -pthread)"/>
+                        <TextBox x:Name="txtTargetArgs" AcceptsReturn="True" Height="46" VerticalScrollBarVisibility="Auto" FontFamily="Consolas"/>
+                        <Label Content="Libraries to link (one per line)"/>
+                        <TextBox x:Name="txtTargetLibs" AcceptsReturn="True" Height="46" VerticalScrollBarVisibility="Auto" FontFamily="Consolas"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Toolchain">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="6">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <Label Content="Toolchain" VerticalAlignment="Center"/>
+                            <ComboBox Grid.Column="1" x:Name="cmbToolchain" SelectionChanged="Toolchain_SelectionChanged" Margin="4,0"/>
+                            <Button Grid.Column="2" Content="New..." Click="NewToolchain_Click" Padding="10,2"/>
+                        </Grid>
+                        <TextBlock x:Name="txtToolchainHint" TextWrapping="Wrap" Margin="4,6" Opacity="0.7"/>
+                        <Grid Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Label Content="Kind"/>
+                            <ComboBox Grid.Column="1" x:Name="cmbKind" HorizontalAlignment="Left" Width="160" SelectionChanged="Kind_SelectionChanged">
+                                <ComboBoxItem Content="gcc"/><ComboBoxItem Content="clang"/><ComboBoxItem Content="msvc"/><ComboBoxItem Content="custom"/><ComboBoxItem Content="files"/>
+                            </ComboBox>
+                            <Label Grid.Row="1" Content="Compiler"/>
+                            <DockPanel Grid.Row="1" Grid.Column="1">
+                                <Button DockPanel.Dock="Right" Content="..." Width="28" Click="BrowseCompiler_Click"/>
+                                <TextBox x:Name="txtCompiler" ToolTip="A name on the PATH (g++, clang++, cl) or a full path (a cross compiler)"/>
+                            </DockPanel>
+                            <Label Grid.Row="2" Content="C++ standard"/>
+                            <TextBox Grid.Row="2" Grid.Column="1" x:Name="txtStd" HorizontalAlignment="Left" Width="100"/>
+                            <Label Grid.Row="3" Content="Optimization"/>
+                            <TextBox Grid.Row="3" Grid.Column="1" x:Name="txtOptimization" HorizontalAlignment="Left" Width="100"/>
+                            <Label Grid.Row="4" Content="Project layout"/>
+                            <ComboBox Grid.Row="4" Grid.Column="1" x:Name="cmbLayout" HorizontalAlignment="Left" Width="160"><ComboBoxItem Content="flat"/><ComboBoxItem Content="idf-component"/></ComboBox>
+                            <Label Grid.Row="5" Content="Build command"/>
+                            <TextBox Grid.Row="5" Grid.Column="1" x:Name="txtBuildCommand" ToolTip="Runs in the output folder after the files are written (e.g. idf.py build)"/>
+                        </Grid>
+                        <Label Content="Custom command ({cpp} {dir} {out} {args} {libs})" Margin="0,8,0,0"/>
+                        <TextBox x:Name="txtCommand" FontFamily="Consolas"/>
+                        <Label Content="Compiler arguments (one per line)"/>
+                        <TextBox x:Name="txtToolArgs" AcceptsReturn="True" Height="60" VerticalScrollBarVisibility="Auto" FontFamily="Consolas"/>
+                        <Label Content="Libraries and linker arguments (one per line)"/>
+                        <TextBox x:Name="txtToolLibs" AcceptsReturn="True" Height="46" VerticalScrollBarVisibility="Auto" FontFamily="Consolas"/>
+                        <Label Content="Include folders (one per line)"/>
+                        <TextBox x:Name="txtToolIncludes" AcceptsReturn="True" Height="46" VerticalScrollBarVisibility="Auto" FontFamily="Consolas"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button Content="Save" Width="80" Margin="0,0,8,0" IsDefault="True" Click="Save_Click"/>
+            <Button Content="Cancel" Width="80" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

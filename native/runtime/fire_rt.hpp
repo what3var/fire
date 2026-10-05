@@ -14,21 +14,32 @@
 #include <cstdlib>
 #include <cstring>
 
+// The platform layer (docs/NATIVE_BACKEND.md, "Plattformschicht"): everything that depends on the operating system or the board - exit, clock, and for
+// fire threads the mutex, the condition variable, the thread and where the per-thread state lives - is one header per platform package. The generated
+// file names it (FIRE_PLATFORM_HEADER, from the target configuration); without a name the host's own is taken.
+#ifndef FIRE_PLATFORM_HEADER
+#if defined(_WIN32)
+#define FIRE_PLATFORM_HEADER "platform/windows/fire_platform.hpp"
+#else
+#define FIRE_PLATFORM_HEADER "platform/posix/fire_platform.hpp"
+#endif
+#endif
+#include FIRE_PLATFORM_HEADER
+
 // Fire threads (`fire { }`): real threads that take turns under one global lock (the GIL); the generator defines FIRE_THREADS when the
 // program uses them. The state that belongs to one thread of execution (unwinding, handlers, the temporary pool, the global scope list)
-// is thread-local then; everything else is only touched while the GIL is held.
+// is per thread then (`thread_local`, or - where the platform has no such thing, FIRE_TLS_STRUCT - one structure behind a task-local
+// pointer); everything else is only touched while the GIL is held.
 #ifdef FIRE_THREADS
 #include <atomic>
-#include <chrono>
-#include <condition_variable>
 #include <deque>
-#include <mutex>
-#include <thread>
 #include <unordered_map>
 #include <vector>
-#define FIRE_TLS thread_local
-#else
-#define FIRE_TLS
+#endif
+
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 12
+// a function keeps the list of its global scope in `g_globalOwn` for as long as it runs (the thread's or the program's top level): not a dangling pointer
+#pragma GCC diagnostic ignored "-Wdangling-pointer"
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -57,11 +68,7 @@ namespace fire {
 [[noreturn]] inline void exitNow(int code) {
     std::fflush(stdout);
     std::fflush(stderr);
-#ifdef FIRE_THREADS
-    std::_Exit(code);
-#else
-    std::exit(code);
-#endif
+    plat::exitProcess(code);
 }
 
 enum Kind : uint8_t { K_Bool, K_Int, K_Float, K_Char, K_String, K_Class, K_Lambda, K_Pointer, K_Array, K_Buffer, K_Undefined };
@@ -109,7 +116,78 @@ struct UnwindState {
     uint64_t token;       // RESUME: which throw is resumed
     Value regs[4];        // JUMP: operand stack slots that the jump takes along (the completion of a finally block)
 };
-FIRE_TLS inline UnwindState g_unwind = {0, UW_NONE, nullptr, {}, 0, 0, {}};
+
+/// The temporary pool: every entry holds one count of a reference value; a scope releases the entries above its mark when it
+/// ends. (One pool per thread of execution.)
+struct Ref;
+struct Pool {
+    Ref** items;
+    uint32_t top;
+    uint32_t cap;
+};
+
+// ---- The state of one thread of execution. One list, two ways to hold it: `thread_local` variables (hosts), or - FIRE_TLS_STRUCT, for platforms whose
+// compiler has no thread_local, like FreeRTOS tasks - the members of one structure that the platform hangs on the task (`plat::tlsGet/tlsSet`) and
+// names that expand to `tl().name`. Without threads they are plain globals.
+struct OwnList;
+struct Pending;
+struct SectionReq;
+#define FIRE_THREAD_VARS(X) \
+    X(UnwindState, g_unwind, (UnwindState{0, UW_NONE, nullptr, {}, 0, 0, {}})) \
+    X(Pool, g_pool, (Pool{nullptr, 0, 0})) \
+    X(Handler*, g_handlers, nullptr) \
+    X(OwnList*, g_globalOwn, nullptr)   /* the global scope: thrown exceptions belong to it (SPEC 7.6) */ \
+    X(Pending*, g_pending, nullptr) \
+    X(uint64_t, g_throwToken, 0) \
+    X(uint8_t, g_isThread, 0)           /* 1 on a fire thread */ \
+    X(int32_t, g_jobDepth, 0)           /* a `fire global` job is running on this thread */ \
+    X(uint32_t, g_attnMask, 7u)         /* the signals this thread looks at (ATTN_ALL|ATTN_MAIN|ATTN_SECT); fire threads clear all but ATTN_ALL */ \
+    X(int32_t, g_tick, 4096) \
+    X(uint8_t, g_leaving, 0)            /* unwinding because of leave/terminate (or an unhandled exception): no more signals */ \
+    X(uint8_t, g_threadFailed, 0)       /* the thread ends with an unhandled exception: its global scope stays */ \
+    X(OwnList*, g_travel, nullptr) \
+    X(SectionReq*, g_curSection, nullptr) \
+    X(int32_t, g_secDepth, 0) \
+    X(uint32_t, g_reflCaller, 0xFFFFFFFFu)   /* the class of the code that called into the reflection library */
+
+#if defined(FIRE_THREADS) && defined(FIRE_TLS_STRUCT)
+struct ThreadLocals {
+#define FIRE_X(type, name, init) type name = init;
+    FIRE_THREAD_VARS(FIRE_X)
+#undef FIRE_X
+};
+/// The structure of the calling task (made when the task first asks).
+inline ThreadLocals& tl() {
+    void* p = plat::tlsGet();
+    if (FIRE_UNLIKELY(!p)) { p = new ThreadLocals(); plat::tlsSet(p); }
+    return *static_cast<ThreadLocals*>(p);
+}
+#define g_unwind (::fire::tl().g_unwind)
+#define g_pool (::fire::tl().g_pool)
+#define g_handlers (::fire::tl().g_handlers)
+#define g_globalOwn (::fire::tl().g_globalOwn)
+#define g_pending (::fire::tl().g_pending)
+#define g_throwToken (::fire::tl().g_throwToken)
+#define g_isThread (::fire::tl().g_isThread)
+#define g_jobDepth (::fire::tl().g_jobDepth)
+#define g_attnMask (::fire::tl().g_attnMask)
+#define g_tick (::fire::tl().g_tick)
+#define g_leaving (::fire::tl().g_leaving)
+#define g_threadFailed (::fire::tl().g_threadFailed)
+#define g_travel (::fire::tl().g_travel)
+#define g_curSection (::fire::tl().g_curSection)
+#define g_secDepth (::fire::tl().g_secDepth)
+#define g_reflCaller (::fire::tl().g_reflCaller)
+#else
+#if defined(FIRE_THREADS)
+#define FIRE_TLS thread_local
+#else
+#define FIRE_TLS
+#endif
+#define FIRE_X(type, name, init) FIRE_TLS inline type name = init;
+FIRE_THREAD_VARS(FIRE_X)
+#undef FIRE_X
+#endif
 
 /// A run-time error that the language reports as an exception (see the exceptions section): the exception is thrown, or - when
 /// the program has no exceptions at all - it ends the program.
@@ -486,14 +564,6 @@ inline void release(Value v) {
     }
 }
 
-/// The temporary pool: every entry holds one count of a reference value; a scope releases the entries above its mark when it
-/// ends. (One pool per thread once fire threads are translated.)
-struct Pool {
-    Ref** items;
-    uint32_t top;
-    uint32_t cap;
-};
-FIRE_TLS inline Pool g_pool = {nullptr, 0, 0};
 
 FIRE_COLD inline void poolGrow() {
     uint32_t cap = g_pool.cap ? g_pool.cap * 2 : 256;
@@ -1538,8 +1608,6 @@ struct Handler {
 };
 
 
-FIRE_TLS inline Handler* g_handlers = nullptr;
-FIRE_TLS inline OwnList* g_globalOwn = nullptr;   // the global scope: thrown exceptions belong to it (SPEC 7.6)
 
 /// Generated: does the exception match the catch type (`typeId` as stored in HandlerInfo::types)?
 bool excMatches(Value exception, int32_t typeId);
@@ -1571,8 +1639,6 @@ struct Pending {
     uint8_t resumable;
     uint8_t cleared;
 };
-FIRE_TLS inline Pending* g_pending = nullptr;
-FIRE_TLS inline uint64_t g_throwToken = 0;
 
 inline void takeGlobal(Obj* o) {
     if (o->owner) unlink(o);
@@ -1586,8 +1652,6 @@ FIRE_COLD inline void reportUnhandled(Value exception) {
 }
 
 #ifdef FIRE_THREADS
-FIRE_TLS inline uint8_t g_isThread = 0;   // 1 on a fire thread
-FIRE_TLS inline int32_t g_jobDepth = 0;   // a `fire global` job is running on this thread
 inline Value threadUnhandled(Value exception);
 inline Value jobUnhandled(Value exception);
 #endif
@@ -2555,25 +2619,28 @@ inline Value print(Value v, OwnList* list) {
 // ownership structures, the handle table and the reference counts never see two threads at once.
 // ---------------------------------------------------------------------------------------------------------------------
 struct Gil {
-    std::mutex m;
-    std::condition_variable cv;
+    plat::Mutex m;
+    plat::CondVar cv;
     uint64_t next = 0, serving = 0;
 };
 inline Gil g_gil;
 inline std::atomic<uint32_t> g_gilWaiting{0};
 
 inline void gilAcquire() {
-    std::unique_lock<std::mutex> lk(g_gil.m);
+    g_gil.m.lock();
     uint64_t ticket = g_gil.next++;
     if (g_gil.serving != ticket) {
         g_gilWaiting.fetch_add(1, std::memory_order_relaxed);
-        g_gil.cv.wait(lk, [&] { return g_gil.serving == ticket; });
+        while (g_gil.serving != ticket) g_gil.cv.wait(g_gil.m);
         g_gilWaiting.fetch_sub(1, std::memory_order_relaxed);
     }
+    g_gil.m.unlock();
 }
 inline void gilRelease() {
-    { std::lock_guard<std::mutex> lk(g_gil.m); g_gil.serving++; }
-    g_gil.cv.notify_all();
+    g_gil.m.lock();
+    g_gil.serving++;
+    g_gil.cv.notifyAll();
+    g_gil.m.unlock();
 }
 /// Lets a thread that waits for the lock run (the ticket lock is fair: this thread queues up again behind it).
 inline void gilYield() {
@@ -2581,30 +2648,26 @@ inline void gilYield() {
 }
 
 // An event: something changed that a waiting thread may be looking for (called with the GIL held, after the change).
-inline std::mutex g_evM;
-inline std::condition_variable g_evCv;
+inline plat::Mutex g_evM;
+inline plat::CondVar g_evCv;
 inline uint64_t g_evCount = 0;
 inline void notifyEvent() {
-    { std::lock_guard<std::mutex> lk(g_evM); g_evCount++; }
-    g_evCv.notify_all();
+    g_evM.lock();
+    g_evCount++;
+    g_evCv.notifyAll();
+    g_evM.unlock();
 }
 
 // Signals. Bit 0 is for every thread (terminate), bit 1 for the main program only (thread exceptions), bit 2 for the main program too (sections and
 // jobs that wait for it; not looked at with `#nosync`).
 constexpr uint32_t ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4;
 inline std::atomic<uint32_t> g_attn{0};
-FIRE_TLS inline uint32_t g_attnMask = ATTN_ALL | ATTN_MAIN | ATTN_SECT;   // fire threads set this to ATTN_ALL
-FIRE_TLS inline int32_t g_tick = 4096;
-FIRE_TLS inline uint8_t g_leaving = 0;        // this thread is unwinding because of leave/terminate (or an unhandled exception): no more signals
-FIRE_TLS inline uint8_t g_threadFailed = 0;   // the thread ends with an unhandled exception: its global scope stays (the exception belongs to it)
 
 struct TerminateState { bool requested; Value value; };
 inline TerminateState g_terminate = {false, {K_Undefined, 0, 0, 0, {0}}};
 inline OwnList g_terminateOwn = {nullptr, nullptr, 0, nullptr, nullptr};   // what a terminate value owns lives on until the process ends
 
-inline int64_t steadyMs() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-}
+inline int64_t steadyMs() { return plat::nowMs(); }
 
 /// Waits - with the GIL released - until `pred` (evaluated with the GIL held) is true. Returns false when it was cut short by
 /// `terminate` (`stopOnTerminate`) or when the deadline passed (`deadlineMs` on the steady clock, 0 = none).
@@ -2614,21 +2677,26 @@ template <class P> inline bool blockUntil(P pred, bool stopOnTerminate = true, i
         if (stopOnTerminate && g_terminate.requested) return false;
         int64_t now = steadyMs();
         if (deadlineMs && now >= deadlineMs) return false;
-        uint64_t seen;
-        { std::lock_guard<std::mutex> lk(g_evM); seen = g_evCount; }
+        g_evM.lock();
+        uint64_t seen = g_evCount;
+        g_evM.unlock();
         gilRelease();
         {
-            std::unique_lock<std::mutex> lk(g_evM);
             int64_t slice = 5;
             if (deadlineMs && deadlineMs - now < slice) slice = deadlineMs - now;
-            g_evCv.wait_for(lk, std::chrono::milliseconds(slice), [&] { return g_evCount != seen; });
+            g_evM.lock();
+            if (g_evCount == seen) g_evCv.waitFor(g_evM, slice);
+            g_evM.unlock();
         }
         gilAcquire();
     }
 }
 
+#ifndef FIRE_THREAD_STACK_BYTES
+#define FIRE_THREAD_STACK_BYTES 0   // 0: the platform's own default
+#endif
 inline int g_threadsLive = 0;
-inline std::vector<std::thread*> g_threadList;
+inline std::vector<plat::Thread*> g_threadList;
 inline std::vector<Value> g_pendingExc;   // unhandled exceptions of fire threads that wait for the main program
 inline std::vector<OwnList*>& graveyard() { static std::vector<OwnList*>* v = new std::vector<OwnList*>(); return *v; }   // the global scopes of threads that ended with an unhandled exception (never freed: the exception is handed on)
 
@@ -2638,7 +2706,6 @@ struct ThreadStart {
     uint32_t n;
     OwnList* travel;   // the copies that `taking` made for the thread (it adopts them into its global scope)
 };
-FIRE_TLS inline OwnList* g_travel = nullptr;
 inline void sectionAbort();   // the end of a thread that is still inside a section
 
 inline void threadEntry(ThreadStart st) {
@@ -2655,6 +2722,16 @@ inline void threadEntry(ThreadStart st) {
     g_threadsLive--;
     notifyEvent();
     gilRelease();
+#ifdef FIRE_TLS_STRUCT
+    delete &tl();   // the state of this task (the GIL is gone, nothing of it is used any more)
+    plat::tlsSet(nullptr);
+#endif
+}
+/// What the platform starts for a fire thread.
+inline void threadMain(void* boxed) {
+    ThreadStart st = *static_cast<ThreadStart*>(boxed);
+    delete static_cast<ThreadStart*>(boxed);
+    threadEntry(st);
 }
 
 /// `fire`: starts the thread that runs `fn(args)`; `travel` (may be null) holds the copies of the `taking` values.
@@ -2663,7 +2740,8 @@ inline void fireThread(void (*fn)(const Value*), const Value* args, uint32_t n, 
     if (!st.args) allocFailed();
     for (uint32_t i = 0; i < n; i++) st.args[i] = args[i];
     g_threadsLive++;
-    g_threadList.push_back(new std::thread(threadEntry, st));
+    ThreadStart* boxed = new ThreadStart(st);
+    g_threadList.push_back(plat::threadStart(threadMain, boxed, FIRE_THREAD_STACK_BYTES));
 }
 
 /// The list that carries the copies for a new thread from the spawner to the thread.
@@ -2768,8 +2846,6 @@ struct SectionReq { bool granted = false, done = false; int refs = 2; };
 struct JobReq { Value lam; Value* args; uint32_t n; OwnList* holder; };
 struct Req { SectionReq* sec; JobReq* job; };
 inline std::deque<Req> g_reqs;
-FIRE_TLS inline SectionReq* g_curSection = nullptr;
-FIRE_TLS inline int32_t g_secDepth = 0;
 
 inline void sectionAcquire() {
     SectionReq* r = new SectionReq();
@@ -3090,7 +3166,7 @@ inline void mainFinish() {
         g_leaving = 0;
     }
     blockUntil([] { mainPoll(); drainQueue(); return g_threadsLive == 0 && g_pendingExc.empty() && g_reqs.empty(); }, false);
-    for (std::thread* t : g_threadList) { t->join(); delete t; }
+    for (plat::Thread* t : g_threadList) plat::threadJoin(t);
     g_threadList.clear();
     g_leaving = 1;   // the globals are destroyed now: nothing interrupts the destructors
 }

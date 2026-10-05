@@ -25,6 +25,18 @@ namespace fire.Compiler
         public TargetProfile? Target { get; init; }
         /// <summary>`-o`: Ausgabedatei von `build` (bzw. die C++-Datei von `native`).</summary>
         public string OutputFile { get; init; } = CommandLineParser.DefaultOutputFile;
+        /// <summary>`-o` was given (otherwise the default depends on what is built).</summary>
+        public bool OutputGiven { get; init; }
+        /// <summary>`-t`: the name of the target, also for targets that only the configuration (fire.native.json) defines; resolved when the command runs.</summary>
+        public string? TargetName { get; init; }
+        /// <summary>`--engine`: `vm` (a self-contained file with the VM) or `native` (translate to C++ and build); null = the configuration's, else `vm`.</summary>
+        public string? Engine { get; init; }
+        /// <summary>`--toolchain`: the toolchain of a native build; null = the configuration's.</summary>
+        public string? ToolchainName { get; init; }
+        /// <summary>`--config`: the native build configuration; null = the nearest fire.native.json next to the first file.</summary>
+        public string? ConfigFile { get; init; }
+        /// <summary>`--keep`: keep the generated C++ next to the program.</summary>
+        public bool KeepSources { get; init; }
         /// <summary>Gesetzt, wenn die Befehlszeile ungültig ist (Meldung für den Nutzer).</summary>
         public string? Error { get; init; }
     }
@@ -51,16 +63,19 @@ namespace fire.Compiler
             """
             Usage:
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64]
-              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64]
-              fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64]
+              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep]
+              fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>]
 
             run     compiles the files into one program and runs it.
-            build   turns them into a self-contained executable (default: out.exe).
+            build   turns them into a program: a self-contained executable that carries the VM (default: out.exe), or - with --engine native, or "engine": "native" in
+                    fire.native.json - C++ built with the toolchain of the configuration for the target (-o is the program; for a toolchain that only writes files, a folder).
             -m      Execution mode (default: whatever the script sets with #debug/#performance, otherwise RELEASE).
             native  translates the files into C++ (written next to fire_rt.hpp, the runtime it includes; default: out.cpp)
                     - an experimental ahead-of-time backend, see docs/NATIVE_BACKEND.md.
-            -t      Target of native: windows, linux, macos or esp32 (default: this machine). The target decides the default
-                    precision of float, which libraries can be imported and how the program starts.
+            -t      Target of a native build: windows, linux, macos, esp32, freertos or one that fire.native.json defines (default: this machine). The target decides the
+                    default precision of float, which libraries can be imported, which platform package of the runtime is used and how the program starts.
+            --config  The native build configuration (default: the nearest fire.native.json next to the first file, else built-in defaults): engine, target,
+                    toolchain (which C++ compiler), own targets. The editor edits the same file.
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
             -o      Name of the file produced by build or native.
 
@@ -86,6 +101,8 @@ namespace fire.Compiler
             VmExecutionMode? mode = null;
             int? floatWidth = null;
             TargetProfile? target = null;
+            string? targetName = null, engine = null, toolchainName = null, configFile = null;
+            bool keep = false;
             string? output = null;
 
             for (int i = 1; i < args.Count; i++)
@@ -102,12 +119,38 @@ namespace fire.Compiler
                 }
                 else if (TryOption(arg, "-t", "--target", out var targetInline))
                 {
-                    if (command != CommandKind.Native) return Fail(command, "-t is only available with native.");
+                    if (command is not (CommandKind.Native or CommandKind.Build)) return Fail(command, "-t is only available with build and native.");
                     string? value = targetInline ?? (i + 1 < args.Count ? args[++i] : null);
                     if (value == null) return Fail(command, "-t must be followed by the target name.");
-                    if (!TargetProfile.TryGet(Unquote(value), out var found))
-                        return Fail(command, $"Unknown target '{value}' (allowed: {string.Join(", ", TargetProfile.All.Select(p => p.Name))}).");
-                    target = found;
+                    targetName = Unquote(value);
+                    // a name the configuration defines is checked when the command runs
+                    if (TargetProfile.TryGet(targetName, out var found)) target = found;
+                }
+                else if (TryOption(arg, "--engine", "--engine", out var engineInline))
+                {
+                    if (command != CommandKind.Build) return Fail(command, "--engine is only available with build.");
+                    string? value = engineInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    if (value == null || Unquote(value).ToLowerInvariant() is not ("vm" or "native")) return Fail(command, "--engine must be followed by vm or native.");
+                    engine = Unquote(value).ToLowerInvariant();
+                }
+                else if (TryOption(arg, "--toolchain", "--toolchain", out var toolchainInline))
+                {
+                    if (command != CommandKind.Build) return Fail(command, "--toolchain is only available with build.");
+                    string? value = toolchainInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    if (string.IsNullOrWhiteSpace(value)) return Fail(command, "--toolchain must be followed by the toolchain name.");
+                    toolchainName = Unquote(value);
+                }
+                else if (TryOption(arg, "--config", "--config", out var configInline))
+                {
+                    if (command is not (CommandKind.Native or CommandKind.Build)) return Fail(command, "--config is only available with build and native.");
+                    string? value = configInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    if (string.IsNullOrWhiteSpace(value)) return Fail(command, "--config must be followed by the file name.");
+                    configFile = Unquote(value);
+                }
+                else if (string.Equals(arg, "--keep", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (command != CommandKind.Build) return Fail(command, "--keep is only available with build.");
+                    keep = true;
                 }
                 else if (TryOption(arg, "-f", "--float", out var floatInline))
                 {
@@ -145,6 +188,12 @@ namespace fire.Compiler
                 Mode = mode,
                 FloatWidth = floatWidth,
                 Target = target,
+                TargetName = targetName,
+                Engine = engine,
+                ToolchainName = toolchainName,
+                ConfigFile = configFile,
+                KeepSources = keep,
+                OutputGiven = output != null,
                 OutputFile = output ?? (command == CommandKind.Native ? DefaultNativeOutputFile : DefaultOutputFile),
             };
         }
@@ -239,6 +288,11 @@ namespace fire.Compiler
 
         private static int Build(CommandLineOptions options, List<string> sources, TextWriter stdout, TextWriter stderr)
         {
+            fire.Native.NativeConfig config;
+            try { config = LoadConfig(options); }
+            catch (fire.Native.NativeConfigException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
+            string engine = options.Engine ?? config.Engine?.ToLowerInvariant() ?? "vm";
+            if (engine == "native") return NativeBuild(options, config, sources, stdout, stderr);
             try
             {
                 new Linker().CompileAndLink(sources, null, options.OutputFile, options.Mode, options.FloatWidth);
@@ -252,19 +306,52 @@ namespace fire.Compiler
             return ExitOk;
         }
 
+        private static fire.Native.NativeConfig LoadConfig(CommandLineOptions options)
+        {
+            if (options.ConfigFile != null)
+            {
+                if (!File.Exists(options.ConfigFile)) throw new fire.Native.NativeConfigException($"Configuration not found: {options.ConfigFile}");
+                return fire.Native.NativeConfig.Load(options.ConfigFile);
+            }
+            return fire.Native.NativeConfig.FindFor(options.Files[0]);
+        }
+
+        /// <summary>`build` with the native engine: translate for the target and let the toolchain build the program (or write the files of a project).</summary>
+        private static int NativeBuild(CommandLineOptions options, fire.Native.NativeConfig config, List<string> sources, TextWriter stdout, TextWriter stderr)
+        {
+            try
+            {
+                var target = config.ResolveTarget(options.TargetName);
+                var toolchain = config.ResolveToolchain(target, options.ToolchainName);
+                string output = options.OutputGiven ? options.OutputFile : NativeBuilder.DefaultOutput(target);
+                var result = NativeBuilder.Build(sources, config, target, toolchain, output, options.Mode, options.FloatWidth, options.KeepSources);
+                stdout.Write(result.Log);
+                if (!result.Ok) { stderr.WriteLine($"The native build for {target.Name} failed."); return ExitScriptError; }
+                stdout.WriteLine($"{result.Output} (native, target {target.Name}, toolchain {toolchain.EffectiveKind})");
+                return ExitOk;
+            }
+            catch (fire.Native.NativeConfigException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
+            catch (Exception ex) when (IsCompileError(ex)) { stderr.WriteLine(CompileErrors.Describe(ex)); return ExitScriptError; }
+            catch (fire.Native.NativeNotSupportedException ex) { stderr.WriteLine("Not supported by the native backend yet: " + ex.Message); return ExitScriptError; }
+        }
+
         private static int Native(CommandLineOptions options, List<string> sources, TextWriter stdout, TextWriter stderr)
         {
             try
             {
-                var target = options.Target ?? TargetProfile.Host;
-                var linked = new Linker().CompileAndLink(sources, null, null, options.Mode, options.FloatWidth, target);
-                string cpp = fire.Native.CppGenerator.Generate(linked, target);
+                var config = LoadConfig(options);
+                var target = config.ResolveTarget(options.TargetName);
+                string cpp = NativeBuilder.Generate(sources, target, options.Mode, options.FloatWidth);
                 string full = Path.GetFullPath(options.OutputFile);
-                File.WriteAllText(full, cpp);
-                fire.Native.NativeRuntimeFiles.WriteTo(Path.GetDirectoryName(full)!);
-                stdout.WriteLine(target.IsEmbedded
-                    ? $"{full} ({cpp.Length} characters) for {target.Name} - add it and fire_rt.hpp to a component of your project (the entry point is app_main)"
-                    : $"{full} ({cpp.Length} characters) - compile with: c++ -std=c++17 -O2 -pthread \"{full}\" -o program");
+                NativeBuilder.WriteFiles(Path.GetDirectoryName(full)!, cpp, target, Path.GetFileName(full), config.Path == null ? null : Path.GetDirectoryName(config.Path));
+                stdout.WriteLine(target.IsEmbedded || target.Native.Entry.Kind == fire.Runtime.EntryKind.Function
+                    ? $"{full} ({cpp.Length} characters) for {target.Name} - add it, fire_rt.hpp and platform/{target.Native.Platform}/ to your project (the entry point is {target.Native.Entry.Name})"
+                    : $"{full} ({cpp.Length} characters) - compile with: c++ -std=c++17 -O2 {string.Join(" ", target.Native.CompileArgs)} \"{full}\" -o program");
+            }
+            catch (fire.Native.NativeConfigException ex)
+            {
+                stderr.WriteLine(ex.Message);
+                return ExitUsage;
             }
             catch (Exception ex) when (IsCompileError(ex))
             {
@@ -313,7 +400,7 @@ namespace fire.Compiler
 
         /// <summary>Fehler, die das Skript selbst verursacht (Parser, Resolver, Compiler, Präprozessor) - alles
         /// andere ist ein Fehler im Werkzeug und soll mit seinem Stacktrace sichtbar bleiben.</summary>
-        private static bool IsCompileError(Exception ex) =>
+        internal static bool IsCompileError(Exception ex) =>
             ex is ParseException or ResolverException or CompilerException
                 or NotSupportedException or PreprocessorException;
     }
