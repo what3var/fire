@@ -1221,6 +1221,56 @@ inline void arraySet(Value a, Value i, Value v) {
     fatal("Index access ('[]') is not possible on this value.");
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// `ref` parameters (SPEC 5.4.2): the argument is a pointer to the variable, the field or the element of the caller.
+// A pointer is a K_Pointer value; `width` 0 points to a Value (variable, field, array element), 1 to a byte (buffer element).
+// ---------------------------------------------------------------------------------------------------------------------
+inline Value PtrV(Value* p) { Value r; r.kind = K_Pointer; r.width = 0; r.reserved = 0; r.unit = 0; r.p = p; return r; }
+inline Value BytePtrV(uint8_t* p) { Value r; r.kind = K_Pointer; r.width = 1; r.reserved = 0; r.unit = 0; r.p = p; return r; }
+
+inline Value ptrRead(Value p) {
+    if (FIRE_UNLIKELY(p.kind != K_Pointer)) fatal("Dereference of a value that is not a pointer.");
+    return p.width ? Int(*static_cast<const uint8_t*>(p.p)) : *static_cast<const Value*>(p.p);
+}
+
+/// `*p = v`: the storage holds a count of what it holds now.
+inline void ptrWrite(Value p, Value v) {
+    if (FIRE_UNLIKELY(p.kind != K_Pointer)) fatal("Assignment through a value that is not a pointer.");
+    if (p.width) { *static_cast<uint8_t*>(const_cast<void*>(p.p)) = (uint8_t)v.i; return; }
+    Value* target = static_cast<Value*>(const_cast<void*>(p.p));
+    Value old = *target;
+    *target = v;
+    retain(v);
+    release(old);
+}
+
+/// A call site that passes an address to a method of which not every implementation takes a `ref`: the others get the value.
+inline Value derefArg(Value v) { return v.kind == K_Pointer ? ptrRead(v) : v; }
+
+inline void requireRef(Value v, const char* name) {
+    if (FIRE_UNLIKELY(v.kind != K_Pointer)) {
+        std::fflush(stdout);
+        std::fprintf(stderr, "fire runtime error: Parameter '%s' is declared 'ref': pass a variable, a field or an array element, not a value.\n", name);
+        std::exit(1);
+    }
+}
+
+/// `x[i]` as a `ref` argument.
+inline Value addressOfIndex(Value a, Value i) {
+    if (i.kind != K_Int) fatal("An index must be an int.");
+    if (a.kind == K_Array) {
+        Arr* arr = arrOf(a);
+        if ((uint64_t)i.i >= arr->length) return indexError("Array index", i.i, arr->length);
+        return PtrV(&arr->items()[i.i]);
+    }
+    if (a.kind == K_Buffer) {
+        Buf* b = bufOf(a);
+        if ((uint64_t)i.i >= b->length) return indexError("Array index", i.i, b->length);
+        return BytePtrV(&b->bytes()[i.i]);
+    }
+    fatal("A 'ref' argument 'x[i]' expects an array or a byte buffer.");
+}
+
 inline Value lengthOf(Value v, bool* ok) {
     *ok = true;
     if (v.kind == K_Array) return Int(arrOf(v)->length);

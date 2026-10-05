@@ -93,7 +93,9 @@ namespace fire.Native
         private int _version;   // bumped whenever something that earlier generated code depended on changes
         /// <summary>The program throws or catches exceptions: calls are followed by a check of the unwinding flag, and the exception hooks exist.</summary>
         private bool _usesExceptions;
-        private readonly List<string> _excTypes = new();   // catch types, as numbered in the HandlerInfo tables
+        private readonly List<string> _excTypes = new();
+        /// <summary>Methods (name, number of arguments) that a call site passes an address to (`ref` parameters): their dispatcher hands the value to the implementations without `ref`.</summary>
+        private readonly HashSet<(string Name, int Argc)> _refCallSites = new();   // catch types, as numbered in the HandlerInfo tables
 
         private CppGenerator(LinkedProgram program, TargetProfile target)
         {
@@ -255,7 +257,7 @@ namespace fire.Native
             foreach (var f in _funcs) sb.AppendLine(f.Signature + ";");
             foreach (var f in _funcs.Where(f => f.Kind == FuncKind.Lambda))
                 sb.AppendLine(f.ThunkSignature + " { " + (f.ParamCount == 0 ? "(void)a; " : "") + $"return {f.Name}(lam{string.Concat(Enumerable.Range(0, f.ParamCount).Select(i => $", a[{i}]"))}); }}");
-            foreach (var name in _fieldNames) sb.AppendLine($"[[maybe_unused]] static inline Value gf_{Mangle(name)}(Value v);").AppendLine($"[[maybe_unused]] static inline void sf_{Mangle(name)}(Value v, Value x);");
+            foreach (var name in _fieldNames) sb.AppendLine($"[[maybe_unused]] static inline Value gf_{Mangle(name)}(Value v);").AppendLine($"[[maybe_unused]] static inline void sf_{Mangle(name)}(Value v, Value x);").AppendLine($"[[maybe_unused]] static inline Value fp_{Mangle(name)}(Value v);");
             foreach (var (name, argc) in _dispatchers) sb.AppendLine(DispatcherSignature(name, argc) + ";");
             sb.AppendLine("[[maybe_unused]] static inline Value aget_g(Value a, Value i, OwnList* list);");
             sb.AppendLine("[[maybe_unused]] static inline void aset_g(Value a, Value i, Value v, OwnList* list);");
@@ -365,13 +367,15 @@ namespace fire.Native
             if (byFunc.Count == 0 && extensions.Count == 0 && !enumeratorOfArray)
                 throw new NativeNotSupportedException($"method '{name}' with {argc} argument(s): no class of the program and no base-type extension defines it (the built-in methods TakeTo, TakeUpwards and TakeGlobal are not supported yet)");
 
-            var args = string.Concat(Enumerable.Range(0, argc).Select(i => $", a{i}"));
+            // a call site that passes addresses: an implementation without `ref` for that position gets the value
+            bool derefs = _refCallSites.Contains((name, argc));
+            string ArgsFor(FunctionProto proto) => string.Concat(Enumerable.Range(0, argc).Select(i => derefs && (proto.RefMask >> i & 1) == 0 ? $", derefArg(a{i})" : $", a{i}"));
             var sb = new StringBuilder();
             sb.AppendLine(DispatcherSignature(name, argc));
             sb.AppendLine("{");
             sb.AppendLine("    switch (self.kind) {");
             foreach (var (cpp, proto) in extensions)
-                sb.AppendLine($"        case {cpp}: return {_funcByProto[proto].Name}(self{args});");
+                sb.AppendLine($"        case {cpp}: return {_funcByProto[proto].Name}(self{ArgsFor(proto)});");
             if (enumeratorOfArray)
             {
                 var info = _classes["ListEnumerator"];
@@ -388,14 +392,14 @@ namespace fire.Native
             {
                 sb.AppendLine("        case K_Class:");
                 if (byFunc.Count == 1 && byFunc.Values.First().Count == _classList.Count)
-                    sb.AppendLine($"            asObj(self); return {byFunc.Keys.First().Name}(self{args});");
+                    sb.AppendLine($"            asObj(self); return {byFunc.Keys.First().Name}(self{ArgsFor(byFunc.Keys.First().Proto!)});");
                 else
                 {
                     sb.AppendLine("            switch (asObj(self)->cls) {");
                     foreach (var (f, ids) in byFunc)
                     {
                         foreach (int id in ids) sb.AppendLine($"                case {id}:");
-                        sb.AppendLine($"                    return {f.Name}(self{args});");
+                        sb.AppendLine($"                    return {f.Name}(self{ArgsFor(f.Proto!)});");
                     }
                     sb.AppendLine("                default: break;");
                     sb.AppendLine("            }");
@@ -431,6 +435,7 @@ namespace fire.Native
             {
                 sb.AppendLine($"static inline Value gf_{m}(Value v) {{\n{lengthCode}    fatal(\"Field '{name}' not found on this value.\");\n}}");
                 sb.AppendLine($"static inline void sf_{m}(Value v, Value x) {{ (void)v; (void)x; fatal(\"Field '{name}' cannot be assigned.\"); }}");
+                sb.AppendLine($"static inline Value fp_{m}(Value v) {{ (void)v; fatal(\"Field '{name}' not found on this object.\"); }}");
                 return sb.ToString();
             }
 
@@ -454,7 +459,8 @@ namespace fire.Native
                     unitChecks.Append($"        case {cls.Id}: checkUnit(x, {UnitId(Unit.Parse(requiredUnit))}, {Constant(Value.MakeString(requiredUnit))}); break;\n");
             string unitCode = unitChecks.Length == 0 ? "" : "    switch (o->cls) {\n" + unitChecks + "        default: break;\n    }\n" + (_usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return;\n" : "");
             return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}    Obj* o = asObj(v);\n{indexCode}\n    return o->fields()[idx];\n}}\n"
-                 + $"static inline void sf_{m}(Value v, Value x) {{\n    Obj* o = asObj(v);\n{indexCode}\n{unitCode}    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n";
+                 + $"static inline void sf_{m}(Value v, Value x) {{\n    Obj* o = asObj(v);\n{indexCode}\n{unitCode}    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
+                 + $"static inline Value fp_{m}(Value v) {{\n    Obj* o = asObj(v);\n{indexCode}\n    return PtrV(&o->fields()[idx]);\n}}\n";
         }
 
         /// <summary>`a[i]` and `a[i] = v`: arrays, buffers and strings directly, objects through their GetIndex/SetIndex methods.</summary>
@@ -1012,6 +1018,19 @@ namespace fire.Native
             }
             void RequireSelf() { if (!f.HasSelf && f.Kind != FuncKind.Lambda) throw new NativeNotSupportedException($"'this' outside of an instance member ({fn} at {ins.Addr})"); }
             string Args(int first, int count) => string.Concat(Enumerable.Range(first, count).Select(i => ", " + S(i)));
+            // `ref` arguments (SPEC 5.4.2): the prefix CopyArgs in front of the call marks the arguments that carry an address (bits 3); `flat`/`copy` are not translated yet.
+            int ArgMask()
+            {
+                int at = f.IndexOf[ins.Addr];
+                if (at == 0 || f.Decoded[at - 1].Op != OpCode.CopyArgs) return 0;
+                int mask = f.Decoded[at - 1].A[0] | (f.Decoded[at - 1].A[1] << 16);
+                for (int i = 0; i < 16; i++)
+                    if ((mask >> (2 * i) & 3) is 1 or 2) throw new NativeNotSupportedException($"`flat`/`copy` as an argument ({fn} at {ins.Addr})");
+                return mask;
+            }
+            // The arguments for a callee that is known: an address goes to a `ref` parameter, the others get the value.
+            string CallArgs(int first, int count, int mask, uint calleeRefs) => string.Concat(Enumerable.Range(0, count).Select(i =>
+                ", " + ((mask >> (2 * i) & 3) == 3 && (calleeRefs >> i & 1) == 0 ? $"ptrRead({S(first + i)})" : S(first + i))));
             bool R(int k) => k >= 64 || (st.Refs >> k & 1UL) != 0;
             void SetR(int k, bool value)
             {
@@ -1236,7 +1255,7 @@ namespace fire.Native
                     if (!proto.IsStatic) throw new NativeNotSupportedException($"{cls}.{method} is not static");
                     if (proto.ParamCount != argc) throw new NativeNotSupportedException($"{cls}.{method}: default arguments");
                     var target = GetFunc(proto, FuncKind.Static);
-                    E($"{S(d - argc)} = {target.Name}({string.Join(", ", Enumerable.Range(d - argc, argc).Select(S))});");
+                    E($"{S(d - argc)} = {target.Name}({CallArgs(d - argc, argc, ArgMask(), proto.RefMask).TrimStart(',', ' ')});");
                     Check();
                     AdoptResult(d - argc);
                     d = d - argc + 1; return Next();
@@ -1312,7 +1331,7 @@ namespace fire.Native
                     var target = GetFunc(ctor, FuncKind.Ctor);
                     int slot = d - argc - (owned ? 1 : 0);
                     string ownerExpr = owned ? $"&asObj({S(slot)})->owned" : "&" + OwnerList();
-                    E($"{{ Value o = newObject({cls.Id}, {cls.Fields.Count}, {ownerExpr}); {target.Name}(o{Args(d - argc, argc)}); {S(slot)} = o; }}");
+                    E($"{{ Value o = newObject({cls.Id}, {cls.Fields.Count}, {ownerExpr}); {target.Name}(o{CallArgs(d - argc, argc, ArgMask(), ctor.RefMask)}); {S(slot)} = o; }}");
                     Check();
                     SetR(slot, false);
                     d = slot + 1; return Next();
@@ -1326,7 +1345,7 @@ namespace fire.Native
                     if (ctor.ParamCount != argc) throw new NativeNotSupportedException($"{rc.Name}: constructor default arguments");
                     var target = GetFunc(ctor, FuncKind.Ctor);
                     OwnerList();
-                    E($"{target.Name}(self{Args(d - argc, argc)});");
+                    E($"{target.Name}(self{CallArgs(d - argc, argc, ArgMask(), ctor.RefMask)});");
                     Check();
                     E($"{S(d - argc)} = Undef();");
                     SetR(d - argc, false);
@@ -1351,6 +1370,7 @@ namespace fire.Native
                     Need(argc + 1);
                     string method = Str(ins.A[0]);
                     _dispatchers.Add((method, argc));
+                    if (ArgMask() != 0) _refCallSites.Add((method, argc));
                     string owner = OwnerList();
                     int slot = d - argc - 1;
                     string extra = method == "GetEnumerator" && argc == 0 ? $", &{owner}" : "";
@@ -1368,7 +1388,7 @@ namespace fire.Native
                     var proto = rc.FindMethodWithAccess(method, argc).Proto ?? throw new NativeNotSupportedException($"{rc.Name}.{method} with {argc} argument(s) not found");
                     if (proto.ParamCount != argc) throw new NativeNotSupportedException($"{rc.Name}.{method}: default arguments");
                     var target = GetFunc(proto, FuncKind.Method);
-                    E($"{S(d - argc)} = {target.Name}(self{Args(d - argc, argc)});");
+                    E($"{S(d - argc)} = {target.Name}(self{CallArgs(d - argc, argc, ArgMask(), proto.RefMask)});");
                     Check();
                     AdoptResult(d - argc);
                     d = d - argc + 1; return Next();
@@ -1473,6 +1493,45 @@ namespace fire.Native
                     Check();
                     d--; SetR(d - 1, false); return Next();
                 }
+
+                // ---------------------------------------------------------------------------------------------------
+                // `ref` parameters and pointers to variables, fields and elements (SPEC 5.4.2)
+                // ---------------------------------------------------------------------------------------------------
+                case OpCode.CopyArgs:
+                    return Next();
+                case OpCode.AddressOfLocal:
+                {
+                    string v = Var(st, ins.A[0], ins.A[1], locals);
+                    MarkVarRef(VarKey(f, v));   // what is written through the pointer is counted by the variable
+                    E($"{S(d)} = PtrV(&{v});");
+                    SetR(d, false); d++; return Next();
+                }
+                case OpCode.AddressOfGlobal:
+                    _globals.Add(ins.A[0]); MarkVarRef($"G{ins.A[0]}");
+                    E($"{S(d)} = PtrV(&G{ins.A[0]});");
+                    SetR(d, false); d++; return Next();
+                case OpCode.AddressOfField:
+                {
+                    Need(1);
+                    string field = Str(ins.A[0]);
+                    _fieldNames.Add(field);
+                    E($"{S(d - 1)} = fp_{Mangle(field)}({S(d - 1)});");
+                    SetR(d - 1, false);
+                    return Next();
+                }
+                case OpCode.AddressOfIndex:
+                    Need(2); E($"{S(d - 2)} = addressOfIndex({S(d - 2)}, {S(d - 1)});"); Check(); d--; SetR(d - 1, false); return Next();
+                case OpCode.PtrRead:
+                    Need(1); E($"{S(d - 1)} = ptrRead({S(d - 1)});"); SetR(d - 1, true); return Next();
+                case OpCode.PtrWrite:
+                    Need(2);
+                    E($"ptrWrite({S(d - 2)}, {S(d - 1)});");
+                    E($"{S(d - 2)} = {S(d - 1)};");
+                    SetR(d - 2, R(d - 1));
+                    d--; return Next();
+                case OpCode.RequireRefParam:
+                    E($"requireRef({Var(st, 0, ins.A[0], locals)}, {CString(chunk.Constants[ins.A[1]].AsString())});");
+                    return Next();
 
                 // ---------------------------------------------------------------------------------------------------
                 // Exceptions

@@ -12325,6 +12325,112 @@ static int CountOccurrences(string haystack, string needle)
             }
             print(s)
             """),
+        ("ref-Parameter: Variablen, Felder, Array-Elemente, Puffer, Konstruktor, Weitergabe", """
+            class Box { int n; string s; construct() { this.n = 1; this.s = "a" } }
+            class U {
+                static Swap(ref a, ref b) { var t = a; a = b; b = t }
+                static Inc(ref int x) { x++; x = x + 10 }
+                static Twice(ref int x) { U.Inc(x); U.Inc(x) }
+                static Append(ref string s, string t) { s = s + t }
+                static Plain(int x) { x = 99 }
+                static int Sum(ref int a, int b) { return a + b }
+            }
+            class Counter {
+                int total
+                construct(ref int seed) { this.total = seed; seed = 100 }
+                Add(ref int v) { v = v + this.total }
+                Bump(ref int v) { this.total = this.total + 1; v = this.total }
+                Self() { this.Bump(total) }
+            }
+            var x = 1
+            var y = 2
+            U.Swap(x, y)
+            print(x + " " + y)
+            U.Inc(x)
+            print(x)
+            U.Twice(y)
+            print(y)
+            var s = "hi"
+            U.Append(s, "!!")
+            print(s)
+            var z = 5
+            U.Plain(z)
+            print(z)
+            var b = new Box()
+            U.Swap(b.n, b.s)
+            print(b.n + " " + b.s)
+            var arr = [1, 2, 3]
+            U.Inc(arr[1])
+            U.Swap(arr[0], arr[2])
+            print(arr[0] + " " + arr[1] + " " + arr[2])
+            var buf = new byte[2]
+            U.Inc(buf[1])
+            print(buf[1])
+            var seed = 7
+            var c = new Counter(seed)
+            print(seed + " " + c.total)
+            var k = 3
+            c.Add(k)
+            print(k)
+            c.Self()
+            print(c.total)
+            print(U.Sum(k, 1))
+            var f = (int v) => { U.Inc(v); return v }
+            print(f(5))
+            {
+                var loc = 4
+                U.Inc(loc)
+                print(loc)
+            }
+            try { U.Inc(arr[9]) } catch (e) { print("oob " + e.message) }
+            """),
+        ("ref-Parameter: Strings und Arrays ueber Felder und Elemente, Schleifen", """
+            class Holder { string name; construct(string n) { this.name = n } }
+            class U {
+                static Swap(ref a, ref b) { var t = a; a = b; b = t }
+                static Grow(ref string s, int n) {
+                    for (var i = 0; i < n; i = i + 1) { s = s + i }
+                }
+                static Pick(ref string s, string alt) { if (s == "") { s = alt } return s }
+                static Fill(ref arr) { arr = [1, 2, 3] }
+                static int Step(ref int n) { n = n - 1; return n }
+            }
+            var words = ["x", "y", "z"]
+            U.Swap(words[0], words[2])
+            print(words[0] + words[1] + words[2])
+            var h = new Holder("h")
+            var s = "start"
+            U.Swap(h.name, s)
+            print(h.name + " " + s)
+            U.Grow(h.name, 5)
+            print(h.name)
+            var e = ""
+            print(U.Pick(e, "alt") + e)
+            var arr = 0
+            U.Fill(arr)
+            print(arr[1])
+            var n = 5
+            var total = 0
+            while (U.Step(n) > 0) { total = total + n }
+            print(total)
+            for (var i = 0; i < 100; i = i + 1) { var t = "q" + i; U.Grow(t, 3); U.Swap(t, s) }
+            print(s)
+            """),
+        ("ref-Parameter: List.Add und eine Methode mit ref gleichen Namens", """
+            class Counter {
+                int total
+                construct() { this.total = 0 }
+                Add(ref int v) { v = v + 1 }
+            }
+            var l = new List()
+            var q = 3
+            l.Add(q)
+            l.Add(5)
+            print(l.count + " " + q)
+            var c = new Counter()
+            c.Add(q)
+            print(q)
+            """),
         ("Benchmark alloc", """
             class Point {
                 int x
@@ -12474,12 +12580,12 @@ static int CountOccurrences(string haystack, string needle)
         // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
         try
         {
-            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "var p = 5\nunsafe { var q = &p }" }, null, null, VmExecutionMode.Release));
+            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "class P { int x\n construct() { this.x = 1 } }\nvar p = new P()\nvar q = copy p" }, null, null, VmExecutionMode.Release));
             CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt", false, "keine Ausnahme");
         }
         catch (fire.Native.NativeNotSupportedException ex)
         {
-            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (AddressOfLocal)", ex.Message.Contains("AddressOf"), ex.Message);
+            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (CopyValue)", ex.Message.Contains("CopyValue"), ex.Message);
         }
         try
         {
