@@ -63,7 +63,7 @@ namespace fire.Runtime
             foreach (var import in nativeImports)
             {
                 if (!Imports.TryGetValue(import, out var package))
-                    throw new InvalidOperationException($"Unbekannter Import '{import}' - der Packer weiß nicht, welche DLLs er braucht.");
+                    throw new InvalidOperationException($"Unknown import '{import}' - the packer does not know which DLLs it needs.");
                 foreach (var asm in package.Assemblies) queue.Enqueue(asm);
                 foreach (var native in package.Natives)
                 {

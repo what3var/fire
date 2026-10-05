@@ -116,7 +116,7 @@ namespace fire.Standard
                 }
                 static Parse(string text) {
                     var d = DateTime.TryParse(text)
-                    if (d == undefined) { throw new TimeException("Kein gültiges Datum: '" + text + "'") }
+                    if (d == undefined) { throw new TimeException("Not a valid date: '" + text + "'") }
                     return d
                 }
                 static FromUnixSeconds(class s) { return DateTime.FromTicks(621355968000000000 + __time_to_ticks(s, 10000000), "utc") }

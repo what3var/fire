@@ -19,7 +19,7 @@ namespace fire.IO.Bridge
                 {
                     if (string.IsNullOrWhiteSpace(path))
                     {
-                        Fail(IoError.InvalidArgument, "Der Pfad ist leer.");
+                        Fail(IoError.InvalidArgument, "The path is empty.");
                         return false;
                     }
                     fullPath = Path.GetFullPath(path);
@@ -32,7 +32,7 @@ namespace fire.IO.Bridge
 
                 if (!_policy.IsAllowed(fullPath, access, out var reason))
                 {
-                    Fail(IoError.Denied, reason ?? $"Zugriff auf '{fullPath}' ist nicht erlaubt.");
+                    Fail(IoError.Denied, reason ?? $"Access to '{fullPath}' is not allowed.");
                     return false;
                 }
                 return true;
@@ -107,7 +107,7 @@ namespace fire.IO.Bridge
 
             private Value StdWrite(long kind, string text, bool flush)
             {
-                if (kind != 1 && kind != 2) return BoolFailureWith(IoError.InvalidArgument, $"Ungültiger Ausgabestream {kind}.");
+                if (kind != 1 && kind != 2) return BoolFailureWith(IoError.InvalidArgument, $"Invalid output stream {kind}.");
                 try
                 {
                     lock (_stdLock)
@@ -146,7 +146,7 @@ namespace fire.IO.Bridge
                 // Änderungszeit in Sekunden seit 1970 (UTC), mit der Einheit `s`.
                 ["FileTime"] = args => OnPath(args[0].AsString(), IoAccess.Read, full =>
                 {
-                    if (!File.Exists(full)) throw new FileNotFoundException($"Die Datei '{full}' existiert nicht.");
+                    if (!File.Exists(full)) throw new FileNotFoundException($"The file '{full}' does not exist.");
                     var seconds = new DateTimeOffset(File.GetLastWriteTimeUtc(full)).ToUnixTimeSeconds();
                     return Value.MakeInt(seconds, Values.Unit.Parse("s"));
                 }, NoValue),
@@ -164,7 +164,7 @@ namespace fire.IO.Bridge
                     {
                         if (!overwrite && File.Exists(target))
                         {
-                            Fail(IoError.AlreadyExists, $"Die Zieldatei '{target}' existiert bereits.");
+                            Fail(IoError.AlreadyExists, $"The target file '{target}' already exists.");
                             return BoolFailure;
                         }
                         File.Copy(source, target, overwrite);
@@ -179,7 +179,7 @@ namespace fire.IO.Bridge
                     {
                         if (!overwrite && File.Exists(target))
                         {
-                            Fail(IoError.AlreadyExists, $"Die Zieldatei '{target}' existiert bereits.");
+                            Fail(IoError.AlreadyExists, $"The target file '{target}' already exists.");
                             return BoolFailure;
                         }
                         File.Move(source, target, overwrite);
@@ -231,7 +231,7 @@ namespace fire.IO.Bridge
                     long kind = args[0].AsInt();
                     if (kind < 0 || kind > 2)
                     {
-                        Fail(IoError.InvalidArgument, $"Ungültiger Standardstream {kind}.");
+                        Fail(IoError.InvalidArgument, $"Invalid standard stream {kind}.");
                         return IntFailure;
                     }
                     try

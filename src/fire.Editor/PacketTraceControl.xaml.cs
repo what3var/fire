@@ -31,7 +31,7 @@ namespace fire.Editor
 
         public string TimeText => Record.Time.ToLocalTime().ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture);
         public bool IsOutgoing => Record.Direction == PacketDirection.HostToDevice;
-        public string DirectionText => IsOutgoing ? "Host → Gerät" : "Gerät → Host";
+        public string DirectionText => IsOutgoing ? "Host → Device" : "Device → Host";
         public string DeviceId => Record.DeviceIdentifier;
         public int Length => Record.Data.Length;
 
@@ -162,9 +162,9 @@ namespace fire.Editor
 
         private void UpdateInfo()
         {
-            string target = DeviceIdentifier ?? (FilePath != null ? System.IO.Path.GetFileName(FilePath) : "Protokoll");
-            string live = _manager != null ? "" : " (nicht aufzeichnend)";
-            InfoText.Text = $"{target}{(DeviceIdentifier != null ? live : "")} – {_rows.Count} Paket{(_rows.Count == 1 ? "" : "e")}";
+            string target = DeviceIdentifier ?? (FilePath != null ? System.IO.Path.GetFileName(FilePath) : "Log");
+            string live = _manager != null ? "" : " (not recording)";
+            InfoText.Text = $"{target}{(DeviceIdentifier != null ? live : "")} – {_rows.Count} packet{(_rows.Count == 1 ? "" : "s")}";
         }
 
         private void SetModified(bool value)
@@ -219,7 +219,7 @@ namespace fire.Editor
             catch (FormatException ex)
             {
                 _rows.Clear();
-                ErrorText.Text = "Das Protokoll konnte nicht gelesen werden: " + ex.Message;
+                ErrorText.Text = "The log could not be read: " + ex.Message;
                 ErrorText.Visibility = Visibility.Visible;
             }
             finally { _loading = false; }

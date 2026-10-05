@@ -127,7 +127,7 @@ namespace fire.Compiler
         public void Annouce(string name)
         {
             if (string.IsNullOrWhiteSpace(name))
-                throw new ArgumentException("Direktivenname darf nicht leer sein.", nameof(name));
+                throw new ArgumentException("The directive name must not be empty.", nameof(name));
             _directives[name] = null;
         }
 
@@ -155,7 +155,7 @@ namespace fire.Compiler
         public void Register(string name, int paramCount, DirectiveHandler handler)
         {
             if (string.IsNullOrWhiteSpace(name))
-                throw new ArgumentException("Direktivenname darf nicht leer sein.", nameof(name));
+                throw new ArgumentException("The directive name must not be empty.", nameof(name));
             if (paramCount < 0)
                 throw new ArgumentOutOfRangeException(nameof(paramCount));
             _directives[name] = new DirectiveDefinition(name, paramCount, handler ?? throw new ArgumentNullException(nameof(handler)));
@@ -177,7 +177,7 @@ namespace fire.Compiler
             {
                 if (args[0].Kind != ValueKind.String)
                     throw new PreprocessorException(
-                        $"'#include' erwartet einen String als Pfad, nicht {args[0].Kind} (Zeile {line}).");
+                        $"'#include' expects a string as the path, not {args[0].Kind} (line {line}).");
 
                 string relativePath = args[0].AsString();
                 string fullPath = Path.GetFullPath(Path.Combine(ctx.BasePath, relativePath));
@@ -187,7 +187,7 @@ namespace fire.Compiler
 
                 if (!File.Exists(fullPath))
                     throw new PreprocessorException(
-                        $"'#include \"{relativePath}\"' - Datei nicht gefunden: '{fullPath}' (Zeile {line}).");
+                        $"'#include \"{relativePath}\"' - file not found: '{fullPath}' (line {line}).");
 
                 return ctx.ProcessFile(fullPath);
             });
@@ -264,7 +264,7 @@ namespace fire.Compiler
         {
             if (_includeChain.Contains(fullPath, StringComparer.OrdinalIgnoreCase))
                 throw new PreprocessorException(
-                    $"Zirkuläres Einschleusen von '{fullPath}' (Kette: {string.Join(" -> ", _includeChain)} -> {fullPath}).");
+                    $"Circular include of '{fullPath}' (chain: {string.Join(" -> ", _includeChain)} -> {fullPath}).");
 
             string includedSource;
             try
@@ -273,7 +273,7 @@ namespace fire.Compiler
             }
             catch (Exception ex)
             {
-                throw new PreprocessorException($"'{fullPath}' konnte nicht gelesen werden: {ex.Message}", ex);
+                throw new PreprocessorException($"'{fullPath}' could not be read: {ex.Message}", ex);
             }
 
             _includeChain.Add(fullPath);
@@ -305,7 +305,7 @@ namespace fire.Compiler
                     string usingArg = (match.Groups[2].Success ? match.Groups[2].Value : "").Trim();
                     if (!UsingName.IsMatch(usingArg))
                         throw new PreprocessorException(
-                            $"'#using' erwartet einen (evtl. punktierten) Namespace-Namen, nicht '{usingArg}' (Zeile {lineNo + 1}).");
+                            $"'#using' expects a (possibly dotted) namespace name, not '{usingArg}' (line {lineNo + 1}).");
                     _usings.Add(usingArg);
                     sb.Append('\n'); // Zeile "verschwindet" wie jede andere erkannte Direktive.
                     continue;
@@ -359,7 +359,7 @@ namespace fire.Compiler
             if (def.ParamCount == 0)
             {
                 if (!string.IsNullOrWhiteSpace(argText))
-                    throw new PreprocessorException($"'#{def.Name}' erwartet keine Parameter (Zeile {line}).");
+                    throw new PreprocessorException($"'#{def.Name}' expects no parameters (line {line}).");
                 return Array.Empty<Value>();
             }
 
@@ -370,7 +370,7 @@ namespace fire.Compiler
             }
             catch (LexException ex)
             {
-                throw new PreprocessorException($"Ungültige Parameter für '#{def.Name}' (Zeile {line}): {ex.Message}");
+                throw new PreprocessorException($"Invalid parameters for '#{def.Name}' (line {line}): {ex.Message}");
             }
 
             var values = new List<Value>();
@@ -388,11 +388,11 @@ namespace fire.Compiler
 
             if (i < tokens.Count && tokens[i].Type != TokenType.Eof)
                 throw new PreprocessorException(
-                    $"Unerwartetes Token '{tokens[i].Lexeme}' in den Parametern von '#{def.Name}' (Zeile {line}).");
+                    $"Unexpected token '{tokens[i].Lexeme}' in the parameters of '#{def.Name}' (line {line}).");
 
             if (values.Count != def.ParamCount)
                 throw new PreprocessorException(
-                    $"'#{def.Name}' erwartet {def.ParamCount} Parameter, erhalten {values.Count} (Zeile {line}).");
+                    $"'#{def.Name}' expects {def.ParamCount} parameters, got {values.Count} (line {line}).");
 
             return values;
         }
@@ -443,7 +443,7 @@ namespace fire.Compiler
                     i++;
                     if (i >= tokens.Count || (tokens[i].Type != TokenType.IntLiteral && tokens[i].Type != TokenType.FloatLiteral))
                         throw new PreprocessorException(
-                            $"Erwarte eine Zahl nach '-' in den Parametern von '#{directiveName}' (Zeile {line}).");
+                            $"Expected a number after '-' in the parameters of '#{directiveName}' (line {line}).");
                     var numTok = tokens[i];
                     i++;
                     return numTok.Type == TokenType.IntLiteral
@@ -453,8 +453,8 @@ namespace fire.Compiler
 
                 default:
                     throw new PreprocessorException(
-                        $"Erwarte einen literalen Wert (String/Zahl/Zeichen/bool/undefined) in den Parametern von " +
-                        $"'#{directiveName}', nicht '{tok.Lexeme}' (Zeile {line}).");
+                        $"Expected a literal value (string/number/char/bool/undefined) in the parameters of " +
+                        $"'#{directiveName}', not '{tok.Lexeme}' (line {line}).");
             }
         }
     }

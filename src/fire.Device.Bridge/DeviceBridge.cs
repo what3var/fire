@@ -60,7 +60,7 @@ namespace fire.Device.Bridge
         {
             long milliseconds = 30_000;
             if (timeout.Kind is ValueKind.Int or ValueKind.Float) milliseconds = (long)(timeout.Kind == ValueKind.Int ? timeout.AsInt() : timeout.AsFloat());
-            else if (timeout.Kind != ValueKind.Undefined) throw new ArgumentException("Ungültige Wartezeit: erwartet Millisekunden.");
+            else if (timeout.Kind != ValueKind.Undefined) throw new ArgumentException("Invalid wait time: expected milliseconds.");
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             while (!condition())
             {
@@ -369,7 +369,7 @@ namespace fire.Device.Bridge
                     get {
                         var h = __DEVMgrDefaultHandle()
                         if (h == -1) {
-                            throw new DeviceNotFoundException("Kein Standardgerät gewählt")
+                            throw new DeviceNotFoundException("No default device selected")
                         }
                         return new Device(h)
                     }
@@ -397,7 +397,7 @@ namespace fire.Device.Bridge
                 Device EnsureConnected() {
                     if (!__DEVIsConnected(this.handle)) {
                         if (!__DEVConnect(this.handle)) {
-                            throw new DeviceConnectionException("Verbindung zu '" + __DEVIdentifier(this.handle) + "' fehlgeschlagen")
+                            throw new DeviceConnectionException("Connection to '" + __DEVIdentifier(this.handle) + "' failed")
                         }
                     }
                     return this
@@ -448,14 +448,14 @@ namespace fire.Device.Bridge
                 bool WaitForString(string text, timeout = undefined) {
                     var r = __DEVWaitForString(this.handle, text, timeout)
                     if (r < 0) {
-                        throw new DeviceArgumentException("Ungültige Wartezeit (erwartet: TimeSpan, Zeitwert wie 5s oder Millisekunden)")
+                        throw new DeviceArgumentException("Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)")
                     }
                     return r == 1
                 }
                 bool WaitFor(data, timeout = undefined) {
                     var r = __DEVWaitFor(this.handle, data, timeout)
                     if (r < 0) {
-                        throw new DeviceArgumentException("Ungültige Wartezeit (erwartet: TimeSpan, Zeitwert wie 5s oder Millisekunden)")
+                        throw new DeviceArgumentException("Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)")
                     }
                     return r == 1
                 }
@@ -474,14 +474,14 @@ namespace fire.Device.Bridge
                 Device GetAt(int index) {
                     var h = __DEVMgrHandleAt(index)
                     if (h == -1) {
-                        throw new DeviceNotFoundException("Kein Gerät mit Index " + index)
+                        throw new DeviceNotFoundException("No device with index " + index)
                     }
                     return new Device(h)
                 }
 
                 Device GetByHandle(int handle) {
                     if (__DEVIdentifier(handle) == "") {
-                        throw new DeviceNotFoundException("Kein Gerät mit Handle " + handle)
+                        throw new DeviceNotFoundException("No device with handle " + handle)
                     }
                     return new Device(handle)
                 }
@@ -489,7 +489,7 @@ namespace fire.Device.Bridge
                 Device GetByIdentifier(string identifier) {
                     var h = __DEVMgrHandleForIdentifier(identifier)
                     if (h == -1) {
-                        throw new DeviceNotFoundException("Kein Gerät mit Identifier '" + identifier + "'")
+                        throw new DeviceNotFoundException("No device with identifier '" + identifier + "'")
                     }
                     return new Device(h)
                 }

@@ -5,8 +5,8 @@
         <ListView.View>
             <GridView>
                 <GridViewColumn Header="#" Width="40" DisplayMemberBinding="{Binding Position}"/>
-                <GridViewColumn Header="Typ" Width="80" DisplayMemberBinding="{Binding Type}"/>
-                <GridViewColumn Header="Wert (oben = zuletzt)" Width="360" DisplayMemberBinding="{Binding Text}"/>
+                <GridViewColumn Header="Type" Width="80" DisplayMemberBinding="{Binding Type}"/>
+                <GridViewColumn Header="Value (top = latest)" Width="360" DisplayMemberBinding="{Binding Text}"/>
             </GridView>
         </ListView.View>
     </ListView>

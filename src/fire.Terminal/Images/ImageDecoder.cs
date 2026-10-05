@@ -21,7 +21,7 @@ namespace fire.Terminal
         public static ImageData Decode(byte[] data)
         {
             if (data == null) throw new ArgumentNullException(nameof(data));
-            if (data.Length == 0) throw new ImageFormatException("Die Bilddaten sind leer.");
+            if (data.Length == 0) throw new ImageFormatException("The image data is empty.");
             try
             {
                 return DetectFormat(data) switch
@@ -29,14 +29,14 @@ namespace fire.Terminal
                     "PNG" => PngDecoder.Decode(data),
                     "BMP" => BmpDecoder.Decode(data),
                     "GIF" => GifDecoder.Decode(data),
-                    _ => throw new ImageFormatException("Unbekanntes Bildformat (erwartet: PNG, BMP oder GIF)."),
+                    _ => throw new ImageFormatException("Unknown image format (expected: PNG, BMP or GIF)."),
                 };
             }
             catch (ImageFormatException) { throw; }
             catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException or InvalidDataException or OverflowException or InvalidOperationException)
             {
                 // ein Decoder, der über das Ende der Daten hinausgelesen hat: abgeschnittene/beschädigte Datei
-                throw new ImageFormatException($"Beschädigte Bilddatei ({ex.GetType().Name}).");
+                throw new ImageFormatException($"Corrupt image file ({ex.GetType().Name}).");
             }
         }
     }

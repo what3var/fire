@@ -23,7 +23,7 @@ namespace fire.Bytecode
 
         private static string BuildMessage(ObjectInstance instance)
         {
-            string msg = instance.Fields.TryGetValue("message", out var m) ? m.ToString() : "(kein 'message'-Feld)";
+            string msg = instance.Fields.TryGetValue("message", out var m) ? m.ToString() : "(no 'message' field)";
             return $"Unbehandelte Exception vom Typ '{instance.ClassName}': {msg}";
         }
     }

@@ -466,13 +466,13 @@ namespace fire.Editor
         {
             var entries = new List<EditorCommands.Entry?>
             {
-                new() { Header = "Zu _Definition springen", Gesture = "F12 / Strg+Klick", Execute = () => GoToDefinitionAt(_contextOffset), Enabled = () => FindDefinitionAt(_contextOffset) != null },
+                new() { Header = "Go to _Definition", Gesture = "F12 / Ctrl+Click", Execute = () => GoToDefinitionAt(_contextOffset), Enabled = () => FindDefinitionAt(_contextOffset) != null },
                 null,
             };
             entries.AddRange(EditorCommands.StandardEntries(Editor, Find));
             entries.Add(null);
-            entries.Add(new() { Header = "_Kommentar umschalten", Gesture = "Strg+Umschalt+C", Execute = ToggleComment });
-            entries.Add(new() { Header = "_Haltepunkt umschalten", Gesture = "F9", Execute = ToggleBreakpointAtCaret });
+            entries.Add(new() { Header = "Toggle _Comment", Gesture = "Ctrl+Shift+C", Execute = ToggleComment });
+            entries.Add(new() { Header = "Toggle _Breakpoint", Gesture = "F9", Execute = ToggleBreakpointAtCaret });
             return EditorCommands.BuildMenu(entries);
         }
 
@@ -568,8 +568,8 @@ namespace fire.Editor
                 if (FilePath == null)
                 {
                     MessageBox.Show(
-                        "Diese Datei muss erst gespeichert werden, bevor '#include'-Pfade aufgelöst werden können.",
-                        "Springen nicht möglich", MessageBoxButton.OK, MessageBoxImage.Information);
+                        "This file has to be saved before '#include' paths can be resolved.",
+                        "Cannot jump", MessageBoxButton.OK, MessageBoxImage.Information);
                     return;
                 }
                 string? dir = Path.GetDirectoryName(FilePath);

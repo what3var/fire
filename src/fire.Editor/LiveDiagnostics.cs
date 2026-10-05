@@ -17,7 +17,7 @@ namespace fire.Editor
 
     public sealed record Diagnostic(int Line, string Message, DiagnosticSeverity Severity = DiagnosticSeverity.Error)
     {
-        public override string ToString() => $"Zeile {Line}: {Message}";
+        public override string ToString() => $"Line {Line}: {Message}";
     }
 
     /// <summary>
@@ -149,7 +149,7 @@ namespace fire.Editor
         }
 
         private static readonly Regex UnknownClassOrType =
-            new(@"^(?:Unbekannte Klasse|Unbekannter Typ) '([^']+)'", RegexOptions.Compiled);
+            new(@"^(?:Unknown class|Unknown type) '([^']+)'", RegexOptions.Compiled);
 
         /// <summary>Wie Analyze(source), unterdrückt aber Diagnosen, die NUR
         /// daher kommen, dass diese Analyse ausschließlich `source` (+

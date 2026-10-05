@@ -390,11 +390,11 @@ namespace fire.Standard
                 }
                 First() {
                     foreach (x in this) { return x }
-                    throw new LinqEmptyException("Die Folge enthaelt kein Element")
+                    throw new LinqEmptyException("The sequence contains no element")
                 }
                 First(lambda<int> pred) {
                     foreach (x in this) { if (pred(x)) { return x } }
-                    throw new LinqEmptyException("Die Folge enthaelt kein passendes Element")
+                    throw new LinqEmptyException("The sequence contains no matching element")
                 }
                 FirstOrDefault(class fallback) {
                     foreach (x in this) { return x }
@@ -408,7 +408,7 @@ namespace fire.Standard
                     var found = false
                     var last = undefined
                     foreach (x in this) { last = x; found = true }
-                    if (!found) { throw new LinqEmptyException("Die Folge enthaelt kein Element") }
+                    if (!found) { throw new LinqEmptyException("The sequence contains no element") }
                     return last
                 }
                 ElementAt(int index) {
@@ -417,7 +417,7 @@ namespace fire.Standard
                         if (i == index) { return x }
                         i = i + 1
                     }
-                    throw new LinqEmptyException("Index " + index + " liegt ausserhalb der Folge")
+                    throw new LinqEmptyException("Index " + index + " is outside of the sequence")
                 }
                 Any() {
                     foreach (x in this) { return true }
@@ -463,7 +463,7 @@ namespace fire.Standard
                         else if (smallest) { if (x < best) { best = x } }
                         else { if (x > best) { best = x } }
                     }
-                    if (!found) { throw new LinqEmptyException("Die Folge enthaelt kein Element") }
+                    if (!found) { throw new LinqEmptyException("The sequence contains no element") }
                     return best
                 }
                 Average() { return this.Average(x => x) }
@@ -471,7 +471,7 @@ namespace fire.Standard
                     var s = 0.0
                     var n = 0
                     foreach (x in this) { s = s + fn(x); n = n + 1 }
-                    if (n == 0) { throw new LinqEmptyException("Die Folge enthaelt kein Element") }
+                    if (n == 0) { throw new LinqEmptyException("The sequence contains no element") }
                     return s / n
                 }
                 Aggregate(class seed, lambda<int, int> fn) {

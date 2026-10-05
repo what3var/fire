@@ -46,7 +46,7 @@ var modes = modeText switch
     "release" => new[] { VmExecutionMode.Release },
     "performance" => new[] { VmExecutionMode.Performance },
     "all" => new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance },
-    _ => throw new ArgumentException("--mode: debug, release, performance oder all"),
+    _ => throw new ArgumentException("--mode: debug, release, performance or all"),
 };
 
 var scripts = options.TryGetValue("file", out var filePath) && filePath != null
@@ -96,10 +96,10 @@ if (options.TryGetValue("check", out var checkPath) && checkPath != null)
         if (want != actual)
         {
             mismatches++;
-            Console.WriteLine($"ABWEICHUNG {name}: erwartet '{want}', erhalten '{actual}'");
+            Console.WriteLine($"MISMATCH {name}: expected '{want}', got '{actual}'");
         }
     }
-    Console.WriteLine(mismatches == 0 ? "Alle Ergebnisse stimmen mit der Referenz überein." : $"{mismatches} Abweichung(en)!");
+    Console.WriteLine(mismatches == 0 ? "All results match the reference." : $"{mismatches} Abweichung(en)!");
     return mismatches == 0 ? 0 : 1;
 }
 return 0;

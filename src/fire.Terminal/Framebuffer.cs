@@ -63,9 +63,9 @@ namespace fire.Terminal
         public Framebuffer(int width, int height, ColorMode mode = ColorMode.Rgba)
         {
             if (width <= 0 || height <= 0)
-                throw new ArgumentOutOfRangeException(nameof(width), "Framebuffer-Größe muss positiv sein.");
+                throw new ArgumentOutOfRangeException(nameof(width), "The framebuffer size must be positive.");
             if (mode != ColorMode.Rgba && mode != ColorMode.Indexed)
-                throw new ArgumentOutOfRangeException(nameof(mode), "Unbekannter Farbmodus.");
+                throw new ArgumentOutOfRangeException(nameof(mode), "Unknown color mode.");
             Width = width;
             Height = height;
             Mode = mode;

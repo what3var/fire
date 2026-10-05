@@ -4,43 +4,43 @@
              xmlns:avalonedit="http://icsharpcode.net/sharpdevelop/avalonedit">
     <DockPanel>
         <ToolBar x:Name="FormatBar" DockPanel.Dock="Top" Loaded="ToolBar_HideOverflow">
-            <Button Click="Bold_Click" ToolTip="Fett (Strg+B)" MinWidth="24">
+            <Button Click="Bold_Click" ToolTip="Bold (Ctrl+B)" MinWidth="24">
                 <TextBlock FontWeight="Bold" Text="F"/>
             </Button>
-            <Button Click="Italic_Click" ToolTip="Kursiv (Strg+I)" MinWidth="24">
+            <Button Click="Italic_Click" ToolTip="Italic (Ctrl+I)" MinWidth="24">
                 <TextBlock FontStyle="Italic" Text="K"/>
             </Button>
-            <Button Click="Strike_Click" ToolTip="Durchgestrichen" MinWidth="24">
+            <Button Click="Strike_Click" ToolTip="Strikethrough" MinWidth="24">
                 <TextBlock TextDecorations="Strikethrough" Text="D"/>
             </Button>
-            <Button Click="InlineCode_Click" ToolTip="Code (Strg+E)" MinWidth="24">
+            <Button Click="InlineCode_Click" ToolTip="Code (Ctrl+E)" MinWidth="24">
                 <TextBlock FontFamily="Consolas" Text="&lt;/&gt;"/>
             </Button>
             <Separator/>
-            <Button Click="Heading_Click" ToolTip="Überschrift: Ebene wechseln (Strg+H)" MinWidth="24">
+            <Button Click="Heading_Click" ToolTip="Heading: change level (Ctrl+H)" MinWidth="24">
                 <TextBlock FontWeight="Bold" Text="H"/>
             </Button>
-            <Button Click="BulletList_Click" ToolTip="Aufzählung" MinWidth="24">
+            <Button Click="BulletList_Click" ToolTip="Bulleted list" MinWidth="24">
                 <TextBlock Text="&#x2022;&#x2261;"/>
             </Button>
-            <Button Click="NumberedList_Click" ToolTip="Nummerierte Liste" MinWidth="24">
+            <Button Click="NumberedList_Click" ToolTip="Numbered list" MinWidth="24">
                 <TextBlock Text="1."/>
             </Button>
-            <Button Click="Quote_Click" ToolTip="Zitat" MinWidth="24">
+            <Button Click="Quote_Click" ToolTip="Quote" MinWidth="24">
                 <TextBlock Text="&#x201C;"/>
             </Button>
-            <Button Click="CodeBlock_Click" ToolTip="Code-Block" MinWidth="24">
+            <Button Click="CodeBlock_Click" ToolTip="Code block" MinWidth="24">
                 <TextBlock FontFamily="Consolas" Text="{}{ }"/>
             </Button>
-            <Button Click="Link_Click" ToolTip="Link (Strg+K)" MinWidth="24">
+            <Button Click="Link_Click" ToolTip="Link (Ctrl+K)" MinWidth="24">
                 <TextBlock Text="Link"/>
             </Button>
-            <Button Click="Table_Click" ToolTip="Tabelle einfügen" MinWidth="24">
-                <TextBlock Text="Tabelle"/>
+            <Button Click="Table_Click" ToolTip="Insert table" MinWidth="24">
+                <TextBlock Text="Table"/>
             </Button>
             <Separator/>
-            <ToggleButton x:Name="PreviewToggle" IsChecked="True" Click="PreviewToggle_Click" ToolTip="Vorschau ein-/ausblenden (Strg+Umschalt+V)">
-                <TextBlock Text="Vorschau"/>
+            <ToggleButton x:Name="PreviewToggle" IsChecked="True" Click="PreviewToggle_Click" ToolTip="Show or hide the preview (Ctrl+Shift+V)">
+                <TextBlock Text="Preview"/>
             </ToggleButton>
         </ToolBar>
 

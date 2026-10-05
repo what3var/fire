@@ -40,7 +40,7 @@ namespace fire.Terminal
             var fb = new Framebuffer(width, height, mode);
             int expected = fb.Indices != null ? fb.Indices.Length : fb.Pixels.Length * 4;
             if (pixels.Length != expected)
-                throw new ArgumentException($"Erwarte genau {expected} Byte ({width}x{height}, {(mode == ColorMode.Indexed ? "1 Byte" : "4 Byte")} je Pixel), erhalten {pixels.Length}.", nameof(pixels));
+                throw new ArgumentException($"Expected exactly {expected} bytes ({width}x{height}, {(mode == ColorMode.Indexed ? "1 byte" : "4 bytes")} per pixel), got {pixels.Length}.", nameof(pixels));
             if (fb.Indices != null) Buffer.BlockCopy(pixels, 0, fb.Indices, 0, pixels.Length);
             else Buffer.BlockCopy(pixels, 0, fb.Pixels, 0, pixels.Length);
             fb.MarkDirty();
@@ -122,7 +122,7 @@ namespace fire.Terminal
             int totalBytes = ByteCount(fb);
             if (byteOffset < 0 || byteOffset >= totalBytes)
                 throw new ArgumentOutOfRangeException(
-                    nameof(byteOffset), $"Byte-Offset {byteOffset} außerhalb des Puffers (Größe {totalBytes} Byte).");
+                    nameof(byteOffset), $"Byte offset {byteOffset} outside of the buffer (size {totalBytes} bytes).");
         }
 
         // -----------------------------------------------------------
@@ -152,7 +152,7 @@ namespace fire.Terminal
             var fb = _framebuffers.Get(id);
             int expected = ByteCount(fb);
             if (data.Length != expected)
-                throw new ArgumentException($"Erwarte genau {expected} Byte, erhalten {data.Length}.", nameof(data));
+                throw new ArgumentException($"Expected exactly {expected} bytes, got {data.Length}.", nameof(data));
             if (fb.Indices != null)
             {
                 Buffer.BlockCopy(data, 0, fb.Indices, 0, data.Length);
@@ -198,7 +198,7 @@ namespace fire.Terminal
         public void WritePalette(int id, byte[] data)
         {
             if (data.Length != 768 && data.Length != 1024)
-                throw new ArgumentException($"Eine Palette hat 768 (RGB) oder 1024 (RGBA) Byte, erhalten {data.Length}.", nameof(data));
+                throw new ArgumentException($"A palette has 768 (RGB) or 1024 (RGBA) bytes, got {data.Length}.", nameof(data));
             int stride = data.Length == 768 ? 3 : 4;
             var colors = new uint[256];
             for (int i = 0; i < 256; i++)
@@ -208,7 +208,7 @@ namespace fire.Terminal
 
         private static void CheckPaletteIndex(int index)
         {
-            if ((uint)index > 255) throw new ArgumentOutOfRangeException(nameof(index), $"Palette-Index {index} außerhalb von 0-255.");
+            if ((uint)index > 255) throw new ArgumentOutOfRangeException(nameof(index), $"Palette index {index} outside of 0-255.");
         }
     }
 }

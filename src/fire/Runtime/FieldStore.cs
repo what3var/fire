@@ -59,7 +59,7 @@ namespace fire.Runtime
                     return _known[idx];
                 if (_extra != null && _extra.TryGetValue(name, out var v))
                     return v;
-                throw new KeyNotFoundException($"Kein Feld namens '{name}'.");
+                throw new KeyNotFoundException($"No field named '{name}'.");
             }
             set
             {

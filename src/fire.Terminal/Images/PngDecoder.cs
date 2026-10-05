@@ -49,29 +49,29 @@ namespace fire.Terminal
 
             while (!sawEnd)
             {
-                if (pos + 12 > d.Length) throw new ImageFormatException("PNG: Datei abgeschnitten (kein IEND).");
+                if (pos + 12 > d.Length) throw new ImageFormatException("PNG: file truncated (no IEND).");
                 uint length = Be32(d, pos);
-                if (length > int.MaxValue || (long)pos + 12 + length > d.Length) throw new ImageFormatException("PNG: Datei abgeschnitten (Chunk reicht über das Ende).");
+                if (length > int.MaxValue || (long)pos + 12 + length > d.Length) throw new ImageFormatException("PNG: file truncated (chunk extends past the end).");
                 var typeBytes = new ReadOnlySpan<byte>(d, pos + 4, 4);
                 var data = new ReadOnlySpan<byte>(d, pos + 8, (int)length);
                 if (Crc(typeBytes, data) != Be32(d, pos + 8 + (int)length))
-                    throw new ImageFormatException($"PNG: Prüfsummenfehler im Chunk '{Encoding.ASCII.GetString(typeBytes)}'.");
+                    throw new ImageFormatException($"PNG: checksum error in chunk '{Encoding.ASCII.GetString(typeBytes)}'.");
                 string type = Encoding.ASCII.GetString(typeBytes);
                 pos += 12 + (int)length;
 
-                if (!haveHeader && type != "IHDR") throw new ImageFormatException("PNG: der erste Chunk muss IHDR sein.");
+                if (!haveHeader && type != "IHDR") throw new ImageFormatException("PNG: the first chunk must be IHDR.");
                 switch (type)
                 {
                     case "IHDR":
-                        if (haveHeader || length != 13) throw new ImageFormatException("PNG: ungültiger IHDR-Chunk.");
+                        if (haveHeader || length != 13) throw new ImageFormatException("PNG: invalid IHDR chunk.");
                         width = (int)Math.Min(((uint)data[0] << 24) | ((uint)data[1] << 16) | ((uint)data[2] << 8) | data[3], int.MaxValue);
                         height = (int)Math.Min(((uint)data[4] << 24) | ((uint)data[5] << 16) | ((uint)data[6] << 8) | data[7], int.MaxValue);
                         bitDepth = data[8];
                         colorType = data[9];
-                        if (data[10] != 0) throw new ImageFormatException("PNG: unbekanntes Kompressionsverfahren.");
-                        if (data[11] != 0) throw new ImageFormatException("PNG: unbekanntes Filterverfahren.");
+                        if (data[10] != 0) throw new ImageFormatException("PNG: unknown compression method.");
+                        if (data[11] != 0) throw new ImageFormatException("PNG: unknown filter method.");
                         interlace = data[12];
-                        if (interlace > 1) throw new ImageFormatException("PNG: unbekanntes Verschränkungsverfahren.");
+                        if (interlace > 1) throw new ImageFormatException("PNG: unknown interlace method.");
                         ImageData.CheckSize("PNG", width, height);
                         bool validDepth = colorType switch
                         {
@@ -80,11 +80,11 @@ namespace fire.Terminal
                             3 => bitDepth is 1 or 2 or 4 or 8,
                             _ => false,
                         };
-                        if (!validDepth) throw new ImageFormatException($"PNG: ungültige Kombination aus Farbart {colorType} und Bittiefe {bitDepth}.");
+                        if (!validDepth) throw new ImageFormatException($"PNG: invalid combination of color type {colorType} and bit depth {bitDepth}.");
                         haveHeader = true;
                         break;
                     case "PLTE":
-                        if (length == 0 || length % 3 != 0 || length > 768) throw new ImageFormatException("PNG: ungültige Palette.");
+                        if (length == 0 || length % 3 != 0 || length > 768) throw new ImageFormatException("PNG: invalid palette.");
                         plte = data.ToArray();
                         break;
                     case "tRNS":
@@ -100,7 +100,7 @@ namespace fire.Terminal
             }
 
             if (colorType == 3 && plte == null) throw new ImageFormatException("PNG: Palette-Bild ohne PLTE-Chunk.");
-            if (idat.Length == 0) throw new ImageFormatException("PNG: keine Bilddaten (IDAT).");
+            if (idat.Length == 0) throw new ImageFormatException("PNG: no image data (IDAT).");
 
             int channels = colorType switch { 0 => 1, 2 => 3, 3 => 1, 4 => 2, _ => 4 };
             int bitsPerPixel = channels * bitDepth;
@@ -115,7 +115,7 @@ namespace fire.Terminal
                     int pw = PassWidth(width, pass), ph = PassHeight(height, pass);
                     if (pw > 0 && ph > 0) expected += (long)((pw * (long)bitsPerPixel + 7) / 8 + 1) * ph;
                 }
-            if (expected > int.MaxValue) throw new ImageFormatException("PNG: Bild zu groß.");
+            if (expected > int.MaxValue) throw new ImageFormatException("PNG: image too large.");
 
             var raw = new byte[expected];
             idat.Position = 0;
@@ -126,13 +126,13 @@ namespace fire.Terminal
                 while (got < raw.Length)
                 {
                     int n = z.Read(raw, got, raw.Length - got);
-                    if (n <= 0) throw new ImageFormatException("PNG: die Bilddaten sind zu kurz (abgeschnitten oder beschädigt).");
+                    if (n <= 0) throw new ImageFormatException("PNG: the image data is too short (truncated or corrupt).");
                     got += n;
                 }
             }
             catch (InvalidDataException)
             {
-                throw new ImageFormatException("PNG: die Bilddaten lassen sich nicht entpacken (beschädigt).");
+                throw new ImageFormatException("PNG: the image data cannot be decompressed (corrupt).");
             }
 
             bool indexed = colorType == 3;
@@ -177,7 +177,7 @@ namespace fire.Terminal
                 }
                 // ein Index über die Palettengröße hinaus ist beschädigt
                 foreach (byte b in indices!)
-                    if (b >= entries) throw new ImageFormatException("PNG: ein Pixel verweist auf einen Palette-Eintrag, den es nicht gibt.");
+                    if (b >= entries) throw new ImageFormatException("PNG: a pixel refers to a palette entry that does not exist.");
                 return ImageData.CreateIndexed(width, height, indices, palette, transparent, "PNG");
             }
             return ImageData.CreateTruecolor(width, height, pixels!, "PNG");
@@ -308,7 +308,7 @@ namespace fire.Terminal
                     }
                     break;
                 default:
-                    throw new ImageFormatException($"PNG: unbekannter Zeilenfilter {filter}.");
+                    throw new ImageFormatException($"PNG: unknown scanline filter {filter}.");
             }
         }
     }

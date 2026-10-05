@@ -169,7 +169,7 @@ namespace fire.Compiler
                         if (Peek() == '\n') sawNewline = true;
                         Advance();
                     }
-                    if (IsAtEnd) throw new LexException("Unbeendeter Blockkommentar", _line, _col);
+                    if (IsAtEnd) throw new LexException("Unterminated block comment", _line, _col);
                     Advance(); Advance();
                 }
                 else if (c == '_' && TryConsumeLineContinuation())
@@ -291,7 +291,7 @@ namespace fire.Compiler
 
             if (_pos == digitsStart)
                 throw new LexException(
-                    $"Erwarte mindestens eine gültige Ziffer nach '{_source.Substring(start, _pos - start)}'", line, col);
+                    $"Expected at least one valid digit after '{_source.Substring(start, _pos - start)}'", line, col);
 
             string digits = _source.Substring(digitsStart, _pos - digitsStart);
             long value = Convert.ToInt64(digits, radix);
@@ -338,19 +338,19 @@ namespace fire.Compiler
                 char c = Advance();
                 if (c == '\\')
                 {
-                    if (IsAtEnd) throw new LexException("Unbeendetes String-Literal", line, col);
+                    if (IsAtEnd) throw new LexException("Unterminated string literal", line, col);
                     sb.Append(UnescapeChar(Advance()));
                 }
                 else if (c == '\n')
                 {
-                    throw new LexException("String-Literal über Zeilenende nicht erlaubt", line, col);
+                    throw new LexException("String literals must not span multiple lines", line, col);
                 }
                 else
                 {
                     sb.Append(c);
                 }
             }
-            if (IsAtEnd) throw new LexException("Unbeendetes String-Literal", line, col);
+            if (IsAtEnd) throw new LexException("Unterminated string literal", line, col);
             Advance(); // closing "
 
             string value = sb.ToString();
@@ -386,7 +386,7 @@ namespace fire.Compiler
             while (true)
             {
                 if (IsAtEnd)
-                    throw new LexException("Unbeendeter Format-String", line, col);
+                    throw new LexException("Unterminated format string", line, col);
 
                 char c = Peek();
 
@@ -396,11 +396,11 @@ namespace fire.Compiler
                     break;
                 }
                 if (c == '\n')
-                    throw new LexException("Format-String über Zeilenende nicht erlaubt", line, col);
+                    throw new LexException("Format strings must not span multiple lines", line, col);
                 if (c == '\\')
                 {
                     Advance();
-                    if (IsAtEnd) throw new LexException("Unbeendeter Format-String", line, col);
+                    if (IsAtEnd) throw new LexException("Unterminated format string", line, col);
                     text.Append(UnescapeChar(Advance()));
                     continue;
                 }
@@ -453,7 +453,7 @@ namespace fire.Compiler
             while (true)
             {
                 if (IsAtEnd)
-                    throw new LexException("Unbeendeter Ausdruck in einem Format-String", line, col);
+                    throw new LexException("Unterminated expression in a format string", line, col);
 
                 char c = Peek();
 
@@ -502,13 +502,13 @@ namespace fire.Compiler
                         Advance();
                     }
                     if (IsAtEnd)
-                        throw new LexException("Unbeendeter Format-Spezifizierer in einem Format-String", line, col);
+                        throw new LexException("Unterminated format specifier in a format string", line, col);
                     Advance(); // schließende '}'
                     return new InterpolationSegment(true, expr.ToString(), format.ToString());
                 }
 
                 if (c == '\n')
-                    throw new LexException("Format-String über Zeilenende nicht erlaubt", line, col);
+                    throw new LexException("Format strings must not span multiple lines", line, col);
 
                 expr.Append(c);
                 Advance();
@@ -518,13 +518,13 @@ namespace fire.Compiler
         private Token ReadChar(int line, int col, bool newlineBefore)
         {
             Advance(); // opening '
-            if (IsAtEnd) throw new LexException("Unbeendetes Char-Literal", line, col);
+            if (IsAtEnd) throw new LexException("Unterminated char literal", line, col);
 
             char value;
             char c = Advance();
             if (c == '\\')
             {
-                if (IsAtEnd) throw new LexException("Unbeendetes Char-Literal", line, col);
+                if (IsAtEnd) throw new LexException("Unterminated char literal", line, col);
                 value = UnescapeChar(Advance());
             }
             else
@@ -533,7 +533,7 @@ namespace fire.Compiler
             }
 
             if (IsAtEnd || Peek() != '\'')
-                throw new LexException("Char-Literal muss genau ein Zeichen enthalten", line, col);
+                throw new LexException("A char literal must contain exactly one character", line, col);
             Advance(); // closing '
 
             return new Token(TokenType.CharLiteral, value.ToString(), line, col, null, value, newlineBefore);
@@ -624,7 +624,7 @@ namespace fire.Compiler
                     return Tok(TokenType.Caret, "^", line, col, newlineBefore);
 
                 default:
-                    throw new LexException($"Unerwartetes Zeichen '{c}'", line, col);
+                    throw new LexException($"Unexpected character '{c}'", line, col);
             }
         }
 

@@ -155,7 +155,7 @@ namespace fire.Values
         private void RequireKind(ValueKind expected)
         {
             if (Kind != expected)
-                throw new VmInvariantViolationException($"Value ist vom Typ {Kind}, nicht {expected}.");
+                throw new VmInvariantViolationException($"Value is of type {Kind}, not {expected}.");
         }
 
         // ---------------------------------------------------------------
@@ -167,7 +167,7 @@ namespace fire.Values
         public Value CoerceUnit(Unit targetUnit)
         {
             if (Kind != ValueKind.Int && Kind != ValueKind.Float && Kind != ValueKind.Undefined)
-                throw new InvalidOperationException($"Typ {Kind} trägt keine Einheit und kann nicht umgerechnet werden.");
+                throw new InvalidOperationException($"Type {Kind} carries no unit and cannot be converted.");
 
             var currentUnit = Unit ?? Values.Unit.Unitless;
             if (currentUnit.Equals(targetUnit))
@@ -202,7 +202,7 @@ namespace fire.Values
                     return MakeFloat(0, Unit);
                 default:
                     throw new InvalidOperationException(
-                        $"Kann Typ {Kind} nicht nach {targetKind} coercen.");
+                        $"Cannot coerce type {Kind} to {targetKind}.");
             }
         }
 
@@ -333,7 +333,7 @@ namespace fire.Values
                 return a.OffsetPointer(-b._intValue);
             if (a.Kind == ValueKind.Pointer && b.Kind == ValueKind.Pointer)
                 throw new InvalidOperationException(
-                    "Pointer-Differenz ('ptr1 - ptr2') wird aktuell nicht unterstützt.");
+                    "Pointer difference ('ptr1 - ptr2') is currently not supported.");
 
             RequireNumeric(a); RequireNumeric(b);
             RequireSameUnit(a, b);
@@ -351,7 +351,7 @@ namespace fire.Values
         {
             var target = AsPointer();
             var moved = target.Advance(elementOffset)
-                ?? throw new InvalidOperationException("Pointer-Arithmetik außerhalb eines gültigen Bereichs.");
+                ?? throw new InvalidOperationException("Pointer arithmetic outside of a valid range.");
             return MakePointer(moved);
         }
 
@@ -419,21 +419,21 @@ namespace fire.Values
         public static Value LogicalNot(Value v)
         {
             if (v.Kind != ValueKind.Bool)
-                throw new InvalidOperationException($"'!' (Negation) erwartet bool, nicht {v.Kind}.");
+                throw new InvalidOperationException($"'!' (negation) expects bool, not {v.Kind}.");
             return MakeBool(!v._boolValue);
         }
 
         public static Value BitNot(Value v)
         {
             if (v.Kind != ValueKind.Int)
-                throw new InvalidOperationException($"'~' erwartet int, nicht {v.Kind}.");
+                throw new InvalidOperationException($"'~' expects int, not {v.Kind}.");
             return MakeInt(~v._intValue, v.Unit);
         }
 
         private static void RequireInt(Value v, string opSymbol)
         {
             if (v.Kind != ValueKind.Int)
-                throw new InvalidOperationException($"'{opSymbol}' erwartet int, nicht {v.Kind}.");
+                throw new InvalidOperationException($"'{opSymbol}' expects int, not {v.Kind}.");
         }
 
         public static Value BitAnd(Value a, Value b)
@@ -532,7 +532,7 @@ namespace fire.Values
                 return MakeFloat(truncated, Unit, width);
             }
 
-            throw new InvalidOperationException($"TruncateTo ist nur für int/float gültig, nicht {Kind}.");
+            throw new InvalidOperationException($"TruncateTo is only valid for int/float, not {Kind}.");
         }
 
         // 8-Bit-Minifloat: 1 Vorzeichen- + 4 Exponenten- (Bias 7) + 3 Mantissenbits
@@ -583,7 +583,7 @@ namespace fire.Values
         private static void RequireNumeric(Value v)
         {
             if (v.Kind != ValueKind.Int && v.Kind != ValueKind.Float)
-                throw new InvalidOperationException($"Typ {v.Kind} ist nicht numerisch.");
+                throw new InvalidOperationException($"Type {v.Kind} is not numeric.");
         }
 
         private static void RequireSameUnit(Value a, Value b)
@@ -690,8 +690,8 @@ namespace fire.Values
 
                 default:
                     throw new InvalidOperationException(
-                        $"Unbekannter Format-Spezifizierer '{spec}' (bekannt: X/x, B, D, F, E, jeweils mit " +
-                        "optionaler Nachkommastellen-/Breitenangabe wie 'F2'/'X4'/'D5').");
+                        $"Unknown format specifier '{spec}' (known: X/x, B, D, F, E, each with " +
+                        "an optional decimals/width suffix like 'F2'/'X4'/'D5').");
             }
         }
 
@@ -699,7 +699,7 @@ namespace fire.Values
         {
             if (Array.IndexOf(allowed, Kind) < 0)
                 throw new InvalidOperationException(
-                    $"Format-Spezifizierer '{spec}' erwartet {string.Join("/", allowed)}, nicht {Kind}.");
+                    $"Format specifier '{spec}' expects {string.Join("/", allowed)}, not {Kind}.");
         }
     }
 }

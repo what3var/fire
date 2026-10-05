@@ -35,7 +35,7 @@ namespace fire.Runtime
         }
 
         private static VM Vm() =>
-            VM.CurrentThreadVm ?? throw new InvalidOperationException("Reflection ist nur auf dem Thread einer laufenden VM möglich.");
+            VM.CurrentThreadVm ?? throw new InvalidOperationException("Reflection is only possible on the thread of a running VM.");
 
         private static Value[] ToArgs(Value array)
         {
@@ -137,7 +137,7 @@ namespace fire.Runtime
         {
             var vm = Vm();
             if (kind is not ("changed" or "changing"))
-                return vm.ReflectFail($"Die Art einer Probe ist \"changed\" oder \"changing\", erhalten: \"{kind}\".");
+                return vm.ReflectFail($"The kind of a probe is \"changed\" or \"changing\", got: \"{kind}\".");
             if (!vm.TryProbeAdd(obj, member.Kind == ValueKind.String ? member.AsString() : null, kind == "changing", handler, out long id, out string error))
                 return vm.ReflectFail(error);
             return Value.MakeInt(id);
@@ -174,10 +174,10 @@ namespace fire.Runtime
         private static Value SelectorPath(Value l)
         {
             if (l.Kind != ValueKind.Lambda)
-                return Vm().ReflectFail($"Ein Selektor ('lambda member<...>' o.ä.) erwartet eine Lambda wie `c => c.radius`, erhalten: {l.Kind}.");
+                return Vm().ReflectFail($"A selector ('lambda member<...>' etc.) expects a lambda like `c => c.radius`, got: {l.Kind}.");
             var path = ((LambdaValue)l.AsLambda()).Proto.SelectorPath;
             if (path == null)
-                return Vm().ReflectFail("Die Lambda ist kein Selektor: sie braucht genau einen Parameter, und ihr Körper darf nur eine Mitgliedskette darauf sein (`c => c.radius`, `p => p.address.city`).");
+                return Vm().ReflectFail("The lambda is not a selector: it needs exactly one parameter, and its body may only be a member chain on it (`c => c.radius`, `p => p.address.city`).");
             return StringArray(path);
         }
     }

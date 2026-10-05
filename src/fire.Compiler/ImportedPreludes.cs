@@ -38,7 +38,7 @@ namespace fire.Compiler
             "linq" => NativeImports.Linq,
             "reflection" => NativeImports.Reflection,
             "time" => NativeImports.Time,
-            _ => throw new Exception($"'{name}' ist keine bekannte Erweiterung."),
+            _ => throw new Exception($"'{name}' is not a known extension."),
         };
 
         /// <summary>Der fire-Quelltext der Prelude der Erweiterung `importName`

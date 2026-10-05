@@ -105,12 +105,12 @@ namespace fire.Runtime
         {
             id = 0;
             error = "";
-            if (target.Kind != ValueKind.Class) { error = $"'probe' erwartet ein Objekt, erhalten: {target.Kind}."; return false; }
-            if (handler.Kind != ValueKind.Lambda) { error = $"Der Handler einer Probe muss eine Lambda sein, erhalten: {handler.Kind}."; return false; }
+            if (target.Kind != ValueKind.Class) { error = $"'probe' expects an object, got: {target.Kind}."; return false; }
+            if (handler.Kind != ValueKind.Lambda) { error = $"The handler of a probe must be a lambda, got: {handler.Kind}."; return false; }
             var obj = (ObjectInstance)target.AsObjectRef();
             var lambda = (LambdaValue)handler.AsLambda();
-            if (lambda.Proto.ParamCount > 4) { error = $"Der Handler einer Probe darf höchstens 4 Parameter haben (Objekt, Name, alt, neu), hat {lambda.Proto.ParamCount}."; return false; }
-            if (member != null && !ReflectHas(obj, member)) { error = $"'{obj.ClassName}' hat kein Mitglied '{member}' - dort lässt sich keine Probe anmelden."; return false; }
+            if (lambda.Proto.ParamCount > 4) { error = $"The handler of a probe may have at most 4 parameters (object, name, old, new), it has {lambda.Proto.ParamCount}."; return false; }
+            if (member != null && !ReflectHas(obj, member)) { error = $"'{obj.ClassName}' has no member '{member}' - no probe can be registered there."; return false; }
 
             id = ProbeRegistry.NextId();
             obj.GetOrCreateProbes().Add(new ProbeEntry { Id = id, Member = member, IsChanging = changing, Handler = lambda });
@@ -122,7 +122,7 @@ namespace fire.Runtime
         public bool TrySilenceMember(Value target, string? member, out string error)
         {
             error = "";
-            if (target.Kind != ValueKind.Class) { error = $"'silence' erwartet ein Objekt, erhalten: {target.Kind}."; return false; }
+            if (target.Kind != ValueKind.Class) { error = $"'silence' expects an object, got: {target.Kind}."; return false; }
             var probes = ((ObjectInstance)target.AsObjectRef()).Probes;
             if (probes != null) ProbeRegistry.Forget(member == null ? probes.RemoveAll() : probes.RemoveMember(member));
             return true;
@@ -140,7 +140,7 @@ namespace fire.Runtime
                 if (owner?.Probes != null && owner.Probes.Remove(id)) ProbeRegistry.Forget(new[] { id });
                 return true; // ein schon entferntes Handle ist kein Fehler
             }
-            error = $"'silence' erwartet ein Probe-Handle oder ein Objekt, erhalten: {value.Kind}.";
+            error = $"'silence' expects a probe handle or an object, got: {value.Kind}.";
             return false;
         }
 

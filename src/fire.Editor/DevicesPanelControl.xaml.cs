@@ -44,14 +44,14 @@ namespace fire.Editor
             InitializeComponent();
             DeviceTree.ContextMenu = EditorCommands.BuildMenu(new List<EditorCommands.Entry?>
             {
-                new() { Header = "_Verbinden", Execute = () => _ = ConnectSelectedAsync(), Enabled = () => SelectedSlot is { Device.IsConnected: false } },
-                new() { Header = "_Trennen", Execute = () => _ = DisconnectSelectedAsync(), Enabled = () => SelectedSlot is { Device.IsConnected: true } },
-                new() { Header = "Verfügbarkeit _prüfen", Execute = () => _ = TestSelectedAsync(), Enabled = () => SelectedSlot != null },
+                new() { Header = "_Connect", Execute = () => _ = ConnectSelectedAsync(), Enabled = () => SelectedSlot is { Device.IsConnected: false } },
+                new() { Header = "_Disconnect", Execute = () => _ = DisconnectSelectedAsync(), Enabled = () => SelectedSlot is { Device.IsConnected: true } },
+                new() { Header = "Check _Availability", Execute = () => _ = TestSelectedAsync(), Enabled = () => SelectedSlot != null },
                 null,
-                new() { Header = "Als _Standardgerät festlegen", Execute = SetSelectedAsDefault, Enabled = () => SelectedSlot != null && SelectedSlot.Identifier != _service?.Manager.DefaultIdentifier },
-                new() { Header = "Standardgerät _aufheben", Execute = ClearDefault, Enabled = () => _service?.Manager.DefaultIdentifier != null },
+                new() { Header = "Set as Default _Device", Execute = SetSelectedAsDefault, Enabled = () => SelectedSlot != null && SelectedSlot.Identifier != _service?.Manager.DefaultIdentifier },
+                new() { Header = "Clear Default D_evice", Execute = ClearDefault, Enabled = () => _service?.Manager.DefaultIdentifier != null },
                 null,
-                new() { Header = "Paketverfolgung _öffnen", Execute = OpenTraceForSelected, Enabled = () => SelectedSlot != null },
+                new() { Header = "Open Packet _Trace", Execute = OpenTraceForSelected, Enabled = () => SelectedSlot != null },
             });
         }
 
@@ -112,14 +112,14 @@ namespace fire.Editor
             }
 
             if (DeviceTree.Items.Count == 0)
-                DeviceTree.Items.Add(new TreeViewItem { Header = new TextBlock { Text = "(keine Geräte - auf \"Suchen\" klicken)", Foreground = UncheckedBrush } });
+                DeviceTree.Items.Add(new TreeViewItem { Header = new TextBlock { Text = "(no devices - click \"Search\")", Foreground = UncheckedBrush } });
 
             UpdateButtons();
         }
 
         private static string DriverTitle(string driver) => driver switch
         {
-            "serial" => "Seriell (serial)",
+            "serial" => "Serial (serial)",
             "loopback" => "Simulation (loopback)",
             _ => driver,
         };
@@ -157,7 +157,7 @@ namespace fire.Editor
                     Text = "★",
                     Foreground = StarBrush,
                     FontFamily = new FontFamily("Segoe UI Symbol"),
-                    ToolTip = "Standardgerät (Device.Default im Skript)",
+                    ToolTip = "Default device (Device.Default in scripts)",
                     Margin = new Thickness(6, 0, 0, 0),
                     VerticalAlignment = VerticalAlignment.Center,
                 });
@@ -166,12 +166,12 @@ namespace fire.Editor
 
         private static (string Glyph, Brush Brush, string Text) StateOf(DeviceSlot slot)
         {
-            if (slot.Device.IsConnected) return ("●", ConnectedBrush, "verbunden");
+            if (slot.Device.IsConnected) return ("●", ConnectedBrush, "connected");
             return slot.Device.Availability switch
             {
-                DeviceAvailability.Available => ("○", AvailableBrush, "verfügbar"),
-                DeviceAvailability.Unavailable => ("✖", UnavailableBrush, "nicht verfügbar"),
-                _ => ("◌", UncheckedBrush, "ungeprüft"),
+                DeviceAvailability.Available => ("○", AvailableBrush, "available"),
+                DeviceAvailability.Unavailable => ("✖", UnavailableBrush, "unavailable"),
+                _ => ("◌", UncheckedBrush, "unchecked"),
             };
         }
 
@@ -227,15 +227,15 @@ namespace fire.Editor
             if (_service == null || _searching) return;
             _searching = true;
             UpdateButtons();
-            StatusMessage?.Invoke("Suche Geräte...");
+            StatusMessage?.Invoke("Searching for devices...");
             try
             {
                 await _service.RefreshAsync(fastScan: false);
-                StatusMessage?.Invoke($"{_service.Manager.DeviceCount} Gerät(e) gefunden.");
+                StatusMessage?.Invoke($"{_service.Manager.DeviceCount} device(s) found.");
             }
             catch (Exception ex)
             {
-                StatusMessage?.Invoke($"Gerätesuche fehlgeschlagen: {ex.Message}");
+                StatusMessage?.Invoke($"Device search failed: {ex.Message}");
             }
             finally
             {
@@ -247,15 +247,15 @@ namespace fire.Editor
         public async Task ConnectSelectedAsync()
         {
             if (SelectedSlot is not { } slot) return;
-            StatusMessage?.Invoke($"Verbinde {slot.Identifier}...");
+            StatusMessage?.Invoke($"Connecting {slot.Identifier}...");
             try
             {
                 await Task.Run(() => slot.Device.Connect());
-                StatusMessage?.Invoke($"Verbunden: {slot.Identifier}");
+                StatusMessage?.Invoke($"Connected: {slot.Identifier}");
             }
             catch (Exception ex)
             {
-                StatusMessage?.Invoke($"Verbinden mit {slot.Identifier} fehlgeschlagen: {ex.Message}");
+                StatusMessage?.Invoke($"Connecting to {slot.Identifier} failed: {ex.Message}");
             }
             Refresh();
         }
@@ -266,11 +266,11 @@ namespace fire.Editor
             try
             {
                 await Task.Run(() => slot.Device.Disconnect());
-                StatusMessage?.Invoke($"Getrennt: {slot.Identifier}");
+                StatusMessage?.Invoke($"Disconnected: {slot.Identifier}");
             }
             catch (Exception ex)
             {
-                StatusMessage?.Invoke($"Trennen von {slot.Identifier} fehlgeschlagen: {ex.Message}");
+                StatusMessage?.Invoke($"Disconnecting {slot.Identifier} failed: {ex.Message}");
             }
             Refresh();
         }
@@ -281,11 +281,11 @@ namespace fire.Editor
             try
             {
                 var result = await Task.Run(() => slot.Device.TestAvailability());
-                StatusMessage?.Invoke($"{slot.Identifier}: {(result == DeviceAvailability.Available ? "verfügbar" : "nicht verfügbar")}");
+                StatusMessage?.Invoke($"{slot.Identifier}: {(result == DeviceAvailability.Available ? "available" : "unavailable")}");
             }
             catch (Exception ex)
             {
-                StatusMessage?.Invoke($"Prüfung von {slot.Identifier} fehlgeschlagen: {ex.Message}");
+                StatusMessage?.Invoke($"Checking {slot.Identifier} failed: {ex.Message}");
             }
             Refresh();
         }
@@ -294,14 +294,14 @@ namespace fire.Editor
         {
             if (_service == null || SelectedSlot is not { } slot) return;
             _service.Manager.DefaultIdentifier = slot.Identifier;
-            StatusMessage?.Invoke($"Standardgerät: {slot.Identifier}");
+            StatusMessage?.Invoke($"Default device: {slot.Identifier}");
         }
 
         public void ClearDefault()
         {
             if (_service == null) return;
             _service.Manager.DefaultIdentifier = null;
-            StatusMessage?.Invoke("Kein Standardgerät.");
+            StatusMessage?.Invoke("No default device.");
         }
 
         public void OpenTraceForSelected()

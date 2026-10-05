@@ -108,25 +108,25 @@ namespace fire.IO.Bridge
                     bool CanSeek { get { return false } }
 
                     int Position {
-                        get { throw new IOException("Dieser Stream kennt keine Position.", 8) }
-                        set { throw new IOException("Dieser Stream unterstützt kein Positionieren.", 8) }
+                        get { throw new IOException("This stream has no position.", 8) }
+                        set { throw new IOException("This stream does not support seeking.", 8) }
                     }
 
                     int Length {
-                        get { throw new IOException("Dieser Stream kennt seine Länge nicht.", 8) }
-                        set { throw new IOException("Die Länge dieses Streams lässt sich nicht ändern.", 8) }
+                        get { throw new IOException("This stream does not know its length.", 8) }
+                        set { throw new IOException("The length of this stream cannot be changed.", 8) }
                     }
 
                     int Read(buffer, offset, count) {
-                        throw new IOException("Dieser Stream ist nicht lesbar.", 8)
+                        throw new IOException("This stream is not readable.", 8)
                     }
 
                     int Write(buffer, offset, count) {
-                        throw new IOException("Dieser Stream ist nicht beschreibbar.", 8)
+                        throw new IOException("This stream is not writable.", 8)
                     }
 
                     int Seek(int offset, int origin = IO.SeekOrigin.Begin) {
-                        throw new IOException("Dieser Stream unterstützt kein Positionieren.", 8)
+                        throw new IOException("This stream does not support seeking.", 8)
                     }
 
                     Flush() { }
@@ -211,7 +211,7 @@ namespace fire.IO.Bridge
 
                     // Wirft, wenn der Stream schon geschlossen ist.
                     Check() {
-                        if (this.closed) { throw new StreamClosedException("Der Stream ist geschlossen.") }
+                        if (this.closed) { throw new StreamClosedException("The stream is closed.") }
                     }
 
                     // Schließt das Handle; ein weiteres Close() ist wirkungslos.
@@ -570,7 +570,7 @@ namespace fire.IO.Bridge
                     }
 
                     Check() {
-                        if (this.closed) { throw new StreamClosedException("Der Reader ist geschlossen.") }
+                        if (this.closed) { throw new StreamClosedException("The reader is closed.") }
                     }
 
                     // Sorgt dafür, dass chunk[pos..len) Daten enthält; false am Ende des Streams.
@@ -705,7 +705,7 @@ namespace fire.IO.Bridge
                     bool IsClosed { get { return this.closed } }
 
                     Check() {
-                        if (this.closed) { throw new StreamClosedException("Der Writer ist geschlossen.") }
+                        if (this.closed) { throw new StreamClosedException("The writer is closed.") }
                     }
 
                     // Schreibt den Wert als Text (Zahlen usw. werden umgewandelt).

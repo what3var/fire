@@ -12,7 +12,7 @@ namespace fire.Terminal
 
         public static ImageData Decode(byte[] d)
         {
-            if (d.Length < 26) throw new ImageFormatException("BMP: Datei zu kurz.");
+            if (d.Length < 26) throw new ImageFormatException("BMP: file too short.");
             int dataOffset = Le32(d, 10);
             int headerSize = Le32(d, 14);
 
@@ -26,24 +26,24 @@ namespace fire.Terminal
             }
             else if (headerSize >= 40)
             {
-                if (d.Length < 14 + 40) throw new ImageFormatException("BMP: Datei zu kurz.");
+                if (d.Length < 14 + 40) throw new ImageFormatException("BMP: file too short.");
                 width = Le32(d, 18);
                 int h = Le32(d, 22);
                 topDown = h < 0;
                 height = h == int.MinValue ? 0 : Math.Abs(h);
-                if (Le16(d, 26) != 1) throw new ImageFormatException("BMP: ungültige Ebenenzahl.");
+                if (Le16(d, 26) != 1) throw new ImageFormatException("BMP: invalid plane count.");
                 bpp = Le16(d, 28);
                 compression = Le32(d, 30);
                 colorsUsed = Le32(d, 46);
             }
-            else throw new ImageFormatException($"BMP: nicht unterstützte Kopfzeile ({headerSize} Byte).");
+            else throw new ImageFormatException($"BMP: unsupported header ({headerSize} bytes).");
 
             ImageData.CheckSize("BMP", width, height);
-            if (bpp is not (1 or 4 or 8 or 16 or 24 or 32)) throw new ImageFormatException($"BMP: nicht unterstützte Farbtiefe ({bpp} Bit).");
-            if (compression is not (0 or 1 or 2 or 3 or 6)) throw new ImageFormatException($"BMP: nicht unterstützte Kompression ({compression}).");
-            if (compression == 1 && bpp != 8 || compression == 2 && bpp != 4) throw new ImageFormatException("BMP: RLE passt nicht zur Farbtiefe.");
-            if ((compression == 3 || compression == 6) && bpp is not (16 or 32)) throw new ImageFormatException("BMP: Bitmasken nur bei 16 und 32 Bit.");
-            if (dataOffset < 0 || dataOffset > d.Length) throw new ImageFormatException("BMP: ungültiger Datenanfang.");
+            if (bpp is not (1 or 4 or 8 or 16 or 24 or 32)) throw new ImageFormatException($"BMP: unsupported color depth ({bpp} bits).");
+            if (compression is not (0 or 1 or 2 or 3 or 6)) throw new ImageFormatException($"BMP: unsupported compression ({compression}).");
+            if (compression == 1 && bpp != 8 || compression == 2 && bpp != 4) throw new ImageFormatException("BMP: RLE does not match the color depth.");
+            if ((compression == 3 || compression == 6) && bpp is not (16 or 32)) throw new ImageFormatException("BMP: bit masks are only allowed with 16 and 32 bits.");
+            if (dataOffset < 0 || dataOffset > d.Length) throw new ImageFormatException("BMP: invalid data offset.");
 
             // ---- Bitmasken ----
             uint maskR = 0, maskG = 0, maskB = 0, maskA = 0;
@@ -51,7 +51,7 @@ namespace fire.Terminal
             if (hasMasks)
             {
                 int maskPos = 14 + 40; // bei einer 40-Byte-Kopfzeile folgen die Masken unmittelbar dahinter, bei größeren stehen sie darin
-                if (d.Length < maskPos + 12) throw new ImageFormatException("BMP: Datei zu kurz für die Bitmasken.");
+                if (d.Length < maskPos + 12) throw new ImageFormatException("BMP: file too short for the bit masks.");
                 maskR = (uint)Le32(d, maskPos); maskG = (uint)Le32(d, maskPos + 4); maskB = (uint)Le32(d, maskPos + 8);
                 if ((compression == 6 || headerSize >= 56) && d.Length >= maskPos + 16) maskA = (uint)Le32(d, maskPos + 12);
             }
@@ -65,7 +65,7 @@ namespace fire.Terminal
                 if (entries > 256 || entries > (1 << bpp)) entries = Math.Min(256, 1 << bpp);
                 int entrySize = headerSize == 12 ? 3 : 4;
                 int palPos = 14 + headerSize;
-                if (palPos + entries * entrySize > d.Length) throw new ImageFormatException("BMP: Datei zu kurz für die Palette.");
+                if (palPos + entries * entrySize > d.Length) throw new ImageFormatException("BMP: file too short for the palette.");
                 palette = new uint[256];
                 Array.Fill(palette, 0xFF000000u);
                 for (int i = 0; i < entries; i++)
@@ -85,7 +85,7 @@ namespace fire.Terminal
 
             // ---- Truecolor ----
             int rowSize = (int)(((long)width * bpp + 31) / 32 * 4);
-            if ((long)dataOffset + (long)rowSize * height > d.Length) throw new ImageFormatException("BMP: Datei zu kurz für die Bilddaten.");
+            if ((long)dataOffset + (long)rowSize * height > d.Length) throw new ImageFormatException("BMP: file too short for the image data.");
             var pixels = new uint[width * height];
             bool anyAlpha = false;
 
@@ -139,7 +139,7 @@ namespace fire.Terminal
         private static byte[] ReadIndexed(byte[] d, int dataOffset, int width, int height, int bpp, bool topDown)
         {
             int rowSize = (int)(((long)width * bpp + 31) / 32 * 4);
-            if ((long)dataOffset + (long)rowSize * height > d.Length) throw new ImageFormatException("BMP: Datei zu kurz für die Bilddaten.");
+            if ((long)dataOffset + (long)rowSize * height > d.Length) throw new ImageFormatException("BMP: file too short for the image data.");
             var indices = new byte[width * height];
             for (int row = 0; row < height; row++)
             {

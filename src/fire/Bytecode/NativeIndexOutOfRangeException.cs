@@ -16,7 +16,7 @@ namespace fire.Bytecode
         public string What { get; }
 
         public NativeIndexOutOfRangeException(long index, int length, string what = "Index")
-            : base($"{what} {index} außerhalb des gültigen Bereichs (Länge {length}).")
+            : base($"{what} {index} out of range (length {length}).")
         {
             Index = index;
             Length = length;

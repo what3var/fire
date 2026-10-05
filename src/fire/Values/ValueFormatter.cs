@@ -67,9 +67,9 @@ namespace fire.Values
                     break;
                 default:
                     throw new NotSupportedException(
-                        $"Value vom Typ {value.Kind} kann nicht serialisiert werden - nur reine, objektfreie Werte " +
-                        "(Bool/Int/Float/Char/String/Undefined) sind als Compiler-Konstante/statischer Anfangswert " +
-                        "zulässig (siehe ValueFormatter-Klassendoku).");
+                        $"A value of type {value.Kind} cannot be serialized - only pure, object-free values " +
+                        "(Bool/Int/Float/Char/String/Undefined) are allowed as a compiler constant/static initial value " +
+                        "(see the ValueFormatter class documentation).");
             }
         }
 
@@ -111,8 +111,8 @@ namespace fire.Values
                 }
                 default:
                     throw new NotSupportedException(
-                        $"Unbekannte/nicht unterstützte ValueKind '{kind}' beim Deserialisieren eines Value " +
-                        "(siehe ValueFormatter-Klassendoku - vermutlich eine neuere Programmversion als dieser Cache).");
+                        $"Unknown/unsupported ValueKind '{kind}' while deserializing a value " +
+                        "(see the ValueFormatter class documentation - probably a newer program version than this cache).");
             }
         }
     }

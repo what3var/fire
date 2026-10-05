@@ -61,7 +61,7 @@
             <GroupBox Header="Icon" Margin="2" Padding="4">
                 <StackPanel Orientation="Horizontal">
                     <Image Source="{Binding IconPath}" Width="64" Height="64"></Image>
-                    <Button Content="Laden..." VerticalAlignment="Bottom" Padding="8,2" MinWidth="72" Margin="8,8,0,0" Click="Load_Click"></Button>
+                    <Button Content="Loading..." VerticalAlignment="Bottom" Padding="8,2" MinWidth="72" Margin="8,8,0,0" Click="Load_Click"></Button>
                 </StackPanel>
             </GroupBox>
         </StackPanel>

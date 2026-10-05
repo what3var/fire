@@ -311,8 +311,8 @@ namespace fire.Compiler
                 string resolved = ext.TargetRef.ResolveBaseName(IsKnown);
                 if (!extendedNames.Contains(resolved))
                     throw new ParseException(
-                        $"'class extends {ext.TargetRef.BaseName}' - Klasse '{ext.TargetRef.BaseName}' ist im selben " +
-                        "Programm nicht bekannt (Erweiterungen können keine neue Klasse anlegen).",
+                        $"'class extends {ext.TargetRef.BaseName}' - class '{ext.TargetRef.BaseName}' is not known in the same " +
+                        "program (extensions cannot create a new class).",
                         ext.Line, 1);
             }
 
@@ -446,7 +446,7 @@ namespace fire.Compiler
         private Stmt.BlockStmt ParseBlock()
         {
             int line = Peek().Line;
-            Expect(TokenType.LBrace, "Erwarte '{'");
+            Expect(TokenType.LBrace, "Expected '{'");
 
             var statements = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
@@ -459,7 +459,7 @@ namespace fire.Compiler
                 statements.Add(ParseStatement());
             }
 
-            Expect(TokenType.RBrace, "Erwarte '}' am Blockende");
+            Expect(TokenType.RBrace, "Expected '}' at the end of the block");
             return new Stmt.BlockStmt(_sourceIndex, line, statements);
         }
 
@@ -495,8 +495,8 @@ namespace fire.Compiler
         private CatchClause ParseCatchClause()
         {
             int line = Peek().Line;
-            Expect(TokenType.Catch, "Erwarte 'catch'");
-            Expect(TokenType.LParen, "Erwarte '(' nach 'catch'");
+            Expect(TokenType.Catch, "Expected 'catch'");
+            Expect(TokenType.LParen, "Expected '(' after 'catch'");
 
             // `catch (TypeName varName)` bzw. ungetypt `catch (varName)` -
             // SEIT SPEC "Einheiten-Deklarationen" dieselbe Reihenfolge wie
@@ -508,11 +508,11 @@ namespace fire.Compiler
             // 'Geometry.MyException e' korrekt (siehe dortige Doku).
             TypeRef? typeRef = null;
             if (NextLooksLikeTypeThenName())
-                typeRef = new TypeRef(ParseDottedName("Typname in catch(...)"), null, 0, Namespaces: CurrentNamespaces());
+                typeRef = new TypeRef(ParseDottedName("type name in catch(...)"), null, 0, Namespaces: CurrentNamespaces());
 
-            string varName = Expect(TokenType.Identifier, "Erwarte Bezeichner in catch(...)").Lexeme;
+            string varName = Expect(TokenType.Identifier, "Expected an identifier in catch(...)").Lexeme;
 
-            Expect(TokenType.RParen, "Erwarte ')' nach catch-Parametern");
+            Expect(TokenType.RParen, "Expected ')' after the catch parameters");
             var body = ParseBlock();
             return new CatchClause(_sourceIndex, line, typeRef, varName, body);
         }
@@ -520,7 +520,7 @@ namespace fire.Compiler
         private Stmt ParseTry()
         {
             int line = Peek().Line;
-            Expect(TokenType.Try, "Erwarte 'try'");
+            Expect(TokenType.Try, "Expected 'try'");
             var tryBlock = ParseBlock();
 
             var catches = new List<CatchClause>();
@@ -532,7 +532,7 @@ namespace fire.Compiler
                 finallyBlock = ParseBlock();
 
             if (catches.Count == 0 && finallyBlock == null)
-                throw Error("'try' benötigt mindestens einen 'catch'-Block oder 'finally'", Peek());
+                throw Error("'try' needs at least one 'catch' block or 'finally'", Peek());
 
             return new TryStmt(_sourceIndex, line, tryBlock, catches, finallyBlock);
         }
@@ -550,7 +550,7 @@ namespace fire.Compiler
         /// der beiden Deklarationsformen mit dem Flag gestempelt wird.</summary>
         private Stmt ParseReadonlyDecl()
         {
-            Expect(TokenType.Readonly, "Erwarte 'readonly'");
+            Expect(TokenType.Readonly, "Expected 'readonly'");
 
             if (Check(TokenType.Var))
             {
@@ -561,7 +561,7 @@ namespace fire.Compiler
             if (NextLooksLikeTypeThenName())
                 return ParseBareTypedDecl(isReadonly: true);
 
-            throw Error("Erwarte 'var' oder eine Typ-Deklaration nach 'readonly'", Peek());
+            throw Error("Expected 'var' or a type declaration after 'readonly'", Peek());
         }
 
         /// <summary>var-Deklaration ohne eigenen Terminator-Konsum - für Stellen
@@ -571,8 +571,8 @@ namespace fire.Compiler
         private VarDeclStmt ParseVarDeclCore(bool isReadonly)
         {
             int line = Peek().Line;
-            Expect(TokenType.Var, "Erwarte 'var'");
-            string name = Expect(TokenType.Identifier, "Erwarte Variablennamen").Lexeme;
+            Expect(TokenType.Var, "Expected 'var'");
+            string name = Expect(TokenType.Identifier, "Expected a variable name").Lexeme;
 
             // Array-Klammern VOR dem Typ parsen (direkt hinter dem Bezeichner) -
             // sonst würde `var arr : int[]` fälschlich versuchen, "[]" als
@@ -608,7 +608,7 @@ namespace fire.Compiler
         /// akzeptiert jeden Bezeichner als atomare, frei erfundene Einheit,
         /// siehe dortige Doku) - eine etwaige Prüfung "ist mm wirklich schon
         /// bekannt" wäre ohnehin gegenstandslos.</summary>
-        private string ParseUnitName() => Expect(TokenType.Identifier, "Erwarte Einheitennamen nach ':'").Lexeme;
+        private string ParseUnitName() => Expect(TokenType.Identifier, "Expected a unit name after ':'").Lexeme;
 
         /// <summary>"Nackte" Deklaration ohne `var` (C-artig): `Type name[ranks]
         /// [: einheit] [= init]`. Semantisch identisch zu `var name : Type`
@@ -621,7 +621,7 @@ namespace fire.Compiler
         {
             int line = Peek().Line;
             var type = ParseTypeRef();
-            string name = Expect(TokenType.Identifier, "Erwarte Bezeichner").Lexeme;
+            string name = Expect(TokenType.Identifier, "Expected an identifier").Lexeme;
             var arrayRanks = ParseArrayRanks();
 
             // Wie bei ParseVarDeclCore: ':' legt IMMER nur eine Einheit fest
@@ -656,7 +656,7 @@ namespace fire.Compiler
         {
             if (TypeKeywords.Contains(Peek().Type))
                 return Advance().Lexeme;
-            string name = Expect(TokenType.Identifier, "Erwarte Typnamen").Lexeme;
+            string name = Expect(TokenType.Identifier, "Expected a type name").Lexeme;
             while (Check(TokenType.Dot) && PeekAt(1).Type == TokenType.Identifier)
             {
                 Advance(); // '.'
@@ -698,7 +698,7 @@ namespace fire.Compiler
                     Advance(); // '<'
                     var targetTypes = new List<string>();
                     if (!Check(TokenType.Gt)) targetTypes.Add(ParseTypeAnnotationName()); // `lambda selector<>`: ohne Typ
-                    Expect(TokenType.Gt, $"Erwarte '>' nach dem Typ von 'lambda {selectorKind}<...>'");
+                    Expect(TokenType.Gt, $"Expected '>' after the type of 'lambda {selectorKind}<...>'");
                     return new TypeRef("lambda", null, 0, new LambdaSignature(null, targetTypes, IsSelector: true, SelectorKind: selectorKind), namespaces);
                 }
                 return new TypeRef("lambda", null, 0, ParseLambdaSignature(returnTypeName: null), namespaces);
@@ -711,7 +711,7 @@ namespace fire.Compiler
             if (baseName == "byte")
             {
                 if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
-                    throw Error("'byte' hat bereits eine feste Breite von 8 Bit - kein zusätzliches '[...]' danach", Peek());
+                    throw Error("'byte' already has a fixed width of 8 bits - no additional '[...]' may follow", Peek());
                 int bytePointerDepth = 0;
                 while (Match(TokenType.Star)) bytePointerDepth++;
                 return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
@@ -722,9 +722,9 @@ namespace fire.Compiler
             if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
             {
                 Advance();
-                var widthTok = Expect(TokenType.IntLiteral, "Erwarte Bitbreite (8/16/32/64)");
+                var widthTok = Expect(TokenType.IntLiteral, "Expected a bit width (8/16/32/64)");
                 width = (int)(long)widthTok.LiteralValue!;
-                Expect(TokenType.RBracket, "Erwarte ']' nach Bitbreite");
+                Expect(TokenType.RBracket, "Expected ']' after the bit width");
             }
 
             int pointerDepth = 0;
@@ -748,8 +748,8 @@ namespace fire.Compiler
             {
                 if (!allowArray)
                     throw Error(
-                        "Ein Array schreibt man bei Variablen, Feldern und Parametern mit den Klammern hinter dem Namen " +
-                        "('int werte[]'); 'int[]' als Typ gibt es nur als Rückgabetyp einer Methode oder Property", Peek());
+                        "For variables, fields and parameters an array is written with the brackets after the name " +
+                        "('int values[]'); 'int[]' as a type only exists as the return type of a method or property", Peek());
                 Advance(); // '['
                 Advance(); // ']'
                 rank++;
@@ -773,7 +773,7 @@ namespace fire.Compiler
                         paramTypes.Add(ParseTypeAnnotationName());
                     } while (Match(TokenType.Comma));
                 }
-                Expect(TokenType.Gt, "Erwarte '>' nach den Lambda-Parametertypen");
+                Expect(TokenType.Gt, "Expected '>' after the lambda parameter types");
             }
             return new LambdaSignature(returnTypeName, paramTypes);
         }
@@ -788,7 +788,7 @@ namespace fire.Compiler
             {
                 Advance();
                 Expr? size = Check(TokenType.RBracket) ? null : ParseExpression();
-                Expect(TokenType.RBracket, "Erwarte ']'");
+                Expect(TokenType.RBracket, "Expected ']'");
                 ranks.Add(size);
             }
             return ranks;
@@ -843,10 +843,10 @@ namespace fire.Compiler
         private Stmt ParseIf()
         {
             int line = Peek().Line;
-            Expect(TokenType.If, "Erwarte 'if'");
-            Expect(TokenType.LParen, "Erwarte '(' nach 'if'");
+            Expect(TokenType.If, "Expected 'if'");
+            Expect(TokenType.LParen, "Expected '(' after 'if'");
             var cond = ParseExpression();
-            Expect(TokenType.RParen, "Erwarte ')' nach if-Bedingung");
+            Expect(TokenType.RParen, "Expected ')' after the if condition");
             var thenBranch = ParseStatement();
             Stmt? elseBranch = null;
             if (Match(TokenType.Else))
@@ -857,10 +857,10 @@ namespace fire.Compiler
         private Stmt ParseWhile()
         {
             int line = Peek().Line;
-            Expect(TokenType.While, "Erwarte 'while'");
-            Expect(TokenType.LParen, "Erwarte '(' nach 'while'");
+            Expect(TokenType.While, "Expected 'while'");
+            Expect(TokenType.LParen, "Expected '(' after 'while'");
             var cond = ParseExpression();
-            Expect(TokenType.RParen, "Erwarte ')' nach while-Bedingung");
+            Expect(TokenType.RParen, "Expected ')' after the while condition");
             var body = ParseStatement();
             return new WhileStmt(_sourceIndex, line, cond, body);
         }
@@ -868,21 +868,21 @@ namespace fire.Compiler
         private Stmt ParseFor()
         {
             int line = Peek().Line;
-            Expect(TokenType.For, "Erwarte 'for'");
-            Expect(TokenType.LParen, "Erwarte '(' nach 'for'");
+            Expect(TokenType.For, "Expected 'for'");
+            Expect(TokenType.LParen, "Expected '(' after 'for'");
 
             Stmt? init = null;
             if (!Check(TokenType.Semicolon))
                 init = Check(TokenType.Var) ? ParseVarDeclCore(isReadonly: false) : new ExprStmt(_sourceIndex, Peek().Line, ParseExpression());
-            Expect(TokenType.Semicolon, "Erwarte ';' nach for-Init");
+            Expect(TokenType.Semicolon, "Expected ';' after the for initializer");
 
             Expr? cond = null;
             if (!Check(TokenType.Semicolon)) cond = ParseExpression();
-            Expect(TokenType.Semicolon, "Erwarte ';' nach for-Bedingung");
+            Expect(TokenType.Semicolon, "Expected ';' after the for condition");
 
             Expr? incr = null;
             if (!Check(TokenType.RParen)) incr = ParseExpression();
-            Expect(TokenType.RParen, "Erwarte ')' nach for-Klauseln");
+            Expect(TokenType.RParen, "Expected ')' after the for clauses");
 
             var body = ParseStatement();
             return new ForStmt(_sourceIndex, line, init, cond, incr, body);
@@ -891,12 +891,12 @@ namespace fire.Compiler
         private Stmt ParseForeach()
         {
             int line = Peek().Line;
-            Expect(TokenType.Foreach, "Erwarte 'foreach'");
-            Expect(TokenType.LParen, "Erwarte '(' nach 'foreach'");
-            string varName = Expect(TokenType.Identifier, "Erwarte Variablennamen").Lexeme;
-            Expect(TokenType.In, "Erwarte 'in' in foreach");
+            Expect(TokenType.Foreach, "Expected 'foreach'");
+            Expect(TokenType.LParen, "Expected '(' after 'foreach'");
+            string varName = Expect(TokenType.Identifier, "Expected a variable name").Lexeme;
+            Expect(TokenType.In, "Expected 'in' in foreach");
             var iterable = ParseExpression();
-            Expect(TokenType.RParen, "Erwarte ')' nach foreach-Klauseln");
+            Expect(TokenType.RParen, "Expected ')' after the foreach clauses");
             var body = ParseStatement();
             return new ForeachStmt(_sourceIndex, line, varName, iterable, body);
         }
@@ -904,7 +904,7 @@ namespace fire.Compiler
         private Stmt ParseReturn()
         {
             int line = Peek().Line;
-            Expect(TokenType.Return, "Erwarte 'return'");
+            Expect(TokenType.Return, "Expected 'return'");
             Expr? value = null;
             if (!Check(TokenType.Semicolon) && !Check(TokenType.RBrace) && !Check(TokenType.Eof))
                 value = ParseExpression();
@@ -915,7 +915,7 @@ namespace fire.Compiler
         private Stmt ParseThrowStmt()
         {
             int line = Peek().Line;
-            Expect(TokenType.Throw, "Erwarte 'throw'");
+            Expect(TokenType.Throw, "Expected 'throw'");
             var value = ParseExpression();
             ExpectStatementTerminator();
             return new ThrowStmt(_sourceIndex, line, value);
@@ -929,13 +929,13 @@ namespace fire.Compiler
         private Stmt ParseExternDecl()
         {
             int line = Peek().Line;
-            Expect(TokenType.Extern, "Erwarte 'extern'");
+            Expect(TokenType.Extern, "Expected 'extern'");
 
             TypeRef? returnType = null;
             if (NextLooksLikeTypeThenName())
                 returnType = ParseTypeRef();
 
-            string name = Expect(TokenType.Identifier, "Erwarte Funktionsnamen nach 'extern'").Lexeme;
+            string name = Expect(TokenType.Identifier, "Expected a function name after 'extern'").Lexeme;
             var parms = ParseParamList();
             ExpectStatementTerminator();
             return new ExternDecl(_sourceIndex, line, returnType, name, parms, _currentExternLib);
@@ -954,11 +954,11 @@ namespace fire.Compiler
         private Stmt ParseDirective()
         {
             int line = Peek().Line;
-            Expect(TokenType.Hash, "Erwarte '#'");
+            Expect(TokenType.Hash, "Expected '#'");
 
             if (Match(TokenType.Extern))
             {
-                var libTok = Expect(TokenType.StringLiteral, "Erwarte Bibliotheksnamen (String) nach '#extern'");
+                var libTok = Expect(TokenType.StringLiteral, "Expected a library name (string) after '#extern'");
                 _currentExternLib = (string)libTok.LiteralValue!;
                 ExpectStatementTerminator();
                 return new NoOpStmt(_sourceIndex, line);
@@ -990,13 +990,13 @@ namespace fire.Compiler
             // Preprocessing.Preprocessor.ProcessInner/ProcessedSource) - eine
             // '#using'-Zeile wird dort schon erkannt und aus dem Text entfernt,
             // der Parser sieht sie nie mehr. Kein Fall dafür hier mehr nötig.
-            throw Error($"Unbekannte Präprozessor-Direktive '#{Peek().Lexeme}' (bekannt: '#extern \"libName\"', '#noshadow', '#nosync', '#timeout wert')", Peek());
+            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#timeout value')", Peek());
         }
 
         private Stmt ParseUnsafeStmt()
         {
             int line = Peek().Line;
-            Expect(TokenType.Unsafe, "Erwarte 'unsafe'");
+            Expect(TokenType.Unsafe, "Expected 'unsafe'");
             var body = ParseBlock();
             return new UnsafeStmt(_sourceIndex, line, body);
         }
@@ -1018,14 +1018,14 @@ namespace fire.Compiler
         private Stmt ParseWithStmt()
         {
             int line = Peek().Line;
-            Expect(TokenType.With, "Erwarte 'with'");
+            Expect(TokenType.With, "Expected 'with'");
             var target = ParseExpression();
 
             string tempName = $"__with{_withCounter}__";
             _withCounter++;
             _withVarStack.Push(tempName);
 
-            Expect(TokenType.LBrace, "Erwarte '{' nach dem with-Ausdruck");
+            Expect(TokenType.LBrace, "Expected '{' after the with expression");
 
             var statements = new List<Stmt>
             {
@@ -1040,7 +1040,7 @@ namespace fire.Compiler
                 }
                 statements.Add(ParseStatement());
             }
-            Expect(TokenType.RBrace, "Erwarte '}' am Ende des with-Blocks");
+            Expect(TokenType.RBrace, "Expected '}' at the end of the with block");
 
             // Erst NACH dem Parsen des Bodies wieder abbauen - Verschachtelung
             // (with a { with b { ... } }) braucht den äußeren Eintrag ja noch,
@@ -1064,11 +1064,11 @@ namespace fire.Compiler
         private Stmt ParseSwitchStmt()
         {
             int line = Peek().Line;
-            Expect(TokenType.Switch, "Erwarte 'switch'");
-            Expect(TokenType.LParen, "Erwarte '(' nach 'switch'");
+            Expect(TokenType.Switch, "Expected 'switch'");
+            Expect(TokenType.LParen, "Expected '(' after 'switch'");
             var subject = ParseExpression();
-            Expect(TokenType.RParen, "Erwarte ')' nach switch-Ausdruck");
-            Expect(TokenType.LBrace, "Erwarte '{' nach switch-Kopf");
+            Expect(TokenType.RParen, "Expected ')' after the switch expression");
+            Expect(TokenType.LBrace, "Expected '{' after the switch head");
 
             string tempName = $"__switch{_switchCounter}__";
             _switchCounter++;
@@ -1078,13 +1078,13 @@ namespace fire.Compiler
 
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
             {
-                Expect(TokenType.Case, "Erwarte 'case' im switch-Body");
+                Expect(TokenType.Case, "Expected 'case' in the switch body");
 
                 if (Match(TokenType.Default))
                 {
                     if (defaultBody != null)
-                        throw Error("Mehrere 'case default' in einem switch sind nicht erlaubt", Previous());
-                    Expect(TokenType.Colon, "Erwarte ':' nach 'case default'");
+                        throw Error("Multiple 'case default' in one switch are not allowed", Previous());
+                    Expect(TokenType.Colon, "Expected ':' after 'case default'");
                     defaultBody = ParseSwitchCaseBody();
                     continue;
                 }
@@ -1105,11 +1105,11 @@ namespace fire.Compiler
                     };
                 }
                 var valueExpr = ParseSwitchCaseValue();
-                Expect(TokenType.Colon, "Erwarte ':' nach case-Bedingung");
+                Expect(TokenType.Colon, "Expected ':' after the case condition");
                 var condition = new BinaryExpr(line, op, new IdentifierExpr(line, tempName), valueExpr);
                 cases.Add((condition, ParseSwitchCaseBody()));
             }
-            Expect(TokenType.RBrace, "Erwarte '}' am Ende des switch");
+            Expect(TokenType.RBrace, "Expected '}' at the end of the switch");
 
             // If/Else-if-Kette von HINTEN nach VORNE aufbauen - 'case default'
             // (falls vorhanden) wird das innerste 'else', sonst bleibt es null
@@ -1188,7 +1188,7 @@ namespace fire.Compiler
         private Stmt ParseFireStmt()
         {
             int line = Peek().Line;
-            Expect(TokenType.Fire, "Erwarte 'fire'");
+            Expect(TokenType.Fire, "Expected 'fire'");
 
             if (Check(TokenType.Identifier) && PeekAt(1).Type == TokenType.LParen)
                 return ParseFireCallForm(line);
@@ -1207,7 +1207,7 @@ namespace fire.Compiler
         private Stmt ParseSyncGlobalBlock()
         {
             int line = Peek().Line;
-            Expect(TokenType.Sync, "Erwarte 'sync'");
+            Expect(TokenType.Sync, "Expected 'sync'");
             Advance(); // 'global'
             var body = ParseBlock();
             var exit = new Stmt.BlockStmt(_sourceIndex, line, new List<Stmt> { new SectionExitStmt(_sourceIndex, line) });
@@ -1224,7 +1224,7 @@ namespace fire.Compiler
             Advance(); // 'global'
             var (captures, withVarName, _) = ParseFireTakingWithClauses();
             if (withVarName != null)
-                throw Error("'with' gibt es bei 'fire global' nicht", Peek());
+                throw Error("'with' does not exist for 'fire global'", Peek());
             var body = ParseBlock();
             var parameters = captures.Select(c => new LambdaParam(c.VarName, null, new List<Expr?>(), null)).ToList();
             var lambda = new LambdaExpr(line, parameters, null, body, AutoCapture: false);
@@ -1245,7 +1245,7 @@ namespace fire.Compiler
                 if (Check(TokenType.Taking))
                 {
                     Advance();
-                    var nameTok = Expect(TokenType.Identifier, "Erwarte Bezeichner nach 'taking'");
+                    var nameTok = Expect(TokenType.Identifier, "Expected an identifier after 'taking'");
                     // Referenziert die BEREITS im umgebenden Scope deklarierte
                     // Variable gleichen Namens - ganz normale Identifier-
                     // Auflösung im AUFRUFENDEN Kontext (nicht im isolierten
@@ -1255,9 +1255,9 @@ namespace fire.Compiler
                 else
                 {
                     if (withVarName != null)
-                        throw Error("'with' wurde in diesem 'fire' bereits verwendet", Peek());
+                        throw Error("'with' was already used in this 'fire'", Peek());
                     Advance();
-                    var nameTok = Expect(TokenType.Identifier, "Erwarte Bezeichner nach 'with'");
+                    var nameTok = Expect(TokenType.Identifier, "Expected an identifier after 'with'");
                     withVarName = nameTok.Lexeme;
                     withSource = new IdentifierExpr(nameTok.Line, withVarName);
                 }
@@ -1281,13 +1281,13 @@ namespace fire.Compiler
         private Stmt ParseFireCallForm(int line)
         {
             string methodName = Advance().Lexeme;
-            Expect(TokenType.LParen, "Erwarte '(' nach '" + methodName + "'");
+            Expect(TokenType.LParen, "Expected '(' after '" + methodName + "'");
             var callArgs = new List<Expr>();
             if (!Check(TokenType.RParen))
             {
                 do { callArgs.Add(ParseExpression()); } while (Match(TokenType.Comma));
             }
-            Expect(TokenType.RParen, "Erwarte ')' nach 'fire " + methodName + "(...)'");
+            Expect(TokenType.RParen, "Expected ')' after 'fire " + methodName + "(...)'");
 
             var (explicitTaking, withVarName, withSource) = ParseFireTakingWithClauses();
             ExpectStatementTerminator();
@@ -1316,12 +1316,12 @@ namespace fire.Compiler
         private Stmt ParseTerminateStmt()
         {
             int line = Peek().Line;
-            Expect(TokenType.Terminate, "Erwarte 'terminate'");
-            Expect(TokenType.LParen, "Erwarte '(' nach 'terminate'");
+            Expect(TokenType.Terminate, "Expected 'terminate'");
+            Expect(TokenType.LParen, "Expected '(' after 'terminate'");
             Expr? value = null;
             if (!Check(TokenType.RParen))
                 value = ParseExpression();
-            Expect(TokenType.RParen, "Erwarte ')' nach terminate-Argument");
+            Expect(TokenType.RParen, "Expected ')' after the terminate argument");
             ExpectStatementTerminator();
             return new TerminateStmt(_sourceIndex, line, value);
         }
@@ -1332,7 +1332,7 @@ namespace fire.Compiler
         private Stmt ParseProcessStmt()
         {
             int line = Peek().Line;
-            Expect(TokenType.Process, "Erwarte 'process'");
+            Expect(TokenType.Process, "Expected 'process'");
             var target = ParsePostfix();
             ExpectStatementTerminator();
             return new ProcessStmt(_sourceIndex, line, target);
@@ -1351,23 +1351,23 @@ namespace fire.Compiler
         private Stmt ParseGlobalHandlerDecl()
         {
             int line = Peek().Line;
-            Expect(TokenType.Catch, "Erwarte 'catch'");
+            Expect(TokenType.Catch, "Expected 'catch'");
 
             if (Match(TokenType.Terminate))
             {
-                Expect(TokenType.LParen, "Erwarte '(' nach 'catch terminate'");
+                Expect(TokenType.LParen, "Expected '(' after 'catch terminate'");
                 string? paramName = null;
                 if (!Check(TokenType.RParen))
-                    paramName = Expect(TokenType.Identifier, "Erwarte Parametername in 'catch terminate(...)'").Lexeme;
-                Expect(TokenType.RParen, "Erwarte ')' nach 'catch terminate(...)'");
+                    paramName = Expect(TokenType.Identifier, "Expected a parameter name in 'catch terminate(...)'").Lexeme;
+                Expect(TokenType.RParen, "Expected ')' after 'catch terminate(...)'");
                 var terminateBody = ParseBlock();
                 return new CatchTerminateDecl(_sourceIndex, line, paramName, terminateBody);
             }
 
             // 'threads' ist - wie 'get'/'set'/'value' bei Properties - ein rein
             // kontextabhängiger Bezeichner, kein reserviertes Schlüsselwort.
-            Expect(TokenType.Identifier, "Erwarte 'threads' oder 'terminate' nach 'catch'");
-            Expect(TokenType.LParen, "Erwarte '(' nach 'catch threads'");
+            Expect(TokenType.Identifier, "Expected 'threads' or 'terminate' after 'catch'");
+            Expect(TokenType.LParen, "Expected '(' after 'catch threads'");
 
             TypeRef? typeRef = null;
             string? varName = null;
@@ -1376,11 +1376,11 @@ namespace fire.Compiler
                 // 'catch threads(ExceptionType e)' - Typ-dann-Name, wie ein
                 // normaler Methodenparameter (und inzwischen auch wie beim
                 // normalen 'catch (TypeName varName)' - siehe ParseCatchClause).
-                string typeName = Expect(TokenType.Identifier, "Erwarte Typnamen in 'catch threads(...)'").Lexeme;
+                string typeName = Expect(TokenType.Identifier, "Expected a type name in 'catch threads(...)'").Lexeme;
                 typeRef = new TypeRef(typeName, null, 0, Namespaces: CurrentNamespaces());
-                varName = Expect(TokenType.Identifier, "Erwarte Parametername in 'catch threads(...)'").Lexeme;
+                varName = Expect(TokenType.Identifier, "Expected a parameter name in 'catch threads(...)'").Lexeme;
             }
-            Expect(TokenType.RParen, "Erwarte ')' nach 'catch threads(...)'");
+            Expect(TokenType.RParen, "Expected ')' after 'catch threads(...)'");
             var threadsBody = ParseBlock();
             return new CatchThreadsDecl(_sourceIndex, line, typeRef, varName, threadsBody);
         }
@@ -1406,13 +1406,13 @@ namespace fire.Compiler
         private Stmt ParseClassOrActorDecl(bool isActor)
         {
             int line = Peek().Line;
-            if (isActor) Expect(TokenType.Actor, "Erwarte 'actor'");
-            else Expect(TokenType.Class, "Erwarte 'class'");
+            if (isActor) Expect(TokenType.Actor, "Expected 'actor'");
+            else Expect(TokenType.Class, "Expected 'class'");
 
             if (Check(TokenType.Extends))
                 return ParseClassExtensionDecl(line);
 
-            string name = Expect(TokenType.Identifier, "Erwarte Klassennamen").Lexeme;
+            string name = Expect(TokenType.Identifier, "Expected a class name").Lexeme;
 
             // Generische Typ-Parameter: 'class Name<T1, T2>' - siehe
             // ParseTypeParamList. Leer (kein '<' vorhanden) für eine
@@ -1434,7 +1434,7 @@ namespace fire.Compiler
                 {
                     // Auch qualifiziert ('Geometry.Shape' - eine Basisklasse in einem
                     // anderen Namespace, siehe SPEC "Namespaces").
-                    string baseName = ParseDottedName("Basisklassen-/Interface-Namen");
+                    string baseName = ParseDottedName("base class/interface names");
                     // `class Home : Command<IDevice>`: die Typ-Argumente werden (wie überall) nicht ausgewertet, nur ihre ANZAHL wählt die generische
                     // Klasse bzw. das generische Interface dieses Namens (siehe GenericClassNames.ResolveNewTarget).
                     int typeArgCount = ParseOptionalTypeParamNames().Count;
@@ -1447,7 +1447,7 @@ namespace fire.Compiler
             // ParseWhereClause für die Constraint-Grammatik selbst.
             var typeParams = ParseWhereClauses(typeParamNames, line);
 
-            Expect(TokenType.LBrace, "Erwarte '{' nach Klassenkopf");
+            Expect(TokenType.LBrace, "Expected '{' after the class head");
             var members = new List<Stmt>();
             // Für statische Auto-Properties (siehe ParsePropertyBody) - das
             // synthetisierte Backing-Field ist dort ein Zugriff über
@@ -1471,7 +1471,7 @@ namespace fire.Compiler
                 _currentClassName = savedClassName;
                 _currentClassIsGeneric = savedClassIsGeneric;
             }
-            Expect(TokenType.RBrace, "Erwarte '}' am Ende der Klasse");
+            Expect(TokenType.RBrace, "Expected '}' at the end of the class");
 
             return new ClassDecl(_sourceIndex, line, QualifyDeclName(name), baseRefs, members, typeParams, IsActor: isActor);
         }
@@ -1508,7 +1508,7 @@ namespace fire.Compiler
                 // dieser Aufruf ein reines No-op (T hat nie ein '<' danach).
                 SkipOptionalNestedTypeArgs();
             } while (Match(TokenType.Comma));
-            Expect(TokenType.Gt, "Erwarte '>' nach Typ-Parameterliste");
+            Expect(TokenType.Gt, "Expected '>' after the type parameter list");
             return names;
         }
 
@@ -1531,7 +1531,7 @@ namespace fire.Compiler
                 ParseTypeAnnotationName();
                 SkipOptionalNestedTypeArgs();
             } while (Match(TokenType.Comma));
-            Expect(TokenType.Gt, "Erwarte '>' nach verschachtelter Typ-Argumentliste");
+            Expect(TokenType.Gt, "Expected '>' after the nested type argument list");
         }
 
         /// <summary>Null oder mehr `where Name constraint-group (',' constraint-group)*`
@@ -1548,14 +1548,14 @@ namespace fire.Compiler
 
             while (Match(TokenType.Where))
             {
-                string tpName = Expect(TokenType.Identifier, "Erwarte Typ-Parameternamen nach 'where'").Lexeme;
+                string tpName = Expect(TokenType.Identifier, "Expected a type parameter name after 'where'").Lexeme;
                 if (!typeParamNames.Contains(tpName))
                     throw Error(
-                        $"'where {tpName}' bezieht sich auf keinen deklarierten Typ-Parameter " +
-                        $"(deklariert: {(typeParamNames.Count == 0 ? "keine" : string.Join(", ", typeParamNames))})",
+                        $"'where {tpName}' does not refer to a declared type parameter " +
+                        $"(declared: {(typeParamNames.Count == 0 ? "none" : string.Join(", ", typeParamNames))})",
                         Previous());
                 if (constraintsByName.ContainsKey(tpName))
-                    throw Error($"Mehrere 'where {tpName}'-Klauseln für denselben Typ-Parameter", Previous());
+                    throw Error($"Multiple 'where {tpName}' clauses for the same type parameter", Previous());
 
                 var groups = new List<TypeConstraintGroup>();
                 do
@@ -1582,7 +1582,7 @@ namespace fire.Compiler
         /// Typnamen kollidieren könnten).</summary>
         private TypeConstraint ParseOneTypeConstraint()
         {
-            Expect(TokenType.Is, "Erwarte 'is' in einer where-Bedingung");
+            Expect(TokenType.Is, "Expected 'is' in a where condition");
             if (Match(TokenType.Of))
             {
                 // ParseTypeAnnotationName() statt Expect(Identifier) - das
@@ -1594,10 +1594,10 @@ namespace fire.Compiler
             }
             if (Match(TokenType.In))
             {
-                var tok = Expect(TokenType.StringLiteral, "Erwarte Einheitenname (als String) nach 'is in'");
+                var tok = Expect(TokenType.StringLiteral, "Expected a unit name (as a string) after 'is in'");
                 return new TypeConstraint(TypeConstraintKind.IsIn, (string)tok.LiteralValue!);
             }
-            throw Error("Erwarte 'of' oder 'in' nach 'is' in einer where-Bedingung", Peek());
+            throw Error("Expected 'of' or 'in' after 'is' in a where condition", Peek());
         }
 
         /// <summary>`class extends Name { neue Mitglieder... }` - siehe
@@ -1608,25 +1608,25 @@ namespace fire.Compiler
         /// Schritt, siehe Parser.MergeClassExtensions).</summary>
         private Stmt ParseClassExtensionDecl(int line)
         {
-            Expect(TokenType.Extends, "Erwarte 'extends'");
+            Expect(TokenType.Extends, "Expected 'extends'");
 
             // Ein Basistyp (`string`, `char`, ...) ist ein Schlüsselwort, kein Bezeichner - die
             // Erweiterung eines Basistyps (SPEC 5.5.1) darf NUR Methoden enthalten.
             bool isBaseType = TypeKeywords.Contains(Peek().Type) && Peek().Type != TokenType.Class && Peek().Type != TokenType.Undefined;
             string targetName = isBaseType
                 ? Advance().Lexeme
-                : Expect(TokenType.Identifier, "Erwarte Namen der zu erweiternden Klasse").Lexeme;
+                : Expect(TokenType.Identifier, "Expected the name of the class to extend").Lexeme;
             if (isBaseType && !BaseTypeExtensions.IsExtendable(targetName))
                 throw Error(targetName == "byte"
-                    ? "'byte' lässt sich nicht erweitern - ein byte ist zur Laufzeit ein int, erweitere 'int'"
-                    : $"'{targetName}' lässt sich nicht erweitern", Previous());
+                    ? "'byte' cannot be extended - a byte is an int at run time, extend 'int'"
+                    : $"'{targetName}' cannot be extended", Previous());
             var targetRef = new TypeRef(targetName, null, 0, Namespaces: CurrentNamespaces());
-            Expect(TokenType.LBrace, "Erwarte '{' nach 'class extends " + targetName + "'");
+            Expect(TokenType.LBrace, "Expected '{' after 'class extends " + targetName + "'");
 
             var members = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
                 members.AddRange(ParseClassMember());
-            Expect(TokenType.RBrace, "Erwarte '}' am Ende der Erweiterung");
+            Expect(TokenType.RBrace, "Expected '}' at the end of the extension");
 
             if (isBaseType || BaseTypeExtensions.IsExtendable(targetName))
                 foreach (var member in members)
@@ -1645,21 +1645,21 @@ namespace fire.Compiler
             switch (member)
             {
                 case MethodDecl { IsStatic: true } m:
-                    throw new ParseException(prefix + $"statische Methode '{m.Name}' nicht erlaubt - Erweiterungen von Basistypen bestehen nur aus Instanzmethoden.", m.Line, 1);
+                    throw new ParseException(prefix + $"static method '{m.Name}' is not allowed - extensions of base types consist of instance methods only.", m.Line, 1);
                 case MethodDecl m when m.Name.StartsWith("operator", StringComparison.Ordinal) || m.Name is "GetIndex" or "SetIndex":
-                    throw new ParseException(prefix + "Operatoren lassen sich für Basistypen nicht überladen.", m.Line, 1);
+                    throw new ParseException(prefix + "Operators cannot be overloaded for base types.", m.Line, 1);
                 case MethodDecl:
                     return;
                 case FieldDecl f:
-                    throw new ParseException(prefix + $"Feld '{f.Name}' nicht erlaubt - Erweiterungen von Basistypen dürfen nur Methoden enthalten.", f.Line, 1);
+                    throw new ParseException(prefix + $"field '{f.Name}' is not allowed - extensions of base types may only contain methods.", f.Line, 1);
                 case PropertyDecl p:
-                    throw new ParseException(prefix + $"Property '{p.Name}' nicht erlaubt - Erweiterungen von Basistypen dürfen nur Methoden enthalten.", p.Line, 1);
+                    throw new ParseException(prefix + $"property '{p.Name}' is not allowed - extensions of base types may only contain methods.", p.Line, 1);
                 case ConstructorDecl c:
-                    throw new ParseException(prefix + "ein Konstruktor ist nicht erlaubt - Erweiterungen von Basistypen dürfen nur Methoden enthalten.", c.Line, 1);
+                    throw new ParseException(prefix + "a constructor is not allowed - extensions of base types may only contain methods.", c.Line, 1);
                 case DestructorDecl d:
-                    throw new ParseException(prefix + "ein Destruktor ist nicht erlaubt - Erweiterungen von Basistypen dürfen nur Methoden enthalten.", d.Line, 1);
+                    throw new ParseException(prefix + "a destructor is not allowed - extensions of base types may only contain methods.", d.Line, 1);
                 default:
-                    throw new ParseException(prefix + "nur Methoden sind erlaubt.", member.Line, 1);
+                    throw new ParseException(prefix + "only methods are allowed.", member.Line, 1);
             }
         }
 
@@ -1677,9 +1677,9 @@ namespace fire.Compiler
         private Stmt ParseNamespaceDecl()
         {
             int line = Peek().Line;
-            Expect(TokenType.Namespace, "Erwarte 'namespace'");
+            Expect(TokenType.Namespace, "Expected 'namespace'");
             string name = ParseDottedName("Namespace-Namen");
-            Expect(TokenType.LBrace, "Erwarte '{' nach Namespace-Namen");
+            Expect(TokenType.LBrace, "Expected '{' after the namespace name");
 
             string? savedNamespace = _currentNamespace;
             _currentNamespace = _currentNamespace == null ? name : _currentNamespace + "." + name;
@@ -1687,7 +1687,7 @@ namespace fire.Compiler
             var members = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
                 members.Add(ParseStatement());
-            Expect(TokenType.RBrace, "Erwarte '}' am Ende des Namespace");
+            Expect(TokenType.RBrace, "Expected '}' at the end of the namespace");
 
             _currentNamespace = savedNamespace;
 
@@ -1701,9 +1701,9 @@ namespace fire.Compiler
         /// (überall sonst ist '.' der Elementzugriffs-Operator).</summary>
         private string ParseDottedName(string what)
         {
-            string name = Expect(TokenType.Identifier, $"Erwarte {what}").Lexeme;
+            string name = Expect(TokenType.Identifier, $"Expected {what}").Lexeme;
             while (Match(TokenType.Dot))
-                name += "." + Expect(TokenType.Identifier, $"Erwarte {what} nach '.'").Lexeme;
+                name += "." + Expect(TokenType.Identifier, $"Expected {what} after '.'").Lexeme;
             return name;
         }
 
@@ -1712,12 +1712,12 @@ namespace fire.Compiler
         private Stmt ParseInterfaceDecl()
         {
             int line = Peek().Line;
-            Expect(TokenType.Interface, "Erwarte 'interface'");
-            string name = Expect(TokenType.Identifier, "Erwarte Interface-Namen").Lexeme;
+            Expect(TokenType.Interface, "Expected 'interface'");
+            string name = Expect(TokenType.Identifier, "Expected an interface name").Lexeme;
             // `interface ICommand<T> { ... }`: generisch wie eine Klasse (siehe ParseClassOrActorDecl); wie dort zählt nur Name und Anzahl der Typ-Parameter
             var typeParamNames = ParseOptionalTypeParamNames();
             var typeParams = typeParamNames.Count > 0 ? ParseWhereClauses(typeParamNames, line) : null;
-            Expect(TokenType.LBrace, "Erwarte '{' nach Interface-Kopf");
+            Expect(TokenType.LBrace, "Expected '{' after the interface head");
 
             var methods = new List<InterfaceMethodSig>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
@@ -1726,12 +1726,12 @@ namespace fire.Compiler
                 TypeRef? returnType = null;
                 if (NextLooksLikeTypeThenName())
                     returnType = ParseTypeRef(allowArray: true);
-                string methodName = Expect(TokenType.Identifier, "Erwarte Methodennamen").Lexeme;
+                string methodName = Expect(TokenType.Identifier, "Expected a method name").Lexeme;
                 var parms = ParseParamList();
                 ExpectStatementTerminator();
                 methods.Add(new InterfaceMethodSig(mLine, returnType, methodName, parms));
             }
-            Expect(TokenType.RBrace, "Erwarte '}' am Ende des Interface");
+            Expect(TokenType.RBrace, "Expected '}' at the end of the interface");
 
             return new InterfaceDecl(_sourceIndex, line, QualifyDeclName(name), methods, typeParams);
         }
@@ -1745,16 +1745,16 @@ namespace fire.Compiler
         private Stmt ParseEnumDecl()
         {
             int line = Peek().Line;
-            Expect(TokenType.Enum, "Erwarte 'enum'");
-            string name = Expect(TokenType.Identifier, "Erwarte Enum-Namen").Lexeme;
-            Expect(TokenType.LBrace, "Erwarte '{' nach Enum-Namen");
+            Expect(TokenType.Enum, "Expected 'enum'");
+            string name = Expect(TokenType.Identifier, "Expected an enum name").Lexeme;
+            Expect(TokenType.LBrace, "Expected '{' after the enum name");
 
             var members = new List<EnumMember>();
             if (!Check(TokenType.RBrace))
             {
                 do
                 {
-                    string memberName = Expect(TokenType.Identifier, "Erwarte Enum-Mitgliedsnamen").Lexeme;
+                    string memberName = Expect(TokenType.Identifier, "Expected an enum member name").Lexeme;
                     Expr? valueExpr = null;
                     if (Match(TokenType.Assign))
                         valueExpr = ParseExpression();
@@ -1762,7 +1762,7 @@ namespace fire.Compiler
                 } while (Match(TokenType.Comma));
             }
 
-            Expect(TokenType.RBrace, "Erwarte '}' nach Enum-Mitgliedern");
+            Expect(TokenType.RBrace, "Expected '}' after the enum members");
             return new EnumDecl(_sourceIndex, line, QualifyDeclName(name), members);
         }
 
@@ -1784,7 +1784,7 @@ namespace fire.Compiler
         /// beides an die Mitgliederliste der Klasse an.</summary>
         private List<Stmt> ParsePropertyBody(int line, TypeRef? type, string name, AccessModifier access, bool isStatic = false)
         {
-            Expect(TokenType.LBrace, "Erwarte '{' nach Property-Namen");
+            Expect(TokenType.LBrace, "Expected '{' after the property name");
 
             Stmt.BlockStmt? getter = null;
             Stmt.BlockStmt? setter = null;
@@ -1796,7 +1796,7 @@ namespace fire.Compiler
                 if (Check(TokenType.Identifier) && Peek().Lexeme == "get")
                 {
                     if (getter != null || getterIsAuto)
-                        throw Error($"'get' ist für Property '{name}' bereits definiert", Peek());
+                        throw Error($"'get' is already defined for property '{name}'", Peek());
                     Advance();
                     if (Check(TokenType.LBrace))
                         getter = ParseBlock();
@@ -1809,7 +1809,7 @@ namespace fire.Compiler
                 else if (Check(TokenType.Identifier) && Peek().Lexeme == "set")
                 {
                     if (setter != null || setterIsAuto)
-                        throw Error($"'set' ist für Property '{name}' bereits definiert", Peek());
+                        throw Error($"'set' is already defined for property '{name}'", Peek());
                     Advance();
                     if (Check(TokenType.LBrace))
                         setter = ParseBlock();
@@ -1821,14 +1821,14 @@ namespace fire.Compiler
                 }
                 else
                 {
-                    throw Error("Erwarte 'get' oder 'set' im Property-Body", Peek());
+                    throw Error("Expected 'get' or 'set' in the property body", Peek());
                 }
             }
 
-            Expect(TokenType.RBrace, "Erwarte '}' am Ende der Property");
+            Expect(TokenType.RBrace, "Expected '}' at the end of the property");
 
             if (getter == null && !getterIsAuto && setter == null && !setterIsAuto)
-                throw Error($"Property '{name}' braucht mindestens 'get' oder 'set'", Peek());
+                throw Error($"Property '{name}' needs at least 'get' or 'set'", Peek());
 
             var result = new List<Stmt>();
 
@@ -1945,7 +1945,7 @@ namespace fire.Compiler
                 type = ParseTypeRef(allowArray: true);
             }
 
-            string name = Expect(TokenType.Identifier, "Erwarte Feld- oder Methodennamen").Lexeme;
+            string name = Expect(TokenType.Identifier, "Expected a field or method name").Lexeme;
 
             // Generische Methode: 'Name<T>(...) where T constraint { ... }' -
             // ein '<' direkt nach dem Namen ist hier unzweideutig NUR als
@@ -1959,7 +1959,7 @@ namespace fire.Compiler
             if (Check(TokenType.LParen))
             {
                 if (isReadonly)
-                    throw Error("'readonly' ist nur für Felder gültig, nicht für Methoden", Peek());
+                    throw Error("'readonly' is only valid for fields, not for methods", Peek());
                 var parms = ParseParamList();
                 var methodTypeParams = ParseWhereClauses(methodTypeParamNames, line);
                 var body = ParseBlock();
@@ -1968,21 +1968,21 @@ namespace fire.Compiler
             }
 
             if (methodTypeParamNames.Count > 0)
-                throw Error("Ein generischer Typ-Parameterkopf '<...>' muss von einer Parameterliste '(...)' gefolgt werden", Peek());
+                throw Error("A generic type parameter head '<...>' must be followed by a parameter list '(...)'", Peek());
 
             if (Check(TokenType.LBrace))
             {
                 if (isReadonly)
                     throw Error(
-                        "'readonly' ist für Properties nicht gültig - eine Property ohne 'set' ist bereits nur lesbar",
+                        "'readonly' is not valid for properties - a property without 'set' is already read-only",
                         Peek());
                 return ParsePropertyBody(line, type, name, access, isStatic);
             }
 
             if (type is { ArrayRank: > 0 })
                 throw Error(
-                    "Ein Array-Feld schreibt man mit den Klammern hinter dem Namen ('int werte[]'); " +
-                    "'int[]' als Typ gibt es nur als Rückgabetyp einer Methode oder Property", Previous());
+                    "An array field is written with the brackets after the name ('int values[]'); " +
+                    "'int[]' as a type only exists as the return type of a method or property", Previous());
 
             var arrayRanks = ParseArrayRanks();
 
@@ -2022,7 +2022,7 @@ namespace fire.Compiler
         /// Typen, oder Pythons `__radd__`) ist bewusst NICHT unterstützt.</summary>
         private Stmt ParseOperatorMember(int line)
         {
-            Expect(TokenType.Operator, "Erwarte 'operator'");
+            Expect(TokenType.Operator, "Expected 'operator'");
             string symbol = ParseOperatorSymbol();
             var parms = ParseParamList();
 
@@ -2032,13 +2032,13 @@ namespace fire.Compiler
                     1 => "GetIndex",
                     2 => "SetIndex",
                     _ => throw Error(
-                        "'operator[]' braucht entweder 1 Parameter (Lesezugriff: Index) " +
-                        "oder 2 Parameter (Schreibzugriff: Index, Wert)", Peek()),
+                        "'operator[]' needs either 1 parameter (read access: index) " +
+                        "or 2 parameters (write access: index, value)", Peek()),
                 }
                 : "operator" + symbol;
 
             if (symbol != "[]" && parms.Count != 1)
-                throw Error($"'operator{symbol}' braucht genau 1 Parameter (den rechten Operanden - 'this' ist der linke)", Peek());
+                throw Error($"'operator{symbol}' needs exactly 1 parameter (the right operand - 'this' is the left one)", Peek());
 
             var body = ParseBlock();
             return new MethodDecl(_sourceIndex, line, null, internalName, parms, body, null);
@@ -2054,7 +2054,7 @@ namespace fire.Compiler
         {
             if (Match(TokenType.LBracket))
             {
-                Expect(TokenType.RBracket, "Erwarte ']' nach 'operator['");
+                Expect(TokenType.RBracket, "Expected ']' after 'operator['");
                 return "[]";
             }
             if (Check(TokenType.Lt) && PeekAt(1).Type == TokenType.Lt) { Advance(); Advance(); return "<<"; }
@@ -2075,7 +2075,7 @@ namespace fire.Compiler
             if (Match(TokenType.Lt)) return "<";
             if (Match(TokenType.Gt)) return ">";
             throw Error(
-                "Erwarte einen überladbaren Operator nach 'operator' " +
+                "Expected an overloadable operator after 'operator' " +
                 "('[]', '+', '-', '*', '/', '%', '^', '&', '|', '#', '<<', '>>', " +
                 "'==', '!=', '<', '<=', '>', '>=')", Peek());
         }
@@ -2083,13 +2083,13 @@ namespace fire.Compiler
         private Stmt ParseConstructor(AccessModifier access)
         {
             int line = Peek().Line;
-            Expect(TokenType.Construct, "Erwarte 'construct'");
+            Expect(TokenType.Construct, "Expected 'construct'");
             var parms = ParseParamList();
 
             IReadOnlyList<Expr>? baseArgs = null;
             if (Match(TokenType.Colon))
             {
-                Expect(TokenType.Base, "Erwarte 'base' nach ':' im Konstruktor");
+                Expect(TokenType.Base, "Expected 'base' after ':' in the constructor");
                 baseArgs = ParseArgList();
             }
 
@@ -2100,9 +2100,9 @@ namespace fire.Compiler
         private Stmt ParseDestructor()
         {
             int line = Peek().Line;
-            Expect(TokenType.Destruct, "Erwarte 'destruct'");
-            Expect(TokenType.LParen, "Erwarte '(' nach 'destruct'");
-            Expect(TokenType.RParen, "'destruct' nimmt keine Parameter");
+            Expect(TokenType.Destruct, "Expected 'destruct'");
+            Expect(TokenType.LParen, "Expected '(' after 'destruct'");
+            Expect(TokenType.RParen, "'destruct' takes no parameters");
             var body = ParseBlock();
             return new DestructorDecl(_sourceIndex, line, body);
         }
@@ -2135,7 +2135,7 @@ namespace fire.Compiler
                 type = ParseTypeRef();
             }
 
-            string pname = Expect(TokenType.Identifier, "Erwarte Parameternamen").Lexeme;
+            string pname = Expect(TokenType.Identifier, "Expected a parameter name").Lexeme;
             var arrayRanks = ParseArrayRanks();
 
             if (Match(TokenType.Colon))
@@ -2155,7 +2155,7 @@ namespace fire.Compiler
 
         private List<LambdaParam> ParseParamList()
         {
-            Expect(TokenType.LParen, "Erwarte '('");
+            Expect(TokenType.LParen, "Expected '('");
             var parms = new List<LambdaParam>();
             if (!Check(TokenType.RParen))
             {
@@ -2164,13 +2164,13 @@ namespace fire.Compiler
                     parms.Add(ParseOneParam());
                 } while (Match(TokenType.Comma));
             }
-            Expect(TokenType.RParen, "Erwarte ')' nach Parameterliste");
+            Expect(TokenType.RParen, "Expected ')' after the parameter list");
             return parms;
         }
 
         private List<Expr> ParseArgList()
         {
-            Expect(TokenType.LParen, "Erwarte '('");
+            Expect(TokenType.LParen, "Expected '('");
             var args = new List<Expr>();
             if (!Check(TokenType.RParen))
             {
@@ -2179,7 +2179,7 @@ namespace fire.Compiler
                     args.Add(ParseExpression());
                 } while (Match(TokenType.Comma));
             }
-            Expect(TokenType.RParen, "Erwarte ')' nach Argumentliste");
+            Expect(TokenType.RParen, "Expected ')' after the argument list");
             return args;
         }
 
@@ -2198,7 +2198,7 @@ namespace fire.Compiler
                 var value = ParseAssignment(); // rechts-assoziativ
                 if (left is IdentifierExpr or MemberExpr or IndexExpr or UnaryExpr { Op: UnaryOp.Dereference })
                     return new AssignExpr(line, left, value);
-                throw Error("Ungültiges Ziel für Zuweisung", Previous());
+                throw Error("Invalid assignment target", Previous());
             }
             return left;
         }
@@ -2300,7 +2300,7 @@ namespace fire.Compiler
                     int line = Advance().Line;
                     if (Match(TokenType.In))
                     {
-                        string unitName = Expect(TokenType.Identifier, "Erwarte Einheitennamen nach 'is in'").Lexeme;
+                        string unitName = Expect(TokenType.Identifier, "Expected a unit name after 'is in'").Lexeme;
                         left = new IsInExpr(line, left, unitName);
                     }
                     else if (Match(TokenType.Of))
@@ -2318,7 +2318,7 @@ namespace fire.Compiler
                     }
                     else
                     {
-                        throw Error("Erwarte 'in', 'of', 'from' oder 'under' nach 'is'", Peek());
+                        throw Error("Expected 'in', 'of', 'from' or 'under' after 'is'", Peek());
                     }
                 }
                 else
@@ -2487,7 +2487,7 @@ namespace fire.Compiler
                 if (Check(TokenType.Dot))
                 {
                     int line = Advance().Line;
-                    string name = Expect(TokenType.Identifier, "Erwarte Namen nach '.'").Lexeme;
+                    string name = Expect(TokenType.Identifier, "Expected a name after '.'").Lexeme;
                     expr = new MemberExpr(line, expr, name);
                 }
                 else if (Check(TokenType.LParen))
@@ -2500,7 +2500,7 @@ namespace fire.Compiler
                 {
                     int line = Advance().Line;
                     var index = ParseExpression();
-                    Expect(TokenType.RBracket, "Erwarte ']' nach Index");
+                    Expect(TokenType.RBracket, "Expected ']' after the index");
                     expr = new IndexExpr(line, expr, index);
                 }
                 else if (Check(TokenType.Colon) && _suppressColonPostfixAtDepth != _bracketDepth)
@@ -2543,11 +2543,11 @@ namespace fire.Compiler
         {
             int line = Peek().Line;
             bool isTry = Match(TokenType.Try);
-            Expect(TokenType.Sync, "Erwarte 'sync'");
+            Expect(TokenType.Sync, "Expected 'sync'");
             // `sync globals`: das Hauptprogramm arbeitet die Warteschlange seiner Fire-Threads ab
             if (Check(TokenType.Identifier) && Peek().Lexeme == "globals")
             {
-                if (isTry) throw Error("'try sync globals' gibt es nicht", Peek());
+                if (isTry) throw Error("'try sync globals' does not exist", Peek());
                 Advance();
                 return new SyncGlobalsExpr(line);
             }
@@ -2594,7 +2594,7 @@ namespace fire.Compiler
                     Advance(); // 'try'
                     var innerCall = ParsePostfix();
                     if (innerCall is not CallExpr)
-                        throw Error("Erwarte 'sync', 'process' oder einen Funktionsaufruf nach 'try'", tok);
+                        throw Error("Expected 'sync', 'process' or a function call after 'try'", tok);
                     return new TryCallExpr(tok.Line, innerCall);
                 }
 
@@ -2613,9 +2613,9 @@ namespace fire.Compiler
                     // wieder exakt hier, ohne je voranzukommen).
                     if (_withVarStack.Count == 0)
                         throw Error(
-                            "'.' als Ausdrucksanfang ist nur innerhalb eines 'with'-Blocks gültig", tok);
+                            "'.' at the start of an expression is only valid inside a 'with' block", tok);
                     Advance();
-                    string memberName = Expect(TokenType.Identifier, "Erwarte Namen nach '.'").Lexeme;
+                    string memberName = Expect(TokenType.Identifier, "Expected a name after '.'").Lexeme;
                     return new MemberExpr(tok.Line, new IdentifierExpr(tok.Line, _withVarStack.Peek()), memberName);
                 }
 
@@ -2683,7 +2683,7 @@ namespace fire.Compiler
                             elements.Add(ParseExpression());
                         } while (Match(TokenType.Comma));
                     }
-                    Expect(TokenType.RBracket, "Erwarte ']' nach Array-Literal");
+                    Expect(TokenType.RBracket, "Expected ']' after the array literal");
                     return new ArrayLiteralExpr(tok.Line, elements);
                 }
 
@@ -2709,9 +2709,9 @@ namespace fire.Compiler
                             Advance(); // 'byte'
                             var bufSizeExprs = ParseArrayRanks();
                             if (bufSizeExprs.Count == 0)
-                                throw Error("Erwarte '[' nach 'byte' bei 'new'", Peek());
+                                throw Error("Expected '[' after 'byte' in 'new'", Peek());
                             if (bufSizeExprs.Count > 1 || bufSizeExprs[0] == null)
-                                throw Error("'new byte[...]' erwartet genau EINE Größe (kein mehrdimensionaler Byte-Puffer, keine unbestimmte Größe)", Peek());
+                                throw Error("'new byte[...]' expects exactly ONE size (no multidimensional byte buffer, no unspecified size)", Peek());
                             return new NewBufferExpr(tok.Line, bufSizeExprs[0]!);
                         }
 
@@ -2719,7 +2719,7 @@ namespace fire.Compiler
                         var elementType = new TypeRef(elementTypeName, null, 0, Namespaces: CurrentNamespaces());
                         var sizeExprs = ParseArrayRanks();
                         if (sizeExprs.Count == 0)
-                            throw Error("Erwarte '[' nach Array-Elementtyp bei 'new'", Peek());
+                            throw Error("Expected '[' after the array element type in 'new'", Peek());
                         return new NewArrayExpr(tok.Line, elementType, sizeExprs);
                     }
 
@@ -2754,12 +2754,12 @@ namespace fire.Compiler
                     }
                     Advance();
                     var inner = ParseExpression();
-                    Expect(TokenType.RParen, "Erwarte ')' nach geklammertem Ausdruck");
+                    Expect(TokenType.RParen, "Expected ')' after the parenthesized expression");
                     return inner;
                 }
 
                 default:
-                    throw Error($"Unerwartetes Token '{tok.Lexeme}' ({tok.Type})", tok);
+                    throw Error($"Unexpected token '{tok.Lexeme}' ({tok.Type})", tok);
             }
         }
 
@@ -2793,7 +2793,7 @@ namespace fire.Compiler
                 }
                 catch (LexException ex)
                 {
-                    throw Error($"Ungültiger Ausdruck in Format-String: {ex.Message}", tok);
+                    throw Error($"Invalid expression in a format string: {ex.Message}", tok);
                 }
 
                 var innerParser = new Parser(innerTokens);
@@ -2803,12 +2803,12 @@ namespace fire.Compiler
                     expr = innerParser.ParseExpression();
                     if (!innerParser.Check(TokenType.Eof))
                         throw Error(
-                            "Unerwartete weitere Token nach dem Ausdruck in einer Format-String-Interpolation " +
-                            "(fehlt ein Operator, oder ':' versehentlich nicht geklammert?)", innerParser.Peek());
+                            "Unexpected further tokens after the expression in a format string interpolation " +
+                            "(is an operator missing, or is a ':' not enclosed in parentheses by mistake?)", innerParser.Peek());
                 }
                 catch (ParseException ex)
                 {
-                    throw Error($"Ungültiger Ausdruck in Format-String: {ex.Message}", tok);
+                    throw Error($"Invalid expression in a format string: {ex.Message}", tok);
                 }
 
                 parts.Add(new InterpolationExprPart(expr, seg.Format));
@@ -2820,7 +2820,7 @@ namespace fire.Compiler
         private Expr ParseLambda()
         {
             int line = Peek().Line;
-            Expect(TokenType.Func, "Erwarte 'func'");
+            Expect(TokenType.Func, "Expected 'func'");
             var parms = ParseParamList();
 
             Expr? onTarget = null;
@@ -2854,7 +2854,7 @@ namespace fire.Compiler
                     member = null;
                     break;
                 }
-                var nameTok = Expect(TokenType.Identifier, "Erwarte einen Mitgliedsnamen nach '.'");
+                var nameTok = Expect(TokenType.Identifier, "Expected a member name after '.'");
                 if (member != null) target = new MemberExpr(nameTok.Line, target, member);
                 member = nameTok.Lexeme;
             }
@@ -2869,9 +2869,9 @@ namespace fire.Compiler
             Advance(); // 'probe'
             var (target, member, hasMember) = ParseProbePath();
             if (!hasMember)
-                throw Error("'probe' erwartet ein Mitglied: 'probe objekt.mitglied changed ...' (oder 'objekt.*' für alle)", Peek());
+                throw Error("'probe' expects a member: 'probe object.member changed ...' (or 'object.*' for all)", Peek());
             if (!Check(TokenType.Identifier) || Peek().Lexeme is not ("changed" or "changing"))
-                throw Error("Erwarte 'changed' oder 'changing' nach dem Ziel von 'probe'", Peek());
+                throw Error("Expected 'changed' or 'changing' after the target of 'probe'", Peek());
             bool changing = Advance().Lexeme == "changing";
 
             Expr handler;
@@ -2918,7 +2918,7 @@ namespace fire.Compiler
         /// <summary>`=> ausdruck` bzw. `=> { ... }` einer Lambda (nach Parameterliste und optionalem `on`).</summary>
         private Expr ParseLambdaTail(int line, List<LambdaParam> parms, Expr? onTarget = null)
         {
-            Expect(TokenType.Arrow, "Erwarte '=>' im Lambda");
+            Expect(TokenType.Arrow, "Expected '=>' in the lambda");
 
             Stmt.BlockStmt body;
             if (Check(TokenType.LBrace))
@@ -2991,7 +2991,7 @@ namespace fire.Compiler
             if (Match(TokenType.Semicolon)) return;
             if (Peek().NewlineBefore) return;
             if (Check(TokenType.RBrace) || Check(TokenType.Eof)) return;
-            throw Error("Erwarte ';' oder einen Zeilenumbruch zwischen Anweisungen", Peek());
+            throw Error("Expected ';' or a line break between statements", Peek());
         }
 
         private static ParseException Error(string message, Token at) =>

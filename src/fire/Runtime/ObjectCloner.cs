@@ -75,10 +75,10 @@ namespace fire.Runtime
         {
             if (obj.IsDestroyed)
                 throw new InvalidOperationException(
-                    $"Ein bereits zerstörtes Objekt ('{obj.ClassName}') lässt sich nicht kopieren.");
+                    $"An already destroyed object ('{obj.ClassName}') cannot be copied.");
             if (IsActor(obj))
                 throw new InvalidOperationException(
-                    $"Ein Actor ('{obj.ClassName}') lässt sich nicht kopieren - Actor-Referenzen werden geteilt.");
+                    $"An actor ('{obj.ClassName}') cannot be copied - actor references are shared.");
         }
 
         private static bool IsActor(ObjectInstance obj) => obj.Mailbox != null || (obj.RtClass?.IsActor ?? false);

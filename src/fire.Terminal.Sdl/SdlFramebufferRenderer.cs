@@ -91,7 +91,7 @@ namespace fire.Terminal.Sdl
             _fbHeight = initialHeight;
 
             if (!SDL.Init(SDL.InitFlags.Video))
-                throw new InvalidOperationException($"SDL.Init fehlgeschlagen: {SDL.GetError()}");
+                throw new InvalidOperationException($"SDL.Init failed: {SDL.GetError()}");
 
             // SDL3-CS bietet CreateWindowAndRenderer als EINEN Aufruf (statt
             // getrennt CreateWindow + CreateRenderer wie in SDL2) - laut
@@ -100,7 +100,7 @@ namespace fire.Terminal.Sdl
             if (!SDL.CreateWindowAndRenderer(
                     title, initialWidth, initialHeight,
                     SDL.WindowFlags.Resizable, out _window, out _renderer))
-                throw new InvalidOperationException($"SDL.CreateWindowAndRenderer fehlgeschlagen: {SDL.GetError()}");
+                throw new InvalidOperationException($"SDL.CreateWindowAndRenderer failed: {SDL.GetError()}");
 
             SDL.SetRenderVSync(_renderer, _vsync ? 1 : 0);
 
@@ -272,7 +272,7 @@ namespace fire.Terminal.Sdl
                 SDL.TextureAccess.Streaming,
                 width, height);
             if (_texture == IntPtr.Zero)
-                throw new InvalidOperationException($"SDL.CreateTexture fehlgeschlagen: {SDL.GetError()}");
+                throw new InvalidOperationException($"SDL.CreateTexture failed: {SDL.GetError()}");
 
             _texWidth = width;
             _texHeight = height;

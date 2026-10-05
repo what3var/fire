@@ -35,15 +35,15 @@ namespace fire.Editor
         {
             var descriptions = breakpointDescriptions.ToList();
             BreakpointsText.Text = descriptions.Count == 0
-                ? "Haltepunkte: (keine - F9 auf der Cursor-Zeile)"
-                : "Haltepunkte: " + string.Join(", ", descriptions);
+                ? "Breakpoints: (none - press F9 on the cursor line)"
+                : "Breakpoints: " + string.Join(", ", descriptions);
 
             var active = _session?.ActiveThread;
             _rows = (_session?.Threads.ToList() ?? new List<DebugThreadContext>()).Select(t =>
             {
-                string status = t.RuntimeError != null ? $"Fehler: {t.RuntimeError}"
-                    : t.IsFinished ? "beendet"
-                    : t.IsMain ? "angehalten" : "läuft/angehalten";
+                string status = t.RuntimeError != null ? $"Error: {t.RuntimeError}"
+                    : t.IsFinished ? "finished"
+                    : t.IsMain ? "paused" : "running/paused";
                 string line = t.IsFinished ? "-" : t.Vm.CurrentLine.ToString();
                 string depth = t.IsFinished ? "-" : t.Vm.DebugCallDepth.ToString();
                 return new ThreadRow(ReferenceEquals(t, active) ? "\u25B6" : "", t.Name, status, line, depth, t);

@@ -64,7 +64,7 @@ namespace fire.Values
             RequireValidWidth(bytesPerChar);
             if (buf.Length % bytesPerChar != 0)
                 throw new System.InvalidOperationException(
-                    $"Puffergröße ({buf.Length}) ist kein Vielfaches der Zeichenbreite ({bytesPerChar}).");
+                    $"Buffer size ({buf.Length}) is not a multiple of the character width ({bytesPerChar}).");
             int count = buf.Length / bytesPerChar;
             var chars = new char[count];
             for (int i = 0; i < count; i++)
@@ -77,7 +77,7 @@ namespace fire.Values
             RequireValidWidth(bytesPerChar);
             if (buf.Length < bytesPerChar)
                 throw new System.InvalidOperationException(
-                    $"Puffer zu klein ({buf.Length} Byte) für ein {bytesPerChar}-Byte-Zeichen.");
+                    $"Buffer too small ({buf.Length} bytes) for a {bytesPerChar}-byte character.");
             return ReadCodeUnit(buf.Bytes, 0, bytesPerChar, buf.Order);
         }
 
@@ -85,7 +85,7 @@ namespace fire.Values
         {
             if (bytesPerChar < 1 || bytesPerChar > 4)
                 throw new System.InvalidOperationException(
-                    $"Ungültige Zeichenbreite {bytesPerChar} (erlaubt: 1-4 Byte pro Zeichen).");
+                    $"Invalid character width {bytesPerChar} (allowed: 1-4 bytes per character).");
         }
 
         private static void WriteCodeUnit(byte[] dest, int offset, char value, int width, ByteOrder order)

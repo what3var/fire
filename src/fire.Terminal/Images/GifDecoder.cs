@@ -10,7 +10,7 @@ namespace fire.Terminal
     {
         public static ImageData Decode(byte[] d)
         {
-            if (d.Length < 13) throw new ImageFormatException("GIF: Datei zu kurz.");
+            if (d.Length < 13) throw new ImageFormatException("GIF: file too short.");
             int screenW = d[6] | (d[7] << 8), screenH = d[8] | (d[9] << 8);
             int flags = d[10];
             int backgroundIndex = d[11];
@@ -38,10 +38,10 @@ namespace fire.Terminal
                     SkipSubBlocks(d, ref pos);
                     continue;
                 }
-                if (block != 0x2C) throw new ImageFormatException($"GIF: unbekannter Block 0x{block:X2}.");
+                if (block != 0x2C) throw new ImageFormatException($"GIF: unknown block 0x{block:X2}.");
 
                 // Bildbeschreibung
-                if (pos + 9 > d.Length) throw new ImageFormatException("GIF: Datei abgeschnitten (Bildbeschreibung).");
+                if (pos + 9 > d.Length) throw new ImageFormatException("GIF: file truncated (image descriptor).");
                 int left = d[pos] | (d[pos + 1] << 8), top = d[pos + 2] | (d[pos + 3] << 8);
                 int w = d[pos + 4] | (d[pos + 5] << 8), h = d[pos + 6] | (d[pos + 7] << 8);
                 int iflags = d[pos + 8];
@@ -51,18 +51,18 @@ namespace fire.Terminal
                 if (palette == null) throw new ImageFormatException("GIF: weder globale noch lokale Palette.");
                 bool interlaced = (iflags & 0x40) != 0;
 
-                if (pos >= d.Length) throw new ImageFormatException("GIF: Datei abgeschnitten (Bilddaten).");
+                if (pos >= d.Length) throw new ImageFormatException("GIF: file truncated (image data).");
                 int minCode = d[pos++];
-                if (minCode < 2 || minCode > 11) throw new ImageFormatException("GIF: ungültige LZW-Codegröße.");
+                if (minCode < 2 || minCode > 11) throw new ImageFormatException("GIF: invalid LZW code size.");
 
                 // die Teilblöcke der Bilddaten zusammensetzen
                 var packed = new MemoryStream();
                 while (true)
                 {
-                    if (pos >= d.Length) throw new ImageFormatException("GIF: Datei abgeschnitten (Bilddaten).");
+                    if (pos >= d.Length) throw new ImageFormatException("GIF: file truncated (image data).");
                     int len = d[pos++];
                     if (len == 0) break;
-                    if (pos + len > d.Length) throw new ImageFormatException("GIF: Datei abgeschnitten (Bilddaten).");
+                    if (pos + len > d.Length) throw new ImageFormatException("GIF: file truncated (image data).");
                     packed.Write(d, pos, len);
                     pos += len;
                 }
@@ -87,12 +87,12 @@ namespace fire.Terminal
                 }
                 return ImageData.CreateIndexed(screenW, screenH, indices, palette, transparent, "GIF");
             }
-            throw new ImageFormatException("GIF: die Datei enthält kein Bild.");
+            throw new ImageFormatException("GIF: the file contains no image.");
         }
 
         private static uint[] ReadPalette(byte[] d, ref int pos, int entries)
         {
-            if (pos + entries * 3 > d.Length) throw new ImageFormatException("GIF: Datei abgeschnitten (Palette).");
+            if (pos + entries * 3 > d.Length) throw new ImageFormatException("GIF: file truncated (palette).");
             var palette = new uint[256];
             Array.Fill(palette, 0xFF000000u);
             for (int i = 0; i < entries; i++)
@@ -166,7 +166,7 @@ namespace fire.Terminal
 
                 if (prev == -1)
                 {
-                    if (code >= clear) throw new ImageFormatException("GIF: ungültiger LZW-Code am Anfang.");
+                    if (code >= clear) throw new ImageFormatException("GIF: invalid LZW code at the start.");
                     output[outPos++] = (byte)code;
                     prev = code;
                     first = (byte)code;
@@ -177,7 +177,7 @@ namespace fire.Terminal
                 int sp = 0;
                 if (code >= next)
                 {
-                    if (code > next) throw new ImageFormatException("GIF: beschädigte LZW-Daten (Code außerhalb des Wörterbuchs).");
+                    if (code > next) throw new ImageFormatException("GIF: corrupt LZW data (code outside of the dictionary).");
                     stack[sp++] = first;   // der Sonderfall K-w-K
                     cur = prev;
                 }

@@ -5,26 +5,26 @@
         <Border DockPanel.Dock="Top" Background="#F5F5F5" BorderBrush="#DDDDDD" BorderThickness="0,0,0,1" Padding="2">
             <WrapPanel>
                 <Button x:Name="SearchButton" Click="Search_Click" Padding="8,2" Margin="2"
-                        ToolTip="Nach Geräten suchen und ihre Verfügbarkeit prüfen">
-                    <TextBlock Text="Suchen"/>
+                        ToolTip="Search for devices and check their availability">
+                    <TextBlock Text="Search"/>
                 </Button>
                 <Button x:Name="ConnectButton" Click="Connect_Click" Padding="8,2" Margin="2"
-                        ToolTip="Das gewählte Gerät verbinden">
-                    <TextBlock Text="Verbinden"/>
+                        ToolTip="Connect the selected device">
+                    <TextBlock Text="Connect"/>
                 </Button>
                 <Button x:Name="DisconnectButton" Click="Disconnect_Click" Padding="8,2" Margin="2"
-                        ToolTip="Das gewählte Gerät trennen">
-                    <TextBlock Text="Trennen"/>
+                        ToolTip="Disconnect the selected device">
+                    <TextBlock Text="Disconnect"/>
                 </Button>
                 <Button x:Name="TraceButton" Click="Trace_Click" Padding="8,2" Margin="2"
-                        ToolTip="Paketverfolgung für das gewählte Gerät in einem neuen Tab öffnen">
-                    <TextBlock Text="Paketverfolgung"/>
+                        ToolTip="Open the packet trace of the selected device in a new tab">
+                    <TextBlock Text="Packet Trace"/>
                 </Button>
             </WrapPanel>
         </Border>
 
         <TextBlock x:Name="HintText" DockPanel.Dock="Bottom" Margin="8,4" TextWrapping="Wrap" Foreground="#666666" FontSize="11"
-                   Text="Rechtsklick auf ein Gerät: verbinden, trennen, als Standardgerät festlegen (Device.Default im Skript), Paketverfolgung."/>
+                   Text="Right-click a device: connect, disconnect, set as default device (Device.Default in scripts), packet trace."/>
 
         <TreeView x:Name="DeviceTree" BorderThickness="0"
                   SelectedItemChanged="DeviceTree_SelectedItemChanged"

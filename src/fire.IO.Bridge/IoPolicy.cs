@@ -52,7 +52,7 @@ namespace fire.IO.Bridge
         {
             public override bool IsAllowed(string fullPath, IoAccess access, out string? reason)
             {
-                reason = "Dateizugriff ist für dieses Programm nicht erlaubt.";
+                reason = "File access is not allowed for this program.";
                 return false;
             }
         }
@@ -78,12 +78,12 @@ namespace fire.IO.Bridge
                     || path.StartsWith(_root + Path.AltDirectorySeparatorChar, Comparison);
                 if (!inside)
                 {
-                    reason = $"Pfad liegt außerhalb des erlaubten Verzeichnisses '{_root}'.";
+                    reason = $"The path is outside of the permitted directory '{_root}'.";
                     return false;
                 }
                 if (_readOnly && (access & (IoAccess.Write | IoAccess.Delete)) != 0)
                 {
-                    reason = "Nur Lesezugriff erlaubt.";
+                    reason = "Read access only.";
                     return false;
                 }
                 reason = null;

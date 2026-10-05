@@ -3,11 +3,11 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <DockPanel>
         <ToolBar DockPanel.Dock="Top" Loaded="ToolBar_HideOverflow">
-            <Button x:Name="PauseThreadButton" Click="PauseThread_Click" ToolTip="Den aktiven Thread an der nächsten Anweisung anhalten">
-                <TextBlock Text="Aktiven Thread anhalten" Margin="2,0"/>
+            <Button x:Name="PauseThreadButton" Click="PauseThread_Click" ToolTip="Pause the active thread at the next statement">
+                <TextBlock Text="Pause active thread" Margin="2,0"/>
             </Button>
             <Separator/>
-            <TextBlock x:Name="BreakpointsText" Text="Haltepunkte: (keine)" VerticalAlignment="Center" Margin="4,0"/>
+            <TextBlock x:Name="BreakpointsText" Text="Breakpoints: (none)" VerticalAlignment="Center" Margin="4,0"/>
         </ToolBar>
 
         <ListView x:Name="ThreadsList" FontFamily="Consolas" FontSize="12" BorderThickness="0"
@@ -17,8 +17,8 @@
                     <GridViewColumn Header="" Width="24" DisplayMemberBinding="{Binding Marker}"/>
                     <GridViewColumn Header="Name" Width="140" DisplayMemberBinding="{Binding Name}"/>
                     <GridViewColumn Header="Status" Width="200" DisplayMemberBinding="{Binding Status}"/>
-                    <GridViewColumn Header="Zeile" Width="60" DisplayMemberBinding="{Binding Line}"/>
-                    <GridViewColumn Header="Aufruftiefe" Width="90" DisplayMemberBinding="{Binding Depth}"/>
+                    <GridViewColumn Header="Line" Width="60" DisplayMemberBinding="{Binding Line}"/>
+                    <GridViewColumn Header="Call depth" Width="90" DisplayMemberBinding="{Binding Depth}"/>
                 </GridView>
             </ListView.View>
         </ListView>
