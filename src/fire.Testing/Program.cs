@@ -13101,6 +13101,64 @@ static int CountOccurrences(string haystack, string needle)
             var neg = -0.5
             print($"{neg:E1}")
             """),
+        ("copy und flat: Objekte, Zyklen, Arrays, Puffer, Feldzuweisung, als Argument (die Kopie gehoert der aufgerufenen Funktion)", """
+            class Leaf { string name; int data[]
+                construct(string n) { this.name = n; this.data = new int[2]; this.data[0] = 7 }
+                destruct() { print("~" + this.name) } }
+            class Node { string label; Leaf leaf; Node next; int nums[]
+                construct(string l) { this.label = l; this.leaf = new Leaf(l + "-leaf"); this.nums = [1, 2, 3] }
+                destruct() { print("~" + this.label) } }
+            class Box { Node held
+                construct(Node n) { this.held = copy n }
+                Node Same() { return this.held } }
+            class Eat {
+                static string Consume(Node n) { n.label = "eaten"; return n.label }
+                static Node Keep(Node n) { return n }
+                static int Sum(int xs[]) { var t = 0; for (var i = 0; i < xs.length; i = i + 1) { t = t + xs[i] }
+                    return t }
+            }
+            var a = new Node("a")
+            var f = flat a
+            var c = copy a
+            print(f.label + " " + (f.leaf == a.leaf) + " " + (f.nums == a.nums))
+            print(c.label + " " + (c.leaf == a.leaf) + " " + (c.nums == a.nums))
+            c.leaf.name = "changed"
+            print(a.leaf.name)
+            f.label = "f2"
+            print(a.label)
+            a.next = a
+            var cyc = copy a
+            print(cyc.next == cyc)
+            print(cyc.next == a)
+            var b = new Box(a)
+            print(b.held.label + " " + (b.held == a))
+            print(Eat.Consume(copy a))
+            print(a.label)
+            print(Eat.Consume(flat a))
+            var kept = Eat.Keep(copy a)
+            print(kept.label)
+            var arr = [1, 2, 3]
+            var arr2 = copy arr
+            arr2[0] = 99
+            print(arr[0] + " " + arr2[0])
+            var fa = flat arr
+            fa[1] = 5
+            print(arr[1] + " " + Eat.Sum(copy arr))
+            var buf = new byte[4]
+            buf[0] = 9
+            var buf2 = copy buf
+            buf2[0] = 1
+            print(buf[0] + " " + buf2[0])
+            var nested = [[1, 2], [3]]
+            var n2 = copy nested
+            n2[0][0] = 50
+            print(nested[0][0] + " " + n2[0][0])
+            var s = copy "text"
+            print(s)
+            var q = copy 5
+            print(q)
+            print("end")
+            """),
         ("Besitz: #performance prueft zerstoerte Arrays nicht (FIRE_UNCHECKED), Ergebnis wie die VM", """
             #performance
             var a = new int[100]
@@ -13259,12 +13317,12 @@ static int CountOccurrences(string haystack, string needle)
         // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
         try
         {
-            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "class P { int x\n construct() { this.x = 1 } }\nvar p = new P()\nvar q = copy p" }, null, null, VmExecutionMode.Release));
+            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "fire { print(1) }" }, null, null, VmExecutionMode.Release));
             CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt", false, "keine Ausnahme");
         }
         catch (fire.Native.NativeNotSupportedException ex)
         {
-            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (CopyValue)", ex.Message.Contains("CopyValue"), ex.Message);
+            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (Fire)", ex.Message.Contains("Fire") || ex.Message.Contains("thread"), ex.Message);
         }
         try { Directory.Delete(workDir, true); } catch (IOException) { }
     }

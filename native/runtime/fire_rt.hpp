@@ -1833,6 +1833,192 @@ inline void ownMethod(int method, Value self, Value arg, OwnList* here) {
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// `flat x` and `copy x` (SPEC 2.4): no constructor runs, the copy belongs to `owner` like any new value.
+// ---------------------------------------------------------------------------------------------------------------------
+inline Value flatCopy(Value v, OwnList* owner) {
+    switch (v.kind) {
+        case K_Class: {
+            Obj* src = asObj(v);
+            Value c = newObject(src->cls, src->nfields, owner);
+            Obj* dst = asObj(c);
+            for (uint32_t i = 0; i < src->nfields; i++) { dst->fields()[i] = src->fields()[i]; retain(dst->fields()[i]); }
+            return c;
+        }
+        case K_Array: {
+            if (!ownedOf(v)) return destroyedError(v);
+            Arr* src = arrOf(v);
+            Arr* dst = allocArr(src->length, owner);
+            for (uint32_t i = 0; i < src->length; i++) { dst->items()[i] = src->items()[i]; retain(dst->items()[i]); }
+            return ArrV(dst);
+        }
+        case K_Buffer: {
+            if (!ownedOf(v)) return destroyedError(v);
+            Buf* src = bufOf(v);
+            Buf* dst = allocBuf(src->length, owner);
+            std::memcpy(dst->bytes(), src->bytes(), src->length);
+            return BufV(dst);
+        }
+        default: return v;
+    }
+}
+
+/// The identity table of a deep copy: original -> copy (open addressing on the address).
+struct CopyMap {
+    const void** from = nullptr;
+    Value* to = nullptr;
+    uint32_t cap = 0, count = 0;
+    ~CopyMap() { std::free(from); std::free(to); }
+    static uint32_t hashOf(const void* p) { return (uint32_t)(((uintptr_t)p >> 4) * 2654435761u); }
+    void grow() {
+        uint32_t newCap = cap ? cap * 2 : 32;
+        const void** nf = static_cast<const void**>(std::calloc(newCap, sizeof(void*)));
+        Value* nt = static_cast<Value*>(std::malloc(newCap * sizeof(Value)));
+        if (!nf || !nt) allocFailed();
+        for (uint32_t i = 0; i < cap; i++)
+            if (from[i]) { uint32_t k = hashOf(from[i]) & (newCap - 1); while (nf[k]) k = (k + 1) & (newCap - 1); nf[k] = from[i]; nt[k] = to[i]; }
+        std::free(from); std::free(to);
+        from = nf; to = nt; cap = newCap;
+    }
+    Value* find(const void* key) {
+        if (!cap) return nullptr;
+        uint32_t k = hashOf(key) & (cap - 1);
+        while (from[k]) { if (from[k] == key) return &to[k]; k = (k + 1) & (cap - 1); }
+        return nullptr;
+    }
+    void put(const void* key, Value value) {
+        if ((count + 1) * 2 > cap) grow();
+        uint32_t k = hashOf(key) & (cap - 1);
+        while (from[k]) k = (k + 1) & (cap - 1);
+        from[k] = key; to[k] = value; count++;
+    }
+};
+
+struct DeepCopier {
+    OwnList* owner;
+    CopyMap objects;      // object -> copy (the objects found, which are copied)
+    CopyMap containers;   // array/buffer -> copy
+    Obj** order = nullptr;
+    uint32_t orderCount = 0, orderCap = 0;
+    const void** seen = nullptr;   // arrays visited by the discovery
+    uint32_t seenCount = 0, seenCap = 0;
+    Value* pending = nullptr;
+    uint32_t pendingCount = 0, pendingCap = 0;
+
+    explicit DeepCopier(OwnList* o) : owner(o) {}
+    ~DeepCopier() { std::free(order); std::free(seen); std::free(pending); }
+
+    template <class T> static void push(T*& items, uint32_t& count, uint32_t& cap, T item) {
+        if (count == cap) {
+            cap = cap ? cap * 2 : 16;
+            items = static_cast<T*>(std::realloc(items, cap * sizeof(T)));
+            if (!items) allocFailed();
+        }
+        items[count++] = item;
+    }
+
+    bool seenArray(const void* a) {
+        for (uint32_t i = 0; i < seenCount; i++) if (seen[i] == a) return true;
+        return false;
+    }
+    /// Phase 1: everything reachable through fields and array elements (objects in discovery order).
+    void discover(Value start) {
+        push(pending, pendingCount, pendingCap, start);
+        while (pendingCount) {
+            Value v = pending[--pendingCount];
+            if (v.kind == K_Class) {
+                Obj* o = asObj(v);
+                if (objects.find(o)) continue;
+                objects.put(o, Undef());   // marks it as found; the copy is made in phase 2
+                push(order, orderCount, orderCap, o);
+                for (uint32_t i = 0; i < o->nfields; i++) push(pending, pendingCount, pendingCap, o->fields()[i]);
+            } else if (v.kind == K_Array && ownedOf(v)) {
+                Arr* a = arrOf(v);
+                if (seenArray(a)) continue;
+                push(seen, seenCount, seenCap, static_cast<const void*>(a));
+                for (uint32_t i = 0; i < a->length; i++) push(pending, pendingCount, pendingCap, a->items()[i]);
+            }
+        }
+    }
+    /// Phase 2: the copy of an object belongs to the copy of its owner when that is copied too, else to `owner`.
+    Value materialize(Obj* o) {
+        Value* done = objects.find(o);
+        if (done && done->kind == K_Class) return *done;
+        OwnList* target = owner;
+        if (o->owner && o->owner->holder && objects.find(o->owner->holder)) {
+            Value holderCopy = materialize(static_cast<Obj*>(o->owner->holder));
+            target = &asObj(holderCopy)->owned;
+        }
+        Value c = newObject(o->cls, o->nfields, target);
+        *objects.find(o) = c;   // replaces the "found" marker
+        return c;
+    }
+    /// What a value becomes in the copy.
+    Value map(Value v) {
+        switch (v.kind) {
+            case K_Class: { Value* c = objects.find(asObj(v)); return c && c->kind == K_Class ? *c : v; }
+            case K_Array: {
+                if (!ownedOf(v)) return v;
+                Arr* src = arrOf(v);
+                if (Value* c = containers.find(src)) return *c;
+                Arr* dst = allocArr(src->length, owner);
+                Value r = ArrV(dst);
+                containers.put(src, r);   // before filling: an array may contain itself
+                for (uint32_t i = 0; i < src->length; i++) { dst->items()[i] = map(src->items()[i]); retain(dst->items()[i]); }
+                return r;
+            }
+            case K_Buffer: {
+                if (!ownedOf(v)) return v;
+                Buf* src = bufOf(v);
+                if (Value* c = containers.find(src)) return *c;
+                Buf* dst = allocBuf(src->length, owner);
+                std::memcpy(dst->bytes(), src->bytes(), src->length);
+                Value r = BufV(dst);
+                containers.put(src, r);
+                return r;
+            }
+            default: return v;
+        }
+    }
+    Value run(Value root) {
+        discover(root);
+        for (uint32_t i = 0; i < orderCount; i++) materialize(order[i]);
+        for (uint32_t i = 0; i < orderCount; i++) {
+            Obj* src = order[i];
+            Obj* dst = asObj(*objects.find(src));
+            for (uint32_t f = 0; f < src->nfields; f++) { dst->fields()[f] = map(src->fields()[f]); retain(dst->fields()[f]); }
+        }
+        return map(root);
+    }
+};
+
+/// `copy x`: the copy of everything reachable from x, once each (cycles included); what belonged to a copied object belongs to its copy.
+inline Value deepCopy(Value v, OwnList* owner) {
+    if (v.kind == K_Class || ((v.kind == K_Array || v.kind == K_Buffer) && ownedOf(v))) { DeepCopier c(owner); return c.run(v); }
+    if (v.kind == K_Array || v.kind == K_Buffer) return destroyedError(v);
+    return v;
+}
+
+inline Value copyValue(Value v, bool deep, OwnList* owner) { return deep ? deepCopy(v, owner) : flatCopy(v, owner); }
+
+/// `obj.field = copy x`: the copy belongs to the object (when it is being destroyed already, the copy goes with it at once).
+inline Value copyOwned(Value target, Value v, bool deep) {
+    Obj* t = asObj(target);
+    if (t->flags & 1) {
+        OwnList scratch = {nullptr, nullptr, 0, nullptr, nullptr};
+        Value r = copyValue(v, deep, &scratch);
+        destroyList(&scratch);
+        return r;
+    }
+    return copyValue(v, deep, &t->owned);
+}
+
+/// A copy-prefixed argument (`f(copy x)`): the copy travels in the argument list of the call and dies with it unless the callee keeps it.
+inline Value copyArg(Value v, bool deep, OwnList* from, OwnList* al) {
+    al->parent = from;
+    return copyValue(v, deep, al);
+}
+
 /// `delete x`: destroys the object (destructor, everything it owns), array or buffer at once.
 inline void deleteValue(Value v) {
     if (v.kind == K_Class) {

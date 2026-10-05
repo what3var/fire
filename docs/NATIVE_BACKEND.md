@@ -202,6 +202,12 @@ einzigen Maschine, keine Garantie.
   und `UnitMismatchException` (`CheckUnit`, Felder mit Einheit). Eine nicht gefangene Ausnahme meldet die Klasse auf stderr und beendet
   das Programm mit Exitcode 1, ohne Abwickeln - wie die VM.
 
+* **`copy` und `flat`** (SPEC 2.4): `flatCopy`/`deepCopy` arbeiten allgemein auf den Köpfen (Klassen-Id, Felderzahl, Felder): kein Konstruktor, die Kopie gehört dem
+  Besitzer wie jedes neue Objekt; `copy` kopiert alles Erreichbare einmal (Identitätstabelle `CopyMap`, Zyklen eingeschlossen) und hält die Besitzverhältnisse
+  (was einem mitkopierten Objekt gehörte, gehört dessen Kopie, Arrays und Puffer dem Besitzer der Kopie). `obj.feld = copy x` gibt die Kopie dem Objekt
+  (`copyOwned`). Als **Argument** (`f(copy x)`) reist die Kopie in der Argumentliste `AL` des Aufrufs wie ein durchgereichter Rückgabewert (`copyArg`/`finishArgs`):
+  sie gehört der aufgerufenen Funktion und stirbt mit ihr, außer die Funktion behält sie. (Destruktoren dieser Kopie laufen nach dem Aufruf, nicht davor.)
+
 * **Einheiten** (SPEC 3): `Value::unit` ist der Index in eine Tabelle (`g_ud`), die zur Laufzeit wächst: eine Einheit ist ein Exponentenvektor über den
   Basissymbolen des Programms (`g_dimNames`, vom Generator gesammelt und wie in der VM sortiert) und ein Faktor zur Basis; `mm * mm` oder `m / s` legen neue Einträge an
   (gleiche Dimension, Faktor und Anzeigetext = derselbe Index, `unitEq` vergleicht auch verschiedene Indizes mit der Toleranz 1e-12 der VM). Der schnelle Pfad
@@ -226,8 +232,7 @@ einzigen Maschine, keine Garantie.
   deren Adresse genommen wird, ist ab dann im Speicher (nur diese Funktion wird langsamer). Eine Methode ohne `ref` an derselben Stelle bekommt den
   Wert: bei bekanntem Ziel setzt der Aufrufer `ptrRead`, beim virtuellen Aufruf der Dispatcher (`derefArg`).
 
-Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), `flat`/`copy` als Argument, Threads, Reflection,
-`copy`/`flat`,
+Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), Threads, Reflection,
 `extern`, die Bridges.
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes

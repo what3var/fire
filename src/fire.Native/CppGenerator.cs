@@ -1209,8 +1209,6 @@ namespace fire.Native
                 int at = f.IndexOf[ins.Addr];
                 if (at == 0 || f.Decoded[at - 1].Op != OpCode.CopyArgs) return 0;
                 long mask = (long)f.Decoded[at - 1].A[0] | ((long)f.Decoded[at - 1].A[1] << 16) | ((long)f.Decoded[at - 1].A[2] << 32) | ((long)f.Decoded[at - 1].A[3] << 48);
-                for (int i = 0; i < 16; i++)
-                    if ((mask >> (4 * i) & 15) is 1 or 2) throw new NativeNotSupportedException($"`flat`/`copy` as an argument ({fn} at {ins.Addr})");
                 return mask;
             }
             // The arguments for a callee that is known: an address goes to a `ref` parameter, the others get the value.
@@ -1222,16 +1220,26 @@ namespace fire.Native
             void ArgsBefore(int first, int argc, long mask)
             {
                 for (int i = 0; i < Math.Min(argc, 16); i++)
-                    if ((mask >> (4 * i) & 15) == 4)
+                {
+                    int bits = (int)(mask >> (4 * i) & 15);
+                    if (bits == 4)
                     {
                         f.NeedsArgList = true;
                         E($"reownArg({S(first + i)}, &{OwnerList()}, &AL);");
                     }
+                    else if (bits is 1 or 2)
+                    {
+                        // `f(flat x)` / `f(copy x)`: the copy belongs to the callee - it travels in the argument list like a returned value
+                        f.NeedsArgList = true;
+                        E($"{S(first + i)} = copyArg({S(first + i)}, {(bits == 2 ? "true" : "false")}, &{OwnerList()}, &AL);");
+                        Check();
+                    }
+                }
             }
             void ArgsAfter(int argc, long mask, string result)
             {
                 for (int i = 0; i < Math.Min(argc, 16); i++)
-                    if ((mask >> (4 * i) & 15) == 4) { E($"finishArgs({result}, &AL);"); return; }
+                    if ((mask >> (4 * i) & 15) is 1 or 2 or 4) { E($"finishArgs({result}, &AL);"); return; }
             }
             bool R(int k) => k >= 64 || (st.Refs >> k & 1UL) != 0;
             void SetR(int k, bool value)
@@ -1850,6 +1858,16 @@ namespace fire.Native
                 // ---------------------------------------------------------------------------------------------------
                 // `ref` parameters and pointers to variables, fields and elements (SPEC 5.4.2)
                 // ---------------------------------------------------------------------------------------------------
+                case OpCode.CopyValue:
+                    Need(1);
+                    E($"{S(d - 1)} = copyValue({S(d - 1)}, {((ins.A[0] & 1) != 0 ? "true" : "false")}, &{OwnerList()});");
+                    Check();
+                    return Next();
+                case OpCode.CopyValueOwned:
+                    Need(2);
+                    E($"{S(d - 2)} = copyOwned({S(d - 2)}, {S(d - 1)}, {((ins.A[0] & 1) != 0 ? "true" : "false")});");
+                    Check();
+                    d--; SetR(d - 1, R(d)); return Next();
                 case OpCode.CopyArgs:
                     return Next();
                 case OpCode.AddressOfLocal:
