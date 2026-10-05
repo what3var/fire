@@ -207,13 +207,18 @@ einzigen Maschine, keine Garantie.
   die `OwnList*`). Ein Setter ohne Getter (und umgekehrt) und die Adresse einer Property sind Laufzeitfehler wie in der VM. Statische Properties
   rufen `GetStaticField`/`SetStaticField` direkt.
 
+* **Operator-Überladung** (SPEC 5.11): überlädt irgendeine Klasse des Programms `operator+` usw., gehen alle Operationen dieses Operators durch einen erzeugten
+  Wrapper `ov_...(a, b, list)`: ein Objekt als linker Operand mit dieser Überladung ruft sie über den Dispatcher der Methode auf (das Ergebnis gehört der
+  Liste des Aufrufers), sonst gilt die eingebaute Operation (`==` auf Objekten ohne Überladung: Identität). `==` und `!=` sind getrennte Überladungen wie in
+  der VM. Programme ohne Überladung eines Operators behalten den schnellen Pfad. `[]` läuft schon über `GetIndex`/`SetIndex`.
+
 * **`ref`-Parameter** (SPEC 5.4.2): der Aufrufer übergibt einen Zeiger auf die Variable (`PtrV(&B3_0)`), das Feld (`fp_name`) oder das
   Array-/Puffer-Element (`addressOfIndex`); der Parameter liest und schreibt durch ihn (`ptrRead`/`ptrWrite`, der Speicher zählt mit). Eine Variable,
   deren Adresse genommen wird, ist ab dann im Speicher (nur diese Funktion wird langsamer). Eine Methode ohne `ref` an derselben Stelle bekommt den
   Wert: bei bekanntem Ziel setzt der Aufrufer `ptrRead`, beim virtuellen Aufruf der Dispatcher (`derefArg`).
 
 Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), `flat`/`copy` als Argument, Threads, Reflection,
-Operator-Überladung, `copy`/`flat`,
+`copy`/`flat`,
 Einheiten-Algebra und implizites Einheiten-Coercing, das Zahlenformat `E`, `extern`, die Bridges.
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes

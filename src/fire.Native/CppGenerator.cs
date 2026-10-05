@@ -86,6 +86,28 @@ namespace fire.Native
         private readonly Dictionary<string, ClassInfo> _classes = new();
         private readonly List<ClassInfo> _classList = new();
         private readonly SortedSet<(string Name, int Argc)> _dispatchers = new();
+        /// <summary>Operators (method names `operator+`, ...) that the program overloads and that an operation of it uses: each gets a wrapper `ov_...` (SPEC 5.11).</summary>
+        private readonly SortedSet<string> _operators = new();
+
+        /// <summary>What the operator wrapper does when the left operand is not an object with that overload: the built-in operation.</summary>
+        private static readonly Dictionary<string, string> OperatorFallback = new()
+        {
+            ["operator+"] = "addR(a, b, list)", ["operator-"] = "sub(a, b)", ["operator*"] = "mul(a, b)", ["operator/"] = "divide(a, b)", ["operator%"] = "modulo(a, b)",
+            ["operator&"] = "bitAnd(a, b)", ["operator|"] = "bitOr(a, b)", ["operator#"] = "bitXor(a, b)", ["operator<<"] = "shl(a, b)", ["operator>>"] = "shr(a, b)",
+            ["operator=="] = "Bool(eq(a, b))", ["operator!="] = "Bool(!eq(a, b))", ["operator<"] = "Bool(lt(a, b))", ["operator<="] = "Bool(le(a, b))",
+            ["operator>"] = "Bool(gt(a, b))", ["operator>="] = "Bool(ge(a, b))",
+        };
+
+        private static string OperatorWrapper(string method) => "ov_" + Mangle(method.Substring("operator".Length));
+
+        /// <summary>Does the program overload this operator in some class? Then the operation goes through the wrapper (and the dispatcher of the method).</summary>
+        private bool UseOperator(string method)
+        {
+            if (!_program.Program.Classes.Values.Any(rc => rc.Methods.ContainsKey(method))) return false;
+            _operators.Add(method);
+            _dispatchers.Add((method, 1));
+            return true;
+        }
         private readonly SortedSet<string> _fieldNames = new(StringComparer.Ordinal);
         private readonly Dictionary<(string Class, string Field), int> _staticFields = new();
 
@@ -292,12 +314,29 @@ namespace fire.Native
                 sb.AppendLine($"[[maybe_unused]] static inline Value gf_{Mangle(name)}(Value v{lp});").AppendLine($"[[maybe_unused]] static inline void sf_{Mangle(name)}(Value v, Value x{lp});").AppendLine($"[[maybe_unused]] static inline Value fp_{Mangle(name)}(Value v);");
             }
             foreach (var (name, argc) in _dispatchers) sb.AppendLine(DispatcherSignature(name, argc) + ";");
+            foreach (var method in _operators) sb.AppendLine($"static Value {OperatorWrapper(method)}(Value a, Value b, OwnList* list);");
             sb.AppendLine("[[maybe_unused]] static inline Value aget_g(Value a, Value i, OwnList* list);");
             sb.AppendLine("[[maybe_unused]] static inline void aset_g(Value a, Value i, Value v, OwnList* list);");
             sb.AppendLine();
 
             foreach (var name in _fieldNames) sb.AppendLine(FieldHelpers(name));
             foreach (var (name, argc) in _dispatchers) sb.AppendLine(Dispatcher(name, argc));
+            foreach (var method in _operators)
+            {
+                var ids = _classList.Where(c => c.Rc.FindMethodWithAccess(method, 1).Proto != null).Select(c => c.Id).ToList();
+                sb.AppendLine($"static Value {OperatorWrapper(method)}(Value a, Value b, OwnList* list) {{");
+                if (ids.Count > 0)
+                {
+                    sb.AppendLine("    if (a.kind == K_Class) {");
+                    sb.AppendLine("        switch (asObj(a)->cls) {");
+                    sb.AppendLine("            " + string.Concat(ids.Select(id => $"case {id}: ")) + $"{{ Value r = call_{Mangle(method)}_1(a, b{(DispatchNeedsDefaults(method, 1) ? ", list" : "")}); adopt(r, list); return r; }}");
+                    sb.AppendLine("            default: break;");
+                    sb.AppendLine("        }");
+                    sb.AppendLine("    }");
+                }
+                sb.AppendLine($"    return {OperatorFallback[method]};");
+                sb.AppendLine("}");
+            }
             sb.AppendLine(IndexHelpers());
             sb.AppendLine(RuntimeHooks());
 
@@ -1278,7 +1317,13 @@ namespace fire.Native
                 case OpCode.Add:
                 {
                     Need(2);
-                    if (R(d - 2) || R(d - 1))
+                    if (UseOperator("operator+"))
+                    {
+                        E($"{S(d - 2)} = {OperatorWrapper("operator+")}({S(d - 2)}, {S(d - 1)}, &{OwnerList()});");
+                        Check();
+                        d--; SetR(d - 1, true);
+                    }
+                    else if (R(d - 2) || R(d - 1))
                     {
                         E($"{S(d - 2)} = addR({S(d - 2)}, {S(d - 1)}, &{OwnerList()});");
                         Check();
@@ -1287,25 +1332,25 @@ namespace fire.Native
                     else { E($"{S(d - 2)} = add({S(d - 2)}, {S(d - 1)});"); d--; SetR(d - 1, false); }
                     return Next();
                 }
-                case OpCode.Sub: return Binary("sub");
-                case OpCode.Mul: return Binary("mul");
-                case OpCode.Div: return Binary("divide");
-                case OpCode.Mod: return Binary("modulo");
-                case OpCode.BitAnd: return Binary("bitAnd");
-                case OpCode.BitOr: return Binary("bitOr");
-                case OpCode.BitXor: return Binary("bitXor");
-                case OpCode.ShiftLeft: return Binary("shl");
-                case OpCode.ShiftRight: return Binary("shr");
+                case OpCode.Sub: return Binary("sub", "operator-");
+                case OpCode.Mul: return Binary("mul", "operator*");
+                case OpCode.Div: return Binary("divide", "operator/");
+                case OpCode.Mod: return Binary("modulo", "operator%");
+                case OpCode.BitAnd: return Binary("bitAnd", "operator&");
+                case OpCode.BitOr: return Binary("bitOr", "operator|");
+                case OpCode.BitXor: return Binary("bitXor", "operator#");
+                case OpCode.ShiftLeft: return Binary("shl", "operator<<");
+                case OpCode.ShiftRight: return Binary("shr", "operator>>");
                 case OpCode.Neg: return Unary("negate");
                 case OpCode.LogicalNot: return Unary("lnot");
                 case OpCode.BitNot: return Unary("bitNot");
 
-                case OpCode.Eq: return Compare("eq", false);
-                case OpCode.NotEq: return Compare("eq", true);
-                case OpCode.Lt: return Compare("lt", false);
-                case OpCode.LtEq: return Compare("le", false);
-                case OpCode.Gt: return Compare("gt", false);
-                case OpCode.GtEq: return Compare("ge", false);
+                case OpCode.Eq: return Compare("eq", false, "operator==");
+                case OpCode.NotEq: return Compare("eq", true, "operator!=");
+                case OpCode.Lt: return Compare("lt", false, "operator<");
+                case OpCode.LtEq: return Compare("le", false, "operator<=");
+                case OpCode.Gt: return Compare("gt", false, "operator>");
+                case OpCode.GtEq: return Compare("ge", false, "operator>=");
 
                 case OpCode.Jump:
                 {
@@ -1334,12 +1379,12 @@ namespace fire.Native
                 case OpCode.JumpIfTruePeek:
                     Need(1); E($"if (truthy({S(d - 1)})) goto L{ins.A[0]};");
                     return new StepResult(true, ins.A[0]);
-                case OpCode.JumpIfNotLt: return JumpIfNot("lt", false);
-                case OpCode.JumpIfNotLtEq: return JumpIfNot("le", false);
-                case OpCode.JumpIfNotGt: return JumpIfNot("gt", false);
-                case OpCode.JumpIfNotGtEq: return JumpIfNot("ge", false);
-                case OpCode.JumpIfNotEq: return JumpIfNot("eq", false);
-                case OpCode.JumpIfNotNotEq: return JumpIfNot("eq", true);
+                case OpCode.JumpIfNotLt: return JumpIfNot("lt", false, "operator<");
+                case OpCode.JumpIfNotLtEq: return JumpIfNot("le", false, "operator<=");
+                case OpCode.JumpIfNotGt: return JumpIfNot("gt", false, "operator>");
+                case OpCode.JumpIfNotGtEq: return JumpIfNot("ge", false, "operator>=");
+                case OpCode.JumpIfNotEq: return JumpIfNot("eq", false, "operator==");
+                case OpCode.JumpIfNotNotEq: return JumpIfNot("eq", true, "operator!=");
 
                 case OpCode.EnterScope:
                 {
@@ -1897,21 +1942,43 @@ namespace fire.Native
                     throw new NativeNotSupportedException($"opcode {ins.Op} (in {fn} at {ins.Addr})");
             }
 
-            StepResult Binary(string fnName)
+            StepResult Binary(string fnName, string opMethod)
             {
-                Need(2); E($"{S(d - 2)} = {fnName}({S(d - 2)}, {S(d - 1)});"); d--; SetR(d - 1, false); return Next();
+                Need(2);
+                if (UseOperator(opMethod))
+                {
+                    E($"{S(d - 2)} = {OperatorWrapper(opMethod)}({S(d - 2)}, {S(d - 1)}, &{OwnerList()});");
+                    Check(); d--; SetR(d - 1, true); return Next();
+                }
+                E($"{S(d - 2)} = {fnName}({S(d - 2)}, {S(d - 1)});"); d--; SetR(d - 1, false); return Next();
             }
             StepResult Unary(string fnName)
             {
                 Need(1); E($"{S(d - 1)} = {fnName}({S(d - 1)});"); SetR(d - 1, false); return Next();
             }
-            StepResult Compare(string fnName, bool negate)
+            StepResult Compare(string fnName, bool negate, string opMethod)
             {
-                Need(2); E($"{S(d - 2)} = Bool({(negate ? "!" : "")}{fnName}({S(d - 2)}, {S(d - 1)}));"); d--; SetR(d - 1, false); return Next();
+                Need(2);
+                if (UseOperator(opMethod))
+                {
+                    E($"{S(d - 2)} = {OperatorWrapper(opMethod)}({S(d - 2)}, {S(d - 1)}, &{OwnerList()});");
+                    Check(); d--; SetR(d - 1, true); return Next();
+                }
+                E($"{S(d - 2)} = Bool({(negate ? "!" : "")}{fnName}({S(d - 2)}, {S(d - 1)}));"); d--; SetR(d - 1, false); return Next();
             }
-            StepResult JumpIfNot(string fnName, bool negate)
+            StepResult JumpIfNot(string fnName, bool negate, string opMethod)
             {
-                Need(2); E($"if (!({(negate ? "!" : "")}{fnName}({S(d - 2)}, {S(d - 1)}))) goto L{ins.A[0]};");
+                Need(2);
+                if (UseOperator(opMethod))
+                {
+                    // the overload can return anything: a value that is true or false decides
+                    E($"{{ Value t = {OperatorWrapper(opMethod)}({S(d - 2)}, {S(d - 1)}, &{OwnerList()});");
+                    if (_usesExceptions && sb != null) E($"  if (FIRE_UNLIKELY(g_unwind.active)) goto {ExitLabel(f, st, locals)};");
+                    E($"  if (!truthy(t)) goto L{ins.A[0]}; }}");
+                    d -= 2; st.Depth = d;
+                    return new StepResult(true, ins.A[0]);
+                }
+                E($"if (!({(negate ? "!" : "")}{fnName}({S(d - 2)}, {S(d - 1)}))) goto L{ins.A[0]};");
                 d -= 2; st.Depth = d;
                 return new StepResult(true, ins.A[0]);
             }

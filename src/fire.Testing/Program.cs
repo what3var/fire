@@ -12947,6 +12947,59 @@ static int CountOccurrences(string haystack, string needle)
             for (var i = 0; i < 2; i = i + 1) { sum = sum + all[i].Diameter }
             print(sum)
             """),
+        ("Operator-Ueberladung: Arithmetik, Vergleiche, ==/!= getrennt, Rueckfall auf die eingebaute Operation, in Bedingungen", """
+            class Vec {
+                float x
+                float y
+                construct(float x, float y) { this.x = x; this.y = y }
+                operator+(class o) { return new Vec(this.x + o.x, this.y + o.y) }
+                operator-(class o) { return new Vec(this.x - o.x, this.y - o.y) }
+                operator*(float k) { return new Vec(this.x * k, this.y * k) }
+                operator==(class o) { return this.x == o.x && this.y == o.y }
+                operator<(class o) { return this.x * this.x + this.y * this.y < o.x * o.x + o.y * o.y }
+                operator>(class o) { return o < this }
+                string ToString() { return "(" + this.x + "," + this.y + ")" }
+            }
+            class Money {
+                int cents
+                construct(int c) { this.cents = c }
+                operator+(class o) { return new Money(this.cents + o.cents) }
+                operator!=(class o) { return this.cents != o.cents }
+                operator<<(int n) { return new Money(this.cents << n) }
+                operator%(int n) { return this.cents % n }
+                string ToString() { return "$" + this.cents }
+            }
+            class Plain { int v; construct(int v) { this.v = v } }
+            var a = new Vec(1.0, 2.0)
+            var b = new Vec(3.0, 4.0)
+            print((a + b).ToString())
+            print((b - a).ToString())
+            print((a * 2.0).ToString())
+            print(a == b)
+            print(a == new Vec(1.0, 2.0))
+            print(a < b)
+            print(a > b)
+            var m = new Money(250) + new Money(50)
+            print(m.ToString())
+            print(m != new Money(300))
+            print(m != new Money(1))
+            print((m << 2).ToString())
+            print(m % 7)
+            var p = new Plain(1)
+            var q = new Plain(1)
+            print(p == q)
+            print(p == p)
+            print(p != q)
+            print(1 + 2)
+            print("a" + "b")
+            print("v=" + a)
+            if (a < b) { print("lt") } else { print("ge") }
+            if (b < a) { print("lt") } else { print("ge") }
+            var s = a
+            for (var i = 0; i < 3; i = i + 1) { s = s + b }
+            print(s.ToString())
+            print(m + new Money(1))
+            """),
         ("Besitz: #performance prueft zerstoerte Arrays nicht (FIRE_UNCHECKED), Ergebnis wie die VM", """
             #performance
             var a = new int[100]
