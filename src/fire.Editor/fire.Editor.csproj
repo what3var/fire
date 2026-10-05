@@ -55,6 +55,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The help page behind the "?" menu: copied next to the executable and opened from there (see MainWindow.HelpFirstSteps_Click). -->
+    <None Update="First Steps.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Resource Include="icons\Material-DebugStepInto.png" />
     <Resource Include="icons\Material-DebugStepOut.png" />
     <Resource Include="icons\Material-DebugStepOver.png" />

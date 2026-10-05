@@ -10,6 +10,9 @@ namespace fire.Editor
         /// <summary>Dateipfad, `null` solange das Dokument noch nie gespeichert/geöffnet wurde.</summary>
         string? FilePath { get; set; }
 
+        /// <summary>Read-only documents cannot be edited or saved (the Save commands are disabled).</summary>
+        bool IsReadOnly { get; }
+
         /// <summary>Seit dem Laden/letzten Speichern verändert?</summary>
         bool IsModified { get; }
         event Action? ModifiedChanged;

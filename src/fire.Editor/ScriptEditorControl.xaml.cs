@@ -94,6 +94,7 @@ namespace fire.Editor
         /// geändert wurde (für den Stern im Tab-Titel und die Rückfrage beim
         /// Schließen).</summary>
         public bool IsModified { get; private set; }
+        public bool IsReadOnly => false;
 
         /// <summary>Feuert, wenn sich IsModified geändert hat.</summary>
         public event Action? ModifiedChanged;

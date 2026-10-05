@@ -76,6 +76,7 @@ namespace fire.Editor
         private bool _loading;
 
         public string? FilePath { get; set; }
+        public bool IsReadOnly => false;
         public bool IsModified { get; private set; }
         public event Action? ModifiedChanged;
         public event Action<int>? CaretLineChanged;

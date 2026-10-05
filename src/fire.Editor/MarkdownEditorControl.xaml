@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:avalonedit="http://icsharpcode.net/sharpdevelop/avalonedit">
     <DockPanel>
-        <ToolBar DockPanel.Dock="Top" Loaded="ToolBar_HideOverflow">
+        <ToolBar x:Name="FormatBar" DockPanel.Dock="Top" Loaded="ToolBar_HideOverflow">
             <Button Click="Bold_Click" ToolTip="Fett (Strg+B)" MinWidth="24">
                 <TextBlock FontWeight="Bold" Text="F"/>
             </Button>

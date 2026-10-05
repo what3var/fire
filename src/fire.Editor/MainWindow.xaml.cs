@@ -101,6 +101,10 @@ namespace fire.Editor
             public string? UntitledName { get; init; }
             public LayoutDocument Layout { get; set; } = null!;
 
+            /// <summary>Files shown in this tab by following links in a read-only Markdown document (back/forward with Alt+Left/Right).</summary>
+            public List<string> History { get; } = new();
+            public int HistoryIndex { get; set; }
+
             public bool IsMarkdown => Kind == DocumentKind.Markdown;
             public ScriptEditorControl? Script => View as ScriptEditorControl;
             public MarkdownEditorControl? Markdown => View as MarkdownEditorControl;
@@ -163,6 +167,14 @@ namespace fire.Editor
             // Override/normal registrierter Handler hätte das NICHT
             // garantiert.
             AddHandler(PreviewKeyDownEvent, new KeyEventHandler(Window_PreviewKeyDown), handledEventsToo: true);
+
+            // Mouse back/forward buttons navigate like Alt+Left/Right in read-only Markdown tabs.
+            PreviewMouseDown += (_, e) =>
+            {
+                if (ActiveDocument is not { Markdown.IsReadOnly: true } d) return;
+                if (e.ChangedButton == MouseButton.XButton1) { NavigateHistory(d, -1); e.Handled = true; }
+                else if (e.ChangedButton == MouseButton.XButton2) { NavigateHistory(d, +1); e.Handled = true; }
+            };
 
             _debugger = new DebuggerPanels(DebugThreadsPanel, DebugScopePanel, DebugStackPanel);
             _debugger.AttachSession(_session);
@@ -741,6 +753,91 @@ namespace fire.Editor
 
         private void NewMarkdown_Click(object sender, RoutedEventArgs e) => NewMarkdown("");
 
+        private void OpenReadOnly_Click(object sender, RoutedEventArgs e) => OpenMarkdownDialog(MarkdownViewMode.ReadOnly);
+        private void OpenViewer_Click(object sender, RoutedEventArgs e) => OpenMarkdownDialog(MarkdownViewMode.Viewer);
+
+        private void OpenMarkdownDialog(MarkdownViewMode mode)
+        {
+            var dlg = new OpenFileDialog
+            {
+                Multiselect = true,
+                Title = mode == MarkdownViewMode.Viewer ? "Open Markdown in Viewer" : "Open Markdown Read-Only",
+                Filter = MarkdownFilter + "|All files (*.*)|*.*",
+            };
+            if (dlg.ShowDialog() != true) return;
+            foreach (var file in dlg.FileNames) OpenFile(file, mode);
+        }
+
+        private void HelpFirstSteps_Click(object sender, RoutedEventArgs e)
+        {
+            string path = Path.Combine(AppContext.BaseDirectory, "First Steps.md");
+            if (!File.Exists(path))
+            {
+                MessageBox.Show(this, $"The help file was not found:\n{path}", "Help", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            OpenFile(path, MarkdownViewMode.Viewer);
+        }
+
+        // -----------------------------------------------------------
+        // Links in Markdown documents
+        // -----------------------------------------------------------
+
+        /// <summary>A link to a local file was clicked in a Markdown preview. In a read-only document or viewer a plain click loads a
+        /// Markdown target into the same tab (again read-only/viewer, with back/forward history); Ctrl+click opens it in a new tab
+        /// with the same mode. In an editable document the file always opens in a new tab (the text there may be unsaved). Other file
+        /// types (scripts) open normally in a new tab.</summary>
+        private void HandleMarkdownLink(OpenDocument source, string path, string? anchor, bool newTab)
+        {
+            if (source.Markdown is not { } md) return;
+            bool targetIsMarkdown = KindOfPath(path) == DocumentKind.Markdown;
+
+            if (md.IsReadOnly && targetIsMarkdown && !newTab)
+            {
+                NavigateMarkdown(source, path, anchor, recordHistory: true);
+                return;
+            }
+
+            var target = OpenFile(path, targetIsMarkdown ? md.Mode : MarkdownViewMode.Edit);
+            if (target?.Markdown is { } targetView) targetView.ScrollToAnchor(anchor);
+        }
+
+        /// <summary>Loads `path` into the (read-only) Markdown tab `doc`, replacing what it showed.</summary>
+        private void NavigateMarkdown(OpenDocument doc, string path, string? anchor, bool recordHistory)
+        {
+            if (doc.Markdown is not { } md) return;
+            string full = Path.GetFullPath(path);
+            string text;
+            try { text = File.ReadAllText(full); }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "Open failed", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            if (recordHistory)
+            {
+                if (doc.History.Count == 0 && md.FilePath != null) doc.History.Add(md.FilePath);
+                if (doc.History.Count > 0) doc.History.RemoveRange(doc.HistoryIndex + 1, doc.History.Count - doc.HistoryIndex - 1);
+                doc.History.Add(full);
+                doc.HistoryIndex = doc.History.Count - 1;
+            }
+
+            md.ResetTo(text, full);
+            md.ScrollToAnchor(anchor);
+            UpdateTitle(doc);
+            UpdateStatus($"Opened: {full}");
+        }
+
+        /// <summary>Back (-1) or forward (+1) through the files a read-only Markdown tab has shown.</summary>
+        private void NavigateHistory(OpenDocument doc, int delta)
+        {
+            int index = doc.HistoryIndex + delta;
+            if (index < 0 || index >= doc.History.Count) return;
+            doc.HistoryIndex = index;
+            NavigateMarkdown(doc, doc.History[index], null, recordHistory: false);
+        }
+
         private void Open_Click(object sender, RoutedEventArgs e)
         {
             var dlg = new OpenFileDialog
@@ -764,7 +861,7 @@ namespace fire.Editor
 
         private void SaveAll_Click(object sender, RoutedEventArgs e)
         {
-            foreach (var doc in _documents.Where(d => d.View.IsModified).ToList())
+            foreach (var doc in _documents.Where(d => d.View.IsModified && !d.View.IsReadOnly).ToList())
                 if (!Save(doc)) return;
         }
 
@@ -779,8 +876,9 @@ namespace fire.Editor
             var view = ActiveDocument?.View;
             mnuUndo.IsEnabled = view?.CanUndo == true;
             mnuRedo.IsEnabled = view?.CanRedo == true;
-            mnuCut.IsEnabled = mnuCopy.IsEnabled = mnuDelete.IsEnabled = view?.HasSelection == true;
-            mnuPaste.IsEnabled = view != null && EditorCommands.ClipboardHasText();
+            mnuCopy.IsEnabled = view?.HasSelection == true;
+            mnuCut.IsEnabled = mnuDelete.IsEnabled = view?.HasSelection == true && !view.IsReadOnly;
+            mnuPaste.IsEnabled = view is { IsReadOnly: false } && EditorCommands.ClipboardHasText();
             mnuGoToDefinition.IsEnabled = ActiveScript?.CanGoToDefinition() == true;
             mnuToggleComment.IsEnabled = ActiveScript != null;
         }
@@ -916,7 +1014,7 @@ namespace fire.Editor
 
         /// <summary>Öffnet eine Datei in einem neuen Tab (Skript oder Markdown nach Endung) - ist sie schon offen, wird
         /// nur dorthin gewechselt.</summary>
-        private OpenDocument? OpenFile(string path)
+        private OpenDocument? OpenFile(string path, MarkdownViewMode mode = MarkdownViewMode.Edit)
         {
             string full = Path.GetFullPath(path);
             var existing = _documents.FirstOrDefault(d => d.View.FilePath != null &&
@@ -940,17 +1038,18 @@ namespace fire.Editor
                 && _documents[0].View.FilePath == null && !_documents[0].View.IsModified
                 ? _documents[0] : null;
 
-            var doc = CreateDocument(KindOfPath(full), text, full);
+            var doc = CreateDocument(KindOfPath(full), text, full, mode: mode);
             if (pristine != null) pristine.Layout.Close();
             UpdateStatus($"Geöffnet: {full}");
             return doc;
         }
 
-        private OpenDocument CreateDocument(DocumentKind kind, string text, string? path, string? untitledName = null)
+        private OpenDocument CreateDocument(DocumentKind kind, string text, string? path, string? untitledName = null,
+            MarkdownViewMode mode = MarkdownViewMode.Edit)
         {
             IDocumentView view = kind switch
             {
-                DocumentKind.Markdown => new MarkdownEditorControl(),
+                DocumentKind.Markdown => new MarkdownEditorControl { Mode = mode },
                 DocumentKind.PacketLog => new PacketTraceControl(),
                 _ => new ScriptEditorControl(),
             };
@@ -972,7 +1071,7 @@ namespace fire.Editor
             };
 
             if (doc.Markdown is { } md)
-                md.OpenFileRequested += p => OpenFile(p);
+                md.OpenFileRequested += (p, anchor, newTab) => HandleMarkdownLink(doc, p, anchor, newTab);
 
             if (doc.Script is { } script)
             {
@@ -1058,7 +1157,7 @@ namespace fire.Editor
         }
 
         private static string? WindowTitle(OpenDocument? doc) =>
-            doc == null ? null : $"{doc.DisplayName}{(doc.View.IsModified ? "*" : "")}";
+            doc == null ? null : $"{doc.DisplayName}{(doc.View.IsModified ? "*" : "")}{(doc.View.IsReadOnly ? " (read-only)" : "")}";
 
         private void UpdateWindowTitle(string? subtitle)
         {
@@ -1072,7 +1171,16 @@ namespace fire.Editor
             UpdateWindowTitle(WindowTitle(doc));
             CaretText.Text = doc == null ? "" : $"Zeile {doc.View.GetCaretLine()}";
             UpdateErrorPanel();
+            UpdateSaveCommands();
             _debugger.Refresh(BreakpointDescriptions());
+        }
+
+        /// <summary>Save, Save As and the Save toolbar button are disabled for read-only documents; Save All when nothing is saveable.</summary>
+        private void UpdateSaveCommands()
+        {
+            bool canSave = ActiveDocument is { View.IsReadOnly: false };
+            mnuSave.IsEnabled = mnuSaveAs.IsEnabled = btnSave.IsEnabled = canSave;
+            mnuSaveAll.IsEnabled = _documents.Any(d => !d.View.IsReadOnly);
         }
 
         /// <summary>Fragt bei ungespeicherten Änderungen nach (Speichern/Verwerfen/Abbrechen). false = Schließen abbrechen.</summary>
@@ -1090,10 +1198,15 @@ namespace fire.Editor
         }
 
         /// <summary>Speichert ein Dokument (ohne Pfad: "Speichern unter"). false = nicht gespeichert (abgebrochen/Fehler).</summary>
-        private bool Save(OpenDocument doc) => doc.View.FilePath == null ? SaveAs(doc) : WriteDocument(doc, doc.View.FilePath);
+        private bool Save(OpenDocument doc)
+        {
+            if (doc.View.IsReadOnly) return false;
+            return doc.View.FilePath == null ? SaveAs(doc) : WriteDocument(doc, doc.View.FilePath);
+        }
 
         private bool SaveAs(OpenDocument doc)
         {
+            if (doc.View.IsReadOnly) return false;
             var dlg = new SaveFileDialog
             {
                 Filter = doc.Kind switch
@@ -1175,8 +1288,14 @@ namespace fire.Editor
             bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
             bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
 
+            bool alt = (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
+
             switch (key)
             {
+                case Key.Left when alt && ActiveDocument is { Markdown.IsReadOnly: true } mdDoc:
+                    NavigateHistory(mdDoc, -1); e.Handled = true; break;
+                case Key.Right when alt && ActiveDocument is { Markdown.IsReadOnly: true } mdDoc:
+                    NavigateHistory(mdDoc, +1); e.Handled = true; break;
                 case Key.F5 when ctrl:
                     Restart_Click(this, e); e.Handled = true; break;
                 case Key.F5 when shift:

@@ -29,9 +29,11 @@
                 <MenuItem Header="_Neues Skript" Click="New_Click" InputGestureText="Ctrl+N"/>
                 <MenuItem Header="Neues _Markdown-Dokument" Click="NewMarkdown_Click" InputGestureText="Ctrl+Umschalt+N"/>
                 <MenuItem Header="_Öffnen..." Click="Open_Click" InputGestureText="Ctrl+O"/>
-                <MenuItem Header="_Speichern" Click="Save_Click" InputGestureText="Ctrl+S"/>
-                <MenuItem Header="Speichern _unter..." Click="SaveAs_Click"/>
-                <MenuItem Header="_Alle speichern" Click="SaveAll_Click" InputGestureText="Ctrl+Umschalt+S"/>
+                <MenuItem Header="Open Markdown _Read-Only..." Click="OpenReadOnly_Click"/>
+                <MenuItem Header="Open Markdown in _Viewer..." Click="OpenViewer_Click"/>
+                <MenuItem Header="_Speichern" x:Name="mnuSave" Click="Save_Click" InputGestureText="Ctrl+S"/>
+                <MenuItem Header="Speichern _unter..." x:Name="mnuSaveAs" Click="SaveAs_Click"/>
+                <MenuItem Header="_Alle speichern" x:Name="mnuSaveAll" Click="SaveAll_Click" InputGestureText="Ctrl+Umschalt+S"/>
                 <MenuItem Header="Dokument _schließen" Click="CloseDocument_Click" InputGestureText="Ctrl+W"/>
                 <Separator/>
                 <MenuItem Header="Buildeinstellungen" Click="BuildSettings_Click"/>
@@ -102,6 +104,9 @@
                 <Separator/>
                 <MenuItem Header="_Layout zurücksetzen" Click="ResetLayout_Click"/>
             </MenuItem>
+            <MenuItem Header="?">
+                <MenuItem Header="_First Steps" Click="HelpFirstSteps_Click"/>
+            </MenuItem>
         </Menu>
 
         <ToolBarTray DockPanel.Dock="Top" IsLocked="False">
@@ -115,7 +120,7 @@
                 <Button Click="Open_Click" ToolTip="Öffnen... (Ctrl+O)">
                     <TextBlock Style="{StaticResource GlyphText}" Text="&#xE8E5;"/>
                 </Button>
-                <Button Click="Save_Click" ToolTip="Speichern (Ctrl+S)">
+                <Button x:Name="btnSave" Click="Save_Click" ToolTip="Speichern (Ctrl+S)">
                     <TextBlock Style="{StaticResource GlyphText}" Text="&#xE74E;"/>
                 </Button>
             </ToolBar>

@@ -24,6 +24,7 @@ namespace fire.Editor
         private static readonly Brush QuoteText = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55)).AsFrozen();
         private static readonly Brush TableBorder = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)).AsFrozen();
         private static readonly Brush TableHeader = new SolidColorBrush(Color.FromRgb(0xF0, 0xF0, 0xF0)).AsFrozen();
+        private readonly HashSet<string> _usedAnchors = new();
         private static readonly double[] HeadingSizes = { 30, 24, 20, 17, 15, 14 };
 
         /// <summary>Verzeichnis des Dokuments (für relative Bildpfade).</summary>
@@ -32,8 +33,13 @@ namespace fire.Editor
         /// <summary>Wird aufgerufen, wenn ein Link angeklickt wurde (Ziel wie im Dokument geschrieben).</summary>
         public Action<string>? LinkClicked { get; set; }
 
+        /// <summary>Heading blocks of the last rendered document by anchor (see <see cref="MdAnchors"/>), for links like `file.md#section`.</summary>
+        public Dictionary<string, Block> Anchors { get; } = new();
+
         public FlowDocument Render(string markdown)
         {
+            Anchors.Clear();
+            _usedAnchors.Clear();
             var doc = new FlowDocument
             {
                 FontFamily = new FontFamily("Segoe UI"),
@@ -67,6 +73,7 @@ namespace fire.Editor
                         p.Padding = new Thickness(0, 0, 0, 3);
                     }
                     AddInlines(p.Inlines, h.Content);
+                    Anchors[MdAnchors.Unique(MarkdownParser.PlainText(h.Content), _usedAnchors)] = p;
                     target.Add(p);
                     break;
                 }

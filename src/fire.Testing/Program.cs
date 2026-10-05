@@ -9261,6 +9261,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
     CheckDev("WaitForString: was vor dem Treffer lag, ist verbraucht; was danach kam, bleibt lesbar", """
         #import "devices"
+        #import "time"
         var d = Device.Default.EnsureConnected()
         d.WriteString("vorspann|nutzlast")
         print(d.WaitForString("|"))
@@ -9269,6 +9270,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         d.WriteString("zwei")
         print(d.WaitForString("ei"))
         print("[" + d.ReadString() + "]")
+        var tries = 0
+        while (!d.HasData() && tries < 200) { Sleep(TimeSpan.FromMilliseconds(10)); tries = tries + 1 }   // the echo of "zwei" arrives a moment later
         print("[" + d.ReadString() + "]")
         """, new[] { "True", "[nutzlast]", "True", "[ns]", "[zwei]" }, defaultId: "loopback:echo");
 
@@ -10849,6 +10852,48 @@ static int CountOccurrences(string haystack, string needle)
         idx += needle.Length;
     }
     return count;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Editor-Hilfe: Anker fuer Ueberschriften (Links wie "Datei.md#abschnitt") und die mitgelieferte "First Steps.md"
+// ---------------------------------------------------------------------------------------------------------------------------
+{
+    Console.WriteLine("=== Markdown-Anker und First Steps ===");
+    int mdFailures = 0;
+    void CheckMd(string title, string actual, string expected)
+    {
+        bool ok = actual == expected;
+        if (!ok) mdFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}\n  erwartet: {expected}\n  erhalten: {actual}");
+    }
+
+    CheckMd("Anker: Kleinbuchstaben, Leerzeichen zu Bindestrichen, Satzzeichen weg", fire.Editor.MdAnchors.Slug("First Steps!"), "first-steps");
+    CheckMd("Anker: Kommas und Zahlen", fire.Editor.MdAnchors.Slug("Variables, types and 2 units"), "variables-types-and-2-units");
+    var usedAnchors = new HashSet<string>();
+    CheckMd("Anker: erste Ueberschrift", fire.Editor.MdAnchors.Unique("Setup", usedAnchors), "setup");
+    CheckMd("Anker: zweite gleichnamige Ueberschrift bekommt -1", fire.Editor.MdAnchors.Unique("Setup", usedAnchors), "setup-1");
+    CheckMd("Anker: dritte gleichnamige Ueberschrift bekommt -2", fire.Editor.MdAnchors.Unique("Setup", usedAnchors), "setup-2");
+
+    // Jeder Link "(#anker)" der mitgelieferten Hilfeseite muss auf eine Ueberschrift zeigen.
+    string helpPath = Path.Combine(Path.GetDirectoryName(GetTestDataDir())!, "..", "fire.Editor", "First Steps.md");
+    if (File.Exists(helpPath))
+    {
+        string helpText = File.ReadAllText(helpPath);
+        var anchors = new HashSet<string>();
+        foreach (var block in fire.Editor.MarkdownParser.Parse(helpText))
+            if (block is fire.Editor.MdHeading h)
+                fire.Editor.MdAnchors.Unique(fire.Editor.MarkdownParser.PlainText(h.Content), anchors);
+        var missing = System.Text.RegularExpressions.Regex.Matches(helpText, @"\]\(#([^)]+)\)")
+            .Select(m => m.Groups[1].Value).Where(a => !anchors.Contains(a)).ToList();
+        CheckMd("First Steps.md: alle Inhaltsverzeichnis-Links zeigen auf Ueberschriften", string.Join(",", missing), "");
+    }
+    else
+    {
+        mdFailures++;
+        Console.WriteLine($"FEHLER: First Steps.md nicht gefunden: {helpPath}");
+    }
+
+    Console.WriteLine(mdFailures == 0 ? "Alle Markdown-Pruefungen bestanden." : $"FEHLER: {mdFailures} Markdown-Pruefung(en) fehlgeschlagen.");
 }
 
 static class PackerNativeProbe

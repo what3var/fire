@@ -636,4 +636,29 @@ namespace fire.Editor
             return sb.ToString();
         }
     }
+
+    /// <summary>Heading anchors the way GitHub makes them: lower case, punctuation removed, spaces become hyphens
+    /// ("## First Steps!" gives "first-steps"). Repeated headings get -1, -2 ... appended.</summary>
+    public static class MdAnchors
+    {
+        public static string Slug(string headingText)
+        {
+            var sb = new StringBuilder();
+            foreach (char c in headingText.Trim().ToLowerInvariant())
+            {
+                if (char.IsLetterOrDigit(c) || c == '-' || c == '_') sb.Append(c);
+                else if (c == ' ') sb.Append('-');
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>Like <see cref="Slug"/>, but numbered against anchors already handed out (`used` is extended).</summary>
+        public static string Unique(string headingText, ISet<string> used)
+        {
+            string slug = Slug(headingText);
+            string candidate = slug;
+            for (int n = 1; !used.Add(candidate); n++) candidate = slug + "-" + n;
+            return candidate;
+        }
+    }
 }

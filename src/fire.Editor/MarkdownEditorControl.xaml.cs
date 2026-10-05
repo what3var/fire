@@ -12,6 +12,10 @@ using ICSharpCode.AvalonEdit.Document;
 
 namespace fire.Editor
 {
+    /// <summary>How a Markdown document is opened: editable, read-only (editor and preview visible, no changes possible),
+    /// or as a pure viewer (only the rendered page, the editor is hidden).</summary>
+    public enum MarkdownViewMode { Edit, ReadOnly, Viewer }
+
     /// <summary>Editor für Markdown-Dokumente: AvalonEdit-Quelltext mit
     /// Markdown-Hervorhebung (siehe MarkdownColorizer; ```fire-Blöcke werden
     /// wie im Skript-Editor eingefärbt), Format-Knöpfe/-Kürzel, automatische
@@ -27,9 +31,25 @@ namespace fire.Editor
         public event Action? ModifiedChanged;
         public event Action<int>? CaretLineChanged;
 
-        /// <summary>Ein relativer Link der Vorschau (z.B. auf eine andere .md-/.fire-Datei) wurde
-        /// angeklickt - der Host öffnet die Datei in einem eigenen Tab. Parameter: vollständiger Pfad.</summary>
-        public event Action<string>? OpenFileRequested;
+        /// <summary>A link to a local file was clicked in the preview. Parameters: full path, anchor (heading, or null) and whether
+        /// the file should open in a new tab (Ctrl+click). The host decides what happens (see MainWindow.HandleMarkdownLink).</summary>
+        public event Action<string, string?, bool>? OpenFileRequested;
+
+        private MarkdownViewMode _mode = MarkdownViewMode.Edit;
+
+        /// <summary>Edit / read-only / viewer only. Set once after creation (and before showing the document).</summary>
+        public MarkdownViewMode Mode
+        {
+            get => _mode;
+            set
+            {
+                _mode = value;
+                ApplyMode();
+            }
+        }
+
+        public bool IsReadOnly => _mode != MarkdownViewMode.Edit;
+        private bool ViewerOnly => _mode == MarkdownViewMode.Viewer;
 
         public string? BaseDirectory => FilePath == null ? null : Path.GetDirectoryName(Path.GetFullPath(FilePath));
 
@@ -60,11 +80,11 @@ namespace fire.Editor
             EditorTheme.Apply(Editor, _searchPanel);
             Editor.ContextMenu = EditorCommands.BuildMenu(new List<EditorCommands.Entry?>
             {
-                new() { Header = "_Fett", Gesture = "Strg+B", Execute = () => Wrap("**") },
-                new() { Header = "_Kursiv", Gesture = "Strg+I", Execute = () => Wrap("*") },
-                new() { Header = "_Code", Gesture = "Strg+E", Execute = () => Wrap("`") },
-                new() { Header = "_Link", Gesture = "Strg+K", Execute = InsertLink },
-                new() { Header = "_Überschrift (Ebene wechseln)", Gesture = "Strg+H", Execute = CycleHeading },
+                new() { Header = "_Fett", Gesture = "Strg+B", Execute = () => Wrap("**"), Enabled = CanFormat },
+                new() { Header = "_Kursiv", Gesture = "Strg+I", Execute = () => Wrap("*"), Enabled = CanFormat },
+                new() { Header = "_Code", Gesture = "Strg+E", Execute = () => Wrap("`"), Enabled = CanFormat },
+                new() { Header = "_Link", Gesture = "Strg+K", Execute = InsertLink, Enabled = CanFormat },
+                new() { Header = "_Überschrift (Ebene wechseln)", Gesture = "Strg+H", Execute = CycleHeading, Enabled = CanFormat },
                 null,
             }.Concat(EditorCommands.StandardEntries(Editor, Find)).ToList());
 
@@ -86,7 +106,11 @@ namespace fire.Editor
 
         public string GetText() => Editor.Text;
         public int GetCaretLine() => Editor.TextArea.Caret.Line;
-        public void FocusEditor() => Editor.Focus();
+        public void FocusEditor()
+        {
+            if (ViewerOnly) Preview.Focus();
+            else Editor.Focus();
+        }
 
         // -----------------------------------------------------------
         // Bearbeiten (Menü des Hauptfensters, Kontextmenü)
@@ -94,22 +118,38 @@ namespace fire.Editor
 
         private ICSharpCode.AvalonEdit.Search.SearchPanel? _searchPanel;
 
-        public bool CanUndo => Editor.Document.UndoStack.CanUndo;
-        public bool CanRedo => Editor.Document.UndoStack.CanRedo;
-        public bool HasSelection => Editor.SelectionLength > 0;
+        public bool CanUndo => !IsReadOnly && Editor.Document.UndoStack.CanUndo;
+        public bool CanRedo => !IsReadOnly && Editor.Document.UndoStack.CanRedo;
+        public bool HasSelection => ViewerOnly ? !Preview.Selection.IsEmpty : Editor.SelectionLength > 0;
         public int LineCount => Editor.Document.LineCount;
 
         public void Undo() { Editor.Undo(); Editor.Focus(); }
         public void Redo() { Editor.Redo(); Editor.Focus(); }
         public void Cut() { Editor.Cut(); Editor.Focus(); }
-        public void Copy() { Editor.Copy(); Editor.Focus(); }
+        public void Copy()
+        {
+            if (ViewerOnly)
+            {
+                try { if (!Preview.Selection.IsEmpty) Clipboard.SetText(Preview.Selection.Text); }
+                catch (System.Runtime.InteropServices.COMException) { /* clipboard locked by another program */ }
+                return;
+            }
+            Editor.Copy();
+            Editor.Focus();
+        }
         public void Paste() { Editor.Paste(); Editor.Focus(); }
         public void Delete() { Editor.Delete(); Editor.Focus(); }
-        public void SelectAll() { Editor.SelectAll(); Editor.Focus(); }
+        public void SelectAll()
+        {
+            if (ViewerOnly) { Preview.Focus(); Preview.SelectAll(); return; }
+            Editor.SelectAll();
+            Editor.Focus();
+        }
         public void GoToLine(int line) => Editor.GoToLine(line);
 
         public void Find()
         {
+            if (ViewerOnly) return;
             Editor.Focus();
             _searchPanel?.Open();
         }
@@ -128,7 +168,7 @@ namespace fire.Editor
             Editor.ScrollToHome();
             RecomputeFences();
             RecomputeFireHighlighting();
-            UpdatePreview();
+            UpdatePreview(keepScroll: false);
             SetModified(false);
         }
 
@@ -181,7 +221,7 @@ namespace fire.Editor
 
         public bool PreviewVisible
         {
-            get => PreviewToggle.IsChecked == true;
+            get => ViewerOnly || PreviewToggle.IsChecked == true;
             set
             {
                 PreviewToggle.IsChecked = value;
@@ -189,12 +229,40 @@ namespace fire.Editor
             }
         }
 
-        public void TogglePreview() => PreviewVisible = !PreviewVisible;
+        public void TogglePreview()
+        {
+            if (!ViewerOnly) PreviewVisible = !PreviewVisible;
+        }
+
+        /// <summary>Applies <see cref="Mode"/>: editor read-only, formatting buttons disabled, or (viewer) the editor hidden altogether.</summary>
+        private void ApplyMode()
+        {
+            Editor.IsReadOnly = IsReadOnly;
+            foreach (var item in FormatBar.Items.OfType<Control>())
+                if (!ReferenceEquals(item, PreviewToggle)) item.IsEnabled = !IsReadOnly;
+            FormatBar.Visibility = ViewerOnly ? Visibility.Collapsed : Visibility.Visible;
+            ApplyPreviewVisibility();
+        }
 
         private void PreviewToggle_Click(object sender, RoutedEventArgs e) => ApplyPreviewVisibility();
 
         private void ApplyPreviewVisibility()
         {
+            if (ViewerOnly)
+            {
+                // only the rendered page: no editor, no splitter
+                Editor.Visibility = Visibility.Collapsed;
+                EditorColumn.Width = new GridLength(0);
+                Splitter.Visibility = Visibility.Collapsed;
+                SplitterColumn.Width = new GridLength(0);
+                Preview.Visibility = Visibility.Visible;
+                PreviewColumn.Width = new GridLength(1, GridUnitType.Star);
+                UpdatePreview();
+                return;
+            }
+            Editor.Visibility = Visibility.Visible;
+            EditorColumn.Width = new GridLength(1, GridUnitType.Star);
+
             if (PreviewVisible)
             {
                 Splitter.Visibility = Visibility.Visible;
@@ -213,7 +281,7 @@ namespace fire.Editor
             }
         }
 
-        private void UpdatePreview()
+        private void UpdatePreview(bool keepScroll = true)
         {
             if (!PreviewVisible) return;
             _renderer.BaseDirectory = BaseDirectory;
@@ -229,19 +297,34 @@ namespace fire.Editor
             {
                 // ohne Scroll-Erhalt weitermachen
             }
-            double offset = viewer?.VerticalOffset ?? 0;
+            double offset = keepScroll ? viewer?.VerticalOffset ?? 0 : 0;
 
             Preview.Document = _renderer.Render(Editor.Text);
 
             if (viewer != null && offset > 0)
                 Dispatcher.BeginInvoke(new Action(() => viewer.ScrollToVerticalOffset(offset)), DispatcherPriority.Loaded);
+            else if (viewer != null && !keepScroll)
+                Dispatcher.BeginInvoke(new Action(() => viewer.ScrollToHome()), DispatcherPriority.Loaded);
+        }
+
+        /// <summary>Scrolls the preview to the heading with the given anchor (GitHub style, see <see cref="MdAnchors"/>).</summary>
+        public bool ScrollToAnchor(string? anchor)
+        {
+            if (string.IsNullOrEmpty(anchor)) return false;
+            if (!_renderer.Anchors.TryGetValue(Uri.UnescapeDataString(anchor).ToLowerInvariant(), out var block)) return false;
+            Dispatcher.BeginInvoke(new Action(() => block.BringIntoView()), DispatcherPriority.Loaded);
+            return true;
         }
 
         private void HandleLink(string url)
         {
             try
             {
-                if (url.StartsWith("#")) return;
+                if (url.StartsWith("#"))
+                {
+                    ScrollToAnchor(url.Substring(1));
+                    return;
+                }
                 if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                     url.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
                     url.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase))
@@ -250,13 +333,14 @@ namespace fire.Editor
                     return;
                 }
 
-                string path = Uri.UnescapeDataString(url);
-                int hash = path.IndexOf('#');
-                if (hash >= 0) path = path.Substring(0, hash);
+                int hash = url.IndexOf('#');
+                string? anchor = hash >= 0 ? url.Substring(hash + 1) : null;
+                string path = Uri.UnescapeDataString(hash >= 0 ? url.Substring(0, hash) : url);
                 if (path.Length == 0) return;
                 if (!Path.IsPathRooted(path) && BaseDirectory != null) path = Path.Combine(BaseDirectory, path);
                 path = Path.GetFullPath(path);
-                if (File.Exists(path)) OpenFileRequested?.Invoke(path);
+                bool newTab = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+                if (File.Exists(path)) OpenFileRequested?.Invoke(path, anchor, newTab);
             }
             catch (Exception ex)
             {
@@ -293,6 +377,8 @@ namespace fire.Editor
         private static readonly Regex NumberPrefix = new(@"^(\s*)\d+[.)]\s+", RegexOptions.Compiled);
         private static readonly Regex QuotePrefix = new(@"^(\s*)>\s?", RegexOptions.Compiled);
         private static readonly Regex HeadingPrefix = new(@"^(#{1,6})\s+", RegexOptions.Compiled);
+
+        private bool CanFormat() => !IsReadOnly;
 
         private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_';
 
@@ -446,6 +532,12 @@ namespace fire.Editor
             bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
             bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
             bool alt = (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
+
+            if (IsReadOnly)
+            {
+                if (ctrl && shift && e.Key == Key.V) { TogglePreview(); e.Handled = true; }
+                return; // no formatting shortcuts or list continuation in a read-only document
+            }
 
             if (ctrl && !alt)
             {
