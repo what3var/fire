@@ -132,10 +132,39 @@ namespace fire.Editor
 
             foreach (var item in Items)
             {
-                _contextMenu.Items.Add(item);
+                if (item is MenuItem menuItem)
+                {
+                    
+                    var mItem = new MenuItem
+                    {
+                        Header = menuItem.Header,
+                        Icon = menuItem.Icon,
+                        InputGestureText = menuItem.InputGestureText,
+                        Command = menuItem.Command,
+                        CommandParameter = menuItem.CommandParameter
+                    };
+
+                    mItem.Click += (s, args) => menuItem.RaiseEvent(args);
+
+                    _contextMenu.Items.Add(mItem);
+                }
+                else if (item is Separator)
+                {
+                    _contextMenu.Items.Add(new Separator());
+                }
+                else
+                {
+                    var mItem = new MenuItem
+                    {
+                        Header = item,
+                    };
+                    _contextMenu.Items.Add(mItem);
+                }
             }
 
-            _contextMenu.PlacementTarget = _toggleButton;
+            //_contextMenu.ItemsSource = this.Items;
+
+            _contextMenu.PlacementTarget = this;
             _contextMenu.Placement = PlacementMode.Bottom;
 
             _contextMenu.Closed += ContextMenu_Closed;

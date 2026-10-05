@@ -575,9 +575,10 @@ namespace fire.Editor
             {
                 var config = FilePath != null ? fire.Native.NativeConfig.FindFor(FilePath) : new fire.Native.NativeConfig();
                 bool native = string.Equals(config.Engine, "native", StringComparison.OrdinalIgnoreCase);
+                var target = config.ResolveTarget();
                 _conditionalSymbols = native
-                    ? fire.Compiler.ConditionalSymbols.For(config.ResolveTarget(), "native", config.FloatWidth, config.Defines)
-                    : fire.Compiler.ConditionalSymbols.For(null, fire.Compiler.ConditionalSymbols.DefaultEngine, null, config.Defines);
+                    ? fire.Compiler.ConditionalSymbols.For(target, "native", target.FloatWidth, target.Native.Defines)
+                    : fire.Compiler.ConditionalSymbols.For(null, fire.Compiler.ConditionalSymbols.DefaultEngine, null, target.Native.Defines);
             }
             catch (Exception)
             {

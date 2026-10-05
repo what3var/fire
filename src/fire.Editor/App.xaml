@@ -59,23 +59,24 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="{x:Type local:SplitButton}">
-                            <Border BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
-                                BorderThickness="1">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="24" />
+                                        <ColumnDefinition Width="auto" />
                                     </Grid.ColumnDefinitions>
                                     <Button x:Name="PART_Button"
                                         Grid.Column="0"
                                         Content="{TemplateBinding Content}"
-                                        BorderThickness="0" />
+                                        VerticalAlignment="Stretch"
+                                        BorderThickness="0,0,1,0" BorderBrush="#404040" 
+                                        Background="Transparent"/>
                                     <ToggleButton x:Name="PART_ToggleButton"
-                                        Grid.Column="1"
-                                        BorderThickness="1,0,0,0">
+                                        Grid.Column="1" Content="▼" Padding="6" FontSize="8"
+                                        VerticalAlignment="Stretch" 
+                                        BorderThickness="0"
+                                        Background="Transparent">
                                     </ToggleButton>
                                 </Grid>
-                            </Border>
                         </ControlTemplate>
                     </Setter.Value>
                 </Setter>
