@@ -275,10 +275,11 @@ inline Value SlcSlice(Value id, Value lineWidth, Value pixelSize, Value overlap,
     if (s.lineWidth <= 0) { setError("Specified argument was out of the range of valid values."); return Int(-1); }
     std::vector<ToolPath> paths = s.slice(*t.framebuffers[(size_t)i]);
     Arr* outer = allocArr((uint32_t)paths.size(), list);
-    if (!paths.empty()) outer->parts = newPartsList(outer);
+    // the VM hands out plain arrays that live as long as something refers to them (the prelude puts the points into objects that outlive the call): here they
+    // belong to the global scope
     for (size_t k = 0; k < paths.size(); k++) {
-        Arr* entry = allocArr(3, outer->parts);
-        Arr* points = allocArr((uint32_t)paths[k].points.size() * 2, outer->parts);
+        Arr* entry = allocArr(3, g_globalOwn);
+        Arr* points = allocArr((uint32_t)paths[k].points.size() * 2, g_globalOwn);
         for (size_t j = 0; j < paths[k].points.size(); j++) { points->items()[2 * j] = Float((Real)paths[k].points[j].x); points->items()[2 * j + 1] = Float((Real)paths[k].points[j].y); }
         entry->items()[0] = Int(paths[k].kind);
         entry->items()[1] = Bool(paths[k].closed);

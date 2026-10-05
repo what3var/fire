@@ -555,7 +555,7 @@ inline Value StrV(const Str* s) { Value r; r.kind = K_String; r.width = 0; r.res
 inline Value ArrV(Arr* a) { Value r; r.kind = K_Array; r.width = 0; r.reserved = a->gen; r.unit = a->slot; r.p = a; return r; }
 inline Value BufV(Buf* b) { Value r; r.kind = K_Buffer; r.width = 0; r.reserved = b->gen; r.unit = b->slot; r.p = b; return r; }
 
-inline bool isRef(Value v) { return ((0x50u >> v.kind) & 1u) != 0; }  // String, Lambda (counted values)
+inline bool isRef(Value v) { return ((0x70u >> v.kind) & 1u) != 0; }  // String, Class, Lambda (counted values: an object is counted too, see "Objects that are destroyed but still referenced")
 inline Ref* refOf(Value v) { return static_cast<Ref*>(const_cast<void*>(v.p)); }
 inline const Str* strOf(Value v) { return static_cast<const Str*>(v.p); }
 inline Arr* arrOf(Value v) { return static_cast<Arr*>(const_cast<void*>(v.p)); }
@@ -564,20 +564,28 @@ inline Lam* lamOf(Value v) { return static_cast<Lam*>(const_cast<void*>(v.p)); }
 inline Value LamV(Lam* l) { Value r; r.kind = K_Lambda; r.width = 0; r.reserved = 0; r.unit = 0; r.p = l; return r; }
 
 inline void freeRef(Ref* r);
+inline void objReclaim(Owned* o);   // an object that is destroyed and not referenced any more
 
+/// A count on an object is a reference from a storage location (variable, parameter, field, array element), the temporary pool or a lambda. It does not keep the object alive:
+/// its owner still destroys it (SPEC 2). It keeps the *memory* of a destroyed object valid while something refers to it - the VM lets a destroyed object keep working.
 inline void retain(Value v) {
     if (isRef(v)) {
+        if (v.kind == K_Class) { static_cast<Owned*>(const_cast<void*>(v.p))->slot++; return; }
         Ref* r = refOf(v);
         if (r->rc != IMMORTAL) r->rc++;
     }
 }
 inline void release(Value v) {
     if (isRef(v)) {
+        if (v.kind == K_Class) {
+            Owned* o = static_cast<Owned*>(const_cast<void*>(v.p));
+            if (--o->slot == 0 && (o->flags & 1)) objReclaim(o);
+            return;
+        }
         Ref* r = refOf(v);
         if (r->rc != IMMORTAL && --r->rc == 0) freeRef(r);
     }
 }
-
 
 FIRE_COLD inline void poolGrow() {
     uint32_t cap = g_pool.cap ? g_pool.cap * 2 : 256;
@@ -590,11 +598,17 @@ inline void poolPush(Ref* r) {
     if (FIRE_UNLIKELY(g_pool.top == g_pool.cap)) poolGrow();
     g_pool.items[g_pool.top++] = r;
 }
+/// An object in the pool: the tag in the lowest bit of the pointer (a Ref is at least 8-byte aligned).
+inline void poolPushObj(Owned* o) { poolPush(reinterpret_cast<Ref*>(reinterpret_cast<uintptr_t>(o) | 1)); }
 inline uint32_t poolMark() { return g_pool.top; }
 inline void poolRelease(uint32_t mark) {
     while (g_pool.top > mark) {
         Ref* r = g_pool.items[--g_pool.top];
-        if (--r->rc == 0) freeRef(r);
+        uintptr_t tagged = reinterpret_cast<uintptr_t>(r);
+        if (tagged & 1) {
+            Owned* o = reinterpret_cast<Owned*>(tagged & ~static_cast<uintptr_t>(1));
+            if (--o->slot == 0 && (o->flags & 1)) objReclaim(o);
+        } else if (--r->rc == 0) freeRef(r);
     }
 }
 
@@ -926,30 +940,78 @@ inline void probeFree(Obj* o);   // the probes of an object that is destroyed (f
 inline void originFree(Obj* o);   // flags 4 (has `taking` copies) and 32 (is one): see the fire threads section
 #endif
 
-/// What was destroyed during a batch is freed when the outermost batch ends: a destructor sees every object of its scope in the state it was in when it was
-/// destroyed (fields and strings intact), like in the VM where a destroyed object keeps working.
+// ---------------------------------------------------------------------------------------------------------------------
+// Objects that are destroyed but still referenced. The owner of an object destroys it (SPEC 2: destructor, what it owns), but the VM lets a destroyed object keep
+// working: `items.Add(new Item())` in a function, the function returns, the item is destroyed - and `items[0].n` still reads it. So the memory of an object lives as long
+// as something refers to it. Every reference from a storage location (variable, parameter, field, array element), the temporary pool or a lambda is counted in `Owned::slot`.
+//  * destroyed and not referenced: freed - at the end of the *destroy batch* (the outermost destroy), so that destructors see the other objects of their scope;
+//  * destroyed but referenced: the object is in *limbo* (flag 128, a doubly linked list) until the last reference goes;
+//  * references between objects in limbo can form a cycle (`child.parent = parent`): now and then trial deletion over the limbo list frees what only limbo objects refer to.
+// ---------------------------------------------------------------------------------------------------------------------
+constexpr uint8_t F_LIMBO = 128;
+inline Owned* g_limboHead = nullptr;
+inline size_t g_limboCount = 0, g_limboThreshold = 1024;
+inline bool g_collecting = false;
+
+inline void limboAdd(Owned* o) {
+    o->flags |= F_LIMBO;
+    o->prev = nullptr;
+    o->next = g_limboHead;
+    if (g_limboHead) g_limboHead->prev = o;
+    g_limboHead = o;
+    g_limboCount++;
+}
+inline void limboRemove(Owned* o) {
+    if (o->prev) o->prev->next = o->next; else g_limboHead = o->next;
+    if (o->next) o->next->prev = o->prev;
+    o->prev = o->next = nullptr;
+    o->flags &= (uint8_t)~F_LIMBO;
+    g_limboCount--;
+}
+
+inline void collectLimbo();
+
+/// The objects to free when the outermost batch ends (chained through `next`).
 struct DestroyBatch {
     DestroyBatch() { g_zombies.depth++; }
     ~DestroyBatch() {
-        if (--g_zombies.depth > 0) return;
-        Owned* o = g_zombies.head;
-        g_zombies.head = nullptr;
-        while (o) {
-            Owned* next = o->next;
+        if (g_zombies.depth > 1) { g_zombies.depth--; return; }
+        // the outermost batch: free what was collected; letting go of the fields can release more objects, they are put on the same list
+        while (Owned* o = g_zombies.head) {
+            g_zombies.head = o->next;
             Obj* obj = static_cast<Obj*>(o);
             Value* f = obj->fields();
             for (uint32_t i = 0; i < obj->nfields; i++) release(f[i]);
 #ifndef FIRE_KEEP_DESTROYED
             std::free(obj);
 #endif
-            o = next;
         }
+        g_zombies.depth = 0;
+        if (g_limboCount >= g_limboThreshold && !g_collecting) collectLimbo();
     }
+};
+
+/// A destroyed object that nothing refers to any more.
+inline void objReclaim(Owned* o) {
+    if (o->flags & F_LIMBO) limboRemove(o);
+    DestroyBatch batch;
+    o->next = g_zombies.head;
+    g_zombies.head = o;
+}
+
+/// Keeps `this` valid while a method runs (the method may destroy its own object, or the owner of it).
+struct SelfGuard {
+    Value v;
+    explicit SelfGuard(Value x) : v(x) { retain(v); }
+    ~SelfGuard() { release(v); }
+    SelfGuard(const SelfGuard&) = delete;
+    SelfGuard& operator=(const SelfGuard&) = delete;
 };
 
 inline void destroy(Obj* o) {
     if (o->flags & 1) return;
     o->flags |= 1;
+    o->slot++;   // held while the object is destroyed: a destructor may retain and release `this`
     DestroyBatch batch;
     if (o->flags & 16) {
         // a copy that `taking` made for a fire thread: its original still lives, the destructor is not run for the copy
@@ -967,8 +1029,8 @@ inline void destroy(Obj* o) {
 #ifdef FIRE_THREADS
     if (FIRE_UNLIKELY(o->flags & 44)) originFree(o);   // an original with copies (4), an actor (8), or a copy that knows its original (32)
 #endif
-    o->next = g_zombies.head;   // freed with the batch
-    g_zombies.head = o;
+    if (--o->slot == 0) { o->next = g_zombies.head; g_zombies.head = o; }   // freed with the batch
+    else { if (o->owner) unlink(o); limboAdd(o); }
 }
 
 /// Destroys everything on the list, in creation order, and empties it.
@@ -984,6 +1046,77 @@ inline void destroyList(OwnList* list) {
         o = next;
     }
 }
+
+/// Trial deletion over the limbo objects: a limbo object that is referenced only by other limbo objects that nothing outside refers to is garbage. Objects that are
+/// referenced from outside (a count that the fields of limbo objects do not explain) and everything they refer to stay.
+struct OwnedStack {
+    Owned** items = nullptr;
+    size_t count = 0, cap = 0;
+    ~OwnedStack() { std::free(items); }
+    void push(Owned* o) {
+        if (count == cap) {
+            cap = cap ? cap * 2 : 64;
+            items = static_cast<Owned**>(std::realloc(items, cap * sizeof(Owned*)));
+            if (!items) fatal("out of memory");
+        }
+        items[count++] = o;
+    }
+    bool empty() const { return count == 0; }
+    Owned* pop() { return items[--count]; }
+};
+
+inline void collectLimbo() {
+    g_collecting = true;
+    constexpr uint32_t MARK = 0x80000000u, GARBAGE = 0xFFFFFFFFu;
+    auto scratch = [](Owned* o) -> uint32_t& { return static_cast<Obj*>(o)->owned.mark; };
+    auto limboTarget = [](Value v) -> Owned* {
+        if (v.kind != K_Class) return nullptr;
+        Owned* t = static_cast<Owned*>(const_cast<void*>(v.p));
+        return (t->flags & F_LIMBO) ? t : nullptr;
+    };
+    for (Owned* o = g_limboHead; o; o = o->next) scratch(o) = o->slot;
+    for (Owned* o = g_limboHead; o; o = o->next) {
+        Obj* obj = static_cast<Obj*>(o);
+        for (uint32_t i = 0; i < obj->nfields; i++) if (Owned* t = limboTarget(obj->fields()[i])) scratch(t)--;
+    }
+    OwnedStack work;
+    for (Owned* o = g_limboHead; o; o = o->next) if (scratch(o) > 0) { scratch(o) |= MARK; work.push(o); }
+    while (!work.empty()) {
+        Obj* obj = static_cast<Obj*>(work.pop());
+        for (uint32_t i = 0; i < obj->nfields; i++)
+            if (Owned* t = limboTarget(obj->fields()[i])) if (!(scratch(t) & MARK)) { scratch(t) |= MARK; work.push(t); }
+    }
+    OwnedStack garbage;
+    for (Owned* o = g_limboHead; o; o = o->next) if (!(scratch(o) & MARK)) garbage.push(o);
+    for (size_t g = 0; g < garbage.count; g++) scratch(garbage.items[g]) = GARBAGE;
+    for (size_t g = 0; g < garbage.count; g++) {
+        Owned* o = garbage.items[g];
+        Obj* obj = static_cast<Obj*>(o);
+        for (uint32_t i = 0; i < obj->nfields; i++) {
+            Value v = obj->fields()[i];
+            if (v.kind == K_Class && scratch(static_cast<Owned*>(const_cast<void*>(v.p))) == GARBAGE) continue;   // freed with this one
+            release(v);
+        }
+    }
+    for (size_t g = 0; g < garbage.count; g++) { Owned* o = garbage.items[g]; limboRemove(o); o->slot = 0; static_cast<Obj*>(o)->owned.mark = 0;
+#ifndef FIRE_KEEP_DESTROYED
+        std::free(o);
+#endif
+    }
+    g_limboThreshold = std::max<size_t>(1024, g_limboCount * 2);
+    g_collecting = false;
+}
+
+#ifdef FIRE_CHECK_LIMBO
+/// Test aid: at the end of the program nothing may be left in limbo (a left-over is a count that was never released).
+struct LimboReport {
+    ~LimboReport() {
+        if (g_limboCount > 0 && !g_collecting) collectLimbo();
+        if (g_limboCount > 0) std::fprintf(stderr, "limbo: %zu object(s) left\n", g_limboCount);
+    }
+};
+inline LimboReport g_limboReport;
+#endif
 
 /// An array or buffer is destroyed: what it holds is released, the inner arrays it owns are destroyed, its handle expires.
 inline void destroyLeaf(Owned* o) {
@@ -1022,7 +1155,12 @@ inline void transferOut(Value v, OwnList* list) {
 /// The caller takes over what came back from a call: an object, array or buffer without an owner, or a string/lambda that the
 /// callee retained for the trip (that count now belongs to the scope's pool).
 inline void adopt(Value v, OwnList* list) {
-    if (Owned* o = ownedOf(v)) {
+    if (v.kind == K_Class) {
+        // the count that came with the value (retained for the trip) now belongs to the pool; an object that is still alive and has no owner belongs to the scope
+        Owned* o = static_cast<Owned*>(const_cast<void*>(v.p));
+        if (!o->owner && !(o->flags & 1)) link(list, o);
+        poolPushObj(o);
+    } else if (Owned* o = ownedOf(v)) {
         if (!o->owner) link(list, o);
     } else if (isRef(v)) {
         Ref* r = refOf(v);
@@ -2973,7 +3111,7 @@ inline void postJob(Value lam, const Value* args, uint32_t n) {
     if (!j->args || !j->holder) allocFailed();
     *j->holder = {nullptr, nullptr, 0, nullptr, nullptr};
     for (uint32_t i = 0; i < n; i++) {
-        if (args[i].kind == K_Class) j->args[i] = deepCopy(args[i], j->holder);
+        if (args[i].kind == K_Class) { j->args[i] = deepCopy(args[i], j->holder); retain(j->args[i]); }
         else { j->args[i] = args[i]; retain(args[i]); }
     }
     g_reqs.push_back({nullptr, j});

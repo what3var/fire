@@ -14329,7 +14329,7 @@ static int CountOccurrences(string haystack, string needle)
             File.WriteAllText(probeFile, "int main() { return 0; }\n");
             using var probe = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cxx, $"-fsanitize=address,undefined \"{probeFile}\" -o \"{probeFile}.bin\"") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false })!;
             probe.StandardError.ReadToEnd(); probe.StandardOutput.ReadToEnd(); probe.WaitForExit();
-            if (probe.ExitCode == 0 && System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(probeFile + ".bin") { UseShellExecute = false, RedirectStandardError = true }) is { } run) { run.StandardError.ReadToEnd(); run.WaitForExit(); if (run.ExitCode == 0) sanitize = "-fsanitize=address,undefined -fno-sanitize-recover=undefined "; }
+            if (probe.ExitCode == 0 && System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(probeFile + ".bin") { UseShellExecute = false, RedirectStandardError = true }) is { } run) { run.StandardError.ReadToEnd(); run.WaitForExit(); if (run.ExitCode == 0) sanitize = "-fsanitize=address,undefined -fno-sanitize-recover=undefined -DFIRE_CHECK_LIMBO "; }
         }
         Console.WriteLine(sanitize.Length > 0 ? "(die Faelle laufen unter AddressSanitizer/UBSan)" : "(Sanitizer nicht verfuegbar)");
 
