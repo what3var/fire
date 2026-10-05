@@ -6156,6 +6156,49 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         print("end")
         """, new[] { "3", "free b0", "free b1", "b2", "13", "42", "5 child", "4", "6", "8", "free child", "end", "free b2" });
 
+    CheckPerf("return in ineinander liegenden finally-Bloecken: die Bewohner des Stacks bleiben fuer das naechste finally liegen", """
+        class T {
+            static int Nested(int n) {
+                try {
+                    n = n + 0
+                } finally {
+                    try {
+                        try {
+                        } finally {
+                            if (n > 1) { return 1 }
+                        }
+                    } finally {
+                        if (n > 0) { return 4 }
+                    }
+                }
+            }
+            static int WithLoops(int n) {
+                var xs = [1, 2, 3]
+                try {
+                    foreach (x in xs) {
+                        try {
+                            foreach (y in xs) {
+                                try { if (y == n) { return x * 10 + y } } finally { if (n == 3) { return 99 } }
+                            }
+                        } finally {
+                            n = n + 0
+                        }
+                    }
+                } finally {
+                    foreach (z in xs) { if (z == 2 && n == 0) { return 77 } }
+                }
+                return -1
+            }
+        }
+        print(T.Nested(2))
+        print(T.Nested(1))
+        print(T.Nested(0))
+        print(1 + T.WithLoops(1) + 2)
+        print(T.WithLoops(2))
+        print(T.WithLoops(3))
+        print(T.WithLoops(0))
+        """, new[] { "4", "4", "undefined", "14", "12", "99", "77" });
+
     // --- Value: Gleichheit und Arithmetik (kompaktes Layout, Schnellpfade)
     CheckPerf("Gleichheit: Art, Einheit und Breite", """
         print(1 == 1)
@@ -12742,6 +12785,48 @@ static int CountOccurrences(string haystack, string needle)
             try { print(Util.Pass(Util.Make(8))[0]) } catch (e) { print("died with the callee") }
             delete h
             print("end")
+            """),
+        ("return in ineinander liegenden finally-Bloecken und foreach", """
+            class T {
+                static int Nested(int n) {
+                    try {
+                        n = n + 0
+                    } finally {
+                        try {
+                            try {
+                            } finally {
+                                if (n > 1) { return 1 }
+                            }
+                        } finally {
+                            if (n > 0) { return 4 }
+                        }
+                    }
+                }
+                static int WithLoops(int n) {
+                    var xs = [1, 2, 3]
+                    try {
+                        foreach (x in xs) {
+                            try {
+                                foreach (y in xs) {
+                                    try { if (y == n) { return x * 10 + y } } finally { if (n == 3) { return 99 } }
+                                }
+                            } finally {
+                                n = n + 0
+                            }
+                        }
+                    } finally {
+                        foreach (z in xs) { if (z == 2 && n == 0) { return 77 } }
+                    }
+                    return -1
+                }
+            }
+            print(T.Nested(2))
+            print(T.Nested(1))
+            print(T.Nested(0))
+            print(1 + T.WithLoops(1) + 2)
+            print(T.WithLoops(2))
+            print(T.WithLoops(3))
+            print(T.WithLoops(0))
             """),
         ("Besitz: #performance prueft zerstoerte Arrays nicht (FIRE_UNCHECKED), Ergebnis wie die VM", """
             #performance

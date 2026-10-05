@@ -139,6 +139,8 @@ namespace fire.Compiler
             public TryPhase Phase;
             public int OuterDepth;
             public int LoopCount;
+            /// <summary>Anzahl der Stack-Bewohner (siehe _residents) beim Betreten des `try`: sie liegen unter dem Stand, auf den der Handler den Stack zurücksetzt.</summary>
+            public int ResidentsAtStart;
 
             /// <summary>Stellen (Operanden von `Jump`), die in den `finally`-Block springen und noch auf seine Adresse warten.</summary>
             public readonly List<int> FinallyJumpPatches = new();
@@ -1167,7 +1169,13 @@ namespace fire.Compiler
                         }
                     // Bewohner des Stacks (die Enumeratoren der umgebenden `foreach`, die Abschlüsse der umgebenden `finally`-Blöcke) liegen unter dem
                     // Rückgabewert: sonst blieben sie dort liegen und verschöben die Operanden des Aufrufers (`1 + f()` mit einem `return` im `foreach` von `f`).
-                    for (int r = _residents.Count - 1; r >= 0; r--)
+                    // Liegt ein `try` mit `finally` offen, fängt `DoReturn` das `return` dort ab und setzt den Stack auf den Stand zurück, den dessen Handler beim Betreten
+                    // hatte: die Bewohner darunter (z.B. der Abschluss eines umgebenden `finally`) gehören dem `finally`-Block, der gleich läuft, und bleiben liegen -
+                    // erst das `return` ohne offenes `try` nimmt alle weg.
+                    int keepResidents = 0;
+                    for (int k = _tryStack.Count - 1; k >= 0; k--)
+                        if (_tryStack[k].Stmt.Finally != null) { keepResidents = _tryStack[k].ResidentsAtStart; break; }
+                    for (int r = _residents.Count - 1; r >= keepResidents; r--)
                         for (int n = 0; n < _residents[r]; n++)
                         {
                             _chunk.EmitOp(OpCode.Swap);
@@ -1658,7 +1666,7 @@ namespace fire.Compiler
             _chunk.EmitOp(OpCode.RegisterHandler);
             _chunk.EmitU16(templateIdx);
 
-            var tryContext = new TryCompileContext { Stmt = t, Phase = TryPhase.Try, OuterDepth = _currentScopeDepth, LoopCount = _loopStack.Count };
+            var tryContext = new TryCompileContext { Stmt = t, Phase = TryPhase.Try, OuterDepth = _currentScopeDepth, LoopCount = _loopStack.Count, ResidentsAtStart = _residents.Count };
             _tryStack.Add(tryContext);
             CompileBlockNewScope(t.TryBlock);
             _tryStack.RemoveAt(_tryStack.Count - 1);
