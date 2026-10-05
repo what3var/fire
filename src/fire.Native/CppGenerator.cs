@@ -255,10 +255,10 @@ namespace fire.Native
             foreach (var f in _funcs) sb.AppendLine(f.Signature + ";");
             foreach (var f in _funcs.Where(f => f.Kind == FuncKind.Lambda))
                 sb.AppendLine(f.ThunkSignature + " { " + (f.ParamCount == 0 ? "(void)a; " : "") + $"return {f.Name}(lam{string.Concat(Enumerable.Range(0, f.ParamCount).Select(i => $", a[{i}]"))}); }}");
-            foreach (var name in _fieldNames) sb.AppendLine($"static inline Value gf_{Mangle(name)}(Value v);").AppendLine($"static inline void sf_{Mangle(name)}(Value v, Value x);");
+            foreach (var name in _fieldNames) sb.AppendLine($"[[maybe_unused]] static inline Value gf_{Mangle(name)}(Value v);").AppendLine($"[[maybe_unused]] static inline void sf_{Mangle(name)}(Value v, Value x);");
             foreach (var (name, argc) in _dispatchers) sb.AppendLine(DispatcherSignature(name, argc) + ";");
-            sb.AppendLine("static inline Value aget_g(Value a, Value i, OwnList* list);");
-            sb.AppendLine("static inline void aset_g(Value a, Value i, Value v, OwnList* list);");
+            sb.AppendLine("[[maybe_unused]] static inline Value aget_g(Value a, Value i, OwnList* list);");
+            sb.AppendLine("[[maybe_unused]] static inline void aset_g(Value a, Value i, Value v, OwnList* list);");
             sb.AppendLine();
 
             foreach (var name in _fieldNames) sb.AppendLine(FieldHelpers(name));

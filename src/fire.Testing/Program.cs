@@ -12178,6 +12178,68 @@ static int CountOccurrences(string haystack, string needle)
                 print(e.message)
             }
             """),
+        ("Ausnahmen: try in Konstruktor, Lambda und foreach, Zeichenketten beim Werfen", """
+            class Bad : Exception { string message; construct(string m) { this.message = m } }
+            class Thing {
+                string state
+                int value
+                construct(int v) {
+                    this.state = "init"
+                    try {
+                        if (v < 0) { throw new Bad("negative") }
+                        this.value = v
+                        this.state = "ok"
+                    } catch (Bad b) {
+                        this.value = 0
+                        this.state = "recovered " + b.message
+                        return
+                    } finally {
+                        print("ctor finally " + v)
+                    }
+                    print("ctor end " + v)
+                }
+                destruct() {
+                    try { print("dtor " + this.state) } finally { print("dtor fin") }
+                }
+            }
+            var a = new Thing(5)
+            var b = new Thing(-1)
+            print(a.state + " / " + b.state)
+            var f = (int x) => {
+                try {
+                    if (x == 0) { throw new Bad("zero") }
+                    return 100 / x
+                } catch (e) {
+                    return -1
+                } finally {
+                    print("lambda fin " + x)
+                }
+            }
+            print(f(0))
+            print(f(4))
+            var words = ["a", "b", "c"]
+            var out = ""
+            foreach (w in words) {
+                try {
+                    if (w == "b") { throw new Bad("b!") }
+                    out = out + w
+                } catch (e) {
+                    out = out + "[" + e.message + "]"
+                }
+            }
+            print(out)
+            // exception thrown while building a string, temporaries must not leak or crash
+            var s = ""
+            for (var i = 0; i < 20; i = i + 1) {
+                try {
+                    s = s + "x" + i
+                    if (i % 7 == 6) { throw new Bad("seven " + s) }
+                } catch (Bad e) {
+                    s = e.message + "|"
+                }
+            }
+            print(s)
+            """),
         ("Benchmark alloc", """
             class Point {
                 int x
