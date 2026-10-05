@@ -1,0 +1,132 @@
+# Packages and `ember`
+
+fire can import more than the libraries that come with the compiler (`graphics`, `io`, `time`, ...): a **package** brings one or more imports of its own, for example the
+interface to a sensor, a protocol or an operating system API. `#import "name"` finds the imports of the installed packages like the built-in ones.
+
+`ember` is the package manager (project `fire.Package.Manager`, product and program name `ember`). The editor has a small window for it
+(*File > Package Manager (ember)...*).
+
+## Using packages
+
+```
+ember find sensor          search the package sources (a part of a name or description; no name: everything)
+ember install sensorkit    install the newest version (and what it depends on); sensorkit@1.2.0 installs that version
+ember install kit.fpk      install a package file
+ember list                 the installed packages
+ember remove sensorkit     remove a package (not one that another installed package needs)
+```
+
+Packages are installed **for the machine**: below `Packages\<name>\` in the folder of the compiler (the folder of `ember` itself). Every script sees the same packages.
+A script uses an import of a package like any other:
+
+```
+#import "sensorkit"
+print(SensorKit.Read(3))
+```
+
+An import that is not installed is an error that points to `ember`. The live diagnostics of the editor know the installed imports; after the Package Manager window
+installed or removed something, the open scripts are checked again.
+
+### Sources
+
+`ember find` and `ember install` look in the *package sources*. `ember.json` next to the compiler lists them; without the file these are
+the folder `PackageSource` next to the compiler and the index on the GitHub page of the packages:
+
+```json
+{ "sources": [ "PackageSource", "https://what3var.github.io/fire-packages/index.json", "D:\\my-packages\\index.json" ] }
+```
+
+A source is a **folder** (`.fpk` files, and/or an `index.json`) or an **index** (an address of the web, a `file:` address or the path of a json file). The index:
+
+```json
+{
+  "packages": [
+    { "name": "sensorkit", "author": "Jane", "description": "Sensors on the I2C bus",
+      "versions": [ { "version": "1.0.0", "url": "sensorkit-1.0.0.fpk", "sha256": "..." } ] }
+  ]
+}
+```
+
+The `url` is relative to the index or absolute; `sha256` (optional) is checked after the download. `ember index Folder [BaseUrl]` writes the `index.json` for the `.fpk`
+files of a folder, ready to be put on a web page together with them. A source that cannot be read (no network) is reported and skipped.
+
+## The package file (.fpk)
+
+A `.fpk` is a zip file with a `package.json` in its root and the files that it names (paths relative to the root of the zip):
+
+```json
+{
+  "format": 1,
+  "name": "sensorkit",
+  "version": "1.0.0",
+  "author": "Jane",
+  "description": "Sensors on the I2C bus",
+  "license": "MIT",
+  "homepage": "https://example.com/sensorkit",
+  "dependencies": [ "otherpackage" ],
+  "imports": [
+    {
+      "name": "sensorkit",
+      "prelude": "sensorkit/sensorkit.fire",
+      "requires": [ "io" ],
+      "native": {
+        "sources": [ "sensorkit/sensorkit.hpp" ],
+        "platforms": [ "posix", "freertos" ],
+        "functions": [ { "name": "__sk_read", "arguments": 1, "cpp": "sk_read", "needsList": false, "returnsReference": false } ]
+      }
+    }
+  ]
+}
+```
+
+* `imports`: the names for `#import "name"` (letters, digits, `_`; not case sensitive; not one of the compiler: `print graphics windows devices io ui linq reflection time`).
+  A package can bring several. An import can have a **prelude**, **natives**, or both. A package that is only a prelude is allowed.
+* `requires`: other imports (of the compiler or of packages) that this one switches on, like `ui` switches on `graphics`.
+* `dependencies`: other *packages* that `ember install` installs too.
+
+### The prelude
+
+Fire source that is added to the program by `#import` - classes, functions, `namespace`s - like the preludes of the compiler's libraries. It works in the virtual machine and in
+native builds.
+
+### Natives (C++)
+
+`native.sources` are C++ files, `native.functions` lists the functions that fire code can call by `name` (typically the prelude calls them, but a script may too).
+Natives only exist in the **native backend** (`fire native`): the generated file contains the text of the source files after the runtime and the bridges, outside of any
+namespace. A file includes what it needs and puts its functions into `namespace fire`; a native is
+
+```cpp
+#include <cmath>
+namespace fire {
+inline Value mk_hypot(Value a, Value b) { return Float((Real)std::hypot((double)toR(a), (double)toR(b))); }
+}
+```
+
+taking `Value`s (`arguments` of them) and returning a `Value` (see `native/runtime/fire_rt.hpp` and the bridges in `native/bridges/` for what is available: `Int`, `Float`,
+`Bool`, strings, `allocArr`, exceptions such as `indexError`, ...). With `"needsList": true` the function gets the list of the calling scope as an extra last argument
+(`OwnList* list`): what it allocates for its result (arrays, buffers) belongs to the caller; set `"returnsReference": true` when the result is such a value.
+`platforms` names the platform packages (`posix`, `windows`, `freertos`, ...) the C++ is written for; a build for another target is refused (empty: all).
+
+The virtual machine cannot run C++: it knows the names, a call is an error ("only available in a native build"). A package that wants to run in both has to
+write its prelude so that the natives are only used where the native backend is the engine (`#if native`, SPEC 8.1.7).
+
+## Making packages
+
+```
+ember create Kit.json      a description with example values and the example files (a prelude and a C++ native) next to it
+ember blank Kit.json       a description with all fields there but empty
+ember forge Kit.json       builds the package: Kit.json\..\build\name-version.fpk   (-o Dir: another folder)
+```
+
+The file that `forge` reads (the *forge file*) is the same description as the `package.json`, but its paths are **absolute** (or relative to the file itself): they say where the
+prelude and the C++ files are on this machine. `forge` puts every file below a folder of its import in the zip, writes the `package.json` with the relative paths, and keeps a copy of the forge
+file - with absolute paths - in `Dir\json\name-version.json`. Open that file later to forge the package again (`ember forge Dir\json\name-version.json`).
+
+## Where it is in the code
+
+* `src/fire.Package.Manager`: the manifest (`PackageManifest`), the package file (`Fpk`), the installed packages (`PackageStore`), the sources (`FolderSource`, `IndexSource`),
+  install/remove (`PackageManagerService`) and the command line (`Program`). The compiler and the editor use this assembly.
+* The compiler keeps the imports of packages in its set of imports under the key `pkg:name` (`PackageStore.KeyPrefix`): `ImportedPreludes` resolves `#import`, inserts the prelude
+  and registers the names of the natives; `LinkedProgram.PackageNatives` carries those names so that a run in the virtual machine (also of a packed program) keeps the
+  indexes of the native calls right.
+* The native generator (`CppGenerator.CollectPackages`) checks the platforms, puts the C++ sources into the generated file and calls the functions.

@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\fire\fire.csproj" />
+    <ProjectReference Include="..\fire.Package.Manager\fire.Package.Manager.csproj" />
   </ItemGroup>
 
   <ItemGroup>

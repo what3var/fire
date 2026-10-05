@@ -191,6 +191,8 @@ namespace fire.Compiler
             if (linkedProgram.NativeImports.Contains(NativeImports.IO))
                 ioResources = fire.IO.Bridge.IoBridge.RegisterAll(natives, ioPolicy, ioStdio);
 
+            PackageImports.RegisterForRun(natives, linkedProgram.PackageNatives);   // the natives of imports of packages: names only (they are C++)
+
             var globalScope = new Scope(null, isGlobal: true);
             
             var mainVm = new VM(linkedProgram.Program.TopLevel, globalScope, natives, linkedProgram.Program.Classes,

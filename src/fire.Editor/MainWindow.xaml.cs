@@ -1501,6 +1501,15 @@ namespace fire.Editor
             return config;
         }
 
+        /// <summary>The package manager (ember): packages bring imports (`#import "name"`); after a change the open scripts are checked again (an import may have become available or gone).</summary>
+        private void PackageManager_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new PackageManagerDialog { Owner = this };
+            dialog.ShowDialog();
+            if (dialog.Changed)
+                foreach (var doc in _documents) doc.Script?.Revalidate();
+        }
+
         private void NativeBuildSettings_Click(object sender, RoutedEventArgs e)
         {
             fire.Native.NativeConfig config;
