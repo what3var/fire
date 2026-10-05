@@ -18,13 +18,36 @@ namespace fire.Values
     /// Skript-Exception werfen" ein Konzept der VM/des Interpreters ist,
     /// keins dieser reinen Datenstruktur.
     /// </summary>
-    public sealed class ScriptArray
+    public sealed class ScriptArray : fire.Runtime.IOwnedLeaf
     {
         public Value[] Items { get; }
 
+        /// <summary>Der Owner (SPEC 2): ein Scope oder ein Objekt; null fuer ein Array, das ausserhalb der VM entstand und nie zerstoert wird.</summary>
+        public fire.Runtime.IOwner? LeafOwner { get; set; }
+
+        /// <summary>Zerstoert (der Owner wurde verlassen/zerstoert oder `delete`): der Zugriff ist ein Fehler (Debug/Release).</summary>
+        public bool IsDestroyed { get; private set; }
+
+        /// <summary>Innere Arrays einer mehrdimensionalen Allokation (`new int[3][4]`): sie gehoeren zum aeusseren Array und werden mit ihm zerstoert.</summary>
+        public System.Collections.Generic.List<fire.Runtime.IOwnedLeaf>? Parts { get; set; }
+
+        public void MarkDestroyed()
+        {
+            if (IsDestroyed) return;
+            IsDestroyed = true;
+            Special = true;
+            LeafOwner = null;
+            if (Parts != null) foreach (var part in Parts) part.MarkDestroyed();
+            Parts = null;
+        }
+
         /// <summary>Wurde dieses Array von einem Fire-Thread über die Globals erreicht (siehe GlobalsBroker)? Dann gehört es zum geteilten
         /// Bereich: Elementzugriffe laufen unter dem Baum-Lock, und ein Fire-Thread ändert Elemente nur innerhalb einer Sektion.</summary>
-        public bool IsShared { get; set; }
+        public bool IsShared { get => _shared; set { _shared = value; Special = value || IsDestroyed; } }
+        private bool _shared;
+
+        /// <summary>Geteilt oder zerstoert: die Schnellpfade der VM (Elementzugriff) nehmen dann den langsamen Weg, der beides beachtet.</summary>
+        public bool Special { get; private set; }
         public int Length => Items.Length;
 
         public ScriptArray(int length)

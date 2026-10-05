@@ -41,6 +41,14 @@ namespace fire.Standard
                 }
             }
 
+            class DestroyedException : Exception {
+                string message
+
+                construct(string message) {
+                    this.message = message
+                }
+            }
+
             class AccessDeniedException : Exception {
                 string message
 
@@ -149,6 +157,28 @@ namespace fire.Standard
                 }
             }
 
+            // The enumerator of a List: reads through the list, so it stays valid when the list grows (its backing array is replaced).
+            class ListIter : IEnumerator {
+                class list
+                int count
+                int index
+
+                construct(class list, int count) {
+                    this.list = list
+                    this.count = count
+                    this.index = -1
+                }
+
+                MoveNext() {
+                    this.index = this.index + 1
+                    return this.index < this.count
+                }
+
+                GetCurrent() {
+                    return this.list.items[this.index]
+                }
+            }
+
             class List : IEnumerable {
                 class items
                 int count
@@ -198,11 +228,15 @@ namespace fire.Standard
                         newItems[i] = this.items[i]
                         i = i + 1
                     }
+                    // the new array belongs to the list (a local array dies with this method), the old one is released
+                    var old = this.items
                     this.items = newItems
+                    newItems.TakeTo(this)
+                    delete old
                 }
 
                 GetEnumerator() {
-                    return new ListEnumerator(this.items, this.count)
+                    return new ListIter(this, this.count)
                 }
             }
             """;

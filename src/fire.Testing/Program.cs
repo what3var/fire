@@ -6305,6 +6305,68 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         Console.WriteLine(refOk ? $"OK: ref-Parameter: Fehler '{refMessage}'" : $"FEHLER: ref-Parameter: erwartet '{refMessage}', erhalten '{refResult}'");
     }
 
+    CheckPerf("Arrays und Puffer im Besitzmodell: Scope, Feld, return, TakeTo/TakeGlobal/Take, delete, zerstoerte Benutzung, innere Arrays", """
+        class Holder {
+            int data[]
+            construct() { this.data = [1, 2, 3] }
+            Fill() { var tmp = new int[2]; tmp[0] = 7; this.data = tmp; tmp.TakeTo(this) }
+            Bad() { var tmp = new int[2]; this.data = tmp }
+        }
+        class Res { string n; construct(string n) { this.n = n } destruct() { print("free " + this.n) } }
+        class Make {
+            static int[] Create() { var a = [4, 5, 6]; return a }
+            static int[] Pair() { var a = new int[2]; { var b = new int[1]; b.TakeUpwards(); a[0] = b[0] } return a }
+        }
+        var h = new Holder()
+        print(h.data[1])
+        h.Fill()
+        print(h.data[0])
+        var r = Make.Create()
+        print(r[2])
+        var p = Make.Pair()
+        print(p.length)
+        h.Bad()
+        try { print(h.data[0]) } catch (DestroyedException e) { print("destroyed: " + e.message) }
+        var x = [1, 2]
+        delete x
+        try { print(x[0]) } catch (e) { print("after delete: " + e.message) }
+        try { print(x.length) } catch (e) { print("len: " + e.message) }
+        var m = new int[2][3]
+        m[1][2] = 9
+        print(m[1][2])
+        delete m
+        try { print(m[0]) } catch (e) { print("matrix gone") }
+        var b = new byte[4]
+        b[1] = 5
+        b.TakeGlobal()
+        print(b[1])
+        {
+            var inner = [9, 9]
+            inner.Take()
+            var r2 = new Res("r2")
+            r2.Take()
+        }
+        print("end")
+        var rr = new Res("kept")
+        delete rr
+        print("last")
+        {
+            var tmp = [1]
+            tmp.TakeGlobal()
+            var g = tmp
+        }
+        print("done")
+        class Cell { int vals[]; construct() { this.vals = new int[3]; this.vals[0] = 5 } }
+        var c = new Cell()
+        print(c.vals[0])
+        var grid = [[1, 2], [3, 4]]
+        print(grid[1][0])
+        class Fn { static int[][] Make() { return [[7, 8], [9]] } }
+        print(Fn.Make()[0][1])
+        var words = "a,b,c".Split(",")
+        print(words.length)
+        """, new[] { "2", "7", "6", "2", "destroyed: Access to a destroyed array.", "after delete: Access to a destroyed array.", "len: Access to a destroyed array.", "9", "matrix gone", "5", "free r2", "end", "free kept", "last", "done", "5", "3", "8", "3" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
+
     CheckPerf("Objekte: Ownership und Destruktor pro Schleifendurchlauf", """
         class D { int id; construct(int id) { this.id = id } destruct() { print("d" + this.id) } }
         for (var i = 0; i < 3; i = i + 1) { var d = new D(i) }
@@ -10129,7 +10191,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         """, new[] { "mk fin", "5", "mk2 fin", "6", "res fin", "11", "second", "~Box 5", "~Box 6" });
 
     CheckLq("Arrays sind IEnumerable: is of, GetEnumerator, foreach, fluent LINQ direkt auf dem Array (class extends array)", linqHead + """
-        class Bag : IEnumerable { GetEnumerator() { return new ListEnumerator([1, 2], 2) } }
+        class Bag : IEnumerable { GetEnumerator() { var items = [1, 2]; var e = new ListEnumerator(items, 2); items.TakeTo(e); return e } }
         class T {
             static Count(class src) { var n = 0; foreach (x in src) { n = n + 1 } return n }
             static Run() {
@@ -12392,7 +12454,7 @@ static int CountOccurrences(string haystack, string needle)
                     for (var i = 0; i < n; i = i + 1) { s = s + i }
                 }
                 static Pick(ref string s, string alt) { if (s == "") { s = alt } return s }
-                static Fill(ref arr) { arr = [1, 2, 3] }
+                static Fill(ref arr) { var made = [1, 2, 3]; made.TakeGlobal(); arr = made }
                 static int Step(ref int n) { n = n - 1; return n }
             }
             var words = ["x", "y", "z"]

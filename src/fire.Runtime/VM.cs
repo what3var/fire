@@ -1809,6 +1809,7 @@ namespace fire.Runtime
             var indexVal = Pop();
             var target = Pop();
             long idx = indexVal.AsInt();
+            if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return; }
 
             if (target.Kind == ValueKind.Array)
             {
@@ -2104,6 +2105,9 @@ namespace fire.Runtime
                             for (var sc = _currentScope; sc != null && !ReferenceEquals(sc, handler.TargetScope); sc = sc.Parent)
                                 if (ReferenceEquals(sc, ownerScope)) { retInstance.ReparentTo(_frames.Peek().ReturnScope); break; }
                     }
+                    if (_frames.Count > 0 && LeafOf(retVal) is { LeafOwner: Scope leafOwnerScope })
+                        for (var sc = _currentScope; sc != null && !ReferenceEquals(sc, handler.TargetScope); sc = sc.Parent)
+                            if (ReferenceEquals(sc, leafOwnerScope)) { LeafOwnership.Reparent(LeafOf(retVal)!, _frames.Peek().ReturnScope); break; }
                     UnwindTo(handler.FrameDepthAtEntry, handler.TargetScope);
                     if (_sp > handler.StackPointer) _sp = handler.StackPointer;
                     Push(retVal);
@@ -2129,6 +2133,10 @@ namespace fire.Runtime
                 if (retInstance.Owner is Scope retOwner && OwnsWithinCall(retOwner))
                     retInstance.ReparentTo(_frames.Peek().ReturnScope);
             }
+
+            // dasselbe fuer ein zurueckgegebenes Array/einen Puffer
+            if (_frames.Count > 0 && LeafOf(retVal) is { LeafOwner: Scope leafOwner } returnedLeaf && OwnsWithinCall(leafOwner))
+                LeafOwnership.Reparent(returnedLeaf, _frames.Peek().ReturnScope);
 
             ReleaseCallScopes();
 
@@ -2299,6 +2307,7 @@ namespace fire.Runtime
             {
                 if (fieldName is "Length" or "length")
                 {
+                    if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return false; }
                     Push(Value.MakeInt(target.AsArray().Length));
                     return true;
                 }
@@ -2310,6 +2319,7 @@ namespace fire.Runtime
                 var buf = target.AsBuffer();
                 if (fieldName is "Length" or "length")
                 {
+                    if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return false; }
                     Push(Value.MakeInt(buf.Length));
                     return true;
                 }
@@ -2667,9 +2677,15 @@ namespace fire.Runtime
                     }
                 }
 
+                if (LeafOf(target) is { } ownedLeaf && TryCallLeafOwnershipMethod(ownedLeaf, methodName, args))
+                {
+                    Push(Value.MakeUndefined());
+                    return;
+                }
                 if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
                 if (TryCallBuiltinMethod(target, methodName, args, out Value builtinResult))
                 {
+                    AdoptFresh(builtinResult);
                     Push(builtinResult);
                     return;
                 }
@@ -2760,8 +2776,48 @@ namespace fire.Runtime
                 case "TakeTo" when args.Length == 1:
                     obj.TakeTo(RequireObjectInstance(args[0], "TakeTo"), this);
                     return true;
+                case "Take" when args.Length == 0:
+                    // in den aktuellen Scope ziehen (der Scope, in dem der Aufruf steht)
+                    if (obj.IsDestroyed) throw new OwnershipException("A destroyed object cannot change its owner.");
+                    obj.ReparentTo(_currentScope);
+                    return true;
                 default:
                     return false;
+            }
+        }
+
+        /// <summary>Die Ownership-Methoden eines Arrays oder Puffers (SPEC 2.2): TakeUpwards, TakeGlobal, TakeTo(objekt), Take().</summary>
+        private bool TryCallLeafOwnershipMethod(IOwnedLeaf leaf, string name, Value[] args)
+        {
+            switch (name)
+            {
+                case "TakeUpwards" when args.Length == 0: LeafOwnership.TakeUpwards(leaf); return true;
+                case "TakeGlobal" when args.Length == 0: LeafOwnership.Reparent(leaf, _globalScope); return true;
+                case "TakeTo" when args.Length == 1: LeafOwnership.TakeTo(leaf, RequireObjectInstance(args[0], "TakeTo")); return true;
+                case "Take" when args.Length == 0: LeafOwnership.Reparent(leaf, _currentScope); return true;
+                default: return false;
+            }
+        }
+
+        /// <summary>`delete x`: zerstoert ein Objekt (Destruktor, Kaskade), ein Array oder einen Puffer sofort und loest es von seinem Owner.</summary>
+        private void DeleteValue(Value v)
+        {
+            switch (v.Kind)
+            {
+                case ValueKind.Class:
+                {
+                    var obj = (ObjectInstance)v.AsObjectRef();
+                    if (obj.IsDestroyed) return;
+                    obj.Owner.RemoveOwned(obj);
+                    obj.Destroy(this);
+                    return;
+                }
+                case ValueKind.Array:
+                case ValueKind.Buffer:
+                    LeafOwnership.Destroy(LeafOf(v)!);
+                    return;
+                default:
+                    throw new InvalidOperationException($"'delete' expects an object, an array or a buffer, not {v.Kind}.");
             }
         }
 
@@ -3054,7 +3110,9 @@ namespace fire.Runtime
             long size = Pop().AsInt();
             if (size < 0)
                 throw new InvalidOperationException($"Invalid array size {size}.");
-            Push(Value.MakeArray(new ScriptArray((int)size)));
+            var created = new ScriptArray((int)size);
+            LeafOwnership.Adopt(created, _currentScope);
+            Push(Value.MakeArray(created));
             return;
         }
         }
@@ -3066,6 +3124,7 @@ namespace fire.Runtime
             var arr = new ScriptArray(count);
             for (int i = count - 1; i >= 0; i--)
                 arr.Items[i] = Pop();
+            LeafOwnership.Adopt(arr, _currentScope);
             Push(Value.MakeArray(arr));
             return;
         }
@@ -3081,7 +3140,7 @@ namespace fire.Runtime
                 var fastArray = fastTarget.AsArray();
                 var items = fastArray.Items;
                 long i = fastIndex.AsInt();
-                if ((ulong)i < (ulong)items.Length && !fastArray.IsShared)
+                if ((ulong)i < (ulong)items.Length && !fastArray.Special)
                 {
                     fastTarget = items[i];
                     _sp--;
@@ -3096,6 +3155,7 @@ namespace fire.Runtime
         {
             var indexVal = Pop();
             var target = Pop();
+            if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return; }
 
             if (target.Kind == ValueKind.Array && target.AsArray().IsShared)
             {
@@ -3196,7 +3256,7 @@ namespace fire.Runtime
                 var fastArray = fastTarget.AsArray();
                 var items = fastArray.Items;
                 long i = fastIndex.AsInt();
-                if ((ulong)i < (ulong)items.Length && !fastArray.IsShared)
+                if ((ulong)i < (ulong)items.Length && !fastArray.Special)
                 {
                     var assigned = _stack[_sp - 1];
                     items[i] = assigned;
@@ -3214,6 +3274,7 @@ namespace fire.Runtime
             var value = Pop();
             var indexVal = Pop();
             var target = Pop();
+            if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); return; }
 
             if (target.Kind == ValueKind.Array && target.AsArray().IsShared)
             {
@@ -3486,6 +3547,7 @@ namespace fire.Runtime
                     // meldet das über den Rückgabewert 'false', nicht über
                     // einen Wurf; das Skript sieht dafür einfach 'undefined'.
                     bool success = _natives.TryableAt(tryableIdx)(args, out Value tryResult);
+                    if (success) AdoptFresh(tryResult);
                     Push(success ? tryResult : Value.MakeUndefined());
                     PollSignalsAfterOp();
                     break;
@@ -3706,6 +3768,49 @@ namespace fire.Runtime
                     break;
                 }
 
+                case OpCode.MakeArrayLiteralParts:
+                {
+                    int count = ReadU16();
+                    uint mask = (uint)ReadU16();
+                    mask |= (uint)ReadU16() << 16;
+                    var arr = new ScriptArray(count);
+                    for (int i = count - 1; i >= 0; i--) arr.Items[i] = Pop();
+                    for (int i = 0; i < count; i++)
+                        if ((mask >> i & 1) != 0 && LeafOf(arr.Items[i]) is { } part)
+                            LeafOwnership.AttachPart(arr, part);   // der innere gehoert jetzt dem aeusseren, nicht mehr dem Scope, der ihn eben erzeugt hat
+                    LeafOwnership.Adopt(arr, _currentScope);
+                    Push(Value.MakeArray(arr));
+                    break;
+                }
+
+                case OpCode.NewJagged:
+                {
+                    int ranks = ReadByte();
+                    var sizes = new long[ranks];
+                    for (int i = ranks - 1; i >= 0; i--) sizes[i] = Pop().AsInt();
+                    foreach (long size in sizes)
+                        if (size < 0) throw new InvalidOperationException($"Invalid array size {size}.");
+                    var parts = new List<IOwnedLeaf>();
+                    var outer = BuildJagged(sizes, 0, parts);
+                    outer.Parts = parts.Count > 0 ? parts : null;
+                    LeafOwnership.Adopt(outer, _currentScope);
+                    Push(Value.MakeArray(outer));
+                    break;
+                }
+
+                case OpCode.OwnValue:
+                {
+                    var value = Pop();
+                    var owner = RequireObjectInstance(Pop(), "Assigning an array to a field");
+                    if (LeafOf(value) is { } leaf) LeafOwnership.TakeTo(leaf, owner);
+                    Push(value);
+                    break;
+                }
+
+                case OpCode.Delete:
+                    DeleteValue(Pop());
+                    break;
+
                 case OpCode.RequireRefParam:
                 {
                     int slot = ReadU16();
@@ -3719,6 +3824,7 @@ namespace fire.Runtime
                 {
                     long idx = Pop().AsInt();
                     var target = Pop();
+                    if (IsDestroyedLeaf(target)) { ThrowDestroyed(target); break; }
                     if (target.Kind == ValueKind.Array)
                     {
                         var arr = target.AsArray();
@@ -3764,7 +3870,9 @@ namespace fire.Runtime
                     long size = Pop().AsInt();
                     if (size < 0)
                         throw new InvalidOperationException($"Invalid byte buffer size {size} (must be >= 0).");
-                    Push(Value.MakeBuffer(new ByteBuffer((int)size, ByteConversions.HostByteOrder)));
+                    var createdBuffer = new ByteBuffer((int)size, ByteConversions.HostByteOrder);
+                    LeafOwnership.Adopt(createdBuffer, _currentScope);
+                    Push(Value.MakeBuffer(createdBuffer));
                     break;
                 }
 
@@ -5012,6 +5120,7 @@ namespace fire.Runtime
                     _nativeRedirected = false;
                     return false;
                 }
+                AdoptFresh(result);
                 return true;
             }
             catch (NativeIndexOutOfRangeException ex)
@@ -5036,6 +5145,48 @@ namespace fire.Runtime
             string msg = $"{what} {index} out of range (length {length}).";
             var args = new[] { Value.MakeString(msg), Value.MakeInt(index), Value.MakeInt(length) };
             var instance = ConstructNested(rc, args);
+            ThrowException(Value.MakeClassRef(instance));
+        }
+
+        /// <summary>Ein Array/Puffer, den eine eingebaute oder native Funktion frisch erzeugt hat (noch ohne Owner), gehoert dem aktuellen Scope.</summary>
+        private void AdoptFresh(Value v)
+        {
+            if (LeafOf(v) is { LeafOwner: null, IsDestroyed: false } leaf) LeafOwnership.Adopt(leaf, _currentScope);
+        }
+
+        /// <summary>Legt ein mehrdimensionales Array an; die inneren Arrays kommen in <paramref name="parts"/> (sie gehoeren dem aeusseren).</summary>
+        private static ScriptArray BuildJagged(long[] sizes, int level, List<IOwnedLeaf> parts)
+        {
+            var array = new ScriptArray((int)sizes[level]);
+            if (level + 1 < sizes.Length)
+                for (int i = 0; i < array.Length; i++)
+                {
+                    var inner = BuildJagged(sizes, level + 1, parts);
+                    parts.Add(inner);
+                    array.Items[i] = Value.MakeArray(inner);
+                }
+            return array;
+        }
+
+        /// <summary>Der Wert als besitzbares Blatt (Array oder Puffer), sonst null.</summary>
+        private static IOwnedLeaf? LeafOf(Value v) => v.Kind switch
+        {
+            ValueKind.Array => v.AsArray(),
+            ValueKind.Buffer => v.AsBuffer(),
+            _ => null,
+        };
+
+        /// <summary>Ist der Wert ein zerstoerter Array/Puffer, dessen Benutzung geprueft wird (nicht im Performance-Modus)?</summary>
+        private bool IsDestroyedLeaf(Value v) =>
+            v.Kind is ValueKind.Array or ValueKind.Buffer && ExecutionMode != VmExecutionMode.Performance
+            && (v.Kind == ValueKind.Array ? v.AsArray().IsDestroyed : v.AsBuffer().IsDestroyed);
+
+        /// <summary>Benutzung eines zerstoerten Arrays/Puffers: eine fangbare `DestroyedException` (Prelude).</summary>
+        private void ThrowDestroyed(Value leaf)
+        {
+            var rc = ResolveClass("DestroyedException");
+            string what = leaf.Kind == ValueKind.Buffer ? "buffer" : "array";
+            var instance = ConstructNested(rc, new[] { Value.MakeString($"Access to a destroyed {what}.") });
             ThrowException(Value.MakeClassRef(instance));
         }
 

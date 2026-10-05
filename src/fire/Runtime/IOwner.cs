@@ -13,5 +13,9 @@ namespace fire.Runtime
         IReadOnlyList<ObjectInstance> OwnedObjects { get; }
         void AddOwned(ObjectInstance obj);
         void RemoveOwned(ObjectInstance obj);
+
+        /// <summary>Arrays und Puffer, die diesem Owner gehoeren (siehe <see cref="IOwnedLeaf"/>).</summary>
+        void AddLeaf(IOwnedLeaf leaf);
+        void RemoveLeaf(IOwnedLeaf leaf);
     }
 }

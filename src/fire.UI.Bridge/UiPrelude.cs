@@ -537,10 +537,10 @@ namespace fire.UI.Bridge
                     bool Tick() {
                         this.Draw()
                         var open = this.window.Tick()
-                        var e = this.window.NextEvent()
-                        while (e != undefined) {
+                        while (true) {
+                            var e = this.window.NextEvent()   // (declared in the loop: the event array belongs to this iteration)
+                            if (e == undefined) { break }
                             this.Dispatch(e)
-                            e = this.window.NextEvent()
                         }
                         if (!open) { this.closed = true }
                         return open

@@ -111,20 +111,27 @@ lexer error.
 ## 2. Ownership model
 
 Every object instance (`class`) has **exactly one owner**: either a scope (block/function/global) or another object instance.
+**Arrays and byte buffers** (`new int[n]`, `[1, 2]`, `new byte[n]`) are part of the model as well (2.5): they also have exactly one owner, but they own nothing themselves
+(the elements of an array do not change their owner). Strings and the basic types are plain values and have no owner.
 
 ### 2.1 Initial owner on creation (`new Foo()`)
 
 - If the new object is **assigned directly to a field of another object** (`obj1.Foo = new Bar()`), the owner is immediately `obj1`.
 - In all other cases (local variable, parameter value, expression) the owner is the **current scope**.
 - This also applies to the initializer of an instance field (`Item it = new Item(1)` in the class body) and to a bare field name in a class (`field = new X()` instead of `this.field = new X()`): the object belongs to the instance. (It used to belong to the initializer/method scope there and was destroyed when that scope was left, although the field still pointed to it.)
+- Arrays and buffers follow the same rule: `obj.items = new int[8]`, `obj.items = [1, 2]`, `obj.data = new byte[4]`, a bare `items = ...` in a class and a field initializer give the array to the
+  object; everywhere else (a variable, an argument, a return value, the result of a native function such as `text.Split(",")`) it belongs to the **current scope**. An array that is made **in one
+  expression together with inner arrays** (`new int[3][4]`, `[[1, 2], [3]]`) owns them: the inner arrays live and die with the outer one. An array that is only assigned to an element later
+  (`a[i] = new int[2]`) does not change its owner.
 - The same rule applies to lambda values: direct field assignment → owner is the object; otherwise → current scope. The `on` binding (this context, see 4.2) is independent of this and does not change the owner.
 
 ### 2.2 Ownership transfer (member functions on object instances)
 
+- `obj.Take()` – the owner becomes the **current scope** (the scope that contains the call).
 - `obj.TakeUpwards()` – the owner becomes the parent scope of the current owner scope (only meaningful if the current owner is a scope).
 - `obj.TakeGlobal()` – the owner becomes the global scope.
 - `obj.TakeTo(other)` – the owner becomes `other` (an object instance).
-- All three are built-in methods of every object instance (a class that declares a method of the same name itself takes precedence). A function can thereby keep an object that belongs to it (e.g. a copy passed as a parameter, 2.4): `param.TakeTo(this)`.
+- All four are built-in methods of every object instance - and of every array and buffer (`TakeTo(obj)` needs an object as the target; a class that declares a method of the same name itself takes precedence). A function can thereby keep an object that belongs to it (e.g. a copy passed as a parameter, 2.4): `param.TakeTo(this)`.
 - **Cycle protection:** `TakeTo(other)` checks whether `other` is transitively already a "descendant" (directly or indirectly owned) of `obj`. If so: run-time error instead of a cycle in the ownership tree.
 - **Race with an ongoing deletion:** If `other` (the target of `TakeTo`) is itself currently in cascade deletion (its own owner was just destroyed, its `destruct()` cascade is already running), the transfer is treated as if it had happened one second *before* the start of that deletion: `obj` is also taken into the running cascade immediately and deleted along with it (including the `destruct()` call), instead of remaining behind as an orphan with a half-destroyed owner.
 - Variable bindings (name → value) themselves do **not** move – only object ownership is transferable.
@@ -144,6 +151,26 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   safety net the host additionally closes all streams that are still open at the end (`IoBridge.RegisterAll(...).Dispose()`). A destructor should never
   throw: an unhandled error in it ends the program (the `IO` destructors therefore swallow IO errors).
 - **Exception `return`:** If an object instance is returned from a local scope via `return`, *and* that scope was its owner, the ownership implicitly passes to the calling/parent scope (no cascade deletion in this case).
+  The same holds for an array or a buffer.
+
+### 2.5 Arrays and buffers in the ownership model, `delete`
+
+- An **array or buffer is destroyed** when its owner is destroyed or left (a scope is left, an object is deleted) and when `delete` is applied to it. Destroying it releases its memory; nothing runs
+  (there is no destructor), the inner arrays it owns (2.1) are destroyed with it.
+- **Using a destroyed array or buffer is an error**: reading, writing, `Length` and `foreach` throw a catchable `DestroyedException` in the execution modes Debug and Release. In `#performance` mode
+  nothing is checked (the behaviour is undefined; natively that is a read of freed memory). A destroyed **object** keeps working as before (SPEC 2.4: a shallow copy may point to one).
+- A reference does not keep anything alive: `this.items = tmp` does **not** move `tmp` to the object - `tmp` still belongs to the scope and dies with it. The owner has to be changed explicitly:
+  `tmp.TakeTo(this)`. The same holds for an array that is stored in a variable of an outer scope in a loop body (`e = Next()` inside a loop: `e.TakeUpwards()`, or declare it in the loop).
+- **`delete expression`** destroys an object, an array or a buffer at once and detaches it from its owner: for an object the destructor runs and everything it owns is destroyed (2.3), exactly as if its owner
+  had been left. Variables that still refer to it see a destroyed object (see above). `delete` on anything else is a run-time error. `delete` is a word only in front of a name on the same line.
+
+```
+var a = new int[4]
+delete a
+print(a[0])                 // DestroyedException
+
+class Cache { int items[]; Grow() { var bigger = new int[8]; this.items = bigger; bigger.TakeTo(this) } }
+```
 
 ### 2.4 Copying: `flat` and `copy`
 

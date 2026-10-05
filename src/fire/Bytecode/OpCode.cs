@@ -177,6 +177,10 @@ namespace fire.Bytecode
         SetTimeout,          //                     : pop v; `#timeout wert` setzt die Standard-Wartezeit der Warte-Funktionen (wird am Programmanfang emittiert)
 
         // Bewusst am Ende angehaengt (stabile Zahlenwerte).
+        NewJagged,           // u8 rankCount : pop rankCount Groessen (aeusserste zuerst gepusht); push das mehrdimensionale Array (`new int[3][4]`), die inneren gehoeren dem aeusseren
+        MakeArrayLiteralParts, // u16 count, u16 maskLo, u16 maskHi : wie MakeArrayLiteral; Bit i der Maske: Element i ist ein im Literal selbst erzeugtes Array/Puffer und gehoert dem neuen Array
+        OwnValue,            //                     : pop Wert (Array/Puffer), pop Owner-Objekt; der Owner uebernimmt den Wert (frisch erzeugt, direkt einem Feld zugewiesen, SPEC 2.1); push den Wert
+        Delete,              //                     : pop Wert; zerstoert ein Objekt, ein Array oder einen Puffer sofort (`delete x`, SPEC 2.5)
         RequireRefParam,     // u16 slot, u16 nameConstIdx : prueft, dass der `ref`-Parameter im Slot (Tiefe 0) einen Zeiger haelt (der Aufrufer hat eine Variable uebergeben), sonst Fehler
         AddressOfIndex,      //                     : pop index, pop Array/Puffer; push Pointer auf das Element (Argument fuer einen `ref`-Parameter, SPEC 5.4.2)
     }

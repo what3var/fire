@@ -47,6 +47,7 @@ namespace fire.Runtime
 
         // Die besessenen Kinder (siehe OwnedSet): die meisten Objekte besitzen keins, die übrigen meist genau eins.
         private OwnedSet _owned;
+        private List<IOwnedLeaf>? _leaves; // besessene Arrays und Puffer
         private bool _destroyed;
 
         public bool IsDestroyed => _destroyed;
@@ -212,6 +213,8 @@ namespace fire.Runtime
             else if (ThreadLock != null) obj.ActivateThreadSharing(ThreadLock);
         }
         public void RemoveOwned(ObjectInstance obj) => _owned.Remove(obj);
+        public void AddLeaf(IOwnedLeaf leaf) => (_leaves ??= new List<IOwnedLeaf>()).Add(leaf);
+        public void RemoveLeaf(IOwnedLeaf leaf) => _leaves?.Remove(leaf);
 
         // -----------------------------------------------------------
         // Ownership-Transfer: TakeUpwards / TakeGlobal / TakeTo (SPEC 2.2)
@@ -329,6 +332,7 @@ namespace fire.Runtime
                 runner.RunDestructor(this);
 
             _owned.DestroyAll(runner);
+            LeafOwnership.DestroyAll(_leaves);
 
             // Ein zerstörtes Objekt gehört niemandem mehr: sein bisheriger Owner (meist eine Scope, die gleich wiederverwendet wird)
             // darf nicht länger auf es zeigen. `Owner` bleibt nie null - ein Platzhalter nimmt Anfragen an den toten Besitzer entgegen.

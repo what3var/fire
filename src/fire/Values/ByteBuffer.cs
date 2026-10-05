@@ -21,9 +21,14 @@ namespace fire.Values
     /// Host-Architektur übernommen (siehe VM.HostByteOrder - zur Laufzeit
     /// per Bit-Trick ermittelt, kein Compile-Flag).
     /// </summary>
-    public sealed class ByteBuffer
+    public sealed class ByteBuffer : fire.Runtime.IOwnedLeaf
     {
         public byte[] Bytes { get; }
+
+        /// <summary>Der Owner (SPEC 2), siehe <see cref="ScriptArray.LeafOwner"/>.</summary>
+        public fire.Runtime.IOwner? LeafOwner { get; set; }
+        public bool IsDestroyed { get; private set; }
+        public void MarkDestroyed() { IsDestroyed = true; LeafOwner = null; }
         public ByteOrder Order { get; set; }
         public int Length => Bytes.Length;
 

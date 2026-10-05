@@ -1172,6 +1172,11 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.Return);
                     break;
 
+                case DeleteStmt del:
+                    CompileExpr(del.Target);
+                    _chunk.EmitOp(OpCode.Delete);
+                    break;
+
                 case ThrowStmt th:
                     CompileExpr(th.Value);
                     _chunk.EmitOp(OpCode.Throw);
@@ -1630,51 +1635,14 @@ namespace fire.Compiler
         /// nicht den Array-WERT, auf den sie gerade noch gezeigt haben.</summary>
         private void CompileArrayAlloc(IReadOnlyList<Expr?> ranks, int rankIndex)
         {
-            CompileExpr(ranks[rankIndex]!);
-            _chunk.EmitOp(OpCode.NewArray);
-
-            bool hasNextRank = rankIndex + 1 < ranks.Count && ranks[rankIndex + 1] != null;
-            if (!hasNextRank) return;
-
-            _chunk.EmitOp(OpCode.EnterScope);
-            _chunk.EmitOp(OpCode.DeclareLocal); // Slot 0: äußeres Array (konsumiert den Stack-Top)
-            EmitLoadConst(Value.MakeInt(0));
-            _chunk.EmitOp(OpCode.DeclareLocal); // Slot 1: Schleifenindex i
-
-            int loopStart = _chunk.Here;
-            _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(1); // i
-            _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(0); // arr
-            _chunk.EmitOp(OpCode.GetField);
-            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString("length")));
-            _chunk.EmitOp(OpCode.Lt);
-            _chunk.EmitOp(OpCode.JumpIfFalse);
-            int endJumpAt = _chunk.Here;
-            _chunk.EmitU16(0);
-
-            // arr[i] = <rekursiv alloziertes inneres Array>
-            _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(0); // arr
-            _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(1); // i
-            CompileArrayAlloc(ranks, rankIndex + 1);
-            _chunk.EmitOp(OpCode.ArraySet);
-            _chunk.EmitOp(OpCode.Pop); // ArraySet lässt den zugewiesenen Wert auf dem Stack (wie jede Zuweisung) - hier als Statement verwerfen
-
-            // i = i + 1
-            _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(1);
-            EmitLoadConst(Value.MakeInt(1));
-            _chunk.EmitOp(OpCode.Add);
-            _chunk.EmitOp(OpCode.StoreLocal); _chunk.EmitU16(0); _chunk.EmitU16(1);
-            _chunk.EmitOp(OpCode.Pop); // StoreLocal lässt den zugewiesenen Wert auf dem Stack - verwerfen
-
-            _chunk.EmitOp(OpCode.Jump);
-            _chunk.EmitU16(loopStart);
-
-            _chunk.PatchU16(endJumpAt, _chunk.Here);
-
-            // Fertiges äußeres Array vor dem ExitScope zurück auf den Stack
-            // (siehe Doc-Kommentar oben - unbedenklich, da Arrays nicht am
-            // Ownership-System hängen).
-            _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(0);
-            _chunk.EmitOp(OpCode.ExitScope);
+            // Alle Raenge mit Groesse (bis zum ersten ohne): jede Groesse wird EINMAL ausgewertet, NewJagged legt das ganze Gebilde an.
+            // Die inneren Arrays gehoeren dem aeusseren (SPEC 2.5) - sie leben und sterben mit ihm.
+            int sized = 0;
+            while (rankIndex + sized < ranks.Count && ranks[rankIndex + sized] != null) sized++;
+            for (int i = 0; i < sized; i++) CompileExpr(ranks[rankIndex + i]!);
+            if (sized == 1) { _chunk.EmitOp(OpCode.NewArray); return; }
+            _chunk.EmitOp(OpCode.NewJagged);
+            _chunk.EmitByte((byte)sized);
         }
 
         private void CompileTry(TryStmt t)
@@ -1867,8 +1835,23 @@ namespace fire.Compiler
 
                 case ArrayLiteralExpr al:
                     foreach (var el in al.Elements) CompileExpr(el);
-                    _chunk.EmitOp(OpCode.MakeArrayLiteral);
-                    _chunk.EmitU16(al.Elements.Count);
+                    // ein im Literal selbst erzeugtes Array/Puffer (`[[1, 2], [3]]`) gehoert dem aeusseren (SPEC 2.5)
+                    uint partMask = 0;
+                    if (al.Elements.Count <= 32)
+                        for (int i = 0; i < al.Elements.Count; i++)
+                            if (al.Elements[i] is ArrayLiteralExpr or NewArrayExpr or NewBufferExpr) partMask |= 1u << i;
+                    if (partMask == 0)
+                    {
+                        _chunk.EmitOp(OpCode.MakeArrayLiteral);
+                        _chunk.EmitU16(al.Elements.Count);
+                    }
+                    else
+                    {
+                        _chunk.EmitOp(OpCode.MakeArrayLiteralParts);
+                        _chunk.EmitU16(al.Elements.Count);
+                        _chunk.EmitU16((int)(partMask & 0xFFFF));
+                        _chunk.EmitU16((int)(partMask >> 16));
+                    }
                     break;
 
                 case InterpolatedStringExpr ise:
@@ -2172,7 +2155,7 @@ namespace fire.Compiler
         /// auf dem Stack liegt (SPEC 2.1/2.4: direkt einem Feld zugewiesen). Liefert false, wenn `value` keins von beiden ist
         /// (dann ist nichts emittiert).</summary>
         private static bool IsOwnedCreation(Expr value) =>
-            value is NewExpr or UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy };
+            value is NewExpr or NewArrayExpr or ArrayLiteralExpr or NewBufferExpr or UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy };
 
         private bool TryCompileOwnedCreation(Expr value)
         {
@@ -2183,6 +2166,13 @@ namespace fire.Compiler
                 _chunk.EmitOp(OpCode.NewObjectOwned);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
                 _chunk.EmitByte((byte)ne.Args.Count);
+                return true;
+            }
+            if (value is NewArrayExpr or ArrayLiteralExpr or NewBufferExpr)
+            {
+                // [owner] -> [owner, array] -> [array]: ein direkt einem Feld zugewiesenes Array/ein Puffer gehoert dem Objekt (SPEC 2.1)
+                CompileExpr(value);
+                _chunk.EmitOp(OpCode.OwnValue);
                 return true;
             }
             if (value is UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy } copyExpr)

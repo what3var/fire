@@ -972,6 +972,10 @@ namespace fire.Compiler
                     ResolveExpr(ts.Value);
                     break;
 
+                case DeleteStmt ds:
+                    ResolveExpr(ds.Target);
+                    break;
+
                 case TryStmt trys:
                     ResolveTry(trys);
                     break;

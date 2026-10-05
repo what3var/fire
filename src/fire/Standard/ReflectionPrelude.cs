@@ -81,10 +81,9 @@ namespace fire.Standard
                     if (info[1] != undefined) { this.Base = new Type(info[1]) }
                     this.IsActor = info[2]
                     this.Interfaces = info[3]
-                    var list = new List()
+                    this.All = new List()   // (assigned directly: the list belongs to the type)
                     var raw = __refl_members(name)
-                    for (var i = 0; i < raw.length; i = i + 1) { list.Add(new Member(raw[i])) }
-                    this.All = list
+                    for (var i = 0; i < raw.length; i = i + 1) { this.All.Add(new Member(raw[i])) }
                 }
 
                 // Die Klasse eines Objekts (oder die mit diesem Namen, wenn ein string übergeben wird)
@@ -132,7 +131,7 @@ namespace fire.Standard
                 string Kind
 
                 construct(class path, string kind) {
-                    this.Path = path
+                    this.Path = flat path   // (a copy that belongs to the selector)
                     this.Name = path[path.length - 1]
                     this.Kind = kind
                 }

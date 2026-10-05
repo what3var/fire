@@ -78,6 +78,9 @@ namespace fire.Ast
     public sealed record ReturnStmt(int Source, int Line, Expr? Value) : Stmt(Source, Line);
     public sealed record ThrowStmt(int Source, int Line, Expr Value) : Stmt(Source, Line);
 
+    /// <summary>`delete ausdruck` (SPEC 2.5): zerstoert das Objekt, das Array oder den Puffer sofort - Destruktor und Kaskade laufen wie beim Verlassen des Owners.</summary>
+    public sealed record DeleteStmt(int Source, int Line, Expr Target) : Stmt(Source, Line);
+
     /// <summary>`break`/`continue` - nur innerhalb einer Schleife (`while`/
     /// `for`/`foreach`) gültig, geprüft vom Resolver (`_loopDepth`). Bricht
     /// NICHT über eine `try`/`catch`/`finally`-Grenze hinweg (siehe

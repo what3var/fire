@@ -379,6 +379,9 @@ namespace fire.Compiler
                 ExpectStatementTerminator();
                 return new ExprStmt(_sourceIndex, probeLine, probe);
             }
+            // `delete x`: kontextabhaengig wie `probe`/`silence` - nur wenn direkt (auf derselben Zeile) ein Name/`this` folgt
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "delete" && PeekAt(1) is { NewlineBefore: false, Type: TokenType.Identifier or TokenType.This or TokenType.Star })
+                return ParseDelete();
             if (Check(TokenType.Var)) return ParseVarDecl();
             if (Check(TokenType.Readonly)) return ParseReadonlyDecl();
             if (Check(TokenType.Enum)) return ParseEnumDecl();
@@ -910,6 +913,15 @@ namespace fire.Compiler
                 value = ParseExpression();
             ExpectStatementTerminator();
             return new ReturnStmt(_sourceIndex, line, value);
+        }
+
+        private Stmt ParseDelete()
+        {
+            int line = Peek().Line;
+            Advance();   // delete
+            var target = ParseExpression();
+            ExpectStatementTerminator();
+            return new DeleteStmt(_sourceIndex, line, target);
         }
 
         private Stmt ParseThrowStmt()
