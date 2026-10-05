@@ -141,7 +141,7 @@ namespace fire.Editor
         public void Delete() { Editor.Delete(); Editor.Focus(); }
         public void SelectAll()
         {
-            if (ViewerOnly) { Preview.Focus(); Preview.SelectAll(); return; }
+            //if (ViewerOnly) { Preview.Focus(); Preview.SelectAll(); return; }
             Editor.SelectAll();
             Editor.Focus();
         }
