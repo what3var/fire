@@ -49,6 +49,8 @@ namespace fire.Native
             public int ParamLike => ParamCount + CaptureCount;
             /// <summary>Scopes of this function that can own objects or reference values (they get an OwnList).</summary>
             public readonly HashSet<int> NeedsList = new();
+            /// <summary>A call passes the result of another call on (`f(g())`): the function has the argument list `AL` (see finishArgs in fire_rt.hpp).</summary>
+            public bool NeedsArgList;
             public string Code = "";
             // Per generation of the chunk (see GenerateChunk): the catch regions, the finally bookkeeping and the decoded code.
             public Dictionary<int, Region> Regions = new();
@@ -783,6 +785,7 @@ namespace fire.Native
             var localsToDeclare = locals.Where(l => !(l.StartsWith("P") && int.Parse(l.AsSpan(1)) < f.ParamLike)).ToList();
             if (localsToDeclare.Count > 0) sb.AppendLine("    Value " + string.Join(", ", localsToDeclare.Select(l => l + " = Undef()")) + ";");
             if (f.NeedsList.Count > 0) sb.AppendLine("    OwnList " + string.Join(", ", f.NeedsList.OrderBy(i => i).Select(i => ListName(i) + (i < 0 ? " = {nullptr, nullptr, poolMark(), nullptr, nullptr}" : " = {nullptr, nullptr, 0, nullptr, nullptr}"))) + ";");
+            if (f.NeedsArgList) sb.AppendLine("    OwnList AL = {nullptr, nullptr, 0, nullptr, nullptr};");
             if (f.Kind == FuncKind.Main && _usesGlobalOwn) sb.AppendLine("    g_globalOwn = &OG;");
             if (f.Kind != FuncKind.Main && _usesTakeUpwards && f.NeedsList.Contains(FunctionScope)) sb.AppendLine("    OP.parent = g_globalOwn;   // the parent scope of a function scope is the global scope");
             // Parameters are variables: they hold what was passed.
@@ -1050,18 +1053,35 @@ namespace fire.Native
             void RequireSelf() { if (!f.HasSelf && f.Kind != FuncKind.Lambda) throw new NativeNotSupportedException($"'this' outside of an instance member ({fn} at {ins.Addr})"); }
             string Args(int first, int count) => string.Concat(Enumerable.Range(first, count).Select(i => ", " + S(i)));
             // `ref` arguments (SPEC 5.4.2): the prefix CopyArgs in front of the call marks the arguments that carry an address (bits 3); `flat`/`copy` are not translated yet.
-            int ArgMask()
+            long ArgMask()
             {
                 int at = f.IndexOf[ins.Addr];
                 if (at == 0 || f.Decoded[at - 1].Op != OpCode.CopyArgs) return 0;
-                int mask = f.Decoded[at - 1].A[0] | (f.Decoded[at - 1].A[1] << 16);
+                long mask = (long)f.Decoded[at - 1].A[0] | ((long)f.Decoded[at - 1].A[1] << 16) | ((long)f.Decoded[at - 1].A[2] << 32) | ((long)f.Decoded[at - 1].A[3] << 48);
                 for (int i = 0; i < 16; i++)
-                    if ((mask >> (2 * i) & 3) is 1 or 2) throw new NativeNotSupportedException($"`flat`/`copy` as an argument ({fn} at {ins.Addr})");
+                    if ((mask >> (4 * i) & 15) is 1 or 2) throw new NativeNotSupportedException($"`flat`/`copy` as an argument ({fn} at {ins.Addr})");
                 return mask;
             }
             // The arguments for a callee that is known: an address goes to a `ref` parameter, the others get the value.
-            string CallArgs(int first, int count, int mask, uint calleeRefs) => string.Concat(Enumerable.Range(0, count).Select(i =>
-                ", " + ((mask >> (2 * i) & 3) == 3 && (calleeRefs >> i & 1) == 0 ? $"ptrRead({S(first + i)})" : S(first + i))));
+            string CallArgs(int first, int count, long mask, uint calleeRefs) => string.Concat(Enumerable.Range(0, count).Select(i =>
+                ", " + ((mask >> (4 * i) & 15) == 3 && (calleeRefs >> i & 1) == 0 ? $"ptrRead({S(first + i)})" : S(first + i))));
+            // `f(g())` (SPEC 2.1): the result of `g` that is still the caller's belongs to the callee - it travels in the argument list of the call
+            // and is destroyed after the call unless the callee kept it (field, TakeTo, return value). The destructor therefore runs after the
+            // callee's own locals, not before them as in the VM.
+            void ArgsBefore(int first, int argc, long mask)
+            {
+                for (int i = 0; i < Math.Min(argc, 16); i++)
+                    if ((mask >> (4 * i) & 15) == 4)
+                    {
+                        f.NeedsArgList = true;
+                        E($"reownArg({S(first + i)}, &{OwnerList()}, &AL);");
+                    }
+            }
+            void ArgsAfter(int argc, long mask, string result)
+            {
+                for (int i = 0; i < Math.Min(argc, 16); i++)
+                    if ((mask >> (4 * i) & 15) == 4) { E($"finishArgs({result}, &AL);"); return; }
+            }
             bool R(int k) => k >= 64 || (st.Refs >> k & 1UL) != 0;
             void SetR(int k, bool value)
             {
@@ -1299,7 +1319,10 @@ namespace fire.Native
                     if (!proto.IsStatic) throw new NativeNotSupportedException($"{cls}.{method} is not static");
                     if (proto.ParamCount != argc) throw new NativeNotSupportedException($"{cls}.{method}: default arguments");
                     var target = GetFunc(proto, FuncKind.Static);
-                    E($"{S(d - argc)} = {target.Name}({CallArgs(d - argc, argc, ArgMask(), proto.RefMask).TrimStart(',', ' ')});");
+                    long mask = ArgMask();
+                    ArgsBefore(d - argc, argc, mask);
+                    E($"{S(d - argc)} = {target.Name}({CallArgs(d - argc, argc, mask, proto.RefMask).TrimStart(',', ' ')});");
+                    ArgsAfter(argc, mask, S(d - argc));
                     Check();
                     AdoptResult(d - argc);
                     d = d - argc + 1; return Next();
@@ -1375,7 +1398,10 @@ namespace fire.Native
                     var target = GetFunc(ctor, FuncKind.Ctor);
                     int slot = d - argc - (owned ? 1 : 0);
                     string ownerExpr = owned ? $"&asObj({S(slot)})->owned" : "&" + OwnerList();
-                    E($"{{ Value o = newObject({cls.Id}, {cls.Fields.Count}, {ownerExpr}); {target.Name}(o{CallArgs(d - argc, argc, ArgMask(), ctor.RefMask)}); {S(slot)} = o; }}");
+                    long mask = ArgMask();
+                    ArgsBefore(d - argc, argc, mask);
+                    E($"{{ Value o = newObject({cls.Id}, {cls.Fields.Count}, {ownerExpr}); {target.Name}(o{CallArgs(d - argc, argc, mask, ctor.RefMask)}); {S(slot)} = o; }}");
+                    ArgsAfter(argc, mask, S(slot));
                     Check();
                     SetR(slot, false);
                     d = slot + 1; return Next();
@@ -1389,7 +1415,10 @@ namespace fire.Native
                     if (ctor.ParamCount != argc) throw new NativeNotSupportedException($"{rc.Name}: constructor default arguments");
                     var target = GetFunc(ctor, FuncKind.Ctor);
                     OwnerList();
-                    E($"{target.Name}(self{CallArgs(d - argc, argc, ArgMask(), ctor.RefMask)});");
+                    long mask = ArgMask();
+                    ArgsBefore(d - argc, argc, mask);
+                    E($"{target.Name}(self{CallArgs(d - argc, argc, mask, ctor.RefMask)});");
+                    ArgsAfter(argc, mask, "Undef()");
                     Check();
                     E($"{S(d - argc)} = Undef();");
                     SetR(d - argc, false);
@@ -1426,9 +1455,12 @@ namespace fire.Native
                         d = slot + 1; return Next();
                     }
                     _dispatchers.Add((method, argc));
-                    if (ArgMask() != 0) _refCallSites.Add((method, argc));
+                    if (Enumerable.Range(0, Math.Min(argc, 16)).Any(i => (ArgMask() >> (4 * i) & 15) == 3)) _refCallSites.Add((method, argc));
                     string extra = method == "GetEnumerator" && argc == 0 || OwnMethodId(method, argc) != null ? $", &{owner}" : "";
+                    long dmask = ArgMask();
+                    ArgsBefore(d - argc, argc, dmask);
                     E($"{S(slot)} = call_{Mangle(method)}_{argc}({S(slot)}{Args(d - argc, argc)}{extra});");
+                    ArgsAfter(argc, dmask, S(slot));
                     Check();
                     AdoptResult(slot);
                     d = slot + 1; return Next();
@@ -1442,7 +1474,10 @@ namespace fire.Native
                     var proto = rc.FindMethodWithAccess(method, argc).Proto ?? throw new NativeNotSupportedException($"{rc.Name}.{method} with {argc} argument(s) not found");
                     if (proto.ParamCount != argc) throw new NativeNotSupportedException($"{rc.Name}.{method}: default arguments");
                     var target = GetFunc(proto, FuncKind.Method);
-                    E($"{S(d - argc)} = {target.Name}(self{CallArgs(d - argc, argc, ArgMask(), proto.RefMask)});");
+                    long mask = ArgMask();
+                    ArgsBefore(d - argc, argc, mask);
+                    E($"{S(d - argc)} = {target.Name}(self{CallArgs(d - argc, argc, mask, proto.RefMask)});");
+                    ArgsAfter(argc, mask, S(d - argc));
                     Check();
                     AdoptResult(d - argc);
                     d = d - argc + 1; return Next();
@@ -1557,9 +1592,22 @@ namespace fire.Native
                     E($"{{ const int64_t sz[{ranks}] = {{{sizes}}}; {S(first)} = newJagged(sz, {ranks}, &{OwnerList()}); }}");
                     d = first + 1; SetR(first, true); return Next();
                 }
+                case OpCode.HoistValue:
+                {
+                    Need(1);
+                    string target = ListName(st.Scopes[0].Id);
+                    f.NeedsList.Add(st.Scopes[0].Id);
+                    for (int i = 1; i < st.Scopes.Count; i++)
+                    {
+                        f.NeedsList.Add(st.Scopes[i].Id);
+                        E($"hoistFrom({S(d - 1)}, &{ListName(st.Scopes[i].Id)}, &{target});");
+                    }
+                    return Next();
+                }
                 case OpCode.OwnValue:
                     Need(2);
-                    E($"{S(d - 2)} = ownValue({S(d - 2)}, {S(d - 1)});");
+                    foreach (var sc in st.Scopes) f.NeedsList.Add(sc.Id);
+                    E($"{S(d - 2)} = ownValue({S(d - 2)}, {S(d - 1)}{string.Concat(st.Scopes.Select(sc => ", &" + ListName(sc.Id)))});");
                     SetR(d - 2, true);
                     d--; return Next();
                 case OpCode.Delete:

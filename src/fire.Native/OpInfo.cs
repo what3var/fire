@@ -63,7 +63,7 @@ namespace fire.Native
             [OpCode.RegisterThreadsCatch] = new[] { 2, 1, 2 }, [OpCode.RegisterTerminateCatch] = new[] { 2 },
             [OpCode.Process] = Array.Empty<int>(), [OpCode.TryProcess] = Array.Empty<int>(),
             [OpCode.Halt] = Array.Empty<int>(),
-            [OpCode.CopyValue] = new[] { 1 }, [OpCode.CopyValueOwned] = new[] { 1 }, [OpCode.CopyArgs] = new[] { 2, 2 },
+            [OpCode.CopyValue] = new[] { 1 }, [OpCode.CopyValueOwned] = new[] { 1 }, [OpCode.CopyArgs] = new[] { 2, 2, 2, 2 },
             [OpCode.SyncGlobals] = Array.Empty<int>(), [OpCode.SectionEnter] = Array.Empty<int>(), [OpCode.SectionExit] = Array.Empty<int>(),
             [OpCode.SetAutoSync] = new[] { 1 }, [OpCode.PostGlobal] = new[] { 1 },
             [OpCode.EnterFinallyNormal] = Array.Empty<int>(), [OpCode.PushJump] = new[] { 2 }, [OpCode.EndFinally] = Array.Empty<int>(),
@@ -74,7 +74,7 @@ namespace fire.Native
             [OpCode.JumpIfNotGtEq] = new[] { 2 }, [OpCode.JumpIfNotEq] = new[] { 2 }, [OpCode.JumpIfNotNotEq] = new[] { 2 },
             [OpCode.ArithLocalConstPop] = new[] { 2, 2, 2, 1 }, [OpCode.ArithGlobalConstPop] = new[] { 2, 2, 1 },
             [OpCode.SetTimeout] = Array.Empty<int>(),
-            [OpCode.AddressOfIndex] = Array.Empty<int>(), [OpCode.NewJagged] = new[] { 1 }, [OpCode.OwnValue] = Array.Empty<int>(), [OpCode.MakeArrayLiteralParts] = new[] { 2, 2, 2 }, [OpCode.Delete] = Array.Empty<int>(), [OpCode.RequireRefParam] = new[] { 2, 2 },
+            [OpCode.AddressOfIndex] = Array.Empty<int>(), [OpCode.NewJagged] = new[] { 1 }, [OpCode.OwnValue] = Array.Empty<int>(), [OpCode.MakeArrayLiteralParts] = new[] { 2, 2, 2 }, [OpCode.Delete] = Array.Empty<int>(), [OpCode.HoistValue] = Array.Empty<int>(), [OpCode.RequireRefParam] = new[] { 2, 2 },
         };
 
         /// <summary>Decodes the whole chunk into instructions.</summary>

@@ -6108,6 +6108,54 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         }
     }
 
+    CheckPerf("Besitz: Zuweisung schiebt nach oben (bis in die Funktions-Scope), Aufrufergebnis direkt ins Feld, Rueckgabe direkt in einen Parameter", """
+        class Box { int items[]; string name; construct(string n) { this.name = n } destruct() { print("free " + this.name) } }
+        class Util {
+            static int[] Make(int n) { var a = new int[n]; a[0] = n; return a }
+            static Box MakeBox(string n) { return new Box(n) }
+            static int Len(int xs[]) { return xs.length }
+            static int[] Pass(int xs[]) { return xs }
+            static int Probe(int xs[]) { return xs[0] }
+            static int Loop() {
+                var last = [0]
+                for (var i = 1; i <= 3; i = i + 1) {
+                    last = Make(i)
+                    if (i == 2) { var x = Make(9); last = x }
+                }
+                return last[0]
+            }
+            static Box BoxLoop() {
+                var b = new Box("b0")
+                for (var i = 1; i <= 2; i = i + 1) { b = MakeBox("b" + i) }
+                return b
+            }
+        }
+        print(Util.Loop())
+        var kept = Util.BoxLoop()
+        print(kept.name)
+        // loop at top level, variable global
+        var g = [0]
+        for (var i = 1; i <= 3; i = i + 1) { g = Util.Make(i + 10) }
+        print(g[0])
+        if (true) { g = Util.Make(42) }
+        print(g[0])
+        // direct assignment of a call result to a field
+        class Holder {
+            int data[]
+            Box child
+            construct() { this.data = Util.Make(5); this.child = Util.MakeBox("child") }
+        }
+        var h = new Holder()
+        print(h.data[0] + " " + h.child.name)
+        // return value directly into a parameter: it belongs to the called function
+        var survivor = Util.Make(3)
+        print(Util.Len(Util.Make(4)))
+        print(Util.Probe(Util.Pass(Util.Make(6))))
+        try { print(Util.Pass(Util.Make(8))[0]) } catch (e) { print("died with the callee") }
+        delete h
+        print("end")
+        """, new[] { "3", "free b0", "free b1", "b2", "13", "42", "5 child", "4", "6", "8", "free child", "end", "free b2" });
+
     // --- Value: Gleichheit und Arithmetik (kompaktes Layout, Schnellpfade)
     CheckPerf("Gleichheit: Art, Einheit und Breite", """
         print(1 == 1)
@@ -6619,6 +6667,7 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
         {
             var t = new Box("t")
             leaked = t
+            delete t
         }
         var d = copy leaked
         """, "destroyed");
@@ -10910,11 +10959,26 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     CheckSc("TakeUpwards haengt ein Objekt an die umgebende Scope (hier die der Schleife): es ueberlebt den Block, nicht die Schleife", scHead + """
         class T {
             static Run() {
+                for (var i = 0; i < 3; i = i + 1) {
+                    var a = new D("a" + i)
+                    var b = new D("b" + i)
+                    if (i == 1) { b.TakeUpwards() }
+                }
+                print("nach der Schleife")
+            }
+        }
+        T.Run()
+        print("ende")
+        """, new[] { "~a0", "~b0", "~a1", "~a2", "~b2", "~b1", "nach der Schleife", "ende" });
+
+    CheckSc("Zuweisung an eine aeussere Variable schiebt den Besitz bis in die Funktions-Scope (nicht aus der Funktion hinaus)", scHead + """
+        class T {
+            static Run() {
                 var keep
                 for (var i = 0; i < 3; i = i + 1) {
                     var a = new D("a" + i)
                     var b = new D("b" + i)
-                    if (i == 1) { b.TakeUpwards(); keep = b }
+                    if (i == 1) { keep = b }
                 }
                 print("nach der Schleife " + keep.n)
                 var u = 0
@@ -10924,7 +10988,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         }
         T.Run()
         print("ende")
-        """, new[] { "~a0", "~b0", "~a1", "~a2", "~b2", "~b1", "nach der Schleife b1", "3 b1", "ende" });
+        """, new[] { "~a0", "~b0", "~a1", "~a2", "~b2", "nach der Schleife b1", "3 b1", "~b1", "ende" });
 
     CheckSc("Destruktoren in Schleifen mit gemischten Bloecken (mit/ohne Objekte) und verschachtelten Aufrufen", scHead + """
         class T {
@@ -12631,6 +12695,53 @@ static int CountOccurrences(string haystack, string needle)
                 cur = scratch[1]
             }
             print(cur)
+            """),
+        ("Besitz: Zuweisung nach oben, Direktzuweisung von Aufrufergebnissen, Rueckgabe direkt in einen Parameter", """
+            class Box { int items[]; string name; construct(string n) { this.name = n } destruct() { print("free " + this.name) } }
+            class Util {
+                static int[] Make(int n) { var a = new int[n]; a[0] = n; return a }
+                static Box MakeBox(string n) { return new Box(n) }
+                static int Len(int xs[]) { return xs.length }
+                static int[] Pass(int xs[]) { return xs }
+                static int Probe(int xs[]) { return xs[0] }
+                static int Loop() {
+                    var last = [0]
+                    for (var i = 1; i <= 3; i = i + 1) {
+                        last = Make(i)
+                        if (i == 2) { var x = Make(9); last = x }
+                    }
+                    return last[0]
+                }
+                static Box BoxLoop() {
+                    var b = new Box("b0")
+                    for (var i = 1; i <= 2; i = i + 1) { b = MakeBox("b" + i) }
+                    return b
+                }
+            }
+            print(Util.Loop())
+            var kept = Util.BoxLoop()
+            print(kept.name)
+            // loop at top level, variable global
+            var g = [0]
+            for (var i = 1; i <= 3; i = i + 1) { g = Util.Make(i + 10) }
+            print(g[0])
+            if (true) { g = Util.Make(42) }
+            print(g[0])
+            // direct assignment of a call result to a field
+            class Holder {
+                int data[]
+                Box child
+                construct() { this.data = Util.Make(5); this.child = Util.MakeBox("child") }
+            }
+            var h = new Holder()
+            print(h.data[0] + " " + h.child.name)
+            // return value directly into a parameter: it belongs to the called function
+            var survivor = Util.Make(3)
+            print(Util.Len(Util.Make(4)))
+            print(Util.Probe(Util.Pass(Util.Make(6))))
+            try { print(Util.Pass(Util.Make(8))[0]) } catch (e) { print("died with the callee") }
+            delete h
+            print("end")
             """),
         ("Besitz: #performance prueft zerstoerte Arrays nicht (FIRE_UNCHECKED), Ergebnis wie die VM", """
             #performance

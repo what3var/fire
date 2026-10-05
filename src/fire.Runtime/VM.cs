@@ -168,7 +168,7 @@ namespace fire.Runtime
 
         // Der Werte-Stack: ein Array mit Stackzeiger statt einer List<Value> (kein Versionszähler, keine
         // doppelte Bereichsprüfung, kein Nullen beim Entfernen) - Push/Pop sind der heißeste Pfad der VM.
-        private int _copyArgMask; // gesetzt vom Präfix CopyArgs, abgeholt vom nächsten Aufruf-Opcode (TakeCopyMask)
+        private long _copyArgMask; // gesetzt vom Präfix CopyArgs, abgeholt vom nächsten Aufruf-Opcode (TakeCopyMask)
         private Value[] _stack = new Value[256];
         private int _sp;
         private readonly Stack<CallFrame> _frames = new();
@@ -1897,7 +1897,7 @@ namespace fire.Runtime
         /// <summary>Wechselt in den Aufruf von `proto`: die obersten `argCount` Stack-Werte werden direkt als
         /// Parameter-Slots der neuen Scope übernommen und (zusammen mit dem darunterliegenden Empfänger/Callee, falls
         /// `dropBelow`) vom Stack genommen. Nur für Aufrufe mit EXAKT passender Argumentanzahl (kein Standardwert nötig).</summary>
-        private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null, int copyMask = 0, Value[]? captures = null)
+        private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null, long copyMask = 0, Value[]? captures = null)
         {
             int captureCount = captures?.Length ?? 0;
             int paramCount = argCount + captureCount;
@@ -1921,22 +1921,29 @@ namespace fire.Runtime
 
         /// <summary>Die Kopier-Maske, die das Präfix `CopyArgs` für den Aufruf-Opcode hinterlegt hat - hier gelesen UND
         /// gelöscht (jeder Aufruf-Opcode holt sie gleich zu Beginn ab, damit sie nie an einen späteren Aufruf gerät).</summary>
-        private int TakeCopyMask()
+        private long TakeCopyMask()
         {
-            int mask = _copyArgMask;
+            long mask = _copyArgMask;
             _copyArgMask = 0;
             return mask;
         }
 
         /// <summary>Kopiert die markierten Parameter einer frisch aufgebauten Aufruf-Scope: die Kopie gehört dieser Scope
         /// (wird also mit dem Verlassen der Funktion zerstört, außer die Funktion gibt sie zurück oder übergibt sie per TakeTo).</summary>
-        private void ApplyCopyMask(Scope scope, int mask, uint calleeRefMask)
+        private void ApplyCopyMask(Scope scope, long mask, uint calleeRefMask)
         {
             if (mask == 0) return;
             for (int i = 0; i < 16; i++)
             {
-                int bits = (mask >> (2 * i)) & 3;
+                int bits = (int)(mask >> (4 * i)) & 15;
                 if (bits == 0) continue;
+                if (bits == 4)
+                {
+                    // Das Argument ist direkt der Rueckgabewert eines Aufrufs (`f(g())`): sein Besitz geht in die aufgerufene Funktion, nicht an den Aufrufer
+                    // (SPEC 2.1) - nur wenn der Wert frisch beim Aufrufer lag, nicht, wenn g etwas zurueckgab, das anderen gehoert.
+                    if (_frames.Count > 0) AdoptReturnedArgument(scope.SlotRef(i), _frames.Peek().ReturnScope, scope);
+                    continue;
+                }
                 if (bits == 3)
                 {
                     // Der Aufrufer hat die Adresse uebergeben (Name + Argumentanzahl kennen einen `ref`-Parameter, SPEC 5.4.2): ein `ref`-Parameter behaelt sie,
@@ -1948,13 +1955,34 @@ namespace fire.Runtime
             }
         }
 
+        /// <summary>Ein Objekt/Array/Puffer, das dem Scope des Aufrufers gehoert (frisch zurueckgegeben), gehoert ab jetzt der aufgerufenen Funktion.</summary>
+        private static void AdoptReturnedArgument(Value arg, Scope callerScope, Scope calleeScope)
+        {
+            switch (arg.Kind)
+            {
+                case ValueKind.Class:
+                {
+                    var obj = (ObjectInstance)arg.AsObjectRef();
+                    if (!obj.IsDestroyed && ReferenceEquals(obj.Owner, callerScope)) obj.ReparentTo(calleeScope);
+                    break;
+                }
+                case ValueKind.Array:
+                case ValueKind.Buffer:
+                {
+                    var leaf = arg.Kind == ValueKind.Array ? (IOwnedLeaf)arg.AsArray() : arg.AsBuffer();
+                    if (!leaf.IsDestroyed && ReferenceEquals(leaf.LeafOwner, callerScope)) LeafOwnership.Reparent(leaf, calleeScope);
+                    break;
+                }
+            }
+        }
+
         /// <summary>Für Aufrufe OHNE Funktions-Scope (eingebaute Methoden, Actor-Nachrichten): die Kopie gehört dem
         /// aktuellen Scope, wie bei einer gewöhnlichen Kopie.</summary>
-        private void ApplyCopyMaskToArgs(Value[] args, int mask)
+        private void ApplyCopyMaskToArgs(Value[] args, long mask)
         {
             for (int i = 0; i < args.Length && i < 16; i++)
             {
-                int bits = (mask >> (2 * i)) & 3;
+                int bits = (int)(mask >> (4 * i)) & 15;
                 if (bits == 3) args[i] = args[i].AsPointer().Read();   // eingebaute Funktionen und Nachrichten kennen kein `ref`: der Wert
                 else if (bits != 0) args[i] = ObjectCloner.Clone(args[i], _currentScope, deep: bits == 2);
             }
@@ -1969,7 +1997,7 @@ namespace fire.Runtime
         {
             if (PollSignals()) return;
             int argCount = ReadByte();
-            int copyMask = TakeCopyMask();
+            long copyMask = TakeCopyMask();
 
             // Schnellpfad: ein Lambda mit genau dieser Parameterzahl (kein Standardwert nötig).
             if (_stack[_sp - 1 - argCount] is { Kind: ValueKind.Lambda } fastCallee
@@ -1985,7 +2013,7 @@ namespace fire.Runtime
         }
         }
 
-        private void OpCallSlow(int argCount, int copyMask)
+        private void OpCallSlow(int argCount, long copyMask)
         {
         {
             var args = new Value[argCount];
@@ -2159,7 +2187,7 @@ namespace fire.Runtime
             int site = _ip - 1;
             int classNameIdx = ReadU16();
             int argCount = ReadByte();
-            int copyMask = TakeCopyMask();
+            long copyMask = TakeCopyMask();
 
             // Schnellpfad (Inline-Cache): Klasse und Konstruktor dieser Stelle sind bekannt, Zugriffs- und
             // Argumentprüfung schon bestanden.
@@ -2173,7 +2201,7 @@ namespace fire.Runtime
             OpNewObjectSlow(site, classNameIdx, argCount, copyMask);
         }
 
-        private void OpNewObjectSlow(int site, int classNameIdx, int argCount, int copyMask)
+        private void OpNewObjectSlow(int site, int classNameIdx, int argCount, long copyMask)
         {
         {
             var args = new Value[argCount];
@@ -2205,7 +2233,7 @@ namespace fire.Runtime
         {
             int classNameIdx = ReadU16();
             int argCount = ReadByte();
-            int copyMask = TakeCopyMask();
+            long copyMask = TakeCopyMask();
             var args = new Value[argCount];
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
             var owner = RequireObjectInstance(Pop(), "Object creation with owner");
@@ -2234,7 +2262,7 @@ namespace fire.Runtime
         {
             int classNameIdx = ReadU16();
             int argCount = ReadByte();
-            int copyMask = TakeCopyMask();
+            long copyMask = TakeCopyMask();
             var args = new Value[argCount];
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
@@ -2581,7 +2609,7 @@ namespace fire.Runtime
             int site = _ip - 1;
             int methodNameIdx = ReadU16();
             int argCount = ReadByte();
-            int copyMask = TakeCopyMask();
+            long copyMask = TakeCopyMask();
 
             // Schnellpfad (Inline-Cache, siehe SiteCache): ein Objekt derselben Klasse wie beim letzten Aufruf
             // dieser Stelle - Methode, Zugriffs- und Argumentprüfung sind schon erledigt.
@@ -2615,7 +2643,7 @@ namespace fire.Runtime
         }
         }
 
-        private void OpCallMethodSlow(int site, int methodNameIdx, int argCount, int copyMask)
+        private void OpCallMethodSlow(int site, int methodNameIdx, int argCount, long copyMask)
         {
         {
             string methodName = _constants[methodNameIdx].AsString();
@@ -2827,7 +2855,7 @@ namespace fire.Runtime
             string baseClassName = _constants[ReadU16()].AsString();
             string methodName = _constants[ReadU16()].AsString();
             int argCount = ReadByte();
-            int copyMask = TakeCopyMask();
+            long copyMask = TakeCopyMask();
             var args = new Value[argCount];
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
@@ -3006,7 +3034,7 @@ namespace fire.Runtime
             int classNameIdx = ReadU16();
             int methodNameIdx = ReadU16();
             int callArgCount = ReadByte();
-            int copyMask = TakeCopyMask();
+            long copyMask = TakeCopyMask();
 
             // Schnellpfad: dieselbe Stelle hat sich schon einmal aufgelöst (Klasse/Methode stehen als Konstanten
             // im Bytecode fest, siehe SiteCache) - kein Lookup nach Klassen- und Methodenname mehr.
@@ -3021,7 +3049,7 @@ namespace fire.Runtime
         }
         }
 
-        private void OpCallStaticMethodSlow(int site, int classNameIdx, int methodNameIdx, int callArgCount, int copyMask)
+        private void OpCallStaticMethodSlow(int site, int classNameIdx, int methodNameIdx, int callArgCount, long copyMask)
         {
         {
             string callClassName = _constants[classNameIdx].AsString();
@@ -3647,9 +3675,11 @@ namespace fire.Runtime
 
                 case OpCode.CopyArgs:
                 {
-                    int lo = ReadU16();
-                    int hi = ReadU16();
-                    _copyArgMask = lo | (hi << 16);
+                    long mask = ReadU16();
+                    mask |= (long)ReadU16() << 16;
+                    mask |= (long)ReadU16() << 32;
+                    mask |= (long)ReadU16() << 48;
+                    _copyArgMask = mask;
                     break;
                 }
 
@@ -3800,12 +3830,25 @@ namespace fire.Runtime
 
                 case OpCode.OwnValue:
                 {
+                    // `obj.field = <direct value>`: the object takes the value when it is fresh (owned by a scope of this call, or by nobody)
                     var value = Pop();
-                    var owner = RequireObjectInstance(Pop(), "Assigning an array to a field");
-                    if (LeafOf(value) is { } leaf) LeafOwnership.TakeTo(leaf, owner);
+                    var owner = RequireObjectInstance(Pop(), "Assigning to a field");
+                    if (LeafOf(value) is { } leaf)
+                    {
+                        if (leaf.LeafOwner == null || IsCurrentCallOwner(leaf.LeafOwner)) LeafOwnership.TakeTo(leaf, owner);
+                    }
+                    else if (value.Kind == ValueKind.Class)
+                    {
+                        var child = (ObjectInstance)value.AsObjectRef();
+                        if (!child.IsDestroyed && !ReferenceEquals(child, owner) && IsCurrentCallOwner(child.Owner)) child.TakeTo(owner, this);
+                    }
                     Push(value);
                     break;
                 }
+
+                case OpCode.HoistValue:
+                    HoistValue(_stack[_sp - 1]);
+                    break;
 
                 case OpCode.Delete:
                     DeleteValue(Pop());
@@ -4548,7 +4591,7 @@ namespace fire.Runtime
             return BitConverter.ToDouble(buf, 0);
         }
 
-        private void BeginConstruction(ObjectInstance instance, FunctionProto ctorProto, Value[] args, int copyMask = 0)
+        private void BeginConstruction(ObjectInstance instance, FunctionProto ctorProto, Value[] args, long copyMask = 0)
         {
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, instance));
 
@@ -5166,6 +5209,41 @@ namespace fire.Runtime
                     array.Items[i] = Value.MakeArray(inner);
                 }
             return array;
+        }
+
+        /// <summary>Gehoert etwas dem Scope des aktuellen Aufrufs (dem aktuellen Scope oder einem umgebenden der laufenden Funktion; im Hauptprogramm auch dem globalen)?</summary>
+        private bool IsCurrentCallOwner(IOwner? owner)
+        {
+            if (owner is not Scope scope) return false;
+            if (ReferenceEquals(scope, _currentScope) || OwnsWithinCall(scope)) return true;
+            return _frames.Count == 0 && scope.IsGlobal;
+        }
+
+        /// <summary>`x = wert` mit einer Variable in einem aeusseren Scope: gehoert der Wert einem inneren Block (Schleife, `if`) der laufenden Funktion, wandert er
+        /// in deren Funktions-Scope - nie aus der Funktion heraus (im Hauptprogramm: in den globalen Scope).</summary>
+        private void HoistValue(Value v)
+        {
+            IOwner? owner = v.Kind switch
+            {
+                ValueKind.Class => ((ObjectInstance)v.AsObjectRef()).Owner,
+                ValueKind.Array => v.AsArray().LeafOwner,
+                ValueKind.Buffer => v.AsBuffer().LeafOwner,
+                _ => null,
+            };
+            if (owner is not Scope scope || !OwnsWithinCall(scope)) return;
+            Scope target = _globalScope;
+            if (_frames.Count > 0)
+            {
+                target = _currentScope;
+                while (target.Parent != null && !target.Parent.IsGlobal) target = target.Parent;
+            }
+            if (ReferenceEquals(scope, target)) return;
+            if (v.Kind == ValueKind.Class)
+            {
+                var obj = (ObjectInstance)v.AsObjectRef();
+                if (!obj.IsDestroyed) obj.ReparentTo(target);
+            }
+            else if (LeafOf(v) is { IsDestroyed: false } leaf) LeafOwnership.Reparent(leaf, target);
         }
 
         /// <summary>Der Wert als besitzbares Blatt (Array oder Puffer), sonst null.</summary>

@@ -1479,10 +1479,33 @@ inline void takeToObject(Owned* o, Obj* target) {
     link(&target->owned, o);
 }
 
-/// `obj.field = new int[3]`: the array belongs to the object.
-inline Value ownValue(Value owner, Value v) {
-    if (Owned* o = ownedOf(v)) takeToObject(o, asObj(owner));
+/// `obj.field = <fresh value>`: the value belongs to the object - when it is still in the hands of this function (it has no owner or
+/// is in one of the function's scopes `lists`); something that belongs to others (an object, the caller) stays where it is (SPEC 2.1).
+template <class... L>
+inline Value ownValue(Value owner, Value v, L*... lists) {
+    if (Owned* o = ownedOf(v))
+        if (!o->owner || ((o->owner == lists) || ...)) takeToObject(o, asObj(owner));
     return v;
+}
+
+/// `x = value` with a variable of an outer scope: what belongs to the inner scope `from` moves to the function scope `to`
+/// (SPEC 2.1) - never out of the function.
+inline void hoistFrom(Value v, OwnList* from, OwnList* to) {
+    Owned* o = ownedOf(v);
+    if (o && o->owner == from) { unlink(o); link(to, o); }
+}
+
+/// `f(g())`: the result of a call passed straight on belongs to the callee, not to the caller (SPEC 2.1). The generated code lets the
+/// value travel in the argument list `al` of the call and destroys what is left in it afterwards (the callee has moved, stored or
+/// returned what it wants to keep).
+inline void reownArg(Value v, OwnList* from, OwnList* al) {
+    Owned* o = ownedOf(v);
+    if (o && o->owner == from) { unlink(o); link(al, o); }
+    al->parent = from;
+}
+inline void finishArgs(Value result, OwnList* al) {
+    transferOut(result, al);
+    if (al->head) destroyList(al);
 }
 
 enum OwnMethod { OM_Take, OM_TakeUpwards, OM_TakeGlobal, OM_TakeTo };

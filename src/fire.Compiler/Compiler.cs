@@ -79,6 +79,9 @@ namespace fire.Compiler
         /// korrekte Anzahl an Scopes, die sie beim Sprung schließen müssen.</summary>
         private int _currentScopeDepth;
 
+        /// <summary>Kompiliert das Hauptprogramm (nicht den Koerper einer Funktion, Methode oder Lambda).</summary>
+        private bool IsTopLevelCode { get; set; }
+
         /// <summary>Pro aktiver Schleife (verschachtelbar, daher ein Stack):
         /// die Scope-Tiefe GENAU beim Betreten des Schleifenkörpers (für die
         /// Anzahl nötiger ExitScope-Opcodes bei einem break/continue, siehe
@@ -259,6 +262,7 @@ namespace fire.Compiler
         private Compiler(ResolveResult resolveResult, NativeRegistry natives)
             : this(resolveResult.References, natives, null, resolveResult.NoShadowGlobals ? 0 : resolveResult.GlobalSlotCount, null, new List<CompilerException>(), RefParamTable.Build(resolveResult.Classes.Values))
         {
+            IsTopLevelCode = true;
         }
 
         /// <summary>Alle bisher gefundenen Fehler (siehe CompilerException) -
@@ -986,7 +990,7 @@ namespace fire.Compiler
             if (rc.Base != null)
             {
                 var baseArgs = ctor?.BaseArgs;
-                uint baseCopyMask = baseArgs != null ? inner.CompileArgs(baseArgs, scopeCreating: true, _refParams.ForConstructor(rc.Base.Name, baseArgs.Count)) : 0;
+                ulong baseCopyMask = baseArgs != null ? inner.CompileArgs(baseArgs, scopeCreating: true, _refParams.ForConstructor(rc.Base.Name, baseArgs.Count)) : 0;
                 inner.EmitCopyArgsPrefix(baseCopyMask);
 
                 inner._chunk.EmitOp(OpCode.ConstructBase);
@@ -1816,7 +1820,7 @@ namespace fire.Compiler
 
                 case NewExpr ne:
                 {
-                    uint newCopyMask = CompileArgs(ne.Args, scopeCreating: true, _refParams.ForConstructor(ResolveNewClassName(ne), ne.Args.Count));
+                    ulong newCopyMask = CompileArgs(ne.Args, scopeCreating: true, _refParams.ForConstructor(ResolveNewClassName(ne), ne.Args.Count));
                     EmitCopyArgsPrefix(newCopyMask);
                     _chunk.EmitOp(OpCode.NewObject);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
@@ -2070,27 +2074,29 @@ namespace fire.Compiler
         /// (Präfix <see cref="OpCode.CopyArgs"/>, siehe <see cref="EmitCopyArgsPrefix"/>): die Kopie gehört dann der Scope der
         /// aufgerufenen Funktion (SPEC 2.4). Bei nativen Funktionen gibt es diese Scope nicht - dort bleibt es eine gewöhnliche
         /// Kopie (Owner: aktueller Scope). Liefert die Kopier-Maske (2 Bit je Argument, 0 = keine).</summary>
-        private uint CompileArgs(IReadOnlyList<Expr> args, bool scopeCreating, bool[]? refs = null)
+        private ulong CompileArgs(IReadOnlyList<Expr> args, bool scopeCreating, bool[]? refs = null)
         {
-            uint mask = 0;
+            ulong mask = 0;
             for (int i = 0; i < args.Count; i++)
             {
                 if (refs != null && i < refs.Length && refs[i] && IsAddressable(args[i]))
                 {
                     if (i >= 16) throw new NotSupportedException("A 'ref' argument is only possible for the first 16 arguments of a call.");
                     CompileRefArgument(args[i], i);
-                    mask |= 3u << (2 * i);
+                    mask |= 3UL << (4 * i);
                 }
                 else if (scopeCreating && args[i] is UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy } copyArg)
                 {
                     if (i >= 16)
                         throw new NotSupportedException("`flat`/`copy` as an argument is only possible for the first 16 arguments of a call.");
-                    mask |= (copyArg.Op == UnaryOp.DeepCopy ? 2u : 1u) << (2 * i);
+                    mask |= (copyArg.Op == UnaryOp.DeepCopy ? 2UL : 1UL) << (4 * i);
                     CompileExpr(copyArg.Operand);
                 }
                 else
                 {
                     CompileExpr(args[i]);
+                    // `f(g())`: the returned value goes into the parameter, so it belongs to the called function (SPEC 2.1), not to the caller
+                    if (scopeCreating && i < 16 && args[i] is CallExpr) mask |= 4UL << (4 * i);
                 }
             }
             return mask;
@@ -2143,32 +2149,31 @@ namespace fire.Compiler
         }
 
         /// <summary>Emittiert das Präfix `CopyArgs` (nur wenn eine Maske da ist) - direkt VOR den Aufruf-Opcode.</summary>
-        private void EmitCopyArgsPrefix(uint mask)
+        private void EmitCopyArgsPrefix(ulong mask)
         {
             if (mask == 0) return;
             _chunk.EmitOp(OpCode.CopyArgs);
-            _chunk.EmitU16((int)(mask & 0xFFFF));
-            _chunk.EmitU16((int)(mask >> 16));
+            for (int part = 0; part < 4; part++) _chunk.EmitU16((int)((mask >> (16 * part)) & 0xFFFF));
         }
 
         /// <summary>Kompiliert `new X(...)` bzw. `flat x`/`copy x` für den Fall, dass der künftige OWNER (ein Objekt) schon
         /// auf dem Stack liegt (SPEC 2.1/2.4: direkt einem Feld zugewiesen). Liefert false, wenn `value` keins von beiden ist
         /// (dann ist nichts emittiert).</summary>
         private static bool IsOwnedCreation(Expr value) =>
-            value is NewExpr or NewArrayExpr or ArrayLiteralExpr or NewBufferExpr or UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy };
+            value is NewExpr or NewArrayExpr or ArrayLiteralExpr or NewBufferExpr or CallExpr or UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy };
 
         private bool TryCompileOwnedCreation(Expr value)
         {
             if (value is NewExpr ne)
             {
-                uint mask = CompileArgs(ne.Args, scopeCreating: true, _refParams.ForConstructor(ResolveNewClassName(ne), ne.Args.Count));
+                ulong mask = CompileArgs(ne.Args, scopeCreating: true, _refParams.ForConstructor(ResolveNewClassName(ne), ne.Args.Count));
                 EmitCopyArgsPrefix(mask);
                 _chunk.EmitOp(OpCode.NewObjectOwned);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
                 _chunk.EmitByte((byte)ne.Args.Count);
                 return true;
             }
-            if (value is NewArrayExpr or ArrayLiteralExpr or NewBufferExpr)
+            if (value is NewArrayExpr or ArrayLiteralExpr or NewBufferExpr or CallExpr)
             {
                 // [owner] -> [owner, array] -> [array]: ein direkt einem Feld zugewiesenes Array/ein Puffer gehoert dem Objekt (SPEC 2.1)
                 CompileExpr(value);
@@ -2499,10 +2504,13 @@ namespace fire.Compiler
                     // Anfangsprüfung einfach durch eine spätere, "falsche"
                     // Zuweisung umgehen.
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
+                    // an assignment from an inner block to a variable of an outer one: the value must not die with the block (SPEC 2.1)
+                    if (local.Depth > 0 && !local.ByRef) _chunk.EmitOp(OpCode.HoistValue);
                     EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
+                    if (_currentScopeDepth > 0 && IsTopLevelCode) _chunk.EmitOp(OpCode.HoistValue);   // top-level block assigning to a global
                     _chunk.EmitOp(OpCode.StoreGlobal);
                     _chunk.EmitU16(global.Slot);
                     break;

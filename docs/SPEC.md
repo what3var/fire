@@ -123,6 +123,13 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   object; everywhere else (a variable, an argument, a return value, the result of a native function such as `text.Split(",")`) it belongs to the **current scope**. An array that is made **in one
   expression together with inner arrays** (`new int[3][4]`, `[[1, 2], [3]]`) owns them: the inner arrays live and die with the outer one. An array that is only assigned to an element later
   (`a[i] = new int[2]`) does not change its owner.
+- **Direct assignment of any call result to a field** (`this.child = Make()`, `this.data = Util.Make(5)`) gives the value to the object as well, not only a `new`: a value that is still in the hands of the
+  current function (freshly returned, or belonging to one of its scopes) becomes the object's. A value that belongs to someone else (an object, the caller, the global scope seen from a function) stays where it is.
+- **Assignment moves ownership up to the function scope.** `x = value` where `x` is a variable of an *outer* block scope moves a value that belongs to an inner block (loop body, `if`, bare block) into the scope of the
+  enclosing **function** (top-level code: the global scope) - never out of the function. `keep = b` inside a loop therefore keeps `b` alive after the loop and until the function ends; without the assignment it
+  would die with the loop body. (Objects and arrays assigned in a loop accumulate until the function ends: use `delete` or `Take`/`TakeTo` for something that should not.)
+- **A call result passed on as an argument belongs to the called function, not to the caller:** in `f(g())` the value that `g` returns is owned by the scope of `f` and dies with it, unless `f` keeps it
+  (stores it in a field, `TakeTo`, returns it). Only values that are fresh at the caller move; `f(g())` where `g` returns something that belongs to an object does not change that owner.
 - The same rule applies to lambda values: direct field assignment → owner is the object; otherwise → current scope. The `on` binding (this context, see 4.2) is independent of this and does not change the owner.
 
 ### 2.2 Ownership transfer (member functions on object instances)

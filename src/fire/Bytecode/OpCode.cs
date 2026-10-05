@@ -136,7 +136,7 @@ namespace fire.Bytecode
         // Bewusst NACH Halt angehängt, damit die Zahlenwerte aller bisherigen Opcodes (auch die von Halt) stabil bleiben.
         CopyValue,      // u8 flags (bit0 = tief) : pop Quelle; push Kopie (`flat x` / `copy x`), Owner = aktueller Scope
         CopyValueOwned, // u8 flags (bit0 = tief) : pop Quelle, pop Owner-Objekt; push Kopie, Owner = das Objekt (wie NewObjectOwned, SPEC 2.1)
-        CopyArgs,       // u16 lo, u16 hi : Präfix DIREKT vor einem Aufruf-Opcode (Call/CallMethod/CallStaticMethod/CallBaseMethod/NewObject/
+        CopyArgs,       // u16 x4 (64 Bit: 4 Bit je Argument, 1 flach kopieren, 2 tief kopieren, 3 Adresse fuer `ref`, 4 frischer Rueckgabewert geht an die aufgerufene Funktion) : Präfix DIREKT vor einem Aufruf-Opcode (Call/CallMethod/CallStaticMethod/CallBaseMethod/NewObject/
                         //   NewObjectOwned/ConstructBase) - 2 Bit je Argument (Bit 2i = flach kopieren, Bit 2i+1 = tief kopieren): der Aufruf
                         //   kopiert diese Argumente selbst, sobald die Scope der aufgerufenen Funktion steht, und die Kopie gehört dieser Scope
                         //   (SPEC 2.4). Höchstens 16 Argumente.
@@ -180,6 +180,7 @@ namespace fire.Bytecode
         NewJagged,           // u8 rankCount : pop rankCount Groessen (aeusserste zuerst gepusht); push das mehrdimensionale Array (`new int[3][4]`), die inneren gehoeren dem aeusseren
         MakeArrayLiteralParts, // u16 count, u16 maskLo, u16 maskHi : wie MakeArrayLiteral; Bit i der Maske: Element i ist ein im Literal selbst erzeugtes Array/Puffer und gehoert dem neuen Array
         OwnValue,            //                     : pop Wert (Array/Puffer), pop Owner-Objekt; der Owner uebernimmt den Wert (frisch erzeugt, direkt einem Feld zugewiesen, SPEC 2.1); push den Wert
+        HoistValue,          //                     : Peek (Zuweisung an eine Variable eines aeusseren Scopes): gehoert der Wert einem inneren Block der laufenden Funktion, wandert er in deren Funktions-Scope (SPEC 2.1)
         Delete,              //                     : pop Wert; zerstoert ein Objekt, ein Array oder einen Puffer sofort (`delete x`, SPEC 2.5)
         RequireRefParam,     // u16 slot, u16 nameConstIdx : prueft, dass der `ref`-Parameter im Slot (Tiefe 0) einen Zeiger haelt (der Aufrufer hat eine Variable uebergeben), sonst Fehler
         AddressOfIndex,      //                     : pop index, pop Array/Puffer; push Pointer auf das Element (Argument fuer einen `ref`-Parameter, SPEC 5.4.2)
