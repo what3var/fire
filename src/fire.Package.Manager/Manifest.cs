@@ -82,9 +82,9 @@ namespace fire.Package.Manager
                 if (!string.IsNullOrWhiteSpace(import.Prelude) && fileExists != null && !fileExists(import.Prelude)) problems.Add(where + $"the prelude '{import.Prelude}' does not exist.");
                 if (import.Native is { } native)
                 {
-                    if (native.Sources.Count == 0) problems.Add(where + "'native' needs at least one file in 'sources'.");
-                    foreach (var src in native.Sources)
-                        if (fileExists != null && !fileExists(src)) problems.Add(where + $"the native source '{src}' does not exist.");
+                    if (native.Sources.Count == 0 && native.PlatformSources.Count == 0 && native.Libraries.Count == 0) problems.Add(where + "'native' needs at least one file in 'sources' (or in 'platformSources' or 'libraries').");
+                    foreach (var src in native.Sources.Concat(native.PlatformSources.Values.SelectMany(l => l)).Concat(native.Libraries.Values))
+                        if (fileExists != null && !fileExists(src)) problems.Add(where + $"the file '{src}' does not exist.");
                     var functions = new HashSet<string>();
                     foreach (var fn in native.Functions)
                     {
@@ -116,9 +116,42 @@ namespace fire.Package.Manager
     public sealed class PackageNative
     {
         public List<string> Sources { get; set; } = new();
-        /// <summary>The platforms of the target (`posix`, `windows`, `freertos`, ...) the source is written for; empty: all.</summary>
+        /// <summary>More source files for one platform or target: the key is the platform package (`posix`, `windows`, `freertos`, `esp32`, ...) or the name of the target
+        /// (`linux`, `macos`, `esp32`, ...); they come before <see cref="Sources"/> in builds for it, so that the common code can use what they declare. The same code can use `FIRE_TARGET_&lt;NAME&gt;` and `FIRE_HAL_&lt;PLATFORM&gt;`.</summary>
+        public Dictionary<string, List<string>> PlatformSources { get; set; } = new();
+        /// <summary>The platforms of the target (`posix`, `windows`, `freertos`, ...) the source is written for; empty: all (and the keys of <see cref="PlatformSources"/>).</summary>
         public List<string> Platforms { get; set; } = new();
+        /// <summary>Prebuilt shared libraries for the virtual machine, by runtime identifier (`win-x64`, `linux-x64`, `linux-arm64`, `osx-arm64`, ...): they export the C ABI of
+        /// native/abi/fire_pkg_abi.h. Without one for the machine, the compiler builds the library from the C++ sources with a C++ compiler.</summary>
+        public Dictionary<string, string> Libraries { get; set; } = new();
         public List<PackageNativeFunction> Functions { get; set; } = new();
+    }
+
+    public static class PackageNativeExtensions
+    {
+        /// <summary>The source files for a build for a target: first those of every key that names the target (not case sensitive) - the layer under the common code - then
+        /// <see cref="PackageNative.Sources"/>, which can use what the platform files declare.</summary>
+        public static IReadOnlyList<string> SourcesFor(this PackageNative native, IEnumerable<string> platformKeys)
+        {
+            var result = new List<string>();
+            foreach (var key in platformKeys)
+                foreach (var (k, files) in native.PlatformSources)
+                    if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) foreach (var f in files) if (!result.Contains(f)) result.Add(f);
+            foreach (var f in native.Sources) if (!result.Contains(f)) result.Add(f);
+            return result;
+        }
+
+        /// <summary>Does the native part have something for one of the keys (platform package or target name)?</summary>
+        public static bool SupportsAny(this PackageNative native, IEnumerable<string> platformKeys)
+        {
+            if (native.Platforms.Count == 0) return true;
+            foreach (var key in platformKeys)
+            {
+                if (native.Platforms.Contains(key, StringComparer.OrdinalIgnoreCase)) return true;
+                if (native.PlatformSources.Keys.Contains(key, StringComparer.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
     }
 
     public sealed class PackageNativeFunction

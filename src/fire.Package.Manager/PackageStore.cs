@@ -28,12 +28,15 @@ namespace fire.Package.Manager
         /// <summary>The prelude (fire source), null if the import has none.</summary>
         public string? ReadPrelude() => string.IsNullOrWhiteSpace(Import.Prelude) ? null : File.ReadAllText(PathOf(Import.Prelude));
 
-        /// <summary>The C++ files of the natives in the order of the description.</summary>
-        public IEnumerable<(string Name, string Text)> ReadNativeSources()
+        /// <summary>The C++ files of the natives for a build for <paramref name="platformKeys"/> (the platform package and the name of the target), in the order of the description.</summary>
+        public IEnumerable<(string Name, string Text)> ReadNativeSources(IEnumerable<string> platformKeys)
         {
             if (Import.Native == null) yield break;
-            foreach (var src in Import.Native.Sources) yield return (src, File.ReadAllText(PathOf(src)));
+            foreach (var src in Import.Native.SourcesFor(platformKeys)) yield return (src, File.ReadAllText(PathOf(src)));
         }
+
+        /// <summary>The full path of a file of the package.</summary>
+        public string FullPath(string relative) => PathOf(relative);
     }
 
     /// <summary>The installed packages: below `Packages` in the folder of the compiler, one folder per package with the unpacked files and the `package.json`. Global for the machine -

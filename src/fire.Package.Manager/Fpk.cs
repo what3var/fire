@@ -30,7 +30,12 @@ namespace fire.Package.Manager
             foreach (var import in forgeCopy.Imports)
             {
                 if (!string.IsNullOrWhiteSpace(import.Prelude)) import.Prelude = Absolute(import.Prelude);
-                if (import.Native != null) import.Native.Sources = import.Native.Sources.Select(Absolute).ToList();
+                if (import.Native != null)
+                {
+                    import.Native.Sources = import.Native.Sources.Select(Absolute).ToList();
+                    import.Native.PlatformSources = import.Native.PlatformSources.ToDictionary(kv => kv.Key, kv => kv.Value.Select(Absolute).ToList());
+                    import.Native.Libraries = import.Native.Libraries.ToDictionary(kv => kv.Key, kv => Absolute(kv.Value));
+                }
             }
 
             // the package: every file below a folder of its import; the package.json names them relative to the root
@@ -52,7 +57,12 @@ namespace fire.Package.Manager
             foreach (var import in packaged.Imports)
             {
                 if (!string.IsNullOrWhiteSpace(import.Prelude)) import.Prelude = Place(import.Name, import.Prelude);
-                if (import.Native != null) import.Native.Sources = import.Native.Sources.Select(s => Place(import.Name, s)).ToList();
+                if (import.Native != null)
+                {
+                    import.Native.Sources = import.Native.Sources.Select(s => Place(import.Name, s)).ToList();
+                    import.Native.PlatformSources = import.Native.PlatformSources.ToDictionary(kv => kv.Key, kv => kv.Value.Select(s => Place(import.Name, s)).ToList());
+                    import.Native.Libraries = import.Native.Libraries.ToDictionary(kv => kv.Key, kv => Place(import.Name, kv.Value));
+                }
             }
 
             string outDir = Path.GetFullPath(outputDirectory ?? Path.Combine(baseDir, "build"));

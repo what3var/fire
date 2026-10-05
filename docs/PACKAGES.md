@@ -92,23 +92,11 @@ native builds.
 ### Natives (C++)
 
 `native.sources` are C++ files, `native.functions` lists the functions that fire code can call by `name` (typically the prelude calls them, but a script may too).
-Natives only exist in the **native backend** (`fire native`): the generated file contains the text of the source files after the runtime and the bridges, outside of any
-namespace. A file includes what it needs and puts its functions into `namespace fire`; a native is
-
-```cpp
-#include <cmath>
-namespace fire {
-inline Value mk_hypot(Value a, Value b) { return Float((Real)std::hypot((double)toR(a), (double)toR(b))); }
-}
-```
-
-taking `Value`s (`arguments` of them) and returning a `Value` (see `native/runtime/fire_rt.hpp` and the bridges in `native/bridges/` for what is available: `Int`, `Float`,
-`Bool`, strings, `allocArr`, exceptions such as `indexError`, ...). With `"needsList": true` the function gets the list of the calling scope as an extra last argument
-(`OwnList* list`): what it allocates for its result (arrays, buffers) belongs to the caller; set `"returnsReference": true` when the result is such a value.
-`platforms` names the platform packages (`posix`, `windows`, `freertos`, ...) the C++ is written for; a build for another target is refused (empty: all).
-
-The virtual machine cannot run C++: it knows the names, a call is an error ("only available in a native build"). A package that wants to run in both has to
-write its prelude so that the natives are only used where the native backend is the engine (`#if native`, SPEC 8.1.7).
+The C++ is written once and works in both engines: a **native build** (`--engine native`, any target) puts the text of the source files into the generated file after the runtime, and
+the **virtual machine** loads a shared library that the compiler builds from the same sources for the machine (a generated wrapper exports the C ABI of `native/abi/fire_pkg_abi.h`; the first run
+of a script that imports the package takes a few seconds for that and needs a C++ compiler on the machine, unless the package brings a prebuilt library, `native.libraries`).
+Per-system code goes into `native.platformSources` (or behind `FIRE_TARGET_*`/`FIRE_HAL_*`), `platforms` limits where the C++ may be used.
+How to write a native, what crosses to the VM, prebuilt libraries and packed programs: **docs/PACKAGE_NATIVES.md**.
 
 ## Making packages
 
@@ -129,4 +117,7 @@ file - with absolute paths - in `Dir\json\name-version.json`. Open that file lat
 * The compiler keeps the imports of packages in its set of imports under the key `pkg:name` (`PackageStore.KeyPrefix`): `ImportedPreludes` resolves `#import`, inserts the prelude
   and registers the names of the natives; `LinkedProgram.PackageNatives` carries those names so that a run in the virtual machine (also of a packed program) keeps the
   indexes of the native calls right.
-* The native generator (`CppGenerator.CollectPackages`) checks the platforms, puts the C++ sources into the generated file and calls the functions.
+* The native generator (`CppGenerator.CollectPackages`) checks the platforms, puts the C++ sources of the target into the generated file and calls the functions.
+* For the virtual machine `PackageLibrary` (fire.Compiler) builds the shared library of an import (generated wrapper + `native/abi/` + the runtime in library mode, `FIRE_LIBRARY`) or
+  finds the prebuilt one; `PackageNativeBinding` (fire.Runtime) loads it and marshals the values. `LinkedProgram.PackageNativeLibraries` names the library of each native; a packed program carries
+  the libraries in its payload (`PackagePlan`).

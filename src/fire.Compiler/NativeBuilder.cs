@@ -99,7 +99,7 @@ namespace fire.Compiler
         }
 
         /// <summary>The compiler command line for the generated file.</summary>
-        public static (string Executable, string Arguments) CompilerCommand(ToolchainDef toolchain, TargetProfile target, string cppFile, string includeDir, string exe)
+        public static (string Executable, string Arguments) CompilerCommand(ToolchainDef toolchain, TargetProfile target, string cppFile, string includeDir, string exe, bool sharedLibrary = false, IEnumerable<string>? extraIncludeDirs = null)
         {
             string kind = toolchain.EffectiveKind;
             var libs = (toolchain.Libs ?? new()).Concat(target.Native.LinkLibs).ToList();
@@ -112,7 +112,7 @@ namespace fire.Compiler
                         string flag = kind == "msvc" ? lib + ".lib" : "-l" + lib;
                         if (!libs.Contains(flag)) libs.Add(flag);
                     }
-            var includes = (toolchain.IncludeDirs ?? new()).ToList();
+            var includes = (toolchain.IncludeDirs ?? new()).Concat(extraIncludeDirs ?? Array.Empty<string>()).ToList();
             if (kind == "custom")
             {
                 string template = toolchain.Command ?? throw new NativeConfigException("a custom toolchain needs a command");
@@ -126,6 +126,7 @@ namespace fire.Compiler
             if (kind == "msvc")
             {
                 args.Append($"/std:{toolchain.Std ?? "c++17"} {toolchain.Optimization ?? "/O2"} ");
+                if (sharedLibrary) args.Append("/LD ");
                 foreach (string a in toolchain.Args ?? new()) args.Append(a).Append(' ');
                 foreach (string a in target.Native.CompileArgs) args.Append(a).Append(' ');
                 args.Append($"\"{cppFile}\" /I\"{includeDir}\" ");
@@ -136,6 +137,7 @@ namespace fire.Compiler
             else
             {
                 args.Append($"-std={toolchain.Std ?? "c++17"} {toolchain.Optimization ?? "-O2"} ");
+                if (sharedLibrary) args.Append(RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "-dynamiclib -fPIC " : "-shared -fPIC ");
                 foreach (string a in toolchain.Args ?? new()) args.Append(a).Append(' ');
                 foreach (string a in target.Native.CompileArgs) args.Append(a).Append(' ');
                 args.Append($"\"{cppFile}\" -I\"{includeDir}\" ");
@@ -153,7 +155,7 @@ namespace fire.Compiler
             return Run(space < 0 ? command : command.Substring(0, space), space < 0 ? "" : command.Substring(space + 1), workDir);
         }
 
-        private static (bool Ok, string Text) Run(string exe, string arguments, string workDir)
+        internal static (bool Ok, string Text) Run(string exe, string arguments, string workDir)
         {
             try
             {

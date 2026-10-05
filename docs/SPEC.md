@@ -2138,7 +2138,7 @@ class Circle {
 
 Besides the libraries of the compiler, `#import "name"` also finds the imports of **installed packages**: a package (`.fpk`, a zip with a `package.json`) brings a prelude in fire
 and/or natives as C++ source for the native backend, and is installed for the machine with the package manager `ember` (also in the editor). An unknown import is an error
-that points to `ember`. The natives of a package exist only in native builds; in the virtual machine a call is an error that says so. See docs/PACKAGES.md.
+that points to `ember`. The natives of a package are C++ (docs/PACKAGE_NATIVES.md): a native build puts the source into the generated file, the virtual machine calls a shared library that the compiler builds from it for the machine. See docs/PACKAGES.md.
 
 ## 9. Open points
 

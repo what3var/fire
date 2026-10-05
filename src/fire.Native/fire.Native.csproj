@@ -20,6 +20,8 @@
     <EmbeddedResource Include="..\..\native\runtime\fire_rt.hpp" LogicalName="fire_rt.hpp" />
     <!-- The bridges (native/bridges/): the natives behind the #import libraries, included by the generated file when the program imports them. -->
     <EmbeddedResource Include="..\..\native\bridges\**\*.hpp" LogicalName="bridges/%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- The C ABI between the virtual machine and the natives of packages, and its C++ wrapper (native/abi/). -->
+    <EmbeddedResource Include="..\..\native\abi\*" LogicalName="abi/%(Filename)%(Extension)" />
     <!-- The platform packages (native/platform/<name>/): everything that depends on the operating system or the board. -->
     <EmbeddedResource Include="..\..\native\platform\**\*.hpp" LogicalName="platform/%(RecursiveDir)%(Filename)%(Extension)" />
     <!-- A FreeRTOS simulator on top of pthreads (to try a FreeRTOS build on a PC, and for the tests). -->

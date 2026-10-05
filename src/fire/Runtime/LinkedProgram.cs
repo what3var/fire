@@ -21,6 +21,13 @@ namespace fire.Runtime
         /// machine registers them as functions that fail with a clear message, so that the indexes of the calls stay right.</summary>
         public List<string>? PackageNatives { get; init; }
 
+        /// <summary>For each of <see cref="PackageNatives"/> the file name of the shared library (C ABI, native/abi/fire_pkg_abi.h) that holds it; the virtual machine loads them.</summary>
+        public List<string>? PackageNativeLibraries { get; init; }
+
+        /// <summary>The full paths of those libraries on the machine that linked the program (not serialized): a packed program carries them in its payload.</summary>
+        [MemoryPackIgnore]
+        public List<string>? PackageLibraryFiles { get; init; }
+
         /// <summary>Ausführungsmodus, mit dem das Programm läuft (`#debug`/`#performance` im Skript oder `-m` der
         /// Befehlszeile); die gepackte Runtime übernimmt ihn von hier.</summary>
         public VmExecutionMode ExecutionMode { get; init; }

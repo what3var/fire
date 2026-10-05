@@ -107,11 +107,8 @@ namespace fire.Runtime
             if (linkedProgram.NativeImports.Contains(NativeImports.IO))
                 session.IoResources = RegisterIo(natives);
 
-            // the natives of imports of packages (C++ for the native backend): the same names in the same order, each an error when called
-            if (linkedProgram.PackageNatives != null)
-                foreach (string missing in linkedProgram.PackageNatives)
-                    if (!natives.Has(missing))
-                        natives.Register(missing, _ => throw new InvalidOperationException($"The native function '{missing}' of a package is written in C++: it is only available in a native build, not in the virtual machine."));
+            // the natives of imports of packages (C++ in shared libraries, the libraries of a packed program come from its payload): same names, same order
+            PackageNativeBinding.Register(natives, linkedProgram.PackageNatives, linkedProgram.PackageNativeLibraries, null);
 
             var globalScope = new Scope(null, isGlobal: true);
 

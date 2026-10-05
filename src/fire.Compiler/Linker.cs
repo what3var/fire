@@ -316,7 +316,10 @@ namespace fire.Compiler
             if (floatWidth != 32 && floatWidth != 64) throw new ArgumentOutOfRangeException(nameof(floatWidthOverride), "The float width must be 32 or 64.");
             if (floatWidth == 32) FloatNarrowing.Apply(compiled);
 
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = PackageImports.NativeNamesOf(nativeImports) };
+            var packageNatives = PackageImports.NativesOf(nativeImports);
+            // a program that is packed carries the libraries of its packages: they are built now (a native build does not need them: it takes the C++ source)
+            List<string>? packageLibraryFiles = !string.IsNullOrEmpty(outname) && Engine != "native" ? PackageImports.EnsureLibraries(nativeImports) : null;
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles };
 
             if (!string.IsNullOrEmpty(outname))
             {

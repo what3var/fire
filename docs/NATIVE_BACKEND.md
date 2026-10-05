@@ -567,3 +567,12 @@ Reihenfolge: IO und Time (Dateisystem und Uhr), dann Devices, dann Graphics.
 * **Speicher**: `Value` hat 16 Byte. Objektlayouts pro Klasse halten den Heap klein. Kein GC - die Ownership-Kaskade ist deterministisch.
 * **Code im Flash**: erzeugtes C++ landet als normaler Code im Flash; String-Konstanten sind `static const` (Flash/DROM).
 * `#extern "lib"` (dynamisches Laden) entfällt dort; `extern` wird zum statischen Bindungspunkt.
+
+## Natives von Packages in der VM (Shared Library, C-ABI)
+
+Die C++-Natives eines Packages (docs/PACKAGES.md, docs/PACKAGE_NATIVES.md) laufen in der VM nicht als Fehler-Stub, sondern über eine **Shared Library**: `PackageLibrary` (fire.Compiler) erzeugt einen
+Wrapper (`native/abi/fire_pkg_wrapper.hpp` + je Funktion ein Thunk), kompiliert ihn zusammen mit `fire_rt.hpp` in dem Modus `FIRE_LIBRARY` (`fatal`/`unsupported` werfen eine `FireFatalError`, statt das
+Programm zu beenden; `runDestructors` ist leer) und den Quellen des Packages für die Plattform dieses Rechners (`platformSources`) mit dem Toolchain-Aufruf von `NativeBuilder.CompilerCommand(sharedLibrary: true)`.
+Die Bibliothek exportiert die C-Schnittstelle aus `native/abi/fire_pkg_abi.h` (`fire_pkg_call` mit `fire_val`: Zahlen, Text als UTF-16, Arrays und Puffer werden kopiert). `PackageNativeBinding` (fire.Runtime) lädt sie
+(`NativeLibrary`, im gepackten Programm über den Payload wie SDL) und übersetzt `Value` <-> `fire_val`. Ein Package kann fertige Bibliotheken je Runtime-Identifier mitbringen (`native.libraries`).
+Aufrufe in eine Bibliothek laufen unter einem Mutex (die Runtime darin ist nicht threadsicher). Nicht geprüft ist der Aufbau mit MSVC und auf macOS.

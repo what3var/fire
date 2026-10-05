@@ -50,13 +50,13 @@ namespace fire.Package.Manager
             // The prelude of the import "mathkit": fire source that is added to the program by `#import "mathkit"`.
             class MathKit {
                 static Square(x) { return x * x }
-                // __mathkit_hypot is a native written in C++ (mathkit.hpp): it exists in native builds only; the virtual machine reports an error when it is called.
+                // __mathkit_hypot is a native written in C++ (mathkit.hpp, see docs/PACKAGE_NATIVES.md): native builds include it, the virtual machine runs it from a shared library.
                 static Hypot(a, b) { return __mathkit_hypot(a, b) }
             }
             """;
 
         public const string ExampleNative = """
-            // C++ source of the natives of "mathkit". It is put into the generated file after the runtime (fire_rt.hpp), outside of any namespace.
+            // C++ source of the natives of "mathkit" (docs/PACKAGE_NATIVES.md). It is put into the generated file after the runtime (fire_rt.hpp), outside of any namespace, and built into a shared library for the virtual machine.
             #include <cmath>
 
             namespace fire {

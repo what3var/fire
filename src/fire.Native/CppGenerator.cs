@@ -444,8 +444,10 @@ namespace fire.Native
                 _packageImports.Add((import, key));
                 var native = import.Import.Native;
                 if (native == null) continue;
-                if (native.Platforms.Count > 0 && !native.Platforms.Contains(_target.Native.Platform, StringComparer.OrdinalIgnoreCase))
+                if (!native.SupportsAny(new[] { _target.Native.Platform, _target.Name }))
                     throw new NativeNotSupportedException($"the package '{import.Package.Name}' (import '{import.Name}') has native code for {string.Join(", ", native.Platforms)}, not for the platform '{_target.Native.Platform}' of the target '{_target.Name}'");
+                if (native.SourcesFor(new[] { _target.Native.Platform, _target.Name }).Count == 0)
+                    throw new NativeNotSupportedException($"the package '{import.Package.Name}' (import '{import.Name}') has no C++ source for the target '{_target.Name}' (platform '{_target.Native.Platform}')");
                 foreach (var fn in native.Functions)
                     _packageNatives.TryAdd(fn.Name, (fn.Arguments, fn.Cpp, fn.NeedsList, fn.ReturnsReference));
             }
@@ -515,7 +517,7 @@ namespace fire.Native
             }
             // the C++ source of the packages the program imports: after the runtime and the bridges, at the top level (the files include what they need and put their functions into namespace fire)
             foreach (var (import, _) in _packageImports)
-                foreach (var (name, text) in import.ReadNativeSources())
+                foreach (var (name, text) in import.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
                 {
                     sb.AppendLine($"// ---- package {import.Package.Name} {import.Package.Version}, import \"{import.Name}\": {name}");
                     sb.AppendLine(text);

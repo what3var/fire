@@ -15928,9 +15928,6 @@ else
             }), Path.Combine(pkgDir, "out")).PackagePath;
             fire.Package.Manager.PackageStore.Default.Install(natFpk);
             string natScript = "#import \"pknat\"\nprint(PkgNat.Twice(21))\nvar s = PkgNat.Squares(4)\nprint(s.length)\nprint(s[3])";
-            string vmNative;
-            try { vmNative = vmOutput(natScript); } catch (Exception ex) { vmNative = ex.Message; }
-            CheckNat("Paket: ein C++-Native in der VM ist ein klarer Fehler", vmNative.Contains("native build") && vmNative.Contains("__pk_twice"), vmNative);
             string pkgCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natScript }, null, null, VmExecutionMode.Release));
             CheckNat("Paket: der C++-Quelltext des Natives steht im erzeugten C++", pkgCpp.Contains("---- package pknat 1.0.0, import \"pknat\"") && pkgCpp.Contains("inline Value pk_twice") && pkgCpp.Contains("= pk_squares("));
             string? pkgCxx = FindCxx();
@@ -15950,6 +15947,72 @@ else
                 string build = RunTool(pkgCxx, $"-std=c++17 -pthread -O1 -Wall -Wextra \"{Path.Combine(run, "pkg.cpp")}\" -I\"{run}\" -o \"{Path.Combine(run, "pkg.bin")}\"");
                 string result = build.Length == 0 ? RunTool(Path.Combine(run, "pkg.bin"), "") : "C++-Compiler: " + build;
                 CheckNat("Paket: das C++-Native laeuft im uebersetzten Programm (Zahlen, ein Array aus der Scope-Liste)", result == "42\n4\n9\n", result);
+
+                // the same natives in the virtual machine: built into a shared library with the C ABI, called through it (numbers, text, arrays, buffers cross; errors are reported)
+                string vmNative;
+                try { vmNative = vmOutput(natScript); } catch (Exception ex) { vmNative = ex.Message; }
+                CheckNat("Paket: dasselbe C++-Native laeuft in der VM ueber eine Shared Library (C-ABI) und liefert dasselbe wie nativ", vmNative == result, vmNative);
+                string abiCpp = "#include <cstdint>\nnamespace fire {\n"
+                    + "inline Value ab_upper(Value s, OwnList* list) { const Str* t = strOf(s); Str* r = allocStr(t->length, list); for (uint32_t i = 0; i < t->length; i++) strChars(r)[i] = t->data[i] >= 'a' && t->data[i] <= 'z' ? (char16_t)(t->data[i] - 32) : t->data[i]; return StrV(r); }\n"
+                    + "inline Value ab_sum(Value arr) { Arr* a = arrOf(arr); double t = 0; for (uint32_t i = 0; i < a->length; i++) t += (double)toR(a->items()[i]); return Float((Real)t); }\n"
+                    + "inline Value ab_bytes(Value buf, OwnList* list) { Buf* b = bufOf(buf); Buf* r = allocBuf(b->length, list); for (uint32_t i = 0; i < b->length; i++) r->bytes()[i] = (uint8_t)(b->bytes()[i] + 1); return BufV(r); }\n"
+                    + "inline Value ab_fail(Value n) { return indexError(\"Array index\", n.i, 3); }\n}\n";
+                string abiFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkabi", "1.0.0", "pkabi", "class PkAbi { static Upper(s) { return __ab_upper(s) }\n static Sum(a) { return __ab_sum(a) }\n static Bytes(b) { return __ab_bytes(b) }\n static Fail(n) { return __ab_fail(n) } }", abiCpp, m =>
+                {
+                    foreach (var (n, c, argc, list) in new[] { ("__ab_upper", "ab_upper", 1, true), ("__ab_sum", "ab_sum", 1, false), ("__ab_bytes", "ab_bytes", 1, true), ("__ab_fail", "ab_fail", 1, false) })
+                        m.Imports[0].Native!.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = n, Arguments = argc, Cpp = c, NeedsList = list, ReturnsReference = list });
+                }), Path.Combine(pkgDir, "out")).PackagePath;
+                fire.Package.Manager.PackageStore.Default.Install(abiFpk);
+                string abiScript = "#import \"pkabi\"\nprint(PkAbi.Upper(\"hello w\u00f6rld\"))\nprint(PkAbi.Sum([1, 2.5, 3]))\nvar b = new byte[3]\nb[0] = 1; b[1] = 2; b[2] = 255\nvar c = PkAbi.Bytes(b)\nprint(c[0] + \" \" + c[1] + \" \" + c[2] + \" \" + b[2])";
+                string abiVm;
+                try { abiVm = vmOutput(abiScript); } catch (Exception ex) { abiVm = ex.Message; }
+                string abiFail;
+                try { vmOutput("#import \"pkabi\"\nPkAbi.Fail(7)"); abiFail = ""; } catch (Exception ex) { abiFail = ex.Message; }
+                CheckNat("Paket: Zahlen, Text (UTF-16), Arrays und Byte-Puffer gehen ueber die C-ABI hin und zurueck",
+                    abiVm == "HELLO W\u00f6RLD\n6.5\n2 3 0 255\n", abiVm);
+                CheckNat("Paket: ein Fehler der Native (hier IndexOutOfBounds) meldet die VM mit seinem Text", abiFail.Contains("Array index 7 out of range"), abiFail);
+
+                // per platform: sources of the target are added; the VM uses those of this machine
+                string whichFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkwhich", "1.0.0", "pkwhich", "class PkWhich { static Which() { return __pk_which() } }", "namespace fire { }\n", m =>
+                {
+                    string d = Path.Combine(pkgDir, "which");
+                    Directory.CreateDirectory(d);
+                    var native = m.Imports[0].Native!;
+                    foreach (var (key, value) in new[] { ("posix", 1), ("windows", 2), ("freertos", 3) })
+                    {
+                        File.WriteAllText(Path.Combine(d, key + ".hpp"), $"namespace fire {{ inline Value pk_which_{key}() {{ return Int({value}); }} }}\n");
+                        native.PlatformSources[key] = new List<string> { Path.Combine(d, key + ".hpp") };
+                    }
+                    File.WriteAllText(Path.Combine(d, "common.hpp"), "namespace fire {\n#if defined(FIRE_HAL_WINDOWS)\ninline Value pk_which() { return pk_which_windows(); }\n#elif defined(FIRE_HAL_FREERTOS)\ninline Value pk_which() { return pk_which_freertos(); }\n#else\ninline Value pk_which() { return pk_which_posix(); }\n#endif\n}\n");
+                    native.Sources.Clear();
+                    native.Sources.Add(Path.Combine(d, "common.hpp"));
+                    native.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = "__pk_which", Arguments = 0, Cpp = "pk_which" });
+                }), Path.Combine(pkgDir, "out")).PackagePath;
+                fire.Package.Manager.PackageStore.Default.Install(whichFpk);
+                string whichScript = "#import \"pkwhich\"\nprint(PkWhich.Which())";
+                string cppLinux = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { whichScript }, null, null, VmExecutionMode.Release, null, TargetProfile.Linux), TargetProfile.Linux);
+                string cppRtos = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { whichScript }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos);
+                string vmWhich;
+                try { vmWhich = vmOutput(whichScript); } catch (Exception ex) { vmWhich = ex.Message; }
+                CheckNat("Paket: platformSources - jedes Ziel bekommt seine Quellen (Linux: posix, FreeRTOS: freertos), die VM die der eigenen Plattform",
+                    cppLinux.Contains("pk_which_posix() {") && !cppLinux.Contains("pk_which_freertos() {") && !cppLinux.Contains("pk_which_windows() {") && cppRtos.Contains("pk_which_freertos() {") && !cppRtos.Contains("pk_which_posix() {")
+                    && vmWhich == (OperatingSystem.IsWindows() ? "2\n" : "1\n"), vmWhich);
+
+                // a program that is packed carries the library of its package: it runs where the package is not installed
+                string packed = Path.Combine(pkgDir, "packed.bin");
+                new Linker().CompileAndLink(new[] { natScript }, null, packed, VmExecutionMode.Release);
+                var storeForPack = fire.Package.Manager.PackageStore.Default;
+                fire.Package.Manager.PackageStore.Default = new fire.Package.Manager.PackageStore(Path.Combine(pkgDir, "EmptyStore"));
+                string packedRun = "";
+                if (File.Exists(packed) && !OperatingSystem.IsWindows())
+                {
+                    using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(packed) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+                    var err = p.StandardError.ReadToEndAsync();
+                    packedRun = p.StandardOutput.ReadToEnd() + err.Result;
+                    p.WaitForExit();
+                }
+                CheckNat("Paket: ein gepacktes Programm bringt die Bibliothek seiner Pakete mit (laeuft ohne das Paket)", OperatingSystem.IsWindows() || packedRun == "42\n4\n9\n", packedRun);
+                fire.Package.Manager.PackageStore.Default = storeForPack;
             }
             // the platform of the native part: a package for windows only is refused for another target
             string winOnly = fire.Package.Manager.Fpk.Forge(MakeForge("pkgwin", "1.0.0", "pkgwin", "class PkgWin { static F(x) { return __pk_win(x) } }", "namespace fire { inline Value pk_win(Value a) { return a; } }\n", m =>

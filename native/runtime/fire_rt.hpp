@@ -215,6 +215,22 @@ inline Value indexError(const char* what, int64_t index, int64_t length);
 /// The use of a destroyed object, array or buffer (SPEC 2.3, 2.5): a DestroyedException, or the end of the program when there are no exceptions.
 inline Value destroyedError(Value leaf);
 
+#ifdef FIRE_LIBRARY
+// The natives of a package built as a shared library for the virtual machine (native/abi/fire_pkg_wrapper.hpp): a run-time error does not end the process,
+// it is thrown to the wrapper of the entry point, which reports it to the VM.
+struct FireFatalError { char text[256]; };
+[[noreturn]] inline void fatal(const char* message) {
+    FireFatalError e;
+    std::snprintf(e.text, sizeof e.text, "%s", message);
+    throw e;
+}
+
+[[noreturn]] inline void unsupported(const char* what) {
+    FireFatalError e;
+    std::snprintf(e.text, sizeof e.text, "'%s' is not supported in a package library", what);
+    throw e;
+}
+#else
 [[noreturn]] FIRE_COLD inline void fatal(const char* message) {
     std::fflush(stdout);
     std::fprintf(stderr, "fire runtime error: %s\n", message);
@@ -226,6 +242,7 @@ inline Value destroyedError(Value leaf);
     std::fprintf(stderr, "fire runtime error: '%s' is not supported by the native backend yet\n", what);
     exitNow(1);
 }
+#endif
 
 inline bool isNumeric(Value v) { return v.kind == K_Int || v.kind == K_Float; }
 inline Real toR(Value v) { return v.kind == K_Float ? v.f : (Real)v.i; }

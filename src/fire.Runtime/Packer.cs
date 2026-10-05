@@ -42,7 +42,7 @@ namespace fire.Runtime
                 if (!File.Exists(required))
                     throw new FileNotFoundException($"Zum Packen fehlt '{Path.GetFileName(required)}' im Ordner des Compilers ({baseDir}).", required);
 
-            var plan = PackagePlan.Create(program.NativeImports, baseDir);
+            var plan = PackagePlan.Create(program.NativeImports, baseDir, program.PackageLibraryFiles);
             if (plan.Unresolved.Count > 0)
                 throw new InvalidOperationException("Dependencies required for packing are missing in the compiler folder: " + string.Join(", ", plan.Unresolved));
 

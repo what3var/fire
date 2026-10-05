@@ -56,11 +56,16 @@ namespace fire.Runtime
         /// sonst fehlt der fertigen Datei zur Laufzeit etwas).</summary>
         public SortedSet<string> Unresolved { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-        public static PackagePlan Create(IEnumerable<string> nativeImports, string baseDir)
+        public static PackagePlan Create(IEnumerable<string> nativeImports, string baseDir, IEnumerable<string>? extraNativeFiles = null)
         {
             var plan = new PackagePlan();
             var searchDirs = SearchDirectories(baseDir);
             var frameworkDir = RuntimeEnvironment.GetRuntimeDirectory();
+
+            // the shared libraries of the natives of packages travel in the payload like the native libraries of the bridges
+            if (extraNativeFiles != null)
+                foreach (var file in extraNativeFiles)
+                    if (File.Exists(file)) plan.Natives[Path.GetFileName(file)] = file;
 
             var queue = new Queue<string>(CoreAssemblies);
             foreach (var import in nativeImports)
