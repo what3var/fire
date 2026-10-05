@@ -2314,10 +2314,12 @@ inline void hoistFrom(Value v, OwnList* from, OwnList* to) {
 /// `f(g())`: the result of a call passed straight on belongs to the callee, not to the caller (SPEC 2.1). The generated code lets the
 /// value travel in the argument list `al` of the call and destroys what is left in it afterwards (the callee has moved, stored or
 /// returned what it wants to keep).
+constexpr uint32_t AL_MARK = 0xFFFFFFFEu;   // an argument list (`mark` of a scope is the height of the temporary pool)
 inline void reownArg(Value v, OwnList* from, OwnList* al) {
     Owned* o = ownedOf(v);
     if (o && o->owner == from) { unlink(o); link(al, o); }
     al->parent = from;
+    al->mark = AL_MARK;
 }
 inline void finishArgs(Value result, OwnList* al) {
     transferOut(result, al);
@@ -2383,9 +2385,15 @@ inline OwnList* carrierOf(Owned* node) {
     return nullptr;
 }
 
+/// Generated when the program uses a `Takes` mode and has classes that implement IEnumerable: hands the items of such an object (through its enumerator) to `sink`. False for an object
+/// that is not enumerable (or when an exception ended the enumeration).
+using EnumerateItemsFn = bool (*)(Value obj, OwnList* list, void (*sink)(Value, void*), void* ctx);
+inline EnumerateItemsFn g_enumerateItems = nullptr;
+
 /// Takes what hangs on `root` along (the root has its new owner already), by `mode`: TK_CHILDREN what it points to directly, TK_LOCALS everything reachable that belongs to a scope of
 /// the call (recursively), TK_ALL everything reachable. A thing that moves belongs to the object that points to it; what would end up below itself stays where it is. Every node is visited once.
-inline void moveReachable(Owned* root, int mode, const LocalScopes& locals) {
+/// TK_CHILDREN of an IEnumerable takes its items (through the enumerator, which lives in `here`) instead of its fields.
+inline void moveReachable(Owned* root, int mode, const LocalScopes& locals, OwnList* here = nullptr) {
     if (mode == TK_THIS) return;
     OwnedStack work, seen;
     root->flags |= F_VISIT;
@@ -2394,6 +2402,21 @@ inline void moveReachable(Owned* root, int mode, const LocalScopes& locals) {
     while (!work.empty()) {
         Owned* node = work.pop();
         OwnList* carrier = carrierOf(node);
+        if (mode == TK_CHILDREN && node->okind == O_Object && g_enumerateItems && here) {
+            struct Sink { OwnList* carrier; OwnedStack* seen; } sink{carrier, &seen};
+            bool handled = g_enumerateItems(ObjV(static_cast<Obj*>(node)), here, [](Value v, void* ctx) {
+                Sink* k = static_cast<Sink*>(ctx);
+                Owned* child = ownedOf(v);
+                if (!child || (child->flags & (1 | F_VISIT))) return;
+                child->flags |= F_VISIT;
+                k->seen->push(child);
+                if (k->carrier && child->owner != k->carrier) {
+                    bool cycle = child->okind == O_Object && k->carrier->holder && ownsTransitively(child, k->carrier->holder);
+                    if (!cycle) { if (child->owner) unlink(child); link(k->carrier, child); }
+                }
+            }, &sink);
+            if (handled) continue;
+        }
         Value* items;
         uint32_t n;
         if (node->okind == O_Object) { Obj* ob = static_cast<Obj*>(node); items = ob->fields(); n = ob->nfields; }
@@ -2463,7 +2486,21 @@ inline void ownMethodT(int method, Value self, Value arg, Value mode, OwnList* h
     ownMethod(method, self, arg, here);
     if (mode.i == TK_THIS) return;
     Owned* o = ownedOf(self);
-    if (o && !(o->flags & 1)) moveReachable(o, (int)mode.i, LocalScopes{lists, n});
+    if (o && !(o->flags & 1)) moveReachable(o, (int)mode.i, LocalScopes{lists, n}, here);
+}
+
+/// `try x.Take...(...)` (SPEC 2.2): only the owner moves the thing - it has to belong to a scope of the running call (`lists`) or to the current object (`thisValue`). True when it moved.
+inline bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n, Value thisValue) {
+    Owned* o = ownedOf(self);
+    if (!o) fatal("Take... is only possible for an object, an array or a buffer that is not destroyed.");
+    bool mine = false;
+    for (int i = 0; i < n && !mine; i++) mine = o->owner == lists[i];
+    // the result of a call that was passed on (`f(g())`) belongs to the called function: natively it travels in the argument list of the call (the callee does not know which one, any is taken for its own)
+    if (!mine && o->owner && !o->owner->holder && o->owner->mark == AL_MARK) mine = true;
+    if (!mine && thisValue.kind == K_Class && leafAlive(thisValue)) mine = o->owner == &static_cast<Obj*>(const_cast<void*>(thisValue.p))->owned;
+    if (!mine || (o->flags & 1)) return false;
+    ownMethodT(method, self, arg, mode, here, lists, n);
+    return true;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

@@ -531,8 +531,8 @@ namespace fire.Runtime
             try
             {
                 var rc = ResolveClass(obj.ClassName);
-                if (rc.FindMethodWithAccess(methodName, args.Length).Item1 == null && TryCallOwnershipMethod(obj, methodName, args))
-                    return Value.MakeUndefined();
+                if (rc.FindMethodWithAccess(methodName, args.Length).Item1 == null && TryCallOwnershipMethod(obj, methodName, args, out var ownershipResult))
+                    return ownershipResult;
                 return CallMethodNested(obj, methodName, args);
             }
             finally { ExitGlobalsSection(); }
@@ -2728,9 +2728,9 @@ namespace fire.Runtime
                     }
                 }
 
-                if (LeafOf(target) is { } ownedLeaf && TryCallLeafOwnershipMethod(ownedLeaf, methodName, args))
+                if (LeafOf(target) is { } ownedLeaf && TryCallLeafOwnershipMethod(ownedLeaf, methodName, args, out var leafResult))
                 {
-                    Push(Value.MakeUndefined());
+                    Push(leafResult);
                     return;
                 }
                 if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
@@ -2746,7 +2746,7 @@ namespace fire.Runtime
             }
 
             var obj = (ObjectInstance)target.AsObjectRef();
-            if (IsDeadObject(obj) && !(methodName is "Take" or "TakeUpwards" or "TakeGlobal" or "TakeTo")) { ThrowDestroyedObject(obj); return; }
+            if (IsDeadObject(obj) && !(methodName is "Take" or "TakeUpwards" or "TakeGlobal" or "TakeTo" or "tryTake" or "tryTakeUpwards" or "tryTakeGlobal" or "tryTakeTo")) { ThrowDestroyedObject(obj); return; }
 
             // Actor-Ziel (siehe Runtime.ObjectInstance.Mailbox-Doku):
             // JEDER Methodenaufruf wird zu einer asynchronen Nachricht
@@ -2775,9 +2775,9 @@ namespace fire.Runtime
             if (proto == null)
             {
                 // Die Ownership-Übergabe (SPEC 2.2) ist für jedes Objekt da, ohne dass die Klasse sie deklariert.
-                if (TryCallOwnershipMethod(obj, methodName, args))
+                if (TryCallOwnershipMethod(obj, methodName, args, out var ownershipValue))
                 {
-                    Push(Value.MakeUndefined());
+                    Push(ownershipValue);
                     return;
                 }
                 throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
@@ -2815,14 +2815,26 @@ namespace fire.Runtime
 
         /// <summary>`obj.Take(...)`, `obj.TakeUpwards(...)`, `obj.TakeGlobal(...)`, `obj.TakeTo(other, ...)` (SPEC 2.2): eingebaute Methoden jedes Objekts, die
         /// nur greifen, wenn die Klasse nichts Gleichnamiges deklariert. Das letzte Argument darf ein `Takes`-Wert sein (was außer dem Objekt mitwandert).
-        /// Liefert false, wenn `name`/Argumentzahl keine davon ist.</summary>
-        private bool TryCallOwnershipMethod(ObjectInstance obj, string name, Value[] args)
+        /// Mit `try` davor (`tryTake...`, vom Compiler) verschiebt die Methode nur, wenn der Aufrufer der Besitzer ist (der Scope des Aufrufs oder `this`), und
+        /// liefert, ob sie es getan hat. Liefert false, wenn `name`/Argumentzahl keine davon ist.</summary>
+        private bool TryCallOwnershipMethod(ObjectInstance obj, string name, Value[] args, out Value result)
         {
-            int baseArgs = name == "TakeTo" ? 1 : 0;
+            result = Value.MakeUndefined();
+            bool conditional = name.StartsWith("tryTake", StringComparison.Ordinal);
+            string method = conditional ? name.Substring(3) : name;
+            if (method is not ("Take" or "TakeUpwards" or "TakeGlobal" or "TakeTo")) return false;
+            int baseArgs = method == "TakeTo" ? 1 : 0;
             if (args.Length != baseArgs && args.Length != baseArgs + 1) return false;
             int mode = args.Length > baseArgs ? TakesMode(args[baseArgs]) : Takes.This;
+            if (conditional)
+            {
+                // nur der Besitzer verschiebt: das Objekt gehört dem Scope dieses Aufrufs oder dem aktuellen Objekt
+                bool owned = !obj.IsDestroyed && (IsCurrentCallOwner(obj.Owner) || ReferenceEquals(obj.Owner, _currentThis));
+                result = Value.MakeBool(owned);
+                if (!owned) return true;
+            }
             Scope? target;
-            switch (name)
+            switch (method)
             {
                 case "TakeUpwards":
                     obj.TakeUpwards();
@@ -2836,19 +2848,17 @@ namespace fire.Runtime
                 {
                     var other = RequireObjectInstance(args[0], "TakeTo");
                     obj.TakeTo(other, this);
-                    if (!obj.IsDestroyed && mode != Takes.This) OwnershipWalk.MoveReachable(Value.MakeClassRef(obj), mode, OwnsWithinCall, other);
+                    if (!obj.IsDestroyed && mode != Takes.This) OwnershipWalk.MoveReachable(Value.MakeClassRef(obj), mode, OwnsWithinCall, other, EnumerateItems);
                     return true;
                 }
-                case "Take":
+                default:   // Take
                     // in den aktuellen Scope ziehen (der Scope, in dem der Aufruf steht)
                     if (obj.IsDestroyed) throw new OwnershipException("A destroyed object cannot change its owner.");
                     obj.ReparentTo(_currentScope);
                     target = _currentScope;
                     break;
-                default:
-                    return false;
             }
-            if (mode != Takes.This && target != null) OwnershipWalk.MoveReachable(Value.MakeClassRef(obj), mode, OwnsWithinCall, target);
+            if (mode != Takes.This && target != null) OwnershipWalk.MoveReachable(Value.MakeClassRef(obj), mode, OwnsWithinCall, target, EnumerateItems);
             return true;
         }
 
@@ -2859,15 +2869,49 @@ namespace fire.Runtime
             return (int)v.AsInt();
         }
 
-        /// <summary>Die Ownership-Methoden eines Arrays oder Puffers (SPEC 2.2): TakeUpwards, TakeGlobal, TakeTo(objekt), Take(), jeweils mit einem `Takes`-Wert als letztem Argument.</summary>
-        private bool TryCallLeafOwnershipMethod(IOwnedLeaf leaf, string name, Value[] args)
+        /// <summary>Die Items eines Objekts, das `IEnumerable` implementiert (`Takes.Children`, SPEC 2.2): über seinen Enumerator (GetEnumerator, MoveNext, GetCurrent). null, wenn es keins
+        /// implementiert oder eine Ausnahme die Aufzählung abgebrochen hat.</summary>
+        private IReadOnlyList<Value>? EnumerateItems(ObjectInstance obj)
         {
-            int baseArgs = name == "TakeTo" ? 1 : 0;
+            bool enumerable = false;
+            for (var rc = ResolveClass(obj.ClassName); rc != null && !enumerable; rc = rc.Base)
+                enumerable = rc.Interfaces.Contains("IEnumerable");
+            if (!enumerable) return null;
+            var enumerator = CallMethodNested(obj, "GetEnumerator", Array.Empty<Value>());
+            if (enumerator == null || enumerator.Value.Kind != ValueKind.Class) return null;
+            var enumeratorObj = (ObjectInstance)enumerator.Value.AsObjectRef();
+            var items = new List<Value>();
+            while (true)
+            {
+                var more = CallMethodNested(enumeratorObj, "MoveNext", Array.Empty<Value>());
+                if (more == null) return null;
+                if (!more.Value.AsBool()) break;
+                var current = CallMethodNested(enumeratorObj, "GetCurrent", Array.Empty<Value>());
+                if (current == null) return null;
+                items.Add(current.Value);
+            }
+            return items;
+        }
+
+        /// <summary>Die Ownership-Methoden eines Arrays oder Puffers (SPEC 2.2): TakeUpwards, TakeGlobal, TakeTo(objekt), Take(), jeweils mit einem `Takes`-Wert als letztem Argument
+        /// und mit `try` davor (`tryTake...`).</summary>
+        private bool TryCallLeafOwnershipMethod(IOwnedLeaf leaf, string name, Value[] args, out Value result)
+        {
+            result = Value.MakeUndefined();
+            bool conditional = name.StartsWith("tryTake", StringComparison.Ordinal);
+            string method = conditional ? name.Substring(3) : name;
+            if (method is not ("TakeUpwards" or "TakeGlobal" or "TakeTo" or "Take")) return false;
+            int baseArgs = method == "TakeTo" ? 1 : 0;
             if (args.Length != baseArgs && args.Length != baseArgs + 1) return false;
-            if (name is not ("TakeUpwards" or "TakeGlobal" or "TakeTo" or "Take")) return false;
             int mode = args.Length > baseArgs ? TakesMode(args[baseArgs]) : Takes.This;
+            if (conditional)
+            {
+                bool owned = !leaf.IsDestroyed && (IsCurrentCallOwner(leaf.LeafOwner) || ReferenceEquals(leaf.LeafOwner, _currentThis));
+                result = Value.MakeBool(owned);
+                if (!owned) return true;
+            }
             IOwner target;
-            switch (name)
+            switch (method)
             {
                 case "TakeUpwards": LeafOwnership.TakeUpwards(leaf); target = leaf.LeafOwner!; break;
                 case "TakeGlobal": LeafOwnership.Reparent(leaf, _globalScope); target = _globalScope; break;
@@ -2881,7 +2925,7 @@ namespace fire.Runtime
                 default: LeafOwnership.Reparent(leaf, _currentScope); target = _currentScope; break;
             }
             if (mode != Takes.This && !leaf.IsDestroyed)
-                OwnershipWalk.MoveReachable(leaf is ScriptArray a ? Value.MakeArray(a) : Value.MakeBuffer((ByteBuffer)leaf), mode, OwnsWithinCall, target);
+                OwnershipWalk.MoveReachable(leaf is ScriptArray a ? Value.MakeArray(a) : Value.MakeBuffer((ByteBuffer)leaf), mode, OwnsWithinCall, target, EnumerateItems);
             return true;
         }
 

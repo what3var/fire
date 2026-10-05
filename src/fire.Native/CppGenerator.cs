@@ -146,6 +146,8 @@ namespace fire.Native
         private bool _usesDevices;
         private bool _usesGraphics;
         private bool _usesWindows;
+        /// <summary>A `Takes` mode is used: `Takes.Children` needs the enumerator of the IEnumerable classes (fire_enumerateItems).</summary>
+        private bool _usesTakeEnumerate;
         private int _ioSecondsUnit;
 
         /// <summary>The natives of `#import "io"` (`__IO` + name): the number of arguments, whether the result is a string/array/buffer (it belongs to the innermost scope),
@@ -407,7 +409,7 @@ namespace fire.Native
         }
 
         /// <summary>The runtime enum of a built-in ownership method (SPEC 2.2), or null.</summary>
-        private static string? OwnMethodId(string name, int argc) => (name, argc) switch
+        private static string? OwnMethodId(string name, int argc) => (name.StartsWith("try", StringComparison.Ordinal) ? name.Substring(3) : name, argc) switch
         {
             ("Take", 0 or 1) => "OM_Take",
             ("TakeUpwards", 0 or 1) => "OM_TakeUpwards",
@@ -415,6 +417,9 @@ namespace fire.Native
             ("TakeTo", 1 or 2) => "OM_TakeTo",
             _ => null,
         };
+
+        /// <summary>`try x.Take...(...)` (the compiler turns it into a call of `tryTake...`): only the owner moves it.</summary>
+        private static bool OwnMethodIsTry(string name) => name.StartsWith("tryTake", StringComparison.Ordinal);
 
         /// <summary>The ownership method takes the target as its first argument (`TakeTo(obj)`), and optionally a `Takes` mode after it.</summary>
         private static int OwnMethodBaseArgs(string ownId) => ownId == "OM_TakeTo" ? 1 : 0;
@@ -555,6 +560,7 @@ namespace fire.Native
 
             foreach (var name in _fieldNames) sb.AppendLine(FieldHelpers(name));
             foreach (var (name, argc) in _dispatchers) sb.AppendLine(Dispatcher(name, argc));
+            if (_usesTakeEnumerate) sb.Append(EnumerateItemsFunction());
             foreach (var method in _operators)
             {
                 var ids = _classList.Where(c => c.Rc.FindMethodWithAccess(method, 1).Proto != null).Select(c => c.Id).ToList();
@@ -656,6 +662,12 @@ namespace fire.Native
                     if (cls.Rc.FindMethodWithAccess("get_" + field, 0).Proto is { } getter) GetFunc(getter, FuncKind.Method);
                     if (cls.Rc.FindMethodWithAccess("set_" + field, 1).Proto is { } setter) GetFunc(setter, FuncKind.Method);
                 }
+            if (_usesTakeEnumerate && _classList.Any(c => ClassIs(c.Rc, "IEnumerable")))
+            {
+                _dispatchers.Add(("GetEnumerator", 0));
+                _dispatchers.Add(("MoveNext", 0));
+                _dispatchers.Add(("GetCurrent", 0));
+            }
             if (AnyClassHasMethod("GetIndex", 1)) _dispatchers.Add(("GetIndex", 1));
             if (AnyClassHasMethod("SetIndex", 2)) _dispatchers.Add(("SetIndex", 2));
             if (_dispatchers.Contains(("GetEnumerator", 0)) && _program.Program.Classes.ContainsKey("ListEnumerator"))
@@ -867,6 +879,37 @@ namespace fire.Native
             }
             sb.AppendLine("}");
             if (WrapDispatchers) sb.Append(ActorWrapper(name, argc));
+            return sb.ToString();
+        }
+
+        /// <summary>`Takes.Children` of an object that implements IEnumerable takes its items (SPEC 2.2): this runs the enumerator (GetEnumerator, MoveNext, GetCurrent) and hands each item to the runtime.</summary>
+        private string EnumerateItemsFunction()
+        {
+            var ids = _classList.Where(c => ClassIs(c.Rc, "IEnumerable")).Select(c => c.Id).ToList();
+            var sb = new StringBuilder();
+            sb.AppendLine("static bool fire_enumerateItems(Value obj, OwnList* list, void (*sink)(Value, void*), void* ctx) {");
+            if (ids.Count == 0) sb.AppendLine("    (void)obj; (void)list; (void)sink; (void)ctx;\n    return false;\n}");
+            else
+            {
+                string unwound = _usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return false;\n" : "";
+                sb.AppendLine("    if (obj.kind != K_Class || !leafAlive(obj)) return false;");
+                sb.AppendLine("    switch (asObj(obj)->cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "break; default: return false; }");
+                sb.AppendLine($"    Value e = call_GetEnumerator_0(obj{DispatchTail("GetEnumerator", 0, "list", "0xFFFFFFFFu")});");
+                sb.AppendLine("    adopt(e, list);");
+                sb.Append(unwound);
+                sb.AppendLine("    for (;;) {");
+                sb.AppendLine($"        Value more = call_MoveNext_0(e{DispatchTail("MoveNext", 0, "list", "0xFFFFFFFFu")});");
+                sb.Append(unwound.Replace("    if", "        if"));
+                sb.AppendLine("        if (!(more.kind == K_Bool && more.i)) break;");
+                sb.AppendLine($"        Value cur = call_GetCurrent_0(e{DispatchTail("GetCurrent", 0, "list", "0xFFFFFFFFu")});");
+                sb.AppendLine("        adopt(cur, list);");
+                sb.Append(unwound.Replace("    if", "        if"));
+                sb.AppendLine("        sink(cur, ctx);");
+                sb.AppendLine("    }");
+                sb.AppendLine("    return true;");
+                sb.AppendLine("}");
+            }
+            sb.AppendLine("[[maybe_unused]] static const bool fire_enumerateHook_ = (g_enumerateItems = fire_enumerateItems, true);");
             return sb.ToString();
         }
 
@@ -2302,13 +2345,20 @@ namespace fire.Native
                         if (ownMethodId == "OM_TakeGlobal" && !_usesGlobalOwn) { _usesGlobalOwn = true; _version++; }
                         int baseArgs = OwnMethodBaseArgs(ownMethodId);
                         string targetArg = baseArgs == 1 ? S(slot + 1) : "Undef()";
-                        if (argc == baseArgs) E($"ownMethod({ownMethodId}, {S(slot)}, {targetArg}, &{owner});");
+                        bool isTry = OwnMethodIsTry(method);
+                        if (argc == baseArgs && !isTry) E($"ownMethod({ownMethodId}, {S(slot)}, {targetArg}, &{owner});");
                         else
                         {
-                            // with a `Takes` mode: the scopes of the running call tell what is "local"
+                            // with a `Takes` mode (the scopes of the running call tell what is "local") or with `try` (only the owner moves it)
                             var scopeLists = st.Scopes.Where(sc => f.NeedsList.Contains(sc.Id)).Select(sc => "&" + ListName(sc.Id)).ToList();
                             string localsDecl = scopeLists.Count == 0 ? "" : $"OwnList* const L_[] = {{{string.Join(", ", scopeLists)}}}; ";
-                            E($"{{ {localsDecl}ownMethodT({ownMethodId}, {S(slot)}, {targetArg}, {S(slot + 1 + baseArgs)}, &{owner}, {(scopeLists.Count == 0 ? "nullptr" : "L_")}, {scopeLists.Count}); }}");
+                            string modeArg = argc > baseArgs ? S(slot + 1 + baseArgs) : "Int(0)";
+                            if (argc > baseArgs && !_usesTakeEnumerate) { _usesTakeEnumerate = true; _version++; }
+                            string call = isTry
+                                ? $"{S(slot)} = Bool(ownMethodTry({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "nullptr" : "L_")}, {scopeLists.Count}, {(f.HasSelf ? "self" : "Undef()")}));"
+                                : $"ownMethodT({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "nullptr" : "L_")}, {scopeLists.Count});";
+                            E($"{{ {localsDecl}{call} }}");
+                            if (isTry) { SetR(slot, false); d = slot + 1; return Next(); }
                         }
                         E($"{S(slot)} = Undef();");
                         SetR(slot, false);

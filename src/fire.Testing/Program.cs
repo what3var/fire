@@ -5535,8 +5535,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         IO.Stdio.Flush()
         IO.Stdio.ErrorLine("Fehler ä")
         print("gelesen: " + IO.Stdio.ReadLine())
-        var stdoutStream = IO.Stdio.Out()
-        var w = new IO.TextWriter(stdoutStream, true)   // (leaveOpen: the writer does not own the stream, the variable keeps it alive)
+        var w = new IO.TextWriter(IO.Stdio.Out(), true)
         w.WriteLine("via TextWriter äöü")
         w.Flush()
         print(IO.Stdio.ReadLine())
@@ -10978,6 +10977,42 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print("end")
         """, new[] { "~q1", "1 p1", "q1 dead", "2 q2", "~r3", "3 q3", "r3 dead", "4 foreign", "5 p4", "6", "7 a1a2", "end", "~h", "~p5", "~q5", "~p1", "~p2", "~q2", "~p3", "~q3", "~p4", "~foreign", "~p6", "~q6", "~a1", "~a2" });
 
+    CheckScChecked("try x.Take...: verschiebt nur der Besitzer (bool); Takes.Children nimmt die Items von Array und IEnumerable mit", """
+        class Item { string n
+          construct(string n) { this.n = n }
+          destruct() { print("~" + this.n) } }
+        class Holder { var kept
+          construct() { }
+          // x is the result of a call passed straight on: it belongs to this method's scope, so the Holder may take it
+          Adopt(x) { return try x.TakeTo(this) }
+          AdoptNew(x) { return try x.TakeTo(this) }
+          // the thing is owned by this object: only the owner moves it
+          Release() { return try this.kept.Take() }
+        }
+        class F { static Make(string n) { return new Item(n) } }
+        var h = new Holder()
+        print(h.Adopt(F.Make("fresh")))
+        var mine = new Item("mine")
+        print(h.AdoptNew(mine))
+        print(h.AdoptNew(new Item("tmp")))
+        // children of a list: the items go to the list
+        class Bag { var list
+          construct() { this.list = new List() } }
+        var items = new List()
+        var a = new Item("la")
+        var b = new Item("lb")
+        items.Add(a)
+        items.Add(b)
+        var arr = [new Item("a1"), new Item("a2")]
+        class T { static Run(items, arr) {
+            items.Take(Takes.Children)
+            arr.Take(Takes.Children)
+            return 0
+        } }
+        T.Run(items, arr)
+        print("end")
+        """, new[] { "True", "False", "False", "~la", "~lb", "~a1", "~a2", "end", "~fresh", "~mine", "~tmp" });
+
     CheckSc("return aus verschachtelten Bloecken zerstoert die Objekte ALLER verlassenen Scopes (innerster zuerst)", scHead + """
         class T {
             static F() {
@@ -14682,6 +14717,45 @@ else
             var ref = p.it
             delete p
             try { print(ref.n) } catch (DestroyedException e) { print("caught2") }
+            """),
+    }).ToArray();
+
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Besitz: try x.Take... und Takes.Children (Array, IEnumerable)", """
+            class Item { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class Holder { var kept
+              construct() { }
+              // x is the result of a call passed straight on: it belongs to this method's scope, so the Holder may take it
+              Adopt(x) { return try x.TakeTo(this) }
+              AdoptNew(x) { return try x.TakeTo(this) }
+              // the thing is owned by this object: only the owner moves it
+              Release() { return try this.kept.Take() }
+            }
+            class F { static Make(string n) { return new Item(n) } }
+            var h = new Holder()
+            print(h.Adopt(F.Make("fresh")))
+            var mine = new Item("mine")
+            print(h.AdoptNew(mine))
+            print(h.AdoptNew(new Item("tmp")))
+            // children of a list: the items go to the list
+            class Bag { var list
+              construct() { this.list = new List() } }
+            var items = new List()
+            var a = new Item("la")
+            var b = new Item("lb")
+            items.Add(a)
+            items.Add(b)
+            var arr = [new Item("a1"), new Item("a2")]
+            class T { static Run(items, arr) {
+                items.Take(Takes.Children)
+                arr.Take(Takes.Children)
+                return 0
+            } }
+            T.Run(items, arr)
+            print("end")
             """),
     }).ToArray();
 

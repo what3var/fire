@@ -141,12 +141,17 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
 - All four are built-in methods of every object instance - and of every array and buffer (`TakeTo(obj)` needs an object as the target; a class that declares a method of the same name itself takes precedence). A function can thereby keep an object that belongs to it (e.g. a copy passed as a parameter, 2.4): `param.TakeTo(this)`.
 - **What travels along.** Every one of them takes a last argument of the enum `Takes` (always available): `Take(Takes.Locals)`, `TakeUpwards(Takes.Children)`, `TakeTo(obj, Takes.All)`, `TakeGlobal(Takes.This)`. Without it the mode is `Takes.This`.
   - `Takes.This` - only the object itself (what it owns goes along anyway, it is part of its tree).
-  - `Takes.Children` - the object and everything its fields (an array: its elements) point to directly; it owns them afterwards.
-  - `Takes.Locals` (also `Takes.Recursive`) - like `return` (2.3): everything reachable from the object that belongs to a scope of the running call, recursively. A thing that is taken along belongs to the object that points to it
+  - `Takes.Children` - the object and everything it points to directly; it owns them afterwards. For an array and for everything that implements `IEnumerable` that are its **items** (an object: through its
+    enumerator - `GetEnumerator`, `MoveNext`, `GetCurrent`), for any other object its fields.
+  - `Takes.Locals` - like `return` (2.3): everything reachable from the object that belongs to a scope of the running call, recursively. A thing that is taken along belongs to the object that points to it
     (for an array: to the owner of the array, if that is an object), otherwise to the new owner of the object.
   - `Takes.All` - everything reachable, recursively, whoever owns it.
   
   Every thing is visited once (references can form cycles; the ownership stays a tree: what would end up below itself stays where it is). A destroyed object is never taken.
+- **`try`: only the owner moves it.** `try obj.Take...(...)` (also `try obj.TakeTo(other, Takes.X)`) moves the object only if the caller is its owner at this moment - it belongs to a scope of the running call or to the
+  current object (`this`) - and gives `true` if it moved it, else `false` (nothing changes). A library can thereby take what is handed to it without stealing what belongs to somebody else:
+  `construct(source) { this.source = source; try source.TakeTo(this) }` keeps a stream that is only the result of a call passed straight on (`new Reader(File.Open(p))`, 2.1) and leaves a stream of the caller alone.
+  What travels along (`Takes`) only moves when the object itself moved.
 - **Cycle protection:** `TakeTo(other)` checks whether `other` is transitively already a "descendant" (directly or indirectly owned) of `obj`. If so: run-time error instead of a cycle in the ownership tree.
 - **Race with an ongoing deletion:** If `other` (the target of `TakeTo`) is itself currently in cascade deletion (its own owner was just destroyed, its `destruct()` cascade is already running), the transfer is treated as if it had happened one second *before* the start of that deletion: `obj` is also taken into the running cascade immediately and deleted along with it (including the `destruct()` call), instead of remaining behind as an orphan with a half-destroyed owner.
 - Variable bindings (name → value) themselves do **not** move – only object ownership is transferable.
@@ -1812,8 +1817,7 @@ and throw `IO.StreamClosedException` if you carry on after `Close()`.
 
 **Standard input/output (`IO.Stdio`).** `IO.Stdio.Write(x)`, `WriteLine(x)`, `ErrorWrite(x)`,
 `ErrorLine(x)`, `Flush()`, `ReadLine()` (undefined at the end), `ReadAll()`; `In()`/`Out()`/`Err()`
-return them as a stream (e.g. `var o = IO.Stdio.Out(); var w = new IO.TextWriter(o, true)` - with `leaveOpen` the writer does not own the stream, so a variable has to keep it: a stream that is
-only the argument `IO.Stdio.Out()` belongs to the constructor and dies with it), `Close()` on them changes
+return them as a stream (e.g. `new IO.TextWriter(IO.Stdio.Out(), true)`), `Close()` on them changes
 nothing. **Where** this leads is decided by the host: the real console (default, `IoStdio.SystemConsole`)
 or callback functions (`IoStdio.Custom(output, error, input)` - the editor routes them into its
 output window, the input is empty there). Output always runs as UTF-8; with the `Custom` target it is passed on

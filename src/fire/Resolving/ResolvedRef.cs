@@ -41,6 +41,10 @@ namespace fire.Resolving
         /// Aufruf `Name(...)` wie Native/Extern.</summary>
         public sealed record TryableNative(string Name) : ResolvedRef;
 
+        /// <summary>`try obj.Take...(...)` (Ast.TryCallExpr mit einem Methodenaufruf, SPEC 2.2): die Ownership-Methode (`Take`, `TakeUpwards`, `TakeGlobal`, `TakeTo`) verschiebt
+        /// nur, wenn der Aufrufer der Besitzer ist, und liefert, ob sie es getan hat.</summary>
+        public sealed record TryTake(string Name) : ResolvedRef;
+
         /// <summary>Ein Zugriff auf ein `enum`-Mitglied (`EnumName.Mitglied`) -
         /// löst zur Compile-Zeit direkt zum passenden Int-Wert auf, keine
         /// Laufzeit-Auflösung nötig (siehe Ast.EnumDecl-Doku). Wird vom

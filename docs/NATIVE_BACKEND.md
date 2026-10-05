@@ -85,6 +85,11 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
 * **`Takes`** (`Take`, `TakeUpwards`, `TakeGlobal`, `TakeTo` mit einem `Takes`-Wert als letztem Argument): `ownMethodT` setzt erst den Owner wie bisher, dann `moveReachable` mit dem Modus
   (`TK_THIS` nichts weiter, `TK_CHILDREN` die unmittelbaren Mitglieder, `TK_LOCALS` wie `return` mit den Listen der offenen Scopes der Funktion, `TK_ALL` alles Erreichbare). Über den Methoden-Verteiler
   (eine Klasse deklariert selbst ein `Take...`) kennt der Aufruf die Scopes des Aufrufers nicht: `Takes.Locals` findet dort nichts.
+* **`Takes.Children` und `IEnumerable`**: nimmt ein Objekt, das `IEnumerable` implementiert, seine Items über den Enumerator mit, erzeugt der Generator `fire_enumerateItems` (GetEnumerator, MoveNext, GetCurrent über die Verteiler)
+  und setzt `g_enumerateItems`; `moveReachable` benutzt sie statt der Felder. Ein Array nimmt seine Elemente mit.
+* **`try x.Take...(...)`** (`ownMethodTry`): der Compiler macht daraus einen Aufruf von `tryTake...`; verschoben wird nur, wenn das Ding einem Scope des laufenden Aufrufs (die Listen der offenen Scopes), dem
+  aktuellen Objekt (`self`) oder einer Argumentliste gehört (das Ergebnis eines weitergereichten Aufrufs `f(g())` reist nativ in der Argumentliste des Aufrufs, `AL_MARK`; der Aufgerufene weiß nicht, welche es ist, jede gilt
+  als seine - gibt er das Argument weiter, kann ein tiefer Aufgerufener es nativ übernehmen, in der VM nicht). Das Ergebnis ist `Bool`.
 * Abweichung zur VM: die Elemente eines zurückgegebenen Arrays, das keinem Objekt gehört, hängen nativ an dem Array (Teileliste), in der VM am aufrufenden Scope - beide sterben zusammen mit dem Array bzw. dem Scope.
 
 ### Speicher: Besitz für Objekte, Arrays und Puffer, Zähler für Strings und Lambdas

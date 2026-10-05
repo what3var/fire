@@ -1631,10 +1631,22 @@ namespace fire.Compiler
         /// TryCallExpr-Knoten selbst, die der Compiler abfragt.</summary>
         private void ResolveTryCallExpr(TryCallExpr tc)
         {
+            // `try obj.Take...(...)` (SPEC 2.2): die Ownership-Methode verschiebt nur, wenn der Aufrufer der Besitzer ist
+            if (tc.Call is CallExpr takeCall && takeCall.Callee is MemberExpr takeMember && takeMember.Name is "Take" or "TakeUpwards" or "TakeGlobal" or "TakeTo")
+            {
+                int baseArgs = takeMember.Name == "TakeTo" ? 1 : 0;
+                if (takeCall.Args.Count != baseArgs && takeCall.Args.Count != baseArgs + 1)
+                    throw new ResolverException($"'try {takeMember.Name}(...)' expects {(baseArgs == 1 ? "the target object and optionally a Takes mode" : "optionally a Takes mode")}", tc.Line);
+                ResolveExpr(takeMember.Target);
+                foreach (var a in takeCall.Args) ResolveExpr(a);
+                _refs[tc] = new ResolvedRef.TryTake(takeMember.Name);
+                return;
+            }
+
             if (tc.Call is not CallExpr innerCall || innerCall.Callee is not IdentifierExpr calleeIdent)
                 throw new ResolverException(
                     "'try' before a call expects a direct call of a registered function " +
-                    "(no method call, no lambda call)", tc.Line);
+                    "(no method call except obj.Take/TakeUpwards/TakeGlobal/TakeTo, no lambda call)", tc.Line);
 
             if (!_tryableNativeNames.Contains(calleeIdent.Name))
                 throw new ResolverException(

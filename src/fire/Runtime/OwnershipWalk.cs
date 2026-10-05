@@ -9,7 +9,7 @@ namespace fire.Runtime
     {
         /// <summary>Nur das Objekt, auf dem die Methode aufgerufen wird (was es besitzt, wandert ohnehin mit).</summary>
         public const int This = 0;
-        /// <summary>Das Objekt und alles, worauf seine Felder (bei einem Array: seine Elemente) unmittelbar zeigen; es besitzt sie danach.</summary>
+        /// <summary>Das Objekt und alles, worauf seine Felder unmittelbar zeigen; bei einem Array und bei allem, was `IEnumerable` implementiert, seine Items (ein Objekt über seinen Enumerator). Es besitzt sie danach.</summary>
         public const int Children = 1;
         /// <summary>Wie `return`: alles Erreichbare, was einem Scope des laufenden Aufrufs gehört (rekursiv); es wandert zu dem Objekt, das darauf zeigt.</summary>
         public const int Locals = 2;
@@ -24,7 +24,7 @@ namespace fire.Runtime
         /// <summary>Nimmt, was hinter <paramref name="root"/> hängt, nach <paramref name="mode"/> mit (der Wurzel selbst hat der Aufrufer schon den neuen Owner gegeben).
         /// Ein mitgenommener Knoten gehört danach dem Objekt, das auf ihn zeigt (bei einem Array: dem Owner des Arrays, wenn der ein Objekt ist), sonst
         /// <paramref name="fallback"/>. <paramref name="isLocalScope"/> sagt, ob ein Scope zum laufenden Aufruf gehört (`Takes.Locals`): lokal ist, was einem solchen Scope gehört, auch über andere Objekte hinweg (die gleich mit ihm sterben).</summary>
-        public static void MoveReachable(Value root, int mode, Func<Scope, bool> isLocalScope, IOwner fallback)
+        public static void MoveReachable(Value root, int mode, Func<Scope, bool> isLocalScope, IOwner fallback, Func<ObjectInstance, IReadOnlyList<Value>?>? enumerate = null)
         {
             if (mode == Takes.This) return;
             object? rootNode = NodeOf(root);
@@ -39,7 +39,9 @@ namespace fire.Runtime
                 var node = work.Pop();
                 IOwner carrier = (node as ObjectInstance) ?? ((node as IOwnedLeaf)?.LeafOwner as ObjectInstance) ?? fallback;
                 values.Clear();
-                CollectValues(node, values);
+                // `Takes.Children` eines IEnumerable: seine Items, nicht seine Felder
+                if (mode == Takes.Children && node is ObjectInstance enumerableObj && enumerate?.Invoke(enumerableObj) is { } items) values.AddRange(items);
+                else CollectValues(node, values);
                 foreach (var v in values)
                 {
                     var child = NodeOf(v);

@@ -1977,6 +1977,13 @@ namespace fire.Compiler
                     // ResolvedRef, nur der TryCallExpr-Knoten selbst hat
                     // ResolvedRef.TryableNative) - nur die Argumente.
                     var innerCall = (CallExpr)tryCallExpr.Call;
+                    if (_refs.TryGetValue(tryCallExpr, out var takeRef) && takeRef is ResolvedRef.TryTake tryTake)
+                    {
+                        // `try obj.Take...(...)`: dieselbe Aufrufform wie die Ownership-Methode, unter dem Namen `try<Name>` (die VM liefert den bool)
+                        var takeMember = (MemberExpr)innerCall.Callee;
+                        CompileCall(new CallExpr(innerCall.Line, new MemberExpr(takeMember.Line, takeMember.Target, "try" + tryTake.Name), innerCall.Args));
+                        break;
+                    }
                     foreach (var arg in innerCall.Args) CompileExpr(arg);
                     if (_refs.TryGetValue(tryCallExpr, out var tcRef) && tcRef is ResolvedRef.TryableNative tn)
                     {
