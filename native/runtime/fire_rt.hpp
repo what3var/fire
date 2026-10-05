@@ -14,6 +14,23 @@
 #include <cstdlib>
 #include <cstring>
 
+// Fire threads (`fire { }`): real threads that take turns under one global lock (the GIL); the generator defines FIRE_THREADS when the
+// program uses them. The state that belongs to one thread of execution (unwinding, handlers, the temporary pool, the global scope list)
+// is thread-local then; everything else is only touched while the GIL is held.
+#ifdef FIRE_THREADS
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <unordered_map>
+#include <vector>
+#define FIRE_TLS thread_local
+#else
+#define FIRE_TLS
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
 #define FIRE_COLD __attribute__((noinline, cold))
 #define FIRE_UNUSED_LABEL __attribute__((unused))
@@ -35,6 +52,17 @@ using Real = double;
 #endif
 
 namespace fire {
+
+/// Ends the process. With threads the other threads must not run static destructors under their feet: no cleanup, only the streams are flushed.
+[[noreturn]] inline void exitNow(int code) {
+    std::fflush(stdout);
+    std::fflush(stderr);
+#ifdef FIRE_THREADS
+    std::_Exit(code);
+#else
+    std::exit(code);
+#endif
+}
 
 enum Kind : uint8_t { K_Bool, K_Int, K_Float, K_Char, K_String, K_Class, K_Lambda, K_Pointer, K_Array, K_Buffer, K_Undefined };
 
@@ -70,7 +98,7 @@ inline Value Undef(uint32_t unit = 0) { Value r; r.kind = K_Undefined; r.width =
 // The state of an exception that is unwinding the stack (see the exceptions section): every generated function checks the flag
 // after a call that can throw and, if it is set, leaves its scopes and returns.
 // ---------------------------------------------------------------------------------------------------------------------
-enum UnwindKind : uint8_t { UW_NONE, UW_JUMP, UW_RETURN, UW_RETHROW, UW_RESUME };
+enum UnwindKind : uint8_t { UW_NONE, UW_JUMP, UW_RETURN, UW_RETHROW, UW_RESUME, UW_LEAVE };
 struct Handler;
 struct UnwindState {
     uint8_t active;
@@ -81,7 +109,7 @@ struct UnwindState {
     uint64_t token;       // RESUME: which throw is resumed
     Value regs[4];        // JUMP: operand stack slots that the jump takes along (the completion of a finally block)
 };
-inline UnwindState g_unwind = {0, UW_NONE, nullptr, {}, 0, 0, {}};
+FIRE_TLS inline UnwindState g_unwind = {0, UW_NONE, nullptr, {}, 0, 0, {}};
 
 /// A run-time error that the language reports as an exception (see the exceptions section): the exception is thrown, or - when
 /// the program has no exceptions at all - it ends the program.
@@ -92,13 +120,13 @@ inline Value destroyedError(Value leaf);
 [[noreturn]] FIRE_COLD inline void fatal(const char* message) {
     std::fflush(stdout);
     std::fprintf(stderr, "fire runtime error: %s\n", message);
-    std::exit(1);
+    exitNow(1);
 }
 
 [[noreturn]] FIRE_COLD inline void unsupported(const char* what) {
     std::fflush(stdout);
     std::fprintf(stderr, "fire runtime error: '%s' is not supported by the native backend yet\n", what);
-    std::exit(1);
+    exitNow(1);
 }
 
 inline bool isNumeric(Value v) { return v.kind == K_Int || v.kind == K_Float; }
@@ -207,7 +235,7 @@ inline char* unitBuildName(const int32_t* dims, double scale, const char* displa
         }
     }
     char* out = static_cast<char*>(std::malloc(n + 1));
-    if (!out) { std::fputs("fire runtime error: Out of memory.\n", stderr); std::exit(1); }
+    if (!out) { std::fputs("fire runtime error: Out of memory.\n", stderr); exitNow(1); }
     std::memcpy(out, buf, n);
     out[n] = 0;
     return out;
@@ -216,7 +244,7 @@ inline char* unitBuildName(const int32_t* dims, double scale, const char* displa
 inline void unitsInit(const UnitInit* init, uint32_t count) {
     g_udCap = count + 32;
     g_ud = static_cast<UnitDef*>(std::malloc(sizeof(UnitDef) * g_udCap));
-    if (!g_ud) { std::fputs("fire runtime error: Out of memory.\n", stderr); std::exit(1); }
+    if (!g_ud) { std::fputs("fire runtime error: Out of memory.\n", stderr); exitNow(1); }
     for (uint32_t i = 0; i < count; i++) {
         std::memcpy(g_ud[i].dims, init[i].dims, sizeof g_ud[i].dims);
         g_ud[i].scale = init[i].scale;
@@ -235,7 +263,7 @@ inline uint32_t unitIntern(const int32_t* dims, double scale, const char* displa
     if (g_udCount == g_udCap) {
         g_udCap *= 2;
         g_ud = static_cast<UnitDef*>(std::realloc(g_ud, sizeof(UnitDef) * g_udCap));
-        if (!g_ud) { std::fputs("fire runtime error: Out of memory.\n", stderr); std::exit(1); }
+        if (!g_ud) { std::fputs("fire runtime error: Out of memory.\n", stderr); exitNow(1); }
     }
     UnitDef& d = g_ud[g_udCount];
     std::memcpy(d.dims, dims, sizeof d.dims);
@@ -252,7 +280,7 @@ inline bool unitEq(uint32_t a, uint32_t b) { return a == b || (unitCompatible(a,
 [[noreturn]] FIRE_COLD inline void unitConflict(uint32_t from, uint32_t to) {
     std::fflush(stdout);
     std::fprintf(stderr, "Unhandled exception. fire.Values.UnitMismatchException: Incompatible units: '%s' cannot be converted to '%s'.\n", g_ud[from].name, g_ud[to].name);
-    std::exit(1);
+    exitNow(1);
 }
 /// Unit.ConversionFactorTo
 inline double unitFactor(uint32_t from, uint32_t to) {
@@ -272,7 +300,7 @@ inline uint32_t unitMul(uint32_t a, uint32_t b) {
     if (x.display && y.display && std::strcmp(x.display, y.display) == 0) {
         size_t l = std::strlen(x.display);
         char* square = static_cast<char*>(std::malloc(l + 3));
-        if (!square) { std::fputs("fire runtime error: Out of memory.\n", stderr); std::exit(1); }
+        if (!square) { std::fputs("fire runtime error: Out of memory.\n", stderr); exitNow(1); }
         std::memcpy(square, x.display, l);
         std::memcpy(square + l, "^2", 3);
         display = square;
@@ -465,7 +493,7 @@ struct Pool {
     uint32_t top;
     uint32_t cap;
 };
-inline Pool g_pool = {nullptr, 0, 0};
+FIRE_TLS inline Pool g_pool = {nullptr, 0, 0};
 
 FIRE_COLD inline void poolGrow() {
     uint32_t cap = g_pool.cap ? g_pool.cap * 2 : 256;
@@ -496,7 +524,7 @@ inline void poolRelease(uint32_t mark) {
 [[noreturn]] FIRE_COLD inline void opFailed(const char* op) {
     std::fflush(stdout);
     std::fprintf(stderr, "fire runtime error: operator '%s' is not supported for these operands in the native backend yet\n", op);
-    std::exit(1);
+    exitNow(1);
 }
 
 struct VPair { Value a, b; };
@@ -758,7 +786,14 @@ inline Obj* asObj(Value v) {
     return static_cast<Obj*>(const_cast<void*>(v.p));
 }
 
+#ifdef FIRE_THREADS
+inline bool g_domainOn = false;   // a fire thread exists: the objects of the global scope are the shared domain (flag 64)
+inline void domainLink(OwnList* list, Owned* o);
+#endif
 inline void link(OwnList* list, Owned* o) {
+#ifdef FIRE_THREADS
+    if (FIRE_UNLIKELY(g_domainOn)) domainLink(list, o);
+#endif
     o->owner = list;
     o->prev = list->tail;
     o->next = nullptr;
@@ -803,11 +838,16 @@ inline void destroyLeaf(Owned* o);
 #ifdef FIRE_REFLECTION
 inline void probeFree(Obj* o);   // the probes of an object that is destroyed (flag 2)
 #endif
+#ifdef FIRE_THREADS
+inline void originFree(Obj* o);   // flags 4 (has `taking` copies) and 32 (is one): see the fire threads section
+#endif
 
 inline void destroy(Obj* o) {
     if (o->flags & 1) return;
     o->flags |= 1;
-    if (FIRE_UNLIKELY(g_unwind.active)) {
+    if (o->flags & 16) {
+        // a copy that `taking` made for a fire thread: its original still lives, the destructor is not run for the copy
+    } else if (FIRE_UNLIKELY(g_unwind.active)) {
         // the scope is left because of an exception: the destructor runs as ordinary code, the exception keeps unwinding afterwards
         UnwindState saved = g_unwind;
         g_unwind.active = 0;
@@ -819,6 +859,9 @@ inline void destroy(Obj* o) {
     for (uint32_t i = 0; i < o->nfields; i++) release(f[i]);
 #ifdef FIRE_REFLECTION
     if (FIRE_UNLIKELY(o->flags & 2)) probeFree(o);
+#endif
+#ifdef FIRE_THREADS
+    if (FIRE_UNLIKELY(o->flags & 44)) originFree(o);   // an original with copies (4), an actor (8), or a copy that knows its original (32)
 #endif
 #ifndef FIRE_KEEP_DESTROYED
     std::free(o);
@@ -1495,8 +1538,8 @@ struct Handler {
 };
 
 
-inline Handler* g_handlers = nullptr;
-inline OwnList* g_globalOwn = nullptr;   // the global scope: thrown exceptions belong to it (SPEC 7.6)
+FIRE_TLS inline Handler* g_handlers = nullptr;
+FIRE_TLS inline OwnList* g_globalOwn = nullptr;   // the global scope: thrown exceptions belong to it (SPEC 7.6)
 
 /// Generated: does the exception match the catch type (`typeId` as stored in HandlerInfo::types)?
 bool excMatches(Value exception, int32_t typeId);
@@ -1528,8 +1571,8 @@ struct Pending {
     uint8_t resumable;
     uint8_t cleared;
 };
-inline Pending* g_pending = nullptr;
-inline uint64_t g_throwToken = 0;
+FIRE_TLS inline Pending* g_pending = nullptr;
+FIRE_TLS inline uint64_t g_throwToken = 0;
 
 inline void takeGlobal(Obj* o) {
     if (o->owner) unlink(o);
@@ -1542,6 +1585,13 @@ FIRE_COLD inline void reportUnhandled(Value exception) {
     std::fprintf(stderr, "Unhandled exception of class '%s'.\n", className(o->cls));
 }
 
+#ifdef FIRE_THREADS
+FIRE_TLS inline uint8_t g_isThread = 0;   // 1 on a fire thread
+FIRE_TLS inline int32_t g_jobDepth = 0;   // a `fire global` job is running on this thread
+inline Value threadUnhandled(Value exception);
+inline Value jobUnhandled(Value exception);
+#endif
+
 /// `throw exception`. Returns the resume value if the exception is resumed at this very point; otherwise it returns with
 /// `g_unwind.active` set and the caller has to unwind (the generated code checks the flag after every call).
 inline Value throwValue(Value exception, bool resumable = true) {
@@ -1549,8 +1599,12 @@ inline Value throwValue(Value exception, bool resumable = true) {
     takeGlobal(asObj(exception));
     Handler* h = g_handlers;
     if (!h) {   // nothing catches it: the program ends here (like the VM, without unwinding the stack)
+#ifdef FIRE_THREADS
+        if (g_jobDepth > 0) return jobUnhandled(exception);   // a job of `fire global`: it ends, the exception goes to `catch threads`
+        if (g_isThread) return threadUnhandled(exception);   // a fire thread ends; the exception goes to the main program
+#endif
         reportUnhandled(exception);
-        std::exit(1);
+        exitNow(1);
     }
     g_handlers = h->prev;
     if (!h->finallyOnly) {
@@ -1893,7 +1947,7 @@ inline void requireRef(Value v, const char* name) {
     if (FIRE_UNLIKELY(v.kind != K_Pointer)) {
         std::fflush(stdout);
         std::fprintf(stderr, "fire runtime error: Parameter '%s' is declared 'ref': pass a variable, a field or an array element, not a value.\n", name);
-        std::exit(1);
+        exitNow(1);
     }
 }
 
@@ -2205,8 +2259,28 @@ struct CopyMap {
     }
 };
 
+/// `taking` (a copy for a fire thread) refuses a value that cannot be isolated: the program ends with the reason.
+[[noreturn]] FIRE_COLD inline void takingViolation(const char* what) {
+    std::fflush(stdout);
+    std::fprintf(stderr, "fire runtime error: 'taking' rejected: %s\n", what);
+    exitNow(1);
+}
+
+/// Is `o` the object `root` or (transitively) owned by it?
+inline bool withinTree(Obj* o, Obj* root) {
+    Owned* x = o;
+    while (true) {
+        if (x == root) return true;
+        OwnList* l = x->owner;
+        if (!l || !l->holder) return false;
+        x = l->holder;
+    }
+}
+
 struct DeepCopier {
     OwnList* owner;
+    bool taking = false;       // a copy for a fire thread (`taking`): only the own ownership tree of treeRoot, copies are marked
+    Obj* treeRoot = nullptr;
     CopyMap objects;      // object -> copy (the objects found, which are copied)
     CopyMap containers;   // array/buffer -> copy
     Obj** order = nullptr;
@@ -2237,9 +2311,20 @@ struct DeepCopier {
         push(pending, pendingCount, pendingCap, start);
         while (pendingCount) {
             Value v = pending[--pendingCount];
+            if (taking && v.kind == K_Lambda) takingViolation("lambda values cannot be copied for a thread.");
+            if (taking && v.kind == K_Pointer) takingViolation("raw pointers cannot be copied for a thread.");
             if (v.kind == K_Class) {
                 Obj* o = asObj(v);
                 if (objects.find(o)) continue;
+                if (taking && treeRoot && !withinTree(o, treeRoot)) {
+#ifdef FIRE_THREADS
+                    char text[200];
+                    std::snprintf(text, sizeof text, "a field refers to an instance of '%s', which is not part of its own ownership tree.", className(o->cls));
+                    takingViolation(text);
+#else
+                    takingViolation("a field refers to an instance that is not part of its own ownership tree.");
+#endif
+                }
                 objects.put(o, Undef());   // marks it as found; the copy is made in phase 2
                 push(order, orderCount, orderCap, o);
                 for (uint32_t i = 0; i < o->nfields; i++) push(pending, pendingCount, pendingCap, o->fields()[i]);
@@ -2261,6 +2346,7 @@ struct DeepCopier {
             target = &asObj(holderCopy)->owned;
         }
         Value c = newObject(o->cls, o->nfields, target);
+        if (taking) asObj(c)->flags |= 16;   // a copy for a thread: its destructor does not run when the thread ends
         *objects.find(o) = c;   // replaces the "found" marker
         return c;
     }
@@ -2461,5 +2547,560 @@ inline Value print(Value v, OwnList* list) {
     std::fputc('\n', stdout);
     return Undef();
 }
+
+#ifdef FIRE_THREADS
+// ---------------------------------------------------------------------------------------------------------------------
+// Fire threads (docs/THREADING_DESIGN.md): `fire { }` starts a real thread. All fire code runs while the thread holds the
+// GIL (a fair ticket lock); a thread gives it up when it waits (sync, process, Sleep) and now and then at a safe point, so the
+// ownership structures, the handle table and the reference counts never see two threads at once.
+// ---------------------------------------------------------------------------------------------------------------------
+struct Gil {
+    std::mutex m;
+    std::condition_variable cv;
+    uint64_t next = 0, serving = 0;
+};
+inline Gil g_gil;
+inline std::atomic<uint32_t> g_gilWaiting{0};
+
+inline void gilAcquire() {
+    std::unique_lock<std::mutex> lk(g_gil.m);
+    uint64_t ticket = g_gil.next++;
+    if (g_gil.serving != ticket) {
+        g_gilWaiting.fetch_add(1, std::memory_order_relaxed);
+        g_gil.cv.wait(lk, [&] { return g_gil.serving == ticket; });
+        g_gilWaiting.fetch_sub(1, std::memory_order_relaxed);
+    }
+}
+inline void gilRelease() {
+    { std::lock_guard<std::mutex> lk(g_gil.m); g_gil.serving++; }
+    g_gil.cv.notify_all();
+}
+/// Lets a thread that waits for the lock run (the ticket lock is fair: this thread queues up again behind it).
+inline void gilYield() {
+    if (g_gilWaiting.load(std::memory_order_relaxed)) { gilRelease(); gilAcquire(); }
+}
+
+// An event: something changed that a waiting thread may be looking for (called with the GIL held, after the change).
+inline std::mutex g_evM;
+inline std::condition_variable g_evCv;
+inline uint64_t g_evCount = 0;
+inline void notifyEvent() {
+    { std::lock_guard<std::mutex> lk(g_evM); g_evCount++; }
+    g_evCv.notify_all();
+}
+
+// Signals. Bit 0 is for every thread (terminate), bit 1 for the main program only (thread exceptions), bit 2 for the main program too (sections and
+// jobs that wait for it; not looked at with `#nosync`).
+constexpr uint32_t ATTN_ALL = 1, ATTN_MAIN = 2, ATTN_SECT = 4;
+inline std::atomic<uint32_t> g_attn{0};
+FIRE_TLS inline uint32_t g_attnMask = ATTN_ALL | ATTN_MAIN | ATTN_SECT;   // fire threads set this to ATTN_ALL
+FIRE_TLS inline int32_t g_tick = 4096;
+FIRE_TLS inline uint8_t g_leaving = 0;        // this thread is unwinding because of leave/terminate (or an unhandled exception): no more signals
+FIRE_TLS inline uint8_t g_threadFailed = 0;   // the thread ends with an unhandled exception: its global scope stays (the exception belongs to it)
+
+struct TerminateState { bool requested; Value value; };
+inline TerminateState g_terminate = {false, {K_Undefined, 0, 0, 0, {0}}};
+inline OwnList g_terminateOwn = {nullptr, nullptr, 0, nullptr, nullptr};   // what a terminate value owns lives on until the process ends
+
+inline int64_t steadyMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+/// Waits - with the GIL released - until `pred` (evaluated with the GIL held) is true. Returns false when it was cut short by
+/// `terminate` (`stopOnTerminate`) or when the deadline passed (`deadlineMs` on the steady clock, 0 = none).
+template <class P> inline bool blockUntil(P pred, bool stopOnTerminate = true, int64_t deadlineMs = 0) {
+    while (true) {
+        if (pred()) return true;
+        if (stopOnTerminate && g_terminate.requested) return false;
+        int64_t now = steadyMs();
+        if (deadlineMs && now >= deadlineMs) return false;
+        uint64_t seen;
+        { std::lock_guard<std::mutex> lk(g_evM); seen = g_evCount; }
+        gilRelease();
+        {
+            std::unique_lock<std::mutex> lk(g_evM);
+            int64_t slice = 5;
+            if (deadlineMs && deadlineMs - now < slice) slice = deadlineMs - now;
+            g_evCv.wait_for(lk, std::chrono::milliseconds(slice), [&] { return g_evCount != seen; });
+        }
+        gilAcquire();
+    }
+}
+
+inline int g_threadsLive = 0;
+inline std::vector<std::thread*> g_threadList;
+inline std::vector<Value> g_pendingExc;   // unhandled exceptions of fire threads that wait for the main program
+inline std::vector<OwnList*>& graveyard() { static std::vector<OwnList*>* v = new std::vector<OwnList*>(); return *v; }   // the global scopes of threads that ended with an unhandled exception (never freed: the exception is handed on)
+
+struct ThreadStart {
+    void (*fn)(const Value*);
+    Value* args;
+    uint32_t n;
+    OwnList* travel;   // the copies that `taking` made for the thread (it adopts them into its global scope)
+};
+FIRE_TLS inline OwnList* g_travel = nullptr;
+inline void sectionAbort();   // the end of a thread that is still inside a section
+
+inline void threadEntry(ThreadStart st) {
+    gilAcquire();
+    g_isThread = 1;
+    g_attnMask = ATTN_ALL;
+    g_tick = 4096;
+    g_travel = st.travel;
+    st.fn(st.args);
+    sectionAbort();
+    std::free(st.args);
+    std::free(g_pool.items);
+    g_pool = {nullptr, 0, 0};
+    g_threadsLive--;
+    notifyEvent();
+    gilRelease();
+}
+
+/// `fire`: starts the thread that runs `fn(args)`; `travel` (may be null) holds the copies of the `taking` values.
+inline void fireThread(void (*fn)(const Value*), const Value* args, uint32_t n, OwnList* travel) {
+    ThreadStart st = {fn, static_cast<Value*>(std::malloc((n ? n : 1) * sizeof(Value))), n, travel};
+    if (!st.args) allocFailed();
+    for (uint32_t i = 0; i < n; i++) st.args[i] = args[i];
+    g_threadsLive++;
+    g_threadList.push_back(new std::thread(threadEntry, st));
+}
+
+/// The list that carries the copies for a new thread from the spawner to the thread.
+inline OwnList* newTravel() {
+    OwnList* l = static_cast<OwnList*>(std::malloc(sizeof(OwnList)));
+    if (!l) allocFailed();
+    *l = {nullptr, nullptr, 0, nullptr, nullptr};
+    return l;
+}
+
+/// The unwinding of `leave`/`terminate`/an unhandled exception: finally blocks run, no catch block matches it.
+inline void startLeave() {
+    g_leaving = 1;
+    unwindTo(UW_LEAVE, nullptr, Undef(), 0);
+}
+
+// ---- Actors (THREADING_DESIGN 2): every method call on an actor is a message in its mailbox; `process` runs one. An actor has flag 8. -------
+using MsgFn = Value (*)(Value self, const Value* args, OwnList* list);
+struct Msg { MsgFn fn; Value* args; uint32_t n; };
+struct Mailbox { std::deque<Msg> q; };
+inline std::unordered_map<Obj*, Mailbox*> g_mailboxes;
+inline void markActor(Value v) {
+    Obj* o = asObj(v);
+    o->flags |= 8;
+    g_mailboxes[o] = new Mailbox();
+}
+/// A call of an actor's method: it does not run, it is queued (the arguments travel with the message and are released after it ran).
+inline void actorSend(Value self, MsgFn fn, const Value* args, uint32_t n) {
+    auto it = g_mailboxes.find(asObj(self));
+    if (it == g_mailboxes.end()) return;
+    Msg m = {fn, static_cast<Value*>(std::malloc((n ? n : 1) * sizeof(Value))), n};
+    if (!m.args) allocFailed();
+    for (uint32_t i = 0; i < n; i++) { m.args[i] = args[i]; retain(args[i]); }
+    it->second->q.push_back(m);
+    notifyEvent();
+}
+inline void actorFree(Obj* o) {
+    auto it = g_mailboxes.find(o);
+    if (it == g_mailboxes.end()) return;
+    for (Msg& m : it->second->q) { for (uint32_t i = 0; i < m.n; i++) release(m.args[i]); std::free(m.args); }
+    delete it->second;
+    g_mailboxes.erase(it);
+}
+/// `process x` / `try process x`: runs one message of the actor. 1: a message ran; 0: none there (`try`); -1: terminate cut the wait short.
+inline int processMsg(Value v, bool blocking, OwnList* list) {
+    if (v.kind != K_Class || !(asObj(v)->flags & 8)) fatal("'process' on something that is not an actor.");
+    Obj* a = asObj(v);
+    auto ready = [&] { auto it = g_mailboxes.find(a); return it == g_mailboxes.end() || !it->second->q.empty(); };
+    if (!ready()) {
+        if (!blocking) return 0;
+        if (!blockUntil(ready)) { startLeave(); return -1; }
+    }
+    auto it = g_mailboxes.find(a);
+    if (it == g_mailboxes.end()) return 0;
+    Msg m = it->second->q.front();
+    it->second->q.pop_front();
+    Value r = m.fn(v, m.args, list);
+    for (uint32_t i = 0; i < m.n; i++) release(m.args[i]);
+    std::free(m.args);
+    adopt(r, list);
+    return 1;
+}
+
+// ---- The shared domain of the globals (THREADING_DESIGN 7) -----------------------------------------------------------------------
+// Everything the global scope of the main program owns - objects, their owned objects, the arrays they hold - is the shared domain (flag 64) as
+// soon as there is a fire thread. A thread reads it directly, but changes it only inside a *section*: it queues a request and waits until the main
+// program grants it (at a safe point, or at `sync globals` with `#nosync`); the main program then waits until the section ends, so there is one
+// writer at a time. A method call on an object of the domain is one section as a whole.
+constexpr uint8_t F_SHARED = 64;
+inline OwnList* g_domainRoot = nullptr;   // the global scope of the main program
+inline void markOwnedShared(Owned* c);
+inline void markArrayShared(Arr* a) {
+    if (a->flags & F_SHARED) return;
+    a->flags |= F_SHARED;
+    for (uint32_t i = 0; i < a->length; i++) if (a->items()[i].kind == K_Array && ownedOf(a->items()[i])) markArrayShared(arrOf(a->items()[i]));
+}
+inline void markOwnedShared(Owned* c) {
+    if (c->okind == O_Object) {
+        Obj* o = static_cast<Obj*>(c);
+        if (o->flags & F_SHARED) return;
+        o->flags |= F_SHARED;
+        for (Owned* k = o->owned.head; k; k = k->next) markOwnedShared(k);
+        for (uint32_t i = 0; i < o->nfields; i++) if (o->fields()[i].kind == K_Array && ownedOf(o->fields()[i])) markArrayShared(arrOf(o->fields()[i]));
+    } else if (c->okind == O_Array) markArrayShared(static_cast<Arr*>(c));
+}
+inline void domainLink(OwnList* list, Owned* o) {
+    if (list == g_domainRoot || (list->holder && (list->holder->flags & F_SHARED))) markOwnedShared(o);
+}
+/// The first `fire`: from now on what the global scope owns is shared.
+inline void ensureDomain() {
+    if (g_domainOn) return;
+    g_domainOn = true;
+    if (g_domainRoot) for (Owned* c = g_domainRoot->head; c; c = c->next) markOwnedShared(c);
+}
+inline bool sharedValue(Value v) {
+    if (v.kind == K_Class) return (asObj(v)->flags & F_SHARED) != 0;
+    if (v.kind == K_Array && ownedOf(v)) return (arrOf(v)->flags & F_SHARED) != 0;
+    return false;
+}
+
+struct SectionReq { bool granted = false, done = false; int refs = 2; };
+struct JobReq { Value lam; Value* args; uint32_t n; OwnList* holder; };
+struct Req { SectionReq* sec; JobReq* job; };
+inline std::deque<Req> g_reqs;
+FIRE_TLS inline SectionReq* g_curSection = nullptr;
+FIRE_TLS inline int32_t g_secDepth = 0;
+
+inline void sectionAcquire() {
+    SectionReq* r = new SectionReq();
+    g_reqs.push_back({r, nullptr});
+    g_attn.fetch_or(ATTN_SECT, std::memory_order_relaxed);
+    notifyEvent();
+    blockUntil([&] { return r->granted; }, false);
+    g_curSection = r;
+}
+inline void sectionRelease() {
+    SectionReq* r = g_curSection;
+    g_curSection = nullptr;
+    if (!r) return;
+    r->done = true;
+    notifyEvent();
+    if (--r->refs == 0) delete r;
+}
+inline void sectionAbort() { if (g_curSection) { g_secDepth = 0; sectionRelease(); } }
+/// One change of the shared domain from a thread: the section lasts as long as this object lives.
+struct SectionScope {
+    bool entered = false;
+    explicit SectionScope(bool shared) {
+        if (shared && g_isThread && g_secDepth == 0) { sectionAcquire(); g_secDepth = 1; entered = true; }
+    }
+    explicit SectionScope(Value v) {
+        if (g_isThread && g_secDepth == 0 && g_domainOn && sharedValue(v)) { sectionAcquire(); g_secDepth = 1; entered = true; }
+    }
+    ~SectionScope() { if (entered) { g_secDepth = 0; sectionRelease(); } }
+    SectionScope(const SectionScope&) = delete;
+    SectionScope& operator=(const SectionScope&) = delete;
+};
+/// `sync global { ... }`: in a thread the section starts here and ends at the matching exit (in the `finally` of the block); in the main program nothing.
+inline void sectionEnterOp() { if (g_isThread && g_secDepth++ == 0) sectionAcquire(); }
+inline void sectionExitOp() { if (g_isThread && g_secDepth > 0 && --g_secDepth == 0) sectionRelease(); }
+
+/// `fire global { ... } taking x`: the job (a lambda with the copies as parameters) is queued, the caller goes on.
+inline void postJob(Value lam, const Value* args, uint32_t n) {
+    JobReq* j = new JobReq();
+    j->lam = lam;
+    retain(lam);
+    j->n = n;
+    j->args = static_cast<Value*>(std::malloc((n ? n : 1) * sizeof(Value)));
+    j->holder = static_cast<OwnList*>(std::malloc(sizeof(OwnList)));
+    if (!j->args || !j->holder) allocFailed();
+    *j->holder = {nullptr, nullptr, 0, nullptr, nullptr};
+    for (uint32_t i = 0; i < n; i++) {
+        if (args[i].kind == K_Class) j->args[i] = deepCopy(args[i], j->holder);
+        else { j->args[i] = args[i]; retain(args[i]); }
+    }
+    g_reqs.push_back({nullptr, j});
+    g_attn.fetch_or(ATTN_SECT, std::memory_order_relaxed);
+    notifyEvent();
+}
+
+/// A job runs on the main program with the real globals; an exception that it does not catch ends the job and goes to `catch threads`.
+inline Value jobUnhandled(Value exception) {
+    g_pendingExc.push_back(exception);
+    g_attn.fetch_or(ATTN_MAIN, std::memory_order_relaxed);
+    unwindTo(UW_LEAVE, nullptr, Undef(), 0);
+    return Undef();
+}
+inline void runJob(JobReq* j) {
+    Handler* savedHandlers = g_handlers;
+    g_handlers = nullptr;   // what the main program has registered does not see the job's exceptions
+    g_jobDepth++;
+    OwnList scratch = {nullptr, nullptr, poolMark(), nullptr, nullptr};
+    Value r = callLam(j->lam, (int)j->n, j->args, &scratch);
+    (void)r;
+    if (g_unwind.active) clearUnwind();
+    g_jobDepth--;
+    g_handlers = savedHandlers;
+    leave(&scratch);
+    for (uint32_t i = 0; i < j->n; i++) release(j->args[i]);
+    destroyList(j->holder);
+    std::free(j->holder);
+    std::free(j->args);
+    release(j->lam);
+    delete j;
+}
+
+/// The main program serves the queue: each section is granted in turn (it waits until it ends), each job runs. Returns how many entries it handled.
+inline int drainQueue() {
+    int handled = 0;
+    while (!g_reqs.empty()) {
+        Req r = g_reqs.front();
+        g_reqs.pop_front();
+        handled++;
+        if (r.sec) {
+            r.sec->granted = true;
+            notifyEvent();
+            SectionReq* sec = r.sec;
+            blockUntil([sec] { return sec->done; }, false);
+            if (--sec->refs == 0) delete sec;
+        } else runJob(r.job);
+    }
+    g_attn.fetch_and(~ATTN_SECT, std::memory_order_relaxed);
+    return handled;
+}
+
+// The copies that `taking` made remember their original (flag 32 on the copy, 4 on the original), for `sync`. A destroyed original is
+// recorded as null: `sync` then says `undefined`.
+inline std::unordered_map<Obj*, Obj*> g_originOf;
+inline std::unordered_multimap<Obj*, Obj*> g_copiesOf;
+inline void originAdd(Obj* copy, Obj* original) {
+    copy->flags |= 32;
+    original->flags |= 4;
+    g_originOf[copy] = original;
+    g_copiesOf.emplace(original, copy);
+}
+inline void originFree(Obj* o) {
+    if (o->flags & 8) actorFree(o);
+    if (o->flags & 32) {
+        auto it = g_originOf.find(o);
+        if (it != g_originOf.end()) {
+            if (Obj* target = it->second) {
+                auto range = g_copiesOf.equal_range(target);
+                for (auto c = range.first; c != range.second; ++c) if (c->second == o) { g_copiesOf.erase(c); break; }
+            }
+            g_originOf.erase(it);
+        }
+    }
+    if (o->flags & 4) {
+        auto range = g_copiesOf.equal_range(o);
+        for (auto c = range.first; c != range.second; ++c) g_originOf[c->second] = nullptr;
+        g_copiesOf.erase(o);
+    }
+}
+
+/// `fire ... taking x`: what the thread gets. An object, array or buffer is copied (isolated, THREADING_DESIGN 3), the copy goes to `travel`; a
+/// string or lambda is shared (the thread gets a count of it), other values are plain.
+inline Value takeCopy(Value v, OwnList* travel) {
+    switch (v.kind) {
+        case K_Class: {
+            DeepCopier c(travel); c.taking = true; c.treeRoot = asObj(v);
+            Value copy = c.run(v);
+            originAdd(asObj(copy), asObj(v));
+            return copy;
+        }
+        case K_Array: case K_Buffer: {
+            if (!ownedOf(v)) return v;
+            DeepCopier c(travel); c.taking = true; return c.run(v);
+        }
+        case K_String: case K_Lambda: retain(v); return v;
+        default: return v;
+    }
+}
+
+// ---- `sync`: the copy writes back into its original (last writer wins). Cases for a reference (THREADING_DESIGN 4.3):
+//   A: copy has an object, original has none -> a new independent copy for the original;  B: copy has none, original has one -> the
+//   original loses it (destroyed if the original's object owned it);  C: both have one -> the reference stays (a full sync goes into it).
+inline void syncFields(Obj* src, Obj* tgt, bool flat);
+inline Value syncSingle(Value src, Value tgt, Obj* container, bool flat) {
+    bool srcObj = src.kind == K_Class, tgtObj = tgt.kind == K_Class;
+    if (srcObj && tgtObj) {
+        if (!flat) syncFields(asObj(src), asObj(tgt), false);
+        return tgt;
+    }
+    if (srcObj) { DeepCopier c(&container->owned); return c.run(src); }
+    if (tgtObj) {
+        Obj* t = asObj(tgt);
+        if (t->owner == &container->owned) { unlink(t); destroy(t); }
+        return src;
+    }
+    if (src.kind == K_Array) {
+        if (!ownedOf(src)) return destroyedError(src);
+        Arr* sa = arrOf(src);
+        Arr* oldArr = (tgt.kind == K_Array && ownedOf(tgt)) ? arrOf(tgt) : nullptr;
+        Arr* na = allocArr(sa->length, &container->owned);
+        Value result = ArrV(na);
+        for (uint32_t i = 0; i < sa->length; i++) {
+            Value oldElem = (oldArr && i < oldArr->length) ? oldArr->items()[i] : Undef();
+            na->items()[i] = syncSingle(sa->items()[i], oldElem, container, flat);
+            retain(na->items()[i]);
+        }
+        if (oldArr && oldArr->owner == &container->owned) destroyLeaf(oldArr);
+        return result;
+    }
+    if (src.kind == K_Buffer) {
+        if (!ownedOf(src)) return destroyedError(src);
+        Buf* sb = bufOf(src);
+        Buf* nb = allocBuf(sb->length, &container->owned);
+        std::memcpy(nb->bytes(), sb->bytes(), sb->length);
+        if (tgt.kind == K_Buffer && ownedOf(tgt) && bufOf(tgt)->owner == &container->owned) destroyLeaf(bufOf(tgt));
+        return BufV(nb);
+    }
+    if (src.kind == K_Lambda || src.kind == K_Pointer) takingViolation("'sync' does not support lambda or pointer values.");
+    return src;
+}
+inline void syncFields(Obj* src, Obj* tgt, bool flat) {
+    for (uint32_t i = 0; i < src->nfields; i++) {
+        Value s = src->fields()[i], t = tgt->fields()[i];
+        Value n = syncSingle(s, t, tgt, flat);
+        retain(n);
+        tgt->fields()[i] = n;
+        release(t);
+    }
+}
+
+/// `sync x` / `sync flat x` (also the `try` forms: there is only one thread at a time, so nothing is ever busy): true, or `undefined` when the
+/// original does not exist any more.
+inline Value syncValue(Value v, bool flat) {
+    if (v.kind != K_Class) fatal("'sync' expects an object.");
+    Obj* copy = asObj(v);
+    auto it = g_originOf.find(copy);
+    if (it == g_originOf.end()) fatal("sync: this object is not a 'taking' copy (no SyncOrigin set).");
+    if (!it->second) return Undef();
+    syncFields(copy, it->second, flat);
+    return Bool(true);
+}
+
+/// The start of a thread: what the spawner copied for it now belongs to its global scope.
+inline void adoptTravel(OwnList* into) {
+    OwnList* t = g_travel;
+    g_travel = nullptr;
+    if (!t) return;
+    for (Owned* o = t->head; o; o = o->next) o->owner = into;
+    if (t->head) {
+        if (into->tail) { into->tail->next = t->head; t->head->prev = into->tail; } else into->head = t->head;
+        into->tail = t->tail;
+    }
+    std::free(t);
+}
+
+/// The end of a thread whose global scope has to live on (the exception that is on its way to the main program belongs to it).
+inline void graveyardAdd(OwnList* list) {
+    OwnList* heap = static_cast<OwnList*>(std::malloc(sizeof(OwnList)));
+    if (!heap) allocFailed();
+    *heap = *list;
+    for (Owned* o = heap->head; o; o = o->next) o->owner = heap;
+    list->head = list->tail = nullptr;
+    graveyard().push_back(heap);
+}
+
+/// `leave`: the thread that calls it goes straight into the unwinding.
+inline void leaveNow() { startLeave(); }
+
+/// `terminate(value)`: the first call wins; every thread notices at its next safe point (or wait) and leaves.
+inline void terminateNow(Value v) {
+    if (!g_terminate.requested) {
+        if (v.kind == K_Class || v.kind == K_Array || v.kind == K_Buffer) {   // the value outlives the scope that created it
+            if (Owned* o = ownedOf(v)) { if (o->owner) unlink(o); link(&g_terminateOwn, o); }
+        } else retain(v);
+        g_terminate.value = v;
+        g_terminate.requested = true;
+        g_attn.fetch_or(ATTN_ALL, std::memory_order_relaxed);
+        notifyEvent();
+    }
+    startLeave();
+}
+
+/// A fire thread ends with an exception that nothing caught: it unwinds (finally blocks run) and the exception goes to the main program.
+inline Value threadUnhandled(Value exception) {
+    g_pendingExc.push_back(exception);
+    g_threadFailed = 1;
+    g_attn.fetch_or(ATTN_MAIN, std::memory_order_relaxed);
+    notifyEvent();
+    startLeave();
+    return Undef();
+}
+
+// `catch threads(...)` and `catch terminate(...)`: generated functions, registered when the program starts.
+struct ThreadsCatch { int32_t typeId; Value (*fn)(Value); };
+inline std::vector<ThreadsCatch> g_threadsCatches;
+inline Value (*g_terminateFn)(Value) = nullptr;
+inline void registerThreadsCatch(int32_t typeId, Value (*fn)(Value)) { g_threadsCatches.push_back({typeId, fn}); }
+inline void registerTerminateCatch(Value (*fn)(Value)) { g_terminateFn = fn; }
+
+/// The main program at a safe point: what the fire threads left for it (their exceptions; sections and jobs unless `#nosync`).
+inline int drainQueue();
+inline bool g_autoSync = true;
+inline void mainPoll() {
+    while (!g_pendingExc.empty() && !g_unwind.active) {
+        Value e = g_pendingExc.front();
+        g_pendingExc.erase(g_pendingExc.begin());
+        Value (*handler)(Value) = nullptr;
+        for (const ThreadsCatch& c : g_threadsCatches)
+            if (c.typeId < 0 || excMatches(e, c.typeId)) { handler = c.fn; break; }
+        if (!handler) { reportUnhandled(e); exitNow(1); }
+        Value r = handler(e);
+        (void)r;
+    }
+    if (g_pendingExc.empty()) g_attn.fetch_and(~ATTN_MAIN, std::memory_order_relaxed);
+    if (g_autoSync && !g_unwind.active) drainQueue();
+}
+
+FIRE_COLD inline bool pollSlow() {
+    if (g_leaving) return false;
+    if (g_terminate.requested) { startLeave(); return true; }
+    if (g_attnMask & ATTN_MAIN) mainPoll();
+    return g_unwind.active != 0;
+}
+
+/// A safe point (loop back edge, function entry, after a native call): now and then the GIL is offered to the other threads, and the
+/// signals are looked at. True when a leave/an exception is unwinding because of it.
+inline bool pollSignals() {
+    if (FIRE_UNLIKELY(--g_tick <= 0)) { g_tick = 4096; gilYield(); }
+    if (FIRE_LIKELY(!(g_attn.load(std::memory_order_relaxed) & g_attnMask))) return false;
+    return pollSlow();
+}
+
+/// `sync globals`: serves the queue (main program) and gives the other threads a turn; a thread gets 0.
+inline int64_t syncGlobals() {
+    int64_t handled = 0;
+    if (!g_isThread) { mainPoll(); handled = drainQueue(); }
+    gilYield();
+    return handled;
+}
+
+/// The end of the main program: `terminate` runs its handler, then the main program waits for the fire threads (serving what they
+/// leave for it) before its globals are destroyed.
+inline void mainFinish() {
+    clearUnwind();
+    g_leaving = 0;
+    if (g_terminate.requested && g_terminateFn) {
+        g_leaving = 1;   // no more signals while the handler runs
+        g_terminateFn(g_terminate.value);
+        clearUnwind();
+        g_leaving = 0;
+    }
+    blockUntil([] { mainPoll(); drainQueue(); return g_threadsLive == 0 && g_pendingExc.empty() && g_reqs.empty(); }, false);
+    for (std::thread* t : g_threadList) { t->join(); delete t; }
+    g_threadList.clear();
+    g_leaving = 1;   // the globals are destroyed now: nothing interrupts the destructors
+}
+
+/// The exit code of the process: a `terminate` with a whole number gives it.
+inline int mainExitCode() {
+    if (g_terminate.requested && g_terminate.value.kind == K_Int) return (int)g_terminate.value.i;
+    return 0;
+}
+#endif  // FIRE_THREADS
+
 
 }  // namespace fire

@@ -122,6 +122,10 @@ namespace fire.Runtime
         /// Null für ein Objekt, das keine Kopie ist (der Normalfall).</summary>
         public ObjectInstance? SyncOrigin { get; set; }
 
+        /// <summary>Jeder Knoten einer `taking`-Kopie (nicht nur die Wurzel, die `SyncOrigin` trägt): am Ende des Fire-Threads bleiben
+        /// diese Objekte unberührt - sie sind Kopien von Objekten des Hauptprogramms und lösen dort keine Destruktoren aus.</summary>
+        public bool IsTakingCopy { get; set; }
+
         /// <summary>Gesetzt (bei `new`, siehe VM.NewObject), wenn diese
         /// Instanz von einer `actor`-Deklaration stammt (docs/
         /// THREADING_DESIGN.md Abschnitt 2) - null für ganz normale Objekte.
@@ -313,6 +317,18 @@ namespace fire.Runtime
         // -----------------------------------------------------------
         // Kaskadenlöschung (SPEC 2.3)
         // -----------------------------------------------------------
+
+        /// <summary>Ende eines Fire-Threads für eine `taking`-Kopie (sie bleibt unberührt, sie löst keinen Destruktor aus): was der Thread selbst darin
+        /// angelegt hat, wird zerstört; Kopien darin werden genauso behandelt.</summary>
+        public void DestroyOwnedNonCopies(IDestructRunner runner)
+        {
+            var children = new List<ObjectInstance>(_owned.AsList());
+            foreach (var child in children)
+            {
+                if (child.IsTakingCopy) child.DestroyOwnedNonCopies(runner);
+                else child.Destroy(runner);
+            }
+        }
 
         /// <summary>Zerstört dieses Objekt: ruft zuerst destruct() auf (über den
         /// vom Evaluator bereitgestellten Runner), dann kaskadierend alle noch von

@@ -827,7 +827,7 @@ namespace fire.Runtime
         /// zerstört.</summary>
         private void ReleaseGlobalScope()
         {
-            if (IsFireThreadVm) _globalScope.ReleaseWhere(this, o => o.SyncOrigin == null);
+            if (IsFireThreadVm) _globalScope.ReleaseWhere(this, o => !o.IsTakingCopy);
             else _globalScope.Release(this);
         }
 

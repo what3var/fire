@@ -11429,6 +11429,9 @@ static int CountOccurrences(string haystack, string needle)
 
     string vmOutput(string source)
     {
+        // `terminate` and `catch threads/terminate` are process-wide state of the VM: an earlier case must not leave its handlers behind
+        VM.ResetTerminateForTests();
+        GlobalHandlers.ResetForTests();
         var lines = new List<string>();
         var session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, args => { lines.Add(args[0].ToString()!); return Value.MakeUndefined(); });
         session.Run();
@@ -13419,6 +13422,570 @@ static int CountOccurrences(string haystack, string needle)
             }
             """)).ToArray();
 
+    // Fire threads (THREADING_DESIGN): only programs whose output does not depend on how the threads interleave
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Threads: leave im Hauptprogramm wartet auf Fire-Threads, dann werden die Globals zerstoert", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            var g = new Item(1)
+            fire {
+                var i = 0
+                while (i < 300000) { i = i + 1 }
+                print("thread fertig")
+            }
+            leave
+            print("nie")
+            """),
+        ("Threads: terminate im Hauptprogramm stoppt Fire-Threads (finally laeuft), Globals zuletzt", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            var g = new Item(1)
+            fire {
+                try { while (true) { } } finally { print("thread finally") }
+            }
+            var j = 0
+            while (j < 1000) { j = j + 1 }
+            terminate(5)
+            print("nie")
+            """),
+        ("Threads: terminate in einem Fire-Thread stoppt auch das Hauptprogramm", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            var g = new Item(1)
+            fire {
+                var k = 0
+                while (k < 1000) { k = k + 1 }
+                terminate(3)
+                print("nie im thread")
+            }
+            try { while (true) { } } finally { print("main finally") }
+            print("nie")
+            """),
+        ("Threads: terminate in einer Property haelt sofort an, danach geordnet", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            class P {
+                int v {
+                    get {
+                        print("im getter")
+                        terminate(1)
+                        print("nie getter")
+                        return 5
+                    }
+                }
+            }
+            var g = new Item(1)
+            var p = new P()
+            try {
+                var x = p.v
+                print("nie x")
+            } finally {
+                print("finally")
+            }
+            print("nie")
+            """),
+        ("Threads: Programmende wartet auf Fire-Threads, dann werden die Globals zerstoert", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            var g = new Item(1)
+            fire {
+                var i = 0
+                while (i < 300000) { i = i + 1 }
+                print("thread fertig")
+            }
+            print("main fertig")
+            """),
+        ("Threads: catch terminate(v) laeuft im Hauptprogramm", """
+            catch terminate(v)
+            {
+                print("Main-Thread: catch terminate(v) -> " + v)
+            }
+            var i = 0
+            while (i < 2000000) {
+                i = i + 1
+                if (i == 5) {
+                    terminate(77)
+                }
+            }
+            print("NIE ERREICHT")
+            """),
+        ("Threads: catch threads() faengt die Ausnahme eines Threads", """
+            catch threads()
+            {
+                print("Main-Thread: catch threads() gefangen")
+            }
+            class MyError {
+                string message
+                construct(string message) { this.message = message }
+            }
+            fire {
+                throw new MyError("boom aus echter Sprachsyntax")
+            }
+            var i = 0
+            while (i < 2000000) {
+                i = i + 1
+            }
+            print("Hauptprogramm fertig")
+            """),
+        ("Threads: taking: der Thread bekommt eine isolierte Kopie, die Zerstoerung ruft keinen Destruktor", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            var b = new Box("orig")
+            b.item = new Item(5)
+            fire taking b {
+                print("thread sieht " + b.name + " " + b.item.n)
+                b.name = "geaendert"
+                b.item.n = 6
+            }
+            var i = 0
+            while (i < 3000000) { i = i + 1 }
+            print("main " + b.name + " " + b.item.n)
+            """),
+        ("Threads: leave laeuft durch finally, kein catch faengt es", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            fire {
+                try {
+                    try { print("a"); leave; print("nie") } catch (e) { print("nie catch") } finally { print("fin1") }
+                } finally { print("fin2") }
+                print("nie")
+            }
+            var i = 0
+            while (i < 3000000) { i = i + 1 }
+            print("fertig")
+            """),
+        ("Threads: leave aus einer Funktion im Thread, finally laeuft", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            var Work = func (n) => {
+                var it = new Item(n)
+                if (n == 2) { leave }
+                print("work " + n)
+            }
+            fire {
+                var a = new Item(100)
+                Work(1)
+                try { Work(2) } catch (e) { print("nie") } finally { print("fin") }
+                print("nie")
+            }
+            var i = 0
+            while (i < 3000000) { i = i + 1 }
+            print("fertig")
+            """),
+        ("Threads: Thread startet Thread", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            fire {
+                print("outer")
+                fire { print("inner") }
+                var i = 0
+                while (i < 1000000) { i = i + 1 }
+                print("outer end")
+            }
+            var i = 0
+            while (i < 6000000) { i = i + 1 }
+            print("fertig")
+            """),
+        ("Threads: sync: die Kopie schreibt ins Original zurueck", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            var player = new Box("p")
+            player.item = new Item(100)
+            var done = 0
+            fire taking player {
+                player.item.n = player.item.n - 10
+                var r = sync player
+                print("sync = " + r)
+                sync global { done = 1 }
+            }
+            while (done == 0) { sync globals }
+            print("main item " + player.item.n)
+            """),
+        ("Threads: sync: Arrays und Objekte (Fall A/B/C)", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            class Inv {
+                int gold
+                var items
+                Item best
+                construct() { this.gold = 0; this.items = [1, 2]; this.best = new Item(1) }
+            }
+            var inv = new Inv()
+            var done = 0
+            fire taking inv {
+                inv.gold = 5
+                inv.items = [10, 20, 30]
+                inv.best.n = 99
+                sync inv
+                sync global { done = 1 }
+            }
+            while (done == 0) { sync globals }
+            print(inv.gold + " " + inv.items.length + " " + inv.best.n)
+            for (var i = 0; i < inv.items.length; i = i + 1) { print(inv.items[i]) }
+            """),
+        ("Threads: Actor: fire with + process", """
+            actor Logger {
+                string lastMessage
+                construct() {
+                    this.lastMessage = ""
+                }
+                log(string msg) {
+                    this.lastMessage = msg
+                    print("Logger (Heimat-Thread): " + msg)
+                }
+            }
+            var logger = new Logger()
+            fire with logger {
+                logger.log("hallo vom fire-Thread")
+            }
+            process logger
+            print("Hauptprogramm: logger.lastMessage = " + logger.lastMessage)
+            """),
+        ("Threads: Actor: try process", """
+            actor Counter {
+                int value
+                construct() {
+                    this.value = 0
+                }
+                increment() {
+                    this.value = this.value + 1
+                }
+            }
+            var counter = new Counter()
+            var before = try process counter
+            print("try process VOR jeder Nachricht (erwartet false): " + before)
+            fire with counter {
+                counter.increment()
+            }
+            process counter
+            print("Hauptprogramm: counter.value = " + counter.value)
+            """),
+        ("Threads: Actor: Aufruf ist immer eine Nachricht", """
+            actor Greeter {
+                string name
+                construct(string name) {
+                    this.name = name
+                }
+                greet() {
+                    print("greet() ist jetzt gelaufen")
+                }
+            }
+            var greeter = new Greeter("Welt")
+            greeter.greet()
+            print("Vor process: greet() ist noch NICHT gelaufen")
+            process greeter
+            print("Nach process: siehe oben")
+            """),
+        ("Threads: Actor: mehrere Nachrichten in Reihenfolge", """
+            actor Worker {
+                int sum
+                int pending
+                construct() { this.sum = 0; this.pending = 3 }
+                add(int x) { this.sum = this.sum + x; this.pending = this.pending - 1 }
+                done() { print("done " + this.sum) }
+            }
+            var w = new Worker()
+            fire with w { for (var i = 1; i <= 3; i = i + 1) { w.add(i * 10) } w.done() }
+            while (w.pending > 0 || true) {
+                process w
+                if (w.pending == 0) { break }
+            }
+            process w
+            """),
+        ("Threads: Globals: Schreiben erst bei sync globals (#nosync)", """
+            #nosync
+            var counter = 0
+            fire { counter = 5 }
+            var handled = 0
+            while (handled == 0) { handled = sync globals }
+            print("counter " + counter + " bearbeitet " + handled)
+            """),
+        ("Threads: Globals: #nosync haelt den Wert", """
+            #nosync
+            var counter = 0
+            var seen = 0
+            fire { counter = 5 }
+            for (var i = 0; i < 200000; i = i + 1) { seen = seen + counter }
+            print("gesehen " + seen)
+            """),
+        ("Threads: Globals: automatisches Abarbeiten", """
+            var counter = 0
+            fire { counter = 5 }
+            var spins = 0
+            while (counter == 0 && spins < 100000000) { spins = spins + 1 }
+            print("counter " + counter)
+            """),
+        ("Threads: Globals: fire global und Methodenaufrufe ohne sync globals", """
+            class Box { int n; construct() { this.n = 0 } Add(int d) { this.n = this.n + d } }
+            var box = new Box()
+            var done = 0
+            fire { box.Add(2); box.Add(3); fire global { done = done + 1 } }
+            var spins = 0
+            while (done == 0 && spins < 100000000) { spins = spins + 1 }
+            print("n " + box.n + " done " + done)
+            """),
+        ("Threads: Globals: Methodenaufruf wartet bei #nosync", """
+            #nosync
+            class Box { int n; construct() { this.n = 0 } Add(int d) { this.n = this.n + d } }
+            var box = new Box()
+            var finished = 0
+            fire { box.Add(4) }
+            for (var i = 0; i < 300000; i = i + 1) { finished = finished + box.n }
+            print("vorher " + finished)
+            while (box.n == 0) { sync globals }
+            print("nachher " + box.n)
+            """),
+        ("Threads: Globals: der Thread liest live", """
+            var flag = 0
+            var done = 0
+            fire {
+                while (flag == 0) { }
+                sync global { done = done + 1 }
+            }
+            flag = 1
+            while (done == 0) { sync globals }
+            print("fertig " + done)
+            """),
+        ("Threads: Globals: Methoden auf globalen Objekten laufen atomar", """
+            class Counter {
+                int n
+                construct() { this.n = 0 }
+                Inc() { var old = this.n; this.n = old + 1 }
+            }
+            var c = new Counter()
+            var done = 0
+            fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+            fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+            fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+            fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+            while (done < 4) { sync globals }
+            print("n " + c.n)
+            """),
+        ("Threads: Globals: sync global ist atomar", """
+            var total = 0
+            var done = 0
+            fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+            fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+            fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+            fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+            while (done < 4) { sync globals }
+            print("total " + total)
+            """),
+        ("Threads: Globals: Block sieht Locals des Threads", """
+            var total = 0
+            var done = 0
+            fire {
+                var step = 7
+                sync global { total = total + step }
+                done = 1
+            }
+            while (done == 0) { sync globals }
+            print("total " + total)
+            """),
+        ("Threads: Globals: fire global mit taking", """
+            var total = 0
+            var started = 0
+            fire {
+                var x = 7
+                fire global taking x { total = total + x }
+                fire global taking x { total = total + x * 10 }
+            }
+            while (total == 0) { sync globals }
+            while (total < 77) { sync globals }
+            print("total " + total)
+            """),
+        ("Threads: Globals: fire global mit Objekt als taking", """
+            class Box { int v; construct(int v) { this.v = v } }
+            var seen = 0
+            fire {
+                var b = new Box(5)
+                fire global taking b { seen = seen + b.v }
+                b.v = 100
+            }
+            while (seen == 0) { sync globals }
+            print("seen " + seen)
+            """),
+        ("Threads: Globals: Programmende bedient Threads", """
+            class G { int v; construct() { this.v = 1 } destruct() { print("~G " + this.v) } }
+            var g = new G()
+            fire { g.v = 9 }
+            print("ende")
+            """),
+        ("Threads: Globals: Ausnahme im Block beendet die Sektion", """
+            class Exception { string message; construct(string message) { this.message = message } }
+            var total = 0
+            var done = 0
+            fire {
+                try { sync global { total = total + 1; throw new Exception("x") } } catch (e) { }
+                sync global { total = total + 10; done = 1 }
+            }
+            while (done == 0) { sync globals }
+            print("total " + total)
+            """),
+        ("Threads: Globals: Array der Globals", """
+            var arr = new int[5]
+            var done = 0
+            fire {
+                for (var i = 0; i < 5; i = i + 1) { arr[i] = i * 2 }
+                sync global { done = 1 }
+            }
+            while (done == 0) { sync globals }
+            var sum = 0
+            for (var i = 0; i < 5; i = i + 1) { sum = sum + arr[i] }
+            print("sum " + sum)
+            """),
+        ("Threads: Globals: statisches Feld", """
+            class Cfg { static int hits = 0 }
+            var done = 0
+            fire { Cfg.hits = 3; sync global { done = 1 } }
+            while (done == 0) { sync globals }
+            print("hits " + Cfg.hits)
+            """),
+        ("Threads: Globals: Thread startet Thread, beide schreiben", """
+            var total = 0
+            var done = 0
+            fire {
+                sync global { total = total + 1 }
+                fire { sync global { total = total + 10; done = 1 } }
+            }
+            while (done == 0) { sync globals }
+            print("total " + total)
+            """),
+        ("Threads: Globals: terminate im Thread beendet sync-globals-Schleife", """
+            fire { terminate(1) }
+            while (true) { sync globals }
+            """),
+        ("Threads: Globals: sync globals ohne Threads liefert 0", """
+            print("n " + (sync globals))
+            """),
+        ("Threads: Globals: break/continue aus sync global", """
+            var total = 0
+            var done = 0
+            fire {
+                for (var i = 0; i < 10; i = i + 1) {
+                    sync global { if (i == 3) { break } total = total + 1 }
+                }
+                for (var j = 0; j < 4; j = j + 1) {
+                    sync global { if (j % 2 == 0) { continue } total = total + 10 }
+                }
+                sync global { done = 1 }
+            }
+            while (done == 0) { sync globals }
+            print("total " + total)
+            """),
+    }).ToArray();
+
     string? cxx = FindCxx();
     if (cxx == null)
         Console.WriteLine("(kein C++-Compiler gefunden - die Native-Backend-Pruefungen werden uebersprungen)");
@@ -13461,7 +14028,7 @@ static int CountOccurrences(string haystack, string needle)
                 return output + errTask.Result;
             }
 
-            string build = RunTool(cxx, $"-std=c++17 -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"", out int buildExit);
+            string build = RunTool(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"", out int buildExit);
             if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C++-Compiler: " + build);
             if (c.Name.StartsWith("Abbruch:"))
             {
@@ -13473,7 +14040,8 @@ static int CountOccurrences(string haystack, string needle)
                 return (c.Name, expected, run.ExitCode == 1 && stderrTask.Result.Contains("Unhandled exception") ? stdout : $"Exitcode {run.ExitCode}: {stdout}{stderrTask.Result}");
             }
             string actual = RunTool(exeFile, "", out int runExit);
-            return (c.Name, expected, runExit == 0 ? actual : $"Exitcode {runExit}: {actual}");
+            // `terminate(n)` with a whole number is the exit code of the process (like the command line runner)
+            return (c.Name, expected, runExit == 0 || (c.Name.StartsWith("Threads:") && c.Source.Contains("terminate(")) ? actual : $"Exitcode {runExit}: {actual}");
         })).ToArray();
         Task.WaitAll(compiled);
 
@@ -13530,12 +14098,12 @@ static int CountOccurrences(string haystack, string needle)
         // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
         try
         {
-            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "fire { print(1) }" }, null, null, VmExecutionMode.Release));
+            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#import \"io\"\nvar w = new IO.FileStream(\"a.bin\", IO.FileMode.Create)" }, null, null, VmExecutionMode.Release));
             CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt", false, "keine Ausnahme");
         }
         catch (fire.Native.NativeNotSupportedException ex)
         {
-            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (Fire)", ex.Message.Contains("Fire") || ex.Message.Contains("thread"), ex.Message);
+            CheckNat("Nicht unterstuetzte native Funktionen werden abgelehnt", ex.Message.Contains("native function"), ex.Message);
         }
         try { Directory.Delete(workDir, true); } catch (IOException) { }
     }

@@ -264,7 +264,7 @@ namespace fire.Compiler
                 fire.Native.NativeRuntimeFiles.WriteTo(Path.GetDirectoryName(full)!);
                 stdout.WriteLine(target.IsEmbedded
                     ? $"{full} ({cpp.Length} characters) for {target.Name} - add it and fire_rt.hpp to a component of your project (the entry point is app_main)"
-                    : $"{full} ({cpp.Length} characters) - compile with: c++ -std=c++17 -O2 \"{full}\" -o program");
+                    : $"{full} ({cpp.Length} characters) - compile with: c++ -std=c++17 -O2 -pthread \"{full}\" -o program");
             }
             catch (Exception ex) when (IsCompileError(ex))
             {

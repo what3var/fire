@@ -158,6 +158,12 @@ namespace fire.Compiler
         /// Direktive im Quelltext steht).</summary>
         private bool _noShadowGlobals;
 
+        /// <summary>Die endgültige Anzahl der globalen Slots des Hauptprogramms (aus einem ersten Durchlauf), oder null im ersten Durchlauf. Die Slots eines
+        /// `fire`-Blocks (Erfassungen und eigene Variablen) liegen HINTER allen Globals des Hauptprogramms - auch hinter denen, die erst nach dem `fire`
+        /// deklariert werden; sonst würden sie mit diesen zusammenfallen (der Thread liest dann die geteilte Variable statt seiner eigenen).</summary>
+        private int? _finalGlobalCount;
+        private bool _sawFire;
+
         /// <summary>Wie `_functionDepth`, aber für `break`/`continue`: Anzahl
         /// umschließender Schleifen (0 = kein `break`/`continue` gültig) bzw.
         /// `try`/`catch`/`finally`-Blöcke seit der letzten Schleife (>0 = ein
@@ -228,13 +234,9 @@ namespace fire.Compiler
         public static ResolveResult Resolve(
             IReadOnlyList<Stmt> program, IEnumerable<string>? nativeNames = null, IEnumerable<string>? tryableNativeNames = null)
         {
-            var resolver = new Resolver(nativeNames, tryableNativeNames);
-            resolver.CollectClasses(program);
-            resolver.CollectExterns(program);
-            resolver.CollectEnums(program);
-            resolver._noShadowGlobals = program.Any(s => s is NoShadowDirective);
-            foreach (var stmt in program)
-                resolver.ResolveStmt(stmt);
+            var resolver = Run(program, nativeNames, tryableNativeNames, null);
+            // A program with `fire` resolves a second time, now that the number of its globals is known (see _finalGlobalCount).
+            if (resolver._sawFire && resolver._errors.Count == 0) resolver = Run(program, nativeNames, tryableNativeNames, resolver._globalScope.Slots.Count);
 
             // Ab dem ersten Fehler steht fest, dass es kein Ergebnis gibt -
             // aber erst HIER, nachdem alles aufgelöst wurde, damit der
@@ -250,6 +252,18 @@ namespace fire.Compiler
                 Externs = resolver._externs,
                 NoShadowGlobals = resolver._noShadowGlobals,
             };
+        }
+
+        private static Resolver Run(IReadOnlyList<Stmt> program, IEnumerable<string>? nativeNames, IEnumerable<string>? tryableNativeNames, int? finalGlobalCount)
+        {
+            var resolver = new Resolver(nativeNames, tryableNativeNames) { _finalGlobalCount = finalGlobalCount };
+            resolver.CollectClasses(program);
+            resolver.CollectExterns(program);
+            resolver.CollectEnums(program);
+            resolver._noShadowGlobals = program.Any(s => s is NoShadowDirective);
+            foreach (var stmt in program)
+                resolver.ResolveStmt(stmt);
+            return resolver;
         }
 
         // -----------------------------------------------------------
@@ -1744,6 +1758,7 @@ namespace fire.Compiler
         /// statt zugelassen).</summary>
         private void ResolveFireStmt(FireStmt fs)
         {
+            _sawFire = true;
             foreach (var capture in fs.TakingCaptures)
                 ResolveExpr(capture.Source);
             if (fs.WithSource != null)
@@ -1778,11 +1793,19 @@ namespace fire.Compiler
             // gleichnamige Hauptprogramm-Global) und ist selbst ganz normal
             // beschreibbar wie bisher, NICHT readonly.
             int nextCaptureSlot = _noShadowGlobals ? 0 : _globalScope.Slots.Count;
+            if (!_noShadowGlobals && _finalGlobalCount is int finalCount)
+            {
+                // the slots of the globals that are declared later belong to the main program: keep them free in the body (placeholders)
+                for (; nextCaptureSlot < finalCount; nextCaptureSlot++) _current.Slots["\u0001global:" + nextCaptureSlot] = nextCaptureSlot;
+            }
             var capturesSeen = new HashSet<string>();
             foreach (var capture in fs.TakingCaptures)
             {
                 if (!capturesSeen.Add(capture.VarName))
                     throw new ResolverException($"'{capture.VarName}' was already captured in this 'fire'", fs.Line);
+                // A capture with the name of a global replaces its shadow; the old entry stays under a hidden key so that the slot count (the
+                // slot of the next variable of the body) stays right.
+                if (_current.Slots.TryGetValue(capture.VarName, out int shadowed)) _current.Slots["\u0001shadow:" + capture.VarName] = shadowed;
                 _current.Slots[capture.VarName] = nextCaptureSlot++;
                 _current.ReadonlySlots.Remove(capture.VarName);
             }
@@ -1790,6 +1813,7 @@ namespace fire.Compiler
             {
                 if (!capturesSeen.Add(fs.WithVarName))
                     throw new ResolverException($"'{fs.WithVarName}' was already captured in this 'fire'", fs.Line);
+                if (_current.Slots.TryGetValue(fs.WithVarName, out int shadowedWith)) _current.Slots["\u0001shadow:" + fs.WithVarName] = shadowedWith;
                 _current.Slots[fs.WithVarName] = nextCaptureSlot++;
                 _current.ReadonlySlots.Remove(fs.WithVarName);
             }

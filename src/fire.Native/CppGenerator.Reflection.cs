@@ -120,7 +120,7 @@ namespace fire.Native
         {
             var sb = new StringBuilder();
             var classes = _program.Program.Classes.Values.OrderBy(c => c.Name, StringComparer.Ordinal).ToList();
-            sb.AppendLine("static uint32_t g_reflCaller = 0xFFFFFFFFu;");
+            sb.AppendLine("FIRE_TLS static uint32_t g_reflCaller = 0xFFFFFFFFu;");
 
             // ---- tables ----------------------------------------------------------------------------------------------------
             int listIndex = 0;

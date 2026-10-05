@@ -91,6 +91,8 @@ namespace fire.Native
                 var operands = new int[sizes.Length];
                 for (int i = 0; i < sizes.Length; i++)
                 {
+                    // `catch threads()` without a type has no type operand
+                    if (op == OpCode.RegisterThreadsCatch && i == 2 && operands[1] == 0) break;
                     if (sizes[i] == 1) operands[i] = code[ip];
                     else operands[i] = code[ip] | (code[ip + 1] << 8);
                     ip += sizes[i];

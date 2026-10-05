@@ -260,8 +260,34 @@ einzigen Maschine, keine Garantie.
   deren Adresse genommen wird, ist ab dann im Speicher (nur diese Funktion wird langsamer). Eine Methode ohne `ref` an derselben Stelle bekommt den
   Wert: bei bekanntem Ziel setzt der Aufrufer `ptrRead`, beim virtuellen Aufruf der Dispatcher (`derefArg`).
 
-Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), Threads,
-die Bridges.
+* **Threads** (`docs/THREADING_DESIGN.md`): ein Programm mit `fire`, `leave`, `terminate`, `sync`, Actors oder `catch threads/terminate` bekommt `FIRE_THREADS` (Binary mit
+  `-pthread` linken; nur auf Hosts, nicht auf Embedded-Zielen). Jeder Fire-Thread ist ein echter `std::thread`; aller fire-Code läuft unter **einer globalen Sperre (GIL)**,
+  einem fairen Ticket-Lock: ein Thread gibt sie nur beim Warten (`sync`, `process`, Sektionen) und an sicheren Punkten ab (Schleifen-Rücksprung, Funktionsanfang, alle 4096 Stationen
+  ein `gilYield`). Dadurch sehen Besitzstrukturen, Handle-Tabelle und Zähler nie zwei Threads zugleich. Zustand eines Ausführungsstrangs (`g_unwind`, `g_handlers`, `g_pending`,
+  Temporärpool, `g_globalOwn`, `g_reflCaller`) ist `thread_local`.
+  Der Rumpf eines `fire`-Blocks ist eine eigene Funktion (`FuncKind.FireBody`, wie das Hauptprogramm: eigener globaler Scope `OG`); die Globals des Hauptprogramms (Slots unterhalb
+  `globalSlotCount`) sind die geteilten `G{n}`, die Slots dahinter (Erfassungen und Variablen des Blocks) Variablen des Threads `T{n}`. `taking x` kopiert **im Aufrufer**:
+  `takeCopy` = `DeepCopier` im Modus `taking` (nur der eigene Besitzbaum, sonst Abbruch "taking rejected"; Lambda/Zeiger im Graphen ebenso; Arrays und Puffer werden mitkopiert).
+  Die Kopien reisen in einer Liste (`travel`) und gehören dem globalen Scope des Threads; sie tragen Flag 16 (am Ende des Threads läuft ihr Destruktor nicht, was der Thread selbst
+  darin angelegt hat wird zerstört) und - die Wurzel - Flag 32 samt Eintrag in `g_originOf`/`g_copiesOf` (der Original-Zeiger für `sync`; ein zerstörtes Original gibt `undefined`).
+  `sync`/`sync flat` (Fall A/B/C, Arrays elementweise neu, Puffer kopiert) arbeiten auf den Feldern gleicher Klasse.
+  `leave`/`terminate` sind **keine Ausnahme, aber laufen wie eine**: `g_unwind` mit `UW_LEAVE`; kein `catch` passt, ein `finally` läuft (Abschluss 4), Landeplätze und
+  `EndFinally` kennen es. Ein Thread endet damit ohne Rest; `terminate(v)` setzt (erster Aufruf gewinnt) ein globales Signal, jeder Thread bemerkt es am nächsten sicheren Punkt oder
+  Warten. Das Hauptprogramm führt danach `catch terminate(v)` aus, wartet auf alle Threads (und bedient dabei deren Sektionen und Ausnahmen, `mainFinish`) und zerstört erst dann
+  seine Globals; `terminate(n)` mit einer Zahl ist der Exitcode. Eine unbehandelte Ausnahme in einem Thread wickelt ihn ab (der globale Scope bleibt, die Ausnahme gehört ihm:
+  `graveyard`) und geht an das Hauptprogramm: `catch threads(...)`, sonst Meldung und Exitcode 1.
+  **Actors**: ein Actor-Objekt hat Flag 8 und eine Mailbox (Seitentabelle); jeder Dispatcher heißt dann `direct_...`, `call_...` stellt für einen Actor eine Nachricht
+  (Thunk `msg_...`, Argumente referenzgezählt) in die Mailbox, `process`/`try process` führt eine aus (blockierend: Warten ohne GIL).
+  **Globals** (THREADING_DESIGN 7): ab dem ersten `fire` gehört alles, was der globale Scope des Hauptprogramms besitzt, zum geteilten Bereich (Flag 64, `link` hält ihn aktuell).
+  Ein Thread liest direkt; eine Zuweisung an ein Global, ein Feld/Array-Element/statisches Feld des Bereichs und der Aufruf einer Methode eines Objekts des Bereichs laufen in einer
+  **Sektion** (`SectionScope`): Anmeldung in der Warteschlange, Warten (ohne GIL), bis das Hauptprogramm sie an einem sicheren Punkt (oder bei `sync globals` mit `#nosync`) erteilt;
+  es wartet dann, bis sie endet. `sync global { }` ist `sectionEnterOp`/`sectionExitOp`, `fire global { }` ein Auftrag (`postJob`, Objekt-Argumente als Kopie), den das
+  Hauptprogramm auf seinem Strang mit den echten Globals ausführt (eine Ausnahme darin geht an `catch threads`).
+  Abweichungen von der VM: Actor-Referenzen und Objekt-Argumente von Nachrichten gelten als Referenzen (ein Actor muss die Threads überleben, die ihn benutzen); `try sync`
+  liefert nie `false` (es gibt nur einen Strang zur Zeit); ein `leave`/`terminate` in einem Destruktor/einer Property wirkt nativ erst an deren Ende; nach einem `leave` in
+  einem Thread zerstört dieser auch das, was er in `taking`-Kopien angelegt hat (die VM ließ es liegen); es gibt noch kein `Sleep`.
+
+Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), die Bridges.
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes
 C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich sein.
@@ -273,7 +299,7 @@ C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich se
 2. **Ownership**: Scopes, die besitzende Objekte halten, behalten eine Laufzeit-Scope-Kette (für die Destruktor-Kaskade); alle anderen
    bleiben aufgelöst.
 3. ~~**Ausnahmen mit Resume**~~ - umgesetzt, siehe "Ausnahmen".
-4. **Threads, `sync`, Safe-Points** (`leave`/`terminate`) über `std::thread` bzw. FreeRTOS-Tasks.
+4. ~~**Threads, `sync`, Safe-Points** (`leave`/`terminate`)~~ - umgesetzt für Hosts (`std::thread` + GIL), siehe "Threads"; FreeRTOS-Tasks folgen.
 5. **Bridges** (Variante A): eine C++-Implementierung mit C-ABI, die auch der C#-Editor per P/Invoke nutzt - IO und Time zuerst,
    dann Graphics (SDL3 ist ohnehin C), zuletzt Devices.
 6. **Optimierungen**: Typinferenz und Einheiten-Folding, Devirtualisierung (geschlossene Welt), Inlining, Scope-Elision.
