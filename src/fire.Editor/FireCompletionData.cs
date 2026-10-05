@@ -25,7 +25,10 @@ namespace fire.Editor
         /// (z.B. Parameteranzahl bei Methoden).</summary>
         public object Content => Item.Display;
 
-        public object Description => Item.Detail ?? Item.Kind.ToString();
+        /// <summary>The tooltip next to the list: the symbol with its `///` documentation if it has one, otherwise just the detail text.</summary>
+        public object Description => Item.Documentation is { } doc
+            ? DocToolTip.Build(Item.Display, doc)
+            : Item.Detail ?? Item.Kind.ToString();
 
         public double Priority => Item.Score;
 

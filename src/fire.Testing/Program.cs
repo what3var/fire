@@ -10896,6 +10896,89 @@ static int CountOccurrences(string haystack, string needle)
     Console.WriteLine(mdFailures == 0 ? "Alle Markdown-Pruefungen bestanden." : $"FEHLER: {mdFailures} Markdown-Pruefung(en) fehlgeschlagen.");
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------
+// Editor: Dokumentationskommentare (///) fuer Klassen, Felder, Properties und Methoden
+// ---------------------------------------------------------------------------------------------------------------------------
+{
+    Console.WriteLine("=== Dokumentationskommentare (///) ===");
+    int docFailures = 0;
+    void CheckDoc(string title, bool ok, string detail = "")
+    {
+        if (!ok) docFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title} {detail}");
+    }
+
+    var plain = fire.Editor.DocComments.Parse("Draws a circle.\nSecond line of the same paragraph.\n\nNew paragraph.");
+    CheckDoc("Parse: reiner Text, Zeilen eines Absatzes werden verbunden, Leerzeile trennt Absaetze",
+        plain?.Summary == "Draws a circle. Second line of the same paragraph.\nNew paragraph.", plain?.Summary);
+
+    var tagged = fire.Editor.DocComments.Parse("<summary>\nAdds <c>two</c> numbers, see <see cref=\"Sub\"/>.\n</summary>\n<param name=\"a\">first &lt;int&gt;</param>\n<param name=\"b\">second</param>\n<returns>the sum</returns>\n<remarks>Fast.</remarks>");
+    CheckDoc("Parse: summary, c, see cref, Entities", tagged?.Summary == "Adds two numbers, see Sub.", tagged?.Summary);
+    CheckDoc("Parse: Parameter in Reihenfolge mit Text", tagged != null && tagged.Parameters.Count == 2 && tagged.Parameters[0] == ("a", "first <int>") && tagged.Parameters[1] == ("b", "second"));
+    CheckDoc("Parse: returns und remarks", tagged?.Returns == "the sum" && tagged?.Remarks == "Fast.");
+    CheckDoc("Parse: leerer Kommentar ist kein Dokument", fire.Editor.DocComments.Parse("  \n ") == null);
+
+    string docSource = """
+        /// A calculator.
+        /// Works on ints.
+        class Calc {
+            /// <summary>Adds two numbers.</summary>
+            /// <param name="a">first</param>
+            /// <param name="b">second &amp; last</param>
+            /// <returns>the sum</returns>
+            int Add(int a, int b) { return a + b }
+
+            /// Current total.
+            int total
+
+            /// <summary>Doubled total</summary>
+            int Double { get { return this.total * 2 } }
+
+            // an ordinary comment is no documentation
+            Plain() { }
+
+            /// separated from its method by a blank line
+
+            Separated() { }
+        }
+        var c = new Calc()
+        c.Add(1, 2)
+        c.total
+        c.Double
+        c.Plain()
+        c.Separated()
+        """;
+
+    var docIndex = fire.Editor.ScriptSymbolIndex.Build(docSource);
+    fire.Editor.ResolvedSymbol? SymbolAt(string needle)
+    {
+        int offset = docSource.LastIndexOf(needle, StringComparison.Ordinal) + 1;
+        return fire.Editor.NavigationEngine.TryResolveSymbol(docSource, offset, docIndex);
+    }
+
+    var calcDoc = SymbolAt("Calc()")?.Documentation;
+    CheckDoc("Klasse: /// ueber der Deklaration, mehrere Zeilen werden verbunden", calcDoc?.Summary == "A calculator. Works on ints.", calcDoc?.Summary);
+    var addSymbol = SymbolAt("Add(1");
+    var addDoc = addSymbol?.Documentation;
+    CheckDoc("Methode: summary, Parameter und returns", addDoc?.Summary == "Adds two numbers." && addDoc.Parameters.Count == 2
+        && addDoc.Parameters[1].Text == "second & last" && addDoc.Returns == "the sum", addDoc?.ToPlainText());
+    CheckDoc("Methode: die Kopfzeile nennt Klasse und Signatur", addSymbol?.Header.Contains("Calc.Add(int a, int b)") == true, addSymbol?.Header);
+    CheckDoc("Feld: einfacher /// Text", SymbolAt("total\nc.Double")?.Documentation?.Summary == "Current total.");
+    CheckDoc("Property: summary", SymbolAt("Double\nc.Plain")?.Documentation?.Summary == "Doubled total");
+    CheckDoc("Gewoehnlicher // Kommentar ist keine Dokumentation", SymbolAt("Plain()\nc.Sep")?.Documentation == null);
+    CheckDoc("Leerzeile zwischen /// und Deklaration: keine Dokumentation", SymbolAt("Separated()")?.Documentation == null);
+    CheckDoc("Die Deklarationsstelle selbst loest ebenfalls auf (Cursor auf dem Namen in der Klasse)",
+        fire.Editor.NavigationEngine.TryResolveSymbol(docSource, docSource.IndexOf("Add(int a") + 1, docIndex)?.Documentation?.Summary == "Adds two numbers.");
+
+    var items = fire.Editor.CompletionEngine.GetSuggestions(docSource + "\nc.", docSource.Length + 3, fire.Editor.ScriptSymbolIndex.Build(docSource + "\nc."));
+    CheckDoc("Vervollstaendigung: Eintraege tragen ihre Dokumentation, andere nicht",
+        items.FirstOrDefault(i => i.Text == "Add")?.Documentation?.Summary == "Adds two numbers." && items.FirstOrDefault(i => i.Text == "Plain")?.Documentation == null);
+    var classItems = fire.Editor.CompletionEngine.GetSuggestions(docSource + "\nvar d = new Ca", docSource.Length + 15, fire.Editor.ScriptSymbolIndex.Build(docSource + "\nvar d = new Ca"));
+    CheckDoc("Vervollstaendigung: Klassen tragen ihre Dokumentation", classItems.FirstOrDefault(i => i.Text == "Calc")?.Documentation?.Summary == "A calculator. Works on ints.");
+
+    Console.WriteLine(docFailures == 0 ? "Alle Dokumentationskommentar-Pruefungen bestanden." : $"FEHLER: {docFailures} Dokumentationskommentar-Pruefung(en) fehlgeschlagen.");
+}
+
 static class PackerNativeProbe
 {
     [System.Runtime.InteropServices.DllImport("libfiretestnative")] private static extern int Nonexistent();

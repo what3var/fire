@@ -4,10 +4,13 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Threading;
+using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.CodeCompletion;
 using ICSharpCode.AvalonEdit.Document;
+using ICSharpCode.AvalonEdit.Rendering;
 
 namespace fire.Editor
 {
@@ -196,8 +199,135 @@ namespace fire.Editor
                 RunDiagnostics();
             };
 
+            // Documentation tooltips (`///` comments): a short pause with the caret on a symbol, or the mouse resting on one.
+            _caretTipTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+            _caretTipTimer.Tick += (_, _) =>
+            {
+                _caretTipTimer.Stop();
+                ShowCaretDocTip();
+            };
+            Editor.TextArea.Caret.PositionChanged += (_, _) =>
+            {
+                CloseDocTip();
+                _caretTipTimer.Stop();
+                _caretTipTimer.Start();
+            };
+            Editor.TextArea.TextView.MouseHover += TextView_MouseHover;
+            Editor.TextArea.TextView.MouseHoverStopped += (_, _) => CloseDocTip();
+            Editor.TextArea.TextView.ScrollOffsetChanged += (_, _) => CloseDocTip();
+            Editor.LostKeyboardFocus += (_, _) =>
+            {
+                _caretTipTimer.Stop();
+                CloseDocTip();
+            };
+            Unloaded += (_, _) =>
+            {
+                _caretTipTimer.Stop();
+                CloseDocTip();
+            };
+
             SetText(string.Empty);
             IsModified = false;
+        }
+
+        // -----------------------------------------------------------
+        // Documentation tooltips: the `///` comment above a class, field, property or method is shown as a tooltip
+        // when the caret rests on its name, when the mouse hovers over it, and next to the completion list
+        // (see FireCompletionData). Where a symbol is declared and what it is comes from NavigationEngine.
+        // -----------------------------------------------------------
+
+        private readonly DispatcherTimer _caretTipTimer;
+        private System.Windows.Controls.ToolTip? _docTip;
+        private string? _indexedSource;
+        private ScriptSymbolIndex? _index;
+
+        /// <summary>The symbol index of `source`, reused as long as the text does not change.</summary>
+        private ScriptSymbolIndex IndexFor(string source)
+        {
+            if (_index == null || !string.Equals(_indexedSource, source, StringComparison.Ordinal))
+            {
+                _index = ScriptSymbolIndex.Build(source);
+                _indexedSource = source;
+            }
+            return _index;
+        }
+
+        private bool TryGetDoc(int offset, out string header, out DocComment doc)
+        {
+            string source = Editor.Text;
+            var symbol = NavigationEngine.TryResolveSymbol(source, offset, IndexFor(source));
+            if (symbol?.Documentation is { } found)
+            {
+                header = symbol.Header;
+                doc = found;
+                return true;
+            }
+            header = string.Empty;
+            doc = null!;
+            return false;
+        }
+
+        private void ShowDocTip(string header, DocComment doc, double x, double y)
+        {
+            CloseDocTip();
+            var tip = DocToolTip.Create(header, doc);
+            tip.PlacementTarget = Editor.TextArea.TextView;
+            tip.Placement = PlacementMode.Relative;
+            tip.HorizontalOffset = x;
+            tip.VerticalOffset = y;
+            tip.StaysOpen = true;
+            tip.IsOpen = true;
+            _docTip = tip;
+        }
+
+        private void CloseDocTip()
+        {
+            if (_docTip == null) return;
+            _docTip.IsOpen = false;
+            _docTip = null;
+        }
+
+        private void ShowCaretDocTip()
+        {
+            if (!Editor.IsKeyboardFocusWithin || _completionWindow != null || Editor.SelectionLength > 0) return;
+            if (!TryGetDoc(Editor.CaretOffset, out string header, out DocComment doc)) return;
+
+            var textView = Editor.TextArea.TextView;
+            var below = textView.GetVisualPosition(Editor.TextArea.Caret.Position, VisualYPosition.LineBottom) - textView.ScrollOffset;
+            ShowDocTip(header, doc, below.X, below.Y + 2);
+        }
+
+        private void TextView_MouseHover(object? sender, MouseEventArgs e)
+        {
+            var textView = Editor.TextArea.TextView;
+            var position = Editor.GetPositionFromPoint(e.GetPosition(Editor));
+            if (position == null) return;
+
+            // The identifier under the mouse, and only if the mouse really is over its text (not in the empty space behind the line).
+            int offset = Editor.Document.GetOffset(position.Value.Location);
+            var (start, end) = IdentifierAround(offset);
+            if (start >= end) return;
+            var startPos = new TextViewPosition(Editor.Document.GetLocation(start));
+            var endPos = new TextViewPosition(Editor.Document.GetLocation(end));
+            var left = textView.GetVisualPosition(startPos, VisualYPosition.LineTop) - textView.ScrollOffset;
+            var right = textView.GetVisualPosition(endPos, VisualYPosition.LineTop) - textView.ScrollOffset;
+            var bottom = textView.GetVisualPosition(startPos, VisualYPosition.LineBottom) - textView.ScrollOffset;
+            var mouse = e.GetPosition(textView);
+            if (mouse.X < left.X || mouse.X > right.X || mouse.Y < left.Y || mouse.Y > bottom.Y) return;
+
+            if (!TryGetDoc(start, out string header, out DocComment doc)) return;
+            ShowDocTip(header, doc, mouse.X + 8, mouse.Y + 18);
+        }
+
+        /// <summary>Start and end offsets of the identifier that contains or touches `offset` (start == end: none).</summary>
+        private (int Start, int End) IdentifierAround(int offset)
+        {
+            var document = Editor.Document;
+            bool IsIdent(char c) => char.IsLetterOrDigit(c) || c == '_';
+            int start = offset, end = offset;
+            while (start > 0 && IsIdent(document.GetCharAt(start - 1))) start--;
+            while (end < document.TextLength && IsIdent(document.GetCharAt(end))) end++;
+            return (start, end);
         }
 
         // -----------------------------------------------------------
@@ -236,6 +366,7 @@ namespace fire.Editor
 
         private void Editor_TextChanged(object? sender, EventArgs e)
         {
+            CloseDocTip();
             if (!_loading) SetModified(true);
             _diagnosticsTimer.Stop();
             _diagnosticsTimer.Start();

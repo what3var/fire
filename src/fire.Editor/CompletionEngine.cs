@@ -21,6 +21,9 @@ namespace fire.Editor
 
     public sealed record CompletionItem(string Text, CompletionKind Kind, float Score, string? Detail = null)
     {
+        /// <summary>The `///` documentation of the class/member this item stands for (shown as a tooltip next to the list).</summary>
+        public DocComment? Documentation { get; init; }
+
         public string Display => Detail != null ? $"{Text}  {Detail}" : Text;
     }
 
@@ -190,7 +193,7 @@ namespace fire.Editor
                 if ((cls.IsInterface && !includeInterfaces) || !MatchesPrefix(cls.SimpleName, prefix)) continue;
                 if (index.ResolveClassKey(cls.SimpleName, context, lenient: false) != cls.Name) continue;
                 string detail = cls.Namespace.Length > 0 ? $"{(cls.IsInterface ? "Interface" : "Class")} in {cls.Namespace}" : (cls.IsInterface ? "Interface" : "Class");
-                results.Add(new CompletionItem(cls.SimpleName, CompletionKind.ClassName, CompareKeywords(prefix, cls.SimpleName), detail));
+                results.Add(new CompletionItem(cls.SimpleName, CompletionKind.ClassName, CompareKeywords(prefix, cls.SimpleName), detail) { Documentation = cls.Documentation });
             }
 
             if (!includeEnums) return;
@@ -375,7 +378,7 @@ namespace fire.Editor
                 MemberKind.Property => $"{modifiers}Property{(type.Length > 0 ? " : " + type : string.Empty)}{owner}",
                 _ => $"{modifiers}Field{(type.Length > 0 ? " : " + type : string.Empty)}{owner}",
             };
-            return new CompletionItem(m.Name, kind, CompareKeywords(prefix, m.Name, baseScore), detail);
+            return new CompletionItem(m.Name, kind, CompareKeywords(prefix, m.Name, baseScore), detail) { Documentation = m.Documentation };
         }
 
         private static List<CompletionItem> Dedupe(List<CompletionItem> items) =>

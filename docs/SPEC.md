@@ -1957,6 +1957,31 @@ A standalone program (or `fire.Compiler run`) gets an own, non-shared manager wi
 **Packet trace.** The manager attaches to `IDevice.OnRawDataSent`/`OnRawDataReceived` and reports every packet via `DeviceManager.PacketCaptured` (`PacketRecord`: time, device, direction, bytes) - no matter whether the script or the host sent it.
 `PacketLog` stores logs as a text file `.fplog` (header line `# fire-packetlog 1`, one line per packet: UTC time, `H2D`/`D2H`, identifier, hex bytes, separated by tabs; lossless).
 
+### 8.17 Documentation comments (`///`)
+
+Lines that start with `///` directly above a **class, interface, field, property or method** document it. The editor shows the text as a tooltip when the symbol is selected in the completion list, when the caret rests on its name, and when the mouse hovers over it. For the compiler they are ordinary comments.
+
+```
+/// A circle with a radius.
+class Circle {
+    /// The radius, in millimeters.
+    float radius
+
+    /// <summary>Scales the circle.</summary>
+    /// <param name="factor">What the radius is multiplied by.</param>
+    /// <returns>The new radius.</returns>
+    float Scale(float factor) {
+        this.radius = this.radius * factor
+        return this.radius
+    }
+}
+```
+
+- The `///` lines must be contiguous and directly above the declaration - a blank line or an ordinary `//` comment in between means "no documentation".
+- Plain text is the summary: the lines of a paragraph are joined, a blank line starts a new paragraph.
+- Like in Visual Studio, the XML-style tags `<summary>`, `<param name="...">`, `<returns>` and `<remarks>` are recognized (also `<c>`, `<para>` and `<see cref="..."/>`, which are shown as plain text); other tags are dropped and the entities `&lt; &gt; &amp; &quot; &apos;` are resolved.
+- Declarations in files pulled in with `#include` are not covered (the editor only looks at the document itself and the built-in libraries).
+
 ## 9. Open points
 
 The only earlier point here – the method declaration syntax

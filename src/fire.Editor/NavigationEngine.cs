@@ -21,6 +21,37 @@ namespace fire.Editor
         public bool IsPrelude => PreludeName != null;
     }
 
+    /// <summary>What <see cref="NavigationEngine.TryResolveSymbol"/> found at a position: where it is declared
+    /// (<see cref="Target"/>) and, if it is a class or a member, the symbol itself - for its documentation comment.</summary>
+    public sealed record ResolvedSymbol(NavigationTarget Target, ClassInfo? Class = null, MemberInfo? Member = null)
+    {
+        /// <summary>The `///` documentation of the member or class, null if there is none.</summary>
+        public DocComment? Documentation => Member?.Documentation ?? Class?.Documentation;
+
+        /// <summary>A one-line description of the symbol, e.g. `(method) Calc.Add(int a, int b) → int`.</summary>
+        public string Header
+        {
+            get
+            {
+                if (Member is { } m)
+                {
+                    string type = m.TypeName != null ? m.TypeName + (m.TypeIsArray ? "[]" : "") : string.Empty;
+                    string owner = m.Owner.Length > 0 ? m.Owner + "." : string.Empty;
+                    return m.Kind switch
+                    {
+                        MemberKind.Method => $"(method) {owner}{m.Name}({m.Signature}){(type.Length > 0 ? " → " + type : "")}",
+                        MemberKind.Constructor => $"(constructor) new {m.Owner}({m.Signature})",
+                        MemberKind.Property => $"(property) {owner}{m.Name}{(type.Length > 0 ? " : " + type : "")}",
+                        _ => $"(field) {owner}{m.Name}{(type.Length > 0 ? " : " + type : "")}",
+                    };
+                }
+                if (Class is { } c)
+                    return (c.IsInterface ? "interface " : "class ") + c.SimpleName + (c.BaseNames.Count > 0 ? " : " + string.Join(", ", c.BaseNames) : "");
+                return string.Empty;
+            }
+        }
+    }
+
     /// <summary>
     /// Bestimmt, wohin ein Klick auf eine bestimmte Zeichen-Position im
     /// Quelltext springen soll - Best-Effort wie der Rest der Editor-Werkzeuge
@@ -49,13 +80,17 @@ namespace fire.Editor
     /// </summary>
     public static class NavigationEngine
     {
-        public static NavigationTarget? TryResolve(string source, int offset, ScriptSymbolIndex index)
+        public static NavigationTarget? TryResolve(string source, int offset, ScriptSymbolIndex index) =>
+            TryResolveSymbol(source, offset, index)?.Target;
+
+        /// <summary>Like <see cref="TryResolve"/>, but also returns the class/member that was found (for its documentation).</summary>
+        public static ResolvedSymbol? TryResolveSymbol(string source, int offset, ScriptSymbolIndex index)
         {
             if (offset < 0 || offset > source.Length) return null;
 
             int line = LineOf(source, offset);
             var include = index.IncludeDirectives.FirstOrDefault(d => d.Line == line);
-            if (include != null) return new NavigationTarget(include.RelativePath, 1);
+            if (include != null) return new ResolvedSymbol(new NavigationTarget(include.RelativePath, 1));
 
             string? identifier = ReadIdentifierAt(source, offset, out int idStart);
             if (identifier == null) return null;
@@ -75,10 +110,10 @@ namespace fire.Editor
                     string qualified = dotted + "." + identifier;
                     string? qualifiedClass = index.TryFindClass(qualified, offset);
                     if (qualifiedClass != null && index.Classes.TryGetValue(qualifiedClass, out var qc) && qc.DeclLine > 0)
-                        return new NavigationTarget(null, qc.DeclLine, qc.PreludeName);
+                        return new ResolvedSymbol(new NavigationTarget(null, qc.DeclLine, qc.PreludeName), qc);
                     string? qualifiedEnum = index.TryFindEnum(qualified, offset);
                     if (qualifiedEnum != null && index.EnumDeclLines.ContainsKey(qualifiedEnum))
-                        return EnumTarget(index, qualifiedEnum);
+                        return new ResolvedSymbol(EnumTarget(index, qualifiedEnum));
                 }
 
                 var type = index.ResolveReceiver(idStart - 1);
@@ -96,29 +131,29 @@ namespace fire.Editor
                 if (className != null)
                 {
                     var member = FindMember(index, className, identifier);
-                    if (member != null) return MemberTarget(index, member);
+                    if (member != null) return MemberSymbol(index, member);
                 }
 
                 string? receiverEnum = index.TryFindEnum(receiver, offset);
                 if (receiverEnum != null && enumMembersContain(index, receiverEnum, identifier))
-                    return EnumTarget(index, receiverEnum);
+                    return new ResolvedSymbol(EnumTarget(index, receiverEnum));
 
                 return null;
             }
 
             string? classKey = index.TryFindClass(identifier, offset);
             if (classKey != null && index.Classes.TryGetValue(classKey, out var cls) && cls.DeclLine > 0)
-                return new NavigationTarget(null, cls.DeclLine, cls.PreludeName);
+                return new ResolvedSymbol(new NavigationTarget(null, cls.DeclLine, cls.PreludeName), cls);
 
             string? enumKey = index.TryFindEnum(identifier, offset);
             if (enumKey != null && index.EnumDeclLines.ContainsKey(enumKey))
-                return EnumTarget(index, enumKey);
+                return new ResolvedSymbol(EnumTarget(index, enumKey));
 
             string? enclosing = index.EnclosingClassAt(offset);
             if (enclosing != null)
             {
                 var member = FindMember(index, enclosing, identifier);
-                if (member != null) return MemberTarget(index, member);
+                if (member != null) return MemberSymbol(index, member);
             }
 
             return null;
@@ -136,6 +171,9 @@ namespace fire.Editor
         private static NavigationTarget MemberTarget(ScriptSymbolIndex index, MemberInfo member) =>
             new(null, member.DeclLine, member.Source?.PreludeName);
 
+        private static ResolvedSymbol MemberSymbol(ScriptSymbolIndex index, MemberInfo member) =>
+            new(MemberTarget(index, member), null, member);
+
         /// <summary>Ziel eines Enums (einzelne Mitglieder haben keine eigene Zeile).</summary>
         private static NavigationTarget EnumTarget(ScriptSymbolIndex index, string enumKey)
         {
@@ -144,7 +182,7 @@ namespace fire.Editor
         }
 
         /// <summary>Das Mitglied `identifier` zu einem hergeleiteten Empfänger-Typ (siehe ScriptSymbolIndex.ResolveReceiver).</summary>
-        private static NavigationTarget? ResolveMemberOfType(ScriptSymbolIndex index, ExprType type, string identifier)
+        private static ResolvedSymbol? ResolveMemberOfType(ScriptSymbolIndex index, ExprType type, string identifier)
         {
             switch (type.Kind)
             {
@@ -152,18 +190,18 @@ namespace fire.Editor
                 case TypeKind.Static:
                     {
                         var member = FindMember(index, type.Name!, identifier);
-                        return member == null ? null : MemberTarget(index, member);
+                        return member == null ? null : MemberSymbol(index, member);
                     }
                 case TypeKind.Enum:
                     return enumMembersContain(index, type.Name!, identifier) && index.EnumDeclLines.ContainsKey(type.Name!)
-                        ? EnumTarget(index, type.Name!) : null;
+                        ? new ResolvedSymbol(EnumTarget(index, type.Name!)) : null;
                 case TypeKind.Namespace:
                     {
                         // `Geometry.Circle`: eine Klasse/ein Enum im Namespace.
                         string full = type.Name + "." + identifier;
                         if (index.Classes.TryGetValue(full, out var cls) && cls.DeclLine > 0)
-                            return new NavigationTarget(null, cls.DeclLine, cls.PreludeName);
-                        if (index.EnumDeclLines.ContainsKey(full)) return EnumTarget(index, full);
+                            return new ResolvedSymbol(new NavigationTarget(null, cls.DeclLine, cls.PreludeName), cls);
+                        if (index.EnumDeclLines.ContainsKey(full)) return new ResolvedSymbol(EnumTarget(index, full));
                         return null;
                     }
                 case TypeKind.Primitive:
@@ -173,7 +211,7 @@ namespace fire.Editor
                         if (BuiltinMembers.ExtensionClassOf(type) is { } key && index.Classes.ContainsKey(key))
                         {
                             var member = FindMember(index, key, identifier);
-                            if (member != null) return MemberTarget(index, member);
+                            if (member != null) return MemberSymbol(index, member);
                         }
                         return null;
                     }
