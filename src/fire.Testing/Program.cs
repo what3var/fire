@@ -15814,6 +15814,168 @@ else
         try { Directory.Delete(workDir, true); } catch (IOException) { }
     }
 
+    // ---- Pakete (ember): fpk, Store, Quellen, #import "name" in VM und nativ ----
+    {
+        Console.WriteLine("=== Pakete (ember) ===");
+        string pkgDir = Path.Combine(Path.GetTempPath(), "fire-pkg-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(pkgDir);
+        var savedStore = fire.Package.Manager.PackageStore.Default;
+        try
+        {
+            // a package whose parts are files in a folder of its own; returns the path of the forge file
+            string MakeForge(string name, string version, string importName, string? prelude, string? nativeCpp, Action<fire.Package.Manager.PackageManifest>? tweak = null)
+            {
+                string dir = Path.Combine(pkgDir, "src-" + name + "-" + version);
+                Directory.CreateDirectory(dir);
+                var m = new fire.Package.Manager.PackageManifest { Name = name, Version = version, Author = "tester", Description = "test package " + name };
+                var import = new fire.Package.Manager.PackageImport { Name = importName };
+                if (prelude != null) { File.WriteAllText(Path.Combine(dir, importName + ".fire"), prelude); import.Prelude = Path.Combine(dir, importName + ".fire"); }
+                if (nativeCpp != null)
+                {
+                    File.WriteAllText(Path.Combine(dir, importName + ".hpp"), nativeCpp);
+                    import.Native = new fire.Package.Manager.PackageNative { Sources = { Path.Combine(dir, importName + ".hpp") } };
+                }
+                m.Imports.Add(import);
+                tweak?.Invoke(m);
+                string json = Path.Combine(dir, "forge.json");
+                m.Save(json);
+                return json;
+            }
+
+            // the template: forging it works as it is, the package.json has relative paths, the kept description absolute ones and forges the same package again
+            string exJson = Path.Combine(pkgDir, "example", "mathkit.json");
+            fire.Package.Manager.Templates.Example(exJson, writeFiles: true).Save(exJson);
+            var forged = fire.Package.Manager.Fpk.Forge(exJson, Path.Combine(pkgDir, "out"));
+            var inside = fire.Package.Manager.Fpk.ReadManifest(forged.PackagePath);
+            var kept = fire.Package.Manager.PackageManifest.Load(forged.JsonCopyPath);
+            CheckNat("Paket: ember create + forge: package.json im fpk mit relativen Pfaden, die Beschreibung daneben mit absoluten",
+                File.Exists(forged.PackagePath) && inside.Name == "mathkit" && inside.Imports[0].Prelude == "mathkit/mathkit.fire" && inside.Imports[0].Native!.Sources[0] == "mathkit/mathkit.hpp"
+                && Path.IsPathRooted(kept.Imports[0].Prelude!) && Path.IsPathRooted(kept.Imports[0].Native!.Sources[0]) && forged.JsonCopyPath.Replace('\\', '/').EndsWith("out/json/mathkit-1.0.0.json"));
+            var again = fire.Package.Manager.Fpk.Forge(forged.JsonCopyPath, Path.Combine(pkgDir, "out2"));
+            CheckNat("Paket: die kopierte Beschreibung baut dasselbe Paket noch einmal", again.Manifest.ToJson() == forged.Manifest.ToJson());
+            var blank = fire.Package.Manager.Templates.Blank();
+            CheckNat("Paket: ember blank hat alle Felder, aber leer, und ist ungueltig", blank.Imports.Count == 1 && blank.Name == "" && blank.Validate().Count >= 3);
+            var reserved = new fire.Package.Manager.PackageManifest { Name = "x", Version = "1.0", Imports = { new fire.Package.Manager.PackageImport { Name = "io", Prelude = "a.fire" } } };
+            CheckNat("Paket: ein Importname des Compilers ist verboten, eine fehlende Datei beim Schmieden ein Fehler",
+                reserved.Validate().Any(p => p.Contains("belongs to the compiler")) && PkgThrows(() => fire.Package.Manager.Fpk.Forge(MakeForge("missing", "1.0.0", "missing", "class A {}", null, m => m.Imports[0].Prelude = Path.Combine(pkgDir, "nothere.fire")), Path.Combine(pkgDir, "out"))));
+
+            // the store: install, find the import (not case sensitive), replace, remove
+            var store = new fire.Package.Manager.PackageStore(Path.Combine(pkgDir, "Packages"));
+            string demoFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkgdemo", "1.0.0", "pkgdemo", "class PkgDemo { static Twice(x) { return x * 2 } }", null), Path.Combine(pkgDir, "out")).PackagePath;
+            store.Install(demoFpk);
+            CheckNat("Paket: installieren, den Import finden (Gross-/Kleinschreibung egal) und entfernen",
+                store.Find("PKGDEMO") is { Version: "1.0.0" } && store.FindImport("PkgDemo")?.Key == "pkg:pkgdemo" && store.FindImport("PkgDemo")!.ReadPrelude()!.Contains("Twice")
+                && store.Remove("pkgdemo") && store.Find("pkgdemo") == null && !store.Remove("pkgdemo"));
+
+            // a zip that leaves its folder is refused
+            string evil = Path.Combine(pkgDir, "evil.fpk");
+            using (var zip = System.IO.Compression.ZipFile.Open(evil, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                var m = new fire.Package.Manager.PackageManifest { Name = "evil", Version = "1.0.0", Imports = { new fire.Package.Manager.PackageImport { Name = "evil", Prelude = "../evil.fire" } } };
+                using (var w = new StreamWriter(zip.CreateEntry("package.json").Open())) w.Write(m.ToJson());
+                using (var w = new StreamWriter(zip.CreateEntry("../evil.fire").Open())) w.Write("class E {}");
+            }
+            CheckNat("Paket: ein fpk mit einem Pfad aus dem Ordner heraus wird abgelehnt", PkgThrows(() => store.Install(evil)) && !File.Exists(Path.Combine(pkgDir, "evil.fire")));
+
+            // the sources: a folder of packages (two versions, a dependency) and an index with checksums
+            string sourceDir = Path.Combine(pkgDir, "PackageSource");
+            Directory.CreateDirectory(sourceDir);
+            foreach (var (n, v, dep) in new[] { ("libbase", "1.0.0", ""), ("libtop", "1.0.0", "libbase"), ("libtop", "1.2.0", "libbase"), ("libtop", "1.10.0", "libbase") })
+            {
+                string forge = MakeForge(n, v, n, $"class {n}V{v.Replace(".", "_")} {{ }}", null, m => { if (dep.Length > 0) m.Dependencies.Add(dep); });
+                File.Copy(fire.Package.Manager.Fpk.Forge(forge, Path.Combine(pkgDir, "built")).PackagePath, Path.Combine(sourceDir, $"{n}-{v}.fpk"), true);
+            }
+            var service = new fire.Package.Manager.PackageManagerService(new fire.Package.Manager.PackageStore(Path.Combine(pkgDir, "P2")), new fire.Package.Manager.IPackageSource[] { new fire.Package.Manager.FolderSource(sourceDir) });
+            var found = service.Find("lib");
+            var top = found.First(l => l.Name == "libtop");
+            CheckNat("Paket: find sucht in Namen und Beschreibung, die neueste Version zaehlt numerisch (1.10 > 1.2)", found.Count == 2 && top.Versions.Count == 3 && top.Latest!.Version == "1.10.0" && service.Find("LIBTOP").Count == 1 && service.Find("nothing like it").Count == 0);
+            var pkgLog = new List<string>();
+            service.Install("libtop@1.2.0", pkgLog.Add);
+            CheckNat("Paket: install holt die gewuenschte Version samt Abhaengigkeit, ein zweites Mal ist nichts zu tun",
+                service.Store.Find("libtop")?.Version == "1.2.0" && service.Store.Find("libbase") != null && PkgThrows(() => service.Install("libtop@9.9.9")) && service.Install("libtop@1.2.0", pkgLog.Add).Count == 0);
+            bool refusedDependency = PkgThrows(() => service.Remove("libbase"));
+            service.Remove("libtop");
+            service.Remove("libbase");
+            CheckNat("Paket: remove verweigert, was ein anderes Paket braucht", refusedDependency && service.Store.Installed().Count == 0);
+            string indexFile = Path.Combine(sourceDir, "index.json");
+            File.WriteAllText(indexFile, fire.Package.Manager.PackageIndex.Build(sourceDir, null));
+            var indexed = new fire.Package.Manager.IndexSource(indexFile).List();
+            CheckNat("Paket: ein Index (ember index) nennt Namen, Autor, Beschreibung, Versionen und Pruefsummen", indexed.Count == 2 && indexed.First(l => l.Name == "libtop").Versions.Count == 3 && indexed.First(l => l.Name == "libtop").Author == "tester"
+                && indexed.All(l => l.Versions.All(v => v.Sha256 is { Length: 64 } && File.Exists(v.Url))));
+            var viaIndex = new fire.Package.Manager.PackageManagerService(new fire.Package.Manager.PackageStore(Path.Combine(pkgDir, "P3")), new fire.Package.Manager.IPackageSource[] { new fire.Package.Manager.IndexSource(indexFile) });
+            viaIndex.Install("libbase");
+            var broken = new fire.Package.Manager.PackageVersion("1.0.0", Path.Combine(sourceDir, "libbase-1.0.0.fpk"), new string('0', 64));
+            CheckNat("Paket: install ueber einen Index, eine falsche Pruefsumme wird abgelehnt", viaIndex.Store.Find("libbase") != null && PkgThrows(() => new fire.Package.Manager.IndexSource(indexFile).Fetch(broken, Path.Combine(pkgDir, "dl"))));
+
+            // #import "name": the prelude of a package in the VM; an unknown import points to ember
+            fire.Package.Manager.PackageStore.Default = new fire.Package.Manager.PackageStore(Path.Combine(pkgDir, "Packages"));
+            fire.Package.Manager.PackageStore.Default.Install(demoFpk);
+            string vmPkg = vmOutput("#import \"pkgdemo\"\nprint(PkgDemo.Twice(21))");
+            string unknown;
+            try { vmOutput("#import \"nosuchpackage\"\nprint(1)"); unknown = ""; } catch (Exception ex) { unknown = ex.Message; }
+            CheckNat("Paket: #import \"name\" bringt die Prelude eines installierten Pakets (VM); ein unbekannter Import verweist auf ember", vmPkg == "42\n" && unknown.Contains("not a known extension") && unknown.Contains("ember"), vmPkg + unknown);
+            var onEsp = new Linker().CompileAndLink(new[] { "#import \"pkgdemo\"\nprint(PkgDemo.Twice(2))" }, null, null, VmExecutionMode.Release, null, TargetProfile.Esp32);
+            CheckNat("Paket: ein Import eines Pakets ist auf jedem Ziel erlaubt (die Plattformen nennt der native Teil)", onEsp.NativeImports.Contains("pkg:pkgdemo"));
+
+            // the natives (C++): not in the VM, in the native backend the source is part of the generated file; needsList gives the native the list of the scope
+            string natPrelude = "class PkgNat { static Twice(x) { return __pk_twice(x) }\n static Squares(n) { return __pk_squares(n) } }";
+            string natCpp = "#include <cstdint>\nnamespace fire {\ninline Value pk_twice(Value a) { return Int(a.i * 2); }\n"
+                + "inline Value pk_squares(Value n, OwnList* list) { Arr* a = allocArr((uint32_t)n.i, list); for (int64_t i = 0; i < n.i; i++) a->items()[i] = Int(i * i); return ArrV(a); }\n}\n";
+            string natFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pknat", "1.0.0", "pknat", natPrelude, natCpp, m =>
+            {
+                m.Imports[0].Native!.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = "__pk_twice", Arguments = 1, Cpp = "pk_twice" });
+                m.Imports[0].Native!.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = "__pk_squares", Arguments = 1, Cpp = "pk_squares", NeedsList = true, ReturnsReference = true });
+            }), Path.Combine(pkgDir, "out")).PackagePath;
+            fire.Package.Manager.PackageStore.Default.Install(natFpk);
+            string natScript = "#import \"pknat\"\nprint(PkgNat.Twice(21))\nvar s = PkgNat.Squares(4)\nprint(s.length)\nprint(s[3])";
+            string vmNative;
+            try { vmNative = vmOutput(natScript); } catch (Exception ex) { vmNative = ex.Message; }
+            CheckNat("Paket: ein C++-Native in der VM ist ein klarer Fehler", vmNative.Contains("native build") && vmNative.Contains("__pk_twice"), vmNative);
+            string pkgCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natScript }, null, null, VmExecutionMode.Release));
+            CheckNat("Paket: der C++-Quelltext des Natives steht im erzeugten C++", pkgCpp.Contains("---- package pknat 1.0.0, import \"pknat\"") && pkgCpp.Contains("inline Value pk_twice") && pkgCpp.Contains("= pk_squares("));
+            string? pkgCxx = FindCxx();
+            if (pkgCxx != null)
+            {
+                string run = Path.Combine(pkgDir, "run");
+                fire.Native.NativeRuntimeFiles.WriteTo(run);
+                File.WriteAllText(Path.Combine(run, "pkg.cpp"), pkgCpp);
+                string RunTool(string tool, string args, string? workDirectory = null)
+                {
+                    using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool, args) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDirectory ?? run })!;
+                    var err = p.StandardError.ReadToEndAsync();
+                    string output = p.StandardOutput.ReadToEnd();
+                    p.WaitForExit();
+                    return (p.ExitCode == 0 ? "" : $"[exit {p.ExitCode}] ") + output + err.Result;
+                }
+                string build = RunTool(pkgCxx, $"-std=c++17 -pthread -O1 -Wall -Wextra \"{Path.Combine(run, "pkg.cpp")}\" -I\"{run}\" -o \"{Path.Combine(run, "pkg.bin")}\"");
+                string result = build.Length == 0 ? RunTool(Path.Combine(run, "pkg.bin"), "") : "C++-Compiler: " + build;
+                CheckNat("Paket: das C++-Native laeuft im uebersetzten Programm (Zahlen, ein Array aus der Scope-Liste)", result == "42\n4\n9\n", result);
+            }
+            // the platform of the native part: a package for windows only is refused for another target
+            string winOnly = fire.Package.Manager.Fpk.Forge(MakeForge("pkgwin", "1.0.0", "pkgwin", "class PkgWin { static F(x) { return __pk_win(x) } }", "namespace fire { inline Value pk_win(Value a) { return a; } }\n", m =>
+            {
+                m.Imports[0].Native!.Platforms.Add("windows");
+                m.Imports[0].Native!.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = "__pk_win", Arguments = 1, Cpp = "pk_win" });
+            }), Path.Combine(pkgDir, "out")).PackagePath;
+            fire.Package.Manager.PackageStore.Default.Install(winOnly);
+            bool refused = false;
+            try { fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#import \"pkgwin\"\nprint(PkgWin.F(1))" }, null, null, VmExecutionMode.Release, null, TargetProfile.Linux), TargetProfile.Linux); }
+            catch (fire.Native.NativeNotSupportedException ex) { refused = ex.Message.Contains("pkgwin") && ex.Message.Contains("windows"); }
+            CheckNat("Paket: ein natives Paket nur fuer andere Plattformen wird fuers Ziel abgelehnt", refused);
+        }
+        finally
+        {
+            fire.Package.Manager.PackageStore.Default = savedStore;
+            try { Directory.Delete(pkgDir, true); } catch (IOException) { }
+        }
+
+        bool PkgThrows(Action action)
+        {
+            try { action(); return false; }
+            catch (fire.Package.Manager.PackageException) { return true; }
+        }
+    }
+
     Console.WriteLine(natFailures == 0 ? "Alle Native-Backend-Pruefungen bestanden." : $"FEHLER: {natFailures} Native-Backend-Pruefung(en) fehlgeschlagen.");
 }
 

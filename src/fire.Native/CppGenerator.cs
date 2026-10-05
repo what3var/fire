@@ -1,5 +1,6 @@
 ﻿using System.Globalization;
 using System.Text;
+using fire.Package.Manager;
 using fire.Ast;
 using fire.Bytecode;
 using fire.Runtime;
@@ -430,8 +431,29 @@ namespace fire.Native
 
         private bool AnyClassHasMethod(string name, int argc) => _classList.Any(c => c.Rc.FindMethodWithAccess(name, argc).Proto != null);
 
+        /// <summary>The natives of the imports of packages (C++ source that is put into the generated file): the fire name -> argument count and the C++ function.</summary>
+        private readonly Dictionary<string, (int Argc, string Function, bool NeedsList, bool ReturnsReference)> _packageNatives = new();
+        private readonly List<(InstalledImport Import, string Key)> _packageImports = new();
+
+        /// <summary>Looks at the imports of packages the program uses: their native functions, and whether the target is one the C++ source is written for.</summary>
+        private void CollectPackages()
+        {
+            foreach (var key in _program.NativeImports.Where(k => k.StartsWith(PackageStore.KeyPrefix, StringComparison.Ordinal)).OrderBy(k => k, StringComparer.Ordinal))
+            {
+                var import = PackageStore.Default.FindKey(key) ?? throw new NativeNotSupportedException($"the import '{key.Substring(PackageStore.KeyPrefix.Length)}' belongs to a package that is not installed (`ember list`)");
+                _packageImports.Add((import, key));
+                var native = import.Import.Native;
+                if (native == null) continue;
+                if (native.Platforms.Count > 0 && !native.Platforms.Contains(_target.Native.Platform, StringComparer.OrdinalIgnoreCase))
+                    throw new NativeNotSupportedException($"the package '{import.Package.Name}' (import '{import.Name}') has native code for {string.Join(", ", native.Platforms)}, not for the platform '{_target.Native.Platform}' of the target '{_target.Name}'");
+                foreach (var fn in native.Functions)
+                    _packageNatives.TryAdd(fn.Name, (fn.Arguments, fn.Cpp, fn.NeedsList, fn.ReturnsReference));
+            }
+        }
+
         private string Run()
         {
+            CollectPackages();
             var main = new Func { Proto = null, Chunk = _program.Program.TopLevel, Kind = FuncKind.Main };
             if (_program.Program.Classes.Values.Any(rc => rc.IsActor)) { _usesActors = true; UseThreads(); }
 
@@ -491,6 +513,14 @@ namespace fire.Native
                 sb.AppendLine($"#define FIRE_PLATFORM_DISPLAY_HEADER \"platform/{_target.Native.Platform}/fire_display.hpp\"");
                 sb.AppendLine("#include \"bridges/fire_bridge_windows.hpp\"");
             }
+            // the C++ source of the packages the program imports: after the runtime and the bridges, at the top level (the files include what they need and put their functions into namespace fire)
+            foreach (var (import, _) in _packageImports)
+                foreach (var (name, text) in import.ReadNativeSources())
+                {
+                    sb.AppendLine($"// ---- package {import.Package.Name} {import.Package.Version}, import \"{import.Name}\": {name}");
+                    sb.AppendLine(text);
+                    sb.AppendLine($"// ---- end of {name}");
+                }
             sb.AppendLine("using namespace fire;");
             sb.AppendLine();
             sb.AppendLine("namespace fire {");
@@ -2174,6 +2204,15 @@ namespace fire.Native
                         // a sleep ends at terminate: leave now, not at the next loop
                         if (native == "Sleep" && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
                         d = first + 1; SetR(first, timeNative.ReturnsReference); return Next();
+                    }
+                    if (_packageNatives.TryGetValue(native, out var packageNative) && packageNative.Argc == argc)
+                    {
+                        // a native of a package (C++ in the generated file): `Value cpp(Value a, ...)`, with the list of the scope as the last argument if it asks for it
+                        int first = d - argc;
+                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(packageNative.NeedsList ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
+                        E($"{S(first)} = {packageNative.Function}({args});");
+                        Check();
+                        d = first + 1; SetR(first, packageNative.ReturnsReference); return Next();
                     }
                     throw new NativeNotSupportedException($"native function '{native}' (called in {fn})");
                 }

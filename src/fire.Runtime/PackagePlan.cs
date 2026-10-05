@@ -65,6 +65,7 @@ namespace fire.Runtime
             var queue = new Queue<string>(CoreAssemblies);
             foreach (var import in nativeImports)
             {
+                if (import.StartsWith("pkg:", StringComparison.Ordinal)) continue;   // an import of a package: its prelude is part of the program, its natives are C++ (native backend only)
                 if (!Imports.TryGetValue(import, out var package))
                     throw new InvalidOperationException($"Unknown import '{import}' - the packer does not know which DLLs it needs.");
                 foreach (var asm in package.Assemblies) queue.Enqueue(asm);

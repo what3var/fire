@@ -2134,6 +2134,12 @@ class Circle {
 - Like in Visual Studio, the XML-style tags `<summary>`, `<param name="...">`, `<returns>` and `<remarks>` are recognized (also `<c>`, `<para>` and `<see cref="..."/>`, which are shown as plain text); other tags are dropped and the entities `&lt; &gt; &amp; &quot; &apos;` are resolved.
 - Declarations in files pulled in with `#include` are not covered (the editor only looks at the document itself and the built-in libraries).
 
+### 8.18 Imports of packages (`ember`)
+
+Besides the libraries of the compiler, `#import "name"` also finds the imports of **installed packages**: a package (`.fpk`, a zip with a `package.json`) brings a prelude in fire
+and/or natives as C++ source for the native backend, and is installed for the machine with the package manager `ember` (also in the editor). An unknown import is an error
+that points to `ember`. The natives of a package exist only in native builds; in the virtual machine a call is an error that says so. See docs/PACKAGES.md.
+
 ## 9. Open points
 
 The only earlier point here – the method declaration syntax

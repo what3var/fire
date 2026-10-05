@@ -38,6 +38,7 @@
                 <Separator/>
                 <MenuItem Header="Build Settings" Click="BuildSettings_Click"/>
                 <MenuItem Header="Native Build Settings..." Click="NativeBuildSettings_Click"/>
+                <MenuItem Header="Package Manager (ember)..." Click="PackageManager_Click"/>
                 <Separator/>
                 <MenuItem Header="E_xit" Click="Exit_Click"/>
             </MenuItem>

@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System;
 
 namespace fire.Runtime
 {
@@ -38,7 +39,7 @@ namespace fire.Runtime
         /// <summary>A small target without an operating system shell: no console program, the entry point is the board's.</summary>
         public bool IsEmbedded { get; init; }
 
-        public bool HasImport(string import) => Imports == null || Imports.Contains(import);
+        public bool HasImport(string import) => Imports == null || Imports.Contains(import) || import.StartsWith("pkg:", StringComparison.Ordinal);   // imports of packages: their native part names the platforms it supports
 
         // -------------------------------------------------------------------------------------------------------------
         public static readonly TargetProfile Windows = new()

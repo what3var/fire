@@ -586,6 +586,9 @@ namespace fire.Editor
             return _conditionalSymbols;
         }
 
+        /// <summary>Checks the script again now (after the installed packages changed).</summary>
+        public void Revalidate() => RunDiagnostics();
+
         public void InvalidateConditionalSymbols()
         {
             _conditionalSymbols = null;

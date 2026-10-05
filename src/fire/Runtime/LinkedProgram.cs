@@ -17,6 +17,10 @@ namespace fire.Runtime
 
         public int FirstUserSource { get; init; }
 
+        /// <summary>The natives of the imports of packages (C++ for the native backend) in registration order: they come after the natives of the compiler's own imports. A run in the virtual
+        /// machine registers them as functions that fail with a clear message, so that the indexes of the calls stay right.</summary>
+        public List<string>? PackageNatives { get; init; }
+
         /// <summary>Ausführungsmodus, mit dem das Programm läuft (`#debug`/`#performance` im Skript oder `-m` der
         /// Befehlszeile); die gepackte Runtime übernimmt ihn von hier.</summary>
         public VmExecutionMode ExecutionMode { get; init; }
