@@ -458,6 +458,36 @@ The default value expression only sees its own context + global +
 of the same function, since it is evaluated independently of them (only at the actual
 call, if the argument is missing).
 
+### 5.4.2 Passing arguments: reference or copy, `ref`
+
+What a parameter receives depends on the kind of the argument:
+
+- **Objects and arrays (also byte buffers) are passed by reference.** The function works on the very same instance; nothing changes about its owner (2).
+  Whoever wants a copy writes `flat x` or `copy x` in front of the argument (2.4).
+- **Basic types (`bool`, `int`, `float`, `char`) and strings are copied.** Assigning to the parameter does not change the variable of the caller.
+- **`ref`**: a parameter declared with a leading `ref` is passed by reference, whatever its type. The function reads and writes the variable of the caller itself.
+
+```
+class Util {
+    static Swap(ref a, ref b) { var t = a; a = b; b = t }
+    static Add10(ref int x) { x = x + 10 }
+}
+var p = 1
+var q = 2
+Util.Swap(p, q)        // p = 2, q = 1 - no marker at the call: the declaration of the parameter decides
+Util.Add10(arr[3])     // a variable, a field (`obj.n`, a bare field name in a class) or an array/buffer element
+```
+
+- The call needs **no marker**: when the parameter is declared `ref`, the passing is implicitly by reference. The argument has to be a **variable, a
+  field or an element of an array or buffer** (`a`, `obj.field`, `a[i]`); a value (`Util.Add10(5)`) is a run-time error in the function ("Parameter 'x'
+  is declared 'ref'"). A `ref` argument can be handed on to another `ref` parameter. `copy x`/`flat x` do not combine with `ref`.
+- `ref` is possible for the parameters of **methods and constructors** (not for lambdas, `extern` functions and operators), also with a unit
+  (`ref int len : mm`, checked at the call and on every assignment), but a `ref` parameter **cannot have a default value**. The first 16 parameters of a call can be `ref`.
+- A lambda that is created inside the function captures the **value** of a `ref` parameter (4.2.1), not the reference.
+- A call is bound to its method only at run time (by name and number of arguments). The caller therefore passes the reference when **any** method of this name
+  and number of parameters declares that position `ref`; a method that declares it without `ref` receives the value (a copy for basic types and strings).
+- `ref` is a word only in front of a parameter; as a variable name it stays possible.
+
 ### 5.5 Extension classes (`class extends`)
 
 ```

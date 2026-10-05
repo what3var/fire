@@ -175,6 +175,10 @@ namespace fire.Bytecode
         ArithGlobalConstPop, // u16 slot, u16 constIdx, u8 sub            : dasselbe für eine globale Variable
 
         SetTimeout,          //                     : pop v; `#timeout wert` setzt die Standard-Wartezeit der Warte-Funktionen (wird am Programmanfang emittiert)
+
+        // Bewusst am Ende angehaengt (stabile Zahlenwerte).
+        RequireRefParam,     // u16 slot, u16 nameConstIdx : prueft, dass der `ref`-Parameter im Slot (Tiefe 0) einen Zeiger haelt (der Aufrufer hat eine Variable uebergeben), sonst Fehler
+        AddressOfIndex,      //                     : pop index, pop Array/Puffer; push Pointer auf das Element (Argument fuer einen `ref`-Parameter, SPEC 5.4.2)
     }
 
     /// <summary>Zieltyp für CoerceType/CoerceTypeDynamic - entspricht genau den

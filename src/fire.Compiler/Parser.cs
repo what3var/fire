@@ -1727,7 +1727,7 @@ namespace fire.Compiler
                 if (NextLooksLikeTypeThenName())
                     returnType = ParseTypeRef(allowArray: true);
                 string methodName = Expect(TokenType.Identifier, "Expected a method name").Lexeme;
-                var parms = ParseParamList();
+                var parms = ParseParamList(allowRef: true);
                 ExpectStatementTerminator();
                 methods.Add(new InterfaceMethodSig(mLine, returnType, methodName, parms));
             }
@@ -1960,7 +1960,7 @@ namespace fire.Compiler
             {
                 if (isReadonly)
                     throw Error("'readonly' is only valid for fields, not for methods", Peek());
-                var parms = ParseParamList();
+                var parms = ParseParamList(allowRef: true);
                 var methodTypeParams = ParseWhereClauses(methodTypeParamNames, line);
                 var body = ParseBlock();
                 return new List<Stmt> { new MethodDecl(_sourceIndex, line, type, name, parms, body,
@@ -2084,7 +2084,7 @@ namespace fire.Compiler
         {
             int line = Peek().Line;
             Expect(TokenType.Construct, "Expected 'construct'");
-            var parms = ParseParamList();
+            var parms = ParseParamList(allowRef: true);
 
             IReadOnlyList<Expr>? baseArgs = null;
             if (Match(TokenType.Colon))
@@ -2122,8 +2122,19 @@ namespace fire.Compiler
         /// vorangestelltes `var`/Typ angegeben (`func f(a:mm)`), wird das
         /// implizit wie `var a:mm` behandelt (Typ aus dem Argument beim Aufruf
         /// übernommen, Einheit fest mm).</summary>
-        private LambdaParam ParseOneParam()
+        private LambdaParam ParseOneParam(bool allowRef)
         {
+            // `ref` vor dem Parameter (contextual: `ref` bleibt als Name/Typ nutzbar, solange kein weiterer Name darauf folgt)
+            bool byRef = false;
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "ref"
+                && PeekAt(1).Type is not (TokenType.Comma or TokenType.RParen or TokenType.Assign or TokenType.Colon or TokenType.LBracket))
+            {
+                if (!allowRef)
+                    throw Error("'ref' parameters are only possible in methods and constructors", Peek());
+                Advance();
+                byRef = true;
+            }
+
             TypeRef? type = null;
             if (Check(TokenType.Var))
             {
@@ -2148,12 +2159,15 @@ namespace fire.Compiler
 
             Expr? defaultValue = null;
             if (Match(TokenType.Assign))
+            {
+                if (byRef) throw Error("A 'ref' parameter cannot have a default value", Previous());
                 defaultValue = ParseExpression();
+            }
 
-            return new LambdaParam(pname, type, arrayRanks, defaultValue);
+            return new LambdaParam(pname, type, arrayRanks, defaultValue, byRef);
         }
 
-        private List<LambdaParam> ParseParamList()
+        private List<LambdaParam> ParseParamList(bool allowRef = false)
         {
             Expect(TokenType.LParen, "Expected '('");
             var parms = new List<LambdaParam>();
@@ -2161,7 +2175,7 @@ namespace fire.Compiler
             {
                 do
                 {
-                    parms.Add(ParseOneParam());
+                    parms.Add(ParseOneParam(allowRef));
                 } while (Match(TokenType.Comma));
             }
             Expect(TokenType.RParen, "Expected ')' after the parameter list");

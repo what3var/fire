@@ -35,6 +35,9 @@ namespace fire.Bytecode
         /// gebundenes 'this' läuft.</summary>
         public bool IsStatic { get; set; }
 
+        /// <summary>Bit i: der Parameter i ist `ref` deklariert (SPEC 5.4.2) - sein Slot haelt einen Zeiger auf die Variable des Aufrufers.</summary>
+        public uint RefMask { get; set; }
+
         /// <summary>Besteht der Körper einer Lambda mit genau einem Parameter nur aus einer Mitgliedskette auf diesem Parameter
         /// (`c => c.radius`, `p => p.address.city`), die Namen von außen nach innen - sonst null. Grundlage des Lambda-Typs `selector`.</summary>
         public string[]? SelectorPath { get; set; }

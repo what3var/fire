@@ -38,7 +38,9 @@ namespace fire.Ast
     /// da die Sprache dynamisch typisiert ist und der Aufrufer nicht
     /// grundsätzlich wissen kann, wie viele Parameter das Ziel hat/welche
     /// davon optional sind.</summary>
-    public sealed record LambdaParam(string Name, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, Expr? DefaultValue = null);
+    /// <summary>ByRef: der Parameter ist mit vorangestelltem `ref` deklariert - das Argument wird per Referenz uebergeben (SPEC 5.4.2): die Funktion
+    /// liest und schreibt die Variable (das Feld, das Array-Element) des Aufrufers. Ohne `ref` werden Basistypen und Strings kopiert.</summary>
+    public sealed record LambdaParam(string Name, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, Expr? DefaultValue = null, bool ByRef = false);
 
     // AutoCapture: äußere LOKALE Variablen, die der Körper benutzt, werden beim Erzeugen als Wert kopiert (SPEC 4.2);
     // false für `fire global { }` (dort gilt allein `taking`).

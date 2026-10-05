@@ -62,4 +62,41 @@ namespace fire.Runtime
 
         public override int GetHashCode() => System.HashCode.Combine(Instance, FieldName);
     }
+
+    /// <summary>Zeigt auf ein Element eines Arrays oder Puffers (Argument fuer einen `ref`-Parameter). Der Index wird beim Lesen/Schreiben geprueft.</summary>
+    public sealed class ElementPointerTarget : PointerTarget
+    {
+        private readonly ScriptArray? _array;
+        private readonly ByteBuffer? _buffer;
+        public long Index { get; }
+
+        public ElementPointerTarget(ScriptArray array, long index) { _array = array; Index = index; }
+        public ElementPointerTarget(ByteBuffer buffer, long index) { _buffer = buffer; Index = index; }
+
+        public override Value Read()
+        {
+            if (_array != null)
+                return _array.TryGet(Index, out var v) ? v : throw new InvalidOperationException($"Array index {Index} out of range (length {_array.Length}).");
+            return _buffer!.TryGet(Index, out byte b) ? Value.MakeInt(b, width: NumericWidth.W8) : throw new InvalidOperationException($"Array index {Index} out of range (length {_buffer.Length}).");
+        }
+
+        public override void Write(Value v)
+        {
+            if (_array != null)
+            {
+                if (!_array.TrySet(Index, v)) throw new InvalidOperationException($"Array index {Index} out of range (length {_array.Length}).");
+                return;
+            }
+            if (!_buffer!.TrySet(Index, (byte)v.AsInt())) throw new InvalidOperationException($"Array index {Index} out of range (length {_buffer.Length}).");
+        }
+
+        public override PointerTarget Advance(long elementOffset) => _array != null
+            ? new ElementPointerTarget(_array, Index + elementOffset)
+            : new ElementPointerTarget(_buffer!, Index + elementOffset);
+
+        public override bool Equals(object? obj) =>
+            obj is ElementPointerTarget o && ReferenceEquals(o._array, _array) && ReferenceEquals(o._buffer, _buffer) && o.Index == Index;
+
+        public override int GetHashCode() => System.HashCode.Combine(_array, _buffer, Index);
+    }
 }

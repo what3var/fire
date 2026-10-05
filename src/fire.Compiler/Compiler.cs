@@ -257,7 +257,7 @@ namespace fire.Compiler
         private HashSet<string>? _knownClassNames;
 
         private Compiler(ResolveResult resolveResult, NativeRegistry natives)
-            : this(resolveResult.References, natives, null, resolveResult.NoShadowGlobals ? 0 : resolveResult.GlobalSlotCount, null, new List<CompilerException>())
+            : this(resolveResult.References, natives, null, resolveResult.NoShadowGlobals ? 0 : resolveResult.GlobalSlotCount, null, new List<CompilerException>(), RefParamTable.Build(resolveResult.Classes.Values))
         {
         }
 
@@ -267,6 +267,47 @@ namespace fire.Compiler
         /// ausgewertet.</summary>
         private readonly List<CompilerException> _errors;
 
+        /// <summary>Welche Parameter welcher Methoden/Konstruktoren `ref` sind (SPEC 5.4.2) - der Aufrufer muss wissen, wo er eine Adresse statt eines Werts uebergibt.</summary>
+        private readonly RefParamTable _refParams;
+
+        /// <summary>Die `ref`-Parameter aller Methoden und Konstruktoren des Programms. Ein Aufruf (`obj.M(a, b)`) wird erst zur Laufzeit an eine Klasse
+        /// gebunden - der Aufrufer uebergibt deshalb die Adresse, wenn IRGENDEINE Methode dieses Namens (und dieser Argumentanzahl) dort `ref` hat; die VM
+        /// gibt einem gewoehnlichen Parameter beim Binden den Wert.</summary>
+        private sealed class RefParamTable
+        {
+            private readonly Dictionary<(string Name, int Argc), bool[]> _methods = new();
+            private readonly Dictionary<(string Class, int Argc), bool[]> _constructors = new();
+
+            public static RefParamTable Build(IEnumerable<ClassDecl> classes)
+            {
+                var table = new RefParamTable();
+                // ALLE Methoden nehmen teil (auch die ohne `ref`), damit ein Widerspruch zwischen Klassen auffaellt
+                foreach (var cls in classes)
+                    foreach (var member in cls.Members)
+                    {
+                        if (member is MethodDecl md) table.Register(table._methods, md.Name, md.Params, md.Line, $"method '{md.Name}'");
+                        else if (member is ConstructorDecl cd) table.Register(table._constructors, cls.Name, cd.Params, cd.Line, $"the constructor of '{cls.Name}'");
+                    }
+                return table;
+            }
+
+            private void Register(Dictionary<(string, int), bool[]> map, string key, IReadOnlyList<LambdaParam> parms, int line, string what)
+            {
+                int required = parms.TakeWhile(p => p.DefaultValue == null).Count();
+                for (int argc = required; argc <= parms.Count; argc++)
+                {
+                    var mask = parms.Take(argc).Select(p => p.ByRef).ToArray();
+                    if (map.TryGetValue((key, argc), out var existing))
+                        for (int i = 0; i < argc; i++) existing[i] |= mask[i];
+                    else map[(key, argc)] = mask;
+                }
+            }
+
+            /// <summary>Die `ref`-Maske einer Methode (null: kein Parameter ist `ref`).</summary>
+            public bool[]? ForMethod(string name, int argc) => _methods.TryGetValue((name, argc), out var m) && m.Any(x => x) ? m : null;
+            public bool[]? ForConstructor(string cls, int argc) => _constructors.TryGetValue((cls, argc), out var m) && m.Any(x => x) ? m : null;
+        }
+
         /// <summary>Nutzt das Programm die Reflection-Bibliothek (`#import "reflection"`)? Dann schreibt der Compiler die deklarierten Typen als
         /// <see cref="ClassMeta"/> mit und markiert die Klassen der Bibliothek.</summary>
         private bool Reflection => _natives.Has(fire.Standard.ReflectionPrelude.MembersNative);
@@ -275,8 +316,9 @@ namespace fire.Compiler
         /// in einen eigenen Chunk (FunctionProto): teilt sich die Resolver-
         /// Referenzen und die Native-Registry mit dem äußeren Compiler, baut aber
         /// einen eigenen, frischen Chunk.</summary>
-        private Compiler(IReadOnlyDictionary<Expr, ResolvedRef> refs, NativeRegistry natives, RuntimeClass? enclosingClass, int globalSlotCount, HashSet<string>? knownClassNames, List<CompilerException> errors)
+        private Compiler(IReadOnlyDictionary<Expr, ResolvedRef> refs, NativeRegistry natives, RuntimeClass? enclosingClass, int globalSlotCount, HashSet<string>? knownClassNames, List<CompilerException> errors, RefParamTable refParams)
         {
+            _refParams = refParams;
             _errors = errors;
             _refs = refs;
             _natives = natives;
@@ -648,7 +690,7 @@ namespace fire.Compiler
             for (int i = 0; i < parms.Count; i++)
             {
                 if (parms[i].DefaultValue == null) continue;
-                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
+                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
                 inner.CompileExpr(parms[i].DefaultValue!);
                 inner._chunk.EmitOp(OpCode.Return);
                 defaults[i] = new FunctionProto(inner._chunk, 0, AccessModifier.Private);
@@ -671,7 +713,7 @@ namespace fire.Compiler
 
         private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer, bool isStatic = false)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
             inner._chunk.OwnerClass = rc;
             if (initializer != null)
             {
@@ -704,8 +746,28 @@ namespace fire.Compiler
         /// Prüfung liest den Wert also einfach per LoadLocal zurück, prüft
         /// ihn (CheckLambdaSignature) und verwirft die Kopie wieder (Pop) -
         /// der eigentliche Slot-Wert bleibt unangetastet.</summary>
+        private static uint RefMaskOf(IReadOnlyList<LambdaParam> parms)
+        {
+            uint mask = 0;
+            for (int i = 0; i < parms.Count; i++)
+                if (parms[i].ByRef)
+                {
+                    if (i >= 16) throw new NotSupportedException("Only the first 16 parameters of a method can be 'ref'.");
+                    mask |= 1u << i;
+                }
+            return mask;
+        }
+
         private void EmitLambdaParamChecks(Compiler inner, IReadOnlyList<LambdaParam> parms)
         {
+            for (int i = 0; i < parms.Count; i++)
+                if (parms[i].ByRef)
+                {
+                    inner._chunk.EmitOp(OpCode.RequireRefParam);
+                    inner._chunk.EmitU16(i);
+                    inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(parms[i].Name)));
+                }
+
             for (int i = 0; i < parms.Count; i++)
             {
                 var sig = parms[i].Type?.LambdaSignature;
@@ -731,6 +793,7 @@ namespace fire.Compiler
                 inner._chunk.EmitOp(OpCode.LoadLocal);
                 inner._chunk.EmitU16(0);
                 inner._chunk.EmitU16((ushort)i);
+                if (parms[i].ByRef) inner._chunk.EmitOp(OpCode.PtrRead);
                 inner._chunk.EmitOp(OpCode.CheckLambdaSignature);
                 inner._chunk.EmitByte((byte)sig.ParamTypeNames.Count);
                 inner._chunk.EmitOp(OpCode.Pop);
@@ -749,6 +812,7 @@ namespace fire.Compiler
                 inner._chunk.EmitOp(OpCode.LoadLocal);
                 inner._chunk.EmitU16(0);
                 inner._chunk.EmitU16((ushort)i);
+                if (parms[i].ByRef) inner._chunk.EmitOp(OpCode.PtrRead);
                 EmitCheckUnitIfNeeded(inner, unit);
                 inner._chunk.EmitOp(OpCode.Pop);
             }
@@ -795,7 +859,7 @@ namespace fire.Compiler
         /// kollidieren.</summary>
         private void CompileFireStmt(FireStmt fs)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams);
             int slot = _globalSlotCount;
             foreach (var capture in fs.TakingCaptures)
                 inner._chunk.MarkLocalName(0, slot++, capture.VarName);
@@ -845,7 +909,7 @@ namespace fire.Compiler
         /// HandleDeliveredThreadException), nicht hier an dieser Stelle.</summary>
         private void CompileCatchThreadsDecl(CatchThreadsDecl decl)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams);
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -867,7 +931,7 @@ namespace fire.Compiler
         /// keine "Art" von terminate) und mit dem anderen Register-Opcode.</summary>
         private void CompileCatchTerminateDecl(CatchTerminateDecl decl)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams);
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -883,7 +947,7 @@ namespace fire.Compiler
 
         private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access, bool isStatic = false)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
             inner._chunk.OwnerClass = rc;
             // SPEC "Statische Mitglieder": eine statische Methode hat kein
             // gebundenes 'this' - der innere Compiler merkt sich das, um
@@ -897,7 +961,7 @@ namespace fire.Compiler
             foreach (var stmt in body.Statements) inner.CompileStmt(stmt);
             inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
-            return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic);
+            return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic) { RefMask = RefMaskOf(parms) };
         }
 
         /// <summary>Konstruktor-Proto: [Basis-Konstruktor-Aufruf (explizit mit
@@ -909,7 +973,7 @@ namespace fire.Compiler
         /// einheitlich über denselben Mechanismus.</summary>
         private FunctionProto CompileConstructorProto(RuntimeClass rc, ConstructorDecl? ctor, AccessModifier access)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
             inner._chunk.OwnerClass = rc;
 
             if (ctor != null)
@@ -922,7 +986,7 @@ namespace fire.Compiler
             if (rc.Base != null)
             {
                 var baseArgs = ctor?.BaseArgs;
-                uint baseCopyMask = baseArgs != null ? inner.CompileArgs(baseArgs, scopeCreating: true) : 0;
+                uint baseCopyMask = baseArgs != null ? inner.CompileArgs(baseArgs, scopeCreating: true, _refParams.ForConstructor(rc.Base.Name, baseArgs.Count)) : 0;
                 inner.EmitCopyArgsPrefix(baseCopyMask);
 
                 inner._chunk.EmitOp(OpCode.ConstructBase);
@@ -964,7 +1028,7 @@ namespace fire.Compiler
             inner._chunk.EmitOp(OpCode.Return);
 
             var paramDefaults = ctor != null ? CompileParamDefaults(rc, ctor.Params) : Array.Empty<FunctionProto?>();
-            return new FunctionProto(inner._chunk, ctor?.Params.Count ?? 0, access, paramDefaults);
+            return new FunctionProto(inner._chunk, ctor?.Params.Count ?? 0, access, paramDefaults) { RefMask = ctor != null ? RefMaskOf(ctor.Params) : 0 };
         }
 
         // -----------------------------------------------------------
@@ -1341,7 +1405,7 @@ namespace fire.Compiler
             if (!_refs.TryGetValue(target, out var reference)) return false;
             switch (reference)
             {
-                case ResolvedRef.Local { RequiredUnit: null } local:
+                case ResolvedRef.Local { RequiredUnit: null, ByRef: false } local:
                     _chunk.EmitOp(OpCode.ArithLocalConstPop);
                     _chunk.EmitU16(local.Depth);
                     _chunk.EmitU16(local.Slot);
@@ -1784,7 +1848,7 @@ namespace fire.Compiler
 
                 case NewExpr ne:
                 {
-                    uint newCopyMask = CompileArgs(ne.Args, scopeCreating: true);
+                    uint newCopyMask = CompileArgs(ne.Args, scopeCreating: true, _refParams.ForConstructor(ResolveNewClassName(ne), ne.Args.Count));
                     EmitCopyArgsPrefix(newCopyMask);
                     _chunk.EmitOp(OpCode.NewObject);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
@@ -1967,7 +2031,7 @@ namespace fire.Compiler
 
         private void CompileLambda(LambdaExpr lambda)
         {
-            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames, _errors);
+            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames, _errors, _refParams);
             inner._chunk.OwnerClass = _enclosingClass;
             for (int i = 0; i < lambda.Params.Count; i++)
                 inner._chunk.MarkLocalName(0, i, lambda.Params[i].Name);
@@ -2023,12 +2087,18 @@ namespace fire.Compiler
         /// (Präfix <see cref="OpCode.CopyArgs"/>, siehe <see cref="EmitCopyArgsPrefix"/>): die Kopie gehört dann der Scope der
         /// aufgerufenen Funktion (SPEC 2.4). Bei nativen Funktionen gibt es diese Scope nicht - dort bleibt es eine gewöhnliche
         /// Kopie (Owner: aktueller Scope). Liefert die Kopier-Maske (2 Bit je Argument, 0 = keine).</summary>
-        private uint CompileArgs(IReadOnlyList<Expr> args, bool scopeCreating)
+        private uint CompileArgs(IReadOnlyList<Expr> args, bool scopeCreating, bool[]? refs = null)
         {
             uint mask = 0;
             for (int i = 0; i < args.Count; i++)
             {
-                if (scopeCreating && args[i] is UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy } copyArg)
+                if (refs != null && i < refs.Length && refs[i] && IsAddressable(args[i]))
+                {
+                    if (i >= 16) throw new NotSupportedException("A 'ref' argument is only possible for the first 16 arguments of a call.");
+                    CompileRefArgument(args[i], i);
+                    mask |= 3u << (2 * i);
+                }
+                else if (scopeCreating && args[i] is UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy } copyArg)
                 {
                     if (i >= 16)
                         throw new NotSupportedException("`flat`/`copy` as an argument is only possible for the first 16 arguments of a call.");
@@ -2041,6 +2111,52 @@ namespace fire.Compiler
                 }
             }
             return mask;
+        }
+
+        /// <summary>Ein Argument fuer einen `ref`-Parameter: statt des Werts die Adresse einer Variable, eines Felds oder eines Array-Elements (SPEC 5.4.2).</summary>
+        /// <summary>Hat der Ausdruck eine Adresse (Variable, Feld, Array-Element)? Nur dann wird sie fuer einen `ref`-Parameter uebergeben; sonst der Wert -
+        /// bindet der Aufruf dann an einen `ref`-Parameter, meldet die VM, dass dort eine Variable stehen muss.</summary>
+        private bool IsAddressable(Expr arg) => arg switch
+        {
+            IdentifierExpr id => _refs.TryGetValue(id, out var r) && r is ResolvedRef.Local or ResolvedRef.Global or ResolvedRef.ImplicitThisMember,
+            MemberExpr me => !(_refs.TryGetValue(me, out var m) && m is ResolvedRef.StaticMember or ResolvedRef.EnumMember),
+            IndexExpr => true,
+            _ => false,
+        };
+
+        private void CompileRefArgument(Expr arg, int index)
+        {
+            string Fail(string what) => $"Argument {index + 1} is passed to a 'ref' parameter, so it has to be a variable, a field or an array element{what}.";
+            switch (arg)
+            {
+                case IdentifierExpr id:
+                    switch (_refs[id])
+                    {
+                        case ResolvedRef.Local local: EmitAddressOfLocal(local); return;
+                        case ResolvedRef.Global global:
+                            _chunk.EmitOp(OpCode.AddressOfGlobal);
+                            _chunk.EmitU16(global.Slot);
+                            return;
+                        case ResolvedRef.ImplicitThisMember:
+                            _chunk.EmitOp(OpCode.LoadThis);
+                            _chunk.EmitOp(OpCode.AddressOfField);
+                            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
+                            return;
+                        default: throw new NotSupportedException(Fail($" ('{id.Name}' is none of these)"));
+                    }
+                case MemberExpr me when !(_refs.TryGetValue(me, out var memberRef) && memberRef is ResolvedRef.StaticMember or ResolvedRef.EnumMember):
+                    CompileExpr(me.Target);
+                    _chunk.EmitOp(OpCode.AddressOfField);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
+                    return;
+                case IndexExpr ix:
+                    CompileExpr(ix.Target);
+                    CompileExpr(ix.Index);
+                    _chunk.EmitOp(OpCode.AddressOfIndex);
+                    return;
+                default:
+                    throw new NotSupportedException(Fail(" - an expression has no address"));
+            }
         }
 
         /// <summary>Emittiert das Präfix `CopyArgs` (nur wenn eine Maske da ist) - direkt VOR den Aufruf-Opcode.</summary>
@@ -2062,7 +2178,7 @@ namespace fire.Compiler
         {
             if (value is NewExpr ne)
             {
-                uint mask = CompileArgs(ne.Args, scopeCreating: true);
+                uint mask = CompileArgs(ne.Args, scopeCreating: true, _refParams.ForConstructor(ResolveNewClassName(ne), ne.Args.Count));
                 EmitCopyArgsPrefix(mask);
                 _chunk.EmitOp(OpCode.NewObjectOwned);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
@@ -2113,7 +2229,7 @@ namespace fire.Compiler
                 {
                     // SPEC "Statische Mitglieder" - bloßer Name statt
                     // 'ClassName.Method(...)'.
-                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(calleeId.Name, call.Args.Count)));
                     _chunk.EmitOp(OpCode.CallStaticMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(callSm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(calleeId.Name)));
@@ -2129,7 +2245,7 @@ namespace fire.Compiler
                     // VM.CallMethod: Args zuerst gepoppt, dann erst 'target')
                     // - 'this' also VOR den Argumenten pushen.
                     _chunk.EmitOp(OpCode.LoadThis);
-                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(calleeId.Name, call.Args.Count)));
                     _chunk.EmitOp(OpCode.CallMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(calleeId.Name)));
                     _chunk.EmitByte((byte)call.Args.Count);
@@ -2169,7 +2285,7 @@ namespace fire.Compiler
                 // ResolvedRef.StaticMember, vom Resolver aufgelöst).
                 if (_refs.TryGetValue(me, out var calleeMemberRef) && calleeMemberRef is ResolvedRef.StaticMember sm)
                 {
-                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count)));
                     _chunk.EmitOp(OpCode.CallStaticMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
@@ -2189,7 +2305,7 @@ namespace fire.Compiler
                         throw new NotSupportedException(
                             "'base.Method(...)' outside of a class with a base class - the resolver should have caught this.");
 
-                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count)));
 
                     _chunk.EmitOp(OpCode.CallBaseMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(_enclosingClass.Base.Name)));
@@ -2199,7 +2315,7 @@ namespace fire.Compiler
                 }
 
                 CompileExpr(me.Target);
-                EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+                EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count)));
                 _chunk.EmitOp(OpCode.CallMethod);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
                 _chunk.EmitByte((byte)call.Args.Count);
@@ -2233,14 +2349,46 @@ namespace fire.Compiler
                 EmitCoerceUnitStatic(fire.Values.Unit.Unitless);
         }
 
+        /// <summary>Liest eine lokale Variable; bei einem `ref`-Parameter haelt der Slot einen Zeiger auf die Variable des Aufrufers - dann wird dereferenziert.</summary>
+        private void EmitLoadVariable(ResolvedRef.Local local)
+        {
+            _chunk.EmitOp(OpCode.LoadLocal);
+            _chunk.EmitU16(local.Depth);
+            _chunk.EmitU16(local.Slot);
+            if (local.ByRef) _chunk.EmitOp(OpCode.PtrRead);
+        }
+
+        /// <summary>Schreibt den obersten Wert in eine lokale Variable und laesst ihn auf dem Stack (wie StoreLocal); bei einem `ref`-Parameter durch den Zeiger.</summary>
+        private void EmitStoreVariable(ResolvedRef.Local local)
+        {
+            if (!local.ByRef)
+            {
+                _chunk.EmitOp(OpCode.StoreLocal);
+                _chunk.EmitU16(local.Depth);
+                _chunk.EmitU16(local.Slot);
+                return;
+            }
+            _chunk.EmitOp(OpCode.LoadLocal);   // [wert, zeiger]
+            _chunk.EmitU16(local.Depth);
+            _chunk.EmitU16(local.Slot);
+            _chunk.EmitOp(OpCode.Swap);        // [zeiger, wert]
+            _chunk.EmitOp(OpCode.PtrWrite);    // schreibt und liefert den Wert
+        }
+
+        /// <summary>Die Adresse einer lokalen Variable; ein `ref`-Parameter ist selbst schon ein Zeiger.</summary>
+        private void EmitAddressOfLocal(ResolvedRef.Local local)
+        {
+            _chunk.EmitOp(local.ByRef ? OpCode.LoadLocal : OpCode.AddressOfLocal);
+            _chunk.EmitU16(local.Depth);
+            _chunk.EmitU16(local.Slot);
+        }
+
         private void CompileIdentifierLoad(IdentifierExpr id)
         {
             switch (_refs[id])
             {
                 case ResolvedRef.Local local:
-                    _chunk.EmitOp(OpCode.LoadLocal);
-                    _chunk.EmitU16(local.Depth);
-                    _chunk.EmitU16(local.Slot);
+                    EmitLoadVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     _chunk.EmitOp(OpCode.LoadGlobal);
@@ -2361,9 +2509,7 @@ namespace fire.Compiler
                     // Anfangsprüfung einfach durch eine spätere, "falsche"
                     // Zuweisung umgehen.
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
-                    _chunk.EmitOp(OpCode.StoreLocal);
-                    _chunk.EmitU16(local.Depth);
-                    _chunk.EmitU16(local.Slot);
+                    EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
@@ -2538,9 +2684,7 @@ namespace fire.Compiler
                 switch (refKind)
                 {
                     case ResolvedRef.Local local:
-                        _chunk.EmitOp(OpCode.LoadLocal);
-                        _chunk.EmitU16(local.Depth);
-                        _chunk.EmitU16(local.Slot);
+                        EmitLoadVariable(local);
                         break;
                     case ResolvedRef.Global global:
                         _chunk.EmitOp(OpCode.LoadGlobal);
@@ -2560,9 +2704,7 @@ namespace fire.Compiler
                         // `++`/`--` ist ja auch nur eine (kompakter geschriebene)
                         // Zuweisung.
                         EmitCheckUnitIfNeeded(this, local.RequiredUnit);
-                        _chunk.EmitOp(OpCode.StoreLocal);
-                        _chunk.EmitU16(local.Depth);
-                        _chunk.EmitU16(local.Slot);
+                        EmitStoreVariable(local);
                         break;
                     case ResolvedRef.Global global:
                         EmitCheckUnitIfNeeded(this, global.RequiredUnit);
@@ -2619,9 +2761,7 @@ namespace fire.Compiler
                     switch (_refs[id])
                     {
                         case ResolvedRef.Local local:
-                            _chunk.EmitOp(OpCode.AddressOfLocal);
-                            _chunk.EmitU16(local.Depth);
-                            _chunk.EmitU16(local.Slot);
+                            EmitAddressOfLocal(local);
                             return;
                         case ResolvedRef.Global global:
                             _chunk.EmitOp(OpCode.AddressOfGlobal);

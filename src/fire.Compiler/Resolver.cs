@@ -696,6 +696,9 @@ namespace fire.Compiler
             /// `: einheit` hatte - siehe Define/ResolveIdentifierRef.</summary>
             public readonly Dictionary<string, string> RequiredUnits = new();
 
+            /// <summary>Namen der `ref`-Parameter dieses Scopes (der Slot haelt einen Zeiger auf die Variable des Aufrufers).</summary>
+            public readonly HashSet<string> RefNames = new();
+
             /// <summary>Namen, die in DIESEM (Lambda-)Scope als Capture (Kopie einer äußeren Variablen) liegen - Zuweisung ist ein Fehler,
             /// eine eigene Deklaration mit demselben Namen verdeckt sie (siehe Define).</summary>
             public readonly HashSet<string> CaptureNames = new();
@@ -710,7 +713,7 @@ namespace fire.Compiler
         private void PushScope() => _current = new ResolverScope(_current);
         private void PopScope() => _current = _current.Parent!;
 
-        private void Define(string name, int line, bool isReadonly = false, string? requiredUnit = null)
+        private void Define(string name, int line, bool isReadonly = false, string? requiredUnit = null, bool isRef = false)
         {
             if (_current.Slots.ContainsKey(name))
             {
@@ -723,8 +726,10 @@ namespace fire.Compiler
                 _current.Slots["\u0001capture:" + name] = captureSlot;
                 _current.ReadonlySlots.Remove(name);
                 _current.RequiredUnits.Remove(name);
+                _current.RefNames.Remove(name);
             }
             _current.Slots[name] = _current.Slots.Count;
+            if (isRef) _current.RefNames.Add(name);
             if (isReadonly) _current.ReadonlySlots.Add(name);
             if (requiredUnit != null) _current.RequiredUnits[name] = requiredUnit;
         }
@@ -740,7 +745,7 @@ namespace fire.Compiler
                     scope.RequiredUnits.TryGetValue(name, out var requiredUnit);
                     return scope.IsGlobal
                         ? new ResolvedRef.Global(slot, requiredUnit)
-                        : new ResolvedRef.Local(depth, slot, requiredUnit);
+                        : new ResolvedRef.Local(depth, slot, requiredUnit, scope.RefNames.Contains(name));
                 }
                 depth++;
                 scope = scope.Parent;
@@ -1312,7 +1317,7 @@ namespace fire.Compiler
             {
                 if (p.Type != null) Guard(() => ValidateTypeRef(p.Type, body.Line));
                 ResolveArrayRanks(p.ArrayRanks);
-                Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.Unit));
+                Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.Unit, isRef: p.ByRef));
             }
 
             if (baseArgs != null)
@@ -1880,7 +1885,7 @@ namespace fire.Compiler
 
                 found.RequiredUnits.TryGetValue(name, out var requiredUnit);
                 var outer = new IdentifierExpr(lambda.Line, name);
-                _refs[outer] = new ResolvedRef.Local(depth, found.Slots[name], requiredUnit);
+                _refs[outer] = new ResolvedRef.Local(depth, found.Slots[name], requiredUnit, found.RefNames.Contains(name));   // (the capture copies the VALUE of a ref parameter)
                 Define(name, lambda.Line, requiredUnit: requiredUnit);
                 _current.CaptureNames.Add(name);
                 (captures ??= new List<IdentifierExpr>()).Add(outer);

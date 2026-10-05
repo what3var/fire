@@ -74,6 +74,7 @@ namespace fire.Native
             [OpCode.JumpIfNotGtEq] = new[] { 2 }, [OpCode.JumpIfNotEq] = new[] { 2 }, [OpCode.JumpIfNotNotEq] = new[] { 2 },
             [OpCode.ArithLocalConstPop] = new[] { 2, 2, 2, 1 }, [OpCode.ArithGlobalConstPop] = new[] { 2, 2, 1 },
             [OpCode.SetTimeout] = Array.Empty<int>(),
+            [OpCode.AddressOfIndex] = Array.Empty<int>(), [OpCode.RequireRefParam] = new[] { 2, 2 },
         };
 
         /// <summary>Decodes the whole chunk into instructions.</summary>

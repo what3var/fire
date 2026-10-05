@@ -1909,7 +1909,7 @@ namespace fire.Runtime
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, constructed));
             _currentThis = newThis;
             _currentScope = scope;
-            if (copyMask != 0) ApplyCopyMask(_currentScope, copyMask);
+            if (copyMask != 0) ApplyCopyMask(_currentScope, copyMask, proto.RefMask);
             _currentChunk = proto.Chunk;
             _ip = 0;
         }
@@ -1929,13 +1929,20 @@ namespace fire.Runtime
 
         /// <summary>Kopiert die markierten Parameter einer frisch aufgebauten Aufruf-Scope: die Kopie gehört dieser Scope
         /// (wird also mit dem Verlassen der Funktion zerstört, außer die Funktion gibt sie zurück oder übergibt sie per TakeTo).</summary>
-        private void ApplyCopyMask(Scope scope, int mask)
+        private void ApplyCopyMask(Scope scope, int mask, uint calleeRefMask)
         {
             if (mask == 0) return;
             for (int i = 0; i < 16; i++)
             {
                 int bits = (mask >> (2 * i)) & 3;
                 if (bits == 0) continue;
+                if (bits == 3)
+                {
+                    // Der Aufrufer hat die Adresse uebergeben (Name + Argumentanzahl kennen einen `ref`-Parameter, SPEC 5.4.2): ein `ref`-Parameter behaelt sie,
+                    // ein gewoehnlicher bekommt den Wert (Basistypen und Strings als Kopie, Objekte und Arrays als Referenz).
+                    if ((calleeRefMask >> i & 1) == 0) scope.SlotRef(i) = scope.SlotRef(i).AsPointer().Read();
+                    continue;
+                }
                 scope.SlotRef(i) = ObjectCloner.Clone(scope.SlotRef(i), scope, deep: bits == 2);
             }
         }
@@ -1947,7 +1954,8 @@ namespace fire.Runtime
             for (int i = 0; i < args.Length && i < 16; i++)
             {
                 int bits = (mask >> (2 * i)) & 3;
-                if (bits != 0) args[i] = ObjectCloner.Clone(args[i], _currentScope, deep: bits == 2);
+                if (bits == 3) args[i] = args[i].AsPointer().Read();   // eingebaute Funktionen und Nachrichten kennen kein `ref`: der Wert
+                else if (bits != 0) args[i] = ObjectCloner.Clone(args[i], _currentScope, deep: bits == 2);
             }
         }
 
@@ -1996,7 +2004,7 @@ namespace fire.Runtime
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
             if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
-            ApplyCopyMask(funcScope, copyMask);
+            ApplyCopyMask(funcScope, copyMask, lambda.Proto.RefMask);
 
             _currentThis = lambda.OnTarget;
             _currentScope = funcScope;
@@ -2234,7 +2242,7 @@ namespace fire.Runtime
 
             var baseScope = new Scope(_globalScope);
             foreach (var a in args) baseScope.DefineSlot(a);
-            ApplyCopyMask(baseScope, copyMask);
+            ApplyCopyMask(baseScope, copyMask, ctorProto.RefMask);
 
             _currentScope = baseScope;
             _currentChunk = ctorProto.Chunk;
@@ -2649,7 +2657,7 @@ namespace fire.Runtime
                         _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
                         var extScope = new Scope(_globalScope);
                         foreach (var a in args) extScope.DefineSlot(a);
-                        ApplyCopyMask(extScope, copyMask);
+                        ApplyCopyMask(extScope, copyMask, extProto.RefMask);
 
                         _currentThis = target;
                         _currentScope = extScope;
@@ -2727,7 +2735,7 @@ namespace fire.Runtime
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
             var scope = new Scope(_globalScope);
             foreach (var a in args) scope.DefineSlot(a);
-            ApplyCopyMask(scope, copyMask);
+            ApplyCopyMask(scope, copyMask, proto.RefMask);
 
             _currentThis = obj;
             _currentScope = scope;
@@ -2785,7 +2793,7 @@ namespace fire.Runtime
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
             var scope = new Scope(_globalScope);
             foreach (var a in args) scope.DefineSlot(a);
-            ApplyCopyMask(scope, copyMask);
+            ApplyCopyMask(scope, copyMask, proto.RefMask);
 
             _currentScope = scope;
             _currentChunk = proto.Chunk;
@@ -2989,7 +2997,7 @@ namespace fire.Runtime
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
             var callScope = new Scope(_globalScope);
             foreach (var a in callArgs) callScope.DefineSlot(a);
-            ApplyCopyMask(callScope, copyMask);
+            ApplyCopyMask(callScope, copyMask, callProto.RefMask);
 
             // Explizit KEIN 'this' (anders als oben bei CallBaseMethod,
             // das die aufrufende Instanz beibehält) - der Resolver
@@ -3695,6 +3703,35 @@ namespace fire.Runtime
                     string fieldName = _constants[ReadU16()].AsString();
                     var obj = RequireObjectInstance(Pop(), "Address-of on field");
                     Push(Value.MakePointer(new FieldPointerTarget(obj, fieldName)));
+                    break;
+                }
+
+                case OpCode.RequireRefParam:
+                {
+                    int slot = ReadU16();
+                    string paramName = _constants[ReadU16()].AsString();
+                    if (_currentScope.GetSlot(slot).Kind != ValueKind.Pointer)
+                        throw new InvalidOperationException($"Parameter '{paramName}' is declared 'ref': pass a variable, a field or an array element, not a value.");
+                    break;
+                }
+
+                case OpCode.AddressOfIndex:
+                {
+                    long idx = Pop().AsInt();
+                    var target = Pop();
+                    if (target.Kind == ValueKind.Array)
+                    {
+                        var arr = target.AsArray();
+                        if (!arr.TryGet(idx, out _)) { ThrowIndexOutOfBounds(idx, arr.Length); break; }
+                        Push(Value.MakePointer(new ElementPointerTarget(arr, idx)));
+                    }
+                    else if (target.Kind == ValueKind.Buffer)
+                    {
+                        var buf = target.AsBuffer();
+                        if (!buf.TryGet(idx, out _)) { ThrowIndexOutOfBounds(idx, buf.Length); break; }
+                        Push(Value.MakePointer(new ElementPointerTarget(buf, idx)));
+                    }
+                    else throw new InvalidOperationException($"A 'ref' argument 'x[i]' expects an array or a byte buffer, not {target.Kind}.");
                     break;
                 }
 
@@ -4409,7 +4446,7 @@ namespace fire.Runtime
 
             var ctorScope = new Scope(_globalScope);
             foreach (var a in args) ctorScope.DefineSlot(a);
-            if (copyMask != 0) ApplyCopyMask(ctorScope, copyMask);
+            if (copyMask != 0) ApplyCopyMask(ctorScope, copyMask, ctorProto.RefMask);
 
             _currentThis = instance;
             _currentScope = ctorScope;

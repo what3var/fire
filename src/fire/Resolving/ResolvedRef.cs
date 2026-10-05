@@ -11,8 +11,9 @@ namespace fire.Resolving
         /// Ausführungsposition nach oben (0 = aktueller Scope selbst). Slot = Index
         /// innerhalb des dortigen Scopes. RequiredUnit: geforderte Einheit (SPEC
         /// "Einheiten-Deklarationen"), wenn die Deklaration ein explizites
-        /// `: einheit` hatte - `null` sonst (jeder Wert zulässig, wie bisher).</summary>
-        public sealed record Local(int Depth, int Slot, string? RequiredUnit = null) : ResolvedRef;
+        /// `: einheit` hatte - `null` sonst (jeder Wert zulässig, wie bisher).
+        /// ByRef: ein `ref`-Parameter - der Slot haelt einen Zeiger auf die Variable des Aufrufers, Lesen und Schreiben gehen durch ihn hindurch.</summary>
+        public sealed record Local(int Depth, int Slot, string? RequiredUnit = null, bool ByRef = false) : ResolvedRef;
 
         /// <summary>Globale Variable (Top-Level-Deklaration). Slot = Index im
         /// globalen Scope. RequiredUnit: wie bei Local.</summary>

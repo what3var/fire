@@ -6220,6 +6220,91 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         print(add(2, 3) + inc(4))
         """, new[] { "95", "10" });
 
+    CheckPerf("ref-Parameter: Variablen, Felder, Array-Elemente, Puffer, Konstruktor, Weitergabe, Basistypen und Strings als Kopie", """
+        class Box { int n; string s; construct() { this.n = 1; this.s = "a" } }
+        class U {
+            static Swap(ref a, ref b) { var t = a; a = b; b = t }
+            static Inc(ref int x) { x++; x = x + 10 }
+            static Twice(ref int x) { U.Inc(x); U.Inc(x) }
+            static Append(ref string s, string t) { s = s + t }
+            static Plain(int x) { x = 99 }
+            static int Sum(ref int a, int b) { return a + b }
+        }
+        class Counter {
+            int total
+            construct(ref int seed) { this.total = seed; seed = 100 }
+            Add(ref int v) { v = v + this.total }
+            Bump(ref int v) { this.total = this.total + 1; v = this.total }
+            Self() { this.Bump(total) }
+        }
+        var x = 1
+        var y = 2
+        U.Swap(x, y)
+        print(x + " " + y)
+        U.Inc(x)
+        print(x)
+        U.Twice(y)
+        print(y)
+        var s = "hi"
+        U.Append(s, "!!")
+        print(s)
+        var z = 5
+        U.Plain(z)
+        print(z)
+        var b = new Box()
+        U.Swap(b.n, b.s)
+        print(b.n + " " + b.s)
+        var arr = [1, 2, 3]
+        U.Inc(arr[1])
+        U.Swap(arr[0], arr[2])
+        print(arr[0] + " " + arr[1] + " " + arr[2])
+        var buf = new byte[2]
+        U.Inc(buf[1])
+        print(buf[1])
+        var seed = 7
+        var c = new Counter(seed)
+        print(seed + " " + c.total)
+        var k = 3
+        c.Add(k)
+        print(k)
+        c.Self()
+        print(c.total)
+        print(U.Sum(k, 1))
+        var f = (int v) => { U.Inc(v); return v }
+        print(f(5))
+        {
+            var loc = 4
+            U.Inc(loc)
+            print(loc)
+        }
+        try { U.Inc(arr[9]) } catch (e) { print("oob " + e.message) }
+        """, new[] { "2 1", "13", "23", "hi!!", "5", "a 1", "3 13 1", "11", "100 7", "10", "8", "11", "16", "15", "oob Array index 9 out of range (length 3)." });
+
+    CheckPerf("ref-Parameter: gewoehnliche Methode gleichen Namens (List.Add) bekommt den Wert, ein Wert fuer ein ref ist ein Fehler", """
+        class Counter { int total; construct() { this.total = 0 } Add(ref int v) { v = v + 1 } }
+        var l = new List()
+        var q = 3
+        l.Add(q)
+        l.Add(5)
+        print(l.count + " " + q)
+        var c = new Counter()
+        c.Add(q)
+        print(q)
+        """, new[] { "2 3", "4" }, new[] { VmExecutionMode.Release });
+    foreach (var (refSource, refMessage) in new[]
+    {
+        ("var f = func (ref x) { x = 1 }", "only possible in methods and constructors"),
+        ("class A { M(ref int x = 1) { } }", "cannot have a default value"),
+    })
+    {
+        string refResult;
+        try { new Linker().CompileAndLink(new[] { refSource }, null, null, VmExecutionMode.Release); refResult = "kein Fehler"; }
+        catch (Exception ex) { refResult = ex.Message; }
+        bool refOk = refResult.Contains(refMessage);
+        if (!refOk) perfFailures++;
+        Console.WriteLine(refOk ? $"OK: ref-Parameter: Fehler '{refMessage}'" : $"FEHLER: ref-Parameter: erwartet '{refMessage}', erhalten '{refResult}'");
+    }
+
     CheckPerf("Objekte: Ownership und Destruktor pro Schleifendurchlauf", """
         class D { int id; construct(int id) { this.id = id } destruct() { print("d" + this.id) } }
         for (var i = 0; i < 3; i = i + 1) { var d = new D(i) }
