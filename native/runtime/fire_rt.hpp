@@ -206,7 +206,7 @@ FIRE_THREAD_VARS(FIRE_X)
 /// A run-time error that the language reports as an exception (see the exceptions section): the exception is thrown, or - when
 /// the program has no exceptions at all - it ends the program.
 inline Value indexError(const char* what, int64_t index, int64_t length);
-/// The use of a destroyed array or buffer (SPEC 2.5): a DestroyedException, or the end of the program when there are no exceptions.
+/// The use of a destroyed object, array or buffer (SPEC 2.3, 2.5): a DestroyedException, or the end of the program when there are no exceptions.
 inline Value destroyedError(Value leaf);
 
 [[noreturn]] FIRE_COLD inline void fatal(const char* message) {
@@ -669,7 +669,17 @@ FIRE_COLD inline Value divUnits(Value a, Value b) {
     return Float(toR(a) / toR(b), u);
 }
 
+/// `p + n` / `p - n` for a pointer: "n elements further" (SPEC 8.3). Exact for the elements of an array or a buffer (`ref a[i]`); a pointer to a variable or a field only supports 0
+/// (the VM moves to the neighbouring slot of the scope, which the generated code does not have: the variables are C++ variables).
+inline Value ptrOffset(Value p, int64_t n) {
+    if (n == 0) return p;
+    Value r = p;
+    r.p = p.width ? static_cast<const void*>(static_cast<const uint8_t*>(p.p) + n) : static_cast<const void*>(static_cast<const Value*>(p.p) + n);
+    return r;
+}
+
 inline Value add(Value a, Value b) {
+    if (a.kind == K_Pointer && b.kind == K_Int) return ptrOffset(a, b.i);
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i + (uint64_t)b.i), a.unit);
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) + toR(b), a.unit);
@@ -677,6 +687,7 @@ inline Value add(Value a, Value b) {
     opFailed("+");
 }
 inline Value sub(Value a, Value b) {
+    if (a.kind == K_Pointer && b.kind == K_Int) return ptrOffset(a, -b.i);
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i - (uint64_t)b.i), a.unit);
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) - toR(b), a.unit);
@@ -864,7 +875,7 @@ struct alignas(alignof(Value)) Obj : Owned {
 /// Runs the destructors of the object's class chain, derived class first (generated; empty if no class has one).
 void runDestructors(Obj* o);
 
-inline Value ObjV(Obj* o) { Value r; r.kind = K_Class; r.width = 0; r.reserved = 0; r.unit = 0; r.p = o; return r; }
+inline Value ObjV(Obj* o) { Value r; r.kind = K_Class; r.width = 0; r.reserved = o->gen; r.unit = o->slot; r.p = o; return r; }
 inline Obj* asObj(Value v) {
     if (FIRE_UNLIKELY(v.kind != K_Class)) fatal("A member was accessed on something that is not an object.");
     return static_cast<Obj*>(const_cast<void*>(v.p));
@@ -902,8 +913,7 @@ inline Value newObject(uint32_t cls, uint32_t fieldCount, OwnList* owner) {
     if (FIRE_UNLIKELY(!memory)) allocFailed();
     Obj* o = static_cast<Obj*>(memory);
     o->okind = O_Object;
-    o->slot = 0;
-    o->gen = 0;
+    slotAcquire(o);   // the handle: a destroyed object is recognized by it (SPEC 2.3, 2.5)
     o->cls = cls;
     o->flags = 0;
     o->owned.head = o->owned.tail = nullptr;
@@ -926,8 +936,8 @@ inline void probeFree(Obj* o);   // the probes of an object that is destroyed (f
 inline void originFree(Obj* o);   // flags 4 (has `taking` copies) and 32 (is one): see the fire threads section
 #endif
 
-/// What was destroyed during a batch is freed when the outermost batch ends: a destructor sees every object of its scope in the state it was in when it was
-/// destroyed (fields and strings intact), like in the VM where a destroyed object keeps working.
+/// What was destroyed during a batch is freed - and dead - when the outermost batch ends: a destructor sees every object of its scope in the state it was in when it was
+/// destroyed (fields and strings intact), like in the VM (SPEC 2.3). After that its handle has expired: using it throws a DestroyedException.
 struct DestroyBatch {
     DestroyBatch() { g_zombies.depth++; }
     ~DestroyBatch() {
@@ -939,6 +949,7 @@ struct DestroyBatch {
             Obj* obj = static_cast<Obj*>(o);
             Value* f = obj->fields();
             for (uint32_t i = 0; i < obj->nfields; i++) release(f[i]);
+            slotRelease(obj);   // from now on a Value of this object is dead: using it is a DestroyedException
 #ifndef FIRE_KEEP_DESTROYED
             std::free(obj);
 #endif
@@ -1008,8 +1019,7 @@ inline void leave(OwnList* list) {
 
 /// The header of an object, an array or a buffer (null for any other value, and for an array or buffer that is already destroyed).
 inline Owned* ownedOf(Value v) {
-    if (v.kind == K_Class) return static_cast<Owned*>(const_cast<void*>(v.p));
-    if ((v.kind == K_Array || v.kind == K_Buffer) && leafAlive(v)) return static_cast<Owned*>(const_cast<void*>(v.p));
+    if ((v.kind == K_Class || v.kind == K_Array || v.kind == K_Buffer) && leafAlive(v)) return static_cast<Owned*>(const_cast<void*>(v.p));
     return nullptr;
 }
 
@@ -1252,6 +1262,7 @@ inline Value toStringValue(Value v, OwnList* list) {
 }
 
 FIRE_COLD inline Value addSlow(Value a, Value b, OwnList* list) {
+    if (a.kind == K_Pointer && b.kind == K_Int) return ptrOffset(a, b.i);
     if (a.kind == K_String || b.kind == K_String) return concat(a, b, list);
     if (isNumeric(a) && isNumeric(b)) return addUnits(a, b);
     opFailed("+");
@@ -1998,7 +2009,7 @@ inline void setDefaultTimeout(Value t) {
 Value makeDestroyedError(Value message);
 
 inline Value destroyedError(Value leaf) {
-    const char* text = leaf.kind == K_Buffer ? "Access to a destroyed buffer." : "Access to a destroyed array.";
+    const char* text = leaf.kind == K_Buffer ? "Access to a destroyed buffer." : leaf.kind == K_Class ? "Access to a destroyed object." : "Access to a destroyed array.";
 #ifdef FIRE_EXCEPTIONS
     OwnList unused = {nullptr, nullptr, 0, nullptr, nullptr};
     uint32_t n = (uint32_t)std::strlen(text);
@@ -2313,6 +2324,109 @@ inline void finishArgs(Value result, OwnList* al) {
     if (al->head) destroyList(al);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// What travels along: `return` and `Takes.*` (SPEC 2.2, 2.3)
+// ---------------------------------------------------------------------------------------------------------------------
+enum { TK_THIS = 0, TK_CHILDREN = 1, TK_LOCALS = 2, TK_ALL = 3 };   // the values of the enum `Takes`
+constexpr uint8_t F_VISIT = 128;   // (while walking the graph of references)
+
+/// The scopes of the running call (their lists): what belongs to one of them - also through objects that belong to them - is "local".
+struct LocalScopes { OwnList* const* lists; int n; };
+
+/// The list of the scope that a thing finally belongs to (through the objects that own it); null for what travels.
+inline OwnList* scopeListOf(const Owned* o) {
+    OwnList* l = o->owner;
+    while (l && l->holder) l = l->holder->owner;
+    return l;
+}
+inline bool isLocalNode(const Owned* o, const LocalScopes& s) {
+    OwnList* l = scopeListOf(o);
+    if (!l) return false;
+    for (int i = 0; i < s.n; i++) if (s.lists[i] == l) return true;
+    return false;
+}
+/// `ancestor` is `o` or stands in its chain of owners.
+inline bool ownsTransitively(const Owned* ancestor, const Owned* o) {
+    for (const Owned* a = o; a;) {
+        if (a == ancestor) return true;
+        OwnList* l = a->owner;
+        a = l ? l->holder : nullptr;
+    }
+    return false;
+}
+
+struct OwnedStack {
+    Owned** items = nullptr;
+    size_t count = 0, cap = 0;
+    ~OwnedStack() { std::free(items); }
+    void push(Owned* o) {
+        if (count == cap) {
+            cap = cap ? cap * 2 : 64;
+            items = static_cast<Owned**>(std::realloc(items, cap * sizeof(Owned*)));
+            if (!items) allocFailed();
+        }
+        items[count++] = o;
+    }
+    bool empty() const { return count == 0; }
+    Owned* pop() { return items[--count]; }
+};
+
+/// The list that what `node` points to joins when it moves: the object that points to it - for an array the object that owns the array, else the array itself (an array can own).
+inline OwnList* carrierOf(Owned* node) {
+    if (node->okind == O_Object) return &static_cast<Obj*>(node)->owned;
+    if (node->okind == O_Array) {
+        if (node->owner && node->owner->holder) return node->owner;
+        Arr* a = static_cast<Arr*>(node);
+        if (!a->parts) a->parts = newPartsList(a);
+        return a->parts;
+    }
+    return nullptr;
+}
+
+/// Takes what hangs on `root` along (the root has its new owner already), by `mode`: TK_CHILDREN what it points to directly, TK_LOCALS everything reachable that belongs to a scope of
+/// the call (recursively), TK_ALL everything reachable. A thing that moves belongs to the object that points to it; what would end up below itself stays where it is. Every node is visited once.
+inline void moveReachable(Owned* root, int mode, const LocalScopes& locals) {
+    if (mode == TK_THIS) return;
+    OwnedStack work, seen;
+    root->flags |= F_VISIT;
+    seen.push(root);
+    work.push(root);
+    while (!work.empty()) {
+        Owned* node = work.pop();
+        OwnList* carrier = carrierOf(node);
+        Value* items;
+        uint32_t n;
+        if (node->okind == O_Object) { Obj* ob = static_cast<Obj*>(node); items = ob->fields(); n = ob->nfields; }
+        else if (node->okind == O_Array) { Arr* a = static_cast<Arr*>(node); items = a->items(); n = a->length; }
+        else continue;
+        for (uint32_t i = 0; i < n; i++) {
+            Owned* child = ownedOf(items[i]);
+            if (!child || (child->flags & (1 | F_VISIT))) continue;
+            child->flags |= F_VISIT;
+            seen.push(child);
+            bool move = mode != TK_LOCALS || isLocalNode(child, locals);
+            bool descend = mode == TK_ALL || (mode == TK_LOCALS && (move || (child->owner && child->owner->holder && (child->owner->holder->flags & F_VISIT))));
+            if (move && carrier && child->owner != carrier) {
+                bool cycle = child->okind == O_Object && carrier->holder && ownsTransitively(child, carrier->holder);
+                if (!cycle) { if (child->owner) unlink(child); link(carrier, child); }
+            }
+            if (descend) work.push(child);
+        }
+    }
+    for (size_t k = 0; k < seen.count; k++) seen.items[k]->flags &= (uint8_t)~F_VISIT;
+}
+
+/// `return`: a value that belongs to one of the scopes that are left (directly or through objects that belong to them) does not die with them: it travels to the caller, and everything
+/// that hangs on it and also belongs to those scopes goes along (SPEC 2.3).
+inline void transferTree(Value v, OwnList* const* lists, int n) {
+    Owned* o = ownedOf(v);
+    if (!o) return;
+    LocalScopes scopes{lists, n};
+    if (!isLocalNode(o, scopes)) return;
+    unlink(o);   // (the caller takes it over: adopt)
+    moveReachable(o, TK_LOCALS, scopes);
+}
+
 enum OwnMethod { OM_Take, OM_TakeUpwards, OM_TakeGlobal, OM_TakeTo };
 
 /// `x.Take()`, `x.TakeUpwards()`, `x.TakeGlobal()`, `x.TakeTo(obj)` on an object, an array or a buffer (SPEC 2.2).
@@ -2341,6 +2455,15 @@ inline void ownMethod(int method, Value self, Value arg, OwnList* here) {
             takeToObject(o, asObj(arg));
             break;
     }
+}
+
+/// The same with a `Takes` mode: what hangs on the value goes along (SPEC 2.2); `lists` are the scopes of the running call.
+inline void ownMethodT(int method, Value self, Value arg, Value mode, OwnList* here, OwnList* const* lists, int n) {
+    if (mode.kind != K_Int || mode.i < TK_THIS || mode.i > TK_ALL) fatal("The mode of Take... must be one of Takes.This, Takes.Children, Takes.Locals, Takes.All.");
+    ownMethod(method, self, arg, here);
+    if (mode.i == TK_THIS) return;
+    Owned* o = ownedOf(self);
+    if (o && !(o->flags & 1)) moveReachable(o, (int)mode.i, LocalScopes{lists, n});
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -2564,6 +2687,7 @@ inline Value copyArg(Value v, bool deep, OwnList* from, OwnList* al) {
 /// `delete x`: destroys the object (destructor, everything it owns), array or buffer at once.
 inline void deleteValue(Value v) {
     if (v.kind == K_Class) {
+        if (!leafAlive(v)) return;   // already dead: nothing to do (like in the VM)
         Obj* o = static_cast<Obj*>(const_cast<void*>(v.p));
         if (o->owner) unlink(o);
         destroy(o);

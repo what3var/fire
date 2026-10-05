@@ -69,27 +69,23 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Objekte kosten nichts.
 * Objekte werden beim Zerstören **freigegeben** - aber erst am Ende des **Zerstörungsstapels** (`DestroyBatch`: das Verlassen eines Scopes, ein `delete`, das Ende des Programms):
   alle Destruktoren eines Scopes sehen die Objekte des Scopes also noch (die Reihenfolge ist die der Erzeugung: der Destruktor eines Writers leert einen Stream, der schon
-  zerstört ist - in der VM geht das, weil ein zerstörtes Objekt weiterarbeitet). Was freigegeben wird, wird iterativ abgearbeitet (lange Ketten sprengen den Stack nicht).
-  Ein Objekt, auf das noch etwas zeigt, wird dabei **nicht** freigegeben, siehe "Zerstörte Objekte, auf die noch etwas zeigt". Mit `-DFIRE_KEEP_DESTROYED` bleiben alle im Speicher
-  (Fehlersuche). Die Tests laufen unter AddressSanitizer/UBSan und mit `-DFIRE_CHECK_LIMBO`.
+  zerstört ist). Danach ist das Objekt **tot** (SPEC 2.3): sein Handle läuft ab, jede Benutzung wirft eine `DestroyedException` (ohne Ausnahmen im Programm: Programmende mit Meldung).
+  Mit `-DFIRE_KEEP_DESTROYED` bleibt der Speicher stehen (Fehlersuche). Die Tests laufen unter AddressSanitizer/UBSan.
 
-#### Zerstörte Objekte, auf die noch etwas zeigt
+#### Tote Objekte, `return` und `Takes`
 
-Die VM lässt ein zerstörtes Objekt weiterarbeiten (`items.Add(new Item())` in einer Funktion: die Funktion endet, das Item ist zerstört - `items[0].n` liest weiter). Nativ
-muss dafür der **Speicher** gültig bleiben, solange etwas darauf zeigt - der Besitz (Destruktor, wann es stirbt) ändert sich nicht:
-
-* Objekte werden wie Strings gezählt (`Owned::slot` ist bei Objekten der Zähler): Variablen, Parameter, Felder, Array-Elemente, der temporäre Pool (als Zeiger mit gesetztem
-  Bit 0) und Lambdas halten einen Zähler. Der Besitzer zählt nicht mit.
-* `destroy` hält den Zähler selbst, solange der Destruktor läuft. Am Ende: Zähler 0 -> freigegeben mit dem Batch; sonst **Limbo** (Flag 128, doppelt verkettet über `prev`/`next`).
-  Verlässt der letzte Zähler ein Limbo-Objekt, wird es freigegeben (`objReclaim`).
-* Zeigen Limbo-Objekte nur aufeinander (`child.parent = parent`), findet `collectLimbo` sie per **Probe-Löschung**: Zähler minus Verweise aus Feldern anderer Limbo-Objekte;
-  was dann noch von außen gehalten wird (und alles, was davon erreichbar ist), bleibt, der Rest ist Müll. Läuft, wenn die Zahl der Limbo-Objekte die Schwelle erreicht (mindestens
-  1024, danach das Doppelte des Rests).
-* Der Aufrufer übernimmt ein zurückgegebenes Objekt (`adopt`) in seinen Pool (der Zähler, den `return` gesetzt hat); lebt es noch und hat keinen Besitzer, gehört es dem Scope.
-* In Methoden hält `SelfGuard` (RAII) `this`: die Methode darf ihr eigenes Objekt (oder dessen Besitzer) zerstören. Der Generator markiert Objekte als "kann eine Referenz sein"
-  (`new`, `this`), danach laufen `retain`/`release` an denselben Stellen wie bei Strings.
-* `-DFIRE_CHECK_LIMBO`: am Programmende wird Limbo gesammelt; was bleibt, wird gemeldet (`limbo: N object(s) left`) - ein Zähler, der nie freigegeben wurde.
-* Grenze: Arrays und Puffer haben keinen Zähler (Handle-Tabelle, siehe unten). Von Natives gelieferte verschachtelte Arrays (Slicer) gehören dem globalen Scope.
+* **Handles.** Der `Value` eines Objekts trägt wie der eines Arrays den Platz seines Kopfs in einer Tabelle von Generationen (`unit` = Platz, `reserved` = Generation, `ObjV`). Am Ende des
+  Stapels bekommt der Platz eine neue Generation (`slotRelease`), bevor der Speicher frei wird. Die erzeugten Zugriffe (`gf_`/`sf_`/`fp_`, der Methoden-Verteiler) prüfen das Handle
+  (`leafAlive`: eine Ladung und ein Vergleich) und melden sonst `destroyedError`; das Programm prüft danach das Unwinding, wenn es Ausnahmen benutzt. Mit `#performance` (`FIRE_UNCHECKED`)
+  gibt es keine Tabelle und keine Prüfung. Objekte werden **nicht** gezählt - der Besitzer entscheidet, das Handle erkennt, was nicht mehr da ist.
+* **`return` nimmt den Baum mit** (`transferTree`): gehört der zurückgegebene Wert einem der Scopes, die verlassen werden (auch über Objekte hinweg, die gleich mit ihnen sterben), wird er ausgehängt
+  (er reist, `adopt` des Aufrufers übernimmt ihn) und `moveReachable` geht durch alles, was an ihm hängt: was ebenfalls diesen Scopes gehört, wandert zu dem Objekt, das darauf zeigt
+  (`carrierOf`: das Objekt; bei einem Array der Owner des Arrays, wenn der ein Objekt ist, sonst das Array selbst über seine Teileliste `parts`). Jeder Knoten wird einmal besucht (Flag `F_VISIT`),
+  was unter sich selbst landen würde, bleibt. Der Generator übergibt die Listen der verlassenen Scopes als Feld (`T_`).
+* **`Takes`** (`Take`, `TakeUpwards`, `TakeGlobal`, `TakeTo` mit einem `Takes`-Wert als letztem Argument): `ownMethodT` setzt erst den Owner wie bisher, dann `moveReachable` mit dem Modus
+  (`TK_THIS` nichts weiter, `TK_CHILDREN` die unmittelbaren Mitglieder, `TK_LOCALS` wie `return` mit den Listen der offenen Scopes der Funktion, `TK_ALL` alles Erreichbare). Über den Methoden-Verteiler
+  (eine Klasse deklariert selbst ein `Take...`) kennt der Aufruf die Scopes des Aufrufers nicht: `Takes.Locals` findet dort nichts.
+* Abweichung zur VM: die Elemente eines zurückgegebenen Arrays, das keinem Objekt gehört, hängen nativ an dem Array (Teileliste), in der VM am aufrufenden Scope - beide sterben zusammen mit dem Array bzw. dem Scope.
 
 ### Speicher: Besitz für Objekte, Arrays und Puffer, Zähler für Strings und Lambdas
 
@@ -107,7 +103,7 @@ muss dafür der **Speicher** gültig bleiben, solange etwas darauf zeigt - der B
   Arrays/Puffers den Platz seines Kopfs in einer Tabelle von Generationen (`unit` = Platz, `reserved` = Generation); beim Zerstören bekommt der Platz eine neue
   Generation, jeder Zugriff vergleicht (`leafAlive`: eine Ladung und ein Vergleich) und meldet sonst die fangbare `DestroyedException`, bevor freigegebener
   Speicher berührt wird. Mit `#performance` definiert der Generator `FIRE_UNCHECKED`: keine Tabelle, keine Prüfung (undefiniert, wie in der VM-Doku).
-  **Objekte** brauchen kein Handle: ein zerstörtes Objekt arbeitet weiter, solange etwas darauf zeigt (siehe oben).
+  **Objekte** haben dasselbe Handle (siehe oben).
 * **Strings und Lambdas werden gezählt** (sie werden frei weitergegeben: `var t = s`, in Feldern und Arrays gespeichert, zurückgegeben):
   * **Speicherorte halten einen Zähler**: Variablen, Parameter, Felder, Array-Elemente und statische Felder (`retain` beim Speichern, `release` beim
     Überschreiben, beim Verlassen des Scopes und beim Zerstören des Objekts/Arrays). Stack-Zwischenwerte halten nichts.
@@ -354,7 +350,9 @@ und `std/fire_display_none.hpp` (kein Bildschirm: `new Window` wirft eine `Handl
 Maus-Werte sind dieselben. Die Tests laufen mit dem SDL-Dummy-Treiber (`SDL_VIDEODRIVER=dummy`) und `-DFIRE_DISPLAY_SELFTEST`, das beim Öffnen eine feste Folge von Ereignissen einspeist; die UI-Bibliothek
 (`#import "ui"`, reines fire) läuft damit nativ und zeichnet dieselben Pixel wie in der VM.
 
-Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`).
+**Zeiger** (`unsafe`, SPEC 8.3): ein Zeiger ist ein `K_Pointer`-Wert auf die Speicherstelle einer Variablen, eines Feldes oder eines Array-/Puffer-Elements (`ref`-Argumente). `&`, `*`, `*p = v`,
+Zeiger auf Zeiger und der Vergleich laufen wie in der VM. Die Zeiger-Arithmetik (`p + n`, `p - n`, `ptrOffset`) ist für die Elemente eines Arrays oder Puffers genau; ein Zeiger auf eine Variable
+oder ein Feld kennt nur den Versatz 0 (die VM rückt zum Nachbar-Slot des Scopes, den es in erzeugtem Code nicht gibt: die Variablen sind C++-Variablen).
 
 ### Plattformschicht
 

@@ -409,12 +409,15 @@ namespace fire.Native
         /// <summary>The runtime enum of a built-in ownership method (SPEC 2.2), or null.</summary>
         private static string? OwnMethodId(string name, int argc) => (name, argc) switch
         {
-            ("Take", 0) => "OM_Take",
-            ("TakeUpwards", 0) => "OM_TakeUpwards",
-            ("TakeGlobal", 0) => "OM_TakeGlobal",
-            ("TakeTo", 1) => "OM_TakeTo",
+            ("Take", 0 or 1) => "OM_Take",
+            ("TakeUpwards", 0 or 1) => "OM_TakeUpwards",
+            ("TakeGlobal", 0 or 1) => "OM_TakeGlobal",
+            ("TakeTo", 1 or 2) => "OM_TakeTo",
             _ => null,
         };
+
+        /// <summary>The ownership method takes the target as its first argument (`TakeTo(obj)`), and optionally a `Takes` mode after it.</summary>
+        private static int OwnMethodBaseArgs(string ownId) => ownId == "OM_TakeTo" ? 1 : 0;
 
         private bool AnyClassHasMethod(string name, int argc) => _classList.Any(c => c.Rc.FindMethodWithAccess(name, argc).Proto != null);
 
@@ -755,7 +758,7 @@ namespace fire.Native
             sb.AppendLine("{");
             if (_usesActors)
             {
-                sb.AppendLine("    if (self.kind == K_Class && (asObj(self)->flags & 8)) {");
+                sb.AppendLine("    if (self.kind == K_Class && FIRE_LIKELY(leafAlive(self)) && (asObj(self)->flags & 8)) {");
                 sb.AppendLine($"        Value av[{Math.Max(1, argc)}] = {{{string.Join(", ", Enumerable.Range(0, argc).Select(i => $"a{i}").DefaultIfEmpty("Undef()"))}}};");
                 sb.AppendLine($"        actorSend(self, msg_{m}, av, {argc});");
                 sb.AppendLine("        return Undef();");
@@ -829,6 +832,7 @@ namespace fire.Native
             if (byFunc.Count > 0)
             {
                 sb.AppendLine("        case K_Class:");
+                sb.AppendLine("            if (FIRE_UNLIKELY(!leafAlive(self))) return destroyedError(self);");
                 if (byFunc.Count == 1 && byFunc.Values.First().Count == _classList.Count)
                     sb.AppendLine($"            asObj(self); {CallImpl(byFunc.Keys.First().Name, byFunc.Keys.First().Proto!, _classList.First().Rc)}");
                 else
@@ -849,7 +853,10 @@ namespace fire.Native
             if (OwnMethodId(name, argc) is { } ownId)
             {
                 // the built-in ownership method for everything that has no method of this name
-                sb.AppendLine($"    ownMethod({ownId}, self, {(argc == 1 ? "a0" : "Undef()")}, list);");
+                int baseArgs = OwnMethodBaseArgs(ownId);
+                string target = baseArgs == 1 ? "a0" : "Undef()";
+                if (argc == baseArgs) sb.AppendLine($"    ownMethod({ownId}, self, {target}, list);");
+                else sb.AppendLine($"    ownMethodT({ownId}, self, {target}, a{baseArgs}, list, nullptr, 0);   // (the scopes of the caller are not known here: `Takes.Locals` finds nothing)");
                 sb.AppendLine("    return Undef();");
             }
             else
@@ -910,9 +917,9 @@ namespace fire.Native
                 if (indexByClass.ContainsKey(cls.Id) && cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit)
                     unitChecks.Append($"        case {cls.Id}: checkUnit(x, {UnitId(Unit.Parse(requiredUnit))}, {Constant(Value.MakeString(requiredUnit))}); break;\n");
             string unitCode = unitChecks.Length == 0 ? "" : "    switch (o->cls) {\n" + unitChecks + "        default: break;\n    }\n" + (_usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return;\n" : "");
-            return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}    Obj* o = asObj(v);\n{indexCode}\n    return o->fields()[idx];\n}}\n"
-                 + $"static inline void sf_{m}(Value v, Value x) {{\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}{indexCode}\n{unitCode}    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
-                 + $"static inline Value fp_{m}(Value v) {{\n    Obj* o = asObj(v);\n{indexCode}\n    return PtrV(&o->fields()[idx]);\n}}\n";
+            return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{indexCode}\n    return o->fields()[idx];\n}}\n"
+                 + $"static inline void sf_{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}{indexCode}\n{unitCode}    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
+                 + $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{indexCode}\n    return PtrV(&o->fields()[idx]);\n}}\n";
         }
 
         /// <summary>Does some class of the program declare a property of this name (`get_name`/`set_name`)? Then reading and writing it takes the scope list
@@ -969,9 +976,9 @@ namespace fire.Native
             var sb = new StringBuilder();
             string lp = (HasProperty(name) ? ", OwnList* list" : "") + (RestrictedField(name) ? ", uint32_t caller" : "");
             string unusedLp = (HasProperty(name) ? "(void)list; " : "") + (RestrictedField(name) ? "(void)caller; " : "");
-            sb.AppendLine($"static inline Value gf_{m}(Value v{lp}) {{\n{lengthCode}    {unusedLp}\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{get}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
-            sb.AppendLine($"static inline void sf_{m}(Value v, Value x{lp}) {{\n    (void)x; {unusedLp}\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}    switch (o->cls) {{\n{set}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
-            sb.AppendLine($"static inline Value fp_{m}(Value v) {{\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{ptr}        default: fatal(\"The address of '{name}' cannot be taken (it is a property or does not exist).\");\n    }}\n}}");
+            sb.AppendLine($"static inline Value gf_{m}(Value v{lp}) {{\n{lengthCode}    {unusedLp}\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{get}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
+            sb.AppendLine($"static inline void sf_{m}(Value v, Value x{lp}) {{\n    (void)x; {unusedLp}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}    switch (o->cls) {{\n{set}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
+            sb.AppendLine($"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{ptr}        default: fatal(\"The address of '{name}' cannot be taken (it is a property or does not exist).\");\n    }}\n}}");
             return sb.ToString();
         }
 
@@ -1483,8 +1490,13 @@ namespace fire.Native
         private void ReleaseScopes(Func f, Flow st, int fromCount, int downTo, bool reset, ISet<string> locals, Action<string> emit, string? transfer)
         {
             if (transfer != null)
+            {
+                // a returned value that belongs to one of the scopes that are left goes to the caller, with what hangs on it and belongs to them too (SPEC 2.3)
+                var leaving = new List<string>();
                 for (int i = fromCount - 1; i >= downTo; i--)
-                    if (f.NeedsList.Contains(st.Scopes[i].Id)) emit($"transferOut({transfer}, &{ListName(st.Scopes[i].Id)});");
+                    if (f.NeedsList.Contains(st.Scopes[i].Id)) leaving.Add("&" + ListName(st.Scopes[i].Id));
+                if (leaving.Count > 0) emit($"{{ OwnList* const T_[] = {{{string.Join(", ", leaving)}}}; transferTree({transfer}, T_, {leaving.Count}); }}");
+            }
             for (int i = fromCount - 1; i >= downTo; i--)
             {
                 int id = st.Scopes[i].Id;
@@ -2200,7 +2212,7 @@ namespace fire.Native
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
                     if (HasProperty(field) || RestrictedField(field)) { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});"); Check(); }
-                    else E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)});");
+                    else { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)});"); Check(); }   // (a destroyed object throws)
                     SetR(d - 1, true);
                     return Next();
                 }
@@ -2288,7 +2300,16 @@ namespace fire.Native
                         // the built-in ownership methods of objects, arrays and buffers (a class that declares one itself takes precedence)
                         if (ownMethodId == "OM_TakeUpwards" && !_usesTakeUpwards) { _usesTakeUpwards = true; _usesGlobalOwn = true; _version++; }
                         if (ownMethodId == "OM_TakeGlobal" && !_usesGlobalOwn) { _usesGlobalOwn = true; _version++; }
-                        E($"ownMethod({ownMethodId}, {S(slot)}, {(argc == 1 ? S(slot + 1) : "Undef()")}, &{owner});");
+                        int baseArgs = OwnMethodBaseArgs(ownMethodId);
+                        string targetArg = baseArgs == 1 ? S(slot + 1) : "Undef()";
+                        if (argc == baseArgs) E($"ownMethod({ownMethodId}, {S(slot)}, {targetArg}, &{owner});");
+                        else
+                        {
+                            // with a `Takes` mode: the scopes of the running call tell what is "local"
+                            var scopeLists = st.Scopes.Where(sc => f.NeedsList.Contains(sc.Id)).Select(sc => "&" + ListName(sc.Id)).ToList();
+                            string localsDecl = scopeLists.Count == 0 ? "" : $"OwnList* const L_[] = {{{string.Join(", ", scopeLists)}}}; ";
+                            E($"{{ {localsDecl}ownMethodT({ownMethodId}, {S(slot)}, {targetArg}, {S(slot + 1 + baseArgs)}, &{owner}, {(scopeLists.Count == 0 ? "nullptr" : "L_")}, {scopeLists.Count}); }}");
+                        }
                         E($"{S(slot)} = Undef();");
                         SetR(slot, false);
                         d = slot + 1; return Next();

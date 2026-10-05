@@ -14508,6 +14508,262 @@ else
             """),
     }).ToArray();
 
+    // Ownership (SPEC 2.2, 2.3): dead objects, what `return` takes along, `Takes`
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Besitz: zerstoerte Objekte sind tot, im Zerstoerungsstapel noch benutzbar, return nimmt den Baum der Locals mit", """
+            class D {
+                string n
+                D next
+                construct(string n) { this.n = n }
+                destruct() { print("~" + this.n) }
+            }
+            class W {
+                D target
+                construct(D target) { this.target = target }
+                destruct() { print("~W sees " + this.target.n) }
+            }
+            class T {
+                static Dead() {
+                    var a = new D("a")
+                    return a.n
+                }
+                // the destructor of w uses d, which was destroyed before it in the same scope: allowed until the scope is gone
+                static Batch() {
+                    var d = new D("d")
+                    var w = new W(d)
+                }
+                // a returned list takes its elements along
+                static Items() {
+                    var list = new List()
+                    for (var i = 0; i < 3; i = i + 1) { var x = new D("i" + i); x.TakeTo(list); list.Add(x) }
+                    return list
+                }
+                // by reference only: everything local travels with the returned object
+                static Ring() {
+                    var a = new D("ra")
+                    var b = new D("rb")
+                    a.next = b
+                    b.next = a
+                    return a
+                }
+                // not returned: gone
+                static Lost() {
+                    var keep = new D("lost")
+                    return 1
+                }
+                // taken out of an owner that dies with the scope
+                static Inner() {
+                    var outer = new D("outer")
+                    outer.next = new D("inner")
+                    outer.next.TakeTo(outer)
+                    return outer.next
+                }
+            }
+            var x = new D("x")
+            delete x
+            try { print(x.n) } catch (DestroyedException e) { print("dead: " + e.message) }
+            try { x.next = x } catch (DestroyedException e) { print("dead set") }
+            T.Batch()
+            print("batch done")
+            var items = T.Items()
+            print(items.count + " " + items[2].n)
+            var ring = T.Ring()
+            print(ring.next.next.n)
+            T.Lost()
+            print(T.Inner().n)
+            print("end")
+            """),
+        ("Besitz: Takes.This/Children/Locals/All bei TakeUpwards/TakeTo/TakeGlobal und fuer Arrays", """
+            class N {
+                string name
+                N next
+                N other
+                construct(string name) { this.name = name }
+                destruct() { print("~" + this.name) }
+            }
+            class F {
+                // This: the child stays behind and dies with the function
+                static UpThis(holder) {
+                    var p = new N("p1")
+                    var q = new N("q1")
+                    p.next = q
+                    p.TakeUpwards()
+                    holder.next = p
+                }
+                // Locals: the child travels along (to the object that points to it)
+                static UpLocals(holder) {
+                    var p = new N("p2")
+                    var q = new N("q2")
+                    p.next = q
+                    p.TakeUpwards(Takes.Locals)
+                    holder.next = p
+                }
+                // Children: what the fields point to directly, not what those point to
+                static UpChildren(holder) {
+                    var p = new N("p3")
+                    var q = new N("q3")
+                    var r = new N("r3")
+                    p.next = q
+                    q.next = r
+                    p.TakeUpwards(Takes.Children)
+                    holder.next = p
+                }
+                // All: also what is owned by somebody else
+                static TakeAll(holder, foreign) {
+                    var p = new N("p4")
+                    p.other = foreign
+                    p.TakeUpwards(Takes.All)
+                    holder.next = p
+                }
+                // TakeTo with a mode, and TakeGlobal
+                static ToObject(holder) {
+                    var p = new N("p5")
+                    var q = new N("q5")
+                    p.next = q
+                    p.TakeTo(holder, Takes.Locals)
+                }
+                static Global() {
+                    var p = new N("p6")
+                    var q = new N("q6")
+                    p.next = q
+                    p.TakeGlobal(Takes.Children)
+                    return 0
+                }
+                // an array travels with the objects it holds
+                static Arr() {
+                    var a = [new N("a1"), new N("a2")]
+                    a.TakeUpwards(Takes.Locals)
+                    return a
+                }
+            }
+            var h = new N("h")
+            var foreign = new N("foreign")
+            F.UpThis(h)
+            print("1 " + h.next.name)
+            try { print(h.next.next.name) } catch (DestroyedException e) { print("q1 dead") }
+            F.UpLocals(h)
+            print("2 " + h.next.next.name)
+            F.UpChildren(h)
+            print("3 " + h.next.next.name)
+            try { print(h.next.next.next.name) } catch (DestroyedException e) { print("r3 dead") }
+            F.TakeAll(h, foreign)
+            print("4 " + h.next.other.name)
+            F.ToObject(h)
+            print("5 " + h.next.name)
+            F.Global()
+            print("6")
+            var arr = F.Arr()
+            print("7 " + arr[0].name + arr[1].name)
+            print("end")
+            """),
+        ("Besitz: Liste mit Objekten aus einer Funktion, Zugriff auf ein geloeschtes Objekt", """
+            class Item { int n
+              construct(int n) { this.n = n }
+              destruct() { print("~Item" + this.n) } }
+            class F { static Make() {
+                var l = new List()
+                l.Add(new Item(1))
+                l.Add(new Item(2))
+                return l
+            } }
+            var l = F.Make()
+            print("made " + l.count)
+            print(l[0].n + l[1].n)
+            class G { static Gone() { var i = new Item(9); return i }
+              static Lost() { var a = new Item(7); return 1 } }
+            var kept = G.Gone()
+            print(kept.n)
+            delete kept
+            try { print(kept.n) } catch (DestroyedException e) { print("caught " + e.message) }
+            class P { Item it
+              construct() { this.it = new Item(5) } }
+            var p = new P()
+            var ref = p.it
+            delete p
+            try { print(ref.n) } catch (DestroyedException e) { print("caught2") }
+            """),
+    }).ToArray();
+
+    // Pointers (SPEC 8.3)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Zeiger (unsafe): Variablen, Felder, ref-Parameter, Parameter vom Typ int*, Tausch", """
+            class Box { int v = 1
+              string s = "a" }
+            class F {
+              static Inc(int* p) { unsafe { *p = *p + 1 } }
+              static Swap(int* a, int* b) { unsafe { var t = *a; *a = *b; *b = t } }
+            }
+            var x = 5
+            unsafe {
+                int* p = &x
+                *p = *p + 10
+                print(x)
+                F.Inc(p)
+                print(x)
+                var y = 7
+                F.Swap(&x, &y)
+                print(x + " " + y)
+                var b = new Box()
+                int* pv = &b.v
+                *pv = 42
+                print(b.v)
+                string* ps = &b.s
+                *ps = *ps + "z"
+                print(b.s)
+                int* r = &x
+                r = r + 0
+                print(*r)
+            }
+            """),
+        ("Zeiger (unsafe): Arithmetik ueber Array- und Puffer-Elemente (ref), Vergleich, Zeiger auf Zeiger", """
+            class F {
+              static Sum(ref int first, int n) {
+                var t = 0
+                unsafe {
+                  int* p = &first
+                  for (var i = 0; i < n; i++) { t = t + *p; p = p + 1 }
+                }
+                return t
+              }
+              static Zero(ref int first, int n) {
+                unsafe {
+                  int* p = &first
+                  for (var i = 0; i < n; i++) { *p = 0; p = p + 1 }
+                }
+              }
+              static Bytes(ref byte first, int n) {
+                var t = 0
+                unsafe {
+                  byte* p = &first
+                  for (var i = 0; i < n; i++) { t = t + *p; p = p + 1 }
+                }
+                return t
+              }
+            }
+            var a = [1, 2, 3, 4, 5]
+            print(F.Sum(a[1], 3))
+            F.Zero(a[2], 2)
+            print(a[0] + " " + a[1] + " " + a[2] + " " + a[3] + " " + a[4])
+            var buf = new byte[4]
+            buf[0] = 1; buf[1] = 2; buf[2] = 3; buf[3] = 4
+            print(F.Bytes(buf[1], 3))
+            var x = 1
+            var y = 1
+            unsafe {
+              int* p = &x
+              int* q = &x
+              print(p == q)
+              int* r = &y
+              print(p == r)
+              int** pp = &p
+              **pp = 99
+            }
+            print(x)
+            """),
+    }).ToArray();
+
     // Time and Sleep (bridges/fire_bridge_time.hpp)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
@@ -14676,7 +14932,7 @@ else
             File.WriteAllText(probeFile, "int main() { return 0; }\n");
             using var probe = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cxx, $"-fsanitize=address,undefined \"{probeFile}\" -o \"{probeFile}.bin\"") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false })!;
             probe.StandardError.ReadToEnd(); probe.StandardOutput.ReadToEnd(); probe.WaitForExit();
-            if (probe.ExitCode == 0 && System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(probeFile + ".bin") { UseShellExecute = false, RedirectStandardError = true }) is { } run) { run.StandardError.ReadToEnd(); run.WaitForExit(); if (run.ExitCode == 0) sanitize = "-fsanitize=address,undefined -fno-sanitize-recover=undefined -DFIRE_CHECK_LIMBO "; }
+            if (probe.ExitCode == 0 && System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(probeFile + ".bin") { UseShellExecute = false, RedirectStandardError = true }) is { } run) { run.StandardError.ReadToEnd(); run.WaitForExit(); if (run.ExitCode == 0) sanitize = "-fsanitize=address,undefined -fno-sanitize-recover=undefined "; }
         }
         Console.WriteLine(sanitize.Length > 0 ? "(die Faelle laufen unter AddressSanitizer/UBSan)" : "(Sanitizer nicht verfuegbar)");
 
