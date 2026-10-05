@@ -202,6 +202,19 @@ einzigen Maschine, keine Garantie.
   und `UnitMismatchException` (`CheckUnit`, Felder mit Einheit). Eine nicht gefangene Ausnahme meldet die Klasse auf stderr und beendet
   das Programm mit Exitcode 1, ohne Abwickeln - wie die VM.
 
+* **Zugriffsmodifikatoren** (SPEC 5.7): `private`/`protected` bei Feldern, Methoden, statischen Mitgliedern, Properties und Konstruktoren werden wie in der VM geprüft
+  (Debug und Release, nicht `#performance`), der Fehler ist die fangbare `AccessDeniedException` mit derselben Meldung. Was der Generator beim Übersetzen entscheiden
+  kann (statische Aufrufe, Konstruktoren, statische Felder: er kennt die Klasse des aufrufenden Codes, `Chunk.OwnerClass`), kostet nichts. Bei Feldern und Methoden, deren
+  Name irgendwo eingeschränkt deklariert ist, bekommen Feldhelfer (`gf_`/`sf_`) und Dispatcher einen Parameter `caller` (die Klasse des aufrufenden Codes) und prüfen je
+  Klasse; alle anderen Namen behalten den schnellen Pfad. Der Initialisierer eines statischen Feldes läuft ungeprüft.
+
+* **Eingebaute Umwandlungen**: `string.ToBytes/ToUnicode`, `char.ToByte/ToUnicode`, `byte.ToChar`, `buffer.ToString/ToUnicode/ToUnicodeChar/ToLittleEndian/ToBigEndian` und `buffer.littleEndian`
+  (SPEC 8.10; ein Puffer trägt seine Byte-Reihenfolge, die der Maschine wird zur Laufzeit festgestellt) stehen im Dispatcher der Methode, wenn keine Klasse sie selbst deklariert.
+
+* **Bekannte Abweichungen von der VM**: Beim Verlassen eines `catch` zerstört die VM zuerst die Objekte des Wurfortes (Scopes im `try`), dann die des `catch`; nativ laufen
+  die Destruktoren des `catch`-Scopes zuerst (der Wurfort wird erst danach abgewickelt). Ein Zeiger auf eine lokale Variable (`unsafe`), der die Funktion überlebt, zeigt in der VM
+  auf den noch lebenden Scope, nativ ins Leere (wie in C).
+
 * **`copy` und `flat`** (SPEC 2.4): `flatCopy`/`deepCopy` arbeiten allgemein auf den Köpfen (Klassen-Id, Felderzahl, Felder): kein Konstruktor, die Kopie gehört dem
   Besitzer wie jedes neue Objekt; `copy` kopiert alles Erreichbare einmal (Identitätstabelle `CopyMap`, Zyklen eingeschlossen) und hält die Besitzverhältnisse
   (was einem mitkopierten Objekt gehörte, gehört dessen Kopie, Arrays und Puffer dem Besitzer der Kopie). `obj.feld = copy x` gibt die Kopie dem Objekt

@@ -13159,6 +13159,99 @@ static int CountOccurrences(string haystack, string needle)
             print(q)
             print("end")
             """),
+        ("Zugriffsmodifikatoren: private/protected bei Feldern, Methoden, statischen Mitgliedern, Properties, Konstruktoren", """
+            class Base {
+                private int secret
+                protected int shared
+                int open
+                construct() { this.secret = 1; this.shared = 2; this.open = 3 }
+                private int Hidden() { return this.secret * 10 }
+                protected int Guarded() { return this.shared * 10 }
+                int Reveal() { return this.Hidden() + this.Guarded() }
+                private static int Counter() { return 7 }
+                static int PublicCounter() { return Base.Counter() }
+                int Total { get { return this.secret + this.shared } set { this.secret = value } }
+                private int Hush { get { return this.secret } set { this.secret = value } }
+                Reset() { this.Total = 100; this.Hush = 3 }
+            }
+            class Child : Base {
+                int Peek() { return this.shared + this.Guarded() }
+                int PeekSecret() { return this.secret }
+            }
+            class Locked {
+                private construct() { }
+                static Locked Make() { return new Locked() }
+            }
+            var b = new Base()
+            var c = new Child()
+            print(b.open)
+            print(b.Reveal())
+            print(c.Peek())
+            print(Base.PublicCounter())
+            try { print(b.secret) } catch (AccessDeniedException e) { print("denied 1: " + e.message) }
+            try { b.secret = 5 } catch (AccessDeniedException e) { print("denied 2: " + e.message) }
+            try { print(b.shared) } catch (AccessDeniedException e) { print("denied 3: " + e.message) }
+            try { print(b.Hidden()) } catch (AccessDeniedException e) { print("denied 4: " + e.message) }
+            try { print(b.Guarded()) } catch (AccessDeniedException e) { print("denied 5: " + e.message) }
+            try { print(Base.Counter()) } catch (AccessDeniedException e) { print("denied 6: " + e.message) }
+            try { print(c.PeekSecret()) } catch (AccessDeniedException e) { print("denied 7: " + e.message) }
+            try { b.Hush = 5 } catch (AccessDeniedException e) { print("denied 8: " + e.message) }
+            try { print(b.Hush) } catch (AccessDeniedException e) { print("denied 8b: " + e.message) }
+            try { var l = new Locked() } catch (AccessDeniedException e) { print("denied 9: " + e.message) }
+            print(Locked.Make() is of Locked)
+            print(b.Total)
+            b.Reset()
+            print(b.Total)
+            var lam = func () => { return b.open }
+            print(lam())
+            """),
+        ("Zugriffsmodifikatoren: #performance prueft nicht", """
+            #performance
+            class Base {
+                private int secret
+                protected int shared
+                int open
+                construct() { this.secret = 1; this.shared = 2; this.open = 3 }
+                private int Hidden() { return this.secret * 10 }
+                protected int Guarded() { return this.shared * 10 }
+                int Reveal() { return this.Hidden() + this.Guarded() }
+                private static int Counter() { return 7 }
+                static int PublicCounter() { return Base.Counter() }
+                int Total { get { return this.secret + this.shared } set { this.secret = value } }
+                private int Hush { get { return this.secret } set { this.secret = value } }
+                Reset() { this.Total = 100; this.Hush = 3 }
+            }
+            class Child : Base {
+                int Peek() { return this.shared + this.Guarded() }
+                int PeekSecret() { return this.secret }
+            }
+            class Locked {
+                private construct() { }
+                static Locked Make() { return new Locked() }
+            }
+            var b = new Base()
+            var c = new Child()
+            print(b.open)
+            print(b.Reveal())
+            print(c.Peek())
+            print(Base.PublicCounter())
+            try { print(b.secret) } catch (AccessDeniedException e) { print("denied 1: " + e.message) }
+            try { b.secret = 5 } catch (AccessDeniedException e) { print("denied 2: " + e.message) }
+            try { print(b.shared) } catch (AccessDeniedException e) { print("denied 3: " + e.message) }
+            try { print(b.Hidden()) } catch (AccessDeniedException e) { print("denied 4: " + e.message) }
+            try { print(b.Guarded()) } catch (AccessDeniedException e) { print("denied 5: " + e.message) }
+            try { print(Base.Counter()) } catch (AccessDeniedException e) { print("denied 6: " + e.message) }
+            try { print(c.PeekSecret()) } catch (AccessDeniedException e) { print("denied 7: " + e.message) }
+            try { b.Hush = 5 } catch (AccessDeniedException e) { print("denied 8: " + e.message) }
+            try { print(b.Hush) } catch (AccessDeniedException e) { print("denied 8b: " + e.message) }
+            try { var l = new Locked() } catch (AccessDeniedException e) { print("denied 9: " + e.message) }
+            print(Locked.Make() is of Locked)
+            print(b.Total)
+            b.Reset()
+            print(b.Total)
+            var lam = func () => { return b.open }
+            print(lam())
+            """),
         ("Besitz: #performance prueft zerstoerte Arrays nicht (FIRE_UNCHECKED), Ergebnis wie die VM", """
             #performance
             var a = new int[100]

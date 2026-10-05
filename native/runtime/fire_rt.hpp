@@ -363,6 +363,7 @@ struct alignas(alignof(Value)) Arr : Owned {
 /// Byte buffer (`byte[]`).
 struct Buf : Owned {
     uint32_t length;
+    uint8_t little;    // the byte order the buffer is tagged with (metadata only: the bytes never change by themselves)
     uint8_t* bytes() { return reinterpret_cast<uint8_t*>(this + 1); }
 };
 
@@ -974,12 +975,16 @@ inline void checkUnit(Value v, uint32_t unit, Value expectedText) {
     if (FIRE_UNLIKELY(!unitEq(actual, unit))) unitMismatch(v, expectedText);
 }
 
+/// The byte order of the machine, found out at run time (a 16-bit 1 starts with its low byte in little-endian memory).
+inline bool hostLittle() { uint16_t one = 1; return *reinterpret_cast<uint8_t*>(&one) == 1; }
+
 inline Buf* allocBuf(uint32_t length, OwnList* list) {
     Buf* b = static_cast<Buf*>(std::malloc(sizeof(Buf) + length));
     if (FIRE_UNLIKELY(!b)) allocFailed();
     b->okind = O_Buffer;
     b->flags = 0;
     b->length = length;
+    b->little = hostLittle() ? 1 : 0;
     std::memset(b->bytes(), 0, length);
     slotAcquire(b);
     link(list, b);
@@ -1560,6 +1565,22 @@ inline void unitMismatch(Value v, Value expectedText) {
 #endif
 }
 
+/// Generated: builds an AccessDeniedException (message) owned by the global scope.
+Value makeAccessError(Value message);
+
+/// A private or protected member used from where it may not be (SPEC 5.7): an AccessDeniedException, or the end of the program when there are no exceptions.
+inline Value accessDenied(const char* text) {
+#ifdef FIRE_EXCEPTIONS
+    OwnList unused = {nullptr, nullptr, 0, nullptr, nullptr};
+    uint32_t n = (uint32_t)std::strlen(text);
+    Str* msg = allocStr(n, &unused);
+    widenAscii(text, n, strChars(msg));
+    return throwValue(makeAccessError(StrV(msg)));
+#else
+    fatal(text);
+#endif
+}
+
 /// Generated: builds a DestroyedException (message) owned by the global scope.
 Value makeDestroyedError(Value message);
 
@@ -1692,6 +1713,82 @@ inline Value lengthOf(Value v, bool* ok) {
 inline Value newArray(Value size, OwnList* list) {
     if (size.kind != K_Int || size.i < 0 || size.i > 0x7FFFFFFF) fatal("An array size must be a non-negative int.");
     return ArrV(allocArr((uint32_t)size.i, list));
+}
+
+// ---- The conversions of strings, chars, bytes and buffers (SPEC 8.10) --------------------------------------------------
+inline void checkCharWidth(Value width) {
+    if (FIRE_UNLIKELY(width.kind != K_Int || width.i < 1 || width.i > 4)) fatal("Invalid character width (allowed: 1-4 bytes per character).");
+}
+inline void writeCodeUnit(uint8_t* dest, uint32_t value, int width, bool little) {
+    for (int b = 0; b < width; b++) dest[b] = (uint8_t)((value >> (little ? b * 8 : (width - 1 - b) * 8)) & 0xFF);
+}
+inline uint32_t readCodeUnit(const uint8_t* src, int width, bool little) {
+    uint32_t v = 0;
+    for (int b = 0; b < width; b++) v |= (uint32_t)src[b] << (little ? b * 8 : (width - 1 - b) * 8);
+    return v & 0xFFFF;   // a char is one 16-bit code unit
+}
+/// `string.ToBytes()`: one byte per character (the lowest byte).
+inline Value strToBytes(Value text, OwnList* list) {
+    const Str* s = strOf(text);
+    Buf* b = allocBuf(s->length, list);
+    for (uint32_t i = 0; i < s->length; i++) b->bytes()[i] = (uint8_t)s->data[i];
+    return BufV(b);
+}
+/// `string.ToUnicode(width)`
+inline Value strToUnicode(Value text, Value width, OwnList* list) {
+    checkCharWidth(width);
+    const Str* s = strOf(text);
+    Buf* b = allocBuf(s->length * (uint32_t)width.i, list);
+    for (uint32_t i = 0; i < s->length; i++) writeCodeUnit(b->bytes() + i * (uint32_t)width.i, s->data[i], (int)width.i, b->little);
+    return BufV(b);
+}
+/// `char.ToUnicode(width)`
+inline Value charToUnicode(Value c, Value width, OwnList* list) {
+    checkCharWidth(width);
+    Buf* b = allocBuf((uint32_t)width.i, list);
+    writeCodeUnit(b->bytes(), (uint32_t)c.i, (int)width.i, b->little);
+    return BufV(b);
+}
+inline Value charToByte(Value c) { return Int((uint8_t)c.i); }
+inline Value byteToChar(Value v) { return Char((uint8_t)v.i); }
+/// `buffer.ToString()`: one character per byte.
+inline Value bufToString(Value v, OwnList* list) {
+    if (!ownedOf(v)) return destroyedError(v);
+    Buf* b = bufOf(v);
+    Str* r = allocStr(b->length, list);
+    char16_t* d = strChars(r);
+    for (uint32_t i = 0; i < b->length; i++) d[i] = b->bytes()[i];
+    return StrV(r);
+}
+/// `buffer.ToUnicode(width)`
+inline Value bufToUnicode(Value v, Value width, OwnList* list) {
+    if (!ownedOf(v)) return destroyedError(v);
+    checkCharWidth(width);
+    Buf* b = bufOf(v);
+    if (FIRE_UNLIKELY(b->length % (uint32_t)width.i != 0)) fatal("The buffer size is not a multiple of the character width.");
+    uint32_t count = b->length / (uint32_t)width.i;
+    Str* r = allocStr(count, list);
+    char16_t* d = strChars(r);
+    for (uint32_t i = 0; i < count; i++) d[i] = (char16_t)readCodeUnit(b->bytes() + i * (uint32_t)width.i, (int)width.i, b->little);
+    return StrV(r);
+}
+/// `buffer.ToUnicodeChar(width)`: the first `width` bytes as one character.
+inline Value bufToUnicodeChar(Value v, Value width) {
+    if (!ownedOf(v)) return destroyedError(v);
+    checkCharWidth(width);
+    Buf* b = bufOf(v);
+    if (FIRE_UNLIKELY(b->length < (uint32_t)width.i)) fatal("The buffer is too small for the character width.");
+    return Char(readCodeUnit(b->bytes(), (int)width.i, b->little));
+}
+/// `buffer.ToLittleEndian()` / `ToBigEndian()`: a copy, mirrored as one block when the order differs.
+inline Value bufToEndian(Value v, bool little, OwnList* list) {
+    if (!ownedOf(v)) return destroyedError(v);
+    Buf* b = bufOf(v);
+    Buf* c = allocBuf(b->length, list);
+    if ((b->little != 0) == little) std::memcpy(c->bytes(), b->bytes(), b->length);
+    else for (uint32_t i = 0; i < b->length; i++) c->bytes()[i] = b->bytes()[b->length - 1 - i];
+    c->little = little ? 1 : 0;
+    return BufV(c);
 }
 
 inline Value newBuffer(Value size, OwnList* list) {

@@ -1,5 +1,6 @@
 ﻿using System.Globalization;
 using System.Text;
+using fire.Ast;
 using fire.Bytecode;
 using fire.Runtime;
 using fire.Standard;
@@ -213,14 +214,67 @@ namespace fire.Native
             (ValueKind.Float, "K_Float"), (ValueKind.Bool, "K_Bool"), (ValueKind.Array, "K_Array"),
         };
 
+        // ---- Access modifiers (SPEC 5.7): checked in Debug and Release, not in Performance ----------------------------------------------
+        private bool CheckAccess => _program.ExecutionMode != VmExecutionMode.Performance;
+        private static string DescribeAccess(AccessModifier access) => access switch { AccessModifier.Private => "private", AccessModifier.Protected => "protected", _ => "public" };
+
+        /// <summary>May code of the class <paramref name="caller"/> (null: top-level code) use a member that <paramref name="declaring"/> declares with this access?</summary>
+        private static bool AccessAllowed(RuntimeClass? caller, RuntimeClass declaring, AccessModifier access)
+        {
+            if (access == AccessModifier.Public) return true;
+            if (caller == null) return false;
+            // classes are compared by name: the linked program need not keep one object per class
+            if (access == AccessModifier.Private) return caller.Name == declaring.Name;
+            for (var rc = caller; rc != null; rc = rc.Base) if (rc.Name == declaring.Name) return true;
+            return false;
+        }
+
+        /// <summary>The class of the code of this function as a number for the checks at run time (no class: all ones).</summary>
+        private string CallerId(Func f) => f.Chunk.OwnerClass is { } owner && CheckAccess ? RegisterClass(owner.Name).Id.ToString(CultureInfo.InvariantCulture) : "0xFFFFFFFFu";
+
+        private bool RestrictedMethodName(string name) =>
+            CheckAccess && _program.Program.Classes.Values.Any(rc => rc.Methods.TryGetValue(name, out var list) && list.Any(m => m.Access is { } a && a != AccessModifier.Public));
+
+        /// <summary>Is some field (or property accessor) of this name private or protected somewhere? Then the field helpers check the class of the caller.</summary>
+        private bool RestrictedField(string name) =>
+            CheckAccess && (_program.Program.Classes.Values.Any(rc => rc.OwnFieldInfo.TryGetValue(name, out var info) && info.AccessModifier != AccessModifier.Public)
+                || RestrictedMethodName("get_" + name) || RestrictedMethodName("set_" + name));
+
+        /// <summary>The condition (over `caller`) under which the member may be used, empty when everybody may.</summary>
+        private string AllowedExpr(RuntimeClass declaring, AccessModifier access)
+        {
+            if (access == AccessModifier.Public) return "";
+            var ids = _classList.Where(c => AccessAllowed(c.Rc, declaring, access)).Select(c => c.Id).ToList();
+            return ids.Count == 0 ? "false" : "(" + string.Join(" || ", ids.Select(id => $"caller == {id}")) + ")";
+        }
+
+        /// <summary>The extra arguments of a field helper: the scope list when a class has a property of that name, the caller's class when the name is restricted.</summary>
+        private string FieldTail(string name, Func f, System.Func<string> list) =>
+            (HasProperty(name) ? ", " + list() : "") + (RestrictedField(name) ? ", " + CallerId(f) : "");
+
+        private HashSet<FunctionProto>? _extensionProtos;
+        /// <summary>Is the function a method of a base-type extension (`class extends string`)? Its `this` is then a value that can be a string or an array (reference counted).</summary>
+        private bool IsExtensionMethod(FunctionProto? proto)
+        {
+            if (proto == null) return false;
+            if (_extensionProtos == null)
+            {
+                _extensionProtos = new HashSet<FunctionProto>();
+                foreach (var (kind, _) in ExtendableKinds)
+                    if (BaseTypeExtensions.ClassNameFor(kind) is { } className && _program.Program.Classes.TryGetValue(className, out var rc))
+                        foreach (var list in rc.Methods.Values) foreach (var m in list) _extensionProtos.Add(m);
+            }
+            return _extensionProtos.Contains(proto);
+        }
+
         /// <summary>The methods of a base-type extension (`class extends string`) for this name, per kind of receiver.</summary>
-        private IEnumerable<(string Cpp, FunctionProto Proto)> ExtensionMethods(string name, int argc)
+        private IEnumerable<(string Cpp, FunctionProto Proto, RuntimeClass Rc)> ExtensionMethods(string name, int argc)
         {
             foreach (var (kind, cpp) in ExtendableKinds)
                 if (BaseTypeExtensions.ClassNameFor(kind) is { } className
                     && _program.Program.Classes.TryGetValue(className, out var rc)
                     && rc.FindMethodWithAccess(name, argc).Proto is { } proto)
-                    yield return (cpp, proto);
+                    yield return (cpp, proto, rc);
         }
 
         /// <summary>Is the class <paramref name="rc"/>, a base class of it or an interface of it called <paramref name="name"/>? (what a typed `catch` matches)</summary>
@@ -322,7 +376,7 @@ namespace fire.Native
             }
             foreach (var name in _fieldNames)
             {
-                string lp = HasProperty(name) ? ", OwnList* list" : "";
+                string lp = (HasProperty(name) ? ", OwnList* list" : "") + (RestrictedField(name) ? ", uint32_t caller" : "");
                 sb.AppendLine($"[[maybe_unused]] static inline Value gf_{Mangle(name)}(Value v{lp});").AppendLine($"[[maybe_unused]] static inline void sf_{Mangle(name)}(Value v, Value x{lp});").AppendLine($"[[maybe_unused]] static inline Value fp_{Mangle(name)}(Value v);");
             }
             foreach (var (name, argc) in _dispatchers) sb.AppendLine(DispatcherSignature(name, argc) + ";");
@@ -341,7 +395,7 @@ namespace fire.Native
                 {
                     sb.AppendLine("    if (a.kind == K_Class) {");
                     sb.AppendLine("        switch (asObj(a)->cls) {");
-                    sb.AppendLine("            " + string.Concat(ids.Select(id => $"case {id}: ")) + $"{{ Value r = call_{Mangle(method)}_1(a, b{(DispatchNeedsDefaults(method, 1) ? ", list" : "")}); adopt(r, list); return r; }}");
+                    sb.AppendLine("            " + string.Concat(ids.Select(id => $"case {id}: ")) + $"{{ Value r = call_{Mangle(method)}_1(a, b{DispatchTail(method, 1, "list", "0xFFFFFFFFu")}); adopt(r, list); return r; }}");
                     sb.AppendLine("            default: break;");
                     sb.AppendLine("        }");
                     sb.AppendLine("    }");
@@ -399,6 +453,8 @@ namespace fire.Native
                 if (destroyedError.Rc.FindConstructor(1) is { } destroyedCtor && destroyedCtor.ParamCount == 1) GetFunc(destroyedCtor, FuncKind.Ctor);
                 var unitError = RegisterClass("UnitMismatchException");
                 if (unitError.Rc.FindConstructor(3) is { } unitCtor && unitCtor.ParamCount == 3) GetFunc(unitCtor, FuncKind.Ctor);
+                var accessError = RegisterClass("AccessDeniedException");
+                if (accessError.Rc.FindConstructor(1) is { } accessCtor && accessCtor.ParamCount == 1) GetFunc(accessCtor, FuncKind.Ctor);
             }
             foreach (var field in _fieldNames.ToList())
                 foreach (var cls in _classList.ToList())
@@ -430,7 +486,7 @@ namespace fire.Native
                         GetFunc(method, FuncKind.Method);
                         DefaultArgs(method, argc, "self", "list");   // registers the functions of the default values
                     }
-                foreach (var (_, method) in ExtensionMethods(name, argc))
+                foreach (var (_, method, _) in ExtensionMethods(name, argc))
                 {
                     GetFunc(method, FuncKind.Method);
                     DefaultArgs(method, argc, "self", "list");
@@ -467,11 +523,37 @@ namespace fire.Native
             _program.Program.Classes.Values.Any(rc => rc.FindMethodWithAccess(name, argc).Proto is { } m && m.ParamCount != argc)
             || ExtensionMethods(name, argc).Any(e => e.Proto.ParamCount != argc);
 
+        /// <summary>The conversions of the base types that a method call reaches when no class defines the method (SPEC 8.10): per kind of receiver the C++ expression.</summary>
+        private static IEnumerable<(string Kind, string Expr)> BuiltinMethods(string name, int argc)
+        {
+            switch ((name, argc))
+            {
+                case ("ToBytes", 0): yield return ("K_String", "strToBytes(self, list)"); break;
+                case ("ToUnicode", 1): yield return ("K_String", "strToUnicode(self, a0, list)"); yield return ("K_Char", "charToUnicode(self, a0, list)"); yield return ("K_Buffer", "bufToUnicode(self, a0, list)"); break;
+                case ("ToUnicode", 0): yield return ("K_Buffer", "bufToUnicode(self, Int(2), list)"); break;
+                case ("ToByte", 0): yield return ("K_Char", "charToByte(self)"); break;
+                case ("ToChar", 0): yield return ("K_Int", "byteToChar(self)"); break;
+                case ("ToString", 0): yield return ("K_Buffer", "bufToString(self, list)"); break;
+                case ("ToUnicodeChar", 0): yield return ("K_Buffer", "bufToUnicodeChar(self, Int(2))"); break;
+                case ("ToUnicodeChar", 1): yield return ("K_Buffer", "bufToUnicodeChar(self, a0)"); break;
+                case ("ToLittleEndian", 0): yield return ("K_Buffer", "bufToEndian(self, true, list)"); break;
+                case ("ToBigEndian", 0): yield return ("K_Buffer", "bufToEndian(self, false, list)"); break;
+            }
+        }
+
+        private bool DispatchNeedsList(string name, int argc) =>
+            name == "GetEnumerator" && argc == 0 || OwnMethodId(name, argc) != null || DispatchNeedsDefaults(name, argc) || BuiltinMethods(name, argc).Any();
+
+        /// <summary>The arguments after the operands of a dispatcher call (see <see cref="DispatcherSignature"/>).</summary>
+        private string DispatchTail(string name, int argc, string list, string caller) =>
+            (DispatchNeedsList(name, argc) ? ", " + list : "") + (RestrictedMethodName(name) ? ", " + caller : "");
+
         private string DispatcherSignature(string name, int argc)
         {
             var parameters = new List<string> { "Value self" };
             parameters.AddRange(Enumerable.Range(0, argc).Select(i => $"Value a{i}"));
-            if (name == "GetEnumerator" && argc == 0 || OwnMethodId(name, argc) != null || DispatchNeedsDefaults(name, argc)) parameters.Add("OwnList* list");
+            if (DispatchNeedsList(name, argc)) parameters.Add("OwnList* list");
+            if (RestrictedMethodName(name)) parameters.Add("uint32_t caller");
             return $"static Value call_{Mangle(name)}_{argc}(" + string.Join(", ", parameters) + ")";
         }
 
@@ -489,24 +571,37 @@ namespace fire.Native
                 }
             var extensions = ExtensionMethods(name, argc).ToList();
             bool enumeratorOfArray = name == "GetEnumerator" && argc == 0 && _classes.ContainsKey("ListEnumerator");
-            if (byFunc.Count == 0 && extensions.Count == 0 && !enumeratorOfArray && OwnMethodId(name, argc) == null)
+            var builtins = BuiltinMethods(name, argc).ToList();
+            if (byFunc.Count == 0 && extensions.Count == 0 && !enumeratorOfArray && OwnMethodId(name, argc) == null && builtins.Count == 0)
                 throw new NativeNotSupportedException($"method '{name}' with {argc} argument(s): no class of the program and no base-type extension defines it (the built-in methods TakeTo, TakeUpwards and TakeGlobal are not supported yet)");
 
             // a call site that passes addresses: an implementation without `ref` for that position gets the value
             bool derefs = _refCallSites.Contains((name, argc));
             string ArgsFor(FunctionProto proto) => string.Concat(Enumerable.Range(0, argc).Select(i => derefs && (proto.RefMask >> i & 1) == 0 ? $", derefArg(a{i})" : $", a{i}"));
             // an implementation with default values: the missing arguments are evaluated first (in order), then it is called
-            string CallImpl(string target, FunctionProto proto)
+            bool restricted = RestrictedMethodName(name);
+            string CallImpl(string target, FunctionProto proto, RuntimeClass? sample = null, bool extension = false)
             {
                 var (pre, defaults) = DefaultArgs(proto, argc, "self", "list");
-                return pre.Length == 0 ? $"return {target}(self{ArgsFor(proto)});" : $"{{ {pre}return {target}(self{ArgsFor(proto)}{defaults}); }}";
+                string access = "";
+                if (restricted && sample != null && sample.FindMethodWithAccess(name, argc) is { Proto: not null } found && found.Access != AccessModifier.Public)
+                {
+                    string cond = AllowedExpr(found.DeclaringClass!, found.Access);
+                    string message = extension
+                        ? $"Method '{name}' of the extension of '{sample.Name.Substring(1)}' is {DescribeAccess(found.Access)} and cannot be called from here."
+                        : $"Method '{name}' of '{found.DeclaringClass!.Name}' is {DescribeAccess(found.Access)} and cannot be called from here.";
+                    access = $"if (!{cond}) return accessDenied({CString(message)}); ";
+                }
+                return pre.Length == 0 ? $"{{ {access}return {target}(self{ArgsFor(proto)}); }}" : $"{{ {access}{pre}return {target}(self{ArgsFor(proto)}{defaults}); }}";
             }
             var sb = new StringBuilder();
             sb.AppendLine(DispatcherSignature(name, argc));
             sb.AppendLine("{");
             sb.AppendLine("    switch (self.kind) {");
-            foreach (var (cpp, proto) in extensions)
-                sb.AppendLine($"        case {cpp}: {CallImpl(_funcByProto[proto].Name, proto)}");
+            foreach (var (cpp, proto, extensionRc) in extensions)
+                sb.AppendLine($"        case {cpp}: {CallImpl(_funcByProto[proto].Name, proto, extensionRc, true)}");
+            foreach (var (kind, expr) in builtins)
+                if (!extensions.Any(e => e.Cpp == kind)) sb.AppendLine($"        case {kind}: return {expr};");
             if (enumeratorOfArray)
             {
                 var info = _classes["ListEnumerator"];
@@ -523,14 +618,14 @@ namespace fire.Native
             {
                 sb.AppendLine("        case K_Class:");
                 if (byFunc.Count == 1 && byFunc.Values.First().Count == _classList.Count)
-                    sb.AppendLine($"            asObj(self); {CallImpl(byFunc.Keys.First().Name, byFunc.Keys.First().Proto!)}");
+                    sb.AppendLine($"            asObj(self); {CallImpl(byFunc.Keys.First().Name, byFunc.Keys.First().Proto!, _classList.First().Rc)}");
                 else
                 {
                     sb.AppendLine("            switch (asObj(self)->cls) {");
                     foreach (var (f, ids) in byFunc)
                     {
                         foreach (int id in ids) sb.AppendLine($"                case {id}:");
-                        sb.AppendLine($"                    {CallImpl(f.Name, f.Proto!)}");
+                        sb.AppendLine($"                    {CallImpl(f.Name, f.Proto!, _classList.First(c => c.Id == ids[0]).Rc)}");
                     }
                     sb.AppendLine("                default: break;");
                     sb.AppendLine("            }");
@@ -557,16 +652,15 @@ namespace fire.Native
             var indexByClass = new Dictionary<int, int>();
             foreach (var cls in _classList)
                 if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) indexByClass[cls.Id] = index;
-            if (HasProperty(name)) return PropertyHelpers(name, indexByClass);
+            if (HasProperty(name) || RestrictedField(name)) return PropertyHelpers(name, indexByClass);
             bool isLength = name is "Length" or "length";
-            if (indexByClass.Count == 0 && !isLength)
-                throw new NativeNotSupportedException($"member '{name}': no class of the program has a field with this name (built-in members are not supported yet)");
-
             string m = Mangle(name);
-            string lengthCode = isLength ? "    { bool ok; Value n = lengthOf(v, &ok); if (ok) return n; }\n" : "";
+            string lengthCode = isLength ? "    { bool ok; Value n = lengthOf(v, &ok); if (ok) return n; }\n"
+                : name == "littleEndian" ? "    if (v.kind == K_Buffer) return Bool(bufOf(v)->little != 0);\n" : "";
             var sb = new StringBuilder();
             if (indexByClass.Count == 0)
             {
+                // no object of the program has such a field: only a built-in member (or dead code) can get here
                 sb.AppendLine($"static inline Value gf_{m}(Value v) {{\n{lengthCode}    fatal(\"Field '{name}' not found on this value.\");\n}}");
                 sb.AppendLine($"static inline void sf_{m}(Value v, Value x) {{ (void)v; (void)x; fatal(\"Field '{name}' cannot be assigned.\"); }}");
                 sb.AppendLine($"static inline Value fp_{m}(Value v) {{ (void)v; fatal(\"Field '{name}' not found on this object.\"); }}");
@@ -608,7 +702,8 @@ namespace fire.Native
         {
             string m = Mangle(name);
             bool isLength = name is "Length" or "length";
-            string lengthCode = isLength ? "    { bool ok; Value n = lengthOf(v, &ok); if (ok) return n; }\n" : "";
+            string lengthCode = isLength ? "    { bool ok; Value n = lengthOf(v, &ok); if (ok) return n; }\n"
+                : name == "littleEndian" ? "    if (v.kind == K_Buffer) return Bool(bufOf(v)->little != 0);\n" : "";
             var get = new StringBuilder();
             var set = new StringBuilder();
             var ptr = new StringBuilder();
@@ -617,24 +712,41 @@ namespace fire.Native
                 string label = $"        case {cls.Id}: ";
                 if (indexByClass.TryGetValue(cls.Id, out int index))
                 {
-                    get.AppendLine($"{label}return o->fields()[{index}];");
+                    string fieldGuard = "", fieldGuardSet = "";
+                    if (CheckAccess && cls.Rc.FindFieldAccess(name) is { } fieldAccess && fieldAccess.Access != AccessModifier.Public)
+                    {
+                        string text = CString($"Field '{name}' of '{fieldAccess.DeclaringClass.Name}' is {DescribeAccess(fieldAccess.Access)} and cannot be accessed from here.");
+                        string cond = AllowedExpr(fieldAccess.DeclaringClass, fieldAccess.Access);
+                        fieldGuard = $"if (!{cond}) return accessDenied({text}); ";
+                        fieldGuardSet = $"if (!{cond}) {{ accessDenied({text}); return; }} ";
+                    }
+                    get.AppendLine($"{label}{{ {fieldGuard}return o->fields()[{index}]; }}");
                     string unit = cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit
                         ? $"checkUnit(x, {UnitId(Unit.Parse(requiredUnit))}, {Constant(Value.MakeString(requiredUnit))}); " + (_usesExceptions ? "if (FIRE_UNLIKELY(g_unwind.active)) return; " : "")
                         : "";
-                    set.AppendLine($"{label}{{ {unit}Value old = o->fields()[{index}]; o->fields()[{index}] = x; retain(x); release(old); return; }}");
+                    set.AppendLine($"{label}{{ {fieldGuardSet}{unit}Value old = o->fields()[{index}]; o->fields()[{index}] = x; retain(x); release(old); return; }}");
                     ptr.AppendLine($"{label}return PtrV(&o->fields()[{index}]);");
                     continue;
                 }
-                var getter = cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto;
-                var setter = cls.Rc.FindMethodWithAccess("set_" + name, 1).Proto;
-                if (getter != null) get.AppendLine($"{label}{{ Value r = {_funcByProto[getter].Name}(v); adopt(r, list); return r; }}");
+                var (getter, getterDecl, getterAccess) = cls.Rc.FindMethodWithAccess("get_" + name, 0);
+                var (setter, setterDecl, setterAccess) = cls.Rc.FindMethodWithAccess("set_" + name, 1);
+                string AccessorGuard(string method, RuntimeClass decl, AccessModifier access, bool isSetter)
+                {
+                    if (!CheckAccess || access == AccessModifier.Public) return "";
+                    string text = CString($"'{method}' of '{decl.Name}' is {DescribeAccess(access)} and cannot be accessed from here.");
+                    string cond = AllowedExpr(decl, access);
+                    return isSetter ? $"if (!{cond}) {{ accessDenied({text}); return; }} " : $"if (!{cond}) return accessDenied({text}); ";
+                }
+                if (getter != null) get.AppendLine($"{label}{{ {AccessorGuard("get_" + name, getterDecl!, getterAccess, false)}Value r = {_funcByProto[getter].Name}(v); adopt(r, list); return r; }}");
                 else if (setter != null) get.AppendLine($"{label}fatal(\"Property '{name}' of '{cls.Rc.Name}' has no getter (only 'set').\");");
-                if (setter != null) set.AppendLine($"{label}{{ Value r = {_funcByProto[setter].Name}(v, x); adopt(r, list); return; }}");
+                if (setter != null) set.AppendLine($"{label}{{ {AccessorGuard("set_" + name, setterDecl!, setterAccess, true)}Value r = {_funcByProto[setter].Name}(v, x); adopt(r, list); return; }}");
                 else if (getter != null) set.AppendLine($"{label}fatal(\"Property '{name}' on '{cls.Rc.Name}' has no setter (only 'get').\");");
             }
             var sb = new StringBuilder();
-            sb.AppendLine($"static inline Value gf_{m}(Value v, OwnList* list) {{\n{lengthCode}    (void)list;\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{get}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
-            sb.AppendLine($"static inline void sf_{m}(Value v, Value x, OwnList* list) {{\n    (void)x; (void)list;\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{set}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
+            string lp = (HasProperty(name) ? ", OwnList* list" : "") + (RestrictedField(name) ? ", uint32_t caller" : "");
+            string unusedLp = (HasProperty(name) ? "(void)list; " : "") + (RestrictedField(name) ? "(void)caller; " : "");
+            sb.AppendLine($"static inline Value gf_{m}(Value v{lp}) {{\n{lengthCode}    {unusedLp}\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{get}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
+            sb.AppendLine($"static inline void sf_{m}(Value v, Value x{lp}) {{\n    (void)x; {unusedLp}\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{set}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
             sb.AppendLine($"static inline Value fp_{m}(Value v) {{\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{ptr}        default: fatal(\"The address of '{name}' cannot be taken (it is a property or does not exist).\");\n    }}\n}}");
             return sb.ToString();
         }
@@ -646,14 +758,14 @@ namespace fire.Native
             sb.AppendLine("static inline Value aget_g(Value a, Value i, OwnList* list) {");
             if (_dispatchers.Contains(("GetIndex", 1)))
             {
-                sb.AppendLine("    if (a.kind == K_Class) { Value r = call_GetIndex_1(a, i); adopt(r, list); return r; }");
+                sb.AppendLine($"    if (a.kind == K_Class) {{ Value r = call_GetIndex_1(a, i{DispatchTail("GetIndex", 1, "list", "0xFFFFFFFFu")}); adopt(r, list); return r; }}");
             }
             else sb.AppendLine("    (void)list;");
             sb.AppendLine("    return arrayGet(a, i);");
             sb.AppendLine("}");
             sb.AppendLine("static inline void aset_g(Value a, Value i, Value v, OwnList* list) {");
             if (_dispatchers.Contains(("SetIndex", 2)))
-                sb.AppendLine("    if (a.kind == K_Class) { Value r = call_SetIndex_2(a, i, v); adopt(r, list); return; }");
+                sb.AppendLine($"    if (a.kind == K_Class) {{ Value r = call_SetIndex_2(a, i, v{DispatchTail("SetIndex", 2, "list", "0xFFFFFFFFu")}); adopt(r, list); return; }}");
             else sb.AppendLine("    (void)list;");
             sb.AppendLine("    arraySet(a, i, v);");
             sb.AppendLine("}");
@@ -710,6 +822,12 @@ namespace fire.Native
                 sb.AppendLine("Value makeDestroyedError(Value message) {");
                 sb.AppendLine($"    Value o = newObject({destroyedClass.Id}, {destroyedClass.Fields.Count}, g_globalOwn);");
                 sb.AppendLine($"    {_funcByProto[destroyedClass.Rc.FindConstructor(1)!].Name}(o, message);");
+                sb.AppendLine("    return o;");
+                sb.AppendLine("}");
+                var accessClass = _classes.GetValueOrDefault("AccessDeniedException") ?? throw new NativeNotSupportedException("exceptions need the prelude class AccessDeniedException");
+                sb.AppendLine("Value makeAccessError(Value message) {");
+                sb.AppendLine($"    Value o = newObject({accessClass.Id}, {accessClass.Fields.Count}, g_globalOwn);");
+                sb.AppendLine($"    {_funcByProto[accessClass.Rc.FindConstructor(1)!].Name}(o, message);");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
                 var unitClass = _classes.GetValueOrDefault("UnitMismatchException") ?? throw new NativeNotSupportedException("exceptions need the prelude class UnitMismatchException");
@@ -1201,6 +1319,13 @@ namespace fire.Native
                 f.NeedsList.Add(st.Scopes[^1].Id);
                 return ListName(st.Scopes[^1].Id);
             }
+            // A member that the code of this function may not use: the access is an AccessDeniedException (the code after it is dead when it is thrown)
+            void AccessCheck(RuntimeClass declaring, AccessModifier access, string message)
+            {
+                if (!CheckAccess || AccessAllowed(f.Chunk.OwnerClass, declaring, access)) return;
+                E($"accessDenied({CString(message)});");
+                Check();
+            }
             void RequireSelf() { if (!f.HasSelf && f.Kind != FuncKind.Lambda) throw new NativeNotSupportedException($"'this' outside of an instance member ({fn} at {ins.Addr})"); }
             string Args(int first, int count) => string.Concat(Enumerable.Range(first, count).Select(i => ", " + S(i)));
             // `ref` arguments (SPEC 5.4.2): the prefix CopyArgs in front of the call marks the arguments that carry an address (bits 3); `flat`/`copy` are not translated yet.
@@ -1517,6 +1642,8 @@ namespace fire.Native
                     var proto = rc.FindMethodWithAccess(method, argc).Proto
                         ?? throw new NativeNotSupportedException($"{cls}.{method} with {argc} argument(s) not found");
                     if (!proto.IsStatic) throw new NativeNotSupportedException($"{cls}.{method} is not static");
+                    if (rc.FindMethodWithAccess(method, argc) is { } staticFound)
+                        AccessCheck(staticFound.DeclaringClass!, staticFound.Access, $"Static method '{method}' of '{staticFound.DeclaringClass!.Name}' is {DescribeAccess(staticFound.Access)} and cannot be called from here.");
                     var target = GetFunc(proto, FuncKind.Static);
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
@@ -1556,13 +1683,13 @@ namespace fire.Native
                 // Objects
                 // ---------------------------------------------------------------------------------------------------
                 case OpCode.LoadThis:
-                    RequireSelf(); E($"{S(d)} = self;"); SetR(d, false); d++; return Next();
+                    RequireSelf(); E($"{S(d)} = self;"); SetR(d, IsExtensionMethod(f.Proto)); d++; return Next();
                 case OpCode.GetField:
                 {
                     Need(1);
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    if (HasProperty(field)) { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)}, &{OwnerList()});"); Check(); }
+                    if (HasProperty(field) || RestrictedField(field)) { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});"); Check(); }
                     else E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)});");
                     SetR(d - 1, true);
                     return Next();
@@ -1572,7 +1699,7 @@ namespace fire.Native
                     Need(2);
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    E($"sf_{Mangle(field)}({S(d - 2)}, {S(d - 1)}{(HasProperty(field) ? ", &" + OwnerList() : "")});");
+                    E($"sf_{Mangle(field)}({S(d - 2)}, {S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});");
                     Check();
                     E($"{S(d - 2)} = {S(d - 1)};");
                     SetR(d - 2, R(d - 1));
@@ -1583,7 +1710,7 @@ namespace fire.Native
                     Need(1); RequireSelf();
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    E($"sf_{Mangle(field)}(self, {S(d - 1)}{(HasProperty(field) ? ", &" + OwnerList() : "")});");
+                    E($"sf_{Mangle(field)}(self, {S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});");
                     Check();
                     d--; return Next();
                 }
@@ -1595,6 +1722,7 @@ namespace fire.Native
                     Need(argc + (owned ? 1 : 0));
                     var cls = RegisterClass(Str(ins.A[0]));
                     var ctor = cls.Rc.FindConstructor(argc) ?? throw new NativeNotSupportedException($"class {cls.Rc.Name} has no constructor with {argc} argument(s)");
+                    AccessCheck(cls.Rc, ctor.Access ?? AccessModifier.Public, $"Constructor of '{cls.Rc.Name}' is {DescribeAccess(ctor.Access ?? AccessModifier.Public)} and cannot be called from here.");
                     var target = GetFunc(ctor, FuncKind.Ctor);
                     int slot = d - argc - (owned ? 1 : 0);
                     string ownerExpr = owned ? $"&asObj({S(slot)})->owned" : "&" + OwnerList();
@@ -1657,7 +1785,7 @@ namespace fire.Native
                     }
                     _dispatchers.Add((method, argc));
                     if (Enumerable.Range(0, Math.Min(argc, 16)).Any(i => (ArgMask() >> (4 * i) & 15) == 3)) _refCallSites.Add((method, argc));
-                    string extra = method == "GetEnumerator" && argc == 0 || OwnMethodId(method, argc) != null || DispatchNeedsDefaults(method, argc) ? $", &{owner}" : "";
+                    string extra = DispatchTail(method, argc, "&" + owner, CallerId(f));
                     long dmask = ArgMask();
                     ArgsBefore(d - argc, argc, dmask);
                     E($"{S(slot)} = call_{Mangle(method)}_{argc}({S(slot)}{Args(d - argc, argc)}{extra});");
@@ -1673,6 +1801,8 @@ namespace fire.Native
                     var rc = FindClass(Str(ins.A[0]));
                     string method = Str(ins.A[1]);
                     var proto = rc.FindMethodWithAccess(method, argc).Proto ?? throw new NativeNotSupportedException($"{rc.Name}.{method} with {argc} argument(s) not found");
+                    if (rc.FindMethodWithAccess(method, argc) is { Proto: not null } baseFound)
+                        AccessCheck(baseFound.DeclaringClass!, baseFound.Access, $"Method '{method}' of '{baseFound.DeclaringClass!.Name}' is {DescribeAccess(baseFound.Access)} and cannot be called from here.");
                     var target = GetFunc(proto, FuncKind.Method);
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
@@ -1694,6 +1824,8 @@ namespace fire.Native
                         AdoptResult(d);
                         d++; return Next();
                     }
+                    if (FindClass(Str(ins.A[0])).FindFieldAccess(Str(ins.A[1])) is { } getAccess)
+                        AccessCheck(getAccess.DeclaringClass, getAccess.Access, $"Static field '{Str(ins.A[1])}' of '{getAccess.DeclaringClass.Name}' is {DescribeAccess(getAccess.Access)} and cannot be accessed from here.");
                     int index = StaticFieldIndex(Str(ins.A[0]), Str(ins.A[1]));
                     E($"{S(d)} = SF{index};");
                     SetR(d, VarRef($"SF{index}"));
@@ -1710,6 +1842,9 @@ namespace fire.Native
                         Check();
                         return Next();
                     }
+                    // (the initializer of a static field runs for its class, whatever the access)
+                    if (ins.Op == OpCode.SetStaticField && FindClass(Str(ins.A[0])).FindFieldAccess(Str(ins.A[1])) is { } setAccess)
+                        AccessCheck(setAccess.DeclaringClass, setAccess.Access, $"Static field '{Str(ins.A[1])}' of '{setAccess.DeclaringClass.Name}' is {DescribeAccess(setAccess.Access)} and cannot be accessed from here.");
                     int index = StaticFieldIndex(Str(ins.A[0]), Str(ins.A[1]));
                     StoreVar($"SF{index}", d - 1);
                     return Next();
