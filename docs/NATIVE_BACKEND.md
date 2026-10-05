@@ -340,7 +340,21 @@ Blockieren). Mitgeliefert: `std/fire_dev_posix.hpp` (termios; Linux `/dev/ttyS*|
 UART-Treibers. Die Gerätliste entsteht beim ersten Zugriff auf eine Geräte-Funktion und bei jedem `Refresh` (in einem VM-Programm ohne Editor ist sie vor dem ersten `Refresh` leer). Die Warte-Funktionen
 benutzen `#timeout` (`SetTimeout` setzt `g_defaultTimeoutTicks`), warten mit freigegebenem GIL und enden bei `terminate`.
 
-Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), die Bridge Graphics.
+**`graphics`** (`fire_bridge_graphics.hpp`, Zeichencode in `bridges/graphics/`): `Framebuffer` (RGBA und Palette, Palette, Transparenz), `Console` (Text mit der 8x14-Schrift, Linien, Rechtecke,
+Kreise, Ellipsen, Dreiecke, Polygone, Füllen, `Blit` zwischen den Farbmodi), Bilder (PNG, BMP, GIF aus Bytes und aus Dateien) und der `Slicer`. Das ist ein Port von `src/fire.Terminal` ohne
+Betriebssystem und ohne Ausnahmen - dieselben Pixel kommen heraus (die Tests vergleichen Prüfsummen mit der VM). Dateien liest das Plattformpaket (`FIRE_PLATFORM_FS_HEADER`, begrenzt durch
+`FIRE_IO_POLICY` wie bei IO). Abweichungen: eine unbekannte oder zerstörte Ressourcen-ID beendet das Programm mit einer Meldung (die VM wirft eine .NET-Ausnahme); die verschachtelten Arrays,
+die `Slicer.Slice` liefert, gehören dem globalen Scope (die VM liefert freie Arrays, die ein `ToolPath` behält).
+
+**`windows`** (`fire_bridge_windows.hpp`): `Window` zeigt einen Framebuffer und liefert Ereignisse, wie in der VM: `Tick` holt die Ereignisse, zeigt den Framebuffer und führt dann die angemeldeten
+Callbacks aus (auf dem aufrufenden Thread mit den echten Globals; eine nicht gefangene Ausnahme beendet nur den Callback und wird gemeldet); `EnableEvents`/`NextEvent` liefern sie als Warteschlange.
+Das Fenster selbst ist die **Anzeige** des Plattformpakets (`platform/<name>/fire_display.hpp`, als `FIRE_PLATFORM_DISPLAY_HEADER` eingebunden): `fire::plat::disp::Window` mit
+`open/close/pump/present/setVSync`. Mitgeliefert: `std/fire_display_sdl.hpp` (SDL2, für `posix` und `windows`; das Programm bittet den Build mit der Zeile `// fire-link: SDL2` um `-lSDL2` bzw. `SDL2.lib`)
+und `std/fire_display_none.hpp` (kein Bildschirm: `new Window` wirft eine `HandleUnavailableException`; ein Board-Paket liefert seine eigene Anzeige). Die VM nutzt SDL3, die Tasten- und
+Maus-Werte sind dieselben. Die Tests laufen mit dem SDL-Dummy-Treiber (`SDL_VIDEODRIVER=dummy`) und `-DFIRE_DISPLAY_SELFTEST`, das beim Öffnen eine feste Folge von Ereignissen einspeist; die UI-Bibliothek
+(`#import "ui"`, reines fire) läuft damit nativ und zeichnet dieselben Pixel wie in der VM.
+
+Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`).
 
 ### Plattformschicht
 
@@ -421,7 +435,7 @@ C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich se
 3. ~~**Ausnahmen mit Resume**~~ - umgesetzt, siehe "Ausnahmen".
 4. ~~**Threads, `sync`, Safe-Points** (`leave`/`terminate`)~~ - umgesetzt (`std::thread` oder FreeRTOS-Tasks + GIL), siehe "Threads" und "Plattformschicht".
 5. **Bridges** (Variante A): eine C++-Implementierung mit C-ABI, die auch der C#-Editor per P/Invoke nutzt - IO und Time zuerst,
-   dann Graphics (SDL3 ist ohnehin C), zuletzt Devices.
+   dann Graphics (mit der Anzeige über SDL2/SDL3), zuletzt Devices.
 6. **Optimierungen**: Typinferenz und Einheiten-Folding, Devirtualisierung (geschlossene Welt), Inlining, Scope-Elision.
 7. **Zielprofil und ESP32**: Ziele (`--target`), `#if`, Stack-Analyse, Plattformpakete, ESP-IDF-Komponente.
 8. **Editor**: `Run -> Build Native`, Toolchain-Erkennung.
@@ -442,7 +456,7 @@ Präprozessor lesen dasselbe:
 | `Symbols` | Symbole für `#if` (SPEC 8.1.7) | `esp32`, `freertos` |
 | `FloatWidth` | Standard-Genauigkeit von `float` | 32 |
 | `DefaultStackBytes` | Standard-Stack eines `fire`-Threads | 8192 |
-| `Imports` | welche `#import`-Bibliotheken es dort gibt | print, io, devices, time, reflection, linq (kein `graphics`/`ui`) |
+| `Imports` | welche `#import`-Bibliotheken es dort gibt | print, io, devices, time, reflection, linq (kein `graphics`/`windows`/`ui`) |
 | `HalPackage` | Plattformpaket der C++-Runtime | `esp32` |
 | `IsEmbedded` | kein Betriebssystem-Prozess (der Einsprung steht in `Native.Entry`: `app_main`) | ja |
 

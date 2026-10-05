@@ -8549,6 +8549,31 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     Console.WriteLine(slFailures == 0 ? "Alle Slicer-Pruefungen bestanden." : $"FEHLER: {slFailures} Slicer-Pruefung(en) fehlgeschlagen.");
 }
 
+// the drawing of the UI library without events: run by the VM (fake renderer) below, natively (SDL dummy driver) in the native checks
+string uiDrawScript = """
+    var fb = new Framebuffer(320, 200)
+    var win = new Window(fb, "Test")
+    var ui = new UI.Root(fb, win)
+    var panel = new UI.Panel(8, 8, 300, 150)
+    ui.Add(panel)
+    panel.Add(new UI.Label("Hello UI", 6, 6))
+    panel.Add(new UI.Button("OK", 6, 26, 80, 26))
+    panel.Add(new UI.CheckBox("check me", 100, 30, true))
+    var box = new UI.TextBox("text", 6, 64, 160, 24)
+    panel.Add(box)
+    var stack = new UI.Stack(180, 60, 100, 80)
+    stack.Add(new UI.Button("one", 0, 0, 80, 20))
+    stack.Add(new UI.Button("two", 0, 0, 80, 20))
+    panel.Add(stack)
+    print(ui.Tick())
+    var bytes = fb.ReadBytes()
+    var h = 17
+    for (var i = 0; i < bytes.length; i++) { h = (h * 31 + bytes[i]) % 1000000007 }
+    print("hash " + h)
+    print(ui.Tick())
+    """;
+string[] uiDrawExpected = Array.Empty<string>();
+
 // ---------------------------------------------------------------------------
 // UI-Bibliothek (#import "ui"): headless - echte Framebuffer/Konsole/WindowManager, nur der Renderer ist eine Attrappe
 // ---------------------------------------------------------------------------
@@ -8595,6 +8620,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
         return lines;
     }
+
+    uiDrawExpected = RunUi(uiDrawScript, VmExecutionMode.Release).ToArray();
 
     void CheckUi(string title, string script, string[] expected)
     {
@@ -14161,6 +14188,161 @@ static int CountOccurrences(string haystack, string needle)
             """),
     }).ToArray();
 
+    // Graphics (bridges/fire_bridge_graphics.hpp)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Grafik: Framebuffer, Zeichnen, Palette, Blit, Fehler, Slicer (Konsole)", """
+            #import "graphics"
+            // a checksum of the pixels, order dependent
+            class Util {
+                static Hash(Framebuffer fb) {
+                    var bytes = fb.ReadBytes()
+                    var h = 17
+                    for (var i = 0; i < bytes.length; i++) { h = (h * 31 + bytes[i]) % 1000000007 }
+                    return h
+                }
+            }
+            var fb = new Framebuffer(64, 48)
+            var con = new Console(fb)
+            print(fb.Width() + "x" + fb.Height() + " mode " + fb.Mode() + " bytes " + fb.ByteCount())
+            con.Clear()
+            print("clear " + Util.Hash(fb))
+            con.FillRect(2, 3, 10, 7, 4)
+            con.DrawRect(1, 1, 20, 15, 14)
+            con.DrawLine(0, 0, 63, 47, 0xFF00FF00)
+            con.DrawLine(0, 47, 63, 0, 12)
+            con.DrawLine(5, 20, 50, 20, 0xFFFF8000)
+            print("basic " + Util.Hash(fb))
+            con.DrawCircle(30, 24, 10, 15)
+            con.FillCircle(10, 35, 6, 9)
+            con.DrawEllipse(40, 30, 12, 5, 11)
+            con.FillEllipse(45, 10, 8, 4, 13)
+            con.DrawCircle(0, 0, 0, 7)
+            con.FillCircle(5, 5, 1, 7)
+            print("round " + Util.Hash(fb))
+            con.DrawTriangle(2, 40, 14, 30, 22, 46, 10)
+            con.FillTriangle(50, 40, 60, 30, 62, 46, 3)
+            con.DrawPolygon([5, 5, 25, 8, 20, 25, 8, 20], 2, true)
+            con.DrawPolygon([30, 5, 40, 5, 35, 12], 5, false)
+            con.FillPolygon([0, 0, 12, 4, 6, 12, 10, 20, 0, 14], 6)
+            print("poly " + Util.Hash(fb))
+            con.FloodFill(20, 40, 200)
+            con.FloodFillBorder(60, 2, 100, 14)
+            print("flood " + Util.Hash(fb))
+            con.SetColor(15, 1)
+            con.Locate(0, 0)
+            con.Print("Hello, fire!\nSecond line äöü ÿ")
+            con.DrawText(3, 30, "Text", 0xFF0000FF, 0)
+            con.DrawText(3, 38, "Bg", 0xFFFFFFFF, 0xFF800000)
+            print("text " + Util.Hash(fb) + " " + con.CellWidth() + "x" + con.CellHeight())
+            print(con.GetPixel(2, 3) + " " + con.GetPixel(200, 3) + " " + con.GetPixelIndex(2, 3))
+            for (var i = 0; i < 8; i++) { con.Print("scroll " + i + "\n") }
+            print("scroll " + Util.Hash(fb))
+
+            // palette mode
+            var pal = new Framebuffer(32, 24, ColorMode.Palette)
+            var pcon = new Console(pal)
+            pcon.Clear()
+            pcon.FillRect(2, 2, 12, 9, 4)
+            pcon.DrawCircle(20, 12, 8, 0xFF3366FF)
+            pcon.DrawLine(0, 23, 31, 0, 40)
+            pcon.FillTriangle(3, 20, 10, 14, 14, 22, 200)
+            pcon.Print("Pal")
+            pal.SetPaletteRgb(4, 10, 200, 30)
+            print("pal " + Util.Hash(pal) + " " + pal.GetPaletteColor(4) + " " + pal.ReadPalette().length + " " + pal.ReadPalette(true).length)
+            pal.TransparentIndex = 0
+            print(pal.TransparentIndex)
+            // blit between modes and with scaling / flipping
+            con.Blit(pal, 40, 2)
+            con.BlitScaled(pal, 0, 0, 32, 24, 0, 24, -48, 20, BlitMode.Transparent)
+            con.BlitRegion(pal, 4, 4, 10, 8, 20, 36, BlitMode.Blend)
+            pcon.Blit(fb, 0, 0, 0, 0)
+            con.Blit(fb, 5, 5)
+            print("blit " + Util.Hash(fb) + " " + Util.Hash(pal))
+            var raw = new byte[16]
+            for (var i = 0; i < 16; i++) { raw[i] = (i * 37) % 256 }
+            raw[3] = 255
+            raw[7] = 128
+            raw[11] = 0
+            raw[15] = 255
+            var small = Framebuffer.FromPixels(2, 2, raw, ColorMode.Rgba)
+            print(small.ReadByte(5) + " " + small.ReadBytes().length)
+            small.WriteByte(0, 99)
+            print(small.ReadByte(0))
+            var sc = new Console(small)
+            print(sc.GetPixel(0, 0) + " " + sc.GetPixel(1, 0) + " " + sc.GetPixel(0, 1))
+            var idx = Framebuffer.FromPixels(2, 2, new byte[4], ColorMode.Palette)
+            print(idx.Mode() + " " + idx.ByteCount())
+            var mask = fb.ToMask(100, true, 128)
+            print(mask.Mode() + " " + Util.Hash(mask) + " " + mask.TransparentIndex)
+            try { Framebuffer.FromPixels(2, 2, new byte[3], ColorMode.Rgba) } catch (ImageException e) { print(e.message) }
+            try { small.WriteBytes(new byte[3]) } catch (GraphicsException e) { print(e.message) }
+            try { small.GetPaletteColor(300) } catch (GraphicsException e) { print(e.message) }
+            try { small.WritePalette(new byte[10]) } catch (GraphicsException e) { print(e.message) }
+            try { var bad = new Framebuffer(0, 5) } catch (HandleUnavailableException e) { print("bad size") }
+            try { var bad = new Framebuffer(5, 5, 7) } catch (HandleUnavailableException e) { print("bad mode") }
+            try { Framebuffer.FromImage(new byte[4]) } catch (ImageException e) { print(e.message) }
+            try { Framebuffer.FromImage(new byte[0]) } catch (ImageException e) { print(e.message) }
+            // the slicer
+            var slicer = new Slicer(2.0, 1.0)
+            var paths = slicer.Slice(mask)
+            print(paths.count)
+            var total = 0
+            foreach (p in paths) { total = total + p.Count() }
+            print(total)
+            if (paths.count > 0) { print(paths[0].kind + " " + paths[0].closed + " " + paths[0].Count() + " " + paths[0].X(0) + " " + paths[0].Y(0)) }
+            var zz = new Slicer(1.5, 1.0)
+            zz.strategy = FillStrategy.ZigZag
+            zz.flipY = false
+            var zp = zz.Slice(mask)
+            print(zp.count)
+            """),
+        ("Grafik: Bilder PNG/BMP/GIF aus Bytes", """
+            #import "graphics"
+            class Img {
+                static Bytes(a) { var b = new byte[a.length]; for (var i = 0; i < a.length; i++) { b[i] = a[i] } return b }
+                static Show(string name, data) {
+                    var fb = Framebuffer.FromImage(data)
+                    print(name + " " + fb.Width() + "x" + fb.Height() + " mode " + fb.Mode() + " transparent " + fb.TransparentIndex)
+                    var bytes = fb.ReadBytes()
+                    var line = ""
+                    for (var i = 0; i < bytes.length; i++) { line = line + bytes[i] + " " }
+                    print(line)
+                    if (fb.Mode() == 1) { print("palette0 " + fb.GetPaletteColor(0) + " palette1 " + fb.GetPaletteColor(1)) }
+                }
+            }
+            var png1 = Img.Bytes([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,6,0,0,0,31,21,196,137,0,0,0,13,73,68,65,84,120,218,99,252,207,192,80,15,0,4,133,1,128,132,169,140,33,0,0,0,0,73,69,78,68,174,66,96,130])
+            Img.Show("png1", png1)
+            var gif = Img.Bytes([71,73,70,56,57,97,1,0,1,0,128,0,0,255,255,255,0,0,0,33,249,4,1,0,0,0,0,44,0,0,0,0,1,0,1,0,0,2,2,68,1,0,59])
+            Img.Show("gif", gif)
+            var bmp = Img.Bytes([66,77,78,0,0,0,0,0,0,0,54,0,0,0,40,0,0,0,3,0,0,0,2,0,0,0,1,0,24,0,0,0,0,0,24,0,0,0,19,11,0,0,19,11,0,0,0,0,0,0,0,0,0,0,30,20,10,60,50,40,90,80,70,0,0,0,0,0,255,0,255,0,255,0,0,0,0,0])
+            Img.Show("bmp", bmp)
+            var png2 = Img.Bytes([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,4,0,0,0,3,8,2,0,0,0,59,150,57,145,0,0,0,41,73,68,65,84,120,156,13,197,49,1,0,32,0,195,176,42,65,201,148,84,201,148,160,100,2,33,79,0,194,41,25,130,39,166,58,11,75,254,235,118,31,169,95,11,245,222,135,168,195,0,0,0,0,73,69,78,68,174,66,96,130])
+            Img.Show("png2", png2)
+            """),
+        ("Grafik: Bild aus einer Datei laden (IO-Richtlinie)", """
+            #import "graphics"
+            #import "io"
+            class Img {
+                static Bytes(a) { var b = new byte[a.length]; for (var i = 0; i < a.length; i++) { b[i] = a[i] } return b }
+            }
+            var bmp = Img.Bytes([66,77,78,0,0,0,0,0,0,0,54,0,0,0,40,0,0,0,3,0,0,0,2,0,0,0,1,0,24,0,0,0,0,0,24,0,0,0,19,11,0,0,19,11,0,0,0,0,0,0,0,0,0,0,30,20,10,60,50,40,90,80,70,0,0,0,0,0,255,0,255,0,255,0,0,0,0,0])
+            var dir = IO.Path.Combine(IO.Path.Temp(), "fire_gfx_test_g3")
+            IO.Directory.Create(dir)
+            var path = IO.Path.Combine(dir, "t.bmp")
+            IO.File.WriteAllBytes(path, bmp)
+            var fb = Framebuffer.FromFile(path)
+            print(fb.Width() + "x" + fb.Height() + " " + fb.ByteCount())
+            var raw = fb.ReadBytes()
+            var line = ""
+            for (var i = 0; i < raw.length; i++) { line = line + raw[i] + " " }
+            print(line)
+            try { Framebuffer.FromFile(IO.Path.Combine(dir, "missing.png")) } catch (ImageException e) { print("missing " + (e.message.Length > 0)) }
+            IO.File.Delete(path)
+            IO.Directory.Delete(dir)
+            """),
+    }).ToArray();
+
     // Time and Sleep (bridges/fire_bridge_time.hpp)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
@@ -14460,6 +14642,100 @@ static int CountOccurrences(string haystack, string needle)
             CheckNat("Geraete nativ: es gibt Faelle", devNativeCases.Count >= 10, devNativeCases.Count.ToString());
         }
 
+        // ---- Fenster (bridges/fire_bridge_windows.hpp): SDL2 mit dem Dummy-Treiber; die Ereignisse stellt FIRE_DISPLAY_SELFTEST bereit (die VM nutzt SDL3, hier gibt es keinen Vergleich)
+        {
+            string sdlProbe = Path.Combine(workDir, "sdlprobe.cpp");
+            File.WriteAllText(sdlProbe, "#if __has_include(<SDL2/SDL.h>)\n#include <SDL2/SDL.h>\n#else\n#include <SDL.h>\n#endif\nint main() { return SDL_Init(0); }\n");
+            RunProc(cxx, $"-std=c++17 \"{sdlProbe}\" -lSDL2 -o \"{sdlProbe}.bin\"", workDir, out int sdlExit);
+            var windowCases = new (string Title, string Script, string[] Expected, string Define)[]
+            {
+                ("Fenster: Framebuffer anzeigen, VSync, Tick, Ereignisse anmelden", """
+            #import "windows"
+            var fb = new Framebuffer(64, 48)
+            var con = new Console(fb)
+            con.Clear()
+            con.FillRect(4, 4, 20, 10, 12)
+            var win = new Window(fb, "fire test")
+            print(win.VSync)
+            win.VSync = false
+            print(win.VSync)
+            print(win.EnableEvents())
+            print(win.Tick())
+            print(win.NextEvent())
+            print(win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key") }))
+            print(win.RegisterClose(func() => { print("close") }))
+            print(win.RegisterTextInput(func(string t) => { print("text " + t) }))
+            for (var i = 0; i < 3; i++) { con.FillRect(i * 5, 20, 4, 4, 9); win.Tick() }
+            print(win.Tick())
+            """, new[] { "True", "False", "True", "True", "undefined", "True", "True", "True", "True" }, ""),
+                ("Fenster: Ereignisse als Callbacks und aus der Warteschlange, Schliessen beendet Tick", """
+            #import "windows"
+            var fb = new Framebuffer(64, 48)
+            var win = new Window(fb, "events")
+            var log = ""
+            win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("keydown " + k + " " + s + " " + m + " " + r) })
+            win.RegisterKeyUp(func(int k, int s, int m, bool r) => { print("keyup " + k + " " + s + " " + m + " " + r) })
+            win.RegisterMouseDown(func(int b, float x, float y) => { print("down " + b + " " + x + " " + y) })
+            win.RegisterMouseUp(func(int b, float x, float y) => { print("up " + b + " " + x + " " + y) })
+            win.RegisterMouseMove(func(float x, float y, int st) => { print("move " + x + " " + y + " " + st) })
+            win.RegisterMouseMoveRelative(func(float x, float y, int st) => { print("rel " + x + " " + y + " " + st) })
+            win.RegisterMouseScroll(func(float sx, float sy, float x, float y) => { print("scroll " + sx + " " + sy) })
+            win.RegisterTextInput(func(string t) => { print("text " + t + " " + t.Length) })
+            win.RegisterCloseRequest(func() => { print("closerequest") })
+            win.RegisterClose(func() => { print("close") })
+            win.EnableEvents()
+            var open = win.Tick()
+            print("open " + open)
+            var e = win.NextEvent()
+            while (e != undefined) {
+                var line = ""
+                for (var i = 0; i < e.length; i++) { line = line + e[i] + " " }
+                print("queued " + line)
+                e = win.NextEvent()
+            }
+            print(win.NextEvent())
+            """, new[] { "keydown 97 4 1 False", "keyup 97 4 0 False", "down 1 32 24", "up 1 32 24", "move 10 12 1", "rel 3 -2 1", "scroll 0 1.5", "text éx 2", "closerequest", "close", "open False", "queued 24 97 4 1 False ", "queued 25 97 4 0 False ", "queued 8 1 32 24 ", "queued 11 1 32 24 ", "queued 9 10 12 1 ", "queued 10 3 -2 1 ", "queued 12 0 1.5 0 0 ", "queued 3 éx ", "queued 2 ", "queued 1 ", "undefined" }, "-DFIRE_DISPLAY_SELFTEST "),
+            };
+            var windowTarget = TargetProfile.Host;
+            foreach (var wc in windowCases)
+            {
+                string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { wc.Script }, null, null, VmExecutionMode.Release, null, windowTarget), windowTarget);
+                CheckNat($"Fenster: {wc.Title}: das Programm bittet um SDL2", cpp.Contains("// fire-link: SDL2") && cpp.Contains("fire_display.hpp"), "");
+                if (sdlExit != 0) { Console.WriteLine("(SDL2 nicht verfuegbar: das Fenster wird nicht ausgefuehrt)"); continue; }
+                string file = Path.Combine(workDir, "window_" + Math.Abs(wc.Title.GetHashCode()) + ".cpp"), exe = file + ".bin";
+                File.WriteAllText(file, cpp);
+                var command = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], windowTarget, file, workDir, exe);
+                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}{wc.Define}\"{file}\" -I\"{workDir}\" -lSDL2 -o \"{exe}\"", workDir, out int buildExit);
+                if (buildExit != 0 || build.Contains("warning:")) { CheckNat($"Fenster: {wc.Title}", false, "C++-Compiler: " + build); continue; }
+                Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
+                string actual = RunProc(exe, "", workDir, out int runExit);
+                string expected = string.Concat(wc.Expected.Select(l => l + "\n"));
+                CheckNat($"Fenster: {wc.Title}", runExit == 0 && actual == expected, $"  erwartet:\n{expected}\n  erhalten:\n{actual}");
+                CheckNat($"Fenster: {wc.Title}: der Build haengt -lSDL2 an", command.Arguments.Contains("-lSDL2"), command.Arguments);
+            }
+        }
+
+        // ---- UI-Bibliothek: dieselben Elemente nativ (Fenster mit dem Dummy-Treiber) gegen die VM mit der Attrappe
+        {
+            string sdlProbe2 = Path.Combine(workDir, "sdlprobe.cpp.bin");
+            if (!File.Exists(sdlProbe2)) Console.WriteLine("(SDL2 nicht verfuegbar: die UI wird nicht nativ ausgefuehrt)");
+            else
+            {
+                string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#import \"ui\"\n" + uiDrawScript }, null, null, VmExecutionMode.Release));
+                string file = Path.Combine(workDir, "uidraw.cpp"), exe = file + ".bin";
+                File.WriteAllText(file, cpp);
+                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{file}\" -I\"{workDir}\" -lSDL2 -o \"{exe}\"", workDir, out int buildExit);
+                if (buildExit != 0 || build.Contains("warning:")) CheckNat("UI nativ == VM", false, "C++-Compiler: " + build);
+                else
+                {
+                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
+                    string actual = RunProc(exe, "", workDir, out int runExit);
+                    string expected = string.Concat(uiDrawExpected.Select(l => l + "\n"));
+                    CheckNat("UI nativ == VM: Label, Button, CheckBox, TextBox, Stack zeichnen", runExit == 0 && actual == expected && uiDrawExpected.Length == 3, $"  erwartet (VM):\n{expected}\n  erhalten:\n{actual}");
+                }
+            }
+        }
+
         // ---- Plattformschicht: dieselben Thread-Programme auf FreeRTOS (Tasks, Semaphoren) - hier auf dem Simulator (native/sim, pthreads)
         {
             string[] rtosCases = { "Actor: fire with", "Actor: mehrere", "sync: die Kopie", "sync: Arrays", "taking: der Thread", "terminate im Hauptprogramm", "catch threads()",
@@ -14600,7 +14876,7 @@ static int CountOccurrences(string haystack, string needle)
         // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
         try
         {
-            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#import \"windows\"\nvar fb = new Framebuffer(8, 8)\nvar w = new Window(fb, \"t\")" }, null, null, VmExecutionMode.Release));
+            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#import \"windows\"\nvar x = __GRPHWinCreate(1)" }, null, null, VmExecutionMode.Release));
             CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt", false, "keine Ausnahme");
         }
         catch (fire.Native.NativeNotSupportedException ex)

@@ -103,6 +103,15 @@ namespace fire.Compiler
         {
             string kind = toolchain.EffectiveKind;
             var libs = (toolchain.Libs ?? new()).Concat(target.Native.LinkLibs).ToList();
+            // the generated program asks for libraries it needs (`// fire-link: SDL2` for a window): -lSDL2, SDL2.lib with msvc
+            if (File.Exists(cppFile))
+                foreach (string line in File.ReadLines(cppFile).Take(400))
+                    if (line.StartsWith("// fire-link: ", StringComparison.Ordinal))
+                    {
+                        string lib = line.Substring("// fire-link: ".Length).Trim();
+                        string flag = kind == "msvc" ? lib + ".lib" : "-l" + lib;
+                        if (!libs.Contains(flag)) libs.Add(flag);
+                    }
             var includes = (toolchain.IncludeDirs ?? new()).ToList();
             if (kind == "custom")
             {

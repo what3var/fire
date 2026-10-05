@@ -145,6 +145,7 @@ namespace fire.Native
         private bool _usesIo;
         private bool _usesDevices;
         private bool _usesGraphics;
+        private bool _usesWindows;
         private int _ioSecondsUnit;
 
         /// <summary>The natives of `#import "io"` (`__IO` + name): the number of arguments, whether the result is a string/array/buffer (it belongs to the innermost scope),
@@ -189,6 +190,13 @@ namespace fire.Native
             ["ConFillPolygon"] = (3, false), ["ConFloodFill"] = (4, false), ["ConFloodFillBorder"] = (5, false), ["ConBlit"] = (12, false),
             ["SlcSlice"] = (7, true),
         };
+        /// <summary>The natives of `#import "windows"` (`__GRPHWin` + name): arguments and whether the result is an array (it belongs to the innermost scope).</summary>
+        private static readonly Dictionary<string, (int Argc, bool Reference)> WindowsBridgeNatives = new()
+        {
+            ["Create"] = (2, false), ["Destroy"] = (1, false), ["Tick"] = (1, false), ["EnableEvents"] = (1, false), ["NextEvent"] = (1, true), ["RegisterEvent"] = (3, false),
+            ["SetVSync"] = (2, false), ["GetVSync"] = (1, false),
+        };
+
         private static readonly HashSet<string> GraphicsNeedsList = new() { "FbReadBytes", "FbReadPalette", "FbLastError", "SlcSlice" };
 
         /// <summary>The functions of <see cref="IoBridgeNatives"/> that take the scope that owns their result as a last argument.</summary>
@@ -464,6 +472,12 @@ namespace fire.Native
                 sb.AppendLine("#include \"bridges/fire_bridge_io.hpp\"");
             }
             if (_usesGraphics) sb.AppendLine("#include \"bridges/fire_bridge_graphics.hpp\"");
+            if (_usesWindows)
+            {
+                if (_target.Native.Platform is "posix" or "windows") sb.AppendLine("// fire-link: SDL2");   // the display of these platforms is SDL2: the build links it
+                sb.AppendLine($"#define FIRE_PLATFORM_DISPLAY_HEADER \"platform/{_target.Native.Platform}/fire_display.hpp\"");
+                sb.AppendLine("#include \"bridges/fire_bridge_windows.hpp\"");
+            }
             sb.AppendLine("using namespace fire;");
             sb.AppendLine();
             sb.AppendLine("namespace fire {");
@@ -1219,6 +1233,15 @@ namespace fire.Native
             _usesGraphics = true;
             _usesGlobalOwn = true;   // what the slicer hands out belongs to the global scope
             UseExceptions();
+            _version++;
+        }
+
+        /// <summary>`#import "windows"`: the window shows a framebuffer of the graphics bridge; on the desktop it needs SDL2 (the build links it, see `fire-link:`).</summary>
+        private void UseWindows()
+        {
+            if (_usesWindows) return;
+            UseGraphics();
+            _usesWindows = true;
             _version++;
         }
 
@@ -2025,6 +2048,16 @@ namespace fire.Native
                         E($"{S(first)} = io::{name}({args});");
                         Check();
                         d = first + 1; SetR(first, ioNative.Reference); return Next();
+                    }
+                    if (native.StartsWith("__GRPHWin", StringComparison.Ordinal) && WindowsBridgeNatives.TryGetValue(native.Substring(9), out var winNative) && winNative.Argc == argc)
+                    {
+                        UseWindows();
+                        string name = native.Substring(6);
+                        int first = d - argc;
+                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(name == "WinNextEvent" ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
+                        E($"{S(first)} = win::{name}({args});");
+                        Check();
+                        d = first + 1; SetR(first, winNative.Reference); return Next();
                     }
                     if (native.StartsWith("__GRPH", StringComparison.Ordinal) && GraphicsBridgeNatives.TryGetValue(native.Substring(6), out var grphNative) && grphNative.Argc == argc)
                     {
