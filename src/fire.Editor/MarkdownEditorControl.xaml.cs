@@ -141,7 +141,13 @@ namespace fire.Editor
         public void Delete() { Editor.Delete(); Editor.Focus(); }
         public void SelectAll()
         {
-            if (ViewerOnly) { Preview.Focus(); Preview.SelectAll(); return; }
+            if (ViewerOnly)
+            {
+                // FlowDocumentScrollViewer has no SelectAll: select the whole document through its Selection.
+                Preview.Focus();
+                if (Preview.Document != null) Preview.Selection.Select(Preview.Document.ContentStart, Preview.Document.ContentEnd);
+                return;
+            }
             Editor.SelectAll();
             Editor.Focus();
         }

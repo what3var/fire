@@ -69,12 +69,12 @@ print($"{name}: {count} x {ratio} (ready: {ready})")
 
 The line with `$"..."` is a *format string*: whatever is in `{curly braces}` is evaluated and inserted.
 
-Numbers can carry a **unit**. A trailing `:` converts a value to the unit of the other operand, `:unit` converts to a unit you name, and incompatible units are an error instead of a silently wrong number:
+Numbers can carry a **unit**. Units of the same kind are converted for you - the result has the unit of the left operand. A trailing `:unit` converts a value explicitly, and units that cannot be converted into each other are an error instead of a silently wrong number:
 
 ```fire
 var length = 500mm
 var distance = 2m
-print(length + distance:)   // 2500mm - the distance is converted to millimeters
+print(length + distance)    // 2500mm - the distance is converted to millimeters
 print(distance:cm)          // 200cm
 ```
 

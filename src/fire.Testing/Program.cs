@@ -10840,6 +10840,22 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(User.Use(new Sq()))
         """, new[] { "4" });
 
+    CheckSc("Einheiten: gleiche Dimension, andere Skalierung wird implizit umgerechnet (ohne ':')", """
+        print(500mm + 2m)
+        print(2m + 500mm)
+        print(2m - 500mm)
+        print(1m > 500mm)
+        print(5mm < 1m)
+        print(1500mm % 1m)
+        var x = 3m
+        x = x + 250cm
+        print(x)
+        """, new[] { "2500mm", "2.5m", "1.5m", "True", "True", "500mm", "5.5m" });
+
+    CheckSc("Einheiten: verschiedene Dimensionen bleiben ein Fehler", """
+        print(5mm + 2kg)
+        """, new[] { "AUSNAHME: Incompatible units: 'mm' cannot be converted to 'kg'." });
+
     Console.WriteLine(scFailures == 0 ? "Alle Scope-Pruefungen bestanden." : $"FEHLER: {scFailures} Scope-Pruefung(en) fehlgeschlagen.");
 }
 
@@ -10975,6 +10991,34 @@ static int CountOccurrences(string haystack, string needle)
         items.FirstOrDefault(i => i.Text == "Add")?.Documentation?.Summary == "Adds two numbers." && items.FirstOrDefault(i => i.Text == "Plain")?.Documentation == null);
     var classItems = fire.Editor.CompletionEngine.GetSuggestions(docSource + "\nvar d = new Ca", docSource.Length + 15, fire.Editor.ScriptSymbolIndex.Build(docSource + "\nvar d = new Ca"));
     CheckDoc("Vervollstaendigung: Klassen tragen ihre Dokumentation", classItems.FirstOrDefault(i => i.Text == "Calc")?.Documentation?.Summary == "A calculator. Works on ints.");
+
+    // Aufrufkontext: Tooltip bleibt waehrend der Argumente, new Foo( springt auf den Konstruktor
+    string callSource = """
+        /// A point.
+        class Point {
+            int x
+            /// <summary>Creates the origin.</summary>
+            construct() { this.x = 0 }
+            /// <summary>Creates a point.</summary>
+            /// <param name="x">the x value</param>
+            construct(int x) { this.x = x }
+            /// <summary>Moves it.</summary>
+            Move(int dx, int dy) { }
+        }
+        """;
+    fire.Editor.ResolvedSymbol? CallAt(string text)
+    {
+        string full = callSource + "\n" + text;
+        var idx = fire.Editor.ScriptSymbolIndex.Build(full);
+        var call = fire.Editor.NavigationEngine.FindOpenCall(full, full.Length);
+        return call == null ? null : fire.Editor.NavigationEngine.TryResolveCall(full, call, idx);
+    }
+    CheckDoc("Aufruf: nach 'new Point(' zeigt der Tooltip den Konstruktor", CallAt("var p = new Point(")?.Documentation?.Summary == "Creates the origin.", CallAt("var p = new Point(")?.Documentation?.Summary);
+    CheckDoc("Aufruf: mit einem Argument wird der passende Konstruktor gewaehlt", CallAt("var p = new Point(5")?.Documentation?.Summary == "Creates a point.", CallAt("var p = new Point(5")?.Documentation?.Summary);
+    CheckDoc("Aufruf: Konstruktor-Kopfzeile", CallAt("var p = new Point(5")?.Header.Contains("new Point(int x)") == true, CallAt("var p = new Point(5")?.Header);
+    CheckDoc("Aufruf: Methode bleibt waehrend der Argumente dokumentiert", CallAt("var p = new Point(1)\np.Move(1, ")?.Documentation?.Summary == "Moves it.", CallAt("var p = new Point(1)\np.Move(1, ")?.Documentation?.Summary);
+    CheckDoc("Aufruf: nach der schliessenden Klammer gibt es keinen offenen Aufruf", CallAt("var p = new Point(1)") == null);
+    CheckDoc("Aufruf: Klammern in Strings zaehlen nicht", CallAt("var p = new Point(\"(\")") == null);
 
     Console.WriteLine(docFailures == 0 ? "Alle Dokumentationskommentar-Pruefungen bestanden." : $"FEHLER: {docFailures} Dokumentationskommentar-Pruefung(en) fehlgeschlagen.");
 }
