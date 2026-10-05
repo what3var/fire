@@ -2,7 +2,7 @@
 
 Eine minimale, komplett in fire geschriebene Oberfläche, die in einem Framebuffer läuft: Schaltflächen, Beschriftungen, Kontrollkästchen, Textfelder, Panels und ein Stapel-Layout. Sie liegt als
 eigene Brücke in `src/fire.UI.Bridge` (nur fire-Quelltext, `UiBridge.PreludeSource`, `namespace UI`; keine native Funktion, keine DLL) und baut auf den Klassen der Grafik-Brücke auf
-(`Framebuffer`, `Console`, `Window`, siehe `docs/CONSOLE.md`). `#import "ui"` schaltet `graphics` automatisch mit zu (`ImportedPreludes.WithDependencies`).
+(`Framebuffer`, `Console`, `Window`, siehe `docs/CONSOLE.md`). `#import "ui"` schaltet `graphics` und `windows` (das Fenster, siehe `docs/CONSOLE.md`) automatisch mit zu (`ImportedPreludes.WithDependencies`).
 
 ```
 #import "ui"

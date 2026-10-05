@@ -8,7 +8,6 @@
     Quelltext (GraphicsBridge.PreludeSource), der diese nativen Funktionen
     hinter drei gewöhnlichen Klassen (Framebuffer/Console/Window) versteckt.
 
-    net8.0-windows, da WindowManager (fire.Terminal.Windows) das
     voraussetzt.
   -->
   <PropertyGroup>
@@ -24,7 +23,6 @@
   <ItemGroup>
     <ProjectReference Include="..\fire\fire.csproj" />
     <ProjectReference Include="..\fire.Terminal\fire.Terminal.csproj" />
-    <ProjectReference Include="..\fire.Terminal.Windows\fire.Terminal.Windows.csproj" />
   </ItemGroup>
 
 </Project>

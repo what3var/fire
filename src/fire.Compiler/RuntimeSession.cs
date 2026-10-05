@@ -141,7 +141,7 @@ namespace fire.Compiler
             natives.RegisterBaseTypeNatives();
 
             // WICHTIG: native Funktionen werden über ihren INDEX angesprungen - die Reihenfolge der Registrierung muss
-            // exakt der beim Übersetzen entsprechen (siehe ImportedPreludes.Insert): graphics, reflection, time, devices, io.
+            // exakt der beim Übersetzen entsprechen (siehe ImportedPreludes.Insert): graphics, windows, reflection, time, devices, io.
             FramebufferManager? fbManager = null;
             ConsoleManager? consoleManager = null;
             WindowManager? windowManager = null;
@@ -153,17 +153,23 @@ namespace fire.Compiler
                 var font = new IntegratedGlyphFont();
                 fbManager = new FramebufferManager();
                 consoleManager = new ConsoleManager(fbManager, font);
-                windowManager = new WindowManager(fbManager, (l,v) => session.CallLambda(l,v));
 
                 // Bilddateien (Framebuffer.FromFile) liest das Programm nur, wo die IoPolicy des Hosts das Lesen erlaubt (wie IO.File)
                 var imagePolicy = ioPolicy ?? fire.IO.Bridge.IoPolicy.AllowAll;
-                GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager, path =>
+                GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, path =>
                 {
                     string fullPath = Path.GetFullPath(path);
                     if (!imagePolicy.IsAllowed(fullPath, fire.IO.Bridge.IoAccess.Read, out var reason))
                         throw new UnauthorizedAccessException(reason ?? $"Access to '{fullPath}' is not allowed.");
                     return File.ReadAllBytes(fullPath);
                 });
+
+                // `#import "windows"`: das SDL-Fenster zum Framebuffer (direkt hinter graphics registriert, wie beim Uebersetzen)
+                if (linkedProgram.NativeImports.Contains(NativeImports.Windows))
+                {
+                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v));
+                    fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, windowManager);
+                }
             }
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))

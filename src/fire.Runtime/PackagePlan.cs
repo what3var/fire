@@ -29,7 +29,10 @@ namespace fire.Runtime
         {
             [NativeImports.Print] = new(Array.Empty<string>(), Array.Empty<string>()),
             [NativeImports.Graphics] = new(
-                new[] { "fire.Terminal.Bridge", "fire.Terminal.Windows", "fire.Terminal.Sdl" },
+                new[] { "fire.Terminal.Bridge" }, Array.Empty<string>()),
+            // das SDL-Fenster: eigene Assembly samt SDL (`graphics` allein kommt ohne aus)
+            [NativeImports.Windows] = new(
+                new[] { "fire.Windows.Bridge", "fire.Terminal.Windows", "fire.Terminal.Sdl" },
                 new[] { "SDL3.dll", "libSDL3.so.0", "libSDL3.dylib" }),
             [NativeImports.Devices] = new(
                 new[] { "fire.Device.Bridge", "fire.Device.Manager" },

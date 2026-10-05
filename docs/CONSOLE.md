@@ -23,8 +23,11 @@ ScriptLang.Terminal.Windows    (net8.0-windows, referenziert .Terminal + .Sdl)
 ScriptLang.Terminal.Demo       (net8.0-windows, referenziert .Windows)
   Program.cs                      – Standalone-Demo (rohes C#-Manager-API)
 
-ScriptLang.Terminal.Bridge     (net8.0-windows, referenziert ScriptLang + .Terminal + .Windows)
-  GraphicsBridge.cs                – native Funktionsregistrierung + ScriptLang-Prelude
+ScriptLang.Terminal.Bridge     (referenziert ScriptLang + .Terminal - KEIN Fenster, kein SDL)
+  GraphicsBridge.cs                – Framebuffer, Console, Slicer: native Funktionsregistrierung + ScriptLang-Prelude (`#import "graphics"`)
+
+fire.Windows.Bridge            (referenziert fire + .Terminal + .Windows)
+  WindowsBridge.cs                 – `Window`, `EventType` und der WindowManager als native Funktionen (`#import "windows"`)
 
 ScriptLang.Terminal.Bridge.Test (net8.0-windows, referenziert .Bridge)
   Program.cs                      – End-to-End-Test: Skript ruft die Grafik-API auf
@@ -37,8 +40,11 @@ Genau das ist die Schicht, die später möglichst 1:1 portierbar bleiben soll
 
 ## Die Brücke zur Skriptsprache (`ScriptLang.Terminal.Bridge`)
 
-`GraphicsBridge.RegisterAll(natives, framebuffers, consoles, windows)`
-registriert die drei Manager als native Funktionen - über
+**Grafik und Fenster sind getrennt** (`#import "graphics"` und `#import "windows"`): `graphics` bringt `Framebuffer`, `Console` und `Slicer` und braucht
+weder SDL noch ein Fenster - auf einer Plattform ohne Fenster (Embedded) importiert ein Programm nur `graphics` und bindet statt `Window` ein Display ein.
+`#import "windows"` bringt `Window` und `EventType` (SDL, eigene Assembly `fire.Windows.Bridge`) und schaltet `graphics` mit zu; `#import "ui"` schaltet beide zu.
+`GraphicsBridge.RegisterAll(natives, framebuffers, consoles, readFile)` und `WindowsBridge.RegisterAll(natives, windows)`
+registrieren die Manager als native Funktionen - über
 `NativeRegistry.RegisterGroup(prefix, functions)` (SPEC 8.1.6): jede
 Funktionsgruppe bekommt ein eigenes Namens-Präfix
 (`__GRPHFb`/`__GRPHCon`/`__GRPHWin`), der tatsächlich registrierte Name ist

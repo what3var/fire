@@ -994,7 +994,7 @@ weiterhin beim ersten Syntaxfehler ab (kein Wiederaufsetzen).
 
 **Live-Diagnostik und Preludes**: die Editor-Live-Diagnostik (`LiveDiagnostics`)
 kompiliert wie der Linker: Standard-Prelude UND die Preludes der per
-`#import "graphics"`/`"devices"` zugeschalteten Erweiterungen (samt ihrer
+`#import "graphics"`/`"windows"`/`"devices"` zugeschalteten Erweiterungen (samt ihrer
 nativen Platzhalter), gemeinsam in `ImportedPreludes` (von `Linker.CompileAndLink`
 und `LiveDiagnostics` benutzt). Ein `#import` in einer ANDEREN Projektdatei gilt
 auch für die gerade bearbeitete (`AnalyzeInProject`), wie beim echten Kompilieren

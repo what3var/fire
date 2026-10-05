@@ -7176,17 +7176,37 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     PackCheck(planIo.Assemblies.ContainsKey("fire.IO.Bridge") && !planIo.Assemblies.ContainsKey("fire.Terminal.Bridge") && !planIo.Assemblies.ContainsKey("fire.Device.Bridge"),
         "Plan: io bindet nur die IO-Bridge ein");
     var planGfx = Plan(NativeImports.Print, NativeImports.Graphics);
-    PackCheck(new[] { "fire.Terminal.Bridge", "fire.Terminal", "fire.Terminal.Windows", "fire.Terminal.Sdl", "SDL3-CS" }.All(planGfx.Assemblies.ContainsKey) && !planGfx.Assemblies.ContainsKey("fire.IO.Bridge"),
-        "Plan: graphics bindet Terminal-Bridge samt Terminal/Windows/SDL ein (Abhaengigkeiten aus den Metadaten)");
+    PackCheck(new[] { "fire.Terminal.Bridge", "fire.Terminal" }.All(planGfx.Assemblies.ContainsKey) && !planGfx.Assemblies.ContainsKey("fire.IO.Bridge")
+        && !planGfx.Assemblies.Keys.Any(n => n is "fire.Terminal.Windows" or "fire.Terminal.Sdl" or "fire.Windows.Bridge" or "SDL3-CS") && planGfx.Natives.Count == 0,
+        "Plan: graphics bindet Terminal-Bridge und Terminal ein - ohne Fenster, SDL und native Bibliotheken");
+    var planWin = Plan(NativeImports.Print, NativeImports.Graphics, NativeImports.Windows);
+    PackCheck(new[] { "fire.Terminal.Bridge", "fire.Windows.Bridge", "fire.Terminal", "fire.Terminal.Windows", "fire.Terminal.Sdl", "SDL3-CS" }.All(planWin.Assemblies.ContainsKey) && planWin.Unresolved.Count == 0,
+        "Plan: windows bindet Fenster-Bridge samt Terminal/Windows/SDL ein (Abhaengigkeiten aus den Metadaten)");
     var planDev = Plan(NativeImports.Print, NativeImports.Devices);
-    var planUi = Plan(NativeImports.Print, NativeImports.Graphics, NativeImports.Ui);
-    PackCheck(planUi.Assemblies.Keys.SequenceEqual(planGfx.Assemblies.Keys) && planUi.Unresolved.Count == 0, "Plan: ui bringt keine eigene DLL mit (reiner fire-Quelltext, graphics kommt ueber den Import)");
+    var planUi = Plan(NativeImports.Print, NativeImports.Graphics, NativeImports.Windows, NativeImports.Ui);
+    PackCheck(planUi.Assemblies.Keys.SequenceEqual(planWin.Assemblies.Keys) && planUi.Unresolved.Count == 0, "Plan: ui bringt keine eigene DLL mit (reiner fire-Quelltext, graphics und windows kommen ueber den Import)");
     PackCheck(new[] { "fire.Device.Bridge", "fire.Device.Manager", "System.IO.Ports" }.All(planDev.Assemblies.ContainsKey) && !planDev.Assemblies.ContainsKey("SDL3-CS"),
         "Plan: devices bindet Device-Bridge, Manager und System.IO.Ports ein");
     PackCheck(planGfx.Unresolved.Count == 0 && planDev.Unresolved.Count == 0 && planIo.Unresolved.Count == 0 && planPrint.Unresolved.Count == 0,
         "Plan: alle Verweise aufloesbar (Datei neben dem Compiler oder Teil des Frameworks)");
-    PackCheck(planGfx.Natives.Count == 0 || planGfx.Natives.ContainsKey("SDL3.dll") || planGfx.Natives.ContainsKey("libSDL3.so.0") || planGfx.Natives.ContainsKey("libSDL3.dylib"),
-        "Plan: graphics bringt SDL3 mit, wo es die Plattform gibt");
+    PackCheck(planWin.Natives.Count == 0 || planWin.Natives.ContainsKey("SDL3.dll") || planWin.Natives.ContainsKey("libSDL3.so.0") || planWin.Natives.ContainsKey("libSDL3.dylib"),
+        "Plan: windows bringt SDL3 mit, wo es die Plattform gibt");
+    // `windows` ist von `graphics` getrennt: das Fenster gibt es nur mit dem eigenen Import, der `graphics` mitbringt; `graphics` allein kennt kein Window
+    {
+        string LinkResult(string src)
+        {
+            try { var linked = new Linker().CompileAndLink(new[] { src }); return string.Join(",", linked.NativeImports.OrderBy(x => x)); }
+            catch (Exception ex) { return "FEHLER " + ex.Message; }
+        }
+        string onlyGfx = LinkResult("#import \"graphics\"\nvar w = new Window(new Framebuffer(8, 8), \"t\")");
+        PackCheck(onlyGfx.StartsWith("FEHLER") && onlyGfx.Contains("Window"), "Import: graphics allein kennt kein Window (" + onlyGfx.Split('\n')[0] + ")");
+        string withWin = LinkResult("#import \"windows\"\nvar x = EventType.Close");
+        PackCheck(withWin == "graphics,print,windows", "Import: windows bringt graphics mit (" + withWin + ")");
+        string withUi = LinkResult("#import \"ui\"\nvar x = EventType.Close");
+        PackCheck(withUi == "graphics,print,ui,windows", "Import: ui bringt graphics und windows mit (" + withUi + ")");
+        string gfxOnly = LinkResult("#import \"graphics\"\nvar fb = new Framebuffer(8, 8)");
+        PackCheck(gfxOnly == "graphics,print", "Import: graphics allein ohne Fenster (" + gfxOnly + ")");
+    }
     bool unknownImportRejected = false;
     try { Plan("gibtsnicht"); } catch (InvalidOperationException) { unknownImportRejected = true; }
     PackCheck(unknownImportRejected, "Plan: unbekannter Import wird abgelehnt statt still ignoriert");
@@ -8090,7 +8110,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     List<string> RunGf(string script, VmExecutionMode mode, Func<string, byte[]>? reader = null)
     {
         var lines = new List<string>();
-        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, script };
+        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, script };
         var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase))).ToList());
         var natives = new NativeRegistry();
         natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
@@ -8098,7 +8118,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var fbManager = new fire.Terminal.FramebufferManager();
         var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
         var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => new FakeRenderer());
-        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, winManager, reader ?? (path => ImageFixtures.Get(path)));
+        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, reader ?? (path => ImageFixtures.Get(path)));
+        fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
         // die Bytes einer Testdatei als Puffer, und ein Puffer mit Unsinn
         natives.Register("__TestImage", args => Value.MakeBuffer(new ByteBuffer(ImageFixtures.Get(args[0].AsString()), ByteConversions.HostByteOrder)));
         natives.Register("__TestGarbage", args => Value.MakeBuffer(new ByteBuffer(System.Text.Encoding.ASCII.GetBytes("kein Bild"), ByteConversions.HostByteOrder)));
@@ -8544,7 +8565,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     List<string> RunUi(string script, VmExecutionMode mode)
     {
         var lines = new List<string>();
-        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.UI.Bridge.UiBridge.PreludeSource, script };
+        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, fire.UI.Bridge.UiBridge.PreludeSource, script };
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
         var natives = new NativeRegistry();
@@ -8555,7 +8576,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var fbManager = new fire.Terminal.FramebufferManager();
         var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
         var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => renderer);
-        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, winManager);
+        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager);
+        fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
 
         natives.Register("__TestClose", args => { renderer.Closed = true; return Value.MakeUndefined(); });
         natives.Register("__TestEvent", args =>
@@ -8835,7 +8857,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     List<string> RunCb(string script, VmExecutionMode mode)
     {
         var lines = new List<string>();
-        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, script };
+        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, script };
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
         var natives = new NativeRegistry();
@@ -8850,7 +8872,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var winManager = new fire.Terminal.Windows.WindowManager(fbManager,
             (l, v) => FireRuntime.RunCallback(l, v, natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode, vm),
             () => renderer);
-        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, winManager);
+        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager);
+        fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
 
         var kept = new List<LambdaValue>();
         natives.Register("__TestEvent", args => { renderer.Push((int)args[0].AsInt(), args); return Value.MakeUndefined(); });

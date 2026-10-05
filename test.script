@@ -1,4 +1,5 @@
 #import "graphics"
+#import "windows"
 var fb = new Framebuffer(640, 480)
 
 print("Framebuffer erstellt, id=" + fb.id)

@@ -4,6 +4,7 @@ using fire.IO.Bridge;
 using fire.Runtime;
 using fire.Terminal.Bridge;
 using fire.UI.Bridge;
+using fire.Windows.Bridge;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -32,6 +33,7 @@ namespace fire.Compiler
         public static string ParseImportName(string name) => name.ToLowerInvariant() switch
         {
             "graphics" => NativeImports.Graphics,
+            "windows" => NativeImports.Windows,
             "devices" => NativeImports.Devices,
             "io" => NativeImports.IO,
             "ui" => NativeImports.Ui,
@@ -48,7 +50,8 @@ namespace fire.Compiler
         /// `graphics` auf und schaltet es mit zu. Jede Stelle, die ein `#import` auswertet, trägt alle Schlüssel daraus ein.</summary>
         public static IEnumerable<string> WithDependencies(string importKey)
         {
-            if (importKey == NativeImports.Ui) yield return NativeImports.Graphics;
+            if (importKey == NativeImports.Windows) yield return NativeImports.Graphics; // Window zeigt einen Framebuffer
+            if (importKey == NativeImports.Ui) { yield return NativeImports.Graphics; yield return NativeImports.Windows; }
             if (importKey == NativeImports.Linq) yield return NativeImports.Reflection; // SelectProperty/SelectField arbeiten mit Selektoren
             yield return importKey;
         }
@@ -56,6 +59,7 @@ namespace fire.Compiler
         public static string? TrySourceFor(string importName) => importName.ToLowerInvariant() switch
         {
             "graphics" => GraphicsBridge.PreludeSource,
+            "windows" => WindowsBridge.PreludeSource,
             "devices" => DeviceBridge.PreludeSource,
             "io" => IoBridge.PreludeSource,
             "ui" => UiBridge.PreludeSource,
@@ -93,6 +97,14 @@ namespace fire.Compiler
             {
                 processedSources.Insert(1, preprocess(GraphicsBridge.PreludeSource));
                 GraphicsBridge.RegisterStubs(natives);
+                inserted++;
+            }
+
+            if (nativeImports.Contains(NativeImports.Windows))
+            {
+                // hinter `graphics`: die Prelude-Reihenfolge (jede Einfuegung steht VOR den frueheren) und die der nativen Funktionen sind unabhaengig voneinander
+                processedSources.Insert(1, preprocess(WindowsBridge.PreludeSource));
+                WindowsBridge.RegisterStubs(natives);
                 inserted++;
             }
 

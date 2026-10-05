@@ -87,7 +87,12 @@ namespace fire.Runtime
             // WICHTIG: native Funktionen werden über ihren INDEX angesprungen - die Reihenfolge der Registrierung muss
             // exakt der beim Übersetzen entsprechen (siehe ImportedPreludes.Insert): graphics, reflection, time, devices, io.
             if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
-                RegisterGraphics(session, natives);
+            {
+                // der Manager reist als object: jede Methode, die den Typ nennt, laedt beim JIT-Kompilieren fire.Terminal (siehe Klassen-Doku)
+                object fbManager = RegisterGraphics(natives);
+                if (linkedProgram.NativeImports.Contains(NativeImports.Windows))
+                    RegisterWindows(session, natives, fbManager);
+            }
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
                 ReflectionNatives.Register(natives);
@@ -115,14 +120,22 @@ namespace fire.Runtime
         // Jede dieser Methoden ist die EINZIGE Stelle, die ihre Bridge-Typen erwähnt (siehe Klassen-Doku).
 
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static void RegisterGraphics(Session session, NativeRegistry natives)
+        private static object RegisterGraphics(NativeRegistry natives)
         {
             var font = new fire.Terminal.IntegratedGlyphFont();
             var fbManager = new fire.Terminal.FramebufferManager();
             var consoleManager = new fire.Terminal.ConsoleManager(fbManager, font);
-            var windowManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => session.CallLambda(l, v));
 
-            fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager);
+            fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, consoleManager);
+            return fbManager;
+        }
+
+        /// <summary>`#import "windows"`: das SDL-Fenster (eigene Assembly samt SDL - ein Programm nur mit `graphics` laedt sie nie).</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void RegisterWindows(Session session, NativeRegistry natives, object framebuffers)
+        {
+            var windowManager = new fire.Terminal.Windows.WindowManager((fire.Terminal.FramebufferManager)framebuffers, (l, v) => session.CallLambda(l, v));
+            fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, windowManager);
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
