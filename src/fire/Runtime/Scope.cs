@@ -208,11 +208,16 @@ namespace fire.Runtime
         {
             if (_owned.IsEmpty) return;   // (Arrays und Puffer bleiben: Fire-Thread-Schnappschuesse sind Kopien des Hauptprogramms)
             var all = _owned.ToArray();
-            foreach (var obj in all)
+            DestroyBatch.Enter();
+            try
             {
-                if (filter(obj)) obj.Destroy(runner);
-                else obj.DestroyOwnedNonCopies(runner);   // (a copy stays, what the thread made inside of it does not)
+                foreach (var obj in all)
+                {
+                    if (filter(obj)) obj.Destroy(runner);
+                    else obj.DestroyOwnedNonCopies(runner);   // (a copy stays, what the thread made inside of it does not)
+                }
             }
+            finally { DestroyBatch.Exit(); }
             _owned.RemoveDestroyed();
         }
 

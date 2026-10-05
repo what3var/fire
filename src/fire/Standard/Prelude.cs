@@ -41,6 +41,9 @@ namespace fire.Standard
                 }
             }
 
+            // what the ownership methods take along (SPEC 2.2): `x.TakeUpwards(Takes.Locals)`
+            enum Takes { This = 0, Children = 1, Locals = 2, Recursive = 2, All = 3 }
+
             class DestroyedException : Exception {
                 string message
 

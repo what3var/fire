@@ -2110,6 +2110,35 @@ namespace fire.Runtime
             if (_scopePoolCount < ScopePoolMax) _scopePool[_scopePoolCount++] = scope;
         }
 
+        /// <summary>`return` (SPEC 2.3): gehört der zurückgegebene Wert (Objekt, Array, Puffer) einem der Scopes, die gleich verlassen werden, geht er an den aufrufenden Scope - und
+        /// mit ihm alles, was an ihm hängt und ebenfalls diesen Scopes gehört (rekursiv, jeder Knoten einmal): es wandert zu dem Objekt, das darauf zeigt. Ohne das stürben
+        /// die Elemente einer zurückgegebenen Liste mit dem Scope, der sie angelegt hat.</summary>
+        private void MoveReturned(Value retVal, Func<Scope, bool> isLocalScope)
+        {
+            var target = _frames.Peek().ReturnScope;
+            switch (retVal.Kind)
+            {
+                case ValueKind.Class:
+                {
+                    var obj = (ObjectInstance)retVal.AsObjectRef();
+                    if (obj.IsDestroyed || !OwnershipWalk.IsLocal(obj.Owner, isLocalScope)) return;
+                    obj.ReparentTo(target);
+                    break;
+                }
+                case ValueKind.Array:
+                case ValueKind.Buffer:
+                {
+                    var leaf = LeafOf(retVal)!;
+                    if (leaf.IsDestroyed || !OwnershipWalk.IsLocal(leaf.LeafOwner, isLocalScope)) return;
+                    LeafOwnership.Reparent(leaf, target);
+                    break;
+                }
+                default:
+                    return;
+            }
+            OwnershipWalk.MoveReachable(retVal, Takes.Locals, isLocalScope, target);
+        }
+
         /// <summary>Beendet die aktuelle Funktion mit `retVal`. Liegt dabei noch ein `try` mit `finally` dieses Frames offen (auch ein `catch`-Block, der
         /// noch zu einem solchen `try` gehört), wird nicht zurückgekehrt, sondern erst sein `finally` ausgeführt (Abschluss "return"): dessen `EndFinally`
         /// ruft diese Methode erneut auf, bis kein `finally` mehr offen ist. Handler ohne `finally` werden einfach abgemeldet.</summary>
@@ -2125,17 +2154,17 @@ namespace fire.Runtime
                     _handlers.RemoveAt(_handlers.Count - 1);
                     if (handler.Template.FinallyAddr is not int finallyAddr) continue;
 
-                    // Ein zurückgegebenes Objekt, das einem der Scopes gehört, die gleich verlassen werden, geht an den Aufrufer (wie unten bei `Return`)
-                    if (retVal.Kind == ValueKind.Class && _frames.Count > 0)
+                    // Ein zurückgegebener Wert, der einem der Scopes gehört, die gleich verlassen werden, geht mit allem, was an ihm hängt, an den Aufrufer (wie unten bei `Return`)
+                    if (_frames.Count > 0)
                     {
-                        var retInstance = (ObjectInstance)retVal.AsObjectRef();
-                        if (retInstance.Owner is Scope ownerScope)
-                            for (var sc = _currentScope; sc != null && !ReferenceEquals(sc, handler.TargetScope); sc = sc.Parent)
-                                if (ReferenceEquals(sc, ownerScope)) { retInstance.ReparentTo(_frames.Peek().ReturnScope); break; }
+                        var leavingTo = handler.TargetScope;
+                        MoveReturned(retVal, ownerScope =>
+                        {
+                            for (var sc = _currentScope; sc != null && !ReferenceEquals(sc, leavingTo); sc = sc.Parent)
+                                if (ReferenceEquals(sc, ownerScope)) return true;
+                            return false;
+                        });
                     }
-                    if (_frames.Count > 0 && LeafOf(retVal) is { LeafOwner: Scope leafOwnerScope })
-                        for (var sc = _currentScope; sc != null && !ReferenceEquals(sc, handler.TargetScope); sc = sc.Parent)
-                            if (ReferenceEquals(sc, leafOwnerScope)) { LeafOwnership.Reparent(LeafOf(retVal)!, _frames.Peek().ReturnScope); break; }
                     UnwindTo(handler.FrameDepthAtEntry, handler.TargetScope);
                     if (_sp > handler.StackPointer) _sp = handler.StackPointer;
                     Push(retVal);
@@ -2155,16 +2184,7 @@ namespace fire.Runtime
             // folgende Release() des eigenen Scopes sofort mit zerstört.
             // Das gilt für JEDEN Scope dieses Aufrufs (innerster Block bis Funktions-Scope): ein `return` mitten in verschachtelten
             // Blöcken verlässt sie alle auf einmal.
-            if (retVal.Kind == ValueKind.Class && _frames.Count > 0)
-            {
-                var retInstance = (ObjectInstance)retVal.AsObjectRef();
-                if (retInstance.Owner is Scope retOwner && OwnsWithinCall(retOwner))
-                    retInstance.ReparentTo(_frames.Peek().ReturnScope);
-            }
-
-            // dasselbe fuer ein zurueckgegebenes Array/einen Puffer
-            if (_frames.Count > 0 && LeafOf(retVal) is { LeafOwner: Scope leafOwner } returnedLeaf && OwnsWithinCall(leafOwner))
-                LeafOwnership.Reparent(returnedLeaf, _frames.Peek().ReturnScope);
+            if (_frames.Count > 0) MoveReturned(retVal, OwnsWithinCall);
 
             ReleaseCallScopes();
 
@@ -2361,6 +2381,7 @@ namespace fire.Runtime
             }
 
             var obj = RequireObjectInstance(target, "Feldzugriff");
+            if (IsDeadObject(obj)) { ThrowDestroyedObject(obj); return false; }
             if (obj.TryGetFieldLocked(fieldName, out var val))
             {
                 if (_threadBroker != null && obj.InGlobalsDomain) MarkShared(val); // ein Array des geteilten Bereichs
@@ -2456,6 +2477,7 @@ namespace fire.Runtime
         {
             var value = Pop();
             var obj = RequireObjectInstance(Pop(), "Feldzuweisung");
+            if (IsDeadObject(obj)) { ThrowDestroyedObject(obj); return false; }
 
             if (obj.HasFieldLocked(fieldName))
             {
@@ -2569,6 +2591,7 @@ namespace fire.Runtime
             var value = Pop();
             if (_currentThis is not ObjectInstance oi)
                 throw new InvalidOperationException("SetFieldOnThis without a bound ObjectInstance as 'this'.");
+            if (IsDeadObject(oi)) { ThrowDestroyedObject(oi); return; }
 
             // SPEC "Einheiten-Deklarationen" - dieselbe Prüfung wie in
             // SetField (siehe dort für die Begründung, warum das zur
@@ -2723,6 +2746,7 @@ namespace fire.Runtime
             }
 
             var obj = (ObjectInstance)target.AsObjectRef();
+            if (IsDeadObject(obj) && !(methodName is "Take" or "TakeUpwards" or "TakeGlobal" or "TakeTo")) { ThrowDestroyedObject(obj); return; }
 
             // Actor-Ziel (siehe Runtime.ObjectInstance.Mailbox-Doku):
             // JEDER Methodenaufruf wird zu einer asynchronen Nachricht
@@ -2789,42 +2813,76 @@ namespace fire.Runtime
         }
         }
 
-        /// <summary>`obj.TakeUpwards()`, `obj.TakeGlobal()`, `obj.TakeTo(other)` (SPEC 2.2): eingebaute Methoden jedes Objekts, die
-        /// nur greifen, wenn die Klasse nichts Gleichnamiges deklariert. Liefert false, wenn `name`/Argumentzahl keine davon ist.</summary>
+        /// <summary>`obj.Take(...)`, `obj.TakeUpwards(...)`, `obj.TakeGlobal(...)`, `obj.TakeTo(other, ...)` (SPEC 2.2): eingebaute Methoden jedes Objekts, die
+        /// nur greifen, wenn die Klasse nichts Gleichnamiges deklariert. Das letzte Argument darf ein `Takes`-Wert sein (was außer dem Objekt mitwandert).
+        /// Liefert false, wenn `name`/Argumentzahl keine davon ist.</summary>
         private bool TryCallOwnershipMethod(ObjectInstance obj, string name, Value[] args)
         {
+            int baseArgs = name == "TakeTo" ? 1 : 0;
+            if (args.Length != baseArgs && args.Length != baseArgs + 1) return false;
+            int mode = args.Length > baseArgs ? TakesMode(args[baseArgs]) : Takes.This;
+            Scope? target;
             switch (name)
             {
-                case "TakeUpwards" when args.Length == 0:
+                case "TakeUpwards":
                     obj.TakeUpwards();
-                    return true;
-                case "TakeGlobal" when args.Length == 0:
+                    target = obj.Owner as Scope;
+                    break;
+                case "TakeGlobal":
                     obj.TakeGlobal(_globalScope);
+                    target = _globalScope;
+                    break;
+                case "TakeTo":
+                {
+                    var other = RequireObjectInstance(args[0], "TakeTo");
+                    obj.TakeTo(other, this);
+                    if (!obj.IsDestroyed && mode != Takes.This) OwnershipWalk.MoveReachable(Value.MakeClassRef(obj), mode, OwnsWithinCall, other);
                     return true;
-                case "TakeTo" when args.Length == 1:
-                    obj.TakeTo(RequireObjectInstance(args[0], "TakeTo"), this);
-                    return true;
-                case "Take" when args.Length == 0:
+                }
+                case "Take":
                     // in den aktuellen Scope ziehen (der Scope, in dem der Aufruf steht)
                     if (obj.IsDestroyed) throw new OwnershipException("A destroyed object cannot change its owner.");
                     obj.ReparentTo(_currentScope);
-                    return true;
+                    target = _currentScope;
+                    break;
                 default:
                     return false;
             }
+            if (mode != Takes.This && target != null) OwnershipWalk.MoveReachable(Value.MakeClassRef(obj), mode, OwnsWithinCall, target);
+            return true;
         }
 
-        /// <summary>Die Ownership-Methoden eines Arrays oder Puffers (SPEC 2.2): TakeUpwards, TakeGlobal, TakeTo(objekt), Take().</summary>
+        private static int TakesMode(Value v)
+        {
+            if (v.Kind != ValueKind.Int || v.AsInt() < Takes.This || v.AsInt() > Takes.All)
+                throw new OwnershipException("The mode of Take... must be one of Takes.This, Takes.Children, Takes.Locals, Takes.All.");
+            return (int)v.AsInt();
+        }
+
+        /// <summary>Die Ownership-Methoden eines Arrays oder Puffers (SPEC 2.2): TakeUpwards, TakeGlobal, TakeTo(objekt), Take(), jeweils mit einem `Takes`-Wert als letztem Argument.</summary>
         private bool TryCallLeafOwnershipMethod(IOwnedLeaf leaf, string name, Value[] args)
         {
+            int baseArgs = name == "TakeTo" ? 1 : 0;
+            if (args.Length != baseArgs && args.Length != baseArgs + 1) return false;
+            if (name is not ("TakeUpwards" or "TakeGlobal" or "TakeTo" or "Take")) return false;
+            int mode = args.Length > baseArgs ? TakesMode(args[baseArgs]) : Takes.This;
+            IOwner target;
             switch (name)
             {
-                case "TakeUpwards" when args.Length == 0: LeafOwnership.TakeUpwards(leaf); return true;
-                case "TakeGlobal" when args.Length == 0: LeafOwnership.Reparent(leaf, _globalScope); return true;
-                case "TakeTo" when args.Length == 1: LeafOwnership.TakeTo(leaf, RequireObjectInstance(args[0], "TakeTo")); return true;
-                case "Take" when args.Length == 0: LeafOwnership.Reparent(leaf, _currentScope); return true;
-                default: return false;
+                case "TakeUpwards": LeafOwnership.TakeUpwards(leaf); target = leaf.LeafOwner!; break;
+                case "TakeGlobal": LeafOwnership.Reparent(leaf, _globalScope); target = _globalScope; break;
+                case "TakeTo":
+                {
+                    var other = RequireObjectInstance(args[0], "TakeTo");
+                    LeafOwnership.TakeTo(leaf, other);
+                    target = other;
+                    break;
+                }
+                default: LeafOwnership.Reparent(leaf, _currentScope); target = _currentScope; break;
             }
+            if (mode != Takes.This && !leaf.IsDestroyed)
+                OwnershipWalk.MoveReachable(leaf is ScriptArray a ? Value.MakeArray(a) : Value.MakeBuffer((ByteBuffer)leaf), mode, OwnsWithinCall, target);
+            return true;
         }
 
         /// <summary>`delete x`: zerstoert ein Objekt (Destruktor, Kaskade), ein Array oder einen Puffer sofort und loest es von seinem Owner.</summary>
@@ -5265,6 +5323,16 @@ namespace fire.Runtime
             var rc = ResolveClass("DestroyedException");
             string what = leaf.Kind == ValueKind.Buffer ? "buffer" : "array";
             var instance = ConstructNested(rc, new[] { Value.MakeString($"Access to a destroyed {what}.") });
+            ThrowException(Value.MakeClassRef(instance));
+        }
+
+        /// <summary>Benutzung eines zerstoerten Objekts (SPEC 2.5): eine fangbare `DestroyedException`. Nicht im Performance-Modus.</summary>
+        private bool IsDeadObject(ObjectInstance obj) => obj.IsDead && ExecutionMode != VmExecutionMode.Performance;
+
+        private void ThrowDestroyedObject(ObjectInstance obj)
+        {
+            var rc = ResolveClass("DestroyedException");
+            var instance = ConstructNested(rc, new[] { Value.MakeString("Access to a destroyed object.") });
             ThrowException(Value.MakeClassRef(instance));
         }
 

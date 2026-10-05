@@ -823,7 +823,7 @@ namespace fire.Native
                 sb.AppendLine("            Value count = lengthOf(self, &ok);");
                 sb.AppendLine($"            Value e = newObject({info.Id}, {info.Fields.Count}, list);");
                 sb.AppendLine($"            {ctor.Name}(e, self, count);");
-                sb.AppendLine("            retain(e);   // the count that travels with a returned value (see adopt)\n            return e;");
+                sb.AppendLine("            return e;");
                 sb.AppendLine("        }");
             }
             if (byFunc.Count > 0)
@@ -1382,7 +1382,7 @@ namespace fire.Native
             }
             sb.AppendLine(f.Signature);
             sb.AppendLine("{");
-            if (f.HasSelf) sb.AppendLine(f.Kind == FuncKind.Lambda ? "    (void)self;" : "    (void)self;\n    SelfGuard selfGuard_(self);   // `this` is not freed while the method runs, even if it is destroyed meanwhile");
+            if (f.HasSelf) sb.AppendLine("    (void)self;");
             if (f.Kind == FuncKind.FireBody) sb.AppendLine("    (void)args;");
             if (!f.IsTop && _usesThreads) sb.AppendLine("    if (FIRE_UNLIKELY(pollSignals())) return Undef();");
             if (f.Kind == FuncKind.Lambda)
@@ -2193,7 +2193,7 @@ namespace fire.Native
                 // Objects
                 // ---------------------------------------------------------------------------------------------------
                 case OpCode.LoadThis:
-                    RequireSelf(); E($"{S(d)} = self;"); SetR(d, true); d++; return Next();
+                    RequireSelf(); E($"{S(d)} = self;"); SetR(d, IsExtensionMethod(f.Proto)); d++; return Next();
                 case OpCode.GetField:
                 {
                     Need(1);
@@ -2242,7 +2242,7 @@ namespace fire.Native
                     E($"{{ Value o = newObject({cls.Id}, {cls.Fields.Count}, {ownerExpr}); {(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{target.Name}(o{CallArgs(d - argc, argc, mask, ctor.RefMask)}{dargs}); {S(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));
                     Check();
-                    SetR(slot, true);   // an object is counted where it is stored (see "Objects that are destroyed but still referenced" in the runtime)
+                    SetR(slot, false);
                     d = slot + 1; return Next();
                 }
                 case OpCode.ConstructBase:

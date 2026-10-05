@@ -554,6 +554,7 @@ namespace fire.IO.Bridge
                         } else {
                             this.source = source
                             this.ownsSource = !leaveOpen
+                            if (this.ownsSource) { source.TakeTo(this) }   // (the reader that closes the stream also owns it: `new IO.TextReader(IO.File.Open(...))`)
                         }
                     }
 
@@ -697,6 +698,7 @@ namespace fire.IO.Bridge
                         } else {
                             this.target = dest
                             this.ownsTarget = !flag
+                            if (this.ownsTarget) { dest.TakeTo(this) }
                         }
                     }
 
@@ -750,7 +752,8 @@ namespace fire.IO.Bridge
                 //
                 //     IO.Stdio.WriteLine("Hallo")
                 //     var name = IO.Stdio.ReadLine()          // undefined am Ende der Eingabe
-                //     var out = new IO.TextWriter(IO.Stdio.Out(), true)
+                //     var stream = IO.Stdio.Out()
+                //     var out = new IO.TextWriter(stream, true)    // (leaveOpen: a variable keeps the stream alive)
                 //
                 // Ausgabe geht immer als UTF-8. ReadLine/ReadAll lesen gepuffert - nicht mit
                 // rohen Lesezugriffen auf In() mischen. Eine unvollständige Ausgabezeile

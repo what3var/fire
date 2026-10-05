@@ -5535,7 +5535,8 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         IO.Stdio.Flush()
         IO.Stdio.ErrorLine("Fehler ä")
         print("gelesen: " + IO.Stdio.ReadLine())
-        var w = new IO.TextWriter(IO.Stdio.Out(), true)
+        var stdoutStream = IO.Stdio.Out()
+        var w = new IO.TextWriter(stdoutStream, true)   // (leaveOpen: the writer does not own the stream, the variable keeps it alive)
         w.WriteLine("via TextWriter äöü")
         w.Flush()
         print(IO.Stdio.ReadLine())
@@ -10807,6 +10808,20 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         }
     }
 
+    // like CheckSc, but not in the Performance mode (it does not check for destroyed objects)
+    void CheckScChecked(string title, string script, string[] expected)
+    {
+        foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release })
+        {
+            string[] actual;
+            try { actual = RunSc(script, mode).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + CompileErrors.Describe(ex) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) scFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
     const string scHead = """
         class D {
             string n
@@ -10814,6 +10829,154 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
             destruct() { print("~" + this.n) }
         }
         """;
+
+    CheckScChecked("Zerstoerte Objekte: Benutzung nach dem Zerstoerungsstapel ist eine DestroyedException, im Stapel noch erlaubt; return nimmt den Baum der Locals mit", """
+        class D {
+            string n
+            D next
+            construct(string n) { this.n = n }
+            destruct() { print("~" + this.n) }
+        }
+        class W {
+            D target
+            construct(D target) { this.target = target }
+            destruct() { print("~W sees " + this.target.n) }
+        }
+        class T {
+            static Dead() {
+                var a = new D("a")
+                return a.n
+            }
+            // the destructor of w uses d, which was destroyed before it in the same scope: allowed until the scope is gone
+            static Batch() {
+                var d = new D("d")
+                var w = new W(d)
+            }
+            // a returned list takes its elements along
+            static Items() {
+                var list = new List()
+                for (var i = 0; i < 3; i = i + 1) { var x = new D("i" + i); x.TakeTo(list); list.Add(x) }
+                return list
+            }
+            // by reference only: everything local travels with the returned object
+            static Ring() {
+                var a = new D("ra")
+                var b = new D("rb")
+                a.next = b
+                b.next = a
+                return a
+            }
+            // not returned: gone
+            static Lost() {
+                var keep = new D("lost")
+                return 1
+            }
+            // taken out of an owner that dies with the scope
+            static Inner() {
+                var outer = new D("outer")
+                outer.next = new D("inner")
+                outer.next.TakeTo(outer)
+                return outer.next
+            }
+        }
+        var x = new D("x")
+        delete x
+        try { print(x.n) } catch (DestroyedException e) { print("dead: " + e.message) }
+        try { x.next = x } catch (DestroyedException e) { print("dead set") }
+        T.Batch()
+        print("batch done")
+        var items = T.Items()
+        print(items.count + " " + items[2].n)
+        var ring = T.Ring()
+        print(ring.next.next.n)
+        T.Lost()
+        print(T.Inner().n)
+        print("end")
+        """, new[] { "~x", "dead: Access to a destroyed object.", "dead set", "~d", "~W sees d", "batch done", "3 i2", "ra", "~lost", "~outer", "inner", "end", "~i0", "~i1", "~i2", "~ra", "~rb", "~inner" });
+
+    CheckScChecked("Takes: This, Children, Locals, All bei TakeUpwards/TakeTo/TakeGlobal und fuer Arrays", """
+        class N {
+            string name
+            N next
+            N other
+            construct(string name) { this.name = name }
+            destruct() { print("~" + this.name) }
+        }
+        class F {
+            // This: the child stays behind and dies with the function
+            static UpThis(holder) {
+                var p = new N("p1")
+                var q = new N("q1")
+                p.next = q
+                p.TakeUpwards()
+                holder.next = p
+            }
+            // Locals: the child travels along (to the object that points to it)
+            static UpLocals(holder) {
+                var p = new N("p2")
+                var q = new N("q2")
+                p.next = q
+                p.TakeUpwards(Takes.Locals)
+                holder.next = p
+            }
+            // Children: what the fields point to directly, not what those point to
+            static UpChildren(holder) {
+                var p = new N("p3")
+                var q = new N("q3")
+                var r = new N("r3")
+                p.next = q
+                q.next = r
+                p.TakeUpwards(Takes.Children)
+                holder.next = p
+            }
+            // All: also what is owned by somebody else
+            static TakeAll(holder, foreign) {
+                var p = new N("p4")
+                p.other = foreign
+                p.TakeUpwards(Takes.All)
+                holder.next = p
+            }
+            // TakeTo with a mode, and TakeGlobal
+            static ToObject(holder) {
+                var p = new N("p5")
+                var q = new N("q5")
+                p.next = q
+                p.TakeTo(holder, Takes.Locals)
+            }
+            static Global() {
+                var p = new N("p6")
+                var q = new N("q6")
+                p.next = q
+                p.TakeGlobal(Takes.Children)
+                return 0
+            }
+            // an array travels with the objects it holds
+            static Arr() {
+                var a = [new N("a1"), new N("a2")]
+                a.TakeUpwards(Takes.Locals)
+                return a
+            }
+        }
+        var h = new N("h")
+        var foreign = new N("foreign")
+        F.UpThis(h)
+        print("1 " + h.next.name)
+        try { print(h.next.next.name) } catch (DestroyedException e) { print("q1 dead") }
+        F.UpLocals(h)
+        print("2 " + h.next.next.name)
+        F.UpChildren(h)
+        print("3 " + h.next.next.name)
+        try { print(h.next.next.next.name) } catch (DestroyedException e) { print("r3 dead") }
+        F.TakeAll(h, foreign)
+        print("4 " + h.next.other.name)
+        F.ToObject(h)
+        print("5 " + h.next.name)
+        F.Global()
+        print("6")
+        var arr = F.Arr()
+        print("7 " + arr[0].name + arr[1].name)
+        print("end")
+        """, new[] { "~q1", "1 p1", "q1 dead", "2 q2", "~r3", "3 q3", "r3 dead", "4 foreign", "5 p4", "6", "7 a1a2", "end", "~h", "~p5", "~q5", "~p1", "~p2", "~q2", "~p3", "~q3", "~p4", "~foreign", "~p6", "~q6", "~a1", "~a2" });
 
     CheckSc("return aus verschachtelten Bloecken zerstoert die Objekte ALLER verlassenen Scopes (innerster zuerst)", scHead + """
         class T {
@@ -11434,6 +11597,8 @@ static int CountOccurrences(string haystack, string needle)
 // ---------------------------------------------------------------------------------------------------------------------------
 // Native-Backend (fire.Native): derselbe Quelltext laeuft in der VM und als erzeugtes C++ - die Ausgabe muss identisch sein
 // ---------------------------------------------------------------------------------------------------------------------------
+if (Environment.GetEnvironmentVariable("FIRE_TEST_NO_NATIVE") == "1") Console.WriteLine("(FIRE_TEST_NO_NATIVE: the native checks are skipped)");
+else
 {
     Console.WriteLine("=== Native-Backend: erzeugtes C++ gegen die VM ===");
     int natFailures = 0;

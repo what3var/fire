@@ -75,11 +75,16 @@ namespace fire.Runtime
         {
             var first = _first;
             if (first == null) return;
-            if (_rest == null || _rest.Count == 0)
-                first.Destroy(runner);
-            else
-                foreach (var obj in ToArray())
-                    obj.Destroy(runner);
+            DestroyBatch.Enter();
+            try
+            {
+                if (_rest == null || _rest.Count == 0)
+                    first.Destroy(runner);
+                else
+                    foreach (var obj in ToArray())
+                        obj.Destroy(runner);
+            }
+            finally { DestroyBatch.Exit(); }
             Clear();
         }
     }

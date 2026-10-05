@@ -610,7 +610,9 @@ namespace fire.Terminal.Bridge
                     var paths = new List()
                     for (var i = 0; i < raw.length; i = i + 1) {
                         var entry = raw[i]
-                        paths.Add(new ToolPath(entry[0], entry[1], entry[2]))
+                        var path = new ToolPath(entry[0], entry[1], entry[2])
+                        path.TakeTo(paths)   // (the paths belong to the list, not to the loop body)
+                        paths.Add(path)
                     }
                     return paths
                 }

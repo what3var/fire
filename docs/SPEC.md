@@ -139,6 +139,14 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
 - `obj.TakeGlobal()` – the owner becomes the global scope.
 - `obj.TakeTo(other)` – the owner becomes `other` (an object instance).
 - All four are built-in methods of every object instance - and of every array and buffer (`TakeTo(obj)` needs an object as the target; a class that declares a method of the same name itself takes precedence). A function can thereby keep an object that belongs to it (e.g. a copy passed as a parameter, 2.4): `param.TakeTo(this)`.
+- **What travels along.** Every one of them takes a last argument of the enum `Takes` (always available): `Take(Takes.Locals)`, `TakeUpwards(Takes.Children)`, `TakeTo(obj, Takes.All)`, `TakeGlobal(Takes.This)`. Without it the mode is `Takes.This`.
+  - `Takes.This` - only the object itself (what it owns goes along anyway, it is part of its tree).
+  - `Takes.Children` - the object and everything its fields (an array: its elements) point to directly; it owns them afterwards.
+  - `Takes.Locals` (also `Takes.Recursive`) - like `return` (2.3): everything reachable from the object that belongs to a scope of the running call, recursively. A thing that is taken along belongs to the object that points to it
+    (for an array: to the owner of the array, if that is an object), otherwise to the new owner of the object.
+  - `Takes.All` - everything reachable, recursively, whoever owns it.
+  
+  Every thing is visited once (references can form cycles; the ownership stays a tree: what would end up below itself stays where it is). A destroyed object is never taken.
 - **Cycle protection:** `TakeTo(other)` checks whether `other` is transitively already a "descendant" (directly or indirectly owned) of `obj`. If so: run-time error instead of a cycle in the ownership tree.
 - **Race with an ongoing deletion:** If `other` (the target of `TakeTo`) is itself currently in cascade deletion (its own owner was just destroyed, its `destruct()` cascade is already running), the transfer is treated as if it had happened one second *before* the start of that deletion: `obj` is also taken into the running cascade immediately and deleted along with it (including the `destruct()` call), instead of remaining behind as an orphan with a half-destroyed owner.
 - Variable bindings (name → value) themselves do **not** move – only object ownership is transferable.
@@ -157,15 +165,19 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   shared handle. An unhandled exception unwinds the open scopes but does not release the global scope. As a
   safety net the host additionally closes all streams that are still open at the end (`IoBridge.RegisterAll(...).Dispose()`). A destructor should never
   throw: an unhandled error in it ends the program (the `IO` destructors therefore swallow IO errors).
-- **Exception `return`:** If an object instance is returned from a local scope via `return`, *and* that scope was its owner, the ownership implicitly passes to the calling/parent scope (no cascade deletion in this case).
-  The same holds for an array or a buffer.
+- **`return`:** If a value that belongs to one of the scopes being left (directly, or through objects that belong to them) is returned - an object, an array or a buffer -, it does not die with them: the
+  ownership passes to the calling scope, **together with everything that hangs on it and also belongs to those scopes** (that is `Takes.Locals`, 2.2): the elements of a returned list, the objects a returned
+  object points to. What is taken along belongs to the object that points to it, so it lives and dies with it. A value that belongs to someone else (an object that stays, the caller, the global scope) is not touched.
+- **Destroyed objects.** A destroyed object is **dead** when the destruction that destroyed it is over (the scope is left, `delete` returned): using it - a field, a method, a property - throws a catchable
+  `DestroyedException`, like an array (2.5). While the destruction is still running (the destructors of one scope), the objects of that scope can still be used, also those that were destroyed before - the destructor of a
+  writer can flush a stream that was destroyed before it. A reference does not keep anything alive: what a function wants to hand out has to be returned, taken (`Take...`) or stored in an owner that lives on.
 
 ### 2.5 Arrays and buffers in the ownership model, `delete`
 
 - An **array or buffer is destroyed** when its owner is destroyed or left (a scope is left, an object is deleted) and when `delete` is applied to it. Destroying it releases its memory; nothing runs
   (there is no destructor), the inner arrays it owns (2.1) are destroyed with it.
 - **Using a destroyed array or buffer is an error**: reading, writing, `Length` and `foreach` throw a catchable `DestroyedException` in the execution modes Debug and Release. In `#performance` mode
-  nothing is checked (the behaviour is undefined; natively that is a read of freed memory). A destroyed **object** keeps working as before (SPEC 2.4: a shallow copy may point to one).
+  nothing is checked (the behaviour is undefined; natively that is a read of freed memory). A destroyed **object** is treated the same way (2.3): dead objects throw `DestroyedException` (a shallow copy, 2.4, may point to one).
 - A reference does not keep anything alive: `this.items = tmp` does **not** move `tmp` to the object - `tmp` still belongs to the scope and dies with it. The owner has to be changed explicitly:
   `tmp.TakeTo(this)`. The same holds for an array that is stored in a variable of an outer scope in a loop body (`e = Next()` inside a loop: `e.TakeUpwards()`, or declare it in the loop).
 - **`delete expression`** destroys an object, an array or a buffer at once and detaches it from its owner: for an object the destructor runs and everything it owns is destroyed (2.3), exactly as if its owner
@@ -1800,7 +1812,8 @@ and throw `IO.StreamClosedException` if you carry on after `Close()`.
 
 **Standard input/output (`IO.Stdio`).** `IO.Stdio.Write(x)`, `WriteLine(x)`, `ErrorWrite(x)`,
 `ErrorLine(x)`, `Flush()`, `ReadLine()` (undefined at the end), `ReadAll()`; `In()`/`Out()`/`Err()`
-return them as a stream (e.g. `new IO.TextWriter(IO.Stdio.Out(), true)`), `Close()` on them changes
+return them as a stream (e.g. `var o = IO.Stdio.Out(); var w = new IO.TextWriter(o, true)` - with `leaveOpen` the writer does not own the stream, so a variable has to keep it: a stream that is
+only the argument `IO.Stdio.Out()` belongs to the constructor and dies with it), `Close()` on them changes
 nothing. **Where** this leads is decided by the host: the real console (default, `IoStdio.SystemConsole`)
 or callback functions (`IoStdio.Custom(output, error, input)` - the editor routes them into its
 output window, the input is empty there). Output always runs as UTF-8; with the `Custom` target it is passed on
