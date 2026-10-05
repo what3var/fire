@@ -122,7 +122,8 @@ namespace fire.Native
         /// <summary>Does the program overload this operator in some class? Then the operation goes through the wrapper (and the dispatcher of the method).</summary>
         private bool UseOperator(string method)
         {
-            if (!_program.Program.Classes.Values.Any(rc => rc.Methods.ContainsKey(method))) return false;
+            // only a class that the program uses (is generated) can be the operand; a class of a library that nothing creates does not count (registering one repeats the generation)
+            if (!_classList.Any(c => c.Rc.FindMethodWithAccess(method, 1).Proto != null)) return false;
             _operators.Add(method);
             _dispatchers.Add((method, 1));
             return true;
@@ -138,6 +139,81 @@ namespace fire.Native
         private bool _usesExceptions;
         /// <summary>The program uses fire threads (`fire`, `leave`, `terminate`, actors, ...): FIRE_THREADS, safe points that look at signals.</summary>
         private bool _usesThreads;
+        private bool _usesTime;
+        /// <summary>The runtime has to read the `ticks` of a TimeSpan (the time functions, the waiting functions of the devices, `#timeout`): `timeObjTicks` is generated.</summary>
+        private bool _needsTimeObj;
+        private bool _usesIo;
+        private bool _usesDevices;
+        private bool _usesGraphics;
+        private int _ioSecondsUnit;
+
+        /// <summary>The natives of `#import "io"` (`__IO` + name): the number of arguments, whether the result is a string/array/buffer (it belongs to the innermost scope),
+        /// and the C++ function (bridges/fire_bridge_io.hpp: `io::Name`).</summary>
+        private static readonly Dictionary<string, (int Argc, bool Reference)> IoBridgeNatives = new()
+        {
+            ["LastError"] = (0, false), ["LastErrorMessage"] = (0, true), ["OpenCount"] = (0, false),
+            ["FileOpen"] = (3, false), ["MemNew"] = (0, false), ["MemFromBuffer"] = (1, false), ["Close"] = (1, false),
+            ["Read"] = (4, false), ["Write"] = (4, false), ["ReadByte"] = (1, false), ["WriteByte"] = (2, false), ["ReadRest"] = (1, true), ["Flush"] = (1, false),
+            ["Seek"] = (3, false), ["Position"] = (1, false), ["Length"] = (1, false), ["SetLength"] = (2, false),
+            ["CanRead"] = (1, false), ["CanWrite"] = (1, false), ["CanSeek"] = (1, false), ["MemToBuffer"] = (1, true),
+            ["FileExists"] = (1, false), ["FileSize"] = (1, false), ["FileTime"] = (1, false), ["FileDelete"] = (1, false), ["FileCopy"] = (3, false), ["FileMove"] = (3, false),
+            ["DirExists"] = (1, false), ["DirCreate"] = (1, false), ["DirDelete"] = (2, false), ["DirList"] = (4, true), ["CurrentDir"] = (0, true),
+            ["PathCombine"] = (2, true), ["PathFileName"] = (1, true), ["PathStem"] = (1, true), ["PathExtension"] = (1, true), ["PathParent"] = (1, true), ["PathFull"] = (1, true),
+            ["PathTemp"] = (0, true), ["PathSeparator"] = (0, true), ["PathIsRooted"] = (1, false),
+            ["StdHandle"] = (1, false), ["StdWrite"] = (2, false), ["StdFlush"] = (1, false), ["StdReadLine"] = (0, true), ["StdReadAll"] = (0, true),
+            ["BufferIndexOf"] = (4, false), ["Utf8Encode"] = (1, true), ["Utf8Decode"] = (3, true), ["SplitLines"] = (1, true),
+        };
+        /// <summary>The natives of `#import "devices"` (`__DEV` + name; the manager's start with `Mgr`): arguments, whether the result is a string/buffer, whether the program should
+        /// look at its signals afterwards (a wait ends at `terminate`).</summary>
+        private static readonly Dictionary<string, (int Argc, bool Reference, bool NeedsList, bool Waits)> DeviceBridgeNatives = new()
+        {
+            ["MgrRefresh"] = (1, false, false, false), ["MgrHandleForIdentifier"] = (1, false, false, false), ["MgrCount"] = (0, false, false, false), ["MgrHandleAt"] = (1, false, false, false),
+            ["MgrIsShared"] = (0, false, false, false), ["MgrDefaultHandle"] = (0, false, false, false),
+            ["Identifier"] = (1, true, true, false), ["IsShared"] = (1, false, false, false), ["IsConnected"] = (1, false, false, false), ["PortName"] = (1, true, true, false),
+            ["Availability"] = (1, false, false, false), ["TestAvailability"] = (1, false, false, false), ["Connect"] = (1, false, false, false), ["Disconnect"] = (1, false, false, false),
+            ["DoCommand"] = (2, false, false, false), ["HasData"] = (1, false, false, false), ["ReadString"] = (1, true, true, false), ["Read"] = (1, true, true, false),
+            ["WriteString"] = (2, false, false, false), ["Write"] = (2, false, false, false), ["WaitForString"] = (3, false, false, true), ["WaitFor"] = (3, false, false, true),
+        };
+
+        /// <summary>The natives of `#import "graphics"` (`__GRPH` + name; `Fb` framebuffer, `Con` console, `Slc` slicer): arguments and whether the result is a string/buffer/array.</summary>
+        private static readonly Dictionary<string, (int Argc, bool Reference)> GraphicsBridgeNatives = new()
+        {
+            ["FbCreate"] = (3, false), ["FbDestroy"] = (1, false), ["FbWidth"] = (1, false), ["FbHeight"] = (1, false), ["FbReadByte"] = (2, false), ["FbWriteByte"] = (3, false),
+            ["FbMode"] = (1, false), ["FbByteCount"] = (1, false), ["FbReadBytes"] = (1, true), ["FbWriteBytes"] = (2, false), ["FbGetPaletteColor"] = (2, false), ["FbSetPaletteColor"] = (3, false),
+            ["FbReadPalette"] = (2, true), ["FbWritePalette"] = (2, false), ["FbLoadImage"] = (2, false), ["FbLoadFile"] = (2, false), ["FbFromPixels"] = (5, false), ["FbLastError"] = (0, true),
+            ["FbGetTransparentIndex"] = (1, false), ["FbSetTransparentIndex"] = (2, false), ["FbToMask"] = (4, false),
+            ["ConCreate"] = (1, false), ["ConDestroy"] = (1, false), ["ConPrint"] = (2, false), ["ConLocate"] = (3, false), ["ConClear"] = (1, false), ["ConSetColor"] = (3, false),
+            ["ConSetPixel"] = (4, false), ["ConGetPixel"] = (3, false), ["ConFillRect"] = (6, false), ["ConDrawRect"] = (6, false), ["ConDrawLine"] = (6, false), ["ConDrawText"] = (6, false),
+            ["ConCellWidth"] = (1, false), ["ConCellHeight"] = (1, false), ["ConGetPixelIndex"] = (3, false), ["ConDrawCircle"] = (5, false), ["ConFillCircle"] = (5, false),
+            ["ConDrawEllipse"] = (6, false), ["ConFillEllipse"] = (6, false), ["ConDrawTriangle"] = (8, false), ["ConFillTriangle"] = (8, false), ["ConDrawPolygon"] = (4, false),
+            ["ConFillPolygon"] = (3, false), ["ConFloodFill"] = (4, false), ["ConFloodFillBorder"] = (5, false), ["ConBlit"] = (12, false),
+            ["SlcSlice"] = (7, true),
+        };
+        private static readonly HashSet<string> GraphicsNeedsList = new() { "FbReadBytes", "FbReadPalette", "FbLastError", "SlcSlice" };
+
+        /// <summary>The functions of <see cref="IoBridgeNatives"/> that take the scope that owns their result as a last argument.</summary>
+        private static readonly HashSet<string> IoNeedsList = new()
+        {
+            "LastErrorMessage", "ReadRest", "MemToBuffer", "DirList", "CurrentDir", "PathCombine", "PathFileName", "PathStem", "PathExtension", "PathParent", "PathFull", "PathTemp", "PathSeparator",
+            "StdReadLine", "StdReadAll", "Utf8Encode", "Utf8Decode", "SplitLines",
+        };
+
+        /// <summary>The natives of `#import "time"` and their C++ functions (bridges/fire_bridge_time.hpp).</summary>
+        private static readonly Dictionary<string, (int Argc, string Function, bool NeedsList, bool ReturnsReference)> TimeBridgeNatives = new()
+        {
+            ["Sleep"] = (1, "sleepNative", false, false),
+            ["__time_now"] = (0, "tm_now", false, false),
+            ["__time_local_offset"] = (1, "tm_localOffset", false, false),
+            ["__time_parts"] = (1, "tm_parts", true, true),
+            ["__time_make"] = (7, "tm_make", false, false),
+            ["__time_parse"] = (1, "tm_parse", false, false),
+            ["__time_format"] = (2, "tm_format", true, true),
+            ["__time_add_months"] = (2, "tm_addMonths", false, false),
+            ["__time_days_in_month"] = (2, "tm_daysInMonth", false, false),
+            ["__time_to_ticks"] = (2, "tm_toTicks", false, false),
+            ["__time_unit_ticks"] = (1, "tm_unitTicks", false, false),
+            ["__time_span_text"] = (1, "tm_spanText", true, true),
+        };
         /// <summary>The program declares actors (classes with IsActor): calls of their methods are messages.</summary>
         private bool _usesActors;
         private Func _cur = null!;   // the function that is being generated
@@ -375,6 +451,19 @@ namespace fire.Native
             foreach (var include in _target.Native.Includes) sb.AppendLine($"#include <{include}>");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.hpp\"");
             sb.AppendLine("#include \"fire_rt.hpp\"");
+            if (_usesTime) sb.AppendLine("#include \"bridges/fire_bridge_time.hpp\"");
+            if (_usesDevices)
+            {
+                sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{_target.Native.Platform}/fire_dev.hpp\"");
+                sb.AppendLine("#include \"bridges/fire_bridge_devices.hpp\"");
+            }
+            if (_usesIo || _usesGraphics) sb.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{_target.Native.Platform}/fire_fs.hpp\"");
+            if (_usesIo)
+            {
+                sb.AppendLine($"#define FIRE_UNIT_SECONDS {_ioSecondsUnit}");
+                sb.AppendLine("#include \"bridges/fire_bridge_io.hpp\"");
+            }
+            if (_usesGraphics) sb.AppendLine("#include \"bridges/fire_bridge_graphics.hpp\"");
             sb.AppendLine("using namespace fire;");
             sb.AppendLine();
             sb.AppendLine("namespace fire {");
@@ -530,6 +619,11 @@ namespace fire.Native
                 }
                 var accessError = RegisterClass("AccessDeniedException");
                 if (accessError.Rc.FindConstructor(1) is { } accessCtor && accessCtor.ParamCount == 1) GetFunc(accessCtor, FuncKind.Ctor);
+                if (_usesTime && _program.Program.Classes.ContainsKey("TimeException"))
+                {
+                    var timeError = RegisterClass("TimeException");
+                    if (timeError.Rc.FindConstructor(1) is { } timeCtor && timeCtor.ParamCount == 1) GetFunc(timeCtor, FuncKind.Ctor);
+                }
             }
             foreach (var field in _fieldNames.ToList())
                 foreach (var cls in _classList.ToList())
@@ -677,8 +771,7 @@ namespace fire.Native
             var extensions = ExtensionMethods(name, argc).ToList();
             bool enumeratorOfArray = name == "GetEnumerator" && argc == 0 && _classes.ContainsKey("ListEnumerator");
             var builtins = BuiltinMethods(name, argc).ToList();
-            if (byFunc.Count == 0 && extensions.Count == 0 && !enumeratorOfArray && OwnMethodId(name, argc) == null && builtins.Count == 0)
-                throw new NativeNotSupportedException($"method '{name}' with {argc} argument(s): no class of the program and no base-type extension defines it (the built-in methods TakeTo, TakeUpwards and TakeGlobal are not supported yet)");
+            // no class has the method (e.g. `command.Execute(device)` of the devices library when the program defines no command): calling it is an error at run time, like in the VM
 
             // a call site that passes addresses: an implementation without `ref` for that position gets the value
             bool derefs = _refCallSites.Contains((name, argc));
@@ -745,7 +838,12 @@ namespace fire.Native
                 sb.AppendLine($"    ownMethod({ownId}, self, {(argc == 1 ? "a0" : "Undef()")}, list);");
                 sb.AppendLine("    return Undef();");
             }
-            else sb.AppendLine($"    fatal(\"Method '{name}' not found on this value.\");");
+            else
+            {
+                if (byFunc.Count == 0 && extensions.Count == 0 && builtins.Count == 0 && !enumeratorOfArray && argc > 0)
+                    sb.AppendLine("    " + string.Concat(Enumerable.Range(0, argc).Select(i => $"(void)a{i}; ")).TrimEnd());   // no class has the method: nothing uses the arguments
+                sb.AppendLine($"    fatal(\"Method '{name}' not found on this value.\");");
+            }
             sb.AppendLine("}");
             if (WrapDispatchers) sb.Append(ActorWrapper(name, argc));
             return sb.ToString();
@@ -962,6 +1060,33 @@ namespace fire.Native
                 sb.AppendLine($"    {_funcByProto[indexClass.Rc.FindConstructor(3)!].Name}(o, message, Int(index), Int(length));");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
+                if (_usesTime)
+                {
+                    var timeClass = _classes.GetValueOrDefault("TimeException") ?? throw new NativeNotSupportedException("the time functions need the prelude class TimeException (#import \"time\")");
+                    sb.AppendLine("Value makeTimeError(Value message) {");
+                    sb.AppendLine($"    Value o = newObject({timeClass.Id}, {timeClass.Fields.Count}, g_globalOwn);");
+                    sb.AppendLine($"    {_funcByProto[timeClass.Rc.FindConstructor(1)!].Name}(o, message);");
+                    sb.AppendLine("    return o;");
+                    sb.AppendLine("}");
+                }
+            }
+            if (_needsTimeObj)
+            {
+                // a TimeSpan is any class with a whole number field `ticks` (like the VM looks at the field, not at the class name)
+                sb.AppendLine("bool timeObjTicks(Value v, int64_t& ticks) {");
+                var tick = new StringBuilder();
+                foreach (var cls in _classList)
+                    if (cls.Rc.FieldIndex.TryGetValue("ticks", out int index)) tick.AppendLine($"        case {cls.Id}: if (o->fields()[{index}].kind == K_Int) {{ ticks = o->fields()[{index}].i; return true; }} return false;");
+                if (tick.Length > 0)
+                {
+                    sb.AppendLine("    Obj* o = asObj(v);");
+                    sb.AppendLine("    switch (o->cls) {");
+                    sb.Append(tick);
+                    sb.AppendLine("        default: return false;");
+                    sb.AppendLine("    }");
+                }
+                else sb.AppendLine("    (void)v; (void)ticks; return false;");
+                sb.AppendLine("}");
             }
             sb.AppendLine("bool userToString(Value object, OwnList* list, Value* result) {");
             var toStrings = new StringBuilder();
@@ -1047,6 +1172,52 @@ namespace fire.Native
             if (_usesExceptions && _usesGlobalOwn) return;
             _usesExceptions = true;
             _usesGlobalOwn = true;
+            _version++;
+        }
+
+        /// <summary>`Sleep` and the other natives of `#import "time"`: the runtime needs the TimeException and a way to read the `ticks` of a TimeSpan.</summary>
+        private void UseTime()
+        {
+            if (_usesTime) return;
+            _usesTime = true;
+            UseExceptions();
+            _version++;
+            NeedTimeObj();
+        }
+
+        private void NeedTimeObj()
+        {
+            if (_needsTimeObj) return;
+            _needsTimeObj = true;
+            _version++;
+        }
+
+        /// <summary>`#import "io"`: the bridge needs the exceptions (a destroyed buffer) and the unit `s` (the modification time of a file).</summary>
+        private void UseIo()
+        {
+            if (_usesIo) return;
+            _usesIo = true;
+            _ioSecondsUnit = UnitId(Unit.Parse("s"));
+            UseExceptions();
+            _version++;
+        }
+
+        /// <summary>`#import "devices"`: the bridge needs the exceptions (a destroyed buffer) and `timeObjTicks` (a TimeSpan as a wait time).</summary>
+        private void UseDevices()
+        {
+            if (_usesDevices) return;
+            _usesDevices = true;
+            UseExceptions();
+            NeedTimeObj();
+            _version++;
+        }
+
+        /// <summary>`#import "graphics"`: the bridge needs the exceptions (a destroyed buffer or array).</summary>
+        private void UseGraphics()
+        {
+            if (_usesGraphics) return;
+            _usesGraphics = true;
+            UseExceptions();
             _version++;
         }
 
@@ -1843,6 +2014,50 @@ namespace fire.Native
                         Check();
                         d = first + 1; SetR(first, true); return Next();
                     }
+                    if (native.StartsWith("__IO", StringComparison.Ordinal) && IoBridgeNatives.TryGetValue(native.Substring(4), out var ioNative) && ioNative.Argc == argc)
+                    {
+                        UseIo();
+                        string name = native.Substring(4);
+                        int first = d - argc;
+                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(IoNeedsList.Contains(name) ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
+                        E($"{S(first)} = io::{name}({args});");
+                        Check();
+                        d = first + 1; SetR(first, ioNative.Reference); return Next();
+                    }
+                    if (native.StartsWith("__GRPH", StringComparison.Ordinal) && GraphicsBridgeNatives.TryGetValue(native.Substring(6), out var grphNative) && grphNative.Argc == argc)
+                    {
+                        UseGraphics();
+                        string name = native.Substring(6);
+                        int first = d - argc;
+                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(GraphicsNeedsList.Contains(name) ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
+                        E($"{S(first)} = gfx::{name}({args});");
+                        Check();
+                        d = first + 1; SetR(first, grphNative.Reference); return Next();
+                    }
+                    if (native.StartsWith("__DEV", StringComparison.Ordinal) && DeviceBridgeNatives.TryGetValue(native.Substring(5), out var devNative) && devNative.Argc == argc)
+                    {
+                        UseDevices();
+                        string name = native.Substring(5);
+                        int first = d - argc;
+                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(devNative.NeedsList ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
+                        E($"{S(first)} = dev::{name}({args});");
+                        Check();
+                        // a wait ends at terminate: leave now, not at the next loop
+                        if (devNative.Waits && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
+                        d = first + 1; SetR(first, devNative.Reference); return Next();
+                    }
+                    if (TimeBridgeNatives.TryGetValue(native, out var timeNative) && timeNative.Argc == argc)
+                    {
+                        // the time bridge (bridges/fire_bridge_time.hpp); every one of them can throw a TimeException
+                        UseTime();
+                        int first = d - argc;
+                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(timeNative.NeedsList ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
+                        E($"{S(first)} = {timeNative.Function}({args});");
+                        Check();
+                        // a sleep ends at terminate: leave now, not at the next loop
+                        if (native == "Sleep" && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
+                        d = first + 1; SetR(first, timeNative.ReturnsReference); return Next();
+                    }
                     throw new NativeNotSupportedException($"native function '{native}' (called in {fn})");
                 }
                 case OpCode.CallExtern:
@@ -1934,8 +2149,8 @@ namespace fire.Native
                     return new StepResult(false, null);
                 case OpCode.SetTimeout:
                 case OpCode.SetAutoSync:
-                    // `#timeout` (waiting functions) does not exist in the native backend yet; `#nosync` only matters for programs with threads
-                    if (ins.Op == OpCode.SetTimeout) { Need(1); d--; }
+                    // `#timeout` sets the wait time of the waiting functions of the devices; `#nosync` only matters for programs with threads
+                    if (ins.Op == OpCode.SetTimeout) { Need(1); E($"setDefaultTimeout({S(d - 1)});"); NeedTimeObj(); d--; }
                     else if (_usesThreads && ins.A[0] == 0) E("g_autoSync = false; g_attnMask &= ~ATTN_SECT;");
                     return Next();
 

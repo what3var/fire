@@ -77,8 +77,9 @@ namespace fire.Compiler
         /// Editor, der auf unverarbeitetem, evtl. gerade erst getipptem Text
         /// arbeitet). Unbekannte Namen sind enthalten - prüfen mit
         /// <see cref="TrySourceFor"/>.</summary>
-        public static IEnumerable<string> FindImportNames(string source) =>
-            ImportDirective.Matches(source).Select(m => m.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase);
+        public static IEnumerable<string> FindImportNames(string source, ISet<string>? symbols = null) =>
+            ImportDirective.Matches(ConditionalSymbols.Apply(source, symbols ?? ConditionalSymbols.For(null)))
+                .Select(m => m.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>Setzt die Preludes aller in `nativeImports` enthaltenen
         /// Erweiterungen (jeweils durch `preprocess` vorverarbeitet) direkt

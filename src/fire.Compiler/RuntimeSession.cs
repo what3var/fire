@@ -108,9 +108,10 @@ namespace fire.Compiler
         /// Direktive", ohne ihre eigentliche Wirkung auszulösen. Eine UNBEKANNTE Erweiterung (`#import
         /// "unfug"`) wirft weiterhin - das ist ein ECHTER Fehler, kein
         /// reines "kennt die Live-Diagnostik das nur (noch) nicht".</summary>
-        public static DirectiveRegistry CreateProjectDirectiveRegistry(Action<string>? onImport = null)
+        public static DirectiveRegistry CreateProjectDirectiveRegistry(Action<string>? onImport = null, IEnumerable<string>? defines = null)
         {
             var registry = new DirectiveRegistry(); // komplett leer, NICHT CreateDefault()
+            foreach (var symbol in ConditionalSymbols.For(null, ConditionalSymbols.DefaultEngine, null, defines)) registry.Symbols.Add(symbol); // `#if windows`: the machine the VM runs on
             registry.Register("import", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind == ValueKind.String)
@@ -123,9 +124,9 @@ namespace fire.Compiler
             return registry;
         }
 
-        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null, string? basePath = null, fire.Device.Manager.DeviceManager.DeviceManager? deviceManager = null, int? floatWidth = null)
+        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null, string? basePath = null, fire.Device.Manager.DeviceManager.DeviceManager? deviceManager = null, int? floatWidth = null, IReadOnlyList<string>? defines = null)
         {
-            var linker = new Linker { BasePath = basePath };
+            var linker = new Linker { BasePath = basePath, Defines = defines };
             var natives = new NativeRegistry();
 
             var linkedProgram = linker.CompileAndLink(sources, debugWriter, outname, executionMode, floatWidth);

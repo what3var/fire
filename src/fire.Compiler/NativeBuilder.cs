@@ -19,9 +19,9 @@ namespace fire.Compiler
 
         /// <summary>The program of <paramref name="sources"/> as C++ for <paramref name="target"/>. Compile errors of the script and
         /// <see cref="NativeNotSupportedException"/> propagate.</summary>
-        public static string Generate(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null)
+        public static string Generate(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null)
         {
-            var linked = new Linker { BasePath = basePath }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             return CppGenerator.Generate(linked, target);
         }
 
@@ -44,9 +44,9 @@ namespace fire.Compiler
 
         /// <summary>Translates and builds. <paramref name="output"/> is the program, or the folder for a toolchain that only writes files.</summary>
         public static NativeBuildResult Build(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
-            VmExecutionMode? mode = null, int? floatWidth = null, bool keepSources = false, string? basePath = null)
+            VmExecutionMode? mode = null, int? floatWidth = null, bool keepSources = false, string? basePath = null, IReadOnlyList<string>? defines = null)
         {
-            string cpp = Generate(sources, target, mode, floatWidth, basePath);
+            string cpp = Generate(sources, target, mode, floatWidth, basePath, defines);
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
             var log = new StringBuilder();
 
@@ -90,7 +90,7 @@ namespace fire.Compiler
 
         /// <summary>Like <see cref="Build"/>, but what goes wrong (an error in the script, something the native backend cannot translate yet, a bad configuration) is in the result's log.</summary>
         public static NativeBuildResult BuildSafe(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
-            VmExecutionMode? mode = null, int? floatWidth = null, bool keepSources = false, string? basePath = null)
+            VmExecutionMode? mode = null, int? floatWidth = null, bool keepSources = false, string? basePath = null, IReadOnlyList<string>? defines = null)
         {
             try { return Build(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath); }
             catch (NativeNotSupportedException ex) { return new NativeBuildResult(false, output, "Not supported by the native backend yet: " + ex.Message); }

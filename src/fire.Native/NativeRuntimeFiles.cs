@@ -14,6 +14,8 @@ namespace fire.Native
         {
             Directory.CreateDirectory(directory);
             WriteResource("fire_rt.hpp", directory);
+            foreach (string name in Asm.GetManifestResourceNames().Where(n => n.StartsWith("bridges/", StringComparison.Ordinal)))
+                WriteResource(name, directory);
             var wanted = platform == null ? AllPackages() : PackageClosure(platform);
             foreach (string package in wanted)
                 foreach (string name in Asm.GetManifestResourceNames().Where(n => n.StartsWith($"platform/{package}/", StringComparison.Ordinal)))

@@ -3,6 +3,8 @@
 // A platform header offers the runtime (fire_rt.hpp) these, in namespace fire::plat:
 //   int64_t nowMs()                    a monotonic clock in milliseconds
 //   [[noreturn]] void exitProcess(int) ends the program (the streams are flushed already)
+//   int64_t unixMicros()               the wall clock: microseconds since 1970-01-01 UTC (the time bridge)
+//   void sleepMs(int64_t)              the calling thread sleeps (only without fire threads; with them the runtime waits on a CondVar)
 // and with FIRE_THREADS (fire threads, see docs/NATIVE_BACKEND.md):
 //   class Mutex      lock(), unlock()                      (not recursive)
 //   class CondVar    wait(Mutex&), bool waitFor(Mutex&, ms) (false: timed out), notifyAll()   - always called with the mutex held
@@ -15,10 +17,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 #ifdef FIRE_THREADS
 #include <condition_variable>
 #include <mutex>
-#include <thread>
 #endif
 
 namespace fire {
@@ -27,6 +29,12 @@ namespace plat {
 inline int64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
+
+inline int64_t unixMicros() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+inline void sleepMs(int64_t ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
 
 /// Ends the program. With threads the other threads must not run static destructors under their feet: no cleanup.
 [[noreturn]] inline void exitProcess(int code) {

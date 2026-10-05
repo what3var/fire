@@ -132,6 +132,12 @@ struct Pool {
 struct OwnList;
 struct Pending;
 struct SectionReq;
+/// The last error of a bridge function (IO, devices): a code and a message, one per thread (the prelude asks for it right after the call).
+struct BridgeError { int32_t code; char message[176]; };
+struct Owned;
+/// The objects that are destroyed while a destroy batch runs (see `destroy`): their memory is freed when the batch ends, so that a destructor can still look at an
+/// object that was destroyed before it (the order in a scope is the order of creation: a writer's destructor flushes a stream that is already destroyed).
+struct Zombies { Owned* head; int32_t depth; };
 #define FIRE_THREAD_VARS(X) \
     X(UnwindState, g_unwind, (UnwindState{0, UW_NONE, nullptr, {}, 0, 0, {}})) \
     X(Pool, g_pool, (Pool{nullptr, 0, 0})) \
@@ -148,7 +154,11 @@ struct SectionReq;
     X(OwnList*, g_travel, nullptr) \
     X(SectionReq*, g_curSection, nullptr) \
     X(int32_t, g_secDepth, 0) \
-    X(uint32_t, g_reflCaller, 0xFFFFFFFFu)   /* the class of the code that called into the reflection library */
+    X(uint32_t, g_reflCaller, 0xFFFFFFFFu)   /* the class of the code that called into the reflection library */ \
+    X(Zombies, g_zombies, (Zombies{nullptr, 0}))          /* destroyed objects whose memory is freed at the end of the batch */ \
+    X(BridgeError, g_ioError, (BridgeError{0, {0}}))      /* the IO bridge: the last error of this thread */ \
+    X(BridgeError, g_deviceError, (BridgeError{0, {0}}))  /* the device bridge */ \
+    X(BridgeError, g_gfxError, (BridgeError{0, {0}}))     /* the graphics bridge: the message of the last failed image function */
 
 #if defined(FIRE_THREADS) && defined(FIRE_TLS_STRUCT)
 struct ThreadLocals {
@@ -178,6 +188,10 @@ inline ThreadLocals& tl() {
 #define g_curSection (::fire::tl().g_curSection)
 #define g_secDepth (::fire::tl().g_secDepth)
 #define g_reflCaller (::fire::tl().g_reflCaller)
+#define g_zombies (::fire::tl().g_zombies)
+#define g_ioError (::fire::tl().g_ioError)
+#define g_deviceError (::fire::tl().g_deviceError)
+#define g_gfxError (::fire::tl().g_gfxError)
 #else
 #if defined(FIRE_THREADS)
 #define FIRE_TLS thread_local
@@ -912,9 +926,31 @@ inline void probeFree(Obj* o);   // the probes of an object that is destroyed (f
 inline void originFree(Obj* o);   // flags 4 (has `taking` copies) and 32 (is one): see the fire threads section
 #endif
 
+/// What was destroyed during a batch is freed when the outermost batch ends: a destructor sees every object of its scope in the state it was in when it was
+/// destroyed (fields and strings intact), like in the VM where a destroyed object keeps working.
+struct DestroyBatch {
+    DestroyBatch() { g_zombies.depth++; }
+    ~DestroyBatch() {
+        if (--g_zombies.depth > 0) return;
+        Owned* o = g_zombies.head;
+        g_zombies.head = nullptr;
+        while (o) {
+            Owned* next = o->next;
+            Obj* obj = static_cast<Obj*>(o);
+            Value* f = obj->fields();
+            for (uint32_t i = 0; i < obj->nfields; i++) release(f[i]);
+#ifndef FIRE_KEEP_DESTROYED
+            std::free(obj);
+#endif
+            o = next;
+        }
+    }
+};
+
 inline void destroy(Obj* o) {
     if (o->flags & 1) return;
     o->flags |= 1;
+    DestroyBatch batch;
     if (o->flags & 16) {
         // a copy that `taking` made for a fire thread: its original still lives, the destructor is not run for the copy
     } else if (FIRE_UNLIKELY(g_unwind.active)) {
@@ -925,21 +961,19 @@ inline void destroy(Obj* o) {
         g_unwind = saved;
     } else runDestructors(o);
     destroyList(&o->owned);
-    Value* f = o->fields();
-    for (uint32_t i = 0; i < o->nfields; i++) release(f[i]);
 #ifdef FIRE_REFLECTION
     if (FIRE_UNLIKELY(o->flags & 2)) probeFree(o);
 #endif
 #ifdef FIRE_THREADS
     if (FIRE_UNLIKELY(o->flags & 44)) originFree(o);   // an original with copies (4), an actor (8), or a copy that knows its original (32)
 #endif
-#ifndef FIRE_KEEP_DESTROYED
-    std::free(o);
-#endif
+    o->next = g_zombies.head;   // freed with the batch
+    g_zombies.head = o;
 }
 
 /// Destroys everything on the list, in creation order, and empties it.
 inline void destroyList(OwnList* list) {
+    DestroyBatch batch;
     Owned* o = list->head;
     list->head = list->tail = nullptr;
     while (o) {
@@ -1911,6 +1945,53 @@ inline Value accessDenied(const char* text) {
 #else
     fatal(text);
 #endif
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Time in the runtime: ticks of 100 ns like in the VM; used by `Sleep` and the other time bridge functions (bridges/fire_bridge_time.hpp), by the waiting functions
+// of the devices and by `#timeout`.
+// ---------------------------------------------------------------------------------------------------------------------
+constexpr int64_t TICKS_PER_MS = 10000;
+
+/// Generated: the `ticks` of a TimeSpan (any class with a whole number field `ticks`); false for another object (and for every object when the program has none).
+bool timeObjTicks(Value v, int64_t& ticks);
+
+/// Is the unit a unit of time (the dimension `s` and nothing else)? `factor` is then its size in seconds.
+inline bool unitOfTime(uint32_t u, double& factor) {
+    int s = -1;
+    for (int i = 0; i < FIRE_NDIMS; i++) if (std::strcmp(g_dimNames[i], "s") == 0) s = i;
+    if (s < 0 || g_ud[u].dims[s] != 1) return false;
+    for (int i = 0; i < FIRE_NDIMS; i++) if (i != s && g_ud[u].dims[i] != 0) return false;
+    factor = g_ud[u].scale;
+    return true;
+}
+
+/// A time as ticks, the way the waiting functions take it: a TimeSpan, a number with a unit of time (`500ms`), or a number (milliseconds). False for anything else.
+inline bool timeTicksOf(Value a, int64_t& ticks) {
+    if (a.kind == K_Class) return timeObjTicks(a, ticks);
+    if (a.kind != K_Int && a.kind != K_Float) return false;
+    double number = a.kind == K_Int ? (double)a.i : (double)a.f;
+    if (unitIsUnitless(a.unit)) { ticks = (int64_t)std::nearbyint(number * (double)TICKS_PER_MS); return true; }
+    double perSecond;
+    if (!unitOfTime(a.unit, perSecond)) return false;
+    ticks = (int64_t)std::nearbyint(number * perSecond * 1e7);
+    return true;
+}
+
+/// How long a waiting function waits without a time of its own: `#timeout`, else 30 seconds.
+inline int64_t g_defaultTimeoutTicks = 30LL * 10000000;
+
+#ifdef FIRE_THREADS
+inline void sleepTicks(int64_t ticks);
+#else
+inline void sleepTicks(int64_t ticks) { if (ticks > 0) plat::sleepMs((ticks + TICKS_PER_MS - 1) / TICKS_PER_MS); }
+#endif
+
+/// `#timeout value`: the program has to give a time (the VM fails with an InvalidOperationException; here the program ends).
+inline void setDefaultTimeout(Value t) {
+    int64_t ticks;
+    if (!timeTicksOf(t, ticks)) fatal("#timeout expects a TimeSpan, a time value or milliseconds.");
+    g_defaultTimeoutTicks = ticks;
 }
 
 /// Generated: builds a DestroyedException (message) owned by the global scope.
@@ -3152,6 +3233,17 @@ inline int64_t syncGlobals() {
     if (!g_isThread) { mainPoll(); handled = drainQueue(); }
     gilYield();
     return handled;
+}
+
+/// `Sleep`: this thread sleeps - with the GIL released, so the others run. It is not deaf: `terminate` ends it at once, and the main program serves
+/// what the threads leave for it (sections, jobs, their exceptions) while it sleeps; whatever that raises ends the sleep.
+inline void sleepTicks(int64_t ticks) {
+    if (ticks <= 0) { gilYield(); return; }
+    int64_t deadline = steadyMs() + (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS;
+    blockUntil([] {
+        if (!g_isThread) mainPoll();
+        return g_unwind.active != 0;
+    }, true, deadline);
 }
 
 /// The end of the main program: `terminate` runs its handler, then the main program waits for the fire threads (serving what they

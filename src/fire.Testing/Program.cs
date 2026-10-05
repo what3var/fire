@@ -9355,6 +9355,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     Console.WriteLine(glFailures == 0 ? "Alle Globals-Pruefungen bestanden." : $"FEHLER: {glFailures} Globals-Pruefung(en) fehlgeschlagen.");
 }
 
+// The scripts of the device checks with their expected output, for the native backend (a loopback device)
+var devNativeCases = new List<(string Title, string Script, string[] Expected, string? DefaultId)>();
+
 // ---------------------------------------------------------------------------
 // Geraete: geteilter DeviceManager, Standardgeraet, EnsureConnected, IsShared, Paketverfolgung, Paketprotokoll
 // ---------------------------------------------------------------------------
@@ -9386,6 +9389,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     void CheckDev(string title, string script, string[] expected, bool shared = true, string? defaultId = null,
         Action<fire.Device.Manager.DeviceManager.DeviceManager>? after = null)
     {
+        if (after == null && !title.StartsWith("IsShared") && !script.Contains("#import \"graphics\"")) devNativeCases.Add((title, script, expected, defaultId));
         foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
         {
             string[] actual;
@@ -13986,6 +13990,329 @@ static int CountOccurrences(string haystack, string needle)
             """),
     }).ToArray();
 
+    // The IO bridge (bridges/fire_bridge_io.hpp); the console is tested separately (a program with input)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("IO: Dateien, Verzeichnisse, Text, Fehler (FileNotFound, DirectoryNotFound, FileExists)", """
+            #import "io"
+            var dir = IO.Path.Combine(IO.Path.Temp(), "fire_io_test_i1")
+            if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
+            IO.Directory.Create(IO.Path.Combine(dir, "sub/deeper"))
+            print(IO.Directory.Exists(dir))
+            var f = IO.Path.Combine(dir, "a.txt")
+            IO.File.WriteAllText(f, "Hallo Welt\nZeile 2 äöü €\r\nZeile 3 é 😀\n\nletzte")
+            print(IO.File.Exists(f) + " " + IO.File.Size(f))
+            print(IO.File.ReadAllText(f))
+            foreach (line in IO.File.ReadAllLines(f)) { print("[" + line + "]") }
+            IO.File.AppendAllText(f, "\nangehaengt")
+            print(IO.File.ReadAllLines(f).count)
+            var reader = new IO.TextReader(f)
+            print(reader.ReadLine())
+            print(reader.ReadLine())
+            reader.Close()
+            var w = IO.File.CreateText(IO.Path.Combine(dir, "b.txt"))
+            w.WriteLine("eins")
+            w.WriteLine("zwei")
+            w.Close()
+            print(IO.File.ReadAllText(IO.Path.Combine(dir, "b.txt")))
+            IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt"))
+            IO.File.Move(IO.Path.Combine(dir, "b.txt"), IO.Path.Combine(dir, "sub/deeper/d.txt"))
+            foreach (p in IO.Directory.GetFiles(dir, "*", true)) { print(IO.Path.FileName(p)) }
+            foreach (p in IO.Directory.GetFiles(dir, "*.txt")) { print("top " + IO.Path.FileName(p)) }
+            foreach (p in IO.Directory.GetDirectories(dir, "*", true)) { print("dir " + IO.Path.FileName(p)) }
+            try { IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt")) } catch (IO.FileExistsException e) { print("exists") }
+            IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt"), true)
+            try { IO.File.ReadAllText(IO.Path.Combine(dir, "nope.txt")) } catch (IO.FileNotFoundException e) { print("not found") }
+            try { IO.File.WriteAllText(IO.Path.Combine(dir, "nodir/x.txt"), "x") } catch (IO.DirectoryNotFoundException e) { print("no dir") }
+            try { IO.Directory.Delete(dir) } catch (IO.IOException e) { print("not empty") }
+            var t = IO.File.ModifiedTime(f)
+            print(t > 1000000000s)
+            IO.File.Delete(f)
+            IO.File.Delete(f)
+            print(IO.File.Exists(f))
+            IO.Directory.Delete(dir, true)
+            print(IO.Directory.Exists(dir))
+            """),
+        ("IO: MemoryStream, UTF-8, Pfade", """
+            #import "io"
+            var m = new IO.MemoryStream()
+            m.Write(IO.Utf8.GetBytes("0123456789"))
+            print(m.Length + " " + m.Position)
+            m.Position = 3
+            var b = new byte[4]
+            print(m.Read(b, 0, 4))
+            print(IO.Utf8.GetString(b))
+            print(m.Position)
+            m.Seek(-2, IO.SeekOrigin.End)
+            print(IO.Utf8.GetString(m.ReadAll()))
+            m.Length = 5
+            print(m.Length + " " + m.Position)
+            m.Length = 8
+            print(m.ToBuffer().length)
+            var buf = m.ToBuffer()
+            print(buf[0] + " " + buf[4] + " " + buf[5] + " " + buf[7])
+            print(m.ReadByte())
+            m.Position = 0
+            print(m.ReadByte() + " " + m.ReadByte())
+            m.Close()
+            try { m.ReadByte() } catch (IO.IOException e) { print("closed") }
+            print(IO.Utf8.GetString(IO.Utf8.GetBytes("äöü€😀")) == "äöü€😀")
+            print(IO.Utf8.GetBytes("äöü€😀").length)
+            var bad = new byte[5]
+            bad[0] = 65
+            bad[1] = 255
+            bad[2] = 195
+            bad[3] = 66
+            bad[4] = 226
+            print(IO.Utf8.GetString(bad).length)
+            var bom = new byte[4]
+            bom[0] = 239
+            bom[1] = 187
+            bom[2] = 191
+            bom[3] = 65
+            print(IO.Utf8.GetString(bom))
+            print(IO.Path.Combine("a", "b") + " " + IO.Path.Combine("a/", "b") + " " + IO.Path.Combine("a", "/b") + " [" + IO.Path.Combine("", "b") + "]")
+            print(IO.Path.FileName("/x/y/z.tar.gz") + " " + IO.Path.Stem("/x/y/z.tar.gz") + " " + IO.Path.Extension("/x/y/z.tar.gz"))
+            print("[" + IO.Path.Extension(".gitignore") + "] [" + IO.Path.Stem(".gitignore") + "] [" + IO.Path.Extension("noext") + "] [" + IO.Path.Extension("dot.") + "] [" + IO.Path.FileName("dir/") + "]")
+            print(IO.Path.Parent("/x/y/z") + "|" + IO.Path.Parent("/x") + "|" + IO.Path.Parent("x") + "|" + IO.Path.Parent("a/b/") + "|" + IO.Path.Parent("a//b") + "|" + IO.Path.Parent("/"))
+            print(IO.Path.IsRooted("/x") + " " + IO.Path.IsRooted("x") + " " + IO.Path.Separator())
+            print(IO.Path.FullPath("/a/b/../c/./d//e") )
+            print(IO.Path.FullPath("x/../y") == IO.Path.Combine(IO.Directory.Current(), "y"))
+            print(IO.Path.Temp().length > 1)
+            print("done")
+            """),
+        ("IO: FileStream (Modi, Zugriff, Position, Laenge, Fehlercodes), TextReader/TextWriter", """
+            #import "io"
+            var dir = IO.Path.Combine(IO.Path.Temp(), "fire_io_test_i4")
+            if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
+            IO.Directory.Create(dir)
+            var p = IO.Path.Combine(dir, "data.bin")
+            var s = new IO.FileStream(p, IO.FileMode.Create)
+            print(s.CanRead + " " + s.CanWrite + " " + s.CanSeek)
+            var data = new byte[10]
+            for (var i = 0; i < 10; i++) { data[i] = i * 3 }
+            print(s.Write(data, 0, 10))
+            print(s.Length + " " + s.Position)
+            s.Position = 2
+            var chunk = new byte[4]
+            print(s.Read(chunk, 0, 4) + " " + chunk[0] + " " + chunk[3])
+            s.Seek(-3, IO.SeekOrigin.End)
+            print(s.ReadByte() + " " + s.ReadByte() + " " + s.ReadByte() + " " + s.ReadByte())
+            s.Position = 5
+            s.WriteByte(200)
+            s.Position = 5
+            print(s.ReadByte())
+            s.Length = 4
+            print(s.Length + " " + s.Position)
+            s.Length = 12
+            s.Position = 0
+            var all = s.ReadAll()
+            print(all.length + " " + all[3] + " " + all[11])
+            s.Flush()
+            s.Close()
+            try { s.Position } catch (IO.StreamClosedException e) { print("closed " + e.code) }
+            var r = new IO.FileStream(p)
+            print(r.CanRead + " " + r.CanWrite)
+            try { r.Write(data, 0, 1) } catch (IO.IOException e) { print("read only " + e.code) }
+            try { r.Seek(-5, IO.SeekOrigin.Begin) } catch (IO.IOException e) { print("before start " + e.code) }
+            try { r.Read(chunk, 2, 4) } catch (IO.IOException e) { print("range " + e.code) }
+            r.Close()
+            var a = new IO.FileStream(p, IO.FileMode.Append)
+            print(a.CanRead + " " + a.CanWrite + " " + a.Position)
+            a.Write(data, 0, 3)
+            print(a.Length)
+            a.Close()
+            try { var n = new IO.FileStream(p, IO.FileMode.CreateNew) } catch (IO.FileExistsException e) { print("exists " + e.code) }
+            try { var n = new IO.FileStream(IO.Path.Combine(dir, "missing")) } catch (IO.FileNotFoundException e) { print("missing " + e.code) }
+            try { var n = new IO.FileStream(IO.Path.Combine(dir, "nodir/x"), IO.FileMode.Create) } catch (IO.DirectoryNotFoundException e) { print("nodir " + e.code) }
+            try { var n = new IO.FileStream(dir) } catch (IO.IOException e) { print("dir " + e.code) }
+            try { var n = new IO.FileStream("  ") } catch (IO.IOException e) { print("blank " + e.code) }
+            var oc = new IO.FileStream(IO.Path.Combine(dir, "oc.bin"), IO.FileMode.OpenOrCreate)
+            oc.Write(data, 0, 2)
+            oc.Close()
+            var oc2 = new IO.FileStream(IO.Path.Combine(dir, "oc.bin"), IO.FileMode.OpenOrCreate, IO.FileAccess.ReadWrite)
+            print(oc2.Length)
+            oc2.Close()
+            var w = new IO.FileStream(p, IO.FileMode.Open, IO.FileAccess.ReadWrite)
+            w.Seek(0, IO.SeekOrigin.End)
+            w.Write(data, 0, 1)
+            w.Position = 0
+            print(w.ReadByte())
+            w.Close()
+            print(IO.File.Size(p))
+            IO.File.WriteAllLines(IO.Path.Combine(dir, "lines.txt"), ["alpha", "beta", "", "gamma"])
+            var rd = new IO.TextReader(IO.Path.Combine(dir, "lines.txt"))
+            print(rd.EndOfStream)
+            var count = 0
+            foreach (l in rd) { count = count + 1 }
+            print(count + " " + rd.EndOfStream)
+            rd.Close()
+            var lines = IO.File.ReadAllLines(IO.Path.Combine(dir, "lines.txt"))
+            print(lines.count + " [" + lines[2] + "] " + lines[3])
+            var open = IO.File.OpenText(IO.Path.Combine(dir, "lines.txt"))
+            print(open.ReadLine() + "|" + open.ReadAll().length)
+            open.Close()
+            try { open.ReadLine() } catch (IO.StreamClosedException e) { print("reader closed") }
+            IO.File.AppendAllText(IO.Path.Combine(dir, "lines.txt"), "tail")
+            print(IO.File.ReadAllText(IO.Path.Combine(dir, "lines.txt")).length)
+            print(IO.Directory.GetFiles(dir).count)
+            IO.Directory.Delete(dir, true)
+            print(IO.Directory.Exists(dir))
+            """),
+    }).ToArray();
+
+    // Time and Sleep (bridges/fire_bridge_time.hpp)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Time: TimeSpan, DateTime, Formate, Parse, Sleep", """
+            #import "time"
+            var a = TimeSpan.FromSeconds(90)
+            print(a)
+            print(new TimeSpan(1, 2, 3, 4, 5))
+            print(TimeSpan.FromMilliseconds(1500) * 2)
+            print(TimeSpan.FromHours(2.5).Negate())
+            var d = new DateTime(2024, 3, 15, 14, 30, 5, 123)
+            print(d)
+            print(d.ToString("dd.MM.yyyy HH:mm:ss.fff"))
+            print(d.ToString("o"))
+            print(d.ToString("dddd, d MMMM yyyy h:mm tt"))
+            print(d.ToString("D"))
+            print(d.ToString("G"))
+            print(d.Year + "-" + d.Month + "-" + d.Day + " " + d.Hour + ":" + d.Minute + " dow " + d.DayOfWeek + " doy " + d.DayOfYear)
+            print(d.AddMonths(11))
+            print(d.AddMonths(-3))
+            print(new DateTime(2024, 1, 31).AddMonths(1))
+            print(d.AddDays(20.5))
+            print(d + TimeSpan.FromHours(10))
+            print((d + TimeSpan.FromHours(10)) - d)
+            print(DateTime.DaysInMonth(2023, 2) + " " + DateTime.DaysInMonth(2024, 2) + " " + DateTime.IsLeapYear(1900))
+            print(d.Date())
+            print(d.TimeOfDay())
+            print(d.ToUnixSeconds())
+            print(DateTime.FromUnixSeconds(1700000000).ToString("yyyy-MM-dd HH:mm:ss"))
+            print(DateTime.Parse("2024-03-15 14:30:00"))
+            print(DateTime.Parse("2024-03-15T14:30:00.5Z"))
+            print(DateTime.Parse("2024-03-15T14:30:00+02:00"))
+            print(DateTime.Parse("3/15/2024"))
+            print(DateTime.Parse("March 15, 2024 3:45 PM"))
+            print(DateTime.Parse("Fri, 15 Mar 2024 14:30:00 GMT"))
+            print(DateTime.TryParse("rubbish"))
+            print(d < d.AddDays(1))
+            print(d.ToUtc().Kind)
+            Sleep(5ms)
+            Sleep(TimeSpan.FromMilliseconds(5))
+            Sleep(2)
+            Sleep(0.002s)
+            print("slept")
+            var t0 = DateTime.UtcNow()
+            Sleep(60ms)
+            var el = DateTime.UtcNow() - t0
+            print(el >= TimeSpan.FromMilliseconds(55))
+            print(el < TimeSpan.FromMilliseconds(500))
+            """),
+        ("Time: Formatstrings, Fehler (TimeException), Parse-Formen, Sleep mit falschen Angaben", """
+            #import "time"
+            class Thing { int x
+              construct() { this.x = 1 } }
+            var d = new DateTime(2024, 12, 5, 0, 7, 9, 50)
+            var f = ["yyyy", "yy", "y", "yyy", "M", "MM", "MMM", "MMMM", "d", "dd", "ddd", "dddd", "H", "HH", "h", "hh", "m", "mm", "s", "ss", "t", "tt", "f", "ff", "fff", "ffffff", "F", "FF", "ss.FFF", "ss.FFFFFF", "'quoted' yyyy", "\"dq\" MM", "yyyy\\MM", "%d", "%y", "d/M/yyyy", "HH:mm:ss", "g", "m", "u", "s", "r", "t", "T", "y", "M", "f", "F", "O", "dddd dd MMMM yyyy 'at' H:mm", "x yy z"]
+            foreach (x in f) {
+                try { print(x + " => " + d.ToString(x)) } catch (TimeException e) { print(x + " => error: " + e.message) }
+            }
+            foreach (bad in ["", "yyyyyyyy", "fffffffff", "Z", "q", "%", "\\", "'abc", "hhh"]) {
+                try { print("[" + bad + "] => " + d.ToString(bad)) } catch (TimeException e) { print("error: " + e.message) }
+            }
+            try { var x = new DateTime(2023, 2, 29) } catch (TimeException e) { print("error: " + e.message) }
+            try { var x = new DateTime(2023, 13, 1) } catch (TimeException e) { print("error: " + e.message) }
+            try { var x = new DateTime(2023, 1, 1, 24, 0, 0) } catch (TimeException e) { print("error: " + e.message) }
+            try { print(DateTime.DaysInMonth(2023, 13)) } catch (TimeException e) { print("error: " + e.message) }
+            try { Sleep("x") } catch (TimeException e) { print("error: " + e.message) }
+            try { Sleep(3m) } catch (TimeException e) { print("error: " + e.message) }
+            try { Sleep(new Thing()) } catch (TimeException e) { print("error: " + e.message) }
+            try { Sleep(true) } catch (TimeException e) { print("error: " + e.message) }
+            try { Sleep(undefined) } catch (TimeException e) { print("error: " + e.message) }
+            try { print(new DateTime(9999, 12, 31).AddDays(2)) } catch (TimeException e) { print("error: " + e.message) }
+            try { print(new DateTime(9999, 12, 31).AddMonths(1)) } catch (TimeException e) { print("error: " + e.message) }
+            try { print(new DateTime(1, 1, 1).AddYears(-1)) } catch (TimeException e) { print("error: " + e.message) }
+            try { print(DateTime.Parse("nonsense")) } catch (TimeException e) { print("error: " + e.message) }
+            try { print(TimeSpan.FromSeconds(2m)) } catch (Exception e) { print("error") }
+            print(TimeSpan.Of(1.5s))
+            print(TimeSpan.Of(250ms).TotalMilliseconds)
+            print(TimeSpan.Of(2))
+            print(new TimeSpan(0, 0, 0, 0, 1).ToString())
+            print(new TimeSpan(-5).ToString())
+            print(new TimeSpan(10, 0, 0, 0))
+            for (var y = 1; y <= 3; y++) { print(new DateTime(2000 + y * 400, 2, 29).DayOfWeek) }
+            print(new DateTime(1, 1, 1).DayName() + " " + new DateTime(9999, 12, 31).DayName() + " " + new DateTime(1900, 3, 1).DayOfYear + " " + new DateTime(2000, 12, 31).DayOfYear)
+            print(new DateTime(1, 1, 1).Ticks)
+            print(new DateTime(9999, 12, 31, 23, 59, 59, 999).Ticks)
+            print(DateTime.Parse("1999-12-31 23:59:59").AddSeconds(1))
+            print(DateTime.Parse("12/31/99"))
+            print(DateTime.Parse("1/2/30"))
+            print(DateTime.Parse("14:30"))
+            print(DateTime.Parse("2:30:15 PM"))
+            print(DateTime.Parse("12:00 AM"))
+            print(DateTime.Parse("Mar 5 2020"))
+            print(DateTime.Parse("5 March 2020 08:15"))
+            print(DateTime.Parse("2024-03-15 14:30:00 +0530"))
+            print(DateTime.Parse("2024/03/15"))
+            print(DateTime.TryParse("2024-02-30") == undefined)
+            """),
+        ("Threads: Sleep gibt den anderen Threads frei, das Hauptprogramm bedient dabei die Sektionen", """
+            #import "time"
+            var done = 0
+            var log = []
+            class Counter { int n
+              construct() { this.n = 0 }
+              Add() { this.n = this.n + 1 }
+            }
+            var c = new Counter()
+            fire {
+                for (var i = 0; i < 5; i++) { Sleep(10ms); c.Add() }
+                done = done + 1
+            }
+            fire {
+                for (var i = 0; i < 5; i++) { Sleep(7); c.Add() }
+                done = done + 1
+            }
+            // the main program sleeps and meanwhile serves the sections of the threads
+            Sleep(600ms)
+            print("after sleep: " + done + " " + c.n)
+            while (done < 2) { Sleep(5ms) }
+            print("n = " + c.n)
+            """),
+        ("Threads: terminate beendet Sleep sofort", """
+            #import "time"
+            // terminate cuts a sleep short and runs the handler; a thread that sleeps ends too
+            fire {
+                Sleep(5s)
+                print("never")
+            }
+            catch terminate(v) { print("handler " + v) }
+            Sleep(50ms)
+            print("before terminate")
+            terminate(7)
+            Sleep(10s)
+            print("never either")
+            """),
+        ("Threads: eine Ausnahme eines Threads erreicht das Hauptprogramm waehrend Sleep", """
+            #import "time"
+            class Boom { string message
+              construct() { this.message = "from thread" } }
+            // a sleeping thread does not hold the others up; an exception of a thread reaches the main program during its Sleep
+            fire {
+                Sleep(20ms)
+                throw new Boom()
+            }
+            catch threads(Boom e) { print("caught in main: " + e.message) }
+            var start = DateTime.UtcNow()
+            Sleep(400ms)
+            print("main woke up")
+            print((DateTime.UtcNow() - start) >= TimeSpan.FromMilliseconds(100))
+            """),
+    }).ToArray();
+
+
     string? cxx = FindCxx();
     if (cxx == null)
         Console.WriteLine("(kein C++-Compiler gefunden - die Native-Backend-Pruefungen werden uebersprungen)");
@@ -14096,16 +14423,43 @@ static int CountOccurrences(string haystack, string needle)
             cliEsp.Error == null && cliEsp.Target == esp && CommandLineParser.Parse(new[] { "native", "a.script", "-t", "amiga" }).TargetName == "amiga"
             && CommandLineParser.Parse(new[] { "run", "a.script", "-t", "esp32" }).Error != null && CommandLineParser.Parse(new[] { "native", "a.script" }).Target == null);
 
-        string RunProc(string tool, string arguments, string dir, out int exit)
+        string RunProc(string tool, string arguments, string dir, out int exit, string? input = null)
         {
             using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool, arguments)
-            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = dir })!;
+            { RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = input != null, UseShellExecute = false, WorkingDirectory = dir })!;
+            if (input != null) { p.StandardInput.Write(input); p.StandardInput.Close(); }
             var errTask = p.StandardError.ReadToEndAsync();
             string output = p.StandardOutput.ReadToEnd();
             p.WaitForExit();
             exit = p.ExitCode;
             return output + errTask.Result;
         }
+        // ---- Geraete: dieselben Skripte wie in den Geraete-Pruefungen der VM, nativ mit dem Loopback-Geraet (FIRE_DEVICES), gegen die erwarteten Ausgaben
+        {
+            var devTasks = devNativeCases.Select((c, index) => Task.Run(() =>
+            {
+                var defines = new List<string> { "FIRE_DEVICES=\"loopback\"" };
+                if (c.DefaultId != null) defines.Add($"FIRE_DEFAULT_DEVICE=\"{c.DefaultId}\"");
+                var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Defines = defines } };
+                string cpp;
+                try { cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { c.Script }, null, null, VmExecutionMode.Release, null, target), target); }
+                catch (fire.Native.NativeNotSupportedException ex) { return (c.Title, "", $"nicht uebersetzbar: {ex.Message}"); }
+                string file = Path.Combine(workDir, $"dev{index}.cpp"), exe = Path.Combine(workDir, $"dev{index}.bin");
+                File.WriteAllText(file, cpp);
+                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{file}\" -I\"{workDir}\" -o \"{exe}\"", workDir, out int buildExit);
+                if (buildExit != 0 || build.Contains("warning:")) return (c.Title, "", "C++-Compiler: " + build);
+                string actual = RunProc(exe, "", workDir, out int runExit);
+                return (c.Title, string.Concat(c.Expected.Select(l => l + "\n")), runExit == 0 ? actual : $"Exitcode {runExit}: {actual}");
+            })).ToArray();
+            Task.WaitAll(devTasks);
+            foreach (var task in devTasks)
+            {
+                var (title, expected, actual) = task.Result;
+                CheckNat($"Geraete nativ: {title}", expected == actual, $"  erwartet:\n{expected}\n  erhalten:\n{actual}");
+            }
+            CheckNat("Geraete nativ: es gibt Faelle", devNativeCases.Count >= 10, devNativeCases.Count.ToString());
+        }
+
         // ---- Plattformschicht: dieselben Thread-Programme auf FreeRTOS (Tasks, Semaphoren) - hier auf dem Simulator (native/sim, pthreads)
         {
             string[] rtosCases = { "Actor: fire with", "Actor: mehrere", "sync: die Kopie", "sync: Arrays", "taking: der Thread", "terminate im Hauptprogramm", "catch threads()",
@@ -14162,6 +14516,62 @@ static int CountOccurrences(string haystack, string needle)
             CheckNat("Konfiguration: Defines, Includes vor der Plattform und Einsprung stehen im C++", boardCpp.Contains("#define BOARD_X 3") && incAt > 0 && platAt > incAt
                 && boardCpp.Contains("void board_main(void) {") && !boardCpp.Contains("extern \"C\" void board_main") && boardCpp.IndexOf("#define BOARD_X 3", StringComparison.Ordinal) < incAt);
 
+            // conditional compilation (#if): symbols come from the target, the engine and -D
+            {
+                string Pp(string src, TargetProfile t, string engine = "vm", params string[] defs)
+                {
+                    var reg = new DirectiveRegistry();
+                    foreach (var sym in ConditionalSymbols.For(t, engine, null, defs)) reg.Symbols.Add(sym);
+                    return Preprocessor.Process(src, ".", reg).Source;
+                }
+                string[] Lines(string text) => text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Where(l => l.Length > 0).ToArray();
+                string pick = "#if windows\nW\n#elif esp32 && native\nE\n#elif linux || macos\nP\n#else\nO\n#endif\n";
+                CheckNat("#if: das Ziel waehlt den Zweig", Lines(Pp(pick, TargetProfile.Windows)).SequenceEqual(new[] { "W" }) && Lines(Pp(pick, TargetProfile.Esp32, "native")).SequenceEqual(new[] { "E" })
+                    && Lines(Pp(pick, TargetProfile.Esp32, "vm")).SequenceEqual(new[] { "O" }) && Lines(Pp(pick, TargetProfile.Linux)).SequenceEqual(new[] { "P" }) && Lines(Pp(pick, TargetProfile.MacOs)).SequenceEqual(new[] { "P" }));
+                string numbered = "a\n#if false\nb\nc\n#endif\nd\n";
+                CheckNat("#if: die Zeilennummern bleiben erhalten", Pp(numbered, TargetProfile.Linux).Split('\n').ToList().IndexOf("d") == 5 && Lines(Pp(numbered, TargetProfile.Linux)).SequenceEqual(new[] { "a", "d" }));
+                CheckNat("#if: Ausdruecke (!, &&, ||, Klammern, true/false, Gross-/Kleinschreibung)",
+                    Lines(Pp("#if !(windows || macos) && LINUX\nyes\n#endif\n#if false || (true && !linux)\nno\n#endif\n#if float32\nf32\n#endif\n", TargetProfile.Linux)).SequenceEqual(new[] { "yes" })
+                    && Lines(Pp("#if float32\nf32\n#endif\n", TargetProfile.Esp32)).SequenceEqual(new[] { "f32" }));
+                string nested = "#if linux\n1\n#if windows\n2\n#else\n3\n#endif\n#else\n4\n#if broken ((\n5\n#elif also broken\n6\n#endif\n#unknownthing\n#endif\n";
+                CheckNat("#if: verschachtelt, ein nicht gewaehlter Zweig wird nicht gelesen", Lines(Pp(nested, TargetProfile.Linux)).SequenceEqual(new[] { "1", "3" }));
+                CheckNat("#define, #undef, #ifdef, #ifndef", Lines(Pp("#ifdef X\nA\n#endif\n#define X\n#ifdef X\nB\n#endif\n#ifndef X\nC\n#endif\n#undef X\n#ifndef X\nD\n#endif\n#if Y\nE\n#endif\n", TargetProfile.Linux, "vm", "Y"))
+                    .SequenceEqual(new[] { "B", "D", "E" }));
+                string ifErr(string src) { try { Pp(src, TargetProfile.Linux); return "no error"; } catch (PreprocessorException ex) { return ex.Message; } }
+                CheckNat("#if: Fehler (fehlendes #endif, #else/#endif/#elif ohne #if, zweites #else, #elif nach #else, falscher Ausdruck, #error)",
+                    ifErr("#if linux\nx\n").Contains("no '#endif'") && ifErr("#else\n").Contains("without '#if'") && ifErr("#endif\n").Contains("without '#if'") && ifErr("#elif a\n").Contains("without '#if'")
+                    && ifErr("#if a\n#else\n#else\n#endif\n").Contains("second '#else'") && ifErr("#if a\n#else\n#elif b\n#endif\n").Contains("after '#else'") && ifErr("#if a ||\n#endif\n").Contains("ends too early")
+                    && ifErr("#if (a\n#endif\n").Contains("')' is missing") && ifErr("#if a $ b\n#endif\n").Contains("unexpected character") && ifErr("#if linux\n#error nur Windows\n#endif\n").Contains("#error nur Windows") && ifErr("#if windows\n#error nicht gelesen\n#endif\n") == "no error");
+                var gated = "#if esp32\n#import \"graphics\"\n#endif\n#if linux\n#import \"time\"\n#endif\n";
+                CheckNat("#if: ein #import in einem nicht gewaehlten Zweig zaehlt nicht (Editor)", ImportedPreludes.FindImportNames(gated, ConditionalSymbols.For(TargetProfile.Linux)).SequenceEqual(new[] { "time" })
+                    && ImportedPreludes.FindImportNames(gated, ConditionalSymbols.For(TargetProfile.Esp32)).SequenceEqual(new[] { "graphics" }));
+                string ifDir = Path.Combine(workDir, "ifbuild");
+                Directory.CreateDirectory(ifDir);
+                string ifScript = Path.Combine(ifDir, "cond.script");
+                File.WriteAllText(ifScript, "#if native\nprint(\"engine native\")\n#elif vm\nprint(\"engine vm\")\n#endif\n#if EXTRA\nprint(\"extra\")\n#endif\n#if windows\nprint(\"windows\")\n#elif posix\nprint(\"posix\")\n#endif\n");
+                File.WriteAllText(Path.Combine(ifDir, "fire.native.json"), "{ \"engine\": \"native\", \"target\": \"" + TargetProfile.Host.Name + "\", \"toolchain\": \"" + (cxx.Contains("clang") ? "clang" : "gcc") + "\" }");
+                string ifExe = Path.Combine(ifDir, "cond.out");
+                int ifCode = CommandLineRunner.Run(new[] { "build", ifScript, "-D", "EXTRA", "-o", ifExe }, new StringWriter(), new StringWriter());
+                string ifRan = ifCode == 0 ? RunProc(ifExe, "", ifDir, out _) : "";
+                CheckNat("#if: build --engine native setzt native, das Ziel und -D", ifCode == 0 && ifRan == "engine native\nextra\n" + (TargetProfile.Host.Name == "windows" ? "windows" : "posix") + "\n", ifRan);
+                var badDefine = CommandLineParser.Parse(new[] { "run", ifScript, "-D", "1x" });
+                CheckNat("#if: -D braucht einen Namen", badDefine.Error != null && CommandLineParser.Parse(new[] { "run", ifScript, "-DA", "--define", "B", "-D=C" }).Defines.SequenceEqual(new[] { "A", "B", "C" }));
+            }
+
+            // the console through IO.Stdio: the standard input is read (lines end with \n, \r\n or \r), output and errors go to their streams
+            {
+                string ioDir = Path.Combine(workDir, "iobuild");
+                Directory.CreateDirectory(ioDir);
+                string ioScript = Path.Combine(ioDir, "console.script");
+                File.WriteAllText(ioScript, "#import \"io\"\nprint(\"first\")\nvar a = IO.Stdio.ReadLine()\nIO.Stdio.WriteLine(\"a=\" + a)\nIO.Stdio.ErrorLine(\"to stderr\")\nvar b = IO.Stdio.ReadLine()\nvar rest = IO.Stdio.ReadAll()\nprint(\"b=\" + b + \" rest=\" + rest.length)\nprint(IO.Stdio.ReadLine() == undefined)\nvar so = IO.Stdio.Out()\nvar w = new IO.TextWriter(so, true)\nw.WriteLine(\"via writer\")\nw.Flush()\n");
+                File.WriteAllText(Path.Combine(ioDir, "fire.native.json"), "{ \"engine\": \"native\", \"target\": \"" + TargetProfile.Host.Name + "\", \"toolchain\": \"" + (cxx.Contains("clang") ? "clang" : "gcc") + "\" }");
+                string ioExe = Path.Combine(ioDir, "console.out");
+                int ioCode = CommandLineRunner.Run(new[] { "build", ioScript, "-o", ioExe }, new StringWriter(), new StringWriter());
+                string ioRan = ioCode == 0 ? RunProc(ioExe, "", ioDir, out _, "one\r\ntwo\nthree\rfour") : "";
+                string[] ioLines = ioRan.Split('\n');
+                CheckNat("IO: Standardeingabe, -ausgabe und -fehler", ioCode == 0 && ioLines.Contains("first") && ioLines.Contains("a=one") && ioLines.Contains("to stderr") && ioLines.Contains("b=two rest=10") && ioLines.Contains("True") && ioLines.Contains("via writer"), ioRan);
+            }
+
             // build --engine native through the command line runner: a program, and the files of a project
             string dir = Path.Combine(workDir, "build");
             Directory.CreateDirectory(dir);
@@ -14190,7 +14600,7 @@ static int CountOccurrences(string haystack, string needle)
         // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
         try
         {
-            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#import \"io\"\nvar w = new IO.FileStream(\"a.bin\", IO.FileMode.Create)" }, null, null, VmExecutionMode.Release));
+            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#import \"windows\"\nvar fb = new Framebuffer(8, 8)\nvar w = new Window(fb, \"t\")" }, null, null, VmExecutionMode.Release));
             CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt", false, "keine Ausnahme");
         }
         catch (fire.Native.NativeNotSupportedException ex)

@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 
 #ifndef portMAX_DELAY
 #error "fire platform freertos: include FreeRTOS.h, task.h and semphr.h first (list them under `includes` in the target configuration)"
@@ -40,6 +41,24 @@ inline int64_t nowMs() {
     if (now < last) high += (uint64_t)1 << 32;
     last = now;
     return (int64_t)((high + now) * (uint64_t)portTICK_PERIOD_MS);
+}
+
+/// The wall clock (microseconds since 1970-01-01 UTC): the C library's time(), which a board sets from an RTC or SNTP, refined by the tick counter (time() counts
+/// whole seconds). When time() and the counter drift apart by more than a second (the clock was set), the counter is anchored again.
+inline int64_t unixMicros() {
+    static int64_t anchor = 0;
+    static bool anchored = false;
+    int64_t seconds = (int64_t)std::time(nullptr) * 1000000;
+    int64_t ticks = nowMs() * 1000;
+    int64_t drift = seconds - (anchor + ticks);
+    if (!anchored || drift > 1000000 || drift < -1000000) { anchor = seconds - ticks; anchored = true; }
+    return anchor + ticks;
+}
+
+/// The calling task sleeps (at least one tick).
+inline void sleepMs(int64_t ms) {
+    TickType_t ticks = pdMS_TO_TICKS(ms);
+    vTaskDelay(ticks ? ticks : 1);
 }
 
 /// There is no process to end: the output is flushed and the program stops with a panic (ESP-IDF: reboot).

@@ -67,7 +67,10 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Scopes und bei `return` werden die Listen von innen nach außen zerstört (Reihenfolge der Erzeugung, erst `destruct()`, dann die
   eigenen Objekte); ein zurückgegebenes Objekt, das dem verlassenen Scope gehörte, wandert zum Aufrufer (`transferOut`/`adopt`). Scopes ohne
   Objekte kosten nichts.
-* Objekte werden beim Zerstören **freigegeben**. Der Zugriff auf ein zerstörtes Objekt wird (anders als in der VM) nicht erkannt; mit
+* Objekte werden beim Zerstören **freigegeben** - aber erst am Ende des **Zerstörungsstapels** (`DestroyBatch`: das Verlassen eines Scopes, ein `delete`, das Ende des Programms):
+  alle Destruktoren eines Scopes sehen die Objekte des Scopes also noch (die Reihenfolge ist die der Erzeugung: der Destruktor eines Writers leert einen Stream, der schon
+  zerstört ist - in der VM geht das, weil ein zerstörtes Objekt weiterarbeitet). Danach gilt: der Zugriff auf ein zerstörtes Objekt wird (anders als in der VM) nicht erkannt, z.B. wenn ein Objekt
+  ein Argument behält, das ihm als frisches Aufrufergebnis übergeben wurde (`new W(F.Make())`: das Argument gehört dem Konstruktor und stirbt mit ihm); mit
   `-DFIRE_KEEP_DESTROYED` bleiben sie im Speicher (Fehlersuche). Die Tests laufen unter AddressSanitizer/UBSan. `delete obj` und ein zweites `delete` auf
   dasselbe Objekt sind deshalb nur für Objekte erlaubt, die danach nicht mehr berührt werden.
 
@@ -285,10 +288,42 @@ einzigen Maschine, keine Garantie.
   Hauptprogramm auf seinem Strang mit den echten Globals ausführt (eine Ausnahme darin geht an `catch threads`).
   Abweichungen von der VM: Actor-Referenzen und Objekt-Argumente von Nachrichten gelten als Referenzen (ein Actor muss die Threads überleben, die ihn benutzen); `try sync`
   liefert nie `false` (es gibt nur einen Strang zur Zeit); ein `leave`/`terminate` in einem Destruktor/einer Property wirkt nativ erst an deren Ende; nach einem `leave` in
-  einem Thread zerstört dieser auch das, was er in `taking`-Kopien angelegt hat (die VM ließ es liegen); es gibt noch kein `Sleep`. Hosts brauchen `-pthread`
+  einem Thread zerstört dieser auch das, was er in `taking`-Kopien angelegt hat (die VM ließ es liegen). Hosts brauchen `-pthread`
 (`compileArgs` des Ziels); auf FreeRTOS sind Fire-Threads Tasks (`threadStart`), eine kleine Stackgröße ist die häufigste Fehlerquelle (`FIRE_THREAD_STACK_BYTES`, `stackBytes`).
 
-Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), die Bridges.
+### Bridges: Time und `Sleep` - umgesetzt
+
+Die Natives einer `#import`-Bibliothek stehen in einem eigenen Header `native/bridges/fire_bridge_<name>.hpp`, den die erzeugte Datei nur einbindet, wenn das Programm
+die Bibliothek importiert (`bridges/` liegt neben `fire_rt.hpp`; `NativeRuntimeFiles` schreibt sie mit). Sie benutzen die Runtime und die Plattformschicht (`plat::`), nie ein
+Betriebssystem-Header direkt. **`time`** (`fire_bridge_time.hpp`): `Sleep`, `DateTime.Now/UtcNow`, Kalenderrechnung, `ToString(format)` (die .NET-Zeitformate, Invariant Culture),
+`Parse`/`TryParse`, `TimeSpan`-Text. Was der Header von der Plattform braucht: `plat::unixMicros()` (Wanduhr) und für `Sleep` ohne Threads `plat::sleepMs`; die Zeitzone kommt aus
+`localtime_r` (mit `FIRE_NO_LOCALTIME` auf Boards ohne Zeitzonen: Ortszeit = UTC).
+
+* `Sleep(zeit)` (`TimeSpan`, `500ms`, Zahl = Millisekunden) schläft **nicht taub**: mit Threads wartet es ohne GIL (`blockUntil`), `terminate` beendet es sofort (danach geht
+  das Programm den Weg von `leave`), und das Hauptprogramm bedient dabei die Warteschlange der Threads (Sektionen, `fire global`-Aufträge, ihre Ausnahmen).
+  Eine falsche Angabe ist eine `TimeException` mit den Texten der VM.
+* Abweichung: `DateTime.Parse` liest eine Teilmenge der .NET-Formate (ISO-Datum und -Zeit mit `Z`/`+hh:mm`, `M/d/yyyy`, Monatsnamen, `3:45 PM`, `GMT`); sonst `undefined` bzw. `TimeException`.
+
+**`io`** (`fire_bridge_io.hpp`): Streams (Datei, Speicher, Konsole), Dateien, Verzeichnisse, Pfade, UTF-8. Die Handle-Tabelle und die Fehlerbehandlung (`__IOLastError` je Thread:
+`g_ioError` in den Thread-Variablen) sind in C++, das Dateisystem kommt aus dem Plattformpaket: `platform/<name>/fire_fs.hpp` (der Generator setzt `FIRE_PLATFORM_FS_HEADER`) mit
+`plat::fs::open/tell/seek/truncate/fileSize/fileTime/removeFile/copyFile/moveFile/makeDirs/removeDir/list/fullPath/...`. Mitgeliefert: `std/fire_fs_std.hpp` (`<filesystem>`, für posix und
+windows), `std/fire_fs_posix.hpp` (POSIX-Aufrufe für `esp32` und `freertos`: SPIFFS/FAT/LittleFS über das virtuelle Dateisystem von ESP-IDF; `FIRE_FS_ROOT` für relative Pfade) und
+`std/fire_fs_none.hpp` (`FIRE_NO_FS`: ein Board ohne Dateisystem - Dateioperationen scheitern mit `NotSupported`, Konsole und `MemoryStream` gehen). Ein eigenes Paket liefert eine eigene `fire_fs.hpp`.
+Die Richtlinie des Hosts (`IoPolicy`) ist ein Übersetzungsschalter: `FIRE_IO_POLICY(vollerPfad, zugriff, grund)` (Funktion, vor den Includes in der Zielkonfiguration), Standard: alles erlaubt.
+Abweichungen: Standardeingabe wartet bei `Read` auf die verlangte Byteanzahl oder das Ende; `IO.Stdio` schreibt direkt auf `stdout`/`stderr` (gemeinsame Pufferung mit `print`);
+was ein Skript offen lässt, wird am Programmende geschlossen (statisches Destruktor-Netz).
+
+**`devices`** (`fire_bridge_devices.hpp`): Geräteverwaltung (Handles, Kennungen `treiber:port`, Standardgerät), Empfangspuffer mit Paketgrenzen und `WaitFor`/`WaitForString`. Welche Geräte
+es gibt, bestimmen **Treiber**: `FIRE_DEVICES` (Komma-Liste in der Reihenfolge der Anmeldung, Standard `"serial"`; `"loopback"` ist ein simuliertes Gerät `loopback:echo`, das nach 5 ms zurücksendet,
+was es bekommt) und `FIRE_DEFAULT_DEVICE` (Kennung des Standardgeräts, `Device.Default`) - beides als `defines` im Ziel. Die seriellen Ports liefert das Plattformpaket
+(`platform/<name>/fire_dev.hpp`, vom Generator als `FIRE_PLATFORM_DEV_HEADER` eingebunden): `plat::dev::serialNames()` und `plat::dev::SerialPort` (115200 Baud 8N1, `open/close/read/write`, Lesen ohne
+Blockieren). Mitgeliefert: `std/fire_dev_posix.hpp` (termios; Linux `/dev/ttyS*|ttyUSB*|ttyACM*|ttyAMA*`, macOS `/dev/tty.*|cu.*`), `std/fire_dev_win32.hpp` (Win32-Kommunikations-API, Ports aus der Registry),
+`std/fire_dev_esp32.hpp` (UART-Treiber von ESP-IDF; `FIRE_SERIAL_PORTS`, `FIRE_UART<n>_TX/RX`) und `std/fire_dev_none.hpp` (keine Ports). Die Windows- und ESP32-Teile sind noch nicht auf echter Hardware probiert.
+**Es gibt keine Hintergrund-Threads**: Empfangenes wird eingesammelt, wenn das Programm fragt (`HasData`, `Read...`, die Warte-Funktionen, `Connect`) - bis dahin hält es der Puffer des Betriebssystems bzw. des
+UART-Treibers. Die Gerätliste entsteht beim ersten Zugriff auf eine Geräte-Funktion und bei jedem `Refresh` (in einem VM-Programm ohne Editor ist sie vor dem ersten `Refresh` leer). Die Warte-Funktionen
+benutzen `#timeout` (`SetTimeout` setzt `g_defaultTimeoutTicks`), warten mit freigegebenem GIL und enden bei `terminate`.
+
+Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), die Bridge Graphics.
 
 ### Plattformschicht
 
@@ -387,7 +422,7 @@ Präprozessor lesen dasselbe:
 | Feld | Bedeutung | `esp32` |
 |---|---|---|
 | `Name` | `--target`/`-t` auf der Befehlszeile | `esp32` |
-| `Symbols` | Symbole für `#if` (noch nicht gebaut) | `esp32`, `freertos` |
+| `Symbols` | Symbole für `#if` (SPEC 8.1.7) | `esp32`, `freertos` |
 | `FloatWidth` | Standard-Genauigkeit von `float` | 32 |
 | `DefaultStackBytes` | Standard-Stack eines `fire`-Threads | 8192 |
 | `Imports` | welche `#import`-Bibliotheken es dort gibt | print, io, devices, time, reflection, linq (kein `graphics`/`ui`) |
@@ -453,13 +488,14 @@ Zwei Ebenen, die zusammenarbeiten:
    #endif
    ```
 
-   Die Symbole setzt das Ziel: Betriebssystem/Board (`windows`, `linux`, `macos`, `esp32`), Engine (`vm`, `native`), `float32`;
-   dazu `#define NAME` und `--define NAME`. Weil das Textersetzung vor dem Parser ist, werden nicht gewählte Zweige nie gelesen - sie
+   Die Symbole setzt das Ziel: Betriebssystem/Board (`windows`, `linux`, `macos`, `posix`, `esp32`, `freertos`), Engine (`vm`, `native`), `float32`;
+   dazu `#define NAME` und `-D NAME`. Weil das Textersetzung vor dem Parser ist, werden nicht gewählte Zweige nie gelesen - sie
    dürfen auch Bridges benutzen, die es auf dem Ziel gar nicht gibt. Die VM setzt die Symbole für das Host-System selbst, damit
-   dasselbe Skript im Editor und als Binary dasselbe tut; die Live-Diagnose des Editors graut nicht gewählte Zweige aus.
+   dasselbe Skript im Editor und als Binary dasselbe tut (SPEC 8.1.7). Umgesetzt in `Conditional.cs` (Ausdrücke, `#if`-Stapel pro Datei)
+   und `Preprocessor`; die Symbolmenge hängt an der `DirectiveRegistry`, `Linker.Engine`/`Linker.Defines` und `-D` füllen sie. *Noch offen:* der Editor
+   graut nicht gewählte Zweige aus.
 2. **In C++ (Plattformschicht):** siehe nächster Abschnitt.
 
-*Noch nicht umgesetzt* (`#if` ist ein Präprozessor-Thema für sich).
 
 ### Bridges: ein C++-Interface, plattformabhängig angesteckt (Variante A)
 

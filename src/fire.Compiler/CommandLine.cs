@@ -21,6 +21,9 @@ namespace fire.Compiler
         public VmExecutionMode? Mode { get; init; }
         /// <summary>`-f`: Genauigkeit von `float` (32 oder 64); null = der im Skript (`#floatwidth`) bzw. 64.</summary>
         public int? FloatWidth { get; init; }
+
+        /// <summary>`-D name` (repeatable): extra symbols for `#if`.</summary>
+        public IReadOnlyList<string> Defines { get; init; } = Array.Empty<string>();
         /// <summary>`-t`: Zielprofil von `native` (siehe TargetProfile); null = der Rechner, auf dem der Compiler läuft.</summary>
         public TargetProfile? Target { get; init; }
         /// <summary>`-o`: Ausgabedatei von `build` (bzw. die C++-Datei von `native`).</summary>
@@ -77,6 +80,7 @@ namespace fire.Compiler
             --config  The native build configuration (default: the nearest fire.native.json next to the first file, else built-in defaults): engine, target,
                     toolchain (which C++ compiler), own targets. The editor edits the same file.
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
+            -D name Defines the symbol "name" for #if (repeatable, also --define name or -Dname).
             -o      Name of the file produced by build or native.
 
             File names without spaces do not need quotation marks.
@@ -104,6 +108,7 @@ namespace fire.Compiler
             string? targetName = null, engine = null, toolchainName = null, configFile = null;
             bool keep = false;
             string? output = null;
+            var defines = new List<string>();
 
             for (int i = 1; i < args.Count; i++)
             {
@@ -160,6 +165,13 @@ namespace fire.Compiler
                         return Fail(command, $"Unknown float precision '{value}' (allowed: 32, 64).");
                     floatWidth = int.Parse(Unquote(value));
                 }
+                else if (TryOption(arg, "-D", "--define", out var defineInline) || (arg.Length > 2 && arg.StartsWith("-D", StringComparison.Ordinal) && (defineInline = arg.Substring(2)) != null))
+                {
+                    string? value = defineInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    if (value == null || !System.Text.RegularExpressions.Regex.IsMatch(Unquote(value), "^[A-Za-z_][A-Za-z0-9_]*$"))
+                        return Fail(command, "-D must be followed by a symbol name (letters, digits, underscore).");
+                    defines.Add(Unquote(value));
+                }
                 else if (TryOption(arg, "-o", "--out", out var outInline))
                 {
                     if (command is not (CommandKind.Build or CommandKind.Native)) return Fail(command, "-o is only available with build and native.");
@@ -187,6 +199,7 @@ namespace fire.Compiler
                 Files = files,
                 Mode = mode,
                 FloatWidth = floatWidth,
+                Defines = defines,
                 Target = target,
                 TargetName = targetName,
                 Engine = engine,
@@ -295,7 +308,7 @@ namespace fire.Compiler
             if (engine == "native") return NativeBuild(options, config, sources, stdout, stderr);
             try
             {
-                new Linker().CompileAndLink(sources, null, options.OutputFile, options.Mode, options.FloatWidth);
+                new Linker { Defines = options.Defines }.CompileAndLink(sources, null, options.OutputFile, options.Mode, options.FloatWidth);
             }
             catch (Exception ex) when (IsCompileError(ex))
             {
@@ -324,7 +337,7 @@ namespace fire.Compiler
                 var target = config.ResolveTarget(options.TargetName);
                 var toolchain = config.ResolveToolchain(target, options.ToolchainName);
                 string output = options.OutputGiven ? options.OutputFile : NativeBuilder.DefaultOutput(target);
-                var result = NativeBuilder.Build(sources, config, target, toolchain, output, options.Mode, options.FloatWidth, options.KeepSources);
+                var result = NativeBuilder.Build(sources, config, target, toolchain, output, options.Mode, options.FloatWidth, options.KeepSources, defines: options.Defines);
                 stdout.Write(result.Log);
                 if (!result.Ok) { stderr.WriteLine($"The native build for {target.Name} failed."); return ExitScriptError; }
                 stdout.WriteLine($"{result.Output} (native, target {target.Name}, toolchain {toolchain.EffectiveKind})");
@@ -341,7 +354,7 @@ namespace fire.Compiler
             {
                 var config = LoadConfig(options);
                 var target = config.ResolveTarget(options.TargetName);
-                string cpp = NativeBuilder.Generate(sources, target, options.Mode, options.FloatWidth);
+                string cpp = NativeBuilder.Generate(sources, target, options.Mode, options.FloatWidth, defines: options.Defines);
                 string full = Path.GetFullPath(options.OutputFile);
                 NativeBuilder.WriteFiles(Path.GetDirectoryName(full)!, cpp, target, Path.GetFileName(full), config.Path == null ? null : Path.GetDirectoryName(config.Path));
                 stdout.WriteLine(target.IsEmbedded || target.Native.Entry.Kind == fire.Runtime.EntryKind.Function
@@ -376,7 +389,7 @@ namespace fire.Compiler
                 {
                     if (args.Length > 0) Console.WriteLine(args[0].ToString());
                     return Value.MakeUndefined();
-                }, floatWidth: options.FloatWidth);
+                }, floatWidth: options.FloatWidth, defines: options.Defines);
             }
             catch (Exception ex) when (IsCompileError(ex))
             {

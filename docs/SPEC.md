@@ -1170,6 +1170,46 @@ self-contained API groups (e.g. a graphics/console bridge, see
 individual `Register(...)` calls, and additionally returns the list of the
 names created.
 
+### 8.1.7 Conditional compilation (`#if`)
+
+```
+#if windows
+    var port = "serial:COM3"
+#elif esp32 && native
+    var port = "uart:1"
+#else
+    var port = "serial:/dev/ttyUSB0"
+#endif
+
+#ifdef DEBUGGING
+print("starting")
+#endif
+```
+
+A preprocessor feature (text, before the lexer, like `#include`): the lines of a branch that is **not taken** are replaced by empty lines - they are
+never lexed, parsed or checked, so they may use libraries, classes or syntax that do not exist on the target (`#import "graphics"` in a branch for
+`windows`), and the line numbers of everything else stay the same.
+
+| Directive | Meaning |
+|---|---|
+| `#if expr`, `#elif expr`, `#else`, `#endif` | choose a branch; `#if` can be nested; every `#if` is closed in the file it starts in |
+| `#ifdef NAME`, `#ifndef NAME` | the same for one symbol |
+| `#define NAME`, `#undef NAME` | add or remove a symbol (from here on, also for the files processed after this one) |
+| `#error text` | in a branch that is taken: stops the compilation with `text` |
+
+`expr`: symbol names, `true`, `false`, `!`, `&&` (binds tighter), `||` and parentheses. Names are case-insensitive; a name that is not defined is false.
+
+**Symbols** come from the build:
+
+* the target (`TargetProfile.Symbols`): `windows`, `linux`, `macos` (and `posix` for the last two), `esp32` and `freertos` for the board, the symbols a target of
+  `fire.native.json` lists under `symbols`;
+* the engine: `vm` or `native`;
+* `float32` when `float` has 32 bits (`-f 32` or the default of the target; `#floatwidth` is read after the symbols are needed);
+* `-D NAME` on the command line (repeatable, also `--define NAME`, `-DNAME`).
+
+The VM that runs a script in the editor uses the machine it runs on (`windows`, `linux` or `macos`, `vm`), so the same script does the same thing in the editor and
+as a native program for the same system. The live diagnostics of the editor do the same; an `#import` in a branch that is not taken does not import.
+
 ### 8.2 Bit widths for `int`/`float`
 
 ```

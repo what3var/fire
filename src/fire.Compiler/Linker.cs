@@ -22,7 +22,13 @@ namespace fire.Compiler
         /// Verzeichnis der aktiven Datei.</summary>
         public string? BasePath { get; set; }
 
-        public static AssemblyInfo ExtractAssemblyInfo(IReadOnlyList<string> sources)
+        /// <summary>The engine the program is built for, a symbol of `#if` (`vm` or `native`).</summary>
+        public string Engine { get; set; } = ConditionalSymbols.DefaultEngine;
+
+        /// <summary>Further symbols of `#if` (`-D name` on the command line).</summary>
+        public IReadOnlyList<string>? Defines { get; set; }
+
+        public static AssemblyInfo ExtractAssemblyInfo(IReadOnlyList<string> sources, IEnumerable<string>? defines = null)
         {
             var assemblyInfo = new AssemblyInfo();
             var alreadyIncluded = new HashSet<string>();
@@ -33,6 +39,7 @@ namespace fire.Compiler
             inputSources.AddRange(sources);
 
             var registry = DirectiveRegistry.CreateDefault(); // komplett leer, NICHT CreateDefault()
+            foreach (var symbol in ConditionalSymbols.For(null, ConditionalSymbols.DefaultEngine, null, defines)) registry.Symbols.Add(symbol);
             registry.Register("import", 1, (ctx, args, line) =>
             {
                 return null;
@@ -171,6 +178,7 @@ namespace fire.Compiler
             inputSources.AddRange(sources);
 
             var registry = DirectiveRegistry.CreateDefault(); // komplett leer, NICHT CreateDefault()
+            foreach (var symbol in ConditionalSymbols.For(target, Engine, floatWidthOverride, Defines)) registry.Symbols.Add(symbol);
             registry.Register("import", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind == ValueKind.String)

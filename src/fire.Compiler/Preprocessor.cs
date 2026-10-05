@@ -131,6 +131,10 @@ namespace fire.Compiler
             _directives[name] = null;
         }
 
+        /// <summary>The symbols of `#if` (see <see cref="ConditionalSymbols"/>), case-insensitive. Shared by everything processed with this registry, so a
+        /// `#define` of one file is seen by the next. Empty at first; the linker and the runtime session fill it from the target.</summary>
+        public HashSet<string> Symbols { get; } = new(StringComparer.OrdinalIgnoreCase);
+
         public DirectiveRegistry()
         {
             Annouce("import");
@@ -218,6 +222,8 @@ namespace fire.Compiler
         private static readonly Regex DirectiveLine =
             new(@"^\s*#([A-Za-z_][A-Za-z0-9_]*)(?:[ \t]+(.*))?\s*$", RegexOptions.Compiled);
 
+        internal static Regex DirectiveLineRegex => DirectiveLine;
+
         /// <summary>Ein gültiger (evtl. punktierter) Namespace-Name nach
         /// `#using` - dieselbe Namensgrammatik wie Parser.ParseDottedName
         /// (`A` oder `A.B.C`), hier aber als reine Text-Prüfung statt über
@@ -288,6 +294,7 @@ namespace fire.Compiler
         {
             var sb = new StringBuilder();
             var lines = source.Split('\n');
+            var conditional = new ConditionalState(); // `#if` nesting of this file; the symbols are those of the registry (shared by all files)
 
             for (int lineNo = 0; lineNo < lines.Length; lineNo++)
             {
@@ -295,11 +302,22 @@ namespace fire.Compiler
                 var match = DirectiveLine.Match(line);
                 if (!match.Success)
                 {
-                    sb.Append(line).Append('\n');
+                    sb.Append(conditional.Active ? line : "").Append('\n'); // a branch that is not taken: an empty line, the numbering stays
                     continue;
                 }
 
                 string name = match.Groups[1].Value;
+
+                if (conditional.TryHandle(name, match.Groups[2].Success ? match.Groups[2].Value : "", lineNo + 1, _registry.Symbols))
+                {
+                    sb.Append('\n');
+                    continue;
+                }
+                if (!conditional.Active)
+                {
+                    sb.Append('\n');
+                    continue;
+                }
 
                 if (string.Equals(name, "using", StringComparison.OrdinalIgnoreCase))
                 {
@@ -346,6 +364,7 @@ namespace fire.Compiler
                 }
             }
 
+            conditional.EnsureClosed();
             return sb.ToString();
         }
 
