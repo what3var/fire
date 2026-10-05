@@ -17,12 +17,22 @@
     <None Remove="icons\Material-DebugStepInto.png" />
     <None Remove="icons\Material-DebugStepOut.png" />
     <None Remove="icons\Material-DebugStepOver.png" />
+    <None Remove="icons\Material-FileDocumentOutline.png" />
+    <None Remove="icons\Material-ForumOutline.png" />
     <None Remove="icons\Material-PauseCircle.png" />
     <None Remove="icons\Material-Play.png" />
     <None Remove="icons\Material-PlayOutline.png" />
+    <None Remove="icons\Material-PowerPlugOffOutline.png" />
+    <None Remove="icons\Material-PowerPlugOutline.png" />
     <None Remove="icons\Material-Restart.png" />
     <None Remove="icons\Material-ScriptOutline.png" />
+    <None Remove="icons\Material-SharkFin.png" />
     <None Remove="icons\Material-Stop.png" />
+    <None Remove="icons\Material-ToyBrickOffline.png" />
+    <None Remove="icons\Material-ToyBrickOnline.png" />
+    <None Remove="icons\Material-ToyBrickOutline.png" />
+    <None Remove="icons\Material-ToyBrickRemoveOutline.png" />
+    <None Remove="icons\Material-ToyBrickSearchOutline.png" />
     <None Remove="Logo-64.png" />
   </ItemGroup>
 
@@ -63,12 +73,22 @@
     <Resource Include="icons\Material-DebugStepInto.png" />
     <Resource Include="icons\Material-DebugStepOut.png" />
     <Resource Include="icons\Material-DebugStepOver.png" />
+    <Resource Include="icons\Material-FileDocumentOutline.png" />
+    <Resource Include="icons\Material-ForumOutline.png" />
     <Resource Include="icons\Material-PauseCircle.png" />
     <Resource Include="icons\Material-Play.png" />
     <Resource Include="icons\Material-PlayOutline.png" />
+    <Resource Include="icons\Material-PowerPlugOffOutline.png" />
+    <Resource Include="icons\Material-PowerPlugOutline.png" />
     <Resource Include="icons\Material-Restart.png" />
     <Resource Include="icons\Material-ScriptOutline.png" />
+    <Resource Include="icons\Material-SharkFin.png" />
     <Resource Include="icons\Material-Stop.png" />
+    <Resource Include="icons\Material-ToyBrickOffline.png" />
+    <Resource Include="icons\Material-ToyBrickOnline.png" />
+    <Resource Include="icons\Material-ToyBrickOutline.png" />
+    <Resource Include="icons\Material-ToyBrickRemoveOutline.png" />
+    <Resource Include="icons\Material-ToyBrickSearchOutline.png" />
     <Resource Include="Logo-64.png" />
   </ItemGroup>
 

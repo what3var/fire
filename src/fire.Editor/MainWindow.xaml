@@ -24,9 +24,9 @@
         </Style>
     </Window.Resources>
     <DockPanel>
-        <Menu DockPanel.Dock="Top">
-            <MenuItem Header="_File">
-                <MenuItem Header="_New Script" Click="New_Click" InputGestureText="Ctrl+N"/>
+        <Menu DockPanel.Dock="Top" >
+            <MenuItem Header="_File" Margin="0">
+                <MenuItem Icon="/icons/Material-ScriptOutline.png" Header="_New Script" Click="New_Click" InputGestureText="Ctrl+N"/>
                 <MenuItem Header="New _Markdown Document" Click="NewMarkdown_Click" InputGestureText="Ctrl+Shift+N"/>
                 <MenuItem Header="_Open..." Click="Open_Click" InputGestureText="Ctrl+O"/>
                 <MenuItem Header="Open Markdown _Read-Only..." Click="OpenReadOnly_Click"/>
@@ -112,9 +112,27 @@
 
         <ToolBarTray DockPanel.Dock="Top" IsLocked="False">
             <ToolBar Band="0" BandIndex="0" ToolTip="File">
-                <Button Click="New_Click" ToolTip="New Script (Ctrl+N)">
-                    <TextBlock Style="{StaticResource GlyphText}" Text="&#xE7C3;"/>
-                </Button>
+                <local:SplitButton>
+                    <local:SplitButton.Content>
+                        <Image Source="/icons/Material-ScriptOutline.png"></Image>
+                    </local:SplitButton.Content>
+
+                    <MenuItem Icon="/icons/Material-ScriptOutline.png" Header="_New Script" Click="New_Click" InputGestureText="Ctrl+N"/>
+                </local:SplitButton>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="auto"/>
+                        <ColumnDefinition Width="auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Button Click="New_Click" ToolTip="New Script (Ctrl+N)">
+                        <TextBlock Style="{StaticResource GlyphText}" Text="&#xE7C3;"/>
+                    </Button>
+
+                    <Button Click="New_Click">
+                        <TextBlock Style="{StaticResource GlyphText}" Text="&#xE7C3;"/>
+                    </Button>
+                </Grid>
                 <Button Click="NewMarkdown_Click" ToolTip="New Markdown Document (Ctrl+Shift+N)">
                     <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="MD"/>
                 </Button>

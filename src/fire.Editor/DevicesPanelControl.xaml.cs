@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using fire.Device.Manager.DeviceManager;
 using fire.Device.Manager.Drivers;
@@ -126,16 +127,14 @@ namespace fire.Editor
 
         private static StackPanel MakeHeader(DeviceSlot slot, bool isDefault)
         {
-            var (glyph, brush, state) = StateOf(slot);
+            var (source, brush, state) = StateOf(slot);
+            
             var panel = new StackPanel { Orientation = Orientation.Horizontal, ToolTip = $"{slot.Identifier} - {state}" };
-            panel.Children.Add(new TextBlock
+            panel.Children.Add(new Image
             {
-                Text = glyph,
-                Foreground = brush,
-                FontFamily = new FontFamily("Segoe UI Symbol"),
-                FontSize = 13,
-                Margin = new Thickness(0, 0, 6, 0),
+                Source = new BitmapImage(new Uri(source, UriKind.Relative)),
                 VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0,0,8,0)
             });
             panel.Children.Add(new TextBlock
             {
@@ -164,14 +163,14 @@ namespace fire.Editor
             return panel;
         }
 
-        private static (string Glyph, Brush Brush, string Text) StateOf(DeviceSlot slot)
+        private static (string Source, Brush Brush, string Text) StateOf(DeviceSlot slot)
         {
-            if (slot.Device.IsConnected) return ("●", ConnectedBrush, "connected");
+            if (slot.Device.IsConnected) return ("/icons/Material-ToyBrickOnline.png", ConnectedBrush, "connected");
             return slot.Device.Availability switch
             {
-                DeviceAvailability.Available => ("○", AvailableBrush, "available"),
-                DeviceAvailability.Unavailable => ("✖", UnavailableBrush, "unavailable"),
-                _ => ("◌", UncheckedBrush, "unchecked"),
+                DeviceAvailability.Available => ("/icons/Material-ToyBrickOffline.png", AvailableBrush, "available"),
+                DeviceAvailability.Unavailable => ("/icons/Material-ToyBrickRemoveOutline.png", UnavailableBrush, "unavailable"),
+                _ => ("/icons/Material-ToyBrickOutline.png", UncheckedBrush, "unchecked"),
             };
         }
 
