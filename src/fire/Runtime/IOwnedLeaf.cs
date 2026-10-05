@@ -17,7 +17,7 @@ namespace fire.Runtime
         bool IsDestroyed { get; }
 
         /// <summary>Markiert das Blatt als zerstoert (und laesst seine Teile mit zerstoeren). Nur vom Owner und von <see cref="LeafOwnership"/> aufzurufen.</summary>
-        void MarkDestroyed();
+        void MarkDestroyed(IDestructRunner runner);
     }
 
     /// <summary>Besitzwechsel und Zerstoerung der Blaetter (Arrays, Puffer) - das Gegenstueck zu den Methoden von <see cref="ObjectInstance"/>.</summary>
@@ -50,9 +50,9 @@ namespace fire.Runtime
         }
 
         /// <summary>`x.TakeTo(objekt)`: ist das Ziel schon in der Kaskadenloeschung, wird das Blatt sofort mit zerstoert (wie bei Objekten, SPEC 2.2).</summary>
-        public static void TakeTo(IOwnedLeaf leaf, ObjectInstance target)
+        public static void TakeTo(IOwnedLeaf leaf, ObjectInstance target, IDestructRunner runner)
         {
-            if (target.IsDestroyed) { Destroy(leaf); return; }
+            if (target.IsDestroyed) { Destroy(leaf, runner); return; }
             Reparent(leaf, target);
         }
 
@@ -65,20 +65,20 @@ namespace fire.Runtime
         }
 
         /// <summary>`delete x` / Ende des Owners: das Blatt gehoert niemandem mehr und ist zerstoert.</summary>
-        public static void Destroy(IOwnedLeaf leaf)
+        public static void Destroy(IOwnedLeaf leaf, IDestructRunner runner)
         {
             if (leaf.IsDestroyed) return;
             leaf.LeafOwner?.RemoveLeaf(leaf);
-            leaf.MarkDestroyed();
+            leaf.MarkDestroyed(runner);
         }
 
         /// <summary>Zerstoert alle Blaetter einer Liste (der Owner raeumt sie danach selbst auf).</summary>
-        internal static void DestroyAll(List<IOwnedLeaf>? leaves)
+        internal static void DestroyAll(List<IOwnedLeaf>? leaves, IDestructRunner runner)
         {
             if (leaves == null || leaves.Count == 0) return;
             var all = leaves.ToArray();
             leaves.Clear();
-            foreach (var leaf in all) leaf.MarkDestroyed();
+            foreach (var leaf in all) leaf.MarkDestroyed(runner);
         }
     }
 }

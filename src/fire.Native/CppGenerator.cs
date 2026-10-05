@@ -411,7 +411,7 @@ namespace fire.Native
         /// <summary>The runtime enum of a built-in ownership method (SPEC 2.2), or null.</summary>
         private static string? OwnMethodId(string name, int argc) => (name.StartsWith("try", StringComparison.Ordinal) ? name.Substring(3) : name, argc) switch
         {
-            ("Take", 0 or 1) => "OM_Take",
+            ("TakeLocal", 0 or 1) => "OM_TakeLocal",
             ("TakeUpwards", 0 or 1) => "OM_TakeUpwards",
             ("TakeGlobal", 0 or 1) => "OM_TakeGlobal",
             ("TakeTo", 1 or 2) => "OM_TakeTo",
@@ -1071,6 +1071,13 @@ namespace fire.Native
             else sb.AppendLine("    (void)o;");
             sb.AppendLine("}");
 
+            sb.AppendLine("const char* className(uint32_t cls) {");
+            sb.AppendLine("    switch (cls) {");
+            foreach (var cls in _classList) sb.AppendLine($"        case {cls.Id}: return {CString(cls.Rc.Name)};");
+            sb.AppendLine("        default: return \"?\";");
+            sb.AppendLine("    }");
+            sb.AppendLine("}");
+
             if (_usesExceptions)
             {
                 sb.AppendLine("bool excMatches(Value exception, int32_t type) {");
@@ -1084,12 +1091,6 @@ namespace fire.Native
                     sb.AppendLine($"        case {i}: " + (ids.Count == 0 ? "return false;" : "switch (cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }"));
                 }
                 sb.AppendLine("        default: return false;");
-                sb.AppendLine("    }");
-                sb.AppendLine("}");
-                sb.AppendLine("const char* className(uint32_t cls) {");
-                sb.AppendLine("    switch (cls) {");
-                foreach (var cls in _classList) sb.AppendLine($"        case {cls.Id}: return {CString(cls.Rc.Name)};");
-                sb.AppendLine("        default: return \"?\";");
                 sb.AppendLine("    }");
                 sb.AppendLine("}");
                 var indexClass = _classes.GetValueOrDefault("IndexOutOfBoundsException") ?? throw new NativeNotSupportedException("exceptions need the prelude class IndexOutOfBoundsException");
@@ -1227,6 +1228,8 @@ namespace fire.Native
             public int Start = -1, End = -1;
             /// <summary>Jump targets outside of the catch blocks that the catch code leaves to.</summary>
             public readonly SortedSet<int> ExitLabels = new();
+            /// <summary>The catch block leaves its own scope on the way out (jump): its objects die at the landing site, after the scopes of the throw site (like in the VM).</summary>
+            public bool DeferCatchRelease;
             public bool ReturnExit;
             public readonly Out Out = new();
         }
@@ -1444,7 +1447,7 @@ namespace fire.Native
             if (f.Root.MaxDepth > 0) sb.AppendLine("    Value " + string.Join(", ", Enumerable.Range(0, f.Root.MaxDepth).Select(i => $"s{i}")) + ";");
             var localsToDeclare = locals.Where(l => !(l.StartsWith("P") && int.Parse(l.AsSpan(1)) < f.ParamLike)).ToList();
             if (localsToDeclare.Count > 0) sb.AppendLine("    Value " + string.Join(", ", localsToDeclare.Select(l => l + " = Undef()")) + ";");
-            if (f.NeedsList.Count > 0) sb.AppendLine("    OwnList " + string.Join(", ", f.NeedsList.OrderBy(i => i).Select(i => ListName(i) + (i < 0 ? " = {nullptr, nullptr, poolMark(), nullptr, nullptr}" : " = {nullptr, nullptr, 0, nullptr, nullptr}"))) + ";");
+            if (f.NeedsList.Count > 0) sb.AppendLine("    OwnList " + string.Join(", ", f.NeedsList.OrderBy(i => i).Select(i => ListName(i) + (i < 0 ? " = {nullptr, nullptr, poolMark(), nullptr, nullptr}" : i >= f.Chunk.Code.Count ? " = {nullptr, nullptr, 0xFFFFFFFFu, nullptr, nullptr}" : " = {nullptr, nullptr, 0, nullptr, nullptr}"))) + ";");   // (the list of a catch block that never ran: leaving it is a no-op)
             if (f.NeedsArgList) sb.AppendLine("    OwnList AL = {nullptr, nullptr, 0, nullptr, nullptr};");
             if (f.Kind == FuncKind.Main && _usesThreads) sb.AppendLine("    gilAcquire();\n    g_domainRoot = &OG;");
             if (f.IsTop && (_usesGlobalOwn || f.Kind == FuncKind.FireBody)) sb.AppendLine("    g_globalOwn = &OG;");
@@ -1543,6 +1546,8 @@ namespace fire.Native
             for (int i = fromCount - 1; i >= downTo; i--)
             {
                 int id = st.Scopes[i].Id;
+                // the scope of a catch block that is left (jump, return, exception): the landing site of the `try` leaves it, after the scopes of the throw site (like in the VM)
+                if (st.Region != null && id == st.Region.CatchScopeId && i == st.Region.ScopeBase) { st.Region.DeferCatchRelease = true; continue; }
                 if (f.NeedsList.Contains(id)) emit($"leave(&{ListName(id)});");
                 foreach (var v in ScopeVariables(f, id, locals))
                     if (VarRef(VarKey(f, v))) emit(reset ? $"release({v}); {v} = Undef();" : $"release({v});");
@@ -1646,6 +1651,13 @@ namespace fire.Native
             void E(string text) => lt.Append("    ").AppendLine(text);
             var reg = r.Reg;
             lt.AppendLine($"LAND{t}: FIRE_UNUSED_LABEL;");
+            if (r.DeferCatchRelease)
+            {
+                // the scope of the catch block (left by a jump, a return or an exception) dies here, after the scopes of the throw site (the VM destroys in this order)
+                if (f.NeedsList.Contains(r.CatchScopeId)) E($"leave(&{ListName(r.CatchScopeId)});");
+                foreach (var v in ScopeVariables(f, r.CatchScopeId, locals))
+                    if (VarRef(VarKey(f, v))) E($"release({v}); {v} = Undef();");
+            }
             if (r.ExitLabels.Count > 0)
             {
                 E($"if (g_unwind.kind == UW_JUMP && g_unwind.target == &H{t}) {{");
@@ -2028,8 +2040,10 @@ namespace fire.Native
                 {
                     if (st.Scopes.Count <= 1) throw new NativeNotSupportedException($"ExitScope without scope at {ins.Addr} in {fn}");
                     int id = st.Scopes[^1].Id;
+                    // the scope of the catch block itself: its objects die after the scopes of the throw site, so the landing site leaves it (see Landing)
+                    if (st.Region != null && id == st.Region.CatchScopeId && st.Scopes.Count - 1 == st.Region.ScopeBase) st.Region.DeferCatchRelease = true;
                     // a catch block that leaves scopes of its function (break/continue): the function that owns the `try` leaves them, after the unwinding
-                    if (st.Scopes.Count - 1 >= (st.Region?.ScopeBase ?? 0))
+                    else if (st.Scopes.Count - 1 >= (st.Region?.ScopeBase ?? 0))
                     {
                         if (f.NeedsList.Contains(id)) E($"leave(&{ListName(id)});");
                         ReleaseScopeVariables(id, reset: true);

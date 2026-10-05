@@ -1168,6 +1168,8 @@ inline Buf* allocBuf(uint32_t length, OwnList* list) {
 /// Generated: calls the ToString() method of the object's class if it has one (the result is a string value created in `list`).
 bool userToString(Value object, OwnList* list, Value* result);
 
+const char* className(uint32_t cls);   // (generated)
+
 /// The characters of a value as `+` and `$"..."` append them (Value.ToString()).
 struct Piece {
     const char16_t* p;
@@ -1221,7 +1223,14 @@ inline void pieceOf(Value v, Piece& out, OwnList* list) {
                 if (FIRE_UNLIKELY(g_unwind.active || text.kind != K_String)) { out.p = out.buf; out.n = 0; return; }   // ToString() threw
                 out.p = strOf(text)->data; out.n = strOf(text)->length;
             }
-            else setPiece(out, "<object>");
+            else if (!leafAlive(v)) setPiece(out, "<object>");   // (dead: its class is not known any more)
+            else {
+                char t[80];
+                int n = std::snprintf(t, sizeof t, "<object %s>", className(asObj(v)->cls));
+                if (n >= (int)sizeof t) n = (int)sizeof t - 1;
+                out.p = out.buf;
+                out.n = widenAscii(t, (uint32_t)n, out.buf);
+            }
             return;
         }
         case K_Lambda: setPiece(out, "<lambda>"); return;
@@ -2450,15 +2459,15 @@ inline void transferTree(Value v, OwnList* const* lists, int n) {
     moveReachable(o, TK_LOCALS, scopes);
 }
 
-enum OwnMethod { OM_Take, OM_TakeUpwards, OM_TakeGlobal, OM_TakeTo };
+enum OwnMethod { OM_TakeLocal, OM_TakeUpwards, OM_TakeGlobal, OM_TakeTo };
 
-/// `x.Take()`, `x.TakeUpwards()`, `x.TakeGlobal()`, `x.TakeTo(obj)` on an object, an array or a buffer (SPEC 2.2).
+/// `x.TakeLocal()`, `x.TakeUpwards()`, `x.TakeGlobal()`, `x.TakeTo(obj)` on an object, an array or a buffer (SPEC 2.2).
 inline void ownMethod(int method, Value self, Value arg, OwnList* here) {
     Owned* o = ownedOf(self);
     if (!o) fatal("Take... is only possible for an object, an array or a buffer that is not destroyed.");
     if (o->flags & 1) fatal("A destroyed value cannot change its owner.");
     switch (method) {
-        case OM_Take:
+        case OM_TakeLocal:
             if (o->owner) unlink(o);
             link(here, o);
             break;

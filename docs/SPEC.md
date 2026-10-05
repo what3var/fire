@@ -127,24 +127,25 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   current function (freshly returned, or belonging to one of its scopes) becomes the object's. A value that belongs to someone else (an object, the caller, the global scope seen from a function) stays where it is.
 - **Assignment moves ownership up to the function scope.** `x = value` where `x` is a variable of an *outer* block scope moves a value that belongs to an inner block (loop body, `if`, bare block) into the scope of the
   enclosing **function** (top-level code: the global scope) - never out of the function. `keep = b` inside a loop therefore keeps `b` alive after the loop and until the function ends; without the assignment it
-  would die with the loop body. (Objects and arrays assigned in a loop accumulate until the function ends: use `delete` or `Take`/`TakeTo` for something that should not.)
-- **A call result passed on as an argument belongs to the called function, not to the caller:** in `f(g())` the value that `g` returns is owned by the scope of `f` and dies with it, unless `f` keeps it
-  (stores it in a field, `TakeTo`, returns it). Only values that are fresh at the caller move; `f(g())` where `g` returns something that belongs to an object does not change that owner.
+  would die with the loop body. (Objects and arrays assigned in a loop accumulate until the function ends: use `delete` or `TakeLocal`/`TakeTo` for something that should not.)
+- **A call result passed on as an argument belongs to the called function, not to the caller:** in `f(g())` the value that `g` returns belongs to the call of `f`: it dies when the call is over - after everything `f` created
+  itself - unless `f` keeps it (`TakeTo`, `try x.TakeTo(this)` (2.2), returns it). Only values that are fresh at the caller move; `f(g())` where `g` returns something that belongs to an object does not change that owner.
 - The same rule applies to lambda values: direct field assignment → owner is the object; otherwise → current scope. The `on` binding (this context, see 4.2) is independent of this and does not change the owner.
 
 ### 2.2 Ownership transfer (member functions on object instances)
 
-- `obj.Take()` – the owner becomes the **current scope** (the scope that contains the call).
+- `obj.TakeLocal()` – the owner becomes the **current scope** (the scope that contains the call).
 - `obj.TakeUpwards()` – the owner becomes the parent scope of the current owner scope (only meaningful if the current owner is a scope).
 - `obj.TakeGlobal()` – the owner becomes the global scope.
+- (`Take` is not a built-in method: `list.Take(obj)` and `list.Take(obj, Takes.Children)` of the `List` class do `obj.TakeTo(this)` - the list owns what it takes; `Add` only keeps a reference. Because of that, `list.Take(n)` of the LINQ library is not available directly on a `List` - write `Linq.From(list).Take(n)`.)
 - `obj.TakeTo(other)` – the owner becomes `other` (an object instance).
 - All four are built-in methods of every object instance - and of every array and buffer (`TakeTo(obj)` needs an object as the target; a class that declares a method of the same name itself takes precedence). A function can thereby keep an object that belongs to it (e.g. a copy passed as a parameter, 2.4): `param.TakeTo(this)`.
-- **What travels along.** Every one of them takes a last argument of the enum `Takes` (always available): `Take(Takes.Locals)`, `TakeUpwards(Takes.Children)`, `TakeTo(obj, Takes.All)`, `TakeGlobal(Takes.This)`. Without it the mode is `Takes.This`.
+- **What travels along.** Every one of them takes a last argument of the enum `Takes` (always available): `TakeLocal(Takes.Locals)`, `TakeUpwards(Takes.Children)`, `TakeTo(obj, Takes.All)`, `TakeGlobal(Takes.This)`. Without it the mode is `Takes.This`.
   - `Takes.This` - only the object itself (what it owns goes along anyway, it is part of its tree).
   - `Takes.Children` - the object and everything it points to directly; it owns them afterwards. For an array and for everything that implements `IEnumerable` that are its **items** (an object: through its
     enumerator - `GetEnumerator`, `MoveNext`, `GetCurrent`), for any other object its fields.
   - `Takes.Locals` - like `return` (2.3): everything reachable from the object that belongs to a scope of the running call, recursively. A thing that is taken along belongs to the object that points to it
-    (for an array: to the owner of the array, if that is an object), otherwise to the new owner of the object.
+    (for an array: to the owner of the array, if that is an object, else to the array itself - an array can own objects and arrays that were taken along; they die with it), otherwise to the new owner of the object.
   - `Takes.All` - everything reachable, recursively, whoever owns it.
   
   Every thing is visited once (references can form cycles; the ownership stays a tree: what would end up below itself stays where it is). A destroyed object is never taken.

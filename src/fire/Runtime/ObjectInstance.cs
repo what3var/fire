@@ -289,6 +289,15 @@ namespace fire.Runtime
         /// öffentlichen Skript-API (dafür bleiben TakeUpwards/TakeGlobal/TakeTo).</summary>
         public void ReparentTo(Scope newOwner) => Reparent(newOwner);
 
+        /// <summary>Das Objekt wird zum Argument des Aufrufs von <paramref name="scope"/> (siehe Scope.AddArgument): es stirbt als letztes.</summary>
+        public void ReparentToArgument(Scope scope)
+        {
+            if (_destroyed) return;
+            Owner.RemoveOwned(this);
+            Owner = scope;
+            scope.AddArgument(this);
+        }
+
         /// <summary>Wie <see cref="ReparentTo"/> für einen beliebigen Owner (Scope oder Objekt) - für OwnershipWalk. Ein zerstörtes Objekt bleibt, wo es ist.</summary>
         internal void ReparentToOwner(IOwner newOwner)
         {
@@ -330,6 +339,7 @@ namespace fire.Runtime
             {
                 if (ReferenceEquals(current, ownerCandidate)) return true;
                 if (current is ObjectInstance oi) current = oi.Owner;
+                else if (current is fire.Values.ScriptArray array && array.LeafOwner != null) current = array.LeafOwner;
                 else return false;
             }
         }
@@ -375,7 +385,7 @@ namespace fire.Runtime
                 runner.RunDestructor(this);
 
             _owned.DestroyAll(runner);
-            LeafOwnership.DestroyAll(_leaves);
+            LeafOwnership.DestroyAll(_leaves, runner);
 
             // Ein zerstörtes Objekt gehört niemandem mehr: sein bisheriger Owner (meist eine Scope, die gleich wiederverwendet wird)
             // darf nicht länger auf es zeigen. `Owner` bleibt nie null - ein Platzhalter nimmt Anfragen an den toten Besitzer entgegen.

@@ -82,7 +82,7 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   (er reist, `adopt` des Aufrufers übernimmt ihn) und `moveReachable` geht durch alles, was an ihm hängt: was ebenfalls diesen Scopes gehört, wandert zu dem Objekt, das darauf zeigt
   (`carrierOf`: das Objekt; bei einem Array der Owner des Arrays, wenn der ein Objekt ist, sonst das Array selbst über seine Teileliste `parts`). Jeder Knoten wird einmal besucht (Flag `F_VISIT`),
   was unter sich selbst landen würde, bleibt. Der Generator übergibt die Listen der verlassenen Scopes als Feld (`T_`).
-* **`Takes`** (`Take`, `TakeUpwards`, `TakeGlobal`, `TakeTo` mit einem `Takes`-Wert als letztem Argument): `ownMethodT` setzt erst den Owner wie bisher, dann `moveReachable` mit dem Modus
+* **`Takes`** (`TakeLocal`, `TakeUpwards`, `TakeGlobal`, `TakeTo` mit einem `Takes`-Wert als letztem Argument): `ownMethodT` setzt erst den Owner wie bisher, dann `moveReachable` mit dem Modus
   (`TK_THIS` nichts weiter, `TK_CHILDREN` die unmittelbaren Mitglieder, `TK_LOCALS` wie `return` mit den Listen der offenen Scopes der Funktion, `TK_ALL` alles Erreichbare). Über den Methoden-Verteiler
   (eine Klasse deklariert selbst ein `Take...`) kennt der Aufruf die Scopes des Aufrufers nicht: `Takes.Locals` findet dort nichts.
 * **`Takes.Children` und `IEnumerable`**: nimmt ein Objekt, das `IEnumerable` implementiert, seine Items über den Enumerator mit, erzeugt der Generator `fire_enumerateItems` (GetEnumerator, MoveNext, GetCurrent über die Verteiler)
@@ -90,20 +90,19 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
 * **`try x.Take...(...)`** (`ownMethodTry`): der Compiler macht daraus einen Aufruf von `tryTake...`; verschoben wird nur, wenn das Ding einem Scope des laufenden Aufrufs (die Listen der offenen Scopes), dem
   aktuellen Objekt (`self`) oder einer Argumentliste gehört (das Ergebnis eines weitergereichten Aufrufs `f(g())` reist nativ in der Argumentliste des Aufrufs, `AL_MARK`; der Aufgerufene weiß nicht, welche es ist, jede gilt
   als seine - gibt er das Argument weiter, kann ein tiefer Aufgerufener es nativ übernehmen, in der VM nicht). Das Ergebnis ist `Bool`.
-* Abweichung zur VM: die Elemente eines zurückgegebenen Arrays, das keinem Objekt gehört, hängen nativ an dem Array (Teileliste), in der VM am aufrufenden Scope - beide sterben zusammen mit dem Array bzw. dem Scope.
+* Ein Array kann Objekte (und Arrays) besitzen, die `return`/`Takes` mitnehmen - nativ über seine Teileliste (`parts`), in der VM als `IOwner` (`ScriptArray`): sie sterben mit dem Array, auch wenn es weitergegeben wird.
 
 ### Speicher: Besitz für Objekte, Arrays und Puffer, Zähler für Strings und Lambdas
 
 * **Objekte, Arrays und Puffer haben genau einen Besitzer** (SPEC 2, 2.5) und werden mit ihm zerstört: sie hängen in derselben `OwnList` (gemeinsamer
   Kopf `fire::Owned`: Vorgänger, Nachfolger, Besitzer, Art). `new int[n]`, Literale und `new byte[n]` kommen in die Liste des innersten Scopes, direkt einem
-  Feld zugewiesen (`OwnValue`) in die des Objekts; `return` gibt sie an den Aufrufer weiter (`transferOut`/`adopt`), `x.Take()`, `TakeUpwards`, `TakeGlobal`,
+  Feld zugewiesen (`OwnValue`) in die des Objekts; `return` gibt sie an den Aufrufer weiter (`transferOut`/`adopt`), `x.TakeLocal()`, `TakeUpwards`, `TakeGlobal`,
   `TakeTo(obj)` und `delete x` sind kleine Laufzeitfunktionen (`ownMethod`, `deleteValue`). Die inneren Arrays von `new int[3][4]` und `[[1, 2], [3]]` hängen in
   der Teileliste (`parts`) des äußeren. Es gibt **keine Zähler** für diese Werte.
 * **Zuweisung nach oben, Aufrufergebnisse** (SPEC 2.1): `HoistValue` wird zu `hoistFrom(v, &innerer_Scope, &Funktions_Scope)` für jeden inneren Scope der Funktion
   (nur was dem inneren Scope gehört, wandert). `OwnValue` ist bedingt: `ownValue(objekt, v, &Scope1, &Scope2, ...)` gibt den Wert nur dem Objekt, wenn er niemandem oder
   einem Scope dieser Funktion gehört. `f(g())`: der Rückgabewert von `g` reist in der Argumentliste `AL` des Aufrufs (`reownArg`), nach dem Aufruf zerstört `finishArgs`
-  was die aufgerufene Funktion nicht behalten hat. **Abweichung von der VM:** dort stirbt der Wert mit dem Scope der aufgerufenen Funktion (vor deren übrigen
-  Variablen, auch beim Auslösen einer Ausnahme), nativ erst nach dem Aufruf - die Reihenfolge von Destruktor-Ausgaben kann sich dabei unterscheiden.
+  was die aufgerufene Funktion nicht behalten hat. Die VM verhält sich genauso: der Wert gehört dem Aufruf (`Scope.AddArgument`) und stirbt als letztes, nach allem, was die aufgerufene Funktion selbst angelegt hat.
 * **Handle-Tabelle gegen hängende Referenzen.** Ein zerstörtes Array darf nicht mehr benutzt werden (SPEC 2.5). In den geprüften Modi trägt der `Value` eines
   Arrays/Puffers den Platz seines Kopfs in einer Tabelle von Generationen (`unit` = Platz, `reserved` = Generation); beim Zerstören bekommt der Platz eine neue
   Generation, jeder Zugriff vergleicht (`leafAlive`: eine Ladung und ein Vergleich) und meldet sonst die fangbare `DestroyedException`, bevor freigegebener
@@ -125,7 +124,7 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Funktions-Scope hat den globalen Scope als Eltern, wie in der VM).
 
 Bekannte Abweichungen zur VM: Unicode-Klassifizierung und Groß-/Kleinschreibung nur für Basic Latin, Latin-1, Griechisch und Kyrillisch
-(`char.IsDigit` nur ASCII-Ziffern); `print(objekt)` ohne `ToString()` schreibt `<object>`; das Zahlenformat `E` fehlt.
+(`char.IsDigit` nur ASCII-Ziffern); das Zahlenformat `E` fehlt.
 
 ### Regeln für die Runtime (gelernt)
 
@@ -164,7 +163,6 @@ Bekannte Abweichungen zur VM:
 * `resume` geht nur an die Wurfstelle selbst. Läuft die Ausnahme an einem `try` ohne passenden `catch` vorbei (oder durch ein `finally`), ist die
   Wurfstelle schon abgerollt; `resume` meldet dann einen Fehler (die VM setzt dort an einer verschobenen Stelle fort).
 * Ein Objekt, das erst im `catch` mit `new` entsteht, kann nicht an `resume` übergeben werden (es gehört dem `catch`-Scope, der endet).
-* Die Destruktoren des `catch`-Scopes laufen vor denen der Wurfstelle (die VM umgekehrt).
 * `resume` nach einer `UnitMismatchException` setzt hinter dem `CheckUnit` fort; die VM schiebt dort einen zusätzlichen Wert auf den Stack.
 * Eine Ausnahme, die ein Destruktor wirft, wird beim Abrollen ignoriert.
 
@@ -208,7 +206,7 @@ einzigen Maschine, keine Garantie.
   `ToUpper`, `ToLower`, `Trim*`, `Replace`, `Split`, `PadLeft`, `PadRight`) und von `char`
 * **Arrays und Puffer**: `new T[n]`, Literale, Zugriff und Zuweisung, `++` auf Elementen, `length`, verschachtelte (gezackte) Arrays,
   `byte[]`, `foreach` über Arrays, Index-Methoden von Klassen (`GetIndex`/`SetIndex`) und damit `List` aus dem Prelude; als Teil des Besitzmodells
-  (SPEC 2.5): `Take()`, `TakeUpwards()`, `TakeGlobal()`, `TakeTo(obj)`, `delete x`, `DestroyedException`
+  (SPEC 2.5): `TakeLocal()`, `TakeUpwards()`, `TakeGlobal()`, `TakeTo(obj)`, `delete x`, `DestroyedException`
 
 * **Lambdas**: `func (x) => ...`, Kurzschreibweisen, Captures als Kopie (SPEC 4.2.1), `on`-Ziel, verschachtelte Lambdas, Signaturprüfung
   (`lambda<...>`), Einheitenprüfung (`CheckUnit`). Ein Lambda ist ein referenzgezählter Wert (Funktionszeiger, kopierte Captures, `on`-Ziel); die
@@ -247,8 +245,7 @@ einzigen Maschine, keine Garantie.
 * **Eingebaute Umwandlungen**: `string.ToBytes/ToUnicode`, `char.ToByte/ToUnicode`, `byte.ToChar`, `buffer.ToString/ToUnicode/ToUnicodeChar/ToLittleEndian/ToBigEndian` und `buffer.littleEndian`
   (SPEC 8.10; ein Puffer trägt seine Byte-Reihenfolge, die der Maschine wird zur Laufzeit festgestellt) stehen im Dispatcher der Methode, wenn keine Klasse sie selbst deklariert.
 
-* **Bekannte Abweichungen von der VM**: Beim Verlassen eines `catch` zerstört die VM zuerst die Objekte des Wurfortes (Scopes im `try`), dann die des `catch`; nativ laufen
-  die Destruktoren des `catch`-Scopes zuerst (der Wurfort wird erst danach abgewickelt). Ein Zeiger auf eine lokale Variable (`unsafe`), der die Funktion überlebt, zeigt in der VM
+* **Bekannte Abweichungen von der VM**: (Beim Verlassen eines `catch` zerstören VM und nativ zuerst die Objekte des Wurfortes, dann die des `catch`: der Scope des `catch` wird erst an der Landestelle verlassen.) Ein Zeiger auf eine lokale Variable (`unsafe`), der die Funktion überlebt, zeigt in der VM
   auf den noch lebenden Scope, nativ ins Leere (wie in C).
 
 * **`copy` und `flat`** (SPEC 2.4): `flatCopy`/`deepCopy` arbeiten allgemein auf den Köpfen (Klassen-Id, Felderzahl, Felder): kein Konstruktor, die Kopie gehört dem

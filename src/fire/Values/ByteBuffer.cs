@@ -28,7 +28,7 @@ namespace fire.Values
         /// <summary>Der Owner (SPEC 2), siehe <see cref="ScriptArray.LeafOwner"/>.</summary>
         public fire.Runtime.IOwner? LeafOwner { get; set; }
         public bool IsDestroyed { get; private set; }
-        public void MarkDestroyed() { IsDestroyed = true; LeafOwner = null; }
+        public void MarkDestroyed(fire.Runtime.IDestructRunner runner) { IsDestroyed = true; LeafOwner = null; }
         public ByteOrder Order { get; set; }
         public int Length => Bytes.Length;
 

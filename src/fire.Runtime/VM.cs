@@ -129,6 +129,10 @@ namespace fire.Runtime
         /// <summary>Anzahl der aktiven Handler, als der `catch` begann (ohne das finally-only des `try`): `resume()` verwirft alles darüber.</summary>
         public readonly int HandlerCount;
 
+        /// <summary>Ausnahmen, deren `catch` diese Ausnahme verlassen hat (sie wurde in einem `catch` geworfen und von einem äußeren `try` behandelt): ihre eingefrorenen Wurfstellen
+        /// werden mit dieser zusammen aufgegeben - zuerst die inneren, dann diese. `resume()` dieser Ausnahme setzt sie wieder ein.</summary>
+        public List<(ObjectInstance Exception, PendingResume Pending)>? Inner;
+
         public PendingResume(SavedContinuation continuation, ActiveHandler handler, int handlerCount)
         {
             Continuation = continuation;
@@ -1963,7 +1967,7 @@ namespace fire.Runtime
                 case ValueKind.Class:
                 {
                     var obj = (ObjectInstance)arg.AsObjectRef();
-                    if (!obj.IsDestroyed && ReferenceEquals(obj.Owner, callerScope)) obj.ReparentTo(calleeScope);
+                    if (!obj.IsDestroyed && ReferenceEquals(obj.Owner, callerScope)) obj.ReparentToArgument(calleeScope);
                     break;
                 }
                 case ValueKind.Array:
@@ -2746,7 +2750,7 @@ namespace fire.Runtime
             }
 
             var obj = (ObjectInstance)target.AsObjectRef();
-            if (IsDeadObject(obj) && !(methodName is "Take" or "TakeUpwards" or "TakeGlobal" or "TakeTo" or "tryTake" or "tryTakeUpwards" or "tryTakeGlobal" or "tryTakeTo")) { ThrowDestroyedObject(obj); return; }
+            if (IsDeadObject(obj) && !(methodName is "TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo" or "tryTakeLocal" or "tryTakeUpwards" or "tryTakeGlobal" or "tryTakeTo")) { ThrowDestroyedObject(obj); return; }
 
             // Actor-Ziel (siehe Runtime.ObjectInstance.Mailbox-Doku):
             // JEDER Methodenaufruf wird zu einer asynchronen Nachricht
@@ -2813,7 +2817,7 @@ namespace fire.Runtime
         }
         }
 
-        /// <summary>`obj.Take(...)`, `obj.TakeUpwards(...)`, `obj.TakeGlobal(...)`, `obj.TakeTo(other, ...)` (SPEC 2.2): eingebaute Methoden jedes Objekts, die
+        /// <summary>`obj.TakeLocal(...)`, `obj.TakeUpwards(...)`, `obj.TakeGlobal(...)`, `obj.TakeTo(other, ...)` (SPEC 2.2): eingebaute Methoden jedes Objekts, die
         /// nur greifen, wenn die Klasse nichts Gleichnamiges deklariert. Das letzte Argument darf ein `Takes`-Wert sein (was außer dem Objekt mitwandert).
         /// Mit `try` davor (`tryTake...`, vom Compiler) verschiebt die Methode nur, wenn der Aufrufer der Besitzer ist (der Scope des Aufrufs oder `this`), und
         /// liefert, ob sie es getan hat. Liefert false, wenn `name`/Argumentzahl keine davon ist.</summary>
@@ -2822,7 +2826,7 @@ namespace fire.Runtime
             result = Value.MakeUndefined();
             bool conditional = name.StartsWith("tryTake", StringComparison.Ordinal);
             string method = conditional ? name.Substring(3) : name;
-            if (method is not ("Take" or "TakeUpwards" or "TakeGlobal" or "TakeTo")) return false;
+            if (method is not ("TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo")) return false;
             int baseArgs = method == "TakeTo" ? 1 : 0;
             if (args.Length != baseArgs && args.Length != baseArgs + 1) return false;
             int mode = args.Length > baseArgs ? TakesMode(args[baseArgs]) : Takes.This;
@@ -2851,7 +2855,7 @@ namespace fire.Runtime
                     if (!obj.IsDestroyed && mode != Takes.This) OwnershipWalk.MoveReachable(Value.MakeClassRef(obj), mode, OwnsWithinCall, other, EnumerateItems);
                     return true;
                 }
-                default:   // Take
+                default:   // TakeLocal
                     // in den aktuellen Scope ziehen (der Scope, in dem der Aufruf steht)
                     if (obj.IsDestroyed) throw new OwnershipException("A destroyed object cannot change its owner.");
                     obj.ReparentTo(_currentScope);
@@ -2893,14 +2897,14 @@ namespace fire.Runtime
             return items;
         }
 
-        /// <summary>Die Ownership-Methoden eines Arrays oder Puffers (SPEC 2.2): TakeUpwards, TakeGlobal, TakeTo(objekt), Take(), jeweils mit einem `Takes`-Wert als letztem Argument
+        /// <summary>Die Ownership-Methoden eines Arrays oder Puffers (SPEC 2.2): TakeUpwards, TakeGlobal, TakeTo(objekt), TakeLocal(), jeweils mit einem `Takes`-Wert als letztem Argument
         /// und mit `try` davor (`tryTake...`).</summary>
         private bool TryCallLeafOwnershipMethod(IOwnedLeaf leaf, string name, Value[] args, out Value result)
         {
             result = Value.MakeUndefined();
             bool conditional = name.StartsWith("tryTake", StringComparison.Ordinal);
             string method = conditional ? name.Substring(3) : name;
-            if (method is not ("TakeUpwards" or "TakeGlobal" or "TakeTo" or "Take")) return false;
+            if (method is not ("TakeUpwards" or "TakeGlobal" or "TakeTo" or "TakeLocal")) return false;
             int baseArgs = method == "TakeTo" ? 1 : 0;
             if (args.Length != baseArgs && args.Length != baseArgs + 1) return false;
             int mode = args.Length > baseArgs ? TakesMode(args[baseArgs]) : Takes.This;
@@ -2918,7 +2922,7 @@ namespace fire.Runtime
                 case "TakeTo":
                 {
                     var other = RequireObjectInstance(args[0], "TakeTo");
-                    LeafOwnership.TakeTo(leaf, other);
+                    LeafOwnership.TakeTo(leaf, other, this);
                     target = other;
                     break;
                 }
@@ -2944,7 +2948,7 @@ namespace fire.Runtime
                 }
                 case ValueKind.Array:
                 case ValueKind.Buffer:
-                    LeafOwnership.Destroy(LeafOf(v)!);
+                    LeafOwnership.Destroy(LeafOf(v)!, this);
                     return;
                 default:
                     throw new InvalidOperationException($"'delete' expects an object, an array or a buffer, not {v.Kind}.");
@@ -3937,7 +3941,7 @@ namespace fire.Runtime
                     var owner = RequireObjectInstance(Pop(), "Assigning to a field");
                     if (LeafOf(value) is { } leaf)
                     {
-                        if (leaf.LeafOwner == null || IsCurrentCallOwner(leaf.LeafOwner)) LeafOwnership.TakeTo(leaf, owner);
+                        if (leaf.LeafOwner == null || IsCurrentCallOwner(leaf.LeafOwner)) LeafOwnership.TakeTo(leaf, owner, this);
                     }
                     else if (value.Kind == ValueKind.Class)
                     {
@@ -4132,6 +4136,8 @@ namespace fire.Runtime
                             "(either it was already resumed, or there is no active catch for it).");
 
                     _pendingResumes.Remove(excInstance);
+                    // die `catch`-Blöcke, die diese Ausnahme verlassen hat, laufen nach dem `resume` wieder
+                    if (pending.Inner != null) foreach (var (innerExc, innerPending) in pending.Inner) _pendingResumes[innerExc] = innerPending;
 
                     // Den GERADE laufenden catch-Kontext abwickeln, den resume()
                     // verlässt - exakt wie beim Betreten des Handlers selbst,
@@ -4173,7 +4179,7 @@ namespace fire.Runtime
                     if (_pendingResumes.TryGetValue(excInstance, out var pending))
                     {
                         _pendingResumes.Remove(excInstance);
-                        DiscardContinuation(pending.Continuation, pending.Handler.TargetScope);
+                        DiscardPending(pending);
                     }
                     break;
                 }
@@ -4743,7 +4749,9 @@ namespace fire.Runtime
                     // zerstört, solange nicht klar ist, ob resume() aufgerufen
                     // wird oder nicht (siehe ClearPendingResume).
                     var continuation = CaptureContinuation(handler.FrameDepthAtEntry);
-                    _pendingResumes[excInstance] = new PendingResume(continuation, handler, _handlers.Count);
+                    var newPending = new PendingResume(continuation, handler, _handlers.Count);
+                    newPending.Inner = TakePendingBelow(handler.FrameDepthAtEntry, excInstance);
+                    _pendingResumes[excInstance] = newPending;
 
                     // Der `catch` beginnt auf der Stack-Höhe des `try`: die Operanden der Wurfstelle (z.B. der Enumerator eines `foreach`, aus dem
                     // geworfen wurde, oder halb ausgewertete Ausdrücke des Aufrufers tieferer Frames) bleiben nicht als Leichen liegen und
@@ -4769,7 +4777,9 @@ namespace fire.Runtime
 
                 // Kein Match an diesem Handler - der ist damit endgültig
                 // verworfen (kein resume() für nicht-passende Handler
-                // möglich), also ganz normal destruktiv abwickeln.
+                // möglich), also ganz normal destruktiv abwickeln. Die Wurfstellen der Ausnahmen, deren `catch` dabei verlassen wird, vorher (SPEC 2.3: erst der Wurfort).
+                if (TakePendingBelow(handler.FrameDepthAtEntry, excInstance) is { } leftCatches)
+                    foreach (var left in leftCatches) DiscardPending(left.Pending);
                 UnwindTo(handler.FrameDepthAtEntry, handler.TargetScope);
 
                 // Die Exception geht an diesem `try` vorbei - sein `finally` läuft (im selben Chunk, mit den lokalen Variablen), und `EndFinally`
@@ -4849,6 +4859,26 @@ namespace fire.Runtime
         /// Continuation nachträglich sauber auf (Ownership-Kaskade inkl.
         /// Destruktoren) - spiegelt exakt UnwindTo's Logik, nur auf den
         /// GESICHERTEN (kopierten) Daten statt auf dem LIVE-VM-Zustand.</summary>
+        /// <summary>Nimmt die Ausnahmen aus `_pendingResumes`, deren `catch` (Handler auf <paramref name="frameDepth"/> oder tiefer) von einer neuen Ausnahme verlassen wird, die weiter außen behandelt wird.</summary>
+        private List<(ObjectInstance Exception, PendingResume Pending)>? TakePendingBelow(int frameDepth, ObjectInstance except)
+        {
+            List<(ObjectInstance, PendingResume)>? taken = null;
+            foreach (var kv in _pendingResumes.ToList())
+            {
+                if (ReferenceEquals(kv.Key, except) || kv.Value.Handler.FrameDepthAtEntry < frameDepth) continue;
+                (taken ??= new()).Add((kv.Key, kv.Value));
+                _pendingResumes.Remove(kv.Key);
+            }
+            return taken;
+        }
+
+        /// <summary>Gibt eine eingefrorene Wurfstelle auf: erst die der inneren Ausnahmen, dann diese (SPEC 2.3).</summary>
+        private void DiscardPending(PendingResume pending)
+        {
+            if (pending.Inner != null) foreach (var (_, inner) in pending.Inner) DiscardPending(inner);
+            DiscardContinuation(pending.Continuation, pending.Handler.TargetScope);
+        }
+
         private void DiscardContinuation(SavedContinuation continuation, Scope targetScope)
         {
             var scope = continuation.Scope;

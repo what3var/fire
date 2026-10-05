@@ -37,7 +37,13 @@ namespace fire.Runtime
             while (work.Count > 0)
             {
                 var node = work.Pop();
-                IOwner carrier = (node as ObjectInstance) ?? ((node as IOwnedLeaf)?.LeafOwner as ObjectInstance) ?? fallback;
+                // wohin mitgenommene Dinge kommen: zum Objekt, das darauf zeigt; bei einem Array zu dem Objekt, dem das Array gehoert, sonst zum Array selbst (es kann besitzen)
+                IOwner carrier = node switch
+                {
+                    ObjectInstance obj => obj,
+                    ScriptArray array => (array.LeafOwner as ObjectInstance) ?? (IOwner)array,
+                    _ => fallback,
+                };
                 values.Clear();
                 // `Takes.Children` eines IEnumerable: seine Items, nicht seine Felder
                 if (mode == Takes.Children && node is ObjectInstance enumerableObj && enumerate?.Invoke(enumerableObj) is { } items) values.AddRange(items);
@@ -58,13 +64,13 @@ namespace fire.Runtime
                     {
                         Takes.Children => false,
                         Takes.All => true,
-                        _ => move || (owner is ObjectInstance parentObj && visited.Contains(parentObj)),
+                        _ => move || (owner is { } parentOwner && visited.Contains(parentOwner)),
                     };
                     if (move && !ReferenceEquals(owner, carrier))
                     {
                         var target = carrier;
                         // der neue Owner darf nicht unter dem Knoten hängen (der Besitz bleibt ein Baum)
-                        if (child is ObjectInstance childObj && target is ObjectInstance targetObj && IsAncestor(childObj, targetObj)) target = fallback;
+                        if (child is ObjectInstance childObj && IsAncestor(childObj, target)) target = fallback;
                         Reparent(child, target);
                     }
                     if (descend) work.Push(child);
@@ -75,7 +81,7 @@ namespace fire.Runtime
         /// <summary>Gehört etwas (über die Kette der Owner) einem lokalen Scope?</summary>
         public static bool IsLocal(IOwner? owner, Func<Scope, bool> isLocalScope)
         {
-            while (owner is ObjectInstance oi) owner = oi.Owner;
+            while (owner is ObjectInstance or ScriptArray) owner = owner is ObjectInstance oi ? oi.Owner : ((ScriptArray)owner).LeafOwner;
             return owner is Scope scope && isLocalScope(scope);
         }
 
@@ -104,10 +110,10 @@ namespace fire.Runtime
         }
 
         /// <summary><paramref name="ancestor"/> steht in der Besitzkette von <paramref name="node"/> (oder ist es selbst).</summary>
-        private static bool IsAncestor(ObjectInstance ancestor, ObjectInstance node)
+        private static bool IsAncestor(ObjectInstance ancestor, IOwner node)
         {
-            for (IOwner? o = node; o is ObjectInstance oi; o = oi.Owner)
-                if (ReferenceEquals(oi, ancestor)) return true;
+            for (IOwner? o = node; o != null; o = o is ObjectInstance oi ? oi.Owner : (o as ScriptArray)?.LeafOwner)
+                if (ReferenceEquals(o, ancestor)) return true;
             return false;
         }
     }

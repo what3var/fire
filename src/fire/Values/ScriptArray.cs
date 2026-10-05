@@ -18,7 +18,7 @@ namespace fire.Values
     /// Skript-Exception werfen" ein Konzept der VM/des Interpreters ist,
     /// keins dieser reinen Datenstruktur.
     /// </summary>
-    public sealed class ScriptArray : fire.Runtime.IOwnedLeaf
+    public sealed class ScriptArray : fire.Runtime.IOwnedLeaf, fire.Runtime.IOwner
     {
         public Value[] Items { get; }
 
@@ -31,13 +31,23 @@ namespace fire.Values
         /// <summary>Innere Arrays einer mehrdimensionalen Allokation (`new int[3][4]`): sie gehoeren zum aeusseren Array und werden mit ihm zerstoert.</summary>
         public System.Collections.Generic.List<fire.Runtime.IOwnedLeaf>? Parts { get; set; }
 
-        public void MarkDestroyed()
+        // Ein Array kann Objekte besitzen (SPEC 2.2): was `Takes` und `return` an einem Array mitnehmen, gehoert dem Array und stirbt mit ihm.
+        private fire.Runtime.OwnedSet _ownedObjects;
+        public System.Collections.Generic.IReadOnlyList<fire.Runtime.ObjectInstance> OwnedObjects => _ownedObjects.AsList();
+        public void AddOwned(fire.Runtime.ObjectInstance obj) => _ownedObjects.Add(obj);
+        public void RemoveOwned(fire.Runtime.ObjectInstance obj) => _ownedObjects.Remove(obj);
+        public void AddLeaf(fire.Runtime.IOwnedLeaf leaf) => (Parts ??= new System.Collections.Generic.List<fire.Runtime.IOwnedLeaf>()).Add(leaf);
+        public void RemoveLeaf(fire.Runtime.IOwnedLeaf leaf) => Parts?.Remove(leaf);
+
+        public void MarkDestroyed(fire.Runtime.IDestructRunner runner)
         {
             if (IsDestroyed) return;
+            // was dem Array gehoert, stirbt vor ihm (die Destruktoren sehen es noch)
+            if (!_ownedObjects.IsEmpty) _ownedObjects.DestroyAll(runner);
             IsDestroyed = true;
             Special = true;
             LeafOwner = null;
-            if (Parts != null) foreach (var part in Parts) part.MarkDestroyed();
+            if (Parts != null) foreach (var part in Parts.ToArray()) part.MarkDestroyed(runner);
             Parts = null;
         }
 

@@ -6433,9 +6433,9 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         print(b[1])
         {
             var inner = [9, 9]
-            inner.Take()
+            inner.TakeLocal()
             var r2 = new Res("r2")
-            r2.Take()
+            r2.TakeLocal()
         }
         print("end")
         var rr = new Res("kept")
@@ -10182,7 +10182,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckLq("LINQ: Take/Skip/TakeWhile/SkipWhile/Concat/Zip/SelectMany/Range", linqHead + """
         var nums = new List([5, 3, 8, 1, 9, 2, 8])
-        print(nums.Take(3).Join(",") + " | " + nums.Skip(5).Join(",") + " | " + nums.TakeWhile(x => x > 2).Join(",") + " | " + nums.SkipWhile(x => x > 2).Join(","))
+        print(Linq.From(nums).Take(3).Join(",") + " | " + nums.Skip(5).Join(",") + " | " + nums.TakeWhile(x => x > 2).Join(",") + " | " + nums.SkipWhile(x => x > 2).Join(","))
         print(Linq.Range(1, 3).Concat([7, 8]).Join(",") + " | " + Linq.Range(1, 3).Zip([10, 20, 30], (a, b) => a * b).Join(",") + " | " + Linq.Range(1, 3).SelectMany(x => Linq.Range(0, x)).Join(","))
         """, new[] { "5,3,8 | 2,8 | 5,3,8 | 1,9,2,8", "1,2,3,7,8 | 10,40,90 | 0,0,1,0,1,2" });
 
@@ -10987,7 +10987,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
           Adopt(x) { return try x.TakeTo(this) }
           AdoptNew(x) { return try x.TakeTo(this) }
           // the thing is owned by this object: only the owner moves it
-          Release() { return try this.kept.Take() }
+          Release() { return try this.kept.TakeLocal() }
         }
         class F { static Make(string n) { return new Item(n) } }
         var h = new Holder()
@@ -11005,13 +11005,93 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         items.Add(b)
         var arr = [new Item("a1"), new Item("a2")]
         class T { static Run(items, arr) {
-            items.Take(Takes.Children)
-            arr.Take(Takes.Children)
+            items.TakeLocal(Takes.Children)
+            arr.TakeLocal(Takes.Children)
             return 0
         } }
         T.Run(items, arr)
         print("end")
         """, new[] { "True", "False", "False", "~la", "~lb", "~a1", "~a2", "end", "~fresh", "~mine", "~tmp" });
+
+    CheckScChecked("List.Take(obj) und Take(obj, Takes), TakeLocal", """
+        class Item { string n
+          construct(string n) { this.n = n }
+          destruct() { print("~" + this.n) } }
+        class F {
+          static Fill() {
+            var list = new List()
+            for (var i = 0; i < 3; i++) { var it = new Item("i" + i); list.Take(it); list.Add(it) }
+            return list
+          }
+          static FillChildren() {
+            var list = new List()
+            var a = new Item("c1")
+            var b = new Item("c2")
+            list.Add(a)
+            list.Add(b)
+            list.Take(a, Takes.Children)
+            return list
+          }
+          static Local(holder) {
+            var x = new Item("x")
+            x.TakeLocal()
+            print(try x.TakeLocal())
+            return 0
+          }
+        }
+        var l = F.Fill()
+        print(l.count + " " + l[2].n)
+        var l2 = F.FillChildren()
+        print(l2.count)
+        F.Local(0)
+        print("end")
+        """, new[] { "3 i2", "2", "True", "~x", "end", "~i0", "~i1", "~i2", "~c1", "~c2" });
+
+    CheckScChecked("Ein Array besitzt, was return und Takes mitnehmen", """
+        class Item { string n
+          var arr
+          construct(string n) { this.n = n }
+          destruct() { print("~" + this.n) } }
+        class F {
+          static Make() {
+            var a = [new Item("a1"), new Item("a2")]
+            return a
+          }
+          static Inner() {
+            var holder = new Item("holder")
+            var a = [new Item("b1")]
+            holder.arr = a
+            a.TakeTo(holder)
+            return a
+          }
+        }
+        var arr = F.Make()
+        arr.TakeGlobal()
+        class G { static Run() { var x = F.Make(); print(x.length); return 0 } }
+        G.Run()
+        print("after G")
+        var inner = F.Inner()
+        print(inner[0].n)
+        delete arr
+        print("deleted")
+        print("end")
+        """, new[] { "2", "~a1", "~a2", "after G", "~holder", "b1", "~a1", "~a2", "deleted", "end", "~b1" });
+
+    CheckScChecked("Ein weitergereichtes Argument stirbt nach dem Aufruf, nach den Locals des Aufgerufenen", """
+        class D { string n
+          construct(string n) { this.n = n }
+          destruct() { print("~" + this.n) } }
+        class W { D d
+          construct(D d) { this.d = d } }
+        class F { static Make() { return new D("arg") }
+          static Use(D x) { var local = new D("local"); print("in Use") }
+          static Pass(D x) { return x } }
+        F.Use(F.Make())
+        print("after Use")
+        var kept = F.Pass(F.Make())
+        print("kept " + kept.n)
+        print("end")
+        """, new[] { "in Use", "~local", "~arg", "after Use", "kept arg", "end", "~arg" });
 
     CheckSc("return aus verschachtelten Bloecken zerstoert die Objekte ALLER verlassenen Scopes (innerster zuerst)", scHead + """
         class T {
@@ -12894,9 +12974,9 @@ else
             print(b[1])
             {
                 var inner = [9, 9]
-                inner.Take()
+                inner.TakeLocal()
                 var r2 = new Res("r2")
-                r2.Take()
+                r2.TakeLocal()
             }
             print("end")
             var rr = new Res("kept")
@@ -12991,7 +13071,7 @@ else
             var cur = 0
             {
                 var scratch = [1, 2]
-                scratch.Take()
+                scratch.TakeLocal()
                 cur = scratch[1]
             }
             print(cur)
@@ -14732,7 +14812,7 @@ else
               Adopt(x) { return try x.TakeTo(this) }
               AdoptNew(x) { return try x.TakeTo(this) }
               // the thing is owned by this object: only the owner moves it
-              Release() { return try this.kept.Take() }
+              Release() { return try this.kept.TakeLocal() }
             }
             class F { static Make(string n) { return new Item(n) } }
             var h = new Holder()
@@ -14750,12 +14830,138 @@ else
             items.Add(b)
             var arr = [new Item("a1"), new Item("a2")]
             class T { static Run(items, arr) {
-                items.Take(Takes.Children)
-                arr.Take(Takes.Children)
+                items.TakeLocal(Takes.Children)
+                arr.TakeLocal(Takes.Children)
                 return 0
             } }
             T.Run(items, arr)
             print("end")
+            """),
+    }).ToArray();
+
+    // Ownership: arrays own, call arguments, List.Take
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Besitz: List.Take(obj) und Take(obj, Takes), TakeLocal", """
+            class Item { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class F {
+              static Fill() {
+                var list = new List()
+                for (var i = 0; i < 3; i++) { var it = new Item("i" + i); list.Take(it); list.Add(it) }
+                return list
+              }
+              static FillChildren() {
+                var list = new List()
+                var a = new Item("c1")
+                var b = new Item("c2")
+                list.Add(a)
+                list.Add(b)
+                list.Take(a, Takes.Children)
+                return list
+              }
+              static Local(holder) {
+                var x = new Item("x")
+                x.TakeLocal()
+                print(try x.TakeLocal())
+                return 0
+              }
+            }
+            var l = F.Fill()
+            print(l.count + " " + l[2].n)
+            var l2 = F.FillChildren()
+            print(l2.count)
+            F.Local(0)
+            print("end")
+            """),
+        ("Besitz: Ein Array besitzt, was return und Takes mitnehmen", """
+            class Item { string n
+              var arr
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class F {
+              static Make() {
+                var a = [new Item("a1"), new Item("a2")]
+                return a
+              }
+              static Inner() {
+                var holder = new Item("holder")
+                var a = [new Item("b1")]
+                holder.arr = a
+                a.TakeTo(holder)
+                return a
+              }
+            }
+            var arr = F.Make()
+            arr.TakeGlobal()
+            class G { static Run() { var x = F.Make(); print(x.length); return 0 } }
+            G.Run()
+            print("after G")
+            var inner = F.Inner()
+            print(inner[0].n)
+            delete arr
+            print("deleted")
+            print("end")
+            """),
+        ("Besitz: Ein weitergereichtes Argument stirbt nach dem Aufruf, nach den Locals des Aufgerufenen", """
+            class D { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class W { D d
+              construct(D d) { this.d = d } }
+            class F { static Make() { return new D("arg") }
+              static Use(D x) { var local = new D("local"); print("in Use") }
+              static Pass(D x) { return x } }
+            F.Use(F.Make())
+            print("after Use")
+            var kept = F.Pass(F.Make())
+            print("kept " + kept.n)
+            print("end")
+            """),
+    }).ToArray();
+
+    // Differences that were aligned
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Ausnahmen: Destruktor-Reihenfolge beim Verlassen eines catch (Wurfort zuerst, dann der catch)", """
+            class D { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class Boom : Exception { string message
+              construct(string m) { this.message = m } }
+            class F {
+              static Thrower() {
+                var t = new D("thrower-local")
+                throw new Boom("x")
+              }
+              static Run() {
+                var outer = new D("outer-local")
+                try {
+                  var inTry = new D("in-try")
+                  F.Thrower()
+                } catch (Boom e) {
+                  var inCatch = new D("in-catch")
+                  print("caught " + e.message)
+                }
+                print("after catch")
+              }
+            }
+            F.Run()
+            print("end")
+            """),
+        ("print eines Objekts ohne ToString zeigt die Klasse", """
+            class P { int x
+              construct() { this.x = 3 } }
+            class Q { int y
+              construct() { this.y = 4 }
+              ToString() { return "Q(" + this.y + ")" } }
+            var p = new P()
+            var q = new Q()
+            print(p)
+            print(q)
+            print("" + p)
+            print("v " + q)
             """),
     }).ToArray();
 

@@ -27,15 +27,16 @@ namespace fire.Standard
             ("Contains", new[] { 1 }), ("ForEach", new[] { 1 }), ("Join", new[] { 1 }),
         };
 
-        public static readonly string Source = CoreSource + Extension("List", "new List(this.ToArray())") + Extension("array", "new List(this)");
+        public static readonly string Source = CoreSource + Extension("List", "new List(this.ToArray())", "Take") + Extension("array", "new List(this)");
 
         /// <summary>`class extends List` / `class extends array`: dieselben Operatoren direkt auf der Sammlung (Arrays nehmen die Erweiterung eines Basistyps,
         /// SPEC 5.5.1; `this` ist dort das Array selbst).</summary>
-        private static string Extension(string target, string toListExpression)
+        private static string Extension(string target, string toListExpression, string? skip = null)
         {
             var sb = new StringBuilder($"\nclass extends {target} {{\n");
             foreach (var (name, arities) in ListOperators)
             {
+                if (name == skip) continue;   // `List.Take(obj)` (ownership) takes the name; LINQ's Take(n) stays on `Linq.From(list)`
                 foreach (int arity in arities)
                 {
                     var parameters = string.Join(", ", System.Linq.Enumerable.Range(0, arity).Select(i => "a" + i));

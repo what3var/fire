@@ -1632,7 +1632,7 @@ namespace fire.Compiler
         private void ResolveTryCallExpr(TryCallExpr tc)
         {
             // `try obj.Take...(...)` (SPEC 2.2): die Ownership-Methode verschiebt nur, wenn der Aufrufer der Besitzer ist
-            if (tc.Call is CallExpr takeCall && takeCall.Callee is MemberExpr takeMember && takeMember.Name is "Take" or "TakeUpwards" or "TakeGlobal" or "TakeTo")
+            if (tc.Call is CallExpr takeCall && takeCall.Callee is MemberExpr takeMember && takeMember.Name is "TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo")
             {
                 int baseArgs = takeMember.Name == "TakeTo" ? 1 : 0;
                 if (takeCall.Args.Count != baseArgs && takeCall.Args.Count != baseArgs + 1)
@@ -1646,7 +1646,7 @@ namespace fire.Compiler
             if (tc.Call is not CallExpr innerCall || innerCall.Callee is not IdentifierExpr calleeIdent)
                 throw new ResolverException(
                     "'try' before a call expects a direct call of a registered function " +
-                    "(no method call except obj.Take/TakeUpwards/TakeGlobal/TakeTo, no lambda call)", tc.Line);
+                    "(no method call except obj.TakeLocal/TakeUpwards/TakeGlobal/TakeTo, no lambda call)", tc.Line);
 
             if (!_tryableNativeNames.Contains(calleeIdent.Name))
                 throw new ResolverException(
