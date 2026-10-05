@@ -11487,6 +11487,58 @@ static int CountOccurrences(string haystack, string needle)
             foreach (v in l) { total = total + v }
             print(total)
             """),
+        ("Lambdas: Captures als Kopie, on-Ziel, Verschachtelung, Signaturpruefung, Lambdas in Listen", """
+            var add = func (a, b) => { return a + b }
+            print(add(2, 3))
+            var twice = x => x * 2
+            print(twice(21))
+            var limit = 3
+            var f = x => x > limit
+            limit = 10
+            print(f(5))
+            class T {
+                int n
+                construct(int n) { this.n = n }
+                static Run() {
+                    var k = 7
+                    var g = (a) => a + k
+                    k = 100
+                    return g(1)
+                }
+                Make() {
+                    var inc = func (x) on this => { this.n = this.n + x; return this.n }
+                    return inc
+                }
+            }
+            print(T.Run())
+            var t = new T(10)
+            var inc = t.Make()
+            print(inc(5))
+            print(inc(5))
+            var fs = new List()
+            for (var i = 0; i < 3; i = i + 1) { fs.Add(() => i * 10) }
+            foreach (h in fs) { print(h()) }
+            var greet = (name) => "hi " + name
+            print(greet("Ada"))
+            var compose = (f1, f2) => (x) => f2(f1(x))
+            var both = compose(twice, x => x + 1)
+            print(both(5))
+            var acc = 0
+            for (var j = 0; j < 100; j = j + 1) { acc = add(acc, j) }
+            print(acc)
+            lambda w = func () => { print("zero") }
+            w()
+            int lambda<int> sq = x => x * x
+            print(sq(9))
+            """),
+        ("Benchmark lambda", """
+            var add = func (a, b) => { return a + b }
+            var acc = 0
+            for (var i = 0; i < 200000; i = i + 1) {
+                acc = add(acc, i)
+            }
+            print(acc)
+            """),
         ("Objekte: Klassen, Felder, Konstruktoren, Vererbung, Destruktoren, statische Felder", """
             class Animal {
                 int id
@@ -11782,12 +11834,12 @@ static int CountOccurrences(string haystack, string needle)
         // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
         try
         {
-            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "var f = func (x) => { return x }\nprint(1)" }, null, null, VmExecutionMode.Release));
+            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "try { print(1) } catch (e) { print(2) }" }, null, null, VmExecutionMode.Release));
             CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt", false, "keine Ausnahme");
         }
         catch (fire.Native.NativeNotSupportedException ex)
         {
-            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (MakeLambda)", ex.Message.Contains("MakeLambda"), ex.Message);
+            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (RegisterHandler)", ex.Message.Contains("RegisterHandler"), ex.Message);
         }
         try
         {

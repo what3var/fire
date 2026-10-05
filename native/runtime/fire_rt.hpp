@@ -93,7 +93,7 @@ inline Real toR(Value v) { return v.kind == K_Float ? v.f : (Real)v.i; }
 // Constants live in static storage and are immortal (never counted).
 // ---------------------------------------------------------------------------------------------------------------------
 constexpr uint32_t IMMORTAL = 0xFFFFFFFFu;
-enum RefType : uint8_t { R_Str, R_Arr, R_Buf };
+enum RefType : uint8_t { R_Str, R_Arr, R_Buf, R_Lam };
 
 struct Ref {
     uint32_t rc;     // number of holders; IMMORTAL for constants
@@ -112,6 +112,15 @@ struct alignas(alignof(Value)) Arr : Ref {
     Value* items() { return reinterpret_cast<Value*>(this + 1); }
 };
 
+/// A lambda value: the function, the values it captured when it was created (copies, SPEC 4.2.1) and the `on` target (`this`).
+struct alignas(alignof(Value)) Lam : Ref {
+    uint32_t nparams;
+    uint32_t ncaps;
+    Value on;
+    Value (*fn)(Value lam, const Value* args);
+    Value* caps() { return reinterpret_cast<Value*>(this + 1); }
+};
+
 /// Byte buffer (`byte[]`).
 struct Buf : Ref {
     uint32_t length;
@@ -122,11 +131,13 @@ inline Value StrV(const Str* s) { Value r; r.kind = K_String; r.width = 0; r.res
 inline Value ArrV(Arr* a) { Value r; r.kind = K_Array; r.width = 0; r.reserved = 0; r.unit = 0; r.p = a; return r; }
 inline Value BufV(Buf* b) { Value r; r.kind = K_Buffer; r.width = 0; r.reserved = 0; r.unit = 0; r.p = b; return r; }
 
-inline bool isRef(Value v) { return ((0x310u >> v.kind) & 1u) != 0; }  // String, Array, Buffer
+inline bool isRef(Value v) { return ((0x350u >> v.kind) & 1u) != 0; }  // String, Lambda, Array, Buffer
 inline Ref* refOf(Value v) { return static_cast<Ref*>(const_cast<void*>(v.p)); }
 inline const Str* strOf(Value v) { return static_cast<const Str*>(v.p); }
 inline Arr* arrOf(Value v) { return static_cast<Arr*>(const_cast<void*>(v.p)); }
 inline Buf* bufOf(Value v) { return static_cast<Buf*>(const_cast<void*>(v.p)); }
+inline Lam* lamOf(Value v) { return static_cast<Lam*>(const_cast<void*>(v.p)); }
+inline Value LamV(Lam* l) { Value r; r.kind = K_Lambda; r.width = 0; r.reserved = 0; r.unit = 0; r.p = l; return r; }
 
 inline void freeRef(Ref* r);
 
@@ -496,7 +507,11 @@ inline void adopt(Value v, OwnList* list) {
 // Memory of the reference-counted values
 // ---------------------------------------------------------------------------------------------------------------------
 inline void freeRef(Ref* r) {
-    if (r->type == R_Arr) {
+    if (r->type == R_Lam) {
+        Lam* l = static_cast<Lam*>(r);
+        Value* caps = l->caps();
+        for (uint32_t i = 0; i < l->ncaps; i++) release(caps[i]);
+    } else if (r->type == R_Arr) {
         Arr* a = static_cast<Arr*>(r);
         Value* items = a->items();
         for (uint32_t i = 0; i < a->length; i++) release(items[i]);
@@ -533,6 +548,41 @@ inline Arr* allocArr(uint32_t length, OwnList* list) {
     for (uint32_t i = 0; i < length; i++) items[i] = Undef();
     registerTemp(a, list);
     return a;
+}
+
+inline Lam* allocLam(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const Value*), OwnList* list) {
+    Lam* l = static_cast<Lam*>(std::malloc(sizeof(Lam) + (size_t)ncaps * sizeof(Value)));
+    if (FIRE_UNLIKELY(!l)) allocFailed();
+    l->type = R_Lam;
+    l->nparams = nparams;
+    l->ncaps = ncaps;
+    l->on = Undef();
+    l->fn = fn;
+    registerTemp(l, list);
+    return l;
+}
+
+/// The `this` of a lambda body: its `on` target.
+inline Value lamOn(Value lam) { return lamOf(lam)->on; }
+inline Value lamCapture(Value lam, uint32_t index) { return lamOf(lam)->caps()[index]; }
+
+/// `callee(args...)`
+inline Value callLam(Value callee, int argc, const Value* args) {
+    if (FIRE_UNLIKELY(callee.kind != K_Lambda)) fatal("Call of a value that is not a lambda.");
+    Lam* l = lamOf(callee);
+    if (FIRE_UNLIKELY(l->nparams != (uint32_t)argc)) fatal("A lambda was called with the wrong number of arguments.");
+    return l->fn(callee, args);
+}
+
+/// CheckLambdaSignature: a value assigned to a `lambda<...>` annotation must have that many parameters.
+inline void checkLambda(Value v, int nparams) {
+    if (FIRE_UNLIKELY(v.kind != K_Lambda || lamOf(v)->nparams != (uint32_t)nparams)) fatal("The lambda does not have the declared number of parameters.");
+}
+
+/// CheckUnit: the value must have exactly this unit.
+inline void checkUnit(Value v, uint32_t unit) {
+    uint32_t actual = (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined) ? v.unit : 0;
+    if (FIRE_UNLIKELY(actual != unit)) fatal("Incompatible units.");
 }
 
 inline Buf* allocBuf(uint32_t length, OwnList* list) {

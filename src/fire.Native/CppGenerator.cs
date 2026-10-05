@@ -32,7 +32,7 @@ namespace fire.Native
     /// </summary>
     public sealed class CppGenerator
     {
-        private enum FuncKind { Main, Static, Method, Ctor, Init, Dtor }
+        private enum FuncKind { Main, Static, Method, Ctor, Init, Dtor, Lambda }
 
         private sealed class Func
         {
@@ -43,11 +43,17 @@ namespace fire.Native
             public string Name => Kind == FuncKind.Main ? "fire_main" : $"f{Index}";
             public bool HasSelf => Kind is FuncKind.Method or FuncKind.Ctor or FuncKind.Init or FuncKind.Dtor;
             public int ParamCount => Proto?.ParamCount ?? 0;
+            /// <summary>Lambdas: the number of values captured when the lambda was created; they are variables behind the parameters.</summary>
+            public int CaptureCount;
+            /// <summary>Parameters plus captures: the variables of the function scope that exist on entry.</summary>
+            public int ParamLike => ParamCount + CaptureCount;
             /// <summary>Scopes of this function that can own objects or reference values (they get an OwnList).</summary>
             public readonly HashSet<int> NeedsList = new();
             public string Code = "";
             public string Signature => Kind == FuncKind.Main ? "static void fire_main()"
-                : $"static Value {Name}(" + string.Join(", ", (HasSelf ? new[] { "Value self" } : Array.Empty<string>()).Concat(Enumerable.Range(0, ParamCount).Select(i => $"Value P{i}"))) + ")";
+                : $"static Value {Name}(" + string.Join(", ", (HasSelf ? new[] { "Value self" } : Kind == FuncKind.Lambda ? new[] { "Value lam" } : Array.Empty<string>()).Concat(Enumerable.Range(0, ParamCount).Select(i => $"Value P{i}"))) + ")";
+            /// <summary>Lambdas are called through a pointer with a uniform signature.</summary>
+            public string ThunkSignature => $"static Value {Name}_t(Value lam, const Value* a)";
         }
 
         private sealed class ClassInfo
@@ -92,14 +98,15 @@ namespace fire.Native
         // -------------------------------------------------------------------------------------------------------------
         // Registries
         // -------------------------------------------------------------------------------------------------------------
-        private Func GetFunc(FunctionProto proto, FuncKind kind)
+        private Func GetFunc(FunctionProto proto, FuncKind kind, int captureCount = 0)
         {
             if (_funcByProto.TryGetValue(proto, out var existing))
             {
                 if (existing.Kind != kind) throw new NativeNotSupportedException($"a function is used both as {existing.Kind} and as {kind}");
+                if (existing.CaptureCount != captureCount) throw new NativeNotSupportedException("a lambda is created with different numbers of captures");
                 return existing;
             }
-            var func = new Func { Proto = proto, Chunk = proto.Chunk, Kind = kind, Index = _funcs.Count };
+            var func = new Func { Proto = proto, Chunk = proto.Chunk, Kind = kind, Index = _funcs.Count, CaptureCount = captureCount };
             _funcs.Add(func);
             _funcByProto[proto] = func;
             _version++;
@@ -225,6 +232,8 @@ namespace fire.Native
 
             // Prototypes of everything, then the helpers (they call functions), then the functions (they call helpers).
             foreach (var f in _funcs) sb.AppendLine(f.Signature + ";");
+            foreach (var f in _funcs.Where(f => f.Kind == FuncKind.Lambda))
+                sb.AppendLine(f.ThunkSignature + " { " + (f.ParamCount == 0 ? "(void)a; " : "") + $"return {f.Name}(lam{string.Concat(Enumerable.Range(0, f.ParamCount).Select(i => $", a[{i}]"))}); }}");
             foreach (var name in _fieldNames) sb.AppendLine($"static inline Value gf_{Mangle(name)}(Value v);").AppendLine($"static inline void sf_{Mangle(name)}(Value v, Value x);");
             foreach (var (name, argc) in _dispatchers) sb.AppendLine(DispatcherSignature(name, argc) + ";");
             sb.AppendLine("static inline Value aget_g(Value a, Value i, OwnList* list);");
@@ -501,10 +510,10 @@ namespace fire.Native
 
             var entry = new Flow?[code.Count];
             var start = new Flow();
-            start.Scopes.Add(f.Kind == FuncKind.Main ? (GlobalScope, 0) : (FunctionScope, f.ParamCount));
+            start.Scopes.Add(f.Kind == FuncKind.Main ? (GlobalScope, 0) : (FunctionScope, f.ParamLike));
             entry[0] = start;
             // Parameters can be anything: assume they may be references (a call-site analysis could narrow this).
-            for (int i = 0; i < f.ParamCount; i++) MarkVarRef(VarKey(f, $"P{i}"));
+            for (int i = 0; i < f.ParamLike; i++) MarkVarRef(VarKey(f, $"P{i}"));
 
             var targets = new HashSet<int>();
             var work = new Stack<int>();
@@ -543,13 +552,18 @@ namespace fire.Native
             sb.AppendLine(f.Signature);
             sb.AppendLine("{");
             if (f.HasSelf) sb.AppendLine("    (void)self;");
+            if (f.Kind == FuncKind.Lambda)
+            {
+                sb.AppendLine("    Value self = lamOn(lam); (void)self;");
+                for (int i = 0; i < f.CaptureCount; i++) sb.AppendLine($"    Value P{f.ParamCount + i} = lamCapture(lam, {i});");
+            }
             for (int i = 0; i < f.ParamCount; i++) sb.AppendLine($"    (void)P{i};");
             if (maxDepth > 0) sb.AppendLine("    Value " + string.Join(", ", Enumerable.Range(0, maxDepth).Select(i => $"s{i}")) + ";");
-            var localsToDeclare = locals.Where(l => !(l.StartsWith("P") && int.Parse(l.AsSpan(1)) < f.ParamCount)).ToList();
+            var localsToDeclare = locals.Where(l => !(l.StartsWith("P") && int.Parse(l.AsSpan(1)) < f.ParamLike)).ToList();
             if (localsToDeclare.Count > 0) sb.AppendLine("    Value " + string.Join(", ", localsToDeclare.Select(l => l + " = Undef()")) + ";");
             if (f.NeedsList.Count > 0) sb.AppendLine("    OwnList " + string.Join(", ", f.NeedsList.OrderBy(i => i).Select(i => ListName(i) + (i < 0 ? " = {nullptr, nullptr, poolMark()}" : " = {nullptr, nullptr, 0}"))) + ";");
             // Parameters are variables: they hold what was passed.
-            for (int i = 0; i < f.ParamCount; i++)
+            for (int i = 0; i < f.ParamLike; i++)
                 if (VarRef(VarKey(f, $"P{i}"))) sb.AppendLine($"    retain(P{i});");
 
             for (int i = 0; i < code.Count; i++)
@@ -584,7 +598,7 @@ namespace fire.Native
         {
             if (scopeId == GlobalScope) return Enumerable.Empty<string>();
             if (scopeId == FunctionScope)
-                return Enumerable.Range(0, f.ParamCount).Select(i => $"P{i}").Concat(locals.Where(l => l.StartsWith("P") && int.Parse(l.AsSpan(1)) >= f.ParamCount));
+                return Enumerable.Range(0, f.ParamLike).Select(i => $"P{i}").Concat(locals.Where(l => l.StartsWith("P") && int.Parse(l.AsSpan(1)) >= f.ParamLike));
             return locals.Where(l => l.StartsWith($"B{scopeId}_", StringComparison.Ordinal));
         }
 
@@ -607,7 +621,7 @@ namespace fire.Native
                 f.NeedsList.Add(st.Scopes[^1].Id);
                 return ListName(st.Scopes[^1].Id);
             }
-            void RequireSelf() { if (!f.HasSelf) throw new NativeNotSupportedException($"'this' outside of an instance member ({fn} at {ins.Addr})"); }
+            void RequireSelf() { if (!f.HasSelf && f.Kind != FuncKind.Lambda) throw new NativeNotSupportedException($"'this' outside of an instance member ({fn} at {ins.Addr})"); }
             string Args(int first, int count) => string.Concat(Enumerable.Range(first, count).Select(i => ", " + S(i)));
             bool R(int k) => k >= 64 || (st.Refs >> k & 1UL) != 0;
             void SetR(int k, bool value)
@@ -965,6 +979,46 @@ namespace fire.Native
                     Need(1);
                     int index = StaticFieldIndex(Str(ins.A[0]), Str(ins.A[1]));
                     StoreVar($"SF{index}", d - 1);
+                    return Next();
+                }
+
+                // ---------------------------------------------------------------------------------------------------
+                // Lambdas (capture by value, SPEC 4.2.1)
+                // ---------------------------------------------------------------------------------------------------
+                case OpCode.MakeLambda:
+                case OpCode.MakeLambdaCapturing:
+                {
+                    bool capturing = ins.Op == OpCode.MakeLambdaCapturing;
+                    bool hasOn = ins.A[1] != 0;
+                    int captures = capturing ? ins.A[2] : 0;
+                    Need(captures + (hasOn ? 1 : 0));
+                    var proto = chunk.Functions[ins.A[0]];
+                    if (proto.ParamDefaults.Any(p => p != null)) throw new NativeNotSupportedException("a lambda with default parameter values");
+                    var target = GetFunc(proto, FuncKind.Lambda, captures);
+                    int first = d - captures - (hasOn ? 1 : 0);
+                    var sbCaps = new StringBuilder();
+                    for (int i = 0; i < captures; i++) sbCaps.Append($" l->caps()[{i}] = {S(first + i)}; retain({S(first + i)});");
+                    E($"{{ Lam* l = allocLam({proto.ParamCount}, {captures}, {target.Name}_t, &{OwnerList()}); l->on = {(hasOn ? S(d - 1) : "Undef()")};{sbCaps} {S(first)} = LamV(l); }}");
+                    d = first + 1; SetR(first, true); return Next();
+                }
+                case OpCode.Call:
+                {
+                    int argc = ins.A[0];
+                    Need(argc + 1);
+                    int slot = d - argc - 1;
+                    string owner = OwnerList();
+                    var argList = argc == 0 ? "Undef()" : string.Join(", ", Enumerable.Range(slot + 1, argc).Select(S));
+                    E($"{{ Value args[{Math.Max(argc, 1)}] = {{{argList}}}; {S(slot)} = callLam({S(slot)}, {argc}, args); }}");
+                    AdoptResult(slot);
+                    d = slot + 1; return Next();
+                }
+                case OpCode.CheckLambdaSignature:
+                    Need(1); E($"checkLambda({S(d - 1)}, {ins.A[0]});"); return Next();
+                case OpCode.CheckUnit:
+                {
+                    Need(1);
+                    string unitText = Str(ins.A[0]);
+                    E($"checkUnit({S(d - 1)}, {UnitId(Unit.Parse(unitText))});");
                     return Next();
                 }
 

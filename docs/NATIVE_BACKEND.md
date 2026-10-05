@@ -115,7 +115,7 @@ Rechner dieser Sitzung, g++ 13 `-O2`, VM im Modus *Performance*, Zeiten ohne Pro
 | `alloc` (60 000 Objekte erzeugen und freigeben) | 38 ms | 1,9 ms | ~20x |
 | `list` (`List` aus dem Prelude, `foreach`) | 44 ms | 3,4 ms | ~13x |
 
-Nur `lambda` fehlt noch (Lambdas sind noch nicht übersetzt). Mit clang++ sind die Werte ähnlich.
+Damit laufen alle neun Benchmarks nativ (`lambda` siehe unten). Mit clang++ sind die Werte ähnlich.
 
 *Handgeschrieben generisch* heißt: alles bleibt ein getaggter `Value`, so wie es der Generator erzeugt; mit nackten `int64`/`double`
 (Typinferenz) wird `fib` weitere ~4x schneller (`native/spike/spike.cpp`). Die Zahlen sind Momentaufnahmen von einer
@@ -141,7 +141,11 @@ einzigen Maschine, keine Garantie.
 * **Arrays und Puffer**: `new T[n]`, Literale, Zugriff und Zuweisung, `++` auf Elementen, `length`, verschachtelte (gezackte) Arrays,
   `byte[]`, `foreach` über Arrays, Index-Methoden von Klassen (`GetIndex`/`SetIndex`) und damit `List` aus dem Prelude
 
-Noch nicht (der Generator meldet es mit Namen): Lambdas/Closures, Zeiger, Ausnahmen, Threads, Reflection, Properties,
+* **Lambdas**: `func (x) => ...`, Kurzschreibweisen, Captures als Kopie (SPEC 4.2.1), `on`-Ziel, verschachtelte Lambdas, Signaturprüfung
+  (`lambda<...>`), Einheitenprüfung (`CheckUnit`). Ein Lambda ist ein referenzgezählter Wert (Funktionszeiger, kopierte Captures, `on`-Ziel); die
+  Captures sind Variablen hinter den Parametern. Standard-Parameterwerte bei Lambdas sind noch nicht übersetzt.
+
+Noch nicht (der Generator meldet es mit Namen): Zeiger, Ausnahmen, Threads, Reflection, Properties,
 Operator-Überladung, `copy`/`flat`, die eingebauten Objektmethoden (`TakeTo`, `TakeUpwards`, `TakeGlobal`), Standardargumente,
 Einheiten-Algebra und implizites Einheiten-Coercing, das Zahlenformat `E`, `extern`, die Bridges.
 
