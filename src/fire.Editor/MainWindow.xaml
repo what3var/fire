@@ -106,6 +106,7 @@
             </MenuItem>
             <MenuItem Header="?">
                 <MenuItem Header="_First Steps" Click="HelpFirstSteps_Click"/>
+                <MenuItem Header="_Embedding fire in your Application" Click="HelpEmbedding_Click"/>
             </MenuItem>
         </Menu>
 

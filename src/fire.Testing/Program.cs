@@ -10902,23 +10902,30 @@ static int CountOccurrences(string haystack, string needle)
     CheckMd("Anker: zweite gleichnamige Ueberschrift bekommt -1", fire.Editor.MdAnchors.Unique("Setup", usedAnchors), "setup-1");
     CheckMd("Anker: dritte gleichnamige Ueberschrift bekommt -2", fire.Editor.MdAnchors.Unique("Setup", usedAnchors), "setup-2");
 
-    // Jeder Link "(#anker)" der mitgelieferten Hilfeseite muss auf eine Ueberschrift zeigen.
-    string helpPath = Path.Combine(Path.GetDirectoryName(GetTestDataDir())!, "..", "fire.Editor", "First Steps.md");
-    if (File.Exists(helpPath))
+    // Jeder Link "(#anker)" der mitgelieferten Hilfeseiten muss auf eine Ueberschrift zeigen, jeder Link auf eine andere Seite auf eine vorhandene Datei.
+    string helpDir = Path.Combine(Path.GetDirectoryName(GetTestDataDir())!, "..", "fire.Editor", "Help");
+    foreach (var helpFile in new[] { "First Steps.md", "Embedding.md" })
     {
-        string helpText = File.ReadAllText(helpPath);
-        var anchors = new HashSet<string>();
-        foreach (var block in fire.Editor.MarkdownParser.Parse(helpText))
-            if (block is fire.Editor.MdHeading h)
-                fire.Editor.MdAnchors.Unique(fire.Editor.MarkdownParser.PlainText(h.Content), anchors);
-        var missing = System.Text.RegularExpressions.Regex.Matches(helpText, @"\]\(#([^)]+)\)")
-            .Select(m => m.Groups[1].Value).Where(a => !anchors.Contains(a)).ToList();
-        CheckMd("First Steps.md: alle Inhaltsverzeichnis-Links zeigen auf Ueberschriften", string.Join(",", missing), "");
-    }
-    else
-    {
-        mdFailures++;
-        Console.WriteLine($"FEHLER: First Steps.md nicht gefunden: {helpPath}");
+        string helpPath = Path.Combine(helpDir, helpFile);
+        if (File.Exists(helpPath))
+        {
+            string helpText = File.ReadAllText(helpPath);
+            var anchors = new HashSet<string>();
+            foreach (var block in fire.Editor.MarkdownParser.Parse(helpText))
+                if (block is fire.Editor.MdHeading h)
+                    fire.Editor.MdAnchors.Unique(fire.Editor.MarkdownParser.PlainText(h.Content), anchors);
+            var missing = System.Text.RegularExpressions.Regex.Matches(helpText, @"\]\(#([^)]+)\)")
+                .Select(m => m.Groups[1].Value).Where(a => !anchors.Contains(a)).ToList();
+            CheckMd($"{helpFile}: alle Inhaltsverzeichnis-Links zeigen auf Ueberschriften", string.Join(",", missing), "");
+            var brokenFiles = System.Text.RegularExpressions.Regex.Matches(helpText, @"\]\(([^)#:]+\.md)(?:#[^)]*)?\)")
+                .Select(m => Uri.UnescapeDataString(m.Groups[1].Value)).Where(f => !File.Exists(Path.Combine(helpDir, f))).ToList();
+            CheckMd($"{helpFile}: Links auf andere Hilfeseiten zeigen auf vorhandene Dateien", string.Join(",", brokenFiles), "");
+        }
+        else
+        {
+            mdFailures++;
+            Console.WriteLine($"FEHLER: {helpFile} nicht gefunden: {helpPath}");
+        }
     }
 
     Console.WriteLine(mdFailures == 0 ? "Alle Markdown-Pruefungen bestanden." : $"FEHLER: {mdFailures} Markdown-Pruefung(en) fehlgeschlagen.");
@@ -11033,6 +11040,87 @@ static int CountOccurrences(string haystack, string needle)
     CheckDoc("Aufruf: Klammern in Strings zaehlen nicht", CallAt("var p = new Point(\"(\")") == null);
 
     Console.WriteLine(docFailures == 0 ? "Alle Dokumentationskommentar-Pruefungen bestanden." : $"FEHLER: {docFailures} Dokumentationskommentar-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Hilfeseite "Embedding.md": die dort gezeigten Host-Beispiele muessen mit der echten API laufen
+// ---------------------------------------------------------------------------------------------------------------------------
+{
+    Console.WriteLine("=== Embedding.md: Host-Beispiele ===");
+    int embFailures = 0;
+    void CheckEmb(string title, bool ok, string? detail = null)
+    {
+        if (!ok) embFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}" + (detail == null ? "" : $"\n  erhalten: {detail}"));
+    }
+
+    // Skript ausfuehren, print einsammeln
+    var printed = new List<string>();
+    Func<Value[], Value> writer = args => { printed.Add(args[0].ToString()!); return Value.MakeUndefined(); };
+    var hello = RuntimeSession.Build(new[] { "var name = \"fire\"\nprint($\"Hello from {name}!\")" }, null, writer);
+    hello.Run();
+    CheckEmb("Skript ausfuehren: print geht an den debugWriter", string.Join("|", printed) == "Hello from fire!", string.Join("|", printed));
+
+    // Mehrere Quellen werden zu einem Programm verbunden
+    printed.Clear();
+    RuntimeSession.Build(new[] { "var a = 20", "print(a + 22)" }, VmExecutionMode.Release, writer).Run();
+    CheckEmb("Mehrere Quellen, ausdrueckliche Betriebsart", string.Join("|", printed) == "42", string.Join("|", printed));
+
+    // Uebersetzungsfehler
+    List<string>? compileMessages = null;
+    try { RuntimeSession.Build(new[] { "var x = ;\nprint(unknownName)" }, null, writer); }
+    catch (Exception ex) when (ex is ParseException or ResolverException or CompilerException or NotSupportedException or PreprocessorException)
+    {
+        compileMessages = CompileErrors.Messages(ex).ToList();
+    }
+    CheckEmb("Uebersetzungsfehler: Build wirft, CompileErrors liefert Meldungen", compileMessages is { Count: > 0 }, compileMessages == null ? "keine Exception" : null);
+
+    // Nicht behandelte Exception: Run kehrt normal zurueck
+    var failing = RuntimeSession.Build(new[] { "class Oops {\n    string message\n    construct(string message) { this.message = message }\n}\nthrow new Oops(\"boom\")" }, null, writer);
+    failing.Run();
+    var failingVm = failing.VirtualMachine!;
+    CheckEmb("Nicht behandelte Exception steht in vm.UnhandledException",
+        failingVm.UnhandledException != null && new UncaughtScriptException(failingVm.UnhandledException).Message.Contains("boom"));
+
+    // IoStdio.Custom und IoPolicy werden von Build angenommen
+    var stdioOut = new System.Text.StringBuilder();
+    var stdio = fire.IO.Bridge.IoStdio.Custom(text => stdioOut.Append(text), text => stdioOut.Append("[error] ").Append(text), new MemoryStream(System.Text.Encoding.UTF8.GetBytes("in\n")));
+    var policy = fire.IO.Bridge.IoPolicy.Rooted(Path.GetTempPath(), readOnly: false);
+    printed.Clear();
+    RuntimeSession.Build(new[] { "print(1)" }, null, writer, ioPolicy: policy, ioStdio: stdio).Run();
+    CheckEmb("ioPolicy und ioStdio sind Parameter von Build", string.Join("|", printed) == "1");
+
+    // terminate(wert): Exitcode ueber VM.ExitValue; das naechste Programm startet wieder normal
+    RuntimeSession.Build(new[] { "terminate(7)" }, null, writer).Run();
+    var exit = VM.ExitValue;
+    CheckEmb("terminate(7): VM.ExitValue ist 7", exit.Kind == ValueKind.Int && exit.AsInt() == 7);
+    printed.Clear();
+    RuntimeSession.Build(new[] { "print(\"again\")" }, null, writer).Run();
+    CheckEmb("Nach terminate laeuft das naechste Programm im selben Prozess normal", string.Join("|", printed) == "again", string.Join("|", printed));
+    CheckEmb("Ein normal beendetes Programm hat keinen Exitwert", VM.ExitValue.Kind == ValueKind.Undefined);
+
+    // Skript auf einem Hintergrundthread
+    printed.Clear();
+    var bgSession = RuntimeSession.Build(new[] { "print(\"background\")" }, null, writer);
+    var bgThread = new Thread(() => bgSession.Run()) { IsBackground = true };
+    bgThread.Start();
+    CheckEmb("Hintergrundthread: Run laeuft dort", bgThread.Join(10000) && string.Join("|", printed) == "background");
+
+    // Untere Ebene: eigene extern-Funktion per ExternRegistry
+    var lowNatives = NativeRegistry.CreateDefault();
+    var lowExterns = new ExternRegistry();
+    lowExterns.Register("HostAdd", args => (long)args[0]! + (long)args[1]!);
+    var lowProgram = Parser.Parse("extern int HostAdd(int a, int b)\nprint(HostAdd(2, 3))");
+    var lowResolved = Resolver.Resolve(lowProgram, lowNatives.Names);
+    var lowCompiled = Compiler.Compile(lowProgram, lowResolved, lowNatives);
+    var lowOut = new StringWriter();
+    var oldOut = Console.Out;
+    Console.SetOut(lowOut);
+    try { new VM(lowCompiled.TopLevel, new Scope(null, isGlobal: true), lowNatives, lowCompiled.Classes, lowExterns).Run(); }
+    finally { Console.SetOut(oldOut); }
+    CheckEmb("Eigene C#-Funktion per extern + ExternRegistry", lowOut.ToString().Trim() == "5", lowOut.ToString());
+
+    Console.WriteLine(embFailures == 0 ? "Alle Embedding-Pruefungen bestanden." : $"FEHLER: {embFailures} Embedding-Pruefung(en) fehlgeschlagen.");
 }
 
 static class PackerNativeProbe

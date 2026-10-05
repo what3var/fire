@@ -55,8 +55,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The help page behind the "?" menu: copied next to the executable and opened from there (see MainWindow.HelpFirstSteps_Click). -->
-    <None Update="First Steps.md" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The help pages behind the "?" menu (Help folder): copied to Help\ next to the executable and opened from there (see MainWindow.OpenHelp). -->
+    <None Update="Help\**\*.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

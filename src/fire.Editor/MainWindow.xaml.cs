@@ -776,9 +776,14 @@ namespace fire.Editor
             foreach (var file in dlg.FileNames) OpenFile(file, mode);
         }
 
-        private void HelpFirstSteps_Click(object sender, RoutedEventArgs e)
+        private void HelpFirstSteps_Click(object sender, RoutedEventArgs e) => OpenHelp("First Steps.md");
+
+        private void HelpEmbedding_Click(object sender, RoutedEventArgs e) => OpenHelp("Embedding.md");
+
+        /// <summary>Opens a page of the Help folder (next to the executable) as a viewer.</summary>
+        private void OpenHelp(string fileName)
         {
-            string path = Path.Combine(AppContext.BaseDirectory, "First Steps.md");
+            string path = Path.Combine(AppContext.BaseDirectory, "Help", fileName);
             if (!File.Exists(path))
             {
                 MessageBox.Show(this, $"The help file was not found:\n{path}", "Help", MessageBoxButton.OK, MessageBoxImage.Warning);
