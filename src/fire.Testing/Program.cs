@@ -11284,6 +11284,209 @@ static int CountOccurrences(string haystack, string needle)
             class F { static float Mean(float a, float b) { return (a + b) / 2 } }
             print(F.Mean(0.1, 0.2))
             """),
+        ("Strings: Konkatenation, Laenge, Methoden, Format, Vergleich", """
+            var name = "fire"
+            print("Hello, " + name + "!")
+            var n = 3
+            print("n=" + n + " f=" + 2.5 + " b=" + true + " c=" + 'x' + " u=" + undefined)
+            print("mm: " + 5mm + " " + 2.5mm)
+            var s = "Hello, wörld"
+            print(s.Length)
+            print(s.ToUpper())
+            print(s.ToLower())
+            print(s.Substring(7, 3))
+            print(s.Substring(7))
+            print(s.IndexOf("w"))
+            print(s.IndexOf("o", 5))
+            print(s.IndexOf("zz"))
+            print(s.LastIndexOf("o"))
+            print(s.LastIndexOf("l", 5))
+            print(s.LastIndexOf(""))
+            print(s.Contains("lo"))
+            print(s.StartsWith("Hell"))
+            print(s.EndsWith("ld"))
+            print(s.CharAt(4))
+            print(s.Replace("l", "LL"))
+            print("  padded\t ".Trim() + "|")
+            print("  padded ".TrimStart() + "|")
+            print("  padded ".TrimEnd() + "|")
+            print("7".PadLeft(3) + "|" + "7".PadLeft(3, '0') + "|" + "ab".PadRight(5, '.') + "|")
+            print($"{name}: {n} {2.5:F2} {255:X4} {255:x} {7:D3} {-7:D3} {5:B8} {1234.5678:F1}")
+            print($"{0.5:F0} {1.5:F0} {2.5:F0} {0.125:F2} {1.005:F2}")
+            var text = ""
+            for (var i = 0; i < 5; i = i + 1) { text = text + "ab" }
+            print(text)
+            print(text.Length)
+            var t = s
+            s = "other"
+            print(t)
+            print(s == "other")
+            print(s != t)
+            print("a" + 1 + 2)
+            print('q'.IsLetter())
+            print('7'.IsDigit())
+            print('a'.ToUpper())
+            print('Z'.ToLower())
+            print(' '.IsWhiteSpace())
+            print('x'.ToInt())
+            """),
+        ("Strings: Lebensdauer (Rueckgabe, Felder, innere Bloecke, Aliase, Objekte mit Zeichenketten)", """
+            class Person {
+                string name
+                construct(string name) { this.name = name }
+                destruct() { print("bye " + this.name) }
+                string Greet() { return "hi " + this.name }
+                Rename(string n) { this.name = n + "!" }
+            }
+            class Maker {
+                static string Join(string a, string b) {
+                    var r = a + "-" + b
+                    return r
+                }
+                static string Pick(int i) {
+                    if (i > 0) { return "positive" }
+                    var inner = "non" + "-" + "positive"
+                    return inner
+                }
+            }
+            var outer = "start"
+            {
+                var inner = "in" + "ner"
+                outer = outer + ":" + inner
+            }
+            print(outer)
+            var p = new Person("Ada")
+            print(p.Greet())
+            p.Rename("Grace")
+            print(p.Greet())
+            var kept = p.name
+            p.Rename("Linus")
+            print(kept)
+            print(p.name)
+            var joined = Maker.Join("a", "b")
+            print(Maker.Join(joined, "c"))
+            print(Maker.Pick(1) + " " + Maker.Pick(0))
+            var words = ["one", "two"]
+            words[1] = words[0] + words[1]
+            print(words[1])
+            var all = ""
+            foreach (w in words) { all = all + w + ";" }
+            print(all)
+            {
+                var q = new Person("Temp")
+                var local = q.Greet()
+                print(local)
+            }
+            var alias = outer
+            outer = "changed"
+            print(alias)
+            print(outer)
+            """),
+        ("Strings: ToString() von Klassen, in print, + und $\"\"", """
+            class Money {
+                int cents
+                construct(int cents) { this.cents = cents }
+                string ToString() { return "$" + this.cents / 100 + "." + this.cents % 100 }
+            }
+            var m = new Money(1999)
+            print(m)
+            print("price: " + m)
+            print(m + " total")
+            print($"[{m}]")
+            """),
+        ("Strings: Unicode (Umlaute, Griechisch, Kyrillisch, Surrogatpaare)", """
+            var s = "Größe ÀÉÎõ αβγ жя"
+            print(s.Length)
+            print(s.ToUpper())
+            print(s.ToLower())
+            var emoji = "a😀b"
+            print(emoji.Length)
+            print(emoji)
+            print(emoji.IndexOf("b"))
+            print("é".Length)
+            print("ÄÖÜ".ToLower() + "äöü".ToUpper())
+            print('é'.IsLetter())
+            print("x" + 'ä' + 'ö')
+            """),
+        ("Arrays: Literal, new, Zugriff, ++, length, verschachtelt, foreach, Puffer, Zeichenkette indexieren", """
+            var names = ["Ada", "Grace", "Linus"]
+            var total = 0
+            foreach (n in names) {
+                total = total + n.Length
+                print(n)
+            }
+            print(total)
+            var a = new int[4]
+            a[1] = 5
+            a[1]++
+            ++a[1]
+            a[2] = a[1] * 2
+            print(a[1] + a.length)
+            print(a[2])
+            print(a[0])
+            var m = [[1, 2], [3, 4]]
+            print(m[1][0] + m[0][1])
+            m[0][0] = 10
+            print(m[0][0])
+            var b = new byte[3]
+            b[0] = 200
+            b[2] = b[0] + 100
+            print(b[0] + b.length)
+            print(b[2])
+            var cs = "xyz"
+            print(cs[1])
+            var parts = "a,b,,c".Split(",")
+            print(parts.Length)
+            foreach (p in parts) { print("[" + p + "]") }
+            print("x".Split("").Length)
+            var mixed = [1, "two", 3.5, true, 'c']
+            foreach (e in mixed) { print(e) }
+            var sum = 0
+            for (var i = 1; i < 3; i = i + 1) { sum = sum + a[i] }
+            print(sum)
+            """),
+        ("Listen aus dem Prelude (List, Add, Index, foreach, Wachstum)", """
+            var l = new List()
+            for (var i = 0; i < 20; i = i + 1) { l.Add(i * i) }
+            var sum = 0
+            foreach (v in l) { sum = sum + v }
+            print(sum)
+            print(l[3])
+            l[3] = 100
+            print(l[3])
+            print(l.count)
+            var names = new List(["x", "y", "z"])
+            var joined = ""
+            foreach (n in names) { joined = joined + n }
+            print(joined)
+            """),
+        ("Benchmark array", """
+            var n = 100000
+            var a = new int[n]
+            var total = 0
+            for (var pass = 0; pass < 5; pass = pass + 1) {
+                for (var i = 0; i < n; i = i + 1) { a[i] = i + pass }
+                for (var i = 0; i < n; i = i + 1) { total = total + a[i] }
+            }
+            print(total)
+            """),
+        ("Benchmark string", """
+            var s = "Hello, World, again"
+            var n = 0
+            for (var i = 0; i < 40000; i = i + 1) {
+                n = n + s.IndexOf("o") + s.Substring(3, 4).Length + s.Length
+            }
+            var text = ""
+            for (var i = 0; i < 2000; i = i + 1) { text = text + "ab" }
+            print(n + text.Length)
+            """),
+        ("Benchmark list", """
+            var l = new List()
+            for (var i = 0; i < 40000; i = i + 1) { l.Add(i) }
+            var total = 0
+            foreach (v in l) { total = total + v }
+            print(total)
+            """),
         ("Objekte: Klassen, Felder, Konstruktoren, Vererbung, Destruktoren, statische Felder", """
             class Animal {
                 int id
@@ -11579,12 +11782,12 @@ static int CountOccurrences(string haystack, string needle)
         // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
         try
         {
-            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "var a = new int[3]\nprint(1)" }, null, null, VmExecutionMode.Release));
+            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "var f = func (x) => { return x }\nprint(1)" }, null, null, VmExecutionMode.Release));
             CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt", false, "keine Ausnahme");
         }
         catch (fire.Native.NativeNotSupportedException ex)
         {
-            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (NewArray)", ex.Message.Contains("NewArray"), ex.Message);
+            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (MakeLambda)", ex.Message.Contains("MakeLambda"), ex.Message);
         }
         try
         {

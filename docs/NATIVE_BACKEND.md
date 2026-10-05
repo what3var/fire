@@ -70,6 +70,27 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
 * Objekte werden beim Zerstören **freigegeben**. Der Zugriff auf ein zerstörtes Objekt wird (anders als in der VM) nicht erkannt; mit
   `-DFIRE_KEEP_DESTROYED` bleiben sie im Speicher (Fehlersuche). Die Tests laufen unter AddressSanitizer/UBSan.
 
+### Speicher für Strings, Arrays und Puffer
+
+Diese Werte werden (anders als Objekte, die genau einen Besitzer haben) frei weitergegeben: `var t = s`, in Feldern und Arrays gespeichert,
+zurückgegeben. Es gibt keinen GC, also werden sie **referenzgezählt**:
+
+* **Speicherorte halten einen Zähler**: Variablen, Parameter, Felder, Array-Elemente und statische Felder (`retain` beim Speichern, `release` beim
+  Überschreiben, beim Verlassen des Scopes und beim Zerstören des Objekts/Arrays). Stack-Zwischenwerte halten nichts.
+* **Frische Werte** (Verkettung, Methoden von `string`, `new T[n]`, ...) kommen mit Zähler 1 in den **temporären Pool**; jeder Scope merkt sich dessen
+  Höhe beim Eintritt und gibt beim Verlassen alles darüber frei. Ein Zwischenwert lebt also bis zum Ende seines Scopes.
+* **`return`** hält den Rückgabewert mit einem Zähler fest, der Aufrufer übernimmt ihn in seinen Pool (`adopt`).
+* **Konstanten** liegen statisch und sind unsterblich (nie gezählt).
+* Der Pool ist ein einfaches Array statt einer verketteten Liste: derselbe Wert darf mehrfach darin stehen (ein Fehler dieser Art wurde
+  durch AddressSanitizer gefunden). Der Zähler-Code kostet nur dort etwas, wo ein Wert eine Referenz sein *kann*:
+* **"Kann eine Referenz sein"** leitet der Generator für jede Variable und jeden Stack-Platz ab (Konstanten, Zahlenrechnung und Vergleiche sind
+  es nie; Parameter, Aufrufergebnisse, Feld- und Array-Lesungen schon). Nur dann entstehen `retain`/`release` und das stringfähige `addR`
+  statt `add`. Reine Zahlenschleifen sind deshalb so schnell wie zuvor. (Parameter gelten vorerst immer als "kann Referenz sein"; eine
+  Analyse aller Aufrufstellen kann das später einschränken.)
+
+Bekannte Abweichungen zur VM: Unicode-Klassifizierung und Groß-/Kleinschreibung nur für Basic Latin, Latin-1, Griechisch und Kyrillisch
+(`char.IsDigit` nur ASCII-Ziffern); `print(objekt)` ohne `ToString()` schreibt `<object>`; das Zahlenformat `E` fehlt.
+
 ### Regeln für die Runtime (gelernt)
 
 * **Alle Funktionen nehmen `Value` per Wert**, nie per Referenz, und die Fehlerpfade nur die Operandenarten. Eine Referenz auf eine
@@ -83,13 +104,18 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
 
 Rechner dieser Sitzung, g++ 13 `-O2`, VM im Modus *Performance*, Zeiten ohne Prozessstart (1,3 ms):
 
-| Benchmark | VM | handgeschrieben, generisch | erzeugt (g++) | Faktor (erzeugt) |
-|---|---:|---:|---:|---:|
-| `loop` (1,5 Mio. Iterationen, Int) | 158 ms | 1,9 ms | ~2,8 ms | ~55x |
-| `float` (600 000 Iterationen) | 99 ms | 3,4 ms | ~4,8 ms | ~20x |
-| `fib` (rekursiv, `Fib(23)`) | 29 ms | 0,27 ms | ~1,3 ms | ~22x |
-| `method` (250 000 Methodenaufrufe, Felder) | 59 ms | - | ~1,5-2,6 ms | ~25-40x |
-| `alloc` (60 000 Objekte erzeugen und freigeben) | 38 ms | - | ~1,7 ms | ~20x |
+| Benchmark | VM | erzeugt (g++ -O2) | Faktor |
+|---|---:|---:|---:|
+| `loop` (1,5 Mio. Iterationen, Int) | 158 ms | 2,3 ms | ~68x |
+| `float` (600 000 Iterationen) | 99 ms | 5,3 ms | ~19x |
+| `fib` (rekursiv, `Fib(23)`) | 29 ms | 1,3 ms | ~21x |
+| `method` (250 000 Methodenaufrufe, Felder) | 59 ms | 2,6 ms | ~23x |
+| `array` (Array füllen und summieren) | 126 ms | 4,6 ms | ~28x |
+| `string` (Verkettung, Zeichenkettenmethoden) | 39 ms | 1,9 ms | ~21x |
+| `alloc` (60 000 Objekte erzeugen und freigeben) | 38 ms | 1,9 ms | ~20x |
+| `list` (`List` aus dem Prelude, `foreach`) | 44 ms | 3,4 ms | ~13x |
+
+Nur `lambda` fehlt noch (Lambdas sind noch nicht übersetzt). Mit clang++ sind die Werte ähnlich.
 
 *Handgeschrieben generisch* heißt: alles bleibt ein getaggter `Value`, so wie es der Generator erzeugt; mit nackten `int64`/`double`
 (Typinferenz) wird `fib` weitere ~4x schneller (`native/spike/spike.cpp`). Die Zahlen sind Momentaufnahmen von einer
@@ -109,9 +135,15 @@ einzigen Maschine, keine Garantie.
 * Einheiten: Rechnen und Vergleichen **gleicher** Einheiten
 * Float-Genauigkeit 32 oder 64 Bit (`#floatwidth`, `-f`), identisch zur VM
 
-Noch nicht (der Generator meldet es mit Namen): Arrays, Strings über `print` hinaus, Lambdas/Closures, Zeiger, Ausnahmen,
-Threads, Reflection, Properties, Operator-Überladung, `copy`/`flat`, die eingebauten Objektmethoden (`TakeTo`, `TakeUpwards`,
-`TakeGlobal`), Standardargumente, Einheiten-Algebra und implizites Einheiten-Coercing, `extern`, die Bridges.
+* **Strings** (UTF-16 wie in der VM): Konstanten, `+` mit allen Wertarten (inkl. `ToString()` von Klassen), `$"{x:F2}"` (Formate `X`, `D`, `B`, `F`),
+  `.Length`, Indexierung, alle Methoden von `string` (`IndexOf`, `LastIndexOf`, `Substring`, `CharAt`, `Contains`, `StartsWith`, `EndsWith`,
+  `ToUpper`, `ToLower`, `Trim*`, `Replace`, `Split`, `PadLeft`, `PadRight`) und von `char`
+* **Arrays und Puffer**: `new T[n]`, Literale, Zugriff und Zuweisung, `++` auf Elementen, `length`, verschachtelte (gezackte) Arrays,
+  `byte[]`, `foreach` über Arrays, Index-Methoden von Klassen (`GetIndex`/`SetIndex`) und damit `List` aus dem Prelude
+
+Noch nicht (der Generator meldet es mit Namen): Lambdas/Closures, Zeiger, Ausnahmen, Threads, Reflection, Properties,
+Operator-Überladung, `copy`/`flat`, die eingebauten Objektmethoden (`TakeTo`, `TakeUpwards`, `TakeGlobal`), Standardargumente,
+Einheiten-Algebra und implizites Einheiten-Coercing, das Zahlenformat `E`, `extern`, die Bridges.
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes
 C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich sein.
