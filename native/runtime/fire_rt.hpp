@@ -326,6 +326,10 @@ struct alignas(alignof(Value)) Lam : Ref {
     Value on;
     Value (*fn)(Value lam, const Value* args);
     Value (*dflt)(Value lam, uint32_t index);   // the default value of parameter `index` (null: the lambda has none)
+#ifdef FIRE_REFLECTION
+    const char* const* sel;   // a selector lambda (`c => c.radius`): the member chain (SPEC 8.13), else null
+    uint32_t nsel;
+#endif
     Value* caps() { return reinterpret_cast<Value*>(this + 1); }
 };
 
@@ -796,6 +800,9 @@ inline Value newObject(uint32_t cls, uint32_t fieldCount, OwnList* owner) {
 
 inline void destroyList(OwnList* list);
 inline void destroyLeaf(Owned* o);
+#ifdef FIRE_REFLECTION
+inline void probeFree(Obj* o);   // the probes of an object that is destroyed (flag 2)
+#endif
 
 inline void destroy(Obj* o) {
     if (o->flags & 1) return;
@@ -810,6 +817,9 @@ inline void destroy(Obj* o) {
     destroyList(&o->owned);
     Value* f = o->fields();
     for (uint32_t i = 0; i < o->nfields; i++) release(f[i]);
+#ifdef FIRE_REFLECTION
+    if (FIRE_UNLIKELY(o->flags & 2)) probeFree(o);
+#endif
 #ifndef FIRE_KEEP_DESTROYED
     std::free(o);
 #endif
@@ -937,6 +947,10 @@ inline Lam* allocLam(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const 
     l->on = Undef();
     l->fn = fn;
     l->dflt = nullptr;
+#ifdef FIRE_REFLECTION
+    l->sel = nullptr;
+    l->nsel = 0;
+#endif
     registerTemp(l, list);
     return l;
 }
@@ -1389,6 +1403,70 @@ inline Value formatValue(Value v, Value specV, OwnList* list) {
     fatal("Unknown format specifier.");
 }
 
+#ifdef FIRE_REFLECTION
+// ---------------------------------------------------------------------------------------------------------------------
+// Reflection (SPEC 8.13): the tables describe the classes of the program (written by the generator); the functions that read,
+// write and call members by name are generated, they use the field helpers and dispatchers of the program.
+// ---------------------------------------------------------------------------------------------------------------------
+struct RfMember {
+    const char* name; const char* kind; const char* type; const char* access;
+    uint8_t flags;                    // 1 static, 2 readonly, 4 can read, 8 can write
+    const char* unit; const char* declared;
+    const char* const* pnames; const char* const* ptypes; uint32_t pcount;
+};
+struct RfClass {
+    const char* name; const char* base; uint8_t isActor;
+    const char* const* ifaces; uint32_t nIfaces;
+    const RfMember* members; uint32_t nMembers;
+};
+
+/// Is the string equal to this UTF-8 text?
+inline bool strIs(Value v, const char* utf8) {
+    if (v.kind != K_String) return false;
+    const Str* s = strOf(v);
+    char16_t buf[160];
+    uint32_t n = utf8ToUtf16(utf8, buf, 160);
+    return n == s->length && std::memcmp(buf, s->data, n * sizeof(char16_t)) == 0;
+}
+/// A string value made from UTF-8 text (owned by the temporary pool of `list`).
+inline Value strFromUtf8(const char* utf8, OwnList* list) {
+    char16_t buf[400];
+    uint32_t n = utf8ToUtf16(utf8, buf, 400);
+    return newStrFrom(buf, n, list);
+}
+/// UTF-16 -> UTF-8 into `out` (cut when it does not fit).
+inline void strToUtf8(Value v, char* out, uint32_t cap) {
+    uint32_t n = 0;
+    if (v.kind == K_String) {
+        const Str* s = strOf(v);
+        for (uint32_t i = 0; i < s->length && n + 4 < cap; i++) {
+            uint32_t c = s->data[i];
+            if (c >= 0xD800 && c < 0xDC00 && i + 1 < s->length) { c = 0x10000 + ((c - 0xD800) << 10) + (s->data[i + 1] - 0xDC00); i++; }
+            if (c < 0x80) out[n++] = (char)c;
+            else if (c < 0x800) { out[n++] = (char)(0xC0 | (c >> 6)); out[n++] = (char)(0x80 | (c & 0x3F)); }
+            else if (c < 0x10000) { out[n++] = (char)(0xE0 | (c >> 12)); out[n++] = (char)(0x80 | ((c >> 6) & 0x3F)); out[n++] = (char)(0x80 | (c & 0x3F)); }
+            else { out[n++] = (char)(0xF0 | (c >> 18)); out[n++] = (char)(0x80 | ((c >> 12) & 0x3F)); out[n++] = (char)(0x80 | ((c >> 6) & 0x3F)); out[n++] = (char)(0x80 | (c & 0x3F)); }
+        }
+    }
+    out[n] = 0;
+}
+/// An array of strings.
+inline Value strArrayOf(const char* const* items, uint32_t n, OwnList* list) {
+    Arr* a = allocArr(n, list);
+    for (uint32_t i = 0; i < n; i++) { a->items()[i] = strFromUtf8(items[i], list); retain(a->items()[i]); }
+    return ArrV(a);
+}
+/// Generated: builds a ReflectionException (message) owned by the global scope.
+Value makeReflectError(Value message);
+inline const char* kindName(Value v) {
+    switch (v.kind) {
+        case K_Bool: return "Bool"; case K_Int: return "Int"; case K_Float: return "Float"; case K_Char: return "Char"; case K_String: return "String";
+        case K_Class: return "Class"; case K_Lambda: return "Lambda"; case K_Pointer: return "Pointer"; case K_Array: return "Array"; case K_Buffer: return "Buffer";
+        default: return "Undefined";
+    }
+}
+#endif
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Exceptions (SPEC 7): throw, try/catch/finally and resume.
 //
@@ -1564,6 +1642,142 @@ inline void unitMismatch(Value v, Value expectedText) {
     fatal("Incompatible units.");
 #endif
 }
+
+#ifdef FIRE_REFLECTION
+/// A reflection call that cannot be done: a ReflectionException, or the end of the program when there are no exceptions.
+inline Value rfFail(const char* utf8) {
+#ifdef FIRE_EXCEPTIONS
+    OwnList unused = {nullptr, nullptr, 0, nullptr, nullptr};
+    Value msg = strFromUtf8(utf8, &unused);
+    return throwValue(makeReflectError(msg));
+#else
+    fatal(utf8);
+#endif
+}
+#endif
+
+#ifdef FIRE_REFLECTION
+// ---- probes (SPEC 8.14): handlers for writes to the members of an object. An object with probes has flag 2; its setters look at them. -------
+struct ProbeEntry { int64_t id; char* member; bool changing; Value handler; };
+struct ProbeNode {
+    Obj* obj;
+    ProbeEntry* entries; uint32_t n, cap;
+    const char* running[8]; uint32_t nrunning;
+    ProbeNode* next;
+};
+inline ProbeNode* g_probeNodes = nullptr;
+inline int64_t g_probeNextId = 1;
+
+inline ProbeNode* probeNodeOf(Obj* o, bool create) {
+    for (ProbeNode* p = g_probeNodes; p; p = p->next) if (p->obj == o) return p;
+    if (!create) return nullptr;
+    ProbeNode* p = static_cast<ProbeNode*>(std::calloc(1, sizeof(ProbeNode)));
+    if (!p) allocFailed();
+    p->obj = o;
+    p->next = g_probeNodes;
+    g_probeNodes = p;
+    o->flags |= 2;
+    return p;
+}
+inline void probeRemoveAt(ProbeNode* node, uint32_t i) {
+    release(node->entries[i].handler);
+    std::free(node->entries[i].member);
+    for (uint32_t k = i + 1; k < node->n; k++) node->entries[k - 1] = node->entries[k];
+    node->n--;
+}
+inline void probeFree(Obj* o) {
+    for (ProbeNode** link = &g_probeNodes; *link; link = &(*link)->next)
+        if ((*link)->obj == o) {
+            ProbeNode* p = *link;
+            *link = p->next;
+            while (p->n) probeRemoveAt(p, p->n - 1);
+            std::free(p->entries);
+            std::free(p);
+            return;
+        }
+}
+inline int64_t probeAddEntry(Obj* o, const char* member, bool changing, Value handler) {
+    ProbeNode* node = probeNodeOf(o, true);
+    if (node->n == node->cap) {
+        node->cap = node->cap ? node->cap * 2 : 4;
+        node->entries = static_cast<ProbeEntry*>(std::realloc(node->entries, node->cap * sizeof(ProbeEntry)));
+        if (!node->entries) allocFailed();
+    }
+    ProbeEntry& e = node->entries[node->n++];
+    e.id = g_probeNextId++;
+    e.member = nullptr;
+    if (member) { size_t l = std::strlen(member); e.member = static_cast<char*>(std::malloc(l + 1)); if (!e.member) allocFailed(); std::memcpy(e.member, member, l + 1); }
+    e.changing = changing;
+    e.handler = handler;
+    retain(handler);
+    return e.id;
+}
+/// `silence obj.member` (member null: all probes of the object).
+inline void probeSilence(Obj* o, const char* member) {
+    ProbeNode* node = probeNodeOf(o, false);
+    if (!node) return;
+    for (uint32_t i = node->n; i-- > 0;)
+        if (!member || (node->entries[i].member && std::strcmp(node->entries[i].member, member) == 0)) probeRemoveAt(node, i);
+}
+/// `silence <handle>`: that probe only (a handle that is gone is no error).
+inline void probeSilenceHandle(int64_t id) {
+    for (ProbeNode* p = g_probeNodes; p; p = p->next)
+        for (uint32_t i = 0; i < p->n; i++) if (p->entries[i].id == id) { probeRemoveAt(p, i); return; }
+}
+
+using ProbeRawSet = void (*)(Value obj, Value value, OwnList* list, uint32_t caller);
+using ProbeRawGet = Value (*)(Value obj, OwnList* list);
+
+/// The handler gets (new), (old, new), (object, old, new) or (object, name, old, new) by its number of parameters.
+inline Value probeRun(const ProbeEntry& e, Value obj, const char* name, Value oldValue, Value newValue, OwnList* list) {
+    Value handler = e.handler;
+    uint32_t np = lamOf(handler)->nparams;
+    Value args[4];
+    int argc;
+    if (np == 0) argc = 0;
+    else if (np == 1) { args[0] = newValue; argc = 1; }
+    else if (np == 2) { args[0] = oldValue; args[1] = newValue; argc = 2; }
+    else if (np == 3) { args[0] = obj; args[1] = oldValue; args[2] = newValue; argc = 3; }
+    else { args[0] = obj; args[1] = strFromUtf8(name, list); args[2] = oldValue; args[3] = newValue; argc = 4; }
+    retain(handler);   // a handler that silences itself must stay alive until it returns
+    Value r = callLam(handler, argc, args, list);
+    release(handler);
+    adopt(r, list);
+    return r;
+}
+
+/// `obj.member = value` on an object with probes: the `changing` handlers (one that returns `false` cancels the write), then the write, then - when the
+/// value changed - the `changed` handlers. A handler that writes the same member does not fire it again.
+inline void probedSet(Value obj, const char* name, Value value, ProbeRawSet raw, ProbeRawGet get, uint32_t caller) {
+    Obj* o = asObj(obj);
+    ProbeNode* node = probeNodeOf(o, false);
+    OwnList local = {nullptr, nullptr, poolMark(), nullptr, nullptr};
+    bool nested = false;
+    if (node) for (uint32_t i = 0; i < node->nrunning; i++) if (std::strcmp(node->running[i], name) == 0) nested = true;
+    if (!node || nested || node->nrunning >= 8) { raw(obj, value, &local, caller); leave(&local); return; }
+    node->running[node->nrunning++] = name;
+    Value oldValue = get(obj, &local);
+    bool cancelled = false;
+    for (uint32_t i = 0; i < node->n && !g_unwind.active; i++) {
+        ProbeEntry e = node->entries[i];
+        if (!e.changing || (e.member && std::strcmp(e.member, name) != 0)) continue;
+        Value verdict = probeRun(e, obj, name, oldValue, value, &local);
+        if (g_unwind.active) break;
+        if (verdict.kind == K_Bool && !verdict.i) { cancelled = true; break; }
+    }
+    if (!g_unwind.active && !cancelled) {
+        raw(obj, value, &local, caller);
+        if (!g_unwind.active && !eq(oldValue, value))
+            for (uint32_t i = 0; i < node->n && !g_unwind.active; i++) {
+                ProbeEntry e = node->entries[i];
+                if (e.changing || (e.member && std::strcmp(e.member, name) != 0)) continue;
+                probeRun(e, obj, name, oldValue, value, &local);
+            }
+    }
+    for (uint32_t i = 0; i < node->nrunning; i++) if (node->running[i] == name) { node->running[i] = node->running[--node->nrunning]; break; }
+    leave(&local);
+}
+#endif
 
 /// Generated: builds an AccessDeniedException (message) owned by the global scope.
 Value makeAccessError(Value message);

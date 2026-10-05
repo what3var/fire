@@ -31,7 +31,7 @@ namespace fire.Native
     /// What is translated is a growing subset of the ISA (see <see cref="NativeNotSupportedException"/> for the rest):
     /// the generator never produces code with different semantics, it refuses.
     /// </summary>
-    public sealed class CppGenerator
+    public sealed partial class CppGenerator
     {
         private enum FuncKind { Main, Static, Method, Ctor, Init, Dtor, Lambda }
 
@@ -91,6 +91,13 @@ namespace fire.Native
         private readonly SortedSet<string> _operators = new();
         /// <summary>Class and interface names tested with `is of`: each gets a function `isof_...`.</summary>
         private readonly SortedSet<string> _isOfTypes = new();
+        /// <summary>The member chains of selector lambdas (`c => c.radius`), each a static array.</summary>
+        private readonly Dictionary<string[], string> _selectorPaths = new(new SelectorPathComparer());
+        private sealed class SelectorPathComparer : IEqualityComparer<string[]>
+        {
+            public bool Equals(string[]? a, string[]? b) => a != null && b != null && a.SequenceEqual(b);
+            public int GetHashCode(string[] p) => string.Join("\u0001", p).GetHashCode();
+        }
 
         /// <summary>What the operator wrapper does when the left operand is not an object with that overload: the built-in operation.</summary>
         private static readonly Dictionary<string, string> OperatorFallback = new()
@@ -321,6 +328,7 @@ namespace fire.Native
             sb.AppendLine($"#define FIRE_HAL_{_target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine($"#define FIRE_DEFAULT_STACK_BYTES {_target.DefaultStackBytes}");
             if (_usesExceptions) sb.AppendLine("#define FIRE_EXCEPTIONS 1");
+            if (_usesReflection) sb.AppendLine("#define FIRE_REFLECTION 1");
             if (_program.ExecutionMode == VmExecutionMode.Performance) sb.AppendLine("#define FIRE_UNCHECKED 1 // #performance: destroyed arrays and buffers are not detected");
             if (_program.FloatWidth == 32) sb.AppendLine("#define FIRE_FLOAT32 1 // #floatwidth 32: float is a 32-bit float, like in the VM");
             // The unit table: the base symbols of all units of the program (sorted like the VM prints them) and one row per unit.
@@ -412,6 +420,11 @@ namespace fire.Native
                 sb.AppendLine(ids.Count == 0 ? "    return false;" : "    switch (asObj(v)->cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }");
                 sb.AppendLine("}");
             }
+            if (_usesReflection)
+            {
+                foreach (var (path, name) in _selectorPaths) sb.AppendLine($"static const char* const {name}[] = {{{string.Join(", ", path.Select(CString))}}};");
+                sb.AppendLine(ReflectionCode());
+            }
             sb.AppendLine(IndexHelpers());
             sb.AppendLine(RuntimeHooks());
 
@@ -453,6 +466,11 @@ namespace fire.Native
                 if (destroyedError.Rc.FindConstructor(1) is { } destroyedCtor && destroyedCtor.ParamCount == 1) GetFunc(destroyedCtor, FuncKind.Ctor);
                 var unitError = RegisterClass("UnitMismatchException");
                 if (unitError.Rc.FindConstructor(3) is { } unitCtor && unitCtor.ParamCount == 3) GetFunc(unitCtor, FuncKind.Ctor);
+                if (_usesReflection && _program.Program.Classes.ContainsKey("ReflectionException"))
+                {
+                    var reflectError = RegisterClass("ReflectionException");
+                    if (reflectError.Rc.FindConstructor(1) is { } reflectCtor && reflectCtor.ParamCount == 1) GetFunc(reflectCtor, FuncKind.Ctor);
+                }
                 var accessError = RegisterClass("AccessDeniedException");
                 if (accessError.Rc.FindConstructor(1) is { } accessCtor && accessCtor.ParamCount == 1) GetFunc(accessCtor, FuncKind.Ctor);
             }
@@ -492,6 +510,7 @@ namespace fire.Native
                     DefaultArgs(method, argc, "self", "list");
                 }
             }
+            RegisterReflectionTargets();
             foreach (var cls in _classList.ToList())
                 for (var rc = cls.Rc; rc != null; rc = rc.Base)
                     if (rc.Destructor != null) GetFunc(rc.Destructor, FuncKind.Dtor);
@@ -648,6 +667,12 @@ namespace fire.Native
         /// <summary>Read and write access to the field `name`: the index of a field is the same in a class and all its subclasses,
         /// but not between unrelated classes that happen to use the same name. `Length`/`length` also work on strings, arrays and buffers.</summary>
         private string FieldHelpers(string name)
+        {
+            string text = FieldHelpersCore(name);
+            return _usesProbes ? WrapProbeSetter(name, text) : text;
+        }
+
+        private string FieldHelpersCore(string name)
         {
             var indexByClass = new Dictionary<int, int>();
             foreach (var cls in _classList)
@@ -824,6 +849,14 @@ namespace fire.Native
                 sb.AppendLine($"    {_funcByProto[destroyedClass.Rc.FindConstructor(1)!].Name}(o, message);");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
+                if (_usesReflection && _classes.GetValueOrDefault("ReflectionException") is { } reflectClass)
+                {
+                    sb.AppendLine("Value makeReflectError(Value message) {");
+                    sb.AppendLine($"    Value o = newObject({reflectClass.Id}, {reflectClass.Fields.Count}, g_globalOwn);");
+                    sb.AppendLine($"    {_funcByProto[reflectClass.Rc.FindConstructor(1)!].Name}(o, message);");
+                    sb.AppendLine("    return o;");
+                    sb.AppendLine("}");
+                }
                 var accessClass = _classes.GetValueOrDefault("AccessDeniedException") ?? throw new NativeNotSupportedException("exceptions need the prelude class AccessDeniedException");
                 sb.AppendLine("Value makeAccessError(Value message) {");
                 sb.AppendLine($"    Value o = newObject({accessClass.Id}, {accessClass.Fields.Count}, g_globalOwn);");
@@ -1631,6 +1664,36 @@ namespace fire.Native
                         E($"{S(first)} = charCall({S(first)}.i, {S(first + 1)}, &{OwnerList()});");
                         d = first + 1; SetR(first, true); return Next();
                     }
+                    if (native.StartsWith("__refl_") && ReflectionNatives.Contains(native))
+                    {
+                        UseReflection();
+                        if (native is "__refl_probe" or "__refl_silence" or "__refl_silence_handle") UseProbes();
+                        int first = d - argc;
+                        string callerArg = "g_reflCaller";
+                        string list = "&" + OwnerList();
+                        string call = native switch
+                        {
+                            "__refl_class_name" when argc == 1 => $"rf_class_name({S(first)}, {list})",
+                            "__refl_class_info" when argc == 1 => $"rf_class_info({S(first)}, {list})",
+                            "__refl_members" when argc == 1 => $"rf_members({S(first)}, {list})",
+                            "__refl_classes" when argc == 0 => $"rf_classes({list})",
+                            "__refl_is_sub" when argc == 2 => $"rf_is_sub({S(first)}, {S(first + 1)})",
+                            "__refl_get" when argc == 2 => $"rf_get({S(first)}, {S(first + 1)}, {list}, {callerArg})",
+                            "__refl_set" when argc == 3 => $"rf_set({S(first)}, {S(first + 1)}, {S(first + 2)}, {list}, {callerArg})",
+                            "__refl_call" when argc == 3 => $"rf_call({S(first)}, {S(first + 1)}, {S(first + 2)}, {list}, {callerArg})",
+                            "__refl_new" when argc == 2 => $"rf_new({S(first)}, {S(first + 1)}, {list}, {callerArg})",
+                            "__refl_has" when argc == 2 => $"rf_has({S(first)}, {S(first + 1)})",
+                            "__refl_selector_path" when argc == 1 => $"rf_selector_path({S(first)}, {list})",
+                            "__refl_member_kind" when argc == 2 => $"rf_member_kind({S(first)}, {S(first + 1)}, {list})",
+                            "__refl_probe" when argc == 4 => $"rf_probe({S(first)}, {S(first + 1)}, {S(first + 2)}, {S(first + 3)}, {list}, {callerArg})",
+                            "__refl_silence" when argc == 2 => $"rf_silence({S(first)}, {S(first + 1)})",
+                            "__refl_silence_handle" when argc == 1 => $"rf_silence_handle({S(first)})",
+                            _ => throw new NativeNotSupportedException($"native function '{native}' with {argc} argument(s) (called in {fn})"),
+                        };
+                        E($"{S(first)} = {call};");
+                        Check();
+                        d = first + 1; SetR(first, true); return Next();
+                    }
                     throw new NativeNotSupportedException($"native function '{native}' (called in {fn})");
                 }
                 case OpCode.CallStaticMethod:
@@ -1645,6 +1708,7 @@ namespace fire.Native
                     if (rc.FindMethodWithAccess(method, argc) is { } staticFound)
                         AccessCheck(staticFound.DeclaringClass!, staticFound.Access, $"Static method '{method}' of '{staticFound.DeclaringClass!.Name}' is {DescribeAccess(staticFound.Access)} and cannot be called from here.");
                     var target = GetFunc(proto, FuncKind.Static);
+                    if (ReflectionPrelude.HelperClasses.Contains(cls)) E(ReflectionCallerAssign(f).TrimEnd());
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
                     var (dpre, dargs) = DefaultArgs(proto, argc, "Undef()", "&" + OwnerList());
@@ -1787,6 +1851,7 @@ namespace fire.Native
                     if (Enumerable.Range(0, Math.Min(argc, 16)).Any(i => (ArgMask() >> (4 * i) & 15) == 3)) _refCallSites.Add((method, argc));
                     string extra = DispatchTail(method, argc, "&" + owner, CallerId(f));
                     long dmask = ArgMask();
+                    if (_usesReflection && ReflectionMethodNames.Contains(method)) E(ReflectionCallerAssign(f).TrimEnd());
                     ArgsBefore(d - argc, argc, dmask);
                     E($"{S(slot)} = call_{Mangle(method)}_{argc}({S(slot)}{Args(d - argc, argc)}{extra});");
                     ArgsAfter(argc, dmask, S(slot));
@@ -1863,13 +1928,19 @@ namespace fire.Native
                     var proto = chunk.Functions[ins.A[0]];
                     var target = GetFunc(proto, FuncKind.Lambda, captures);
                     string defaultsInit = "";
+                    if (proto.SelectorPath is { } selectorPath)
+                    {
+                        UseReflection();
+                        if (!_selectorPaths.TryGetValue(selectorPath, out var selName)) { selName = $"kSel{_selectorPaths.Count}"; _selectorPaths[selectorPath] = selName; _version++; }
+                        defaultsInit = $" l->sel = {selName}; l->nsel = {selectorPath.Length};";
+                    }
                     if (proto.ParamDefaults.Any(p => p != null))
                     {
                         // the default values are functions of their own (with the `on` target as `this`); the lambda knows how to reach them
                         foreach (var dp in proto.ParamDefaults) if (dp != null) GetFunc(dp, FuncKind.Init);
                         int required = 0;
                         while (required < proto.ParamCount && (required >= proto.ParamDefaults.Count || proto.ParamDefaults[required] == null)) required++;
-                        defaultsInit = $" l->nreq = {required}; l->dflt = {target.Name}_d;";
+                        defaultsInit += $" l->nreq = {required}; l->dflt = {target.Name}_d;";
                         _lambdaDefaults.Add(target);
                     }
                     int first = d - captures - (hasOn ? 1 : 0);
@@ -1993,6 +2064,24 @@ namespace fire.Native
                 // ---------------------------------------------------------------------------------------------------
                 // `ref` parameters and pointers to variables, fields and elements (SPEC 5.4.2)
                 // ---------------------------------------------------------------------------------------------------
+                case OpCode.Probe:
+                {
+                    Need(2); UseProbes();
+                    string member = (ins.A[1] & 2) != 0 ? "nullptr" : CString(Str(ins.A[0]));
+                    E($"{{ char err[500]; int64_t id = rf_probeAdd({S(d - 2)}, {member}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {S(d - 1)}, err, sizeof err); if (id < 0) fatal(err); {S(d - 2)} = Int(id); }}");
+                    d--; SetR(d - 1, false); return Next();
+                }
+                case OpCode.SilenceMember:
+                {
+                    Need(1); UseProbes();
+                    string member = ins.A[1] != 0 ? "nullptr" : CString(Str(ins.A[0]));
+                    E($"{{ char err[500]; if (!rf_silenceCore({S(d - 1)}, {member}, err, sizeof err)) fatal(err); }}");
+                    d--; return Next();
+                }
+                case OpCode.SilenceValue:
+                    Need(1); UseProbes();
+                    E($"{{ char err[500]; if (!rf_silenceValue({S(d - 1)}, err, sizeof err)) fatal(err); }}");
+                    d--; return Next();
                 case OpCode.CopyValue:
                     Need(1);
                     E($"{S(d - 1)} = copyValue({S(d - 1)}, {((ins.A[0] & 1) != 0 ? "true" : "false")}, &{OwnerList()});");

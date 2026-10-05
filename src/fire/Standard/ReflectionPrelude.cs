@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
 namespace fire.Standard
 {
@@ -48,8 +48,8 @@ namespace fire.Standard
                     this.CanWrite = d[7]
                     this.Unit = d[8]
                     this.DeclaredIn = d[9]
-                    this.ParamNames = d[10]
-                    this.ParamTypes = d[11]
+                    this.ParamNames = flat d[10]   // (copies that belong to the member: the arrays of the native call die with the scope that made them)
+                    this.ParamTypes = flat d[11]
                 }
 
                 ParamCount() { return this.ParamNames.length }
@@ -80,10 +80,11 @@ namespace fire.Standard
                     this.Name = info[0]
                     if (info[1] != undefined) { this.Base = new Type(info[1]) }
                     this.IsActor = info[2]
-                    this.Interfaces = info[3]
+                    this.Interfaces = flat info[3]
                     this.All = new List()   // (assigned directly: the list belongs to the type)
                     var raw = __refl_members(name)
-                    for (var i = 0; i < raw.length; i = i + 1) { this.All.Add(new Member(raw[i])) }
+                    // (the members belong to the type, not to the loop body - a list does not own its elements)
+                    for (var i = 0; i < raw.length; i = i + 1) { var member = new Member(raw[i]); member.TakeTo(this); this.All.Add(member) }
                 }
 
                 // Die Klasse eines Objekts (oder die mit diesem Namen, wenn ein string übergeben wird)

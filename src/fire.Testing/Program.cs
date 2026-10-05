@@ -13252,6 +13252,100 @@ static int CountOccurrences(string haystack, string needle)
             var lam = func () => { return b.open }
             print(lam())
             """),
+        ("Reflection: Type, Member, Get/Set/Call/New/Has, Selektoren, Zugriffsregeln; probe/silence", """
+            #import "reflection"
+            class Circle {
+                float radius
+                private int secret
+                string label = "c"
+                construct(float r) { this.radius = r; this.secret = 42 }
+                float Diameter { get { return this.radius * 2 } set { this.radius = value / 2 } }
+                float Area { get { return this.radius * this.radius * 3 } }
+                float Scale(float k) { return this.radius * k }
+                Grow() { this.radius = this.radius + 1 }
+            }
+            class Ring : Circle {
+                float hole
+                construct(float r, float h) : base(r) { this.hole = h }
+            }
+            var c = new Circle(5.0)
+            var t = Type.Of(c)
+            print(t.Name)
+            print(t.Base == undefined)
+            print(t.Fields().count)
+            print(t.Properties().count)
+            var names = ""
+            foreach (m in t.All) { names = names + m.Kind + ":" + m.Name + " " }
+            print(names)
+            print(Reflect.Get(c, "radius"))
+            print(Reflect.Get(c, "Diameter"))
+            Reflect.Set(c, "Diameter", 20.0)
+            print(c.radius)
+            print(Reflect.Call(c, "Scale", [2.0]))
+            Reflect.Call(c, "Grow", [])
+            print(c.radius)
+            print(Reflect.Has(c, "radius") + " " + Reflect.Has(c, "nothing") + " " + Reflect.Has(c, "Area") + " " + Reflect.Has(c, "Grow"))
+            var r = Reflect.New("Ring", [3.0, 1.0])
+            print(Type.Of(r).Name + " " + r.hole)
+            print(Type.Of(r).Base.Name)
+            print(Type.Of(r).IsSubclassOf(Type.Of(c)))
+            print(Type.Named("Nope") == undefined)
+            try { Reflect.Get(c, "zzz") } catch (e) { print(e.message) }
+            try { Reflect.Set(c, "Area", 1.0) } catch (e) { print(e.message) }
+            try { Reflect.Call(c, "Nope", []) } catch (e) { print(e.message) }
+            try { Reflect.New("Circle", []) } catch (e) { print(e.message) }
+            try { Reflect.Get(5, "x") } catch (e) { print(e.message) }
+            try { print(Reflect.Get(c, "secret")) } catch (e) { print("private: " + e.message) }
+            var cl = Type.Names()
+            print(cl.length > 3)
+            class W {
+                static Watch(lambda field<Circle> sel, Circle x) {
+                    print(sel.Name + " " + sel.Kind)
+                    print(sel.Get(x))
+                }
+            }
+            W.Watch(q => q.radius, c)
+            var mem = Type.Of(c).Find("Scale")
+            print(mem.Kind + " " + mem.ParamCount() + " " + mem.TypeName)
+            print(mem.Call(c, [3.0]))
+            class Cfg {
+                int volume
+                string name
+                Cfg sub
+                construct() { this.volume = 1; this.name = "n" }
+                int Level { get { return this.volume * 10 } set { this.volume = value / 10 } }
+            }
+            var cfg = new Cfg()
+            var h1 = probe cfg.volume changed { print("changed: " + old + " -> " + value) }
+            var h2 = probe cfg.volume changing (o, n) => n <= 100
+            cfg.volume = 5
+            cfg.volume = 500
+            print(cfg.volume)
+            cfg.volume = 5
+            probe cfg.name changed (obj, member, o, n) => print(member + ": " + o + " -> " + n)
+            cfg.name = "other"
+            cfg.name = "other"
+            silence h1
+            cfg.volume = 7
+            print(cfg.volume)
+            probe cfg.* changed (obj, member, o, n) => print("any " + member + " " + n)
+            cfg.volume = 8
+            cfg.name = "z"
+            cfg.Level = 90
+            silence cfg.*
+            cfg.volume = 9
+            print(cfg.volume)
+            var h3 = Reflect.Probe(cfg, "volume", "changed", func (o, n) => print("reflect " + o + " " + n))
+            cfg.volume = 10
+            Reflect.SilenceHandle(h3)
+            cfg.volume = 11
+            try { Reflect.Probe(cfg, "nope", "changed", func () => 1) } catch (e) { print(e.message) }
+            try { Reflect.Probe(cfg, "volume", "weird", func () => 1) } catch (e) { print(e.message) }
+            var c2 = new Cfg()
+            probe c2.volume changed { print("c2 " + value) }
+            c2.volume = 4
+            delete c2
+            """),
         ("Besitz: #performance prueft zerstoerte Arrays nicht (FIRE_UNCHECKED), Ergebnis wie die VM", """
             #performance
             var a = new int[100]

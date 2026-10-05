@@ -202,6 +202,16 @@ einzigen Maschine, keine Garantie.
   und `UnitMismatchException` (`CheckUnit`, Felder mit Einheit). Eine nicht gefangene Ausnahme meldet die Klasse auf stderr und beendet
   das Programm mit Exitcode 1, ohne Abwickeln - wie die VM.
 
+* **Reflection und `probe`** (SPEC 8.13/8.14, `#import "reflection"`): ruft das Programm eine der `__refl_*`-Funktionen auf, erzeugt der Generator **alle** Klassen des Programms
+  (eine Klasse ist über ihren Namen erreichbar) mit ihren Konstruktoren, Methoden und den Feldhelfern aller Namen (`CppGenerator.Reflection.cs`). Die Beschreibungen sind Tabellen
+  (`RfClass`/`RfMember`, wie `ReflectionNatives.Members` sie aufbaut: eigene und geerbte Mitglieder, ein abgeleitetes verdeckt gleichnamige); `Reflect.Get/Set/Call/New/Has`
+  sind erzeugte Funktionen über die Feldhelfer und Dispatcher des Programms - mit denselben Zugriffs-, Einheiten- und Property-Regeln und denselben Fehlermeldungen
+  (`ReflectionException`). Für private/protected zählt der Code, der die Bibliothek aufgerufen hat: ein Aufruf einer Methode der Bibliotheksklassen von außen setzt `g_reflCaller`.
+  Ein Selektor (`c => c.radius`) trägt seine Mitgliedskette in der `Lam` (`sel`). `probe`/`silence`: ein Objekt mit Proben hat Flag 2 und eine `ProbeNode` (Seitentabelle);
+  die Setter-Helfer (`sfo_` = der eigentliche Setter, `sf_` prüft zuerst das Flag) rufen dann `probedSet`: `changing`-Handler (ein `false` bricht ab), Schreiben, `changed`-Handler
+  bei geändertem Wert, ohne Wiederholung für dasselbe Mitglied. Die Bibliotheks-Prelude hält ihre Objekte selbst (`TakeTo`, `flat`): eine Liste besitzt ihre Elemente nicht, und die Arrays
+  nativer Aufrufe sterben mit dem Scope, der sie bekam.
+
 * **Zugriffsmodifikatoren** (SPEC 5.7): `private`/`protected` bei Feldern, Methoden, statischen Mitgliedern, Properties und Konstruktoren werden wie in der VM geprüft
   (Debug und Release, nicht `#performance`), der Fehler ist die fangbare `AccessDeniedException` mit derselben Meldung. Was der Generator beim Übersetzen entscheiden
   kann (statische Aufrufe, Konstruktoren, statische Felder: er kennt die Klasse des aufrufenden Codes, `Chunk.OwnerClass`), kostet nichts. Bei Feldern und Methoden, deren
@@ -245,7 +255,7 @@ einzigen Maschine, keine Garantie.
   deren Adresse genommen wird, ist ab dann im Speicher (nur diese Funktion wird langsamer). Eine Methode ohne `ref` an derselben Stelle bekommt den
   Wert: bei bekanntem Ziel setzt der Aufrufer `ptrRead`, beim virtuellen Aufruf der Dispatcher (`derefArg`).
 
-Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), Threads, Reflection,
+Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), Threads,
 `extern`, die Bridges.
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes
