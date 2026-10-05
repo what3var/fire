@@ -22,7 +22,7 @@ namespace fire.Standard
 
     /// <summary>
     /// `char`-Methoden als Erweiterung des Basistyps (`class extends char`, SPEC 5.5.1) im Prelude, alle
-    /// über EINE native Funktion: `__CharCall(id, zeichen)`. Die Klassifizierung folgt Unicode (wie
+    /// über EINE native Funktion: `__CharCall(id, char)`. Die Klassifizierung folgt Unicode (wie
     /// .NETs `char.IsLetter` usw., auf der einzelnen 16-Bit-Codeeinheit), Groß-/Kleinschreibung ist
     /// invariant. (`ToByte()`/`ToUnicode(n)` bleiben die eingebauten Konvertierungen, SPEC 8.10.)
     /// </summary>
@@ -50,7 +50,7 @@ namespace fire.Standard
         {
             var sb = new StringBuilder();
             sb.AppendLine();
-            sb.AppendLine("// char als Basistyp erweitert (SPEC 5.5.1, 8.12): eine native Funktion " + NativeName + "(id, zeichen).");
+            sb.AppendLine("// char als Basistyp erweitert (SPEC 5.5.1, 8.12): eine native Funktion " + NativeName + "(id, char).");
             sb.AppendLine("class extends char {");
             foreach (var (id, returns, name) in Signatures)
                 sb.AppendLine($"    {returns} {name}() {{ return {NativeName}({(int)id}, this) }}");
@@ -58,11 +58,11 @@ namespace fire.Standard
             return sb.ToString();
         }
 
-        /// <summary>Die native Funktion `__CharCall(id, zeichen)`.</summary>
+        /// <summary>Die native Funktion `__CharCall(id, char)`.</summary>
         public static Value Call(Value[] args)
         {
             if (args.Length != 2 || args[1].Kind != ValueKind.Char)
-                throw new InvalidOperationException($"{NativeName}(id, zeichen) erwartet genau ein Zeichen als zweites Argument.");
+                throw new InvalidOperationException($"{NativeName}(id, char) expects exactly one character as the second argument.");
 
             char c = args[1].AsChar();
             switch ((CharMethod)args[0].AsInt())
@@ -78,7 +78,7 @@ namespace fire.Standard
                 case CharMethod.ToString: return Value.MakeString(c.ToString());
                 case CharMethod.ToInt: return Value.MakeInt(c);
                 default:
-                    throw new InvalidOperationException($"{NativeName}: unbekannte Methoden-ID {args[0].AsInt()}.");
+                    throw new InvalidOperationException($"{NativeName}: unknown method ID {args[0].AsInt()}.");
             }
         }
     }

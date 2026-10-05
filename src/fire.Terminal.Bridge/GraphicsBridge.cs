@@ -505,7 +505,7 @@ namespace fire.Terminal.Bridge
                     } else {
                         this.id = __GRPHFbCreate(width, height, mode)
                         if (this.id == -1) {
-                            throw new HandleUnavailableException("Framebuffer konnte nicht erstellt werden.")
+                            throw new HandleUnavailableException("The framebuffer could not be created.")
                         }
                     }
                 }
@@ -651,7 +651,7 @@ namespace fire.Terminal.Bridge
 
                 construct(float lineWidth, float pixelSize) {
                     if (lineWidth <= 0 || pixelSize <= 0) {
-                        throw new GraphicsException("Linienstärke und Pixelgröße müssen größer als 0 sein.")
+                        throw new GraphicsException("Line thickness and pixel size must be greater than 0.")
                     }
                     this.lineWidth = lineWidth
                     this.pixelSize = pixelSize
@@ -664,7 +664,7 @@ namespace fire.Terminal.Bridge
                 // (Palette: Index ungleich 0, RGBA: sichtbar und nicht schwarz) ausgefräst werden - meist von Framebuffer.ToMask.
                 Slice(Framebuffer mask) {
                     if (this.overlap < 0 || this.overlap > 0.95) {
-                        throw new GraphicsException("Die Überlappung muss zwischen 0 und 0.95 liegen.")
+                        throw new GraphicsException("The overlap must be between 0 and 0.95.")
                     }
                     var raw = __GRPHSlcSlice(mask.id, this.lineWidth, this.pixelSize, this.overlap, this.strategy, this.simplifyTolerance, this.flipY)
                     if (raw is of int) {
@@ -685,7 +685,7 @@ namespace fire.Terminal.Bridge
                 construct(Framebuffer framebuffer) {
                     this.id = __GRPHConCreate(framebuffer.id)
                     if (this.id == -1) {
-                        throw new HandleUnavailableException("Konsole konnte nicht erstellt werden.")
+                        throw new HandleUnavailableException("The console could not be created.")
                     }
                 }
 
@@ -756,7 +756,7 @@ namespace fire.Terminal.Bridge
                 construct(Framebuffer framebuffer, string title) {
                     this.id = __GRPHWinCreate(framebuffer.id, title)
                     if (this.id == -1) {
-                        throw new HandleUnavailableException("Fenster konnte nicht erstellt werden.")
+                        throw new HandleUnavailableException("The window could not be created.")
                     }
                 }
 

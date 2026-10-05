@@ -110,9 +110,9 @@ namespace fire.Terminal
         public static void CheckSize(string format, long width, long height)
         {
             if (width <= 0 || height <= 0)
-                throw new ImageFormatException($"{format}: ungültige Bildgröße {width}x{height}.");
+                throw new ImageFormatException($"{format}: invalid image size {width}x{height}.");
             if (width * height > MaxPixels)
-                throw new ImageFormatException($"{format}: Bild zu groß ({width}x{height}; höchstens {MaxPixels / (1024 * 1024)} Millionen Pixel).");
+                throw new ImageFormatException($"{format}: image too large ({width}x{height}; at most {MaxPixels / (1024 * 1024)} million pixels).");
         }
     }
 }

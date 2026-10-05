@@ -273,7 +273,7 @@ namespace fire.Values
         public Unit To { get; }
 
         public UnitMismatchException(Unit from, Unit to)
-            : base($"Einheiten inkompatibel: '{from}' kann nicht nach '{to}' umgerechnet werden.")
+            : base($"Incompatible units: '{from}' cannot be converted to '{to}'.")
         {
             From = from;
             To = to;

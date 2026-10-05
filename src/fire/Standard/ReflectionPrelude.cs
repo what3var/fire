@@ -76,7 +76,7 @@ namespace fire.Standard
 
                 construct(string name) {
                     var info = __refl_class_info(name)
-                    if (info == undefined) { throw new ReflectionException("Unbekannte Klasse '" + name + "'") }
+                    if (info == undefined) { throw new ReflectionException("Unknown class '" + name + "'") }
                     this.Name = info[0]
                     if (info[1] != undefined) { this.Base = new Type(info[1]) }
                     this.IsActor = info[2]
@@ -90,7 +90,7 @@ namespace fire.Standard
                 // Die Klasse eines Objekts (oder die mit diesem Namen, wenn ein string übergeben wird)
                 static Of(class x) {
                     var name = __refl_class_name(x)
-                    if (name == undefined) { throw new ReflectionException("Kein Objekt und keine bekannte Klasse") }
+                    if (name == undefined) { throw new ReflectionException("Not an object and not a known class") }
                     return new Type(name)
                 }
 
@@ -157,19 +157,19 @@ namespace fire.Standard
                 // Feld oder Property lesen/schreiben (eine Methode: Call)
                 Get(class obj) {
                     var parent = this.CheckKind(this.Parent(obj))
-                    if (__refl_member_kind(parent, this.Name) == "method") { throw new ReflectionException("'" + this.Name + "' ist eine Methode - Call(obj, args) ruft sie auf") }
+                    if (__refl_member_kind(parent, this.Name) == "method") { throw new ReflectionException("'" + this.Name + "' is a method - Call(obj, args) calls it") }
                     return Reflect.Get(parent, this.Name)
                 }
                 Set(class obj, class value) {
                     var parent = this.CheckKind(this.Parent(obj))
-                    if (__refl_member_kind(parent, this.Name) == "method") { throw new ReflectionException("'" + this.Name + "' ist eine Methode und lässt sich nicht zuweisen") }
+                    if (__refl_member_kind(parent, this.Name) == "method") { throw new ReflectionException("'" + this.Name + "' is a method and cannot be assigned") }
                     Reflect.Set(parent, this.Name, value)
                 }
 
                 // Eine Methode aufrufen (nur bei `lambda selector<T>`, das Methoden zulässt)
                 Call(class obj, class args) {
                     var parent = this.CheckKind(this.Parent(obj))
-                    if (__refl_member_kind(parent, this.Name) != "method") { throw new ReflectionException("'" + this.Name + "' ist keine Methode") }
+                    if (__refl_member_kind(parent, this.Name) != "method") { throw new ReflectionException("'" + this.Name + "' is not a method") }
                     return Reflect.Call(parent, this.Name, args)
                 }
 
@@ -178,7 +178,7 @@ namespace fire.Standard
                 // Probe auf das gewählte Feld/die Property (kind: "changed" oder "changing"); Silence entfernt sie wieder
                 Probe(class obj, string kind, class handler) {
                     var parent = this.CheckKind(this.Parent(obj))
-                    if (__refl_member_kind(parent, this.Name) == "method") { throw new ReflectionException("Auf eine Methode lässt sich keine Probe anmelden ('" + this.Name + "')") }
+                    if (__refl_member_kind(parent, this.Name) == "method") { throw new ReflectionException("A probe cannot be registered on a method ('" + this.Name + "')") }
                     return Reflect.Probe(parent, this.Name, kind, handler)
                 }
                 Silence(class obj) { Reflect.Silence(this.Parent(obj), this.Name) }
@@ -215,19 +215,19 @@ namespace fire.Standard
                 }
 
                 static KindWord(class actual) {
-                    if (actual == "field") { return "ein Feld" }
-                    if (actual == "property") { return "eine Property" }
-                    return "eine Methode"
+                    if (actual == "field") { return "a field" }
+                    if (actual == "property") { return "a property" }
+                    return "a method"
                 }
 
                 // Meldung für ein Mitglied, das zum Selektor nicht passt
                 static KindMessage(string name, class actual, string kind) {
-                    if (actual == undefined) { return "'" + name + "' ist kein Mitglied" }
-                    var erwartet = "ein Feld"
-                    if (kind == "property") { erwartet = "eine Property" }
-                    if (kind == "method") { erwartet = "eine Methode" }
-                    if (kind == "member") { erwartet = "ein Feld oder eine Property" }
-                    return "'" + name + "' ist " + Reflect.KindWord(actual) + ", erwartet (lambda " + kind + "<...>): " + erwartet
+                    if (actual == undefined) { return "'" + name + "' is not a member" }
+                    var expected = "a field"
+                    if (kind == "property") { expected = "a property" }
+                    if (kind == "method") { expected = "a method" }
+                    if (kind == "member") { expected = "a field or a property" }
+                    return "'" + name + "' is " + Reflect.KindWord(actual) + ", expected (lambda " + kind + "<...>): " + expected
                 }
             }
             """;

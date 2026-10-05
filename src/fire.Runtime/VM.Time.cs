@@ -46,7 +46,7 @@ namespace fire.Runtime
         {
             long ticks;
             if (timeout.Kind == fire.Values.ValueKind.Undefined) ticks = System.Threading.Volatile.Read(ref s_defaultTimeoutTicks);
-            else if (!TimeNatives.TryTimeTicks(timeout, out ticks, out var error)) throw new ArgumentException("Ungültige Wartezeit: " + error);
+            else if (!TimeNatives.TryTimeTicks(timeout, out ticks, out var error)) throw new ArgumentException("Invalid wait time: " + error);
 
             if (CurrentThreadVm is { } vm) return vm.WaitUntilTicks(condition, ticks);
 

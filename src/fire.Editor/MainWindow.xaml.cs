@@ -113,7 +113,7 @@ namespace fire.Editor
             /// <summary>Dateiname bzw. "Unbenannt N" (Markdown: mit .md).</summary>
             public string DisplayName => View.FilePath != null
                 ? Path.GetFileName(View.FilePath)
-                : UntitledName ?? (IsMarkdown ? $"Unbenannt {Number}.md" : $"Unbenannt {Number}");
+                : UntitledName ?? (IsMarkdown ? $"Untitled {Number}.md" : $"Untitled {Number}");
         }
 
         private readonly List<OpenDocument> _documents = new();
@@ -237,13 +237,13 @@ namespace fire.Editor
                     if (File.Exists(arg)) OpenFile(arg);
                 _ = _devices.RefreshAsync(fastScan: true); // Geräte auflisten (schnell); die Verfügbarkeitsprüfung macht "Suchen"
                 if (_documents.Count == 0)
-                    NewScript("// Willkommen im fire-Editor\nprint(\"Hallo, Welt!\")\n");
+                    NewScript("// Welcome to the fire editor\nprint(\"Hello, world!\")\n");
             };
 
             //WindowTitleBar.SetExtendsContentIntoTitleBar(this, true);
             //WindowTitleBar.SetIsIconVisible(this, false);
 
-            UpdateStatus("Bereit.");
+            UpdateStatus("Ready.");
         }
 
         private void UpdateExecutionModeSelection(DebugSession session)
@@ -296,7 +296,7 @@ namespace fire.Editor
             var doc = ActiveDocument;
             var diagnostics = doc?.Script?.Diagnostics ?? (IReadOnlyList<Diagnostic>)Array.Empty<Diagnostic>();
             string file = doc?.DisplayName ?? "";
-            var items = diagnostics.Select(d => new ErrorListItem("Fehler", d.Message, file, d.Line)).ToList();
+            var items = diagnostics.Select(d => new ErrorListItem("Error", d.Message, file, d.Line)).ToList();
 
             Dispatcher.Invoke(() =>
             {
@@ -310,9 +310,9 @@ namespace fire.Editor
         private void ApplyErrorFilter()
         {
             int count = _errors.Count;
-            ErrorCountText.Text = count == 1 ? "1 Fehler" : $"{count} Fehler";
+            ErrorCountText.Text = count == 1 ? "1 error" : $"{count} errors";
             if (_panels.TryGetValue("errors", out var panel))
-                panel.Title = count == 0 ? "Fehlerliste" : $"Fehlerliste ({count})";
+                panel.Title = count == 0 ? "Error List" : $"Error List ({count})";
 
             var sorts = ErrorGrid.Columns
                 .Where(c => c.SortDirection != null)
@@ -392,6 +392,13 @@ namespace fire.Editor
             ["devices"] = DevicesPanel,
         };
 
+        // A saved layout stores the panel titles it was saved with; setting them again after loading keeps the titles in the
+        // current language (and the Error List title is updated by ApplyErrorFilter anyway).
+        private static readonly Dictionary<string, string> PanelTitles = new()
+        {
+            ["output"] = "Output", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices",
+        };
+
         private void DeserializeLayout(TextReader reader)
         {
             var contents = PanelContents();
@@ -410,6 +417,7 @@ namespace fire.Editor
                 if (id != null && contents.TryGetValue(id, out var content))
                 {
                     args.Content = content;
+                    if (PanelTitles.TryGetValue(id, out var title)) args.Model.Title = title;
                     panels[id] = args.Model;
                 }
                 else if (id != null && documentsById.TryGetValue(id, out var doc) && args.Model is LayoutDocument layoutDocument)
@@ -493,7 +501,7 @@ namespace fire.Editor
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine(ex);
-                UpdateStatus("Das Layout konnte nicht zurückgesetzt werden.");
+                UpdateStatus("The layout could not be reset.");
             }
         }
 
@@ -558,8 +566,8 @@ namespace fire.Editor
             ShowDebugLine(chosen.IsFinished ? null : chosen.Vm.CurrentLine);
             _debugger.Refresh(BreakpointDescriptions());
             UpdateStatus(chosen.IsFinished
-                ? $"{chosen.Name}: beendet."
-                : $"{chosen.Name}: angehalten in Zeile {chosen.Vm.CurrentLine}.");
+                ? $"{chosen.Name}: finished."
+                : $"{chosen.Name}: paused at line {chosen.Vm.CurrentLine}.");
         }
 
         private void UpdateStatus(string text) => StatusText.Text = text;
@@ -633,7 +641,7 @@ namespace fire.Editor
             var doc = ActiveDocument;
             if (doc?.Script is not { } script)
             {
-                UpdateStatus(doc == null ? "Kein Dokument geöffnet." : "Das aktive Dokument ist kein Skript - zum Ausführen einen Skript-Tab wählen.");
+                UpdateStatus(doc == null ? "No document is open." : "The active document is not a script - select a script tab to run.");
                 return false;
             }
 
@@ -647,13 +655,13 @@ namespace fire.Editor
 
             if (!_session.Compile(new[] { source }, filename, script.BaseDirectory))
             {
-                UpdateStatus($"Kompilierfehler: {_session.CompileError}");
-                MessageBox.Show(_session.CompileError, "Kompilierfehler",
+                UpdateStatus($"Compile error: {_session.CompileError}");
+                MessageBox.Show(_session.CompileError, "Compile error",
                     MessageBoxButton.OK, MessageBoxImage.Error);
                 return false;
             }
 
-            UpdateStatus("Kompiliert - bereit für Einzelschritt/Weiter/Bis Ende.");
+            UpdateStatus("Compiled - ready to step, continue or run to the end.");
             _debugger.Refresh(BreakpointDescriptions());
             return true;
         }
@@ -701,7 +709,7 @@ namespace fire.Editor
         private void BeginStep()
         {
             _isBusy = true;
-            UpdateStatus("Läuft...");
+            UpdateStatus("Running...");
         }
 
         private void Stop_Click(object sender, RoutedEventArgs e)
@@ -710,7 +718,7 @@ namespace fire.Editor
             _isBusy = false;
             ShowDebugLine(null);
             _debugger.Refresh(BreakpointDescriptions());
-            UpdateStatus("Gestoppt.");
+            UpdateStatus("Stopped.");
         }
 
         private void AfterStep(bool more)
@@ -720,14 +728,14 @@ namespace fire.Editor
             {
                 ShowDebugLine(null);
                 UpdateStatus(_session.RuntimeError != null
-                    ? $"Laufzeitfehler: {_session.RuntimeError}"
-                    : "Programm beendet.");
+                    ? $"Runtime error: {_session.RuntimeError}"
+                    : "Program finished.");
             }
             else
             {
                 int line = _session.Vm!.CurrentLine;
                 ShowDebugLine(line);
-                UpdateStatus($"Angehalten in Zeile {line}.");
+                UpdateStatus($"Paused at line {line}.");
             }
             _debugger.Refresh(BreakpointDescriptions());
         }
@@ -735,16 +743,16 @@ namespace fire.Editor
         private void ToggleBreakpoint_Click(object sender, RoutedEventArgs e)
         {
             if (ActiveScript is { } script) script.ToggleBreakpointAtCaret();
-            else UpdateStatus("Haltepunkte gibt es nur in Skript-Tabs.");
+            else UpdateStatus("Breakpoints are only available in script tabs.");
         }
 
         // -----------------------------------------------------------
         // Datei-Menü
         // -----------------------------------------------------------
 
-        private const string ScriptFilter = "fire-Dateien (*.script;*.fi;*.fic)|*.script;*.fi;*.fic";
+        private const string ScriptFilter = "fire files (*.script;*.fi;*.fic)|*.script;*.fi;*.fic";
         private const string MarkdownFilter = "Markdown (*.md;*.markdown)|*.md;*.markdown";
-        private const string PacketLogFilter = "Paketprotokolle (*.fplog)|*.fplog";
+        private const string PacketLogFilter = "Packet logs (*.fplog)|*.fplog";
 
         private static string SafeFileName(string name) =>
             string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ' ' ? '-' : c));
@@ -843,7 +851,7 @@ namespace fire.Editor
             var dlg = new OpenFileDialog
             {
                 Multiselect = true,
-                Filter = "Alle Dokumente|*.script;*.fi;*.fic;*.md;*.markdown;*.fplog|" + ScriptFilter + "|" + MarkdownFilter + "|" + PacketLogFilter + "|Alle Dateien (*.*)|*.*",
+                Filter = "All documents|*.script;*.fi;*.fic;*.md;*.markdown;*.fplog|" + ScriptFilter + "|" + MarkdownFilter + "|" + PacketLogFilter + "|All files (*.*)|*.*",
             };
             if (dlg.ShowDialog() != true) return;
             foreach (var file in dlg.FileNames) OpenFile(file);
@@ -897,7 +905,7 @@ namespace fire.Editor
         private void GoToDefinition_Click(object sender, RoutedEventArgs e)
         {
             if (ActiveScript is { } script) script.GoToDefinition();
-            else UpdateStatus("Zu Definition springen gibt es nur in Skript-Tabs.");
+            else UpdateStatus("Go to Definition is only available in script tabs.");
         }
 
         private void ToggleComment_Click(object sender, RoutedEventArgs e) => ActiveScript?.ToggleComment();
@@ -913,18 +921,18 @@ namespace fire.Editor
         {
             var box = new TextBox { Text = current.ToString(), MinWidth = 220, Margin = new Thickness(0, 4, 0, 10) };
             var ok = new Button { Content = "OK", IsDefault = true, MinWidth = 70, Margin = new Thickness(0, 0, 8, 0) };
-            var cancel = new Button { Content = "Abbrechen", IsCancel = true, MinWidth = 70 };
+            var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 70 };
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
             buttons.Children.Add(ok);
             buttons.Children.Add(cancel);
             var panel = new StackPanel { Margin = new Thickness(14) };
-            panel.Children.Add(new TextBlock { Text = $"Zeilennummer (1 - {max}):" });
+            panel.Children.Add(new TextBlock { Text = $"Line number (1 - {max}):" });
             panel.Children.Add(box);
             panel.Children.Add(buttons);
 
             var dialog = new Window
             {
-                Title = "Gehe zu Zeile",
+                Title = "Go to Line",
                 Content = panel,
                 SizeToContent = SizeToContent.WidthAndHeight,
                 ResizeMode = ResizeMode.NoResize,
@@ -959,14 +967,14 @@ namespace fire.Editor
         private void DevicesLoopback_Click(object sender, RoutedEventArgs e)
         {
             _devices.LoopbackEnabled = mnuLoopback.IsChecked;
-            UpdateStatus(_devices.LoopbackEnabled ? "Simuliertes Gerät 'loopback:echo' aktiv." : "Simuliertes Gerät entfernt.");
+            UpdateStatus(_devices.LoopbackEnabled ? "Simulated device 'loopback:echo' enabled." : "Simulated device removed.");
         }
 
         // Verhindert, dass das programmatische Füllen der Auswahl das Standardgerät erneut setzt.
         private bool _updatingDefaultUi;
-        private const string NoDefaultText = "(keins)";
+        private const string NoDefaultText = "(none)";
 
-        /// <summary>Füllt die Standardgerät-Auswahl der Symbolleiste: "(keins)", alle gefundenen Geräte und - falls es nicht
+        /// <summary>Füllt die Standardgerät-Auswahl der Symbolleiste: "(none)", alle gefundenen Geräte und - falls es nicht
         /// (mehr) gefunden wird - das gewählte Standardgerät.</summary>
         private void RefreshDefaultDeviceCombo()
         {
@@ -999,9 +1007,9 @@ namespace fire.Editor
                 return;
             }
 
-            var doc = CreateDocument(DocumentKind.PacketLog, "", null, untitledName: $"Pakete {identifier}");
+            var doc = CreateDocument(DocumentKind.PacketLog, "", null, untitledName: $"Packets {identifier}");
             doc.Trace!.Attach(_devices.Manager, identifier);
-            UpdateStatus($"Paketverfolgung für {identifier} gestartet.");
+            UpdateStatus($"Packet trace for {identifier} started.");
         }
 
         // -----------------------------------------------------------
@@ -1029,7 +1037,7 @@ namespace fire.Editor
             try { text = File.ReadAllText(full); }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "Öffnen fehlgeschlagen", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(this, ex.Message, "Open failed", MessageBoxButton.OK, MessageBoxImage.Error);
                 return null;
             }
 
@@ -1040,7 +1048,7 @@ namespace fire.Editor
 
             var doc = CreateDocument(KindOfPath(full), text, full, mode: mode);
             if (pristine != null) pristine.Layout.Close();
-            UpdateStatus($"Geöffnet: {full}");
+            UpdateStatus($"Opened: {full}");
             return doc;
         }
 
@@ -1067,7 +1075,7 @@ namespace fire.Editor
             view.ModifiedChanged += () => UpdateTitle(doc);
             view.CaretLineChanged += line =>
             {
-                if (ReferenceEquals(ActiveDocument, doc)) CaretText.Text = $"Zeile {line}";
+                if (ReferenceEquals(ActiveDocument, doc)) CaretText.Text = $"Line {line}";
             };
 
             if (doc.Markdown is { } md)
@@ -1169,7 +1177,7 @@ namespace fire.Editor
         {
             var doc = ActiveDocument;
             UpdateWindowTitle(WindowTitle(doc));
-            CaretText.Text = doc == null ? "" : $"Zeile {doc.View.GetCaretLine()}";
+            CaretText.Text = doc == null ? "" : $"Line {doc.View.GetCaretLine()}";
             UpdateErrorPanel();
             UpdateSaveCommands();
             _debugger.Refresh(BreakpointDescriptions());
@@ -1187,7 +1195,7 @@ namespace fire.Editor
         private bool ConfirmClose(OpenDocument doc)
         {
             if (!doc.View.IsModified) return true;
-            var answer = MessageBox.Show(this, $"Änderungen an „{doc.DisplayName}“ speichern?", "fire Editor",
+            var answer = MessageBox.Show(this, $"Save changes to \"{doc.DisplayName}\"?", "fire Editor",
                 MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
             return answer switch
             {
@@ -1211,9 +1219,9 @@ namespace fire.Editor
             {
                 Filter = doc.Kind switch
                 {
-                    DocumentKind.Markdown => MarkdownFilter + "|Alle Dateien (*.*)|*.*",
-                    DocumentKind.PacketLog => PacketLogFilter + "|Alle Dateien (*.*)|*.*",
-                    _ => "fire-Dateien (*.script)|*.script|" + ScriptFilter + "|Alle Dateien (*.*)|*.*",
+                    DocumentKind.Markdown => MarkdownFilter + "|All files (*.*)|*.*",
+                    DocumentKind.PacketLog => PacketLogFilter + "|All files (*.*)|*.*",
+                    _ => "fire files (*.script)|*.script|" + ScriptFilter + "|All files (*.*)|*.*",
                 },
                 FileName = doc.View.FilePath ?? (doc.Kind == DocumentKind.PacketLog ? SafeFileName(doc.DisplayName) : ""),
                 DefaultExt = doc.Kind switch { DocumentKind.Markdown => ".md", DocumentKind.PacketLog => fire.Device.Manager.DeviceManager.PacketLog.FileExtension, _ => ".script" },
@@ -1228,13 +1236,13 @@ namespace fire.Editor
             try { File.WriteAllText(path, doc.View.GetText()); }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "Speichern fehlgeschlagen", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(this, ex.Message, "Save failed", MessageBoxButton.OK, MessageBoxImage.Error);
                 return false;
             }
             doc.View.FilePath = path;
             doc.View.MarkSaved();
             UpdateTitle(doc);
-            UpdateStatus($"Gespeichert: {path}");
+            UpdateStatus($"Saved: {path}");
             return true;
         }
 
@@ -1337,7 +1345,7 @@ namespace fire.Editor
         {
             if (ActiveScript is not { } script)
             {
-                UpdateStatus("Buildeinstellungen gibt es nur für Skript-Tabs.");
+                UpdateStatus("Build settings are only available for script tabs.");
                 return;
             }
 
@@ -1476,7 +1484,7 @@ namespace fire.Editor
 
         private void Build_Click(object sender, RoutedEventArgs e)
         {
-            var dlg = new SaveFileDialog { Filter = "Ausführbare Dateien (*.exe)|*.exe|Alle Dateien (*.*)|*.*" };
+            var dlg = new SaveFileDialog { Filter = "Executable files (*.exe)|*.exe|All files (*.*)|*.*" };
             if (dlg.ShowDialog() != true) return;
 
             var filename = dlg.FileName;

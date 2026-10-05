@@ -95,7 +95,7 @@ namespace fire.Standard
         public static Value Call(Value[] args)
         {
             if (args.Length < 2 || args[1].Kind != ValueKind.String)
-                throw new InvalidOperationException($"{NativeName}(id, text, ...) erwartet die Zeichenkette als zweites Argument.");
+                throw new InvalidOperationException($"{NativeName}(id, text, ...) expects the string as the second argument.");
 
             var method = (StringMethod)args[0].AsInt();
             string s = args[1].AsString();
@@ -202,19 +202,19 @@ namespace fire.Standard
                 }
 
                 default:
-                    throw new InvalidOperationException($"{NativeName}: unbekannte Methoden-ID {(int)method}.");
+                    throw new InvalidOperationException($"{NativeName}: unknown method ID {(int)method}.");
             }
         }
 
         /// <summary>Zeichenkette oder Zeichen als Zeichenkette.</summary>
         private static string Text(Value v) => v.Kind == ValueKind.Char ? v.AsChar().ToString() : v.AsString();
 
-        private static NativeIndexOutOfRangeException Out(long index, int length) => new(index, length, "String-Index");
+        private static NativeIndexOutOfRangeException Out(long index, int length) => new(index, length, "String index");
 
         private static void Arity(StringMethod method, int argc, int min, int max)
         {
             if (argc < min || argc > max)
-                throw new InvalidOperationException($"{NativeName}: {method} erwartet {(min == max ? min.ToString() : $"{min}..{max}")} Argument(e), erhalten {argc}.");
+                throw new InvalidOperationException($"{NativeName}: {method} expects {(min == max ? min.ToString() : $"{min}..{max}")} argument(s), got {argc}.");
         }
     }
 }

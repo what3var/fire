@@ -84,7 +84,7 @@ namespace fire.Compiler
         public void CallLambda(LambdaValue lambda, Value[] args)
         {
             FireRuntime.RunCallback(lambda, args, nativeRegistry, CompiledProgram.Classes, () => VirtualMachine.SnapshotGlobals(),
-                message => Console.WriteLine($"(unbehandelte Exception im Callback: {message})"), owner: VirtualMachine);
+                message => Console.WriteLine($"(unhandled exception in the callback: {message})"), owner: VirtualMachine);
         }
 
         /// <summary>Baut die DirectiveRegistry, die reale Programme (siehe
@@ -118,7 +118,7 @@ namespace fire.Compiler
                     foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(args[0].AsString()))) onImport?.Invoke(key);
                     return null;
                 }
-                throw new Exception($"Falsche Argumente für 'import'-Direktive.");
+                throw new Exception($"Wrong arguments for the 'import' directive.");
             });
             return registry;
         }
@@ -160,7 +160,7 @@ namespace fire.Compiler
                 {
                     string fullPath = Path.GetFullPath(path);
                     if (!imagePolicy.IsAllowed(fullPath, fire.IO.Bridge.IoAccess.Read, out var reason))
-                        throw new UnauthorizedAccessException(reason ?? $"Zugriff auf '{fullPath}' ist nicht erlaubt.");
+                        throw new UnauthorizedAccessException(reason ?? $"Access to '{fullPath}' is not allowed.");
                     return File.ReadAllBytes(fullPath);
                 });
             }

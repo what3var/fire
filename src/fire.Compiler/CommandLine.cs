@@ -44,16 +44,16 @@ namespace fire.Compiler
 
         public static string Usage =>
             """
-            Verwendung:
-              fire.Compiler run   <datei>... [-m DEBUG|RELEASE|PERFORMANCE]
-              fire.Compiler build <datei>... [-o <ziel.exe>] [-m DEBUG|RELEASE|PERFORMANCE]
+            Usage:
+              fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE]
+              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE]
 
-            run     kompiliert die Dateien zu einem Programm und führt es aus.
-            build   erzeugt daraus eine eigenständige ausführbare Datei (Vorgabe: out.exe).
-            -m      Ausführungsmodus (Vorgabe: was das Skript mit #debug/#performance festlegt, sonst RELEASE).
-            -o      Name der erzeugten Datei bei build.
+            run     compiles the files into one program and runs it.
+            build   turns them into a self-contained executable (default: out.exe).
+            -m      Execution mode (default: whatever the script sets with #debug/#performance, otherwise RELEASE).
+            -o      Name of the file produced by build.
 
-            Dateinamen ohne Leerzeichen brauchen keine Anführungszeichen.
+            File names without spaces do not need quotation marks.
             """;
 
         public static CommandLineOptions Parse(IReadOnlyList<string> args)
@@ -67,7 +67,7 @@ namespace fire.Compiler
                 case "run": command = CommandKind.Run; break;
                 case "build": command = CommandKind.Build; break;
                 default:
-                    return Fail(CommandKind.Help, $"Unbekannter Befehl '{args[0]}' (erwartet: run oder build).");
+                    return Fail(CommandKind.Help, $"Unknown command '{args[0]}' (expected: run or build).");
             }
 
             var files = new List<string>();
@@ -81,21 +81,21 @@ namespace fire.Compiler
                 if (TryOption(arg, "-m", "--mode", out var modeInline))
                 {
                     string? value = modeInline ?? (i + 1 < args.Count ? args[++i] : null);
-                    if (value == null) return Fail(command, "Nach -m fehlt der Modus (DEBUG, RELEASE oder PERFORMANCE).");
+                    if (value == null) return Fail(command, "-m must be followed by the mode (DEBUG, RELEASE or PERFORMANCE).");
                     if (!TryParseMode(Unquote(value), out var parsed))
-                        return Fail(command, $"Unbekannter Modus '{value}' (erlaubt: DEBUG, RELEASE, PERFORMANCE).");
+                        return Fail(command, $"Unknown mode '{value}' (allowed: DEBUG, RELEASE, PERFORMANCE).");
                     mode = parsed;
                 }
                 else if (TryOption(arg, "-o", "--out", out var outInline))
                 {
-                    if (command != CommandKind.Build) return Fail(command, "-o gibt es nur bei build.");
+                    if (command != CommandKind.Build) return Fail(command, "-o is only available with build.");
                     string? value = outInline ?? (i + 1 < args.Count ? args[++i] : null);
-                    if (string.IsNullOrWhiteSpace(value)) return Fail(command, "Nach -o fehlt der Dateiname.");
+                    if (string.IsNullOrWhiteSpace(value)) return Fail(command, "-o must be followed by the file name.");
                     output = Unquote(value);
                 }
                 else if (arg.StartsWith("-") && arg.Length > 1)
                 {
-                    return Fail(command, $"Unbekannte Option '{arg}'.");
+                    return Fail(command, $"Unknown option '{arg}'.");
                 }
                 else
                 {
@@ -105,7 +105,7 @@ namespace fire.Compiler
             }
 
             if (files.Count == 0)
-                return Fail(command, "Es wurde keine Quelldatei angegeben.");
+                return Fail(command, "No source file was specified.");
 
             return new CommandLineOptions
             {
@@ -190,7 +190,7 @@ namespace fire.Compiler
             {
                 if (!File.Exists(file))
                 {
-                    stderr.WriteLine($"Datei nicht gefunden: {file}");
+                    stderr.WriteLine($"File not found: {file}");
                     return ExitUsage;
                 }
                 sources.Add(File.ReadAllText(file));
@@ -212,7 +212,7 @@ namespace fire.Compiler
                 stderr.WriteLine(CompileErrors.Describe(ex));
                 return ExitScriptError;
             }
-            stdout.WriteLine($"{Path.GetFullPath(options.OutputFile)} ({new FileInfo(options.OutputFile).Length} Bytes)");
+            stdout.WriteLine($"{Path.GetFullPath(options.OutputFile)} ({new FileInfo(options.OutputFile).Length} bytes)");
             return ExitOk;
         }
 

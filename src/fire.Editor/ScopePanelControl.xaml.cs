@@ -40,14 +40,14 @@ namespace fire.Editor
             foreach (var level in vm.DebugScopeChain())
             {
                 string label = level.Depth == 0
-                    ? (level.IsFunctionTopLevel ? "Aktiver Scope (Funktionsebene)" : "Aktiver Scope")
-                    : $"umschließender Scope (Tiefe {level.Depth})" + (level.IsFunctionTopLevel ? " - Parameter" : "");
+                    ? (level.IsFunctionTopLevel ? "Active scope (function level)" : "Active scope")
+                    : $"enclosing scope (depth {level.Depth})" + (level.IsFunctionTopLevel ? " - parameters" : "");
 
                 var node = new TreeViewItem { Header = label, IsExpanded = level.Depth == 0 };
                 foreach (var (name, value) in level.Variables)
                     node.Items.Add(BuildVariableTreeItem(name, value));
                 if (level.Variables.Count == 0)
-                    node.Items.Add(new TreeViewItem { Header = "(leer)" });
+                    node.Items.Add(new TreeViewItem { Header = "(empty)" });
                 ScopeTree.Items.Add(node);
             }
 
@@ -58,7 +58,7 @@ namespace fire.Editor
             foreach (var (name, value) in globals)
                 globalNode.Items.Add(BuildVariableTreeItem(name, value));
             if (globals.Count == 0)
-                globalNode.Items.Add(new TreeViewItem { Header = "(leer)" });
+                globalNode.Items.Add(new TreeViewItem { Header = "(empty)" });
             ScopeTree.Items.Add(globalNode);
         }
 
@@ -103,7 +103,7 @@ namespace fire.Editor
                 var obj = (ObjectInstance)value.AsObjectRef();
                 if (ancestors.Contains(obj))
                 {
-                    item.Items.Add(new TreeViewItem { Header = "(Zyklus - Objekt liegt weiter oben im Baum)" });
+                    item.Items.Add(new TreeViewItem { Header = "(cycle - object is further up in the tree)" });
                     return;
                 }
                 if (!obj.Fields.Any()) return; // keine Felder - kein Aufklapp-Pfeil nötig
@@ -126,7 +126,7 @@ namespace fire.Editor
                 if (arr.Length == 0) return;
                 if (ancestors.Contains(arr))
                 {
-                    item.Items.Add(new TreeViewItem { Header = "(Zyklus - Array liegt weiter oben im Baum)" });
+                    item.Items.Add(new TreeViewItem { Header = "(cycle - array is further up in the tree)" });
                     return;
                 }
 

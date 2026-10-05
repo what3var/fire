@@ -141,7 +141,7 @@ namespace fire.IO.Bridge
                 DirectoryNotFoundException => Fail(IoError.DirectoryNotFound, ex.Message),
                 UnauthorizedAccessException => Fail(IoError.Permission, ex.Message),
                 ArgumentException or NotSupportedException => Fail(IoError.InvalidArgument, ex.Message),
-                ObjectDisposedException => Fail(IoError.InvalidHandle, "Der Stream ist bereits geschlossen."),
+                ObjectDisposedException => Fail(IoError.InvalidHandle, "The stream is already closed."),
                 IOException => Fail(IoError.Other, ex.Message),
                 _ => Fail(IoError.Other, ex.Message),
             };
@@ -160,7 +160,7 @@ namespace fire.IO.Bridge
                     entry = found;
                     return true;
                 }
-                Fail(IoError.InvalidHandle, "Ungültiges oder bereits geschlossenes Stream-Handle.");
+                Fail(IoError.InvalidHandle, "Invalid or already closed stream handle.");
                 entry = null!;
                 return false;
             }
@@ -170,7 +170,7 @@ namespace fire.IO.Bridge
             {
                 if (offset < 0 || count < 0 || offset > buffer.Length || count > buffer.Length - offset)
                 {
-                    Fail(IoError.InvalidArgument, $"offset/count ({offset}/{count}) liegen außerhalb des Puffers (Länge {buffer.Length}).");
+                    Fail(IoError.InvalidArgument, $"offset/count ({offset}/{count}) are outside of the buffer (length {buffer.Length}).");
                     return false;
                 }
                 return true;
@@ -241,7 +241,7 @@ namespace fire.IO.Bridge
                     }
                     if (!_streams.TryRemove((int)args[0].AsInt(), out var entry))
                     {
-                        Fail(IoError.InvalidHandle, "Ungültiges oder bereits geschlossenes Stream-Handle.");
+                        Fail(IoError.InvalidHandle, "Invalid or already closed stream handle.");
                         return Value.MakeBool(false);
                     }
                     try
@@ -265,7 +265,7 @@ namespace fire.IO.Bridge
                     if (!CheckRange(buffer, offset, count)) return Value.MakeInt(Failed);
                     return Value.MakeInt(Locked(args[0], s =>
                     {
-                        if (!s.CanRead) return Fail(IoError.NotSupported, "Der Stream ist nicht lesbar.");
+                        if (!s.CanRead) return Fail(IoError.NotSupported, "The stream is not readable.");
                         return s.Read(buffer.Bytes, (int)offset, (int)count);
                     }));
                 },
@@ -276,20 +276,20 @@ namespace fire.IO.Bridge
                     if (!CheckRange(buffer, offset, count)) return Value.MakeInt(Failed);
                     return Value.MakeInt(Locked(args[0], s =>
                     {
-                        if (!s.CanWrite) return Fail(IoError.NotSupported, "Der Stream ist nicht beschreibbar.");
+                        if (!s.CanWrite) return Fail(IoError.NotSupported, "The stream is not writable.");
                         s.Write(buffer.Bytes, (int)offset, (int)count);
                         return count;
                     }));
                 },
                 ["ReadByte"] = args => Value.MakeInt(Locked(args[0], s =>
                 {
-                    if (!s.CanRead) return Fail(IoError.NotSupported, "Der Stream ist nicht lesbar.");
+                    if (!s.CanRead) return Fail(IoError.NotSupported, "The stream is not readable.");
                     int b = s.ReadByte();
                     return b < 0 ? EndOfStream : b;
                 })),
                 ["WriteByte"] = args => Value.MakeInt(Locked(args[0], s =>
                 {
-                    if (!s.CanWrite) return Fail(IoError.NotSupported, "Der Stream ist nicht beschreibbar.");
+                    if (!s.CanWrite) return Fail(IoError.NotSupported, "The stream is not writable.");
                     s.WriteByte((byte)(args[1].AsInt() & 0xFF));
                     return 1;
                 })),
@@ -303,7 +303,7 @@ namespace fire.IO.Bridge
                         {
                             if (!entry.Stream.CanRead)
                             {
-                                Fail(IoError.NotSupported, "Der Stream ist nicht lesbar.");
+                                Fail(IoError.NotSupported, "The stream is not readable.");
                                 return Value.MakeUndefined();
                             }
                             using var copy = new MemoryStream();
@@ -327,24 +327,24 @@ namespace fire.IO.Bridge
                 // ---- Position ----
                 ["Seek"] = args => Value.MakeInt(Locked(args[0], s =>
                 {
-                    if (!s.CanSeek) return Fail(IoError.NotSupported, "Der Stream unterstützt kein Positionieren.");
+                    if (!s.CanSeek) return Fail(IoError.NotSupported, "The stream does not support seeking.");
                     long origin = args[2].AsInt();
-                    if (origin < 0 || origin > 2) return Fail(IoError.InvalidArgument, $"Ungültiger Seek-Ursprung {origin}.");
+                    if (origin < 0 || origin > 2) return Fail(IoError.InvalidArgument, $"Invalid seek origin {origin}.");
                     long target = args[1].AsInt();
                     // Vor den Anfang zu springen ist ein Fehler des Aufrufers.
                     long basePos = origin == 0 ? 0 : origin == 1 ? s.Position : s.Length;
-                    if (basePos + target < 0) return Fail(IoError.InvalidArgument, "Die Position läge vor dem Anfang des Streams.");
+                    if (basePos + target < 0) return Fail(IoError.InvalidArgument, "The position would be before the start of the stream.");
                     return s.Seek(target, (SeekOrigin)origin);
                 })),
                 ["Position"] = args => Value.MakeInt(Locked(args[0], s =>
-                    s.CanSeek ? s.Position : Fail(IoError.NotSupported, "Der Stream unterstützt keine Position."))),
+                    s.CanSeek ? s.Position : Fail(IoError.NotSupported, "The stream does not support a position."))),
                 ["Length"] = args => Value.MakeInt(Locked(args[0], s =>
-                    s.CanSeek ? s.Length : Fail(IoError.NotSupported, "Der Stream kennt seine Länge nicht."))),
+                    s.CanSeek ? s.Length : Fail(IoError.NotSupported, "The stream does not know its length."))),
                 ["SetLength"] = args => Value.MakeBool(Locked(args[0], s =>
                 {
                     long length = args[1].AsInt();
-                    if (length < 0) return Fail(IoError.InvalidArgument, "Die Länge darf nicht negativ sein.");
-                    if (!s.CanSeek || !s.CanWrite) return Fail(IoError.NotSupported, "Die Länge dieses Streams lässt sich nicht ändern.");
+                    if (length < 0) return Fail(IoError.InvalidArgument, "The length must not be negative.");
+                    if (!s.CanSeek || !s.CanWrite) return Fail(IoError.NotSupported, "The length of this stream cannot be changed.");
                     s.SetLength(length);
                     return 1;
                 }) != Failed),
@@ -360,7 +360,7 @@ namespace fire.IO.Bridge
                     if (!TryGet(args[0], out var entry)) return Value.MakeUndefined();
                     if (entry.Stream is not MemoryStream ms)
                     {
-                        Fail(IoError.NotSupported, "Nur ein MemoryStream lässt sich als Puffer lesen.");
+                        Fail(IoError.NotSupported, "Only a MemoryStream can be read as a buffer.");
                         return Value.MakeUndefined();
                     }
                     lock (entry.Lock)
@@ -375,17 +375,17 @@ namespace fire.IO.Bridge
             {
                 try
                 {
-                    if (mode < 0 || mode > 4) return Fail(IoError.InvalidArgument, $"Ungültiger FileMode {mode}.");
-                    if (access < 0 || access > 2) return Fail(IoError.InvalidArgument, $"Ungültiger FileAccess {access}.");
+                    if (mode < 0 || mode > 4) return Fail(IoError.InvalidArgument, $"Invalid FileMode {mode}.");
+                    if (access < 0 || access > 2) return Fail(IoError.InvalidArgument, $"Invalid FileAccess {access}.");
                     if (mode == 4 && access != 1) return Fail(IoError.InvalidArgument, "FileMode.Append verlangt FileAccess.Write.");
                     if ((mode == 1 || mode == 2) && access == 0)
-                        return Fail(IoError.InvalidArgument, "Anlegen einer Datei verlangt Schreibzugriff.");
+                        return Fail(IoError.InvalidArgument, "Creating a file requires write access.");
 
                     var needed = access == 0 ? IoAccess.Read : access == 1 ? IoAccess.Write : IoAccess.Read | IoAccess.Write;
                     if (!Authorize(path, needed, out string fullPath)) return Failed;
 
                     if (mode == 2 && File.Exists(fullPath))
-                        return Fail(IoError.AlreadyExists, $"Die Datei '{fullPath}' existiert bereits.");
+                        return Fail(IoError.AlreadyExists, $"The file '{fullPath}' already exists.");
 
                     var fileMode = mode switch
                     {

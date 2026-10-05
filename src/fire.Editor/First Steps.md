@@ -10,6 +10,7 @@ Welcome to **spark**, the editor for the **fire** scripting language. This page 
 - [Errors and exceptions](#errors-and-exceptions)
 - [Debugging](#debugging)
 - [Talking to devices](#talking-to-devices)
+- [Documenting your code](#documenting-your-code)
 - [Writing documentation](#writing-documentation)
 
 ## The editor at a glance
@@ -182,6 +183,28 @@ if (device.WaitForString("pong", 2s)) {
 ```
 
 Pick a *default device* in the toolbar (the **Devices** panel finds serial ports; **Devices → Show simulated loopback device** gives you an echo device to experiment with), then run the script. The **packet trace** of a device records everything that was sent and received.
+
+## Documenting your code
+
+Put `///` lines directly above a class, field, property or method to document it:
+
+```fire
+/// A circle with a radius.
+class Circle {
+    /// The radius, in millimeters.
+    float radius
+
+    /// <summary>Scales the circle.</summary>
+    /// <param name="factor">What the radius is multiplied by.</param>
+    /// <returns>The new radius.</returns>
+    float Scale(float factor) {
+        this.radius = this.radius * factor
+        return this.radius
+    }
+}
+```
+
+The text appears as a tooltip when you select the symbol in the completion list, when the caret rests on its name, and when you hover over it with the mouse.
 
 ## Writing documentation
 

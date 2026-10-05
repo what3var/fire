@@ -34,7 +34,7 @@ namespace fire.Terminal
         public T Get(int id) =>
             _items.TryGetValue(id, out var item)
                 ? item
-                : throw new KeyNotFoundException($"Keine Ressource mit ID {id} (unbekannt oder bereits zerstört).");
+                : throw new KeyNotFoundException($"No resource with ID {id} (unknown or already destroyed).");
 
         public bool TryGet(int id, out T? item) => _items.TryGetValue(id, out item);
 

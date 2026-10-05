@@ -278,7 +278,7 @@ namespace fire.Editor
             {
                 // beschädigtes Bild o.Ä.: unten als Text anzeigen
             }
-            return new Run($"[Bild: {(img.Alt.Length > 0 ? img.Alt : img.Url)}]") { Foreground = QuoteText, FontStyle = FontStyles.Italic };
+            return new Run($"[Image: {(img.Alt.Length > 0 ? img.Alt : img.Url)}]") { Foreground = QuoteText, FontStyle = FontStyles.Italic };
         }
     }
 }

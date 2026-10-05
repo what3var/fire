@@ -162,7 +162,7 @@ namespace fire.Runtime
         }
 
         private void ThrowBadSlot(int index) =>
-            throw new System.ArgumentOutOfRangeException(nameof(index), $"Slot {index} ist nicht definiert (Slots: {_slotCount}).");
+            throw new System.ArgumentOutOfRangeException(nameof(index), $"Slot {index} is not defined (slots: {_slotCount}).");
 
         /// <summary>Anzahl belegter Slots - für Debug-/Inspektionszwecke (siehe
         /// VM.DebugLocals), von der normalen Ausführung selbst nicht gebraucht.</summary>

@@ -1208,8 +1208,8 @@ namespace fire.Compiler
                     // Sollte NIE hier ankommen - siehe derselbe Fall im
                     // Resolver (ResolveStmt) für die Erklärung.
                     throw new NotSupportedException(
-                        $"Interner Fehler: 'class extends {cx.TargetRef.BaseName}' wurde nicht zusammengeführt " +
-                        "(Programm muss über Parser.Parse()/ParseMultiple() erzeugt werden).");
+                        $"Internal error: 'class extends {cx.TargetRef.BaseName}' was not merged " +
+                        "(the program must be produced by Parser.Parse()/ParseMultiple()).");
 
                 case ExternDecl:
                     // Reine Signatur-Deklaration, erzeugt selbst keinen Code (nur
@@ -1226,7 +1226,7 @@ namespace fire.Compiler
                     break;
 
                 default:
-                    throw new NotSupportedException($"Statement {stmt.GetType().Name} wird nicht unterstützt.");
+                    throw new NotSupportedException($"Statement {stmt.GetType().Name} is not supported.");
             }
         }
 
@@ -1761,7 +1761,7 @@ namespace fire.Compiler
 
                 case BaseExpr:
                     throw new NotSupportedException(
-                        "'base' ist nur als 'base.Methode(...)' gültig, nicht als eigenständiger Wert.");
+                        "'base' is only valid as 'base.Method(...)', not as a standalone value.");
 
                 case IsInExpr iin:
                     CompileExpr(iin.Operand);
@@ -1928,7 +1928,7 @@ namespace fire.Compiler
                     else
                     {
                         throw new NotSupportedException(
-                            "TryCallExpr ohne aufgelöste TryableNative-Referenz - sollte der Resolver bereits abgefangen haben.");
+                            "TryCallExpr without a resolved TryableNative reference - the resolver should have caught this.");
                     }
                     break;
                 }
@@ -1938,7 +1938,7 @@ namespace fire.Compiler
                     break;
 
                 default:
-                    throw new NotSupportedException($"Ausdruckstyp {expr.GetType().Name} wird nicht unterstützt.");
+                    throw new NotSupportedException($"Expression type {expr.GetType().Name} is not supported.");
             }
         }
 
@@ -1990,7 +1990,7 @@ namespace fire.Compiler
             var captures = _refs.TryGetValue(lambda, out var captureRef) && captureRef is ResolvedRef.LambdaCaptures lc ? lc.Variables : null;
             if (captures != null)
             {
-                if (captures.Count > 255) throw new NotSupportedException("Eine Lambda kann höchstens 255 äußere Variablen erfassen.");
+                if (captures.Count > 255) throw new NotSupportedException("A lambda can capture at most 255 outer variables.");
                 foreach (var captured in captures) CompileExpr(captured);
             }
 
@@ -2031,7 +2031,7 @@ namespace fire.Compiler
                 if (scopeCreating && args[i] is UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy } copyArg)
                 {
                     if (i >= 16)
-                        throw new NotSupportedException("`flat`/`copy` als Argument ist nur für die ersten 16 Argumente eines Aufrufs möglich.");
+                        throw new NotSupportedException("`flat`/`copy` as an argument is only possible for the first 16 arguments of a call.");
                     mask |= (copyArg.Op == UnaryOp.DeepCopy ? 2u : 1u) << (2 * i);
                     CompileExpr(copyArg.Operand);
                 }
@@ -2147,7 +2147,7 @@ namespace fire.Compiler
                     // eingefrorenen Wurfstelle zurück (siehe VM.ResumeException).
                     if (call.Args.Count > 1)
                         throw new NotSupportedException(
-                            "'resume' erwartet höchstens ein Argument (den Fortsetzungswert).");
+                            "'resume' expects at most one argument (the resume value).");
 
                     CompileExpr(me.Target);
                     if (call.Args.Count == 1)
@@ -2187,7 +2187,7 @@ namespace fire.Compiler
                     // wenn 'this' zur Laufzeit eine Instanz von C : B ist).
                     if (_enclosingClass?.Base == null)
                         throw new NotSupportedException(
-                            "'base.Method(...)' außerhalb einer Klasse mit Basisklasse - sollte der Resolver bereits abgefangen haben.");
+                            "'base.Method(...)' outside of a class with a base class - the resolver should have caught this.");
 
                     EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
 
@@ -2248,12 +2248,12 @@ namespace fire.Compiler
                     break;
                 case ResolvedRef.Native native:
                     throw new NotSupportedException(
-                        $"'{native.Name}' ist eine native Funktion und kann nur direkt aufgerufen werden " +
-                        $"({native.Name}(...)), nicht als Wert verwendet werden.");
+                        $"'{native.Name}' is a native function and can only be called directly " +
+                        $"({native.Name}(...)), not used as a value.");
                 case ResolvedRef.Extern ext:
                     throw new NotSupportedException(
-                        $"'{ext.Name}' ist eine extern deklarierte Funktion und kann nur direkt aufgerufen werden, " +
-                        $"nicht als Wert verwendet werden.");
+                        $"'{ext.Name}' is a function declared extern and can only be called directly, " +
+                        $"not used as a value.");
                 case ResolvedRef.StaticMember sm:
                     // SPEC "Statische Mitglieder" - bloßer Name statt
                     // 'ClassName.Name' (siehe Resolver.ResolveIdentifierRef).
@@ -2334,7 +2334,7 @@ namespace fire.Compiler
 
             if (a.Target is not IdentifierExpr id)
                 throw new NotSupportedException(
-                    "Ungültiges Zuweisungsziel für den Bytecode-Compiler.");
+                    "Invalid assignment target for the bytecode compiler.");
 
             // Bloßer Feldname in einer Klasse (`feld = new X()` / `feld = copy x`): wie `this.feld = ...` gehört das neue
             // Objekt dem Objekt, nicht der Scope (SPEC 2.1/2.4) - sonst würde es beim Verlassen der Methode zerstört,
@@ -2372,10 +2372,10 @@ namespace fire.Compiler
                     break;
                 case ResolvedRef.Native native:
                     throw new NotSupportedException(
-                        $"Zuweisung an '{native.Name}' ist nicht möglich - das ist eine native Funktion.");
+                        $"Cannot assign to '{native.Name}' - it is a native function.");
                 case ResolvedRef.Extern ext:
                     throw new NotSupportedException(
-                        $"Zuweisung an '{ext.Name}' ist nicht möglich - das ist eine extern deklarierte Funktion.");
+                        $"Cannot assign to '{ext.Name}' - it is a function declared extern.");
                 case ResolvedRef.StaticMember sm:
                     // SPEC "Statische Mitglieder" - bloßer Name statt
                     // 'ClassName.Name = ...' (siehe Resolver.
@@ -2485,7 +2485,7 @@ namespace fire.Compiler
             }
 
             if (e.Target is not IdentifierExpr id)
-                throw new NotSupportedException("Ungültiges Ziel für '++'/'--' im Bytecode-Compiler.");
+                throw new NotSupportedException("Invalid target for '++'/'--' in the bytecode compiler.");
 
             var refKind = _refs[id];
 
@@ -2547,7 +2547,7 @@ namespace fire.Compiler
                         _chunk.EmitU16(global.Slot);
                         break;
                     default:
-                        throw new NotSupportedException($"'++'/'--' auf '{id.Name}' ist nicht möglich.");
+                        throw new NotSupportedException($"'++'/'--' on '{id.Name}' is not possible.");
                 }
             }
             void EmitStore()
@@ -2629,7 +2629,7 @@ namespace fire.Compiler
                             return;
                         default:
                             throw new NotSupportedException(
-                                "'&' ist nur auf lokale/globale Variablen oder Objektfelder anwendbar.");
+                                "'&' can only be applied to local/global variables or object fields.");
                     }
 
                 case MemberExpr me:
@@ -2640,7 +2640,7 @@ namespace fire.Compiler
 
                 default:
                     throw new NotSupportedException(
-                        "'&' ist nur auf Variablen oder Objektfelder anwendbar (kein gültiges Adressierungsziel).");
+                        "'&' can only be applied to variables or object fields (not a valid address target).");
             }
         }
 
@@ -2806,7 +2806,7 @@ namespace fire.Compiler
             TokenType.KwFloat => TypeTag.Float,
             TokenType.KwChar => TypeTag.Char,
             TokenType.KwString => TypeTag.String,
-            _ => throw new NotSupportedException($"Coercion-Ziel {t} wird nicht unterstützt."),
+            _ => throw new NotSupportedException($"Coercion target {t} is not supported."),
         };
 
         // -----------------------------------------------------------

@@ -65,7 +65,7 @@ namespace fire.Compiler
             registry.Register("name", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'name'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'name' directive.");
 
                 assemblyInfo.ProductName = args[0].AsString();
                 return null;
@@ -73,7 +73,7 @@ namespace fire.Compiler
             registry.Register("codename", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'codename'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'codename' directive.");
 
                 assemblyInfo.InternalName = args[0].AsString();
                 return null;
@@ -81,7 +81,7 @@ namespace fire.Compiler
             registry.Register("description", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'description'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'description' directive.");
 
                 assemblyInfo.FileDescription = args[0].AsString();
                 return null;
@@ -89,7 +89,7 @@ namespace fire.Compiler
             registry.Register("author", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'author'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'author' directive.");
 
                 assemblyInfo.CompanyName = args[0].AsString();
                 return null;
@@ -97,7 +97,7 @@ namespace fire.Compiler
             registry.Register("comments", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'comments'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'comments' directive.");
 
                 assemblyInfo.Comments = args[0].AsString();
                 return null;
@@ -105,7 +105,7 @@ namespace fire.Compiler
             registry.Register("icon", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'icon'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'icon' directive.");
 
                 assemblyInfo.IconPath = args[0].AsString();
                 return null;
@@ -113,7 +113,7 @@ namespace fire.Compiler
             registry.Register("version", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'version'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'version' directive.");
 
                 assemblyInfo.ProductVersion = args[0].AsString();
                 return null;
@@ -121,7 +121,7 @@ namespace fire.Compiler
             registry.Register("fileversion", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'fileversion'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'fileversion' directive.");
 
                 assemblyInfo.FileVersion = args[0].AsString();
                 return null;
@@ -162,7 +162,7 @@ namespace fire.Compiler
                     foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(args[0].AsString()))) nativeImports.Add(key);
                     return null;
                 }
-                throw new Exception($"Falsche Argumente für 'import'-Direktive.");
+                throw new Exception($"Wrong arguments for the 'import' directive.");
             });
 
             assemblyInfo.Subsystem = Utilities.SubsystemType.Console;
@@ -193,7 +193,7 @@ namespace fire.Compiler
             registry.Register("name", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'name'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'name' directive.");
 
                 assemblyInfo.ProductName = args[0].AsString();
                 return null;
@@ -201,7 +201,7 @@ namespace fire.Compiler
             registry.Register("codename", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'codename'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'codename' directive.");
 
                 assemblyInfo.InternalName = args[0].AsString();
                 return null;
@@ -209,7 +209,7 @@ namespace fire.Compiler
             registry.Register("description", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'description'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'description' directive.");
 
                 assemblyInfo.FileDescription = args[0].AsString();
                 return null;
@@ -217,7 +217,7 @@ namespace fire.Compiler
             registry.Register("author", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'author'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'author' directive.");
 
                 assemblyInfo.CompanyName = args[0].AsString();
                 return null;
@@ -225,7 +225,7 @@ namespace fire.Compiler
             registry.Register("comments", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'comments'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'comments' directive.");
 
                 assemblyInfo.Comments = args[0].AsString();
                 return null;
@@ -233,7 +233,7 @@ namespace fire.Compiler
             registry.Register("icon", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'icon'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'icon' directive.");
 
                 assemblyInfo.IconPath = args[0].AsString();
                 return null;
@@ -241,7 +241,7 @@ namespace fire.Compiler
             registry.Register("version", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'version'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'version' directive.");
 
                 assemblyInfo.ProductVersion = args[0].AsString();
                 return null;
@@ -249,7 +249,7 @@ namespace fire.Compiler
             registry.Register("fileversion", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'fileversion'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'fileversion' directive.");
 
                 assemblyInfo.FileVersion = args[0].AsString();
                 return null;

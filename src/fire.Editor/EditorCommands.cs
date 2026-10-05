@@ -105,17 +105,17 @@ namespace fire.Editor
         /// <summary>Rückgängig/Wiederholen, Ausschneiden/Kopieren/Einfügen/Löschen, Alles auswählen, Suchen.</summary>
         public static IEnumerable<Entry?> StandardEntries(TextEditor editor, Action find)
         {
-            yield return new Entry { Header = "_Rückgängig", Gesture = "Strg+Z", Execute = () => editor.Undo(), Enabled = () => !editor.IsReadOnly && editor.Document.UndoStack.CanUndo };
-            yield return new Entry { Header = "_Wiederholen", Gesture = "Strg+Y", Execute = () => editor.Redo(), Enabled = () => !editor.IsReadOnly && editor.Document.UndoStack.CanRedo };
+            yield return new Entry { Header = "_Undo", Gesture = "Ctrl+Z", Execute = () => editor.Undo(), Enabled = () => !editor.IsReadOnly && editor.Document.UndoStack.CanUndo };
+            yield return new Entry { Header = "_Redo", Gesture = "Ctrl+Y", Execute = () => editor.Redo(), Enabled = () => !editor.IsReadOnly && editor.Document.UndoStack.CanRedo };
             yield return null;
-            yield return new Entry { Header = "A_usschneiden", Gesture = "Strg+X", Execute = () => editor.Cut(), Enabled = () => !editor.IsReadOnly && editor.SelectionLength > 0 };
-            yield return new Entry { Header = "_Kopieren", Gesture = "Strg+C", Execute = () => editor.Copy(), Enabled = () => editor.SelectionLength > 0 };
-            yield return new Entry { Header = "_Einfügen", Gesture = "Strg+V", Execute = () => editor.Paste(), Enabled = () => !editor.IsReadOnly && ClipboardHasText() };
-            yield return new Entry { Header = "_Löschen", Gesture = "Entf", Execute = () => editor.Delete(), Enabled = () => !editor.IsReadOnly && editor.SelectionLength > 0 };
+            yield return new Entry { Header = "Cu_t", Gesture = "Ctrl+X", Execute = () => editor.Cut(), Enabled = () => !editor.IsReadOnly && editor.SelectionLength > 0 };
+            yield return new Entry { Header = "_Copy", Gesture = "Ctrl+C", Execute = () => editor.Copy(), Enabled = () => editor.SelectionLength > 0 };
+            yield return new Entry { Header = "_Paste", Gesture = "Ctrl+V", Execute = () => editor.Paste(), Enabled = () => !editor.IsReadOnly && ClipboardHasText() };
+            yield return new Entry { Header = "_Delete", Gesture = "Del", Execute = () => editor.Delete(), Enabled = () => !editor.IsReadOnly && editor.SelectionLength > 0 };
             yield return null;
-            yield return new Entry { Header = "_Alles auswählen", Gesture = "Strg+A", Execute = () => editor.SelectAll() };
+            yield return new Entry { Header = "Select _All", Gesture = "Ctrl+A", Execute = () => editor.SelectAll() };
             yield return null;
-            yield return new Entry { Header = "_Suchen...", Gesture = "Strg+F", Execute = find };
+            yield return new Entry { Header = "_Find...", Gesture = "Ctrl+F", Execute = find };
         }
     }
 }

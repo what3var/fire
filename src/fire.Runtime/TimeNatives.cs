@@ -52,7 +52,7 @@ namespace fire.Runtime
         /// <summary>[Jahr, Monat, Tag, Stunde, Minute, Sekunde, Millisekunde, Wochentag (0 = Sonntag), Tag im Jahr].</summary>
         private static Value Parts(long ticks)
         {
-            if (ticks < DateTime.MinValue.Ticks || ticks > DateTime.MaxValue.Ticks) return Fail($"Zeitpunkt außerhalb des gültigen Bereichs ({ticks} Ticks).");
+            if (ticks < DateTime.MinValue.Ticks || ticks > DateTime.MaxValue.Ticks) return Fail($"Point in time out of range ({ticks} ticks).");
             var d = new DateTime(ticks);
             return Array(d.Year, d.Month, d.Day, d.Hour, d.Minute, d.Second, d.Millisecond, (int)d.DayOfWeek, d.DayOfYear);
         }
@@ -66,7 +66,7 @@ namespace fire.Runtime
             }
             catch (ArgumentOutOfRangeException)
             {
-                return Fail($"Ungültiges Datum/ungültige Zeit: {a[0].AsInt()}-{a[1].AsInt()}-{a[2].AsInt()} {a[3].AsInt()}:{a[4].AsInt()}:{a[5].AsInt()}.{a[6].AsInt()}");
+                return Fail($"Invalid date/time: {a[0].AsInt()}-{a[1].AsInt()}-{a[2].AsInt()} {a[3].AsInt()}:{a[4].AsInt()}:{a[5].AsInt()}.{a[6].AsInt()}");
             }
         }
 
@@ -78,19 +78,19 @@ namespace fire.Runtime
         private static Value Format(long ticks, string format)
         {
             try { return Value.MakeString(new DateTime(ticks).ToString(format, CultureInfo.InvariantCulture)); }
-            catch (FormatException) { return Fail($"Ungültiges Zeitformat '{format}'."); }
-            catch (ArgumentOutOfRangeException) { return Fail($"Zeitpunkt außerhalb des gültigen Bereichs ({ticks} Ticks)."); }
+            catch (FormatException) { return Fail($"Invalid time format '{format}'."); }
+            catch (ArgumentOutOfRangeException) { return Fail($"Point in time out of range ({ticks} ticks)."); }
         }
 
         private static Value AddMonths(long ticks, long months)
         {
             try { return Value.MakeInt(new DateTime(ticks).AddMonths((int)months).Ticks); }
-            catch (ArgumentOutOfRangeException) { return Fail("Das Ergebnis liegt außerhalb des gültigen Zeitbereichs."); }
+            catch (ArgumentOutOfRangeException) { return Fail("The result is outside the valid time range."); }
         }
 
         private static Value DaysInMonth(long year, long month)
         {
-            if (year < 1 || year > 9999 || month < 1 || month > 12) return Fail($"Ungültiger Monat {year}-{month}.");
+            if (year < 1 || year > 9999 || month < 1 || month > 12) return Fail($"Invalid month {year}-{month}.");
             return Value.MakeInt(DateTime.DaysInMonth((int)year, (int)month));
         }
 
@@ -100,7 +100,7 @@ namespace fire.Runtime
             if (v.Kind is not (ValueKind.Int or ValueKind.Float) || v.Unit is not { IsUnitless: false } unit) return Value.MakeUndefined();
             double perSecond;
             try { perSecond = unit.ConversionFactorTo(Unit.Parse("s")); }
-            catch (Exception) { return Fail($"'{unit}' ist keine Zeiteinheit."); }
+            catch (Exception) { return Fail($"'{unit}' is not a unit of time."); }
             return Value.MakeInt((long)Math.Round(Num(v) * perSecond * TicksPerSecond));
         }
 
@@ -116,7 +116,7 @@ namespace fire.Runtime
             if (arg.Kind == ValueKind.Class)
             {
                 var obj = (ObjectInstance)arg.AsObjectRef();
-                if (!obj.TryGetFieldLocked("ticks", out var field) || field.Kind != ValueKind.Int) { error = $"erwartet eine TimeSpan, erhalten: {obj.ClassName}."; return false; }
+                if (!obj.TryGetFieldLocked("ticks", out var field) || field.Kind != ValueKind.Int) { error = $"expects a TimeSpan, got: {obj.ClassName}."; return false; }
                 ticks = field.AsInt();
                 return true;
             }
@@ -125,25 +125,25 @@ namespace fire.Runtime
                 if (arg.Unit is { IsUnitless: false } unit)
                 {
                     try { ticks = (long)Math.Round(Num(arg) * unit.ConversionFactorTo(Unit.Parse("s")) * TicksPerSecond); return true; }
-                    catch (Exception) { error = $"'{unit}' ist keine Zeiteinheit."; return false; }
+                    catch (Exception) { error = $"'{unit}' is not a unit of time."; return false; }
                 }
                 ticks = (long)Math.Round(Num(arg) * TicksPerMillisecond); // eine Zahl ohne Einheit: Millisekunden
                 return true;
             }
-            error = $"erwartet eine TimeSpan, einen Zeitwert oder Millisekunden, erhalten: {arg.Kind}.";
+            error = $"expects a TimeSpan, a time value or milliseconds, got: {arg.Kind}.";
             return false;
         }
 
         /// <summary>`Sleep(zeit)`: `zeit` ist eine `TimeSpan`, ein Wert mit Zeiteinheit (`Sleep(500ms)`) oder eine Zahl (Millisekunden).</summary>
         private static Value Sleep(Value[] a)
         {
-            if (a.Length != 1) return Fail("Sleep erwartet genau ein Argument (TimeSpan, Zeitwert wie 500ms oder Millisekunden).");
+            if (a.Length != 1) return Fail("Sleep expects exactly one argument (TimeSpan, a time value like 500ms, or milliseconds).");
             long ticks;
             var arg = a[0];
             if (arg.Kind == ValueKind.Class)
             {
                 var obj = (ObjectInstance)arg.AsObjectRef();
-                if (!obj.TryGetFieldLocked("ticks", out var field) || field.Kind != ValueKind.Int) return Fail($"Sleep erwartet eine TimeSpan, erhalten: {obj.ClassName}.");
+                if (!obj.TryGetFieldLocked("ticks", out var field) || field.Kind != ValueKind.Int) return Fail($"Sleep expects a TimeSpan, got: {obj.ClassName}.");
                 ticks = field.AsInt();
             }
             else if (arg.Kind is ValueKind.Int or ValueKind.Float)
@@ -153,7 +153,7 @@ namespace fire.Runtime
                 else if (unitTicks.Kind == ValueKind.Undefined) ticks = (long)Math.Round(Num(arg) * TicksPerMillisecond); // eine Zahl ohne Einheit: Millisekunden
                 else return unitTicks;
             }
-            else return Fail($"Sleep erwartet eine TimeSpan, einen Zeitwert oder Millisekunden, erhalten: {arg.Kind}.");
+            else return Fail($"Sleep expects a TimeSpan, a time value or milliseconds, got: {arg.Kind}.");
 
             if (VM.CurrentThreadVm is { } vm) vm.SleepTicks(ticks);
             else if (ticks > 0) System.Threading.Thread.Sleep(TimeSpan.FromTicks(ticks));

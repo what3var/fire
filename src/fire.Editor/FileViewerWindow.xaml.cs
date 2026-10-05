@@ -71,7 +71,7 @@ namespace fire.Editor
         {
             _filePath = filePath;
             _preludeName = null;
-            Title = $"Datei ansehen - {Path.GetFileName(filePath)}";
+            Title = $"View File - {Path.GetFileName(filePath)}";
             PathText.Text = filePath;
 
             string source;
@@ -81,7 +81,7 @@ namespace fire.Editor
             }
             catch (Exception ex)
             {
-                source = $"// Datei konnte nicht geöffnet werden:\n// {filePath}\n// {ex.Message}";
+                source = $"// The file could not be opened:\n// {filePath}\n// {ex.Message}";
             }
 
             DisplaySource(source, jumpToLine);

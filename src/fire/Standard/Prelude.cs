@@ -66,14 +66,17 @@ namespace fire.Standard
             //   var home = new Command<IDevice>()
             //   home.Command = d => { d.WriteString("G28\n") }
             //   Device.Default.DoCommand(home)
+            /// <summary>A command as an object that is executed without a context.</summary>
             interface ICommand {
                 Execute()
             }
 
+            /// <summary>A command as an object that is executed with a context - e.g. `ICommand<IDevice>` is run by `Device.DoCommand` with the device as its context.</summary>
             interface ICommand<T> {
                 Execute(T context)
             }
 
+            /// <summary>A command object without a context. The lambda in `Command` is its body; derive from the class and override `Execute` if you need more.</summary>
             class Command : ICommand {
                 lambda Command
 
@@ -83,7 +86,8 @@ namespace fire.Standard
                     this.Command = command
                 }
 
-                // Ruft das Lambda auf; ohne Lambda geschieht nichts. Liefert dessen Ergebnis.
+                /// <summary>Calls the lambda `Command`; without a lambda nothing happens.</summary>
+                /// <returns>The result of the lambda, or `undefined`.</returns>
                 Execute() {
                     var body = this.Command
                     if (body == undefined) {
@@ -93,6 +97,7 @@ namespace fire.Standard
                 }
             }
 
+            /// <summary>A command object with a context of type T (e.g. `Command<IDevice>`). The lambda in `Command` receives the context as its argument.</summary>
             class Command<T> : ICommand<T> {
                 lambda<T> Command
 
@@ -102,6 +107,9 @@ namespace fire.Standard
                     this.Command = command
                 }
 
+                /// <summary>Calls the lambda `Command` with the context; without a lambda nothing happens.</summary>
+                /// <param name="context">What the command works on, e.g. the device.</param>
+                /// <returns>The result of the lambda, or `undefined`.</returns>
                 Execute(T context) {
                     var body = this.Command
                     if (body == undefined) {

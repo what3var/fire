@@ -24,7 +24,7 @@ namespace fire.Editor
         {
             P("Length", "int"),
             M("ToBytes", "", "buffer"),
-            M("ToUnicode", "breite", "buffer"),
+            M("ToUnicode", "width", "buffer"),
         };
 
         private static readonly BuiltinMember[] ArrayMembers = { P("Length", "int") };
@@ -34,8 +34,8 @@ namespace fire.Editor
             P("Length", "int"),
             P("littleEndian", "bool"),
             M("ToString", "", "string"),
-            M("ToUnicode", "[breite]", "string"),
-            M("ToUnicodeChar", "[breite]", "char"),
+            M("ToUnicode", "[width]", "string"),
+            M("ToUnicodeChar", "[width]", "char"),
             M("ToLittleEndian", "", "buffer"),
             M("ToBigEndian", "", "buffer"),
         };
@@ -43,7 +43,7 @@ namespace fire.Editor
         private static readonly BuiltinMember[] CharMembers =
         {
             M("ToByte", "", "int"),
-            M("ToUnicode", "breite", "buffer"),
+            M("ToUnicode", "width", "buffer"),
         };
 
         private static readonly BuiltinMember[] IntMembers = { M("ToChar", "", "char") };

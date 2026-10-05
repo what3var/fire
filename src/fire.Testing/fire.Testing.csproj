@@ -16,6 +16,7 @@
     <Compile Include="..\fire.Editor\NavigationEngine.cs" Link="Editor\NavigationEngine.cs" />
     <Compile Include="..\fire.Editor\BuiltinMembers.cs" Link="Editor\BuiltinMembers.cs" />
     <Compile Include="..\fire.Editor\MarkdownParser.cs" Link="Editor\MarkdownParser.cs" />
+    <Compile Include="..\fire.Editor\DocComments.cs" Link="Editor\DocComments.cs" />
   </ItemGroup>
 
   <ItemGroup>

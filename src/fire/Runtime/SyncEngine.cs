@@ -34,10 +34,10 @@ namespace fire.Runtime
         {
             var target = copy.SyncOrigin
                 ?? throw new System.InvalidOperationException(
-                    "sync: dieses Objekt ist keine 'taking'-Kopie (kein SyncOrigin gesetzt).");
+                    "sync: this object is not a 'taking' copy (no SyncOrigin set).");
             var treeLock = target.ThreadLock
                 ?? throw new System.InvalidOperationException(
-                    "sync: interner Fehler - Ziel hat keinen ThreadLock (hätte durch 'taking' gesetzt sein müssen).");
+                    "sync: internal error - the target has no ThreadLock (it should have been set by 'taking').");
 
             if (blocking) treeLock.Enter();
             else if (!treeLock.TryEnter()) return SyncResult.LockBusy;
@@ -155,8 +155,8 @@ namespace fire.Runtime
 
             if (srcVal.Kind == ValueKind.Lambda || srcVal.Kind == ValueKind.Pointer)
                 throw new TakingViolationException(
-                    "'sync' abgelehnt: Lambda-/Pointer-Werte werden in dieser Ausbaustufe nicht unterstützt " +
-                    "(dieselbe Einschränkung wie bei 'taking', siehe ObjectCopier-Klassenkommentar).");
+                    "'sync' rejected: lambda/pointer values are not supported at this stage " +
+                    "(the same limitation as for 'taking', see the ObjectCopier class comment).");
 
             // Primitive Werte (bool/int/float/char/string/undefined) - wertartig, direkt übernommen.
             return srcVal;

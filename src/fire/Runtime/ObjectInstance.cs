@@ -224,10 +224,10 @@ namespace fire.Runtime
         {
             if (Owner is not Scope currentScope)
                 throw new OwnershipException(
-                    "TakeUpwards ist nur gültig, wenn der aktuelle Owner ein Scope ist.");
+                    "TakeUpwards is only valid if the current owner is a scope.");
             if (currentScope.Parent == null)
                 throw new OwnershipException(
-                    "TakeUpwards: der aktuelle Scope hat keinen Parent-Scope (bereits global).");
+                    "TakeUpwards: the current scope has no parent scope (already global).");
             Reparent(currentScope.Parent);
         }
 
@@ -251,7 +251,7 @@ namespace fire.Runtime
 
             if (IsAncestorOf(target))
                 throw new OwnershipException(
-                    "TakeTo: Zyklus erkannt - das Zielobjekt ist bereits (direkt oder transitiv) im Besitz dieses Objekts.");
+                    "TakeTo: cycle detected - the target object is already owned (directly or transitively) by this object.");
 
             Reparent(target);
         }

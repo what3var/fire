@@ -73,6 +73,9 @@ namespace fire.Editor
         internal int BodyStart { get; init; } = -1;
         internal int BodyEnd { get; init; } = -1;
 
+        /// <summary>The `///` documentation comment above the declaration, null if there is none.</summary>
+        public DocComment? Documentation => DeclLine > 0 ? Source?.DocumentationAt(DeclLine) : null;
+
         public MemberInfo(string name, MemberKind kind, int paramCount, int declLine = 0)
         {
             Name = name;
@@ -142,6 +145,9 @@ namespace fire.Editor
         /// eine Zeile INNERHALB des Prelude-Quelltexts, NICHT auf das
         /// aktuell bearbeitete Dokument.</summary>
         public int DeclLine { get; set; }
+
+        /// <summary>The `///` documentation comment above the class declaration, null if there is none.</summary>
+        public DocComment? Documentation => DeclLine > 0 ? Source?.DocumentationAt(DeclLine) : null;
 
         /// <summary>true, wenn diese Klasse aus der eingebauten
         /// Standardbibliothek stammt (siehe ScriptSymbolIndex.
@@ -219,7 +225,7 @@ namespace fire.Editor
 
         /// <summary>Anzeigename einer Prelude für Fenstertitel.</summary>
         public static string PreludeTitleOf(string preludeName) =>
-            preludeName == StandardPreludeName ? "Standardbibliothek (Prelude)" : $"Prelude '{preludeName}'";
+            preludeName == StandardPreludeName ? "Standard library (prelude)" : $"Prelude '{preludeName}'";
 
         /// <summary>Alle irgendwo im Dokument gesehenen Bezeichner-Namen
         /// (Variablen, Parameter, Felder, ...) - unscharfer, aber robuster
@@ -259,6 +265,9 @@ namespace fire.Editor
             _tokens = tokens;
             _lineStarts = ComputeLineStarts(source);
         }
+
+        /// <summary>The documentation comment (`///` lines) directly above the 1-based line `declLine` of THIS index's source.</summary>
+        internal DocComment? DocumentationAt(int declLine) => DocComments.Find(_source, _lineStarts, declLine);
 
         private static int[] ComputeLineStarts(string source)
         {

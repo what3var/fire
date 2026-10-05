@@ -5891,7 +5891,7 @@ Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...
         print("s".Foo())
         int i = 5
         print(i.Foo())
-        """, "AUSNAHME: 'Foo' (0 Argument(e)) ist keine bekannte eingebaute Methode auf einem Wert vom Typ Int.");
+        """, "AUSNAHME: 'Foo' (0 argument(s)) is not a known built-in method on a value of type Int.");
 
     CheckExt("char-Methoden des Prelude", """
         char c = 'a'
@@ -5921,17 +5921,17 @@ Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...
 
     CheckExt("native Funktion: falsches Argument wird gemeldet", $$"""
         print({{fire.Standard.StringMethods.NativeName}}(1, 5, "x"))
-        """, "AUSNAHME: __StringCall(id, text, ...) erwartet die Zeichenkette als zweites Argument.");
+        """, "AUSNAHME: __StringCall(id, text, ...) expects the string as the second argument.");
 
-    CheckExtError("Feld in Basistyp-Erweiterung", "class extends string { int count }", "nur Methoden");
-    CheckExtError("Property in Basistyp-Erweiterung", "class extends string { int Size { get { return 1 } } }", "Property 'Size' nicht erlaubt");
-    CheckExtError("Auto-Property in Basistyp-Erweiterung", "class extends int { int Size { get; set; } }", "nicht erlaubt");
-    CheckExtError("Konstruktor in Basistyp-Erweiterung", "class extends string { construct() { } }", "Konstruktor");
-    CheckExtError("Destruktor in Basistyp-Erweiterung", "class extends string { destruct() { } }", "Destruktor");
-    CheckExtError("statische Methode in Basistyp-Erweiterung", "class extends string { static int F() { return 1 } }", "statische Methode 'F'");
-    CheckExtError("Operator in Basistyp-Erweiterung", "class extends string { operator+(other) { return this } }", "Operatoren");
-    CheckExtError("byte nicht erweiterbar", "class extends byte { int F() { return 1 } }", "'byte' lässt sich nicht erweitern");
-    CheckExtError("unbekannte Klasse bleibt ein Fehler", "class extends Gibtsnicht { F() { } }", "nicht bekannt");
+    CheckExtError("Feld in Basistyp-Erweiterung", "class extends string { int count }", "may only contain methods");
+    CheckExtError("Property in Basistyp-Erweiterung", "class extends string { int Size { get { return 1 } } }", "property 'Size' is not allowed");
+    CheckExtError("Auto-Property in Basistyp-Erweiterung", "class extends int { int Size { get; set; } }", "is not allowed");
+    CheckExtError("Konstruktor in Basistyp-Erweiterung", "class extends string { construct() { } }", "a constructor is not allowed");
+    CheckExtError("Destruktor in Basistyp-Erweiterung", "class extends string { destruct() { } }", "a destructor is not allowed");
+    CheckExtError("statische Methode in Basistyp-Erweiterung", "class extends string { static int F() { return 1 } }", "static method 'F'");
+    CheckExtError("Operator in Basistyp-Erweiterung", "class extends string { operator+(other) { return this } }", "Operators cannot be overloaded");
+    CheckExtError("byte nicht erweiterbar", "class extends byte { int F() { return 1 } }", "'byte' cannot be extended");
+    CheckExtError("unbekannte Klasse bleibt ein Fehler", "class extends Gibtsnicht { F() { } }", "is not known");
     CheckExtError("doppelte Methode (Prelude + eigene)", "class extends string { int IndexOf(value) { return 0 } }", "IndexOf");
 
     Console.WriteLine(extFailures == 0 ? "Alle Basistyp-Erweiterungs-Pruefungen bestanden." : $"FEHLER: {extFailures} Pruefung(en) fehlgeschlagen.");
@@ -6039,12 +6039,12 @@ Console.WriteLine("=== Array als Rueckgabetyp (int[] Name(), leere Klammern) ===
         print(parts.Length)
         """, "3");
 
-    CheckArrError("Feld mit int[] Typ", "class A { int[] values }", "hinter dem Namen");
-    CheckArrError("Parameter mit int[] Typ", "class A { F(int[] p) { } }", "hinter dem Namen");
-    CheckArrError("lokale Variable mit int[] Typ", "int[] v = [1, 2]", "hinter dem Namen");
-    CheckArrError("extern mit Array-Rueckgabe", "extern int[] Foo()", "hinter dem Namen");
+    CheckArrError("Feld mit int[] Typ", "class A { int[] values }", "after the name");
+    CheckArrError("Parameter mit int[] Typ", "class A { F(int[] p) { } }", "after the name");
+    CheckArrError("lokale Variable mit int[] Typ", "int[] v = [1, 2]", "after the name");
+    CheckArrError("extern mit Array-Rueckgabe", "extern int[] Foo()", "after the name");
     CheckArrError("unbekannte Klasse im Array-Rueckgabetyp", "class A { Gibtsnicht[] F() { return [] } }", "Gibtsnicht");
-    CheckArrError("byte[8] bleibt widerspruechlich", "class A { byte[8] F() { return 1 } }", "'byte' hat bereits");
+    CheckArrError("byte[8] bleibt widerspruechlich", "class A { byte[8] F() { return 1 } }", "'byte' already has");
 
     Console.WriteLine(arrFailures == 0 ? "Alle Array-Rueckgabetyp-Pruefungen bestanden." : $"FEHLER: {arrFailures} Pruefung(en) fehlgeschlagen.");
 }
@@ -6149,7 +6149,7 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
 
     CheckPerf("Einheiten-Konflikt bleibt ein Fehler", """
         print(1mm + 2)
-        """, new[] { "AUSNAHME: Einheiten inkompatibel: 'mm' kann nicht nach 'unitless' umgerechnet werden." });
+        """, new[] { "AUSNAHME: Incompatible units: 'mm' cannot be converted to 'unitless'." });
 
     // --- Stack und Scope-Slots wachsen
     CheckPerf("tiefe Rekursion (Stack und Frames wachsen)", """
@@ -6465,7 +6465,7 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
         actor Counter { int n; construct() { this.n = 0 } }
         var c = new Counter()
         var d = copy c
-        """, "Actor");
+        """, "actor");
 
     CheckCloneError("zerstoertes Objekt", cloneClasses + """
         var leaked = new Box("x")
@@ -6474,9 +6474,9 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
             leaked = t
         }
         var d = copy leaked
-        """, "zerstört");
+        """, "destroyed");
 
-    CheckCloneError("Kopier-Praefix ohne Operand", "var x = copy", "Unerwartetes Token");
+    CheckCloneError("Kopier-Praefix ohne Operand", "var x = copy", "Unexpected token");
 
     Console.WriteLine(cloneFailures == 0 ? "Alle Kopier-Pruefungen bestanden." : $"FEHLER: {cloneFailures} Pruefung(en) fehlgeschlagen.");
 }
@@ -7042,7 +7042,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
             // Ohne Payload (nackte Runtime) gibt es eine klare Meldung statt eines Absturzes.
             var bare = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(baseDir, stubName)) { RedirectStandardError = true, RedirectStandardOutput = true })!;
             var bareErr = bare.StandardError.ReadToEnd(); bare.WaitForExit(20000);
-            PackCheck(bare.ExitCode == 1 && bareErr.Contains("Payload"), "Ende-zu-Ende: nackte Runtime ohne Payload meldet das verstaendlich");
+            PackCheck(bare.ExitCode == 1 && bareErr.Contains("payload"), "Ende-zu-Ende: nackte Runtime ohne Payload meldet das verstaendlich");
 
             long PackProgramSize(string source)
             {
@@ -8052,7 +8052,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         try { Framebuffer.FromImage(__TestGarbage()) } catch (e) { print((e is of ImageException) + " " + e.message) }
         try { Framebuffer.FromImage(__TestImage("png_rgb8"), 7) } catch (e) { print(e is of ImageException) }
         print("weiter")
-        """, new[] { "1 13", "True Datei nicht da: fehlt.png", "True verboten: verboten.png", "True Unbekanntes Bildformat (erwartet: PNG, BMP oder GIF).", "True", "weiter" },
+        """, new[] { "1 13", "True Datei nicht da: fehlt.png", "True verboten: verboten.png", "True Unknown image format (expected: PNG, BMP or GIF).", "True", "weiter" },
         reader: path => path switch
         {
             "fehlt.png" => throw new System.IO.FileNotFoundException("Datei nicht da: " + path),
@@ -8084,10 +8084,10 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         try { print(b.GetPaletteColor(-1)) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
         print(b.ReadByte(0))
         """, new[] { "0 50 16", $"1 5 {4278190080L + 33 * 65536 + 22 * 256 + 11}", "99", "falsche Groesse: True",
-            "True Erwarte genau 6 Byte, erhalten 16.",
-            "True Eine Palette hat 768 (RGB) oder 1024 (RGBA) Byte, erhalten 16.",
-            "True Palette-Index 256 außerhalb von 0-255.",
-            "True Palette-Index -1 außerhalb von 0-255.", "99" });
+            "True Expected exactly 6 bytes, got 16.",
+            "True A palette has 768 (RGB) or 1024 (RGBA) bytes, got 16.",
+            "True Palette index 256 outside of 0-255.",
+            "True Palette index -1 outside of 0-255.", "99" });
 
     CheckGf("Blit: geladenes Bild in einen anderen Framebuffer (auch ueber die Farbmodi), Ausschnitt, Skalierung, Spiegelung, Transparenz", gfHead + """
         var img = Framebuffer.FromImage(__TestImage("png_pal4"))
@@ -8151,7 +8151,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         slicer.overlap = 0.99
         try { slicer.Slice(mask) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
         foreach (p in new Slicer(1, 0.1).Slice(mask)) { print(p.kind) }
-        """, new[] { "1 120x70 0 1", "0.5", "4", "True True True True", "1", "0", "True Linienstärke und Pixelgröße müssen größer als 0 sein.", "True Die Überlappung muss zwischen 0 und 0.95 liegen.", "0", "0", "0", "1" });
+        """, new[] { "1 120x70 0 1", "0.5", "4", "True True True True", "1", "0", "True Line thickness and pixel size must be greater than 0.", "True The overlap must be between 0 and 0.95.", "0", "0", "0", "1" });
 
     // ---- Echte Dateien ueber die Sitzung des Hosts: die IoPolicy entscheidet, was Framebuffer.FromFile lesen darf ----
     {
@@ -8189,7 +8189,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             }
             CheckSession("FromFile ohne Richtlinie (alles erlaubt)", null, r => r == "geladen 1 13x7");
             CheckSession("FromFile mit Richtlinie, die das Verzeichnis erlaubt", fire.IO.Bridge.IoPolicy.Rooted(imgDir, readOnly: true), r => r == "geladen 1 13x7");
-            CheckSession("FromFile mit DenyAll: ImageException mit dem Grund der Richtlinie", fire.IO.Bridge.IoPolicy.DenyAll, r => r == "True Dateizugriff ist für dieses Programm nicht erlaubt.");
+            CheckSession("FromFile mit DenyAll: ImageException mit dem Grund der Richtlinie", fire.IO.Bridge.IoPolicy.DenyAll, r => r == "True File access is not allowed for this program.");
             CheckSession("FromFile ausserhalb des erlaubten Verzeichnisses: ImageException", fire.IO.Bridge.IoPolicy.Rooted(otherDir), r => r.StartsWith("True "));
         }
         finally
@@ -9156,7 +9156,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         } catch (DeviceNotFoundException e) {
             print("keins: " + e.message)
         }
-        """, new[] { "False", "keins: Kein Standardgerät gewählt" });
+        """, new[] { "False", "keins: No default device selected" });
 
     CheckDev("Standardgeraet: Device.Default, IsConnected (Property und Methode), EnsureConnected, Senden/Empfangen", """
         #import "devices"
@@ -9308,7 +9308,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var ms = (DateTime.Now() - t0).TotalMilliseconds
         print((ms >= 330) + " " + (ms < 5000))
         try { d.WaitForString("a", "x") } catch (e) { print((e is of DeviceArgumentException) + " " + e.message) }
-        """, new[] { "False", "False", "False", "True True", "True Ungültige Wartezeit (erwartet: TimeSpan, Zeitwert wie 5s oder Millisekunden)" }, defaultId: "loopback:echo");
+        """, new[] { "False", "False", "False", "True True", "True Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)" }, defaultId: "loopback:echo");
 
     CheckDev("#timeout: die Standard-Wartezeit ohne eigene Zeitangabe (sonst 30 Sekunden)", """
         #import "devices"
@@ -9722,8 +9722,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             "2024-12-24 18:00:00 True 28 True",
             "2024-03-15 00:00:00 14:30:05",
             "1970-01-02 00:00:00 86400",
-            "1 Ungültiges Datum/ungültige Zeit: 2024-13-1 0:0:0.0",
-            "2 Kein gültiges Datum: 'quatsch'",
+            "1 Invalid date/time: 2024-13-1 0:0:0.0",
+            "2 Not a valid date: 'quatsch'",
             "True",
             "utc local",
         });
@@ -9756,7 +9756,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var ms = (DateTime.UtcNow() - t0).TotalMilliseconds
         print((ms >= 190) + " " + (ms < 2000))
         try { Sleep("x") } catch (e) { print(e.message) }
-        """, new[] { "True True", "Sleep erwartet eine TimeSpan, einen Zeitwert oder Millisekunden, erhalten: String." });
+        """, new[] { "True True", "Sleep expects a TimeSpan, a time value or milliseconds, got: String." });
 
     CheckLq("Sleep arbeitet die Warteschlange ab (automatischer Globals-Sync); mit #nosync nicht; fire global-Auftraege auch", timeHead + """
         var counter = 0
@@ -9838,7 +9838,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             }
         }
         T.Run()
-        """, new[] { "AUSNAHME: 'n' ist im Lambda eine KOPIE der \u00e4u\u00dferen Variablen (Capture) und kann dort nicht zugewiesen werden (eine neue lokale Variable mit anderem Namen anlegen) (4)" });
+        """, new[] { "AUSNAHME: 'n' is a COPY of the outer variable inside the lambda (capture) and cannot be assigned there (declare a new local variable with a different name) (4)" });
 
     CheckLq("Capture: ein Objekt wird als Referenz geteilt", """
         class Box { int n; construct() { this.n = 0 } }
@@ -9910,7 +9910,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
     CheckLq("LINQ: First auf einer leeren Folge wirft LinqEmptyException", linqHead + """
         try { Linq.From([]).First() } catch (e) { print("leer: " + e.message) }
-        """, new[] { "leer: Die Folge enthaelt kein Element" });
+        """, new[] { "leer: The sequence contains no element" });
 
     CheckLq("LINQ: foreach ueber eine Abfrage, ToArray, Query auf einem Array", linqHead + """
         var arr = Linq.From([3, 1, 2]).OrderBy(x => x).ToArray()
@@ -10081,10 +10081,10 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         """, new[]
         {
             "a,b 6,2 3,1 6,2", "ab ba",
-            "1 'Double' ist eine Property, erwartet (lambda field<...>): ein Feld",
-            "2 'price' ist ein Feld, erwartet (lambda property<...>): eine Property",
-            "3 'nope' ist kein Mitglied",
-            "4 Die Lambda ist kein Selektor: sie braucht genau einen Parameter, und ihr Körper darf nur eine Mitgliedskette darauf sein (`c => c.radius`, `p => p.address.city`).",
+            "1 'Double' is a property, expected (lambda field<...>): a field",
+            "2 'price' is a field, expected (lambda property<...>): a property",
+            "3 'nope' is not a member",
+            "4 The lambda is not a selector: it needs exactly one parameter, and its body may only be a member chain on it (`c => c.radius`, `p => p.address.city`).",
         });
 
     CheckLq("## ist ein Synonym fuer !=", """
@@ -10230,9 +10230,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(c.PeekSecret())
         """, new[]
         {
-            "1 Feld 'secret' von 'Circle' ist private und von hier aus nicht zugreifbar.",
-            "2 'Hidden' von 'Circle' ist private und von hier aus nicht zugreifbar.",
-            "3 Das Feld 'id' von 'Circle' ist 'readonly' und lässt sich nicht zuweisen.",
+            "1 Field 'secret' of 'Circle' is private and cannot be accessed from here.",
+            "2 'Hidden' of 'Circle' is private and cannot be accessed from here.",
+            "3 The field 'id' of 'Circle' is 'readonly' and cannot be assigned.",
             "4 Einheit",
             "42",
         }, debugRelease);
@@ -10255,11 +10255,11 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print("weiter")
         """, new[]
         {
-            "1 'P' hat kein lesbares Mitglied 'nope'.",
-            "2 Die Property 'Age' von 'P' hat keinen Setter (nur 'get').",
-            "3 'P' hat keine Methode 'Nope' mit 0 Parameter(n).",
-            "4 Reflect.Get: erwartet ein Objekt, erhalten: Int.",
-            "5 Unbekannte Klasse 'Gibts'.",
+            "1 'P' has no readable member 'nope'.",
+            "2 The property 'Age' of 'P' has no setter (only 'get').",
+            "3 'P' has no method 'Nope' with 0 parameter(s).",
+            "4 Reflect.Get: expects an object, got: Int.",
+            "5 Unknown class 'Gibts'.",
             "6 kein Alter",
             "7 boom",
             "weiter",
@@ -10289,8 +10289,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         try { W.Show(5, new P()) } catch (e) { print("2 " + e.message) }
         """, new[]
         {
-            "1 Die Lambda ist kein Selektor: sie braucht genau einen Parameter, und ihr Körper darf nur eine Mitgliedskette darauf sein (`c => c.radius`, `p => p.address.city`).",
-            "2 Ein Selektor ('lambda member<...>' o.ä.) erwartet eine Lambda wie `c => c.radius`, erhalten: Int.",
+            "1 The lambda is not a selector: it needs exactly one parameter, and its body may only be a member chain on it (`c => c.radius`, `p => p.address.city`).",
+            "2 A selector ('lambda member<...>' etc.) expects a lambda like `c => c.radius`, got: Int.",
         });
 
     // gepackt: Metadaten und try/catch muessen die Serialisierung ueberleben (catch-Klauseln gingen frueher verloren)
@@ -10423,9 +10423,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         """, new[]
         {
             "r 1 4", "5", "50",
-            "'C' hat kein Mitglied 'nope' - dort lässt sich keine Probe anmelden.",
-            "Die Art einer Probe ist \"changed\" oder \"changing\", erhalten: \"gestern\".",
-            "Der Handler einer Probe darf höchstens 4 Parameter haben (Objekt, Name, alt, neu), hat 5.",
+            "'C' has no member 'nope' - no probe can be registered there.",
+            "The kind of a probe is \"changed\" or \"changing\", got: \"gestern\".",
+            "The handler of a probe may have at most 4 parameters (object, name, old, new), it has 5.",
         }, debugRelease);
 
     CheckRf("Selektor-Arten: field, property, member (Feld oder Property), method (nur Methode), selector (alles)", """
@@ -10455,15 +10455,15 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         {
             "v=1 P=7 v=1 P=7",
             "v:field P:property Twice:method 42",
-            "1 'P' ist eine Property, erwartet (lambda field<...>): ein Feld",
-            "2 'v' ist ein Feld, erwartet (lambda property<...>): eine Property",
-            "3 'Twice' ist eine Methode, erwartet (lambda member<...>): ein Feld oder eine Property",
-            "4 'nope' ist kein Mitglied",
-            "5 'Twice' ist eine Methode - Call(obj, args) ruft sie auf",
-            "6 'v' ist keine Methode",
+            "1 'P' is a property, expected (lambda field<...>): a field",
+            "2 'v' is a field, expected (lambda property<...>): a property",
+            "3 'Twice' is a method, expected (lambda member<...>): a field or a property",
+            "4 'nope' is not a member",
+            "5 'Twice' is a method - Call(obj, args) calls it",
+            "6 'v' is not a method",
             "Twice->8",
-            "7 'v' ist ein Feld, erwartet (lambda method<...>): eine Methode",
-            "8 'P' ist eine Property, erwartet (lambda method<...>): eine Methode",
+            "7 'v' is a field, expected (lambda method<...>): a method",
+            "8 'P' is a property, expected (lambda method<...>): a method",
         });
 
     Console.WriteLine(rfFailures == 0 ? "Alle Reflection-Pruefungen bestanden." : $"FEHLER: {rfFailures} Reflection-Pruefung(en) fehlgeschlagen.");
@@ -10894,6 +10894,89 @@ static int CountOccurrences(string haystack, string needle)
     }
 
     Console.WriteLine(mdFailures == 0 ? "Alle Markdown-Pruefungen bestanden." : $"FEHLER: {mdFailures} Markdown-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Editor: Dokumentationskommentare (///) fuer Klassen, Felder, Properties und Methoden
+// ---------------------------------------------------------------------------------------------------------------------------
+{
+    Console.WriteLine("=== Dokumentationskommentare (///) ===");
+    int docFailures = 0;
+    void CheckDoc(string title, bool ok, string detail = "")
+    {
+        if (!ok) docFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title} {detail}");
+    }
+
+    var plain = fire.Editor.DocComments.Parse("Draws a circle.\nSecond line of the same paragraph.\n\nNew paragraph.");
+    CheckDoc("Parse: reiner Text, Zeilen eines Absatzes werden verbunden, Leerzeile trennt Absaetze",
+        plain?.Summary == "Draws a circle. Second line of the same paragraph.\nNew paragraph.", plain?.Summary);
+
+    var tagged = fire.Editor.DocComments.Parse("<summary>\nAdds <c>two</c> numbers, see <see cref=\"Sub\"/>.\n</summary>\n<param name=\"a\">first &lt;int&gt;</param>\n<param name=\"b\">second</param>\n<returns>the sum</returns>\n<remarks>Fast.</remarks>");
+    CheckDoc("Parse: summary, c, see cref, Entities", tagged?.Summary == "Adds two numbers, see Sub.", tagged?.Summary);
+    CheckDoc("Parse: Parameter in Reihenfolge mit Text", tagged != null && tagged.Parameters.Count == 2 && tagged.Parameters[0] == ("a", "first <int>") && tagged.Parameters[1] == ("b", "second"));
+    CheckDoc("Parse: returns und remarks", tagged?.Returns == "the sum" && tagged?.Remarks == "Fast.");
+    CheckDoc("Parse: leerer Kommentar ist kein Dokument", fire.Editor.DocComments.Parse("  \n ") == null);
+
+    string docSource = """
+        /// A calculator.
+        /// Works on ints.
+        class Calc {
+            /// <summary>Adds two numbers.</summary>
+            /// <param name="a">first</param>
+            /// <param name="b">second &amp; last</param>
+            /// <returns>the sum</returns>
+            int Add(int a, int b) { return a + b }
+
+            /// Current total.
+            int total
+
+            /// <summary>Doubled total</summary>
+            int Double { get { return this.total * 2 } }
+
+            // an ordinary comment is no documentation
+            Plain() { }
+
+            /// separated from its method by a blank line
+
+            Separated() { }
+        }
+        var c = new Calc()
+        c.Add(1, 2)
+        c.total
+        c.Double
+        c.Plain()
+        c.Separated()
+        """;
+
+    var docIndex = fire.Editor.ScriptSymbolIndex.Build(docSource);
+    fire.Editor.ResolvedSymbol? SymbolAt(string needle)
+    {
+        int offset = docSource.LastIndexOf(needle, StringComparison.Ordinal) + 1;
+        return fire.Editor.NavigationEngine.TryResolveSymbol(docSource, offset, docIndex);
+    }
+
+    var calcDoc = SymbolAt("Calc()")?.Documentation;
+    CheckDoc("Klasse: /// ueber der Deklaration, mehrere Zeilen werden verbunden", calcDoc?.Summary == "A calculator. Works on ints.", calcDoc?.Summary);
+    var addSymbol = SymbolAt("Add(1");
+    var addDoc = addSymbol?.Documentation;
+    CheckDoc("Methode: summary, Parameter und returns", addDoc?.Summary == "Adds two numbers." && addDoc.Parameters.Count == 2
+        && addDoc.Parameters[1].Text == "second & last" && addDoc.Returns == "the sum", addDoc?.ToPlainText());
+    CheckDoc("Methode: die Kopfzeile nennt Klasse und Signatur", addSymbol?.Header.Contains("Calc.Add(int a, int b)") == true, addSymbol?.Header);
+    CheckDoc("Feld: einfacher /// Text", SymbolAt("total\nc.Double")?.Documentation?.Summary == "Current total.");
+    CheckDoc("Property: summary", SymbolAt("Double\nc.Plain")?.Documentation?.Summary == "Doubled total");
+    CheckDoc("Gewoehnlicher // Kommentar ist keine Dokumentation", SymbolAt("Plain()\nc.Sep")?.Documentation == null);
+    CheckDoc("Leerzeile zwischen /// und Deklaration: keine Dokumentation", SymbolAt("Separated()")?.Documentation == null);
+    CheckDoc("Die Deklarationsstelle selbst loest ebenfalls auf (Cursor auf dem Namen in der Klasse)",
+        fire.Editor.NavigationEngine.TryResolveSymbol(docSource, docSource.IndexOf("Add(int a") + 1, docIndex)?.Documentation?.Summary == "Adds two numbers.");
+
+    var items = fire.Editor.CompletionEngine.GetSuggestions(docSource + "\nc.", docSource.Length + 3, fire.Editor.ScriptSymbolIndex.Build(docSource + "\nc."));
+    CheckDoc("Vervollstaendigung: Eintraege tragen ihre Dokumentation, andere nicht",
+        items.FirstOrDefault(i => i.Text == "Add")?.Documentation?.Summary == "Adds two numbers." && items.FirstOrDefault(i => i.Text == "Plain")?.Documentation == null);
+    var classItems = fire.Editor.CompletionEngine.GetSuggestions(docSource + "\nvar d = new Ca", docSource.Length + 15, fire.Editor.ScriptSymbolIndex.Build(docSource + "\nvar d = new Ca"));
+    CheckDoc("Vervollstaendigung: Klassen tragen ihre Dokumentation", classItems.FirstOrDefault(i => i.Text == "Calc")?.Documentation?.Summary == "A calculator. Works on ints.");
+
+    Console.WriteLine(docFailures == 0 ? "Alle Dokumentationskommentar-Pruefungen bestanden." : $"FEHLER: {docFailures} Dokumentationskommentar-Pruefung(en) fehlgeschlagen.");
 }
 
 static class PackerNativeProbe

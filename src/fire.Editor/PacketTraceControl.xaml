@@ -4,23 +4,23 @@
     <DockPanel>
         <ToolBar DockPanel.Dock="Top" Loaded="ToolBar_HideOverflow">
             <ToggleButton x:Name="RecordToggle" IsChecked="True" Click="RecordToggle_Click"
-                          ToolTip="Aufzeichnung an/aus (nur bei einer Live-Verfolgung)">
+                          ToolTip="Recording on/off (live traces only)">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#x25CF;" Foreground="#C42B1C" VerticalAlignment="Center"/>
-                    <TextBlock Text="Aufzeichnen" Margin="5,0,2,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="Record" Margin="5,0,2,0" VerticalAlignment="Center"/>
                 </StackPanel>
             </ToggleButton>
-            <Button Click="Clear_Click" ToolTip="Alle Pakete aus der Liste entfernen">
-                <TextBlock Text="Leeren" Margin="2,0"/>
+            <Button Click="Clear_Click" ToolTip="Remove all packets from the list">
+                <TextBlock Text="Clear" Margin="2,0"/>
             </Button>
             <Separator/>
-            <TextBlock Text="Inhalt als:" VerticalAlignment="Center" Margin="4,0"/>
+            <TextBlock Text="Show content as:" VerticalAlignment="Center" Margin="4,0"/>
             <RadioButton x:Name="HexRadio" GroupName="PacketView" IsChecked="True" Content="Hex (Bytes)" Margin="4,0"
                          VerticalAlignment="Center" Checked="ViewMode_Changed"
-                         ToolTip="Jedes Byte hexadezimal, durch Leerzeichen getrennt"/>
+                         ToolTip="Every byte in hexadecimal, separated by spaces"/>
             <RadioButton x:Name="TextRadio" GroupName="PacketView" Content="Text (Unicode)" Margin="4,0"
                          VerticalAlignment="Center" Checked="ViewMode_Changed"
-                         ToolTip="Die Bytes als UTF-8-Text; Steuerzeichen als \r, \n, \xNN"/>
+                         ToolTip="The bytes as UTF-8 text; control characters as \r, \n, \xNN"/>
             <Separator/>
             <CheckBox x:Name="AutoScrollBox" Content="Autoscroll" IsChecked="True" VerticalAlignment="Center" Margin="4,0"/>
             <Separator/>
@@ -45,11 +45,11 @@
             <ListView.View>
                 <GridView>
                     <GridViewColumn Header="#" Width="60" DisplayMemberBinding="{Binding Number}"/>
-                    <GridViewColumn Header="Zeit" Width="100" DisplayMemberBinding="{Binding TimeText}"/>
-                    <GridViewColumn Header="Richtung" Width="110" DisplayMemberBinding="{Binding DirectionText}"/>
-                    <GridViewColumn Header="Gerät" Width="140" DisplayMemberBinding="{Binding DeviceId}"/>
+                    <GridViewColumn Header="Time" Width="100" DisplayMemberBinding="{Binding TimeText}"/>
+                    <GridViewColumn Header="Direction" Width="110" DisplayMemberBinding="{Binding DirectionText}"/>
+                    <GridViewColumn Header="Device" Width="140" DisplayMemberBinding="{Binding DeviceId}"/>
                     <GridViewColumn Header="Bytes" Width="55" DisplayMemberBinding="{Binding Length}"/>
-                    <GridViewColumn Header="Inhalt" Width="600" DisplayMemberBinding="{Binding Content}"/>
+                    <GridViewColumn Header="Content" Width="600" DisplayMemberBinding="{Binding Content}"/>
                 </GridView>
             </ListView.View>
         </ListView>

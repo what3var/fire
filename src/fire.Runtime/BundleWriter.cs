@@ -41,7 +41,7 @@ namespace fire.Runtime
         {
             int sigPos = IndexOf(apphost, Signature);
             if (sigPos < 8)
-                throw new InvalidOperationException("Der apphost enthält keine Bundle-Kennung (falsche Start-.exe?).");
+                throw new InvalidOperationException("The apphost does not contain a bundle signature (wrong start .exe?).");
 
             using var fs = new FileStream(outFile, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
             fs.Write(apphost, 0, apphost.Length);

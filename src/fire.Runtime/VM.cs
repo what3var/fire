@@ -472,7 +472,7 @@ namespace fire.Runtime
                 try
                 {
                     if (slot >= broker.Scope.SlotCount)
-                        throw new InvalidOperationException("Diese globale Variable ist im Hauptprogramm noch nicht deklariert worden.");
+                        throw new InvalidOperationException("This global variable has not been declared in the main program yet.");
                     broker.Scope.SetSlot(slot, value);
                 }
                 finally { broker.Lock.Exit(); }
@@ -993,7 +993,7 @@ namespace fire.Runtime
         {
             var mailbox = actor.Mailbox
                 ?? throw new InvalidOperationException(
-                    $"'process'/'try process' auf einer Instanz von '{actor.ClassName}', die kein Actor ist.");
+                    $"'process'/'try process' on an instance of '{actor.ClassName}', which is not an actor.");
 
             if (!mailbox.TryProcessOne(blocking, out var message))
                 return false;
@@ -1349,7 +1349,7 @@ namespace fire.Runtime
                 var op = (OpCode)ReadByte();
                 if (op == OpCode.Halt)
                     throw new InvalidOperationException(
-                        "Unerwarteter Halt in verschachtelter Ausführung (z.B. während eines Destruktor-Aufrufs).");
+                        "Unexpected halt in nested execution (e.g. during a destructor call).");
                 Step(op);
 
                 // Wie Run() (siehe dort für die ausführliche Begründung) -
@@ -1662,7 +1662,7 @@ namespace fire.Runtime
                     var scope = _currentScope;
                     if (scope.HasOwned) { ExitScopeOwning(); return; } // Release kann Destruktoren ausführen - der ausführliche Weg
                     _currentScope = scope.Parent
-                        ?? throw new InvalidOperationException("ExitScope auf dem globalen Scope aufgerufen.");
+                        ?? throw new InvalidOperationException("ExitScope called on the global scope.");
                     if (scope.CanRecycle) ReturnScopeToPool(scope);
                     return;
                 }
@@ -1787,7 +1787,7 @@ namespace fire.Runtime
             var scope = _currentScope;
             scope.Release(this);
             _currentScope = scope.Parent
-                ?? throw new InvalidOperationException("ExitScope auf dem globalen Scope aufgerufen.");
+                ?? throw new InvalidOperationException("ExitScope called on the global scope.");
             if (scope.CanRecycle) ReturnScopeToPool(scope);
         }
 
@@ -1812,7 +1812,7 @@ namespace fire.Runtime
                 var arr = target.AsArray();
                 if (arr.IsShared && _threadBroker != null && _sectionDepth == 0)
                     throw new InvalidOperationException(
-                        "'++'/'--' auf ein Array-Element der Globals ist in einem Fire-Thread nur innerhalb von 'sync global { ... }' möglich (Lesen und Schreiben müssen zusammen geschehen).");
+                        "'++'/'--' on an array element of the globals is only possible in a fire thread inside 'sync global { ... }' (reading and writing must happen together).");
                 if (!arr.TryGet(idx, out var oldVal))
                 {
                     ThrowIndexOutOfBounds(idx, arr.Length);
@@ -1837,7 +1837,7 @@ namespace fire.Runtime
             else
             {
                 throw new InvalidOperationException(
-                    $"'++'/'--' auf einem Index-Ziel erwartet ein Array oder einen Byte-Puffer, nicht {target.Kind}.");
+                    $"'++'/'--' on an index target expects an array or a byte buffer, not {target.Kind}.");
             }
             return;
         }
@@ -1982,7 +1982,7 @@ namespace fire.Runtime
 
             if (calleeVal.Kind != ValueKind.Lambda)
                 throw new InvalidOperationException(
-                    $"Aufruf eines Werts vom Typ {calleeVal.Kind}, der kein Lambda ist.");
+                    $"Call of a value of type {calleeVal.Kind} which is not a lambda.");
 
             var lambda = (LambdaValue)calleeVal.AsLambda();
             CheckArity(lambda.Proto, args.Length);
@@ -2167,7 +2167,7 @@ namespace fire.Runtime
                 && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
             {
                 ThrowAccessDenied(
-                    $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorProto.Access ?? AccessModifier.Public)} und von hier aus nicht aufrufbar.");
+                    $"Constructor of '{rc.Name}' is {DescribeAccess(ctorProto.Access ?? AccessModifier.Public)} and cannot be called from here.");
                 return;
             }
 
@@ -2189,7 +2189,7 @@ namespace fire.Runtime
             int copyMask = TakeCopyMask();
             var args = new Value[argCount];
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-            var owner = RequireObjectInstance(Pop(), "Objekt-Erzeugung mit Owner");
+            var owner = RequireObjectInstance(Pop(), "Object creation with owner");
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
             var ctorProto = rc.FindConstructor(args.Length)
@@ -2198,7 +2198,7 @@ namespace fire.Runtime
                 && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
             {
                 ThrowAccessDenied(
-                    $"Konstruktor von '{rc.Name}' ist {DescribeAccess(ctorProto.Access ?? AccessModifier.Public)} und von hier aus nicht aufrufbar.");
+                    $"Constructor of '{rc.Name}' is {DescribeAccess(ctorProto.Access ?? AccessModifier.Public)} and cannot be called from here.");
                 return;
             }
 
@@ -2281,7 +2281,7 @@ namespace fire.Runtime
                     Push(Value.MakeInt(target.AsString().Length));
                     return true;
                 }
-                throw new InvalidOperationException($"Zeichenketten haben kein Feld '{fieldName}' (nur 'Length').");
+                throw new InvalidOperationException($"Strings have no field '{fieldName}' (only 'Length').");
             }
 
             if (target.Kind == ValueKind.Array)
@@ -2291,7 +2291,7 @@ namespace fire.Runtime
                     Push(Value.MakeInt(target.AsArray().Length));
                     return true;
                 }
-                throw new InvalidOperationException($"Arrays haben kein Feld '{fieldName}' (nur 'Length').");
+                throw new InvalidOperationException($"Arrays have no field '{fieldName}' (only 'Length').");
             }
 
             if (target.Kind == ValueKind.Buffer)
@@ -2308,7 +2308,7 @@ namespace fire.Runtime
                     return true;
                 }
                 throw new InvalidOperationException(
-                    $"Byte-Puffer haben kein Feld '{fieldName}' (nur 'Length', 'littleEndian').");
+                    $"Byte buffers have no field '{fieldName}' (only 'Length', 'littleEndian').");
             }
 
             var obj = RequireObjectInstance(target, "Feldzugriff");
@@ -2321,8 +2321,8 @@ namespace fire.Runtime
                     if (fieldAccess is (var declaringRcGet, var accessGet) && !IsMemberAccessAllowed(declaringRcGet, accessGet))
                     {
                         ThrowAccessDenied(
-                            $"Feld '{fieldName}' von '{declaringRcGet.Name}' ist {DescribeAccess(accessGet)} " +
-                            "und von hier aus nicht zugreifbar.");
+                            $"Field '{fieldName}' of '{declaringRcGet.Name}' is {DescribeAccess(accessGet)} " +
+                            "and cannot be accessed from here.");
                         return false;
                     }
                 }
@@ -2345,8 +2345,8 @@ namespace fire.Runtime
             }
 
             throw new InvalidOperationException(
-                $"Feld '{fieldName}' existiert nicht auf einer Instanz von '{obj.ClassName}' " +
-                $"(auch keine 'get_{fieldName}'-Property).");
+                $"Field '{fieldName}' does not exist on an instance of '{obj.ClassName}' " +
+                $"(and there is no 'get_{fieldName}' property either).");
         }
         }
 
@@ -2417,8 +2417,8 @@ namespace fire.Runtime
                     if (fieldAccess is (var declaringRcSet, var accessSet) && !IsMemberAccessAllowed(declaringRcSet, accessSet))
                     {
                         ThrowAccessDenied(
-                            $"Feld '{fieldName}' von '{declaringRcSet.Name}' ist {DescribeAccess(accessSet)} " +
-                            "und von hier aus nicht zugreifbar.");
+                            $"Field '{fieldName}' of '{declaringRcSet.Name}' is {DescribeAccess(accessSet)} " +
+                            "and cannot be accessed from here.");
                         return false;
                     }
 
@@ -2473,7 +2473,7 @@ namespace fire.Runtime
             // prüft).
             if (rcSet.FindMethod("get_" + fieldName, 0) != null)
                 throw new InvalidOperationException(
-                    $"Property '{fieldName}' auf '{obj.ClassName}' hat keinen Setter (nur 'get').");
+                    $"Property '{fieldName}' on '{obj.ClassName}' has no setter (only 'get').");
 
             // Weder existierendes Feld noch Property - wie bisher:
             // neues Feld einfach anlegen (dynamische Sprache, keine
@@ -2488,10 +2488,10 @@ namespace fire.Runtime
         {
             Push(_currentThis switch
             {
-                null => throw new InvalidOperationException("'this' ist an dieser Stelle nicht gebunden."),
+                null => throw new InvalidOperationException("'this' is not bound at this point."),
                 ObjectInstance oi => Value.MakeClassRef(oi),
                 Value v => v,
-                _ => throw new InvalidOperationException("Unerwarteter 'this'-Wert."),
+                _ => throw new InvalidOperationException("Unexpected 'this' value."),
             });
             return;
         }
@@ -2519,7 +2519,7 @@ namespace fire.Runtime
             string fieldName = _constants[fieldNameIdx].AsString();
             var value = Pop();
             if (_currentThis is not ObjectInstance oi)
-                throw new InvalidOperationException("SetFieldOnThis ohne gebundene ObjectInstance als 'this'.");
+                throw new InvalidOperationException("SetFieldOnThis without a bound ObjectInstance as 'this'.");
 
             // SPEC "Einheiten-Deklarationen" - dieselbe Prüfung wie in
             // SetField (siehe dort für die Begründung, warum das zur
@@ -2636,8 +2636,8 @@ namespace fire.Runtime
                         if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(extDeclaringRc!, extAccess))
                         {
                             ThrowAccessDenied(
-                                $"Methode '{methodName}' der Erweiterung von '{extensionRc.Name.Substring(1)}' ist " +
-                                $"{DescribeAccess(extAccess)} und von hier aus nicht aufrufbar.");
+                                $"Method '{methodName}' of the extension of '{extensionRc.Name.Substring(1)}' is " +
+                                $"{DescribeAccess(extAccess)} and cannot be called from here.");
                             return;
                         }
                         CheckArity(extProto, args.Length);
@@ -2663,8 +2663,8 @@ namespace fire.Runtime
                     return;
                 }
                 throw new InvalidOperationException(
-                    $"'{methodName}' ({args.Length} Argument(e)) ist keine bekannte eingebaute Methode " +
-                    $"auf einem Wert vom Typ {target.Kind}.");
+                    $"'{methodName}' ({args.Length} argument(s)) is not a known built-in method " +
+                    $"on a value of type {target.Kind}.");
             }
 
             var obj = (ObjectInstance)target.AsObjectRef();
@@ -2706,8 +2706,8 @@ namespace fire.Runtime
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
             {
                 ThrowAccessDenied(
-                    $"Methode '{methodName}' von '{declaringRcCall!.Name}' ist {DescribeAccess(accessCall)} " +
-                    "und von hier aus nicht aufrufbar.");
+                    $"Method '{methodName}' of '{declaringRcCall!.Name}' is {DescribeAccess(accessCall)} " +
+                    "and cannot be called from here.");
                 return;
             }
             CheckArity(proto, args.Length);
@@ -2771,8 +2771,8 @@ namespace fire.Runtime
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcBase!, accessBase))
             {
                 ThrowAccessDenied(
-                    $"Methode '{methodName}' von '{declaringRcBase!.Name}' ist {DescribeAccess(accessBase)} " +
-                    "und von hier aus nicht aufrufbar.");
+                    $"Method '{methodName}' of '{declaringRcBase!.Name}' is {DescribeAccess(accessBase)} " +
+                    "and cannot be called from here.");
                 return;
             }
             CheckArity(proto, args.Length);
@@ -2818,8 +2818,8 @@ namespace fire.Runtime
                     return;
                 }
                 throw new InvalidOperationException(
-                    $"'{className}' hat kein statisches Feld '{fieldName}' (auch keine statische " +
-                    $"'get_{fieldName}'-Property).");
+                    $"'{className}' has no static field '{fieldName}' (and no static " +
+                    $"'get_{fieldName}' property).");
             }
 
             if (ExecutionMode != VmExecutionMode.Performance)
@@ -2828,8 +2828,8 @@ namespace fire.Runtime
                 if (fieldAccess is (var declaringRc, var access) && !IsMemberAccessAllowed(declaringRc, access))
                 {
                     ThrowAccessDenied(
-                        $"Statisches Feld '{fieldName}' von '{declaringRc.Name}' ist {DescribeAccess(access)} " +
-                        "und von hier aus nicht zugreifbar.");
+                        $"Static field '{fieldName}' of '{declaringRc.Name}' is {DescribeAccess(access)} " +
+                        "and cannot be accessed from here.");
                     return;
                 }
             }
@@ -2878,8 +2878,8 @@ namespace fire.Runtime
                     return;
                 }
                 throw new InvalidOperationException(
-                    $"'{setClassName}' hat kein statisches Feld '{setFieldName}' (auch keine statische " +
-                    $"'set_{setFieldName}'-Property).");
+                    $"'{setClassName}' has no static field '{setFieldName}' (and no static " +
+                    $"'set_{setFieldName}' property).");
             }
 
             if (ExecutionMode != VmExecutionMode.Performance)
@@ -2888,8 +2888,8 @@ namespace fire.Runtime
                 if (fieldAccess is (var declaringRc, var access) && !IsMemberAccessAllowed(declaringRc, access))
                 {
                     ThrowAccessDenied(
-                        $"Statisches Feld '{setFieldName}' von '{declaringRc.Name}' ist {DescribeAccess(access)} " +
-                        "und von hier aus nicht zugreifbar.");
+                        $"Static field '{setFieldName}' of '{declaringRc.Name}' is {DescribeAccess(access)} " +
+                        "and cannot be accessed from here.");
                     return;
                 }
 
@@ -2968,13 +2968,13 @@ namespace fire.Runtime
                 throw new InvalidOperationException(DescribeMethodNotFound(callRc, callMethodName, callArgs.Length));
             if (!callProto.IsStatic)
                 throw new InvalidOperationException(
-                    $"'{callMethodName}' auf '{callClassName}' ist keine statische Methode - " +
-                    $"über 'ClassName.{callMethodName}(...)' nur für 'static'-Methoden aufrufbar.");
+                    $"'{callMethodName}' on '{callClassName}' is not a static method - " +
+                    $"'ClassName.{callMethodName}(...)' can only be used to call 'static' methods.");
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
             {
                 ThrowAccessDenied(
-                    $"Statische Methode '{callMethodName}' von '{declaringRcCall!.Name}' ist " +
-                    $"{DescribeAccess(accessCall)} und von hier aus nicht aufrufbar.");
+                    $"Static method '{callMethodName}' of '{declaringRcCall!.Name}' is " +
+                    $"{DescribeAccess(accessCall)} and cannot be called from here.");
                 return;
             }
             CheckArity(callProto, callArgs.Length);
@@ -3042,7 +3042,7 @@ namespace fire.Runtime
         {
             long size = Pop().AsInt();
             if (size < 0)
-                throw new InvalidOperationException($"Ungültige Array-Größe {size}.");
+                throw new InvalidOperationException($"Invalid array size {size}.");
             Push(Value.MakeArray(new ScriptArray((int)size)));
             return;
         }
@@ -3149,7 +3149,7 @@ namespace fire.Runtime
                 if (idx >= 0 && idx < text.Length)
                     Push(Value.MakeChar(text[(int)idx]));
                 else
-                    ThrowIndexOutOfBounds(idx, text.Length, "String-Index");
+                    ThrowIndexOutOfBounds(idx, text.Length, "String index");
             }
             else if (target.Kind == ValueKind.Class)
             {
@@ -3168,8 +3168,8 @@ namespace fire.Runtime
             else
             {
                 throw new InvalidOperationException(
-                    $"Index-Zugriff ('[]') auf einem Wert vom Typ {target.Kind} nicht möglich " +
-                    "(weder Array noch eine Klasse mit 'GetIndex'-Methode).");
+                    $"Index access ('[]') on a value of type {target.Kind} is not possible " +
+                    "(neither an array nor a class with a 'GetIndex' method).");
             }
             return;
         }
@@ -3234,7 +3234,7 @@ namespace fire.Runtime
             {
                 if (value.Kind != ValueKind.Int)
                     throw new InvalidOperationException(
-                        $"Byte-Puffer-Zuweisung erwartet einen int-Wert (byte = int[8]), nicht {value.Kind}.");
+                        $"Assigning to a byte buffer expects an int value (byte = int[8]), not {value.Kind}.");
                 if (ExecutionMode == VmExecutionMode.Performance)
                 {
                     target.AsBuffer().SetUnchecked(indexVal.AsInt(), (byte)value.AsInt());
@@ -3261,14 +3261,14 @@ namespace fire.Runtime
             else if (target.Kind == ValueKind.String)
             {
                 throw new InvalidOperationException(
-                    "Zeichenketten sind unveränderlich - 's[i] = ...' ist nicht möglich " +
-                    "(Replace/Substring liefern eine neue Zeichenkette).");
+                    "Strings are immutable - 's[i] = ...' is not possible " +
+                    "(Replace/Substring return a new string).");
             }
             else
             {
                 throw new InvalidOperationException(
-                    $"Index-Zuweisung ('[]=') auf einem Wert vom Typ {target.Kind} nicht möglich " +
-                    "(weder Array noch eine Klasse mit 'SetIndex'-Methode).");
+                    $"Index assignment ('[]=') on a value of type {target.Kind} is not possible " +
+                    "(neither an array nor a class with a 'SetIndex' method).");
             }
             return;
         }
@@ -3508,9 +3508,9 @@ namespace fire.Runtime
                         else
                         {
                             throw new InvalidOperationException(
-                                $"'{externName}' ist extern deklariert, aber weder manuell verlinkt " +
-                                "(ExternRegistry.Register beim Host) noch per '#extern \"libName\"' einer " +
-                                "nativen Bibliothek zugeordnet.");
+                                $"'{externName}' is declared extern, but neither linked manually " +
+                                "(ExternRegistry.Register in the host) nor assigned to a " +
+                                "native library with '#extern \"libName\"'.");
                         }
                     }
                     finally
@@ -3585,7 +3585,7 @@ namespace fire.Runtime
                     // Direkt einem Feld zugewiesen: die Kopie gehört dem Zielobjekt (wie NewObjectOwned).
                     bool deep = (ReadByte() & 1) != 0;
                     var source = Pop();
-                    var owner = RequireObjectInstance(Pop(), "Kopie mit Owner");
+                    var owner = RequireObjectInstance(Pop(), "Copy with owner");
                     Push(ObjectCloner.CloneOwnedBy(source, owner, deep, this));
                     break;
                 }
@@ -3642,7 +3642,7 @@ namespace fire.Runtime
                     var initOwner = initRc.FindStaticFieldOwner(initFieldName);
 
                     if (initOwner == null)
-                        throw new InvalidOperationException($"'{initClassName}' hat kein statisches Feld '{initFieldName}'.");
+                        throw new InvalidOperationException($"'{initClassName}' has no static field '{initFieldName}'.");
 
                     if (ExecutionMode != VmExecutionMode.Performance)
                     {
@@ -3682,7 +3682,7 @@ namespace fire.Runtime
                 {
                     int slot = ReadU16();
                     if (slot < _sharedCount)
-                        throw new InvalidOperationException("Ein Fire-Thread kann keinen Zeiger auf eine globale Variable des Hauptprogramms nehmen ('&').");
+                        throw new InvalidOperationException("A fire thread cannot take a pointer to a global variable of the main program ('&').");
                     Push(Value.MakePointer(new ScopeSlotPointerTarget(_globalScope, slot)));
                     break;
                 }
@@ -3690,7 +3690,7 @@ namespace fire.Runtime
                 case OpCode.AddressOfField:
                 {
                     string fieldName = _constants[ReadU16()].AsString();
-                    var obj = RequireObjectInstance(Pop(), "Address-of auf Feld");
+                    var obj = RequireObjectInstance(Pop(), "Address-of on field");
                     Push(Value.MakePointer(new FieldPointerTarget(obj, fieldName)));
                     break;
                 }
@@ -3723,7 +3723,7 @@ namespace fire.Runtime
                 {
                     long size = Pop().AsInt();
                     if (size < 0)
-                        throw new InvalidOperationException($"Ungültige Byte-Puffer-Größe {size} (muss >= 0 sein).");
+                        throw new InvalidOperationException($"Invalid byte buffer size {size} (must be >= 0).");
                     Push(Value.MakeBuffer(new ByteBuffer((int)size, ByteConversions.HostByteOrder)));
                     break;
                 }
@@ -3819,7 +3819,7 @@ namespace fire.Runtime
                     var ownerVal = Pop();
                     var operandVal = Pop();
                     var operandObj = RequireObjectInstance(operandVal, "'is from'/'is under'");
-                    var ownerObj = RequireObjectInstance(ownerVal, "'is from'/'is under' (Owner-Ausdruck)");
+                    var ownerObj = RequireObjectInstance(ownerVal, "'is from'/'is under' (owner expression)");
                     bool result = transitive
                         ? operandObj.IsTransitivelyOwnedBy(ownerObj)
                         : operandObj.IsOwnedBy(ownerObj);
@@ -3835,8 +3835,8 @@ namespace fire.Runtime
 
                     if (!_pendingResumes.TryGetValue(excInstance, out var pending))
                         throw new InvalidOperationException(
-                            "resume() aufgerufen, aber diese Exception wird gerade nicht behandelt " +
-                            "(entweder schon fortgesetzt, oder kein aktiver catch dafür).");
+                            "resume() was called, but this exception is not being handled right now " +
+                            "(either it was already resumed, or there is no active catch for it).");
 
                     _pendingResumes.Remove(excInstance);
 
@@ -3897,12 +3897,12 @@ namespace fire.Runtime
                     var v = Peek();
                     if (v.Kind != ValueKind.Lambda)
                         throw new InvalidOperationException(
-                            $"Erwarte einen Lambda-Wert (Typ 'lambda'), erhalten: {v.Kind}.");
+                            $"Expected a lambda value (type 'lambda'), got: {v.Kind}.");
                     var lambdaVal = (LambdaValue)v.AsLambda();
                     if (lambdaVal.Proto.ParamCount != expectedParamCount)
                         throw new InvalidOperationException(
-                            $"Lambda-Signatur passt nicht: erwartet {expectedParamCount} Parameter, " +
-                            $"das Lambda hat {lambdaVal.Proto.ParamCount}.");
+                            $"Lambda signature does not match: expected {expectedParamCount} parameters, " +
+                            $"the lambda has {lambdaVal.Proto.ParamCount}.");
                     break;
                 }
 
@@ -4091,7 +4091,7 @@ namespace fire.Runtime
                 }
 
                 default:
-                    throw new InvalidOperationException($"Unbekannter Opcode {op}");
+                    throw new InvalidOperationException($"Unknown opcode {op}");
             }
         }
 
@@ -4160,7 +4160,7 @@ namespace fire.Runtime
                     }
                     default:
                         throw new InvalidOperationException(
-                            $"Werte vom Typ {v.Kind} können nicht an eine extern-Funktion übergeben werden.");
+                            $"Values of type {v.Kind} cannot be passed to an extern function.");
                 }
             }
 
@@ -4182,8 +4182,8 @@ namespace fire.Runtime
             char c => Value.MakeChar(c),
             string s => Value.MakeString(s),
             _ => throw new InvalidOperationException(
-                $"Rückgabewert vom nativen Typ {nativeResult.GetType().Name} kann nicht in einen Skript-Wert " +
-                "umgewandelt werden (unterstützt: bool/int/float/char/string)."),
+                $"A return value of the native type {nativeResult.GetType().Name} cannot be converted to a script value " +
+                "(supported: bool/int/float/char/string)."),
         };
 
         // -----------------------------------------------------------
@@ -4254,8 +4254,8 @@ namespace fire.Runtime
                 catch (Exception ex)
                 {
                     throw new InvalidOperationException(
-                        $"Native Bibliothek '{libName}' konnte nicht geladen werden (für extern '{externName}', " +
-                        $"per '#extern \"{libName}\"' deklariert): {ex.Message}", ex);
+                        $"Native library '{libName}' could not be loaded (for extern '{externName}', " +
+                        $"declared with '#extern \"{libName}\"'): {ex.Message}", ex);
                 }
                 _loadedNativeLibraries[libName] = libHandle;
             }
@@ -4268,7 +4268,7 @@ namespace fire.Runtime
             catch (Exception ex)
             {
                 throw new InvalidOperationException(
-                    $"Funktion '{externName}' wurde in '{libName}' nicht gefunden: {ex.Message}", ex);
+                    $"Function '{externName}' was not found in '{libName}': {ex.Message}", ex);
             }
 
             var paramClrTypes = sig.ParamTypes.Select(t => MapExternClrType(t, externName)).ToArray();
@@ -4283,7 +4283,7 @@ namespace fire.Runtime
             catch (Exception ex)
             {
                 throw new InvalidOperationException(
-                    $"Konnte für extern '{externName}' aus '{libName}' keinen aufrufbaren Delegate bauen: {ex.Message}", ex);
+                    $"Could not build a callable delegate for extern '{externName}' from '{libName}': {ex.Message}", ex);
             }
 
             _dynamicExternDelegates[externName] = del;
@@ -4341,8 +4341,8 @@ namespace fire.Runtime
         {
             if (t == null)
                 throw new InvalidOperationException(
-                    $"extern '{externName}': ein Parameter-/Rückgabetyp fehlt oder ist zu unspezifisch " +
-                    "für dynamisches Linking (bool/int/float/char/string oder ein Pointer-Typ nötig).");
+                    $"extern '{externName}': a parameter/return type is missing or too unspecific " +
+                    "for dynamic linking (bool/int/float/char/string or a pointer type is required).");
             if (t.PointerDepth > 0) return typeof(IntPtr);
             return t.BaseName switch
             {
@@ -4352,8 +4352,8 @@ namespace fire.Runtime
                 "char" => typeof(char),
                 "string" => typeof(string),
                 _ => throw new InvalidOperationException(
-                    $"extern '{externName}': Typ '{t.BaseName}' kann nicht dynamisch verlinkt werden " +
-                    "(unterstützt: bool/int/float/char/string/Pointer)."),
+                    $"extern '{externName}': type '{t.BaseName}' cannot be linked dynamically " +
+                    "(supported: bool/int/float/char/string/pointer)."),
             };
         }
 
@@ -4378,8 +4378,8 @@ namespace fire.Runtime
                     break;
                 default:
                     throw new InvalidOperationException(
-                        $"Ein Zeiger auf einen Wert vom Typ {v.Kind} kann nicht an eine extern-Funktion " +
-                        "marshalled werden (unterstützt: int/float/bool/char).");
+                        $"A pointer to a value of type {v.Kind} cannot be marshalled to an extern function " +
+                        "(supported: int/float/bool/char).");
             }
         }
 
@@ -4390,7 +4390,7 @@ namespace fire.Runtime
             ValueKind.Bool => Value.MakeBool(System.Runtime.InteropServices.Marshal.ReadByte(ptr) != 0),
             ValueKind.Char => Value.MakeChar((char)System.Runtime.InteropServices.Marshal.ReadInt32(ptr)),
             _ => throw new InvalidOperationException(
-                $"Nicht unterstützter Zeiger-Zieltyp {kind} beim Zurücklesen aus nativem Speicher."),
+                $"Unsupported pointer target type {kind} when reading back from native memory."),
         };
 
         private static double ReadNativeDouble(IntPtr ptr)
@@ -4652,7 +4652,7 @@ namespace fire.Runtime
                 {
                     _currentScope = _currentScope.Parent
                         ?? throw new InvalidOperationException(
-                            "Unwind über den globalen Scope hinaus (inkonsistenter Handler-Zustand).");
+                            "Unwind beyond the global scope (inconsistent handler state).");
                 }
             }
         }
@@ -4817,7 +4817,7 @@ namespace fire.Runtime
             if (_stopExecutionRequested)
                 throw UnhandledException != null
                     ? new UncaughtScriptException(UnhandledException)
-                    : new InvalidOperationException("Der Callback wurde vorzeitig beendet.");
+                    : new InvalidOperationException("The callback was terminated early.");
 
             return Pop();
         }
@@ -4828,7 +4828,7 @@ namespace fire.Runtime
             var (proto, declaringRcNested, accessNested) = rc.FindMethodWithAccess(methodName, args.Length);
             if (proto == null)
                 throw new InvalidOperationException(
-                    $"Methode '{methodName}' nicht gefunden auf '{rc.Name}' (für eine Property oder Operator-Überladung benötigt).");
+                    $"Method '{methodName}' not found on '{rc.Name}' (needed for a property or operator overload).");
             // Deckt sowohl Property-Zugriffe (get_X/set_X, siehe VM.GetField/
             // SetField) als auch Operator-Überladungen ab (siehe
             // Parser.ParseOperatorMember) - Operatoren bekommen nie einen
@@ -4837,8 +4837,8 @@ namespace fire.Runtime
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcNested!, accessNested))
             {
                 ThrowAccessDenied(
-                    $"'{methodName}' von '{declaringRcNested!.Name}' ist {DescribeAccess(accessNested)} " +
-                    "und von hier aus nicht zugreifbar.");
+                    $"'{methodName}' of '{declaringRcNested!.Name}' is {DescribeAccess(accessNested)} " +
+                    "and cannot be accessed from here.");
                 return null;
             }
             CheckArity(proto, args.Length);
@@ -4877,12 +4877,12 @@ namespace fire.Runtime
             var (proto, declaringRcNested, accessNested) = rc.FindMethodWithAccess(methodName, args.Length);
             if (proto == null)
                 throw new InvalidOperationException(
-                    $"Statische Methode '{methodName}' nicht gefunden auf '{rc.Name}' (für eine Property benötigt).");
+                    $"Static method '{methodName}' not found on '{rc.Name}' (needed for a property).");
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcNested!, accessNested))
             {
                 ThrowAccessDenied(
-                    $"'{methodName}' von '{declaringRcNested!.Name}' ist {DescribeAccess(accessNested)} " +
-                    "und von hier aus nicht zugreifbar.");
+                    $"'{methodName}' of '{declaringRcNested!.Name}' is {DescribeAccess(accessNested)} " +
+                    "and cannot be accessed from here.");
                 return null;
             }
             CheckArity(proto, args.Length);
@@ -4949,8 +4949,8 @@ namespace fire.Runtime
                 ReferenceEquals(_currentChunk, savedChunk) && _ip == savedIp && ReferenceEquals(_currentScope, savedScope);
             if (!completedNormally)
                 throw new InvalidOperationException(
-                    $"Interner Fehler: Konstruktion von '{rc.Name}' wurde durch eine Exception unterbrochen " +
-                    "(Exception während des Baus einer VM-internen Exception-Instanz).");
+                    $"Internal error: construction of '{rc.Name}' was interrupted by an exception " +
+                    "(exception while building a VM-internal exception instance).");
 
             Pop(); // Return am Ende des Konstruktors pusht 'instance' selbst (siehe BeginConstruction/frame.ConstructedInstance) - haben wir schon direkt, hier verwerfen
             return instance;
@@ -4990,10 +4990,10 @@ namespace fire.Runtime
         /// ScriptArray/ByteBuffer.TryGet/TrySet `false` liefert (bewusst kein
         /// throw/catch dort selbst - siehe ScriptArray-Doku, C++-Portier-
         /// barkeit).</summary>
-        private void ThrowIndexOutOfBounds(long index, int length, string what = "Array-Index")
+        private void ThrowIndexOutOfBounds(long index, int length, string what = "Array index")
         {
             var rc = ResolveClass("IndexOutOfBoundsException");
-            string msg = $"{what} {index} außerhalb des gültigen Bereichs (Länge {length}).";
+            string msg = $"{what} {index} out of range (length {length}).";
             var args = new[] { Value.MakeString(msg), Value.MakeInt(index), Value.MakeInt(length) };
             var instance = ConstructNested(rc, args);
             ThrowException(Value.MakeClassRef(instance));
@@ -5018,8 +5018,8 @@ namespace fire.Runtime
         private void ThrowUnitMismatch(string requiredUnitName, Values.Unit actualUnit)
         {
             var rc = ResolveClass("UnitMismatchException");
-            string actualDescription = actualUnit.IsUnitless ? "(keine Einheit)" : actualUnit.ToString();
-            string msg = $"Erwartete Einheit '{requiredUnitName}', erhalten: {actualDescription}.";
+            string actualDescription = actualUnit.IsUnitless ? "(no unit)" : actualUnit.ToString();
+            string msg = $"Expected unit '{requiredUnitName}', got: {actualDescription}.";
             var args = new[] { Value.MakeString(msg), Value.MakeString(requiredUnitName), Value.MakeString(actualDescription) };
             var instance = ConstructNested(rc, args);
             ThrowException(Value.MakeClassRef(instance));
@@ -5217,12 +5217,12 @@ namespace fire.Runtime
         private RuntimeClass ResolveClass(string name) =>
             _classes.TryGetValue(name, out var rc)
                 ? rc
-                : throw new InvalidOperationException($"Unbekannte Klasse '{name}' zur Laufzeit.");
+                : throw new InvalidOperationException($"Unknown class '{name}' at run time.");
 
         private static ObjectInstance RequireObjectInstance(Value v, string context)
         {
             if (v.Kind != ValueKind.Class)
-                throw new InvalidOperationException($"{context} auf einem Wert vom Typ {v.Kind}, der kein Objekt ist.");
+                throw new InvalidOperationException($"{context} on a value of type {v.Kind} which is not an object.");
             return (ObjectInstance)v.AsObjectRef();
         }
 
@@ -5231,9 +5231,9 @@ namespace fire.Runtime
             if (argCount == proto.ParamCount) return;
             if (argCount < proto.ParamCount && RuntimeClass.AllTrailingHaveDefaults(proto, argCount)) return;
             throw new InvalidOperationException(
-                $"Falsche Argumentanzahl: erwartet {proto.ParamCount}" +
-                (argCount < proto.ParamCount ? " (die fehlenden Parameter haben keinen Standardwert)" : "") +
-                $", erhalten {argCount}.");
+                $"Wrong number of arguments: expected {proto.ParamCount}" +
+                (argCount < proto.ParamCount ? " (the missing parameters have no default value)" : "") +
+                $", got {argCount}.");
         }
 
         /// <summary>Baut bei Bedarf das vollständige Argument-Array für einen
@@ -5256,8 +5256,8 @@ namespace fire.Runtime
                 var defaultProto = i < proto.ParamDefaults.Count ? proto.ParamDefaults[i] : null;
                 if (defaultProto == null)
                     throw new InvalidOperationException(
-                        $"Interner Fehler: Parameter {i} von Aufruf-Ziel hat keinen Standardwert " +
-                        "(CheckArity hätte das schon abfangen müssen).");
+                        $"Internal error: parameter {i} of the call target has no default value " +
+                        "(CheckArity should have caught this).");
                 result[i] = EvaluateDefaultNested(defaultProto, thisForDefaults);
             }
             return result;
@@ -5291,7 +5291,7 @@ namespace fire.Runtime
                 ReferenceEquals(_currentChunk, savedChunk) && _ip == savedIp && ReferenceEquals(_currentScope, savedScope);
             if (!completedNormally)
                 throw new InvalidOperationException(
-                    "Interner Fehler: Auswertung eines Standardwerts wurde durch eine Exception unterbrochen.");
+                    "Internal error: evaluating a default value was interrupted by an exception.");
 
             _currentThis = savedThis;
             return Pop();
@@ -5311,11 +5311,11 @@ namespace fire.Runtime
                     arities.AddRange(overloads.Select(p => p.ParamCount));
 
             if (arities.Count == 0)
-                return $"Methode '{methodName}' nicht gefunden auf '{rc.Name}'.";
+                return $"Method '{methodName}' not found on '{rc.Name}'.";
 
             var distinctArities = arities.Distinct().OrderBy(x => x);
-            return $"Methode '{methodName}' auf '{rc.Name}' hat keine Überladung mit {argCount} Argument(en) " +
-                   $"(vorhanden: {string.Join(", ", distinctArities)} Argument(e)).";
+            return $"Method '{methodName}' on '{rc.Name}' has no overload with {argCount} argument(s) " +
+                   $"(available: {string.Join(", ", distinctArities)} argument(s)).";
         }
 
         /// <summary>Analog zu DescribeMethodNotFound, für Konstruktoren (keine
@@ -5323,10 +5323,10 @@ namespace fire.Runtime
         private static string DescribeConstructorNotFound(RuntimeClass rc, int argCount)
         {
             if (rc.Constructors.Count == 0)
-                return $"Klasse '{rc.Name}' hat keinen Konstruktor."; // sollte nie vorkommen, immer mind. 1 synthetisiert
+                return $"Class '{rc.Name}' has no constructor."; // sollte nie vorkommen, immer mind. 1 synthetisiert
             var arities = rc.Constructors.Keys.OrderBy(x => x);
-            return $"Klasse '{rc.Name}' hat keinen Konstruktor mit {argCount} Argument(en) " +
-                   $"(vorhanden: {string.Join(", ", arities)} Argument(e)).";
+            return $"Class '{rc.Name}' has no constructor with {argCount} argument(s) " +
+                   $"(available: {string.Join(", ", arities)} argument(s)).";
         }
 
         private static ValueKind TagToKind(TypeTag tag) => tag switch
@@ -5336,7 +5336,7 @@ namespace fire.Runtime
             TypeTag.Float => ValueKind.Float,
             TypeTag.Char => ValueKind.Char,
             TypeTag.String => ValueKind.String,
-            _ => throw new InvalidOperationException($"Unbekannter TypeTag {tag}"),
+            _ => throw new InvalidOperationException($"Unknown TypeTag {tag}"),
         };
 
         /// <summary>Verpackt einen 'on'-Zielwert für LambdaValue.OnTarget. Bei

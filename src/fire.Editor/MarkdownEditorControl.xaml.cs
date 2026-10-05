@@ -80,11 +80,11 @@ namespace fire.Editor
             EditorTheme.Apply(Editor, _searchPanel);
             Editor.ContextMenu = EditorCommands.BuildMenu(new List<EditorCommands.Entry?>
             {
-                new() { Header = "_Fett", Gesture = "Strg+B", Execute = () => Wrap("**"), Enabled = CanFormat },
-                new() { Header = "_Kursiv", Gesture = "Strg+I", Execute = () => Wrap("*"), Enabled = CanFormat },
-                new() { Header = "_Code", Gesture = "Strg+E", Execute = () => Wrap("`"), Enabled = CanFormat },
-                new() { Header = "_Link", Gesture = "Strg+K", Execute = InsertLink, Enabled = CanFormat },
-                new() { Header = "_Überschrift (Ebene wechseln)", Gesture = "Strg+H", Execute = CycleHeading, Enabled = CanFormat },
+                new() { Header = "_Bold", Gesture = "Ctrl+B", Execute = () => Wrap("**"), Enabled = CanFormat },
+                new() { Header = "_Italic", Gesture = "Ctrl+I", Execute = () => Wrap("*"), Enabled = CanFormat },
+                new() { Header = "_Code", Gesture = "Ctrl+E", Execute = () => Wrap("`"), Enabled = CanFormat },
+                new() { Header = "_Link", Gesture = "Ctrl+K", Execute = InsertLink, Enabled = CanFormat },
+                new() { Header = "_Heading (change level)", Gesture = "Ctrl+H", Execute = CycleHeading, Enabled = CanFormat },
                 null,
             }.Concat(EditorCommands.StandardEntries(Editor, Find)).ToList());
 
@@ -513,7 +513,7 @@ namespace fire.Editor
 
         private void InsertTable()
         {
-            const string table = "| Spalte 1 | Spalte 2 |\n|----------|----------|\n|          |          |\n";
+            const string table = "| Column 1 | Column 2 |\n|----------|----------|\n|          |          |\n";
             var doc = Editor.Document;
             var line = doc.GetLineByOffset(Editor.CaretOffset);
             string pre = Editor.CaretOffset == line.Offset ? "" : "\n";

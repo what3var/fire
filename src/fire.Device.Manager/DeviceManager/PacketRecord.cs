@@ -54,16 +54,16 @@ namespace fire.Device.Manager.DeviceManager
                 if (line.Trim().Length == 0 || line.StartsWith('#')) continue;
 
                 var cols = line.Split('\t');
-                if (cols.Length < 3) throw new FormatException($"Zeile {lineNo}: erwartet Zeit, Richtung, Gerät und Inhalt (durch Tabulator getrennt).");
+                if (cols.Length < 3) throw new FormatException($"Line {lineNo}: expected time, direction, device and content (separated by tabs).");
 
                 if (!DateTime.TryParse(cols[0], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var time))
-                    throw new FormatException($"Zeile {lineNo}: ungültiger Zeitstempel '{cols[0]}'.");
+                    throw new FormatException($"Line {lineNo}: invalid timestamp '{cols[0]}'.");
 
                 PacketDirection direction = cols[1].Trim().ToUpperInvariant() switch
                 {
                     "H2D" => PacketDirection.HostToDevice,
                     "D2H" => PacketDirection.DeviceToHost,
-                    _ => throw new FormatException($"Zeile {lineNo}: unbekannte Richtung '{cols[1]}' (erwartet H2D oder D2H)."),
+                    _ => throw new FormatException($"Line {lineNo}: unknown direction '{cols[1]}' (expected H2D or D2H)."),
                 };
 
                 byte[] data;
@@ -75,7 +75,7 @@ namespace fire.Device.Manager.DeviceManager
                 }
                 catch (FormatException)
                 {
-                    throw new FormatException($"Zeile {lineNo}: ungültiger Inhalt (erwartet Hexbytes wie '48 65 6C').");
+                    throw new FormatException($"Line {lineNo}: invalid content (expected hex bytes like '48 65 6C').");
                 }
 
                 result.Add(new PacketRecord(time.ToUniversalTime(), cols[2], direction, data));

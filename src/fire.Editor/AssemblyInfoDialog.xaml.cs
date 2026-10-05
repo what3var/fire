@@ -55,7 +55,7 @@ namespace fire.Editor
 
         private void Load_Click(object sender, RoutedEventArgs e)
         {
-            var dlg = new OpenFileDialog { Filter = "Icons (*.ico)|*.ico|Alle Dateien (*.*)|*.*" };
+            var dlg = new OpenFileDialog { Filter = "Icons (*.ico)|*.ico|All files (*.*)|*.*" };
             if (dlg.ShowDialog() != true) return;
 
             if (this.DataContext is AssemblyInfo info)
