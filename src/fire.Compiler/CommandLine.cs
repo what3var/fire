@@ -21,6 +21,8 @@ namespace fire.Compiler
         public VmExecutionMode? Mode { get; init; }
         /// <summary>`-f`: Genauigkeit von `float` (32 oder 64); null = der im Skript (`#floatwidth`) bzw. 64.</summary>
         public int? FloatWidth { get; init; }
+        /// <summary>`-t`: Zielprofil von `native` (siehe TargetProfile); null = der Rechner, auf dem der Compiler läuft.</summary>
+        public TargetProfile? Target { get; init; }
         /// <summary>`-o`: Ausgabedatei von `build` (bzw. die C++-Datei von `native`).</summary>
         public string OutputFile { get; init; } = CommandLineParser.DefaultOutputFile;
         /// <summary>Gesetzt, wenn die Befehlszeile ungültig ist (Meldung für den Nutzer).</summary>
@@ -50,13 +52,15 @@ namespace fire.Compiler
             Usage:
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64]
               fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64]
-              fire.Compiler native <file>... [-o <target.cpp>] [-f 32|64]
+              fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64]
 
             run     compiles the files into one program and runs it.
             build   turns them into a self-contained executable (default: out.exe).
             -m      Execution mode (default: whatever the script sets with #debug/#performance, otherwise RELEASE).
             native  translates the files into C++ (written next to fire_rt.hpp, the runtime it includes; default: out.cpp)
                     - an experimental ahead-of-time backend, see docs/NATIVE_BACKEND.md.
+            -t      Target of native: windows, linux, macos or esp32 (default: this machine). The target decides the default
+                    precision of float, which libraries can be imported and how the program starts.
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
             -o      Name of the file produced by build or native.
 
@@ -81,6 +85,7 @@ namespace fire.Compiler
             var files = new List<string>();
             VmExecutionMode? mode = null;
             int? floatWidth = null;
+            TargetProfile? target = null;
             string? output = null;
 
             for (int i = 1; i < args.Count; i++)
@@ -94,6 +99,15 @@ namespace fire.Compiler
                     if (!TryParseMode(Unquote(value), out var parsed))
                         return Fail(command, $"Unknown mode '{value}' (allowed: DEBUG, RELEASE, PERFORMANCE).");
                     mode = parsed;
+                }
+                else if (TryOption(arg, "-t", "--target", out var targetInline))
+                {
+                    if (command != CommandKind.Native) return Fail(command, "-t is only available with native.");
+                    string? value = targetInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    if (value == null) return Fail(command, "-t must be followed by the target name.");
+                    if (!TargetProfile.TryGet(Unquote(value), out var found))
+                        return Fail(command, $"Unknown target '{value}' (allowed: {string.Join(", ", TargetProfile.All.Select(p => p.Name))}).");
+                    target = found;
                 }
                 else if (TryOption(arg, "-f", "--float", out var floatInline))
                 {
@@ -130,6 +144,7 @@ namespace fire.Compiler
                 Files = files,
                 Mode = mode,
                 FloatWidth = floatWidth,
+                Target = target,
                 OutputFile = output ?? (command == CommandKind.Native ? DefaultNativeOutputFile : DefaultOutputFile),
             };
         }
@@ -241,12 +256,15 @@ namespace fire.Compiler
         {
             try
             {
-                var linked = new Linker().CompileAndLink(sources, null, null, options.Mode, options.FloatWidth);
-                string cpp = fire.Native.CppGenerator.Generate(linked);
+                var target = options.Target ?? TargetProfile.Host;
+                var linked = new Linker().CompileAndLink(sources, null, null, options.Mode, options.FloatWidth, target);
+                string cpp = fire.Native.CppGenerator.Generate(linked, target);
                 string full = Path.GetFullPath(options.OutputFile);
                 File.WriteAllText(full, cpp);
                 fire.Native.NativeRuntimeFiles.WriteTo(Path.GetDirectoryName(full)!);
-                stdout.WriteLine($"{full} ({cpp.Length} characters) - compile with: c++ -std=c++17 -O2 \"{full}\" -o program");
+                stdout.WriteLine(target.IsEmbedded
+                    ? $"{full} ({cpp.Length} characters) for {target.Name} - add it and fire_rt.hpp to a component of your project (the entry point is app_main)"
+                    : $"{full} ({cpp.Length} characters) - compile with: c++ -std=c++17 -O2 \"{full}\" -o program");
             }
             catch (Exception ex) when (IsCompileError(ex))
             {

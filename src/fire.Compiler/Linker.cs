@@ -148,10 +148,12 @@ namespace fire.Compiler
             throw new Exception("The 'floatwidth' directive expects 32 or 64.");
         }
 
-        /// <param name="floatWidthOverride">32 or 64: precision of `float` for this build (command line, target); overrides `#floatwidth`.</param>
-        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string? outname = null, VmExecutionMode? executionModeOverride = null, int? floatWidthOverride = null)
+        /// <param name="floatWidthOverride">32 or 64: precision of `float` for this build (command line); overrides `#floatwidth` and the target.</param>
+        /// <param name="target">The target the program is built for: its `#import` libraries are checked and its float precision is the
+        /// default (`#floatwidth` and <paramref name="floatWidthOverride"/> win). Null = no restriction, 64 bits.</param>
+        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string? outname = null, VmExecutionMode? executionModeOverride = null, int? floatWidthOverride = null, TargetProfile? target = null)
         {
-            int directiveFloatWidth = 64;
+            int? directiveFloatWidth = null;
             var assemblyInfo = new AssemblyInfo();
             var natives = new NativeRegistry();
             var nativeImports = new HashSet<string>();
@@ -298,7 +300,11 @@ namespace fire.Compiler
             var resolveResult = Resolver.Resolve(program, natives.Names);
             var compiled = Compiler.Compile(program, resolveResult, natives);
 
-            int floatWidth = floatWidthOverride ?? directiveFloatWidth;
+            if (target != null)
+                foreach (var import in nativeImports)
+                    if (!target.HasImport(import))
+                        throw new NotSupportedException($"The library '{import}' is not available on the target '{target.Name}' (available: {string.Join(", ", target.Imports!)}).");
+            int floatWidth = floatWidthOverride ?? directiveFloatWidth ?? target?.FloatWidth ?? 64;
             if (floatWidth != 32 && floatWidth != 64) throw new ArgumentOutOfRangeException(nameof(floatWidthOverride), "The float width must be 32 or 64.");
             if (floatWidth == 32) FloatNarrowing.Apply(compiled);
 

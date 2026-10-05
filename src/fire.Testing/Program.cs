@@ -11368,6 +11368,35 @@ static int CountOccurrences(string haystack, string needle)
         var narrowed = new Linker().CompileAndLink(new[] { "var x = 0.1\nprint(x)" }, null, null, null, floatWidthOverride: 32);
         CheckNat("Konstanten werden auf 32 Bit gerundet", narrowed.Program.TopLevel.Constants.Any(c => c.Kind == ValueKind.Float && c.AsFloat() == (double)0.1f));
 
+        // Zielprofil
+        var esp = TargetProfile.Esp32;
+        var espLinked = new Linker().CompileAndLink(new[] { "print(0.1 + 0.2)" }, null, null, null, null, esp);
+        CheckNat("Zielprofil esp32: float ist 32 Bit, wenn nichts anderes gesagt wird", espLinked.FloatWidth == 32);
+        CheckNat("Zielprofil: #floatwidth gewinnt gegen das Ziel, -f gegen beides",
+            new Linker().CompileAndLink(new[] { "#floatwidth 64\nprint(1)" }, null, null, null, null, esp).FloatWidth == 64
+            && new Linker().CompileAndLink(new[] { "#floatwidth 64\nprint(1)" }, null, null, null, 32, TargetProfile.Windows).FloatWidth == 32
+            && new Linker().CompileAndLink(new[] { "print(1)" }, null, null, null, null, TargetProfile.Windows).FloatWidth == 64);
+        try { new Linker().CompileAndLink(new[] { "#import \"graphics\"\nprint(1)" }, null, null, null, null, esp); CheckNat("Zielprofil: nicht verfuegbare Bibliothek wird abgelehnt", false); }
+        catch (NotSupportedException ex) { CheckNat("Zielprofil: nicht verfuegbare Bibliothek wird abgelehnt", ex.Message.Contains("'graphics'") && ex.Message.Contains("'esp32'"), ex.Message); }
+        CheckNat("Zielprofil: Windows erlaubt die Grafik, esp32 hat Devices/IO/Time", TargetProfile.Windows.HasImport("graphics") && esp.HasImport("devices") && esp.HasImport("io") && esp.HasImport("time") && !esp.HasImport("ui"));
+        CheckNat("Zielprofil: Namen und Host", TargetProfile.TryGet("ESP32", out var byName) && byName == esp && !TargetProfile.TryGet("amiga", out _) && TargetProfile.All.Contains(TargetProfile.Host));
+        string espCpp = fire.Native.CppGenerator.Generate(espLinked, esp);
+        CheckNat("esp32: Einstieg app_main statt main, Defines, 32-Bit-float",
+            espCpp.Contains("extern \"C\" void app_main(void)") && !espCpp.Contains("int main()") && espCpp.Contains("#define FIRE_TARGET_ESP32 1")
+            && espCpp.Contains("#define FIRE_HAL_ESP32 1") && espCpp.Contains("#define FIRE_DEFAULT_STACK_BYTES 4096") && espCpp.Contains("#define FIRE_FLOAT32 1"));
+        {
+            string espFile = Path.Combine(workDir, "esp.cpp");
+            File.WriteAllText(espFile, espCpp);
+            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cxx, $"-std=c++17 -Wall -Wextra -c \"{espFile}\" -I\"{workDir}\" -o \"{espFile}.o\"") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false })!;
+            string espBuild = p.StandardError.ReadToEnd() + p.StandardOutput.ReadToEnd();
+            p.WaitForExit();
+            CheckNat("esp32: das erzeugte C++ uebersetzt ohne Warnung", p.ExitCode == 0 && !espBuild.Contains("warning"), espBuild);
+        }
+        var cliEsp = CommandLineParser.Parse(new[] { "native", "a.script", "-t", "esp32" });
+        CheckNat("Befehlszeile: -t esp32 / unbekanntes Ziel / -t ausserhalb von native",
+            cliEsp.Error == null && cliEsp.Target == esp && CommandLineParser.Parse(new[] { "native", "a.script", "-t", "amiga" }).Error != null
+            && CommandLineParser.Parse(new[] { "run", "a.script", "-t", "esp32" }).Error != null && CommandLineParser.Parse(new[] { "native", "a.script" }).Target == null);
+
         // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
         try
         {

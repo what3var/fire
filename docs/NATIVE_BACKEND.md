@@ -114,6 +114,32 @@ C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich se
 Alles, was sich je nach Ziel ändert, hängt an **einer** Beschreibung des Ziels (Betriebssystem/Board, Float-Genauigkeit,
 Stackgröße, verfügbare Bridges), die Übersetzer, VM und Editor teilen.
 
+### Zielprofil - umgesetzt (Basis)
+
+`TargetProfile` (`src/fire/Runtime/TargetProfile.cs`) beschreibt ein Ziel an einer Stelle; Linker, Generator und später der
+Präprozessor lesen dasselbe:
+
+| Feld | Bedeutung | `esp32` |
+|---|---|---|
+| `Name` | `--target`/`-t` auf der Befehlszeile | `esp32` |
+| `Symbols` | Symbole für `#if` (noch nicht gebaut) | `esp32`, `freertos` |
+| `FloatWidth` | Standard-Genauigkeit von `float` | 32 |
+| `DefaultStackBytes` | Standard-Stack eines `fire`-Threads | 4096 |
+| `Imports` | welche `#import`-Bibliotheken es dort gibt | print, io, devices, time, reflection, linq (kein `graphics`/`ui`) |
+| `HalPackage` | Plattformpaket der C++-Runtime | `esp32` |
+| `IsEmbedded` | Einstieg ist `app_main` statt `main` | ja |
+
+Eingebaut: `windows`, `linux`, `macos`, `esp32`; `TargetProfile.Host` ist das Ziel der VM im Editor.
+
+* **Rangfolge der Float-Genauigkeit:** `-f` > `#floatwidth` im Programm > Standard des Ziels > 64.
+* `Linker.CompileAndLink(..., target:)` lehnt `#import` einer Bibliothek ab, die es auf dem Ziel nicht gibt (Fehler beim Übersetzen, nicht
+  erst auf dem Gerät).
+* Der Generator schreibt `FIRE_TARGET`, `FIRE_TARGET_<NAME>`, `FIRE_HAL_<PAKET>` und `FIRE_DEFAULT_STACK_BYTES` in die Datei; für
+  eingebettete Ziele den Einstieg `extern "C" void app_main(void)`. Die Plattformschicht der Runtime wählt später über diese Defines.
+* Befehlszeile: `fire.Compiler native skript.script -t esp32 -o main.cpp`.
+
+Zusätzliche Ziele (eigene Boards) sind ein Eintrag in dieser Tabelle; Profile aus einer Datei sind ein späterer Schritt.
+
 ### Float-Genauigkeit - umgesetzt
 
 `#floatwidth 32|64` (SPEC 8.2.1), überschreibbar mit `-f 32|64`. **Die VM nutzt den Schalter genauso**: sie rundet jedes Float-Ergebnis,
