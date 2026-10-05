@@ -86,6 +86,7 @@ einzigen Maschine, keine Garantie.
 * `+ - * / %`, Bit-Operationen, Vergleiche, `&&`, `||`, `!`, `if`/`while`/`for`/`do`, `break`/`continue`
 * Statische Methoden (inkl. Rekursion), `print`
 * Einheiten: Rechnen und Vergleichen **gleicher** Einheiten
+* Float-Genauigkeit 32 oder 64 Bit (`#floatwidth`, `-f`), identisch zur VM
 
 Noch nicht (der Generator meldet es mit Namen): Objekte, Felder, Methoden, Konstruktoren, Arrays, Strings über `print` hinaus,
 Lambdas/Closures, Zeiger, Ausnahmen, Threads, Reflection, Einheiten-Algebra und implizites Einheiten-Coercing, `extern`, die Bridges.
@@ -105,16 +106,99 @@ C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich se
 5. **Bridges** (Variante A): eine C++-Implementierung mit C-ABI, die auch der C#-Editor per P/Invoke nutzt - IO und Time zuerst,
    dann Graphics (SDL3 ist ohnehin C), zuletzt Devices.
 6. **Optimierungen**: Typinferenz und Einheiten-Folding, Devirtualisierung (geschlossene Welt), Inlining, Scope-Elision.
-7. **ESP32**: siehe unten.
+7. **Zielprofil und ESP32**: Ziele (`--target`), `#if`, Stack-Analyse, Plattformpakete, ESP-IDF-Komponente.
 8. **Editor**: `Run -> Build Native`, Toolchain-Erkennung.
 
-## ESP32 / FreeRTOS - Besonderheiten, die früh entschieden werden müssen
+## Umschalter und Ziele
 
-* **`double`**: Der klassische ESP32 und der S3 haben nur eine Single-Precision-FPU, `double` ist Software. Typinferenz sollte für
-  `float` mit Bitbreite 32 echtes `float` erzeugen und für Genauigkeits-Default (W64) ein Übersetzungsschalter (`--float32`) erlauben.
-* **Stack**: Rekursion läuft jetzt auf dem C++-Stack (die VM nutzt einen Heap-Stack). FreeRTOS-Tasks haben feste Stacks - die Größe
-  pro `fire`-Thread muss wählbar sein, und eine Rekursionstiefenprüfung gehört in den Funktionsprolog.
-* **Speicher**: `Value` hat 16 Byte. Auf 32-Bit-Zielen reicht das für Zeiger und `int64`; Objektlayouts pro Klasse halten den
-  Heap klein. Kein GC - die Ownership-Kaskade ist deterministisch.
+Alles, was sich je nach Ziel ändert, hängt an **einer** Beschreibung des Ziels (Betriebssystem/Board, Float-Genauigkeit,
+Stackgröße, verfügbare Bridges), die Übersetzer, VM und Editor teilen.
+
+### Float-Genauigkeit - umgesetzt
+
+`#floatwidth 32|64` (SPEC 8.2.1), überschreibbar mit `-f 32|64`. **Die VM nutzt den Schalter genauso**: sie rundet jedes Float-Ergebnis,
+jede Float-Konstante und jede Ganzzahl-nach-Float-Umwandlung auf 32 Bit und druckt die kürzeste 32-Bit-Darstellung. Für `+ - * /` ist
+"in `double` rechnen und auf `float` runden" bit-identisch zur echten `float`-Rechnung (ein `double` hat mehr als 2p+2 Bit), die
+Ergebnisse auf dem Desktop und auf dem ESP32 sind also gleich. Nativ ist `Real` dann `float` (`FIRE_FLOAT32`), auf dem ESP32 die
+Hardware-FPU. Der Differential-Test deckt beide Genauigkeiten ab. Für das Ziel ESP32 ist 32 der Vorgabewert (kommt mit dem Zielprofil).
+
+### Stackgröße der Threads
+
+**Vorab ermitteln geht, solange das Programm nicht rekursiv ist** - sonst nicht:
+
+* Der Generator kennt den Aufrufgraphen (geschlossene Welt: alle Funktionen, Methoden, Lambdas stehen fest). Für jeden Thread-Einstieg
+  (`main`, jeder `fire`-Block) ist der Stackbedarf der **längste Pfad** durch diesen Graphen plus die Summe der Rahmengrößen darauf.
+* Rahmengrößen: als sichere Obergrenze aus den Variablen der Funktion (16 Byte je `Value` plus Aufrufrahmen); genauer aus den
+  Compiler-Angaben (`-fstack-usage` bei gcc/clang, auch im ESP-IDF), dann ist ein zweiter Durchlauf nötig.
+* Aufrufe über Lambdas und virtuelle Methoden zählen konservativ alle in Frage kommenden Ziele (gleiche Parameterzahl bzw. Name).
+* **Rekursion** (ein Zyklus im Graphen) hat keine statische Grenze. Dann gilt die vom Nutzer angegebene Tiefe oder der Standardwert.
+
+Vorschlag für die Einstellung (Standard `auto`):
+
+```
+#stacksize auto          // Analyse; wo sie nicht geht (Rekursion): Standardwert, mit Warnung
+#stacksize 6144          // feste Größe in Byte für alle Threads
+#recursion 200           // geschätzte maximale Rekursionstiefe, damit "auto" auch rekursive Programme abdeckt
+```
+
+und `--stack auto|<Byte>`, `--default-stack <Byte>` auf der Befehlszeile (wie `-f` überschreibt die Befehlszeile die Direktive). Ein
+Prolog-Test (`sp < Grenze` -> fire-Fehler statt stillem Überschreiben) macht eine zu knappe Größe diagnostizierbar; FreeRTOS liefert
+mit `uxTaskGetStackHighWaterMark` die tatsächliche Nutzung, die ein Debug-Build ausgibt, damit man die Größe nachjustieren kann.
+
+### Code abhängig vom Ziel
+
+Zwei Ebenen, die zusammenarbeiten:
+
+1. **In fire (Quelltext):** bedingte Übersetzung im Präprozessor,
+
+   ```
+   #if windows
+       var port = "serial:COM3"
+   #elif esp32
+       var port = "uart:1"
+   #else
+       var port = "serial:/dev/ttyUSB0"
+   #endif
+   ```
+
+   Die Symbole setzt das Ziel: Betriebssystem/Board (`windows`, `linux`, `macos`, `esp32`), Engine (`vm`, `native`), `float32`;
+   dazu `#define NAME` und `--define NAME`. Weil das Textersetzung vor dem Parser ist, werden nicht gewählte Zweige nie gelesen - sie
+   dürfen auch Bridges benutzen, die es auf dem Ziel gar nicht gibt. Die VM setzt die Symbole für das Host-System selbst, damit
+   dasselbe Skript im Editor und als Binary dasselbe tut; die Live-Diagnose des Editors graut nicht gewählte Zweige aus.
+2. **In C++ (Plattformschicht):** siehe nächster Abschnitt.
+
+*Noch nicht umgesetzt* (`#if` ist ein Präprozessor-Thema für sich).
+
+### Bridges: ein C++-Interface, plattformabhängig angesteckt (Variante A)
+
+Schichten, von oben nach unten:
+
+```
+fire-Programm  ->  Natives der Bridges (IO, Time, Devices, Graphics, später Hardware)
+                     |  reine C++-Logik: Handles, IoPolicy, Paketprotokoll, Zeichenfunktionen
+                     v
+                   HAL-Schnittstellen  fire::hal::*   (abstrakte Klassen/Funktionstabellen, kein OS-Header)
+                     |
+        +------------+-------------+-----------------+
+        v            v             v                 v
+   platform/posix  platform/windows  platform/esp32   platform/mock (Tests)
+                                  (SDL3 für Fenster und Eingabe auf dem Desktop)
+```
+
+* Die **Bridges** enthalten die Sprachanbindung und alles Plattformunabhängige; sie sehen nur die HAL-Schnittstellen.
+* **HAL-Schnittstellen** (je eine kleine, ausnahmefreie Klasse, Fehler über Statuswerte): `Clock`/`Sleep`, `FileSystem`, `Console`
+  (stdin/stdout/stderr), `SerialPort` und `SerialEnumerator` (Portnamen sind Sache der Plattform), `Thread`/`Mutex`/`Signal`
+  (`std::thread` oder FreeRTOS-Tasks), `Window`/`Input`/`Framebuffer`, auf dem ESP32 zusätzlich `Gpio`/`I2c`/`Spi`.
+* **Plattformpakete** implementieren sie und werden beim Bauen ausgewählt (CMake-Option bzw. `--target`); dadurch kostet die Schicht auf
+  dem ESP32 nichts zur Laufzeit. Das heutige `loopback`-Gerät wird zur Mock-Plattform, mit der sich die Bridges ohne Hardware testen
+  lassen.
+* **C-ABI-Hülle** (`fire_bridge_*.h`) über den Bridges: der C#-Editor bindet dieselben Bibliotheken per P/Invoke an. Es gibt eine
+  Implementierung, die C#-Bridges werden dünne Wrapper.
+
+Reihenfolge: IO und Time (Dateisystem und Uhr), dann Devices, dann Graphics.
+
+## ESP32 / FreeRTOS - weitere Besonderheiten
+
+* **Speicher**: `Value` hat 16 Byte. Objektlayouts pro Klasse halten den Heap klein. Kein GC - die Ownership-Kaskade ist deterministisch.
 * **Code im Flash**: erzeugtes C++ landet als normaler Code im Flash; String-Konstanten sind `static const` (Flash/DROM).
 * `#extern "lib"` (dynamisches Laden) entfällt dort; `extern` wird zum statischen Bindungspunkt.

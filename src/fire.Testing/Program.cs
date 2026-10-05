@@ -11258,6 +11258,32 @@ static int CountOccurrences(string haystack, string needle)
             print(s == "same")
             print(s != "other")
             """),
+        ("float 32 (#floatwidth 32): Rundung, Ausgabe, Ganzzahl-nach-float", """
+            #floatwidth 32
+            print(0.1 + 0.2)
+            print(1.0 / 3)
+            print(16777216.0 + 1.0)
+            print(16777217 + 0.0)
+            print(123456789.0)
+            print(1000.0 * 1000000.0)
+            print(1000.0 * 100000.0)
+            print(0.00001)
+            print(0.0001 * 1)
+            print(7.5 % 2)
+            print(2.5 < 2.75)
+            var s = 0.0
+            for (var i = 0; i < 1000; i = i + 1) { s = s + 0.1 }
+            print(s)
+            print(-1.5 * 3)
+            """),
+        ("float 32: Einheiten und Kontrollfluss", """
+            #floatwidth 32
+            var total = 0.0mm
+            for (var i = 0; i < 100; i = i + 1) { total = total + 0.3mm }
+            print(total)
+            class F { static float Mean(float a, float b) { return (a + b) / 2 } }
+            print(F.Mean(0.1, 0.2))
+            """),
         ("Benchmark loop", """
             var sum = 0
             for (var i = 0; i < 1500000; i = i + 1) {
@@ -11291,9 +11317,12 @@ static int CountOccurrences(string haystack, string needle)
         string workDir = Path.Combine(Path.GetTempPath(), "fire-native-test-" + Guid.NewGuid().ToString("N"));
         fire.Native.NativeRuntimeFiles.WriteTo(workDir);
 
+        // The VM runs sequentially: the precision of float is process-wide while a program runs.
+        var vmResults = natCases.Select(c => { var text = vmOutput(c.Source); Value.SingleFloats = false; return text; }).ToArray();
+
         var compiled = natCases.Select((c, index) => Task.Run(() =>
         {
-            string expected = vmOutput(c.Source);
+            string expected = vmResults[index];
             string cpp;
             try { cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release)); }
             catch (fire.Native.NativeNotSupportedException ex) { return (c.Name, expected, $"nicht uebersetzbar: {ex.Message}"); }
@@ -11323,6 +11352,21 @@ static int CountOccurrences(string haystack, string needle)
             var (name, expected, actual) = task.Result;
             CheckNat($"Native == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
         }
+
+        // The switch itself: VM output differs between the precisions, the directive is validated, the override wins
+        string out64 = vmOutput("print(0.1 + 0.2)\nprint(1.0 / 3)"), out32 = vmOutput("#floatwidth 32\nprint(0.1 + 0.2)\nprint(1.0 / 3)");
+        Value.SingleFloats = false;
+        CheckNat("#floatwidth: 64 Bit ist der Standard", out64 == "0.30000000000000004\n0.3333333333333333\n", out64);
+        CheckNat("#floatwidth 32: float rechnet und druckt mit 32 Bit", out32 == "0.3\n0.33333334\n", out32);
+        var overridden = new Linker().CompileAndLink(new[] { "#floatwidth 64\nprint(1)" }, null, null, null, floatWidthOverride: 32);
+        CheckNat("Linker: floatWidthOverride gewinnt gegen die Direktive", overridden.FloatWidth == 32 && new Linker().CompileAndLink(new[] { "print(1)" }).FloatWidth == 64);
+        try { new Linker().CompileAndLink(new[] { "#floatwidth 16\nprint(1)" }); CheckNat("#floatwidth 16 wird abgelehnt", false); }
+        catch (Exception ex) { CheckNat("#floatwidth 16 wird abgelehnt", ex.Message.Contains("32 or 64"), ex.Message); }
+        var cli32 = CommandLineParser.Parse(new[] { "run", "a.script", "-f", "32" });
+        var cliBad = CommandLineParser.Parse(new[] { "run", "a.script", "-f", "16" });
+        CheckNat("Befehlszeile: -f 32 / -f 16", cli32.Error == null && cli32.FloatWidth == 32 && cliBad.Error != null && CommandLineParser.Parse(new[] { "run", "a.script" }).FloatWidth == null);
+        var narrowed = new Linker().CompileAndLink(new[] { "var x = 0.1\nprint(x)" }, null, null, null, floatWidthOverride: 32);
+        CheckNat("Konstanten werden auf 32 Bit gerundet", narrowed.Program.TopLevel.Constants.Any(c => c.Kind == ValueKind.Float && c.AsFloat() == (double)0.1f));
 
         // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
         try

@@ -123,12 +123,13 @@ namespace fire.Compiler
             return registry;
         }
 
-        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null, string? basePath = null, fire.Device.Manager.DeviceManager.DeviceManager? deviceManager = null)
+        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null, string? basePath = null, fire.Device.Manager.DeviceManager.DeviceManager? deviceManager = null, int? floatWidth = null)
         {
             var linker = new Linker { BasePath = basePath };
             var natives = new NativeRegistry();
 
-            var linkedProgram = linker.CompileAndLink(sources, debugWriter, outname, executionMode);
+            var linkedProgram = linker.CompileAndLink(sources, debugWriter, outname, executionMode, floatWidth);
+            Value.SingleFloats = linkedProgram.FloatWidth == 32; // the precision of float is process-wide while a program runs
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Print))
             {

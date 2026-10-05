@@ -70,6 +70,7 @@ namespace fire.Runtime
 
         public static Session Build(LinkedProgram linkedProgram, VmExecutionMode executionMode, Func<Value[], Value>? debugWriter = null)
         {
+            Value.SingleFloats = linkedProgram.FloatWidth == 32; // the precision of float is process-wide while a program runs
             var natives = new NativeRegistry();
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Print))

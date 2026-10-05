@@ -57,6 +57,11 @@ namespace fire.Compiler
                 assemblyInfo.ExecutionMode = VmExecutionMode.Performance;
                 return null;
             });
+            registry.Register("floatwidth", 1, (ctx, args, line) =>
+            {
+                ParseFloatWidth(args[0]); // validated here, applied by CompileAndLink
+                return null;
+            });
 
             assemblyInfo.FileVersion = "0.0.0.0";
             assemblyInfo.ProductVersion = "0.0.0.0";
@@ -136,8 +141,17 @@ namespace fire.Compiler
             return assemblyInfo;
         }
 
-        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string? outname = null, VmExecutionMode? executionModeOverride = null)
+        /// <summary>The value of `#floatwidth n` (32 or 64).</summary>
+        public static int ParseFloatWidth(Value arg)
         {
+            if (arg.Kind == ValueKind.Int && arg.AsInt() is 32 or 64) return (int)arg.AsInt();
+            throw new Exception("The 'floatwidth' directive expects 32 or 64.");
+        }
+
+        /// <param name="floatWidthOverride">32 or 64: precision of `float` for this build (command line, target); overrides `#floatwidth`.</param>
+        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string? outname = null, VmExecutionMode? executionModeOverride = null, int? floatWidthOverride = null)
+        {
+            int directiveFloatWidth = 64;
             var assemblyInfo = new AssemblyInfo();
             var natives = new NativeRegistry();
             var nativeImports = new HashSet<string>();
@@ -182,6 +196,11 @@ namespace fire.Compiler
             registry.Register("performance", 0, (ctx, args, line) =>
             {
                 assemblyInfo.ExecutionMode = VmExecutionMode.Performance;
+                return null;
+            });
+            registry.Register("floatwidth", 1, (ctx, args, line) =>
+            {
+                directiveFloatWidth = ParseFloatWidth(args[0]);
                 return null;
             });
 
@@ -279,7 +298,11 @@ namespace fire.Compiler
             var resolveResult = Resolver.Resolve(program, natives.Names);
             var compiled = Compiler.Compile(program, resolveResult, natives);
 
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList() };
+            int floatWidth = floatWidthOverride ?? directiveFloatWidth;
+            if (floatWidth != 32 && floatWidth != 64) throw new ArgumentOutOfRangeException(nameof(floatWidthOverride), "The float width must be 32 or 64.");
+            if (floatWidth == 32) FloatNarrowing.Apply(compiled);
+
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth };
 
             if (!string.IsNullOrEmpty(outname))
             {

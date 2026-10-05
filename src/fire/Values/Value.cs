@@ -47,6 +47,17 @@ namespace fire.Values
         }
 
         // ---------------------------------------------------------------
+        // Program-wide float precision (SPEC 8.2.1): with `#floatwidth 32` every float is a 32-bit IEEE float.
+        // The memory stays a double - each float result is rounded to the nearest float, which is exactly what a
+        // float32 CPU (or a native build with `float`) computes for + - * / (a double has more than 2p+2 bits).
+        // Set by the host before a program runs (RuntimeSession/Session.Build) from LinkedProgram.FloatWidth.
+        // ---------------------------------------------------------------
+        public static bool SingleFloats;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static double Fl(double v) => SingleFloats ? (double)(float)v : v;
+
+        // ---------------------------------------------------------------
         // Factories
         // ---------------------------------------------------------------
         public static Value MakeBool(bool value) =>
@@ -56,7 +67,7 @@ namespace fire.Values
             new(ValueKind.Int, value, unit ?? Values.Unit.Unitless, width);
 
         public static Value MakeFloat(double value, Unit? unit = null, NumericWidth width = NumericWidth.W64) =>
-            new(ValueKind.Float, BitConverter.DoubleToInt64Bits(value), unit ?? Values.Unit.Unitless, width);
+            new(ValueKind.Float, BitConverter.DoubleToInt64Bits(width == NumericWidth.W64 ? Fl(value) : value), unit ?? Values.Unit.Unitless, width);
 
         public static Value MakeChar(char value) =>
             new(ValueKind.Char, value, null);
@@ -230,7 +241,7 @@ namespace fire.Values
             if (!BothNumericSameUnit(a, b)) return false;
             a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
                 ? new Value(ValueKind.Int, a._bits + b._bits, a._ref)
-                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() + b.ToDouble()), a._ref);
+                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() + b.ToDouble())), a._ref);
             return true;
         }
 
@@ -240,7 +251,7 @@ namespace fire.Values
             if (!BothNumericSameUnit(a, b)) return false;
             a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
                 ? new Value(ValueKind.Int, a._bits - b._bits, a._ref)
-                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() - b.ToDouble()), a._ref);
+                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() - b.ToDouble())), a._ref);
             return true;
         }
 
@@ -251,7 +262,7 @@ namespace fire.Values
             if (!BothNumericSameUnit(a, b) || !ReferenceEquals(a._ref, Values.Unit.Unitless)) return false;
             a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
                 ? new Value(ValueKind.Int, a._bits * b._bits, a._ref)
-                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() * b.ToDouble()), a._ref);
+                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() * b.ToDouble())), a._ref);
             return true;
         }
 
@@ -297,7 +308,7 @@ namespace fire.Values
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
                     return new Value(ValueKind.Int, a._bits + b._bits, a._ref);
-                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() + b.ToDouble()), a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() + b.ToDouble())), a._ref);
             }
 
             if (a.Kind == ValueKind.Pointer && b.Kind == ValueKind.Int)
@@ -326,7 +337,7 @@ namespace fire.Values
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
                     return new Value(ValueKind.Int, a._bits - b._bits, a._ref);
-                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() - b.ToDouble()), a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() - b.ToDouble())), a._ref);
             }
 
             if (a.Kind == ValueKind.Pointer && b.Kind == ValueKind.Int)
@@ -361,7 +372,7 @@ namespace fire.Values
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
                     return new Value(ValueKind.Int, a._bits % b._bits, a._ref);
-                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() % b.ToDouble()), a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() % b.ToDouble())), a._ref);
             }
 
             RequireNumeric(a); RequireNumeric(b);
@@ -379,7 +390,7 @@ namespace fire.Values
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
                     return new Value(ValueKind.Int, a._bits / b._bits, a._ref);
-                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() / b.ToDouble()), a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() / b.ToDouble())), a._ref);
             }
 
             RequireNumeric(a); RequireNumeric(b);
@@ -397,7 +408,7 @@ namespace fire.Values
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
                     return new Value(ValueKind.Int, a._bits * b._bits, a._ref);
-                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() * b.ToDouble()), a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() * b.ToDouble())), a._ref);
             }
 
             RequireNumeric(a); RequireNumeric(b);
@@ -408,7 +419,7 @@ namespace fire.Values
             return MakeInt(a._intValue * b._intValue, resultUnit);
         }
 
-        private double ToDouble() => Kind == ValueKind.Float ? _floatValue : _intValue;
+        private double ToDouble() => Kind == ValueKind.Float ? _floatValue : (SingleFloats ? (double)(float)_intValue : _intValue);
 
         public static Value Negate(Value v)
         {
@@ -667,11 +678,14 @@ namespace fire.Values
             _ => HashCode.Combine(Kind, _ref),
         };
 
+        // single floats print their own shortest representation (0.1f is "0.1", not "0.10000000149011612")
+        private string FloatText() => SingleFloats ? ((float)_floatValue).ToString() : _floatValue.ToString();
+
         public override string ToString() => Kind switch
         {
             ValueKind.Bool => _boolValue.ToString(),
             ValueKind.Int => Unit is { IsUnitless: false } u ? $"{_intValue}{u}" : _intValue.ToString(),
-            ValueKind.Float => Unit is { IsUnitless: false } u2 ? $"{_floatValue}{u2}" : _floatValue.ToString(),
+            ValueKind.Float => Unit is { IsUnitless: false } u2 ? $"{FloatText()}{u2}" : FloatText(),
             ValueKind.Char => _charValue.ToString(),
             ValueKind.String => Unsafe.As<string>(_ref) ?? "",
             ValueKind.Class => $"<object {_ref}>",

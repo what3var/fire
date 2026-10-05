@@ -143,6 +143,7 @@ namespace fire.Compiler
             Annouce("icon");
             Annouce("debug");
             Annouce("performance");
+            Annouce("floatwidth");
             Annouce("noconsole");
             Annouce("version");
             Annouce("fileversion");

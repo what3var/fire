@@ -1135,6 +1135,23 @@ the comment at `NumericWidth`). The mechanism (`Value.Width` +
 assignment (the resolver would have to keep track of the declared type of every slot
 for that) is not wired up yet – next stage.
 
+#### 8.2.1 Program-wide float precision (`#floatwidth`)
+
+```
+#floatwidth 32      // every `float` without an explicit bit width is a 32-bit float (default: 64)
+```
+
+Without a directive `float` is a `double` (64 bits). `#floatwidth 32` makes it a 32-bit IEEE float for the whole program, which is
+what small targets with a single-precision FPU (ESP32) want. It is meant to be **the same program with the same results** in
+every engine: the VM rounds every float result (and every float constant, and every int that is converted to float) to the
+nearest 32-bit float, which is exactly what a float32 CPU computes for `+ - * /` and `%`; `print` shows the shortest text that reads back
+as the same 32-bit float (`0.1 + 0.2` is `0.3`, `1.0 / 3` is `0.33333334`). The native backend (see `NATIVE_BACKEND.md`) then computes
+with `float` instead of `double`.
+
+The build can override the directive: `fire.Compiler run|build|native ... -f 32|64` (and `floatWidth:` / `floatWidthOverride:` for
+hosts that call `RuntimeSession.Build` / `Linker.CompileAndLink`). Any other value is an error. The precision is process-wide while a
+program runs (`Value.SingleFloats`); explicit widths (`float[16]`, `float[64]`) keep their meaning.
+
 ### 8.3 Pointers & `unsafe`
 
 ```

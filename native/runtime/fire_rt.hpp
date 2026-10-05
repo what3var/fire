@@ -24,6 +24,14 @@
 #define FIRE_UNLIKELY(x) (x)
 #endif
 
+// Precision of `float`: double by default, `float` when the program is generated with `#floatwidth 32` (the generator then
+// defines FIRE_FLOAT32). The C# VM rounds every float result to 32 bits in that mode, so both give the same numbers.
+#ifdef FIRE_FLOAT32
+using Real = float;
+#else
+using Real = double;
+#endif
+
 namespace fire {
 
 enum Kind : uint8_t { K_Bool, K_Int, K_Float, K_Char, K_String, K_Class, K_Lambda, K_Pointer, K_Array, K_Buffer, K_Undefined };
@@ -42,7 +50,7 @@ struct Value {
     uint32_t unit;
     union {
         int64_t i;
-        double f;
+        Real f;
         const void* p;
     };
 };
@@ -55,7 +63,7 @@ extern const char* const g_unitNames[];
 // Construction
 // ---------------------------------------------------------------------------------------------------------------------
 inline Value Int(int64_t v, uint32_t unit = 0) { Value r; r.kind = K_Int; r.width = 0; r.reserved = 0; r.unit = unit; r.i = v; return r; }
-inline Value Float(double v, uint32_t unit = 0) { Value r; r.kind = K_Float; r.width = 0; r.reserved = 0; r.unit = unit; r.f = v; return r; }
+inline Value Float(Real v, uint32_t unit = 0) { Value r; r.kind = K_Float; r.width = 0; r.reserved = 0; r.unit = unit; r.f = v; return r; }
 inline Value Bool(bool v) { Value r; r.kind = K_Bool; r.width = 0; r.reserved = 0; r.unit = 0; r.i = v ? 1 : 0; return r; }
 inline Value Char(uint32_t c) { Value r; r.kind = K_Char; r.width = 0; r.reserved = 0; r.unit = 0; r.i = c; return r; }
 inline Value Str(const StrObj* s) { Value r; r.kind = K_String; r.width = 0; r.reserved = 0; r.unit = 0; r.p = s; return r; }
@@ -78,7 +86,7 @@ inline Value Undef(uint32_t unit = 0) { Value r; r.kind = K_Undefined; r.width =
 }
 
 inline bool isNumeric(Value v) { return v.kind == K_Int || v.kind == K_Float; }
-inline double toD(Value v) { return v.kind == K_Float ? v.f : (double)v.i; }
+inline Real toR(Value v) { return v.kind == K_Float ? v.f : (Real)v.i; }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Arithmetic. Fast path: both numeric with the same unit. Unit conversion/algebra is not ported yet (slow path).
@@ -97,21 +105,21 @@ inline double toD(Value v) { return v.kind == K_Float ? v.f : (double)v.i; }
 inline Value add(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i + (uint64_t)b.i), a.unit);
-        if (isNumeric(a) && isNumeric(b)) return Float(toD(a) + toD(b), a.unit);
+        if (isNumeric(a) && isNumeric(b)) return Float(toR(a) + toR(b), a.unit);
     }
     opFailed("+", isNumeric(a) && isNumeric(b));
 }
 inline Value sub(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i - (uint64_t)b.i), a.unit);
-        if (isNumeric(a) && isNumeric(b)) return Float(toD(a) - toD(b), a.unit);
+        if (isNumeric(a) && isNumeric(b)) return Float(toR(a) - toR(b), a.unit);
     }
     opFailed("-", isNumeric(a) && isNumeric(b));
 }
 inline Value mul(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == 0 && b.unit == 0)) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i * (uint64_t)b.i));
-        if (isNumeric(a) && isNumeric(b)) return Float(toD(a) * toD(b));
+        if (isNumeric(a) && isNumeric(b)) return Float(toR(a) * toR(b));
     }
     opFailed("*", isNumeric(a) && isNumeric(b));
 }
@@ -122,7 +130,7 @@ inline Value divide(Value a, Value b) {
             if (FIRE_UNLIKELY(b.i == -1)) return Int((int64_t)(0 - (uint64_t)a.i));
             return Int(a.i / b.i);
         }
-        if (isNumeric(a) && isNumeric(b)) return Float(toD(a) / toD(b));
+        if (isNumeric(a) && isNumeric(b)) return Float(toR(a) / toR(b));
     }
     opFailed("/", isNumeric(a) && isNumeric(b));
 }
@@ -133,7 +141,7 @@ inline Value modulo(Value a, Value b) {
             if (FIRE_UNLIKELY(b.i == -1)) return Int(0, a.unit);
             return Int(a.i % b.i, a.unit);
         }
-        if (isNumeric(a) && isNumeric(b)) return Float(std::fmod(toD(a), toD(b)), a.unit);
+        if (isNumeric(a) && isNumeric(b)) return Float(std::fmod(toR(a), toR(b)), a.unit);
     }
     opFailed("%", isNumeric(a) && isNumeric(b));
 }
@@ -178,7 +186,7 @@ inline int compare(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return a.i < b.i ? -1 : (a.i > b.i ? 1 : 0);
         if (isNumeric(a) && isNumeric(b)) {
-            double x = toD(a), y = toD(b);
+            Real x = toR(a), y = toR(b);
             if (x < y) return -1;
             if (x > y) return 1;
             if (x == y) return 0;
@@ -238,9 +246,9 @@ inline bool truthy(Value v) {
 // ---------------------------------------------------------------------------------------------------------------------
 // Output: formatting identical to Value.ToString() (invariant culture)
 // ---------------------------------------------------------------------------------------------------------------------
-/// double -> text like .NET Core 3.0+ `double.ToString()`: shortest round-trip digits, positional notation for
-/// 1E-4 <= |x| < 1E17, otherwise `d.dddE+XX`.
-inline int formatDouble(double v, char* out) {
+/// Real -> text like .NET Core 3.0+ `double.ToString()` / `float.ToString()`: shortest round-trip digits, positional
+/// notation for 1E-4 <= |x| < 1E17 (double) or 1E9 (float), otherwise `d.dddE+XX`.
+inline int formatReal(Real v, char* out) {
     if (std::isnan(v)) { std::memcpy(out, "NaN", 3); return 3; }
     if (std::isinf(v)) { if (v < 0) { std::memcpy(out, "-Infinity", 9); return 9; } std::memcpy(out, "Infinity", 8); return 8; }
     if (v == 0) { if (std::signbit(v)) { out[0] = '-'; out[1] = '0'; return 2; } out[0] = '0'; return 1; }
@@ -256,7 +264,7 @@ inline int formatDouble(double v, char* out) {
 
     int n = 0;
     if (negative) out[n++] = '-';
-    if (exp10 >= 17 || exp10 < -4) {
+    if (exp10 >= (sizeof(Real) == 4 ? 9 : 17) || exp10 < -4) {
         out[n++] = digits[0];
         if (nd > 1) { out[n++] = '.'; for (int k = 1; k < nd; k++) out[n++] = digits[k]; }
         out[n++] = 'E'; out[n++] = exp10 < 0 ? '-' : '+';
@@ -287,7 +295,7 @@ inline void writeValue(Value v, std::FILE* f) {
             break;
         }
         case K_Float: {
-            int n = formatDouble(v.f, buf);
+            int n = formatReal(v.f, buf);
             std::fwrite(buf, 1, (size_t)n, f);
             if (v.unit) std::fputs(g_unitNames[v.unit], f);
             break;

@@ -26,6 +26,10 @@ namespace fire.Runtime
         [MemoryPackIgnore]
         public IReadOnlyList<string>? NativeNames { get; init; }
 
+        /// <summary>Precision of `float`: 64 (double, the default) or 32 (single, `#floatwidth 32`, the default for small targets such as
+        /// the ESP32). The VM and the native backend compute with the same precision (SPEC 8.2.1).</summary>
+        public int FloatWidth { get; init; } = 64;
+
         public LinkedProgram(CompiledProgram program, HashSet<string> nativeImports, int firstUserSource, VmExecutionMode executionMode = VmExecutionMode.Release)
         {
             Program = program;

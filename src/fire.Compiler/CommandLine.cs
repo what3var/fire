@@ -19,6 +19,8 @@ namespace fire.Compiler
         public IReadOnlyList<string> Files { get; init; } = Array.Empty<string>();
         /// <summary>`-m`: Ausführungsmodus; null = der im Skript (`#debug`/`#performance`) bzw. Release.</summary>
         public VmExecutionMode? Mode { get; init; }
+        /// <summary>`-f`: Genauigkeit von `float` (32 oder 64); null = der im Skript (`#floatwidth`) bzw. 64.</summary>
+        public int? FloatWidth { get; init; }
         /// <summary>`-o`: Ausgabedatei von `build` (bzw. die C++-Datei von `native`).</summary>
         public string OutputFile { get; init; } = CommandLineParser.DefaultOutputFile;
         /// <summary>Gesetzt, wenn die Befehlszeile ungültig ist (Meldung für den Nutzer).</summary>
@@ -46,15 +48,16 @@ namespace fire.Compiler
         public static string Usage =>
             """
             Usage:
-              fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE]
-              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE]
-              fire.Compiler native <file>... [-o <target.cpp>]
+              fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64]
+              fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64]
+              fire.Compiler native <file>... [-o <target.cpp>] [-f 32|64]
 
             run     compiles the files into one program and runs it.
             build   turns them into a self-contained executable (default: out.exe).
             -m      Execution mode (default: whatever the script sets with #debug/#performance, otherwise RELEASE).
             native  translates the files into C++ (written next to fire_rt.hpp, the runtime it includes; default: out.cpp)
                     - an experimental ahead-of-time backend, see docs/NATIVE_BACKEND.md.
+            -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
             -o      Name of the file produced by build or native.
 
             File names without spaces do not need quotation marks.
@@ -77,6 +80,7 @@ namespace fire.Compiler
 
             var files = new List<string>();
             VmExecutionMode? mode = null;
+            int? floatWidth = null;
             string? output = null;
 
             for (int i = 1; i < args.Count; i++)
@@ -90,6 +94,14 @@ namespace fire.Compiler
                     if (!TryParseMode(Unquote(value), out var parsed))
                         return Fail(command, $"Unknown mode '{value}' (allowed: DEBUG, RELEASE, PERFORMANCE).");
                     mode = parsed;
+                }
+                else if (TryOption(arg, "-f", "--float", out var floatInline))
+                {
+                    string? value = floatInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    if (value == null) return Fail(command, "-f must be followed by the float precision (32 or 64).");
+                    if (Unquote(value) is not ("32" or "64"))
+                        return Fail(command, $"Unknown float precision '{value}' (allowed: 32, 64).");
+                    floatWidth = int.Parse(Unquote(value));
                 }
                 else if (TryOption(arg, "-o", "--out", out var outInline))
                 {
@@ -117,6 +129,7 @@ namespace fire.Compiler
                 Command = command,
                 Files = files,
                 Mode = mode,
+                FloatWidth = floatWidth,
                 OutputFile = output ?? (command == CommandKind.Native ? DefaultNativeOutputFile : DefaultOutputFile),
             };
         }
@@ -213,7 +226,7 @@ namespace fire.Compiler
         {
             try
             {
-                new Linker().CompileAndLink(sources, null, options.OutputFile, options.Mode);
+                new Linker().CompileAndLink(sources, null, options.OutputFile, options.Mode, options.FloatWidth);
             }
             catch (Exception ex) when (IsCompileError(ex))
             {
@@ -228,7 +241,7 @@ namespace fire.Compiler
         {
             try
             {
-                var linked = new Linker().CompileAndLink(sources, null, null, options.Mode);
+                var linked = new Linker().CompileAndLink(sources, null, null, options.Mode, options.FloatWidth);
                 string cpp = fire.Native.CppGenerator.Generate(linked);
                 string full = Path.GetFullPath(options.OutputFile);
                 File.WriteAllText(full, cpp);
@@ -258,7 +271,7 @@ namespace fire.Compiler
                 {
                     if (args.Length > 0) Console.WriteLine(args[0].ToString());
                     return Value.MakeUndefined();
-                });
+                }, floatWidth: options.FloatWidth);
             }
             catch (Exception ex) when (IsCompileError(ex))
             {
