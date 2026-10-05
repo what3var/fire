@@ -10840,7 +10840,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(User.Use(new Sq()))
         """, new[] { "4" });
 
-    CheckSc("Einheiten: gleiche Dimension, andere Skalierung wird implizit umgerechnet (ohne ':')", """
+    CheckSc("Einheiten: gleiche Dimension, andere Skalierung wird implizit umgerechnet (ohne ':'), ints bleiben ints", """
         print(500mm + 2m)
         print(2m + 500mm)
         print(2m - 500mm)
@@ -10850,7 +10850,19 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var x = 3m
         x = x + 250cm
         print(x)
-        """, new[] { "2500mm", "2.5m", "1.5m", "True", "True", "500mm", "5.5m" });
+        print((2m + 500mm) / 3)
+        """, new[] { "2500mm", "2500mm", "1500mm", "True", "True", "500mm", "550cm", "833mm" });
+
+    CheckSc("Einheiten: Floats bleiben Floats und behalten die Einheit des linken Operanden", """
+        print(1.5mm + 1m)
+        print(2.5m + 250mm)
+        print((1.5mm + 1m) / 2)
+        """, new[] { "1001.5mm", "2.75m", "500.75mm" });
+
+    CheckSc("Einheiten: bei Ueberlauf wird die groebere Einheit Ziel, das Komma faellt weg", """
+        print(1500mm + 900000000000000000m)
+        print(900000000000000000m + 1500mm)
+        """, new[] { "900000000000000001m", "900000000000000001m" });
 
     CheckSc("Einheiten: verschiedene Dimensionen bleiben ein Fehler", """
         print(5mm + 2kg)

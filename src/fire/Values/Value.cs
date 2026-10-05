@@ -586,10 +586,11 @@ namespace fire.Values
                 throw new InvalidOperationException($"Type {v.Kind} is not numeric.");
         }
 
-        /// <summary>Operands whose units have the same dimension but a different scale (`500mm + 2m`) are converted
-        /// implicitly: `b` is converted to the unit of `a`, which is also the unit of the result - no `:` needed.
-        /// An integer that does not convert exactly (`2m + 500mm` in meters: 0.5) becomes a float, so nothing is
-        /// silently rounded. Units of different dimensions (`mm + kg`, `mm + unitless`) are still an error.</summary>
+        /// <summary>Operands of the same dimension but a different scale (`500mm + 2m`) are converted
+        /// implicitly - no `:` needed. The type never changes: floats stay floats (result in the unit of the left
+        /// operand); two ints stay ints. For ints the finer unit (`mm`) is the target as long as the converted value
+        /// does not overflow; otherwise the coarser unit (`m`) is the target and the fraction is cut off.
+        /// Units of different dimensions (`mm + kg`, `mm + unitless`) are still an error.</summary>
         private static void AlignUnits(ref Value a, ref Value b)
         {
             if (ReferenceEquals(a._ref, b._ref) && a.Kind is ValueKind.Int or ValueKind.Float) return;
@@ -598,19 +599,30 @@ namespace fire.Values
             if (ua.Equals(ub)) return;
             if (!ua.IsCompatibleWith(ub)) throw new UnitMismatchException(ua, ub);
 
+            if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
+            {
+                // fine = the unit with the smaller scale (more of them per length), coarse = the other one
+                bool aIsFine = ua.Scale <= ub.Scale;
+                ref Value fine = ref (aIsFine ? ref a : ref b);
+                ref Value coarse = ref (aIsFine ? ref b : ref a);
+                var uFine = aIsFine ? ua : ub;
+                var uCoarse = aIsFine ? ub : ua;
+
+                double up = coarse._intValue * uCoarse.ConversionFactorTo(uFine);
+                if (up >= -9.2e18 && up <= 9.2e18)
+                {
+                    coarse = MakeInt((long)up, uFine);                       // 2m -> 2000mm
+                }
+                else
+                {
+                    double down = fine._intValue * uFine.ConversionFactorTo(uCoarse);
+                    fine = MakeInt((long)down, uCoarse);                     // 500mm -> 0m (fraction cut off)
+                }
+                return;
+            }
+
             double factor = ub.ConversionFactorTo(ua);
-            if (b.Kind == ValueKind.Int)
-            {
-                double converted = b._intValue * factor;
-                double rounded = Math.Round(converted);
-                b = Math.Abs(converted - rounded) < 1e-9 * Math.Max(1.0, Math.Abs(converted))
-                    ? MakeInt((long)rounded, ua)
-                    : MakeFloat(converted, ua);
-            }
-            else
-            {
-                b = MakeFloat(b._floatValue * factor, ua);
-            }
+            b = b.Kind == ValueKind.Int ? MakeFloat(b._intValue * factor, ua) : MakeFloat(b._floatValue * factor, ua);
         }
 
         private static void RequireSameUnit(Value a, Value b)

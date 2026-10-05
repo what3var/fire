@@ -69,7 +69,7 @@ print($"{name}: {count} x {ratio} (ready: {ready})")
 
 The line with `$"..."` is a *format string*: whatever is in `{curly braces}` is evaluated and inserted.
 
-Numbers can carry a **unit**. Units of the same kind are converted for you - the result has the unit of the left operand. A trailing `:unit` converts a value explicitly, and units that cannot be converted into each other are an error instead of a silently wrong number:
+Numbers can carry a **unit**. Units of the same kind are converted for you - integers stay integers and use the finer unit, unless that would overflow. A trailing `:unit` converts a value explicitly, and units that cannot be converted into each other are an error instead of a silently wrong number:
 
 ```fire
 var length = 500mm
