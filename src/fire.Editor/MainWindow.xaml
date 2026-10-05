@@ -24,10 +24,18 @@
         </Style>
     </Window.Resources>
     <DockPanel>
-        <Menu DockPanel.Dock="Top">
-            <MenuItem Header="_File">
-                <MenuItem Header="_New Script" Click="New_Click" InputGestureText="Ctrl+N"/>
-                <MenuItem Header="New _Markdown Document" Click="NewMarkdown_Click" InputGestureText="Ctrl+Shift+N"/>
+        <Menu DockPanel.Dock="Top" >
+            <MenuItem Header="_File" Margin="0">
+                <MenuItem Header="_New Script" Click="New_Click" InputGestureText="Ctrl+N">
+                    <MenuItem.Icon>
+                        <Image Source="/icons/Material-ScriptOutline.png"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="New _Markdown Document" Click="NewMarkdown_Click" InputGestureText="Ctrl+Shift+N">
+                    <MenuItem.Icon>
+                        <Image Source="/icons/Material-FileDocumentOutline.png"/>
+                    </MenuItem.Icon>
+                </MenuItem>
                 <MenuItem Header="_Open..." Click="Open_Click" InputGestureText="Ctrl+O"/>
                 <MenuItem Header="Open Markdown _Read-Only..." Click="OpenReadOnly_Click"/>
                 <MenuItem Header="Open Markdown in _Viewer..." Click="OpenViewer_Click"/>
@@ -115,12 +123,23 @@
 
         <ToolBarTray DockPanel.Dock="Top" IsLocked="False">
             <ToolBar Band="0" BandIndex="0" ToolTip="File">
-                <Button Click="New_Click" ToolTip="New Script (Ctrl+N)">
-                    <TextBlock Style="{StaticResource GlyphText}" Text="&#xE7C3;"/>
-                </Button>
-                <Button Click="NewMarkdown_Click" ToolTip="New Markdown Document (Ctrl+Shift+N)">
-                    <TextBlock Style="{StaticResource ToolbarButtonText}" Margin="2,0" Text="MD"/>
-                </Button>
+                <local:SplitButton Click="New_Click">
+                    <local:SplitButton.Content>
+                        <Image Source="/icons/Material-ScriptOutline.png"></Image>
+                    </local:SplitButton.Content>
+
+                    <MenuItem Header="_New Script" Click="New_Click" InputGestureText="Ctrl+N">
+                        <MenuItem.Icon>
+                            <Image Source="/icons/Material-ScriptOutline.png"/>
+                        </MenuItem.Icon>
+                    </MenuItem>
+
+                    <MenuItem Click="NewMarkdown_Click" Header="New Markdown Document (Ctrl+Shift+N)">
+                        <MenuItem.Icon>
+                            <Image Source="/icons/Material-FileDocumentOutline.png"/>
+                        </MenuItem.Icon>
+                    </MenuItem>
+                </local:SplitButton>
                 <Button Click="Open_Click" ToolTip="Open... (Ctrl+O)">
                     <TextBlock Style="{StaticResource GlyphText}" Text="&#xE8E5;"/>
                 </Button>

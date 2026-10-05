@@ -187,7 +187,7 @@ namespace fire.Editor
         {
             var importsElsewhere = otherProjectFiles
                 .Where(other => !string.IsNullOrWhiteSpace(other))
-                .SelectMany(ImportedPreludes.FindImportNames)
+                .SelectMany(i => ImportedPreludes.FindImportNames(i))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
