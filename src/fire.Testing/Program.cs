@@ -11694,6 +11694,490 @@ static int CountOccurrences(string haystack, string needle)
             }
             print(c.Get())
             """),
+        ("Ausnahmen: throw, catch nach Typ, Destruktoren beim Abwickeln, finally", """
+            class Err : Exception {
+                string message
+                int code
+                construct(string m, int c) { this.message = m; this.code = c }
+            }
+            class Other : Exception {
+                construct() { }
+            }
+            class Res {
+                string name
+                construct(string n) { this.name = n; print("open " + n) }
+                destruct() { print("close " + name) }
+            }
+            class T {
+                static int Deep(int n) {
+                    var r = new Res("deep" + n)
+                    if (n == 0) { throw new Err("bottom", 42) }
+                    return T.Deep(n - 1) + 1
+                }
+                static int Safe(int x) {
+                    try {
+                        return T.Deep(x)
+                    } catch (Other o) {
+                        print("wrong handler")
+                        return -1
+                    } finally {
+                        print("finally in Safe " + x)
+                    }
+                }
+            }
+            try {
+                var a = new Res("A")
+                print(T.Safe(2))
+            } catch (Err e) {
+                print("caught " + e.message + " " + e.code)
+            } finally {
+                print("outer finally")
+            }
+            print("next")
+            try {
+                throw new Other()
+            } catch (e) {
+                print("catch-all")
+            }
+            """),
+        ("Ausnahmen: resume an der Wurfstelle, Indexfehler als Ausnahme", """
+            class Ask : Exception {
+                string what
+                construct(string w) { this.what = w }
+            }
+            class T {
+                static int Value(string k) {
+                    var v = throw new Ask(k)
+                    return v
+                }
+            }
+            try {
+                var x = T.Value("a") + T.Value("b")
+                print("x = " + x)
+            } catch (Ask e) {
+                print("asked " + e.what)
+                e.resume(10)
+            }
+            print("done")
+            var arr = new int[3]
+            try {
+                arr[1] = 5
+                print(arr[1])
+                print(arr[7])
+                print("after read")
+                arr[9] = 1
+                print("after write")
+            } catch (IndexOutOfBoundsException e) {
+                print("index " + e.index + " of " + e.length)
+                e.resume(0)
+            }
+            try {
+                print("abc".Substring(5))
+            } catch (e) {
+                print("sub: " + e.message)
+            }
+            """),
+        ("Ausnahmen: finally bei break, continue, return, Weiterwerfen", """
+            class E1 : Exception { construct() { } }
+            var i = 0
+            while (i < 6) {
+                try {
+                    i = i + 1
+                    if (i == 2) { continue }
+                    if (i == 4) { break }
+                    print("body " + i)
+                } finally {
+                    print("fin " + i)
+                }
+            }
+            print("after loop " + i)
+            class F {
+                static int G(int n) {
+                    for (var k = 0; k < 10; k = k + 1) {
+                        try {
+                            if (k == n) { return k * 10 }
+                        } finally {
+                            print("G fin " + k)
+                        }
+                    }
+                    return -1
+                }
+                static int H() {
+                    try {
+                        try {
+                            throw new E1()
+                        } finally {
+                            print("inner fin")
+                        }
+                    } catch (E1 e) {
+                        print("H caught")
+                        return 7
+                    } finally {
+                        print("H outer fin")
+                    }
+                }
+            }
+            print(F.G(2))
+            print(F.H())
+            try {
+                try {
+                    throw new E1()
+                } catch (E1 e) {
+                    print("rethrow")
+                    throw e
+                }
+            } catch (e) {
+                print("outer caught")
+            }
+            """),
+        ("Ausnahmen: Klassenhierarchie, continue/break im catch, return durch finally", """
+            class Base : Exception {
+                string message
+                construct(string m) { this.message = m }
+            }
+            class Derived : Base {
+                construct(string m) : base(m) { }
+            }
+            class Res {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("free " + n) }
+            }
+            class W {
+                int count
+                construct() { this.count = 0 }
+                int Step(int k) {
+                    this.count = this.count + 1
+                    if (k % 3 == 0) { throw new Derived("k=" + k) }
+                    return k
+                }
+            }
+            var w = new W()
+            var sum = 0
+            for (var i = 1; i <= 8; i = i + 1) {
+                try {
+                    var r = new Res("r" + i)
+                    sum = sum + w.Step(i)
+                    if (i == 7) { continue }
+                    print("ok " + i)
+                } catch (Base e) {
+                    print("caught " + e.message)
+                    if (i == 6) { break }
+                    continue
+                } finally {
+                    print("fin " + i)
+                }
+                print("tail " + i)
+            }
+            print("sum " + sum + " count " + w.count)
+            // nested try in catch, rethrow from nested
+            try {
+                try {
+                    throw new Derived("first")
+                } catch (Base e) {
+                    try {
+                        throw new Derived("second")
+                    } catch (Derived d) {
+                        print("inner " + d.message)
+                    }
+                    print("after inner")
+                    throw e
+                }
+            } catch (e) {
+                print("outer " + e.message)
+            }
+            // return in catch with finally, finally return replaces
+            class R {
+                static int A() {
+                    try {
+                        throw new Derived("x")
+                    } catch (e) {
+                        return 1
+                    } finally {
+                        print("A fin")
+                    }
+                }
+                static int B() {
+                    try {
+                        return 1
+                    } finally {
+                        print("B fin")
+                        return 2
+                    }
+                }
+                static string C() {
+                    var arr = [1, 2, 3]
+                    foreach (v in arr) {
+                        try {
+                            if (v == 2) { return "two" }
+                        } finally {
+                            print("C fin " + v)
+                        }
+                    }
+                    return "none"
+                }
+            }
+            print(R.A())
+            print(R.B())
+            print(R.C())
+            """),
+        ("Abbruch: nicht gefangene Ausnahme beendet das Programm", """
+            class Boom : Exception {
+                construct() { }
+            }
+            class Res {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("free " + n) }
+            }
+            class T {
+                static F(int n) {
+                    var r = new Res("f" + n)
+                    if (n == 0) { throw new Boom() }
+                    T.F(n - 1)
+                }
+            }
+            var g = new Res("global")
+            print("start")
+            T.F(2)
+            print("never")
+            """),
+        ("Ausnahmen: Lambdas, ToString, Konstruktor, catch ohne try", """
+            class Boom : Exception {
+                string message
+                construct(string m) { this.message = m }
+            }
+            class Bad {
+                string ToString() { throw new Boom("tostring") }
+            }
+            var f = (int x) => {
+                if (x > 2) { throw new Boom("big " + x) }
+                return x * 2
+            }
+            for (var i = 1; i < 5; i = i + 1) {
+                try {
+                    print(f(i))
+                } catch (Boom b) {
+                    print("lambda threw: " + b.message)
+                }
+            }
+            try {
+                var b = new Bad()
+                print("v: " + b)
+            } catch (Boom e) {
+                print("ts: " + e.message)
+            }
+            try {
+                print(new Bad())
+            } catch (Boom e) {
+                print("print: " + e.message)
+            }
+            class C {
+                construct(int x) {
+                    if (x < 0) { throw new Boom("ctor") }
+                }
+            }
+            try { var c = new C(-1) } catch (e) { print("ctor failed " + e.message) }
+            var u = 3
+            {
+                catch (e) { print("implicit " + e.message) }
+                throw new Boom("blocky")
+            }
+            print("end " + u)
+            """),
+        ("Abbruch: finally vor dem Abbruch, Methoden, resume aus verschachtelten Aufrufen", """
+            class Oops : Exception {
+                string message
+                construct(string m) { this.message = m }
+            }
+            class Node {
+                string name
+                Node child
+                construct(string n) { this.name = n; print("new " + n) }
+                destruct() { print("del " + name) }
+            }
+            class Svc {
+                int tries
+                string log
+                construct() { this.tries = 0; this.log = "" }
+                string Run(int n) {
+                    var tmp = "run" + n
+                    try {
+                        this.tries = this.tries + 1
+                        var node = new Node("n" + n)
+                        if (n % 2 == 1) { throw new Oops("odd " + tmp) }
+                        this.log = this.log + tmp + ","
+                        return "ok " + tmp
+                    } catch (Oops o) {
+                        this.log = this.log + "!" + o.message + ","
+                        return "failed " + o.message
+                    } finally {
+                        this.log = this.log + "f" + n + ","
+                    }
+                }
+                int Parse(string text) {
+                    // resume with a default value
+                    var v = throw new Oops("parse " + text)
+                    return v
+                }
+            }
+            var s = new Svc()
+            for (var i = 0; i < 4; i = i + 1) { print(s.Run(i)) }
+            print(s.log + " tries=" + s.tries)
+            var total = 0
+            try {
+                total = s.Parse("a") + s.Parse("b") + 1
+            } catch (Oops o) {
+                print("fix " + o.message)
+                o.resume(100)
+            }
+            print("total " + total)
+
+            // deep resume from a nested call
+            class Handler2 {
+                static Fix(Oops o) { o.resume(5) }
+            }
+            try {
+                var q = throw new Oops("q")
+                print("q=" + q)
+            } catch (Oops o) {
+                Handler2.Fix(o)
+            }
+
+            // uncaught through finally: finally runs, then the program ends
+            try {
+                print("before")
+                throw new Oops("final")
+            } finally {
+                print("cleanup")
+            }
+            print("unreachable")
+            """),
+        ("Ausnahmen: break/continue aus verschachtelten catch-Bloecken, foreach", """
+            class A : Exception { string message; construct(string m) { this.message = m } }
+            class B : Exception { construct() { } }
+            var items = [1, 2, 3, 4, 5, 6]
+            // break/continue from catch and try bodies inside a foreach
+            foreach (v in items) {
+                try {
+                    if (v == 1) { continue }
+                    if (v == 3) { throw new A("three") }
+                    if (v == 5) { throw new B() }
+                    print("v" + v)
+                } catch (A a) {
+                    print("A " + a.message)
+                    continue
+                } catch (B b) {
+                    print("B stops")
+                    break
+                } finally {
+                    print("fin " + v)
+                }
+                print("end " + v)
+            }
+            // two levels of catch: break from the inner catch leaves the outer catch too
+            for (var i = 0; i < 3; i = i + 1) {
+                try {
+                    throw new A("outer" + i)
+                } catch (A a) {
+                    try {
+                        throw new B()
+                    } catch (B b) {
+                        print("inner at " + i)
+                        if (i == 1) { break }
+                        continue
+                    }
+                    print("not here")
+                }
+            }
+            // return in nested catches through finally blocks
+            class X {
+                static int F(int n) {
+                    try {
+                        try {
+                            throw new A("a")
+                        } catch (A a) {
+                            try {
+                                throw new B()
+                            } catch (B b) {
+                                return n + 1
+                            } finally {
+                                print("f1")
+                            }
+                        } finally {
+                            print("f2")
+                        }
+                    } finally {
+                        print("f3")
+                    }
+                }
+                static int G(int n) {
+                    foreach (v in [1, 2, 3]) {
+                        try {
+                            if (v == n) { throw new A("g") }
+                        } catch (A a) {
+                            return v * 100
+                        } finally {
+                            print("G" + v)
+                        }
+                    }
+                    return 0
+                }
+            }
+            print(X.F(1))
+            print(X.G(2))
+            print(X.G(9))
+            // a try that is left with an exception thrown in the catch and caught outside
+            try {
+                try {
+                    throw new A("1")
+                } catch (A a) {
+                    throw new B()
+                } finally {
+                    print("mid finally")
+                }
+            } catch (B b) {
+                print("got B")
+            }
+            """),
+        ("Ausnahmen: Einheiten und Indexfehler von Zeichenketten/Puffern", """
+            class M {
+                int len : mm = 0mm
+                construct() { this.len = 1mm }
+            }
+            var m = new M()
+            print(m.len)
+            try {
+                m.len = 7
+                print("no error")
+            } catch (UnitMismatchException e) {
+                print("unit: " + e.message)
+            }
+            float w : mm = 5mm
+            try {
+                w = 3
+            } catch (e) {
+                print("w: " + e.message + " | " + e.expectedUnit + " | " + e.actualUnit)
+            }
+            print(w)
+            var s = "hello"
+            try {
+                print(s.CharAt(10))
+            } catch (IndexOutOfBoundsException e) {
+                print(e.message + " " + e.index + " " + e.length)
+            }
+            try {
+                print(s[9])
+            } catch (IndexOutOfBoundsException e) {
+                print(e.message)
+            }
+            try {
+                var b = new byte[2]
+                b[5] = 1
+            } catch (IndexOutOfBoundsException e) {
+                print(e.message)
+            }
+            """),
         ("Benchmark alloc", """
             class Point {
                 int x
@@ -11776,6 +12260,15 @@ static int CountOccurrences(string haystack, string needle)
 
             string build = RunTool(cxx, $"-std=c++17 -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"", out int buildExit);
             if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C++-Compiler: " + build);
+            if (c.Name.StartsWith("Abbruch:"))
+            {
+                // an exception that nothing catches: the program ends with exit code 1 after the output so far (the VM stops the same way)
+                using var run = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exeFile) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir })!;
+                var stderrTask = run.StandardError.ReadToEndAsync();
+                string stdout = run.StandardOutput.ReadToEnd();
+                run.WaitForExit();
+                return (c.Name, expected, run.ExitCode == 1 && stderrTask.Result.Contains("Unhandled exception") ? stdout : $"Exitcode {run.ExitCode}: {stdout}{stderrTask.Result}");
+            }
             string actual = RunTool(exeFile, "", out int runExit);
             return (c.Name, expected, runExit == 0 ? actual : $"Exitcode {runExit}: {actual}");
         })).ToArray();
@@ -11834,12 +12327,12 @@ static int CountOccurrences(string haystack, string needle)
         // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
         try
         {
-            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "try { print(1) } catch (e) { print(2) }" }, null, null, VmExecutionMode.Release));
+            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "var p = 5\nunsafe { var q = &p }" }, null, null, VmExecutionMode.Release));
             CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt", false, "keine Ausnahme");
         }
         catch (fire.Native.NativeNotSupportedException ex)
         {
-            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (RegisterHandler)", ex.Message.Contains("RegisterHandler"), ex.Message);
+            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (AddressOfLocal)", ex.Message.Contains("AddressOf"), ex.Message);
         }
         try
         {

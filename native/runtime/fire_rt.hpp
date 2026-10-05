@@ -16,10 +16,12 @@
 
 #if defined(__GNUC__) || defined(__clang__)
 #define FIRE_COLD __attribute__((noinline, cold))
+#define FIRE_UNUSED_LABEL __attribute__((unused))
 #define FIRE_LIKELY(x) __builtin_expect(!!(x), 1)
 #define FIRE_UNLIKELY(x) __builtin_expect(!!(x), 0)
 #else
 #define FIRE_COLD
+#define FIRE_UNUSED_LABEL
 #define FIRE_LIKELY(x) (x)
 #define FIRE_UNLIKELY(x) (x)
 #endif
@@ -66,6 +68,27 @@ inline Value Undef(uint32_t unit = 0) { Value r; r.kind = K_Undefined; r.width =
 // Errors. The C# VM turns most of these into catchable script exceptions; the native backend does not support
 // `try`/`catch` yet, so a runtime error ends the program (exit code 1).
 // ---------------------------------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------------------------------
+// The state of an exception that is unwinding the stack (see the exceptions section): every generated function checks the flag
+// after a call that can throw and, if it is set, leaves its scopes and returns.
+// ---------------------------------------------------------------------------------------------------------------------
+enum UnwindKind : uint8_t { UW_NONE, UW_JUMP, UW_RETURN, UW_RETHROW, UW_RESUME };
+struct Handler;
+struct UnwindState {
+    uint8_t active;
+    uint8_t kind;
+    Handler* target;      // the frame that is being unwound to
+    Value value;          // the exception, the return value or the resume value
+    uint32_t label;       // JUMP: the bytecode address to continue at
+    uint64_t token;       // RESUME: which throw is resumed
+    Value regs[4];        // JUMP: operand stack slots that the jump takes along (the completion of a finally block)
+};
+inline UnwindState g_unwind = {0, UW_NONE, nullptr, {}, 0, 0, {}};
+
+/// A run-time error that the language reports as an exception (see the exceptions section): the exception is thrown, or - when
+/// the program has no exceptions at all - it ends the program.
+inline Value indexError(const char* what, int64_t index, int64_t length);
+
 [[noreturn]] FIRE_COLD inline void fatal(const char* message) {
     std::fflush(stdout);
     std::fprintf(stderr, "fire runtime error: %s\n", message);
@@ -455,7 +478,13 @@ inline void destroyList(OwnList* list);
 inline void destroy(Obj* o) {
     if (o->flags & 1) return;
     o->flags |= 1;
-    runDestructors(o);
+    if (FIRE_UNLIKELY(g_unwind.active)) {
+        // the scope is left because of an exception: the destructor runs as ordinary code, the exception keeps unwinding afterwards
+        UnwindState saved = g_unwind;
+        g_unwind.active = 0;
+        runDestructors(o);
+        g_unwind = saved;
+    } else runDestructors(o);
     destroyList(&o->owned);
     Value* f = o->fields();
     for (uint32_t i = 0; i < o->nfields; i++) release(f[i]);
@@ -579,10 +608,13 @@ inline void checkLambda(Value v, int nparams) {
     if (FIRE_UNLIKELY(v.kind != K_Lambda || lamOf(v)->nparams != (uint32_t)nparams)) fatal("The lambda does not have the declared number of parameters.");
 }
 
+/// A value does not have the unit that its declaration demands (an UnitMismatchException; defined with the exceptions).
+inline void unitMismatch(Value v, Value expectedText);
+
 /// CheckUnit: the value must have exactly this unit.
-inline void checkUnit(Value v, uint32_t unit) {
+inline void checkUnit(Value v, uint32_t unit, Value expectedText) {
     uint32_t actual = (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined) ? v.unit : 0;
-    if (FIRE_UNLIKELY(actual != unit)) fatal("Incompatible units.");
+    if (FIRE_UNLIKELY(actual != unit)) unitMismatch(v, expectedText);
 }
 
 inline Buf* allocBuf(uint32_t length, OwnList* list) {
@@ -650,7 +682,10 @@ inline void pieceOf(Value v, Piece& out, OwnList* list) {
         case K_Undefined: setPiece(out, "undefined"); if (v.unit) { out.buf[out.n++] = u':'; } break;
         case K_Class: {
             Value text;
-            if (userToString(v, list, &text)) { out.p = strOf(text)->data; out.n = strOf(text)->length; }
+            if (userToString(v, list, &text)) {
+                if (FIRE_UNLIKELY(g_unwind.active || text.kind != K_String)) { out.p = out.buf; out.n = 0; return; }   // ToString() threw
+                out.p = strOf(text)->data; out.n = strOf(text)->length;
+            }
             else setPiece(out, "<object>");
             return;
         }
@@ -790,14 +825,14 @@ inline Value stringCall(int64_t method, Value text, int argc, Value a0, Value a1
         case 1: {  // IndexOf(value[, start])
             Chars v = charsOf(a0);
             int64_t start = argc == 2 ? a1.i : 0;
-            if (start < 0 || start > (int64_t)len) fatal("String index out of range.");
+            if (start < 0 || start > (int64_t)len) return indexError("String index", start, len);
             return Int(findFrom(s, len, v.p(), v.n, (uint32_t)start));
         }
         case 2: {  // LastIndexOf(value[, start])
             Chars v = charsOf(a0);
             int64_t start = argc == 2 ? a1.i : (int64_t)len - 1;
             if (len == 0) return Int(v.n == 0 ? 0 : -1);
-            if (start < 0 || start >= (int64_t)len) fatal("String index out of range.");
+            if (start < 0 || start >= (int64_t)len) return indexError("String index", start, len);
             if (v.n == 0) return Int(start + 1);
             for (int64_t i = start - (int64_t)v.n + 1; i >= 0; i--)
                 if (std::memcmp(s + i, v.p(), v.n * sizeof(char16_t)) == 0) return Int(i);
@@ -805,14 +840,14 @@ inline Value stringCall(int64_t method, Value text, int argc, Value a0, Value a1
         }
         case 3: {  // Substring(start[, count])
             int64_t start = a0.i;
-            if (start < 0 || start > (int64_t)len) fatal("String index out of range.");
+            if (start < 0 || start > (int64_t)len) return indexError("String index", start, len);
             int64_t count = argc == 2 ? a1.i : (int64_t)len - start;
-            if (count < 0 || count > (int64_t)len - start) fatal("String index out of range.");
+            if (count < 0 || count > (int64_t)len - start) return indexError("String index", start + count, len);
             if (start == 0 && count == (int64_t)len) return text;
             return newStrFrom(s + start, (uint32_t)count, list);
         }
         case 4: {  // CharAt(index)
-            if (a0.i < 0 || a0.i >= (int64_t)len) fatal("String index out of range.");
+            if (a0.i < 0 || a0.i >= (int64_t)len) return indexError("String index", a0.i, len);
             return Char(s[a0.i]);
         }
         case 5: { Chars v = charsOf(a0); return Bool(findFrom(s, len, v.p(), v.n, 0) >= 0); }
@@ -867,7 +902,7 @@ inline Value stringCall(int64_t method, Value text, int argc, Value a0, Value a1
         }
         case 15: case 16: {  // PadLeft / PadRight(width[, fill])
             int64_t width = a0.i;
-            if (width < 0 || width > 0x7FFFFFFF) fatal("String index out of range.");
+            if (width < 0 || width > 0x7FFFFFFF) return indexError("String index", width, len);
             char16_t fill = u' ';
             if (argc == 2) { Chars f = charsOf(a1); if (f.n > 0) fill = f.p()[0]; }
             if (width <= (int64_t)len) return text;
@@ -963,26 +998,201 @@ inline Value formatValue(Value v, Value specV, OwnList* list) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Exceptions (SPEC 7): throw, try/catch/finally and resume.
+//
+// A throw does not unwind by itself. `throwValue` walks the handler stack from the top (the innermost active `try`):
+//  * a handler with a matching catch clause runs that catch block *on top of the throw site* (a callback into the
+//    function that owns the `try`), so the frames of the throw site are still alive and `resume(value)` can continue there;
+//  * a handler without a match - or a finally-only handler - is not entered directly: the frames above its function are
+//    unwound first (status flag `g_unwind`, every generated function cleans up its scopes and returns), and its function
+//    then rethrows (after running its `finally`).
+// When a catch block ends it leaves through `g_unwind` as well: jump to the code after the `try`, `return`, or resume.
+// ---------------------------------------------------------------------------------------------------------------------
+
+struct HandlerInfo {
+    uint32_t ncatch;
+    const int32_t* types;   // per catch clause: the type id for excMatches, -1 = catches everything
+    uint8_t hasFinally;
+};
+
+struct Handler {
+    Handler* prev;
+    const HandlerInfo* info;
+    void (*fn)(void* ctx, uint32_t catchIndex, Value exception);   // runs the catch block (generated)
+    void* ctx;
+    Handler* origin;      // the handler this one stands for (a finally-only handler stands for the one that is running its catch)
+    uint8_t finallyOnly;
+};
+
+
+inline Handler* g_handlers = nullptr;
+inline OwnList* g_globalOwn = nullptr;   // the global scope: thrown exceptions belong to it (SPEC 7.6)
+
+/// Generated: does the exception match the catch type (`typeId` as stored in HandlerInfo::types)?
+bool excMatches(Value exception, int32_t typeId);
+/// Generated: the name of a class, for the report of an unhandled exception.
+const char* className(uint32_t cls);
+/// Generated: builds an IndexOutOfBoundsException (message, index, length) owned by the global scope.
+Value makeIndexError(Value message, int64_t index, int64_t length);
+/// Generated: builds a UnitMismatchException (message, expected unit, actual unit) owned by the global scope.
+Value makeUnitError(Value message, Value expected, Value actual);
+
+template <class L> void handlerTrampoline(void* ctx, uint32_t catchIndex, Value exception) { (*static_cast<L*>(ctx))(catchIndex, exception); }
+
+inline void pushHandler(Handler* h) { h->prev = g_handlers; h->origin = h; h->finallyOnly = 0; g_handlers = h; }
+inline void popHandler() { g_handlers = g_handlers->prev; }
+inline void clearUnwind() { g_unwind.active = 0; g_unwind.kind = UW_NONE; g_unwind.target = nullptr; }
+inline void unwindTo(uint8_t kind, Handler* target, Value value, uint32_t label) {
+    g_unwind.active = 1; g_unwind.kind = kind; g_unwind.target = target ? target->origin : nullptr; g_unwind.value = value; g_unwind.label = label;
+}
+/// Leaving a catch block: continue at `label` in the function that owns the handler.
+inline void exitJump(Handler* h, uint32_t label) { unwindTo(UW_JUMP, h, Undef(), label); }
+/// `return` from inside a catch block: the function that owns the handler returns `value`.
+inline void exitReturn(Handler* h, Value value) { unwindTo(UW_RETURN, h, value, 0); }
+
+/// A throw whose catch block may still call resume (innermost record first).
+struct Pending {
+    Pending* prev;
+    Value exception;
+    uint64_t token;
+    uint8_t resumable;
+    uint8_t cleared;
+};
+inline Pending* g_pending = nullptr;
+inline uint64_t g_throwToken = 0;
+
+inline void takeGlobal(Obj* o) {
+    if (o->owner) unlink(o);
+    link(g_globalOwn, o);
+}
+
+FIRE_COLD inline void reportUnhandled(Value exception) {
+    std::fflush(stdout);
+    Obj* o = asObj(exception);
+    std::fprintf(stderr, "Unhandled exception of class '%s'.\n", className(o->cls));
+}
+
+/// `throw exception`. Returns the resume value if the exception is resumed at this very point; otherwise it returns with
+/// `g_unwind.active` set and the caller has to unwind (the generated code checks the flag after every call).
+inline Value throwValue(Value exception, bool resumable = true) {
+    if (FIRE_UNLIKELY(exception.kind != K_Class)) fatal("throw expects an exception object.");
+    takeGlobal(asObj(exception));
+    Handler* h = g_handlers;
+    if (!h) {   // nothing catches it: the program ends here (like the VM, without unwinding the stack)
+        reportUnhandled(exception);
+        std::exit(1);
+    }
+    g_handlers = h->prev;
+    if (!h->finallyOnly) {
+        int found = -1;
+        for (uint32_t i = 0; i < h->info->ncatch && found < 0; i++)
+            if (h->info->types[i] < 0 || excMatches(exception, h->info->types[i])) found = (int)i;
+        if (found >= 0) {
+            Pending pending = {g_pending, exception, ++g_throwToken, (uint8_t)(resumable ? 1 : 0), 0};
+            g_pending = &pending;
+            Handler fin;
+            if (h->info->hasFinally) {   // while the catch block runs, an exception that leaves it must still run the finally
+                fin.prev = g_handlers; fin.info = h->info; fin.fn = nullptr; fin.ctx = nullptr; fin.origin = h->origin; fin.finallyOnly = 1;
+                g_handlers = &fin;
+            }
+            Handler* saved = h->prev;
+            h->fn(h->ctx, (uint32_t)found, exception);
+            g_pending = pending.prev;
+            if (g_handlers == &fin) g_handlers = fin.prev;   // the catch block was left with its finally still armed: it is not on the stack any more
+            if (g_unwind.active && g_unwind.kind == UW_RESUME && g_unwind.token == pending.token) {
+                Value v = g_unwind.value;
+                clearUnwind();
+                h->prev = saved;      // the resumed code is still inside the try block: its handler is armed again
+                g_handlers = h;
+                return v;
+            }
+            if (!g_unwind.active) fatal("internal error: a catch block ended without leaving.");
+            return Undef();
+        }
+    }
+    // no catch clause here: unwind to the function of this handler, which rethrows (after its finally)
+    unwindTo(UW_RETHROW, h, exception, 0);
+    return Undef();
+}
+
+/// `e.resume(value)`: continue at the throw that `e` belongs to, which then evaluates to `value`.
+inline void resumeThrow(Value exception, Value value) {
+    for (Pending* p = g_pending; p; p = p->prev)
+        if (!p->cleared && p->exception.p == exception.p) {
+            if (!p->resumable) fatal("resume() across a finally block or a rethrow is not supported by the native backend.");
+            p->cleared = 1;
+            retain(value);
+            g_unwind.active = 1; g_unwind.kind = UW_RESUME; g_unwind.target = nullptr; g_unwind.value = value; g_unwind.token = p->token;
+            return;
+        }
+    fatal("resume() was called, but this exception is not being handled right now.");
+}
+
+/// The end of a catch block that did not resume: the throw site is given up.
+inline void clearPending(Value exception) {
+    for (Pending* p = g_pending; p; p = p->prev)
+        if (!p->cleared && p->exception.p == exception.p) { p->cleared = 1; return; }
+}
+
+/// Run-time errors the language reports as exceptions (index out of range).
+inline Value indexError(const char* what, int64_t index, int64_t length) {
+    char text[120];
+    int n = std::snprintf(text, sizeof text, "%s %lld out of range (length %lld).", what, (long long)index, (long long)length);
+#ifdef FIRE_EXCEPTIONS
+    OwnList unused = {nullptr, nullptr, 0};
+    Str* msg = allocStr((uint32_t)n, &unused);
+    widenAscii(text, (uint32_t)n, strChars(msg));
+    return throwValue(makeIndexError(StrV(msg), index, length));
+#else
+    (void)n;
+    fatal(text);
+#endif
+}
+
+inline void unitMismatch(Value v, Value expectedText) {
+#ifdef FIRE_EXCEPTIONS
+    uint32_t actualUnit = (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined) ? v.unit : 0;
+    char16_t actualText[96];
+    uint32_t an = actualUnit ? utf8ToUtf16(g_unitNames[actualUnit], actualText, 80) : 0;
+    if (!actualUnit) { const char* none = "(no unit)"; an = widenAscii(none, 9, actualText); }
+    const Str* expected = strOf(expectedText);
+    OwnList unused = {nullptr, nullptr, 0};
+    Str* msg = allocStr(15 + expected->length + 7 + an + 1, &unused);
+    char16_t* d = strChars(msg);
+    uint32_t n = widenAscii("Expected unit '", 15, d);
+    std::memcpy(d + n, expected->data, expected->length * sizeof(char16_t)); n += expected->length;
+    n += widenAscii("', got: ", 8, d + n);
+    std::memcpy(d + n, actualText, an * sizeof(char16_t)); n += an;
+    d[n++] = u'.';
+    msg->length = n;
+    Value actual = newStrFrom(actualText, an, &unused);
+    throwValue(makeUnitError(StrV(msg), expectedText, actual));
+#else
+    (void)v; (void)expectedText;
+    fatal("Incompatible units.");
+#endif
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Arrays and byte buffers
 // ---------------------------------------------------------------------------------------------------------------------
-FIRE_COLD inline void indexFailed(const char* what) { fatal(what); }
 
 /// `a[i]` for arrays, buffers and strings (objects with a GetIndex method are handled by the generated code).
 inline Value arrayGet(Value a, Value i) {
     if (FIRE_LIKELY(a.kind == K_Array && i.kind == K_Int)) {
         Arr* arr = arrOf(a);
-        if (FIRE_UNLIKELY((uint64_t)i.i >= arr->length)) indexFailed("Array index out of range.");
+        if (FIRE_UNLIKELY((uint64_t)i.i >= arr->length)) return indexError("Array index", i.i, arr->length);
         return arr->items()[i.i];
     }
     if (i.kind != K_Int) fatal("An index must be an int.");
     if (a.kind == K_Buffer) {
         Buf* b = bufOf(a);
-        if ((uint64_t)i.i >= b->length) indexFailed("Buffer index out of range.");
+        if ((uint64_t)i.i >= b->length) return indexError("Array index", i.i, b->length);
         return Int(b->bytes()[i.i]);
     }
     if (a.kind == K_String) {
         const Str* s = strOf(a);
-        if ((uint64_t)i.i >= s->length) indexFailed("String index out of range.");
+        if ((uint64_t)i.i >= s->length) return indexError("String index", i.i, s->length);
         return Char(s->data[i.i]);
     }
     fatal("Index access ('[]') is not possible on this value.");
@@ -992,7 +1202,7 @@ inline Value arrayGet(Value a, Value i) {
 inline void arraySet(Value a, Value i, Value v) {
     if (FIRE_LIKELY(a.kind == K_Array && i.kind == K_Int)) {
         Arr* arr = arrOf(a);
-        if (FIRE_UNLIKELY((uint64_t)i.i >= arr->length)) indexFailed("Array index out of range.");
+        if (FIRE_UNLIKELY((uint64_t)i.i >= arr->length)) { indexError("Array index", i.i, arr->length); return; }
         Value old = arr->items()[i.i];
         arr->items()[i.i] = v;
         retain(v);
@@ -1003,7 +1213,7 @@ inline void arraySet(Value a, Value i, Value v) {
     if (a.kind == K_Buffer) {
         if (v.kind != K_Int) fatal("Assigning to a byte buffer expects an int value.");
         Buf* b = bufOf(a);
-        if ((uint64_t)i.i >= b->length) indexFailed("Buffer index out of range.");
+        if ((uint64_t)i.i >= b->length) { indexError("Array index", i.i, b->length); return; }
         b->bytes()[i.i] = (uint8_t)v.i;
         return;
     }
@@ -1056,6 +1266,7 @@ inline void writeUtf16(const char16_t* s, uint32_t n, std::FILE* f) {
 inline Value print(Value v, OwnList* list) {
     Piece p;
     pieceOf(v, p, list);
+    if (FIRE_UNLIKELY(g_unwind.active)) return Undef();   // ToString() threw
     writeUtf16(p.p, p.n, stdout);
     std::fputc('\n', stdout);
     return Undef();

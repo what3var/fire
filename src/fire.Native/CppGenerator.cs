@@ -50,6 +50,15 @@ namespace fire.Native
             /// <summary>Scopes of this function that can own objects or reference values (they get an OwnList).</summary>
             public readonly HashSet<int> NeedsList = new();
             public string Code = "";
+            // Per generation of the chunk (see GenerateChunk): the catch regions, the finally bookkeeping and the decoded code.
+            public Dictionary<int, Region> Regions = new();
+            public readonly HashSet<int> FinReturn = new();                      // finally blocks that a `return` can run through
+            public readonly Dictionary<int, SortedSet<int>> FinJumps = new();    // finally block -> the jump targets that `break`/`continue` leave through it
+            public List<Instr> Decoded = new();
+            public Dictionary<int, int> IndexOf = new();
+            public Flow?[] Entry = Array.Empty<Flow?>();
+            public Out Root = new();
+            public int FinSignature => FinReturn.Count + FinJumps.Values.Sum(v => v.Count);
             public string Signature => Kind == FuncKind.Main ? "static void fire_main()"
                 : $"static Value {Name}(" + string.Join(", ", (HasSelf ? new[] { "Value self" } : Kind == FuncKind.Lambda ? new[] { "Value lam" } : Array.Empty<string>()).Concat(Enumerable.Range(0, ParamCount).Select(i => $"Value P{i}"))) + ")";
             /// <summary>Lambdas are called through a pointer with a uniform signature.</summary>
@@ -82,6 +91,9 @@ namespace fire.Native
         // until nothing changes (a store in one function can change what a load in another one has to do).
         private readonly Dictionary<string, bool> _varRef = new();
         private int _version;   // bumped whenever something that earlier generated code depended on changes
+        /// <summary>The program throws or catches exceptions: calls are followed by a check of the unwinding flag, and the exception hooks exist.</summary>
+        private bool _usesExceptions;
+        private readonly List<string> _excTypes = new();   // catch types, as numbered in the HandlerInfo tables
 
         private CppGenerator(LinkedProgram program, TargetProfile target)
         {
@@ -177,6 +189,14 @@ namespace fire.Native
                     yield return (cpp, proto);
         }
 
+        /// <summary>Is the class <paramref name="rc"/>, a base class of it or an interface of it called <paramref name="name"/>? (what a typed `catch` matches)</summary>
+        private static bool ClassIs(RuntimeClass rc, string name)
+        {
+            for (var c = rc; c != null; c = c.Base)
+                if (c.Name == name || c.Interfaces.Contains(name)) return true;
+            return false;
+        }
+
         private bool AnyClassHasMethod(string name, int argc) => _classList.Any(c => c.Rc.FindMethodWithAccess(name, argc).Proto != null);
 
         private string Run()
@@ -202,6 +222,7 @@ namespace fire.Native
             sb.AppendLine($"#define FIRE_TARGET_{_target.Name.ToUpperInvariant()} 1");
             sb.AppendLine($"#define FIRE_HAL_{_target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine($"#define FIRE_DEFAULT_STACK_BYTES {_target.DefaultStackBytes}");
+            if (_usesExceptions) sb.AppendLine("#define FIRE_EXCEPTIONS 1");
             if (_program.FloatWidth == 32) sb.AppendLine("#define FIRE_FLOAT32 1 // #floatwidth 32: float is a 32-bit float, like in the VM");
             sb.AppendLine("#include \"fire_rt.hpp\"");
             sb.AppendLine("using namespace fire;");
@@ -260,7 +281,7 @@ namespace fire.Native
                 sb.AppendLine("int main() {");
                 sb.AppendLine("    fire_main();");
                 sb.AppendLine("    std::fflush(stdout);");
-                sb.AppendLine("    return 0;");
+                sb.AppendLine(_usesExceptions ? "    return g_unwind.active ? 1 : 0;   // an exception that nothing caught" : "    return 0;");
                 sb.AppendLine("}");
             }
             return sb.ToString();
@@ -274,6 +295,21 @@ namespace fire.Native
                 foreach (var cls in _classList.ToList())
                     if (cls.Rc.FindMethodWithAccess("ToString", 0).Proto is { } toString && toString.ParamCount == 0)
                         GetFunc(toString, FuncKind.Method);
+            if (_usesExceptions && _program.Program.Classes.ContainsKey("IndexOutOfBoundsException"))
+            {
+                // run-time errors (index out of range) are thrown as this prelude class
+                var indexError = RegisterClass("IndexOutOfBoundsException");
+                if (indexError.Rc.FindConstructor(3) is { } indexCtor && indexCtor.ParamCount == 3) GetFunc(indexCtor, FuncKind.Ctor);
+                var unitError = RegisterClass("UnitMismatchException");
+                if (unitError.Rc.FindConstructor(3) is { } unitCtor && unitCtor.ParamCount == 3) GetFunc(unitCtor, FuncKind.Ctor);
+            }
+            foreach (var field in _fieldNames.ToList())
+                foreach (var cls in _classList.ToList())
+                    if (cls.Rc.FieldIndex.ContainsKey(field) && cls.Rc.FindFieldRequiredUnit(field) is { } requiredUnit)
+                    {
+                        UnitId(Unit.Parse(requiredUnit));   // the unit and its text for the check in the field setter
+                        Constant(Value.MakeString(requiredUnit));
+                    }
             if (AnyClassHasMethod("GetIndex", 1)) _dispatchers.Add(("GetIndex", 1));
             if (AnyClassHasMethod("SetIndex", 2)) _dispatchers.Add(("SetIndex", 2));
             if (_dispatchers.Contains(("GetEnumerator", 0)) && _program.Program.Classes.ContainsKey("ListEnumerator"))
@@ -411,8 +447,14 @@ namespace fire.Native
                 }
                 indexCode = "    uint32_t idx = 0;\n    switch (o->cls) {\n" + cases + $"        default: fatal(\"Field '{name}' not found on this object.\");\n    }}";
             }
+            // a field declared with a unit (`int len : mm`) checks every assignment
+            var unitChecks = new StringBuilder();
+            foreach (var cls in _classList)
+                if (indexByClass.ContainsKey(cls.Id) && cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit)
+                    unitChecks.Append($"        case {cls.Id}: checkUnit(x, {UnitId(Unit.Parse(requiredUnit))}, {Constant(Value.MakeString(requiredUnit))}); break;\n");
+            string unitCode = unitChecks.Length == 0 ? "" : "    switch (o->cls) {\n" + unitChecks + "        default: break;\n    }\n" + (_usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return;\n" : "");
             return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}    Obj* o = asObj(v);\n{indexCode}\n    return o->fields()[idx];\n}}\n"
-                 + $"static inline void sf_{m}(Value v, Value x) {{\n    Obj* o = asObj(v);\n{indexCode}\n    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n";
+                 + $"static inline void sf_{m}(Value v, Value x) {{\n    Obj* o = asObj(v);\n{indexCode}\n{unitCode}    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n";
         }
 
         /// <summary>`a[i]` and `a[i] = v`: arrays, buffers and strings directly, objects through their GetIndex/SetIndex methods.</summary>
@@ -460,6 +502,40 @@ namespace fire.Native
             else sb.AppendLine("    (void)o;");
             sb.AppendLine("}");
 
+            if (_usesExceptions)
+            {
+                sb.AppendLine("bool excMatches(Value exception, int32_t type) {");
+                sb.AppendLine("    uint32_t cls = asObj(exception)->cls; (void)cls;");
+                sb.AppendLine("    switch (type) {");
+                for (int i = 0; i < _excTypes.Count; i++)
+                {
+                    string typeName = _excTypes[i];
+                    if (typeName == "Exception") { sb.AppendLine($"        case {i}: return true;"); continue; }
+                    var ids = _classList.Where(c => ClassIs(c.Rc, typeName)).Select(c => c.Id).ToList();
+                    sb.AppendLine($"        case {i}: " + (ids.Count == 0 ? "return false;" : "switch (cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }"));
+                }
+                sb.AppendLine("        default: return false;");
+                sb.AppendLine("    }");
+                sb.AppendLine("}");
+                sb.AppendLine("const char* className(uint32_t cls) {");
+                sb.AppendLine("    switch (cls) {");
+                foreach (var cls in _classList) sb.AppendLine($"        case {cls.Id}: return {CString(cls.Rc.Name)};");
+                sb.AppendLine("        default: return \"?\";");
+                sb.AppendLine("    }");
+                sb.AppendLine("}");
+                var indexClass = _classes.GetValueOrDefault("IndexOutOfBoundsException") ?? throw new NativeNotSupportedException("exceptions need the prelude class IndexOutOfBoundsException");
+                var unitClass = _classes.GetValueOrDefault("UnitMismatchException") ?? throw new NativeNotSupportedException("exceptions need the prelude class UnitMismatchException");
+                sb.AppendLine("Value makeUnitError(Value message, Value expected, Value actual) {");
+                sb.AppendLine($"    Value o = newObject({unitClass.Id}, {unitClass.Fields.Count}, g_globalOwn);");
+                sb.AppendLine($"    {_funcByProto[unitClass.Rc.FindConstructor(3)!].Name}(o, message, expected, actual);");
+                sb.AppendLine("    return o;");
+                sb.AppendLine("}");
+                sb.AppendLine("Value makeIndexError(Value message, int64_t index, int64_t length) {");
+                sb.AppendLine($"    Value o = newObject({indexClass.Id}, {indexClass.Fields.Count}, g_globalOwn);");
+                sb.AppendLine($"    {_funcByProto[indexClass.Rc.FindConstructor(3)!].Name}(o, message, Int(index), Int(length));");
+                sb.AppendLine("    return o;");
+                sb.AppendLine("}");
+            }
             sb.AppendLine("bool userToString(Value object, OwnList* list, Value* result) {");
             var toStrings = new StringBuilder();
             foreach (var cls in _classList)
@@ -492,10 +568,84 @@ namespace fire.Native
             public List<(int Id, int Declared)> Scopes = new();
             /// <summary>Bit k: stack slot k may hold a string/array/buffer (slots beyond 63 are assumed to).</summary>
             public ulong Refs;
+            /// <summary>The `try` statements that are active here, outermost first.</summary>
+            public List<HEntry> Handlers = new();
+            /// <summary>The catch lambda this code belongs to (null: the function itself).</summary>
+            public Region? Region;
+            /// <summary>The `finally` blocks that this code is inside of (their entry addresses), outermost first.</summary>
+            public List<int> Fins = new();
 
-            public Flow Clone() => new() { Depth = Depth, Scopes = new List<(int, int)>(Scopes), Refs = Refs };
+            public Flow Clone() => new() { Depth = Depth, Scopes = new List<(int, int)>(Scopes), Refs = Refs, Handlers = new List<HEntry>(Handlers), Region = Region, Fins = new List<int>(Fins) };
 
-            public bool SameShape(Flow o) => Depth == o.Depth && Scopes.SequenceEqual(o.Scopes);
+            public bool SameShape(Flow o) => Depth == o.Depth && ReferenceEquals(Region, o.Region) && Scopes.SequenceEqual(o.Scopes)
+                && Handlers.SequenceEqual(o.Handlers) && Fins.SequenceEqual(o.Fins);
+        }
+
+        /// <summary>An active `try`: the region of its template, and whether only its `finally` is still armed (while a catch block runs).</summary>
+        private readonly record struct HEntry(Region Region, bool FinOnly);
+
+        /// <summary>The code of a function or catch lambda, and what belongs at its end: shared unwinding exits and the landing sites of its handlers.</summary>
+        private sealed class Out
+        {
+            public readonly StringBuilder Code = new();
+            public readonly StringBuilder Tail = new();
+            public readonly Dictionary<string, int> Exits = new();
+            public int MaxDepth;
+        }
+
+        /// <summary>One `try` statement (a handler template): its catch blocks are a C++ lambda that runs on top of the throw site, so that
+        /// `resume` can continue there. Slots of the operand stack that the catch code uses are its own (<c>c{template}_{k}</c>).</summary>
+        private sealed class Region
+        {
+            public required int Template;
+            /// <summary>The region the `try` statement is in (null: the function).</summary>
+            public Region? Outer;
+            /// <summary>The state in front of the RegisterHandler instruction.</summary>
+            public required Flow Reg;
+            public int ScopeBase => Reg.Scopes.Count;
+            public int DepthBase => Reg.Depth;
+            public int CatchScopeId;
+            public bool HasFinally;
+            public int? FinallyAddr;
+            public List<(string? Type, int Addr)> Catches = new();
+            public int Start = -1, End = -1;
+            /// <summary>Jump targets outside of the catch blocks that the catch code leaves to.</summary>
+            public readonly SortedSet<int> ExitLabels = new();
+            public bool ReturnExit;
+            public readonly Out Out = new();
+        }
+
+        private void UseExceptions()
+        {
+            if (_usesExceptions) return;
+            _usesExceptions = true;
+            _version++;
+        }
+
+        private Out OutOf(Func f, Region? region) => region?.Out ?? f.Root;
+
+        /// <summary>The innermost region (starting at <paramref name="from"/>) that contains the address; null: the function.</summary>
+        private static Region? RegionAt(Region? from, int addr)
+        {
+            for (var r = from; r != null; r = r.Outer)
+                if (r.Start <= addr && addr < r.End) return r;
+            return null;
+        }
+
+        /// <summary>The name of an operand stack slot in the code of <paramref name="region"/>.</summary>
+        private static string SlotName(Region? region, int k)
+        {
+            for (var r = region; r != null; r = r.Outer)
+                if (k >= r.DepthBase) return $"c{r.Template}_{k}";
+            return $"s{k}";
+        }
+
+        private int ExcTypeId(string? typeName)
+        {
+            if (typeName == null) return -1;
+            int index = _excTypes.IndexOf(typeName);
+            if (index < 0) { _excTypes.Add(typeName); index = _excTypes.Count - 1; }
+            return index;
         }
 
         private static string ListName(int scopeId) => scopeId == FunctionScope ? "OP" : scopeId == GlobalScope ? "OG" : $"O{scopeId}";
@@ -507,24 +657,31 @@ namespace fire.Native
             var code = OpInfo.Decode(chunk.Code);
             var indexOfAddr = new Dictionary<int, int>();
             for (int i = 0; i < code.Count; i++) indexOfAddr[code[i].Addr] = i;
+            f.Decoded = code;
+            f.IndexOf = indexOfAddr;
+            f.Regions = new Dictionary<int, Region>();
+            f.Root = new Out();
+            var finAddrs = chunk.Handlers.Where(t => t.FinallyAddr != null).Select(t => t.FinallyAddr!.Value).ToHashSet();
 
             var entry = new Flow?[code.Count];
+            f.Entry = entry;
             var start = new Flow();
             start.Scopes.Add(f.Kind == FuncKind.Main ? (GlobalScope, 0) : (FunctionScope, f.ParamLike));
             entry[0] = start;
             // Parameters can be anything: assume they may be references (a call-site analysis could narrow this).
             for (int i = 0; i < f.ParamLike; i++) MarkVarRef(VarKey(f, $"P{i}"));
+            if (f.Kind == FuncKind.Main && _usesExceptions) f.NeedsList.Add(GlobalScope);   // thrown exceptions belong to the global scope
 
             var targets = new HashSet<int>();
             var work = new Stack<int>();
             work.Push(0);
-            int maxDepth = 0;
             var locals = new SortedSet<string>(StringComparer.Ordinal);
 
             void Propagate(int addr, Flow state, int from)
             {
                 if (!indexOfAddr.TryGetValue(addr, out int target))
                     throw new NativeNotSupportedException($"jump to {addr} inside an instruction ({name})");
+                if (finAddrs.Contains(addr)) { state = state.Clone(); state.Fins.Add(addr); }
                 if (entry[target] == null) { entry[target] = state.Clone(); work.Push(target); return; }
                 var existing = entry[target]!;
                 if (!existing.SameShape(state))
@@ -533,22 +690,50 @@ namespace fire.Native
             }
 
             // Pass 1: propagate states (and find out which scopes can own objects); pass 2: emit with the states found.
-            while (work.Count > 0)
+            // Which jumps and returns run through a `finally` is only known once the code in front of it was seen, so repeat until that settles.
+            while (true)
             {
-                int idx = work.Pop();
-                var state = entry[idx]!.Clone();
-                var ins = code[idx];
-                var step = Step(f, chunk, ins, state, null, locals);
-                maxDepth = Math.Max(maxDepth, Math.Max(entry[idx]!.Depth, state.Depth));
-                if (step.JumpTarget is int jt) { targets.Add(jt); Propagate(jt, state, ins.Addr); }
-                if (step.FallsThrough)
+                int signature = f.FinSignature;
+                while (work.Count > 0)
                 {
-                    if (idx + 1 >= code.Count) throw new NativeNotSupportedException($"code of {name} runs past its end");
-                    Propagate(code[idx + 1].Addr, state, ins.Addr);
+                    int idx = work.Pop();
+                    var state = entry[idx]!.Clone();
+                    var ins = code[idx];
+                    var step = Step(f, chunk, ins, state, null, locals);
+                    var o = OutOf(f, entry[idx]!.Region);
+                    o.MaxDepth = Math.Max(o.MaxDepth, Math.Max(entry[idx]!.Depth, state.Depth));
+                    if (step.JumpTarget is int jt) { targets.Add(jt); Propagate(jt, state, ins.Addr); }
+                    if (step.Extra != null)
+                        foreach (var (addr, edgeState) in step.Extra) { targets.Add(addr); Propagate(addr, edgeState, ins.Addr); }
+                    if (step.FallsThrough)
+                    {
+                        if (idx + 1 >= code.Count) throw new NativeNotSupportedException($"code of {name} runs past its end");
+                        Propagate(code[idx + 1].Addr, state, ins.Addr);
+                    }
                 }
+                if (f.FinSignature == signature) break;
+                for (int i = 0; i < code.Count; i++) if (entry[i] != null) work.Push(i);
             }
 
+            for (int i = 0; i < code.Count; i++)
+            {
+                if (entry[i] == null) continue; // unreachable
+                var ins = code[i];
+                var o = OutOf(f, entry[i]!.Region);
+                if (targets.Contains(ins.Addr)) o.Code.AppendLine($"L{ins.Addr}:;");
+                o.Code.AppendLine($"    // {ins.Addr}: {ins.Op}{(ins.A.Length > 0 ? " " + string.Join(",", ins.A) : "")}");
+                var state = entry[i]!.Clone();
+                Step(f, chunk, ins, state, o.Code, locals);
+            }
+            foreach (var region in f.Regions.Values.OrderBy(r => r.Template)) Landing(f, region, locals);
+
             var sb = new StringBuilder();
+            foreach (var region in f.Regions.Values.OrderBy(r => r.Template))
+            {
+                var types = region.Catches.Select(c => ExcTypeId(c.Type).ToString(CultureInfo.InvariantCulture)).ToList();
+                sb.AppendLine($"static const int32_t HT_{name}_{region.Template}[] = {{{(types.Count == 0 ? "0" : string.Join(", ", types))}}};");
+                sb.AppendLine($"static const HandlerInfo HI_{name}_{region.Template} = {{{region.Catches.Count}, HT_{name}_{region.Template}, {(region.HasFinally ? 1 : 0)}}};");
+            }
             sb.AppendLine(f.Signature);
             sb.AppendLine("{");
             if (f.HasSelf) sb.AppendLine("    (void)self;");
@@ -558,29 +743,227 @@ namespace fire.Native
                 for (int i = 0; i < f.CaptureCount; i++) sb.AppendLine($"    Value P{f.ParamCount + i} = lamCapture(lam, {i});");
             }
             for (int i = 0; i < f.ParamCount; i++) sb.AppendLine($"    (void)P{i};");
-            if (maxDepth > 0) sb.AppendLine("    Value " + string.Join(", ", Enumerable.Range(0, maxDepth).Select(i => $"s{i}")) + ";");
+            if (f.Root.MaxDepth > 0) sb.AppendLine("    Value " + string.Join(", ", Enumerable.Range(0, f.Root.MaxDepth).Select(i => $"s{i}")) + ";");
             var localsToDeclare = locals.Where(l => !(l.StartsWith("P") && int.Parse(l.AsSpan(1)) < f.ParamLike)).ToList();
             if (localsToDeclare.Count > 0) sb.AppendLine("    Value " + string.Join(", ", localsToDeclare.Select(l => l + " = Undef()")) + ";");
             if (f.NeedsList.Count > 0) sb.AppendLine("    OwnList " + string.Join(", ", f.NeedsList.OrderBy(i => i).Select(i => ListName(i) + (i < 0 ? " = {nullptr, nullptr, poolMark()}" : " = {nullptr, nullptr, 0}"))) + ";");
+            if (f.Kind == FuncKind.Main && _usesExceptions) sb.AppendLine("    g_globalOwn = &OG;");
             // Parameters are variables: they hold what was passed.
             for (int i = 0; i < f.ParamLike; i++)
                 if (VarRef(VarKey(f, $"P{i}"))) sb.AppendLine($"    retain(P{i});");
+            EmitHandlers(f, null, sb, locals, "    ");
 
-            for (int i = 0; i < code.Count; i++)
-            {
-                if (entry[i] == null) continue; // unreachable
-                var ins = code[i];
-                if (targets.Contains(ins.Addr)) sb.AppendLine($"L{ins.Addr}:;");
-                sb.AppendLine($"    // {ins.Addr}: {ins.Op}{(ins.A.Length > 0 ? " " + string.Join(",", ins.A) : "")}");
-                var state = entry[i]!.Clone();
-                Step(f, chunk, ins, state, sb, locals);
-            }
+            sb.Append(f.Root.Code);
+            sb.Append(f.Root.Tail);
             if (f.Kind != FuncKind.Main) sb.AppendLine("    fatal(\"control flow fell off the end of a function\");");
             sb.AppendLine("}");
             f.Code = sb.ToString();
         }
 
-        private readonly record struct StepResult(bool FallsThrough, int? JumpTarget);
+        /// <summary>Declares the handlers of the `try` statements that sit directly in <paramref name="outer"/>, and defines their catch lambdas.</summary>
+        private void EmitHandlers(Func f, Region? outer, StringBuilder sb, ISet<string> locals, string indent)
+        {
+            foreach (var region in f.Regions.Values.Where(r => r.Outer == outer).OrderBy(r => r.Template))
+            {
+                sb.AppendLine($"{indent}Handler H{region.Template};");
+                if (region.Catches.Count == 0) continue;
+                int t = region.Template;
+                sb.AppendLine($"{indent}auto C{t} = [&](uint32_t ci, Value e) {{");
+                string inner = indent + "    ";
+                int top = region.Out.MaxDepth;
+                if (top > region.DepthBase) sb.AppendLine($"{inner}Value " + string.Join(", ", Enumerable.Range(region.DepthBase, top - region.DepthBase).Select(k => $"c{t}_{k}")) + ";");
+                EmitHandlers(f, region, sb, locals, inner);
+                sb.AppendLine($"{inner}switch (ci) {{");
+                string catchVar = $"B{region.CatchScopeId}_0";
+                for (int i = 0; i < region.Catches.Count; i++)
+                {
+                    string init = (locals.Contains(catchVar) ? $"{catchVar} = e; " : "(void)e; ") + (f.NeedsList.Contains(region.CatchScopeId) ? $"{ListName(region.CatchScopeId)}.mark = poolMark(); " : "");
+                    sb.AppendLine($"{inner}case {i}: {{ {init}goto L{region.Catches[i].Addr}; }}");
+                }
+                sb.AppendLine($"{inner}default: break;");
+                sb.AppendLine($"{inner}}}");
+                sb.Append(region.Out.Code);
+                sb.Append(region.Out.Tail);
+                sb.AppendLine($"{inner}fatal(\"control flow fell off the end of a catch block\");");
+                sb.AppendLine($"{indent}}};");
+            }
+        }
+
+        // -------------------------------------------------------------------------------------------------------------
+        // Exceptions: unwinding, landing sites, return through `finally`
+        // -------------------------------------------------------------------------------------------------------------
+        private Region GetRegion(Func f, int template, Flow st)
+        {
+            if (f.Regions.TryGetValue(template, out var region)) return region;
+            var t = f.Chunk.Handlers[template];
+            region = new Region
+            {
+                Template = template, Outer = st.Region, Reg = st.Clone(), CatchScopeId = f.Chunk.Code.Count + template,
+                HasFinally = t.FinallyAddr != null, FinallyAddr = t.FinallyAddr,
+            };
+            foreach (var (type, addr) in t.Catches) region.Catches.Add((type, addr));
+            if (region.Catches.Count > 0)
+            {
+                region.Start = region.Catches[0].Addr;
+                var before = f.Decoded[f.IndexOf[region.Start] - 1];
+                if (before.Op != OpCode.Jump) throw new NativeNotSupportedException($"unexpected layout of a try statement in {f.Name}");
+                region.End = before.A[0];
+            }
+            f.Regions[template] = region;
+            return region;
+        }
+
+        /// <summary>The state while a catch block runs: the registers of the `try` are there, only its `finally` is still armed.</summary>
+        private static Flow LandingFlow(Region region)
+        {
+            var flow = region.Reg.Clone();
+            if (region.HasFinally) flow.Handlers.Add(new HEntry(region, true));
+            return flow;
+        }
+
+        /// <summary>Leaves the scopes <c>[downTo, fromCount)</c> of <paramref name="st"/> (innermost first): what they own is destroyed, what they hold is released.
+        /// With <paramref name="transfer"/> an object that is returned does not die with them.</summary>
+        private void ReleaseScopes(Func f, Flow st, int fromCount, int downTo, bool reset, ISet<string> locals, Action<string> emit, string? transfer)
+        {
+            if (transfer != null)
+                for (int i = fromCount - 1; i >= downTo; i--)
+                    if (f.NeedsList.Contains(st.Scopes[i].Id)) emit($"transferOut({transfer}, &{ListName(st.Scopes[i].Id)});");
+            for (int i = fromCount - 1; i >= downTo; i--)
+            {
+                int id = st.Scopes[i].Id;
+                if (f.NeedsList.Contains(id)) emit($"leave(&{ListName(id)});");
+                foreach (var v in ScopeVariables(f, id, locals))
+                    if (VarRef(VarKey(f, v))) emit(reset ? $"release({v}); {v} = Undef();" : $"release({v});");
+            }
+        }
+
+        /// <summary>The end of the program: the global scope is released like any other (destructors run), then what the globals hold.</summary>
+        private void HaltCode(Func f, Action<string> emit)
+        {
+            if (f.NeedsList.Contains(GlobalScope)) emit("leave(&OG);");
+            foreach (var g in _globals.OrderBy(x => x))
+                if (VarRef($"G{g}")) emit($"release(G{g});");
+            foreach (var (_, index) in _staticFields.OrderBy(kv => kv.Value))
+                if (VarRef($"SF{index}")) emit($"release(SF{index});");
+        }
+
+        /// <summary>The code that runs when something is unwinding through this point: the scopes up to the innermost active `try` of this
+        /// function (or catch lambda) are left, then control goes to the landing site of that `try`, or out of the function. Returns the label.</summary>
+        private string ExitLabel(Func f, Flow st, ISet<string> locals)
+        {
+            var o = OutOf(f, st.Region);
+            var body = new StringBuilder();
+            void E(string text) => body.Append("    ").AppendLine(text);
+            HEntry? local = st.Handlers.Count > 0 && st.Handlers[^1].Region.Outer == st.Region ? st.Handlers[^1] : null;
+            int baseCount = st.Region?.ScopeBase ?? (f.Kind == FuncKind.Main ? 1 : 0);
+            ReleaseScopes(f, st, st.Scopes.Count, local?.Region.ScopeBase ?? baseCount, local != null || st.Region != null, locals, E, null);
+            if (local != null) E($"goto LAND{local.Value.Region.Template};");
+            else if (st.Region != null) E("return;");
+            else if (f.Kind == FuncKind.Main) { HaltCode(f, E); E("return;"); }
+            else E("return Undef();");
+            string text = body.ToString();
+            if (!o.Exits.TryGetValue(text, out int id))
+            {
+                id = o.Exits.Count;
+                o.Exits[text] = id;
+                o.Tail.AppendLine($"U{id}:;").Append(text);
+            }
+            return $"U{id}";
+        }
+
+        /// <summary>A `return` of the C++ variable <c>r</c> from the code described by <paramref name="st"/>. A `try` with a `finally` that is still active
+        /// in this region gets to run it first (completion kind 2); a catch lambda hands the return to the landing site of its `try`. Returns the edges
+        /// of the flow graph (the entries of the finally blocks).</summary>
+        private List<(int Addr, Flow State)> ReturnSeq(Func f, Flow st, bool rIsRef, bool retain, Action<string>? emit, ISet<string> locals)
+        {
+            var edges = new List<(int, Flow)>();
+            void E(string text) => emit?.Invoke(text);
+            bool isCtor = f.Kind == FuncKind.Ctor;
+            string? transfer = isCtor ? null : "r";
+            if (retain && rIsRef && !isCtor) E("retain(r);");
+            for (int hi = st.Handlers.Count - 1; hi >= 0 && st.Handlers[hi].Region.Outer == st.Region; hi--)
+            {
+                var region = st.Handlers[hi].Region;
+                if (!st.Handlers[hi].FinOnly) E("popHandler();");   // (the armed finally of a catch block was already taken off the stack)
+                if (!region.HasFinally) continue;
+                int fin = region.FinallyAddr!.Value;
+                ReleaseScopes(f, st, st.Scopes.Count, region.ScopeBase, true, locals, E, transfer);
+                E($"{SlotName(st.Region, region.DepthBase)} = r; {SlotName(st.Region, region.DepthBase + 1)} = Int(2); goto L{fin};");
+                f.FinReturn.Add(fin);
+                ulong below = region.DepthBase >= 64 ? ulong.MaxValue : (1UL << region.DepthBase) - 1;
+                edges.Add((fin, new Flow
+                {
+                    Depth = region.DepthBase + 2, Scopes = st.Scopes.Take(region.ScopeBase).ToList(), Handlers = st.Handlers.Take(hi).ToList(),
+                    Region = st.Region, Fins = new List<int>(region.Reg.Fins), Refs = (st.Refs & below) | (rIsRef && region.DepthBase < 64 ? 1UL << region.DepthBase : 0),
+                }));
+                return edges;
+            }
+            if (st.Region == null)
+            {
+                ReleaseScopes(f, st, st.Scopes.Count, 0, false, locals, E, transfer);
+                E(isCtor ? "return self;" : "return r;");
+            }
+            else
+            {
+                ReleaseScopes(f, st, st.Scopes.Count, st.Region.ScopeBase, true, locals, E, transfer);
+                E($"exitReturn(&H{st.Region.Template}, r); return;");
+                st.Region.ReturnExit = true;
+                edges.AddRange(ReturnSeq(f, LandingFlow(st.Region), true, false, null, locals));
+            }
+            return edges;
+        }
+
+        /// <summary>Where unwinding arrives at the function that owns a `try` (reached from <c>U</c> exits): what a catch block left through
+        /// (jump, return), an exception that this `try` did not catch (it runs the `finally` and throws on), or something passing by.</summary>
+        private void Landing(Func f, Region r, ISet<string> locals)
+        {
+            var o = OutOf(f, r.Outer);
+            int t = r.Template;
+            var lt = new StringBuilder();
+            void E(string text) => lt.Append("    ").AppendLine(text);
+            var reg = r.Reg;
+            lt.AppendLine($"LAND{t}: FIRE_UNUSED_LABEL;");
+            if (r.ExitLabels.Count > 0)
+            {
+                E($"if (g_unwind.kind == UW_JUMP && g_unwind.target == &H{t}) {{");
+                E("    uint32_t lab = g_unwind.label; clearUnwind();");
+                E("    switch (lab) {");
+                foreach (int target in r.ExitLabels)
+                {
+                    var te = f.Entry[f.IndexOf[target]] ?? throw new NativeNotSupportedException($"catch block leaves to unreachable code ({f.Name})");
+                    bool here = ReferenceEquals(te.Region, r.Outer);
+                    E($"    case {target}: {{");
+                    ReleaseScopes(f, reg, reg.Scopes.Count, here ? te.Scopes.Count : r.Outer?.ScopeBase ?? 0, true, locals, x => E("        " + x), null);
+                    if (here)
+                    {
+                        for (int k = r.DepthBase; k < te.Depth; k++) E($"        {SlotName(r.Outer, k)} = g_unwind.regs[{k - r.DepthBase}];");
+                        E($"        goto L{target};");
+                    }
+                    else E($"        exitJump(&H{r.Outer!.Template}, {target}); return;");
+                    E("    }");
+                }
+                E("    default: fatal(\"internal error: unknown landing label\");");
+                E("    }");
+                E("}");
+            }
+            if (r.ReturnExit)
+            {
+                E($"if (g_unwind.kind == UW_RETURN && g_unwind.target == &H{t}) {{");
+                E("    Value r = g_unwind.value; (void)r; clearUnwind();");
+                ReturnSeq(f, LandingFlow(r), true, false, x => E("    " + x), locals);
+                E("}");
+            }
+            string exit = ExitLabel(f, reg, locals);
+            E($"if (g_unwind.kind == UW_RETHROW && g_unwind.target == &H{t}) {{");
+            E("    Value x = g_unwind.value; clearUnwind();");
+            if (r.HasFinally) E($"    {SlotName(r.Outer, r.DepthBase)} = x; {SlotName(r.Outer, r.DepthBase + 1)} = Int(1); goto L{r.FinallyAddr};");
+            else { E("    throwValue(x, false);"); E($"    goto {exit};"); }
+            E("}");
+            E($"goto {exit};");
+            o.Tail.Append(lt);
+        }
+
+        private readonly record struct StepResult(bool FallsThrough, int? JumpTarget, List<(int Addr, Flow State)>? Extra = null);
 
         private string Var(Flow st, int depth, int slot, ISet<string> locals)
         {
@@ -607,7 +990,13 @@ namespace fire.Native
         {
             int d = st.Depth;
             string fn = f.Name;
-            string S(int k) => $"s{k}";
+            string S(int k) => SlotName(st.Region, k);
+            // After an operation that can throw: if an exception is unwinding, leave (to the handler of this function, or out of it).
+            void Check()
+            {
+                if (!_usesExceptions || sb == null) return;
+                E($"if (FIRE_UNLIKELY(g_unwind.active)) goto {ExitLabel(f, st, locals)};");
+            }
             void E(string text) { sb?.Append("    ").AppendLine(text); }
             void Need(int n)
             {
@@ -716,7 +1105,10 @@ namespace fire.Native
                     if (constant.Kind == ValueKind.String) MarkVarRef(key);
                     string k = Constant(constant);
                     if (!subtract && VarRef(key))
+                    {
                         E($"{{ Value o = {v}; {v} = addR(o, {k}, &{OwnerList()}); retain({v}); release(o); }}");
+                        Check();
+                    }
                     else
                         E($"{v} = {(subtract ? "sub" : "add")}({v}, {k});");
                     return Next();
@@ -728,6 +1120,7 @@ namespace fire.Native
                     if (R(d - 2) || R(d - 1))
                     {
                         E($"{S(d - 2)} = addR({S(d - 2)}, {S(d - 1)}, &{OwnerList()});");
+                        Check();
                         d--; SetR(d - 1, true);
                     }
                     else { E($"{S(d - 2)} = add({S(d - 2)}, {S(d - 1)});"); d--; SetR(d - 1, false); }
@@ -754,8 +1147,23 @@ namespace fire.Native
                 case OpCode.GtEq: return Compare("ge", false);
 
                 case OpCode.Jump:
-                    E($"goto L{ins.A[0]};");
-                    return new StepResult(false, ins.A[0]);
+                {
+                    int target = ins.A[0];
+                    var targetRegion = RegionAt(st.Region, target);
+                    if (ReferenceEquals(targetRegion, st.Region)) { E($"goto L{target};"); return new StepResult(false, target); }
+                    // a jump out of a catch block: the catch lambda ends, and the function that owns the `try` continues at the target
+                    for (var r = st.Region; r != targetRegion; r = r!.Outer) r!.ExitLabels.Add(target);
+                    // the operand slots of the catch code travel in registers of the unwinding state: the frames that unwind first overwrite the
+                    // slots of the function that owns the `try` (the result of the call that threw), the landing site puts them back
+                    var outermost = st.Region!;
+                    while (!ReferenceEquals(outermost.Outer, targetRegion)) outermost = outermost.Outer!;
+                    if (d - outermost.DepthBase > 4) throw new NativeNotSupportedException($"a jump out of a catch block with {d - outermost.DepthBase} operands ({fn} at {ins.Addr})");
+                    for (int k = outermost.DepthBase; k < d; k++) E($"g_unwind.regs[{k - outermost.DepthBase}] = {SlotName(st.Region, k)};");
+                    E($"exitJump(&H{st.Region!.Template}, {target}); return;");
+                    var exitState = st.Clone();
+                    exitState.Region = targetRegion;
+                    return new StepResult(false, null, new List<(int, Flow)> { (target, exitState) });
+                }
                 case OpCode.JumpIfFalse:
                     Need(1); E($"if (!truthy({S(d - 1)})) goto L{ins.A[0]};"); d--; st.Depth = d;
                     return new StepResult(true, ins.A[0]);
@@ -779,8 +1187,12 @@ namespace fire.Native
                 {
                     if (st.Scopes.Count <= 1) throw new NativeNotSupportedException($"ExitScope without scope at {ins.Addr} in {fn}");
                     int id = st.Scopes[^1].Id;
-                    if (f.NeedsList.Contains(id)) E($"leave(&{ListName(id)});");
-                    ReleaseScopeVariables(id, reset: true);
+                    // a catch block that leaves scopes of its function (break/continue): the function that owns the `try` leaves them, after the unwinding
+                    if (st.Scopes.Count - 1 >= (st.Region?.ScopeBase ?? 0))
+                    {
+                        if (f.NeedsList.Contains(id)) E($"leave(&{ListName(id)});");
+                        ReleaseScopeVariables(id, reset: true);
+                    }
                     st.Scopes.RemoveAt(st.Scopes.Count - 1);
                     return Next();
                 }
@@ -793,6 +1205,7 @@ namespace fire.Native
                     if (native == "print" && argc == 1)
                     {
                         E($"{S(d - 1)} = print({S(d - 1)}, &{OwnerList()});");
+                        Check();
                         SetR(d - 1, false);
                         return Next();
                     }
@@ -801,6 +1214,7 @@ namespace fire.Native
                         int first = d - argc;
                         string a0 = argc > 2 ? S(first + 2) : "Undef()", a1 = argc > 3 ? S(first + 3) : "Undef()";
                         E($"{S(first)} = stringCall({S(first)}.i, {S(first + 1)}, {argc - 2}, {a0}, {a1}, &{OwnerList()});");
+                        Check();
                         d = first + 1; SetR(first, true); return Next();
                     }
                     if (native == CharMethods.NativeName && argc == 2)
@@ -823,6 +1237,7 @@ namespace fire.Native
                     if (proto.ParamCount != argc) throw new NativeNotSupportedException($"{cls}.{method}: default arguments");
                     var target = GetFunc(proto, FuncKind.Static);
                     E($"{S(d - argc)} = {target.Name}({string.Join(", ", Enumerable.Range(d - argc, argc).Select(S))});");
+                    Check();
                     AdoptResult(d - argc);
                     d = d - argc + 1; return Next();
                 }
@@ -830,34 +1245,19 @@ namespace fire.Native
                 {
                     Need(1);
                     if (f.Kind == FuncKind.Main) throw new NativeNotSupportedException("return in top-level code");
-                    var chain = st.Scopes.AsEnumerable().Reverse().ToList();   // innermost first
                     bool isCtor = f.Kind == FuncKind.Ctor;
-                    bool anything = chain.Any(sc => f.NeedsList.Contains(sc.Id) || ScopeVariables(f, sc.Id, locals).Any(v => VarRef(VarKey(f, v))));
-                    if (!isCtor && (R(d - 1) || anything)) E($"{{ Value r = {S(d - 1)};");
-                    else if (!isCtor) { E($"return {S(d - 1)};"); return new StepResult(false, null); }
-                    else E("{");
+                    bool anything = st.Scopes.Any(sc => f.NeedsList.Contains(sc.Id) || ScopeVariables(f, sc.Id, locals).Any(v => VarRef(VarKey(f, v))));
+                    bool tryActive = st.Region != null || st.Handlers.Count > 0;
+                    if (!isCtor && !tryActive && !R(d - 1) && !anything) { E($"return {S(d - 1)};"); return new StepResult(false, null); }
                     // the value is on its way to the caller: it keeps a count, and an object that the leaving scopes owned goes along
-                    if (!isCtor && R(d - 1)) E("  retain(r);");
-                    if (!isCtor)
-                        foreach (var sc in chain)
-                            if (f.NeedsList.Contains(sc.Id)) E($"  transferOut(r, &{ListName(sc.Id)});");
-                    foreach (var sc in chain)
-                    {
-                        if (f.NeedsList.Contains(sc.Id)) E($"  leave(&{ListName(sc.Id)});");
-                        foreach (var v in ScopeVariables(f, sc.Id, locals))
-                            if (VarRef(VarKey(f, v))) E($"  release({v});");
-                    }
-                    E(isCtor ? "  return self; }" : "  return r; }");
-                    return new StepResult(false, null);
+                    E($"{{ Value r = {S(d - 1)}; (void)r;");
+                    var edges = ReturnSeq(f, st, R(d - 1), true, sb == null ? null : x => E("  " + x), locals);
+                    E("}");
+                    return new StepResult(false, null, edges);
                 }
                 case OpCode.Halt:
                     if (f.Kind != FuncKind.Main) throw new NativeNotSupportedException("Halt in a function");
-                    // the end of the program: the global scope is released like any other (destructors run), then what the globals hold
-                    if (f.NeedsList.Contains(GlobalScope)) E("leave(&OG);");
-                    foreach (var g in _globals.OrderBy(x => x))
-                        if (VarRef($"G{g}")) E($"release(G{g});");
-                    foreach (var (_, index) in _staticFields.OrderBy(kv => kv.Value))
-                        if (VarRef($"SF{index}")) E($"release(SF{index});");
+                    HaltCode(f, E);
                     E("return;");
                     return new StepResult(false, null);
                 case OpCode.SetTimeout:
@@ -886,6 +1286,7 @@ namespace fire.Native
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
                     E($"sf_{Mangle(field)}({S(d - 2)}, {S(d - 1)});");
+                    Check();
                     E($"{S(d - 2)} = {S(d - 1)};");
                     SetR(d - 2, R(d - 1));
                     d--; return Next();
@@ -896,6 +1297,7 @@ namespace fire.Native
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
                     E($"sf_{Mangle(field)}(self, {S(d - 1)});");
+                    Check();
                     d--; return Next();
                 }
                 case OpCode.NewObject:
@@ -911,6 +1313,7 @@ namespace fire.Native
                     int slot = d - argc - (owned ? 1 : 0);
                     string ownerExpr = owned ? $"&asObj({S(slot)})->owned" : "&" + OwnerList();
                     E($"{{ Value o = newObject({cls.Id}, {cls.Fields.Count}, {ownerExpr}); {target.Name}(o{Args(d - argc, argc)}); {S(slot)} = o; }}");
+                    Check();
                     SetR(slot, false);
                     d = slot + 1; return Next();
                 }
@@ -924,6 +1327,7 @@ namespace fire.Native
                     var target = GetFunc(ctor, FuncKind.Ctor);
                     OwnerList();
                     E($"{target.Name}(self{Args(d - argc, argc)});");
+                    Check();
                     E($"{S(d - argc)} = Undef();");
                     SetR(d - argc, false);
                     d = d - argc + 1; return Next();
@@ -937,6 +1341,7 @@ namespace fire.Native
                     var target = GetFunc(proto, FuncKind.Init);
                     int slot = d - argc - 1;
                     E($"{S(slot)} = {target.Name}({S(slot)}{Args(d - argc, argc)});");
+                    Check();
                     AdoptResult(slot);
                     d = slot + 1; return Next();
                 }
@@ -950,6 +1355,7 @@ namespace fire.Native
                     int slot = d - argc - 1;
                     string extra = method == "GetEnumerator" && argc == 0 ? $", &{owner}" : "";
                     E($"{S(slot)} = call_{Mangle(method)}_{argc}({S(slot)}{Args(d - argc, argc)}{extra});");
+                    Check();
                     AdoptResult(slot);
                     d = slot + 1; return Next();
                 }
@@ -963,6 +1369,7 @@ namespace fire.Native
                     if (proto.ParamCount != argc) throw new NativeNotSupportedException($"{rc.Name}.{method}: default arguments");
                     var target = GetFunc(proto, FuncKind.Method);
                     E($"{S(d - argc)} = {target.Name}(self{Args(d - argc, argc)});");
+                    Check();
                     AdoptResult(d - argc);
                     d = d - argc + 1; return Next();
                 }
@@ -1009,6 +1416,7 @@ namespace fire.Native
                     string owner = OwnerList();
                     var argList = argc == 0 ? "Undef()" : string.Join(", ", Enumerable.Range(slot + 1, argc).Select(S));
                     E($"{{ Value args[{Math.Max(argc, 1)}] = {{{argList}}}; {S(slot)} = callLam({S(slot)}, {argc}, args); }}");
+                    Check();
                     AdoptResult(slot);
                     d = slot + 1; return Next();
                 }
@@ -1018,7 +1426,8 @@ namespace fire.Native
                 {
                     Need(1);
                     string unitText = Str(ins.A[0]);
-                    E($"checkUnit({S(d - 1)}, {UnitId(Unit.Parse(unitText))});");
+                    E($"checkUnit({S(d - 1)}, {UnitId(Unit.Parse(unitText))}, {Constant(chunk.Constants[ins.A[0]])});");
+                    Check();
                     return Next();
                 }
 
@@ -1032,6 +1441,7 @@ namespace fire.Native
                     if (spec.Length > 0 && "XDBFxdbf".IndexOf(spec[0]) < 0)
                         throw new NativeNotSupportedException($"format specifier '{spec}' (supported: X, D, B, F)");
                     E($"{S(d - 1)} = formatValue({S(d - 1)}, {Constant(chunk.Constants[ins.A[0]])}, &{OwnerList()});");
+                    Check();
                     SetR(d - 1, true);
                     return Next();
                 }
@@ -1050,16 +1460,125 @@ namespace fire.Native
                     d = first + 1; SetR(first, true); return Next();
                 }
                 case OpCode.ArrayGet:
-                    Need(2); E($"{S(d - 2)} = aget_g({S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); d--; SetR(d - 1, true); return Next();
+                    Need(2); E($"{S(d - 2)} = aget_g({S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); Check(); d--; SetR(d - 1, true); return Next();
                 case OpCode.ArraySet:
-                    Need(3); E($"aset_g({S(d - 3)}, {S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); E($"{S(d - 3)} = {S(d - 1)};"); SetR(d - 3, R(d - 1)); d -= 2; return Next();
+                    Need(3); E($"aset_g({S(d - 3)}, {S(d - 2)}, {S(d - 1)}, &{OwnerList()});"); Check(); E($"{S(d - 3)} = {S(d - 1)};"); SetR(d - 3, R(d - 1)); d -= 2; return Next();
                 case OpCode.IncDecIndex:
                 {
                     Need(2);
                     bool increment = ins.A[0] != 0, prefix = ins.A[1] != 0;
                     string list = "&" + OwnerList();
-                    E($"{{ Value o = aget_g({S(d - 2)}, {S(d - 1)}, {list}); Value n = {(increment ? "add" : "sub")}(o, Int(1)); aset_g({S(d - 2)}, {S(d - 1)}, n, {list}); {S(d - 2)} = {(prefix ? "n" : "o")}; }}");
+                    string guard = _usesExceptions ? $"if (FIRE_UNLIKELY(g_unwind.active)) goto {(sb == null ? "X" : ExitLabel(f, st, locals))}; " : "";
+                    E($"{{ Value o = aget_g({S(d - 2)}, {S(d - 1)}, {list}); {guard}Value n = {(increment ? "add" : "sub")}(o, Int(1)); aset_g({S(d - 2)}, {S(d - 1)}, n, {list}); {S(d - 2)} = {(prefix ? "n" : "o")}; }}");
+                    Check();
                     d--; SetR(d - 1, false); return Next();
+                }
+
+                // ---------------------------------------------------------------------------------------------------
+                // Exceptions
+                // ---------------------------------------------------------------------------------------------------
+                case OpCode.RegisterHandler:
+                {
+                    UseExceptions();
+                    int t = ins.A[0];
+                    var region = GetRegion(f, t, st);
+                    E(region.Catches.Count > 0 ? $"H{t}.fn = handlerTrampoline<decltype(C{t})>; H{t}.ctx = &C{t};" : $"H{t}.fn = nullptr; H{t}.ctx = nullptr;");
+                    E($"H{t}.info = &HI_{fn}_{t}; pushHandler(&H{t});");
+                    var edges = new List<(int, Flow)>();
+                    foreach (var (_, addr) in region.Catches)
+                    {
+                        var catchFlow = st.Clone();
+                        catchFlow.Region = region;
+                        if (region.HasFinally) catchFlow.Handlers.Add(new HEntry(region, true));
+                        catchFlow.Scopes.Add((region.CatchScopeId, 1));
+                        edges.Add((addr, catchFlow));
+                    }
+                    if (region.HasFinally)
+                    {
+                        // an exception that this `try` does not catch arrives at its `finally`
+                        var finallyFlow = st.Clone();
+                        finallyFlow.Depth = d + 2;
+                        edges.Add((region.FinallyAddr!.Value, finallyFlow));
+                    }
+                    st.Handlers.Add(new HEntry(region, false));
+                    st.Depth = d;
+                    return new StepResult(true, null, edges);
+                }
+                case OpCode.UnregisterHandler:
+                    if (st.Handlers.Count == 0) throw new NativeNotSupportedException($"UnregisterHandler without handler at {ins.Addr} in {fn}");
+                    st.Handlers.RemoveAt(st.Handlers.Count - 1);
+                    E("popHandler();");
+                    return Next();
+                case OpCode.Throw:
+                    UseExceptions(); Need(1);
+                    E($"{S(d - 1)} = throwValue({S(d - 1)});");
+                    Check();
+                    E($"adopt({S(d - 1)}, &{OwnerList()});");
+                    SetR(d - 1, true);
+                    return Next();
+                case OpCode.ResumeException:
+                    UseExceptions(); Need(2);
+                    E($"resumeThrow({S(d - 2)}, {S(d - 1)});");
+                    if (sb != null) E($"goto {ExitLabel(f, st, locals)};");
+                    E($"{S(d - 2)} = Undef();");
+                    d--; SetR(d - 1, false); return Next();
+                case OpCode.ClearPendingResume:
+                    Need(1); E($"clearPending({S(d - 1)});"); d--; return Next();
+                case OpCode.EnterFinallyNormal:
+                    E($"{S(d)} = Undef(); {S(d + 1)} = Int(0);");
+                    SetR(d, false); SetR(d + 1, false);
+                    d += 2; return Next();
+                case OpCode.PushJump:
+                {
+                    var next = f.Decoded[f.IndexOf[ins.Addr] + 1];
+                    if (next.Op != OpCode.Jump) throw new NativeNotSupportedException($"PushJump without Jump at {ins.Addr} in {fn}");
+                    if (!f.FinJumps.TryGetValue(next.A[0], out var jumps)) f.FinJumps[next.A[0]] = jumps = new SortedSet<int>();
+                    jumps.Add(ins.A[0]);
+                    E($"{S(d)} = Int({ins.A[0]}); {S(d + 1)} = Int(3);");
+                    SetR(d, false); SetR(d + 1, false);
+                    d += 2; return Next();
+                }
+                case OpCode.EndFinally:
+                {
+                    Need(2);
+                    if (st.Fins.Count == 0) throw new NativeNotSupportedException($"EndFinally outside of a finally block at {ins.Addr} in {fn}");
+                    int fin = st.Fins[^1];
+                    string payload = S(d - 2), kind = S(d - 1);
+                    bool payloadRef = R(d - 2);
+                    var after = st.Clone();
+                    after.Fins.RemoveAt(after.Fins.Count - 1);
+                    after.Depth = d - 2;
+                    var edges = new List<(int, Flow)>();
+                    E($"switch ({kind}.i) {{");
+                    E("case 0: break;");
+                    E($"case 1: throwValue({payload}, false);");
+                    if (sb != null && _usesExceptions) E($"    goto {ExitLabel(f, after, locals)};");
+                    else E("    break;");
+                    if (f.FinReturn.Contains(fin))
+                    {
+                        E("case 2: {");
+                        E($"    Value r = {payload}; (void)r;");
+                        edges.AddRange(ReturnSeq(f, after, payloadRef, false, sb == null ? null : x => E("    " + x), locals));
+                        E("}");
+                    }
+                    if (f.FinJumps.TryGetValue(fin, out var targets))
+                    {
+                        E($"case 3: switch ({payload}.i) {{");
+                        foreach (int target in targets)
+                        {
+                            E($"    case {target}: goto L{target};");
+                            edges.Add((target, after));
+                        }
+                        E("    default: break;");
+                        E("    }");
+                        E("    break;");
+                    }
+                    E("default: break;");
+                    E("}");
+                    st.Fins.RemoveAt(st.Fins.Count - 1);
+                    d -= 2;
+                    st.Depth = d;
+                    return new StepResult(true, null, edges);
                 }
 
                 default:

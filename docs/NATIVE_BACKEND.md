@@ -96,9 +96,41 @@ Bekannte Abweichungen zur VM: Unicode-Klassifizierung und Groß-/Kleinschreibung
 * **Alle Funktionen nehmen `Value` per Wert**, nie per Referenz, und die Fehlerpfade nur die Operandenarten. Eine Referenz auf eine
   Variable, die an einen nicht eingebetteten Aufruf geht, lässt die Variable "entkommen": der Compiler hält sie dann - und weil der
   Generator die Stack-Variablen wiederverwendet, *alle* - im Speicher statt in Registern. Das allein kostete Faktor 5-10.
-* Kein `throw`, kein RTTI (ESP32-Toolchains schalten beides oft ab). Laufzeitfehler beenden das Programm mit Exitcode 1; `try`/
-  `catch` (wiederaufnehmbar) kommt mit dem Ausnahme-Mechanismus, siehe Roadmap.
+* Kein C++-`throw`, kein RTTI (ESP32-Toolchains schalten beides oft ab). Ausnahmen der Sprache laufen über einen eigenen Mechanismus
+  (siehe "Ausnahmen"); Fehler der Runtime, die die VM nicht als Ausnahme meldet, beenden das Programm mit Exitcode 1.
 * Reines C++17, `std::to_chars` für die Zahlenausgabe (kürzeste Darstellung wie .NET).
+
+## Ausnahmen
+
+`throw` rollt den Stack nicht selbst ab. Der Handler-Stack (`g_handlers`, eine verkettete Liste von `Handler`-Objekten in den Frames der
+Funktionen mit `try`) wird von oben durchsucht:
+
+* **Passender `catch`**: sein Block läuft *auf* dem Stack der Wurfstelle (ein Aufruf in die Funktion, die den `try` besitzt). Die Frames der
+  Wurfstelle leben also noch, und `e.resume(wert)` kann dort weitermachen: das `throw` liefert `wert`. Dafür ist jeder `try` mit `catch` ein
+  C++-Lambda (`C{n}`), das die Variablen der Funktion per Referenz sieht. Seine eigenen Operanden-Slots heißen `c{n}_{k}`, damit sie die der
+  Wurfstelle nicht überschreiben.
+* **Kein passender `catch`** (oder nur ein `finally`): die Frames oberhalb werden über ein Statusflag abgerollt (`g_unwind`): jede erzeugte
+  Funktion prüft es nach einem Aufruf, der werfen kann (`if (g_unwind.active) goto U..`), verlässt ihre Scopes (Destruktoren laufen) und kehrt zurück.
+  In der Funktion des `try` führt der Weg zur **Landestelle** (`LAND{n}`), die das `finally` ausführt und weiterwirft.
+* **Ein `catch`-Block endet** mit `exitJump` (Sprung hinter den `try`, `break`/`continue` aus dem Block, Sprung ins `finally`) oder `exitReturn`
+  (`return` im `catch`): das Lambda kehrt zurück, die Frames der Wurfstelle rollen sich ab (erst jetzt laufen ihre Destruktoren, wie in der VM
+  nach `ClearPendingResume`), und die Landestelle der Funktion macht dort weiter. Operanden, die der Sprung mitnimmt (der Abschluss eines `finally`),
+  reisen in `g_unwind.regs`.
+* **`finally`**: ein Block pro `try`, mit dem Abschluss (Nutzlast, Art) in zwei Operanden-Slots wie im Bytecode (`EnterFinallyNormal`, `PushJump`,
+  `EndFinally`). `return` durch ein `finally` läuft statisch: der Generator kennt die offenen Handler an der Stelle (`Flow.Handlers`) und springt
+  ins `finally`; `EndFinally` setzt die Rückkehr fort.
+
+Der Generator fügt die Prüfungen nur ein, wenn das Programm überhaupt `throw` oder `try` enthält (`FIRE_EXCEPTIONS`); sonst ändert sich der
+erzeugte Code nicht. Typisiertes `catch` ordnet die Klasse über eine erzeugte Tabelle zu (`excMatches`: Klasse, Basisklassen, Interfaces).
+
+Bekannte Abweichungen zur VM:
+
+* `resume` geht nur an die Wurfstelle selbst. Läuft die Ausnahme an einem `try` ohne passenden `catch` vorbei (oder durch ein `finally`), ist die
+  Wurfstelle schon abgerollt; `resume` meldet dann einen Fehler (die VM setzt dort an einer verschobenen Stelle fort).
+* Ein Objekt, das erst im `catch` mit `new` entsteht, kann nicht an `resume` übergeben werden (es gehört dem `catch`-Scope, der endet).
+* Die Destruktoren des `catch`-Scopes laufen vor denen der Wurfstelle (die VM umgekehrt).
+* `resume` nach einer `UnitMismatchException` setzt hinter dem `CheckUnit` fort; die VM schiebt dort einen zusätzlichen Wert auf den Stack.
+* Eine Ausnahme, die ein Destruktor wirft, wird beim Abrollen ignoriert.
 
 ## Messwerte
 
@@ -145,7 +177,13 @@ einzigen Maschine, keine Garantie.
   (`lambda<...>`), Einheitenprüfung (`CheckUnit`). Ein Lambda ist ein referenzgezählter Wert (Funktionszeiger, kopierte Captures, `on`-Ziel); die
   Captures sind Variablen hinter den Parametern. Standard-Parameterwerte bei Lambdas sind noch nicht übersetzt.
 
-Noch nicht (der Generator meldet es mit Namen): Zeiger, Ausnahmen, Threads, Reflection, Properties,
+* **Ausnahmen** (SPEC 7): `throw` (auch als Ausdruck), `try`/`catch` (nach Typ, `catch (e)`, mehrere Klauseln, `catch` ohne `try`), `finally` auf
+  jedem Weg (normal, `break`, `continue`, `return`, Ausnahme, aus dem `catch` heraus), Weiterwerfen, `e.resume(wert)` an der Wurfstelle, auch aus
+  verschachtelten Aufrufen heraus. Die Fehler der Sprache sind fangbar: `IndexOutOfBoundsException` (Array, Puffer, Zeichenkette, Methoden von `string`)
+  und `UnitMismatchException` (`CheckUnit`, Felder mit Einheit). Eine nicht gefangene Ausnahme meldet die Klasse auf stderr und beendet
+  das Programm mit Exitcode 1, ohne Abwickeln - wie die VM.
+
+Noch nicht (der Generator meldet es mit Namen): Zeiger, Threads, Reflection, Properties,
 Operator-Überladung, `copy`/`flat`, die eingebauten Objektmethoden (`TakeTo`, `TakeUpwards`, `TakeGlobal`), Standardargumente,
 Einheiten-Algebra und implizites Einheiten-Coercing, das Zahlenformat `E`, `extern`, die Bridges.
 
@@ -158,8 +196,7 @@ C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich se
    Einheiten-Algebra (Tabelle zur Übersetzungszeit, Konvertierungsfaktoren als Konstanten).
 2. **Ownership**: Scopes, die besitzende Objekte halten, behalten eine Laufzeit-Scope-Kette (für die Destruktor-Kaskade); alle anderen
    bleiben aufgelöst.
-3. **Ausnahmen mit Resume**: `throw` ruft den Handler über einen dynamischen Handler-Stack *auf* (kein Abrollen); nur "abbrechen"
-   rollt ab, über ein Statusflag nach Aufrufen.
+3. ~~**Ausnahmen mit Resume**~~ - umgesetzt, siehe "Ausnahmen".
 4. **Threads, `sync`, Safe-Points** (`leave`/`terminate`) über `std::thread` bzw. FreeRTOS-Tasks.
 5. **Bridges** (Variante A): eine C++-Implementierung mit C-ABI, die auch der C#-Editor per P/Invoke nutzt - IO und Time zuerst,
    dann Graphics (SDL3 ist ohnehin C), zuletzt Devices.
