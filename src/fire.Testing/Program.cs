@@ -13393,6 +13393,32 @@ static int CountOccurrences(string haystack, string needle)
             """),
     };
 
+    // extern: C functions of the C library (Linux; other systems name the library differently)
+    if (OperatingSystem.IsLinux())
+        natCases = natCases.Append(("extern: Funktionen der C-Bibliothek (Zahlen, Zeichenketten, Zeiger auf Variablen)", """
+            #extern "libc.so.6"
+            extern int abs(int n)
+            extern int atoi(string s)
+            extern int strlen(string s)
+            extern string getenv(string name)
+            extern int toupper(int c)
+            extern float atof(string s)
+            extern int sscanf(string text, string format, int* out)
+            print(abs(-5))
+            print(atoi("1234") + 1)
+            print(strlen("hello"))
+            print(strlen("äö"))
+            print(getenv("FIRE_SURELY_UNSET_VARIABLE") == undefined)
+            print(toupper(97))
+            print(atof("2.5") * 2)
+            unsafe {
+                var n = 0
+                var matched = sscanf("42", "%ld", &n)
+                print(matched)
+                print(n)
+            }
+            """)).ToArray();
+
     string? cxx = FindCxx();
     if (cxx == null)
         Console.WriteLine("(kein C++-Compiler gefunden - die Native-Backend-Pruefungen werden uebersprungen)");

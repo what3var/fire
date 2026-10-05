@@ -222,6 +222,23 @@ namespace fire.Native
         };
 
         // ---- Access modifiers (SPEC 5.7): checked in Debug and Release, not in Performance ----------------------------------------------
+        private readonly SortedDictionary<string, string> _externDecls = new();
+
+        /// <summary>The C type of a parameter or result of an `extern` function: `int` is as wide as the declaration says (`int[32]`), else as wide as a pointer.</summary>
+        private static string ExternCType(TypeRef t, string name)
+        {
+            if (t.PointerDepth > 0) return "void*";
+            return t.BaseName switch
+            {
+                "bool" => "bool",
+                "int" => t.BitWidth switch { 8 => "int8_t", 16 => "int16_t", 32 => "int32_t", 64 => "int64_t", _ => "intptr_t" },
+                "float" => t.BitWidth == 32 ? "float" : "double",
+                "char" => "char16_t",
+                "string" => "const char*",
+                _ => throw new NativeNotSupportedException($"extern function '{name}': the type '{t.BaseName}' cannot be passed to C (supported: bool/int/float/char/string/pointer)"),
+            };
+        }
+
         private bool CheckAccess => _program.ExecutionMode != VmExecutionMode.Performance;
         private static string DescribeAccess(AccessModifier access) => access switch { AccessModifier.Private => "private", AccessModifier.Protected => "protected", _ => "public" };
 
@@ -349,6 +366,15 @@ namespace fire.Native
             }
             sb.AppendLine("};");
             sb.AppendLine("static const bool kUnitsReady = (unitsInit(kUnitInit, " + _units.Count + "), true);");
+            if (_externDecls.Count > 0)
+            {
+                sb.AppendLine("#ifdef __APPLE__");
+                sb.AppendLine("#define FIRE_SYM(n) \"_\" n");
+                sb.AppendLine("#else");
+                sb.AppendLine("#define FIRE_SYM(n) n");
+                sb.AppendLine("#endif");
+                foreach (var decl in _externDecls.Values) sb.AppendLine(decl);
+            }
             sb.AppendLine();
             for (int i = 0; i < _strings.Count; i++)
             {
@@ -1695,6 +1721,52 @@ namespace fire.Native
                         d = first + 1; SetR(first, true); return Next();
                     }
                     throw new NativeNotSupportedException($"native function '{native}' (called in {fn})");
+                }
+                case OpCode.CallExtern:
+                {
+                    // a C function of a library (SPEC 8.1.1): declared with its symbol name, called with the arguments converted by their declared types
+                    string externName = chunk.Constants[ins.A[0]].AsString();
+                    int argc = ins.A[1];
+                    Need(argc);
+                    if (!_program.Program.ExternSignatures.TryGetValue(externName, out var sig) || sig.LibName == null)
+                        throw new NativeNotSupportedException($"extern function '{externName}' is not linked to a library with #extern \"lib\" ({fn})");
+                    if (sig.ParamTypes.Count != argc) throw new NativeNotSupportedException($"extern function '{externName}': {sig.ParamTypes.Count} parameter(s) declared, called with {argc}");
+                    int first = d - argc;
+                    var locals2 = new StringBuilder();
+                    var args2 = new List<string>();
+                    var ctypes = new List<string>();
+                    for (int i = 0; i < argc; i++)
+                    {
+                        var t = sig.ParamTypes[i] ?? throw new NativeNotSupportedException($"extern function '{externName}': a parameter type is missing");
+                        string ctype = ExternCType(t, externName);
+                        ctypes.Add(ctype);
+                        string v = S(first + i);
+                        if (t.PointerDepth > 0) { locals2.Append($"ExternPtr p{i}({v}); "); args2.Add($"p{i}.get()"); }
+                        else if (t.BaseName == "string") { locals2.Append($"ExternString p{i}({v}); "); args2.Add($"p{i}.p"); }
+                        else if (t.BaseName == "float") args2.Add($"({ctype})externFloat({v})");
+                        else args2.Add($"({ctype})externInt({v})");
+                    }
+                    string retC = sig.ReturnType == null ? "void" : ExternCType(sig.ReturnType, externName);
+                    _externDecls[externName] = $"extern \"C\" {retC} fire_ext_{Mangle(externName)}({string.Join(", ", ctypes)}) __asm__(FIRE_SYM({CString(externName)}));   // library: {sig.LibName}";
+                    string call = $"fire_ext_{Mangle(externName)}({string.Join(", ", args2)})";
+                    string result;
+                    if (sig.ReturnType == null) { E($"{{ {locals2}{call}; }}"); result = "Undef()"; }
+                    else if (sig.ReturnType.PointerDepth > 0) { E($"{{ {locals2}{S(first)} = Int((int64_t)(intptr_t){call}); }}"); result = ""; }
+                    else
+                    {
+                        string conv = sig.ReturnType.BaseName switch
+                        {
+                            "bool" => $"Bool({call} != 0)",
+                            "float" => $"Float((Real){call})",
+                            "char" => $"Char((uint32_t){call})",
+                            "string" => $"externResultString({call}, &{OwnerList()})",
+                            _ => $"Int((int64_t){call})",
+                        };
+                        E($"{{ {locals2}{S(first)} = {conv}; }}");
+                        result = "";
+                    }
+                    if (result.Length > 0) E($"{S(first)} = {result};");
+                    d = first + 1; SetR(first, sig.ReturnType?.BaseName == "string"); return Next();
                 }
                 case OpCode.CallStaticMethod:
                 {

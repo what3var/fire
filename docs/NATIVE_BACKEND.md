@@ -202,6 +202,11 @@ einzigen Maschine, keine Garantie.
   und `UnitMismatchException` (`CheckUnit`, Felder mit Einheit). Eine nicht gefangene Ausnahme meldet die Klasse auf stderr und beendet
   das Programm mit Exitcode 1, ohne Abwickeln - wie die VM.
 
+* **`extern`** (SPEC 8.1.1): eine mit `#extern "lib"` deklarierte Funktion wird als C-Funktion deklariert (`extern "C" ... __asm__("name")`, damit der Name nicht mit der Runtime
+  kollidiert) und direkt aufgerufen; die Bibliothek muss beim Übersetzen des C++ dazugelinkt werden (die Zeile der Deklaration nennt sie). Typen: `bool`, `int` (so breit wie
+  deklariert, `int[32]` = 32 Bit, sonst Zeigerbreite), `float` (`float[32]` = `float`), `char`, `string` (UTF-8, nach dem Aufruf freigegeben), Zeiger (ein Zeiger auf eine Variable
+  bekommt eine Kopie, die danach zurückgeschrieben wird, wie in der VM). Ohne `#extern` (Host-Registrierung in C#) ist die Funktion nicht übersetzbar; `try Name(...)` (Timeouts) auch nicht.
+
 * **Reflection und `probe`** (SPEC 8.13/8.14, `#import "reflection"`): ruft das Programm eine der `__refl_*`-Funktionen auf, erzeugt der Generator **alle** Klassen des Programms
   (eine Klasse ist über ihren Namen erreichbar) mit ihren Konstruktoren, Methoden und den Feldhelfern aller Namen (`CppGenerator.Reflection.cs`). Die Beschreibungen sind Tabellen
   (`RfClass`/`RfMember`, wie `ReflectionNatives.Members` sie aufbaut: eigene und geerbte Mitglieder, ein abgeleitetes verdeckt gleichnamige); `Reflect.Get/Set/Call/New/Has`
@@ -256,7 +261,7 @@ einzigen Maschine, keine Garantie.
   Wert: bei bekanntem Ziel setzt der Aufrufer `ptrRead`, beim virtuellen Aufruf der Dispatcher (`derefArg`).
 
 Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), Threads,
-`extern`, die Bridges.
+die Bridges.
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes
 C++ (g++/clang++, mit `-Wall -Wextra`, ohne Warnung), die Ausgabe muss gleich sein.

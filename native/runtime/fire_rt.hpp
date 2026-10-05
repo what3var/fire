@@ -2363,6 +2363,95 @@ inline void writeUtf16(const char16_t* s, uint32_t n, std::FILE* f) {
     if (k) std::fwrite(buf, 1, k, f);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// `extern` (SPEC 8.1): calls into C libraries. Values are converted at the call: strings to UTF-8, a pointer to a variable to a copy that is
+// written back after the call (like the VM does), results to values.
+// ---------------------------------------------------------------------------------------------------------------------
+inline int64_t externInt(Value v) {
+    switch (v.kind) {
+        case K_Int: case K_Bool: case K_Char: return v.i;
+        case K_Float: return (int64_t)v.f;
+        default: fatal("An extern function was called with an argument that is not a number.");
+    }
+}
+inline double externFloat(Value v) {
+    if (v.kind == K_Float) return (double)v.f;
+    if (v.kind == K_Int) return (double)v.i;
+    fatal("An extern function was called with an argument that is not a number.");
+}
+/// A string that a C function returned (UTF-8), as a value of `list` (`undefined` for a null pointer).
+inline Value externResultString(const char* utf8, OwnList* list) {
+    if (!utf8) return Undef();
+    size_t n = std::strlen(utf8);
+    char16_t* wide = static_cast<char16_t*>(std::malloc((n + 1) * sizeof(char16_t) * 2));
+    if (!wide) allocFailed();
+    uint32_t len = utf8ToUtf16(utf8, wide, (uint32_t)((n + 1) * 2));
+    Value r = newStrFrom(wide, len, list);
+    std::free(wide);
+    return r;
+}
+/// A string argument as UTF-8 (null for `undefined`); freed after the call.
+struct ExternString {
+    char* p = nullptr;
+    explicit ExternString(Value v) {
+        if (v.kind == K_Undefined) return;
+        if (v.kind != K_String) fatal("An extern function was called with an argument that is not a string.");
+        const Str* s = strOf(v);
+        p = static_cast<char*>(std::malloc((size_t)s->length * 4 + 1));
+        if (!p) allocFailed();
+        size_t n = 0;
+        for (uint32_t i = 0; i < s->length; i++) {
+            uint32_t c = s->data[i];
+            if (c >= 0xD800 && c < 0xDC00 && i + 1 < s->length) { c = 0x10000 + ((c - 0xD800) << 10) + (s->data[i + 1] - 0xDC00); i++; }
+            if (c < 0x80) p[n++] = (char)c;
+            else if (c < 0x800) { p[n++] = (char)(0xC0 | (c >> 6)); p[n++] = (char)(0x80 | (c & 0x3F)); }
+            else if (c < 0x10000) { p[n++] = (char)(0xE0 | (c >> 12)); p[n++] = (char)(0x80 | ((c >> 6) & 0x3F)); p[n++] = (char)(0x80 | (c & 0x3F)); }
+            else { p[n++] = (char)(0xF0 | (c >> 18)); p[n++] = (char)(0x80 | ((c >> 12) & 0x3F)); p[n++] = (char)(0x80 | ((c >> 6) & 0x3F)); p[n++] = (char)(0x80 | (c & 0x3F)); }
+        }
+        p[n] = 0;
+    }
+    ~ExternString() { std::free(p); }
+    ExternString(const ExternString&) = delete;
+    ExternString& operator=(const ExternString&) = delete;
+};
+/// A pointer argument: a pointer to a variable gets 8 bytes of native memory with its value (and the new value is written back after the call).
+struct ExternPtr {
+    alignas(8) unsigned char buf[8] = {0};
+    Value* target = nullptr;
+    uint8_t kind = 0;
+    void* raw = nullptr;
+    explicit ExternPtr(Value v) {
+        if (v.kind == K_Undefined) return;
+        if (v.kind == K_Int) { raw = reinterpret_cast<void*>(static_cast<intptr_t>(v.i)); return; }   // an address that was handed over as a number
+        if (v.kind != K_Pointer) fatal("A pointer argument of an extern function expects a pointer.");
+        if (v.width == 1) { raw = const_cast<void*>(v.p); return; }   // a pointer into a byte buffer: its bytes
+        target = static_cast<Value*>(const_cast<void*>(v.p));
+        Value cur = *target;
+        kind = cur.kind;
+        switch (cur.kind) {
+            case K_Int: { int64_t x = cur.i; std::memcpy(buf, &x, 8); break; }
+            case K_Float: { double d = (double)cur.f; std::memcpy(buf, &d, 8); break; }
+            case K_Bool: buf[0] = cur.i ? 1 : 0; break;
+            case K_Char: { int32_t c = (int32_t)cur.i; std::memcpy(buf, &c, 4); break; }
+            default: fatal("A pointer to this kind of value cannot be passed to an extern function.");
+        }
+        raw = buf;
+    }
+    ~ExternPtr() {
+        if (!target) return;
+        switch (kind) {
+            case K_Int: { int64_t x; std::memcpy(&x, buf, 8); *target = Int(x); break; }
+            case K_Float: { double d; std::memcpy(&d, buf, 8); *target = Float((Real)d); break; }
+            case K_Bool: *target = Bool(buf[0] != 0); break;
+            case K_Char: { int32_t c; std::memcpy(&c, buf, 4); *target = Char((uint32_t)c); break; }
+            default: break;
+        }
+    }
+    ExternPtr(const ExternPtr&) = delete;
+    ExternPtr& operator=(const ExternPtr&) = delete;
+    void* get() const { return raw; }
+};
+
 /// `print(value)`: writes the text of the value (Value.ToString(), or its ToString() method) and a line break.
 inline Value print(Value v, OwnList* list) {
     Piece p;
