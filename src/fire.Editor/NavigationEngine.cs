@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace fire.Editor
@@ -158,6 +160,122 @@ namespace fire.Editor
 
             return null;
         }
+
+        // -----------------------------------------------------------
+        // Calls: the documentation shown while the arguments of a call are being typed
+        // -----------------------------------------------------------
+
+        /// <summary>An open call at the caret: the innermost `(` that is not closed yet, and how many arguments have been started.</summary>
+        /// <param name="ParenOffset">Offset of the `(`.</param>
+        /// <param name="RequiredArgs">How many parameters the called overload needs at least: 0 right after `(`, otherwise the number of arguments started so far.</param>
+        public sealed record OpenCall(int ParenOffset, int RequiredArgs);
+
+        /// <summary>Finds the call whose argument list the caret is in (null if the caret is not inside any parentheses of the current statement).
+        /// Strings, characters and comments are skipped; a `;`, `{` or `}` ends the search.</summary>
+        public static OpenCall? FindOpenCall(string source, int caret)
+        {
+            if (caret < 0 || caret > source.Length) return null;
+            int limit = Math.Max(0, caret - 3000);
+            int start = limit;
+            for (int i = caret - 1; i >= limit; i--)
+            {
+                if (source[i] is ';' or '{' or '}') { start = i + 1; break; }
+            }
+
+            var open = new List<(int Pos, int Commas, bool HasText)>();
+            void MarkText()
+            {
+                if (open.Count > 0) open[^1] = (open[^1].Pos, open[^1].Commas, true);
+            }
+
+            for (int i = start; i < caret; i++)
+            {
+                char c = source[i];
+                if (c == '"' || c == '\'')
+                {
+                    char quote = c;
+                    i++;
+                    while (i < caret && source[i] != quote && source[i] != '\n')
+                    {
+                        if (source[i] == '\\') i++;
+                        i++;
+                    }
+                    MarkText();
+                }
+                else if (c == '/' && i + 1 < caret && source[i + 1] == '/')
+                {
+                    while (i < caret && source[i] != '\n') i++;
+                }
+                else if (c == '/' && i + 1 < caret && source[i + 1] == '*')
+                {
+                    int close = source.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                    if (close < 0 || close + 1 >= caret) return null; // inside an unfinished block comment
+                    i = close + 1;
+                }
+                else if (c == '(')
+                {
+                    MarkText();
+                    open.Add((i, 0, false));
+                }
+                else if (c == ')')
+                {
+                    if (open.Count > 0) open.RemoveAt(open.Count - 1);
+                    MarkText();
+                }
+                else if (c == ',' && open.Count > 0)
+                {
+                    open[^1] = (open[^1].Pos, open[^1].Commas + 1, false);
+                }
+                else if (!char.IsWhiteSpace(c))
+                {
+                    MarkText();
+                }
+            }
+
+            if (open.Count == 0) return null;
+            var (pos, commas, hasText) = open[^1];
+            return new OpenCall(pos, commas > 0 || hasText ? commas + 1 : 0);
+        }
+
+        /// <summary>The symbol being called at an open call: for `new Foo(` the (documented) constructor that fits the arguments typed so far,
+        /// otherwise the class; for `obj.Method(` the documented overload that fits. Null if the name before the `(` is not a known symbol.</summary>
+        public static ResolvedSymbol? TryResolveCall(string source, OpenCall call, ScriptSymbolIndex index)
+        {
+            int end = call.ParenOffset;
+            while (end > 0 && char.IsWhiteSpace(source[end - 1])) end--;
+            if (end <= 0 || !IsIdentChar(source[end - 1])) return null;
+
+            var symbol = TryResolveSymbol(source, end - 1, index);
+            if (symbol == null) return null;
+
+            // `new Foo(` / `new Geo.Foo(`: the word before the (dotted) name is `new`.
+            int nameStart = end;
+            while (nameStart > 0 && (IsIdentChar(source[nameStart - 1]) || source[nameStart - 1] == '.')) nameStart--;
+            int before = nameStart;
+            while (before > 0 && char.IsWhiteSpace(source[before - 1])) before--;
+            bool isNew = before >= 3 && source.Substring(before - 3, 3) == "new" && (before == 3 || !IsIdentChar(source[before - 4]));
+
+            if (isNew && symbol.Class is { } cls)
+            {
+                var constructors = cls.Members.Where(m => m.Kind == MemberKind.Constructor && m.Documentation != null).ToList();
+                var chosen = PickOverload(constructors, call.RequiredArgs);
+                return chosen != null ? new ResolvedSymbol(symbol.Target, null, chosen) : symbol;
+            }
+
+            if (symbol.Member is { Kind: MemberKind.Method } method)
+            {
+                var overloads = index.MembersOf(method.Owner).Where(m => m.Name == method.Name && m.Kind == MemberKind.Method && m.Documentation != null).ToList();
+                var chosen = PickOverload(overloads, call.RequiredArgs);
+                return chosen != null ? new ResolvedSymbol(new NavigationTarget(null, chosen.DeclLine, chosen.Source?.PreludeName), null, chosen) : symbol;
+            }
+
+            return symbol;
+        }
+
+        /// <summary>Of several overloads: the one with the fewest parameters that still has at least `required`, otherwise the one with the most.</summary>
+        private static MemberInfo? PickOverload(List<MemberInfo> overloads, int required) =>
+            overloads.Where(m => m.ParamCount >= required).OrderBy(m => m.ParamCount).FirstOrDefault()
+            ?? overloads.OrderByDescending(m => m.ParamCount).FirstOrDefault();
 
         private static bool enumMembersContain(ScriptSymbolIndex index, string enumKey, string name) =>
             index.EnumMembers.TryGetValue(enumKey, out var members) && members.Contains(name);

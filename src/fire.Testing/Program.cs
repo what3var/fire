@@ -10840,6 +10840,34 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(User.Use(new Sq()))
         """, new[] { "4" });
 
+    CheckSc("Einheiten: gleiche Dimension, andere Skalierung wird implizit umgerechnet (ohne ':'), ints bleiben ints", """
+        print(500mm + 2m)
+        print(2m + 500mm)
+        print(2m - 500mm)
+        print(1m > 500mm)
+        print(5mm < 1m)
+        print(1500mm % 1m)
+        var x = 3m
+        x = x + 250cm
+        print(x)
+        print((2m + 500mm) / 3)
+        """, new[] { "2500mm", "2500mm", "1500mm", "True", "True", "500mm", "550cm", "833mm" });
+
+    CheckSc("Einheiten: Floats bleiben Floats und behalten die Einheit des linken Operanden", """
+        print(1.5mm + 1m)
+        print(2.5m + 250mm)
+        print((1.5mm + 1m) / 2)
+        """, new[] { "1001.5mm", "2.75m", "500.75mm" });
+
+    CheckSc("Einheiten: bei Ueberlauf wird die groebere Einheit Ziel, das Komma faellt weg", """
+        print(1500mm + 900000000000000000m)
+        print(900000000000000000m + 1500mm)
+        """, new[] { "900000000000000001m", "900000000000000001m" });
+
+    CheckSc("Einheiten: verschiedene Dimensionen bleiben ein Fehler", """
+        print(5mm + 2kg)
+        """, new[] { "AUSNAHME: Incompatible units: 'mm' cannot be converted to 'kg'." });
+
     Console.WriteLine(scFailures == 0 ? "Alle Scope-Pruefungen bestanden." : $"FEHLER: {scFailures} Scope-Pruefung(en) fehlgeschlagen.");
 }
 
@@ -10874,23 +10902,30 @@ static int CountOccurrences(string haystack, string needle)
     CheckMd("Anker: zweite gleichnamige Ueberschrift bekommt -1", fire.Editor.MdAnchors.Unique("Setup", usedAnchors), "setup-1");
     CheckMd("Anker: dritte gleichnamige Ueberschrift bekommt -2", fire.Editor.MdAnchors.Unique("Setup", usedAnchors), "setup-2");
 
-    // Jeder Link "(#anker)" der mitgelieferten Hilfeseite muss auf eine Ueberschrift zeigen.
-    string helpPath = Path.Combine(Path.GetDirectoryName(GetTestDataDir())!, "..", "fire.Editor", "First Steps.md");
-    if (File.Exists(helpPath))
+    // Jeder Link "(#anker)" der mitgelieferten Hilfeseiten muss auf eine Ueberschrift zeigen, jeder Link auf eine andere Seite auf eine vorhandene Datei.
+    string helpDir = Path.Combine(Path.GetDirectoryName(GetTestDataDir())!, "..", "fire.Editor", "Help");
+    foreach (var helpFile in new[] { "First Steps.md", "Embedding.md" })
     {
-        string helpText = File.ReadAllText(helpPath);
-        var anchors = new HashSet<string>();
-        foreach (var block in fire.Editor.MarkdownParser.Parse(helpText))
-            if (block is fire.Editor.MdHeading h)
-                fire.Editor.MdAnchors.Unique(fire.Editor.MarkdownParser.PlainText(h.Content), anchors);
-        var missing = System.Text.RegularExpressions.Regex.Matches(helpText, @"\]\(#([^)]+)\)")
-            .Select(m => m.Groups[1].Value).Where(a => !anchors.Contains(a)).ToList();
-        CheckMd("First Steps.md: alle Inhaltsverzeichnis-Links zeigen auf Ueberschriften", string.Join(",", missing), "");
-    }
-    else
-    {
-        mdFailures++;
-        Console.WriteLine($"FEHLER: First Steps.md nicht gefunden: {helpPath}");
+        string helpPath = Path.Combine(helpDir, helpFile);
+        if (File.Exists(helpPath))
+        {
+            string helpText = File.ReadAllText(helpPath);
+            var anchors = new HashSet<string>();
+            foreach (var block in fire.Editor.MarkdownParser.Parse(helpText))
+                if (block is fire.Editor.MdHeading h)
+                    fire.Editor.MdAnchors.Unique(fire.Editor.MarkdownParser.PlainText(h.Content), anchors);
+            var missing = System.Text.RegularExpressions.Regex.Matches(helpText, @"\]\(#([^)]+)\)")
+                .Select(m => m.Groups[1].Value).Where(a => !anchors.Contains(a)).ToList();
+            CheckMd($"{helpFile}: alle Inhaltsverzeichnis-Links zeigen auf Ueberschriften", string.Join(",", missing), "");
+            var brokenFiles = System.Text.RegularExpressions.Regex.Matches(helpText, @"\]\(([^)#:]+\.md)(?:#[^)]*)?\)")
+                .Select(m => Uri.UnescapeDataString(m.Groups[1].Value)).Where(f => !File.Exists(Path.Combine(helpDir, f))).ToList();
+            CheckMd($"{helpFile}: Links auf andere Hilfeseiten zeigen auf vorhandene Dateien", string.Join(",", brokenFiles), "");
+        }
+        else
+        {
+            mdFailures++;
+            Console.WriteLine($"FEHLER: {helpFile} nicht gefunden: {helpPath}");
+        }
     }
 
     Console.WriteLine(mdFailures == 0 ? "Alle Markdown-Pruefungen bestanden." : $"FEHLER: {mdFailures} Markdown-Pruefung(en) fehlgeschlagen.");
@@ -10976,7 +11011,116 @@ static int CountOccurrences(string haystack, string needle)
     var classItems = fire.Editor.CompletionEngine.GetSuggestions(docSource + "\nvar d = new Ca", docSource.Length + 15, fire.Editor.ScriptSymbolIndex.Build(docSource + "\nvar d = new Ca"));
     CheckDoc("Vervollstaendigung: Klassen tragen ihre Dokumentation", classItems.FirstOrDefault(i => i.Text == "Calc")?.Documentation?.Summary == "A calculator. Works on ints.");
 
+    // Aufrufkontext: Tooltip bleibt waehrend der Argumente, new Foo( springt auf den Konstruktor
+    string callSource = """
+        /// A point.
+        class Point {
+            int x
+            /// <summary>Creates the origin.</summary>
+            construct() { this.x = 0 }
+            /// <summary>Creates a point.</summary>
+            /// <param name="x">the x value</param>
+            construct(int x) { this.x = x }
+            /// <summary>Moves it.</summary>
+            Move(int dx, int dy) { }
+        }
+        """;
+    fire.Editor.ResolvedSymbol? CallAt(string text)
+    {
+        string full = callSource + "\n" + text;
+        var idx = fire.Editor.ScriptSymbolIndex.Build(full);
+        var call = fire.Editor.NavigationEngine.FindOpenCall(full, full.Length);
+        return call == null ? null : fire.Editor.NavigationEngine.TryResolveCall(full, call, idx);
+    }
+    CheckDoc("Aufruf: nach 'new Point(' zeigt der Tooltip den Konstruktor", CallAt("var p = new Point(")?.Documentation?.Summary == "Creates the origin.", CallAt("var p = new Point(")?.Documentation?.Summary);
+    CheckDoc("Aufruf: mit einem Argument wird der passende Konstruktor gewaehlt", CallAt("var p = new Point(5")?.Documentation?.Summary == "Creates a point.", CallAt("var p = new Point(5")?.Documentation?.Summary);
+    CheckDoc("Aufruf: Konstruktor-Kopfzeile", CallAt("var p = new Point(5")?.Header.Contains("new Point(int x)") == true, CallAt("var p = new Point(5")?.Header);
+    CheckDoc("Aufruf: Methode bleibt waehrend der Argumente dokumentiert", CallAt("var p = new Point(1)\np.Move(1, ")?.Documentation?.Summary == "Moves it.", CallAt("var p = new Point(1)\np.Move(1, ")?.Documentation?.Summary);
+    CheckDoc("Aufruf: nach der schliessenden Klammer gibt es keinen offenen Aufruf", CallAt("var p = new Point(1)") == null);
+    CheckDoc("Aufruf: Klammern in Strings zaehlen nicht", CallAt("var p = new Point(\"(\")") == null);
+
     Console.WriteLine(docFailures == 0 ? "Alle Dokumentationskommentar-Pruefungen bestanden." : $"FEHLER: {docFailures} Dokumentationskommentar-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Hilfeseite "Embedding.md": die dort gezeigten Host-Beispiele muessen mit der echten API laufen
+// ---------------------------------------------------------------------------------------------------------------------------
+{
+    Console.WriteLine("=== Embedding.md: Host-Beispiele ===");
+    int embFailures = 0;
+    void CheckEmb(string title, bool ok, string? detail = null)
+    {
+        if (!ok) embFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}" + (detail == null ? "" : $"\n  erhalten: {detail}"));
+    }
+
+    // Skript ausfuehren, print einsammeln
+    var printed = new List<string>();
+    Func<Value[], Value> writer = args => { printed.Add(args[0].ToString()!); return Value.MakeUndefined(); };
+    var hello = RuntimeSession.Build(new[] { "var name = \"fire\"\nprint($\"Hello from {name}!\")" }, null, writer);
+    hello.Run();
+    CheckEmb("Skript ausfuehren: print geht an den debugWriter", string.Join("|", printed) == "Hello from fire!", string.Join("|", printed));
+
+    // Mehrere Quellen werden zu einem Programm verbunden
+    printed.Clear();
+    RuntimeSession.Build(new[] { "var a = 20", "print(a + 22)" }, VmExecutionMode.Release, writer).Run();
+    CheckEmb("Mehrere Quellen, ausdrueckliche Betriebsart", string.Join("|", printed) == "42", string.Join("|", printed));
+
+    // Uebersetzungsfehler
+    List<string>? compileMessages = null;
+    try { RuntimeSession.Build(new[] { "var x = ;\nprint(unknownName)" }, null, writer); }
+    catch (Exception ex) when (ex is ParseException or ResolverException or CompilerException or NotSupportedException or PreprocessorException)
+    {
+        compileMessages = CompileErrors.Messages(ex).ToList();
+    }
+    CheckEmb("Uebersetzungsfehler: Build wirft, CompileErrors liefert Meldungen", compileMessages is { Count: > 0 }, compileMessages == null ? "keine Exception" : null);
+
+    // Nicht behandelte Exception: Run kehrt normal zurueck
+    var failing = RuntimeSession.Build(new[] { "class Oops {\n    string message\n    construct(string message) { this.message = message }\n}\nthrow new Oops(\"boom\")" }, null, writer);
+    failing.Run();
+    var failingVm = failing.VirtualMachine!;
+    CheckEmb("Nicht behandelte Exception steht in vm.UnhandledException",
+        failingVm.UnhandledException != null && new UncaughtScriptException(failingVm.UnhandledException).Message.Contains("boom"));
+
+    // IoStdio.Custom und IoPolicy werden von Build angenommen
+    var stdioOut = new System.Text.StringBuilder();
+    var stdio = fire.IO.Bridge.IoStdio.Custom(text => stdioOut.Append(text), text => stdioOut.Append("[error] ").Append(text), new MemoryStream(System.Text.Encoding.UTF8.GetBytes("in\n")));
+    var policy = fire.IO.Bridge.IoPolicy.Rooted(Path.GetTempPath(), readOnly: false);
+    printed.Clear();
+    RuntimeSession.Build(new[] { "print(1)" }, null, writer, ioPolicy: policy, ioStdio: stdio).Run();
+    CheckEmb("ioPolicy und ioStdio sind Parameter von Build", string.Join("|", printed) == "1");
+
+    // terminate(wert): Exitcode ueber VM.ExitValue; das naechste Programm startet wieder normal
+    RuntimeSession.Build(new[] { "terminate(7)" }, null, writer).Run();
+    var exit = VM.ExitValue;
+    CheckEmb("terminate(7): VM.ExitValue ist 7", exit.Kind == ValueKind.Int && exit.AsInt() == 7);
+    printed.Clear();
+    RuntimeSession.Build(new[] { "print(\"again\")" }, null, writer).Run();
+    CheckEmb("Nach terminate laeuft das naechste Programm im selben Prozess normal", string.Join("|", printed) == "again", string.Join("|", printed));
+    CheckEmb("Ein normal beendetes Programm hat keinen Exitwert", VM.ExitValue.Kind == ValueKind.Undefined);
+
+    // Skript auf einem Hintergrundthread
+    printed.Clear();
+    var bgSession = RuntimeSession.Build(new[] { "print(\"background\")" }, null, writer);
+    var bgThread = new Thread(() => bgSession.Run()) { IsBackground = true };
+    bgThread.Start();
+    CheckEmb("Hintergrundthread: Run laeuft dort", bgThread.Join(10000) && string.Join("|", printed) == "background");
+
+    // Untere Ebene: eigene extern-Funktion per ExternRegistry
+    var lowNatives = NativeRegistry.CreateDefault();
+    var lowExterns = new ExternRegistry();
+    lowExterns.Register("HostAdd", args => (long)args[0]! + (long)args[1]!);
+    var lowProgram = Parser.Parse("extern int HostAdd(int a, int b)\nprint(HostAdd(2, 3))");
+    var lowResolved = Resolver.Resolve(lowProgram, lowNatives.Names);
+    var lowCompiled = Compiler.Compile(lowProgram, lowResolved, lowNatives);
+    var lowOut = new StringWriter();
+    var oldOut = Console.Out;
+    Console.SetOut(lowOut);
+    try { new VM(lowCompiled.TopLevel, new Scope(null, isGlobal: true), lowNatives, lowCompiled.Classes, lowExterns).Run(); }
+    finally { Console.SetOut(oldOut); }
+    CheckEmb("Eigene C#-Funktion per extern + ExternRegistry", lowOut.ToString().Trim() == "5", lowOut.ToString());
+
+    Console.WriteLine(embFailures == 0 ? "Alle Embedding-Pruefungen bestanden." : $"FEHLER: {embFailures} Embedding-Pruefung(en) fehlgeschlagen.");
 }
 
 static class PackerNativeProbe

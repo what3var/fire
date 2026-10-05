@@ -65,7 +65,7 @@
             <FlowDocumentScrollViewer x:Name="Preview" Grid.Column="2"
                                       IsToolBarVisible="False"
                                       VerticalScrollBarVisibility="Auto"
-                                      Background="White"/>
+                                      Background="#242028" Foreground="#F4F0F2"/>
         </Grid>
     </DockPanel>
 </UserControl>

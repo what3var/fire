@@ -17,13 +17,14 @@ namespace fire.Editor
     internal sealed class MarkdownRenderer
     {
         private static readonly FontFamily CodeFont = new("Consolas");
-        private static readonly Brush CodeBackground = EditorTheme.Background;
-        private static readonly Brush InlineCodeBackground = new SolidColorBrush(Color.FromRgb(0xEA, 0xEA, 0xEA)).AsFrozen();
-        private static readonly Brush LinkBrush = new SolidColorBrush(Color.FromRgb(0x00, 0x66, 0xCC)).AsFrozen();
-        private static readonly Brush QuoteBar = new SolidColorBrush(Color.FromRgb(0xBB, 0xBB, 0xBB)).AsFrozen();
-        private static readonly Brush QuoteText = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55)).AsFrozen();
-        private static readonly Brush TableBorder = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)).AsFrozen();
-        private static readonly Brush TableHeader = new SolidColorBrush(Color.FromRgb(0xF0, 0xF0, 0xF0)).AsFrozen();
+        // Dark page: the colors come from EditorTheme (page = editor background).
+        private static readonly Brush CodeBackground = EditorTheme.CodeBlockBackground;
+        private static readonly Brush InlineCodeBackground = EditorTheme.CodeBlockBackground;
+        private static readonly Brush LinkBrush = new SolidColorBrush(EditorTheme.AccentTextColor).AsFrozen();
+        private static readonly Brush QuoteBar = EditorTheme.Border;
+        private static readonly Brush QuoteText = EditorTheme.TextDim;
+        private static readonly Brush TableBorder = EditorTheme.Border;
+        private static readonly Brush TableHeader = EditorTheme.CodeBlockBackground;
         private readonly HashSet<string> _usedAnchors = new();
         private static readonly double[] HeadingSizes = { 30, 24, 20, 17, 15, 14 };
 
@@ -48,6 +49,8 @@ namespace fire.Editor
                 // Bei ColumnWidth = Auto bricht FlowDocument in mehrere Spalten um - hier soll es immer eine sein.
                 ColumnWidth = double.PositiveInfinity,
                 TextAlignment = TextAlignment.Left,
+                Background = Brushes.Transparent,
+                Foreground = EditorTheme.Text,
             };
             foreach (var block in MarkdownParser.Parse(markdown))
                 AddBlock(doc.Blocks, block, 0);
@@ -234,7 +237,7 @@ namespace fire.Editor
                         break;
                     }
                     case MdCode c:
-                        target.Add(new Run(c.Code) { FontFamily = CodeFont, FontSize = 13, Background = InlineCodeBackground });
+                        target.Add(new Run(c.Code) { FontFamily = CodeFont, FontSize = 13, Background = InlineCodeBackground, Foreground = EditorTheme.Text });
                         break;
                     case MdLink l:
                     {

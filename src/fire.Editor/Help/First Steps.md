@@ -12,6 +12,7 @@ Welcome to **spark**, the editor for the **fire** scripting language. This page 
 - [Talking to devices](#talking-to-devices)
 - [Documenting your code](#documenting-your-code)
 - [Writing documentation](#writing-documentation)
+- [Going further](#going-further)
 
 ## The editor at a glance
 
@@ -69,12 +70,12 @@ print($"{name}: {count} x {ratio} (ready: {ready})")
 
 The line with `$"..."` is a *format string*: whatever is in `{curly braces}` is evaluated and inserted.
 
-Numbers can carry a **unit**. A trailing `:` converts a value to the unit of the other operand, `:unit` converts to a unit you name, and incompatible units are an error instead of a silently wrong number:
+Numbers can carry a **unit**. Units of the same kind are converted for you - integers stay integers and use the finer unit, unless that would overflow. A trailing `:unit` converts a value explicitly, and units that cannot be converted into each other are an error instead of a silently wrong number:
 
 ```fire
 var length = 500mm
 var distance = 2m
-print(length + distance:)   // 2500mm - the distance is converted to millimeters
+print(length + distance)    // 2500mm - the distance is converted to millimeters
 print(distance:cm)          // 200cm
 ```
 
@@ -211,3 +212,7 @@ The text appears as a tooltip when you select the symbol in the completion list,
 Markdown documents are first-class citizens in spark: **File → New Markdown Document** creates one with a live preview. You can also open documents *read-only* or as a pure *viewer* (this page is open as a viewer): links to other local Markdown files load in the same tab, `Ctrl+Click` opens them in a new tab, and `Alt+Left` / `Alt+Right` go back and forward.
 
 Fenced code blocks marked with ` ```fire ` are colored just like in the code editor.
+
+## Going further
+
+To run fire scripts from your own .NET application, see [Embedding fire in your application](Embedding.md).

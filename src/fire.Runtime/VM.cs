@@ -764,6 +764,9 @@ namespace fire.Runtime
 
         public void Run()
         {
+            // `terminate` is process-wide: a program that ends with it must not stop the NEXT program of the same host
+            // (editor, embedding application) right at its start.
+            if (IsMainThreadVm) ResetTerminateForTests();
             _currentThreadVm = this;
             _acceptingCallbacks = true;
             try { RunLoop(); }

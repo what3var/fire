@@ -226,7 +226,8 @@ For a binary operation between operands with units:
 
 - If **exactly one** operand does not request `:` coercion, its unit is the target unit of the whole operation; all other (compatible) operands are converted to it.
 - If **several/all** operands request `:` auto-coercion (without any of them naming an explicit target unit), the target unit is `unitless`.
-- Incompatible dimensions without a suitable coercion → run-time error.
+- If **no** operand requests a coercion and the units have the **same dimension but a different scale** (`500mm + 2m`), the operands are converted **implicitly** - no `:` needed. The type never changes: two `int`s stay `int`, and the **finer** unit is the target as long as the converted value does not overflow (`2m + 500mm` and `500mm + 2m` are both `2500mm`). If it would overflow, the **coarser** unit is the target and the fraction is cut off (`1500mm + 900000000000000000m` is `900000000000000001m`). With a `float` operand the result is a `float` in the unit of the left operand (`1.5mm + 1m` is `1001.5mm`, `2.5m + 250mm` is `2.75m`). This applies to `+`, `-`, `%` and the comparisons.
+- Incompatible dimensions (`5mm + 2kg`, `5mm + 2`) are a run-time error, unless a suitable coercion is requested.
 - **Chains with more than two operands** (`a + b + c`) are evaluated in the classic left-associative way: `(a + b) + c`. The anchor rule is applied again at every partial step, with the intermediate result (including its already determined unit) counting as the left operand of the next step – so there is no global "all operands at once" view across the whole chain.
 
 ```
@@ -1959,7 +1960,7 @@ A standalone program (or `fire.Compiler run`) gets an own, non-shared manager wi
 
 ### 8.17 Documentation comments (`///`)
 
-Lines that start with `///` directly above a **class, interface, field, property or method** document it. The editor shows the text as a tooltip when the symbol is selected in the completion list, when the caret rests on its name, and when the mouse hovers over it. For the compiler they are ordinary comments.
+Lines that start with `///` directly above a **class, interface, field, property or method** document it (constructors included). The editor shows the text as a tooltip when the symbol is selected in the completion list, when the caret rests on its name, and when the mouse hovers over it. For the compiler they are ordinary comments.
 
 ```
 /// A circle with a radius.
@@ -1977,6 +1978,7 @@ class Circle {
 }
 ```
 
+- While you type the arguments of a call, the tooltip stays visible until the closing `)`. After `new Foo(` it shows the documentation of the constructor (the overload whose parameter count fits the arguments typed so far).
 - The `///` lines must be contiguous and directly above the declaration - a blank line or an ordinary `//` comment in between means "no documentation".
 - Plain text is the summary: the lines of a paragraph are joined, a blank line starts a new paragraph.
 - Like in Visual Studio, the XML-style tags `<summary>`, `<param name="...">`, `<returns>` and `<remarks>` are recognized (also `<c>`, `<para>` and `<see cref="..."/>`, which are shown as plain text); other tags are dropped and the entities `&lt; &gt; &amp; &quot; &apos;` are resolved.

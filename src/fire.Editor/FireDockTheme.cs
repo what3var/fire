@@ -70,6 +70,37 @@ namespace fire.Editor
             dict[ResourceKeys.NavigatorWindowSelectedBackground] = accent;
             dict[ResourceKeys.DockingButtonForegroundBrushKey] = accent;
             dict[ResourceKeys.PreviewBoxBorderBrushKey] = accent;
+
+            // Schließen-Schaltfläche der Dokument-Registerkarten: Hover/Gedrückt statt des Blaus des Themas.
+            var accentHover = EditorTheme.Solid(Color.FromRgb(0xD6, 0x1F, 0x70));   // etwas heller als der Akzent, für die aktive (akzentfarbene) Registerkarte
+            var accentPressed = EditorTheme.Solid(Color.FromRgb(0x8C, 0x00, 0x3F)); // etwas dunkler
+            var neutralHover = EditorTheme.Solid(EditorTheme.BorderColor);          // für Registerkarten ohne Akzent-Hintergrund
+            foreach (var (key, brush) in new (object, Brush)[]
+            {
+                (ResourceKeys.DocumentWellTabButtonSelectedActiveHoveredBackground, accentHover),
+                (ResourceKeys.DocumentWellTabButtonSelectedActiveHoveredBorder, accentHover),
+                (ResourceKeys.DocumentWellTabButtonSelectedActivePressedBackground, accentPressed),
+                (ResourceKeys.DocumentWellTabButtonSelectedActivePressedBorder, accentPressed),
+                (ResourceKeys.DocumentWellTabButtonSelectedInactiveHoveredBackground, neutralHover),
+                (ResourceKeys.DocumentWellTabButtonSelectedInactiveHoveredBorder, neutralHover),
+                (ResourceKeys.DocumentWellTabButtonSelectedInactivePressedBackground, accent),
+                (ResourceKeys.DocumentWellTabButtonSelectedInactivePressedBorder, accent),
+                (ResourceKeys.DocumentWellTabButtonUnselectedTabHoveredButtonHoveredBackground, neutralHover),
+                (ResourceKeys.DocumentWellTabButtonUnselectedTabHoveredButtonHoveredBorder, neutralHover),
+                (ResourceKeys.DocumentWellTabButtonUnselectedTabHoveredButtonPressedBackground, accent),
+                (ResourceKeys.DocumentWellTabButtonUnselectedTabHoveredButtonPressedBorder, accent),
+                (ResourceKeys.DocumentWellOverflowButtonHoveredBackground, neutralHover),
+                (ResourceKeys.DocumentWellOverflowButtonHoveredBorder, neutralHover),
+            })
+                dict[key] = brush;
+            foreach (var key in new object[]
+            {
+                ResourceKeys.DocumentWellTabButtonSelectedActiveHoveredGlyph, ResourceKeys.DocumentWellTabButtonSelectedActivePressedGlyph,
+                ResourceKeys.DocumentWellTabButtonSelectedInactiveHoveredGlyph, ResourceKeys.DocumentWellTabButtonSelectedInactivePressedGlyph,
+                ResourceKeys.DocumentWellTabButtonUnselectedTabHoveredButtonHoveredGlyph, ResourceKeys.DocumentWellTabButtonUnselectedTabHoveredButtonPressedGlyph,
+            })
+                dict[key] = white;
+
             var preview = new SolidColorBrush(EditorTheme.AccentColor) { Opacity = 0.5 };
             preview.Freeze();
             dict[ResourceKeys.PreviewBoxBackgroundBrushKey] = preview;

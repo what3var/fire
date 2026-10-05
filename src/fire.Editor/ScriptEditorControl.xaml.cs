@@ -206,15 +206,18 @@ namespace fire.Editor
                 _caretTipTimer.Stop();
                 ShowCaretDocTip();
             };
-            Editor.TextArea.Caret.PositionChanged += (_, _) =>
-            {
-                CloseDocTip();
-                _caretTipTimer.Stop();
-                _caretTipTimer.Start();
-            };
+            Editor.TextArea.Caret.PositionChanged += (_, _) => OnCaretOrTextChanged();
             Editor.TextArea.TextView.MouseHover += TextView_MouseHover;
-            Editor.TextArea.TextView.MouseHoverStopped += (_, _) => CloseDocTip();
-            Editor.TextArea.TextView.ScrollOffsetChanged += (_, _) => CloseDocTip();
+            Editor.TextArea.TextView.MouseHoverStopped += (_, _) =>
+            {
+                if (_docTipKind == DocTipKind.Hover) CloseDocTip();
+            };
+            // Scrolling moves the text under a tooltip: a call tooltip is placed again, the others are closed.
+            Editor.TextArea.TextView.ScrollOffsetChanged += (_, _) =>
+            {
+                if (_docTipKind == DocTipKind.Call) { _callTipKey = null; UpdateCallTip(); }
+                else CloseDocTip();
+            };
             Editor.LostKeyboardFocus += (_, _) =>
             {
                 _caretTipTimer.Stop();
@@ -238,6 +241,12 @@ namespace fire.Editor
 
         private readonly DispatcherTimer _caretTipTimer;
         private System.Windows.Controls.ToolTip? _docTip;
+
+        /// <summary>Why the tooltip is open: while the arguments of a call are typed (stays until the call is closed),
+        /// because the caret rested on a symbol, or because the mouse hovers over one.</summary>
+        private enum DocTipKind { None, Call, Rest, Hover }
+        private DocTipKind _docTipKind;
+        private (int ParenOffset, string Header)? _callTipKey;
         private string? _indexedSource;
         private ScriptSymbolIndex? _index;
 
@@ -267,7 +276,7 @@ namespace fire.Editor
             return false;
         }
 
-        private void ShowDocTip(string header, DocComment doc, double x, double y)
+        private void ShowDocTip(DocTipKind kind, string header, DocComment doc, double x, double y)
         {
             CloseDocTip();
             var tip = DocToolTip.Create(header, doc);
@@ -278,13 +287,65 @@ namespace fire.Editor
             tip.StaysOpen = true;
             tip.IsOpen = true;
             _docTip = tip;
+            _docTipKind = kind;
         }
 
         private void CloseDocTip()
         {
+            _callTipKey = null;
+            _docTipKind = DocTipKind.None;
             if (_docTip == null) return;
             _docTip.IsOpen = false;
             _docTip = null;
+        }
+
+        /// <summary>Caret moved or text changed: keep (or update) the tooltip of an open call, otherwise close a resting-caret tooltip
+        /// and start waiting for the caret to rest on a symbol.</summary>
+        private void OnCaretOrTextChanged()
+        {
+            bool inCall = UpdateCallTip();
+            if (_docTipKind == DocTipKind.Rest) CloseDocTip();
+            _caretTipTimer.Stop();
+            if (!inCall) _caretTipTimer.Start();
+        }
+
+        /// <summary>While the arguments of `Foo(` / `new Foo(` are typed the documentation of the called method or constructor stays open (above the line, so it does
+        /// not cover the completion list) until the call is closed with `)`. Returns whether the caret is inside a call at all.</summary>
+        private bool UpdateCallTip()
+        {
+            if (!Editor.IsKeyboardFocusWithin && _docTipKind != DocTipKind.Call) return false;
+            string source = Editor.Text;
+            var call = NavigationEngine.FindOpenCall(source, Editor.CaretOffset);
+            if (call == null)
+            {
+                if (_docTipKind == DocTipKind.Call) CloseDocTip();
+                return false;
+            }
+
+            var symbol = NavigationEngine.TryResolveCall(source, call, IndexFor(source));
+            if (symbol?.Documentation is not { } doc)
+            {
+                if (_docTipKind == DocTipKind.Call) CloseDocTip();
+                return true;
+            }
+
+            var key = (call.ParenOffset, symbol.Header);
+            if (_docTipKind == DocTipKind.Call && _callTipKey == key) return true; // same call, same overload: leave it alone
+
+            var textView = Editor.TextArea.TextView;
+            var line = Editor.Document.GetLineByOffset(call.ParenOffset);
+            var nameLocation = Editor.Document.GetLocation(Math.Max(line.Offset, call.ParenOffset - 1));
+            var lineTop = textView.GetVisualPosition(new TextViewPosition(nameLocation), VisualYPosition.LineTop) - textView.ScrollOffset;
+            var lineBottom = textView.GetVisualPosition(new TextViewPosition(nameLocation), VisualYPosition.LineBottom) - textView.ScrollOffset;
+
+            ShowDocTip(DocTipKind.Call, symbol.Header, doc, lineTop.X, lineTop.Y);
+            if (_docTip != null)
+            {
+                _docTip.Placement = PlacementMode.Top;
+                _docTip.PlacementRectangle = new Rect(lineTop.X, lineTop.Y, 0, Math.Max(1, lineBottom.Y - lineTop.Y));
+            }
+            _callTipKey = key;
+            return true;
         }
 
         private void ShowCaretDocTip()
@@ -294,7 +355,7 @@ namespace fire.Editor
 
             var textView = Editor.TextArea.TextView;
             var below = textView.GetVisualPosition(Editor.TextArea.Caret.Position, VisualYPosition.LineBottom) - textView.ScrollOffset;
-            ShowDocTip(header, doc, below.X, below.Y + 2);
+            ShowDocTip(DocTipKind.Rest, header, doc, below.X, below.Y + 2);
         }
 
         private void TextView_MouseHover(object? sender, MouseEventArgs e)
@@ -316,7 +377,7 @@ namespace fire.Editor
             if (mouse.X < left.X || mouse.X > right.X || mouse.Y < left.Y || mouse.Y > bottom.Y) return;
 
             if (!TryGetDoc(start, out string header, out DocComment doc)) return;
-            ShowDocTip(header, doc, mouse.X + 8, mouse.Y + 18);
+            ShowDocTip(DocTipKind.Hover, header, doc, mouse.X + 8, mouse.Y + 18);
         }
 
         /// <summary>Start and end offsets of the identifier that contains or touches `offset` (start == end: none).</summary>
@@ -366,7 +427,8 @@ namespace fire.Editor
 
         private void Editor_TextChanged(object? sender, EventArgs e)
         {
-            CloseDocTip();
+            if (_docTipKind == DocTipKind.Hover) CloseDocTip();
+            OnCaretOrTextChanged();
             if (!_loading) SetModified(true);
             _diagnosticsTimer.Stop();
             _diagnosticsTimer.Start();
@@ -403,6 +465,7 @@ namespace fire.Editor
         {
             // Strg+Leertaste: Vervollständigung manuell anstoßen, auch ohne
             // vorangehenden '.' (allgemeine Bezeichner-Vervollständigung).
+            if (e.Key == Key.Escape) CloseDocTip();
             if (e.Key == Key.Space && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
             {
                 ShowOrUpdateCompletion(closeIfEmpty: true);
