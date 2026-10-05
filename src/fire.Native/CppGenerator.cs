@@ -286,7 +286,11 @@ namespace fire.Native
                 sb.AppendLine("    }");
                 sb.AppendLine("}");
             }
-            foreach (var name in _fieldNames) sb.AppendLine($"[[maybe_unused]] static inline Value gf_{Mangle(name)}(Value v);").AppendLine($"[[maybe_unused]] static inline void sf_{Mangle(name)}(Value v, Value x);").AppendLine($"[[maybe_unused]] static inline Value fp_{Mangle(name)}(Value v);");
+            foreach (var name in _fieldNames)
+            {
+                string lp = HasProperty(name) ? ", OwnList* list" : "";
+                sb.AppendLine($"[[maybe_unused]] static inline Value gf_{Mangle(name)}(Value v{lp});").AppendLine($"[[maybe_unused]] static inline void sf_{Mangle(name)}(Value v, Value x{lp});").AppendLine($"[[maybe_unused]] static inline Value fp_{Mangle(name)}(Value v);");
+            }
             foreach (var (name, argc) in _dispatchers) sb.AppendLine(DispatcherSignature(name, argc) + ";");
             sb.AppendLine("[[maybe_unused]] static inline Value aget_g(Value a, Value i, OwnList* list);");
             sb.AppendLine("[[maybe_unused]] static inline void aset_g(Value a, Value i, Value v, OwnList* list);");
@@ -343,6 +347,13 @@ namespace fire.Native
                         UnitId(Unit.Parse(requiredUnit));   // the unit and its text for the check in the field setter
                         Constant(Value.MakeString(requiredUnit));
                     }
+            foreach (var field in _fieldNames.ToList())
+                foreach (var cls in _classList.ToList())
+                {
+                    if (cls.Rc.FieldIndex.ContainsKey(field)) continue;
+                    if (cls.Rc.FindMethodWithAccess("get_" + field, 0).Proto is { } getter) GetFunc(getter, FuncKind.Method);
+                    if (cls.Rc.FindMethodWithAccess("set_" + field, 1).Proto is { } setter) GetFunc(setter, FuncKind.Method);
+                }
             if (AnyClassHasMethod("GetIndex", 1)) _dispatchers.Add(("GetIndex", 1));
             if (AnyClassHasMethod("SetIndex", 2)) _dispatchers.Add(("SetIndex", 2));
             if (_dispatchers.Contains(("GetEnumerator", 0)) && _program.Program.Classes.ContainsKey("ListEnumerator"))
@@ -485,11 +496,8 @@ namespace fire.Native
         {
             var indexByClass = new Dictionary<int, int>();
             foreach (var cls in _classList)
-            {
                 if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) indexByClass[cls.Id] = index;
-                else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto != null || cls.Rc.FindMethodWithAccess("set_" + name, 1).Proto != null)
-                    throw new NativeNotSupportedException($"property '{name}' of class {cls.Rc.Name}");
-            }
+            if (HasProperty(name)) return PropertyHelpers(name, indexByClass);
             bool isLength = name is "Length" or "length";
             if (indexByClass.Count == 0 && !isLength)
                 throw new NativeNotSupportedException($"member '{name}': no class of the program has a field with this name (built-in members are not supported yet)");
@@ -527,6 +535,48 @@ namespace fire.Native
             return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}    Obj* o = asObj(v);\n{indexCode}\n    return o->fields()[idx];\n}}\n"
                  + $"static inline void sf_{m}(Value v, Value x) {{\n    Obj* o = asObj(v);\n{indexCode}\n{unitCode}    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
                  + $"static inline Value fp_{m}(Value v) {{\n    Obj* o = asObj(v);\n{indexCode}\n    return PtrV(&o->fields()[idx]);\n}}\n";
+        }
+
+        /// <summary>Does some class of the program declare a property of this name (`get_name`/`set_name`)? Then reading and writing it takes the scope list
+        /// of the caller (the getter's result belongs to it).</summary>
+        private bool HasProperty(string name) =>
+            _program.Program.Classes.Values.Any(rc => rc.Methods.ContainsKey("get_" + name) || rc.Methods.ContainsKey("set_" + name));
+
+        /// <summary>Access to `name` where some class has a property of that name (SPEC 8.8): a real field of the class wins, otherwise the getter/setter
+        /// is called - decided per class, like the VM does by name at run time.</summary>
+        private string PropertyHelpers(string name, Dictionary<int, int> indexByClass)
+        {
+            string m = Mangle(name);
+            bool isLength = name is "Length" or "length";
+            string lengthCode = isLength ? "    { bool ok; Value n = lengthOf(v, &ok); if (ok) return n; }\n" : "";
+            var get = new StringBuilder();
+            var set = new StringBuilder();
+            var ptr = new StringBuilder();
+            foreach (var cls in _classList)
+            {
+                string label = $"        case {cls.Id}: ";
+                if (indexByClass.TryGetValue(cls.Id, out int index))
+                {
+                    get.AppendLine($"{label}return o->fields()[{index}];");
+                    string unit = cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit
+                        ? $"checkUnit(x, {UnitId(Unit.Parse(requiredUnit))}, {Constant(Value.MakeString(requiredUnit))}); " + (_usesExceptions ? "if (FIRE_UNLIKELY(g_unwind.active)) return; " : "")
+                        : "";
+                    set.AppendLine($"{label}{{ {unit}Value old = o->fields()[{index}]; o->fields()[{index}] = x; retain(x); release(old); return; }}");
+                    ptr.AppendLine($"{label}return PtrV(&o->fields()[{index}]);");
+                    continue;
+                }
+                var getter = cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto;
+                var setter = cls.Rc.FindMethodWithAccess("set_" + name, 1).Proto;
+                if (getter != null) get.AppendLine($"{label}{{ Value r = {_funcByProto[getter].Name}(v); adopt(r, list); return r; }}");
+                else if (setter != null) get.AppendLine($"{label}fatal(\"Property '{name}' of '{cls.Rc.Name}' has no getter (only 'set').\");");
+                if (setter != null) set.AppendLine($"{label}{{ Value r = {_funcByProto[setter].Name}(v, x); adopt(r, list); return; }}");
+                else if (getter != null) set.AppendLine($"{label}fatal(\"Property '{name}' on '{cls.Rc.Name}' has no setter (only 'get').\");");
+            }
+            var sb = new StringBuilder();
+            sb.AppendLine($"static inline Value gf_{m}(Value v, OwnList* list) {{\n{lengthCode}    (void)list;\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{get}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
+            sb.AppendLine($"static inline void sf_{m}(Value v, Value x, OwnList* list) {{\n    (void)x; (void)list;\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{set}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
+            sb.AppendLine($"static inline Value fp_{m}(Value v) {{\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{ptr}        default: fatal(\"The address of '{name}' cannot be taken (it is a property or does not exist).\");\n    }}\n}}");
+            return sb.ToString();
         }
 
         /// <summary>`a[i]` and `a[i] = v`: arrays, buffers and strings directly, objects through their GetIndex/SetIndex methods.</summary>
@@ -1403,7 +1453,8 @@ namespace fire.Native
                     Need(1);
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)});");
+                    if (HasProperty(field)) { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)}, &{OwnerList()});"); Check(); }
+                    else E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)});");
                     SetR(d - 1, true);
                     return Next();
                 }
@@ -1412,7 +1463,7 @@ namespace fire.Native
                     Need(2);
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    E($"sf_{Mangle(field)}({S(d - 2)}, {S(d - 1)});");
+                    E($"sf_{Mangle(field)}({S(d - 2)}, {S(d - 1)}{(HasProperty(field) ? ", &" + OwnerList() : "")});");
                     Check();
                     E($"{S(d - 2)} = {S(d - 1)};");
                     SetR(d - 2, R(d - 1));
@@ -1423,7 +1474,7 @@ namespace fire.Native
                     Need(1); RequireSelf();
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    E($"sf_{Mangle(field)}(self, {S(d - 1)});");
+                    E($"sf_{Mangle(field)}(self, {S(d - 1)}{(HasProperty(field) ? ", &" + OwnerList() : "")});");
                     Check();
                     d--; return Next();
                 }
@@ -1525,6 +1576,15 @@ namespace fire.Native
                 }
                 case OpCode.GetStaticField:
                 {
+                    // no static field of that name: a static property (`get_Name`, SPEC 8.8)
+                    if (FindClass(Str(ins.A[0])) is { } getRc && getRc.FindStaticFieldOwner(Str(ins.A[1])) == null
+                        && getRc.FindMethodWithAccess("get_" + Str(ins.A[1]), 0).Proto is { IsStatic: true } staticGetter)
+                    {
+                        E($"{S(d)} = {GetFunc(staticGetter, FuncKind.Static).Name}();");
+                        Check();
+                        AdoptResult(d);
+                        d++; return Next();
+                    }
                     int index = StaticFieldIndex(Str(ins.A[0]), Str(ins.A[1]));
                     E($"{S(d)} = SF{index};");
                     SetR(d, VarRef($"SF{index}"));
@@ -1534,6 +1594,13 @@ namespace fire.Native
                 case OpCode.SetStaticFieldOnInit:
                 {
                     Need(1);
+                    if (FindClass(Str(ins.A[0])) is { } setRc && setRc.FindStaticFieldOwner(Str(ins.A[1])) == null
+                        && setRc.FindMethodWithAccess("set_" + Str(ins.A[1]), 1).Proto is { IsStatic: true } staticSetter)
+                    {
+                        E($"{{ Value r = {GetFunc(staticSetter, FuncKind.Static).Name}({S(d - 1)}); adopt(r, &{OwnerList()}); }}");
+                        Check();
+                        return Next();
+                    }
                     int index = StaticFieldIndex(Str(ins.A[0]), Str(ins.A[1]));
                     StoreVar($"SF{index}", d - 1);
                     return Next();

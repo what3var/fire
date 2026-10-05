@@ -12898,6 +12898,55 @@ static int CountOccurrences(string haystack, string needle)
             var total = 0
             for (var i = 0; i < 3; i = i + 1) { print(list[i].Greet("Zed")) }
             """),
+        ("Properties: get/set, nur lesen/schreiben, vererbt, statisch, ueber den Dispatcher", """
+            class Circle {
+                float radius
+                string label = "c"
+                construct(float radius) { this.radius = radius }
+                float Diameter {
+                    get { return this.radius * 2 }
+                    set { this.radius = value / 2 }
+                }
+                float Area { get { return this.radius * this.radius * 3 } }
+                string Label {
+                    get { return "<" + this.label + ">" }
+                    set { this.label = value + "!" }
+                }
+                string Secret { set { this.label = "secret " + value } }
+                static int count = 0
+                static int Count { get { return Circle.count } set { Circle.count = value * 10 } }
+            }
+            class Ring : Circle {
+                float hole = 1.0
+                construct(float r) : base(r) { }
+                float Width { get { return this.radius - this.hole } }
+                float Area { get { return this.radius * 3 - 3 } }
+            }
+            var c = new Circle(5.0)
+            print(c.Diameter)
+            c.Diameter = 20.0
+            print(c.radius)
+            print(c.Area)
+            print(c.Label)
+            c.Label = "big"
+            print(c.Label)
+            c.Secret = "x"
+            print(c.label)
+            c.radius = c.Diameter + 1
+            print(c.radius)
+            var r = new Ring(4.0)
+            print(r.Width)
+            print(r.Area)
+            print(r.Diameter)
+            r.Diameter = 6.0
+            print(r.Width)
+            Circle.Count = 3
+            print(Circle.Count)
+            var all = [c, r]
+            var sum = 0.0
+            for (var i = 0; i < 2; i = i + 1) { sum = sum + all[i].Diameter }
+            print(sum)
+            """),
         ("Besitz: #performance prueft zerstoerte Arrays nicht (FIRE_UNCHECKED), Ergebnis wie die VM", """
             #performance
             var a = new int[100]
@@ -13062,15 +13111,6 @@ static int CountOccurrences(string haystack, string needle)
         catch (fire.Native.NativeNotSupportedException ex)
         {
             CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (CopyValue)", ex.Message.Contains("CopyValue"), ex.Message);
-        }
-        try
-        {
-            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "class P { int v { get { return 5 } } }\nvar p = new P()\nprint(p.v)" }, null, null, VmExecutionMode.Release));
-            CheckNat("Properties werden abgelehnt", false, "keine Ausnahme");
-        }
-        catch (fire.Native.NativeNotSupportedException ex)
-        {
-            CheckNat("Properties werden abgelehnt", ex.Message.Contains("property"), ex.Message);
         }
         try { Directory.Delete(workDir, true); } catch (IOException) { }
     }

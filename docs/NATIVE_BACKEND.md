@@ -202,12 +202,17 @@ einzigen Maschine, keine Garantie.
   und `UnitMismatchException` (`CheckUnit`, Felder mit Einheit). Eine nicht gefangene Ausnahme meldet die Klasse auf stderr und beendet
   das Programm mit Exitcode 1, ohne Abwickeln - wie die VM.
 
+* **Properties** (SPEC 8.8): `get_Name`/`set_Name` sind gewöhnliche Methoden. Der Feldzugriff `gf_`/`sf_` entscheidet je Klasse wie die VM: ein echtes Feld der
+  Klasse gewinnt, sonst wird der Getter/Setter aufgerufen (dessen Ergebnis gehört der Liste des Aufrufers, darum bekommen die Helfer von Namen mit Property
+  die `OwnList*`). Ein Setter ohne Getter (und umgekehrt) und die Adresse einer Property sind Laufzeitfehler wie in der VM. Statische Properties
+  rufen `GetStaticField`/`SetStaticField` direkt.
+
 * **`ref`-Parameter** (SPEC 5.4.2): der Aufrufer übergibt einen Zeiger auf die Variable (`PtrV(&B3_0)`), das Feld (`fp_name`) oder das
   Array-/Puffer-Element (`addressOfIndex`); der Parameter liest und schreibt durch ihn (`ptrRead`/`ptrWrite`, der Speicher zählt mit). Eine Variable,
   deren Adresse genommen wird, ist ab dann im Speicher (nur diese Funktion wird langsamer). Eine Methode ohne `ref` an derselben Stelle bekommt den
   Wert: bei bekanntem Ziel setzt der Aufrufer `ptrRead`, beim virtuellen Aufruf der Dispatcher (`derefArg`).
 
-Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), `flat`/`copy` als Argument, Threads, Reflection, Properties,
+Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), `flat`/`copy` als Argument, Threads, Reflection,
 Operator-Überladung, `copy`/`flat`,
 Einheiten-Algebra und implizites Einheiten-Coercing, das Zahlenformat `E`, `extern`, die Bridges.
 
