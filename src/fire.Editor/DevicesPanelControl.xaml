@@ -1,34 +1,34 @@
 <UserControl x:Class="fire.Editor.DevicesPanelControl"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <DockPanel>
-        <Border DockPanel.Dock="Top" Background="#F5F5F5" BorderBrush="#DDDDDD" BorderThickness="0,0,0,1" Padding="2">
-            <WrapPanel>
-                <Button x:Name="SearchButton" Click="Search_Click" Padding="8,2" Margin="2"
-                        ToolTip="Search for devices and check their availability">
-                    <TextBlock Text="Search"/>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+            <ToolBar HorizontalAlignment="Stretch" Grid.Row="0">
+                <Button x:Name="SearchButton" Click="Search_Click" ToolTip="Search for devices and check their availability">
+                    <Image Source="/icons/Material-ToyBrickSearchOutline.png"/>
                 </Button>
-                <Button x:Name="ConnectButton" Click="Connect_Click" Padding="8,2" Margin="2"
-                        ToolTip="Connect the selected device">
-                    <TextBlock Text="Connect"/>
+                <Separator/>
+                <Button x:Name="ConnectButton" Click="Connect_Click" ToolTip="Connect the selected device">
+                    <Image Source="/icons/Material-PowerPlugOutline.png"/>
                 </Button>
-                <Button x:Name="DisconnectButton" Click="Disconnect_Click" Padding="8,2" Margin="2"
-                        ToolTip="Disconnect the selected device">
-                    <TextBlock Text="Disconnect"/>
+                <Button x:Name="DisconnectButton" Click="Disconnect_Click" ToolTip="Disconnect the selected device">
+                    <Image Source="/icons/Material-PowerPlugOffOutline.png"/>
                 </Button>
-                <Button x:Name="TraceButton" Click="Trace_Click" Padding="8,2" Margin="2"
-                        ToolTip="Open the packet trace of the selected device in a new tab">
-                    <TextBlock Text="Packet Trace"/>
+                <Separator/>
+                <Button x:Name="TraceButton" Click="Trace_Click" ToolTip="Open the packet trace of the selected device in a new tab">
+                    <Image Source="/icons/Material-SharkFin.png"/>
                 </Button>
-            </WrapPanel>
-        </Border>
+            </ToolBar>
+        
+        <!--<TextBlock x:Name="HintText" DockPanel.Dock="Bottom" Margin="8,4" TextWrapping="Wrap" Foreground="#666666" FontSize="11"
+                   Text="Right-click a device: connect, disconnect, set as default device (Device.Default in scripts), packet trace."/>-->
 
-        <TextBlock x:Name="HintText" DockPanel.Dock="Bottom" Margin="8,4" TextWrapping="Wrap" Foreground="#666666" FontSize="11"
-                   Text="Right-click a device: connect, disconnect, set as default device (Device.Default in scripts), packet trace."/>
-
-        <TreeView x:Name="DeviceTree" BorderThickness="0"
+        <TreeView x:Name="DeviceTree" BorderThickness="0" Grid.Row="1"
                   SelectedItemChanged="DeviceTree_SelectedItemChanged"
                   MouseDoubleClick="DeviceTree_MouseDoubleClick"
                   PreviewMouseRightButtonDown="DeviceTree_PreviewMouseRightButtonDown"/>
-    </DockPanel>
+    </Grid>
 </UserControl>
