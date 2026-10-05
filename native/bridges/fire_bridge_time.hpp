@@ -6,7 +6,7 @@
 // and the C library for the time zone (localtime_r; define FIRE_NO_LOCALTIME on a board without a time zone database: local time is then UTC).
 // Time is counted in ticks of 100 ns; a DateTime counts from 0001-01-01 (like .NET). Every function behaves like the VM's (src/fire.Runtime/TimeNatives.cs),
 // only DateTime.Parse reads a subset of the formats: ISO dates and times (`2024-03-15 14:30:00`, `2024-03-15T14:30:00.5Z`, `+02:00`), `M/d/yyyy`,
-// month names (`March 15, 2024`, `Fri, 15 Mar 2024 14:30:00 GMT`), `3:45 PM`.
+// month names (`March 15, 2024`, `March 2024`, `Fri, 15 Mar 2024 14:30:00 GMT`), `yyyy-MM`, `3:45 PM`.
 #pragma once
 
 #include <cctype>
@@ -27,7 +27,7 @@ Value makeTimeError(Value message);
 /// A failed time function: a TimeException (the VM's `NativeFail`), or the end of the program when the program has no exceptions.
 inline Value timeFail(const char* text) {
 #ifdef FIRE_EXCEPTIONS
-    OwnList unused = {nullptr, nullptr, 0, nullptr, nullptr};
+    OwnList unused = {nullptr, nullptr, 0, 0, nullptr, nullptr};
     uint32_t n = (uint32_t)std::strlen(text);
     Str* msg = allocStr(n, &unused);
     widenAscii(text, n, strChars(msg));
@@ -472,6 +472,8 @@ inline bool tmParse(const Str* str, int64_t& ticks) {
             size_t a = numbers[0], b = numbers[1];
             if (t[a].digits >= 3) { year = t[a].value; day = t[b].value; }
             else { day = t[a].value; year = twoDigitYear(t[b].value, t[b].digits); }
+        } else if (numbers.size() == 1 && t[numbers[0]].digits >= 3) {   // `March 2024`: the first of the month
+            year = t[numbers[0]].value;
         } else if (numbers.size() == 1) {
             day = t[numbers[0]].value;
             std::time_t now = (std::time_t)(plat::unixMicros() / 1000000);
@@ -482,6 +484,9 @@ inline bool tmParse(const Str* str, int64_t& ticks) {
         size_t a = numbers[0], b = numbers[1], c = numbers[2];
         if (t[a].digits >= 3) { year = t[a].value; month = t[b].value; day = t[c].value; }
         else { month = t[a].value; day = t[b].value; year = twoDigitYear(t[c].value, t[c].digits); }
+        anyDate = true;
+    } else if (numbers.size() == 2 && t[numbers[0]].digits >= 3) {   // `2024-03`: the first of the month
+        year = t[numbers[0]].value; month = t[numbers[1]].value;
         anyDate = true;
     } else if (!numbers.empty()) return false;
     if (!hasTime && !anyDate) return false;

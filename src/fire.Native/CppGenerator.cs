@@ -230,6 +230,10 @@ namespace fire.Native
         private readonly List<string> _excTypes = new();
         /// <summary>The program uses TakeUpwards: every scope then knows its parent scope (and has an owner list).</summary>
         private bool _usesTakeUpwards;
+        /// <summary>The program takes the address of an array or buffer element (`ref a[i]`): the handle table keeps the headers, so that `p + n` can be checked against the bounds.</summary>
+        private bool _usesElementPointers;
+        /// <summary>The program has `try x.Take...(...)`: every function counts the call depth (`CallDepth`), so that the callee knows which argument list is its own.</summary>
+        private bool _usesTryDepth;
         /// <summary>Something needs the list of the global scope from other functions (`g_globalOwn`): exceptions, TakeGlobal, TakeUpwards.</summary>
         private bool _usesGlobalOwn;
         /// <summary>Methods (name, number of arguments) that a call site passes an address to (`ref` parameters): their dispatcher hands the value to the implementations without `ref`.</summary>
@@ -459,6 +463,7 @@ namespace fire.Native
             if (_usesExceptions) sb.AppendLine("#define FIRE_EXCEPTIONS 1");
             if (_usesThreads) sb.AppendLine("#define FIRE_THREADS 1");
             if (_usesReflection) sb.AppendLine("#define FIRE_REFLECTION 1");
+            if (_usesElementPointers && _program.ExecutionMode != VmExecutionMode.Performance) sb.AppendLine("#define FIRE_PTRBOUNDS 1 // pointers into arrays and buffers (`ref a[i]`, `p + n`) know the bounds");
             if (_program.ExecutionMode == VmExecutionMode.Performance) sb.AppendLine("#define FIRE_UNCHECKED 1 // #performance: destroyed arrays and buffers are not detected");
             if (_program.FloatWidth == 32) sb.AppendLine("#define FIRE_FLOAT32 1 // #floatwidth 32: float is a 32-bit float, like in the VM");
             // The unit table: the base symbols of all units of the program (sorted like the VM prints them) and one row per unit.
@@ -868,7 +873,7 @@ namespace fire.Native
                 int baseArgs = OwnMethodBaseArgs(ownId);
                 string target = baseArgs == 1 ? "a0" : "Undef()";
                 if (argc == baseArgs) sb.AppendLine($"    ownMethod({ownId}, self, {target}, list);");
-                else sb.AppendLine($"    ownMethodT({ownId}, self, {target}, a{baseArgs}, list, nullptr, 0);   // (the scopes of the caller are not known here: `Takes.Locals` finds nothing)");
+                else sb.AppendLine($"    ownMethodT({ownId}, self, {target}, a{baseArgs}, list, g_scopeLists, g_scopeCount);   // (the call site with a `Takes` mode left the scopes of the caller in g_scopeLists)");
                 sb.AppendLine("    return Undef();");
             }
             else
@@ -1435,6 +1440,7 @@ namespace fire.Native
             }
             sb.AppendLine(f.Signature);
             sb.AppendLine("{");
+            if (_usesTryDepth) sb.AppendLine("    CallDepth cd_;");
             if (f.HasSelf) sb.AppendLine("    (void)self;");
             if (f.Kind == FuncKind.FireBody) sb.AppendLine("    (void)args;");
             if (!f.IsTop && _usesThreads) sb.AppendLine("    if (FIRE_UNLIKELY(pollSignals())) return Undef();");
@@ -1447,8 +1453,8 @@ namespace fire.Native
             if (f.Root.MaxDepth > 0) sb.AppendLine("    Value " + string.Join(", ", Enumerable.Range(0, f.Root.MaxDepth).Select(i => $"s{i}")) + ";");
             var localsToDeclare = locals.Where(l => !(l.StartsWith("P") && int.Parse(l.AsSpan(1)) < f.ParamLike)).ToList();
             if (localsToDeclare.Count > 0) sb.AppendLine("    Value " + string.Join(", ", localsToDeclare.Select(l => l + " = Undef()")) + ";");
-            if (f.NeedsList.Count > 0) sb.AppendLine("    OwnList " + string.Join(", ", f.NeedsList.OrderBy(i => i).Select(i => ListName(i) + (i < 0 ? " = {nullptr, nullptr, poolMark(), nullptr, nullptr}" : i >= f.Chunk.Code.Count ? " = {nullptr, nullptr, 0xFFFFFFFFu, nullptr, nullptr}" : " = {nullptr, nullptr, 0, nullptr, nullptr}"))) + ";");   // (the list of a catch block that never ran: leaving it is a no-op)
-            if (f.NeedsArgList) sb.AppendLine("    OwnList AL = {nullptr, nullptr, 0, nullptr, nullptr};");
+            if (f.NeedsList.Count > 0) sb.AppendLine("    OwnList " + string.Join(", ", f.NeedsList.OrderBy(i => i).Select(i => ListName(i) + (i < 0 ? " = {nullptr, nullptr, poolMark(), 0, nullptr, nullptr}" : i >= f.Chunk.Code.Count ? " = {nullptr, nullptr, 0xFFFFFFFFu, 0, nullptr, nullptr}" : " = {nullptr, nullptr, 0, 0, nullptr, nullptr}"))) + ";");   // (the list of a catch block that never ran: leaving it is a no-op)
+            if (f.NeedsArgList) sb.AppendLine("    OwnList AL = {nullptr, nullptr, 0, 0, nullptr, nullptr};");
             if (f.Kind == FuncKind.Main && _usesThreads) sb.AppendLine("    gilAcquire();\n    g_domainRoot = &OG;");
             if (f.IsTop && (_usesGlobalOwn || f.Kind == FuncKind.FireBody)) sb.AppendLine("    g_globalOwn = &OG;");
             if (f.Kind == FuncKind.FireBody)
@@ -1787,6 +1793,13 @@ namespace fire.Native
                         f.NeedsArgList = true;
                         E($"reownArg({S(first + i)}, &{OwnerList()}, &AL);");
                     }
+                    else if (bits == 5)
+                    {
+                        // `f(take x)` (SPEC 2.2): x belongs to the callee, whoever owned it - it travels in the argument list like a returned value
+                        f.NeedsArgList = true;
+                        E($"if (takeAlive({S(first + i)})) takeArg({S(first + i)}, &{OwnerList()}, &AL);");
+                        Check();
+                    }
                     else if (bits is 1 or 2)
                     {
                         // `f(flat x)` / `f(copy x)`: the copy belongs to the callee - it travels in the argument list like a returned value
@@ -1799,7 +1812,7 @@ namespace fire.Native
             void ArgsAfter(int argc, long mask, string result)
             {
                 for (int i = 0; i < Math.Min(argc, 16); i++)
-                    if ((mask >> (4 * i) & 15) is 1 or 2 or 4) { E($"finishArgs({result}, &AL);"); return; }
+                    if ((mask >> (4 * i) & 15) is 1 or 2 or 4 or 5) { E($"finishArgs({result}, &AL);"); return; }
             }
             bool R(int k) => k >= 64 || (st.Refs >> k & 1UL) != 0;
             void SetR(int k, bool value)
@@ -2360,6 +2373,7 @@ namespace fire.Native
                         int baseArgs = OwnMethodBaseArgs(ownMethodId);
                         string targetArg = baseArgs == 1 ? S(slot + 1) : "Undef()";
                         bool isTry = OwnMethodIsTry(method);
+                        if (isTry && !_usesTryDepth) { _usesTryDepth = true; _version++; }
                         if (argc == baseArgs && !isTry) E($"ownMethod({ownMethodId}, {S(slot)}, {targetArg}, &{owner});");
                         else
                         {
@@ -2384,6 +2398,16 @@ namespace fire.Native
                     long dmask = ArgMask();
                     if (_usesReflection && ReflectionMethodNames.Contains(method)) E(ReflectionCallerAssign(f).TrimEnd());
                     ArgsBefore(d - argc, argc, dmask);
+                    if (OwnMethodId(method, argc) is { } dispatchedOwn && argc > OwnMethodBaseArgs(dispatchedOwn))
+                    {
+                        // an ownership method with a `Takes` mode that goes through the dispatcher (some class declares a method of this name): the built-in fallback there needs the scopes of this call
+                        var dispatchScopes = st.Scopes.Where(sc => f.NeedsList.Contains(sc.Id)).Select(sc => "&" + ListName(sc.Id)).ToList();
+                        if (dispatchScopes.Count > 0)
+                            E($"{{ OwnList* const L_[] = {{{string.Join(", ", dispatchScopes)}}}; g_scopeLists = L_; g_scopeCount = {dispatchScopes.Count};");
+                        E($"{S(slot)} = call_{Mangle(method)}_{argc}({S(slot)}{Args(d - argc, argc)}{extra});");
+                        if (dispatchScopes.Count > 0) E("g_scopeLists = nullptr; g_scopeCount = 0; }");
+                    }
+                    else
                     E($"{S(slot)} = call_{Mangle(method)}_{argc}({S(slot)}{Args(d - argc, argc)}{extra});");
                     ArgsAfter(argc, dmask, S(slot));
                     Check();
@@ -2567,6 +2591,35 @@ namespace fire.Native
                     }
                     return Next();
                 }
+                case OpCode.TakeToScope:
+                {
+                    // `var a = take x` / `v = take x` (SPEC 2.2): x belongs to the scope that holds the variable
+                    Need(1);
+                    int depth = ins.A[0];
+                    string list;
+                    if (depth == 0xFFFF) list = "g_globalOwn";
+                    else
+                    {
+                        var sc = st.Scopes[Math.Max(0, st.Scopes.Count - 1 - depth)];
+                        f.NeedsList.Add(sc.Id);
+                        list = "&" + ListName(sc.Id);
+                    }
+                    E($"if (takeAlive({S(d - 1)})) takeToList({S(d - 1)}, {list});");
+                    Check();
+                    return Next();
+                }
+                case OpCode.TakeCheck:
+                    return Next();   // the check is part of `takeArg` in the argument list of the call
+                case OpCode.TakeToObject:
+                    Need(2);
+                    E($"if (takeAlive({S(d - 1)})) takeToHolder({S(d - 2)}, {S(d - 1)});");
+                    Check();
+                    return Next();
+                case OpCode.TakeToArray:
+                    Need(3);
+                    E($"if (takeAlive({S(d - 1)})) takeToHolder({S(d - 3)}, {S(d - 1)});");
+                    Check();
+                    return Next();
                 case OpCode.OwnValue:
                     Need(2);
                     foreach (var sc in st.Scopes) f.NeedsList.Add(sc.Id);
@@ -2649,12 +2702,14 @@ namespace fire.Native
                     return Next();
                 }
                 case OpCode.AddressOfIndex:
+                    if (!_usesElementPointers) { _usesElementPointers = true; _version++; }
                     Need(2); E($"{S(d - 2)} = addressOfIndex({S(d - 2)}, {S(d - 1)});"); Check(); d--; SetR(d - 1, false); return Next();
                 case OpCode.PtrRead:
-                    Need(1); E($"{S(d - 1)} = ptrRead({S(d - 1)});"); SetR(d - 1, true); return Next();
+                    Need(1); E($"{S(d - 1)} = ptrRead({S(d - 1)});"); Check(); SetR(d - 1, true); return Next();
                 case OpCode.PtrWrite:
                     Need(2);
                     E($"ptrWrite({S(d - 2)}, {S(d - 1)});");
+                    Check();
                     E($"{S(d - 2)} = {S(d - 1)};");
                     SetR(d - 2, R(d - 1));
                     d--; return Next();

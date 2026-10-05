@@ -925,7 +925,7 @@ namespace fire.Compiler
                     break; // wirkt erst zur Laufzeit (siehe Compiler.Compile: SetTimeout)
 
                 case VarDeclStmt vd:
-                    if (vd.Initializer != null) ResolveExpr(vd.Initializer);
+                    if (vd.Initializer != null) ResolveExprAllowTake(vd.Initializer);
                     if (vd.Type != null) ValidateTypeRef(vd.Type, vd.Line);
                     ResolveArrayRanks(vd.ArrayRanks);
                     if (vd.IsReadonly && vd.Initializer == null &&
@@ -1021,7 +1021,7 @@ namespace fire.Compiler
                     break;
 
                 case PostGlobalStmt postGlobal:
-                    foreach (var arg in postGlobal.Args) ResolveExpr(arg);
+                    foreach (var arg in postGlobal.Args) ResolveExprAllowTake(arg);
                     ResolveLambda(postGlobal.Lambda);
                     break;
 
@@ -1343,7 +1343,7 @@ namespace fire.Compiler
                 if (!_currentClassHasBase)
                     AddError(new ResolverException(
                         "'base(...)' is only valid in a class with a base class", body.Line));
-                foreach (var a in baseArgs) ResolveExpr(a);
+                foreach (var a in baseArgs) ResolveExprAllowTake(a);
             }
 
             // WICHTIG: NICHT von 'baseArgs != null' ableiten - das heißt nur
@@ -1381,6 +1381,14 @@ namespace fire.Compiler
         /// (siehe ResolveStmt), die Auflösung macht mit den Geschwister-
         /// Ausdrücken weiter - z.B. werden bei `f(a, b)` beide unbekannten
         /// Bezeichner gemeldet, nicht nur `a`.</summary>
+        /// <summary>`take x` is valid directly as an argument and as the value of an assignment/declaration (SPEC 2.2): the places register it here before resolving.</summary>
+        private readonly HashSet<Expr> _takeAllowed = new();
+        private void ResolveExprAllowTake(Expr expr)
+        {
+            if (expr is UnaryExpr { Op: UnaryOp.Take }) _takeAllowed.Add(expr);
+            ResolveExpr(expr);
+        }
+
         private void ResolveExpr(Expr expr)
         {
             var state = SaveState();
@@ -1423,6 +1431,9 @@ namespace fire.Compiler
                     break;
 
                 case UnaryExpr u:
+                    if (u.Op == UnaryOp.Take && !_takeAllowed.Remove(u))
+                        throw new ResolverException(
+                            "'take' is only valid as an argument of a call or on the right of '=' / 'var x =' (SPEC 2.2)", u.Line);
                     if ((u.Op == UnaryOp.Dereference || u.Op == UnaryOp.AddressOf) && _unsafeDepth == 0)
                         throw new ResolverException(
                             $"'{(u.Op == UnaryOp.Dereference ? "*" : "&")}' is only valid inside an 'unsafe' block", u.Line);
@@ -1459,7 +1470,7 @@ namespace fire.Compiler
 
                 case CallExpr call:
                     ResolveExpr(call.Callee);
-                    foreach (var a in call.Args) ResolveExpr(a);
+                    foreach (var a in call.Args) ResolveExprAllowTake(a);
                     break;
 
                 case MemberExpr me:
@@ -1527,7 +1538,9 @@ namespace fire.Compiler
                     break;
 
                 case AssignExpr asg:
-                    ResolveExpr(asg.Value);
+                    ResolveExprAllowTake(asg.Value);
+                    if (asg.Value is UnaryExpr { Op: UnaryOp.Take } && asg.Target is UnaryExpr { Op: UnaryOp.Dereference })
+                        throw new ResolverException("'take' needs a holder: a variable, a field or an array element (not a pointer)", asg.Line);
                     ResolveAssignTarget(asg.Target);
                     break;
 
@@ -1560,7 +1573,7 @@ namespace fire.Compiler
                                 $"'{ne.ClassRef.BaseName}' is not generic, so it does not accept type arguments in angle brackets",
                                 ne.Line);
                     });
-                    foreach (var a in ne.Args) ResolveExpr(a);
+                    foreach (var a in ne.Args) ResolveExprAllowTake(a);
                     break;
 
                 case NewArrayExpr na:
@@ -1638,7 +1651,7 @@ namespace fire.Compiler
                 if (takeCall.Args.Count != baseArgs && takeCall.Args.Count != baseArgs + 1)
                     throw new ResolverException($"'try {takeMember.Name}(...)' expects {(baseArgs == 1 ? "the target object and optionally a Takes mode" : "optionally a Takes mode")}", tc.Line);
                 ResolveExpr(takeMember.Target);
-                foreach (var a in takeCall.Args) ResolveExpr(a);
+                foreach (var a in takeCall.Args) ResolveExprAllowTake(a);
                 _refs[tc] = new ResolvedRef.TryTake(takeMember.Name);
                 return;
             }
@@ -1656,7 +1669,7 @@ namespace fire.Compiler
                         : $"'{calleeIdent.Name}' is not a known native function registered as 'tryable'.",
                     tc.Line);
 
-            foreach (var a in innerCall.Args) ResolveExpr(a);
+            foreach (var a in innerCall.Args) ResolveExprAllowTake(a);
             _refs[tc] = new ResolvedRef.TryableNative(calleeIdent.Name);
         }
 

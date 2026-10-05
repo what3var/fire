@@ -84,12 +84,16 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   was unter sich selbst landen würde, bleibt. Der Generator übergibt die Listen der verlassenen Scopes als Feld (`T_`).
 * **`Takes`** (`TakeLocal`, `TakeUpwards`, `TakeGlobal`, `TakeTo` mit einem `Takes`-Wert als letztem Argument): `ownMethodT` setzt erst den Owner wie bisher, dann `moveReachable` mit dem Modus
   (`TK_THIS` nichts weiter, `TK_CHILDREN` die unmittelbaren Mitglieder, `TK_LOCALS` wie `return` mit den Listen der offenen Scopes der Funktion, `TK_ALL` alles Erreichbare). Über den Methoden-Verteiler
-  (eine Klasse deklariert selbst ein `Take...`) kennt der Aufruf die Scopes des Aufrufers nicht: `Takes.Locals` findet dort nichts.
+  (eine Klasse deklariert selbst ein `Take...`) legt die Aufrufstelle die Scopes des Aufrufers vorher in `g_scopeLists`/`g_scopeCount`; der eingebaute Rückfall im Verteiler liest sie, `Takes.Locals` findet also dasselbe wie ohne Verteiler.
 * **`Takes.Children` und `IEnumerable`**: nimmt ein Objekt, das `IEnumerable` implementiert, seine Items über den Enumerator mit, erzeugt der Generator `fire_enumerateItems` (GetEnumerator, MoveNext, GetCurrent über die Verteiler)
   und setzt `g_enumerateItems`; `moveReachable` benutzt sie statt der Felder. Ein Array nimmt seine Elemente mit.
+* **`take x`** (SPEC 2.2): als Argument `bits == 5` im `CopyArgs`-Präfix: `takeArg` (nimmt den Wert aus seiner Liste und hängt ihn in die Argumentliste `AL` des Aufrufs, danach wie `f(g())` `finishArgs`); der Opcode `TakeCheck` ist nativ nur ein Marker
+  (`takeAlive` im Aufruf wirft die DestroyedException). Zuweisungen: `TakeToScope` (`takeToList` auf die Liste des Scopes der Variablen, `g_globalOwn` für Globale), `TakeToObject`/`TakeToArray` (`takeToHolder`: Objekt über `takeToObject`, Array über seine Teileliste).
+  Ein Besitzer zerstört zuerst seine Objekte (in Erzeugungsreihenfolge), dann seine Arrays und Puffer - wie die VM (`destroyList`).
 * **`try x.Take...(...)`** (`ownMethodTry`): der Compiler macht daraus einen Aufruf von `tryTake...`; verschoben wird nur, wenn das Ding einem Scope des laufenden Aufrufs (die Listen der offenen Scopes), dem
-  aktuellen Objekt (`self`) oder einer Argumentliste gehört (das Ergebnis eines weitergereichten Aufrufs `f(g())` reist nativ in der Argumentliste des Aufrufs, `AL_MARK`; der Aufgerufene weiß nicht, welche es ist, jede gilt
-  als seine - gibt er das Argument weiter, kann ein tiefer Aufgerufener es nativ übernehmen, in der VM nicht). Das Ergebnis ist `Bool`.
+  aktuellen Objekt (`self`) oder dem Argument-Besitz des eigenen Aufrufs gehört: das Ergebnis eines weitergereichten Aufrufs `f(g())` und `f(take x)` reisen in der Argumentliste `AL` des Aufrufs (`AL_MARK`). Damit der
+  Aufgerufene seine eigene Liste erkennt, zählt jede Funktion die Aufruftiefe (`CallDepth`, `g_callDepth`; nur wenn das Programm ein `try x.Take...` enthält) und die Liste merkt sich die Tiefe des Aufrufers (`OwnList::depth`):
+  eigen ist nur eine Liste mit `depth + 1 == g_callDepth` - wie in der VM, wo das Argument nur dem Scope des Aufrufs gehört, nicht einem tieferen Aufgerufenen. Das Ergebnis ist `Bool`.
 * Ein Array kann Objekte (und Arrays) besitzen, die `return`/`Takes` mitnehmen - nativ über seine Teileliste (`parts`), in der VM als `IOwner` (`ScriptArray`): sie sterben mit dem Array, auch wenn es weitergegeben wird.
 
 ### Speicher: Besitz für Objekte, Arrays und Puffer, Zähler für Strings und Lambdas
@@ -124,7 +128,7 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
   Funktions-Scope hat den globalen Scope als Eltern, wie in der VM).
 
 Bekannte Abweichungen zur VM: Unicode-Klassifizierung und Groß-/Kleinschreibung nur für Basic Latin, Latin-1, Griechisch und Kyrillisch
-(`char.IsDigit` nur ASCII-Ziffern); das Zahlenformat `E` fehlt.
+(`char.IsDigit` nur ASCII-Ziffern). Zahlenformate: `X`, `D`, `B`, `F`, `E` wie in der VM (jedes andere ist dort ein Laufzeitfehler, nativ ein Fehler beim Erzeugen).
 
 ### Regeln für die Runtime (gelernt)
 
@@ -317,7 +321,7 @@ Betriebssystem-Header direkt. **`time`** (`fire_bridge_time.hpp`): `Sleep`, `Dat
 * `Sleep(zeit)` (`TimeSpan`, `500ms`, Zahl = Millisekunden) schläft **nicht taub**: mit Threads wartet es ohne GIL (`blockUntil`), `terminate` beendet es sofort (danach geht
   das Programm den Weg von `leave`), und das Hauptprogramm bedient dabei die Warteschlange der Threads (Sektionen, `fire global`-Aufträge, ihre Ausnahmen).
   Eine falsche Angabe ist eine `TimeException` mit den Texten der VM.
-* Abweichung: `DateTime.Parse` liest eine Teilmenge der .NET-Formate (ISO-Datum und -Zeit mit `Z`/`+hh:mm`, `M/d/yyyy`, Monatsnamen, `3:45 PM`, `GMT`); sonst `undefined` bzw. `TimeException`.
+* Abweichung: `DateTime.Parse` liest eine Teilmenge der .NET-Formate (ISO-Datum und -Zeit mit `Z`/`+hh:mm`, `yyyy-MM`, `M/d/yyyy`, Monatsnamen (auch `March 2024`), `3:45 PM`, `GMT`); sonst `undefined` bzw. `TimeException`.
 
 **`io`** (`fire_bridge_io.hpp`): Streams (Datei, Speicher, Konsole), Dateien, Verzeichnisse, Pfade, UTF-8. Die Handle-Tabelle und die Fehlerbehandlung (`__IOLastError` je Thread:
 `g_ioError` in den Thread-Variablen) sind in C++, das Dateisystem kommt aus dem Plattformpaket: `platform/<name>/fire_fs.hpp` (der Generator setzt `FIRE_PLATFORM_FS_HEADER`) mit
@@ -353,8 +357,10 @@ Maus-Werte sind dieselben. Die Tests laufen mit dem SDL-Dummy-Treiber (`SDL_VIDE
 (`#import "ui"`, reines fire) läuft damit nativ und zeichnet dieselben Pixel wie in der VM.
 
 **Zeiger** (`unsafe`, SPEC 8.3): ein Zeiger ist ein `K_Pointer`-Wert auf die Speicherstelle einer Variablen, eines Feldes oder eines Array-/Puffer-Elements (`ref`-Argumente). `&`, `*`, `*p = v`,
-Zeiger auf Zeiger und der Vergleich laufen wie in der VM. Die Zeiger-Arithmetik (`p + n`, `p - n`, `ptrOffset`) ist für die Elemente eines Arrays oder Puffers genau; ein Zeiger auf eine Variable
-oder ein Feld kennt nur den Versatz 0 (die VM rückt zum Nachbar-Slot des Scopes, den es in erzeugtem Code nicht gibt: die Variablen sind C++-Variablen).
+Zeiger auf Zeiger, der Vergleich, `p + n`, `p - n` und `p - q` laufen wie in der VM. `width` sagt, wohin er zeigt: 0 eine Variable oder ein Feld (der Versatz in Elementen steckt in `unit`: ein Zeiger darauf ist ein
+"Array mit einem Element", benutzbar nur bei Versatz 0), 1 ein Byte eines Puffers, 2 ein Element eines Arrays (beide tragen das Handle des Arrays: `unit` = Platz, `reserved` = Generation). `ptrRead`/`ptrWrite`
+prüfen mit `ptrValid` (Versatz, zerstörtes Array, Grenzen: eine fangbare `IndexOutOfBoundsException`/`DestroyedException` wie in der VM); für die Grenzen hält die Handle-Tabelle den Kopf jedes Platzes
+(`FIRE_PTRBOUNDS`, nur wenn das Programm die Adresse eines Elements nimmt). Mit `#performance` (`FIRE_UNCHECKED`) wird nichts geprüft.
 
 ### Plattformschicht
 

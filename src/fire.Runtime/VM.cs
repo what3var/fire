@@ -1948,15 +1948,40 @@ namespace fire.Runtime
                     if (_frames.Count > 0) AdoptReturnedArgument(scope.SlotRef(i), _frames.Peek().ReturnScope, scope);
                     continue;
                 }
+                if (bits == 5)
+                {
+                    // `f(take x)` (SPEC 2.2): der Wert gehoert ab jetzt dem Aufruf - unbedingt, auch wenn er vorher jemand anderem gehoerte
+                    TakeArgument(scope.SlotRef(i), scope);
+                    continue;
+                }
                 if (bits == 3)
                 {
                     // Der Aufrufer hat die Adresse uebergeben (Name + Argumentanzahl kennen einen `ref`-Parameter, SPEC 5.4.2): ein `ref`-Parameter behaelt sie,
                     // ein gewoehnlicher bekommt den Wert (Basistypen und Strings als Kopie, Objekte und Arrays als Referenz).
-                    if ((calleeRefMask >> i & 1) == 0) scope.SlotRef(i) = scope.SlotRef(i).AsPointer().Read();
+                    if ((calleeRefMask >> i & 1) == 0) scope.SlotRef(i) = ReadRefArgument(scope.SlotRef(i));
                     continue;
                 }
                 scope.SlotRef(i) = ObjectCloner.Clone(scope.SlotRef(i), scope, deep: bits == 2);
             }
+        }
+
+        /// <summary>`f(take x)`: das Objekt/Array/der Puffer gehoert dem Aufruf von <paramref name="calleeScope"/> (stirbt nach dessen Locals, wie ein weitergereichtes Aufrufergebnis).</summary>
+        private void TakeArgument(Value arg, Scope calleeScope)
+        {
+            switch (arg.Kind)
+            {
+                case ValueKind.Class: ((ObjectInstance)arg.AsObjectRef()).ReparentToArgument(calleeScope); break;   // (a destroyed object stays; the check ran before the call)
+                case ValueKind.Array when !arg.AsArray().IsDestroyed: LeafOwnership.Reparent(arg.AsArray(), calleeScope); break;
+                case ValueKind.Buffer when !arg.AsBuffer().IsDestroyed: LeafOwnership.Reparent(arg.AsBuffer(), calleeScope); break;
+            }
+        }
+
+        /// <summary>`take x` auf etwas Zerstoertem: DestroyedException (true: es wurde geworfen).</summary>
+        private bool ThrowIfDeadForTake(Value v)
+        {
+            if (v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance obj && IsDeadObject(obj)) { ThrowDestroyedObject(obj); return true; }
+            if (IsDestroyedLeaf(v)) { ThrowDestroyed(v); return true; }
+            return false;
         }
 
         /// <summary>Ein Objekt/Array/Puffer, das dem Scope des Aufrufers gehoert (frisch zurueckgegeben), gehoert ab jetzt der aufgerufenen Funktion.</summary>
@@ -1987,7 +2012,8 @@ namespace fire.Runtime
             for (int i = 0; i < args.Length && i < 16; i++)
             {
                 int bits = (int)(mask >> (4 * i)) & 15;
-                if (bits == 3) args[i] = args[i].AsPointer().Read();   // eingebaute Funktionen und Nachrichten kennen kein `ref`: der Wert
+                if (bits == 5) OwnershipWalk.TakeValue(args[i], _currentScope, this);   // eingebaute Funktionen kennen keinen Aufruf-Scope: der Wert gehoert dem aktuellen Scope
+                else if (bits == 3) args[i] = ReadRefArgument(args[i]);   // eingebaute Funktionen und Nachrichten kennen kein `ref`: der Wert
                 else if (bits != 0) args[i] = ObjectCloner.Clone(args[i], _currentScope, deep: bits == 2);
             }
         }
@@ -3956,6 +3982,35 @@ namespace fire.Runtime
                     HoistValue(_stack[_sp - 1]);
                     break;
 
+                case OpCode.TakeToScope:
+                {
+                    int depth = ReadU16();
+                    if (ThrowIfDeadForTake(_stack[_sp - 1])) break;
+                    OwnershipWalk.TakeValue(_stack[_sp - 1], depth == 0xFFFF ? _globalScope : _currentScope.GetAncestor(depth), this);
+                    break;
+                }
+
+                case OpCode.TakeCheck:
+                    ThrowIfDeadForTake(_stack[_sp - 1]);
+                    break;
+
+                case OpCode.TakeToObject:
+                {
+                    var holder = RequireObjectInstance(_stack[_sp - 2], "take");
+                    if (ThrowIfDeadForTake(_stack[_sp - 1])) break;
+                    OwnershipWalk.TakeValue(_stack[_sp - 1], holder, this);
+                    break;
+                }
+
+                case OpCode.TakeToArray:
+                {
+                    var holder = _stack[_sp - 3];
+                    if (IsDestroyedLeaf(holder)) { ThrowDestroyed(holder); break; }
+                    if (ThrowIfDeadForTake(_stack[_sp - 1])) break;
+                    if (holder.Kind == ValueKind.Array) OwnershipWalk.TakeValue(_stack[_sp - 1], holder.AsArray(), this);
+                    break;
+                }
+
                 case OpCode.Delete:
                     DeleteValue(Pop());
                     break;
@@ -3993,7 +4048,7 @@ namespace fire.Runtime
                 case OpCode.PtrRead:
                 {
                     var ptr = Pop();
-                    Push(ptr.AsPointer().Read());
+                    if (TryReadPointer(ptr, out var read)) Push(read);
                     break;
                 }
 
@@ -4001,8 +4056,7 @@ namespace fire.Runtime
                 {
                     var value = Pop();
                     var ptr = Pop();
-                    ptr.AsPointer().Write(value);
-                    Push(value);
+                    if (TryWritePointer(ptr, value)) Push(value);
                     break;
                 }
 
@@ -4444,7 +4498,8 @@ namespace fire.Runtime
                     case ValueKind.Pointer:
                     {
                         var target = v.AsPointer();
-                        var current = target.Read();
+                        Value current;
+                        try { current = target.Read(); } catch (PointerRangeException ex) { throw new InvalidOperationException("A pointer argument of an extern function: " + ex.Message); }
                         IntPtr native = System.Runtime.InteropServices.Marshal.AllocHGlobal(8);
                         WriteNativeValue(native, current);
                         nativeArgs[i] = native;
@@ -5401,6 +5456,33 @@ namespace fire.Runtime
         }
 
         /// <summary>Benutzung eines zerstoerten Objekts (SPEC 2.5): eine fangbare `DestroyedException`. Nicht im Performance-Modus.</summary>
+        /// <summary>`*p` (SPEC 8.3): ausserhalb des Bereichs (Element jenseits der Grenzen, Versatz bei einer Variable, zerstoertes Array) wird die fangbare Ausnahme geworfen - false.</summary>
+        private bool TryReadPointer(Value ptr, out Value value)
+        {
+            try { value = ptr.AsPointer().Read(); return true; }
+            catch (PointerRangeException ex) { value = Value.MakeUndefined(); ThrowPointerRange(ex); return false; }
+        }
+
+        private bool TryWritePointer(Value ptr, Value value)
+        {
+            try { ptr.AsPointer().Write(value); return true; }
+            catch (PointerRangeException ex) { ThrowPointerRange(ex); return false; }
+        }
+
+        private void ThrowPointerRange(PointerRangeException ex)
+        {
+            if (ex.Destroyed)
+            {
+                var rc = ResolveClass("DestroyedException");
+                ThrowException(Value.MakeClassRef(ConstructNested(rc, new[] { Value.MakeString(ex.Message) })));
+                return;
+            }
+            ThrowIndexOutOfBounds(ex.Index, (int)ex.Length, ex.What);
+        }
+
+        /// <summary>Der Wert hinter dem Zeiger, den der Aufrufer fuer einen `ref`-Parameter uebergeben hat, wenn der Aufgerufene keinen kennt; ausserhalb des Bereichs: undefined (die Ausnahme ist geworfen).</summary>
+        private Value ReadRefArgument(Value ptr) => TryReadPointer(ptr, out var v) ? v : Value.MakeUndefined();
+
         private bool IsDeadObject(ObjectInstance obj) => obj.IsDead && ExecutionMode != VmExecutionMode.Performance;
 
         private void ThrowDestroyedObject(ObjectInstance obj)

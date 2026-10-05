@@ -406,7 +406,7 @@ static Value rf_selector_path(Value l, OwnList* list) {
     if (handler.kind != K_Lambda) { std::snprintf(err, cap, ""The handler of a probe must be a lambda, got: %s."", kindName(handler)); return -1; }
     if (lamOf(handler)->nparams > 4) { std::snprintf(err, cap, ""The handler of a probe may have at most 4 parameters (object, name, old, new), it has %u."", (unsigned)lamOf(handler)->nparams); return -1; }
     if (member) {
-        OwnList local = {nullptr, nullptr, poolMark(), nullptr, nullptr};
+        OwnList local = {nullptr, nullptr, poolMark(), 0, nullptr, nullptr};
         Value name = strFromUtf8(member, &local);
         const RfClass* c = rf_classOf(asObj(target)->cls);
         bool has = rf_kind(c, name) != 0;

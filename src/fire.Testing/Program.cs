@@ -10182,7 +10182,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckLq("LINQ: Take/Skip/TakeWhile/SkipWhile/Concat/Zip/SelectMany/Range", linqHead + """
         var nums = new List([5, 3, 8, 1, 9, 2, 8])
-        print(Linq.From(nums).Take(3).Join(",") + " | " + nums.Skip(5).Join(",") + " | " + nums.TakeWhile(x => x > 2).Join(",") + " | " + nums.SkipWhile(x => x > 2).Join(","))
+        print(nums.Take(3).Join(",") + " | " + nums.Skip(5).Join(",") + " | " + nums.TakeWhile(x => x > 2).Join(",") + " | " + nums.SkipWhile(x => x > 2).Join(","))
         print(Linq.Range(1, 3).Concat([7, 8]).Join(",") + " | " + Linq.Range(1, 3).Zip([10, 20, 30], (a, b) => a * b).Join(",") + " | " + Linq.Range(1, 3).SelectMany(x => Linq.Range(0, x)).Join(","))
         """, new[] { "5,3,8 | 2,8 | 5,3,8 | 1,9,2,8", "1,2,3,7,8 | 10,40,90 | 0,0,1,0,1,2" });
 
@@ -11013,14 +11013,14 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print("end")
         """, new[] { "True", "False", "False", "~la", "~lb", "~a1", "~a2", "end", "~fresh", "~mine", "~tmp" });
 
-    CheckScChecked("List.Take(obj) und Take(obj, Takes), TakeLocal", """
+    CheckScChecked("TakeTo(list, Takes), TakeLocal", """
         class Item { string n
           construct(string n) { this.n = n }
           destruct() { print("~" + this.n) } }
         class F {
           static Fill() {
             var list = new List()
-            for (var i = 0; i < 3; i++) { var it = new Item("i" + i); list.Take(it); list.Add(it) }
+            for (var i = 0; i < 3; i++) { var it = new Item("i" + i); it.TakeTo(list); list.Add(it) }
             return list
           }
           static FillChildren() {
@@ -11029,7 +11029,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
             var b = new Item("c2")
             list.Add(a)
             list.Add(b)
-            list.Take(a, Takes.Children)
+            a.TakeTo(list, Takes.Children)
             return list
           }
           static Local(holder) {
@@ -11046,6 +11046,48 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         F.Local(0)
         print("end")
         """, new[] { "3 i2", "2", "True", "~x", "end", "~i0", "~i1", "~i2", "~c1", "~c2" });
+
+    CheckScChecked("take: Argument, Feld, Array-Element, Variable; zerstoertes Objekt", """
+        class Item { string n
+          construct(string n) { this.n = n }
+          destruct() { print("~" + this.n) } }
+        class Box { Item slot
+          items = [new Item("x0")]
+          Put(x) { x.TakeTo(this); print("put " + x.n) }
+          destruct() { print("~box") } }
+        class T {
+          static Eat(x) { var mine = new Item("mine"); print("eat " + x.n) }
+          static Keep(x, b) { x.TakeTo(b); print("kept") }
+          static Drop(x, b) { print(try x.TakeTo(b)) }
+        }
+        var a = new Item("a")
+        T.Eat(take a)
+        print("1")
+        var box = new Box()
+        var b = new Item("b")
+        T.Keep(take b, box)
+        print("2")
+        var c = new Item("c")
+        box.slot = take c
+        var d = new Item("d")
+        T.Drop(d, box)
+        T.Drop(take d, box)
+        print("3")
+        {
+          var inner = new Item("inner")
+          var out = new Item("out")
+          var x
+          x = take out
+          box.items[0] = take inner
+        }
+        print("4")
+        var e = new Item("e")
+        var f = take e
+        print("5")
+        try { print(a.n) } catch (DestroyedException ex) { print("dead a") }
+        try { T.Eat(take a) } catch (DestroyedException ex) { print("dead take") }
+        print("end")
+        """, new[] { "eat a","~mine","~a","1","~x0","kept","2","False","True","3","~out","4","5","dead a","dead take","end","~box","~b","~c","~d","~inner","~e" });
 
     CheckScChecked("Ein Array besitzt, was return und Takes mitnehmen", """
         class Item { string n
@@ -14842,14 +14884,14 @@ else
     // Ownership: arrays own, call arguments, List.Take
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
-        ("Besitz: List.Take(obj) und Take(obj, Takes), TakeLocal", """
+        ("Besitz: TakeTo(list, Takes), TakeLocal", """
             class Item { string n
               construct(string n) { this.n = n }
               destruct() { print("~" + this.n) } }
             class F {
               static Fill() {
                 var list = new List()
-                for (var i = 0; i < 3; i++) { var it = new Item("i" + i); list.Take(it); list.Add(it) }
+                for (var i = 0; i < 3; i++) { var it = new Item("i" + i); it.TakeTo(list); list.Add(it) }
                 return list
               }
               static FillChildren() {
@@ -14858,7 +14900,7 @@ else
                 var b = new Item("c2")
                 list.Add(a)
                 list.Add(b)
-                list.Take(a, Takes.Children)
+                a.TakeTo(list, Takes.Children)
                 return list
               }
               static Local(holder) {
@@ -14873,6 +14915,127 @@ else
             var l2 = F.FillChildren()
             print(l2.count)
             F.Local(0)
+            print("end")
+            """),
+        ("Besitz: take als Argument und in Zuweisungen", """
+            class Item { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class Box { Item slot
+              items = [new Item("x0")]
+              Put(x) { x.TakeTo(this); print("put " + x.n) }
+              destruct() { print("~box") } }
+            class T {
+              static Eat(x) { var mine = new Item("mine"); print("eat " + x.n) }
+              static Keep(x, b) { x.TakeTo(b); print("kept") }
+              static Drop(x, b) { print(try x.TakeTo(b)) }
+            }
+            var a = new Item("a")
+            T.Eat(take a)
+            print("1")
+            var box = new Box()
+            var b = new Item("b")
+            T.Keep(take b, box)
+            print("2")
+            var c = new Item("c")
+            box.slot = take c
+            var d = new Item("d")
+            T.Drop(d, box)
+            T.Drop(take d, box)
+            print("3")
+            {
+              var inner = new Item("inner")
+              var out = new Item("out")
+              var x
+              x = take out
+              box.items[0] = take inner
+            }
+            print("4")
+            var e = new Item("e")
+            var f = take e
+            print("5")
+            try { print(a.n) } catch (DestroyedException ex) { print("dead a") }
+            try { T.Eat(take a) } catch (DestroyedException ex) { print("dead take") }
+            print("end")
+            """),
+        ("Besitz: take in Konstruktor, Rueckgabe, Array-Element", """
+            class Item { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class Holder { Item kept
+              construct(it) { this.kept = take it; print("holder " + this.kept.n) } 
+              destruct() { print("~holder") } }
+            class Cell { int v }
+            class T {
+              static Make(tag) { var t = new Item(tag); var u = take t; return u }
+              static Num(x) { return x + 1 }
+              static Fill(arr, a, b) {
+                arr[0] = take a
+                arr[1] = take b
+                print("filled")
+              }
+            }
+            var h
+            {
+              var it = new Item("i1")
+              h = new Holder(take it)
+            }
+            print("1")
+            var m = T.Make("m")
+            print(m.n)
+            print(T.Num(take 5))
+            var arr = new Item[2]
+            {
+              var p = new Item("p")
+              var q = new Item("q")
+              T.Fill(arr, p, q)
+              print("block end")
+            }
+            print("2")
+            var data = new int[3]
+            var holder2 = new Holder(new Item("fresh"))
+            var ar2 = [new Item("z")]
+            print(ar2[0].n)
+            print("end")
+            """),
+        ("Besitz: try nimmt nur das Argument des eigenen Aufrufs", """
+            class Item { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class T {
+              static Make(n) { return new Item(n) }
+              static Deep(x, b) { print("deep " + (try x.TakeTo(b))) }
+              static Mid(x, b) { T.Deep(x, b); print("mid " + (try x.TakeTo(b))) }
+              static Pass(x, b) { T.Mid(T.Make("inner"), b); T.Deep(take x, b) }
+            }
+            var box = new Item("box")
+            T.Mid(T.Make("a"), box)
+            var c = new Item("c")
+            T.Mid(take c, box)
+            T.Pass(new Item("p"), box)
+            print("end")
+            """),
+        ("Besitz: Takes.Locals ueber den Methoden-Verteiler", """
+            class Item { string n
+              var child
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class Fake { TakeTo(a, b) { print("fake") } }
+            class T {
+              static F(box) {
+                var a = new Item("a")
+                var b = new Item("b")
+                a.child = b
+                a.TakeTo(box, Takes.Locals)
+                var c = new Item("c")
+                print("F end")
+              }
+            }
+            var box = new Item("box")
+            T.F(box)
+            print("after F")
+            var f = new Fake()
+            f.TakeTo(1, 2)
             print("end")
             """),
         ("Besitz: Ein Array besitzt, was return und Takes mitnehmen", """
@@ -14996,6 +15159,65 @@ else
                 r = r + 0
                 print(*r)
             }
+            """),
+        ("Zeiger (unsafe): Grenzen, Versatz bei Variablen und Feldern, Differenz", """
+            class Box { int v = 1
+              int w = 2 }
+            class F {
+              static Read(ref int first, int n) {
+                var t = 0
+                unsafe { int* p = &first
+                  for (var i = 0; i < n; i++) { t = t + *p; p = p + 1 } }
+                return t
+              }
+              static Back(ref int first) {
+                var t = 0
+                unsafe { int* p = &first
+                  p = p + 2
+                  t = *p; p = p - 1; t = t * 10 + *p; p = p - 1; t = t * 10 + *p
+                  int* q = p + 2
+                  print(q - p)
+                  print(p == q - 2)
+                  try { p = p - 1; print(*p) } catch (e) { print("before: " + e.message) }
+                }
+                return t
+              }
+              static Bytes(ref byte first, int n) {
+                var t = 0
+                unsafe { byte* p = &first
+                  for (var i = 0; i < n; i++) { t = t + *p; *p = 0; p = p + 1 } }
+                return t
+              }
+              static Gone(ref int first) {
+                return first
+              }
+            }
+            var a = [1, 2, 3]
+            print(F.Read(a[1], 2))
+            try { print(F.Read(a[1], 3)) } catch (e) { print("oob: " + e.message) }
+            print(F.Back(a[0]))
+            var buf = new byte[3]
+            buf[0] = 5; buf[1] = 6; buf[2] = 7
+            print(F.Bytes(buf[1], 2))
+            try { print(F.Bytes(buf[1], 3)) } catch (e) { print("oob buf: " + e.message) }
+            print(buf[1] + " " + buf[2])
+            var x = 10
+            var y = 20
+            unsafe {
+              int* p = &x
+              try { print(*(p + 1)) } catch (e) { print("var: " + e.message) }
+              int* q = p + 1
+              try { *q = 99 } catch (e) { print("var write: " + e.message) }
+              print(y)
+              print(q == p)
+              print(q - 1 == p)
+              print(*(q - 1))
+              var b = new Box()
+              int* pf = &b.v
+              try { int* pg = pf + 1; print(*pg) } catch (e) { print("field: " + e.message) }
+              print(pf == pf + 0)
+            }
+            print("end")
             """),
         ("Zeiger (unsafe): Arithmetik ueber Array- und Puffer-Elemente (ref), Vergleich, Zeiger auf Zeiger", """
             class F {
@@ -15522,6 +15744,11 @@ else
                 var gated = "#if esp32\n#import \"graphics\"\n#endif\n#if linux\n#import \"time\"\n#endif\n";
                 CheckNat("#if: ein #import in einem nicht gewaehlten Zweig zaehlt nicht (Editor)", ImportedPreludes.FindImportNames(gated, ConditionalSymbols.For(TargetProfile.Linux)).SequenceEqual(new[] { "time" })
                     && ImportedPreludes.FindImportNames(gated, ConditionalSymbols.For(TargetProfile.Esp32)).SequenceEqual(new[] { "graphics" }));
+                var greySource = "a\n#if esp32\nb\n#else\nc\n#endif\n#ifdef EXTRA\nd\n#endif\ne";
+                var greyLinux = ConditionalSymbols.InactiveLines(greySource, ConditionalSymbols.For(TargetProfile.Linux));
+                var greyDefined = ConditionalSymbols.InactiveLines(greySource, ConditionalSymbols.For(TargetProfile.Esp32, "native", null, new[] { "EXTRA" }));
+                CheckNat("#if: die Zeilen nicht gewaehlter Zweige werden erkannt (Editor: ausgegraut)",
+                    string.Join(",", greyLinux.Select(x => x ? "1" : "0")) == "0,0,1,0,0,0,0,1,0,0" && string.Join(",", greyDefined.Select(x => x ? "1" : "0")) == "0,0,0,0,1,0,0,0,0,0");
                 string ifDir = Path.Combine(workDir, "ifbuild");
                 Directory.CreateDirectory(ifDir);
                 string ifScript = Path.Combine(ifDir, "cond.script");

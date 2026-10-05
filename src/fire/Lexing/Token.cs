@@ -30,6 +30,7 @@ namespace fire.Lexing
         Operator, // 'operator' - Operator-Überladung (siehe Parser.ParseOperatorMember)
         Sync, Flat,
         Copy, // 'copy ausdruck' - tiefe Kopie (siehe Ast.UnaryOp.DeepCopy); 'flat ausdruck' ist die flache (UnaryOp.FlatCopy)
+        Take, // 'take ausdruck' - der Besitz geht an den Aufruf bzw. an den Besitzer des Zuweisungsziels (siehe Ast.UnaryOp.Take, SPEC 2.2)
         Leave, Terminate,
         Actor, Process,
 

@@ -154,6 +154,9 @@ struct Zombies { Owned* head; int32_t depth; };
     X(OwnList*, g_travel, nullptr) \
     X(SectionReq*, g_curSection, nullptr) \
     X(int32_t, g_secDepth, 0) \
+    X(OwnList* const*, g_scopeLists, nullptr)   /* a call of an ownership method with a `Takes` mode through the dispatcher: the scopes of the call (see ownMethodT) */ \
+    X(int32_t, g_scopeCount, 0) \
+    X(uint32_t, g_callDepth, 0)         /* the number of fire functions that are running on this thread (only kept when the program uses `try x.Take...`) */ \
     X(uint32_t, g_reflCaller, 0xFFFFFFFFu)   /* the class of the code that called into the reflection library */ \
     X(Zombies, g_zombies, (Zombies{nullptr, 0}))          /* destroyed objects whose memory is freed at the end of the batch */ \
     X(BridgeError, g_ioError, (BridgeError{0, {0}}))      /* the IO bridge: the last error of this thread */ \
@@ -187,6 +190,9 @@ inline ThreadLocals& tl() {
 #define g_travel (::fire::tl().g_travel)
 #define g_curSection (::fire::tl().g_curSection)
 #define g_secDepth (::fire::tl().g_secDepth)
+#define g_callDepth (::fire::tl().g_callDepth)
+#define g_scopeLists (::fire::tl().g_scopeLists)
+#define g_scopeCount (::fire::tl().g_scopeCount)
 #define g_reflCaller (::fire::tl().g_reflCaller)
 #define g_zombies (::fire::tl().g_zombies)
 #define g_ioError (::fire::tl().g_ioError)
@@ -472,6 +478,7 @@ struct OwnList {
     Owned* head;
     Owned* tail;
     uint32_t mark;     // scopes: height of the temporary pool when the scope was entered
+    uint32_t depth;    // argument lists (`mark == AL_MARK`): the call depth of the caller (see `try x.Take...`, `g_callDepth`)
     OwnList* parent;   // scopes: the enclosing scope (TakeUpwards; set only when the program uses it)
     Owned* holder;     // object lists: the object that owns the list (null for a scope)
 };
@@ -500,8 +507,15 @@ struct SlotTable {
     uint16_t* gen;
     uint32_t* freed;
     uint32_t count, cap, nfree, freedCap;
+#ifdef FIRE_PTRBOUNDS
+    Owned** hdr;   // the header of the array or buffer in each slot: the pointers into arrays and buffers (`p + n`) find the bounds here
+#endif
 };
+#ifdef FIRE_PTRBOUNDS
+inline SlotTable g_slots = {nullptr, nullptr, 0, 0, 0, 0, nullptr};
+#else
 inline SlotTable g_slots = {nullptr, nullptr, 0, 0, 0, 0};
+#endif
 
 [[noreturn]] FIRE_COLD inline void outOfMemory() { fatal("Out of memory."); }
 
@@ -511,6 +525,11 @@ FIRE_COLD inline uint32_t slotGrow() {
     if (!gen) outOfMemory();
     std::memset(gen + g_slots.cap, 0, (cap - g_slots.cap) * sizeof(uint16_t));
     g_slots.gen = gen;
+#ifdef FIRE_PTRBOUNDS
+    Owned** hdr = static_cast<Owned**>(std::realloc(g_slots.hdr, cap * sizeof(Owned*)));
+    if (!hdr) outOfMemory();
+    g_slots.hdr = hdr;
+#endif
     g_slots.cap = cap;
     return cap;
 }
@@ -523,6 +542,9 @@ inline void slotAcquire(Owned* o) {
     }
     o->slot = slot;
     o->gen = g_slots.gen[slot];
+#ifdef FIRE_PTRBOUNDS
+    g_slots.hdr[slot] = o;
+#endif
 }
 inline void slotRelease(Owned* o) {
     uint32_t slot = o->slot;
@@ -669,12 +691,13 @@ FIRE_COLD inline Value divUnits(Value a, Value b) {
     return Float(toR(a) / toR(b), u);
 }
 
-/// `p + n` / `p - n` for a pointer: "n elements further" (SPEC 8.3). Exact for the elements of an array or a buffer (`ref a[i]`); a pointer to a variable or a field only supports 0
-/// (the VM moves to the neighbouring slot of the scope, which the generated code does not have: the variables are C++ variables).
+/// `p + n` / `p - n` for a pointer: "n elements further" (SPEC 8.3). A pointer to a variable or a field is a pointer into an array with one element (the offset is kept in `unit`); a pointer to an element of
+/// an array or a buffer (`ref a[i]`) moves along the elements. Using a pointer outside its range is an IndexOutOfBoundsException (see ptrValid).
 inline Value ptrOffset(Value p, int64_t n) {
     if (n == 0) return p;
     Value r = p;
-    r.p = p.width ? static_cast<const void*>(static_cast<const uint8_t*>(p.p) + n) : static_cast<const void*>(static_cast<const Value*>(p.p) + n);
+    if (p.width == 0) r.unit = (uint32_t)((int32_t)p.unit + (int32_t)n);   // a variable or a field: an "array" with one element, the offset travels in `unit`
+    else r.p = reinterpret_cast<const void*>((uintptr_t)p.p + (uintptr_t)((intptr_t)n * (p.width == 1 ? 1 : (intptr_t)sizeof(Value))));
     return r;
 }
 
@@ -686,8 +709,10 @@ inline Value add(Value a, Value b) {
     } else if (isNumeric(a) && isNumeric(b)) return addUnits(a, b);
     opFailed("+");
 }
+inline Value ptrDiff(Value a, Value b);
 inline Value sub(Value a, Value b) {
     if (a.kind == K_Pointer && b.kind == K_Int) return ptrOffset(a, -b.i);
+    if (a.kind == K_Pointer && b.kind == K_Pointer) return ptrDiff(a, b);
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i - (uint64_t)b.i), a.unit);
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) - toR(b), a.unit);
@@ -846,6 +871,7 @@ inline bool eq(Value a, Value b) {
             auto x = strOf(a), y = strOf(b);
             return x == y || (x->length == y->length && std::memcmp(x->data, y->data, x->length * sizeof(char16_t)) == 0);
         }
+        case K_Pointer: return a.p == b.p && a.unit == b.unit;
         default: return a.p == b.p;
     }
 }
@@ -982,16 +1008,29 @@ inline void destroy(Obj* o) {
     g_zombies.head = o;
 }
 
-/// Destroys everything on the list, in creation order, and empties it.
+/// Destroys everything on the list and empties it: the objects in creation order (their destructors run), then the arrays and buffers - like the VM (SPEC 2.3).
 inline void destroyList(OwnList* list) {
     DestroyBatch batch;
     Owned* o = list->head;
     list->head = list->tail = nullptr;
+    Owned* leaves = nullptr;
+    Owned* leavesTail = nullptr;
     while (o) {
         Owned* next = o->next;
+        if (o->okind == O_Object) {
+            o->owner = nullptr;
+            destroy(static_cast<Obj*>(o));
+        } else {
+            o->next = nullptr;
+            if (leavesTail) leavesTail->next = o; else leaves = o;
+            leavesTail = o;
+        }
+        o = next;
+    }
+    for (o = leaves; o;) {
+        Owned* next = o->next;
         o->owner = nullptr;
-        if (o->okind == O_Object) destroy(static_cast<Obj*>(o));
-        else destroyLeaf(o);
+        destroyLeaf(o);
         o = next;
     }
 }
@@ -1781,7 +1820,7 @@ inline Value indexError(const char* what, int64_t index, int64_t length) {
     char text[120];
     int n = std::snprintf(text, sizeof text, "%s %lld out of range (length %lld).", what, (long long)index, (long long)length);
 #ifdef FIRE_EXCEPTIONS
-    OwnList unused = {nullptr, nullptr, 0, nullptr, nullptr};
+    OwnList unused = {nullptr, nullptr, 0, 0, nullptr, nullptr};
     Str* msg = allocStr((uint32_t)n, &unused);
     widenAscii(text, (uint32_t)n, strChars(msg));
     return throwValue(makeIndexError(StrV(msg), index, length));
@@ -1798,7 +1837,7 @@ inline void unitMismatch(Value v, Value expectedText) {
     uint32_t an = actualUnit ? utf8ToUtf16(g_ud[actualUnit].name, actualText, 80) : 0;
     if (!actualUnit) { const char* none = "(no unit)"; an = widenAscii(none, 9, actualText); }
     const Str* expected = strOf(expectedText);
-    OwnList unused = {nullptr, nullptr, 0, nullptr, nullptr};
+    OwnList unused = {nullptr, nullptr, 0, 0, nullptr, nullptr};
     Str* msg = allocStr(15 + expected->length + 7 + an + 1, &unused);
     char16_t* d = strChars(msg);
     uint32_t n = widenAscii("Expected unit '", 15, d);
@@ -1819,7 +1858,7 @@ inline void unitMismatch(Value v, Value expectedText) {
 /// A reflection call that cannot be done: a ReflectionException, or the end of the program when there are no exceptions.
 inline Value rfFail(const char* utf8) {
 #ifdef FIRE_EXCEPTIONS
-    OwnList unused = {nullptr, nullptr, 0, nullptr, nullptr};
+    OwnList unused = {nullptr, nullptr, 0, 0, nullptr, nullptr};
     Value msg = strFromUtf8(utf8, &unused);
     return throwValue(makeReflectError(msg));
 #else
@@ -1923,7 +1962,7 @@ inline Value probeRun(const ProbeEntry& e, Value obj, const char* name, Value ol
 inline void probedSet(Value obj, const char* name, Value value, ProbeRawSet raw, ProbeRawGet get, uint32_t caller) {
     Obj* o = asObj(obj);
     ProbeNode* node = probeNodeOf(o, false);
-    OwnList local = {nullptr, nullptr, poolMark(), nullptr, nullptr};
+    OwnList local = {nullptr, nullptr, poolMark(), 0, nullptr, nullptr};
     bool nested = false;
     if (node) for (uint32_t i = 0; i < node->nrunning; i++) if (std::strcmp(node->running[i], name) == 0) nested = true;
     if (!node || nested || node->nrunning >= 8) { raw(obj, value, &local, caller); leave(&local); return; }
@@ -1957,7 +1996,7 @@ Value makeAccessError(Value message);
 /// A private or protected member used from where it may not be (SPEC 5.7): an AccessDeniedException, or the end of the program when there are no exceptions.
 inline Value accessDenied(const char* text) {
 #ifdef FIRE_EXCEPTIONS
-    OwnList unused = {nullptr, nullptr, 0, nullptr, nullptr};
+    OwnList unused = {nullptr, nullptr, 0, 0, nullptr, nullptr};
     uint32_t n = (uint32_t)std::strlen(text);
     Str* msg = allocStr(n, &unused);
     widenAscii(text, n, strChars(msg));
@@ -2020,7 +2059,7 @@ Value makeDestroyedError(Value message);
 inline Value destroyedError(Value leaf) {
     const char* text = leaf.kind == K_Buffer ? "Access to a destroyed buffer." : leaf.kind == K_Class ? "Access to a destroyed object." : "Access to a destroyed array.";
 #ifdef FIRE_EXCEPTIONS
-    OwnList unused = {nullptr, nullptr, 0, nullptr, nullptr};
+    OwnList unused = {nullptr, nullptr, 0, 0, nullptr, nullptr};
     uint32_t n = (uint32_t)std::strlen(text);
     Str* msg = allocStr(n, &unused);
     widenAscii(text, n, strChars(msg));
@@ -2086,18 +2125,62 @@ inline void arraySet(Value a, Value i, Value v) {
 // `ref` parameters (SPEC 5.4.2): the argument is a pointer to the variable, the field or the element of the caller.
 // A pointer is a K_Pointer value; `width` 0 points to a Value (variable, field, array element), 1 to a byte (buffer element).
 // ---------------------------------------------------------------------------------------------------------------------
+// `width` 0: a variable or a field (`unit` = the offset in elements: such a pointer is an "array" with one element), 1: an element of a byte buffer, 2: an element of an array
+// (1 and 2 carry the handle of the array: `unit` = slot, `reserved` = generation).
 inline Value PtrV(Value* p) { Value r; r.kind = K_Pointer; r.width = 0; r.reserved = 0; r.unit = 0; r.p = p; return r; }
-inline Value BytePtrV(uint8_t* p) { Value r; r.kind = K_Pointer; r.width = 1; r.reserved = 0; r.unit = 0; r.p = p; return r; }
+inline Value BytePtrV(uint8_t* p, const Owned* buf) { Value r; r.kind = K_Pointer; r.width = 1; r.reserved = buf->gen; r.unit = buf->slot; r.p = p; return r; }
+inline Value ElemPtrV(Value* p, const Owned* arr) { Value r; r.kind = K_Pointer; r.width = 2; r.reserved = arr->gen; r.unit = arr->slot; r.p = p; return r; }
+
+/// May the pointer be used (dereferenced)? Not outside its range: a pointer to a variable or a field only at offset 0, a pointer into an array or a buffer only inside it - and not when the array or buffer
+/// is destroyed. Otherwise the exception is thrown (`err` has the value of the throw) and false is returned. With `#performance` nothing is checked.
+inline bool ptrValid(Value p, Value* err) {
+#ifdef FIRE_UNCHECKED
+    (void)p; (void)err;
+    return true;
+#else
+    if (p.width == 0) {
+        if (FIRE_UNLIKELY((int32_t)p.unit != 0)) { *err = indexError("Pointer offset", (int32_t)p.unit, 1); return false; }
+        return true;
+    }
+#ifdef FIRE_PTRBOUNDS
+    if (FIRE_UNLIKELY(g_slots.gen[p.unit] != p.reserved)) {
+        Value leaf; leaf.kind = p.width == 1 ? K_Buffer : K_Array;
+        *err = destroyedError(leaf);
+        return false;
+    }
+    Owned* h = g_slots.hdr[p.unit];
+    int64_t index, length;
+    if (p.width == 1) { Buf* b = static_cast<Buf*>(h); index = (int64_t)((intptr_t)p.p - (intptr_t)b->bytes()); length = b->length; }
+    else { Arr* a = static_cast<Arr*>(h); index = (int64_t)(((intptr_t)p.p - (intptr_t)a->items()) / (intptr_t)sizeof(Value)); length = a->length; }
+    if (FIRE_UNLIKELY((uint64_t)index >= (uint64_t)length)) { *err = indexError("Array index", index, length); return false; }
+#else
+    (void)err;
+#endif
+    return true;
+#endif
+}
 
 inline Value ptrRead(Value p) {
     if (FIRE_UNLIKELY(p.kind != K_Pointer)) fatal("Dereference of a value that is not a pointer.");
-    return p.width ? Int(*static_cast<const uint8_t*>(p.p)) : *static_cast<const Value*>(p.p);
+    Value err;
+    if (FIRE_UNLIKELY(!ptrValid(p, &err))) return err;
+    return p.width == 1 ? Int(*static_cast<const uint8_t*>(p.p)) : *static_cast<const Value*>(p.p);
+}
+
+/// `p - q` for two pointers into the same array, buffer, variable or field: the number of elements between them.
+inline Value ptrDiff(Value a, Value b) {
+    if (a.width != b.width || (a.width == 0 ? a.p != b.p : (a.unit != b.unit || a.reserved != b.reserved)))
+        fatal("Pointer difference ('ptr1 - ptr2') needs two pointers into the same array or the same variable.");
+    if (a.width == 0) return Int((int64_t)(int32_t)a.unit - (int64_t)(int32_t)b.unit);
+    return Int((int64_t)(((intptr_t)a.p - (intptr_t)b.p) / (a.width == 1 ? (intptr_t)1 : (intptr_t)sizeof(Value))));
 }
 
 /// `*p = v`: the storage holds a count of what it holds now.
 inline void ptrWrite(Value p, Value v) {
     if (FIRE_UNLIKELY(p.kind != K_Pointer)) fatal("Assignment through a value that is not a pointer.");
-    if (p.width) { *static_cast<uint8_t*>(const_cast<void*>(p.p)) = (uint8_t)v.i; return; }
+    Value err;
+    if (FIRE_UNLIKELY(!ptrValid(p, &err))) return;
+    if (p.width == 1) { *static_cast<uint8_t*>(const_cast<void*>(p.p)) = (uint8_t)v.i; return; }
     Value* target = static_cast<Value*>(const_cast<void*>(p.p));
     Value old = *target;
     *target = v;
@@ -2123,13 +2206,13 @@ inline Value addressOfIndex(Value a, Value i) {
         if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
         Arr* arr = arrOf(a);
         if ((uint64_t)i.i >= arr->length) return indexError("Array index", i.i, arr->length);
-        return PtrV(&arr->items()[i.i]);
+        return ElemPtrV(&arr->items()[i.i], arr);
     }
     if (a.kind == K_Buffer) {
         if (FIRE_UNLIKELY(!leafAlive(a))) return destroyedError(a);
         Buf* b = bufOf(a);
         if ((uint64_t)i.i >= b->length) return indexError("Array index", i.i, b->length);
-        return BytePtrV(&b->bytes()[i.i]);
+        return BytePtrV(&b->bytes()[i.i], b);
     }
     fatal("A 'ref' argument 'x[i]' expects an array or a byte buffer.");
 }
@@ -2240,7 +2323,7 @@ inline int64_t sizeArg(Value v) {
 inline OwnList* newPartsList(Owned* holder) {
     OwnList* parts = static_cast<OwnList*>(std::malloc(sizeof(OwnList)));
     if (FIRE_UNLIKELY(!parts)) allocFailed();
-    *parts = {nullptr, nullptr, 0, nullptr, holder};
+    *parts = {nullptr, nullptr, 0, 0, nullptr, holder};
     return parts;
 }
 
@@ -2320,15 +2403,63 @@ inline void hoistFrom(Value v, OwnList* from, OwnList* to) {
     if (o && o->owner == from) { unlink(o); link(to, o); }
 }
 
+constexpr uint32_t AL_MARK = 0xFFFFFFFEu;   // an argument list (`mark` of a scope is the height of the temporary pool)
+
+/// `take x` (SPEC 2.2): false - and a DestroyedException - for a dead object, array or buffer; anything else (numbers, strings, ...) has no owner and is let through.
+inline bool takeAlive(Value v) {
+    if ((v.kind == K_Class || v.kind == K_Array || v.kind == K_Buffer) && !leafAlive(v)) { destroyedError(v); return false; }
+    return true;
+}
+
+/// `take x` into a scope or into the parts of an array (`list`): unconditional, whoever owned the value before; the ownership stays a tree.
+inline void takeToList(Value v, OwnList* list) {
+    Owned* o = ownedOf(v);
+    if (!o || o->owner == list) return;
+    for (Owned* x = list->holder; x;) {
+        if (x == o) fatal("take: cycle detected - the holder is already owned (directly or transitively) by this value.");
+        OwnList* l = x->owner;
+        if (!l) break;
+        x = l->holder;
+    }
+    if (o->owner) unlink(o);
+    link(list, o);
+}
+
+/// `holder.field = take x` and `array[i] = take x`: the object (or the array) owns the value from now on.
+inline void takeToHolder(Value holder, Value v) {
+    Owned* o = ownedOf(v);
+    Owned* h = ownedOf(holder);
+    if (!h || h->okind == O_Buffer) { if (!h && holder.kind != K_Buffer) fatal("take: the holder of the value has to be an object or an array."); return; }
+    if (!o) return;
+    if (h->okind == O_Object) { takeToObject(o, static_cast<Obj*>(h)); return; }
+    Arr* a = static_cast<Arr*>(h);
+    if (!a->parts) a->parts = newPartsList(a);
+    takeToList(v, a->parts);
+}
+
+/// `f(take x)`: x belongs to the callee, whoever owned it before: it travels in the argument list `al` of the call (see `reownArg`).
+/// Counts the running fire functions of the thread (generated into every function when the program uses `try x.Take...`).
+struct CallDepth {
+    CallDepth() { ++g_callDepth; }
+    ~CallDepth() { --g_callDepth; }
+};
+
+inline void takeArg(Value v, OwnList* from, OwnList* al) {
+    if (Owned* o = ownedOf(v)) { if (o->owner) unlink(o); link(al, o); }
+    al->parent = from;
+    al->mark = AL_MARK;
+    al->depth = g_callDepth;
+}
+
 /// `f(g())`: the result of a call passed straight on belongs to the callee, not to the caller (SPEC 2.1). The generated code lets the
 /// value travel in the argument list `al` of the call and destroys what is left in it afterwards (the callee has moved, stored or
 /// returned what it wants to keep).
-constexpr uint32_t AL_MARK = 0xFFFFFFFEu;   // an argument list (`mark` of a scope is the height of the temporary pool)
 inline void reownArg(Value v, OwnList* from, OwnList* al) {
     Owned* o = ownedOf(v);
     if (o && o->owner == from) { unlink(o); link(al, o); }
     al->parent = from;
     al->mark = AL_MARK;
+    al->depth = g_callDepth;
 }
 inline void finishArgs(Value result, OwnList* al) {
     transferOut(result, al);
@@ -2504,8 +2635,8 @@ inline bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList*
     if (!o) fatal("Take... is only possible for an object, an array or a buffer that is not destroyed.");
     bool mine = false;
     for (int i = 0; i < n && !mine; i++) mine = o->owner == lists[i];
-    // the result of a call that was passed on (`f(g())`) belongs to the called function: natively it travels in the argument list of the call (the callee does not know which one, any is taken for its own)
-    if (!mine && o->owner && !o->owner->holder && o->owner->mark == AL_MARK) mine = true;
+    // the result of a call that was passed on (`f(g())`, `f(take x)`) belongs to the called function: natively it travels in the argument list of the call, which the caller made one call level up
+    if (!mine && o->owner && !o->owner->holder && o->owner->mark == AL_MARK && o->owner->depth + 1 == g_callDepth) mine = true;
     if (!mine && thisValue.kind == K_Class && leafAlive(thisValue)) mine = o->owner == &static_cast<Obj*>(const_cast<void*>(thisValue.p))->owned;
     if (!mine || (o->flags & 1)) return false;
     ownMethodT(method, self, arg, mode, here, lists, n);
@@ -2716,7 +2847,7 @@ inline Value copyValue(Value v, bool deep, OwnList* owner) { return deep ? deepC
 inline Value copyOwned(Value target, Value v, bool deep) {
     Obj* t = asObj(target);
     if (t->flags & 1) {
-        OwnList scratch = {nullptr, nullptr, 0, nullptr, nullptr};
+        OwnList scratch = {nullptr, nullptr, 0, 0, nullptr, nullptr};
         Value r = copyValue(v, deep, &scratch);
         destroyList(&scratch);
         return r;
@@ -2727,6 +2858,8 @@ inline Value copyOwned(Value target, Value v, bool deep) {
 /// A copy-prefixed argument (`f(copy x)`): the copy travels in the argument list of the call and dies with it unless the callee keeps it.
 inline Value copyArg(Value v, bool deep, OwnList* from, OwnList* al) {
     al->parent = from;
+    al->mark = AL_MARK;
+    al->depth = g_callDepth;
     return copyValue(v, deep, al);
 }
 
@@ -2826,6 +2959,7 @@ struct ExternPtr {
         if (v.kind == K_Int) { raw = reinterpret_cast<void*>(static_cast<intptr_t>(v.i)); return; }   // an address that was handed over as a number
         if (v.kind != K_Pointer) fatal("A pointer argument of an extern function expects a pointer.");
         if (v.width == 1) { raw = const_cast<void*>(v.p); return; }   // a pointer into a byte buffer: its bytes
+        if (v.width == 0 && (int32_t)v.unit != 0) fatal("A pointer argument of an extern function points outside of its variable.");
         target = static_cast<Value*>(const_cast<void*>(v.p));
         Value cur = *target;
         kind = cur.kind;
@@ -2916,7 +3050,7 @@ inline std::atomic<uint32_t> g_attn{0};
 
 struct TerminateState { bool requested; Value value; };
 inline TerminateState g_terminate = {false, {K_Undefined, 0, 0, 0, {0}}};
-inline OwnList g_terminateOwn = {nullptr, nullptr, 0, nullptr, nullptr};   // what a terminate value owns lives on until the process ends
+inline OwnList g_terminateOwn = {nullptr, nullptr, 0, 0, nullptr, nullptr};   // what a terminate value owns lives on until the process ends
 
 inline int64_t steadyMs() { return plat::nowMs(); }
 
@@ -2999,7 +3133,7 @@ inline void fireThread(void (*fn)(const Value*), const Value* args, uint32_t n, 
 inline OwnList* newTravel() {
     OwnList* l = static_cast<OwnList*>(std::malloc(sizeof(OwnList)));
     if (!l) allocFailed();
-    *l = {nullptr, nullptr, 0, nullptr, nullptr};
+    *l = {nullptr, nullptr, 0, 0, nullptr, nullptr};
     return l;
 }
 
@@ -3141,7 +3275,7 @@ inline void postJob(Value lam, const Value* args, uint32_t n) {
     j->args = static_cast<Value*>(std::malloc((n ? n : 1) * sizeof(Value)));
     j->holder = static_cast<OwnList*>(std::malloc(sizeof(OwnList)));
     if (!j->args || !j->holder) allocFailed();
-    *j->holder = {nullptr, nullptr, 0, nullptr, nullptr};
+    *j->holder = {nullptr, nullptr, 0, 0, nullptr, nullptr};
     for (uint32_t i = 0; i < n; i++) {
         if (args[i].kind == K_Class) j->args[i] = deepCopy(args[i], j->holder);
         else { j->args[i] = args[i]; retain(args[i]); }
@@ -3162,7 +3296,7 @@ inline void runJob(JobReq* j) {
     Handler* savedHandlers = g_handlers;
     g_handlers = nullptr;   // what the main program has registered does not see the job's exceptions
     g_jobDepth++;
-    OwnList scratch = {nullptr, nullptr, poolMark(), nullptr, nullptr};
+    OwnList scratch = {nullptr, nullptr, poolMark(), 0, nullptr, nullptr};
     Value r = callLam(j->lam, (int)j->n, j->args, &scratch);
     (void)r;
     if (g_unwind.active) clearUnwind();

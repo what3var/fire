@@ -84,7 +84,7 @@ inline uint32_t callbackParams(int type) {
 inline void runCallback(Value lam, int argc, const Value* args) {
     Handler* savedHandlers = g_handlers;
     g_handlers = nullptr;
-    OwnList scratch = {nullptr, nullptr, poolMark(), nullptr, nullptr};
+    OwnList scratch = {nullptr, nullptr, poolMark(), 0, nullptr, nullptr};
     callLam(lam, argc, args, &scratch);
     if (g_unwind.active) {
         Value ex = g_unwind.value;
@@ -100,7 +100,7 @@ inline void dispatch(WindowState* w, const plat::disp::Event& e) {
     std::vector<Callback> mine;   // a callback may register or unregister callbacks
     for (const Callback& c : w->callbacks) if (c.type == e.type) { mine.push_back(c); retain(c.lam); }
     for (const Callback& c : mine) {
-        OwnList scratch = {nullptr, nullptr, poolMark(), nullptr, nullptr};
+        OwnList scratch = {nullptr, nullptr, poolMark(), 0, nullptr, nullptr};
         Value a[4];
         int n = 0;
         switch (e.type) {

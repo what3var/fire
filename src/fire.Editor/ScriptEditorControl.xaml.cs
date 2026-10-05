@@ -58,7 +58,8 @@ namespace fire.Editor
         /// OpenFileViewer) - das Control selbst liest/schreibt NIE
         /// eigenständig von/auf die Platte, das bleibt Sache des Host-
         /// Fensters (siehe GetText/SetText).</summary>
-        public string? FilePath { get; set; }
+        private string? _filePath;
+        public string? FilePath { get => _filePath; set { _filePath = value; _conditionalSymbols = null; } }
 
         private readonly HashSet<int> _breakpoints = new();
 
@@ -563,10 +564,38 @@ namespace fire.Editor
         // Zeichen-Logik, hier nur Neuberechnen + Neuzeichnen anstoßen.
         // -----------------------------------------------------------
 
+        private ISet<string>? _conditionalSymbols;
+
+        /// <summary>The symbols of `#if` for the configuration this script is built with (the nearest fire.native.json: engine, target, defines; without one the VM on this machine) -
+        /// the branches that are not taken are greyed out. Cached; <see cref="InvalidateConditionalSymbols"/> after the settings changed.</summary>
+        private ISet<string> ConditionalSymbolsForView()
+        {
+            if (_conditionalSymbols != null) return _conditionalSymbols;
+            try
+            {
+                var config = FilePath != null ? fire.Native.NativeConfig.FindFor(FilePath) : new fire.Native.NativeConfig();
+                bool native = string.Equals(config.Engine, "native", StringComparison.OrdinalIgnoreCase);
+                _conditionalSymbols = native
+                    ? fire.Compiler.ConditionalSymbols.For(config.ResolveTarget(), "native", config.FloatWidth, config.Defines)
+                    : fire.Compiler.ConditionalSymbols.For(null, fire.Compiler.ConditionalSymbols.DefaultEngine, null, config.Defines);
+            }
+            catch (Exception)
+            {
+                _conditionalSymbols = fire.Compiler.ConditionalSymbols.For(null);   // an unreadable configuration: the build reports it, the editor assumes the defaults
+            }
+            return _conditionalSymbols;
+        }
+
+        public void InvalidateConditionalSymbols()
+        {
+            _conditionalSymbols = null;
+            RecomputeHighlighting();
+        }
+
         private void RecomputeHighlighting()
         {
             string text = Editor.Text;
-            _colorizer.Spans = SyntaxHighlighter.Highlight(text);
+            _colorizer.Spans = SyntaxHighlighter.Highlight(text, ConditionalSymbolsForView());
             _colorizer.ErrorLines = _diagnostics.Select(d => d.Line).ToHashSet();
             Editor.TextArea.TextView.Redraw();
         }

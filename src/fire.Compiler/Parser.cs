@@ -2482,6 +2482,13 @@ namespace fire.Compiler
                 return new UnaryExpr(copyTok.Line, copyTok.Type == TokenType.Flat ? UnaryOp.FlatCopy : UnaryOp.DeepCopy, ParseUnary());
             }
 
+            // `take x` (SPEC 2.2): als Argument oder rechts von `=`/`var x =` - der Besitz geht an den Aufruf bzw. an den Besitzer des Ziels
+            if (Check(TokenType.Take))
+            {
+                var takeTok = Advance();
+                return new UnaryExpr(takeTok.Line, UnaryOp.Take, ParseUnary());
+            }
+
             if (Check(TokenType.Minus) || Check(TokenType.Bang) || Check(TokenType.Tilde)
                 || Check(TokenType.Star) || Check(TokenType.Amp))
             {

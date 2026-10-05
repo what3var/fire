@@ -216,11 +216,6 @@ namespace fire.Standard
                     this.count = this.count + 1
                 }
 
-                // `list.Take(obj)`: the object belongs to the list from now on (it dies with it, not with the scope that made it); `list.Take(obj, Takes.Children)`
-                // takes what hangs on it along (SPEC 2.2). Adding does not change the owner: `Add` only keeps a reference.
-                Take(class obj) { obj.TakeTo(this) }
-                Take(class obj, int mode) { obj.TakeTo(this, mode) }
-
                 operator[](int index) {
                     return this.items[index]
                 }

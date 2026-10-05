@@ -109,6 +109,30 @@ namespace fire.Runtime
             else if (node is IOwnedLeaf leaf) LeafOwnership.Reparent(leaf, target);
         }
 
+        /// <summary>`take x` (SPEC 2.2): der Wert (Objekt, Array, Puffer) gehoert ab jetzt <paramref name="holder"/> (Scope, Objekt oder Array) - unbedingt, egal wem er vorher gehoerte.
+        /// Alles andere (Zahl, Text, ...) hat keinen Besitzer und bleibt unveraendert. Ein zerstoertes Ding bleibt, wo es ist (die VM meldet es vorher).</summary>
+        public static void TakeValue(Value v, IOwner holder, IDestructRunner runner)
+        {
+            switch (NodeOf(v))
+            {
+                case ObjectInstance obj:
+                    if (obj.IsDestroyed) return;
+                    if (ReferenceEquals(obj.Owner, holder)) return;
+                    if (IsAncestor(obj, holder))
+                        throw new OwnershipException("take: cycle detected - the holder is already owned (directly or transitively) by this object.");
+                    if (holder is ObjectInstance target) obj.TakeTo(target, runner); else obj.ReparentToOwner(holder);
+                    break;
+                case IOwnedLeaf leaf:
+                    if (leaf.IsDestroyed) return;
+                    if (ReferenceEquals(leaf.LeafOwner, holder)) return;
+                    if (leaf is ScriptArray arr)
+                        for (IOwner? o = holder; o != null; o = o is ObjectInstance oi ? oi.Owner : (o as ScriptArray)?.LeafOwner)
+                            if (ReferenceEquals(o, arr)) throw new OwnershipException("take: cycle detected - the holder is already owned (directly or transitively) by this array.");
+                    if (holder is ObjectInstance targetObj) LeafOwnership.TakeTo(leaf, targetObj, runner); else LeafOwnership.Reparent(leaf, holder);
+                    break;
+            }
+        }
+
         /// <summary><paramref name="ancestor"/> steht in der Besitzkette von <paramref name="node"/> (oder ist es selbst).</summary>
         private static bool IsAncestor(ObjectInstance ancestor, IOwner node)
         {

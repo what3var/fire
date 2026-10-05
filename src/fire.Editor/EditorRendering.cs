@@ -72,6 +72,7 @@ namespace fire.Editor
             HighlightCategory.Char => EditorTheme.WineRed,
             HighlightCategory.Number => EditorTheme.Orange,
             HighlightCategory.Comment => EditorTheme.Comment,
+            HighlightCategory.Inactive => EditorTheme.Comment,
             HighlightCategory.Identifier => EditorTheme.Text,
             _ => EditorTheme.Text,
         };

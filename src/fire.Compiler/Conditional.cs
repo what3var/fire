@@ -105,6 +105,24 @@ namespace fire.Compiler
             }
             return sb.ToString();
         }
+
+        /// <summary>The lines (0-based) that lie in a branch that is not taken - for the editor, which greys them out. The directive lines themselves count as active.
+        /// A `#define`/`#undef` in the text is honoured; the given set is not changed.</summary>
+        public static bool[] InactiveLines(string source, ISet<string> symbols)
+        {
+            var copy = new HashSet<string>(symbols, StringComparer.OrdinalIgnoreCase);
+            var state = new ConditionalState();
+            var lines = source.Split('\n');
+            var inactive = new bool[lines.Length];
+            for (int n = 0; n < lines.Length; n++)
+            {
+                string line = lines[n].TrimEnd('\r');
+                var m = Preprocessor.DirectiveLineRegex.Match(line);
+                bool handled = m.Success && state.TryHandle(m.Groups[1].Value, m.Groups[2].Success ? m.Groups[2].Value : "", n + 1, copy, throwOnError: false);
+                inactive[n] = !handled && !state.Active;
+            }
+            return inactive;
+        }
     }
 
     /// <summary>The `#if` nesting of one file.</summary>

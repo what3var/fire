@@ -212,9 +212,13 @@ referenziert, nie umgekehrt).
   `Add`/`Sub`-Opcodes – `Value.Add`/`Value.Subtract` erkennen den
   Pointer-Fall zur Laufzeit selbst (kein eigener Opcode nötig, dieselbe
   Technik wie bei der String-Konkatenation über `+`). "n weiter" bedeutet
-  "n logische Elemente weiter" (bei einem Scope-Slot-Pointer: n Slots in
-  derselben, ohnehin zusammenhängend gespeicherten Slot-Liste; bei einem
-  Feld-Pointer nur bei `n=0` gültig, da Felder nicht zusammenhängend liegen).
+  "n logische Elemente weiter": ein Zeiger auf ein Array-/Puffer-Element rückt
+  im Array; ein Zeiger auf eine Variable (`ScopeSlotPointerTarget`) oder ein Feld
+  (`FieldPointerTarget`) ist ein "Array mit einem Element" - er merkt sich den
+  Versatz, benutzt werden darf nur der Versatz 0. Lesen/Schreiben ausserhalb des
+  Bereichs (oder in ein zerstörtes Array) wirft `PointerRangeException`, die die VM
+  in die fangbare `IndexOutOfBoundsException`/`DestroyedException` verwandelt.
+  `ptr1 - ptr2` (`PointerTarget.DistanceTo`) liefert die Elementzahl dazwischen.
 - **`unsafe { }`** selbst erzeugt keinen eigenen Code – die Berechtigung
   (Dereferenzierung/Address-of nur innerhalb eines solchen Blocks) prüft
   bereits der Resolver (`_unsafeDepth`-Zähler), der Compiler kompiliert den
@@ -1849,3 +1853,13 @@ diesen Zuständen in lokalen Variablen (nur für die häufigen Instruktionen, al
 - **Generische Basisklassen und Interfaces.** `TypeRef.TypeArgCount` trägt die ANZAHL der Typ-Argumente einer Basisklassen-/Interface-Angabe (`class Home : Command<IDevice>`); `Resolver.ResolveBaseRef` und die Basisverknüpfung des Compilers lösen sie über
   `GenericClassNames.ResolveNewTarget` auf (wie `new Name<...>`). `InterfaceDecl.TypeParams` macht Interfaces generisch; `Parser.DisambiguateGenericClasses` gibt einem generischen Interface neben einem nicht-generischen gleichen Namens den Schlüssel `Name`N`. Ein Interface
   darf als Parametertyp stehen (`Resolver.ValidateTypeName`). `Command`/`Command<T>`/`ICommand`/`ICommand<T>` stehen in der Standard-Prelude.
+
+## 46. `take`, Besitz in Argumenten, Zeiger-Bereiche
+
+- **`take x`** (SPEC 2.2): `TokenType.Take` / `UnaryOp.Take`, geparst in `ParseUnary` wie `copy`. Der Resolver erlaubt es nur direkt als Argument eines Aufrufs (`new`, Methode, Funktion, `try x.TakeTo(...)`, Basiskonstruktor) und als Wert von
+  `=`/`var x =` (`ResolveExprAllowTake`), sonst Fehler. Der Compiler übersetzt es je nach Stelle: als Argument eines Aufrufs mit eigener Scope (`CompileArgs`) steht im `CopyArgs`-Präfix der Wert 5 für das Argument (die VM nimmt es in
+  `ApplyCopyMask` - `TakeArgument` - unbedingt in die Argumentmenge der aufgerufenen Scope, `ReparentToArgument`, vorher prüft `TakeCheck` auf Totes); bei einer nativen Funktion/einem eingebauten Aufruf oder in `var a = take x` geht der Wert
+  mit `TakeToScope 0` in den aktuellen Scope; `v = take x` mit `TakeToScope depth` (0xFFFF: global) in den Scope der Variablen, `obj.feld = take x` mit `TakeToObject` (Stack `[obj, wert]`), `a[i] = take x` mit `TakeToArray` (Stack `[array, index, wert]`).
+  Alle laufen über `OwnershipWalk.TakeValue(wert, halter, runner)` (Zyklenprüfung, ein Ziel in Zerstörung nimmt den Wert mit).
+- **Zeiger-Bereiche.** `ScopeSlotPointerTarget`/`FieldPointerTarget` tragen einen Versatz (`Advance` addiert nur), benutzbar ist nur Versatz 0; `ElementPointerTarget` prüft Index und Zerstörtheit. Sie werfen `PointerRangeException`, die
+  `TryReadPointer`/`TryWritePointer` der VM in `IndexOutOfBoundsException`/`DestroyedException` verwandeln. `ptr - ptr` ist `PointerTarget.DistanceTo`.

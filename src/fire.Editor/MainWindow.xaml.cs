@@ -1512,6 +1512,7 @@ namespace fire.Editor
             try
             {
                 dialog.Result.Save(savePath);
+                foreach (var doc in _documents) doc.Script?.InvalidateConditionalSymbols();   // the `#if` branches that are greyed out depend on the engine, the target and the defines
                 UpdateStatus($"Saved {savePath}");
             }
             catch (IOException ex)

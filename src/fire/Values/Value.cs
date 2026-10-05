@@ -343,8 +343,8 @@ namespace fire.Values
             if (a.Kind == ValueKind.Pointer && b.Kind == ValueKind.Int)
                 return a.OffsetPointer(-b._intValue);
             if (a.Kind == ValueKind.Pointer && b.Kind == ValueKind.Pointer)
-                throw new InvalidOperationException(
-                    "Pointer difference ('ptr1 - ptr2') is currently not supported.");
+                return MakeInt(a.AsPointer().DistanceTo(b.AsPointer())
+                    ?? throw new InvalidOperationException("Pointer difference ('ptr1 - ptr2') needs two pointers into the same array or the same variable."));
 
             RequireNumeric(a); RequireNumeric(b);
             AlignUnits(ref a, ref b);
@@ -360,10 +360,7 @@ namespace fire.Values
         /// gültig).</summary>
         private Value OffsetPointer(long elementOffset)
         {
-            var target = AsPointer();
-            var moved = target.Advance(elementOffset)
-                ?? throw new InvalidOperationException("Pointer arithmetic outside of a valid range.");
-            return MakePointer(moved);
+            return MakePointer(AsPointer().Advance(elementOffset));
         }
 
         public static Value Modulo(Value a, Value b)

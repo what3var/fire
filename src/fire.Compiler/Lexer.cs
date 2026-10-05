@@ -71,6 +71,7 @@ namespace fire.Compiler
             ["sync"] = TokenType.Sync,
             ["flat"] = TokenType.Flat,
             ["copy"] = TokenType.Copy,
+            ["take"] = TokenType.Take,
             ["leave"] = TokenType.Leave,
             ["terminate"] = TokenType.Terminate,
             ["actor"] = TokenType.Actor,

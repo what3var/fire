@@ -137,7 +137,12 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
 - `obj.TakeLocal()` – the owner becomes the **current scope** (the scope that contains the call).
 - `obj.TakeUpwards()` – the owner becomes the parent scope of the current owner scope (only meaningful if the current owner is a scope).
 - `obj.TakeGlobal()` – the owner becomes the global scope.
-- (`Take` is not a built-in method: `list.Take(obj)` and `list.Take(obj, Takes.Children)` of the `List` class do `obj.TakeTo(this)` - the list owns what it takes; `Add` only keeps a reference. Because of that, `list.Take(n)` of the LINQ library is not available directly on a `List` - write `Linq.From(list).Take(n)`.)
+- **`take x`** - the keyword form of the transfer, valid as an **argument** of a call and on the **right of `=`** or `var a =`: `x` (an object, an array or a buffer; anything else is let through) belongs to the receiver
+  from now on, **whoever owned it before** (no check, unlike `try`). `var a = b(take e, d)` is the same as `var a = b(c(), d)` with `var e = c()`: the value belongs to the **call** of `b` and dies after the
+  callee's own locals unless `b` keeps it (`TakeTo`, `try x.TakeTo(this)`, return). In an assignment the receiver is the holder of the target: `obj.field = take x` / `field = take x` the object,
+  `arr[i] = take x` the array (an array can own objects and arrays, 2.5), `v = take x` the scope of the variable `v`, `var a = take x` the current scope. For a native function or a built-in method, which have no call scope of their own, an argument
+  `take x` goes to the current scope. A destroyed value throws a `DestroyedException`; moving it below itself is a run-time error (cycle). Anywhere else `take` is a compile error; it is a reserved word (not an identifier any more) - `Take`, `TakeTo` and the other methods are unaffected.
+  `list.Add(take it)` therefore does not make the list the owner - `Add` only keeps a reference; use `it.TakeTo(list)` for that.
 - `obj.TakeTo(other)` – the owner becomes `other` (an object instance).
 - All four are built-in methods of every object instance - and of every array and buffer (`TakeTo(obj)` needs an object as the target; a class that declares a method of the same name itself takes precedence). A function can thereby keep an object that belongs to it (e.g. a copy passed as a parameter, 2.4): `param.TakeTo(this)`.
 - **What travels along.** Every one of them takes a last argument of the enum `Takes` (always available): `TakeLocal(Takes.Locals)`, `TakeUpwards(Takes.Children)`, `TakeTo(obj, Takes.All)`, `TakeGlobal(Takes.This)`. Without it the mode is `Takes.This`.
@@ -1226,7 +1231,7 @@ never lexed, parsed or checked, so they may use libraries, classes or syntax tha
 * `-D NAME` on the command line (repeatable, also `--define NAME`, `-DNAME`).
 
 The VM that runs a script in the editor uses the machine it runs on (`windows`, `linux` or `macos`, `vm`), so the same script does the same thing in the editor and
-as a native program for the same system. The live diagnostics of the editor do the same; an `#import` in a branch that is not taken does not import.
+as a native program for the same system. The live diagnostics of the editor do the same; an `#import` in a branch that is not taken does not import. The editor greys out the lines of the branches that are not taken (the symbols follow the configuration of the script: with `"engine": "native"` in the nearest `fire.native.json` its target, engine `native` and its defines, otherwise the machine and `vm`); they get no syntax colours.
 
 ### 8.2 Bit widths for `int`/`float`
 
@@ -1300,8 +1305,14 @@ raw memory address. This gives real aliasing (`*p = x` actually changes
 the variable `p` points to) without rebuilding a byte
 memory model of its own. `&` is thereby only applicable to *addressable*
 expressions (variables, object fields) – like lvalues in C#,
-not to arbitrary intermediate values. "Pointer arithmetic" (`ptr + n`) means
-accordingly "n elements further" instead of "n bytes further". The conversion into
+not to arbitrary intermediate values. "Pointer arithmetic" (`ptr + n`, `ptr - n`) means
+accordingly "n elements further" instead of "n bytes further", and `ptr1 - ptr2` is the number of elements
+between two pointers into the same array, buffer or variable. A pointer **to a variable or a field behaves like a pointer to an
+array with exactly one element** (as in C): `p + n` is always allowed (also past the end and back: `p + 1 - 1`), but dereferencing it
+only works at offset 0 - otherwise (and for an element beyond the bounds of its array or buffer, or of a destroyed one) the
+dereference throws a catchable `IndexOutOfBoundsException` (`DestroyedException`); with `#performance` nothing is checked
+(natively: reading or writing outside of the memory). Pointers into arrays and buffers (`ref a[i]` arguments) carry their array, so
+the bounds are exact in the VM and in the native backend alike. The conversion into
 real native addresses for actual `extern` calls (marshalling into
 a pinned buffer) is deliberately deferred until `extern` linking
 itself is due.

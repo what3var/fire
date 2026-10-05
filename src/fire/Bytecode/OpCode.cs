@@ -136,7 +136,7 @@ namespace fire.Bytecode
         // Bewusst NACH Halt angehängt, damit die Zahlenwerte aller bisherigen Opcodes (auch die von Halt) stabil bleiben.
         CopyValue,      // u8 flags (bit0 = tief) : pop Quelle; push Kopie (`flat x` / `copy x`), Owner = aktueller Scope
         CopyValueOwned, // u8 flags (bit0 = tief) : pop Quelle, pop Owner-Objekt; push Kopie, Owner = das Objekt (wie NewObjectOwned, SPEC 2.1)
-        CopyArgs,       // u16 x4 (64 Bit: 4 Bit je Argument, 1 flach kopieren, 2 tief kopieren, 3 Adresse fuer `ref`, 4 frischer Rueckgabewert geht an die aufgerufene Funktion) : Präfix DIREKT vor einem Aufruf-Opcode (Call/CallMethod/CallStaticMethod/CallBaseMethod/NewObject/
+        CopyArgs,       // u16 x4 (64 Bit: 4 Bit je Argument, 1 flach kopieren, 2 tief kopieren, 3 Adresse fuer `ref`, 4 frischer Rueckgabewert geht an die aufgerufene Funktion, 5 `take x`: der Wert geht an die aufgerufene Funktion, egal wem er gehoerte) : Präfix DIREKT vor einem Aufruf-Opcode (Call/CallMethod/CallStaticMethod/CallBaseMethod/NewObject/
                         //   NewObjectOwned/ConstructBase) - 2 Bit je Argument (Bit 2i = flach kopieren, Bit 2i+1 = tief kopieren): der Aufruf
                         //   kopiert diese Argumente selbst, sobald die Scope der aufgerufenen Funktion steht, und die Kopie gehört dieser Scope
                         //   (SPEC 2.4). Höchstens 16 Argumente.
@@ -184,6 +184,12 @@ namespace fire.Bytecode
         Delete,              //                     : pop Wert; zerstoert ein Objekt, ein Array oder einen Puffer sofort (`delete x`, SPEC 2.5)
         RequireRefParam,     // u16 slot, u16 nameConstIdx : prueft, dass der `ref`-Parameter im Slot (Tiefe 0) einen Zeiger haelt (der Aufrufer hat eine Variable uebergeben), sonst Fehler
         AddressOfIndex,      //                     : pop index, pop Array/Puffer; push Pointer auf das Element (Argument fuer einen `ref`-Parameter, SPEC 5.4.2)
+
+        // `take x` (SPEC 2.2): der Wert (oben auf dem Stack, bleibt dort) gehoert ab jetzt dem Halter - unbedingt.
+        TakeToScope,         // u16 depth            : der Scope `depth` Ebenen ueber dem aktuellen (0xFFFF = der globale Scope): `var a = take x`, `v = take x`
+        TakeToObject,        //                     : Stack [obj, wert]: das Objekt `obj` uebernimmt den Wert (`obj.feld = take x`)
+        TakeToArray,         //                     : Stack [array, index, wert]: das Array uebernimmt den Wert (`a[i] = take x`)
+        TakeCheck,           //                     : Peek: ein zerstoertes Objekt/Array/Puffer oben auf dem Stack wirft die DestroyedException (vor dem Aufruf mit `f(take x)`)
     }
 
     /// <summary>Zieltyp für CoerceType/CoerceTypeDynamic - entspricht genau den
