@@ -11123,6 +11123,223 @@ static int CountOccurrences(string haystack, string needle)
     Console.WriteLine(embFailures == 0 ? "Alle Embedding-Pruefungen bestanden." : $"FEHLER: {embFailures} Embedding-Pruefung(en) fehlgeschlagen.");
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------
+// Native-Backend (fire.Native): derselbe Quelltext laeuft in der VM und als erzeugtes C++ - die Ausgabe muss identisch sein
+// ---------------------------------------------------------------------------------------------------------------------------
+{
+    Console.WriteLine("=== Native-Backend: erzeugtes C++ gegen die VM ===");
+    int natFailures = 0;
+    void CheckNat(string title, bool ok, string? detail = null)
+    {
+        if (!ok) natFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}" + (detail == null ? "" : $"\n{detail}"));
+    }
+
+    string? FindCxx()
+    {
+        foreach (var name in new[] { "g++", "clang++", "c++" })
+        {
+            try
+            {
+                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(name, "--version") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+                p.WaitForExit();
+                if (p.ExitCode == 0) return name;
+            }
+            catch (Exception) { }
+        }
+        return null;
+    }
+
+    string vmOutput(string source)
+    {
+        var lines = new List<string>();
+        var session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, args => { lines.Add(args[0].ToString()!); return Value.MakeUndefined(); });
+        session.Run();
+        return string.Join("\n", lines) + (lines.Count > 0 ? "\n" : "");
+    }
+
+    var natCases = new (string Name, string Source)[]
+    {
+        ("Ganzzahl-Arithmetik und Bit-Operationen", """
+            print(7 / 2)
+            print(-7 / 2)
+            print(7 % 3)
+            print(-7 % 3)
+            print(1 << 4)
+            print(256 >> 2)
+            print(6 & 3)
+            print(6 | 3)
+            print(6 # 3)
+            print(~5)
+            print(-(3 + 4))
+            var big = 9223372036854775807
+            print(big + 1)
+            print(big * 2)
+            """),
+        ("Gleitkomma und Ausgabeformat", """
+            print(1.5 + 2)
+            print(10 / 4.0)
+            print(0.1 + 0.2)
+            print(1.0 / 3)
+            print(1000000.0 * 1000000.0 * 1000.0)
+            print(1000000.0 * 1000000.0 * 100.0)
+            print(1000000.0 * 1000000.0 * 10000.0)
+            print(1000000.0 * 1000000.0 * 100000.0)
+            print(123456789.0 * 1000000000.0 * 1000000000.0)
+            print(0.00001)
+            print(0.000123)
+            print(0.000001 * 2.5)
+            print(0.0001 * 1)
+            print(100.0)
+            print(-2.5 * 4)
+            print(7.5 % 2)
+            """),
+        ("Vergleiche und Logik", """
+            print(1 < 2)
+            print(2 <= 2)
+            print(3 > 4)
+            print(3 >= 3)
+            print(1 == 1)
+            print(1 == 1.0)
+            print(1.5 != 2.5)
+            print(!(1 < 2))
+            print(true && false || true)
+            print(false || false)
+            var x = 5
+            print(x > 3 && x < 10)
+            """),
+        ("Schleifen, break, continue und verschachtelte Bloecke", """
+            var total = 0
+            var i = 0
+            while (i < 20) {
+                i++
+                if (i % 2 == 0) { continue }
+                if (i > 15) { break }
+                total = total + i
+            }
+            print(total)
+            for (var a = 0; a < 4; a++) {
+                for (var b = 0; b < 4; b++) {
+                    var p = a * b
+                    if (p == 2 || p == 6) { print(p) }
+                }
+            }
+            """),
+        ("Statische Methoden und Rekursion", """
+            class MathX {
+                static int Gcd(int a, int b) {
+                    if (b == 0) { return a }
+                    return MathX.Gcd(b, a % b)
+                }
+                static float Half(float x) { return x / 2 }
+                static int Fact(int n) {
+                    if (n <= 1) { return 1 }
+                    return n * MathX.Fact(n - 1)
+                }
+            }
+            print(MathX.Gcd(48, 18))
+            print(MathX.Half(5.0))
+            print(MathX.Fact(15))
+            """),
+        ("Einheiten gleicher Art", """
+            print(500mm + 250mm)
+            print(5mm < 3mm)
+            var l = 2.5m
+            print(l - 1m)
+            print(l)
+            var n = 3mm
+            n = n + 4mm
+            print(n)
+            """),
+        ("Zeichenketten und Zeichen als Ausgabe", """
+            print("Hello, wörld")
+            print("tab\there")
+            var s = "same"
+            print(s == "same")
+            print(s != "other")
+            """),
+        ("Benchmark loop", """
+            var sum = 0
+            for (var i = 0; i < 1500000; i = i + 1) {
+                sum = sum + i % 7
+            }
+            print(sum)
+            """),
+        ("Benchmark float", """
+            var x = 0.0
+            for (var i = 0; i < 600000; i = i + 1) {
+                x = x + i * 0.5 - x / 3.0
+            }
+            print(x)
+            """),
+        ("Benchmark fib", """
+            class M {
+                static int Fib(int n) {
+                    if (n < 2) { return n }
+                    return M.Fib(n - 1) + M.Fib(n - 2)
+                }
+            }
+            print(M.Fib(23))
+            """),
+    };
+
+    string? cxx = FindCxx();
+    if (cxx == null)
+        Console.WriteLine("(kein C++-Compiler gefunden - die Native-Backend-Pruefungen werden uebersprungen)");
+    else
+    {
+        string workDir = Path.Combine(Path.GetTempPath(), "fire-native-test-" + Guid.NewGuid().ToString("N"));
+        fire.Native.NativeRuntimeFiles.WriteTo(workDir);
+
+        var compiled = natCases.Select((c, index) => Task.Run(() =>
+        {
+            string expected = vmOutput(c.Source);
+            string cpp;
+            try { cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release)); }
+            catch (fire.Native.NativeNotSupportedException ex) { return (c.Name, expected, $"nicht uebersetzbar: {ex.Message}"); }
+            string cppFile = Path.Combine(workDir, $"case{index}.cpp"), exeFile = Path.Combine(workDir, $"case{index}.bin");
+            File.WriteAllText(cppFile, cpp);
+
+            string RunTool(string tool, string arguments, out int exit)
+            {
+                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool, arguments)
+                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir })!;
+                var errTask = p.StandardError.ReadToEndAsync();
+                string output = p.StandardOutput.ReadToEnd();
+                p.WaitForExit();
+                exit = p.ExitCode;
+                return output + errTask.Result;
+            }
+
+            string build = RunTool(cxx, $"-std=c++17 -O2 -Wall -Wextra \"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"", out int buildExit);
+            if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C++-Compiler: " + build);
+            string actual = RunTool(exeFile, "", out int runExit);
+            return (c.Name, expected, runExit == 0 ? actual : $"Exitcode {runExit}: {actual}");
+        })).ToArray();
+        Task.WaitAll(compiled);
+
+        foreach (var task in compiled)
+        {
+            var (name, expected, actual) = task.Result;
+            CheckNat($"Native == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
+        }
+
+        // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
+        try
+        {
+            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "class P { int x }\nvar p = new P()\nprint(1)" }, null, null, VmExecutionMode.Release));
+            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt", false, "keine Ausnahme");
+        }
+        catch (fire.Native.NativeNotSupportedException ex)
+        {
+            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt (NewObject)", ex.Message.Contains("NewObject"), ex.Message);
+        }
+        try { Directory.Delete(workDir, true); } catch (IOException) { }
+    }
+
+    Console.WriteLine(natFailures == 0 ? "Alle Native-Backend-Pruefungen bestanden." : $"FEHLER: {natFailures} Native-Backend-Pruefung(en) fehlgeschlagen.");
+}
+
 static class PackerNativeProbe
 {
     [System.Runtime.InteropServices.DllImport("libfiretestnative")] private static extern int Nonexistent();

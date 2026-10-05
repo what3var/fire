@@ -16,6 +16,7 @@
   <ItemGroup>
     <ProjectReference Include="..\fire.Runtime\fire.Runtime.csproj" />
     <ProjectReference Include="..\fire.UI.Bridge\fire.UI.Bridge.csproj" />
+    <ProjectReference Include="..\fire.Native\fire.Native.csproj" />
   </ItemGroup>
 
 </Project>

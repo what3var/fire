@@ -21,6 +21,11 @@ namespace fire.Runtime
         /// Befehlszeile); die gepackte Runtime übernimmt ihn von hier.</summary>
         public VmExecutionMode ExecutionMode { get; init; }
 
+        /// <summary>Names of the native functions in registration order (the index used by `CallNative`). Only known while linking
+        /// (not serialized): code generators (fire.Native) need it to map an index back to the function.</summary>
+        [MemoryPackIgnore]
+        public IReadOnlyList<string>? NativeNames { get; init; }
+
         public LinkedProgram(CompiledProgram program, HashSet<string> nativeImports, int firstUserSource, VmExecutionMode executionMode = VmExecutionMode.Release)
         {
             Program = program;

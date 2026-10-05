@@ -9,7 +9,7 @@ using System.Linq;
 namespace fire.Compiler
 {
     /// <summary>Die Art des Aufrufs auf der Befehlszeile.</summary>
-    public enum CommandKind { Run, Build, Help }
+    public enum CommandKind { Run, Build, Native, Help }
 
     /// <summary>Ergebnis des Auswertens der Befehlszeile (siehe <see cref="CommandLineParser.Parse"/>).</summary>
     public sealed class CommandLineOptions
@@ -19,7 +19,7 @@ namespace fire.Compiler
         public IReadOnlyList<string> Files { get; init; } = Array.Empty<string>();
         /// <summary>`-m`: Ausführungsmodus; null = der im Skript (`#debug`/`#performance`) bzw. Release.</summary>
         public VmExecutionMode? Mode { get; init; }
-        /// <summary>`-o`: Ausgabedatei von `build`.</summary>
+        /// <summary>`-o`: Ausgabedatei von `build` (bzw. die C++-Datei von `native`).</summary>
         public string OutputFile { get; init; } = CommandLineParser.DefaultOutputFile;
         /// <summary>Gesetzt, wenn die Befehlszeile ungültig ist (Meldung für den Nutzer).</summary>
         public string? Error { get; init; }
@@ -41,17 +41,21 @@ namespace fire.Compiler
     public static class CommandLineParser
     {
         public const string DefaultOutputFile = "out.exe";
+        public const string DefaultNativeOutputFile = "out.cpp";
 
         public static string Usage =>
             """
             Usage:
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE]
               fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE]
+              fire.Compiler native <file>... [-o <target.cpp>]
 
             run     compiles the files into one program and runs it.
             build   turns them into a self-contained executable (default: out.exe).
             -m      Execution mode (default: whatever the script sets with #debug/#performance, otherwise RELEASE).
-            -o      Name of the file produced by build.
+            native  translates the files into C++ (written next to fire_rt.hpp, the runtime it includes; default: out.cpp)
+                    - an experimental ahead-of-time backend, see docs/NATIVE_BACKEND.md.
+            -o      Name of the file produced by build or native.
 
             File names without spaces do not need quotation marks.
             """;
@@ -66,8 +70,9 @@ namespace fire.Compiler
             {
                 case "run": command = CommandKind.Run; break;
                 case "build": command = CommandKind.Build; break;
+                case "native": command = CommandKind.Native; break;
                 default:
-                    return Fail(CommandKind.Help, $"Unknown command '{args[0]}' (expected: run or build).");
+                    return Fail(CommandKind.Help, $"Unknown command '{args[0]}' (expected: run, build or native).");
             }
 
             var files = new List<string>();
@@ -88,7 +93,7 @@ namespace fire.Compiler
                 }
                 else if (TryOption(arg, "-o", "--out", out var outInline))
                 {
-                    if (command != CommandKind.Build) return Fail(command, "-o is only available with build.");
+                    if (command is not (CommandKind.Build or CommandKind.Native)) return Fail(command, "-o is only available with build and native.");
                     string? value = outInline ?? (i + 1 < args.Count ? args[++i] : null);
                     if (string.IsNullOrWhiteSpace(value)) return Fail(command, "-o must be followed by the file name.");
                     output = Unquote(value);
@@ -112,7 +117,7 @@ namespace fire.Compiler
                 Command = command,
                 Files = files,
                 Mode = mode,
-                OutputFile = output ?? DefaultOutputFile,
+                OutputFile = output ?? (command == CommandKind.Native ? DefaultNativeOutputFile : DefaultOutputFile),
             };
         }
 
@@ -196,9 +201,12 @@ namespace fire.Compiler
                 sources.Add(File.ReadAllText(file));
             }
 
-            return options.Command == CommandKind.Build
-                ? Build(options, sources, stdout, stderr)
-                : Execute(options, sources, stderr);
+            return options.Command switch
+            {
+                CommandKind.Build => Build(options, sources, stdout, stderr),
+                CommandKind.Native => Native(options, sources, stdout, stderr),
+                _ => Execute(options, sources, stderr),
+            };
         }
 
         private static int Build(CommandLineOptions options, List<string> sources, TextWriter stdout, TextWriter stderr)
@@ -213,6 +221,30 @@ namespace fire.Compiler
                 return ExitScriptError;
             }
             stdout.WriteLine($"{Path.GetFullPath(options.OutputFile)} ({new FileInfo(options.OutputFile).Length} bytes)");
+            return ExitOk;
+        }
+
+        private static int Native(CommandLineOptions options, List<string> sources, TextWriter stdout, TextWriter stderr)
+        {
+            try
+            {
+                var linked = new Linker().CompileAndLink(sources, null, null, options.Mode);
+                string cpp = fire.Native.CppGenerator.Generate(linked);
+                string full = Path.GetFullPath(options.OutputFile);
+                File.WriteAllText(full, cpp);
+                fire.Native.NativeRuntimeFiles.WriteTo(Path.GetDirectoryName(full)!);
+                stdout.WriteLine($"{full} ({cpp.Length} characters) - compile with: c++ -std=c++17 -O2 \"{full}\" -o program");
+            }
+            catch (Exception ex) when (IsCompileError(ex))
+            {
+                stderr.WriteLine(CompileErrors.Describe(ex));
+                return ExitScriptError;
+            }
+            catch (fire.Native.NativeNotSupportedException ex)
+            {
+                stderr.WriteLine("Not supported by the native backend yet: " + ex.Message);
+                return ExitScriptError;
+            }
             return ExitOk;
         }
 

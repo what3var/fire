@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>fire.Native</RootNamespace>
+    <AssemblyName>fire.Native</AssemblyName>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\fire\fire.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The C++ runtime that the generated code includes; written next to the generated file (see NativeRuntimeFiles). -->
+    <EmbeddedResource Include="..\..\native\runtime\fire_rt.hpp" LogicalName="fire_rt.hpp" />
+  </ItemGroup>
+
+</Project>
