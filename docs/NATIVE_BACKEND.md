@@ -191,7 +191,10 @@ einzigen Maschine, keine Garantie.
 
 * **Lambdas**: `func (x) => ...`, Kurzschreibweisen, Captures als Kopie (SPEC 4.2.1), `on`-Ziel, verschachtelte Lambdas, Signaturprüfung
   (`lambda<...>`), Einheitenprüfung (`CheckUnit`). Ein Lambda ist ein referenzgezählter Wert (Funktionszeiger, kopierte Captures, `on`-Ziel); die
-  Captures sind Variablen hinter den Parametern. Standard-Parameterwerte bei Lambdas sind noch nicht übersetzt.
+  Captures sind Variablen hinter den Parametern. Standard-Parameterwerte (Methoden, Konstruktoren, Erweiterungen, Lambdas): jeder Standardwert ist eine
+  eigene Funktion (sie sieht `this` des Ziels, bei einem Lambda dessen `on`-Ziel); der Aufrufer wertet die fehlenden der Reihe nach aus (`adoptV`) und ruft
+  dann mit allen Argumenten, der Dispatcher einer Methode mit Standardwerten bekommt dafür die Liste des Aufrufers; ein Lambda trägt `nreq` und `dflt`
+  (`callLam` füllt auf).
 
 * **Ausnahmen** (SPEC 7): `throw` (auch als Ausdruck), `try`/`catch` (nach Typ, `catch (e)`, mehrere Klauseln, `catch` ohne `try`), `finally` auf
   jedem Weg (normal, `break`, `continue`, `return`, Ausnahme, aus dem `catch` heraus), Weiterwerfen, `e.resume(wert)` an der Wurfstelle, auch aus
@@ -205,7 +208,7 @@ einzigen Maschine, keine Garantie.
   Wert: bei bekanntem Ziel setzt der Aufrufer `ptrRead`, beim virtuellen Aufruf der Dispatcher (`derefArg`).
 
 Noch nicht (der Generator meldet es mit Namen): Zeiger (`unsafe`), `flat`/`copy` als Argument, Threads, Reflection, Properties,
-Operator-Überladung, `copy`/`flat`, die eingebauten Objektmethoden (`TakeTo`, `TakeUpwards`, `TakeGlobal`), Standardargumente,
+Operator-Überladung, `copy`/`flat`,
 Einheiten-Algebra und implizites Einheiten-Coercing, das Zahlenformat `E`, `extern`, die Bridges.
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes

@@ -136,8 +136,10 @@ struct Str : Ref {
 struct alignas(alignof(Value)) Lam : Ref {
     uint32_t nparams;
     uint32_t ncaps;
+    uint32_t nreq;     // parameters without a default value (they come first)
     Value on;
     Value (*fn)(Value lam, const Value* args);
+    Value (*dflt)(Value lam, uint32_t index);   // the default value of parameter `index` (null: the lambda has none)
     Value* caps() { return reinterpret_cast<Value*>(this + 1); }
 };
 
@@ -633,6 +635,12 @@ inline void adopt(Value v, OwnList* list) {
     }
 }
 
+/// A value that came out of a function (a default argument), taken over by `list` like the result of a call.
+inline Value adoptV(Value v, OwnList* list) {
+    adopt(v, list);
+    return v;
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Memory of the reference-counted values
 // ---------------------------------------------------------------------------------------------------------------------
@@ -686,8 +694,10 @@ inline Lam* allocLam(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const 
     l->type = R_Lam;
     l->nparams = nparams;
     l->ncaps = ncaps;
+    l->nreq = nparams;
     l->on = Undef();
     l->fn = fn;
+    l->dflt = nullptr;
     registerTemp(l, list);
     return l;
 }
@@ -697,10 +707,18 @@ inline Value lamOn(Value lam) { return lamOf(lam)->on; }
 inline Value lamCapture(Value lam, uint32_t index) { return lamOf(lam)->caps()[index]; }
 
 /// `callee(args...)`
-inline Value callLam(Value callee, int argc, const Value* args) {
+FIRE_COLD inline Value callLamDefaults(Value callee, int argc, const Value* args, OwnList* list) {
+    Lam* l = lamOf(callee);
+    if (!l->dflt || (uint32_t)argc > l->nparams || (uint32_t)argc < l->nreq || l->nparams > 16) fatal("A lambda was called with the wrong number of arguments.");
+    Value full[16];
+    for (int i = 0; i < argc; i++) full[i] = args[i];
+    for (uint32_t i = (uint32_t)argc; i < l->nparams; i++) full[i] = adoptV(l->dflt(callee, i), list);
+    return l->fn(callee, full);
+}
+inline Value callLam(Value callee, int argc, const Value* args, OwnList* list) {
     if (FIRE_UNLIKELY(callee.kind != K_Lambda)) fatal("Call of a value that is not a lambda.");
     Lam* l = lamOf(callee);
-    if (FIRE_UNLIKELY(l->nparams != (uint32_t)argc)) fatal("A lambda was called with the wrong number of arguments.");
+    if (FIRE_UNLIKELY(l->nparams != (uint32_t)argc)) return callLamDefaults(callee, argc, args, list);
     return l->fn(callee, args);
 }
 

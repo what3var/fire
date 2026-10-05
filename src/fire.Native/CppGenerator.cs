@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text;
 using fire.Bytecode;
 using fire.Runtime;
@@ -101,7 +101,9 @@ namespace fire.Native
         /// <summary>Something needs the list of the global scope from other functions (`g_globalOwn`): exceptions, TakeGlobal, TakeUpwards.</summary>
         private bool _usesGlobalOwn;
         /// <summary>Methods (name, number of arguments) that a call site passes an address to (`ref` parameters): their dispatcher hands the value to the implementations without `ref`.</summary>
-        private readonly HashSet<(string Name, int Argc)> _refCallSites = new();   // catch types, as numbered in the HandlerInfo tables
+        private readonly HashSet<(string Name, int Argc)> _refCallSites = new();
+        /// <summary>Lambdas with default parameter values: each gets a function `fN_d(lam, index)` that evaluates the default of a parameter.</summary>
+        private readonly HashSet<Func> _lambdaDefaults = new();   // catch types, as numbered in the HandlerInfo tables
 
         private CppGenerator(LinkedProgram program, TargetProfile target)
         {
@@ -274,6 +276,16 @@ namespace fire.Native
             foreach (var f in _funcs) sb.AppendLine(f.Signature + ";");
             foreach (var f in _funcs.Where(f => f.Kind == FuncKind.Lambda))
                 sb.AppendLine(f.ThunkSignature + " { " + (f.ParamCount == 0 ? "(void)a; " : "") + $"return {f.Name}(lam{string.Concat(Enumerable.Range(0, f.ParamCount).Select(i => $", a[{i}]"))}); }}");
+            foreach (var f in _lambdaDefaults)
+            {
+                sb.AppendLine($"static Value {f.Name}_d(Value lam, uint32_t i) {{");
+                sb.AppendLine("    switch (i) {");
+                for (int i = 0; i < f.Proto!.ParamDefaults.Count; i++)
+                    if (f.Proto.ParamDefaults[i] is { } dp) sb.AppendLine($"        case {i}: return {_funcByProto[dp].Name}(lamOn(lam));");
+                sb.AppendLine("        default: return Undef();");
+                sb.AppendLine("    }");
+                sb.AppendLine("}");
+            }
             foreach (var name in _fieldNames) sb.AppendLine($"[[maybe_unused]] static inline Value gf_{Mangle(name)}(Value v);").AppendLine($"[[maybe_unused]] static inline void sf_{Mangle(name)}(Value v, Value x);").AppendLine($"[[maybe_unused]] static inline Value fp_{Mangle(name)}(Value v);");
             foreach (var (name, argc) in _dispatchers) sb.AppendLine(DispatcherSignature(name, argc) + ";");
             sb.AppendLine("[[maybe_unused]] static inline Value aget_g(Value a, Value i, OwnList* list);");
@@ -344,13 +356,13 @@ namespace fire.Native
                 foreach (var cls in _classList.ToList())
                     if (cls.Rc.FindMethodWithAccess(name, argc).Proto is { } method)
                     {
-                        if (method.ParamCount != argc) throw new NativeNotSupportedException($"default arguments in {cls.Rc.Name}.{name}");
                         GetFunc(method, FuncKind.Method);
+                        DefaultArgs(method, argc, "self", "list");   // registers the functions of the default values
                     }
                 foreach (var (_, method) in ExtensionMethods(name, argc))
                 {
-                    if (method.ParamCount != argc) throw new NativeNotSupportedException($"default arguments in the extension method {name}");
                     GetFunc(method, FuncKind.Method);
+                    DefaultArgs(method, argc, "self", "list");
                 }
             }
             foreach (var cls in _classList.ToList())
@@ -361,11 +373,34 @@ namespace fire.Native
         // -------------------------------------------------------------------------------------------------------------
         // Helpers generated after the fixpoint (their content depends on all classes of the program)
         // -------------------------------------------------------------------------------------------------------------
-        private static string DispatcherSignature(string name, int argc)
+        /// <summary>The values for the parameters beyond the `argc` that a call supplies (SPEC 5.2): each default value is a function of its own
+        /// (it sees `this` of the callee, `self`); the fresh value belongs to the caller's scope `list`. `Pre` evaluates them in order into locals,
+        /// `Args` passes them on. Both are empty when nothing is missing.</summary>
+        private (string Pre, string Args) DefaultArgs(FunctionProto proto, int argc, string self, string list)
+        {
+            if (argc >= proto.ParamCount) return ("", "");
+            var pre = new StringBuilder();
+            var args = new StringBuilder();
+            for (int i = argc; i < proto.ParamCount; i++)
+            {
+                var defaultProto = i < proto.ParamDefaults.Count ? proto.ParamDefaults[i] : null;
+                if (defaultProto == null) throw new NativeNotSupportedException($"call with {argc} argument(s) of a function with {proto.ParamCount} parameters");
+                pre.Append($"Value dv{i} = adoptV({GetFunc(defaultProto, FuncKind.Init).Name}({self}), {list}); ");
+                args.Append($", dv{i}");
+            }
+            return (pre.ToString(), args.ToString());
+        }
+
+        /// <summary>Does a method call of this name with this many arguments reach an implementation that fills in default values? Then its dispatcher gets the scope list.</summary>
+        private bool DispatchNeedsDefaults(string name, int argc) =>
+            _program.Program.Classes.Values.Any(rc => rc.FindMethodWithAccess(name, argc).Proto is { } m && m.ParamCount != argc)
+            || ExtensionMethods(name, argc).Any(e => e.Proto.ParamCount != argc);
+
+        private string DispatcherSignature(string name, int argc)
         {
             var parameters = new List<string> { "Value self" };
             parameters.AddRange(Enumerable.Range(0, argc).Select(i => $"Value a{i}"));
-            if (name == "GetEnumerator" && argc == 0 || OwnMethodId(name, argc) != null) parameters.Add("OwnList* list");
+            if (name == "GetEnumerator" && argc == 0 || OwnMethodId(name, argc) != null || DispatchNeedsDefaults(name, argc)) parameters.Add("OwnList* list");
             return $"static Value call_{Mangle(name)}_{argc}(" + string.Join(", ", parameters) + ")";
         }
 
@@ -389,12 +424,18 @@ namespace fire.Native
             // a call site that passes addresses: an implementation without `ref` for that position gets the value
             bool derefs = _refCallSites.Contains((name, argc));
             string ArgsFor(FunctionProto proto) => string.Concat(Enumerable.Range(0, argc).Select(i => derefs && (proto.RefMask >> i & 1) == 0 ? $", derefArg(a{i})" : $", a{i}"));
+            // an implementation with default values: the missing arguments are evaluated first (in order), then it is called
+            string CallImpl(string target, FunctionProto proto)
+            {
+                var (pre, defaults) = DefaultArgs(proto, argc, "self", "list");
+                return pre.Length == 0 ? $"return {target}(self{ArgsFor(proto)});" : $"{{ {pre}return {target}(self{ArgsFor(proto)}{defaults}); }}";
+            }
             var sb = new StringBuilder();
             sb.AppendLine(DispatcherSignature(name, argc));
             sb.AppendLine("{");
             sb.AppendLine("    switch (self.kind) {");
             foreach (var (cpp, proto) in extensions)
-                sb.AppendLine($"        case {cpp}: return {_funcByProto[proto].Name}(self{ArgsFor(proto)});");
+                sb.AppendLine($"        case {cpp}: {CallImpl(_funcByProto[proto].Name, proto)}");
             if (enumeratorOfArray)
             {
                 var info = _classes["ListEnumerator"];
@@ -411,14 +452,14 @@ namespace fire.Native
             {
                 sb.AppendLine("        case K_Class:");
                 if (byFunc.Count == 1 && byFunc.Values.First().Count == _classList.Count)
-                    sb.AppendLine($"            asObj(self); return {byFunc.Keys.First().Name}(self{ArgsFor(byFunc.Keys.First().Proto!)});");
+                    sb.AppendLine($"            asObj(self); {CallImpl(byFunc.Keys.First().Name, byFunc.Keys.First().Proto!)}");
                 else
                 {
                     sb.AppendLine("            switch (asObj(self)->cls) {");
                     foreach (var (f, ids) in byFunc)
                     {
                         foreach (int id in ids) sb.AppendLine($"                case {id}:");
-                        sb.AppendLine($"                    return {f.Name}(self{ArgsFor(f.Proto!)});");
+                        sb.AppendLine($"                    {CallImpl(f.Name, f.Proto!)}");
                     }
                     sb.AppendLine("                default: break;");
                     sb.AppendLine("            }");
@@ -1317,11 +1358,11 @@ namespace fire.Native
                     var proto = rc.FindMethodWithAccess(method, argc).Proto
                         ?? throw new NativeNotSupportedException($"{cls}.{method} with {argc} argument(s) not found");
                     if (!proto.IsStatic) throw new NativeNotSupportedException($"{cls}.{method} is not static");
-                    if (proto.ParamCount != argc) throw new NativeNotSupportedException($"{cls}.{method}: default arguments");
                     var target = GetFunc(proto, FuncKind.Static);
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
-                    E($"{S(d - argc)} = {target.Name}({CallArgs(d - argc, argc, mask, proto.RefMask).TrimStart(',', ' ')});");
+                    var (dpre, dargs) = DefaultArgs(proto, argc, "Undef()", "&" + OwnerList());
+                    E($"{(dpre.Length > 0 ? "{ " + dpre : "")}{S(d - argc)} = {target.Name}({(CallArgs(d - argc, argc, mask, proto.RefMask) + dargs).TrimStart(',', ' ')});{(dpre.Length > 0 ? " }" : "")}");
                     ArgsAfter(argc, mask, S(d - argc));
                     Check();
                     AdoptResult(d - argc);
@@ -1394,13 +1435,13 @@ namespace fire.Native
                     Need(argc + (owned ? 1 : 0));
                     var cls = RegisterClass(Str(ins.A[0]));
                     var ctor = cls.Rc.FindConstructor(argc) ?? throw new NativeNotSupportedException($"class {cls.Rc.Name} has no constructor with {argc} argument(s)");
-                    if (ctor.ParamCount != argc) throw new NativeNotSupportedException($"{cls.Rc.Name}: constructor default arguments");
                     var target = GetFunc(ctor, FuncKind.Ctor);
                     int slot = d - argc - (owned ? 1 : 0);
                     string ownerExpr = owned ? $"&asObj({S(slot)})->owned" : "&" + OwnerList();
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
-                    E($"{{ Value o = newObject({cls.Id}, {cls.Fields.Count}, {ownerExpr}); {target.Name}(o{CallArgs(d - argc, argc, mask, ctor.RefMask)}); {S(slot)} = o; }}");
+                    var (dpre, dargs) = DefaultArgs(ctor, argc, "o", "&" + OwnerList());
+                    E($"{{ Value o = newObject({cls.Id}, {cls.Fields.Count}, {ownerExpr}); {dpre}{target.Name}(o{CallArgs(d - argc, argc, mask, ctor.RefMask)}{dargs}); {S(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));
                     Check();
                     SetR(slot, false);
@@ -1412,12 +1453,12 @@ namespace fire.Native
                     Need(argc); RequireSelf();
                     var rc = FindClass(Str(ins.A[0]));
                     var ctor = rc.FindConstructor(argc) ?? throw new NativeNotSupportedException($"class {rc.Name} has no constructor with {argc} argument(s)");
-                    if (ctor.ParamCount != argc) throw new NativeNotSupportedException($"{rc.Name}: constructor default arguments");
                     var target = GetFunc(ctor, FuncKind.Ctor);
                     OwnerList();
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
-                    E($"{target.Name}(self{CallArgs(d - argc, argc, mask, ctor.RefMask)});");
+                    var (dpre, dargs) = DefaultArgs(ctor, argc, "self", "&" + OwnerList());
+                    E($"{(dpre.Length > 0 ? "{ " + dpre : "")}{target.Name}(self{CallArgs(d - argc, argc, mask, ctor.RefMask)}{dargs});{(dpre.Length > 0 ? " }" : "")}");
                     ArgsAfter(argc, mask, "Undef()");
                     Check();
                     E($"{S(d - argc)} = Undef();");
@@ -1456,7 +1497,7 @@ namespace fire.Native
                     }
                     _dispatchers.Add((method, argc));
                     if (Enumerable.Range(0, Math.Min(argc, 16)).Any(i => (ArgMask() >> (4 * i) & 15) == 3)) _refCallSites.Add((method, argc));
-                    string extra = method == "GetEnumerator" && argc == 0 || OwnMethodId(method, argc) != null ? $", &{owner}" : "";
+                    string extra = method == "GetEnumerator" && argc == 0 || OwnMethodId(method, argc) != null || DispatchNeedsDefaults(method, argc) ? $", &{owner}" : "";
                     long dmask = ArgMask();
                     ArgsBefore(d - argc, argc, dmask);
                     E($"{S(slot)} = call_{Mangle(method)}_{argc}({S(slot)}{Args(d - argc, argc)}{extra});");
@@ -1472,11 +1513,11 @@ namespace fire.Native
                     var rc = FindClass(Str(ins.A[0]));
                     string method = Str(ins.A[1]);
                     var proto = rc.FindMethodWithAccess(method, argc).Proto ?? throw new NativeNotSupportedException($"{rc.Name}.{method} with {argc} argument(s) not found");
-                    if (proto.ParamCount != argc) throw new NativeNotSupportedException($"{rc.Name}.{method}: default arguments");
                     var target = GetFunc(proto, FuncKind.Method);
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
-                    E($"{S(d - argc)} = {target.Name}(self{CallArgs(d - argc, argc, mask, proto.RefMask)});");
+                    var (dpre, dargs) = DefaultArgs(proto, argc, "self", "&" + OwnerList());
+                    E($"{(dpre.Length > 0 ? "{ " + dpre : "")}{S(d - argc)} = {target.Name}(self{CallArgs(d - argc, argc, mask, proto.RefMask)}{dargs});{(dpre.Length > 0 ? " }" : "")}");
                     ArgsAfter(argc, mask, S(d - argc));
                     Check();
                     AdoptResult(d - argc);
@@ -1509,12 +1550,21 @@ namespace fire.Native
                     int captures = capturing ? ins.A[2] : 0;
                     Need(captures + (hasOn ? 1 : 0));
                     var proto = chunk.Functions[ins.A[0]];
-                    if (proto.ParamDefaults.Any(p => p != null)) throw new NativeNotSupportedException("a lambda with default parameter values");
                     var target = GetFunc(proto, FuncKind.Lambda, captures);
+                    string defaultsInit = "";
+                    if (proto.ParamDefaults.Any(p => p != null))
+                    {
+                        // the default values are functions of their own (with the `on` target as `this`); the lambda knows how to reach them
+                        foreach (var dp in proto.ParamDefaults) if (dp != null) GetFunc(dp, FuncKind.Init);
+                        int required = 0;
+                        while (required < proto.ParamCount && (required >= proto.ParamDefaults.Count || proto.ParamDefaults[required] == null)) required++;
+                        defaultsInit = $" l->nreq = {required}; l->dflt = {target.Name}_d;";
+                        _lambdaDefaults.Add(target);
+                    }
                     int first = d - captures - (hasOn ? 1 : 0);
                     var sbCaps = new StringBuilder();
                     for (int i = 0; i < captures; i++) sbCaps.Append($" l->caps()[{i}] = {S(first + i)}; retain({S(first + i)});");
-                    E($"{{ Lam* l = allocLam({proto.ParamCount}, {captures}, {target.Name}_t, &{OwnerList()}); l->on = {(hasOn ? S(d - 1) : "Undef()")};{sbCaps} {S(first)} = LamV(l); }}");
+                    E($"{{ Lam* l = allocLam({proto.ParamCount}, {captures}, {target.Name}_t, &{OwnerList()}); l->on = {(hasOn ? S(d - 1) : "Undef()")};{defaultsInit}{sbCaps} {S(first)} = LamV(l); }}");
                     d = first + 1; SetR(first, true); return Next();
                 }
                 case OpCode.Call:
@@ -1524,7 +1574,7 @@ namespace fire.Native
                     int slot = d - argc - 1;
                     string owner = OwnerList();
                     var argList = argc == 0 ? "Undef()" : string.Join(", ", Enumerable.Range(slot + 1, argc).Select(S));
-                    E($"{{ Value args[{Math.Max(argc, 1)}] = {{{argList}}}; {S(slot)} = callLam({S(slot)}, {argc}, args); }}");
+                    E($"{{ Value args[{Math.Max(argc, 1)}] = {{{argList}}}; {S(slot)} = callLam({S(slot)}, {argc}, args, &{owner}); }}");
                     Check();
                     AdoptResult(slot);
                     d = slot + 1; return Next();

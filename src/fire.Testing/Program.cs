@@ -12851,6 +12851,53 @@ static int CountOccurrences(string haystack, string needle)
             print(T.WithLoops(3))
             print(T.WithLoops(0))
             """),
+        ("Standardargumente: Methoden, Konstruktoren, base, Erweiterungen, Lambdas, virtuelle Aufrufe", """
+            class Counter {
+                static int n = 0
+                static int Next() { Counter.n = Counter.n + 1; return Counter.n }
+            }
+            class Greeter {
+                string greeting
+                construct(string g = "Hi", int times = 2) { this.greeting = g; print("ctor " + g + " " + times) }
+                string Greet(string name, string suffix = "!", int n = Counter.Next()) { return this.greeting + ", " + name + suffix + n }
+                string Own(string mark = this.greeting + "?") { return mark }
+                static int Sum(int a, int b = 10, int c = 100) { return a + b + c }
+            }
+            class Loud : Greeter {
+                construct(string g = "HEY") : base(g) { }
+                string Greet(string name, string suffix = "!!", int n = 7) { return base.Greet(name, suffix) + "/" + n }
+            }
+            class extends string {
+                string Wrap(string left = "[", string right = "]") { return left + this + right }
+            }
+            var g = new Greeter()
+            var h = new Greeter("Yo")
+            var k = new Greeter("Hello", 5)
+            var l = new Loud()
+            print(g.Greet("Ann"))
+            print(g.Greet("Bob", "?"))
+            print(h.Greet("Cy", ".", 3))
+            print(l.Greet("Di"))
+            print(l.Greet("Ed", "~"))
+            print(h.Own())
+            print(h.Own("x"))
+            print(Greeter.Sum(1))
+            print(Greeter.Sum(1, 2))
+            print(Greeter.Sum(1, 2, 3))
+            print("abc".Wrap())
+            print("abc".Wrap("<"))
+            print("abc".Wrap("<", ">"))
+            var f = func (x, y = 10) => { return x + y }
+            print(f(5))
+            print(f(5, 20))
+            var q = func (int x = 42, string s = "z") => { return s + x }
+            print(q())
+            print(q(7))
+            print(q(7, "a"))
+            var list = [g, h, l]
+            var total = 0
+            for (var i = 0; i < 3; i = i + 1) { print(list[i].Greet("Zed")) }
+            """),
         ("Besitz: #performance prueft zerstoerte Arrays nicht (FIRE_UNCHECKED), Ergebnis wie die VM", """
             #performance
             var a = new int[100]
