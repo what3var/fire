@@ -1,53 +1,28 @@
 using System;
 using System.Collections.Generic;
-using System.Windows;
-using System.Windows.Input;
-using System.Windows.Media;
-using ICSharpCode.AvalonEdit.Editing;
-using ICSharpCode.AvalonEdit.Rendering;
+using Avalonia;
+using Avalonia.Input;
+using Avalonia.Media;
+using AvaloniaEdit.Document;
+using AvaloniaEdit.Editing;
+using AvaloniaEdit.Rendering;
 
 namespace fire.Editor
 {
-    /// <summary>Färbt Syntax-Hervorhebung (aus SyntaxHighlighter.Highlight)
-    /// und Fehler-Unterkringelung (aus ScriptEditorControl.Diagnostics) beim
-    /// Zeichnen ein - OHNE das Dokument selbst anzufassen. Das ist der
-    /// zentrale Unterschied zur alten RichTextBox-Fassung (siehe deren
-    /// ApplyHighlighting): dort musste bei JEDER Änderung das komplette
-    /// FlowDocument neu gebaut und ausgetauscht werden (Quelle so ziemlich
-    /// aller Bugs der letzten Runden - Selektion, Cursor, Scroll-Position,
-    /// Wettlauf mit dem Tippen). AvalonEdits DocumentColorizingTransformer
-    /// wird pro SICHTBARER Zeile beim Zeichnen aufgerufen und ändert nur die
-    /// Darstellung (Vordergrundfarbe, Textdekoration) einzelner Zeichen-
-    /// bereiche - das Dokument/der Text bleibt währenddessen unangetastet,
-    /// Cursor/Auswahl/Scroll-Position sind davon architekturbedingt gar nicht
-    /// erst betroffen.
+    /// <summary>Färbt Syntax-Hervorhebung (aus SyntaxHighlighter.Highlight) beim Zeichnen ein - OHNE das Dokument selbst anzufassen: der Colorizer wird pro SICHTBARER Zeile beim Zeichnen
+    /// aufgerufen und ändert nur die Darstellung (Vordergrundfarbe) einzelner Zeichenbereiche; Cursor, Auswahl und Scroll-Position sind davon gar nicht erst betroffen.
     ///
-    /// `Spans`/`ErrorLines` werden von ScriptEditorControl nach jedem
-    /// (debounced) Neu-Lexen/-Analysieren ausgetauscht, gefolgt von einem
-    /// TextView.Redraw() - DAS löst den nächsten Zeichen-Durchlauf aus, der
-    /// wiederum ColorizeLine für die dann sichtbaren Zeilen aufruft.</summary>
+    /// `Spans` werden von ScriptEditorControl nach jedem (debounced) Neu-Lexen ausgetauscht, gefolgt von einem TextView.Redraw() - DAS löst den nächsten Zeichen-Durchlauf aus,
+    /// der wiederum ColorizeLine für die dann sichtbaren Zeilen aufruft. Die Fehler-Unterkringelung zeichnet <see cref="ErrorSquiggleRenderer"/>.</summary>
     internal sealed class HighlightingColorizer : DocumentColorizingTransformer
     {
-        /// <summary>Aktuelle Hervorhebungs-Spans, nach Start aufsteigend
-        /// sortiert (so liefert sie SyntaxHighlighter.Highlight bereits,
-        /// Tokens werden in Quelltext-Reihenfolge verarbeitet) - das erlaubt
-        /// den frühen Abbruch unten (`span.Start >= lineEnd`), ohne für jede
-        /// Zeile die komplette Liste durchsuchen zu müssen.</summary>
+        /// <summary>Aktuelle Hervorhebungs-Spans, nach Start aufsteigend sortiert (so liefert sie SyntaxHighlighter.Highlight bereits) - das erlaubt den frühen Abbruch unten.</summary>
         public IReadOnlyList<HighlightSpan> Spans { get; set; } = Array.Empty<HighlightSpan>();
 
-        /// <summary>1-basierte Zeilennummern mit mindestens einem gemeldeten
-        /// Diagnostik-Fehler - komplett unterkringelt (keine Spalten-
-        /// Information in Diagnostic vorhanden, siehe dortige Doku), analog
-        /// zur alten RichTextBox-Fassung.</summary>
-        public IReadOnlySet<int> ErrorLines { get; set; } = new HashSet<int>();
-
-        protected override void ColorizeLine(ICSharpCode.AvalonEdit.Document.DocumentLine line)
+        protected override void ColorizeLine(DocumentLine line)
         {
             int lineStart = line.Offset;
             int lineEnd = line.EndOffset;
-
-            if (ErrorLines.Contains(line.LineNumber))
-                ChangeLinePart(lineStart, lineEnd, el => el.TextRunProperties.SetTextDecorations(SquigglyDecorations));
 
             foreach (var span in Spans)
             {
@@ -64,7 +39,7 @@ namespace fire.Editor
             }
         }
 
-        internal static Brush BrushFor(HighlightCategory category) => category switch
+        internal static IBrush BrushFor(HighlightCategory category) => category switch
         {
             HighlightCategory.Keyword => EditorTheme.Magenta,
             HighlightCategory.Type => EditorTheme.Purple,
@@ -76,57 +51,64 @@ namespace fire.Editor
             HighlightCategory.Identifier => EditorTheme.Text,
             _ => EditorTheme.Text,
         };
+    }
 
-        /// <summary>Wie die alte RichTextBox-Fassung (SquigglyDecorations
-        /// dort) - eine ECHTE wellenförmige Unterkringelung statt einer
-        /// geraden Linie: der Stift, der unterstreicht, nutzt selbst einen
-        /// kleinen gekachelten Zickzack-Pinsel als "Farbe".</summary>
-        private static readonly TextDecorationCollection SquigglyDecorations = CreateSquigglyDecorations();
+    /// <summary>Unterkringelt die Zeilen, für die die Live-Diagnostik einen Fehler meldet (komplett: Diagnostic kennt keine Spalte): eine rote Wellenlinie unter dem Text der Zeile.</summary>
+    internal sealed class ErrorSquiggleRenderer : IBackgroundRenderer
+    {
+        private static readonly IPen Pen = new Pen(EditorTheme.ErrorMark, 1);
 
-        private static TextDecorationCollection CreateSquigglyDecorations()
+        /// <summary>1-basierte Zeilennummern mit mindestens einem gemeldeten Diagnostik-Fehler.</summary>
+        public IReadOnlySet<int> ErrorLines { get; set; } = new HashSet<int>();
+
+        public KnownLayer Layer => KnownLayer.Selection;
+
+        public void Draw(TextView textView, DrawingContext drawingContext)
         {
-            var figure = new System.Windows.Media.PathFigure { StartPoint = new Point(0, 2) };
-            figure.Segments.Add(new System.Windows.Media.LineSegment(new Point(1.5, 0), true));
-            figure.Segments.Add(new System.Windows.Media.LineSegment(new Point(3, 2), true));
-            var geometry = new System.Windows.Media.PathGeometry();
-            geometry.Figures.Add(figure);
-
-            var tile = new DrawingBrush(new GeometryDrawing(null, new Pen(Brushes.Red, 1), geometry))
+            if (ErrorLines.Count == 0 || textView.Document == null || !textView.VisualLinesValid) return;
+            
+            foreach (var visualLine in textView.VisualLines)
             {
-                TileMode = TileMode.Tile,
-                Viewport = new Rect(0, 0, 3, 4),
-                ViewportUnits = BrushMappingMode.Absolute,
-                Stretch = Stretch.None,
-            };
-            tile.Freeze();
+                var documentLine = visualLine.FirstDocumentLine;
+                if (!ErrorLines.Contains(documentLine.LineNumber)) continue;
 
-            var pen = new Pen(tile, 3);
-            pen.Freeze();
+                // from the first character that is not white space to the end of the line
+                string text = textView.Document.GetText(documentLine.Offset, documentLine.Length);
+                int first = 0;
+                while (first < text.Length && char.IsWhiteSpace(text[first])) first++;
+                if (first >= text.Length) continue;
+                var segment = new TextSegment { StartOffset = documentLine.Offset + first, EndOffset = documentLine.EndOffset };
+                foreach (var rect in BackgroundGeometryBuilder.GetRectsForSegment(textView, segment))
+                    DrawWave(drawingContext, rect.Left, rect.Right, rect.Bottom - 1);
+            }
+        }
 
-            var decoration = new TextDecoration
+        /// <summary>A zig-zag line (period 4 pixels, height 2) from x1 to x2 at the height y.</summary>
+        private static void DrawWave(DrawingContext context, double x1, double x2, double y)
+        {
+            if (x2 <= x1) return;
+            var geometry = new StreamGeometry();
+            using (var g = geometry.Open())
             {
-                Location = TextDecorationLocation.Underline,
-                Pen = pen,
-                PenThicknessUnit = TextDecorationUnit.Pixel,
-                PenOffset = 1,
-                PenOffsetUnit = TextDecorationUnit.Pixel,
-            };
-
-            var collection = new TextDecorationCollection { decoration };
-            collection.Freeze();
-            return collection;
+                g.BeginFigure(new Point(x1, y), false);
+                bool up = true;
+                for (double x = x1 + 2; x < x2 + 2; x += 2)
+                {
+                    g.LineTo(new Point(Math.Min(x, x2), up ? y - 2 : y));
+                    up = !up;
+                }
+                g.EndFigure(false);
+            }
+            context.DrawGeometry(null, Pen, geometry);
         }
     }
 
-    /// <summary>Zeichnet den vollflächigen Zeilen-Hintergrund für die aktuell
-    /// vom Debugger angehaltene Zeile (gelb) und für Haltepunkt-Zeilen (rot,
-    /// blasser) - analog zu para.Background in der alten RichTextBox-
-    /// Fassung, hier aber als eigene Zeichen-Ebene UNTER dem Text
-    /// (KnownLayer.Background), statt Teil des Dokuments selbst zu sein.</summary>
+    /// <summary>Zeichnet den vollflächigen Zeilen-Hintergrund für die aktuell vom Debugger angehaltene Zeile (gelb) und für Haltepunkt-Zeilen (rot, blasser) als eigene Zeichen-Ebene
+    /// UNTER dem Text (KnownLayer.Background).</summary>
     internal sealed class LineBackgroundRenderer : IBackgroundRenderer
     {
-        private static readonly Brush CurrentLineBrush = EditorTheme.CurrentDebugLine;
-        private static readonly Brush BreakpointBrush = EditorTheme.BreakpointLine;
+        private static readonly IBrush CurrentLineBrush = EditorTheme.CurrentDebugLine;
+        private static readonly IBrush BreakpointBrush = EditorTheme.BreakpointLine;
 
         public int? HighlightedLine { get; set; }
         public IReadOnlySet<int> Breakpoints { get; set; } = new HashSet<int>();
@@ -138,14 +120,12 @@ namespace fire.Editor
             if (HighlightedLine == null && Breakpoints.Count == 0) return;
             if (!textView.VisualLinesValid) return;
 
-            //double width = Math.Max(textView.ActualWidth, textView.);
-
-            double width = textView.ActualWidth;
+            double width = textView.Bounds.Width;
 
             foreach (var visualLine in textView.VisualLines)
             {
                 int lineNumber = visualLine.FirstDocumentLine.LineNumber;
-                Brush? brush = HighlightedLine == lineNumber ? CurrentLineBrush
+                IBrush? brush = HighlightedLine == lineNumber ? CurrentLineBrush
                     : Breakpoints.Contains(lineNumber) ? BreakpointBrush
                     : null;
                 if (brush == null) continue;
@@ -156,28 +136,22 @@ namespace fire.Editor
         }
     }
 
-    /// <summary>Klickbarer Haltepunkt-Rand links vom Text (NEU gegenüber der
-    /// alten RichTextBox-Fassung, die Haltepunkte nur über F9 im Host-Fenster
-    /// setzen ließ, ganz ohne eigene Rand-Anzeige - mit AvalonEdit ist ein
-    /// echter, anklickbarer Rand quasi kostenlos, das ist in praktisch jedem
-    /// Code-Editor die erwartete Bedienung).</summary>
+    /// <summary>Klickbarer Haltepunkt-Rand links vom Text: ein Klick auf eine Zeile schaltet ihren Haltepunkt um.</summary>
     internal sealed class BreakpointMargin : AbstractMargin
     {
         private const double MarginWidth = 18;
 
         public IReadOnlySet<int> Breakpoints { get; set; } = new HashSet<int>();
 
-        /// <summary>Feuert mit der 1-basierten Zeilennummer, auf die geklickt
-        /// wurde - der Host (ScriptEditorControl) entscheidet, was das
-        /// bedeutet (Haltepunkt umschalten).</summary>
+        /// <summary>Feuert mit der 1-basierten Zeilennummer, auf die geklickt wurde - der Host (ScriptEditorControl) entscheidet, was das bedeutet (Haltepunkt umschalten).</summary>
         public event Action<int>? LineClicked;
 
         protected override Size MeasureOverride(Size availableSize) => new(MarginWidth, 0);
 
-        protected override void OnRender(DrawingContext drawingContext)
+        public override void Render(DrawingContext drawingContext)
         {
             var textView = TextView;
-            drawingContext.DrawRectangle(EditorTheme.Background, null, new Rect(0, 0, MarginWidth, RenderSize.Height));
+            drawingContext.DrawRectangle(EditorTheme.Background, null, new Rect(0, 0, MarginWidth, Bounds.Height));
 
             if (textView == null || !textView.VisualLinesValid) return;
 
@@ -191,10 +165,10 @@ namespace fire.Editor
             }
         }
 
-        protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
+        protected override void OnPointerPressed(PointerPressedEventArgs e)
         {
             var textView = TextView;
-            if (textView != null)
+            if (textView != null && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
             {
                 var pos = e.GetPosition(this);
                 var visualLine = textView.GetVisualLineFromVisualTop(pos.Y + textView.VerticalOffset);
@@ -204,23 +178,10 @@ namespace fire.Editor
                     e.Handled = true;
                 }
             }
-            base.OnMouseLeftButtonDown(e);
+            base.OnPointerPressed(e);
         }
 
-        /// <summary>Vom Host nach jeder Haltepunkt-/Layout-Änderung
-        /// aufzurufen - bewusst explizit statt über TextView-Ereignisse
-        /// automatisch verdrahtet, um die Abhängigkeit von genauen Margin-
-        /// Lifecycle-Ereignisnamen zu vermeiden (die sich zwischen AvalonEdit-
-        /// Versionen schon mal verschoben haben).</summary>
+        /// <summary>Vom Host nach jeder Haltepunkt-/Layout-Änderung aufzurufen.</summary>
         public void RedrawMargin() => InvalidateVisual();
-    }
-
-    internal static class BrushFreezeExtensions
-    {
-        public static Brush AsFrozen(this SolidColorBrush brush)
-        {
-            brush.Freeze();
-            return brush;
-        }
     }
 }

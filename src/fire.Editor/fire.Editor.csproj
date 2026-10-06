@@ -1,9 +1,12 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
+  <!--
+    spark, the editor of fire - on Avalonia, so that it runs on Windows, Linux and macOS.
+    Docking: Dock.Avalonia, text editor: AvaloniaEdit, look: the Fluent theme (App.axaml: dark, the accent colour of fire).
+  -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <UseWPF>true</UseWPF>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>fire.Editor</RootNamespace>
@@ -11,85 +14,33 @@
     <LangVersion>latest</LangVersion>
     <AssemblyTitle>fire spark</AssemblyTitle>
     <ApplicationIcon>Logo.ico</ApplicationIcon>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+    <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
   </PropertyGroup>
 
   <ItemGroup>
-    <None Remove="icons\Material-DebugStepInto.png" />
-    <None Remove="icons\Material-DebugStepOut.png" />
-    <None Remove="icons\Material-DebugStepOver.png" />
-    <None Remove="icons\Material-FileDocumentOutline.png" />
-    <None Remove="icons\Material-ForumOutline.png" />
-    <None Remove="icons\Material-PauseCircle.png" />
-    <None Remove="icons\Material-Play.png" />
-    <None Remove="icons\Material-PlayOutline.png" />
-    <None Remove="icons\Material-PowerPlugOffOutline.png" />
-    <None Remove="icons\Material-PowerPlugOutline.png" />
-    <None Remove="icons\Material-Restart.png" />
-    <None Remove="icons\Material-ScriptOutline.png" />
-    <None Remove="icons\Material-SharkFin.png" />
-    <None Remove="icons\Material-Stop.png" />
-    <None Remove="icons\Material-ToyBrickOffline.png" />
-    <None Remove="icons\Material-ToyBrickOnline.png" />
-    <None Remove="icons\Material-ToyBrickOutline.png" />
-    <None Remove="icons\Material-ToyBrickRemoveOutline.png" />
-    <None Remove="icons\Material-ToyBrickSearchOutline.png" />
-    <None Remove="Logo-64.png" />
+    <PackageReference Include="Avalonia" Version="11.3.2" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.2" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.2" />
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.2" />
+    <PackageReference Include="Avalonia.AvaloniaEdit" Version="11.3.0" />
+    <PackageReference Include="Dock.Avalonia" Version="11.3.2" />
+    <PackageReference Include="Dock.Model.Avalonia" Version="11.3.2" />
+    <PackageReference Include="Dock.Avalonia.Themes.Fluent" Version="11.3.2" />
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="Logo.ico" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- Greift per Projektreferenz direkt auf Lexer/Parser/Resolver/Compiler/VM
-         des Hauptprojekts zu - kein separates Kopieren/Verlinken von DLLs,
-         Änderungen am Kernprojekt wirken sich beim nächsten Build sofort aus. -->
+    <!-- Greift per Projektreferenz direkt auf Lexer/Parser/Resolver/Compiler/VM zu. -->
     <ProjectReference Include="..\fire.Compiler\fire.Compiler.csproj" />
     <ProjectReference Include="..\fire.Runtime\fire.Runtime.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- ScriptEditorControl baut auf AvalonEdit statt RichTextBox auf (siehe
-         dortige Klassendoku) - eigenes TextDocument-Modell mit echten,
-         zuverlässigen Zeichen-Offsets statt WPFs TextPointer/Paragraph-
-         Klassenhierarchie, Highlighting per DocumentColorizingTransformer
-         OHNE Dokument-Neuaufbau. -->
-    <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
-    <!-- Andockbare Bereiche (Fenster per Ziehen an jede Seite, als Registerkarten, schwebend oder automatisch ausblendend). -->
-    <PackageReference Include="Dirkster.AvalonDock" Version="5.0.1" />
-    <PackageReference Include="Dirkster.AvalonDock.Serializer.Xml" Version="5.0.1" />
-    <PackageReference Include="Dirkster.AvalonDock.Themes.Expression" Version="5.0.1" />
-    <PackageReference Include="Dirkster.AvalonDock.Themes.VS" Version="5.0.1" />
-    <PackageReference Include="ModernWpfUI" Version="1.0.0-rc.1" />
-    <PackageReference Include="PropertyChanged.Fody" Version="4.1.0" PrivateAssets="All" />
-  </ItemGroup>
-
-  <ItemGroup>
     <!-- The help pages behind the "?" menu (Help folder): copied to Help\ next to the executable and opened from there (see MainWindow.OpenHelp). -->
-    <None Update="Help\**\*.md" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Resource Include="icons\Material-DebugStepInto.png" />
-    <Resource Include="icons\Material-DebugStepOut.png" />
-    <Resource Include="icons\Material-DebugStepOver.png" />
-    <Resource Include="icons\Material-FileDocumentOutline.png" />
-    <Resource Include="icons\Material-ForumOutline.png" />
-    <Resource Include="icons\Material-PauseCircle.png" />
-    <Resource Include="icons\Material-Play.png" />
-    <Resource Include="icons\Material-PlayOutline.png" />
-    <Resource Include="icons\Material-PowerPlugOffOutline.png" />
-    <Resource Include="icons\Material-PowerPlugOutline.png" />
-    <Resource Include="icons\Material-Restart.png" />
-    <Resource Include="icons\Material-ScriptOutline.png" />
-    <Resource Include="icons\Material-SharkFin.png" />
-    <Resource Include="icons\Material-Stop.png" />
-    <Resource Include="icons\Material-ToyBrickOffline.png" />
-    <Resource Include="icons\Material-ToyBrickOnline.png" />
-    <Resource Include="icons\Material-ToyBrickOutline.png" />
-    <Resource Include="icons\Material-ToyBrickRemoveOutline.png" />
-    <Resource Include="icons\Material-ToyBrickSearchOutline.png" />
-    <Resource Include="Logo-64.png" />
+    <None Include="Help\**\*.md" CopyToOutputDirectory="PreserveNewest" />
+    <AvaloniaResource Include="icons\*.png" />
+    <AvaloniaResource Include="Logo-64.png" />
   </ItemGroup>
 
   <Import Project="..\BridgePackages.targets" />

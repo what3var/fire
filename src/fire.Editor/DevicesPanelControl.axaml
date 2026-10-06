@@ -1,0 +1,26 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="fire.Editor.DevicesPanelControl">
+    <Grid RowDefinitions="Auto,*">
+        <Border Grid.Row="0" BorderBrush="#3C3544" BorderThickness="0,0,0,1" Padding="4,2">
+            <StackPanel Orientation="Horizontal" Spacing="2">
+                <Button x:Name="SearchButton" Classes="tool" Click="Search_Click" ToolTip.Tip="Search for devices and check their availability">
+                    <Image Source="/icons/Material-ToyBrickSearchOutline.png" Width="20" Height="20"/>
+                </Button>
+                <Border Width="1" Background="#3C3544" Margin="4,2"/>
+                <Button x:Name="ConnectButton" Classes="tool" Click="Connect_Click" ToolTip.Tip="Connect the selected device">
+                    <Image Source="/icons/Material-PowerPlugOutline.png" Width="20" Height="20"/>
+                </Button>
+                <Button x:Name="DisconnectButton" Classes="tool" Click="Disconnect_Click" ToolTip.Tip="Disconnect the selected device">
+                    <Image Source="/icons/Material-PowerPlugOffOutline.png" Width="20" Height="20"/>
+                </Button>
+                <Border Width="1" Background="#3C3544" Margin="4,2"/>
+                <Button x:Name="TraceButton" Classes="tool" Click="Trace_Click" ToolTip.Tip="Open the packet trace of the selected device in a new tab">
+                    <Image Source="/icons/Material-SharkFin.png" Width="20" Height="20"/>
+                </Button>
+            </StackPanel>
+        </Border>
+
+        <TreeView x:Name="DeviceTree" Grid.Row="1" BorderThickness="0"/>
+    </Grid>
+</UserControl>

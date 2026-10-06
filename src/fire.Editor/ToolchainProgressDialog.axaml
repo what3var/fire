@@ -1,0 +1,10 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="fire.Editor.ToolchainProgressDialog"
+        Title="Installing the toolchain" Width="480" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" CanResize="False">
+    <StackPanel Margin="14">
+        <TextBlock x:Name="txtStatus" Text="Starting..." TextWrapping="Wrap" Margin="0,0,0,10"/>
+        <ProgressBar x:Name="bar" Height="16" IsIndeterminate="True"/>
+    </StackPanel>
+</Window>

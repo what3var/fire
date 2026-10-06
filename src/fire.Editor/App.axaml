@@ -1,0 +1,36 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:dock="using:Dock.Avalonia.Themes.Fluent"
+             x:Class="fire.Editor.App"
+             RequestedThemeVariant="Dark">
+    <Application.Resources>
+        <!-- the docking areas in the colours of fire instead of the blue of the Fluent theme -->
+        <SolidColorBrush x:Key="DockApplicationAccentBrushLow" Color="#8F0040"/>
+        <SolidColorBrush x:Key="DockApplicationAccentBrushMed" Color="#E8447F"/>
+        <SolidColorBrush x:Key="DockApplicationAccentBrushHigh" Color="#E8447F"/>
+        <SolidColorBrush x:Key="DockApplicationAccentBrushIndicator" Color="#D6246E"/>
+        <SolidColorBrush x:Key="DockThemeAccentBrush" Color="#B70052"/>
+    </Application.Resources>
+
+    <Application.Styles>
+        <FluentTheme>
+            <FluentTheme.Palettes>
+                <!-- the colours of fire: panels #242028, frame #1B181E, accent #B70052 (EditorTheme) -->
+                <ColorPaletteResources x:Key="Dark" Accent="#B70052" RegionColor="#242028"
+                                       ErrorText="#E5566F"/>
+            </FluentTheme.Palettes>
+        </FluentTheme>
+        <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml"/>
+        <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml"/>
+        <dock:DockFluentTheme/>
+        <!-- compact buttons of the little tool bars inside the panels (formatting bar of the Markdown editor, ...) -->
+        <Style Selector="Button.tool, ToggleButton.tool">
+            <Setter Property="Padding" Value="8,3"/>
+            <Setter Property="MinWidth" Value="28"/>
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="ToggleButton.tool:checked /template/ ContentPresenter">
+            <Setter Property="Background" Value="#B70052"/>
+        </Style>
+    </Application.Styles>
+</Application>

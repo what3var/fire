@@ -31,13 +31,13 @@ The pipeline is *lexer → parser → resolver → compiler → virtual machine*
 
 `RuntimeSession` links against **all** of the bridges, so the simplest and safest way is to take the complete output folder of `fire.Compiler`: either add a **project reference** to `fire.Compiler` (everything is copied for you), or reference `fire.Compiler.dll` and copy the other files of its `bin` folder - including the `runtimes` subfolder with the native libraries - next to your application.
 
-Your project has to target **`net10.0-windows`** (or newer), the same as `fire.Compiler`:
+Your project has to target **`net10.0`** (or newer), the same as `fire.Compiler`:
 
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\fire\src\fire.Compiler\fire.Compiler.csproj" />

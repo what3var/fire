@@ -1,0 +1,204 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:dock="using:Dock.Avalonia.Controls"
+        x:Class="fire.Editor.MainWindow"
+        Title="spark" Width="1300" Height="820" Icon="/Logo-64.png"
+        DragDrop.AllowDrop="True">
+
+    <Window.Resources>
+        <!-- vector symbols of the tool bars (Material Design Icons), so that no symbol font is needed on any system -->
+        <StreamGeometry x:Key="IconOpen">M19,20H4C2.89,20 2,19.1 2,18V6C2,4.89 2.89,4 4,4H10L12,6H19A2,2 0 0,1 21,8H21L4,8V18L6.14,10H23.21L20.93,18.5C20.7,19.37 19.92,20 19,20Z</StreamGeometry>
+        <StreamGeometry x:Key="IconSave">M15,9H5V5H15M12,19A3,3 0 0,1 9,16A3,3 0 0,1 12,13A3,3 0 0,1 15,16A3,3 0 0,1 12,19M17,3H5C3.89,3 3,3.9 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V7L17,3Z</StreamGeometry>
+        <StreamGeometry x:Key="IconSettings">M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z</StreamGeometry>
+    </Window.Resources>
+
+    <Window.Styles>
+        <Style Selector="Border.toolbar Button">
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="Border.toolbar Button:disabled">
+            <Setter Property="Opacity" Value="0.4"/>
+        </Style>
+        <Style Selector="Border.toolbar Image">
+            <Setter Property="Width" Value="18"/>
+            <Setter Property="Height" Value="18"/>
+        </Style>
+        <Style Selector="Border.toolbar PathIcon">
+            <Setter Property="Width" Value="16"/>
+            <Setter Property="Height" Value="16"/>
+        </Style>
+        <Style Selector="Border.toolbar Rectangle.separator">
+            <Setter Property="Width" Value="1"/>
+            <Setter Property="Margin" Value="6,4"/>
+            <Setter Property="Fill" Value="#4A4252"/>
+        </Style>
+        <Style Selector="Menu > MenuItem">
+            <Setter Property="Padding" Value="8,4"/>
+        </Style>
+    </Window.Styles>
+
+    <DockPanel>
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="_File">
+                <MenuItem Header="_New Script" Click="New_Click" InputGesture="Ctrl+N">
+                    <MenuItem.Icon><Image Source="/icons/Material-ScriptOutline.png"/></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="New _Markdown Document" Click="NewMarkdown_Click" InputGesture="Ctrl+Shift+N">
+                    <MenuItem.Icon><Image Source="/icons/Material-FileDocumentOutline.png"/></MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="_Open..." Click="Open_Click" InputGesture="Ctrl+O"/>
+                <MenuItem Header="Open Markdown _Read-Only..." Click="OpenReadOnly_Click"/>
+                <MenuItem Header="Open Markdown in _Viewer..." Click="OpenViewer_Click"/>
+                <MenuItem Header="_Save" x:Name="mnuSave" Click="Save_Click" InputGesture="Ctrl+S"/>
+                <MenuItem Header="Save _As..." x:Name="mnuSaveAs" Click="SaveAs_Click"/>
+                <MenuItem Header="Save A_ll" x:Name="mnuSaveAll" Click="SaveAll_Click" InputGesture="Ctrl+Shift+S"/>
+                <MenuItem Header="_Close Document" Click="CloseDocument_Click" InputGesture="Ctrl+W"/>
+                <Separator/>
+                <MenuItem Header="Build Settings" Click="BuildSettings_Click"/>
+                <MenuItem Header="Native Build Settings..." Click="NativeBuildSettings_Click"/>
+                <MenuItem Header="Package Manager (ember)..." Click="PackageManager_Click"/>
+                <Separator/>
+                <MenuItem Header="E_xit" Click="Exit_Click"/>
+            </MenuItem>
+            <!-- acts on the active document; the entries are switched on/off when the menu opens (EditMenu_SubmenuOpened) -->
+            <MenuItem Header="_Edit" SubmenuOpened="EditMenu_SubmenuOpened">
+                <MenuItem Header="_Undo" x:Name="mnuUndo" Click="Undo_Click" InputGesture="Ctrl+Z"/>
+                <MenuItem Header="_Redo" x:Name="mnuRedo" Click="Redo_Click" InputGesture="Ctrl+Y"/>
+                <Separator/>
+                <MenuItem Header="Cu_t" x:Name="mnuCut" Click="Cut_Click" InputGesture="Ctrl+X"/>
+                <MenuItem Header="_Copy" x:Name="mnuCopy" Click="Copy_Click" InputGesture="Ctrl+C"/>
+                <MenuItem Header="_Paste" x:Name="mnuPaste" Click="Paste_Click" InputGesture="Ctrl+V"/>
+                <MenuItem Header="_Delete" x:Name="mnuDelete" Click="Delete_Click" InputGesture="Delete"/>
+                <Separator/>
+                <MenuItem Header="Select _All" Click="SelectAll_Click" InputGesture="Ctrl+A"/>
+                <Separator/>
+                <MenuItem Header="_Find..." Click="Find_Click" InputGesture="Ctrl+F"/>
+                <MenuItem Header="Find _Next" Click="FindNext_Click" InputGesture="F3"/>
+                <MenuItem Header="Find _Previous" Click="FindPrevious_Click" InputGesture="Shift+F3"/>
+                <MenuItem Header="_Go to Line..." Click="GoToLine_Click" InputGesture="Ctrl+G"/>
+                <Separator/>
+                <MenuItem Header="Go to _Definition (Ctrl+Click)" x:Name="mnuGoToDefinition" Click="GoToDefinition_Click" InputGesture="F12"/>
+                <MenuItem Header="Toggle _Comment" x:Name="mnuToggleComment" Click="ToggleComment_Click" InputGesture="Ctrl+Shift+C"/>
+            </MenuItem>
+            <MenuItem Header="_Run">
+                <MenuItem Header="_Start / Continue (to next breakpoint)" Click="Run_Click" InputGesture="F5"/>
+                <MenuItem Header="Re_compile and Start" Click="Restart_Click" InputGesture="Ctrl+F5"/>
+                <MenuItem Header="Build Stan_dalone..." Click="Build_Click"/>
+                <MenuItem Header="Build _Native..." Click="BuildNative_Click"/>
+                <Separator/>
+                <MenuItem Header="Step _Over" Click="Step_Click" InputGesture="F10"/>
+                <MenuItem Header="Step _Into" Click="StepInto_Click" InputGesture="F11"/>
+                <MenuItem Header="Step O_ut" Click="StepOut_Click" InputGesture="Shift+F11"/>
+                <MenuItem Header="C_ontinue (like F5)" Click="Continue_Click" InputGesture="F8"/>
+                <MenuItem Header="Run to _End (ignore breakpoints)" Click="RunToEnd_Click"/>
+                <MenuItem Header="S_top" Click="Stop_Click" InputGesture="Shift+F5"/>
+                <Separator/>
+                <MenuItem Header="Debug" ToggleType="CheckBox" x:Name="mnuRunDebug" Click="mnuRunDebug_Click"/>
+                <MenuItem Header="Release" ToggleType="CheckBox" x:Name="mnuRunRelease" Click="mnuRunRelease_Click"/>
+                <MenuItem Header="Performance" ToggleType="CheckBox" x:Name="mnuRunPerformance" Click="mnuRunPerformance_Click"/>
+                <Separator/>
+                <MenuItem Header="Toggle _Breakpoint (current line)" Click="ToggleBreakpoint_Click" InputGesture="F9"/>
+            </MenuItem>
+            <MenuItem Header="_Devices">
+                <MenuItem Header="_Search for Devices" Click="DevicesSearch_Click"/>
+                <MenuItem Header="_Connect" Click="DevicesConnect_Click"/>
+                <MenuItem Header="_Disconnect" Click="DevicesDisconnect_Click"/>
+                <Separator/>
+                <MenuItem Header="Set as Default _Device" Click="DevicesSetDefault_Click"/>
+                <MenuItem Header="Clear Default D_evice" Click="DevicesClearDefault_Click"/>
+                <Separator/>
+                <MenuItem Header="Open Packet _Trace" Click="DevicesTrace_Click"/>
+                <Separator/>
+                <MenuItem Header="Show Simulated _Loopback Device" x:Name="mnuLoopback" ToggleType="CheckBox" Click="DevicesLoopback_Click"
+                          ToolTip.Tip="An echo device without hardware (loopback:echo) for trying out scripts and the packet trace"/>
+            </MenuItem>
+            <!-- a check = the window is visible (updated when the menu opens, see ViewMenu_SubmenuOpened) -->
+            <MenuItem Header="_View" x:Name="mnuView" SubmenuOpened="ViewMenu_SubmenuOpened">
+                <MenuItem Header="_Output" Tag="output" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+                <MenuItem Header="_Error List" Tag="errors" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+                <MenuItem Header="_Threads" Tag="threads" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+                <MenuItem Header="_Scope" Tag="scope" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+                <MenuItem Header="S_tack" Tag="stack" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+                <MenuItem Header="_Devices" Tag="devices" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+                <Separator/>
+                <MenuItem Header="Toggle Markdown _Preview" Click="ToggleMarkdownPreview_Click" InputGesture="Ctrl+Shift+V"/>
+                <Separator/>
+                <MenuItem Header="_Reset Layout" Click="ResetLayout_Click"/>
+            </MenuItem>
+            <MenuItem Header="?">
+                <MenuItem Header="_First Steps" Click="HelpFirstSteps_Click"/>
+                <MenuItem Header="_Embedding fire in your Application" Click="HelpEmbedding_Click"/>
+            </MenuItem>
+        </Menu>
+
+        <Border DockPanel.Dock="Top" Classes="toolbar" BorderBrush="#3C3544" BorderThickness="0,0,0,1" Padding="4,2">
+            <WrapPanel Orientation="Horizontal">
+                <!-- File -->
+                <SplitButton Click="New_Click" ToolTip.Tip="New script (Ctrl+N)" Padding="2" Background="Transparent" VerticalAlignment="Center">
+                    <Image Source="/icons/Material-ScriptOutline.png"/>
+                    <SplitButton.Flyout>
+                        <MenuFlyout>
+                            <MenuItem Header="_New Script" Click="New_Click" InputGesture="Ctrl+N">
+                                <MenuItem.Icon><Image Source="/icons/Material-ScriptOutline.png"/></MenuItem.Icon>
+                            </MenuItem>
+                            <MenuItem Header="New Markdown Document" Click="NewMarkdown_Click" InputGesture="Ctrl+Shift+N">
+                                <MenuItem.Icon><Image Source="/icons/Material-FileDocumentOutline.png"/></MenuItem.Icon>
+                            </MenuItem>
+                        </MenuFlyout>
+                    </SplitButton.Flyout>
+                </SplitButton>
+                <Button Click="Open_Click" ToolTip.Tip="Open... (Ctrl+O)"><PathIcon Data="{StaticResource IconOpen}"/></Button>
+                <Button x:Name="btnSave" Click="Save_Click" ToolTip.Tip="Save (Ctrl+S)"><PathIcon Data="{StaticResource IconSave}"/></Button>
+                <Rectangle Classes="separator"/>
+
+                <!-- Run -->
+                <Button Click="Run_Click" ToolTip.Tip="Start / continue to the next breakpoint (F5) - compiles if necessary and restarts after the program has ended">
+                    <StackPanel Orientation="Horizontal" Spacing="5"><Image Source="/icons/Material-Play.png"/><TextBlock Text="Start" VerticalAlignment="Center"/></StackPanel>
+                </Button>
+                <Button Click="Restart_Click" ToolTip.Tip="Recompile and start (Ctrl+F5)"><Image Source="/icons/Material-Restart.png"/></Button>
+                <Button Click="RunToEnd_Click" ToolTip.Tip="Run to the end without stopping at breakpoints"><Image Source="/icons/Material-PlayOutline.png"/></Button>
+                <Button Click="Stop_Click" ToolTip.Tip="Stop (Shift+F5)"><Image Source="/icons/Material-Stop.png"/></Button>
+                <Rectangle Classes="separator"/>
+
+                <!-- Debug -->
+                <Button Click="Step_Click" ToolTip.Tip="Step over (F10)"><Image Source="/icons/Material-DebugStepOver.png"/></Button>
+                <Button Click="StepInto_Click" ToolTip.Tip="Step into (F11)"><Image Source="/icons/Material-DebugStepInto.png"/></Button>
+                <Button Click="StepOut_Click" ToolTip.Tip="Step out of the current function (Shift+F11)"><Image Source="/icons/Material-DebugStepOut.png"/></Button>
+                <Button Click="ToggleBreakpoint_Click" ToolTip.Tip="Toggle breakpoint (F9)">
+                    <StackPanel Orientation="Horizontal" Spacing="5"><Image Source="/icons/Material-PauseCircle.png"/><TextBlock Text="Breakpoint" VerticalAlignment="Center"/></StackPanel>
+                </Button>
+                <Rectangle Classes="separator"/>
+
+                <!-- Default device -->
+                <TextBlock Text="Default device:" VerticalAlignment="Center" Margin="2,0,6,0"/>
+                <ComboBox x:Name="cmbDefaultDevice" Width="170" SelectionChanged="cmbDefaultDevice_SelectionChanged" MinHeight="28" Padding="8,2"
+                          ToolTip.Tip="The device a script receives as Device.Default"/>
+                <Rectangle Classes="separator"/>
+
+                <!-- Build -->
+                <TextBlock Text="Mode:" VerticalAlignment="Center" Margin="2,0,6,0"/>
+                <ComboBox x:Name="cmbMode" Width="130" SelectionChanged="cmbMode_SelectionChanged" MinHeight="28" Padding="8,2"
+                          ToolTip.Tip="Execution mode: Debug, Release or Performance">
+                    <ComboBoxItem Content="Debug" Tag="Debug"/>
+                    <ComboBoxItem Content="Release" Tag="Release"/>
+                    <ComboBoxItem Content="Performance" Tag="Performance"/>
+                </ComboBox>
+                <Button Click="Build_Click" ToolTip.Tip="Build standalone (self-contained file)..."><TextBlock Text="Build" VerticalAlignment="Center"/></Button>
+                <Button Click="BuildSettings_Click" ToolTip.Tip="Build settings (name, version, icon, ...)"><PathIcon Data="{StaticResource IconSettings}"/></Button>
+            </WrapPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" BorderBrush="#3C3544" BorderThickness="0,1,0,0" Padding="10,3">
+            <DockPanel>
+                <TextBlock x:Name="CaretText" DockPanel.Dock="Right" Text="Line 1" Margin="16,0,0,0"/>
+                <TextBlock x:Name="StatusText" Text="Ready." TextTrimming="CharacterEllipsis"/>
+            </DockPanel>
+        </Border>
+
+        <!-- all areas can be docked (Dock.Avalonia): drag the titles to any side, as a tab of another group, as a floating window or pin them to the edge;
+             the layout is built in SparkFactory and saved when the window closes -->
+        <dock:DockControl x:Name="DockHost" InitializeLayout="False" InitializeFactory="False"/>
+    </DockPanel>
+</Window>

@@ -1,0 +1,25 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="fire.Editor.ThreadsPanelControl">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" BorderBrush="#3C3544" BorderThickness="0,0,0,1" Padding="4,2">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button x:Name="PauseThreadButton" Click="PauseThread_Click" Padding="8,2"
+                        ToolTip.Tip="Pause the active thread at the next statement" Content="Pause active thread"/>
+                <TextBlock x:Name="BreakpointsText" Text="Breakpoints: (none)" VerticalAlignment="Center" Margin="4,0"/>
+            </StackPanel>
+        </Border>
+
+        <DataGrid x:Name="ThreadsList" FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="12" BorderThickness="0"
+                  AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="None"
+                  SelectionChanged="ThreadsList_SelectionChanged">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="" Width="28" Binding="{Binding Marker}"/>
+                <DataGridTextColumn Header="Name" Width="140" Binding="{Binding Name}"/>
+                <DataGridTextColumn Header="Status" Width="200" Binding="{Binding Status}"/>
+                <DataGridTextColumn Header="Line" Width="60" Binding="{Binding Line}"/>
+                <DataGridTextColumn Header="Call depth" Width="90" Binding="{Binding Depth}"/>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</UserControl>

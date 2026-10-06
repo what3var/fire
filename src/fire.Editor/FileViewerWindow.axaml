@@ -1,0 +1,23 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ae="using:AvaloniaEdit"
+        x:Class="fire.Editor.FileViewerWindow"
+        Title="View File" Height="700" Width="900"
+        Background="#1B181E">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#1B181E" BorderBrush="#3C3544" BorderThickness="0,0,0,1">
+            <StackPanel Orientation="Horizontal" Margin="8,5">
+                <TextBlock x:Name="PathText" FontWeight="Bold" Foreground="#F4F0F2" VerticalAlignment="Center"/>
+                <TextBlock Text="  (read-only - Ctrl+click jumps to a definition or include)"
+                           Foreground="#A094A8" VerticalAlignment="Center" FontSize="11"/>
+            </StackPanel>
+        </Border>
+
+        <ae:TextEditor x:Name="Viewer"
+                       FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="14"
+                       IsReadOnly="True"
+                       ShowLineNumbers="True"
+                       VerticalScrollBarVisibility="Auto"
+                       HorizontalScrollBarVisibility="Auto"/>
+    </DockPanel>
+</Window>

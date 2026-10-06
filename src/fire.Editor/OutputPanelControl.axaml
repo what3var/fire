@@ -1,0 +1,8 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ae="using:AvaloniaEdit"
+             x:Class="fire.Editor.OutputPanelControl">
+    <ae:TextEditor x:Name="Editor" IsReadOnly="True" ShowLineNumbers="False" WordWrap="True" Background="#242028" Foreground="#F4F0F2"
+                   FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="13"
+                   HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" Padding="6,2"/>
+</UserControl>

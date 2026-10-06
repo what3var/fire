@@ -2,29 +2,28 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Documents;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Documents;
+using Avalonia.Input;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
 
 namespace fire.Editor
 {
-    /// <summary>Baut aus dem Markdown-Modell (siehe MarkdownParser) ein
-    /// FlowDocument für die Vorschau. Reines Darstellen: Links werden an
-    /// `LinkClicked` gemeldet, der Host entscheidet, was damit passiert
-    /// (Browser, andere Datei im Editor öffnen).</summary>
+    /// <summary>Baut aus dem Markdown-Modell (siehe MarkdownParser) die Vorschau: einen Baum aus Avalonia-Controls (Überschriften, Absätze und Code als markierbare Textblöcke, Listen, Tabellen,
+    /// Bilder). Reines Darstellen: Links werden an `LinkClicked` gemeldet, der Host entscheidet, was damit passiert (Browser, andere Datei im Editor öffnen).</summary>
     internal sealed class MarkdownRenderer
     {
-        private static readonly FontFamily CodeFont = new("Consolas");
+        private static readonly FontFamily CodeFont = new("Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace");
         // Dark page: the colors come from EditorTheme (page = editor background).
-        private static readonly Brush CodeBackground = EditorTheme.CodeBlockBackground;
-        private static readonly Brush InlineCodeBackground = EditorTheme.CodeBlockBackground;
-        private static readonly Brush LinkBrush = new SolidColorBrush(EditorTheme.AccentTextColor).AsFrozen();
-        private static readonly Brush QuoteBar = EditorTheme.Border;
-        private static readonly Brush QuoteText = EditorTheme.TextDim;
-        private static readonly Brush TableBorder = EditorTheme.Border;
-        private static readonly Brush TableHeader = EditorTheme.CodeBlockBackground;
+        private static readonly IBrush CodeBackground = EditorTheme.CodeBlockBackground;
+        private static readonly IBrush LinkBrush = EditorTheme.Solid(EditorTheme.AccentTextColor);
+        private static readonly IBrush QuoteBar = EditorTheme.Border;
+        private static readonly IBrush QuoteText = EditorTheme.TextDim;
+        private static readonly IBrush TableBorder = EditorTheme.Border;
+        private static readonly IBrush TableHeader = EditorTheme.CodeBlockBackground;
         private readonly HashSet<string> _usedAnchors = new();
         private static readonly double[] HeadingSizes = { 30, 24, 20, 17, 15, 14 };
 
@@ -32,59 +31,67 @@ namespace fire.Editor
         public string? BaseDirectory { get; set; }
 
         /// <summary>Wird aufgerufen, wenn ein Link angeklickt wurde (Ziel wie im Dokument geschrieben).</summary>
-        public Action<string>? LinkClicked { get; set; }
+        public Action<string, KeyModifiers>? LinkClicked { get; set; }
 
         /// <summary>Heading blocks of the last rendered document by anchor (see <see cref="MdAnchors"/>), for links like `file.md#section`.</summary>
-        public Dictionary<string, Block> Anchors { get; } = new();
+        public Dictionary<string, Control> Anchors { get; } = new();
 
-        public FlowDocument Render(string markdown)
+        public Control Render(string markdown)
         {
             Anchors.Clear();
             _usedAnchors.Clear();
-            var doc = new FlowDocument
-            {
-                FontFamily = new FontFamily("Segoe UI"),
-                FontSize = 14,
-                PagePadding = new Thickness(18, 12, 18, 12),
-                // Bei ColumnWidth = Auto bricht FlowDocument in mehrere Spalten um - hier soll es immer eine sein.
-                ColumnWidth = double.PositiveInfinity,
-                TextAlignment = TextAlignment.Left,
-                Background = Brushes.Transparent,
-                Foreground = EditorTheme.Text,
-            };
+            var page = new StackPanel { Margin = new Thickness(18, 12, 18, 12) };
             foreach (var block in MarkdownParser.Parse(markdown))
-                AddBlock(doc.Blocks, block, 0);
-            return doc;
+                AddBlock(page.Children, block, 0, EditorTheme.Text);
+            return page;
         }
 
-        private void AddBlock(BlockCollection target, MdBlock block, int listDepth)
+        /// <summary>A text block that can be selected and that reports clicks on the links in it.</summary>
+        private TextBlock NewText(IBrush foreground, out List<(int Start, int End, string Url)> links)
+        {
+            var text = new SelectableTextBlock { TextWrapping = TextWrapping.Wrap, Foreground = foreground, FontSize = 14 };
+            var found = links = new List<(int, int, string)>();
+            string? UrlAt(PointerEventArgs e)
+            {
+                if (found.Count == 0 || text.TextLayout == null) return null;
+                int index = text.TextLayout.HitTestPoint(e.GetPosition(text)).TextPosition;
+                foreach (var (start, end, url) in found) if (index >= start && index < end) return url;
+                return null;
+            }
+            text.PointerMoved += (_, e) => text.Cursor = UrlAt(e) != null ? new Cursor(StandardCursorType.Hand) : null;
+            text.PointerPressed += (_, e) =>
+            {
+                if (!e.GetCurrentPoint(text).Properties.IsLeftButtonPressed) return;
+                if (UrlAt(e) is { } url) { LinkClicked?.Invoke(url, e.KeyModifiers); e.Handled = true; }
+            };
+            return text;
+        }
+
+        private void AddBlock(Avalonia.Controls.Controls target, MdBlock block, int listDepth, IBrush foreground)
         {
             switch (block)
             {
                 case MdHeading h:
                 {
-                    var p = new Paragraph
-                    {
-                        FontSize = HeadingSizes[Math.Clamp(h.Level, 1, 6) - 1],
-                        FontWeight = h.Level >= 5 ? FontWeights.SemiBold : FontWeights.Bold,
-                        Margin = new Thickness(0, h.Level <= 2 ? 14 : 10, 0, 6),
-                    };
+                    var text = NewText(foreground, out var links);
+                    text.FontSize = HeadingSizes[Math.Clamp(h.Level, 1, 6) - 1];
+                    text.FontWeight = h.Level >= 5 ? FontWeight.SemiBold : FontWeight.Bold;
+                    AddInlines(text.Inlines!, h.Content, links);
+                    Control element = text;
+                    var margin = new Thickness(0, h.Level <= 2 ? 14 : 10, 0, 6);
                     if (h.Level <= 2)
-                    {
-                        p.BorderBrush = TableBorder;
-                        p.BorderThickness = new Thickness(0, 0, 0, 1);
-                        p.Padding = new Thickness(0, 0, 0, 3);
-                    }
-                    AddInlines(p.Inlines, h.Content);
-                    Anchors[MdAnchors.Unique(MarkdownParser.PlainText(h.Content), _usedAnchors)] = p;
-                    target.Add(p);
+                        element = new Border { BorderBrush = TableBorder, BorderThickness = new Thickness(0, 0, 0, 1), Padding = new Thickness(0, 0, 0, 3), Child = text };
+                    element.Margin = margin;
+                    Anchors[MdAnchors.Unique(MarkdownParser.PlainText(h.Content), _usedAnchors)] = element;
+                    target.Add(element);
                     break;
                 }
                 case MdParagraph para:
                 {
-                    var p = new Paragraph { Margin = listDepth > 0 ? new Thickness(0, 1, 0, 1) : new Thickness(0, 4, 0, 8) };
-                    AddInlines(p.Inlines, para.Content);
-                    target.Add(p);
+                    var text = NewText(foreground, out var links);
+                    text.Margin = listDepth > 0 ? new Thickness(0, 1, 0, 1) : new Thickness(0, 4, 0, 8);
+                    AddInlines(text.Inlines!, para.Content, links);
+                    target.Add(text);
                     break;
                 }
                 case MdCodeBlock code:
@@ -92,196 +99,198 @@ namespace fire.Editor
                     break;
                 case MdQuote quote:
                 {
-                    var section = new Section
+                    var inner = new StackPanel();
+                    foreach (var b in quote.Blocks) AddBlock(inner.Children, b, listDepth, QuoteText);
+                    target.Add(new Border
                     {
                         BorderBrush = QuoteBar,
                         BorderThickness = new Thickness(3, 0, 0, 0),
                         Padding = new Thickness(10, 0, 0, 0),
                         Margin = new Thickness(0, 4, 0, 8),
-                        Foreground = QuoteText,
-                    };
-                    foreach (var inner in quote.Blocks) AddBlock(section.Blocks, inner, listDepth);
-                    target.Add(section);
+                        Child = inner,
+                    });
                     break;
                 }
                 case MdRule:
-                    target.Add(new BlockUIContainer(new Border
-                    {
-                        Height = 1,
-                        Background = TableBorder,
-                        Margin = new Thickness(0, 8, 0, 8),
-                    }));
+                    target.Add(new Border { Height = 1, Background = TableBorder, Margin = new Thickness(0, 8, 0, 8) });
                     break;
                 case MdList list:
                 {
                     bool allTasks = list.Items.Count > 0 && list.Items.All(i => i.Checked != null);
-                    var fl = new List
-                    {
-                        MarkerStyle = allTasks ? TextMarkerStyle.None : list.Ordered ? TextMarkerStyle.Decimal : listDepth % 2 == 0 ? TextMarkerStyle.Disc : TextMarkerStyle.Circle,
-                        StartIndex = list.Ordered ? list.Start : 1,
-                        Margin = new Thickness(0, 2, 0, 6),
-                        Padding = new Thickness(allTasks ? 6 : 24, 0, 0, 0),
-                    };
+                    var items = new StackPanel { Margin = new Thickness(allTasks ? 6 : 12, 2, 0, 6) };
+                    int number = list.Ordered ? list.Start : 1;
                     foreach (var item in list.Items)
                     {
-                        var li = new ListItem();
-                        for (int k = 0; k < item.Blocks.Count; k++)
-                        {
-                            AddBlock(li.Blocks, item.Blocks[k], listDepth + 1);
-                            if (k == 0 && item.Checked != null && li.Blocks.FirstBlock is Paragraph first)
-                            {
-                                var box = new Run(item.Checked == true ? "☑ " : "☐ ") { FontFamily = new FontFamily("Segoe UI Symbol") };
-                                if (first.Inlines.FirstInline is { } firstInline) first.Inlines.InsertBefore(firstInline, box);
-                                else first.Inlines.Add(box);
-                            }
-                        }
-                        fl.ListItems.Add(li);
+                        string marker = item.Checked != null ? (item.Checked == true ? "☑" : "☐")
+                            : list.Ordered ? number + "." : listDepth % 2 == 0 ? "•" : "◦";
+                        number++;
+                        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+                        row.Children.Add(new TextBlock { Text = marker, Foreground = foreground, FontSize = 14, Margin = new Thickness(0, 1, 8, 1), MinWidth = 16, VerticalAlignment = VerticalAlignment.Top });
+                        var content = new StackPanel();
+                        foreach (var b in item.Blocks) AddBlock(content.Children, b, listDepth + 1, foreground);
+                        Grid.SetColumn(content, 1);
+                        row.Children.Add(content);
+                        items.Children.Add(row);
                     }
-                    target.Add(fl);
+                    target.Add(items);
                     break;
                 }
                 case MdTable table:
-                    target.Add(RenderTable(table));
+                    target.Add(RenderTable(table, foreground));
                     break;
             }
         }
 
-        private Block RenderCodeBlock(MdCodeBlock code)
+        private Control RenderCodeBlock(MdCodeBlock code)
         {
-            var p = new Paragraph
-            {
-                FontFamily = CodeFont,
-                FontSize = 13,
-                Background = CodeBackground,
-                Foreground = EditorTheme.Text,
-                Padding = new Thickness(8, 6, 8, 6),
-                Margin = new Thickness(0, 4, 0, 8),
-                LineHeight = double.NaN,
-            };
+            var text = new SelectableTextBlock { FontFamily = CodeFont, FontSize = 13, Foreground = EditorTheme.Text, TextWrapping = TextWrapping.NoWrap };
 
             // Fire-Quelltext mit demselben Lexer einfärben wie im Editor.
             bool isFire = code.Language != null &&
                 (code.Language.Equals("fire", StringComparison.OrdinalIgnoreCase) || code.Language.Equals("firescript", StringComparison.OrdinalIgnoreCase));
+            var inlines = text.Inlines!;
             if (isFire)
             {
                 int pos = 0;
                 foreach (var span in SyntaxHighlighter.Highlight(code.Code))
                 {
-                    if (span.Start > pos) p.Inlines.Add(new Run(code.Code.Substring(pos, span.Start - pos)));
-                    p.Inlines.Add(new Run(code.Code.Substring(span.Start, span.Length)) { Foreground = HighlightingColorizer.BrushFor(span.Category) });
+                    if (span.Start > pos) inlines.Add(new Run(code.Code.Substring(pos, span.Start - pos)));
+                    inlines.Add(new Run(code.Code.Substring(span.Start, span.Length)) { Foreground = HighlightingColorizer.BrushFor(span.Category) });
                     pos = span.Start + span.Length;
                 }
-                if (pos < code.Code.Length) p.Inlines.Add(new Run(code.Code.Substring(pos)));
+                if (pos < code.Code.Length) inlines.Add(new Run(code.Code.Substring(pos)));
             }
             else
             {
-                p.Inlines.Add(new Run(code.Code));
+                inlines.Add(new Run(code.Code));
             }
-            return p;
+            return new Border
+            {
+                Background = CodeBackground,
+                Padding = new Thickness(8, 6, 8, 6),
+                Margin = new Thickness(0, 4, 0, 8),
+                Child = new ScrollViewer { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto, VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled, Content = text },
+            };
         }
 
-        private Block RenderTable(MdTable md)
+        private Control RenderTable(MdTable md, IBrush foreground)
         {
-            var table = new Table { CellSpacing = 0, Margin = new Thickness(0, 4, 0, 8), BorderBrush = TableBorder, BorderThickness = new Thickness(1, 1, 0, 0) };
-            for (int c = 0; c < md.Header.Count; c++) table.Columns.Add(new TableColumn());
-            var group = new TableRowGroup();
-            table.RowGroups.Add(group);
+            var grid = new Grid { Margin = new Thickness(0, 4, 0, 8) };
+            int columns = md.Header.Count;
+            for (int c = 0; c < columns; c++) grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
 
-            TableRow Row(IReadOnlyList<IReadOnlyList<MdInline>> cells, bool header)
+            void Row(IReadOnlyList<IReadOnlyList<MdInline>> cells, bool header, int rowIndex)
             {
-                var row = new TableRow();
-                if (header) row.Background = TableHeader;
-                for (int c = 0; c < cells.Count; c++)
+                grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+                for (int c = 0; c < Math.Min(cells.Count, columns); c++)
                 {
-                    var p = new Paragraph { Margin = new Thickness(0), TextAlignment = md.Aligns[c] switch { MdAlign.Center => TextAlignment.Center, MdAlign.Right => TextAlignment.Right, _ => TextAlignment.Left } };
-                    if (header) p.FontWeight = FontWeights.Bold;
-                    AddInlines(p.Inlines, cells[c]);
-                    row.Cells.Add(new TableCell(p) { Padding = new Thickness(6, 3, 6, 3), BorderBrush = TableBorder, BorderThickness = new Thickness(0, 0, 1, 1) });
+                    var text = NewText(foreground, out var links);
+                    text.TextAlignment = md.Aligns[c] switch { MdAlign.Center => TextAlignment.Center, MdAlign.Right => TextAlignment.Right, _ => TextAlignment.Left };
+                    if (header) text.FontWeight = FontWeight.Bold;
+                    AddInlines(text.Inlines!, cells[c], links);
+                    var cell = new Border
+                    {
+                        Padding = new Thickness(6, 3, 6, 3),
+                        BorderBrush = TableBorder,
+                        BorderThickness = new Thickness(1, rowIndex == 0 ? 1 : 0, c == columns - 1 ? 1 : 0, 1),
+                        Background = header ? TableHeader : null,
+                        Child = text,
+                    };
+                    Grid.SetRow(cell, rowIndex);
+                    Grid.SetColumn(cell, c);
+                    grid.Children.Add(cell);
                 }
-                return row;
             }
 
-            group.Rows.Add(Row(md.Header, true));
-            foreach (var r in md.Rows) group.Rows.Add(Row(r, false));
-            return table;
+            Row(md.Header, true, 0);
+            for (int r = 0; r < md.Rows.Count; r++) Row(md.Rows[r], false, r + 1);
+            return grid;
         }
 
-        private void AddInlines(InlineCollection target, IEnumerable<MdInline> inlines)
+        /// <summary>Adds the inlines; `links` collects the character range of every link in the text block (to find the one that was clicked).</summary>
+        private void AddInlines(InlineCollection target, IEnumerable<MdInline> inlines, List<(int Start, int End, string Url)> links)
         {
-            foreach (var inline in inlines)
+            int position = 0;
+            foreach (var inline in inlines) position = AddInline(target, inline, links, position);
+        }
+
+        private int AddInline(InlineCollection target, MdInline inline, List<(int Start, int End, string Url)> links, int position)
+        {
+            switch (inline)
             {
-                switch (inline)
+                case MdText t:
+                    target.Add(new Run(t.Text));
+                    return position + t.Text.Length;
+                case MdBold b:
                 {
-                    case MdText t:
-                        target.Add(new Run(t.Text));
-                        break;
-                    case MdBold b:
-                    {
-                        var span = new Bold();
-                        AddInlines(span.Inlines, b.Content);
-                        target.Add(span);
-                        break;
-                    }
-                    case MdItalic i:
-                    {
-                        var span = new Italic();
-                        AddInlines(span.Inlines, i.Content);
-                        target.Add(span);
-                        break;
-                    }
-                    case MdStrike s:
-                    {
-                        var span = new Span { TextDecorations = TextDecorations.Strikethrough };
-                        AddInlines(span.Inlines, s.Content);
-                        target.Add(span);
-                        break;
-                    }
-                    case MdCode c:
-                        target.Add(new Run(c.Code) { FontFamily = CodeFont, FontSize = 13, Background = InlineCodeBackground, Foreground = EditorTheme.Text });
-                        break;
-                    case MdLink l:
-                    {
-                        var link = new Hyperlink { Foreground = LinkBrush, ToolTip = l.Url };
-                        AddInlines(link.Inlines, l.Content);
-                        string url = l.Url;
-                        link.Click += (_, _) => LinkClicked?.Invoke(url);
-                        target.Add(link);
-                        break;
-                    }
-                    case MdImage img:
-                        target.Add(RenderImage(img));
-                        break;
-                    case MdLineBreak:
-                        target.Add(new LineBreak());
-                        break;
+                    var span = new Bold();
+                    position = AddChildren(span.Inlines, b.Content, links, position);
+                    target.Add(span);
+                    return position;
                 }
+                case MdItalic i:
+                {
+                    var span = new Italic();
+                    position = AddChildren(span.Inlines, i.Content, links, position);
+                    target.Add(span);
+                    return position;
+                }
+                case MdStrike s:
+                {
+                    var span = new Span { TextDecorations = TextDecorations.Strikethrough };
+                    position = AddChildren(span.Inlines, s.Content, links, position);
+                    target.Add(span);
+                    return position;
+                }
+                case MdCode c:
+                    target.Add(new Run(c.Code) { FontFamily = CodeFont, FontSize = 13, Background = CodeBackground, Foreground = EditorTheme.Text });
+                    return position + c.Code.Length;
+                case MdLink l:
+                {
+                    var span = new Span { Foreground = LinkBrush, TextDecorations = TextDecorations.Underline };
+                    int start = position;
+                    position = AddChildren(span.Inlines, l.Content, links, position);
+                    links.Add((start, position, l.Url));
+                    target.Add(span);
+                    return position;
+                }
+                case MdImage img:
+                    target.Add(RenderImage(img));
+                    return position + 1;
+                case MdLineBreak:
+                    target.Add(new LineBreak());
+                    return position + 1;
             }
+            return position;
+        }
+
+        private int AddChildren(InlineCollection target, IEnumerable<MdInline> children, List<(int Start, int End, string Url)> links, int position)
+        {
+            foreach (var child in children) position = AddInline(target, child, links, position);
+            return position;
         }
 
         private Inline RenderImage(MdImage img)
         {
-            // Nur lokale Dateien (relativ zum Dokument): ein Markdown-Dokument soll beim bloßen Ansehen
-            // nicht selbständig Netzwerkzugriffe auslösen.
+            // Nur lokale Dateien (relativ zum Dokument): ein Markdown-Dokument soll beim bloßen Ansehen nicht selbständig Netzwerkzugriffe auslösen.
             try
             {
                 string path = img.Url;
                 if (!Path.IsPathRooted(path) && BaseDirectory != null) path = Path.Combine(BaseDirectory, path);
                 if (!img.Url.Contains("://") && File.Exists(path))
                 {
-                    var bmp = new BitmapImage();
-                    bmp.BeginInit();
-                    bmp.CacheOption = BitmapCacheOption.OnLoad; // Datei nicht gesperrt halten
-                    bmp.UriSource = new Uri(Path.GetFullPath(path));
-                    bmp.EndInit();
-                    bmp.Freeze();
-                    return new InlineUIContainer(new Image { Source = bmp, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, MaxWidth = 700, ToolTip = img.Alt });
+                    using var stream = File.OpenRead(Path.GetFullPath(path));   // read completely: the file is not kept locked
+                    var bitmap = new Bitmap(stream);
+                    var image = new Image { Source = bitmap, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, MaxWidth = 700 };
+                    ToolTip.SetTip(image, img.Alt);
+                    return new InlineUIContainer(image);
                 }
             }
             catch (Exception)
             {
                 // beschädigtes Bild o.Ä.: unten als Text anzeigen
             }
-            return new Run($"[Image: {(img.Alt.Length > 0 ? img.Alt : img.Url)}]") { Foreground = QuoteText, FontStyle = FontStyles.Italic };
+            return new Run($"[Image: {(img.Alt.Length > 0 ? img.Alt : img.Url)}]") { Foreground = QuoteText, FontStyle = FontStyle.Italic };
         }
     }
 }

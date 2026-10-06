@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
-using System.Windows;
-using System.Windows.Media;
-using ICSharpCode.AvalonEdit.Document;
-using ICSharpCode.AvalonEdit.Rendering;
+using Avalonia.Media;
+using Avalonia.Media.Immutable;
+using AvaloniaEdit.Document;
+using AvaloniaEdit.Rendering;
 
 namespace fire.Editor
 {
@@ -18,13 +18,13 @@ namespace fire.Editor
     /// berechnet (siehe ComputeFencedLines).</summary>
     internal sealed class MarkdownColorizer : DocumentColorizingTransformer
     {
-        private static readonly Brush HeadingBrush = new SolidColorBrush(Color.FromRgb(0xF2, 0x47, 0x9E)).AsFrozen();
-        private static readonly Brush MarkBrush = new SolidColorBrush(Color.FromRgb(0x8B, 0x7F, 0x93)).AsFrozen();
-        private static readonly Brush CodeBrush = new SolidColorBrush(Color.FromRgb(0xE5, 0x56, 0x6F)).AsFrozen();
-        private static readonly Brush LinkBrush = new SolidColorBrush(Color.FromRgb(0xC0, 0x6A, 0xDE)).AsFrozen();
-        private static readonly Brush QuoteBrush = new SolidColorBrush(Color.FromRgb(0xF9, 0xCB, 0x5C)).AsFrozen();
-        private static readonly Brush ListBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x91, 0x42)).AsFrozen();
-        private static readonly Brush FenceBackground = EditorTheme.CodeBlockBackground;
+        private static readonly IBrush HeadingBrush = new ImmutableSolidColorBrush(Color.FromRgb(0xF2, 0x47, 0x9E));
+        private static readonly IBrush MarkBrush = new ImmutableSolidColorBrush(Color.FromRgb(0x8B, 0x7F, 0x93));
+        private static readonly IBrush CodeBrush = new ImmutableSolidColorBrush(Color.FromRgb(0xE5, 0x56, 0x6F));
+        private static readonly IBrush LinkBrush = new ImmutableSolidColorBrush(Color.FromRgb(0xC0, 0x6A, 0xDE));
+        private static readonly IBrush QuoteBrush = new ImmutableSolidColorBrush(Color.FromRgb(0xF9, 0xCB, 0x5C));
+        private static readonly IBrush ListBrush = new ImmutableSolidColorBrush(Color.FromRgb(0xFF, 0x91, 0x42));
+        private static readonly IBrush FenceBackground = EditorTheme.CodeBlockBackground;
         private static readonly double[] HeadingScale = { 1.6, 1.4, 1.25, 1.15, 1.08, 1.0 };
 
         private static readonly Regex Heading = new(@"^ {0,3}(#{1,6})(\s|$)", RegexOptions.Compiled);
@@ -64,7 +64,7 @@ namespace fire.Editor
                 ChangeLinePart(start, end, el =>
                 {
                     var tf = el.TextRunProperties.Typeface;
-                    el.TextRunProperties.SetTypeface(new Typeface(tf.FontFamily, tf.Style, FontWeights.Bold, tf.Stretch));
+                    el.TextRunProperties.SetTypeface(new Typeface(tf.FontFamily, tf.Style, FontWeight.Bold, tf.Stretch));
                     el.TextRunProperties.SetForegroundBrush(HeadingBrush);
                     el.TextRunProperties.SetFontRenderingEmSize(el.TextRunProperties.FontRenderingEmSize * scale);
                 });
@@ -97,7 +97,7 @@ namespace fire.Editor
                 ChangeLinePart(start + m.Index, start + m.Index + m.Length, el =>
                 {
                     var tf = el.TextRunProperties.Typeface;
-                    el.TextRunProperties.SetTypeface(new Typeface(tf.FontFamily, tf.Style, FontWeights.Bold, tf.Stretch));
+                    el.TextRunProperties.SetTypeface(new Typeface(tf.FontFamily, tf.Style, FontWeight.Bold, tf.Stretch));
                 });
                 Mark(start + m.Index, 2); Mark(start + m.Index + m.Length - 2, 2);
             }
@@ -107,7 +107,7 @@ namespace fire.Editor
                 ChangeLinePart(start + m.Index, start + m.Index + m.Length, el =>
                 {
                     var tf = el.TextRunProperties.Typeface;
-                    el.TextRunProperties.SetTypeface(new Typeface(tf.FontFamily, FontStyles.Italic, tf.Weight, tf.Stretch));
+                    el.TextRunProperties.SetTypeface(new Typeface(tf.FontFamily, FontStyle.Italic, tf.Weight, tf.Stretch));
                 });
                 Mark(start + m.Index, 1); Mark(start + m.Index + m.Length - 1, 1);
             }

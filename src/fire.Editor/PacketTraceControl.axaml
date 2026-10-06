@@ -1,0 +1,42 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="fire.Editor.PacketTraceControl">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" BorderBrush="#3C3544" BorderThickness="0,0,0,1" Padding="4,2">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+                <ToggleButton x:Name="RecordToggle" Classes="tool" IsChecked="True" Click="RecordToggle_Click" ToolTip.Tip="Recording on/off (live traces only)">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#x25CF;" Foreground="#C42B1C" VerticalAlignment="Center"/>
+                        <TextBlock Text="Record" Margin="5,0,2,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </ToggleButton>
+                <Button Classes="tool" Click="Clear_Click" ToolTip.Tip="Remove all packets from the list"><TextBlock Text="Clear"/></Button>
+                <Border Width="1" Background="#3C3544" Margin="4,2"/>
+                <TextBlock Text="Show content as:" VerticalAlignment="Center" Margin="4,0"/>
+                <RadioButton x:Name="HexRadio" GroupName="PacketView" IsChecked="True" Content="Hex (Bytes)" VerticalAlignment="Center"
+                             IsCheckedChanged="ViewMode_Changed" ToolTip.Tip="Every byte in hexadecimal, separated by spaces"/>
+                <RadioButton x:Name="TextRadio" GroupName="PacketView" Content="Text (Unicode)" VerticalAlignment="Center"
+                             IsCheckedChanged="ViewMode_Changed" ToolTip.Tip="The bytes as UTF-8 text; control characters as \r, \n, \xNN"/>
+                <Border Width="1" Background="#3C3544" Margin="4,2"/>
+                <CheckBox x:Name="AutoScrollBox" Content="Autoscroll" IsChecked="True" VerticalAlignment="Center"/>
+                <Border Width="1" Background="#3C3544" Margin="4,2"/>
+                <TextBlock x:Name="InfoText" VerticalAlignment="Center" Margin="4,0" Foreground="#A094A8"/>
+            </StackPanel>
+        </Border>
+
+        <TextBlock x:Name="ErrorText" DockPanel.Dock="Top" IsVisible="False" Margin="8,4" Foreground="#E5566F" TextWrapping="Wrap"/>
+
+        <DataGrid x:Name="PacketList" FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="12" BorderThickness="0"
+                  AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" HeadersVisibility="Column" GridLinesVisibility="None"
+                  SelectionChanged="PacketList_SelectionChanged" LoadingRow="PacketList_LoadingRow">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="#" Width="60" Binding="{Binding Number}"/>
+                <DataGridTextColumn Header="Time" Width="100" Binding="{Binding TimeText}"/>
+                <DataGridTextColumn Header="Direction" Width="120" Binding="{Binding DirectionText}"/>
+                <DataGridTextColumn Header="Device" Width="140" Binding="{Binding DeviceId}"/>
+                <DataGridTextColumn Header="Bytes" Width="60" Binding="{Binding Length}"/>
+                <DataGridTextColumn Header="Content" Width="600" Binding="{Binding Content}"/>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</UserControl>
