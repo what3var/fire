@@ -522,7 +522,8 @@ struct alignas(alignof(Value)) Arr : Owned {
 struct Buf : Owned {
     uint32_t length;
     uint8_t little;    // the byte order the buffer is tagged with (metadata only: the bytes never change by themselves)
-    uint8_t* bytes() { return reinterpret_cast<uint8_t*>(this + 1); }
+    uint8_t* data;     // the bytes: right behind the header - or, in a package library, the memory of the buffer of the VM (see allocBufExternal)
+    uint8_t* bytes() { return data; }
 };
 
 // ---- Handles. A destroyed array or buffer must not be used any more (SPEC 2.5): in the checked modes a Value of an array or
@@ -1222,11 +1223,29 @@ inline Buf* allocBuf(uint32_t length, OwnList* list) {
     b->flags = 0;
     b->length = length;
     b->little = hostLittle() ? 1 : 0;
-    std::memset(b->bytes(), 0, length);
+    b->data = reinterpret_cast<uint8_t*>(b + 1);
+    std::memset(b->data, 0, length);
     slotAcquire(b);
     link(list, b);
     return b;
 }
+
+#ifdef FIRE_LIBRARY
+/// A buffer value over memory of the caller (the virtual machine hands its byte buffers to a package library without copying): the natives read and write the bytes in place.
+/// The memory is not ours: it is neither freed nor moved while the call runs.
+inline Buf* allocBufExternal(uint8_t* data, uint32_t length, OwnList* list) {
+    Buf* b = static_cast<Buf*>(std::malloc(sizeof(Buf)));
+    if (FIRE_UNLIKELY(!b)) allocFailed();
+    b->okind = O_Buffer;
+    b->flags = 0;
+    b->length = length;
+    b->little = hostLittle() ? 1 : 0;
+    b->data = data;
+    slotAcquire(b);
+    link(list, b);
+    return b;
+}
+#endif
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Strings

@@ -4,8 +4,9 @@
  * library (.dll, .so, .dylib) with a generated wrapper around the functions. The wrapper exports the functions below; the virtual machine loads the library and calls
  * them. A package may also bring a prebuilt library (any language) for a platform: it only has to export these functions.
  *
- * Values cross the boundary as plain data - numbers, text, byte buffers and arrays of these are COPIED: a native that changes an array it was given does not change the
- * array of the caller (return the changed array instead). Objects, lambdas and pointers cannot cross. Units are not carried.
+ * Values cross the boundary as plain data. Numbers, text and arrays of these are COPIED: a native that changes an array it was given does not change the array of the caller
+ * (return the changed array instead). Byte buffers are passed BY REFERENCE: the caller keeps them in place for the call (the VM pins them), the native reads and writes the bytes
+ * directly - no copy, so a framebuffer can be handed over at any size; the length is fixed. Objects, lambdas and pointers cannot cross. Units are not carried.
  */
 #ifndef FIRE_PKG_ABI_H
 #define FIRE_PKG_ABI_H
@@ -24,7 +25,7 @@ enum {
     FIRE_CHAR = 4,      /* v.i: the code point */
     FIRE_STRING = 5,    /* v.p: UTF-16 (length UTF-16 code units, not zero terminated) */
     FIRE_ARRAY = 6,     /* v.p: `length` fire_val */
-    FIRE_BUFFER = 7     /* v.p: `length` bytes */
+    FIRE_BUFFER = 7     /* v.p: `length` bytes; an argument: the caller's memory (writable); a result: copied */
 };
 
 typedef struct fire_val {

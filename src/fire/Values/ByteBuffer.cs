@@ -32,9 +32,13 @@ namespace fire.Values
         public ByteOrder Order { get; set; }
         public int Length => Bytes.Length;
 
+        /// <summary>Ab dieser Länge liegt ein Puffer auf dem Pinned Object Heap: der GC verschiebt ihn nie, ein Framebuffer behält seine Adresse und Natives
+        /// bekommen ihn ohne Kopie (siehe PackageNativeBinding).</summary>
+        public const int PinnedThreshold = 16 * 1024;
+
         public ByteBuffer(int length, ByteOrder order)
         {
-            Bytes = new byte[length];
+            Bytes = length >= PinnedThreshold ? System.GC.AllocateArray<byte>(length, pinned: true) : new byte[length];
             Order = order;
         }
 

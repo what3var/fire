@@ -136,7 +136,10 @@ Everything is in `native/runtime/fire_rt.hpp` (the runtime that the generated fi
 In the VM your functions run in a shared library, so values are **copied** at the boundary:
 
 * numbers, `bool`, `char`, text, byte buffers and **arrays of these** (also nested) go in and out;
-* an array or buffer you receive is a copy: changing it does not change the caller's array - return the new one;
+* an array you receive is a copy: changing it does not change the caller's array - return the new one;
+* a **byte buffer you receive is the caller's own memory** (no copy): the VM pins it for the call, you read and write the bytes in place (`b->bytes()`), exactly like in a native build, where a buffer
+  never moves either. So a native can fill a read buffer (`Read(handle, buffer, ...)`) or draw into a framebuffer of any size without a copy; the length is fixed. Buffers of 16 KiB and more live on the
+  pinned heap of .NET, so they keep their address for their whole life. A buffer you *return* is copied;
 * objects, lambdas and pointers cannot cross (an error says so); units are not carried;
 * an error inside your function (`fatal`, `indexError`, ...) is reported to the VM with its text (it ends the program there, like an error of a built-in native); `fireError("Class", "text")` is reported
   with the class (ABI result 2: `error` holds the class name, a line feed and the message) and the VM throws that exception, so a script can `catch` it;

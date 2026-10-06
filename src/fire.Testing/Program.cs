@@ -15967,10 +15967,11 @@ else
                     + "inline Value ab_upper(Value s, OwnList* list) { const Str* t = strOf(s); Str* r = allocStr(t->length, list); for (uint32_t i = 0; i < t->length; i++) strChars(r)[i] = t->data[i] >= 'a' && t->data[i] <= 'z' ? (char16_t)(t->data[i] - 32) : t->data[i]; return StrV(r); }\n"
                     + "inline Value ab_sum(Value arr) { Arr* a = arrOf(arr); double t = 0; for (uint32_t i = 0; i < a->length; i++) t += (double)toR(a->items()[i]); return Float((Real)t); }\n"
                     + "inline Value ab_bytes(Value buf, OwnList* list) { Buf* b = bufOf(buf); Buf* r = allocBuf(b->length, list); for (uint32_t i = 0; i < b->length; i++) r->bytes()[i] = (uint8_t)(b->bytes()[i] + 1); return BufV(r); }\n"
+                    + "inline Value ab_fill(Value buf, Value v) { Buf* b = bufOf(buf); for (uint32_t i = 0; i < b->length; i++) b->bytes()[i] = (uint8_t)v.i; return Int(b->length); }\n"
                     + "inline Value ab_fail(Value n) { return indexError(\"Array index\", n.i, 3); }\n}\n";
-                string abiFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkabi", "1.0.0", "pkabi", "class PkAbi { static Upper(s) { return __ab_upper(s) }\n static Sum(a) { return __ab_sum(a) }\n static Bytes(b) { return __ab_bytes(b) }\n static Fail(n) { return __ab_fail(n) } }", abiCpp, m =>
+                string abiFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkabi", "1.0.0", "pkabi", "class PkAbi { static Upper(s) { return __ab_upper(s) }\n static Sum(a) { return __ab_sum(a) }\n static Bytes(b) { return __ab_bytes(b) }\n static Fill(b, v) { return __ab_fill(b, v) }\n static Fail(n) { return __ab_fail(n) } }", abiCpp, m =>
                 {
-                    foreach (var (n, c, argc, list) in new[] { ("__ab_upper", "ab_upper", 1, true), ("__ab_sum", "ab_sum", 1, false), ("__ab_bytes", "ab_bytes", 1, true), ("__ab_fail", "ab_fail", 1, false) })
+                    foreach (var (n, c, argc, list) in new[] { ("__ab_upper", "ab_upper", 1, true), ("__ab_sum", "ab_sum", 1, false), ("__ab_bytes", "ab_bytes", 1, true), ("__ab_fill", "ab_fill", 2, false), ("__ab_fail", "ab_fail", 1, false) })
                         m.Imports[0].Native!.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = n, Arguments = argc, Cpp = c, NeedsList = list, ReturnsReference = list });
                 }), Path.Combine(pkgDir, "out")).PackagePath;
                 fire.Package.Manager.PackageStore.Default.Install(abiFpk);
@@ -15981,6 +15982,9 @@ else
                 try { vmOutput("#import \"pkabi\"\nPkAbi.Fail(7)"); abiFail = ""; } catch (Exception ex) { abiFail = ex.Message; }
                 CheckNat("Paket: Zahlen, Text (UTF-16), Arrays und Byte-Puffer gehen ueber die C-ABI hin und zurueck",
                     abiVm == "HELLO W\u00f6RLD\n6.5\n2 3 0 255\n", abiVm);
+                string fillVm;
+                try { fillVm = vmOutput("#import \"pkabi\"\nvar big = new byte[1000000]\nprint(PkAbi.Fill(big, 7))\nprint(big[0] + \" \" + big[500000] + \" \" + big[999999])\nvar small = new byte[4]\nPkAbi.Fill(small, 9)\nprint(small[3])"); } catch (Exception ex) { fillVm = ex.Message; }
+                CheckNat("Paket: ein Byte-Puffer geht ohne Kopie an die Native (in place beschrieben, auch ein grosser wie ein Framebuffer)", fillVm == "1000000\n7 7 7\n9\n", fillVm);
                 CheckNat("Paket: ein Fehler der Native (hier IndexOutOfBounds) meldet die VM mit seinem Text", abiFail.Contains("Array index 7 out of range"), abiFail);
 
                 // per platform: sources of the target are added; the VM uses those of this machine

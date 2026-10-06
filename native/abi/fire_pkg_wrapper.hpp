@@ -64,8 +64,8 @@ inline Value toRt(const fire_val& in, OwnList* list) {
             return ArrV(a);
         }
         case FIRE_BUFFER: {
-            Buf* b = allocBuf((uint32_t)in.length, list);
-            if (in.length > 0) std::memcpy(b->bytes(), in.v.p, (size_t)in.length);
+            // by reference: the native reads and writes the bytes of the caller in place (the VM pinned them for the call)
+            Buf* b = allocBufExternal(const_cast<uint8_t*>(static_cast<const uint8_t*>(in.v.p)), (uint32_t)in.length, list);
             return BufV(b);
         }
     }

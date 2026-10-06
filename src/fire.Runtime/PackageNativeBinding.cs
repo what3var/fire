@@ -96,11 +96,12 @@ namespace fire.Runtime
                 throw new InvalidOperationException($"The native function '{name}' takes {fn.Arity} argument(s), called with {args.Length}.");
 
             var allocs = new List<IntPtr>();
+            var pins = new List<GCHandle>();
             IntPtr argBlock = Marshal.AllocHGlobal(Math.Max(1, args.Length) * ValSize), result = Marshal.AllocHGlobal(ValSize), error = Marshal.AllocHGlobal(512);
             try
             {
                 Marshal.WriteByte(error, 0);
-                for (int i = 0; i < args.Length; i++) ToNative(args[i], argBlock + i * ValSize, allocs, name);
+                for (int i = 0; i < args.Length; i++) ToNative(args[i], argBlock + i * ValSize, allocs, pins, name);
                 int rc = lib.Call(fn.Index, argBlock, args.Length, result, error, 512);
                 if (rc == 2)
                 {
@@ -117,13 +118,14 @@ namespace fire.Runtime
             finally
             {
                 foreach (var p in allocs) Marshal.FreeHGlobal(p);
+                foreach (var pin in pins) pin.Free();
                 Marshal.FreeHGlobal(argBlock);
                 Marshal.FreeHGlobal(result);
                 Marshal.FreeHGlobal(error);
             }
         }
 
-        private static void ToNative(Value v, IntPtr dest, List<IntPtr> allocs, string function)
+        private static void ToNative(Value v, IntPtr dest, List<IntPtr> allocs, List<GCHandle> pins, string function)
         {
             var fv = new FireVal();
             switch (v.Kind)
@@ -146,17 +148,17 @@ namespace fire.Runtime
                     var arr = v.AsArray();
                     IntPtr items = Marshal.AllocHGlobal(Math.Max(1, arr.Length) * ValSize);
                     allocs.Add(items);
-                    for (int i = 0; i < arr.Length; i++) ToNative(arr.Items[i], items + i * ValSize, allocs, function);
+                    for (int i = 0; i < arr.Length; i++) ToNative(arr.Items[i], items + i * ValSize, allocs, pins, function);
                     fv.Kind = KindArray; fv.Length = arr.Length; fv.Bits = items.ToInt64();
                     break;
                 }
                 case ValueKind.Buffer:
                 {
+                    // by reference: pinned for the call, the native reads and writes the bytes in place
                     var buf = v.AsBuffer();
-                    IntPtr p = Marshal.AllocHGlobal(Math.Max(1, buf.Length));
-                    allocs.Add(p);
-                    if (buf.Length > 0) Marshal.Copy(buf.Bytes, 0, p, buf.Length);
-                    fv.Kind = KindBuffer; fv.Length = buf.Length; fv.Bits = p.ToInt64();
+                    var pin = GCHandle.Alloc(buf.Bytes, GCHandleType.Pinned);
+                    pins.Add(pin);
+                    fv.Kind = KindBuffer; fv.Length = buf.Length; fv.Bits = pin.AddrOfPinnedObject().ToInt64();
                     break;
                 }
                 default:
