@@ -44,6 +44,21 @@ while (ui.Tick()) {                      // zeichnen, Fenster-Zyklus, Ereignisse
   Zeichen (Texteingabe-Ereignisse), Pfeile, Pos1/Ende, Rücktaste/Entf, Klick setzt die Einfügemarke, der sichtbare Ausschnitt wandert mit, `maxLength`, Enter meldet `entered`.
 - **Zeichnen:** flach, mit der eingebauten 8x14-Schrift (`root.cw`/`root.ch` sind Breite und Höhe eines Zeichens); Gezeichnet wird mit Pinseln und Stiften (`new SolidBrush(UI.Color.Rgb(r, g, b))`, `new Pen(farbe, breite)`; `undefined` = Vorgabe des Themes), also auch mit halbdurchsichtigen Farben, solange `root.renderer.AlphaBlending` an ist. `UI.Color.Rgb(r, g, b)` baut die rohen Farbwerte, `UI.Keys` nennt die Tastencodes.
 
+## Layout
+
+Wie in WPF läuft das Layout in zwei Durchgängen je Zeichnen: `Measure` (was möchte das Element, bei begrenztem oder unbegrenztem Platz) und `Arrange` (Position und Größe im
+Container). Ganze Pixel, `-1` heißt "automatisch/unbegrenzt".
+
+- **Gemeinsame Felder** jedes `UI.Element`: `width`/`height` (`-1` = automatisch), `minWidth`/`minHeight`, `maxWidth`/`maxHeight`, `margin` (`new UI.Thickness(a)` / `(waagerecht, senkrecht)` /
+  `(links, oben, rechts, unten)`), `halign` (`UI.HAlign.Stretch/Left/Center/Right`), `valign` (`UI.VAlign....`). Nach dem Layout liefern `actualWidth`/`actualHeight` die Größe.
+  Abweichung von WPF: ein `Stretch`-Element mit ausdrücklicher Breite/Höhe wird links bzw. oben ausgerichtet.
+- **`Panel`** / **`Canvas`**: absolute Positionen (`x`, `y`) wie bisher.
+- **`StackPanel`** (Alias `Stack`): `horizontal`, `spacing`, `padding`; Kinder quer gestreckt, unsichtbare zählen nicht.
+- **`DockPanel`**: Kind-Feld `dock` (`UI.Dock.Left/Top/Right/Bottom`) in Reihenfolge; das letzte Kind füllt den Rest.
+- **`WrapPanel`**: bricht in die nächste Zeile bzw. Spalte um.
+- **`Grid`**: `SetRows("24, *, auto")`, `SetColumns("60, 2*, auto")` (Pixel, Stern mit Gewicht, auto); Kinder mit `AddAt(kind, zeile, spalte, zeilen, spalten)` oder den Feldern `gridRow`, `gridColumn`, `gridRowSpan`, `gridColumnSpan`.
+- **`Border`**: ein Kind mit Rand, Innenabstand und Hintergrund.
+
 ## Oberfläche im Markup
 
 Die Oberfläche lässt sich auch in einer Markup-Datei (`.fxml`, XML wie XAML) entwerfen; daraus entsteht eine Basisklasse, von der der eigene Code erbt - mit Handlern, benannten Elementen und Datenbindung
@@ -51,7 +66,7 @@ Die Oberfläche lässt sich auch in einer Markup-Datei (`.fxml`, XML wie XAML) e
 
 ## Grenzen
 
-- Nur absolute Positionierung und das einfache `Stack`-Layout; keine Scroll-Container, kein Clipping der Kinder am Container, keine Mehrzeilen-Textfelder, keine Auswahllisten.
+- Keine Scroll-Container, kein Clipping der Kinder am Container, keine Mehrzeilen-Textfelder, keine Auswahllisten (folgt).
 - Text ist dicktengleich (eine Schrift, eine Größe).
 - Die Elemente zeichnen sich in den Framebuffer des Roots; mehrere Roots auf demselben Framebuffer übermalen einander.
 - Das Verhalten der Fenster-Ereignisse mit echtem SDL (Mausposition bei skaliertem Fenster, Texteingabe) ist nur aus dem Code begründet, nicht unter SDL getestet; die Bibliothek selbst ist headless

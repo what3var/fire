@@ -115,5 +115,5 @@ mistakes of the markup are listed under the picture and underlined in the text. 
 
 ## What it is not
 
-There is no resource system besides converters, no styles or templates, no layout other than `Panel` (positions) and `Stack` (one row or column), and the properties are the fields of the
+There is no resource system besides converters, no styles or templates, no markup for the layout panels of the library yet (`Grid`, `DockPanel`, `WrapPanel`, `Border` exist in code, see `docs/UI.md`; the markup knows `Panel` and `Stack`), and the properties are the fields of the
 `ui` elements. Bindings do not look *inside* a collection (`list.Add` is not a write that a probe sees, SPEC 8.14).

@@ -8726,7 +8726,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
 // the drawing of the UI library without events: run by the VM (fake renderer) below, natively (SDL dummy driver) in the native checks
 string uiDrawScript = """
-    var fb = new Framebuffer(320, 200)
+    var fb = new Framebuffer(320, 300)
     var win = new Window(fb, "Test")
     var ui = new UI.Root(fb, win)
     var panel = new UI.Panel(8, 8, 300, 150)
@@ -8740,7 +8740,22 @@ string uiDrawScript = """
     stack.Add(new UI.Button("one", 0, 0, 80, 20))
     stack.Add(new UI.Button("two", 0, 0, 80, 20))
     panel.Add(stack)
+    // the layout panels: a grid with a fixed, a star and an auto column, a border with padding, a wrap panel that spans all columns
+    var lay = new UI.Grid(8, 170, 300, 120)
+    lay.SetColumns("60, *, auto")
+    lay.SetRows("24, *")
+    lay.AddAt(new UI.Button("grid", 0, 0, -1, -1), 0, 0)
+    var bd = new UI.Border()
+    bd.padding = new UI.Thickness(2)
+    bd.SetChild(new UI.Label("border"))
+    lay.AddAt(bd, 0, 1)
+    lay.AddAt(new UI.Label("auto"), 0, 2)
+    var wr = new UI.WrapPanel()
+    for (var i = 0; i < 6; i++) { var wb = new UI.Button("w" + i, 0, 0, 44, 18); wb.margin = new UI.Thickness(2); wr.Add(wb) }
+    lay.AddAt(wr, 1, 0, 1, 3)
+    ui.Add(lay)
     print(ui.Tick())
+    print("layout " + bd.rx + " " + bd.actualWidth + " " + wr.actualWidth + " " + wr.actualHeight + " " + wr.children[5].rx + "," + wr.children[5].ry)
     var bytes = fb.ReadBytes()
     var h = 17
     for (var i = 0; i < bytes.length; i++) { h = (h * 31 + bytes[i]) % 1000000007 }
@@ -9003,8 +9018,99 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Draw()
         var first = ui.content.children[0]
         print(first.text + " " + first.ax)
-        print(ui.content.children[1].width)
+        print(ui.content.children[1].actualWidth)
         """, new[] { "Lokal 10", "32" });
+
+    // ---- Layout: Measure/Arrange wie WPF, in ganzen Pixeln ----
+    CheckUi("Layout: StackPanel (Abstand, Innenabstand, Stretch quer), unsichtbare Kinder zaehlen nicht", uiHead + """
+        var sp = new UI.StackPanel(10, 10, 200, 200, false, 5, 2)
+        var la = new UI.Label("ab")
+        var ba = new UI.Button("x", 0, 0, 100, 20)
+        var bb = new UI.Button("y", 0, 0, 100, 20)
+        sp.Add(la)
+        sp.Add(ba)
+        sp.Add(bb)
+        ui.Add(sp)
+        ui.Draw()
+        print("label " + la.rx + "," + la.ry + " " + la.actualWidth + "x" + la.actualHeight)
+        print("btn1 " + ba.rx + "," + ba.ry + " " + ba.actualWidth + "x" + ba.actualHeight)
+        print("btn2 " + bb.rx + "," + bb.ry + " abs " + bb.ax + "," + bb.ay)
+        ba.visible = false
+        ui.Draw()
+        print("ohne btn1: btn2 " + bb.rx + "," + bb.ry)
+        """, new[] { "label 2,2 196x14", "btn1 2,21 100x20", "btn2 2,46 abs 12,56", "ohne btn1: btn2 2,21" });
+
+    CheckUi("Layout: Ausrichtung, Rand, Mindest- und Hoechstgroesse", uiHead + """
+        var sp2 = new UI.StackPanel(0, 0, 200, 100)
+        var c = new UI.Button("c", 0, 0, 60, 20)
+        c.halign = UI.HAlign.Center
+        var r = new UI.Button("r", 0, 0, 60, 20)
+        r.halign = UI.HAlign.Right
+        r.margin = new UI.Thickness(5)
+        sp2.Add(c)
+        sp2.Add(r)
+        ui.Add(sp2)
+        var sp3 = new UI.StackPanel(0, 100, 300, 100)
+        var m1 = new UI.Button("m", 0, 0, 10, 10)
+        m1.minWidth = 30
+        var m2 = new UI.Button("m", 0, 0, 100, 10)
+        m2.maxWidth = 40
+        sp3.Add(m1)
+        sp3.Add(m2)
+        ui.Add(sp3)
+        ui.Draw()
+        print("mitte " + c.rx + " rechts " + r.rx + "," + r.ry)
+        print("min/max " + m1.actualWidth + " " + m2.actualWidth)
+        var t = new UI.Thickness(3, 4)
+        var u = new UI.Thickness(1, 2, 3, 4)
+        print(t.left + " " + t.top + " " + t.right + " " + t.bottom + " | " + u.left + " " + u.top + " " + u.right + " " + u.bottom)
+        """, new[] { "mitte 70 rechts 135,25", "min/max 30 40", "3 4 3 4 | 1 2 3 4" });
+
+    CheckUi("Layout: Grid (feste, Stern- und Auto-Spuren, Spannen), WrapPanel und Border", uiHead + """
+        var g = new UI.Grid(0, 0, 300, 100)
+        g.SetColumns("50, *, auto")
+        g.SetRows("20, *")
+        var g1 = new UI.Button("a", 0, 0, -1, -1)
+        var g2 = new UI.Border()
+        var g3 = new UI.Label("lbl")
+        g.AddAt(g1, 0, 0)
+        g.AddAt(g2, 1, 1)
+        g.AddAt(g3, 0, 2)
+        ui.Add(g)
+        var w = new UI.WrapPanel(0, 100, 100, 100)
+        for (var i = 0; i < 7; i = i + 1) { var it = new UI.Button("w", 0, 0, 30, 10); w.Add(it) }
+        ui.Add(w)
+        var bo = new UI.Border(150, 100, 100, 60)
+        bo.padding = new UI.Thickness(3)
+        var inner = new UI.Label("in")
+        bo.SetChild(inner)
+        ui.Add(bo)
+        ui.Draw()
+        print("g1 " + g1.rx + "," + g1.ry + " " + g1.actualWidth + "x" + g1.actualHeight)
+        print("g2 " + g2.rx + "," + g2.ry + " " + g2.actualWidth + "x" + g2.actualHeight)
+        print("g3 " + g3.rx + "," + g3.ry + " " + g3.actualWidth + "x" + g3.actualHeight)
+        var last = w.children[6]
+        print("wrap " + last.rx + "," + last.ry)
+        print("border " + inner.rx + "," + inner.ry + " " + inner.actualWidth + "x" + inner.actualHeight)
+        """, new[] { "g1 0,0 50x20", "g2 50,20 226x80", "g3 276,0 24x20", "wrap 0,20", "border 4,4 92x52" });
+
+    CheckUi("Layout: DockPanel (Raender in der Reihenfolge, der Rest fuellt)", uiHead + """
+        var d = new UI.DockPanel(0, 0, 200, 100)
+        var dl = new UI.Button("l", 0, 0, 30, -1)
+        var dt = new UI.Button("t", 0, 0, -1, 20)
+        var dr = new UI.Button("r", 0, 0, 40, -1)
+        var df = new UI.Button("f", 0, 0, -1, -1)
+        d.AddDocked(dl, UI.Dock.Left)
+        d.AddDocked(dt, UI.Dock.Top)
+        d.AddDocked(dr, UI.Dock.Right)
+        d.Add(df)
+        ui.Add(d)
+        ui.Draw()
+        print("l " + dl.rx + "," + dl.ry + " " + dl.actualWidth + "x" + dl.actualHeight)
+        print("t " + dt.rx + "," + dt.ry + " " + dt.actualWidth + "x" + dt.actualHeight)
+        print("r " + dr.rx + "," + dr.ry + " " + dr.actualWidth + "x" + dr.actualHeight)
+        print("f " + df.rx + "," + df.ry + " " + df.actualWidth + "x" + df.actualHeight)
+        """, new[] { "l 0,0 30x100", "t 30,0 170x20", "r 160,20 40x80", "f 30,20 130x80" });
 
     CheckUi("Tick zeichnet, verarbeitet Ereignisse und liefert false, sobald das Fenster geschlossen wurde", uiHead + """
         var b = new UI.Button("OK", 10, 10, 80, 26)
@@ -16036,7 +16142,7 @@ else
                     Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
                     string actual = RunProc(exe, "", workDir, out int runExit);
                     string expected = string.Concat(uiDrawExpected.Select(l => l + "\n"));
-                    CheckNat("UI nativ == VM: Label, Button, CheckBox, TextBox, Stack zeichnen", runExit == 0 && actual == expected && uiDrawExpected.Length == 3, $"  erwartet (VM):\n{expected}\n  erhalten:\n{actual}");
+                    CheckNat("UI nativ == VM: Label, Button, CheckBox, TextBox, Stack zeichnen", runExit == 0 && actual == expected && uiDrawExpected.Length == 4, $"  erwartet (VM):\n{expected}\n  erhalten:\n{actual}");
                 }
             }
         }

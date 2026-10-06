@@ -224,6 +224,63 @@ namespace fire.Standard
                     this.items[index] = value
                 }
 
+                // removes the element at `index` (the ones behind it move up); the element itself is not destroyed
+                RemoveAt(int index) {
+                    var i = index
+                    while (i < this.count - 1) {
+                        this.items[i] = this.items[i + 1]
+                        i = i + 1
+                    }
+                    this.count = this.count - 1
+                    this.items[this.count] = undefined
+                }
+
+                // puts `value` in at `index`; the elements from there on move down
+                Insert(int index, class value) {
+                    if (this.count >= this.items.length) {
+                        this.Grow()
+                    }
+                    var i = this.count
+                    while (i > index) {
+                        this.items[i] = this.items[i - 1]
+                        i = i - 1
+                    }
+                    this.items[index] = value
+                    this.count = this.count + 1
+                }
+
+                // the index of `value` (the same object), -1 if it is not in the list
+                int IndexOf(class value) {
+                    var i = 0
+                    while (i < this.count) {
+                        if (this.items[i] == value) {
+                            return i
+                        }
+                        i = i + 1
+                    }
+                    return -1
+                }
+
+                // removes `value` (the first one); false if it is not in the list
+                bool Remove(class value) {
+                    var at = this.IndexOf(value)
+                    if (at < 0) {
+                        return false
+                    }
+                    this.RemoveAt(at)
+                    return true
+                }
+
+                // empties the list (the elements are not destroyed)
+                Clear() {
+                    var i = 0
+                    while (i < this.count) {
+                        this.items[i] = undefined
+                        i = i + 1
+                    }
+                    this.count = 0
+                }
+
                 Grow() {
                     var newItems = new class[this.items.length * 2]
                     var i = 0

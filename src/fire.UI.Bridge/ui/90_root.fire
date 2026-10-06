@@ -1,0 +1,155 @@
+namespace UI {
+    // Das oberste Element: zeichnet in `framebuffer` und bekommt die Ereignisse von `window` (Warteschlange, siehe Tick).
+    class Root {
+        Framebuffer framebuffer
+        Window window
+        Renderer renderer
+        Theme theme
+        Panel content
+        int width
+        int height
+        // Zellgröße der Schrift in Pixeln (Breite und Höhe eines Zeichens)
+        int cw
+        int ch
+        bool closed = false
+        int mouseX = 0
+        int mouseY = 0
+        Element hoverElement
+        Element pressedElement
+        Element focusElement
+
+        construct(Framebuffer framebuffer, Window window) {
+            this.framebuffer = framebuffer
+            this.window = window
+            this.renderer = new Renderer(framebuffer)
+            this.theme = new Theme()
+            this.cw = this.renderer.CellWidth()
+            this.ch = this.renderer.CellHeight()
+            this.width = framebuffer.Width()
+            this.height = framebuffer.Height()
+            this.content = new Panel(0, 0, this.width, this.height)
+            this.content.filled = false
+
+            // Ereignisse werden abgefragt, nicht per Callback geliefert: so laufen sie im Hauptprogramm, und ein
+            // onClick-Lambda sieht die echten globalen Variablen (ein Callback arbeitet dagegen auf einer Kopie, SPEC 8.1.4)
+            window.EnableEvents()
+        }
+
+        // Fügt ein Element (oder Panel) der obersten Ebene hinzu; es gehört ab jetzt diesem Root.
+        Add(element) { this.content.Add(element) }
+
+        // Ordnet die gesamte Oberfläche an und zeichnet sie neu.
+        Draw() {
+            this.renderer.FillRect(0, 0, this.width, this.height, this.theme.back)
+            this.content.Measure(this, this.width, this.height)
+            this.content.Arrange(this, 0, 0, this.width, this.height)
+            this.content.Draw(this, 0, 0)
+        }
+
+        // Ein Zyklus: Oberfläche zeichnen, dann das Fenster einen Zyklus laufen lassen (Ereignisse abholen, anzeigen).
+        // Liefert false, sobald das Fenster geschlossen wurde.
+        bool Tick() {
+            this.Draw()
+            var open = this.window.Tick()
+            while (true) {
+                var e = this.window.NextEvent()   // (declared in the loop: the event array belongs to this iteration)
+                if (e == undefined) { break }
+                this.Dispatch(e)
+            }
+            if (!open) { this.closed = true }
+            return open
+        }
+
+        // Verteilt ein Ereignis des Fensters (Aufbau siehe Window.NextEvent) an das Element darunter bzw. das mit Fokus.
+        Dispatch(e) {
+            var type = e[0]
+            if (type == 8) { this.MouseDown(e[1], e[2], e[3]) }
+            else if (type == 11) { this.MouseUp(e[1], e[2], e[3]) }
+            else if (type == 9) { this.MouseMove(e[1], e[2]) }
+            else if (type == 24) { this.KeyDown(e[1], e[3]) }
+            else if (type == 3) { this.TextInput(e[1]) }
+            else if (type == 1) { this.closed = true }
+        }
+
+        // Läuft, bis das Fenster geschlossen wird.
+        Run() {
+            while (this.Tick()) { }
+        }
+
+        SetFocus(element) {
+            var old = this.focusElement
+            if (old != undefined) { old.focused = false }
+            this.focusElement = element
+            if (element != undefined) { element.focused = true }
+        }
+
+        // Tab: der Fokus wandert zum nächsten (mit Umschalt: zum vorigen) fokussierbaren Element.
+        FocusStep(bool backwards) {
+            var list = new List()
+            this.content.Collect(list)
+            if (list.count == 0) { return }
+            var index = -1
+            for (var i = 0; i < list.count; i = i + 1) {
+                if (list[i] == this.focusElement) { index = i }
+            }
+            if (backwards) {
+                index = index - 1
+                if (index < 0) { index = list.count - 1 }
+            } else {
+                index = index + 1
+                if (index >= list.count) { index = 0 }
+            }
+            this.SetFocus(list[index])
+        }
+
+        MouseDown(int button, int px, int py) {
+            this.mouseX = px
+            this.mouseY = py
+            var hit = this.content.HitTest(px, py)
+            if (hit != undefined && hit.enabled) {
+                if (hit.Focusable()) { this.SetFocus(hit) } else { this.SetFocus(undefined) }
+                this.pressedElement = hit
+                hit.MouseDown(this, button, px, py)
+            } else {
+                this.SetFocus(undefined)
+            }
+        }
+
+        MouseUp(int button, int px, int py) {
+            this.mouseX = px
+            this.mouseY = py
+            var target = this.pressedElement
+            this.pressedElement = undefined
+            if (target != undefined) { target.MouseUp(this, button, px, py) }
+        }
+
+        MouseMove(int px, int py) {
+            this.mouseX = px
+            this.mouseY = py
+            var hit = this.content.HitTest(px, py)
+            var old = this.hoverElement
+            if (hit != old) {
+                if (old != undefined) { old.hover = false }
+                this.hoverElement = hit
+                if (hit != undefined) { hit.hover = true }
+            }
+            var target = this.pressedElement
+            if (target != undefined) { target.MouseMove(this, px, py) }
+        }
+
+        KeyDown(int key, int mod) {
+            if (key == UI.Keys.Tab()) {
+                // die Umschalttasten sind die Bits 1 und 2 von mod
+                this.FocusStep(mod % 4 != 0)
+                return
+            }
+            var target = this.focusElement
+            if (target != undefined && target.enabled) { target.KeyDown(this, key, mod) }
+        }
+
+        TextInput(string text) {
+            var target = this.focusElement
+            if (target != undefined && target.enabled) { target.TextInput(this, text) }
+        }
+    }
+}

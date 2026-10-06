@@ -1,0 +1,35 @@
+namespace UI {
+    // Die Brushes und Pens der Oberfläche (Root.theme) - einzelne Felder lassen sich nach dem Anlegen des Roots ändern (z.B. `root.theme.back = new SolidBrush(...)`).
+    class Theme {
+        Brush back
+        Brush panel
+        Brush face
+        Brush faceHover
+        Brush facePressed
+        Brush faceDisabled
+        Brush inputBack
+        Brush accent
+        Brush text
+        Brush textDisabled
+        Pen border
+        Pen borderFocus
+        // die Einfügemarke des Textfelds
+        Pen caret
+
+        construct() {
+            this.back = new SolidBrush(UI.Color.Rgb(240, 240, 240))
+            this.panel = new SolidBrush(UI.Color.Rgb(250, 250, 250))
+            this.face = new SolidBrush(UI.Color.Rgb(225, 225, 225))
+            this.faceHover = new SolidBrush(UI.Color.Rgb(229, 241, 251))
+            this.facePressed = new SolidBrush(UI.Color.Rgb(204, 228, 247))
+            this.faceDisabled = new SolidBrush(UI.Color.Rgb(204, 204, 204))
+            this.inputBack = new SolidBrush(UI.Color.Rgb(255, 255, 255))
+            this.accent = new SolidBrush(UI.Color.Rgb(0, 120, 215))
+            this.text = new SolidBrush(UI.Color.Rgb(0, 0, 0))
+            this.textDisabled = new SolidBrush(UI.Color.Rgb(131, 131, 131))
+            this.border = new Pen(UI.Color.Rgb(120, 120, 120))
+            this.borderFocus = new Pen(UI.Color.Rgb(0, 120, 215))
+            this.caret = new Pen(UI.Color.Rgb(0, 0, 0))
+        }
+    }
+}
