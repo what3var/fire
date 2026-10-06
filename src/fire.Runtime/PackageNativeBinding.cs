@@ -22,12 +22,15 @@ namespace fire.Runtime
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int CallFn(int index, IntPtr args, int argc, IntPtr result, IntPtr error, int errorSize);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int IntFn();
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void SetHostFn(IntPtr host);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void VoidFn();
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate IntPtr NameFn(int index);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int ArityFn(int index);
 
         private sealed class Library
         {
             public CallFn Call = null!;
+            public Action? Reset;
             public Dictionary<string, (int Index, int Arity)> Functions = new();
             public string? Failure;
         }
@@ -55,6 +58,15 @@ namespace fire.Runtime
             }
         }
 
+        /// <summary>A program has ended: every loaded library forgets what the program left behind (`fire_pkg_reset`: open streams, ...).</summary>
+        internal static void ResetLibraries()
+        {
+            Library[] loaded;
+            lock (Lock) loaded = Libraries.Values.ToArray();
+            foreach (var lib in loaded)
+                try { lib.Reset?.Invoke(); } catch (Exception) { /* a library that cannot reset is not the end of the host */ }
+        }
+
         private static Library Load(string file, Func<string, string?>? locate)
         {
             lock (Lock)
@@ -73,6 +85,11 @@ namespace fire.Runtime
                     var count = Marshal.GetDelegateForFunctionPointer<IntFn>(NativeLibrary.GetExport(handle, "fire_pkg_function_count"));
                     var nameOf = Marshal.GetDelegateForFunctionPointer<NameFn>(NativeLibrary.GetExport(handle, "fire_pkg_function_name"));
                     var arityOf = Marshal.GetDelegateForFunctionPointer<ArityFn>(NativeLibrary.GetExport(handle, "fire_pkg_function_arity"));
+                    // optional exports: the host of the VM tells the library what it decides (policy, console), and a program's end resets it
+                    if (NativeLibrary.TryGetExport(handle, "fire_pkg_set_host", out var setHost))
+                        Marshal.GetDelegateForFunctionPointer<SetHostFn>(setHost)(PackageHost.Block);
+                    if (NativeLibrary.TryGetExport(handle, "fire_pkg_reset", out var reset))
+                        lib.Reset = Marshal.GetDelegateForFunctionPointer<VoidFn>(reset).Invoke;
                     for (int i = 0, n = count(); i < n; i++)
                         if (Marshal.PtrToStringAnsi(nameOf(i)) is { } fn) lib.Functions[fn] = (i, arityOf(i));
                 }

@@ -15,6 +15,17 @@ fire.Package.Manager.PackageStore.Default = new fire.Package.Manager.PackageStor
 foreach (var problem in fire.Package.Manager.StandardPackages.EnsureInstalled(m => Console.WriteLine(m), Path.Combine(standardRoot, "PackageSource")).Count == 0 ? new[] { "the standard packages were not installed" } : System.Array.Empty<string>())
     Console.WriteLine(problem);
 
+// `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
+string IoPreludeSource() => fire.Package.Manager.PackageStore.Default.FindImport("io")!.ReadPrelude()!;
+IDisposable UseIoPackage(NativeRegistry natives, fire.IO.Bridge.IoPolicy? policy, fire.IO.Bridge.IoStdio? stdio)
+{
+    var ioImport = fire.Package.Manager.PackageStore.Default.FindImport("io")!;
+    var (ioNames, ioLibraries) = fire.Compiler.PackageImports.NativesOf(new[] { ioImport.Key });
+    string ioLibrary = fire.Compiler.PackageLibrary.Ensure(ioImport);
+    fire.Runtime.PackageNativeBinding.Register(natives, ioNames, ioLibraries, _ => ioLibrary);
+    return fire.Runtime.PackageHost.Begin(policy, stdio);
+}
+
 // Kleiner manueller Smoke-Test für Lexer + Parser + Unit-System, bis der
 // Evaluator existiert. Bei dir lokal: `dotnet run` im src/fire-Ordner.
 
@@ -5232,13 +5243,13 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
     {
         var lines = new List<string>();
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var sources = new[] { fire.Standard.Prelude.Source, fire.IO.Bridge.IoBridge.PreludeSource, script }
+        var sources = new[] { fire.Standard.Prelude.Source, IoPreludeSource(), script }
             .Select(s => Preprocessor.Process(s, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList();
         var program = Parser.ParseMultiple(sources);
         var natives = new NativeRegistry();
         natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
         natives.RegisterBaseTypeNatives();
-        fire.IO.Bridge.IoBridge.RegisterAll(natives, policy, stdio);
+        using var ioHost = UseIoPackage(natives, policy, stdio);
         var resolveResult = Resolver.Resolve(program, natives.Names);
         var compiled = Compiler.Compile(program, resolveResult, natives);
         var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes);
@@ -6760,14 +6771,14 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     {
         var lines = new List<string>();
         var sources = withIo
-            ? new[] { fire.Standard.Prelude.Source, fire.IO.Bridge.IoBridge.PreludeSource, script }
+            ? new[] { fire.Standard.Prelude.Source, IoPreludeSource(), script }
             : new[] { fire.Standard.Prelude.Source, script };
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var program = Parser.ParseMultiple(sources.Select(s => Preprocessor.Process(s, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
         var natives = new NativeRegistry();
         natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
         natives.RegisterBaseTypeNatives();
-        IDisposable? io = withIo ? fire.IO.Bridge.IoBridge.RegisterAll(natives) : null;
+        IDisposable? io = withIo ? UseIoPackage(natives, null, null) : null;
         var resolveResult = Resolver.Resolve(program, natives.Names);
         var compiled = Compiler.Compile(program, resolveResult, natives);
         var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, executionMode: mode);
@@ -7179,9 +7190,9 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     PackCheck(planPrint.Assemblies.ContainsKey("fire") && planPrint.Assemblies.ContainsKey("MemoryPack.Core"), "Plan: Kern (fire, MemoryPack) ist immer dabei");
     PackCheck(!planPrint.Assemblies.Keys.Any(n => n.StartsWith("fire.Terminal") || n.StartsWith("fire.Device") || n.StartsWith("fire.IO") || n == "SDL3-CS" || n == "System.IO.Ports") && planPrint.Natives.Count == 0,
         "Plan: ohne Import keine Bridge, keine nativen Bibliotheken");
-    var planIo = Plan(NativeImports.Print, NativeImports.IO);
-    PackCheck(planIo.Assemblies.ContainsKey("fire.IO.Bridge") && !planIo.Assemblies.ContainsKey("fire.Terminal.Bridge") && !planIo.Assemblies.ContainsKey("fire.Device.Bridge"),
-        "Plan: io bindet nur die IO-Bridge ein");
+    var planIo = Plan(NativeImports.Print, "pkg:io");
+    PackCheck(planIo.Assemblies.Keys.SequenceEqual(planPrint.Assemblies.Keys) && !planIo.Assemblies.ContainsKey("fire.Terminal.Bridge") && !planIo.Assemblies.ContainsKey("fire.Device.Bridge"),
+        "Plan: io ist ein Paket (C++ in einer Bibliothek): es bringt keine eigene DLL in das gepackte Programm");
     var planGfx = Plan(NativeImports.Print, NativeImports.Graphics);
     PackCheck(new[] { "fire.Terminal.Bridge", "fire.Terminal" }.All(planGfx.Assemblies.ContainsKey) && !planGfx.Assemblies.ContainsKey("fire.IO.Bridge")
         && !planGfx.Assemblies.Keys.Any(n => n is "fire.Terminal.Windows" or "fire.Terminal.Sdl" or "fire.Windows.Bridge" or "SDL3-CS") && planGfx.Natives.Count == 0,

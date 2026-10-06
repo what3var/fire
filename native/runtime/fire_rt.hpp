@@ -13,6 +13,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#ifdef FIRE_LIBRARY
+#include "fire_pkg_abi.h"   // (the library for the VM: the host structure)
+#endif
 
 // The platform layer (docs/NATIVE_BACKEND.md, "Plattformschicht"): everything that depends on the operating system or the board - exit, clock, and for
 // fire threads the mutex, the condition variable, the thread and where the per-thread state lives - is one header per platform package. The generated
@@ -219,6 +222,8 @@ inline Value destroyedError(Value leaf);
 // The natives of a package built as a shared library for the virtual machine (native/abi/fire_pkg_wrapper.hpp): a run-time error does not end the process,
 // it is thrown to the wrapper of the entry point, which reports it to the VM.
 struct FireFatalError { char text[256]; };
+/// What the host of the VM decides (fire_pkg_abi.h: `fire_host`); null until the host has told the library.
+inline const fire_host*& libraryHost() { static const fire_host* host = nullptr; return host; }
 [[noreturn]] inline void fatal(const char* message) {
     FireFatalError e;
     std::snprintf(e.text, sizeof e.text, "%s", message);

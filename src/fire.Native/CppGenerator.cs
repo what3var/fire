@@ -142,30 +142,12 @@ namespace fire.Native
         private bool _usesThreads;
         /// <summary>The runtime has to read the `ticks` of a TimeSpan (the time functions, the waiting functions of the devices, `#timeout`): `timeObjTicks` is generated.</summary>
         private bool _needsTimeObj;
-        private bool _usesIo;
         private bool _usesDevices;
         private bool _usesGraphics;
         private bool _usesWindows;
         /// <summary>A `Takes` mode is used: `Takes.Children` needs the enumerator of the IEnumerable classes (fire_enumerateItems).</summary>
         private bool _usesTakeEnumerate;
-        private int _ioSecondsUnit;
 
-        /// <summary>The natives of `#import "io"` (`__IO` + name): the number of arguments, whether the result is a string/array/buffer (it belongs to the innermost scope),
-        /// and the C++ function (bridges/fire_bridge_io.hpp: `io::Name`).</summary>
-        private static readonly Dictionary<string, (int Argc, bool Reference)> IoBridgeNatives = new()
-        {
-            ["LastError"] = (0, false), ["LastErrorMessage"] = (0, true), ["OpenCount"] = (0, false),
-            ["FileOpen"] = (3, false), ["MemNew"] = (0, false), ["MemFromBuffer"] = (1, false), ["Close"] = (1, false),
-            ["Read"] = (4, false), ["Write"] = (4, false), ["ReadByte"] = (1, false), ["WriteByte"] = (2, false), ["ReadRest"] = (1, true), ["Flush"] = (1, false),
-            ["Seek"] = (3, false), ["Position"] = (1, false), ["Length"] = (1, false), ["SetLength"] = (2, false),
-            ["CanRead"] = (1, false), ["CanWrite"] = (1, false), ["CanSeek"] = (1, false), ["MemToBuffer"] = (1, true),
-            ["FileExists"] = (1, false), ["FileSize"] = (1, false), ["FileTime"] = (1, false), ["FileDelete"] = (1, false), ["FileCopy"] = (3, false), ["FileMove"] = (3, false),
-            ["DirExists"] = (1, false), ["DirCreate"] = (1, false), ["DirDelete"] = (2, false), ["DirList"] = (4, true), ["CurrentDir"] = (0, true),
-            ["PathCombine"] = (2, true), ["PathFileName"] = (1, true), ["PathStem"] = (1, true), ["PathExtension"] = (1, true), ["PathParent"] = (1, true), ["PathFull"] = (1, true),
-            ["PathTemp"] = (0, true), ["PathSeparator"] = (0, true), ["PathIsRooted"] = (1, false),
-            ["StdHandle"] = (1, false), ["StdWrite"] = (2, false), ["StdFlush"] = (1, false), ["StdReadLine"] = (0, true), ["StdReadAll"] = (0, true),
-            ["BufferIndexOf"] = (4, false), ["Utf8Encode"] = (1, true), ["Utf8Decode"] = (3, true), ["SplitLines"] = (1, true),
-        };
         /// <summary>The natives of `#import "devices"` (`__DEV` + name; the manager's start with `Mgr`): arguments, whether the result is a string/buffer, whether the program should
         /// look at its signals afterwards (a wait ends at `terminate`).</summary>
         private static readonly Dictionary<string, (int Argc, bool Reference, bool NeedsList, bool Waits)> DeviceBridgeNatives = new()
@@ -200,13 +182,6 @@ namespace fire.Native
         };
 
         private static readonly HashSet<string> GraphicsNeedsList = new() { "FbReadBytes", "FbReadPalette", "FbLastError", "SlcSlice" };
-
-        /// <summary>The functions of <see cref="IoBridgeNatives"/> that take the scope that owns their result as a last argument.</summary>
-        private static readonly HashSet<string> IoNeedsList = new()
-        {
-            "LastErrorMessage", "ReadRest", "MemToBuffer", "DirList", "CurrentDir", "PathCombine", "PathFileName", "PathStem", "PathExtension", "PathParent", "PathFull", "PathTemp", "PathSeparator",
-            "StdReadLine", "StdReadAll", "Utf8Encode", "Utf8Decode", "SplitLines",
-        };
 
         /// <summary>The program declares actors (classes with IsActor): calls of their methods are messages.</summary>
         private bool _usesActors;
@@ -487,12 +462,7 @@ namespace fire.Native
                 sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{_target.Native.Platform}/fire_dev.hpp\"");
                 sb.AppendLine("#include \"bridges/fire_bridge_devices.hpp\"");
             }
-            if (_usesIo || _usesGraphics) sb.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{_target.Native.Platform}/fire_fs.hpp\"");
-            if (_usesIo)
-            {
-                sb.AppendLine($"#define FIRE_UNIT_SECONDS {_ioSecondsUnit}");
-                sb.AppendLine("#include \"bridges/fire_bridge_io.hpp\"");
-            }
+            if (_packageImports.Count > 0 || _usesGraphics) sb.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{_target.Native.Platform}/fire_fs.hpp\"");   // (the io package, graphics)
             if (_usesGraphics) sb.AppendLine("#include \"bridges/fire_bridge_graphics.hpp\"");
             if (_usesWindows)
             {
@@ -1275,16 +1245,6 @@ namespace fire.Native
         {
             if (_needsTimeObj) return;
             _needsTimeObj = true;
-            _version++;
-        }
-
-        /// <summary>`#import "io"`: the bridge needs the exceptions (a destroyed buffer) and the unit `s` (the modification time of a file).</summary>
-        private void UseIo()
-        {
-            if (_usesIo) return;
-            _usesIo = true;
-            _ioSecondsUnit = UnitId(Unit.Parse("s"));
-            UseExceptions();
             _version++;
         }
 
@@ -2134,16 +2094,6 @@ namespace fire.Native
                         E($"{S(first)} = {call};");
                         Check();
                         d = first + 1; SetR(first, true); return Next();
-                    }
-                    if (native.StartsWith("__IO", StringComparison.Ordinal) && IoBridgeNatives.TryGetValue(native.Substring(4), out var ioNative) && ioNative.Argc == argc)
-                    {
-                        UseIo();
-                        string name = native.Substring(4);
-                        int first = d - argc;
-                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(IoNeedsList.Contains(name) ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
-                        E($"{S(first)} = io::{name}({args});");
-                        Check();
-                        d = first + 1; SetR(first, ioNative.Reference); return Next();
                     }
                     if (native.StartsWith("__GRPHWin", StringComparison.Ordinal) && WindowsBridgeNatives.TryGetValue(native.Substring(9), out var winNative) && winNative.Argc == argc)
                     {

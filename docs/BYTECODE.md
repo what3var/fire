@@ -1286,6 +1286,8 @@ vermerkt statt umgesetzt):
 
 ## 23. IO-Bridge (`#import "io"`) und zwei Sprachänderungen dazu
 
+> **Stand:** `io` ist inzwischen ein Paket (`fire-io`): die Natives sind das C++ von `native/bridges/fire_bridge_io.hpp`, die VM führt sie in einer Shared Library über die Paket-ABI aus (docs/PACKAGE_NATIVES.md); `IoPolicy` und `IoStdio` bleiben die Entscheidung des Hosts und werden der Bibliothek über `fire_host` (Callbacks, `PackageHost` in fire.Runtime) gegeben. Das Projekt `fire.IO.Bridge` gibt es nicht mehr; der Text unten beschreibt die frühere C#-Bridge.
+
 `src/fire.IO.Bridge`: dasselbe Muster wie `GraphicsBridge`/`DeviceBridge` - `IoBridge.RegisterAll`
 (echt) / `RegisterStubs` (nur Namen, für Linker und Live-Diagnostik über `ImportedPreludes`),
 `IoBridge.PreludeSource` (fire, `namespace IO`), `NativeImports.IO = "io"`. Streams sind
@@ -1535,7 +1537,7 @@ Objekte nach dem Lauf noch verwenden (die Thread-Tests tun das); im Einzelschrit
    Fuß, die frühere Marker-Suche (`DA 1D`) gibt es nicht mehr.
 
 **Welche DLLs.** `PackagePlan.Create(nativeImports, baseDir)`: Kern immer; je Import die Einstiegs-Assemblies (`graphics`: `fire.Terminal.Bridge`/`.Windows`/`.Sdl` + natives SDL3; `devices`: `fire.Device.Bridge`/
-`fire.Device.Manager` (+ `libSystem.IO.Ports.Native` außerhalb von Windows); `io`: `fire.IO.Bridge`; `print`: nichts). Der Rest folgt aus den Assembly-Verweisen der DLLs (System.Reflection.Metadata): alles, was neben
+`fire.Device.Manager` (+ `libSystem.IO.Ports.Native` außerhalb von Windows); `print`: nichts). Der Rest folgt aus den Assembly-Verweisen der DLLs (System.Reflection.Metadata): alles, was neben
 dem Compiler liegt und nicht zum .NET-Framework gehört, kommt mit. Plattform-Unterordner (`runtimes/win/lib/...`, `runtimes/unix/lib/...`) haben Vorrang vor dem Hauptordner (System.IO.Ports liefert dort
 nur eine Attrappe). `PackagePlan.Unresolved` (Verweis ohne Datei und nicht im Framework) lässt `Packer.PackProgram` mit einer Fehlermeldung abbrechen statt eine kaputte Datei zu erzeugen. Native Bibliotheken
 werden nur für die Plattform des Compilers eingebunden (passend zum apphost, den er mitbringt).

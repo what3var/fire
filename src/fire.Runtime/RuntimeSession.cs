@@ -38,8 +38,8 @@ namespace fire.Runtime
             // Private constructor to prevent direct instantiation
         }
 
-        /// <summary>Sicherheitsnetz des Hosts: schließt nach dem Lauf alle Streams, die ein Skript offen gelassen hat
-        /// (siehe IoBridge.RegisterAll). Der Destruktor von `IO.FileStream` &amp; Co. schließt sie normalerweise schon.</summary>
+        /// <summary>Policy und Konsole des Hosts für die Natives von Paketen (siehe PackageHost); am Ende des Laufs schließt es, was das Skript offen gelassen hat.
+        /// Der Destruktor von `IO.FileStream` &amp; Co. schließt Streams normalerweise schon.</summary>
         protected IDisposable? IoResources { get; set; }
 
         /// <summary>Räumt die Geräte-Brücke nach dem Lauf auf (siehe DeviceBridge.RegisterAll).</summary>
@@ -102,8 +102,9 @@ namespace fire.Runtime
 
             // Dateisystem-/Stdio-Policy: die gepackte Runtime nutzt die Vorgabe (alles erlaubt, echte Konsole) -
             // Hosts mit eigener Policy (Editor) bauen ihre Session über fire.Compiler.RuntimeSession.
-            if (linkedProgram.NativeImports.Contains(NativeImports.IO))
-                session.IoResources = RegisterIo(natives);
+            // what the natives of packages (the io package) ask of the host: the real console, everything allowed - the packed runtime has no other host
+            if (linkedProgram.PackageNatives is { Count: > 0 })
+                session.IoResources = PackageHost.Begin(null, null);
 
             // the natives of imports of packages (C++ in shared libraries, the libraries of a packed program come from its payload): same names, same order
             PackageNativeBinding.Register(natives, linkedProgram.PackageNatives, linkedProgram.PackageNativeLibraries, null);
@@ -147,9 +148,5 @@ namespace fire.Runtime
 
             return fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager, VM.WaitUntil);
         }
-
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private static IDisposable? RegisterIo(NativeRegistry natives) =>
-            fire.IO.Bridge.IoBridge.RegisterAll(natives, null, null);
     }
 }

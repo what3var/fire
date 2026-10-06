@@ -174,7 +174,7 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   global destructors therefore run after the end of the last thread. At its
   end a fire thread only destroys objects it created itself - copies of objects of the main program (globals snapshot, `taking`) are left untouched, so that they e.g. do not close a
   shared handle. An unhandled exception unwinds the open scopes but does not release the global scope. As a
-  safety net the host additionally closes all streams that are still open at the end (`IoBridge.RegisterAll(...).Dispose()`). A destructor should never
+  safety net the host additionally closes all streams that are still open at the end (the host session of the io package: `PackageHost.Begin(...).Dispose()`). A destructor should never
   throw: an unhandled error in it ends the program (the `IO` destructors therefore swallow IO errors).
 - **`return`:** If a value that belongs to one of the scopes being left (directly, or through objects that belong to them) is returned - an object, an array or a buffer -, it does not die with them: the
   ownership passes to the calling scope, **together with everything that hangs on it and also belongs to those scopes** (that is `Takes.Locals`, 2.2): the elements of a returned list, the objects a returned
@@ -1731,7 +1731,7 @@ here, `BinaryNumericOrOperator` there).
 
 ### 8.11 Streams and file access (`#import "io"`)
 
-`#import "io"` unlocks the namespace `IO` (bridge `fire.IO.Bridge`, like `graphics`/
+`#import "io"` unlocks the namespace `IO` (the package `fire-io`: its prelude and the C++ of `native/bridges/fire_bridge_io.hpp`; in the VM a library built from it, like `graphics`/
 `devices`: native functions `__IO...` plus a fire prelude). Everything lives in `namespace IO`,
 so that it does not collide with your own classes such as `File` or `Stream`; an enum in a
 namespace is only reachable **fully qualified** (`IO.FileMode.Create`).

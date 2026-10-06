@@ -131,6 +131,9 @@ namespace fire.Package.Manager
         /// <summary>Exception classes of the prelude that natives throw with `fireError("ClassName", "message")` (the class has a constructor with one text argument). In the virtual
         /// machine the library reports the error to the VM, which throws the class; a native build needs to know the classes to construct them.</summary>
         public List<string> Exceptions { get; set; } = new();
+        /// <summary>A C++ function without arguments that the VM calls when a program ends (`fire_pkg_reset`): the natives forget what the program left behind (open streams, ...), because the
+        /// library stays loaded for the next program of the same host. Optional.</summary>
+        public string? Reset { get; set; }
     }
 
     public static class PackageNativeExtensions

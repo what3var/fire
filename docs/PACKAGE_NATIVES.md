@@ -143,6 +143,10 @@ In the VM your functions run in a shared library, so values are **copied** at th
 * objects, lambdas and pointers cannot cross (an error says so); units are not carried;
 * an error inside your function (`fatal`, `indexError`, ...) is reported to the VM with its text (it ends the program there, like an error of a built-in native); `fireError("Class", "text")` is reported
   with the class (ABI result 2: `error` holds the class name, a line feed and the message) and the VM throws that exception, so a script can `catch` it;
+* **the host's decisions** reach a library through callbacks (`fire_host`, `fire_pkg_set_host` in `native/abi/fire_pkg_abi.h`): which paths a script may touch (`io_allow`, the `IoPolicy` of the host) and where the
+  console goes (`std_read`/`std_write`/`std_flush`, the `IoStdio` of the host, e.g. the output window of the editor). In C++ they are `libraryHost()->io_allow(...)` etc.; the io package is the example
+  (`console::`, `allowed()` in `native/bridges/fire_bridge_io.hpp`). When a program ends the VM calls `fire_pkg_reset` - the function named by `native.reset` in the manifest (`"reset": "io::reset"`): forget what the program
+  left behind (open streams), the library stays loaded for the next program;
 * calls into one library are serialized (the runtime inside is not thread-safe).
 
 The library is built **by the compiler at first use** with a C++ compiler of the machine (g++, clang++ or MSVC `cl`; the first run of a script that imports the package takes a few

@@ -36,11 +36,25 @@ typedef struct fire_val {
 
 #define FIRE_PKG_ABI_VERSION 1
 
+/* What the host decides, for natives that need it (the io package): which paths a script may touch and where the console goes. The host hands this structure to the library with
+ * fire_pkg_set_host; every function may be null (then: everything is allowed, the console does nothing). They are called on the thread of the VM that called the native. */
+typedef struct fire_host {
+    int32_t size;                                                                                       /* sizeof(fire_host) */
+    int32_t (*io_allow)(const char* path_utf8, int32_t access, char* reason, int32_t reason_size);    /* access bits: 1 read, 2 write, 4 delete, 8 list; 1 = allowed, 0 = refused (+ reason) */
+    int32_t (*std_read)(int32_t stream, uint8_t* buffer, int32_t count);                              /* stream 0; bytes read, 0 at the end, < 0 error */
+    int32_t (*std_write)(int32_t stream, const uint8_t* buffer, int32_t count);                       /* stream 1 output, 2 error; < 0 error */
+    int32_t (*std_flush)(int32_t stream);
+} fire_host;
+
 /* The entry points of a package library. */
 int fire_pkg_abi_version(void);                    /* FIRE_PKG_ABI_VERSION */
 int fire_pkg_function_count(void);
 const char* fire_pkg_function_name(int index);     /* the name that fire code calls, e.g. "__sk_read" */
 int fire_pkg_function_arity(int index);
+/* Optional: the host of the VM tells the library what it decides (see fire_host); the structure stays valid as long as the library is loaded. */
+void fire_pkg_set_host(const fire_host* host);
+/* Optional: a program has ended, the library stays loaded for the next one: forget what the program left behind (open streams, ...). */
+void fire_pkg_reset(void);
 /* Calls function `index`. Returns 0, then `*result` is the result; 1, then `error` holds a message (zero terminated, at most errorSize bytes) and the program stops with it;
  * or 2, then the native throws an exception of the program: `error` holds the name of the exception class, a line feed and the message (the VM constructs the class with the message).
  * Memory behind `*result` (text, array, buffer) belongs to the library and stays valid until the next call from the same thread: the caller copies it. */

@@ -1,7 +1,6 @@
 using fire.Bytecode;
 using fire.Package.Manager;
 using fire.Device.Bridge;
-using fire.IO.Bridge;
 using fire.Runtime;
 using fire.Terminal.Bridge;
 using fire.UI.Bridge;
@@ -36,7 +35,6 @@ namespace fire.Compiler
             "graphics" => NativeImports.Graphics,
             "windows" => NativeImports.Windows,
             "devices" => NativeImports.Devices,
-            "io" => NativeImports.IO,
             "ui" => NativeImports.Ui,
             "linq" => NativeImports.Linq,
             "reflection" => NativeImports.Reflection,
@@ -76,11 +74,12 @@ namespace fire.Compiler
             "graphics" => GraphicsBridge.PreludeSource,
             "windows" => WindowsBridge.PreludeSource,
             "devices" => DeviceBridge.PreludeSource,
-            "io" => IoBridge.PreludeSource,
             "ui" => UiBridge.PreludeSource,
             "linq" => fire.Standard.LinqPrelude.Source,
             "reflection" => fire.Standard.ReflectionPrelude.Source,
-            _ => PackageStore.Default.FindImport(importName)?.ReadPrelude(),
+            _ => importName.StartsWith(PackageStore.KeyPrefix, StringComparison.Ordinal)
+                ? PackageStore.Default.FindKey(importName)?.ReadPrelude()   // the key of an import of a package (what the editor works with)
+                : PackageStore.Default.FindImport(importName)?.ReadPrelude(),
         };
 
         private static readonly Regex ImportDirective =
@@ -148,13 +147,6 @@ namespace fire.Compiler
             {
                 processedSources.Insert(1, preprocess(DeviceBridge.PreludeSource));
                 DeviceBridge.RegisterStubs(natives);
-                inserted++;
-            }
-
-            if (nativeImports.Contains(NativeImports.IO))
-            {
-                processedSources.Insert(1, preprocess(IoBridge.PreludeSource));
-                IoBridge.RegisterStubs(natives);
                 inserted++;
             }
 

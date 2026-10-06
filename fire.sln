@@ -25,8 +25,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Device.Manager", "src\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Device.Bridge", "src\fire.Device.Bridge\fire.Device.Bridge.csproj", "{913A699B-F8F3-E42F-A44C-9C0BAAC41BB3}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.IO.Bridge", "src\fire.IO.Bridge\fire.IO.Bridge.csproj", "{5C1B7E52-3D0A-4F6B-9A7E-2B8C1D4E6F90}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Benchmarks", "src\fire.Benchmarks\fire.Benchmarks.csproj", "{7858E7A3-1536-418A-B601-A4882C089599}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.UI.Bridge", "src\fire.UI.Bridge\fire.UI.Bridge.csproj", "{2897725B-75E8-4A90-877A-F70F0516156E}"
@@ -89,10 +87,6 @@ Global
 		{913A699B-F8F3-E42F-A44C-9C0BAAC41BB3}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{913A699B-F8F3-E42F-A44C-9C0BAAC41BB3}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{913A699B-F8F3-E42F-A44C-9C0BAAC41BB3}.Release|Any CPU.Build.0 = Release|Any CPU
-		{5C1B7E52-3D0A-4F6B-9A7E-2B8C1D4E6F90}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{5C1B7E52-3D0A-4F6B-9A7E-2B8C1D4E6F90}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{5C1B7E52-3D0A-4F6B-9A7E-2B8C1D4E6F90}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{5C1B7E52-3D0A-4F6B-9A7E-2B8C1D4E6F90}.Release|Any CPU.Build.0 = Release|Any CPU
 		{7858E7A3-1536-418A-B601-A4882C089599}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{7858E7A3-1536-418A-B601-A4882C089599}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7858E7A3-1536-418A-B601-A4882C089599}.Release|Any CPU.ActiveCfg = Release|Any CPU

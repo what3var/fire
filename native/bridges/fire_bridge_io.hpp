@@ -1,23 +1,22 @@
 // fire native bridge "io": the natives behind `#import "io"` (SPEC 8.11) - streams (files, memory, the console), the file system and paths, UTF-8 text
 // (src/fire.IO.Bridge). The fire side (IO.FileStream, IO.File, IO.Path, ... - fire source) is the same as in the VM; this file is what its `__IO...` functions do.
 //
-// Included by the generated file (after fire_rt.hpp) when the program imports "io". The file system comes from the platform package (FIRE_PLATFORM_FS_HEADER:
-// plat::fs, see platform/std/fire_fs_std.hpp), the console is C stdio. Every function reports an error like the VM's: a result of -1/false/undefined and the
-// error code and message of this thread (`__IOLastError`, `__IOLastErrorMessage`), from which the fire code throws a typed exception.
+// This file is the one implementation of the io natives: the native build includes it (the package "io" brings it as its C++ source), and the virtual machine runs it in a shared
+// library built from it (native/abi/fire_pkg_abi.h). The file system comes from the platform package (FIRE_PLATFORM_FS_HEADER: plat::fs, see platform/std/fire_fs_std.hpp).
+// Every function reports an error the same way: a result of -1/false/undefined and the error code and message of this thread (`__IOLastError`, `__IOLastErrorMessage`),
+// from which the fire code throws a typed exception.
 //
-// Differences to the VM: a program can restrict what it may touch with FIRE_IO_POLICY (a function `bool(const std::string& fullPath, int access, std::string& reason)`,
-// access bits 1 Read, 2 Write, 4 Delete, 8 List; define it before the includes in the target configuration) - the default is: everything; reading standard input waits
-// until the requested number of bytes or the end of the input.
+// What the host decides (the policy for paths and where the console goes) differs by build:
+//   - a native build: everything is allowed unless the target defines FIRE_IO_POLICY (a function `bool(const std::string& fullPath, int access, std::string& reason)`,
+//     access bits 1 Read, 2 Write, 4 Delete, 8 List; define it before the includes in the target configuration); the console is C stdio;
+//   - in the library for the VM: the host (the editor, the runtime) is asked through the callbacks of the ABI (`fire_host`): `io_allow` for every path, `std_read`/`std_write`/`std_flush`
+//     for the console. Reading standard input waits until some input or the end of it is there.
 #pragma once
 
 #include <cstring>
 #include FIRE_PLATFORM_FS_HEADER
 #include <string>
 #include <vector>
-
-#ifndef FIRE_UNIT_SECONDS
-#error "fire bridge io: the generated file defines FIRE_UNIT_SECONDS (the index of the unit `s`)"
-#endif
 
 namespace fire {
 namespace io {
@@ -119,6 +118,18 @@ struct StreamTable {
 inline std::vector<Stream*>& streams() { static StreamTable table; return table.items; }
 inline int g_stdHandles[3] = {0, 0, 0};
 
+/// The program has ended (the library for the VM stays loaded for the next one): closes what it left open. The standard streams stay.
+inline void reset() {
+    std::vector<Stream*>& all = streams();
+    for (size_t i = 1; i < all.size(); i++) {
+        Stream* s = all[i];
+        if (!s || s->permanent) continue;
+        if (s->kind == Stream::File && s->file) std::fclose(s->file);
+        delete s;
+        all[i] = nullptr;
+    }
+}
+
 inline int add(Stream* s) { streams().push_back(s); return (int)streams().size() - 1; }
 inline Stream* find(Value h) {
     int64_t i = h.i;
@@ -135,6 +146,68 @@ inline bool checkRange(Value bufferValue, int64_t offset, int64_t count) {
     return true;
 }
 
+// ---- the host: the policy for paths and the console ------------------------------------------------------------------------------------------
+/// Is `access` on the full path allowed? A native build: yes, unless the target defines FIRE_IO_POLICY. The library for the VM asks the host.
+inline bool allowed(const std::string& full, int access, std::string& reason) {
+#ifdef FIRE_LIBRARY
+    const fire_host* host = libraryHost();
+    if (!host || !host->io_allow) return true;
+    char text[256] = {0};
+    if (host->io_allow(full.c_str(), access, text, (int)sizeof text)) return true;
+    reason = text;
+    return false;
+#elif defined(FIRE_IO_POLICY)
+    return FIRE_IO_POLICY(full, access, reason);
+#else
+    (void)full; (void)access; (void)reason;
+    return true;
+#endif
+}
+
+/// The console (standard input, output and error). A native build: C stdio. The library for the VM: the callbacks of the host (the editor shows the output in its own window).
+namespace console {
+#ifdef FIRE_LIBRARY
+struct Input { uint8_t buf[512]; int pos = 0, len = 0; bool end = false; };
+inline Input& input() { static Input in; return in; }
+inline bool fill() {
+    Input& in = input();
+    if (in.pos < in.len) return true;
+    if (in.end) return false;
+    const fire_host* host = libraryHost();
+    int n = host && host->std_read ? host->std_read(0, in.buf, (int)sizeof in.buf) : 0;
+    if (n <= 0) { in.end = true; return false; }
+    in.pos = 0; in.len = n;
+    return true;
+}
+inline int getc() { Input& in = input(); return fill() ? in.buf[in.pos++] : -1; }
+inline void ungetc(int) { input().pos--; }   // only right after a getc
+/// Up to `count` bytes; 0 at the end of the input.
+inline int64_t read(uint8_t* out, int64_t count) {
+    Input& in = input();
+    if (!fill()) return 0;
+    int64_t n = in.len - in.pos < count ? in.len - in.pos : count;
+    std::memcpy(out, in.buf + in.pos, (size_t)n);
+    in.pos += (int)n;
+    return n;
+}
+inline bool write(int kind, const uint8_t* data, int64_t count) {
+    const fire_host* host = libraryHost();
+    return !host || !host->std_write || count == 0 || host->std_write(kind, data, (int)count) >= 0;
+}
+inline void flush(int kind) { const fire_host* host = libraryHost(); if (host && host->std_flush) host->std_flush(kind); }
+#else
+inline int getc() { return std::getc(stdin); }
+inline void ungetc(int c) { std::ungetc(c, stdin); }
+inline int64_t read(uint8_t* out, int64_t count) { return (int64_t)std::fread(out, 1, (size_t)count, stdin); }
+inline bool write(int kind, const uint8_t* data, int64_t count) {
+    std::FILE* f = kind == 1 ? stdout : stderr;
+    if (count > 0 && std::fwrite(data, 1, (size_t)count, f) != (size_t)count) { std::clearerr(f); return false; }
+    return true;
+}
+inline void flush(int kind) { std::fflush(kind == 1 ? stdout : stderr); }
+#endif
+}  // namespace console
+
 /// Is the path allowed for this program? Returns the full path.
 inline bool authorize(Value path, int access, std::string& full) {
     std::string raw = toUtf8(path);
@@ -142,12 +215,8 @@ inline bool authorize(Value path, int access, std::string& full) {
     for (char c : raw) if (c != ' ' && c != '\t' && c != '\n' && c != '\r') { blank = false; break; }
     if (blank) { fail(InvalidArgument, "The path is empty."); return false; }
     full = plat::fs::fullPath(raw);
-#ifdef FIRE_IO_POLICY
     std::string reason;
-    if (!FIRE_IO_POLICY(full, access, reason)) { fail(Denied, reason.empty() ? "Access to '" + full + "' is not allowed." : reason); return false; }
-#else
-    (void)access;
-#endif
+    if (!allowed(full, access, reason)) { fail(Denied, reason.empty() ? "Access to '" + full + "' is not allowed." : reason); return false; }
     return true;
 }
 
@@ -155,8 +224,6 @@ inline void prepare(Stream* s, int op) {
     if (s->kind == Stream::File && s->lastOp != 0 && s->lastOp != op) plat::fs::seek(s->file, 0, SEEK_CUR);
     if (s->kind == Stream::File) s->lastOp = op;
 }
-
-inline std::FILE* stdFile(const Stream* s) { return s->stdKind == 0 ? stdin : s->stdKind == 1 ? stdout : stderr; }
 
 // ---- the natives (called from the generated code as `io::Name`, the name is the part after `__IO`) ----------------------------------------------
 
@@ -237,18 +304,17 @@ inline int64_t readBytes(Stream* s, uint8_t* out, int64_t count) {
     if (count == 0) return 0;
     if (s->kind == Stream::Memory) return memRead(s, out, count);
     if (s->kind == Stream::File) prepare(s, 1);
-    std::FILE* f = s->kind == Stream::File ? s->file : stdFile(s);
-    if (s->kind == Stream::Std) std::fflush(stdout);
-    size_t n = std::fread(out, 1, (size_t)count, f);
-    if (n < (size_t)count && std::ferror(f)) { std::clearerr(f); return fail(Other, "The stream could not be read."); }
+    if (s->kind == Stream::Std) { console::flush(1); return console::read(out, count); }
+    size_t n = std::fread(out, 1, (size_t)count, s->file);
+    if (n < (size_t)count && std::ferror(s->file)) { std::clearerr(s->file); return fail(Other, "The stream could not be read."); }
     return (int64_t)n;
 }
 inline int64_t writeBytes(Stream* s, const uint8_t* data, int64_t count) {
     if (!s->canWrite) return fail(NotSupported, "The stream is not writable.");
     if (s->kind == Stream::Memory) { memWrite(s, data, count); return count; }
     if (s->kind == Stream::File) prepare(s, 2);
-    std::FILE* f = s->kind == Stream::File ? s->file : stdFile(s);
-    if (count > 0 && std::fwrite(data, 1, (size_t)count, f) != (size_t)count) { std::clearerr(f); return fail(Other, "The stream could not be written."); }
+    if (s->kind == Stream::Std) return console::write(s->stdKind, data, count) ? count : fail(Other, "The stream could not be written.");
+    if (count > 0 && std::fwrite(data, 1, (size_t)count, s->file) != (size_t)count) { std::clearerr(s->file); return fail(Other, "The stream could not be written."); }
     return count;
 }
 
@@ -308,7 +374,7 @@ inline Value Flush(Value h) {
     Stream* s = find(h);
     if (!s) return Bool(false);
     if (s->kind == Stream::File) std::fflush(s->file);
-    else if (s->kind == Stream::Std && s->stdKind != 0) std::fflush(stdFile(s));
+    else if (s->kind == Stream::Std && s->stdKind != 0) console::flush(s->stdKind);
     ok();
     return Bool(true);
 }
@@ -405,7 +471,7 @@ inline Value FileTime(Value path) {
     plat::fs::Status s = plat::fs::fileTime(full, seconds);
     if (!s.ok()) { fail(s); return Undef(); }
     ok();
-    return Int(seconds, FIRE_UNIT_SECONDS);
+    return Int(seconds);   // the prelude gives it the unit `s` (units do not cross the package ABI)
 }
 inline Value FileDelete(Value path) {
     std::string full;
@@ -556,9 +622,8 @@ inline Value StdHandle(Value kind) {
 }
 inline Value stdWrite(int64_t kind, const std::string& bytes, bool flush) {
     if (kind != 1 && kind != 2) { fail(InvalidArgument, "Invalid output stream " + std::to_string(kind) + "."); return Bool(false); }
-    std::FILE* f = kind == 1 ? stdout : stderr;
-    if (!bytes.empty() && std::fwrite(bytes.data(), 1, bytes.size(), f) != bytes.size()) { std::clearerr(f); fail(Other, "The console could not be written."); return Bool(false); }
-    if (flush) std::fflush(f);
+    if (!bytes.empty() && !console::write((int)kind, reinterpret_cast<const uint8_t*>(bytes.data()), (int64_t)bytes.size())) { fail(Other, "The console could not be written."); return Bool(false); }
+    if (flush) console::flush((int)kind);
     ok();
     return Bool(true);
 }
@@ -566,21 +631,24 @@ inline Value StdWrite(Value kind, Value text) { return stdWrite(kind.i, toUtf8(t
 inline Value StdFlush(Value kind) { return stdWrite(kind.i, std::string(), true); }
 /// A line of the standard input without the line break; undefined at the end of the input.
 inline Value StdReadLine(OwnList* list) {
-    std::fflush(stdout);
+    console::flush(1);
     std::string line;
-    int c = std::getc(stdin);
-    if (c == EOF) { ok(); return Undef(); }
-    while (c != EOF && c != '\n' && c != '\r') { line.push_back((char)c); c = std::getc(stdin); }
-    if (c == '\r') { int next = std::getc(stdin); if (next != '\n' && next != EOF) std::ungetc(next, stdin); }
+    int c = console::getc();
+    if (c < 0) { ok(); return Undef(); }
+    while (c >= 0 && c != '\n' && c != '\r') { line.push_back((char)c); c = console::getc(); }
+    if (c == '\r') {   // a line break of two characters (\r\n): the second one belongs to it
+        int next = console::getc();
+        if (next >= 0 && next != '\n') console::ungetc(next);
+    }
     ok();
     return str8(line, list);
 }
 inline Value StdReadAll(OwnList* list) {
-    std::fflush(stdout);
+    console::flush(1);
     std::string all;
-    char chunk[512];
-    size_t n;
-    while ((n = std::fread(chunk, 1, sizeof chunk, stdin)) > 0) all.append(chunk, n);
+    uint8_t chunk[512];
+    int64_t n;
+    while ((n = console::read(chunk, (int64_t)sizeof chunk)) > 0) all.append(reinterpret_cast<const char*>(chunk), (size_t)n);
     ok();
     return str8(all, list);
 }

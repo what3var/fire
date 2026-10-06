@@ -128,6 +128,7 @@ namespace fire.Compiler
             sb.AppendLine($"#define FIRE_HAL_{target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine("#define FIRE_NDIMS 1");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.hpp\"");
+            sb.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{target.Native.Platform}/fire_fs.hpp\"");
             sb.AppendLine("#include \"fire_rt.hpp\"");
             foreach (var (name, text) in import.ReadNativeSources(HostPlatformKeys))
             {
@@ -150,6 +151,10 @@ namespace fire.Compiler
             sb.AppendLine("    {nullptr, 0, nullptr}");
             sb.AppendLine("};");
             sb.AppendLine($"static const int kCount = {functions.Count};");
+            sb.AppendLine("FIRE_PKG_EXPORT void fire_pkg_set_host(const fire_host* host) { libraryHost() = host; }");
+            sb.AppendLine(string.IsNullOrWhiteSpace(native.Reset)
+                ? "FIRE_PKG_EXPORT void fire_pkg_reset(void) { }"
+                : $"FIRE_PKG_EXPORT void fire_pkg_reset(void) {{ std::lock_guard<std::mutex> lock(pkgabi::callLock()); {native.Reset}(); }}");
             sb.AppendLine("FIRE_PKG_EXPORT int fire_pkg_abi_version(void) { return FIRE_PKG_ABI_VERSION; }");
             sb.AppendLine("FIRE_PKG_EXPORT int fire_pkg_function_count(void) { return kCount; }");
             sb.AppendLine("FIRE_PKG_EXPORT const char* fire_pkg_function_name(int i) { return i >= 0 && i < kCount ? kEntries[i].name : nullptr; }");

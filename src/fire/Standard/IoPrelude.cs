@@ -1,10 +1,9 @@
-namespace fire.IO.Bridge
+namespace fire.Standard
 {
-    public static partial class IoBridge
+    public static class IoPrelude
     {
         /// <summary>
-        /// Der fire-Quelltext zur Brücke (analog zu GraphicsBridge.PreludeSource/
-        /// DeviceBridge.PreludeSource) - VOR das eigentliche Nutzer-Skript zu
+        /// Der fire-Quelltext zu `#import "io"` (die Natives sind C++, siehe native/bridges/fire_bridge_io.hpp) - VOR das eigentliche Nutzer-Skript zu
         /// setzen, wenn es `#import "io"` gibt. Alles liegt in `namespace IO`
         /// (`IO.FileStream`, `IO.File`, `IO.Path`, ...), damit kein Nutzer-
         /// Klassenname wie `File` oder `Stream` damit kollidiert.
@@ -14,7 +13,7 @@ namespace fire.IO.Bridge
         /// (bequemer) leitet von `Stream` ab, der alles Übrige (ReadByte,
         /// ReadBytes, ReadAll, CopyTo, ...) auf Read/Write aufbaut. `NativeStream`
         /// ist die gemeinsame Basis von `FileStream`/`MemoryStream`, hinter der
-        /// ein natives Handle liegt (siehe IoBridge); sein `destruct()` schließt
+        /// ein natives Handle liegt (die Natives: native/bridges/fire_bridge_io.hpp); sein `destruct()` schließt
         /// das Handle, wenn der Besitzer-Scope endet - ein vergessenes Close()
         /// bleibt also nicht offen. Ein Destruktor wirft nie: schlägt das Schließen
         /// fehl (z.B. weil der Stream, in den ein TextWriter noch leeren will,
@@ -28,7 +27,7 @@ namespace fire.IO.Bridge
         /// (`IO.FileMode.Create`) - ein Enum in einem Namespace ist nur so
         /// erreichbar.
         /// </summary>
-        public const string PreludeSource = """
+        public const string Source = """
             namespace IO {
                 enum FileMode { Open, Create, CreateNew, OpenOrCreate, Append }
                 enum FileAccess { Read, Write, ReadWrite }
@@ -409,7 +408,7 @@ namespace fire.IO.Bridge
                     static ModifiedTime(string path) {
                         var t = __IOFileTime(path)
                         if (t == undefined) { IO.IOErrors.Throw() }
-                        return t
+                        return t * 1s   // the native gives plain seconds (units do not cross the package ABI)
                     }
 
                     // Eine fehlende Datei ist kein Fehler.

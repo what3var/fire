@@ -39,7 +39,7 @@ namespace fire.Compiler
 
         protected NativeRegistry? nativeRegistry { get; set; }
 
-        /// <summary>Sicherheitsnetz des Hosts (siehe IoBridge.RegisterAll): schließt alle Streams, die ein Skript offen
+        /// <summary>Policy und Konsole des Hosts für die Natives von Paketen (siehe PackageHost): schließt am Ende alle Streams, die ein Skript offen
         /// gelassen hat. Wer die VM selbst treibt (z.B. der Step-Debugger), ruft das nach dem Lauf auf.</summary>
         protected IDisposable? IoResources { get; set; }
 
@@ -182,12 +182,11 @@ namespace fire.Compiler
             if (linkedProgram.NativeImports.Contains(NativeImports.Devices))
                 deviceResources = fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager ?? fire.Device.Manager.DeviceManager.DeviceManager.CreateDefault(), VM.WaitUntil);
 
-            // `ioPolicy`: was Skripte im Dateisystem anfassen dürfen, `ioStdio`: wohin
-            // IO.Stdio führt - beides entscheidet der HOST (siehe IoPolicy/IoStdio),
-            // Vorgabe: alles erlaubt, echte Konsole.
+            // `ioPolicy`: was Skripte im Dateisystem anfassen dürfen, `ioStdio`: wohin IO.Stdio führt - beides entscheidet der HOST (siehe IoPolicy/IoStdio),
+            // Vorgabe: alles erlaubt, echte Konsole. Die Natives von `io` sind C++ in einer Bibliothek und fragen den Host über PackageHost.
             IDisposable? ioResources = null;
-            if (linkedProgram.NativeImports.Contains(NativeImports.IO))
-                ioResources = fire.IO.Bridge.IoBridge.RegisterAll(natives, ioPolicy, ioStdio);
+            if (linkedProgram.PackageNatives is { Count: > 0 })
+                ioResources = PackageHost.Begin(ioPolicy, ioStdio);
 
             PackageImports.RegisterForRun(natives, linkedProgram);   // the natives of imports of packages: names only (they are C++)
 

@@ -225,7 +225,7 @@ namespace fire.Editor
 
         /// <summary>Anzeigename einer Prelude für Fenstertitel.</summary>
         public static string PreludeTitleOf(string preludeName) =>
-            preludeName == StandardPreludeName ? "Standard library (prelude)" : $"Prelude '{preludeName}'";
+            preludeName == StandardPreludeName ? "Standard library (prelude)" : $"Prelude '{(preludeName.StartsWith("pkg:", StringComparison.Ordinal) ? preludeName.Substring(4) : preludeName)}'";
 
         /// <summary>Alle irgendwo im Dokument gesehenen Bezeichner-Namen
         /// (Variablen, Parameter, Felder, ...) - unscharfer, aber robuster
