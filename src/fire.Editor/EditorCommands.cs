@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using AvaloniaEdit;
 using AvaloniaEdit.Document;
 
@@ -14,7 +15,7 @@ namespace fire.Editor
         /// <summary>Is there text on the clipboard (enables Paste)?</summary>
         public static async System.Threading.Tasks.Task<bool> ClipboardHasText(TopLevel top)
         {
-            try { return top.Clipboard != null && !string.IsNullOrEmpty(await top.Clipboard.GetTextAsync()); }
+            try { return top.Clipboard != null && !string.IsNullOrEmpty(await top.Clipboard.TryGetTextAsync()); }
             catch (Exception) { return false; }
         }
 

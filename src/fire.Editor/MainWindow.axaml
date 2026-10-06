@@ -3,7 +3,10 @@
         xmlns:dock="using:Dock.Avalonia.Controls"
         x:Class="fire.Editor.MainWindow"
         Title="spark" Width="1300" Height="820" Icon="/Logo-64.png"
-        DragDrop.AllowDrop="True">
+        DragDrop.AllowDrop="True"
+		TransparencyLevelHint="AcrylicBlur"
+        Background="#1B181E"
+        ExtendClientAreaToDecorationsHint="True">
 
     <Window.Resources>
         <!-- vector symbols of the tool bars (Material Design Icons), so that no symbol font is needed on any system -->
@@ -38,105 +41,137 @@
             <Setter Property="Padding" Value="8,4"/>
         </Style>
     </Window.Styles>
-
-    <DockPanel>
-        <Menu DockPanel.Dock="Top">
-            <MenuItem Header="_File">
-                <MenuItem Header="_New Script" Click="New_Click" InputGesture="Ctrl+N">
-                    <MenuItem.Icon><Image Source="/icons/Material-ScriptOutline.png"/></MenuItem.Icon>
-                </MenuItem>
-                <MenuItem Header="New _Markdown Document" Click="NewMarkdown_Click" InputGesture="Ctrl+Shift+N">
-                    <MenuItem.Icon><Image Source="/icons/Material-FileDocumentOutline.png"/></MenuItem.Icon>
-                </MenuItem>
-                <MenuItem Header="New _UI Markup" Click="NewUiMarkup_Click"/>
-                <MenuItem Header="_Open..." Click="Open_Click" InputGesture="Ctrl+O"/>
-                <MenuItem Header="Open Markdown _Read-Only..." Click="OpenReadOnly_Click"/>
-                <MenuItem Header="Open Markdown in _Viewer..." Click="OpenViewer_Click"/>
-                <MenuItem Header="_Save" x:Name="mnuSave" Click="Save_Click" InputGesture="Ctrl+S"/>
-                <MenuItem Header="Save _As..." x:Name="mnuSaveAs" Click="SaveAs_Click"/>
-                <MenuItem Header="Save A_ll" x:Name="mnuSaveAll" Click="SaveAll_Click" InputGesture="Ctrl+Shift+S"/>
-                <MenuItem Header="_Close Document" Click="CloseDocument_Click" InputGesture="Ctrl+W"/>
-                <Separator/>
-                <MenuItem Header="Build Settings" Click="BuildSettings_Click"/>
-                <MenuItem Header="Native Build Settings..." Click="NativeBuildSettings_Click"/>
-                <MenuItem Header="Package Manager (ember)..." Click="PackageManager_Click"/>
-                <Separator/>
-                <MenuItem Header="E_xit" Click="Exit_Click"/>
-            </MenuItem>
-            <!-- acts on the active document; the entries are switched on/off when the menu opens (EditMenu_SubmenuOpened) -->
-            <MenuItem Header="_Edit" SubmenuOpened="EditMenu_SubmenuOpened">
-                <MenuItem Header="_Undo" x:Name="mnuUndo" Click="Undo_Click" InputGesture="Ctrl+Z"/>
-                <MenuItem Header="_Redo" x:Name="mnuRedo" Click="Redo_Click" InputGesture="Ctrl+Y"/>
-                <Separator/>
-                <MenuItem Header="Cu_t" x:Name="mnuCut" Click="Cut_Click" InputGesture="Ctrl+X"/>
-                <MenuItem Header="_Copy" x:Name="mnuCopy" Click="Copy_Click" InputGesture="Ctrl+C"/>
-                <MenuItem Header="_Paste" x:Name="mnuPaste" Click="Paste_Click" InputGesture="Ctrl+V"/>
-                <MenuItem Header="_Delete" x:Name="mnuDelete" Click="Delete_Click" InputGesture="Delete"/>
-                <Separator/>
-                <MenuItem Header="Select _All" Click="SelectAll_Click" InputGesture="Ctrl+A"/>
-                <Separator/>
-                <MenuItem Header="_Find..." Click="Find_Click" InputGesture="Ctrl+F"/>
-                <MenuItem Header="Find _Next" Click="FindNext_Click" InputGesture="F3"/>
-                <MenuItem Header="Find _Previous" Click="FindPrevious_Click" InputGesture="Shift+F3"/>
-                <MenuItem Header="_Go to Line..." Click="GoToLine_Click" InputGesture="Ctrl+G"/>
-                <Separator/>
-                <MenuItem Header="Go to _Definition (Ctrl+Click)" x:Name="mnuGoToDefinition" Click="GoToDefinition_Click" InputGesture="F12"/>
-                <MenuItem Header="Toggle _Comment" x:Name="mnuToggleComment" Click="ToggleComment_Click" InputGesture="Ctrl+Shift+C"/>
-            </MenuItem>
-            <MenuItem Header="_Run">
-                <MenuItem Header="_Start / Continue (to next breakpoint)" Click="Run_Click" InputGesture="F5"/>
-                <MenuItem Header="Re_compile and Start" Click="Restart_Click" InputGesture="Ctrl+F5"/>
-                <MenuItem Header="Build Stan_dalone..." Click="Build_Click"/>
-                <MenuItem Header="Build _Native..." Click="BuildNative_Click"/>
-                <Separator/>
-                <MenuItem Header="Step _Over" Click="Step_Click" InputGesture="F10"/>
-                <MenuItem Header="Step _Into" Click="StepInto_Click" InputGesture="F11"/>
-                <MenuItem Header="Step O_ut" Click="StepOut_Click" InputGesture="Shift+F11"/>
-                <MenuItem Header="C_ontinue (like F5)" Click="Continue_Click" InputGesture="F8"/>
-                <MenuItem Header="Run to _End (ignore breakpoints)" Click="RunToEnd_Click"/>
-                <MenuItem Header="S_top" Click="Stop_Click" InputGesture="Shift+F5"/>
-                <Separator/>
-                <MenuItem Header="Debug" ToggleType="CheckBox" x:Name="mnuRunDebug" Click="mnuRunDebug_Click"/>
-                <MenuItem Header="Release" ToggleType="CheckBox" x:Name="mnuRunRelease" Click="mnuRunRelease_Click"/>
-                <MenuItem Header="Performance" ToggleType="CheckBox" x:Name="mnuRunPerformance" Click="mnuRunPerformance_Click"/>
-                <Separator/>
-                <MenuItem Header="Toggle _Breakpoint (current line)" Click="ToggleBreakpoint_Click" InputGesture="F9"/>
-            </MenuItem>
-            <MenuItem Header="_Devices">
-                <MenuItem Header="_Search for Devices" Click="DevicesSearch_Click"/>
-                <MenuItem Header="_Connect" Click="DevicesConnect_Click"/>
-                <MenuItem Header="_Disconnect" Click="DevicesDisconnect_Click"/>
-                <Separator/>
-                <MenuItem Header="Set as Default _Device" Click="DevicesSetDefault_Click"/>
-                <MenuItem Header="Clear Default D_evice" Click="DevicesClearDefault_Click"/>
-                <Separator/>
-                <MenuItem Header="Open Packet _Trace" Click="DevicesTrace_Click"/>
-                <Separator/>
-                <MenuItem Header="Show Simulated _Loopback Device" x:Name="mnuLoopback" ToggleType="CheckBox" Click="DevicesLoopback_Click"
-                          ToolTip.Tip="An echo device without hardware (loopback:echo) for trying out scripts and the packet trace"/>
-            </MenuItem>
-            <!-- a check = the window is visible (updated when the menu opens, see ViewMenu_SubmenuOpened) -->
-            <MenuItem Header="_View" x:Name="mnuView" SubmenuOpened="ViewMenu_SubmenuOpened">
-                <MenuItem Header="_Output" Tag="output" ToggleType="CheckBox" Click="ViewPanel_Click"/>
-                <MenuItem Header="_Error List" Tag="errors" ToggleType="CheckBox" Click="ViewPanel_Click"/>
-                <MenuItem Header="_Threads" Tag="threads" ToggleType="CheckBox" Click="ViewPanel_Click"/>
-                <MenuItem Header="_Scope" Tag="scope" ToggleType="CheckBox" Click="ViewPanel_Click"/>
-                <MenuItem Header="S_tack" Tag="stack" ToggleType="CheckBox" Click="ViewPanel_Click"/>
-                <MenuItem Header="_Devices" Tag="devices" ToggleType="CheckBox" Click="ViewPanel_Click"/>
-                <Separator/>
-                <MenuItem Header="Toggle Markdown / Design _Preview" Click="ToggleMarkdownPreview_Click" InputGesture="Ctrl+Shift+V"/>
-                <Separator/>
-                <MenuItem Header="_Reset Layout" Click="ResetLayout_Click"/>
-            </MenuItem>
-            <MenuItem Header="?">
-                <MenuItem Header="_First Steps" Click="HelpFirstSteps_Click"/>
-                <MenuItem Header="_Embedding fire in your Application" Click="HelpEmbedding_Click"/>
-            </MenuItem>
-        </Menu>
-
+	<Grid>
+		<Grid.RowDefinitions>
+			<RowDefinition Height="32"/>
+			<RowDefinition Height="*"/>
+		</Grid.RowDefinitions>
+		<ExperimentalAcrylicBorder IsHitTestVisible="False" Grid.Row="0">
+			<ExperimentalAcrylicBorder.Material>
+				<ExperimentalAcrylicMaterial
+                    BackgroundSource="Digger"
+					FallbackColor="#1B181E"
+                    TintColor="#110022"
+                    TintOpacity="1"
+                    MaterialOpacity="0.6" 
+					/>
+			</ExperimentalAcrylicBorder.Material>
+		</ExperimentalAcrylicBorder>
+	<DockPanel Grid.Row="1">
+		<Panel DockPanel.Dock="Top">
+			<ExperimentalAcrylicBorder IsHitTestVisible="False">
+				<ExperimentalAcrylicBorder.Material>
+					<ExperimentalAcrylicMaterial
+						BackgroundSource="Digger"
+						FallbackColor="#1B181E"
+						TintColor="#110022"
+						TintOpacity="1"
+						MaterialOpacity="0.6"
+					/>
+				</ExperimentalAcrylicBorder.Material>
+			</ExperimentalAcrylicBorder>
+			<Menu>
+				<MenuItem Header="_File">
+					<MenuItem Header="_New Script" Click="New_Click" InputGesture="Ctrl+N">
+						<MenuItem.Icon>
+							<Image Source="/icons/Material-ScriptOutline.png"/>
+						</MenuItem.Icon>
+					</MenuItem>
+					<MenuItem Header="New _Markdown Document" Click="NewMarkdown_Click" InputGesture="Ctrl+Shift+N">
+						<MenuItem.Icon>
+							<Image Source="/icons/Material-FileDocumentOutline.png"/>
+						</MenuItem.Icon>
+					</MenuItem>
+					<MenuItem Header="New _UI Markup" Click="NewUiMarkup_Click"/>
+					<MenuItem Header="_Open..." Click="Open_Click" InputGesture="Ctrl+O"/>
+					<MenuItem Header="Open Markdown _Read-Only..." Click="OpenReadOnly_Click"/>
+					<MenuItem Header="Open Markdown in _Viewer..." Click="OpenViewer_Click"/>
+					<MenuItem Header="_Save" x:Name="mnuSave" Click="Save_Click" InputGesture="Ctrl+S"/>
+					<MenuItem Header="Save _As..." x:Name="mnuSaveAs" Click="SaveAs_Click"/>
+					<MenuItem Header="Save A_ll" x:Name="mnuSaveAll" Click="SaveAll_Click" InputGesture="Ctrl+Shift+S"/>
+					<MenuItem Header="_Close Document" Click="CloseDocument_Click" InputGesture="Ctrl+W"/>
+					<Separator/>
+					<MenuItem Header="Build Settings" Click="BuildSettings_Click"/>
+					<MenuItem Header="Native Build Settings..." Click="NativeBuildSettings_Click"/>
+					<MenuItem Header="Package Manager (ember)..." Click="PackageManager_Click"/>
+					<Separator/>
+					<MenuItem Header="E_xit" Click="Exit_Click"/>
+				</MenuItem>
+				<!-- acts on the active document; the entries are switched on/off when the menu opens (EditMenu_SubmenuOpened) -->
+				<MenuItem Header="_Edit" SubmenuOpened="EditMenu_SubmenuOpened">
+					<MenuItem Header="_Undo" x:Name="mnuUndo" Click="Undo_Click" InputGesture="Ctrl+Z"/>
+					<MenuItem Header="_Redo" x:Name="mnuRedo" Click="Redo_Click" InputGesture="Ctrl+Y"/>
+					<Separator/>
+					<MenuItem Header="Cu_t" x:Name="mnuCut" Click="Cut_Click" InputGesture="Ctrl+X"/>
+					<MenuItem Header="_Copy" x:Name="mnuCopy" Click="Copy_Click" InputGesture="Ctrl+C"/>
+					<MenuItem Header="_Paste" x:Name="mnuPaste" Click="Paste_Click" InputGesture="Ctrl+V"/>
+					<MenuItem Header="_Delete" x:Name="mnuDelete" Click="Delete_Click" InputGesture="Delete"/>
+					<Separator/>
+					<MenuItem Header="Select _All" Click="SelectAll_Click" InputGesture="Ctrl+A"/>
+					<Separator/>
+					<MenuItem Header="_Find..." Click="Find_Click" InputGesture="Ctrl+F"/>
+					<MenuItem Header="Find _Next" Click="FindNext_Click" InputGesture="F3"/>
+					<MenuItem Header="Find _Previous" Click="FindPrevious_Click" InputGesture="Shift+F3"/>
+					<MenuItem Header="_Go to Line..." Click="GoToLine_Click" InputGesture="Ctrl+G"/>
+					<Separator/>
+					<MenuItem Header="Go to _Definition (Ctrl+Click)" x:Name="mnuGoToDefinition" Click="GoToDefinition_Click" InputGesture="F12"/>
+					<MenuItem Header="Toggle _Comment" x:Name="mnuToggleComment" Click="ToggleComment_Click" InputGesture="Ctrl+Shift+C"/>
+				</MenuItem>
+				<MenuItem Header="_Run">
+					<MenuItem Header="_Start / Continue (to next breakpoint)" Click="Run_Click" InputGesture="F5"/>
+					<MenuItem Header="Re_compile and Start" Click="Restart_Click" InputGesture="Ctrl+F5"/>
+					<MenuItem Header="Build Stan_dalone..." Click="Build_Click"/>
+					<MenuItem Header="Build _Native..." Click="BuildNative_Click"/>
+					<Separator/>
+					<MenuItem Header="Step _Over" Click="Step_Click" InputGesture="F10"/>
+					<MenuItem Header="Step _Into" Click="StepInto_Click" InputGesture="F11"/>
+					<MenuItem Header="Step O_ut" Click="StepOut_Click" InputGesture="Shift+F11"/>
+					<MenuItem Header="C_ontinue (like F5)" Click="Continue_Click" InputGesture="F8"/>
+					<MenuItem Header="Run to _End (ignore breakpoints)" Click="RunToEnd_Click"/>
+					<MenuItem Header="S_top" Click="Stop_Click" InputGesture="Shift+F5"/>
+					<Separator/>
+					<MenuItem Header="Debug" ToggleType="CheckBox" x:Name="mnuRunDebug" Click="mnuRunDebug_Click"/>
+					<MenuItem Header="Release" ToggleType="CheckBox" x:Name="mnuRunRelease" Click="mnuRunRelease_Click"/>
+					<MenuItem Header="Performance" ToggleType="CheckBox" x:Name="mnuRunPerformance" Click="mnuRunPerformance_Click"/>
+					<Separator/>
+					<MenuItem Header="Toggle _Breakpoint (current line)" Click="ToggleBreakpoint_Click" InputGesture="F9"/>
+				</MenuItem>
+				<MenuItem Header="_Devices">
+					<MenuItem Header="_Search for Devices" Click="DevicesSearch_Click"/>
+					<MenuItem Header="_Connect" Click="DevicesConnect_Click"/>
+					<MenuItem Header="_Disconnect" Click="DevicesDisconnect_Click"/>
+					<Separator/>
+					<MenuItem Header="Set as Default _Device" Click="DevicesSetDefault_Click"/>
+					<MenuItem Header="Clear Default D_evice" Click="DevicesClearDefault_Click"/>
+					<Separator/>
+					<MenuItem Header="Open Packet _Trace" Click="DevicesTrace_Click"/>
+					<Separator/>
+					<MenuItem Header="Show Simulated _Loopback Device" x:Name="mnuLoopback" ToggleType="CheckBox" Click="DevicesLoopback_Click"
+                              ToolTip.Tip="An echo device without hardware (loopback:echo) for trying out scripts and the packet trace"/>
+				</MenuItem>
+				<!-- a check = the window is visible (updated when the menu opens, see ViewMenu_SubmenuOpened) -->
+				<MenuItem Header="_View" x:Name="mnuView" SubmenuOpened="ViewMenu_SubmenuOpened">
+					<MenuItem Header="_Output" Tag="output" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<MenuItem Header="_Error List" Tag="errors" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<MenuItem Header="_Threads" Tag="threads" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<MenuItem Header="_Scope" Tag="scope" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<MenuItem Header="S_tack" Tag="stack" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<MenuItem Header="_Devices" Tag="devices" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<Separator/>
+					<MenuItem Header="Toggle Markdown / Design _Preview" Click="ToggleMarkdownPreview_Click" InputGesture="Ctrl+Shift+V"/>
+					<Separator/>
+					<MenuItem Header="_Reset Layout" Click="ResetLayout_Click"/>
+				</MenuItem>
+				<MenuItem Header="?">
+					<MenuItem Header="_First Steps" Click="HelpFirstSteps_Click"/>
+					<MenuItem Header="_Embedding fire in your Application" Click="HelpEmbedding_Click"/>
+				</MenuItem>
+			</Menu>
+		</Panel>
         <Border DockPanel.Dock="Top" Classes="toolbar" BorderBrush="#3C3544" BorderThickness="0,0,0,1" Padding="4,2">
             <WrapPanel Orientation="Horizontal">
                 <!-- File -->
+				
                 <SplitButton Click="New_Click" ToolTip.Tip="New script (Ctrl+N)" Padding="2" Background="Transparent" VerticalAlignment="Center">
                     <Image Source="/icons/Material-ScriptOutline.png"/>
                     <SplitButton.Flyout>
@@ -203,4 +238,6 @@
              the layout is built in SparkFactory and saved when the window closes -->
         <dock:DockControl x:Name="DockHost" InitializeLayout="False" InitializeFactory="False"/>
     </DockPanel>
+	</Grid>
+
 </Window>

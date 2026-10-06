@@ -817,7 +817,7 @@ namespace fire.Editor
         // Drag files from the file manager onto the window: each one opens in a tab of its own.
         private void Window_DragOver(object? sender, DragEventArgs e)
         {
-            if (e.Data.Contains(DataFormats.Files))
+            if (e.DataTransfer.Formats.Contains(DataFormat.File))
             {
                 e.DragEffects = DragDropEffects.Copy;
                 e.Handled = true;
@@ -826,9 +826,9 @@ namespace fire.Editor
 
         private void Window_Drop(object? sender, DragEventArgs e)
         {
-            var files = e.Data.GetFiles();
+            var files = e.DataTransfer.GetItems(DataFormat.File);
             if (files == null) return;
-            foreach (var path in files.Select(f => f.TryGetLocalPath()).Where(p => p != null && File.Exists(p)))
+            foreach (var path in files.Select(f => f.TryGetFile()?.TryGetLocalPath()).Where(p => p != null && File.Exists(p)))
                 OpenFile(path!);
             e.Handled = true;
         }
