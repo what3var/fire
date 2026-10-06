@@ -23,44 +23,6 @@
         <SolidColorBrush x:Key="DockSplitterDragBrush" Color="#E8447F"/>
 
 
-        <!-- tool bars (ToolBarControls.cs): see-through, so that the acrylic of the main window shows; a bar has a grip on its left side -->
-        <ControlTheme x:Key="{x:Type local:ToolBar}" TargetType="local:ToolBar">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Focusable" Value="False"/>
-            <Setter Property="ItemsPanel">
-                <ItemsPanelTemplate>
-                    <StackPanel Orientation="Horizontal" Spacing="2"/>
-                </ItemsPanelTemplate>
-            </Setter>
-            <Setter Property="Template">
-                <ControlTemplate>
-                    <Border Background="{TemplateBinding Background}" Margin="0,0,6,0" Padding="2,1">
-                        <DockPanel>
-                            <Border DockPanel.Dock="Left" Width="5" Margin="2,4,4,4" Opacity="0.55"
-                                    Background="{DynamicResource DockSeparatorBrush}" CornerRadius="2"/>
-                            <ItemsPresenter Name="PART_ItemsPresenter" ItemsPanel="{TemplateBinding ItemsPanel}"
-                                            VerticalAlignment="Center"/>
-                        </DockPanel>
-                    </Border>
-                </ControlTemplate>
-            </Setter>
-        </ControlTheme>
-        <ControlTheme x:Key="{x:Type local:ToolBarTray}" TargetType="local:ToolBarTray">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Focusable" Value="False"/>
-            <Setter Property="ItemsPanel">
-                <ItemsPanelTemplate>
-                    <WrapPanel Orientation="Horizontal"/>
-                </ItemsPanelTemplate>
-            </Setter>
-            <Setter Property="Template">
-                <ControlTemplate>
-                    <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
-                        <ItemsPresenter Name="PART_ItemsPresenter" ItemsPanel="{TemplateBinding ItemsPanel}"/>
-                    </Border>
-                </ControlTemplate>
-            </Setter>
-        </ControlTheme>
     </Application.Resources>
 
     <Application.Styles>
@@ -74,6 +36,34 @@
         <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml"/>
         <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml"/>
         <dock:DockFluentTheme/>
+        <!-- the tool strips (ToolStrips/), docked and floating -->
+        <Style Selector="local|ToolStrip Button">
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="local|ToolStrip CommandBarButton:disabled">
+            <Setter Property="Opacity" Value="0.4"/>
+        </Style>
+        <Style Selector="local|ToolStrip Image">
+            <Setter Property="Width" Value="18"/>
+            <Setter Property="Height" Value="18"/>
+        </Style>
+        <Style Selector="local|ToolStrip PathIcon">
+            <Setter Property="Width" Value="16"/>
+            <Setter Property="Height" Value="16"/>
+        </Style>
+        <Style Selector="local|ToolStrip Rectangle.separator">
+            <Setter Property="Width" Value="1"/>
+            <Setter Property="Margin" Value="6,4"/>
+            <Setter Property="Fill" Value="#4A4252"/>
+        </Style>
+        <Style Selector="local|ToolStrip SplitButton:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#33FFFFFF"/>
+        </Style>
+        <Style Selector="local|ToolStrip SplitButton">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
         <!-- compact buttons of the little tool bars inside the panels (formatting bar of the Markdown editor, ...) -->
         <Style Selector="Button.tool, ToggleButton.tool">
             <Setter Property="Padding" Value="8,3"/>

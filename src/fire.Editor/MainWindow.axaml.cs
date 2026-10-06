@@ -148,6 +148,11 @@ namespace fire.Editor
             CollectTools();
             HookFactory();
 
+            _strips = new ToolStripManager(this, DockArea, DockHint, trayTop, trayBottom, trayLeft, trayRight);
+            _strips.Adopt();
+            BuildToolbarsMenu();
+            _defaultStrips = _strips.Save();
+
             RegisterToolchainPrompts();
             Opened += (_, _) => OnFirstShown();
 
@@ -225,6 +230,7 @@ namespace fire.Editor
             }
             _defaultLayout = SerializeLayout();
             LoadLayout();
+            LoadToolStrips();
 
             // Files passed on the command line, else an empty welcome script.
             foreach (var arg in (Environment.GetCommandLineArgs()).Skip(1))
@@ -437,6 +443,8 @@ namespace fire.Editor
                 return;
             }
             SaveLayout();
+            SaveToolStrips();
+            _strips.CloseFloatingWindows();
             _devices.Shutdown(); // disconnects the devices; only the owner may take down the shared manager
         }
 
@@ -452,6 +460,66 @@ namespace fire.Editor
         {
             RestoreDefaultLayout();
             try { File.Delete(LayoutFilePath); } catch (IOException) { }
+            ResetToolStrips();
+        }
+
+        // -----------------------------------------------------------
+        // The tool strips: arrangement saved next to the layout of the docking areas, View > Toolbars
+        // -----------------------------------------------------------
+
+        private readonly ToolStripManager _strips;
+        private readonly string _defaultStrips;
+
+        private static string ToolStripsFilePath =>
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "fire", "editor-toolbars.json");
+
+        private void LoadToolStrips()
+        {
+            if (!File.Exists(ToolStripsFilePath)) return;
+            try { _strips.Load(File.ReadAllText(ToolStripsFilePath)); }
+            catch (Exception ex)
+            {
+                // a damaged file must not make the editor unusable
+                System.Diagnostics.Debug.WriteLine(ex);
+                ResetToolStrips();
+            }
+        }
+
+        private void SaveToolStrips()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(ToolStripsFilePath)!);
+                File.WriteAllText(ToolStripsFilePath, _strips.Save());
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex); }
+        }
+
+        private void ResetToolStrips()
+        {
+            try { _strips.Load(_defaultStrips); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex); }
+            try { File.Delete(ToolStripsFilePath); } catch (IOException) { }
+        }
+
+        private void BuildToolbarsMenu()
+        {
+            foreach (var strip in _strips.Strips)
+            {
+                var item = new MenuItem { Header = strip.Title, Tag = strip.Id, ToggleType = MenuItemToggleType.CheckBox };
+                item.Click += (_, _) => _strips.SetVisible(strip, !strip.IsVisible);
+                mnuToolbars.Items.Add(item);
+            }
+            mnuToolbars.Items.Add(new Separator());
+            var reset = new MenuItem { Header = "_Reset Toolbars" };
+            reset.Click += (_, _) => ResetToolStrips();
+            mnuToolbars.Items.Add(reset);
+        }
+
+        private void ToolbarsMenu_SubmenuOpened(object? sender, RoutedEventArgs e)
+        {
+            foreach (var item in mnuToolbars.Items.OfType<MenuItem>())
+                if (item.Tag is string id && _strips.Find(id) is { } strip) item.IsChecked = strip.IsVisible;
         }
 
         private void ViewMenu_SubmenuOpened(object? sender, RoutedEventArgs e)

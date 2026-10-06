@@ -27,6 +27,8 @@ Every file you open gets its own tab. Scripts (`.script`) open in the code edito
 
 All panels can be dragged to any side of the window, stacked as tabs, floated as separate windows or auto-hidden. **View → Reset Layout** brings the original arrangement back.
 
+The tool bars are *tool strips*: drag one by its grip (the bar on its left) to another place in its row, to the top, bottom, left or right edge of the window (a mark shows where it will land; drop it beside a row to start a row of its own), or out of the window to let it float. Double-clicking the grip floats a strip or puts a floating one back, and the grip's context menu docks, floats or hides it (**View → Toolbars** shows hidden ones again). Strips with combo boxes cannot stand at the left or right edge. **View → Reset Layout** resets the tool strips as well.
+
 Handy shortcuts in the code editor:
 
 | Shortcut | Action |
