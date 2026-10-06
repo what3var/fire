@@ -40,7 +40,8 @@ int fire_pkg_abi_version(void);                    /* FIRE_PKG_ABI_VERSION */
 int fire_pkg_function_count(void);
 const char* fire_pkg_function_name(int index);     /* the name that fire code calls, e.g. "__sk_read" */
 int fire_pkg_function_arity(int index);
-/* Calls function `index`. Returns 0, then `*result` is the result; or not 0, then `error` holds a message (zero terminated, at most errorSize bytes).
+/* Calls function `index`. Returns 0, then `*result` is the result; 1, then `error` holds a message (zero terminated, at most errorSize bytes) and the program stops with it;
+ * or 2, then the native throws an exception of the program: `error` holds the name of the exception class, a line feed and the message (the VM constructs the class with the message).
  * Memory behind `*result` (text, array, buffer) belongs to the library and stays valid until the next call from the same thread: the caller copies it. */
 int fire_pkg_call(int index, const fire_val* args, int argc, fire_val* result, char* error, int errorSize);
 

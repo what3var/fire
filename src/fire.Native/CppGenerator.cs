@@ -140,7 +140,6 @@ namespace fire.Native
         private bool _usesExceptions;
         /// <summary>The program uses fire threads (`fire`, `leave`, `terminate`, actors, ...): FIRE_THREADS, safe points that look at signals.</summary>
         private bool _usesThreads;
-        private bool _usesTime;
         /// <summary>The runtime has to read the `ticks` of a TimeSpan (the time functions, the waiting functions of the devices, `#timeout`): `timeObjTicks` is generated.</summary>
         private bool _needsTimeObj;
         private bool _usesIo;
@@ -209,22 +208,6 @@ namespace fire.Native
             "StdReadLine", "StdReadAll", "Utf8Encode", "Utf8Decode", "SplitLines",
         };
 
-        /// <summary>The natives of `#import "time"` and their C++ functions (bridges/fire_bridge_time.hpp).</summary>
-        private static readonly Dictionary<string, (int Argc, string Function, bool NeedsList, bool ReturnsReference)> TimeBridgeNatives = new()
-        {
-            ["Sleep"] = (1, "sleepNative", false, false),
-            ["__time_now"] = (0, "tm_now", false, false),
-            ["__time_local_offset"] = (1, "tm_localOffset", false, false),
-            ["__time_parts"] = (1, "tm_parts", true, true),
-            ["__time_make"] = (7, "tm_make", false, false),
-            ["__time_parse"] = (1, "tm_parse", false, false),
-            ["__time_format"] = (2, "tm_format", true, true),
-            ["__time_add_months"] = (2, "tm_addMonths", false, false),
-            ["__time_days_in_month"] = (2, "tm_daysInMonth", false, false),
-            ["__time_to_ticks"] = (2, "tm_toTicks", false, false),
-            ["__time_unit_ticks"] = (1, "tm_unitTicks", false, false),
-            ["__time_span_text"] = (1, "tm_spanText", true, true),
-        };
         /// <summary>The program declares actors (classes with IsActor): calls of their methods are messages.</summary>
         private bool _usesActors;
         private Func _cur = null!;   // the function that is being generated
@@ -432,7 +415,9 @@ namespace fire.Native
         private bool AnyClassHasMethod(string name, int argc) => _classList.Any(c => c.Rc.FindMethodWithAccess(name, argc).Proto != null);
 
         /// <summary>The natives of the imports of packages (C++ source that is put into the generated file): the fire name -> argument count and the C++ function.</summary>
-        private readonly Dictionary<string, (int Argc, string Function, bool NeedsList, bool ReturnsReference)> _packageNatives = new();
+        private readonly Dictionary<string, (int Argc, string Function, bool NeedsList, bool ReturnsReference, bool Host, bool Throws)> _packageNatives = new();
+        /// <summary>The exception classes that natives of the imported packages throw (`exceptions` of the package): the runtime constructs them by name (`fireError`).</summary>
+        private readonly List<string> _errorClasses = new();
         private readonly List<(InstalledImport Import, string Key)> _packageImports = new();
 
         /// <summary>Looks at the imports of packages the program uses: their native functions, and whether the target is one the C++ source is written for.</summary>
@@ -449,7 +434,8 @@ namespace fire.Native
                 if (native.SourcesFor(new[] { _target.Native.Platform, _target.Name }).Count == 0)
                     throw new NativeNotSupportedException($"the package '{import.Package.Name}' (import '{import.Name}') has no C++ source for the target '{_target.Name}' (platform '{_target.Native.Platform}')");
                 foreach (var fn in native.Functions)
-                    _packageNatives.TryAdd(fn.Name, (fn.Arguments, fn.Cpp, fn.NeedsList, fn.ReturnsReference));
+                    _packageNatives.TryAdd(fn.Name, (fn.Arguments, fn.Cpp, fn.NeedsList, fn.ReturnsReference, fn.Host, native.Exceptions.Count > 0));
+                foreach (var name in native.Exceptions) if (!_errorClasses.Contains(name)) _errorClasses.Add(name);
             }
         }
 
@@ -496,7 +482,6 @@ namespace fire.Native
             foreach (var include in _target.Native.Includes) sb.AppendLine($"#include <{include}>");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.hpp\"");
             sb.AppendLine("#include \"fire_rt.hpp\"");
-            if (_usesTime) sb.AppendLine("#include \"bridges/fire_bridge_time.hpp\"");
             if (_usesDevices)
             {
                 sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{_target.Native.Platform}/fire_dev.hpp\"");
@@ -679,11 +664,12 @@ namespace fire.Native
                 }
                 var accessError = RegisterClass("AccessDeniedException");
                 if (accessError.Rc.FindConstructor(1) is { } accessCtor && accessCtor.ParamCount == 1) GetFunc(accessCtor, FuncKind.Ctor);
-                if (_usesTime && _program.Program.Classes.ContainsKey("TimeException"))
-                {
-                    var timeError = RegisterClass("TimeException");
-                    if (timeError.Rc.FindConstructor(1) is { } timeCtor && timeCtor.ParamCount == 1) GetFunc(timeCtor, FuncKind.Ctor);
-                }
+                foreach (var name in _errorClasses)
+                    if (_program.Program.Classes.ContainsKey(name))
+                    {
+                        var errorClass = RegisterClass(name);
+                        if (errorClass.Rc.FindConstructor(1) is { } errorCtor && errorCtor.ParamCount == 1) GetFunc(errorCtor, FuncKind.Ctor);
+                    }
             }
             foreach (var field in _fieldNames.ToList())
                 foreach (var cls in _classList.ToList())
@@ -1162,15 +1148,21 @@ namespace fire.Native
                 sb.AppendLine($"    {_funcByProto[indexClass.Rc.FindConstructor(3)!].Name}(o, message, Int(index), Int(length));");
                 sb.AppendLine("    return o;");
                 sb.AppendLine("}");
-                if (_usesTime)
+                // `fireError("Class", "text")` of the natives of packages: the exception object of the class of that name
+                sb.AppendLine("Value makeClassError(const char* cls, Value message) {");
+                sb.AppendLine("    (void)cls; (void)message;");
+                foreach (var name in _errorClasses)
                 {
-                    var timeClass = _classes.GetValueOrDefault("TimeException") ?? throw new NativeNotSupportedException("the time functions need the prelude class TimeException (#import \"time\")");
-                    sb.AppendLine("Value makeTimeError(Value message) {");
-                    sb.AppendLine($"    Value o = newObject({timeClass.Id}, {timeClass.Fields.Count}, g_globalOwn);");
-                    sb.AppendLine($"    {_funcByProto[timeClass.Rc.FindConstructor(1)!].Name}(o, message);");
-                    sb.AppendLine("    return o;");
-                    sb.AppendLine("}");
+                    var errorClass = _classes.GetValueOrDefault(name);
+                    if (errorClass == null || errorClass.Rc.FindConstructor(1) is not { ParamCount: 1 } ctor) continue;
+                    sb.AppendLine($"    if (std::strcmp(cls, {CString(name)}) == 0) {{");
+                    sb.AppendLine($"        Value o = newObject({errorClass.Id}, {errorClass.Fields.Count}, g_globalOwn);");
+                    sb.AppendLine($"        {_funcByProto[ctor].Name}(o, message);");
+                    sb.AppendLine("        return o;");
+                    sb.AppendLine("    }");
                 }
+                sb.AppendLine("    return Undef();");
+                sb.AppendLine("}");
             }
             if (_needsTimeObj)
             {
@@ -1277,16 +1269,6 @@ namespace fire.Native
             _usesExceptions = true;
             _usesGlobalOwn = true;
             _version++;
-        }
-
-        /// <summary>`Sleep` and the other natives of `#import "time"`: the runtime needs the TimeException and a way to read the `ticks` of a TimeSpan.</summary>
-        private void UseTime()
-        {
-            if (_usesTime) return;
-            _usesTime = true;
-            UseExceptions();
-            _version++;
-            NeedTimeObj();
         }
 
         private void NeedTimeObj()
@@ -2195,25 +2177,17 @@ namespace fire.Native
                         if (devNative.Waits && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
                         d = first + 1; SetR(first, devNative.Reference); return Next();
                     }
-                    if (TimeBridgeNatives.TryGetValue(native, out var timeNative) && timeNative.Argc == argc)
-                    {
-                        // the time bridge (bridges/fire_bridge_time.hpp); every one of them can throw a TimeException
-                        UseTime();
-                        int first = d - argc;
-                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(timeNative.NeedsList ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
-                        E($"{S(first)} = {timeNative.Function}({args});");
-                        Check();
-                        // a sleep ends at terminate: leave now, not at the next loop
-                        if (native == "Sleep" && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
-                        d = first + 1; SetR(first, timeNative.ReturnsReference); return Next();
-                    }
                     if (_packageNatives.TryGetValue(native, out var packageNative) && packageNative.Argc == argc)
                     {
                         // a native of a package (C++ in the generated file): `Value cpp(Value a, ...)`, with the list of the scope as the last argument if it asks for it
                         int first = d - argc;
                         string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(packageNative.NeedsList ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
+                        if (packageNative.Throws) UseExceptions();   // its exception classes (`fireError`) need the exceptions of the runtime
+                        if (packageNative.Host) NeedTimeObj();        // a function the VM runs itself waits and takes times: a TimeSpan is read from its `ticks`
                         E($"{S(first)} = {packageNative.Function}({args});");
                         Check();
+                        // a function of the host (`Sleep`) ends at terminate: leave now, not at the next loop
+                        if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
                         d = first + 1; SetR(first, packageNative.ReturnsReference); return Next();
                     }
                     throw new NativeNotSupportedException($"native function '{native}' (called in {fn})");

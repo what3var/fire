@@ -230,6 +230,16 @@ struct FireFatalError { char text[256]; };
     std::snprintf(e.text, sizeof e.text, "'%s' is not supported in a package library", what);
     throw e;
 }
+
+/// An exception of the program that a native of the package throws (`fireError("TimeException", "text")`): the wrapper of the entry point reports the class and the text
+/// to the VM, which throws the exception there.
+struct FireClassError { char cls[96]; char text[256]; };
+[[noreturn]] inline Value fireError(const char* cls, const char* utf8) {
+    FireClassError e;
+    std::snprintf(e.cls, sizeof e.cls, "%s", cls);
+    std::snprintf(e.text, sizeof e.text, "%s", utf8);
+    throw e;
+}
 #else
 [[noreturn]] FIRE_COLD inline void fatal(const char* message) {
     std::fflush(stdout);
@@ -1870,6 +1880,26 @@ inline void unitMismatch(Value v, Value expectedText) {
     fatal("Incompatible units.");
 #endif
 }
+
+#ifndef FIRE_LIBRARY
+#ifdef FIRE_EXCEPTIONS
+/// Generated: the exception object of the class `cls` (a class that natives of packages throw: `exceptions` of the package) with the message, or an undefined value.
+Value makeClassError(const char* cls, Value message);
+#endif
+/// An exception of the program that a native of a package throws (`fireError("TimeException", "text")`): thrown, or - when the program has no exceptions - the end of the program.
+inline Value fireError(const char* cls, const char* utf8) {
+#ifdef FIRE_EXCEPTIONS
+    OwnList unused = {nullptr, nullptr, 0, 0, nullptr, nullptr};
+    char16_t text[400];
+    Value msg = newStrFrom(text, utf8ToUtf16(utf8, text, 400), &unused);
+    Value exception = makeClassError(cls, msg);
+    if (exception.kind == K_Class) return throwValue(exception);
+#else
+    (void)cls;
+#endif
+    fatal(utf8);
+}
+#endif
 
 #ifdef FIRE_REFLECTION
 /// A reflection call that cannot be done: a ReflectionException, or the end of the program when there are no exceptions.

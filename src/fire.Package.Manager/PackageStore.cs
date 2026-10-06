@@ -32,8 +32,12 @@ namespace fire.Package.Manager
         public IEnumerable<(string Name, string Text)> ReadNativeSources(IEnumerable<string> platformKeys)
         {
             if (Import.Native == null) yield break;
-            foreach (var src in Import.Native.SourcesFor(platformKeys)) yield return (src, File.ReadAllText(PathOf(src)));
+            foreach (var src in Import.Native.SourcesFor(platformKeys)) yield return (src, StripPragmaOnce(File.ReadAllText(PathOf(src))));
         }
+
+        /// <summary>The sources are put into one generated file: `#pragma once` in a header would only be a warning there.</summary>
+        private static string StripPragmaOnce(string text) =>
+            System.Text.RegularExpressions.Regex.Replace(text, @"^[ \t]*#pragma[ \t]+once[ \t]*\r?$\n?", "", System.Text.RegularExpressions.RegexOptions.Multiline);
 
         /// <summary>The full path of a file of the package.</summary>
         public string FullPath(string relative) => PathOf(relative);

@@ -11,6 +11,9 @@ namespace fire.Runtime
     /// </summary>
     public static class PackageNativeBinding
     {
+        /// <summary>The "library" of a native that the host runs itself (<c>host</c> in the manifest).</summary>
+        public const string HostLibrary = "@host";
+
         [StructLayout(LayoutKind.Sequential)]
         private struct FireVal { public int Kind; public int Length; public long Bits; }
 
@@ -42,6 +45,12 @@ namespace fire.Runtime
                 string name = names[i];
                 string file = libraryFiles != null && i < libraryFiles.Count ? libraryFiles[i] : "";
                 if (natives.Has(name)) continue;
+                if (file == HostLibrary)
+                {
+                    // the host runs it itself (`Sleep`: the VM waits and can be aborted)
+                    natives.Register(name, HostNatives.Find(name) ?? (_ => throw new InvalidOperationException($"The native function '{name}' is run by the host, and this host does not provide it.")));
+                    continue;
+                }
                 natives.Register(name, args => Invoke(name, file, args, locate));
             }
         }
@@ -93,7 +102,16 @@ namespace fire.Runtime
                 Marshal.WriteByte(error, 0);
                 for (int i = 0; i < args.Length; i++) ToNative(args[i], argBlock + i * ValSize, allocs, name);
                 int rc = lib.Call(fn.Index, argBlock, args.Length, result, error, 512);
-                if (rc != 0) throw new InvalidOperationException($"{name}: {Marshal.PtrToStringAnsi(error)}");
+                if (rc == 2)
+                {
+                    // the native throws an exception of the program: "ClassName\nmessage" (as UTF-8)
+                    string text = Marshal.PtrToStringUTF8(error) ?? "";
+                    int nl = text.IndexOf('\n');
+                    string cls = nl < 0 ? text : text.Substring(0, nl), message = nl < 0 ? "" : text.Substring(nl + 1);
+                    if (VM.CurrentThreadVm is { } vm) return vm.NativeFail(cls, message);
+                    throw new InvalidOperationException($"{cls}: {message}");
+                }
+                if (rc != 0) throw new InvalidOperationException($"{name}: {Marshal.PtrToStringUTF8(error)}");
                 return FromNative(result);
             }
             finally

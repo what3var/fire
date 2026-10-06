@@ -91,6 +91,11 @@ class SensorKit {
 * `name` is what fire code calls, `cpp` the C++ function, `arguments` how many `Value`s it takes.
 * `needsList: true`: the function gets `OwnList* list` as an extra **last** parameter. Everything you allocate for the result (`allocStr`, `allocArr`, `allocBuf`)
   is allocated in that list: it belongs to the scope of the caller, like any value a fire function creates. `returnsReference: true`: the result is such a value.
+* `exceptions` (in `native`): the exception classes of your prelude that your natives throw, e.g. `"exceptions": [ "SensorException" ]`. The class needs a constructor with one text
+  argument; the native throws it with `return fireError("SensorException", "no answer");` (a native build constructs the class by name, the VM gets the class and the text from the library).
+* `host: true` (per function): in the virtual machine the host runs the function itself instead of the library. It is for what the C ABI cannot carry or what must not run inside a library:
+  a wait that has to be abortable (`Sleep`), or a function that needs the unit of a value. The VM looks the function up by name in its own table (`fire.Runtime.HostNatives`), so this is for the
+  standard packages; in a native build the `cpp` function is used as always.
 * Then: `ember forge sensorkit.json`, `ember install build\sensorkit-1.0.0.fpk`, and in a script `#import "sensorkit"`.
 
 ## 2. The value API
@@ -101,7 +106,7 @@ Everything is in `native/runtime/fire_rt.hpp` (the runtime that the generated fi
 |---|---|
 | make | `Int(i)`, `Float((Real)x)`, `Bool(b)`, `Char(c)`, `Undef()`; strings `Str* s = allocStr(length, list)` then `strChars(s)[i] = ...` and `StrV(s)`; arrays `Arr* a = allocArr(n, list)`, `a->items()[i] = v`, `ArrV(a)` (call `retain(v)` for a string you store); buffers `Buf* b = allocBuf(n, list)`, `b->bytes()`, `BufV(b)` |
 | read | `v.kind` (`K_Int`, `K_Float`, `K_Bool`, `K_Char`, `K_String`, `K_Array`, `K_Buffer`, `K_Undefined`), `v.i` (int, bool, char), `v.f` / `toR(v)` (a number as a real), `strOf(v)->length` and `->data` (UTF-16), `arrOf(v)->length` / `->items()`, `bufOf(v)->length` / `->bytes()` |
-| errors | `return indexError("Array index", i, length);` throws an `IndexOutOfBoundsException` in a native build; `fatal("text")` ends the program (native build) or reports an error to the VM (library). Check your arguments (`v.kind`) and fail with `fatal`. |
+| errors | `return indexError("Array index", i, length);` throws an `IndexOutOfBoundsException` in a native build; `fatal("text")` ends the program (native build) or reports an error to the VM (library). Check your arguments (`v.kind`) and fail with `fatal`; to let the script catch the error, throw an exception of your prelude: `return fireError("SensorException", "text");` (list the class in `exceptions`). |
 
 `Real` is `double`, or `float` with `#floatwidth 32`. A value of another kind than you expect is your bug to catch: the generated code does not check the kind of the arguments for you.
 
@@ -133,7 +138,8 @@ In the VM your functions run in a shared library, so values are **copied** at th
 * numbers, `bool`, `char`, text, byte buffers and **arrays of these** (also nested) go in and out;
 * an array or buffer you receive is a copy: changing it does not change the caller's array - return the new one;
 * objects, lambdas and pointers cannot cross (an error says so); units are not carried;
-* an error inside your function (`fatal`, `indexError`, ...) is reported to the VM with its text (it ends the program there, like an error of a built-in native);
+* an error inside your function (`fatal`, `indexError`, ...) is reported to the VM with its text (it ends the program there, like an error of a built-in native); `fireError("Class", "text")` is reported
+  with the class (ABI result 2: `error` holds the class name, a line feed and the message) and the VM throws that exception, so a script can `catch` it;
 * calls into one library are serialized (the runtime inside is not thread-safe).
 
 The library is built **by the compiler at first use** with a C++ compiler of the machine (g++, clang++ or MSVC `cl`; the first run of a script that imports the package takes a few

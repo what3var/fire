@@ -127,6 +127,9 @@ inline int callEntry(const FnEntry* entries, int count, int index, const fire_va
         for (int i = 0; i < argc; i++) values[(size_t)i] = toRt(args[i], &list);
         Value r = entry.call(values.data(), &list);
         fromRt(r, result);
+    } catch (const FireClassError& e) {
+        if (error && errorSize > 0) std::snprintf(error, (size_t)errorSize, "%s\n%s", e.cls, e.text);
+        status = 2;
     } catch (const FireFatalError& e) {
         setError(error, errorSize, e.text);
         status = 1;

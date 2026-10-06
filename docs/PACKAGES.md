@@ -104,8 +104,9 @@ The standard bridges of fire - `graphics`, `windows`, `devices`, `io`, `ui`, `li
 and its C++ sources (`native/bridges/`). They are marked `"standard": true`, which is the only way for an import to have the name of an import of the compiler. They are built with the solution:
 after the build, `fire.Compiler bridge-packages <folder>` (an MSBuild target in `src/BridgePackages.targets`, imported by the compiler and the editor) writes them into the folder `PackageSource` of the
 output. When **spark**, **forge** (the compiler) or **ember** start, they check that the standard packages are installed and install the missing or older ones from `PackageSource` (a time stamp in
-`Packages\.standard-stamp` keeps the check quick). The compiler still resolves `#import "io"` and the others to its built-in bridges first, so the packages are the distribution form and the
-basis for moving the bridges to C++ only.
+`Packages\.standard-stamp` keeps the check quick; a package file newer than the stamp is installed again). The move to C++ only is under way, bridge by bridge: **`time` already exists
+only as a package** (`#import "time"` needs `fire-time` to be installed; its functions are the C++ of `native/bridges/fire_bridge_time.hpp`, which the VM runs in a library through the package ABI,
+except `Sleep` and `__time_unit_ticks`, which the VM runs itself: `host` functions). For the others the compiler still resolves `#import "io"` and the rest to its built-in C# bridges first.
 
 ## Making packages
 

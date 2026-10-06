@@ -175,8 +175,6 @@ namespace fire.Compiler
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
                 ReflectionNatives.Register(natives);
-            if (linkedProgram.NativeImports.Contains(NativeImports.Time))
-                TimeNatives.Register(natives);
 
             // `deviceManager`: der Manager des Hosts (z.B. der geteilte des Editors, siehe DeviceManager.IsShared); ohne
             // Angabe bekommt das Programm einen eigenen mit den eingebauten Treibern, der nach dem Lauf freigegeben wird.

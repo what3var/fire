@@ -136,18 +136,20 @@ namespace fire.Compiler
             }
             sb.AppendLine("#include \"fire_pkg_wrapper.hpp\"");
             sb.AppendLine("using namespace fire;");
-            for (int i = 0; i < native.Functions.Count; i++)
+            // the functions of the host (`host` in the manifest) are run by the VM itself: they are not part of the library
+            var functions = native.Functions.Where(f => !f.Host).ToList();
+            for (int i = 0; i < functions.Count; i++)
             {
-                var fn = native.Functions[i];
+                var fn = functions[i];
                 var args = Enumerable.Range(0, fn.Arguments).Select(k => $"a[{k}]").Concat(fn.NeedsList ? new[] { "list" } : Array.Empty<string>());
                 sb.AppendLine($"static Value thunk_{i}(const Value* a, OwnList* list) {{ (void)a; (void)list; return {fn.Cpp}({string.Join(", ", args)}); }}");
             }
             sb.AppendLine("static const pkgabi::FnEntry kEntries[] = {");
-            for (int i = 0; i < native.Functions.Count; i++)
-                sb.AppendLine($"    {{\"{native.Functions[i].Name.Replace("\\", "\\\\").Replace("\"", "\\\"")}\", {native.Functions[i].Arguments}, thunk_{i}}},");
+            for (int i = 0; i < functions.Count; i++)
+                sb.AppendLine($"    {{\"{functions[i].Name.Replace("\\", "\\\\").Replace("\"", "\\\"")}\", {functions[i].Arguments}, thunk_{i}}},");
             sb.AppendLine("    {nullptr, 0, nullptr}");
             sb.AppendLine("};");
-            sb.AppendLine($"static const int kCount = {native.Functions.Count};");
+            sb.AppendLine($"static const int kCount = {functions.Count};");
             sb.AppendLine("FIRE_PKG_EXPORT int fire_pkg_abi_version(void) { return FIRE_PKG_ABI_VERSION; }");
             sb.AppendLine("FIRE_PKG_EXPORT int fire_pkg_function_count(void) { return kCount; }");
             sb.AppendLine("FIRE_PKG_EXPORT const char* fire_pkg_function_name(int i) { return i >= 0 && i < kCount ? kEntries[i].name : nullptr; }");

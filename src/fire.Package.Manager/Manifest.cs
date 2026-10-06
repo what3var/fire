@@ -128,6 +128,9 @@ namespace fire.Package.Manager
         /// native/abi/fire_pkg_abi.h. Without one for the machine, the compiler builds the library from the C++ sources with a C++ compiler.</summary>
         public Dictionary<string, string> Libraries { get; set; } = new();
         public List<PackageNativeFunction> Functions { get; set; } = new();
+        /// <summary>Exception classes of the prelude that natives throw with `fireError("ClassName", "message")` (the class has a constructor with one text argument). In the virtual
+        /// machine the library reports the error to the VM, which throws the class; a native build needs to know the classes to construct them.</summary>
+        public List<string> Exceptions { get; set; } = new();
     }
 
     public static class PackageNativeExtensions
@@ -168,6 +171,9 @@ namespace fire.Package.Manager
         public bool NeedsList { get; set; }
         /// <summary>The result can be an object, array or buffer that has to be adopted (set it with `NeedsList`).</summary>
         public bool ReturnsReference { get; set; }
+        /// <summary>In the virtual machine the host runs this function itself (a function that has to wait or be aborted, like `Sleep`: it is registered by the VM, not taken from the library).
+        /// A native build uses <see cref="Cpp"/> as always.</summary>
+        public bool Host { get; set; }
     }
 
     public sealed class PackageException : Exception

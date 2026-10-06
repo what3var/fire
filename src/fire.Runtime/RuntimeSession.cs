@@ -96,8 +96,6 @@ namespace fire.Runtime
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
                 ReflectionNatives.Register(natives);
-            if (linkedProgram.NativeImports.Contains(NativeImports.Time))
-                TimeNatives.Register(natives);
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Devices))
                 session.DeviceResources = RegisterDevices(natives);

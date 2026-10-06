@@ -43,9 +43,12 @@ namespace fire.Package.Manager
                         string name = PackageNameOf(bridge);
                         var listing = service.Find(name).FirstOrDefault(l => string.Equals(l.Name, name, StringComparison.OrdinalIgnoreCase));
                         if (listing?.Latest == null) continue;
-                        if (store.Find(name) is { } have && SemanticVersion.TryParse(have.Version, out var h) && SemanticVersion.TryParse(listing.Latest.Version, out var l) && h.CompareTo(l) >= 0) continue;
+                        // a package file newer than the last check was built again (the version of a build is the same): it is installed again
+                        string? file = files.FirstOrDefault(f => Path.GetFileName(f).StartsWith(name + "-", StringComparison.OrdinalIgnoreCase));
+                        bool rebuilt = file != null && File.GetLastWriteTimeUtc(file) > stamp;
+                        if (!rebuilt && store.Find(name) is { } have && SemanticVersion.TryParse(have.Version, out var h) && SemanticVersion.TryParse(listing.Latest.Version, out var l) && h.CompareTo(l) >= 0) continue;
                         log?.Invoke($"Installing the standard package {name} {listing.Latest.Version}...");
-                        service.Install(name + "@" + listing.Latest.Version, log);
+                        service.Install(name + "@" + listing.Latest.Version, log, force: rebuilt);
                         installed.Add(name);
                     }
                     catch (PackageException ex) { log?.Invoke(ex.Message); }

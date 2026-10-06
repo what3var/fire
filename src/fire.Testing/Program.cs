@@ -8,6 +8,13 @@ using fire.Resolving;
 using fire.Runtime;
 using fire.Values;
 
+// The standard bridges that run as packages (time, ...): built and installed into a store of their own for this run (the C++ libraries of their natives are built on first use).
+var standardRoot = Path.Combine(Path.GetTempPath(), "fire-test-standard-" + Guid.NewGuid().ToString("N"));
+StandardBridgePackages.Build(Path.Combine(standardRoot, "PackageSource"));
+fire.Package.Manager.PackageStore.Default = new fire.Package.Manager.PackageStore(Path.Combine(standardRoot, "Packages"));
+foreach (var problem in fire.Package.Manager.StandardPackages.EnsureInstalled(m => Console.WriteLine(m), Path.Combine(standardRoot, "PackageSource")).Count == 0 ? new[] { "the standard packages were not installed" } : System.Array.Empty<string>())
+    Console.WriteLine(problem);
+
 // Kleiner manueller Smoke-Test für Lexer + Parser + Unit-System, bis der
 // Evaluator existiert. Bei dir lokal: `dotnet run` im src/fire-Ordner.
 
@@ -9918,8 +9925,12 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         }
         if (script.Contains("#import \"time\""))
         {
-            fire.Runtime.TimeNatives.Register(natives);
-            sources.Add(fire.Standard.TimePrelude.Source);
+            // time is a package: its prelude, and its natives in the library built from the C++ of the package (the VM runs Sleep itself)
+            var timeImport = fire.Package.Manager.PackageStore.Default.FindImport("time")!;
+            sources.Add(timeImport.ReadPrelude()!);
+            var (timeNames, timeLibraries) = fire.Compiler.PackageImports.NativesOf(new[] { timeImport.Key });
+            string timeLibrary = fire.Compiler.PackageLibrary.Ensure(timeImport);
+            fire.Runtime.PackageNativeBinding.Register(natives, timeNames, timeLibraries, _ => timeLibrary);
         }
         sources.Add(script);
         var program = Parser.ParseMultiple(sources

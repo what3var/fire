@@ -66,7 +66,7 @@ namespace fire.Runtime
         {
             Name = "esp32", Symbols = new[] { "esp32", "freertos" }, HalPackage = "esp32",
             FloatWidth = 32, DefaultStackBytes = 8192, IsEmbedded = true,
-            Imports = new[] { NativeImports.Print, NativeImports.IO, NativeImports.Devices, NativeImports.Time, NativeImports.Reflection, NativeImports.Linq },
+            Imports = new[] { NativeImports.Print, NativeImports.IO, NativeImports.Devices, "time", NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
             {
                 Platform = "esp32",
@@ -82,7 +82,7 @@ namespace fire.Runtime
         {
             Name = "freertos", Symbols = new[] { "freertos" }, HalPackage = "freertos",
             FloatWidth = 32, DefaultStackBytes = 8192, IsEmbedded = true,
-            Imports = new[] { NativeImports.Print, NativeImports.IO, NativeImports.Devices, NativeImports.Time, NativeImports.Reflection, NativeImports.Linq },
+            Imports = new[] { NativeImports.Print, NativeImports.IO, NativeImports.Devices, "time", NativeImports.Reflection, NativeImports.Linq },
             Native = new NativeTarget
             {
                 Platform = "freertos",

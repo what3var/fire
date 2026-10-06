@@ -19,7 +19,7 @@ namespace fire.Compiler
             foreach (var key in nativeImports.Where(IsPackageKey).OrderBy(k => k, StringComparer.Ordinal))
                 if (PackageStore.Default.FindKey(key) is { } import && import.Import.Native != null)
                     foreach (var function in import.Import.Native.Functions)
-                        if (!names.Contains(function.Name)) { names.Add(function.Name); libraries.Add(PackageLibrary.FileNameFor(import)); }
+                        if (!names.Contains(function.Name)) { names.Add(function.Name); libraries.Add(function.Host ? PackageNativeBinding.HostLibrary : PackageLibrary.FileNameFor(import)); }
             return (names, libraries);
         }
 
@@ -28,7 +28,7 @@ namespace fire.Compiler
         {
             var files = new List<string>();
             foreach (var key in nativeImports.Where(IsPackageKey).OrderBy(k => k, StringComparer.Ordinal))
-                if (PackageStore.Default.FindKey(key) is { } import && import.Import.Native is { Functions.Count: > 0 })
+                if (PackageStore.Default.FindKey(key) is { } import && import.Import.Native is { } native && native.Functions.Any(f => !f.Host))
                     files.Add(PackageLibrary.Ensure(import, log));
             return files;
         }
@@ -38,7 +38,7 @@ namespace fire.Compiler
         {
             if (import.Import.Native == null) return;
             foreach (var function in import.Import.Native.Functions)
-                if (!natives.Has(function.Name)) natives.Register(function.Name, Unavailable(function.Name));
+                if (!natives.Has(function.Name)) natives.Register(function.Name, function.Host && HostNatives.Find(function.Name) is { } host ? host : Unavailable(function.Name));
         }
 
         /// <summary>For a run in the virtual machine: the natives of packages bound to their libraries (built now when they are not there yet; a library that cannot be built or loaded makes
@@ -49,7 +49,7 @@ namespace fire.Compiler
             // build what is missing now (a failure shows when a native is called, not before)
             var located = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var key in program.NativeImports.Where(IsPackageKey))
-                if (PackageStore.Default.FindKey(key) is { } import && import.Import.Native is { Functions.Count: > 0 })
+                if (PackageStore.Default.FindKey(key) is { } import && import.Import.Native is { } native && native.Functions.Any(f => !f.Host))
                 {
                     try { located[PackageLibrary.FileNameFor(import)] = PackageLibrary.Ensure(import, log ?? (m => (fire.Native.ToolchainProvider.Log ?? Console.Error.WriteLine)(m))); }
                     catch (PackageException ex) { FailedLibraries[PackageLibrary.FileNameFor(import)] = ex.Message; }

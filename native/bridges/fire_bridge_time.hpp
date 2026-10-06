@@ -1,11 +1,12 @@
 // fire native bridge "time": the natives behind `#import "time"` (SPEC 8.15) - `Sleep` and what DateTime and TimeSpan are written with (src/fire/Standard/TimePrelude.cs).
 //
-// Included by the generated file (after fire_rt.hpp) when the program imports "time". It uses the runtime and, from the platform package,
+// This file is the one implementation of the time functions: the native build includes it (the package "time" brings it as its C++ source), and the virtual machine runs it in
+// a shared library built from it (native/abi/fire_pkg_abi.h). It uses the runtime and, from the platform package,
 //   plat::unixMicros()     the wall clock: microseconds since 1970-01-01 UTC
-//   plat::sleepMs(ms)      (through the runtime's sleepTicks)
 // and the C library for the time zone (localtime_r; define FIRE_NO_LOCALTIME on a board without a time zone database: local time is then UTC).
-// Time is counted in ticks of 100 ns; a DateTime counts from 0001-01-01 (like .NET). Every function behaves like the VM's (src/fire.Runtime/TimeNatives.cs),
-// only DateTime.Parse reads a subset of the formats: ISO dates and times (`2024-03-15 14:30:00`, `2024-03-15T14:30:00.5Z`, `+02:00`), `M/d/yyyy`,
+// `Sleep` is only compiled in the native build (it uses plat::sleepMs through the runtime's sleepTicks); the VM waits by itself.
+// Time is counted in ticks of 100 ns; a DateTime counts from 0001-01-01 (like .NET). DateTime.Parse reads
+// a subset of the formats .NET knows: ISO dates and times (`2024-03-15 14:30:00`, `2024-03-15T14:30:00.5Z`, `+02:00`), `M/d/yyyy`,
 // month names (`March 15, 2024`, `March 2024`, `Fri, 15 Mar 2024 14:30:00 GMT`), `yyyy-MM`, `3:45 PM`.
 #pragma once
 
@@ -22,20 +23,8 @@ constexpr int64_t TICKS_PER_DAY = 864000000000LL;
 constexpr int64_t TICKS_UNIX_EPOCH = 621355968000000000LL;   // 1970-01-01
 constexpr int64_t TICKS_MAX = 3155378975999999999LL;         // 9999-12-31 23:59:59.9999999
 
-/// Generated: builds a TimeException (message) owned by the global scope.
-Value makeTimeError(Value message);
-/// A failed time function: a TimeException (the VM's `NativeFail`), or the end of the program when the program has no exceptions.
-inline Value timeFail(const char* text) {
-#ifdef FIRE_EXCEPTIONS
-    OwnList unused = {nullptr, nullptr, 0, 0, nullptr, nullptr};
-    uint32_t n = (uint32_t)std::strlen(text);
-    Str* msg = allocStr(n, &unused);
-    widenAscii(text, n, strChars(msg));
-    return throwValue(makeTimeError(StrV(msg)));
-#else
-    fatal(text);
-#endif
-}
+/// A failed time function: a TimeException (the prelude class), or the end of the program when the program has no exceptions.
+inline Value timeFail(const char* text) { return fireError("TimeException", text); }
 
 inline Value tmString(const std::string& text, OwnList* list) {
     Str* s = allocStr((uint32_t)text.size(), list);
@@ -46,7 +35,10 @@ inline Value tmString(const std::string& text, OwnList* list) {
 inline double tmNum(Value v) { return v.kind == K_Float ? (double)v.f : v.kind == K_Int ? (double)v.i : 0.0; }
 inline int64_t tmRound(double x) { return (int64_t)std::nearbyint(x); }   // half to even, like Math.Round
 
-// ---- units of time ---------------------------------------------------------------------------------------------------------------------------------
+// ---- Sleep and units -----------------------------------------------------------------------------------------------------------------------------------------
+// Only in the native build: in the virtual machine `Sleep` and `__time_unit_ticks` are run by the VM itself (the `host` functions of the package: a wait has to be abortable, and
+// the units of a value do not cross the ABI), the library has no part of them.
+#ifndef FIRE_LIBRARY
 /// A time as ticks, the way `Sleep` and the waiting functions take it: a TimeSpan, a number with a unit of time (`500ms`), or a number (milliseconds).
 /// False when it was none of these (an exception is then unwinding).
 inline bool timeToTicks(Value a, int64_t& ticks, const char* who) {
@@ -68,12 +60,25 @@ inline bool timeToTicks(Value a, int64_t& ticks, const char* who) {
     return false;
 }
 
+/// A value with a unit of time (`500ms`, `2s`) in ticks, otherwise undefined. (Units do not cross the package ABI: the VM runs this one itself, like Sleep.)
+inline Value tm_unitTicks(Value v) {
+    if (!(v.kind == K_Int || v.kind == K_Float) || unitIsUnitless(v.unit)) return Undef();
+    double perSecond;
+    if (!unitOfTime(v.unit, perSecond)) {
+        char text[160];
+        std::snprintf(text, sizeof text, "'%s' is not a unit of time.", g_ud[v.unit].name);
+        return timeFail(text);
+    }
+    return Int(tmRound(tmNum(v) * perSecond * 1e7));
+}
+
 /// `Sleep(time)`: the runtime puts the thread to sleep (not deaf: terminate ends it, the main program keeps serving the queue).
 inline Value sleepNative(Value a) {
     int64_t ticks;
     if (timeToTicks(a, ticks, "Sleep")) sleepTicks(ticks);
     return Undef();
 }
+#endif   // FIRE_LIBRARY
 
 // ---- the calendar (proleptic Gregorian, like .NET) ----------------------------------------------------------------------------------
 /// Days since 0001-01-01 of a date.
@@ -188,18 +193,6 @@ inline Value tm_addMonths(Value ticks, Value months) {
 }
 
 inline Value tm_toTicks(Value a, Value b) { return Int(tmRound(tmNum(a) * tmNum(b))); }
-
-/// A value with a unit of time (`500ms`, `2s`) in ticks, otherwise undefined.
-inline Value tm_unitTicks(Value v) {
-    if (!(v.kind == K_Int || v.kind == K_Float) || unitIsUnitless(v.unit)) return Undef();
-    double perSecond;
-    if (!unitOfTime(v.unit, perSecond)) {
-        char text[160];
-        std::snprintf(text, sizeof text, "'%s' is not a unit of time.", g_ud[v.unit].name);
-        return timeFail(text);
-    }
-    return Int(tmRound(tmNum(v) * perSecond * 1e7));
-}
 
 /// `[-][d.]hh:mm:ss[.fffffff]`
 inline Value tm_spanText(Value ticks, OwnList* list) {
