@@ -30,7 +30,7 @@ namespace fire.Compiler
 
         public FramebufferManager? FramebufferManager { get; private set; }
 
-        public ConsoleManager? ConsoleManager { get; private set; }
+        public RendererManager? RendererManager { get; private set; }
 
         public int FirstUserSourceIndex { get; private set; }
 
@@ -70,13 +70,13 @@ namespace fire.Compiler
             // Private constructor to prevent direct instantiation
         }
 
-        protected void SetVM(VM virtualMachine, WindowManager? wm, Scope globalScope, NativeRegistry natives, FramebufferManager? framebufferManager, ConsoleManager? consoleManager, int firstUserSourceIndex)
+        protected void SetVM(VM virtualMachine, WindowManager? wm, Scope globalScope, NativeRegistry natives, FramebufferManager? framebufferManager, RendererManager? rendererManager, int firstUserSourceIndex)
         {
             VirtualMachine = virtualMachine;
             WindowManager = wm;
             GlobalScope = globalScope;
             FramebufferManager = framebufferManager;
-            ConsoleManager = consoleManager;
+            RendererManager = rendererManager;
             nativeRegistry = natives;
             FirstUserSourceIndex = firstUserSourceIndex;
         }
@@ -144,7 +144,7 @@ namespace fire.Compiler
             // WICHTIG: native Funktionen werden über ihren INDEX angesprungen - die Reihenfolge der Registrierung muss
             // exakt der beim Übersetzen entsprechen (siehe ImportedPreludes.Insert): graphics, windows, reflection, time, devices, io.
             FramebufferManager? fbManager = null;
-            ConsoleManager? consoleManager = null;
+            RendererManager? rendererManager = null;
             WindowManager? windowManager = null;
 
             var session = new RuntimeSession(linkedProgram.Program);
@@ -153,11 +153,11 @@ namespace fire.Compiler
             {
                 var font = new IntegratedGlyphFont();
                 fbManager = new FramebufferManager();
-                consoleManager = new ConsoleManager(fbManager, font);
+                rendererManager = new RendererManager(fbManager, font);
 
                 // Bilddateien (Framebuffer.FromFile) liest das Programm nur, wo die IoPolicy des Hosts das Lesen erlaubt (wie IO.File)
                 var imagePolicy = ioPolicy ?? fire.IO.Bridge.IoPolicy.AllowAll;
-                GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, path =>
+                GraphicsBridge.RegisterAll(natives, fbManager, rendererManager, path =>
                 {
                     string fullPath = Path.GetFullPath(path);
                     if (!imagePolicy.IsAllowed(fullPath, fire.IO.Bridge.IoAccess.Read, out var reason))
@@ -189,7 +189,7 @@ namespace fire.Compiler
             var mainVm = new VM(linkedProgram.Program.TopLevel, globalScope, natives, linkedProgram.Program.Classes,
                 externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: linkedProgram.ExecutionMode);
 
-            session.SetVM(mainVm, windowManager, globalScope, natives, fbManager, consoleManager, linkedProgram.FirstUserSource);
+            session.SetVM(mainVm, windowManager, globalScope, natives, fbManager, rendererManager, linkedProgram.FirstUserSource);
             session.IoResources = ioResources;
 
             return session;

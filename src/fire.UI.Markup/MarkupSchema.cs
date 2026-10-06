@@ -11,7 +11,7 @@ namespace fire.UI.Markup
         Bool,
         /// <summary>A text.</summary>
         Text,
-        /// <summary>A colour: `#RRGGBB`, a whole number (the raw colour value, see `UI.Color`) or `{Enum ...}`.</summary>
+        /// <summary>A colour: `#RRGGBB`, a whole number (the raw colour value, see `UI.Color`) or `{Enum ...}` - the field of the element is a brush, the script makes a `SolidBrush` of it.</summary>
         Color,
         /// <summary>`Horizontal` or `Vertical` (stored in the bool field `horizontal`).</summary>
         Orientation,
@@ -46,17 +46,17 @@ namespace fire.UI.Markup
         {
             Define("Panel", true, "new UI.Panel(0, 0, 100, 100)", new PropertyDef[]
             {
-                new("showBorder", PropertyKind.Bool), new("background", PropertyKind.Color),
+                new("showBorder", PropertyKind.Bool), new("background", PropertyKind.Color), new("filled", PropertyKind.Bool),
             }),
             Define("Stack", true, "new UI.Stack(0, 0, 100, 100)", new PropertyDef[]
             {
                 new("orientation", PropertyKind.Orientation, "horizontal"), new("horizontal", PropertyKind.Bool),
                 new("spacing", PropertyKind.Int), new("padding", PropertyKind.Int),
-                new("showBorder", PropertyKind.Bool), new("background", PropertyKind.Color),
+                new("showBorder", PropertyKind.Bool), new("background", PropertyKind.Color), new("filled", PropertyKind.Bool),
             }),
             Define("Label", false, "new UI.Label(\"\", 0, 0)", new PropertyDef[]
             {
-                new("text", PropertyKind.Text), new("color", PropertyKind.Color),
+                new("text", PropertyKind.Text), new("color", PropertyKind.Color, "brush"),
             }),
             Define("Button", false, "new UI.Button(\"\", 0, 0)", new PropertyDef[]
             {

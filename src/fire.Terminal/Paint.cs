@@ -2,7 +2,7 @@ namespace fire.Terminal
 {
     /// <summary>
     /// Eine Farbangabe des Aufrufers: entweder ein Index der Palette des Ziel-Framebuffers (0-255) oder ein direkter RGBA-Wert. Erst
-    /// <see cref="Framebuffer.ResolveBrush"/> macht daraus die Farbe für GENAU diesen Framebuffer - dieselbe Angabe zeichnet also in jedem
+    /// <see cref="Surface.Resolve"/> macht daraus die Farbe für GENAU diesen Framebuffer - dieselbe Angabe zeichnet also in jedem
     /// Farbmodus: im RGBA-Framebuffer wird ein Index über die Palette in eine Farbe übersetzt, im Palette-Framebuffer ein RGBA-Wert auf den
     /// nächsten Palette-Eintrag abgebildet.
     ///
@@ -40,17 +40,20 @@ namespace fire.Terminal
         public static implicit operator Paint(PixelColor color) => FromRgba(color);
     }
 
-    /// <summary>Eine Farbe, aufgelöst für einen bestimmten Framebuffer (siehe <see cref="Framebuffer.ResolveBrush"/>): `Rgba` für einen
-    /// RGBA-Framebuffer, `Index` für einen Palette-Framebuffer. Die Zeichenfunktionen arbeiten nur noch damit.</summary>
-    public readonly struct Brush
+    /// <summary>Eine Farbe, aufgelöst für ein bestimmtes Ziel (siehe <see cref="Surface.Resolve"/>): `Rgba` ist der Farbwert (für einen RGBA-Framebuffer das, was ins Pixel
+    /// geschrieben wird, auch sein Alpha gilt beim Mischen), `Index` der Palette-Eintrag für einen Palette-Framebuffer. Die Zeichenfunktionen arbeiten nur noch damit.</summary>
+    public readonly struct Pixel
     {
         public readonly uint Rgba;
         public readonly byte Index;
 
-        public Brush(uint rgba, byte index)
+        public Pixel(uint rgba, byte index)
         {
             Rgba = rgba;
             Index = index;
         }
+
+        /// <summary>Das Alpha des Farbwerts (255 = deckend).</summary>
+        public byte Alpha => (byte)(Rgba >> 24);
     }
 }

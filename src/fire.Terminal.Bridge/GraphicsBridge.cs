@@ -10,7 +10,7 @@ namespace fire.Terminal.Bridge
 {
     /// <summary>
     /// Die Brücke zwischen fire und der Grafik-API (siehe docs/
-    /// CONSOLE.md): registriert FramebufferManager/ConsoleManager
+    /// CONSOLE.md): registriert FramebufferManager/RendererManager
     /// als native Funktionen (über NativeRegistry.
     /// RegisterGroup, jeweils mit eigenem Namens-Präfix) und liefert dazu
     /// passenden fire-Quelltext (<see cref="PreludeSource"/>), der
@@ -29,7 +29,9 @@ namespace fire.Terminal.Bridge
     public static class GraphicsBridge
     {
         public const string FramebufferPrefix = "__GRPHFb";
-        public const string ConsolePrefix = "__GRPHCon";
+        public const string RendererPrefix = "__GRPHRnd";
+        public const string BrushPrefix = "__GRPHBsh";
+        public const string PenPrefix = "__GRPHPen";
         public const string SlicerPrefix = "__GRPHSlc";
 
         /// <summary>Ungültige/fehlgeschlagene Erzeugung - IdManager vergibt
@@ -45,10 +47,12 @@ namespace fire.Terminal.Bridge
         /// <summary>`readFile`: wie `Framebuffer.FromFile` an die Bytes einer Datei kommt (der Host entscheidet, was ein Skript lesen darf, siehe IoPolicy) -
         /// ohne Angabe wird die Datei einfach gelesen.</summary>
         public static void RegisterAll(
-            NativeRegistry natives, FramebufferManager framebuffers, ConsoleManager consoles, Func<string, byte[]>? readFile = null)
+            NativeRegistry natives, FramebufferManager framebuffers, RendererManager renderers, Func<string, byte[]>? readFile = null)
         {
             natives.RegisterGroup(FramebufferPrefix, BuildFramebufferFunctions(framebuffers, readFile));
-            natives.RegisterGroup(ConsolePrefix, BuildConsoleFunctions(consoles));
+            natives.RegisterGroup(RendererPrefix, BuildRendererFunctions(renderers));
+            natives.RegisterGroup(BrushPrefix, BuildBrushFunctions(renderers));
+            natives.RegisterGroup(PenPrefix, BuildPenFunctions(renderers));
             natives.RegisterGroup(SlicerPrefix, BuildSlicerFunctions(framebuffers));
         }
 
@@ -56,7 +60,9 @@ namespace fire.Terminal.Bridge
                     NativeRegistry natives)
         {
             natives.RegisterGroup(FramebufferPrefix, BuildFramebufferFunctionStubs());
-            natives.RegisterGroup(ConsolePrefix, BuildConsoleFunctionStubs());
+            natives.RegisterGroup(RendererPrefix, StubsOf(RendererFunctionNames));
+            natives.RegisterGroup(BrushPrefix, StubsOf(BrushFunctionNames));
+            natives.RegisterGroup(PenPrefix, StubsOf(PenFunctionNames));
             natives.RegisterGroup(SlicerPrefix, new Dictionary<string, NativeFunction> { ["Slice"] = args => Value.MakeUndefined() /*STUB*/ });
         }
 
@@ -222,158 +228,120 @@ namespace fire.Terminal.Bridge
             };
         }
 
-        private static Dictionary<string, NativeFunction> BuildConsoleFunctionStubs()
+        // Die Namen der Funktionen jeder Gruppe in ihrer Reihenfolge (Index = Position): die Stubs (nur für den Compiler, der die Natives kennen muss) und die echten Funktionen
+        // müssen übereinstimmen - deshalb gibt es sie nur hier und BuildXFunctions prüft sie.
+        private static readonly string[] RendererFunctionNames =
         {
-            return new Dictionary<string, NativeFunction>
-            {
-                ["Create"] = args => Value.MakeUndefined() /*STUB*/,
-                ["Destroy"] = args => Value.MakeUndefined() /*STUB*/,
-                ["Print"] = args => Value.MakeUndefined() /*STUB*/,
-                ["Locate"] = args => Value.MakeUndefined() /*STUB*/,
-                ["Clear"] = args => Value.MakeUndefined() /*STUB*/,
-                ["SetColor"] = args => Value.MakeUndefined() /*STUB*/,
-                ["SetPixel"] = args => Value.MakeUndefined() /*STUB*/,
-                ["GetPixel"] = args => Value.MakeUndefined() /*STUB*/,
-                ["FillRect"] = args => Value.MakeUndefined() /*STUB*/,
-                ["DrawRect"] = args => Value.MakeUndefined() /*STUB*/,
-                ["DrawLine"] = args => Value.MakeUndefined() /*STUB*/,
-                ["DrawText"] = args => Value.MakeUndefined() /*STUB*/,
-                ["CellWidth"] = args => Value.MakeUndefined() /*STUB*/,
-                ["CellHeight"] = args => Value.MakeUndefined() /*STUB*/,
-                // WICHTIG: neue Funktionen immer ANS ENDE, in BuildConsoleFunctions in derselben Reihenfolge (Index = Position).
-                ["GetPixelIndex"] = args => Value.MakeUndefined() /*STUB*/,
-                ["DrawCircle"] = args => Value.MakeUndefined() /*STUB*/,
-                ["FillCircle"] = args => Value.MakeUndefined() /*STUB*/,
-                ["DrawEllipse"] = args => Value.MakeUndefined() /*STUB*/,
-                ["FillEllipse"] = args => Value.MakeUndefined() /*STUB*/,
-                ["DrawTriangle"] = args => Value.MakeUndefined() /*STUB*/,
-                ["FillTriangle"] = args => Value.MakeUndefined() /*STUB*/,
-                ["DrawPolygon"] = args => Value.MakeUndefined() /*STUB*/,
-                ["FillPolygon"] = args => Value.MakeUndefined() /*STUB*/,
-                ["FloodFill"] = args => Value.MakeUndefined() /*STUB*/,
-                ["FloodFillBorder"] = args => Value.MakeUndefined() /*STUB*/,
-                ["Blit"] = args => Value.MakeUndefined() /*STUB*/,
-            };
+            "Create", "Destroy", "Print", "Locate", "Clear", "ClearTo", "SetColor", "SetPixel", "GetPixel", "GetPixelIndex", "CellWidth", "CellHeight",
+            "GetAlphaBlending", "SetAlphaBlending", "DrawText",
+            "FillRect", "Fill", "FillCircle", "FillEllipse", "FillTriangle", "FillPolygon", "FloodFill", "FloodFillBorder",
+            "DrawPoint", "DrawLine", "DrawPath", "DrawRect", "DrawCircle", "DrawEllipse", "DrawTriangle", "DrawPolygon",
+            "Blit",
+        };
+
+        private static readonly string[] BrushFunctionNames = { "CreateSolid", "Destroy", "GetColor", "SetColor" };
+
+        private static readonly string[] PenFunctionNames = { "Create", "Destroy", "GetColor", "SetColor", "GetWidth", "SetWidth", "GetShape", "SetShape" };
+
+        private static Dictionary<string, NativeFunction> StubsOf(string[] names)
+        {
+            var stubs = new Dictionary<string, NativeFunction>();
+            foreach (var name in names) stubs[name] = args => Value.MakeUndefined() /*STUB*/;
+            return stubs;
         }
 
-        private static Dictionary<string, NativeFunction> BuildConsoleFunctions(ConsoleManager mgr)
+        /// <summary>Stellt sicher, dass die echten Funktionen genau die Namen (und die Reihenfolge) der Stubs haben.</summary>
+        private static Dictionary<string, NativeFunction> Ordered(string[] names, Dictionary<string, NativeFunction> functions)
         {
-            return new Dictionary<string, NativeFunction>
+            var ordered = new Dictionary<string, NativeFunction>();
+            foreach (var name in names) ordered[name] = functions[name];
+            if (functions.Count != names.Length) throw new InvalidOperationException("The natives and their stubs differ.");
+            return ordered;
+        }
+
+        private static Value Nothing(Action action)
+        {
+            action();
+            return Value.MakeUndefined();
+        }
+
+        private static Dictionary<string, NativeFunction> BuildRendererFunctions(RendererManager mgr)
+        {
+            return Ordered(RendererFunctionNames, new Dictionary<string, NativeFunction>
             {
                 ["Create"] = args =>
                 {
-                    try { return Value.MakeInt(mgr.CreateConsole((int)args[0].AsInt())); }
+                    try { return Value.MakeInt(mgr.CreateRenderer(I(args[0]))); }
                     catch { return Value.MakeInt(InvalidHandle); }
                 },
-                ["Destroy"] = args => Value.MakeBool(mgr.DestroyConsole((int)args[0].AsInt())),
-                ["Print"] = args =>
-                {
-                    mgr.Print((int)args[0].AsInt(), args[1].AsString());
-                    return Value.MakeUndefined();
-                },
-                ["Locate"] = args =>
-                {
-                    mgr.Locate((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt());
-                    return Value.MakeUndefined();
-                },
-                ["Clear"] = args =>
-                {
-                    mgr.Clear((int)args[0].AsInt());
-                    return Value.MakeUndefined();
-                },
-                ["SetColor"] = args =>
-                {
-                    mgr.SetColor((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt());
-                    return Value.MakeUndefined();
-                },
-                ["SetPixel"] = args =>
-                {
-                    mgr.SetPixel((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt(), (int)args[3].AsInt());
-                    return Value.MakeUndefined();
-                },
-                ["GetPixel"] = args => Value.MakeInt(mgr.GetPixel((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt())),
-                // Die folgenden nehmen ROHE Farbwerte (R im niedrigsten Byte, Alpha im höchsten), keine Palette-Indizes.
-                ["FillRect"] = args =>
-                {
-                    mgr.FillRect((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt(), (int)args[3].AsInt(), (int)args[4].AsInt(), (int)args[5].AsInt());
-                    return Value.MakeUndefined();
-                },
-                ["DrawRect"] = args =>
-                {
-                    mgr.DrawRect((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt(), (int)args[3].AsInt(), (int)args[4].AsInt(), (int)args[5].AsInt());
-                    return Value.MakeUndefined();
-                },
-                ["DrawLine"] = args =>
-                {
-                    mgr.DrawLine((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt(), (int)args[3].AsInt(), (int)args[4].AsInt(), (int)args[5].AsInt());
-                    return Value.MakeUndefined();
-                },
-                ["DrawText"] = args =>
-                {
-                    mgr.DrawText((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt(), args[3].AsString(), (int)args[4].AsInt(), (int)args[5].AsInt());
-                    return Value.MakeUndefined();
-                },
-                ["CellWidth"] = args => Value.MakeInt(mgr.GetCellWidth((int)args[0].AsInt())),
-                ["CellHeight"] = args => Value.MakeInt(mgr.GetCellHeight((int)args[0].AsInt())),
-                // WICHTIG: neue Funktionen immer ANS ENDE, in BuildConsoleFunctionStubs in derselben Reihenfolge (Index = Position).
-                // Farben: eine Zahl 0-255 ist ein Palette-Index, jede andere ein direkter Wert (siehe Paint.FromArgument).
+                ["Destroy"] = args => Value.MakeBool(mgr.DestroyRenderer(I(args[0]))),
+                ["Print"] = args => Nothing(() => mgr.Print(I(args[0]), args[1].AsString())),
+                ["Locate"] = args => Nothing(() => mgr.Locate(I(args[0]), I(args[1]), I(args[2]))),
+                ["Clear"] = args => Nothing(() => mgr.Clear(I(args[0]))),
+                // eine Zahl 0-255 ist ein Palette-Index, jede andere ein direkter Wert (siehe Paint.FromArgument)
+                ["ClearTo"] = args => Nothing(() => mgr.ClearTo(I(args[0]), I(args[1]))),
+                ["SetColor"] = args => Nothing(() => mgr.SetColor(I(args[0]), I(args[1]), I(args[2]))),
+                ["SetPixel"] = args => Nothing(() => mgr.SetPixel(I(args[0]), I(args[1]), I(args[2]), I(args[3]))),
+                ["GetPixel"] = args => Value.MakeInt(mgr.GetPixel(I(args[0]), I(args[1]), I(args[2]))),
                 ["GetPixelIndex"] = args => Value.MakeInt(mgr.GetPixelIndex(I(args[0]), I(args[1]), I(args[2]))),
-                ["DrawCircle"] = args =>
+                ["CellWidth"] = args => Value.MakeInt(mgr.GetCellWidth(I(args[0]))),
+                ["CellHeight"] = args => Value.MakeInt(mgr.GetCellHeight(I(args[0]))),
+                ["GetAlphaBlending"] = args => Value.MakeBool(mgr.GetAlphaBlending(I(args[0]))),
+                ["SetAlphaBlending"] = args => Nothing(() => mgr.SetAlphaBlending(I(args[0]), args[1].AsBool())),
+                // Pinsel und Stifte kommen als ID; beim Text ist 0 als Hintergrund "kein Hintergrund"
+                ["DrawText"] = args => Nothing(() => mgr.DrawText(I(args[0]), I(args[1]), I(args[2]), args[3].AsString(), I(args[4]), I(args[5]))),
+                ["FillRect"] = args => Nothing(() => mgr.FillRect(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]))),
+                ["Fill"] = args => Nothing(() => mgr.Fill(I(args[0]), I(args[1]))),
+                ["FillCircle"] = args => Nothing(() => mgr.FillCircle(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]))),
+                ["FillEllipse"] = args => Nothing(() => mgr.FillEllipse(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]))),
+                ["FillTriangle"] = args => Nothing(() => mgr.FillTriangle(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]), I(args[7]))),
+                ["FillPolygon"] = args => Nothing(() => mgr.FillPolygon(I(args[0]), ReadPoints(args[1]), I(args[2]))),
+                ["FloodFill"] = args => Nothing(() => mgr.FloodFill(I(args[0]), I(args[1]), I(args[2]), I(args[3]))),
+                ["FloodFillBorder"] = args => Nothing(() => mgr.FloodFillBorder(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]))),
+                ["DrawPoint"] = args => Nothing(() => mgr.DrawPoint(I(args[0]), I(args[1]), I(args[2]), I(args[3]))),
+                ["DrawLine"] = args => Nothing(() => mgr.DrawLine(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]))),
+                ["DrawPath"] = args => Nothing(() => mgr.DrawPath(I(args[0]), ReadPoints(args[1]), I(args[2]), args[3].AsBool())),
+                ["DrawRect"] = args => Nothing(() => mgr.DrawRect(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]))),
+                ["DrawCircle"] = args => Nothing(() => mgr.DrawCircle(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]))),
+                ["DrawEllipse"] = args => Nothing(() => mgr.DrawEllipse(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]))),
+                ["DrawTriangle"] = args => Nothing(() => mgr.DrawTriangle(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]), I(args[7]))),
+                ["DrawPolygon"] = args => Nothing(() => mgr.DrawPolygon(I(args[0]), ReadPoints(args[1]), I(args[2]), args[3].AsBool())),
+                ["Blit"] = args => Nothing(() => mgr.Blit(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]), I(args[7]), I(args[8]), I(args[9]), I(args[10]), I(args[11]))),
+            });
+        }
+
+        private static Dictionary<string, NativeFunction> BuildBrushFunctions(RendererManager mgr)
+        {
+            return Ordered(BrushFunctionNames, new Dictionary<string, NativeFunction>
+            {
+                ["CreateSolid"] = args =>
                 {
-                    mgr.DrawCircle(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]));
-                    return Value.MakeUndefined();
+                    try { return Value.MakeInt(mgr.CreateSolidBrush(I(args[0]))); }
+                    catch { return Value.MakeInt(InvalidHandle); }
                 },
-                ["FillCircle"] = args =>
+                ["Destroy"] = args => Value.MakeBool(mgr.DestroyBrush(I(args[0]))),
+                ["GetColor"] = args => Value.MakeInt((uint)mgr.GetBrushColor(I(args[0]))),
+                ["SetColor"] = args => Nothing(() => mgr.SetBrushColor(I(args[0]), I(args[1]))),
+            });
+        }
+
+        private static Dictionary<string, NativeFunction> BuildPenFunctions(RendererManager mgr)
+        {
+            return Ordered(PenFunctionNames, new Dictionary<string, NativeFunction>
+            {
+                ["Create"] = args =>
                 {
-                    mgr.FillCircle(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]));
-                    return Value.MakeUndefined();
+                    try { return Value.MakeInt(mgr.CreatePen(I(args[0]), I(args[1]), I(args[2]))); }
+                    catch { return Value.MakeInt(InvalidHandle); }
                 },
-                ["DrawEllipse"] = args =>
-                {
-                    mgr.DrawEllipse(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]));
-                    return Value.MakeUndefined();
-                },
-                ["FillEllipse"] = args =>
-                {
-                    mgr.FillEllipse(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]));
-                    return Value.MakeUndefined();
-                },
-                ["DrawTriangle"] = args =>
-                {
-                    mgr.DrawTriangle(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]), I(args[7]));
-                    return Value.MakeUndefined();
-                },
-                ["FillTriangle"] = args =>
-                {
-                    mgr.FillTriangle(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]), I(args[7]));
-                    return Value.MakeUndefined();
-                },
-                ["DrawPolygon"] = args =>
-                {
-                    mgr.DrawPolygon(I(args[0]), ReadPoints(args[1]), I(args[2]), args[3].AsBool());
-                    return Value.MakeUndefined();
-                },
-                ["FillPolygon"] = args =>
-                {
-                    mgr.FillPolygon(I(args[0]), ReadPoints(args[1]), I(args[2]));
-                    return Value.MakeUndefined();
-                },
-                ["FloodFill"] = args =>
-                {
-                    mgr.FloodFill(I(args[0]), I(args[1]), I(args[2]), I(args[3]));
-                    return Value.MakeUndefined();
-                },
-                ["FloodFillBorder"] = args =>
-                {
-                    mgr.FloodFillBorder(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]));
-                    return Value.MakeUndefined();
-                },
-                ["Blit"] = args =>
-                {
-                    mgr.Blit(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]), I(args[7]), I(args[8]), I(args[9]), I(args[10]), I(args[11]));
-                    return Value.MakeUndefined();
-                },
-            };
+                ["Destroy"] = args => Value.MakeBool(mgr.DestroyPen(I(args[0]))),
+                ["GetColor"] = args => Value.MakeInt((uint)mgr.GetPenColor(I(args[0]))),
+                ["SetColor"] = args => Nothing(() => mgr.SetPenColor(I(args[0]), I(args[1]))),
+                ["GetWidth"] = args => Value.MakeInt(mgr.GetPenWidth(I(args[0]))),
+                ["SetWidth"] = args => Nothing(() => mgr.SetPenWidth(I(args[0]), I(args[1]))),
+                ["GetShape"] = args => Value.MakeInt(mgr.GetPenShape(I(args[0]))),
+                ["SetShape"] = args => Nothing(() => mgr.SetPenShape(I(args[0]), I(args[1]))),
+            });
         }
 
         /// <summary>Die Punkte eines Polygons aus einem Skript-Array `[x0, y0, x1, y1, ...]` (Kommazahlen werden abgeschnitten; ein ungerades letztes Element zählt nicht).</summary>
@@ -618,74 +586,167 @@ namespace fire.Terminal.Bridge
                 }
             }
 
-            class Console {
+            // Die Form der Stiftspitze: Round = Kreisscheibe mit dem Durchmesser der Breite, Square = Quadrat der Breite.
+            enum PenShape {
+                Round = 0,
+                Square = 1
+            }
+
+            // Ein Pinsel sagt, wie eine Fläche gefüllt wird (Renderer.FillRect, FillCircle, FloodFill, ... und der Text-Vordergrund). Die Farbe ist eine Zahl: 0 bis 255 ist ein Index der
+            // Palette des Framebuffers, jede andere ein direkter Wert r + g*256 + b*65536 + a*16777216 (a = 255 deckend; siehe UI.Color.Rgb). Ein Alpha unter 255 wird gemischt
+            // (Renderer.AlphaBlending); in einem Palette-Framebuffer wird eine Farbe ab Alpha 128 kopiert und eine darunter nicht gezeichnet.
+            class Brush {
                 int id
 
-                construct(Framebuffer framebuffer) {
-                    this.id = __GRPHConCreate(framebuffer.id)
+                construct(int id) {
+                    this.id = id
+                }
+
+                destruct() {
+                    if (this.id > 0) {
+                        __GRPHBshDestroy(this.id)
+                    }
+                }
+            }
+
+            // Ein einfarbiger Pinsel.
+            class SolidBrush : Brush {
+                construct(int color) : base(__GRPHBshCreateSolid(color)) {
                     if (this.id == -1) {
-                        throw new HandleUnavailableException("The console could not be created.")
+                        throw new HandleUnavailableException("The brush could not be created.")
+                    }
+                }
+
+                // Die Farbe (eine Änderung gilt für alles, was danach mit diesem Pinsel gezeichnet wird)
+                int Color {
+                    get { return __GRPHBshGetColor(this.id) }
+                    set { __GRPHBshSetColor(this.id, value) }
+                }
+            }
+
+            // Ein Stift zeichnet Punkte, Linien und Pfade (und damit die Umrisse der Formen) mit einer Spitze von `width` Pixeln; Farbe wie beim Pinsel. Die Spitze wird einmal
+            // vorgerendert und an jedem Pixel der Linie kopiert bzw. gemischt; width 1 zeichnet genau die Pixel einer einfachen Linie.
+            class Pen {
+                int id
+
+                construct(int color, int width = 1, int shape = 0) {
+                    this.id = __GRPHPenCreate(color, width, shape)
+                    if (this.id == -1) {
+                        throw new HandleUnavailableException("The pen could not be created.")
                     }
                 }
 
                 destruct() {
-                    __GRPHConDestroy(this.id)
+                    if (this.id > 0) {
+                        __GRPHPenDestroy(this.id)
+                    }
                 }
 
-                Print(string text) { __GRPHConPrint(this.id, text) }
-                Locate(int row, int column) { __GRPHConLocate(this.id, row, column) }
-                Clear() { __GRPHConClear(this.id) }
-                SetColor(int foreground, int background) { __GRPHConSetColor(this.id, foreground, background) }
-                SetPixel(int x, int y, int color) { __GRPHConSetPixel(this.id, x, y, color) }
-                int GetPixel(int x, int y) { return __GRPHConGetPixel(this.id, x, y) }
+                int Color {
+                    get { return __GRPHPenGetColor(this.id) }
+                    set { __GRPHPenSetColor(this.id, value) }
+                }
 
-                // Farben: eine Zahl von 0 bis 255 ist ein Palette-Index, jede andere ein direkter Wert r + g*256 + b*65536 + a*16777216
-                // (a = 255 deckend; siehe UI.Color.Rgb). Positionen/Größen in PIXELN.
-                FillRect(int x, int y, int w, int h, int color) { __GRPHConFillRect(this.id, x, y, w, h, color) }
-                DrawRect(int x, int y, int w, int h, int color) { __GRPHConDrawRect(this.id, x, y, w, h, color) }
-                DrawLine(int x0, int y0, int x1, int y1, int color) { __GRPHConDrawLine(this.id, x0, y0, x1, y1, color) }
-                // background 0 (Alpha 0) = transparent: nur die Zeichen-Pixel werden geschrieben
-                DrawText(int x, int y, string text, int color, int background) { __GRPHConDrawText(this.id, x, y, text, color, background) }
-                int CellWidth() { return __GRPHConCellWidth(this.id) }
-                int CellHeight() { return __GRPHConCellHeight(this.id) }
+                // 1 bis 512 (größere Werte werden begrenzt)
+                int Width {
+                    get { return __GRPHPenGetWidth(this.id) }
+                    set { __GRPHPenSetWidth(this.id, value) }
+                }
 
-                // Farben aller Zeichenfunktionen: eine Zahl von 0 bis 255 ist ein Index der Palette des Framebuffers, jede andere ein direkter Wert
-                // (r + g*256 + b*65536 + a*16777216). In einem Palette-Framebuffer wird ein direkter Wert auf den nächsten Palette-Eintrag abgebildet.
-                // Alles wird am Rand des Framebuffers beschnitten.
+                // PenShape.Round oder PenShape.Square
+                int Shape {
+                    get { return __GRPHPenGetShape(this.id) }
+                    set { __GRPHPenSetShape(this.id, value) }
+                }
+            }
 
+            // Der Renderer zeichnet in einen Framebuffer: Terminal-Text (Print, Locate, SetColor) und Grafik in PIXEL-Koordinaten. Füllungen nehmen einen Brush, Zeichnen einen Pen.
+            // Alles wird am Rand des Framebuffers beschnitten.
+            class Renderer {
+                int id
+
+                construct(Framebuffer framebuffer) {
+                    this.id = __GRPHRndCreate(framebuffer.id)
+                    if (this.id == -1) {
+                        throw new HandleUnavailableException("The renderer could not be created.")
+                    }
+                }
+
+                destruct() {
+                    __GRPHRndDestroy(this.id)
+                }
+
+                // Alpha-Blending (Vorgabe: an): eine Farbe mit Alpha unter 255 wird mit dem gemischt, was schon da ist - nur in einem RGBA-Framebuffer. Aus: jede Farbe wird samt Alpha
+                // kopiert. Im Palette-Framebuffer wird eine Farbe ab Alpha 128 kopiert und eine darunter nicht gezeichnet; aus: immer kopiert.
+                bool AlphaBlending {
+                    get { return __GRPHRndGetAlphaBlending(this.id) }
+                    set { __GRPHRndSetAlphaBlending(this.id, value) }
+                }
+
+                // ---- Terminal ----
+                Print(string text) { __GRPHRndPrint(this.id, text) }
+                Locate(int row, int column) { __GRPHRndLocate(this.id, row, column) }
+                // Löscht den ganzen Framebuffer mit der Hintergrundfarbe von SetColor und setzt den Cursor auf (0, 0)
+                Clear() { __GRPHRndClear(this.id) }
+                // Setzt den ganzen Framebuffer auf eine Farbe (ohne Mischen, auch mit Alpha)
+                ClearTo(int color) { __GRPHRndClearTo(this.id, color) }
+                SetColor(int foreground, int background) { __GRPHRndSetColor(this.id, foreground, background) }
+
+                // ---- Pixel ----
+                // Ein Pixel in der Farbe (Zahl wie beim Pinsel; gemischt, wenn sie halbdurchsichtig ist und AlphaBlending an)
+                SetPixel(int x, int y, int color) { __GRPHRndSetPixel(this.id, x, y, color) }
+                // Die Farbe des Pixels als 32-Bit-Zahl MIT Vorzeichen (deckende Farben sind negativ)
+                int GetPixel(int x, int y) { return __GRPHRndGetPixel(this.id, x, y) }
                 // Der Palette-Index des Pixels (RGBA-Framebuffer: der Eintrag, der seiner Farbe am nächsten kommt)
-                int GetPixelIndex(int x, int y) { return __GRPHConGetPixelIndex(this.id, x, y) }
+                int GetPixelIndex(int x, int y) { return __GRPHRndGetPixelIndex(this.id, x, y) }
+                int CellWidth() { return __GRPHRndCellWidth(this.id) }
+                int CellHeight() { return __GRPHRndCellHeight(this.id) }
 
-                // Kreis um (cx, cy) mit Radius r, Ellipse mit den Halbachsen rx (waagerecht) und ry (senkrecht); Fill... füllt die Fläche samt Rand
-                DrawCircle(int cx, int cy, int r, int color) { __GRPHConDrawCircle(this.id, cx, cy, r, color) }
-                FillCircle(int cx, int cy, int r, int color) { __GRPHConFillCircle(this.id, cx, cy, r, color) }
-                DrawEllipse(int cx, int cy, int rx, int ry, int color) { __GRPHConDrawEllipse(this.id, cx, cy, rx, ry, color) }
-                FillEllipse(int cx, int cy, int rx, int ry, int color) { __GRPHConFillEllipse(this.id, cx, cy, rx, ry, color) }
+                // Text an Pixel-Koordinaten: die Zeichen-Pixel mit `foreground`, mit `background` die ganze Zelle darunter (ohne: nur die Zeichen-Pixel)
+                DrawText(int x, int y, string text, Brush foreground, Brush background = undefined) {
+                    var back = 0
+                    if (background != undefined) { back = background.id }
+                    __GRPHRndDrawText(this.id, x, y, text, foreground.id, back)
+                }
 
-                DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, int color) { __GRPHConDrawTriangle(this.id, x0, y0, x1, y1, x2, y2, color) }
-                FillTriangle(int x0, int y0, int x1, int y1, int x2, int y2, int color) { __GRPHConFillTriangle(this.id, x0, y0, x1, y1, x2, y2, color) }
+                // ---- Füllungen (Pinsel) ----
+                FillRect(int x, int y, int w, int h, Brush brush) { __GRPHRndFillRect(this.id, x, y, w, h, brush.id) }
+                // Füllt den ganzen Framebuffer (gemischt, wenn AlphaBlending an; ClearTo setzt ohne Mischen)
+                Fill(Brush brush) { __GRPHRndFill(this.id, brush.id) }
+                // Kreis um (cx, cy) mit Radius r, Ellipse mit den Halbachsen rx (waagerecht) und ry (senkrecht), samt Rand
+                FillCircle(int cx, int cy, int r, Brush brush) { __GRPHRndFillCircle(this.id, cx, cy, r, brush.id) }
+                FillEllipse(int cx, int cy, int rx, int ry, Brush brush) { __GRPHRndFillEllipse(this.id, cx, cy, rx, ry, brush.id) }
+                FillTriangle(int x0, int y0, int x1, int y1, int x2, int y2, Brush brush) { __GRPHRndFillTriangle(this.id, x0, y0, x1, y1, x2, y2, brush.id) }
+                // points: ein Array [x0, y0, x1, y1, ...]; gefüllt nach der Even-Odd-Regel (sich überschneidende Teile bleiben leer)
+                FillPolygon(points, Brush brush) { __GRPHRndFillPolygon(this.id, points, brush.id) }
+                // Füllt die zusammenhängende Fläche mit der Farbe des Pixels (x, y). Mit `border` füllt FloodFill stattdessen bis zu Pixeln dieser Farbe (wie PAINT in QBasic).
+                FloodFill(int x, int y, Brush brush) { __GRPHRndFloodFill(this.id, x, y, brush.id) }
+                FloodFillBorder(int x, int y, Brush brush, int border) { __GRPHRndFloodFillBorder(this.id, x, y, brush.id, border) }
 
-                // points: ein Array [x0, y0, x1, y1, ...]. DrawPolygon verbindet den letzten mit dem ersten Punkt (closed = false: nur der Linienzug);
-                // FillPolygon füllt nach der Even-Odd-Regel (sich überschneidende Teile bleiben leer).
-                DrawPolygon(points, int color, bool closed = true) { __GRPHConDrawPolygon(this.id, points, color, closed) }
-                FillPolygon(points, int color) { __GRPHConFillPolygon(this.id, points, color) }
+                // ---- Zeichnen (Stift) ----
+                DrawPoint(int x, int y, Pen pen) { __GRPHRndDrawPoint(this.id, x, y, pen.id) }
+                DrawLine(int x0, int y0, int x1, int y1, Pen pen) { __GRPHRndDrawLine(this.id, x0, y0, x1, y1, pen.id) }
+                // Ein Pfad durch die Punkte [x0, y0, x1, y1, ...]; closed verbindet den letzten mit dem ersten
+                DrawPath(points, Pen pen, bool closed = false) { __GRPHRndDrawPath(this.id, points, pen.id, closed) }
+                // Umrisse: Pfade aus den Pixeln der Form
+                DrawRect(int x, int y, int w, int h, Pen pen) { __GRPHRndDrawRect(this.id, x, y, w, h, pen.id) }
+                DrawCircle(int cx, int cy, int r, Pen pen) { __GRPHRndDrawCircle(this.id, cx, cy, r, pen.id) }
+                DrawEllipse(int cx, int cy, int rx, int ry, Pen pen) { __GRPHRndDrawEllipse(this.id, cx, cy, rx, ry, pen.id) }
+                DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, Pen pen) { __GRPHRndDrawTriangle(this.id, x0, y0, x1, y1, x2, y2, pen.id) }
+                DrawPolygon(points, Pen pen, bool closed = true) { __GRPHRndDrawPolygon(this.id, points, pen.id, closed) }
 
-                // Füllt die zusammenhängende Fläche mit der Farbe des Pixels (x, y) mit `color`. FloodFillBorder füllt stattdessen bis zu Pixeln der
-                // Farbe `border` (wie PAINT in QBasic).
-                FloodFill(int x, int y, int color) { __GRPHConFloodFill(this.id, x, y, color) }
-                FloodFillBorder(int x, int y, int color, int border) { __GRPHConFloodFillBorder(this.id, x, y, color, border) }
-
-                // Kopiert einen anderen Framebuffer (z.B. ein geladenes Bild) hierher, auch zwischen den Farbmodi (siehe BlitMode). Blit: das ganze Bild mit
-                // der linken oberen Ecke bei (x, y); BlitRegion: der Ausschnitt (sx, sy, sw, sh) nach (dx, dy); BlitScaled: dazu auf die Größe dw x dh gebracht
-                // (nächster Nachbar; eine NEGATIVE Breite/Höhe spiegelt). `key`: bei einem Palette-Bild der durchsichtige Index (-1 = sein TransparentIndex).
+                // ---- Kopieren ----
+                // Kopiert einen anderen Framebuffer (z.B. ein geladenes Bild) hierher, auch zwischen den Farbmodi (siehe BlitMode; Blend mischt nur bei AlphaBlending). Blit: das ganze Bild
+                // mit der linken oberen Ecke bei (x, y); BlitRegion: der Ausschnitt (sx, sy, sw, sh) nach (dx, dy); BlitScaled: dazu auf die Größe dw x dh gebracht (nächster Nachbar;
+                // eine NEGATIVE Breite/Höhe spiegelt). `key`: bei einem Palette-Bild der durchsichtige Index (-1 = sein TransparentIndex).
                 Blit(Framebuffer source, int x, int y, int mode = 0, int key = -1) {
-                    __GRPHConBlit(this.id, source.id, 0, 0, source.Width(), source.Height(), x, y, source.Width(), source.Height(), mode, key)
+                    __GRPHRndBlit(this.id, source.id, 0, 0, source.Width(), source.Height(), x, y, source.Width(), source.Height(), mode, key)
                 }
                 BlitRegion(Framebuffer source, int sx, int sy, int sw, int sh, int dx, int dy, int mode = 0, int key = -1) {
-                    __GRPHConBlit(this.id, source.id, sx, sy, sw, sh, dx, dy, sw, sh, mode, key)
+                    __GRPHRndBlit(this.id, source.id, sx, sy, sw, sh, dx, dy, sw, sh, mode, key)
                 }
                 BlitScaled(Framebuffer source, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode = 0, int key = -1) {
-                    __GRPHConBlit(this.id, source.id, sx, sy, sw, sh, dx, dy, dw, dh, mode, key)
+                    __GRPHRndBlit(this.id, source.id, sx, sy, sw, sh, dx, dy, dw, dh, mode, key)
                 }
             }
             """;

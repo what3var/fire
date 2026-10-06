@@ -5,8 +5,8 @@ var fb = new Framebuffer(640, 480)
 print("Framebuffer erstellt, id=" + fb.id)
 print("Breite: " + fb.Width() + ", Hoehe: " + fb.Height())
 
-var con = new Console(fb)
-print("Console erstellt, id=" + con.id)
+var con = new Renderer(fb)
+print("Renderer erstellt, id=" + con.id)
 
 class MyWin : Window
 {

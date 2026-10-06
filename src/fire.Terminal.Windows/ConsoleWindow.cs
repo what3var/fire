@@ -9,9 +9,9 @@ namespace fire.Terminal.Windows
     /// Eigenständiges Konsolenfenster (siehe docs/CONSOLE.md) - eine DÜNNE
     /// Hülle, die NUR das Rendering eines EXTERN übergebenen Framebuffers
     /// übernimmt (siehe FramebufferManager) - besitzt bewusst KEINEN
-    /// eigenen Framebuffer und KEINE eigene TerminalCanvas mehr (anders als
+    /// eigenen Framebuffer und KEINE eigene Renderer mehr (anders als
     /// in einer früheren Ausbaustufe): "Framebuffer", "Konsole"
-    /// (TerminalCanvas, siehe ConsoleManager) und "Fenster" (diese Klasse)
+    /// (Renderer, siehe RendererManager) und "Fenster" (diese Klasse)
     /// sind jetzt drei UNABHÄNGIG voneinander verwaltete Ressourcenarten mit
     /// jeweils eigenen IDs (siehe WindowManager) - ein Fenster zeigt einfach
     /// an, WAS in einem Framebuffer steht, unabhängig davon, WELCHE Konsole
@@ -63,7 +63,7 @@ namespace fire.Terminal.Windows
         /// <summary>Ein einzelner Zyklus: Fenster-Events abholen, dann den
         /// AKTUELLEN Inhalt von <see cref="Framebuffer"/> zeichnen - ganz
         /// gleich, was zwischenzeitlich hineingezeichnet hat (eine
-        /// TerminalCanvas über ConsoleManager, rohe Grafikoperationen,
+        /// Renderer über RendererManager, rohe Grafikoperationen,
         /// direktes Beschreiben der Pixels, ...). Öffnet das Fenster bei
         /// Bedarf automatisch (mit dem Default-Titel), falls Open() noch
         /// nicht explizit aufgerufen wurde. Liefert false, sobald das

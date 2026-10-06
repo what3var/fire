@@ -35,8 +35,9 @@ namespace fire.UI.Markup
     /// <summary>A plain value as written (`12`, `true`, `#FF0000`, a text).</summary>
     public sealed record LiteralValue(string Text) : MarkupValue;
 
-    /// <summary>`{Enum Type.Member}`, `{Static Type.Member}` or `{Expr ...}`: a piece of fire code that is used as it is (an enum member, a constant, any expression).</summary>
-    public sealed record ExpressionValue(string Code) : MarkupValue;
+    /// <summary>`{Enum Type.Member}`, `{Static Type.Member}` or `{Expr ...}`: a piece of fire code that is used as it is (an enum member, a constant, any expression). For a colour property
+    /// `Enum`/`Static` give a colour NUMBER (the generated script makes a brush of it), `Expr` (<paramref name="IsRaw"/>) a ready value (a brush).</summary>
+    public sealed record ExpressionValue(string Code, bool IsRaw = false) : MarkupValue;
 
     /// <summary>`{Binding Path, Mode=TwoWay, Converter=Key, ElementName=name}`: the value of a property of the data context (or of a named element) follows the property.</summary>
     public sealed record BindingValue(string Path, BindingMode Mode, string? Converter, string? ElementName) : MarkupValue;

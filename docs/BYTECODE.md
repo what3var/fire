@@ -1549,7 +1549,7 @@ wenn der Standard-Kontext eine Assembly nicht findet, also genau beim ersten ech
 
 **Regel für `fire.Runtime`.** Der JIT löst einen Typ schon beim Übersetzen einer Methode auf, die ihn in Signatur, lokaler Variable oder Aufruf erwähnt. Deshalb steht jeder Zugriff auf Bridge-Typen in
 `Session.RegisterGraphics/RegisterDevices/RegisterIo` (`[MethodImpl(NoInlining)]`, nur betreten wenn der Import da ist); `Session` selbst hat keine Bridge-Typen in Feldern/Properties/Parametern (die früheren
-Properties `WindowManager`/`FramebufferManager`/`ConsoleManager` und die Parameter `ioPolicy`/`ioStdio` von `Session.Build` sind entfallen - Hosts mit eigener Policy nutzen `fire.Compiler.RuntimeSession`). Ebenso
+Properties `WindowManager`/`FramebufferManager`/`RendererManager` und die Parameter `ioPolicy`/`ioStdio` von `Session.Build` sind entfallen - Hosts mit eigener Policy nutzen `fire.Compiler.RuntimeSession`). Ebenso
 darf `Main` keinen Typ aus `fire.dll` erwähnen. Neue Bridge = Eintrag in `PackagePlan.Imports` + eigene `Register...`-Methode.
 
 **Icon/Version.** `PeResourceEditor` ändert die PE-Ressourcen und verschiebt damit Dateiinhalt: das geschieht jetzt auf einer Kopie des apphost VOR dem Bündeln (`PackProgram(..., customizeApphost)`), sonst wäre
@@ -1576,7 +1576,7 @@ pixelweise Weg. Spalten/Zeilen-Raster und Zellgröße sind einmal berechnet (`Up
 opak 370 -> 32 ns/Zeichen, transparent 270 -> 26 ns/Zeichen. Der Test-Block "Font-Rendering" vergleicht schnellen und allgemeinen Weg Pixel für Pixel (beide Schriftgrößen, opak/transparent, Positionen
 über den Rand hinaus, Scrollen). `IntegratedGlyphFont`: Tabellen statisch, Zeichen > 255 als `?`.
 
-**Pixel-Text.** `TerminalCanvas.DrawText/MeasureText`, `ConsoleManager.DrawText/GetCellWidth/GetCellHeight`, in der Bridge `Console.FillRect/DrawRect/DrawLine/DrawText/CellWidth/CellHeight` (rohe Farben).
+**Pixel-Text.** `Renderer.DrawText/MeasureText`, `RendererManager.DrawText/GetCellWidth/GetCellHeight`, in der Bridge `Renderer.FillRect/DrawRect/DrawLine/DrawText/CellWidth/CellHeight` (inzwischen mit Brush/Pen statt rohen Farben).
 
 **Ereignisse.** `WindowManager.EnableEventQueue/NextEvent/EncodeEvent` (siehe `docs/CONSOLE.md`), `Window.EnableEvents()/NextEvent()`. `SdlFramebufferRenderer` rechnet die Mausposition von Fenster- auf
 Framebuffer-Koordinaten um (`SDL.GetWindowSize`) und startet die Texteingabe. `WindowManager(framebuffers, runner, rendererFactory)`.

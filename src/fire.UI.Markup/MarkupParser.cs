@@ -199,7 +199,7 @@ namespace fire.UI.Markup
                         errors.Add(new MarkupDiagnostic(line, "'{Expr ...}' needs an expression."));
                         return null;
                     }
-                    return new ExpressionValue(rest);
+                    return new ExpressionValue(rest, IsRaw: true);
                 case "binding":
                     return ReadBinding(rest, line, errors);
                 default:

@@ -2,7 +2,7 @@
 
   <!--
     Windows-spezifische Komposition: GdiGlyphFont (GDI+-Schriftrasterung)
-    und ConsoleWindow (setzt Framebuffer + TerminalCanvas + den SDL-
+    und ConsoleWindow (setzt Framebuffer + Renderer + den SDL-
     Renderer zu einem fertigen Fenster zusammen, mit konkreten Windows-
     Defaults). Referenziert sowohl den plattformunabhängigen Kern als auch
     das SDL-Rendering-Projekt - genau hier, nicht in fire.Terminal

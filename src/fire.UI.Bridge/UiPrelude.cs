@@ -19,8 +19,8 @@ namespace fire.UI.Bridge
         /// Hauptprogramm und sieht die echten globalen Variablen) oder durch Abfragen in der eigenen Schleife
         /// (`if (button.TakeClicked()) { ... }`). Die Ereignisse holt `Root.Tick` per `Window.NextEvent` ab, nicht per Callback.
         ///
-        /// Zeichnen geht über die Methoden von `Console` (FillRect/DrawRect/DrawLine/DrawText mit rohen Farbwerten, siehe
-        /// `UI.Color.Rgb`); Text ist die eingebaute Schrift (dicktengleich, 8x14 Pixel pro Zeichen).
+        /// Gezeichnet wird mit dem `Renderer` der Grafik-Brücke: Flächen mit einem `Brush` (FillRect), Rahmen und Linien mit einem `Pen` (DrawRect, DrawLine), Text mit
+        /// einem Brush (DrawText). Das Theme besteht aus Brushes und Pens (`UI.Color.Rgb` baut die rohen Farbwerte dafür); Text ist die eingebaute Schrift (dicktengleich, 8x14 Pixel pro Zeichen).
         /// </summary>
         public const string PreludeSource = """
             namespace UI {
@@ -81,34 +81,37 @@ namespace fire.UI.Bridge
                     }
                 }
 
-                // Die Farben der Oberfläche (Root.theme) - einzelne Felder lassen sich nach dem Anlegen des Roots ändern.
+                // Die Brushes und Pens der Oberfläche (Root.theme) - einzelne Felder lassen sich nach dem Anlegen des Roots ändern (z.B. `root.theme.back = new SolidBrush(...)`).
                 class Theme {
-                    int back
-                    int panel
-                    int face
-                    int faceHover
-                    int facePressed
-                    int faceDisabled
-                    int border
-                    int borderFocus
-                    int text
-                    int textDisabled
-                    int inputBack
-                    int accent
+                    Brush back
+                    Brush panel
+                    Brush face
+                    Brush faceHover
+                    Brush facePressed
+                    Brush faceDisabled
+                    Brush inputBack
+                    Brush accent
+                    Brush text
+                    Brush textDisabled
+                    Pen border
+                    Pen borderFocus
+                    // die Einfügemarke des Textfelds
+                    Pen caret
 
                     construct() {
-                        this.back = UI.Color.Rgb(240, 240, 240)
-                        this.panel = UI.Color.Rgb(250, 250, 250)
-                        this.face = UI.Color.Rgb(225, 225, 225)
-                        this.faceHover = UI.Color.Rgb(229, 241, 251)
-                        this.facePressed = UI.Color.Rgb(204, 228, 247)
-                        this.faceDisabled = UI.Color.Rgb(204, 204, 204)
-                        this.border = UI.Color.Rgb(120, 120, 120)
-                        this.borderFocus = UI.Color.Rgb(0, 120, 215)
-                        this.text = UI.Color.Rgb(0, 0, 0)
-                        this.textDisabled = UI.Color.Rgb(131, 131, 131)
-                        this.inputBack = UI.Color.Rgb(255, 255, 255)
-                        this.accent = UI.Color.Rgb(0, 120, 215)
+                        this.back = new SolidBrush(UI.Color.Rgb(240, 240, 240))
+                        this.panel = new SolidBrush(UI.Color.Rgb(250, 250, 250))
+                        this.face = new SolidBrush(UI.Color.Rgb(225, 225, 225))
+                        this.faceHover = new SolidBrush(UI.Color.Rgb(229, 241, 251))
+                        this.facePressed = new SolidBrush(UI.Color.Rgb(204, 228, 247))
+                        this.faceDisabled = new SolidBrush(UI.Color.Rgb(204, 204, 204))
+                        this.inputBack = new SolidBrush(UI.Color.Rgb(255, 255, 255))
+                        this.accent = new SolidBrush(UI.Color.Rgb(0, 120, 215))
+                        this.text = new SolidBrush(UI.Color.Rgb(0, 0, 0))
+                        this.textDisabled = new SolidBrush(UI.Color.Rgb(131, 131, 131))
+                        this.border = new Pen(UI.Color.Rgb(120, 120, 120))
+                        this.borderFocus = new Pen(UI.Color.Rgb(0, 120, 215))
+                        this.caret = new Pen(UI.Color.Rgb(0, 0, 0))
                     }
                 }
 
@@ -169,8 +172,11 @@ namespace fire.UI.Bridge
                 class Panel : Element {
                     List children
                     bool showBorder = false
-                    // Hintergrund: 0 = Farbe des Themes, 1 = keiner (durchsichtig), sonst ein Farbwert
-                    int background = 0
+                    // Hintergrund: undefined = der Brush `panel` des Themes; mit filled = false gibt es keinen (durchsichtig)
+                    Brush background
+                    bool filled = true
+                    // Rahmen (showBorder): undefined = der Pen `border` des Themes
+                    Pen pen
 
                     construct(int x, int y, int width, int height) : base(x, y, width, height) {
                         this.children = new List()
@@ -186,13 +192,15 @@ namespace fire.UI.Bridge
 
                     Draw(root, int ax, int ay) {
                         base.Draw(root, ax, ay)
-                        if (this.background != 1) {
-                            var color = this.background
-                            if (color == 0) { color = root.theme.panel }
-                            root.console.FillRect(ax, ay, this.width, this.height, color)
+                        if (this.filled) {
+                            var brush = this.background
+                            if (brush == undefined) { brush = root.theme.panel }
+                            root.renderer.FillRect(ax, ay, this.width, this.height, brush)
                         }
                         if (this.showBorder) {
-                            root.console.DrawRect(ax, ay, this.width, this.height, root.theme.border)
+                            var pen = this.pen
+                            if (pen == undefined) { pen = root.theme.border }
+                            root.renderer.DrawRect(ax, ay, this.width, this.height, pen)
                         }
                         this.Layout()
                         for (var i = 0; i < this.children.count; i = i + 1) {
@@ -254,8 +262,8 @@ namespace fire.UI.Bridge
 
                 class Label : Element {
                     string text
-                    // 0 = Textfarbe des Themes
-                    int color = 0
+                    // Textfarbe: undefined = der Brush `text` des Themes
+                    Brush brush
 
                     construct(string text, int x, int y) : base(x, y, 0, 0) {
                         this.text = text
@@ -265,10 +273,10 @@ namespace fire.UI.Bridge
                         this.width = root.cw * this.text.Length
                         this.height = root.ch
                         base.Draw(root, ax, ay)
-                        var c = this.color
-                        if (c == 0) { c = root.theme.text }
+                        var c = this.brush
+                        if (c == undefined) { c = root.theme.text }
                         if (!this.enabled) { c = root.theme.textDisabled }
-                        root.console.DrawText(ax, ay, this.text, c, 0)
+                        root.renderer.DrawText(ax, ay, this.text, c)
                     }
                 }
 
@@ -303,16 +311,16 @@ namespace fire.UI.Bridge
                         if (!this.enabled) { face = theme.faceDisabled }
                         else if (this.pressed && this.hover) { face = theme.facePressed }
                         else if (this.hover) { face = theme.faceHover }
-                        root.console.FillRect(ax, ay, this.width, this.height, face)
+                        root.renderer.FillRect(ax, ay, this.width, this.height, face)
                         var border = theme.border
                         if (this.focused) { border = theme.borderFocus }
-                        root.console.DrawRect(ax, ay, this.width, this.height, border)
+                        root.renderer.DrawRect(ax, ay, this.width, this.height, border)
 
                         var color = theme.text
                         if (!this.enabled) { color = theme.textDisabled }
                         var tx = ax + (this.width - root.cw * this.text.Length) / 2
                         var ty = ay + (this.height - root.ch) / 2
-                        root.console.DrawText(tx, ty, this.text, color, 0)
+                        root.renderer.DrawText(tx, ty, this.text, color)
                     }
 
                     MouseDown(root, int button, int px, int py) {
@@ -369,18 +377,18 @@ namespace fire.UI.Bridge
                         var back = theme.inputBack
                         if (!this.enabled) { back = theme.faceDisabled }
                         else if (this.hover) { back = theme.faceHover }
-                        root.console.FillRect(ax, by, box, box, back)
+                        root.renderer.FillRect(ax, by, box, box, back)
                         var border = theme.border
                         if (this.focused) { border = theme.borderFocus }
-                        root.console.DrawRect(ax, by, box, box, border)
+                        root.renderer.DrawRect(ax, by, box, box, border)
                         if (this.isChecked) {
                             var mark = theme.accent
                             if (!this.enabled) { mark = theme.textDisabled }
-                            root.console.FillRect(ax + 3, by + 3, box - 6, box - 6, mark)
+                            root.renderer.FillRect(ax + 3, by + 3, box - 6, box - 6, mark)
                         }
                         var color = theme.text
                         if (!this.enabled) { color = theme.textDisabled }
-                        root.console.DrawText(ax + box + 6, ay + (this.height - root.ch) / 2, this.text, color, 0)
+                        root.renderer.DrawText(ax + box + 6, ay + (this.height - root.ch) / 2, this.text, color)
                     }
 
                     MouseDown(root, int button, int px, int py) {
@@ -449,10 +457,10 @@ namespace fire.UI.Bridge
                         var theme = root.theme
                         var back = theme.inputBack
                         if (!this.enabled) { back = theme.faceDisabled }
-                        root.console.FillRect(ax, ay, this.width, this.height, back)
+                        root.renderer.FillRect(ax, ay, this.width, this.height, back)
                         var border = theme.border
                         if (this.focused) { border = theme.borderFocus }
-                        root.console.DrawRect(ax, ay, this.width, this.height, border)
+                        root.renderer.DrawRect(ax, ay, this.width, this.height, border)
 
                         // die Einfügemarke bleibt sichtbar: der sichtbare Ausschnitt wandert mit
                         var fit = this.Fit(root)
@@ -467,11 +475,11 @@ namespace fire.UI.Bridge
                         if (!this.enabled) { color = theme.textDisabled }
                         var ty = ay + (this.height - root.ch) / 2
                         if (count > 0) {
-                            root.console.DrawText(ax + 4, ty, this.text.Substring(this.scroll, count), color, 0)
+                            root.renderer.DrawText(ax + 4, ty, this.text.Substring(this.scroll, count), color)
                         }
                         if (this.focused) {
                             var cx = ax + 4 + (this.caret - this.scroll) * root.cw
-                            root.console.DrawLine(cx, ay + 3, cx, ay + this.height - 4, color)
+                            root.renderer.DrawLine(cx, ay + 3, cx, ay + this.height - 4, theme.caret)
                         }
                     }
 
@@ -526,7 +534,7 @@ namespace fire.UI.Bridge
                 class Root {
                     Framebuffer framebuffer
                     Window window
-                    Console console
+                    Renderer renderer
                     Theme theme
                     Panel content
                     int width
@@ -544,14 +552,14 @@ namespace fire.UI.Bridge
                     construct(Framebuffer framebuffer, Window window) {
                         this.framebuffer = framebuffer
                         this.window = window
-                        this.console = new Console(framebuffer)
+                        this.renderer = new Renderer(framebuffer)
                         this.theme = new Theme()
-                        this.cw = this.console.CellWidth()
-                        this.ch = this.console.CellHeight()
+                        this.cw = this.renderer.CellWidth()
+                        this.ch = this.renderer.CellHeight()
                         this.width = framebuffer.Width()
                         this.height = framebuffer.Height()
                         this.content = new Panel(0, 0, this.width, this.height)
-                        this.content.background = 1
+                        this.content.filled = false
 
                         // Ereignisse werden abgefragt, nicht per Callback geliefert: so laufen sie im Hauptprogramm, und ein
                         // onClick-Lambda sieht die echten globalen Variablen (ein Callback arbeitet dagegen auf einer Kopie, SPEC 8.1.4)
@@ -563,7 +571,7 @@ namespace fire.UI.Bridge
 
                     // Zeichnet die gesamte Oberfläche neu.
                     Draw() {
-                        this.console.FillRect(0, 0, this.width, this.height, this.theme.back)
+                        this.renderer.FillRect(0, 0, this.width, this.height, this.theme.back)
                         this.content.Draw(this, 0, 0)
                     }
 

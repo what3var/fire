@@ -2,7 +2,7 @@
 
   <!--
     PLATTFORMUNABHÄNGIGER Kern (siehe docs/CONSOLE.md): Framebuffer,
-    PixelColor, TerminalCanvas, IGlyphFont, IFramebufferRenderer - bewusst
+    PixelColor, Renderer, IGlyphFont, IFramebufferRenderer - bewusst
     OHNE jede Windows-/SDL-/GDI-spezifische Abhängigkeit, damit eine spätere
     Portierung (z.B. nach C++, oder eine Skriptsprachen-Brücke direkt auf
     diese Schicht) so einfach wie möglich bleibt. Konkrete Implementierungen

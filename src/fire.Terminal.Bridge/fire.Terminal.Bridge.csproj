@@ -3,7 +3,7 @@
   <!--
     Die Brücke zwischen der Skriptsprache (fire) und der Grafik-API
     (fire.Terminal/.Windows) - siehe docs/CONSOLE.md. Registriert
-    FramebufferManager/ConsoleManager/WindowManager als native Funktionen
+    FramebufferManager/RendererManager/WindowManager als native Funktionen
     (NativeRegistry.RegisterGroup) und liefert den passenden fire-
     Quelltext (GraphicsBridge.PreludeSource), der diese nativen Funktionen
     hinter drei gewöhnlichen Klassen (Framebuffer/Console/Window) versteckt.

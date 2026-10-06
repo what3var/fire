@@ -7419,7 +7419,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
     }
 
-    // Dieselbe Schrift, aber OHNE Bitmap-Zeilen: TerminalCanvas muss dann den allgemeinen Weg (IsPixelSet je Pixel) nehmen.
+    // Dieselbe Schrift, aber OHNE Bitmap-Zeilen: Renderer muss dann den allgemeinen Weg (IsPixelSet je Pixel) nehmen.
     var slowFont = new PixelOnlyFont(new fire.Terminal.IntegratedGlyphFont());
     var rng = new Random(7);
     foreach (bool small in new[] { false, true })
@@ -7430,21 +7430,21 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         {
             var fbFast = new fire.Terminal.Framebuffer(203, 97); // krumme Groesse: Raster endet nicht am Rand, Texte ragen hinaus
             var fbSlow = new fire.Terminal.Framebuffer(203, 97);
-            var fast = new fire.Terminal.TerminalCanvas(fbFast, fastFont);
-            var slowCanvas = new fire.Terminal.TerminalCanvas(fbSlow, slow);
+            var fast = new fire.Terminal.Renderer(fbFast, fastFont);
+            var slowCanvas = new fire.Terminal.Renderer(fbSlow, slow);
             foreach (var cv in new[] { fast, slowCanvas })
             {
                 cv.Foreground = new fire.Terminal.PixelColor(200, 100, 50);
                 cv.Background = opaque ? new fire.Terminal.PixelColor(10, 20, 30) : null;
-                cv.Target.Clear(new fire.Terminal.PixelColor(1, 2, 3));
+                ((fire.Terminal.Framebuffer)cv.Target).Clear(new fire.Terminal.PixelColor(1, 2, 3));
             }
             // Zeichen des ganzen Bereichs (auch > 255), an zufaelligen Positionen inkl. teilweise ausserhalb
             for (int i = 0; i < 400; i++)
             {
                 char ch = (char)rng.Next(0, 400);
                 int x = rng.Next(-12, 215), y = rng.Next(-16, 110);
-                fast.DrawGlyph(x, y, ch, fast.Foreground, fast.Background);
-                slowCanvas.DrawGlyph(x, y, ch, slowCanvas.Foreground, slowCanvas.Background);
+                foreach (var cv in new[] { fast, slowCanvas })
+                    cv.DrawGlyph(x, y, ch, new fire.Terminal.SolidBrush(cv.Foreground), cv.Background is fire.Terminal.PixelColor bg ? new fire.Terminal.SolidBrush(bg) : null);
             }
             // Print mit Umbruch und Scrollen
             string text = string.Join("\n", Enumerable.Range(0, 40).Select(n => new string((char)('A' + n % 26), 10 + n % 40)));
@@ -7457,12 +7457,12 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
     {
         var fb = new fire.Terminal.Framebuffer(100, 40);
-        var cv = new fire.Terminal.TerminalCanvas(fb, new fire.Terminal.IntegratedGlyphFont());
-        cv.DrawText(3, 5, "Hallo", fire.Terminal.PixelColor.White);
+        var cv = new fire.Terminal.Renderer(fb, new fire.Terminal.IntegratedGlyphFont());
+        cv.DrawText(3, 5, "Hallo", new fire.Terminal.SolidBrush(fire.Terminal.PixelColor.White));
         FontCheck(cv.MeasureText("Hallo") == 5 * cv.CellWidth, "MeasureText: Zeichenzahl mal Zellbreite");
         var fb2 = new fire.Terminal.Framebuffer(100, 40);
-        var cv2 = new fire.Terminal.TerminalCanvas(fb2, new fire.Terminal.IntegratedGlyphFont());
-        for (int i = 0; i < 5; i++) cv2.DrawGlyph(3 + i * cv2.CellWidth, 5, "Hallo"[i], fire.Terminal.PixelColor.White, null);
+        var cv2 = new fire.Terminal.Renderer(fb2, new fire.Terminal.IntegratedGlyphFont());
+        for (int i = 0; i < 5; i++) cv2.DrawGlyph(3 + i * cv2.CellWidth, 5, "Hallo"[i], new fire.Terminal.SolidBrush(fire.Terminal.PixelColor.White));
         FontCheck(fb.Pixels.SequenceEqual(fb2.Pixels), "DrawText == DrawGlyph je Zeichen");
         cv.Locate(0, 0); cv.Print("\u20AC\u4E2D"); // Zeichen ausserhalb der Tabelle: kein Absturz
         FontCheck(true, "Zeichen > 255 werfen nicht");
@@ -7487,7 +7487,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     var RGBA = fire.Terminal.ColorMode.Rgba;
     var IDX = fire.Terminal.ColorMode.Indexed;
     fire.Terminal.PixelColor Col(byte r, byte g, byte b) => new fire.Terminal.PixelColor(r, g, b);
-    fire.Terminal.Brush Idx(fire.Terminal.Framebuffer fb, int i) => fb.ResolveBrush(fire.Terminal.Paint.FromIndex((byte)i));
+    fire.Terminal.Pixel Idx(fire.Terminal.Framebuffer fb, int i) => fb.ResolvePixel(fire.Terminal.Paint.FromIndex((byte)i));
+    fire.Terminal.Brush Bsh(int i) => new fire.Terminal.SolidBrush(fire.Terminal.Paint.FromIndex((byte)i));
+    fire.Terminal.Pen Pn(int i) => new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex((byte)i));
 
     // Menge der gesetzten Pixel (Palette: Index != 0, RGBA: Wert != 0) als "x,y"-Menge
     HashSet<(int, int)> Lit(fire.Terminal.Framebuffer fb)
@@ -7503,7 +7505,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     {
         var fb = new fire.Terminal.Framebuffer(4, 3, IDX);
         GfxCheck(fb.IsIndexed && fb.Indices != null && fb.Indices.Length == 12, "Palette-Framebuffer hat 1 Byte je Pixel");
-        fb.Plot(1, 1, new fire.Terminal.Brush(0, 9));
+        fb.Plot(1, 1, new fire.Terminal.Pixel(0, 9));
         fb.Resolve();
         GfxCheck(fb.Pixels[1 * 4 + 1] == fb.Palette.GetPacked(9) && fb.Pixels[0] == fb.Palette.GetPacked(0), "Resolve: Pixels = Palette[Index]");
         fb.Palette.SetColor(9, unchecked((int)new fire.Terminal.PixelColor(1, 2, 3).Packed));
@@ -7512,7 +7514,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         fb.Indices![0] = 200; fb.MarkDirty(); fb.Resolve();
         GfxCheck(fb.Pixels[0] == fb.Palette.GetPacked(200), "MarkDirty nach direktem Schreiben der Indizes");
         GfxCheck(fb.GetPixel(0, 0).Packed == fb.Palette.GetPacked(200) && fb.GetIndex(0, 0) == 200, "GetPixel/GetIndex im Palette-Modus");
-        fb.Plot(-1, 0, new fire.Terminal.Brush(0, 5)); fb.Plot(4, 0, new fire.Terminal.Brush(0, 5)); fb.Plot(0, 3, new fire.Terminal.Brush(0, 5));
+        fb.Plot(-1, 0, new fire.Terminal.Pixel(0, 5)); fb.Plot(4, 0, new fire.Terminal.Pixel(0, 5)); fb.Plot(0, 3, new fire.Terminal.Pixel(0, 5));
         GfxCheck(fb.GetIndex(0, 0) == 200 && fb.GetRaw(-1, 0) == 0, "Plot ausserhalb: still beschnitten");
 
         var rgba = new fire.Terminal.Framebuffer(2, 2);
@@ -7532,11 +7534,11 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var rgba = new fire.Terminal.Framebuffer(2, 2);
         var idx = new fire.Terminal.Framebuffer(2, 2, IDX);
         var red = fire.Terminal.PixelColor.FromRgb(255, 0, 0);
-        var viaIndex = rgba.ResolveBrush(fire.Terminal.Paint.FromIndex(4));
+        var viaIndex = rgba.ResolvePixel(fire.Terminal.Paint.FromIndex(4));
         GfxCheck(viaIndex.Rgba == rgba.Palette.GetPacked(4), "RGBA-Framebuffer: ein Index wird ueber die Palette zur Farbe");
-        GfxCheck(rgba.ResolveBrush(fire.Terminal.Paint.FromRgba(red)).Rgba == red.Packed, "RGBA-Framebuffer: ein direkter Wert bleibt");
-        GfxCheck(idx.ResolveBrush(fire.Terminal.Paint.FromIndex(4)).Index == 4, "Palette-Framebuffer: ein Index bleibt");
-        byte nearest = idx.ResolveBrush(fire.Terminal.Paint.FromRgba(fire.Terminal.PixelColor.FromRgb(250, 3, 3))).Index;
+        GfxCheck(rgba.ResolvePixel(fire.Terminal.Paint.FromRgba(red)).Rgba == red.Packed, "RGBA-Framebuffer: ein direkter Wert bleibt");
+        GfxCheck(idx.ResolvePixel(fire.Terminal.Paint.FromIndex(4)).Index == 4, "Palette-Framebuffer: ein Index bleibt");
+        byte nearest = idx.ResolvePixel(fire.Terminal.Paint.FromRgba(fire.Terminal.PixelColor.FromRgb(250, 3, 3))).Index;
         GfxCheck(idx.Palette.GetColor(nearest).R >= 200 && idx.Palette.GetColor(nearest).G <= 50 && idx.Palette.GetColor(nearest).B <= 50, "Palette-Framebuffer: ein direkter Wert wird der naechste Palette-Eintrag (rot -> rotlich)");
         GfxCheck(idx.Palette.FindNearest(fire.Terminal.PixelColor.FromRgb(0, 0, 0)) == 0 && idx.Palette.FindNearest(idx.Palette.GetColor(200)) <= 200 && idx.Palette.GetPacked(idx.Palette.FindNearest(idx.Palette.GetColor(200))) == idx.Palette.GetPacked(200), "FindNearest findet eine exakt vorhandene Farbe");
     }
@@ -7546,21 +7548,21 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var font = new fire.Terminal.IntegratedGlyphFont();
         var fbRgba = new fire.Terminal.Framebuffer(203, 97);
         var fbIdx = new fire.Terminal.Framebuffer(203, 97, IDX);
-        var cRgba = new fire.Terminal.TerminalCanvas(fbRgba, font);
-        var cIdx = new fire.Terminal.TerminalCanvas(fbIdx, font);
+        var cRgba = new fire.Terminal.Renderer(fbRgba, font);
+        var cIdx = new fire.Terminal.Renderer(fbIdx, font);
         foreach (var cv in new[] { cRgba, cIdx })
         {
             cv.SetColor(fire.Terminal.Paint.FromIndex(14), fire.Terminal.Paint.FromIndex(1));
             cv.Clear();
-            cv.FillRect(5, 5, 40, 20, (byte)12);
-            cv.DrawRect(2, 2, 60, 30, (byte)10);
-            cv.DrawLine(0, 0, 202, 96, (byte)9);
-            cv.DrawText(7, 40, "Hallo Welt", fire.Terminal.Paint.FromIndex(15), null);
-            cv.DrawText(100, 80, "ragt hinaus", fire.Terminal.Paint.FromIndex(13), fire.Terminal.Paint.FromIndex(4));
+            cv.FillRect(5, 5, 40, 20, Bsh(12));
+            cv.DrawRect(2, 2, 60, 30, Pn(10));
+            cv.DrawLine(0, 0, 202, 96, Pn(9));
+            cv.DrawText(7, 40, "Hallo Welt", Bsh(15));
+            cv.DrawText(100, 80, "ragt hinaus", Bsh(13), Bsh(4));
             cv.Locate(0, 0);
             cv.Print(string.Join("\n", Enumerable.Range(0, 12).Select(n => new string((char)('A' + n % 26), 8 + n))));
-            cv.SetPixel(1, 1, (byte)200);
-            cv.FillRect(170, 2, 20, 10, (byte)12);
+            cv.SetPixel(1, 1, fire.Terminal.Paint.FromIndex(200));
+            cv.FillRect(170, 2, 20, 10, Bsh(12));
         }
         fbIdx.Resolve();
         GfxCheck(fbRgba.Pixels.SequenceEqual(fbIdx.Pixels), "Clear/FillRect/DrawRect/DrawLine/DrawText/Print/Scrollen: Palette-Framebuffer zeigt dieselben Pixel wie der RGBA-Framebuffer");
@@ -7571,12 +7573,12 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         GfxCheck(fbIdx.GetPixel(175, 5).Packed == fire.Terminal.PixelColor.FromRgb(1, 2, 3).Packed && fbRgba.GetPixel(175, 5).Packed == fbRgba.Palette.GetPacked(12), "Palette-Animation wirkt nur im Palette-Framebuffer");
 
         // die Palette gehoert dem Framebuffer, nicht der Konsole
-        GfxCheck(ReferenceEquals(cIdx.Palette, fbIdx.Palette), "TerminalCanvas.Palette ist die des Ziel-Framebuffers");
+        GfxCheck(ReferenceEquals(cIdx.Palette, fbIdx.Palette), "Renderer.Palette ist die des Ziel-Framebuffers");
 
         // Index-Farbe bleibt Index: eine spaetere Palette-Aenderung faerbt NEU gezeichneten Text um
         cRgba.SetColor(fire.Terminal.Paint.FromIndex(3), null);
         fbRgba.Palette.SetColor(3, unchecked((int)fire.Terminal.PixelColor.FromRgb(9, 8, 7).Packed));
-        cRgba.DrawText(0, 90, "x", fire.Terminal.Paint.FromIndex(3), null);
+        cRgba.DrawText(0, 90, "x", Bsh(3));
         bool found = false;
         for (int y = 90; y < 97 && !found; y++) for (int x = 0; x < 8; x++) if (fbRgba.GetPixel(x, y).Packed == fire.Terminal.PixelColor.FromRgb(9, 8, 7).Packed) { found = true; break; }
         GfxCheck(found, "ein Palette-Index wird erst beim Zeichnen aufgeloest");
@@ -7589,7 +7591,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             for (int r = 0; r <= 12; r++)
             {
                 var fb = new fire.Terminal.Framebuffer(60, 60, mode);
-                fire.Terminal.Shapes.FillCircle(fb, 30, 30, r, Idx(fb, 5));
+                Shp.FillCircle(fb, 30, 30, r, 5);
                 var filled = Lit(fb);
                 var expected = new HashSet<(int, int)>();
                 for (int dy = -r; dy <= r; dy++) for (int dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r) expected.Add((30 + dx, 30 + dy));
@@ -7598,10 +7600,10 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             }
         }
         var fbC = new fire.Terminal.Framebuffer(60, 60);
-        fire.Terminal.Shapes.FillCircle(fbC, 30, 30, 10, Idx(fbC, 5));
+        Shp.FillCircle(fbC, 30, 30, 10, 5);
         var area = Lit(fbC);
         var fbO = new fire.Terminal.Framebuffer(60, 60);
-        fire.Terminal.Shapes.Circle(fbO, 30, 30, 10, Idx(fbO, 5));
+        Shp.Circle(fbO, 30, 30, 10, 5);
         var ring = Lit(fbO);
         GfxCheck(ring.IsSubsetOf(area) && ring.Count > 30 && ring.Count < area.Count, "Circle: die Linie liegt in der Flaeche und ist ein Ring");
         // der Ring ist 4-symmetrisch und schliesst die Flaeche ein: kein innerer Flaechenpunkt hat einen Nachbarn ausserhalb der Flaeche ohne selbst auf dem Ring zu liegen
@@ -7611,43 +7613,43 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         GfxCheck(closed, "Circle: jedes Flaechenpixel am Rand liegt auf der Linie (keine Luecken)");
 
         var fbE = new fire.Terminal.Framebuffer(80, 60);
-        fire.Terminal.Shapes.FillEllipse(fbE, 40, 30, 20, 8, Idx(fbE, 5));
+        Shp.FillEllipse(fbE, 40, 30, 20, 8, 5);
         var ell = Lit(fbE);
         GfxCheck(ell.Contains((40 - 20, 30)) && ell.Contains((40 + 20, 30)) && ell.Contains((40, 30 - 8)) && ell.Contains((40, 30 + 8)) && !ell.Contains((40 - 21, 30)) && !ell.Contains((40, 30 + 9)),
             "FillEllipse: Halbachsen rx=20, ry=8 treffen genau die Spitzen");
         var fbE2 = new fire.Terminal.Framebuffer(80, 60);
-        fire.Terminal.Shapes.Ellipse(fbE2, 40, 30, 20, 8, Idx(fbE2, 5));
+        Shp.Ellipse(fbE2, 40, 30, 20, 8, 5);
         var ellRing = Lit(fbE2);
         GfxCheck(ellRing.IsSubsetOf(ell) && ellRing.Contains((20, 30)) && ellRing.Contains((40, 22)) && !ellRing.Contains((40, 30)), "Ellipse: Linie in der Flaeche, Mitte frei");
         var fbL = new fire.Terminal.Framebuffer(30, 30);
-        fire.Terminal.Shapes.Ellipse(fbL, 15, 15, 6, 0, Idx(fbL, 5));
+        Shp.Ellipse(fbL, 15, 15, 6, 0, 5);
         GfxCheck(Lit(fbL).SetEquals(Enumerable.Range(9, 13).Select(x => (x, 15))), "Ellipse mit ry=0: eine waagerechte Linie");
         var fbV = new fire.Terminal.Framebuffer(30, 30);
-        fire.Terminal.Shapes.FillEllipse(fbV, 15, 15, 0, 4, Idx(fbV, 5));
+        Shp.FillEllipse(fbV, 15, 15, 0, 4, 5);
         GfxCheck(Lit(fbV).SetEquals(Enumerable.Range(11, 9).Select(y => (15, y))), "FillEllipse mit rx=0: eine senkrechte Linie");
         var fbN = new fire.Terminal.Framebuffer(30, 30);
-        fire.Terminal.Shapes.FillCircle(fbN, 15, 15, -1, Idx(fbN, 5));
-        fire.Terminal.Shapes.Circle(fbN, -100, -100, 20, Idx(fbN, 5));
-        fire.Terminal.Shapes.FillCircle(fbN, 15, 15, int.MaxValue, Idx(fbN, 5));
+        Shp.FillCircle(fbN, 15, 15, -1, 5);
+        Shp.Circle(fbN, -100, -100, 20, 5);
+        Shp.FillCircle(fbN, 15, 15, int.MaxValue, 5);
         GfxCheck(true, "negativer Radius, Kreis ausserhalb und riesiger Radius werfen nicht");
     }
 
     // ---- Dreieck und Polygon ----
     {
         var fb = new fire.Terminal.Framebuffer(40, 40);
-        fire.Terminal.Shapes.FillTriangle(fb, 5, 5, 25, 5, 5, 25, Idx(fb, 5));
+        Shp.FillTriangle(fb, 5, 5, 25, 5, 5, 25, 5);
         var tri = Lit(fb);
         GfxCheck(tri.Contains((5, 5)) && tri.Contains((25, 5)) && tri.Contains((5, 25)) && tri.Contains((10, 10)) && !tri.Contains((20, 20)) && !tri.Contains((26, 5)) && !tri.Contains((4, 5)), "FillTriangle: Ecken und Inneres, nicht ausserhalb");
         bool rows = true;
         for (int y = 5; y <= 25; y++) { int n = tri.Count(p => p.Item2 == y); if (Math.Abs(n - (26 - (y - 5) - 5 + 1)) > 1) rows = false; }
         GfxCheck(rows, "FillTriangle: Zeilenbreiten wie bei der Geraden (rechtwinkliges Dreieck)");
         var fbT = new fire.Terminal.Framebuffer(40, 40);
-        fire.Terminal.Shapes.Triangle(fbT, 5, 5, 25, 5, 5, 25, Idx(fbT, 5));
+        Shp.Triangle(fbT, 5, 5, 25, 5, 5, 25, 5);
         var outline = Lit(fbT);
         GfxCheck(outline.IsSubsetOf(tri) && !outline.Contains((10, 10)) && outline.Contains((15, 5)) && outline.Contains((5, 15)), "Triangle: nur der Umriss, in der Flaeche enthalten");
 
         var fbR = new fire.Terminal.Framebuffer(40, 40);
-        fire.Terminal.Shapes.FillPolygon(fbR, new[] { 4, 6, 20, 6, 20, 15, 4, 15 }, Idx(fbR, 5));
+        Shp.FillPolygon(fbR, new[] { 4, 6, 20, 6, 20, 15, 4, 15 }, 5);
         var fbR2 = new fire.Terminal.Framebuffer(40, 40);
         fbR2.FillRect(4, 6, 17, 10, Idx(fbR2, 5));
         GfxCheck(Lit(fbR).SetEquals(Lit(fbR2)), "FillPolygon eines Rechtecks == FillRect (Randpixel gehoeren dazu)");
@@ -7655,22 +7657,22 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         // Even-Odd: ein Stern aus einem Fuenfeck (Pentagramm) hat ein leeres Zentrum
         var fbS = new fire.Terminal.Framebuffer(60, 60);
         int[] star = { 30, 3, 47, 55, 3, 22, 57, 22, 13, 55 };
-        fire.Terminal.Shapes.FillPolygon(fbS, star, Idx(fbS, 5));
+        Shp.FillPolygon(fbS, star, 5);
         var starSet = Lit(fbS);
         GfxCheck(starSet.Contains((30, 12)) && !starSet.Contains((30, 30)) && starSet.Count > 200, "FillPolygon: Even-Odd (das Zentrum eines Pentagramms bleibt leer)");
 
         var fbP = new fire.Terminal.Framebuffer(40, 40);
-        fire.Terminal.Shapes.Polygon(fbP, new[] { 5, 5, 30, 5, 30, 30 }, Idx(fbP, 5), closed: false);
+        Shp.Polygon(fbP, new[] { 5, 5, 30, 5, 30, 30 }, 5, closed: false);
         var open = Lit(fbP);
         GfxCheck(open.Contains((30, 20)) && !open.Contains((15, 18)) && open.Count == 26 + 25, "Polygon offen: Kantenzug ohne Schlusslinie");
-        fire.Terminal.Shapes.Polygon(fbP, new int[0], Idx(fbP, 5));
-        fire.Terminal.Shapes.FillPolygon(fbP, new[] { 1, 1, 9, 9 }, Idx(fbP, 5));
-        fire.Terminal.Shapes.FillPolygon(fbP, new[] { 1, 1, 9, 9, 7 }, Idx(fbP, 5));
+        Shp.Polygon(fbP, new int[0], 5);
+        Shp.FillPolygon(fbP, new[] { 1, 1, 9, 9 }, 5);
+        Shp.FillPolygon(fbP, new[] { 1, 1, 9, 9, 7 }, 5);
         GfxCheck(true, "zu wenige Punkte / ungerade Punktzahl werfen nicht");
 
         var fbBig = new fire.Terminal.Framebuffer(20, 20);
-        fire.Terminal.Shapes.FillTriangle(fbBig, -1000000, -1000000, 1000000, 5, 5, 1000000, Idx(fbBig, 5));
-        fire.Terminal.Shapes.Line(fbBig, int.MinValue, 0, int.MaxValue, 7, Idx(fbBig, 5));
+        Shp.FillTriangle(fbBig, -1000000, -1000000, 1000000, 5, 5, 1000000, 5);
+        Shp.Line(fbBig, int.MinValue, 0, int.MaxValue, 7, 5);
         GfxCheck(true, "riesige Koordinaten: kein Ueberlauf, kein Absturz");
     }
 
@@ -7679,8 +7681,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         foreach (var mode in new[] { RGBA, IDX })
         {
             var fb = new fire.Terminal.Framebuffer(30, 20, mode);
-            fire.Terminal.Shapes.Rect(fb, 5, 5, 15, 10, Idx(fb, 7));
-            fire.Terminal.Shapes.FloodFill(fb, 10, 10, Idx(fb, 3));
+            Shp.Rect(fb, 5, 5, 15, 10, 7);
+            Shp.FloodFill(fb, 10, 10, 3);
             int inside = 0, outside = 0, wall = 0;
             for (int y = 0; y < 20; y++) for (int x = 0; x < 30; x++)
             {
@@ -7691,24 +7693,24 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
                 if (v == 7) wall++;
             }
             GfxCheck(inside == 13 * 8 && outside == 0 && wall == 2 * 15 + 2 * 8, $"FloodFill fuellt genau das Innere des Rahmens [{mode}]");
-            fire.Terminal.Shapes.FloodFill(fb, 0, 0, Idx(fb, 3));
+            Shp.FloodFill(fb, 0, 0, 3);
             GfxCheck(fb.GetIndex(0, 0) == 3 && fb.GetIndex(29, 19) == 3 && fb.GetIndex(5, 5) == 7, $"FloodFill aussen: fuellt den Rest, der Rahmen bleibt [{mode}]");
-            fire.Terminal.Shapes.FloodFill(fb, 0, 0, Idx(fb, 3)); // schon gefuellt: nichts
-            fire.Terminal.Shapes.FloodFill(fb, -5, 100, Idx(fb, 3));
+            Shp.FloodFill(fb, 0, 0, 3); // schon gefuellt: nichts
+            Shp.FloodFill(fb, -5, 100, 3);
         }
         var fbB = new fire.Terminal.Framebuffer(20, 20, IDX);
-        fire.Terminal.Shapes.Rect(fbB, 2, 2, 10, 10, Idx(fbB, 7));
-        fire.Terminal.Shapes.Line(fbB, 4, 4, 9, 4, Idx(fbB, 2)); // eine andere Farbe im Innern
-        fire.Terminal.Shapes.FloodFillBorder(fbB, 5, 6, Idx(fbB, 3), Idx(fbB, 7));
+        Shp.Rect(fbB, 2, 2, 10, 10, 7);
+        Shp.Line(fbB, 4, 4, 9, 4, 2); // eine andere Farbe im Innern
+        Shp.FloodFillBorder(fbB, 5, 6, 3, 7);
         GfxCheck(fbB.GetIndex(5, 4) == 3 && fbB.GetIndex(5, 6) == 3 && fbB.GetIndex(2, 2) == 7 && fbB.GetIndex(15, 15) == 0, "FloodFillBorder: fuellt bis zur Randfarbe, auch ueber andere Farben hinweg");
         // grosse Flaeche: kein Stapelueberlauf
         var fbHuge = new fire.Terminal.Framebuffer(600, 600, IDX);
-        fire.Terminal.Shapes.FloodFill(fbHuge, 0, 0, Idx(fbHuge, 4));
+        Shp.FloodFill(fbHuge, 0, 0, 4);
         GfxCheck(fbHuge.GetIndex(599, 599) == 4 && fbHuge.GetIndex(300, 300) == 4, "FloodFill einer ganzen 600x600-Flaeche");
         // Spirale: lange, verwinkelte Flaeche
         var fbSp = new fire.Terminal.Framebuffer(64, 64);
-        for (int i = 2; i < 60; i += 4) fire.Terminal.Shapes.Rect(fbSp, i, i, 64 - 2 * i, 64 - 2 * i, Idx(fbSp, 7));
-        fire.Terminal.Shapes.FloodFill(fbSp, 0, 0, Idx(fbSp, 2));
+        for (int i = 2; i < 60; i += 4) Shp.Rect(fbSp, i, i, 64 - 2 * i, 64 - 2 * i, 7);
+        Shp.FloodFill(fbSp, 0, 0, 2);
         GfxCheck(fbSp.GetIndex(1, 1) == 2 && fbSp.GetIndex(3, 3) == 0, "FloodFill bleibt hinter einer Wand");
     }
 
@@ -7840,29 +7842,37 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         try { mgr.SetPaletteColor(a, 256, 0); GfxCheck(false, "Palette-Index 256 wird abgelehnt"); }
         catch (ArgumentOutOfRangeException) { GfxCheck(true, "Palette-Index 256 wird abgelehnt"); }
 
-        // ConsoleManager: Farbangaben als Zahlen
-        var cm = new fire.Terminal.ConsoleManager(mgr, new fire.Terminal.IntegratedGlyphFont());
+        // RendererManager: Farbangaben als Zahlen (Pinsel und Stifte werden als ID uebergeben)
+        var cm = new fire.Terminal.RendererManager(mgr, new fire.Terminal.IntegratedGlyphFont());
         int fbId = mgr.CreateFramebuffer(40, 20, IDX);
-        int con = cm.CreateConsole(fbId);
-        cm.FillRect(con, 0, 0, 10, 10, 9);
+        int con = cm.CreateRenderer(fbId);
+        int bI9 = cm.CreateSolidBrush(9);
+        cm.FillRect(con, 0, 0, 10, 10, bI9);
         cm.SetPixel(con, 12, 12, 33);
-        cm.FillRect(con, 20, 0, 5, 5, unchecked((int)0xFF0000FFu)); // direkter Wert (rot) -> naechster Palette-Eintrag
+        int bRed = cm.CreateSolidBrush(unchecked((int)0xFF0000FFu)); // direkter Wert (rot) -> naechster Palette-Eintrag
+        cm.FillRect(con, 20, 0, 5, 5, bRed);
         GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(3, 3) == 9 && mgr.GetFramebuffer(fbId).GetIndex(12, 12) == 33 && cm.GetPixelIndex(con, 12, 12) == 33
-            && mgr.GetFramebuffer(fbId).Palette.GetColor(mgr.GetFramebuffer(fbId).GetIndex(22, 2)).R >= 170, "ConsoleManager: 0-255 = Palette-Index, sonst direkter Wert");
+            && mgr.GetFramebuffer(fbId).Palette.GetColor(mgr.GetFramebuffer(fbId).GetIndex(22, 2)).R >= 170, "RendererManager: 0-255 = Palette-Index, sonst direkter Wert");
         cm.SetColor(con, 14, 1);
         cm.Print(con, "Hi");
-        GfxCheck(Enumerable.Range(0, 8).Any(x => Enumerable.Range(0, 14).Any(y => mgr.GetFramebuffer(fbId).GetIndex(x, y) == 14)), "ConsoleManager.SetColor mit Palette-Indizes (Print schreibt Index 14)");
-        cm.DrawText(con, 0, 10, "T", 15, 0);
-        GfxCheck(true, "DrawText mit Palette-Index und transparentem Hintergrund");
-        cm.FillCircle(con, 30, 12, 4, 6); cm.DrawCircle(con, 30, 12, 6, 7); cm.FillEllipse(con, 10, 15, 5, 2, 8); cm.DrawEllipse(con, 10, 15, 6, 3, 9);
-        cm.FillTriangle(con, 1, 1, 8, 1, 1, 8, 2); cm.DrawTriangle(con, 1, 1, 8, 1, 1, 8, 3);
-        cm.FillPolygon(con, new[] { 20, 10, 30, 10, 25, 18 }, 4); cm.DrawPolygon(con, new[] { 20, 10, 30, 10, 25, 18 }, 5, true);
-        cm.FloodFill(con, 35, 2, 6); cm.FloodFillBorder(con, 35, 2, 7, 6);
-        GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(30, 12) != 0, "ConsoleManager: Kreis/Ellipse/Dreieck/Polygon/FloodFill laufen im Palette-Framebuffer");
+        GfxCheck(Enumerable.Range(0, 8).Any(x => Enumerable.Range(0, 14).Any(y => mgr.GetFramebuffer(fbId).GetIndex(x, y) == 14)), "RendererManager.SetColor mit Palette-Indizes (Print schreibt Index 14)");
+        cm.DrawText(con, 0, 10, "T", cm.CreateSolidBrush(15), 0);
+        GfxCheck(true, "DrawText mit Palette-Index und ohne Hintergrund");
+        int[] bs = Enumerable.Range(0, 10).Select(i => cm.CreateSolidBrush(i)).ToArray();
+        int[] ps = Enumerable.Range(0, 10).Select(i => cm.CreatePen(i, 1, 0)).ToArray();
+        cm.FillCircle(con, 30, 12, 4, bs[6]); cm.DrawCircle(con, 30, 12, 6, ps[7]); cm.FillEllipse(con, 10, 15, 5, 2, bs[8]); cm.DrawEllipse(con, 10, 15, 6, 3, ps[9]);
+        cm.FillTriangle(con, 1, 1, 8, 1, 1, 8, bs[2]); cm.DrawTriangle(con, 1, 1, 8, 1, 1, 8, ps[3]);
+        cm.FillPolygon(con, new[] { 20, 10, 30, 10, 25, 18 }, bs[4]); cm.DrawPolygon(con, new[] { 20, 10, 30, 10, 25, 18 }, ps[5], true);
+        cm.FloodFill(con, 35, 2, bs[6]); cm.FloodFillBorder(con, 35, 2, bs[7], 6);
+        cm.DrawPoint(con, 3, 17, ps[2]); cm.DrawLine(con, 0, 19, 39, 19, ps[3]); cm.DrawPath(con, new[] { 0, 18, 10, 18, 10, 16 }, ps[4], false); cm.DrawRect(con, 30, 2, 6, 6, ps[5]);
+        GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(30, 12) != 0, "RendererManager: Kreis/Ellipse/Dreieck/Polygon/FloodFill/Punkt/Linie/Pfad laufen im Palette-Framebuffer");
         int src2 = mgr.CreateFramebuffer(4, 4, IDX);
-        mgr.GetFramebuffer(src2).FillRect(0, 0, 4, 4, mgr.GetFramebuffer(src2).ResolveBrush(fire.Terminal.Paint.FromIndex(44)));
+        mgr.GetFramebuffer(src2).FillRect(0, 0, 4, 4, mgr.GetFramebuffer(src2).ResolvePixel(fire.Terminal.Paint.FromIndex(44)));
         cm.Blit(con, src2, 0, 0, 4, 4, 30, 14, 4, 4, 0, -1);
-        GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(31, 15) == 44, "ConsoleManager.Blit kopiert einen anderen Framebuffer");
+        GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(31, 15) == 44, "RendererManager.Blit kopiert einen anderen Framebuffer");
+        GfxCheck(cm.GetBrushColor(bI9) == 9 && cm.GetPenColor(ps[3]) == 3 && cm.GetPenWidth(ps[3]) == 1, "Pinsel und Stifte: Farbe und Breite lesen");
+        cm.SetPenWidth(ps[3], 3); cm.SetPenColor(ps[3], 5); cm.SetBrushColor(bI9, 7);
+        GfxCheck(cm.GetPenWidth(ps[3]) == 3 && cm.GetPenColor(ps[3]) == 5 && cm.GetBrushColor(bI9) == 7 && cm.DestroyBrush(bI9) && !cm.DestroyBrush(bI9), "Pinsel und Stifte: Eigenschaften aendern, zerstoeren");
     }
 
     // ---- Fenster: Tick rechnet das sichtbare Abbild eines Palette-Framebuffers aus (Resolve), bevor der Renderer es bekommt ----
@@ -7879,6 +7889,138 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         wm.Tick(win);
         GfxCheck(fb.Pixels[1 * 8 + 2] == fire.Terminal.PixelColor.FromRgb(7, 8, 9).Packed, "Window.Tick nach einer Palette-Aenderung (ohne dass sich ein Index aenderte)");
         wm.DestroyWindow(win);
+    }
+
+    // ---- Brush, Pen, Alpha-Blending ----
+    {
+        var font = new fire.Terminal.IntegratedGlyphFont();
+        var P = (byte r, byte g, byte b, byte a) => fire.Terminal.Paint.FromRgba(new fire.Terminal.PixelColor(r, g, b, a));
+        fire.Terminal.Paint Rgb(byte r, byte g, byte b) => P(r, g, b, 255);
+
+        // Blending: Alpha 255 = Kopie, 0 = nichts, dazwischen gemischt (nur im 32-Bit-Ziel), abschaltbar
+        {
+            var fb = new fire.Terminal.Framebuffer(8, 4);
+            var rd = new fire.Terminal.Renderer(fb, font);
+            rd.FillRect(0, 0, 8, 4, new fire.Terminal.SolidBrush(Rgb(0, 0, 100)));
+            rd.FillRect(0, 0, 2, 2, new fire.Terminal.SolidBrush(P(200, 100, 0, 128)));
+            rd.FillRect(2, 0, 2, 2, new fire.Terminal.SolidBrush(P(200, 100, 0, 0)));
+            rd.FillRect(4, 0, 2, 2, new fire.Terminal.SolidBrush(Rgb(9, 8, 7)));
+            var mixed = fb.GetPixel(0, 0);
+            GfxCheck(Math.Abs(mixed.R - 100) <= 2 && Math.Abs(mixed.G - 50) <= 2 && Math.Abs(mixed.B - 50) <= 2 && mixed.A == 255, "Alpha-Blending: Alpha 128 wird mit dem Untergrund gemischt");
+            GfxCheck(fb.GetPixel(2, 0).B == 100 && fb.GetPixel(4, 0).R == 9, "Alpha 0 zeichnet nichts, Alpha 255 kopiert");
+            rd.AlphaBlending = false;
+            rd.FillRect(0, 2, 2, 1, new fire.Terminal.SolidBrush(P(200, 100, 0, 128)));
+            GfxCheck(fb.GetPixel(0, 2).Packed == new fire.Terminal.PixelColor(200, 100, 0, 128).Packed, "ohne AlphaBlending wird die Farbe samt Alpha kopiert");
+            rd.AlphaBlending = true;
+            rd.Clear(fire.Terminal.Paint.FromIndex(0));
+            GfxCheck(fb.GetPixel(5, 3).Packed == fb.Palette.GetPacked(0), "Clear(Paint) setzt ohne Mischen");
+
+            // 8-Bit-Ziel: ab Alpha 128 Kopie (naechster Eintrag), darunter nichts
+            var pal = new fire.Terminal.Framebuffer(4, 1, IDX);
+            var rp = new fire.Terminal.Renderer(pal, font);
+            rp.FillRect(0, 0, 4, 1, new fire.Terminal.SolidBrush(fire.Terminal.Paint.FromIndex(7)));
+            rp.SetPixel(0, 0, P(255, 255, 255, 127));
+            rp.SetPixel(1, 0, P(255, 255, 255, 128));
+            GfxCheck(pal.Indices![0] == 7 && pal.Indices[1] != 7, "Palette-Ziel: Alpha 127 wird nicht gezeichnet, ab 128 kopiert");
+            rp.AlphaBlending = false;
+            rp.SetPixel(0, 0, P(255, 255, 255, 1));
+            GfxCheck(pal.Indices[0] != 7, "Palette-Ziel ohne Blending: immer kopiert");
+        }
+
+        // Pen: Breite 1 == die einfache Linie, breitere Stifte stempeln ihre Spitze
+        {
+            foreach (var mode in new[] { RGBA, IDX })
+            {
+                var a = new fire.Terminal.Framebuffer(40, 30, mode);
+                var b = new fire.Terminal.Framebuffer(40, 30, mode);
+                new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5)).DrawLine(new fire.Terminal.Surface(a, true), 2, 3, 35, 20);
+                var ra = new fire.Terminal.Renderer(b, font);
+                ra.DrawLine(2, 3, 35, 20, new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5), 1, fire.Terminal.PenShape.Square));
+                GfxCheck(Lit(a).SetEquals(Lit(b)) && Lit(a).Count > 30, $"Pen Breite 1: Round == Square == die Bresenham-Linie [{mode}]");
+            }
+            var fb = new fire.Terminal.Framebuffer(30, 30);
+            var rd = new fire.Terminal.Renderer(fb, font);
+            rd.DrawPoint(10, 10, new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5), 3, fire.Terminal.PenShape.Square));
+            var sq = Lit(fb);
+            GfxCheck(sq.SetEquals(Enumerable.Range(9, 3).SelectMany(x => Enumerable.Range(9, 3).Select(y => (x, y)))), "Pen Quadrat Breite 3: ein 3x3-Stempel, mittig");
+            var fr = new fire.Terminal.Framebuffer(30, 30);
+            new fire.Terminal.Renderer(fr, font).DrawPoint(10, 10, new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5), 7, fire.Terminal.PenShape.Round));
+            var disc = Lit(fr);
+            GfxCheck(disc.Contains((10, 7)) && disc.Contains((7, 10)) && disc.Contains((13, 10)) && !disc.Contains((7, 7)) && !disc.Contains((13, 13)) && disc.Count > 30 && disc.Count < 49, "Pen rund Breite 7: Kreisscheibe (Ecken fehlen)");
+            // eine breite Linie ist die Vereinigung der Stempel entlang der Linie
+            var fl = new fire.Terminal.Framebuffer(40, 20);
+            var pen3 = new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5), 3, fire.Terminal.PenShape.Square);
+            new fire.Terminal.Renderer(fl, font).DrawLine(5, 10, 30, 10, pen3);
+            GfxCheck(Lit(fl).SetEquals(Enumerable.Range(4, 28).SelectMany(x => Enumerable.Range(9, 3).Select(y => (x, y)))), "Pen Breite 3: waagerechte Linie = 3 Zeilen von x-1 bis x+1");
+            // Pfad, Umrisse
+            var fp = new fire.Terminal.Framebuffer(30, 30);
+            var rp = new fire.Terminal.Renderer(fp, font);
+            rp.DrawPath(new[] { 2, 2, 20, 2, 20, 20 }, new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5)), false);
+            var open = Lit(fp);
+            GfxCheck(open.Contains((10, 2)) && open.Contains((20, 10)) && !open.Contains((10, 10)) && open.Count == 19 + 18, "DrawPath offen: Kantenzug");
+            rp.Clear(fire.Terminal.Paint.FromIndex(0));
+            rp.DrawPath(new[] { 2, 2, 20, 2, 20, 20 }, new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5)), true);
+            GfxCheck(Lit(fp).Contains((10, 11)), "DrawPath geschlossen: mit Schlusslinie");
+            // Pen-Eigenschaften
+            var changing = new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5));
+            changing.Width = 5; changing.Shape = fire.Terminal.PenShape.Square;
+            var fc = new fire.Terminal.Framebuffer(20, 20);
+            new fire.Terminal.Renderer(fc, font).DrawPoint(10, 10, changing);
+            GfxCheck(Lit(fc).Count == 25, "Pen: Breite und Form nachtraeglich aendern rendert die Spitze neu");
+            changing.Width = 100000;
+            GfxCheck(changing.Width == fire.Terminal.Pen.MaxWidth, "Pen: die Breite wird begrenzt");
+        }
+
+        // halbdurchsichtiger Stift: die ueberlappenden Stempel mischen NICHT mehrfach (die Vereinigung wird einmal gemischt)
+        {
+            var fb = new fire.Terminal.Framebuffer(30, 10);
+            var rd = new fire.Terminal.Renderer(fb, font);
+            rd.FillRect(0, 0, 30, 10, new fire.Terminal.SolidBrush(Rgb(0, 0, 0)));
+            rd.DrawLine(2, 5, 25, 5, new fire.Terminal.Pen(P(200, 200, 200, 128), 5, fire.Terminal.PenShape.Square));
+            uint inner = fb.GetPixel(10, 5).Packed, edge = fb.GetPixel(10, 3).Packed, start = fb.GetPixel(2, 5).Packed;
+            GfxCheck(inner == edge && inner == start && fb.GetPixel(10, 5).R is >= 99 and <= 101, "halbdurchsichtiger breiter Stift: gleichmaessig gemischt, ohne dunklere Ueberlappung");
+            var fr = new fire.Terminal.Framebuffer(30, 10);
+            var rr = new fire.Terminal.Renderer(fr, font);
+            rr.FillRect(0, 0, 30, 10, new fire.Terminal.SolidBrush(Rgb(0, 0, 0)));
+            rr.DrawRect(3, 1, 20, 7, new fire.Terminal.Pen(P(200, 200, 200, 128), 1));
+            GfxCheck(fr.GetPixel(3, 1).R == fr.GetPixel(10, 1).R && fr.GetPixel(3, 4).R == fr.GetPixel(3, 1).R, "halbdurchsichtiger Umriss: auch die Ecken nur einmal gemischt");
+        }
+
+        // Brush: Fills samt FloodFill, gemischt; FloodFill einer halbdurchsichtigen Farbe bleibt in der Flaeche
+        {
+            var fb = new fire.Terminal.Framebuffer(30, 20);
+            var rd = new fire.Terminal.Renderer(fb, font);
+            rd.FillRect(0, 0, 30, 20, new fire.Terminal.SolidBrush(Rgb(0, 0, 100)));
+            rd.DrawRect(5, 5, 15, 10, new fire.Terminal.Pen(Rgb(255, 255, 255)));
+            rd.FloodFill(10, 10, new fire.Terminal.SolidBrush(P(200, 0, 0, 128)));
+            var inside = fb.GetPixel(10, 10);
+            GfxCheck(Math.Abs(inside.R - 100) <= 2 && Math.Abs(inside.B - 50) <= 2 && fb.GetPixel(2, 2).R == 0 && fb.GetPixel(5, 5).R == 255, "FloodFill mit halbdurchsichtiger Farbe: die Flaeche wird einmal gemischt, Rahmen und Aussen bleiben");
+            GfxCheck(Enumerable.Range(6, 13).All(x => Enumerable.Range(6, 8).All(y => fb.GetPixel(x, y).Packed == inside.Packed)), "FloodFill (gemischt): jedes Pixel der Flaeche gleich");
+            rd.Fill(new fire.Terminal.SolidBrush(Rgb(1, 2, 3)));
+            GfxCheck(fb.GetPixel(0, 0).Packed == new fire.Terminal.PixelColor(1, 2, 3).Packed && fb.GetPixel(29, 19).Packed == new fire.Terminal.PixelColor(1, 2, 3).Packed, "Renderer.Fill fuellt alles");
+        }
+
+        // Text: Vordergrund und Hintergrund als Pinsel, auch halbdurchsichtig
+        {
+            var fb = new fire.Terminal.Framebuffer(40, 20);
+            var rd = new fire.Terminal.Renderer(fb, font);
+            rd.FillRect(0, 0, 40, 20, new fire.Terminal.SolidBrush(Rgb(0, 0, 0)));
+            rd.DrawText(0, 0, "A", new fire.Terminal.SolidBrush(P(255, 255, 255, 128)), new fire.Terminal.SolidBrush(P(0, 255, 0, 255)));
+            var cell = Enumerable.Range(0, 8).SelectMany(x => Enumerable.Range(0, 14).Select(y => fb.GetPixel(x, y))).ToList();
+            GfxCheck(cell.Any(c => c.R is >= 127 and <= 129 && c.G is >= 254) && cell.Any(c => c.R == 0 && c.G == 255), "DrawText: halbdurchsichtiger Vordergrund ueber deckendem Hintergrund (gemischt)");
+            var f2 = new fire.Terminal.Framebuffer(40, 20);
+            var r2 = new fire.Terminal.Renderer(f2, font);
+            r2.DrawText(0, 0, "A", new fire.Terminal.SolidBrush(P(255, 255, 255, 255)), new fire.Terminal.SolidBrush(P(0, 255, 0, 0)));
+            GfxCheck(Enumerable.Range(0, 8).SelectMany(x => Enumerable.Range(0, 14).Select(y => f2.GetPixel(x, y))).All(c => c.Packed == 0 || c.Packed == new fire.Terminal.PixelColor(255, 255, 255, 255).Packed), "DrawText: ein Hintergrund mit Alpha 0 ist keiner");
+        }
+
+        // ein anderes Ziel: ein eigenes IRenderTarget (hier ein Ausschnitt-freier Wrapper um zwei Arrays)
+        {
+            var t = new ArrayTarget(6, 3);
+            var rd = new fire.Terminal.Renderer(t, font);
+            rd.FillRect(1, 1, 3, 1, new fire.Terminal.SolidBrush(Rgb(5, 6, 7)));
+            GfxCheck(t.Pixels[1 * 6 + 1] == new fire.Terminal.PixelColor(5, 6, 7).Packed && t.Pixels[1 * 6 + 4] == 0, "Renderer zeichnet in jedes IRenderTarget");
+        }
     }
 
     Console.WriteLine(gfxFailures == 0 ? "Alle Grafik-Pruefungen bestanden." : $"FEHLER: {gfxFailures} Grafik-Pruefung(en) fehlgeschlagen.");
@@ -8134,7 +8276,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
         natives.RegisterBaseTypeNatives();
         var fbManager = new fire.Terminal.FramebufferManager();
-        var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
+        var conManager = new fire.Terminal.RendererManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
         var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => new FakeRenderer());
         fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, reader ?? (path => ImageFixtures.Get(path)));
         fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
@@ -8168,20 +8310,20 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     string GfDrawExpected()
     {
         var fb = new fire.Terminal.Framebuffer(40, 40);
-        var five = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(5));
-        var zero = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(0));
-        var four = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(4));
+        var five = fb.ResolvePixel(fire.Terminal.Paint.FromIndex(5));
+        var zero = fb.ResolvePixel(fire.Terminal.Paint.FromIndex(0));
+        var four = fb.ResolvePixel(fire.Terminal.Paint.FromIndex(4));
         int Count() { int n = 0; for (int y = 0; y < 40; y++) for (int x = 0; x < 40; x++) if (fb.GetRaw(x, y) == five.Rgba) n++; return n; }
         var counts = new List<int>();
         void Reset() => fb.FillRect(0, 0, 40, 40, zero);
-        fire.Terminal.Shapes.FillCircle(fb, 20, 20, 3, five); counts.Add(Count()); Reset();
-        fire.Terminal.Shapes.Circle(fb, 20, 20, 10, five); counts.Add(Count()); Reset();
-        fire.Terminal.Shapes.FillEllipse(fb, 20, 20, 8, 3, five); counts.Add(Count()); Reset();
-        fire.Terminal.Shapes.FillTriangle(fb, 2, 2, 22, 2, 2, 22, five); counts.Add(Count()); Reset();
-        fire.Terminal.Shapes.FillPolygon(fb, new[] { 5, 5, 15, 5, 15, 12, 5, 12 }, five); counts.Add(Count()); Reset();
-        fire.Terminal.Shapes.Rect(fb, 5, 5, 10, 10, five); fire.Terminal.Shapes.FloodFill(fb, 8, 8, five); counts.Add(Count()); Reset();
-        fire.Terminal.Shapes.Polygon(fb, new[] { 2, 2, 30, 2, 30, 30 }, five, closed: false); counts.Add(Count()); Reset();
-        fire.Terminal.Shapes.Rect(fb, 5, 5, 10, 10, four); fire.Terminal.Shapes.FloodFillBorder(fb, 8, 8, five, four); counts.Add(Count());
+        Shp.FillCircle(fb, 20, 20, 3, 5); counts.Add(Count()); Reset();
+        Shp.Circle(fb, 20, 20, 10, 5); counts.Add(Count()); Reset();
+        Shp.FillEllipse(fb, 20, 20, 8, 3, 5); counts.Add(Count()); Reset();
+        Shp.FillTriangle(fb, 2, 2, 22, 2, 2, 22, 5); counts.Add(Count()); Reset();
+        Shp.FillPolygon(fb, new[] { 5, 5, 15, 5, 15, 12, 5, 12 }, 5); counts.Add(Count()); Reset();
+        Shp.Rect(fb, 5, 5, 10, 10, 5); Shp.FloodFill(fb, 8, 8, 5); counts.Add(Count()); Reset();
+        Shp.Polygon(fb, new[] { 2, 2, 30, 2, 30, 30 }, 5, closed: false); counts.Add(Count()); Reset();
+        Shp.Rect(fb, 5, 5, 10, 10, 4); Shp.FloodFillBorder(fb, 8, 8, 5, 4); counts.Add(Count());
         return string.Join(" ", counts);
     }
 
@@ -8212,14 +8354,14 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     CheckGf("Farbangaben: 0-255 = Palette-Index, sonst direkter Wert - in beiden Farbmodi", gfHead + """
         var rgba = new Framebuffer(16, 8)
         var pal = new Framebuffer(16, 8, ColorMode.Palette)
-        var a = new Console(rgba)
-        var b = new Console(pal)
-        a.FillRect(0, 0, 4, 4, 9)
-        b.FillRect(0, 0, 4, 4, 9)
+        var a = new Renderer(rgba)
+        var b = new Renderer(pal)
+        a.FillRect(0, 0, 4, 4, new SolidBrush(9))
+        b.FillRect(0, 0, 4, 4, new SolidBrush(9))
         print(Px.Get(a, 1, 1) == rgba.GetPaletteColor(9))
         print(b.GetPixelIndex(1, 1))
-        a.FillRect(4, 0, 4, 4, 4278190335)
-        b.FillRect(4, 0, 4, 4, 4278190335)
+        a.FillRect(4, 0, 4, 4, new SolidBrush(4278190335))
+        b.FillRect(4, 0, 4, 4, new SolidBrush(4278190335))
         print(Px.Get(a, 5, 1) == 4278190335)
         print(b.GetPixelIndex(5, 1))
         print(a.GetPixelIndex(5, 1) == b.GetPixelIndex(5, 1))
@@ -8234,10 +8376,10 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     CheckGf("Palette-Animation: ein Palette-Eintrag aendern faerbt alle Pixel mit diesem Index um (nur im Palette-Framebuffer)", gfHead + """
         var rgba = new Framebuffer(8, 8)
         var pal = new Framebuffer(8, 8, ColorMode.Palette)
-        var a = new Console(rgba)
-        var b = new Console(pal)
-        a.FillRect(0, 0, 8, 8, 5)
-        b.FillRect(0, 0, 8, 8, 5)
+        var a = new Renderer(rgba)
+        var b = new Renderer(pal)
+        a.FillRect(0, 0, 8, 8, new SolidBrush(5))
+        b.FillRect(0, 0, 8, 8, new SolidBrush(5))
         var before = Px.Get(a, 3, 3)
         pal.SetPaletteRgb(5, 200, 100, 50)
         rgba.SetPaletteRgb(5, 200, 100, 50)
@@ -8247,7 +8389,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
     CheckGf("Text in einem Palette-Framebuffer: Print und DrawText mit Palette-Indizes", gfHead + """
         var fb = new Framebuffer(80, 28, ColorMode.Palette)
-        var con = new Console(fb)
+        var con = new Renderer(fb)
         con.SetColor(14, 1)
         con.Clear()
         con.Print("Hi")
@@ -8258,7 +8400,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             if (con.GetPixelIndex(x, y) == 1) { bg = bg + 1 }
         } }
         print((fg > 10) + " " + (fg + bg == 16 * 14))
-        con.DrawText(0, 14, "T", 12, 0)
+        con.DrawText(0, 14, "T", new SolidBrush(12))
         var t = 0
         for (var y = 14; y < 28; y = y + 1) { for (var x = 0; x < 8; x = x + 1) { if (con.GetPixelIndex(x, y) == 12) { t = t + 1 } } }
         print(t > 5)
@@ -8274,31 +8416,31 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             }
             static Run(int mode) {
                 var fb = new Framebuffer(40, 40, mode)
-                var con = new Console(fb)
-                con.FillCircle(20, 20, 3, 5)
+                var con = new Renderer(fb)
+                con.FillCircle(20, 20, 3, new SolidBrush(5))
                 var circle = Draw.Count(con, 40, 40)
-                con.FillRect(0, 0, 40, 40, 0)
-                con.DrawCircle(20, 20, 10, 5)
+                con.FillRect(0, 0, 40, 40, new SolidBrush(0))
+                con.DrawCircle(20, 20, 10, new Pen(5))
                 var ring = Draw.Count(con, 40, 40)
-                con.FillRect(0, 0, 40, 40, 0)
-                con.FillEllipse(20, 20, 8, 3, 5)
+                con.FillRect(0, 0, 40, 40, new SolidBrush(0))
+                con.FillEllipse(20, 20, 8, 3, new SolidBrush(5))
                 var ellipse = Draw.Count(con, 40, 40)
-                con.FillRect(0, 0, 40, 40, 0)
-                con.FillTriangle(2, 2, 22, 2, 2, 22, 5)
+                con.FillRect(0, 0, 40, 40, new SolidBrush(0))
+                con.FillTriangle(2, 2, 22, 2, 2, 22, new SolidBrush(5))
                 var tri = Draw.Count(con, 40, 40)
-                con.FillRect(0, 0, 40, 40, 0)
-                con.FillPolygon([5, 5, 15, 5, 15, 12, 5, 12], 5)
+                con.FillRect(0, 0, 40, 40, new SolidBrush(0))
+                con.FillPolygon([5, 5, 15, 5, 15, 12, 5, 12], new SolidBrush(5))
                 var rect = Draw.Count(con, 40, 40)
-                con.FillRect(0, 0, 40, 40, 0)
-                con.DrawRect(5, 5, 10, 10, 5)
-                con.FloodFill(8, 8, 5)
+                con.FillRect(0, 0, 40, 40, new SolidBrush(0))
+                con.DrawRect(5, 5, 10, 10, new Pen(5))
+                con.FloodFill(8, 8, new SolidBrush(5))
                 var flood = Draw.Count(con, 40, 40)
-                con.FillRect(0, 0, 40, 40, 0)
-                con.DrawPolygon([2, 2, 30, 2, 30, 30], 5, false)
+                con.FillRect(0, 0, 40, 40, new SolidBrush(0))
+                con.DrawPolygon([2, 2, 30, 2, 30, 30], new Pen(5), false)
                 var open = Draw.Count(con, 40, 40)
-                con.FillRect(0, 0, 40, 40, 0)
-                con.DrawRect(5, 5, 10, 10, 4)
-                con.FloodFillBorder(8, 8, 5, 4)
+                con.FillRect(0, 0, 40, 40, new SolidBrush(0))
+                con.DrawRect(5, 5, 10, 10, new Pen(4))
+                con.FloodFillBorder(8, 8, new SolidBrush(5), 4)
                 var border = Draw.Count(con, 40, 40)
                 return circle + " " + ring + " " + ellipse + " " + tri + " " + rect + " " + flood + " " + open + " " + border
             }
@@ -8370,13 +8512,13 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     CheckGf("Blit: geladenes Bild in einen anderen Framebuffer (auch ueber die Farbmodi), Ausschnitt, Skalierung, Spiegelung, Transparenz", gfHead + """
         var img = Framebuffer.FromImage(__TestImage("png_pal4"))
         var rgba = new Framebuffer(30, 20)
-        var a = new Console(rgba)
+        var a = new Renderer(rgba)
         a.Blit(img, 2, 3)
         print(Px.Get(a, 2, 3) == img.GetPaletteColor(img.ReadByte(0)))
         print(Px.Get(a, 14, 9) == img.GetPaletteColor(img.ReadByte(6 * 13 + 12)))
         var pal = new Framebuffer(30, 20, ColorMode.Palette)
         pal.WritePalette(img.ReadPalette(true))
-        var b = new Console(pal)
+        var b = new Renderer(pal)
         b.Blit(img, 0, 0)
         print(pal.ReadByte(5) == img.ReadByte(5))
         b.BlitRegion(img, 3, 2, 4, 3, 20, 10)
@@ -8386,8 +8528,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         b.BlitScaled(img, 0, 0, 13, 7, 13, 0, -13, 7)
         print(pal.ReadByte(13) == img.ReadByte(12) && pal.ReadByte(25) == img.ReadByte(0))
         var bg = new Framebuffer(13, 7, ColorMode.Palette)
-        var c = new Console(bg)
-        c.FillRect(0, 0, 13, 7, 200)
+        var c = new Renderer(bg)
+        c.FillRect(0, 0, 13, 7, new SolidBrush(200))
         var sprite = Framebuffer.FromImage(__TestImage("pil_gif_trans"))
         c.Blit(sprite, 0, 0, BlitMode.Transparent)
         var kept = 0
@@ -8395,17 +8537,17 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(kept > 0 && kept < 91)
         var tc = Framebuffer.FromImage(__TestImage("png_rgba8"))
         var dst = new Framebuffer(13, 7)
-        var d = new Console(dst)
-        d.FillRect(0, 0, 13, 7, 4278190335)
+        var d = new Renderer(dst)
+        d.FillRect(0, 0, 13, 7, new SolidBrush(4278190335))
         d.Blit(tc, 0, 0, BlitMode.Transparent)
         print(Px.Get(d, 0, 0) == 4278190335)
         """, new[] { "True", "True", "True", "True", "True", "True", "True", "True" });
 
     CheckGf("Slicer aus fire: ToMask, Slicer.Slice liefert eine List von ToolPath, Fehler als GraphicsException", gfHead + """
         var img = new Framebuffer(120, 70)
-        var con = new Console(img)
-        con.FillRect(0, 0, 120, 70, 4294967295)
-        con.FillRect(10, 10, 100, 50, 4278190080)
+        var con = new Renderer(img)
+        con.FillRect(0, 0, 120, 70, new SolidBrush(4294967295))
+        con.FillRect(10, 10, 100, 50, new SolidBrush(4278190080))
         var mask = img.ToMask()
         print(mask.Mode() + " " + mask.Width() + "x" + mask.Height() + " " + mask.ReadByte(0) + " " + mask.ReadByte(20 * 120 + 20))
         var slicer = new Slicer(1, 0.1)
@@ -8517,7 +8659,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     fire.Terminal.Framebuffer Rect(int w, int h, int x0, int y0, int x1, int y1)
     {
         var fb = new fire.Terminal.Framebuffer(w, h, fire.Terminal.ColorMode.Indexed);
-        fb.FillRect(x0, y0, x1 - x0, y1 - y0, fb.ResolveBrush(fire.Terminal.Paint.FromIndex(1)));
+        fb.FillRect(x0, y0, x1 - x0, y1 - y0, fb.ResolvePixel(fire.Terminal.Paint.FromIndex(1)));
         return fb;
     }
     {
@@ -8554,7 +8696,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     {
         // zwei getrennte Flaechen und ein Loch: ein Ring um das Loch
         var fb = new fire.Terminal.Framebuffer(200, 80, fire.Terminal.ColorMode.Indexed);
-        var one = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(1)); var zero = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(0));
+        var one = fb.ResolvePixel(fire.Terminal.Paint.FromIndex(1)); var zero = fb.ResolvePixel(fire.Terminal.Paint.FromIndex(0));
         fb.FillRect(10, 10, 60, 60, one); fb.FillRect(110, 10, 80, 60, one); fb.FillRect(130, 30, 20, 20, zero);
         var outlines = new fire.Terminal.ImageSlicer(1.0, 0.1) { Strategy = fire.Terminal.FillStrategy.OutlineOnly }.Slice(fb);
         SlCheck(outlines.Count == 3 && outlines.All(p => p.Closed), "zwei Flaechen, eine mit Loch: drei geschlossene Randkonturen");
@@ -8617,7 +8759,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 
         var renderer = new FakeRenderer();
         var fbManager = new fire.Terminal.FramebufferManager();
-        var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
+        var conManager = new fire.Terminal.RendererManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
         var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => renderer);
         fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager);
         fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
@@ -8706,20 +8848,20 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Add(b)
         ui.Draw()
         var t = ui.theme
-        print("back " + (Px.Get(ui.console, 300, 190) == t.back))
-        print("face " + (Px.Get(ui.console, 12, 12) == t.face))
-        print("border " + (Px.Get(ui.console, 10, 10) == t.border))
+        print("back " + (Px.Get(ui.renderer, 300, 190) == t.back.Color))
+        print("face " + (Px.Get(ui.renderer, 12, 12) == t.face.Color))
+        print("border " + (Px.Get(ui.renderer, 10, 10) == t.border.Color))
         var textPixels = 0
         for (var y = 10; y < 36; y = y + 1) {
             for (var x = 10; x < 90; x = x + 1) {
-                if (Px.Get(ui.console, x, y) == t.text) { textPixels = textPixels + 1 }
+                if (Px.Get(ui.renderer, x, y) == t.text.Color) { textPixels = textPixels + 1 }
             }
         }
         print("text " + (textPixels > 20))
         __TestEvent(9, 20.0, 20.0)
         ui.Tick()
         ui.Draw()
-        print("hover " + (Px.Get(ui.console, 12, 12) == t.faceHover))
+        print("hover " + (Px.Get(ui.renderer, 12, 12) == t.faceHover.Color))
         """, new[] { "back True", "face True", "border True", "text True", "hover True" });
 
     CheckUi("CheckBox: Klick und Leertaste schalten um", uiHead + """
@@ -8853,7 +8995,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         var b = new UI.Button("OK", 10, 10, 80, 26)
         ui.Add(b)
         print("offen " + ui.Tick())
-        print("gezeichnet " + (Px.Get(ui.console, 12, 12) == ui.theme.face))
+        print("gezeichnet " + (Px.Get(ui.renderer, 12, 12) == ui.theme.face.Color))
         __TestClose()
         print("offen " + ui.Tick() + " geschlossen " + ui.closed)
         """, new[] { "offen True", "gezeichnet True", "offen False geschlossen True" });
@@ -9016,7 +9158,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 var m = new Model()
                 m.Player = new Player()
                 d.SetDataContext(m)
-                print(d.mirror.text + " " + d.player.text + " " + d.once.text + " " + d.edit.text + " " + d.shout.text + " " + d.cb.text + " " + d.cb.isChecked + " " + d.empty.visible + " " + d.empty.color)
+                print(d.mirror.text + " " + d.player.text + " " + d.once.text + " " + d.edit.text + " " + d.shout.text + " " + d.cb.text + " " + d.cb.isChecked + " " + d.empty.visible + " " + d.empty.brush.Color)
                 d.src.text = "xyz"
                 print(d.mirror.text)
                 m.Player.Name = "p2"
@@ -9073,7 +9215,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         VM? vm = null;
         IReadOnlyDictionary<string, RuntimeClass>? classes = null;
         var fbManager = new fire.Terminal.FramebufferManager();
-        var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
+        var conManager = new fire.Terminal.RendererManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
         var winManager = new fire.Terminal.Windows.WindowManager(fbManager,
             (l, v) => FireRuntime.RunCallback(l, v, natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode, vm),
             () => renderer);
@@ -9895,8 +10037,9 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(Type.Of(fb).Name)
         print(new DeviceManagerFacade().Count())
         print(IO.File.Exists("/gibt/es/nicht"))
-        var con = new Console(fb)
-        con.FillRect(0, 0, 2, 2, 256)
+        var con = new Renderer(fb)
+        con.AlphaBlending = false      // ohne Mischen wird der Wert samt Alpha 0 einfach kopiert
+        con.FillRect(0, 0, 2, 2, new SolidBrush(256))
         print(con.GetPixel(1, 1))
         """, new[] { "8x4", "True", "Framebuffer", "1", "False", "256" });
 
@@ -10047,13 +10190,14 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
             var (session, lines) = BuildDbg("""
                 #import "graphics"
                 var fb = new Framebuffer(16, 16)
-                var con = new Console(fb)
+                var con = new Renderer(fb)
+                con.AlphaBlending = false
                 var viaMethod = 0
                 var direct = 0
                 for (var i = 0; i < 5; i = i + 1) {
-                    con.FillRect(i, 0, 1, 1, 256 + i)
+                    con.FillRect(i, 0, 1, 1, new SolidBrush(256 + i))
                     viaMethod = viaMethod + con.GetPixel(i, 0) + con.CellWidth()
-                    direct = direct + __GRPHConGetPixel(con.id, i, 0) + __GRPHConCellWidth(con.id)
+                    direct = direct + __GRPHRndGetPixel(con.id, i, 0) + __GRPHRndCellWidth(con.id)
                 }
                 print(viaMethod == direct)
                 print(viaMethod)
@@ -14707,37 +14851,37 @@ else
                 }
             }
             var fb = new Framebuffer(64, 48)
-            var con = new Console(fb)
+            var con = new Renderer(fb)
             print(fb.Width() + "x" + fb.Height() + " mode " + fb.Mode() + " bytes " + fb.ByteCount())
             con.Clear()
             print("clear " + Util.Hash(fb))
-            con.FillRect(2, 3, 10, 7, 4)
-            con.DrawRect(1, 1, 20, 15, 14)
-            con.DrawLine(0, 0, 63, 47, 0xFF00FF00)
-            con.DrawLine(0, 47, 63, 0, 12)
-            con.DrawLine(5, 20, 50, 20, 0xFFFF8000)
+            con.FillRect(2, 3, 10, 7, new SolidBrush(4))
+            con.DrawRect(1, 1, 20, 15, new Pen(14))
+            con.DrawLine(0, 0, 63, 47, new Pen(0xFF00FF00))
+            con.DrawLine(0, 47, 63, 0, new Pen(12))
+            con.DrawLine(5, 20, 50, 20, new Pen(0xFFFF8000))
             print("basic " + Util.Hash(fb))
-            con.DrawCircle(30, 24, 10, 15)
-            con.FillCircle(10, 35, 6, 9)
-            con.DrawEllipse(40, 30, 12, 5, 11)
-            con.FillEllipse(45, 10, 8, 4, 13)
-            con.DrawCircle(0, 0, 0, 7)
-            con.FillCircle(5, 5, 1, 7)
+            con.DrawCircle(30, 24, 10, new Pen(15))
+            con.FillCircle(10, 35, 6, new SolidBrush(9))
+            con.DrawEllipse(40, 30, 12, 5, new Pen(11))
+            con.FillEllipse(45, 10, 8, 4, new SolidBrush(13))
+            con.DrawCircle(0, 0, 0, new Pen(7))
+            con.FillCircle(5, 5, 1, new SolidBrush(7))
             print("round " + Util.Hash(fb))
-            con.DrawTriangle(2, 40, 14, 30, 22, 46, 10)
-            con.FillTriangle(50, 40, 60, 30, 62, 46, 3)
-            con.DrawPolygon([5, 5, 25, 8, 20, 25, 8, 20], 2, true)
-            con.DrawPolygon([30, 5, 40, 5, 35, 12], 5, false)
-            con.FillPolygon([0, 0, 12, 4, 6, 12, 10, 20, 0, 14], 6)
+            con.DrawTriangle(2, 40, 14, 30, 22, 46, new Pen(10))
+            con.FillTriangle(50, 40, 60, 30, 62, 46, new SolidBrush(3))
+            con.DrawPolygon([5, 5, 25, 8, 20, 25, 8, 20], new Pen(2), true)
+            con.DrawPolygon([30, 5, 40, 5, 35, 12], new Pen(5), false)
+            con.FillPolygon([0, 0, 12, 4, 6, 12, 10, 20, 0, 14], new SolidBrush(6))
             print("poly " + Util.Hash(fb))
-            con.FloodFill(20, 40, 200)
-            con.FloodFillBorder(60, 2, 100, 14)
+            con.FloodFill(20, 40, new SolidBrush(200))
+            con.FloodFillBorder(60, 2, new SolidBrush(100), 14)
             print("flood " + Util.Hash(fb))
             con.SetColor(15, 1)
             con.Locate(0, 0)
             con.Print("Hello, fire!\nSecond line äöü ÿ")
-            con.DrawText(3, 30, "Text", 0xFF0000FF, 0)
-            con.DrawText(3, 38, "Bg", 0xFFFFFFFF, 0xFF800000)
+            con.DrawText(3, 30, "Text", new SolidBrush(0xFF0000FF))
+            con.DrawText(3, 38, "Bg", new SolidBrush(0xFFFFFFFF), new SolidBrush(0xFF800000))
             print("text " + Util.Hash(fb) + " " + con.CellWidth() + "x" + con.CellHeight())
             print(con.GetPixel(2, 3) + " " + con.GetPixel(200, 3) + " " + con.GetPixelIndex(2, 3))
             for (var i = 0; i < 8; i++) { con.Print("scroll " + i + "\n") }
@@ -14745,12 +14889,12 @@ else
 
             // palette mode
             var pal = new Framebuffer(32, 24, ColorMode.Palette)
-            var pcon = new Console(pal)
+            var pcon = new Renderer(pal)
             pcon.Clear()
-            pcon.FillRect(2, 2, 12, 9, 4)
-            pcon.DrawCircle(20, 12, 8, 0xFF3366FF)
-            pcon.DrawLine(0, 23, 31, 0, 40)
-            pcon.FillTriangle(3, 20, 10, 14, 14, 22, 200)
+            pcon.FillRect(2, 2, 12, 9, new SolidBrush(4))
+            pcon.DrawCircle(20, 12, 8, new Pen(0xFF3366FF))
+            pcon.DrawLine(0, 23, 31, 0, new Pen(40))
+            pcon.FillTriangle(3, 20, 10, 14, 14, 22, new SolidBrush(200))
             pcon.Print("Pal")
             pal.SetPaletteRgb(4, 10, 200, 30)
             print("pal " + Util.Hash(pal) + " " + pal.GetPaletteColor(4) + " " + pal.ReadPalette().length + " " + pal.ReadPalette(true).length)
@@ -14773,7 +14917,7 @@ else
             print(small.ReadByte(5) + " " + small.ReadBytes().length)
             small.WriteByte(0, 99)
             print(small.ReadByte(0))
-            var sc = new Console(small)
+            var sc = new Renderer(small)
             print(sc.GetPixel(0, 0) + " " + sc.GetPixel(1, 0) + " " + sc.GetPixel(0, 1))
             var idx = Framebuffer.FromPixels(2, 2, new byte[4], ColorMode.Palette)
             print(idx.Mode() + " " + idx.ByteCount())
@@ -15757,9 +15901,9 @@ else
                 ("Fenster: Framebuffer anzeigen, VSync, Tick, Ereignisse anmelden", """
             #import "windows"
             var fb = new Framebuffer(64, 48)
-            var con = new Console(fb)
+            var con = new Renderer(fb)
             con.Clear()
-            con.FillRect(4, 4, 20, 10, 12)
+            con.FillRect(4, 4, 20, 10, new SolidBrush(12))
             var win = new Window(fb, "fire test")
             print(win.VSync)
             win.VSync = false
@@ -15770,7 +15914,7 @@ else
             print(win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key") }))
             print(win.RegisterClose(func() => { print("close") }))
             print(win.RegisterTextInput(func(string t) => { print("text " + t) }))
-            for (var i = 0; i < 3; i++) { con.FillRect(i * 5, 20, 4, 4, 9); win.Tick() }
+            for (var i = 0; i < 3; i++) { con.FillRect(i * 5, 20, 4, 4, new SolidBrush(9)); win.Tick() }
             print(win.Tick())
             """, new[] { "True", "False", "True", "True", "undefined", "True", "True", "True", "True" }, ""),
                 ("Fenster: Ereignisse als Callbacks und aus der Warteschlange, Schliessen beendet Tick", """
@@ -16296,7 +16440,7 @@ static class PackerNativeProbe
     public static int Call() => Nonexistent();
 }
 
-/// <summary>Schrift ohne Bitmap-Zeilen (nur IsPixelSet) - erzwingt den allgemeinen Zeichenweg von TerminalCanvas.</summary>
+/// <summary>Schrift ohne Bitmap-Zeilen (nur IsPixelSet) - erzwingt den allgemeinen Zeichenweg von Renderer.</summary>
 sealed class PixelOnlyFont : fire.Terminal.IGlyphFont
 {
     private readonly fire.Terminal.IntegratedGlyphFont _inner;
@@ -16352,4 +16496,39 @@ sealed class volatile_bool
 {
     private volatile bool _value;
     public bool Value { get => _value; set => _value = value; }
+}
+
+/// <summary>Die Zeichenfunktionen mit einem Palette-Index als Farbe (ein SolidBrush bzw. Pen auf dem Framebuffer) - kurze Form fuer die Pruefungen der Rastergeometrie.</summary>
+static class Shp
+{
+    private static fire.Terminal.Surface S(fire.Terminal.Framebuffer fb) => new(fb, true);
+    private static fire.Terminal.Brush B(int i) => new fire.Terminal.SolidBrush(fire.Terminal.Paint.FromIndex((byte)i));
+    private static fire.Terminal.Pen P(int i) => new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex((byte)i));
+
+    public static void FillCircle(fire.Terminal.Framebuffer fb, int cx, int cy, int r, int i) => B(i).FillCircle(S(fb), cx, cy, r);
+    public static void Circle(fire.Terminal.Framebuffer fb, int cx, int cy, int r, int i) => P(i).DrawCircle(S(fb), cx, cy, r);
+    public static void FillEllipse(fire.Terminal.Framebuffer fb, int cx, int cy, int rx, int ry, int i) => B(i).FillEllipse(S(fb), cx, cy, rx, ry);
+    public static void Ellipse(fire.Terminal.Framebuffer fb, int cx, int cy, int rx, int ry, int i) => P(i).DrawEllipse(S(fb), cx, cy, rx, ry);
+    public static void FillTriangle(fire.Terminal.Framebuffer fb, int x0, int y0, int x1, int y1, int x2, int y2, int i) => B(i).FillTriangle(S(fb), x0, y0, x1, y1, x2, y2);
+    public static void Triangle(fire.Terminal.Framebuffer fb, int x0, int y0, int x1, int y1, int x2, int y2, int i) => P(i).DrawTriangle(S(fb), x0, y0, x1, y1, x2, y2);
+    public static void FillPolygon(fire.Terminal.Framebuffer fb, int[] points, int i) => B(i).FillPolygon(S(fb), points);
+    public static void Polygon(fire.Terminal.Framebuffer fb, int[] points, int i, bool closed = true) => P(i).DrawPolygon(S(fb), points, closed);
+    public static void Rect(fire.Terminal.Framebuffer fb, int x, int y, int w, int h, int i) => P(i).DrawRect(S(fb), x, y, w, h);
+    public static void Line(fire.Terminal.Framebuffer fb, int x0, int y0, int x1, int y1, int i) => P(i).DrawLine(S(fb), x0, y0, x1, y1);
+    public static void FloodFill(fire.Terminal.Framebuffer fb, int x, int y, int i) => B(i).FloodFill(S(fb), x, y);
+    public static void FloodFillBorder(fire.Terminal.Framebuffer fb, int x, int y, int i, int border) => B(i).FloodFillBorder(S(fb), x, y, fire.Terminal.Paint.FromIndex((byte)border));
+}
+
+/// <summary>Ein minimales eigenes Renderziel (zwei Arrays, kein Framebuffer) - zeigt, dass der Renderer nur das IRenderTarget braucht.</summary>
+sealed class ArrayTarget : fire.Terminal.IRenderTarget
+{
+    public ArrayTarget(int width, int height) { Width = width; Height = height; Pixels = new uint[width * height]; }
+    public int Width { get; }
+    public int Height { get; }
+    public fire.Terminal.ColorMode Mode => fire.Terminal.ColorMode.Rgba;
+    public fire.Terminal.Palette Palette { get; } = new();
+    public uint[] Pixels { get; }
+    public byte[]? Indices => null;
+    public int TransparentIndex => -1;
+    public void MarkDirty() { }
 }

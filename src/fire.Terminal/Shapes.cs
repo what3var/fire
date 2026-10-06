@@ -4,19 +4,20 @@ using System.Collections.Generic;
 namespace fire.Terminal
 {
     /// <summary>
-    /// Die Zeichenalgorithmen (Linie, Kreis, Ellipse, Dreieck, Polygon, Flächenfüllung) auf einem <see cref="Framebuffer"/> mit einer schon
-    /// aufgelösten <see cref="Brush"/> - gleich für beide Farbmodi, denn geschrieben wird nur über <see cref="Framebuffer.Plot"/> und
-    /// <see cref="Framebuffer.HLine"/>. Alles wird still am Rand beschnitten (eine Form, die teilweise außerhalb liegt, zeigt ihren sichtbaren
+    /// Die Zeichenalgorithmen (Linie, Kreis, Ellipse, Dreieck, Polygon, Flächenfüllung) an eine <see cref="IPixelSink"/> - gleich für beide Farbmodi, denn geliefert werden nur einzelne Pixel und waagerechte Spans. Alles wird still am Rand beschnitten (eine Form, die teilweise außerhalb liegt, zeigt ihren sichtbaren
     /// Teil). Reine Ganzzahl-Arithmetik, ohne Fließkomma: dieselben Pixel auf jeder Plattform.
     /// </summary>
     public static class Shapes
     {
+        // Die Algorithmen liefern nur Pixel und Spans an eine Senke (<see cref="IPixelSink"/>): ein Pinsel füllt sie, ein Stift stempelt sie. Die Senken sind Strukturen und die Methoden
+        // generisch - der JIT erzeugt je Senke einen eigenen Code ohne Schnittstellenaufruf je Pixel.
+
         /// <summary>Bresenham-Linienalgorithmus - keine externe Abhängigkeit, funktioniert identisch unabhängig vom Rendering-Backend.</summary>
-        public static void Line(Framebuffer fb, int x0, int y0, int x1, int y1, in Brush brush)
+        public static void Line<TSink>(ref TSink sink, int x0, int y0, int x1, int y1) where TSink : IPixelSink
         {
             long dxl = Math.Abs((long)x1 - x0), dyl = Math.Abs((long)y1 - y0);
             // Eine waagerechte Linie ist ein einziger Span (der häufigste Fall bei Rahmen und Füllungen).
-            if (y0 == y1) { fb.HLine(x0, x1, y0, brush); return; }
+            if (y0 == y1) { sink.Span(y0, x0, x1); return; }
             if (dxl > int.MaxValue / 2 || dyl > int.MaxValue / 2) return; // absurde Koordinaten: nichts zeichnen statt überlaufen
 
             int dx = (int)dxl, sx = x0 < x1 ? 1 : -1;
@@ -24,7 +25,7 @@ namespace fire.Terminal
             int err = dx + dy;
             while (true)
             {
-                fb.Plot(x0, y0, brush);
+                sink.Point(x0, y0);
                 if (x0 == x1 && y0 == y1) break;
                 int e2 = 2 * err;
                 if (e2 >= dy) { err += dy; x0 += sx; }
@@ -32,15 +33,15 @@ namespace fire.Terminal
             }
         }
 
-        public static void Rect(Framebuffer fb, int x, int y, int w, int h, in Brush brush)
+        public static void Rect<TSink>(ref TSink sink, int x, int y, int w, int h) where TSink : IPixelSink
         {
             if (w <= 0 || h <= 0) return;
-            fb.HLine(x, x + w - 1, y, brush);
-            if (h > 1) fb.HLine(x, x + w - 1, y + h - 1, brush);
+            sink.Span(y, x, x + w - 1);
+            if (h > 1) sink.Span(y + h - 1, x, x + w - 1);
             for (int yy = y + 1; yy < y + h - 1; yy++)
             {
-                fb.Plot(x, yy, brush);
-                if (w > 1) fb.Plot(x + w - 1, yy, brush);
+                sink.Point(x, yy);
+                if (w > 1) sink.Point(x + w - 1, yy);
             }
         }
 
@@ -56,10 +57,10 @@ namespace fire.Terminal
         public const int MaxRadius = 1 << 14;
 
         /// <summary>Kreislinie um (cx, cy) mit Radius `r` (r = 0: ein Pixel; negativ: nichts).</summary>
-        public static void Circle(Framebuffer fb, int cx, int cy, int r, in Brush brush) => Ellipse(fb, cx, cy, r, r, brush);
+        public static void Circle<TSink>(ref TSink sink, int cx, int cy, int r) where TSink : IPixelSink => Ellipse(ref sink, cx, cy, r, r);
 
         /// <summary>Gefüllter Kreis (deckt genau die Fläche, die <see cref="Circle"/> umschließt, samt Linie).</summary>
-        public static void FillCircle(Framebuffer fb, int cx, int cy, int r, in Brush brush) => FillEllipse(fb, cx, cy, r, r, brush);
+        public static void FillCircle<TSink>(ref TSink sink, int cx, int cy, int r) where TSink : IPixelSink => FillEllipse(ref sink, cx, cy, r, r);
 
         /// <summary>Halbbreite der Ellipse je Zeile `dy` = 0..ry (Index = dy): das größte `dx`, das noch zur Fläche gehört.</summary>
         private static int[] EllipseSpans(int rx, int ry)
@@ -80,7 +81,7 @@ namespace fire.Terminal
         }
 
         /// <summary>Ellipsenlinie um (cx, cy) mit den Halbachsen `rx` (waagerecht) und `ry` (senkrecht); ein negativer Radius zeichnet nichts.</summary>
-        public static void Ellipse(Framebuffer fb, int cx, int cy, int rx, int ry, in Brush brush)
+        public static void Ellipse<TSink>(ref TSink sink, int cx, int cy, int rx, int ry) where TSink : IPixelSink
         {
             if (rx < 0 || ry < 0) return;
             rx = Math.Min(rx, MaxRadius);
@@ -99,12 +100,12 @@ namespace fire.Terminal
                         if (dy == 0 && rowSign == 1) continue;  // die Mittelzeile nur einmal
                         int y = cy + rowSign * dy;
                         // die Pixel von `from` bis `dx` Abstand zur Mitte (auf dieser Seite)
-                        fb.HLine(cx + sign * from, cx + sign * dx, y, brush);
+                        sink.Span(y, cx + sign * from, cx + sign * dx);
                     }
             }
         }
 
-        public static void FillEllipse(Framebuffer fb, int cx, int cy, int rx, int ry, in Brush brush)
+        public static void FillEllipse<TSink>(ref TSink sink, int cx, int cy, int rx, int ry) where TSink : IPixelSink
         {
             if (rx < 0 || ry < 0) return;
             rx = Math.Min(rx, MaxRadius);
@@ -112,8 +113,8 @@ namespace fire.Terminal
             var spans = EllipseSpans(rx, ry);
             for (int dy = 0; dy <= ry; dy++)
             {
-                fb.HLine(cx - spans[dy], cx + spans[dy], cy + dy, brush);
-                if (dy != 0) fb.HLine(cx - spans[dy], cx + spans[dy], cy - dy, brush);
+                sink.Span(cy + dy, cx - spans[dy], cx + spans[dy]);
+                if (dy != 0) sink.Span(cy - dy, cx - spans[dy], cx + spans[dy]);
             }
         }
 
@@ -121,33 +122,33 @@ namespace fire.Terminal
         // Dreieck und Polygon
         // -----------------------------------------------------------
 
-        public static void Triangle(Framebuffer fb, int x0, int y0, int x1, int y1, int x2, int y2, in Brush brush)
+        public static void Triangle<TSink>(ref TSink sink, int x0, int y0, int x1, int y1, int x2, int y2) where TSink : IPixelSink
         {
-            Line(fb, x0, y0, x1, y1, brush);
-            Line(fb, x1, y1, x2, y2, brush);
-            Line(fb, x2, y2, x0, y0, brush);
+            Line(ref sink, x0, y0, x1, y1);
+            Line(ref sink, x1, y1, x2, y2);
+            Line(ref sink, x2, y2, x0, y0);
         }
 
-        public static void FillTriangle(Framebuffer fb, int x0, int y0, int x1, int y1, int x2, int y2, in Brush brush) =>
-            FillPolygon(fb, new[] { x0, y0, x1, y1, x2, y2 }, brush);
+        public static void FillTriangle<TSink>(ref TSink sink, int x0, int y0, int x1, int y1, int x2, int y2, int clipHeight) where TSink : IPixelSink =>
+            FillPolygon(ref sink, new[] { x0, y0, x1, y1, x2, y2 }, clipHeight);
 
         /// <summary>Umriss durch die Punkte `points` (x0, y0, x1, y1, ...); `closed` verbindet den letzten mit dem ersten. Weniger als zwei Punkte: nichts.</summary>
-        public static void Polygon(Framebuffer fb, int[] points, in Brush brush, bool closed = true)
+        public static void Polygon<TSink>(ref TSink sink, int[] points, bool closed = true) where TSink : IPixelSink
         {
             int n = points.Length / 2;
             if (n < 2) return;
             for (int i = 0; i + 1 < n; i++)
-                Line(fb, points[2 * i], points[2 * i + 1], points[2 * i + 2], points[2 * i + 3], brush);
+                Line(ref sink, points[2 * i], points[2 * i + 1], points[2 * i + 2], points[2 * i + 3]);
             if (closed && n > 2)
-                Line(fb, points[2 * (n - 1)], points[2 * (n - 1) + 1], points[0], points[1], brush);
+                Line(ref sink, points[2 * (n - 1)], points[2 * (n - 1) + 1], points[0], points[1]);
         }
 
         /// <summary>Füllt das Polygon durch `points` (Even-Odd-Regel, wie bei einem Stift ohne Windungszahl: sich überschneidende Teile bleiben leer).
         /// Die Randpixel gehören dazu (der Umriss wird mitgezeichnet). Weniger als drei Punkte: nur ein Strich/Punkt.</summary>
-        public static void FillPolygon(Framebuffer fb, int[] points, in Brush brush)
+        public static void FillPolygon<TSink>(ref TSink sink, int[] points, int clipHeight) where TSink : IPixelSink
         {
             int n = points.Length / 2;
-            if (n < 3) { Polygon(fb, points, brush, closed: false); return; }
+            if (n < 3) { Polygon(ref sink, points, closed: false); return; }
 
             long minY = long.MaxValue, maxY = long.MinValue;
             for (int i = 0; i < n; i++)
@@ -155,7 +156,7 @@ namespace fire.Terminal
                 minY = Math.Min(minY, points[2 * i + 1]);
                 maxY = Math.Max(maxY, points[2 * i + 1]);
             }
-            int yFrom = (int)Math.Max(minY, 0), yTo = (int)Math.Min(maxY, fb.Height - 1);
+            int yFrom = (int)Math.Max(minY, 0), yTo = (int)Math.Min(maxY, clipHeight - 1);
 
             var crossings = new List<int>();
             for (int y = yFrom; y <= yTo; y++)
@@ -176,67 +177,10 @@ namespace fire.Terminal
                 }
                 crossings.Sort();
                 for (int i = 0; i + 1 < crossings.Count; i += 2)
-                    fb.HLine(crossings[i], crossings[i + 1], y, brush);
+                    sink.Span(y, crossings[i], crossings[i + 1]);
             }
 
-            Polygon(fb, points, brush, closed: true); // der Umriss gehört zur Fläche (und schließt Lücken durch die Rundung)
-        }
-
-        // -----------------------------------------------------------
-        // Flächenfüllung
-        // -----------------------------------------------------------
-
-        /// <summary>Füllt die zusammenhängende Fläche (4er-Nachbarschaft) um (x, y), die denselben Pixelwert hat wie der Startpunkt, mit `brush`.
-        /// Liegt der Startpunkt außerhalb oder hat er schon die Füllfarbe, geschieht nichts.</summary>
-        public static void FloodFill(Framebuffer fb, int x, int y, in Brush brush) =>
-            Flood(fb, x, y, brush, hasBorder: false, border: 0);
-
-        /// <summary>Wie <see cref="FloodFill"/>, aber die Fläche wird von Pixeln der Farbe `border` begrenzt (wie `PAINT x, y, farbe, rand` in QBasic):
-        /// gefüllt wird alles, was nicht Rand- und nicht Füllfarbe ist.</summary>
-        public static void FloodFillBorder(Framebuffer fb, int x, int y, in Brush brush, in Brush border) =>
-            Flood(fb, x, y, brush, hasBorder: true, border: fb.IsIndexed ? border.Index : border.Rgba);
-
-        private static void Flood(Framebuffer fb, int x, int y, in Brush brush, bool hasBorder, uint border)
-        {
-            if ((uint)x >= (uint)fb.Width || (uint)y >= (uint)fb.Height) return;
-            uint fill = fb.IsIndexed ? brush.Index : brush.Rgba;
-            uint target = fb.GetRaw(x, y);
-
-            // gefüllt wird, was zum Startwert gehört (ohne Rand) bzw. alles außer Rand und Füllfarbe (mit Rand)
-            bool Fillable(int px, int py)
-            {
-                uint v = fb.GetRaw(px, py);
-                return hasBorder ? v != border && v != fill : v == target;
-            }
-
-            if (!hasBorder && target == fill) return;
-            if (hasBorder && (target == border || target == fill)) return;
-
-            // Zeilenweise (Scanline) mit eigenem Stapel: kein rekursiver Aufruf, also keine Stapelüberläufe bei großen Flächen
-            var stack = new Stack<(int X, int Y)>();
-            stack.Push((x, y));
-            while (stack.Count > 0)
-            {
-                var (sx, sy) = stack.Pop();
-                if (!Fillable(sx, sy)) continue;
-
-                int left = sx, right = sx;
-                while (left > 0 && Fillable(left - 1, sy)) left--;
-                while (right < fb.Width - 1 && Fillable(right + 1, sy)) right++;
-                fb.HLine(left, right, sy, brush);
-
-                for (int ny = sy - 1; ny <= sy + 1; ny += 2)
-                {
-                    if ((uint)ny >= (uint)fb.Height) continue;
-                    bool inRun = false;
-                    for (int px = left; px <= right; px++)
-                    {
-                        bool ok = Fillable(px, ny);
-                        if (ok && !inRun) stack.Push((px, ny));
-                        inRun = ok;
-                    }
-                }
-            }
+            Polygon(ref sink, points, closed: true); // der Umriss gehört zur Fläche (und schließt Lücken durch die Rundung)
         }
     }
 }

@@ -1,5 +1,5 @@
 // fire native graphics: framebuffers (RGBA or palette), the palette, drawing (lines, rectangles, circles, ellipses, triangles, polygons, flood fill, text), blitting.
-// A port of src/fire.Terminal (Framebuffer, Palette, Paint, Shapes, Blitter, TerminalCanvas) - the same pixels come out. No operating system, no exceptions: it runs on
+// A port of src/fire.Terminal (Framebuffer, Palette, Paint, Surface, Shapes, Brush, Pen, Blitter, Renderer) - the same pixels come out. No operating system, no exceptions: it runs on
 // a microcontroller; a platform package only has to put the pixels on a screen (see ../fire_bridge_windows.hpp).
 //
 // A color is a "paint": a number 0..255 is an index into the palette of the framebuffer, anything else is a direct value r + g*256 + b*65536 + a*16777216.
@@ -34,7 +34,8 @@ struct Paint {
     }
 };
 
-struct Brush { uint32_t rgba = 0; uint8_t index = 0; };
+/// A color resolved for a target (see Surface::resolve): `rgba` is the value (its alpha counts when blending), `index` the palette entry for a palette framebuffer.
+struct Pixel { uint32_t rgba = 0; uint8_t index = 0; };
 
 struct Palette {
     uint32_t entries[256];
@@ -112,18 +113,6 @@ struct Framebuffer {
         for (size_t i = 0, n = pixelCount(); i < n; i++) out[i] = palette.entries[indices[i]];
     }
 
-    Brush resolveBrush(Paint paint) const {
-        Brush b;
-        if (mode == INDEXED) {
-            uint8_t index = paint.isIndex() ? (uint8_t)paint.index : palette.findNearest(paint.rgba);
-            b.rgba = palette.get(index); b.index = index;
-            return b;
-        }
-        if (paint.isIndex()) { b.rgba = palette.get((uint8_t)paint.index); b.index = (uint8_t)paint.index; return b; }
-        b.rgba = paint.rgba; b.index = 0;
-        return b;
-    }
-
     uint32_t getRaw(int x, int y) const {
         if ((unsigned)x >= (unsigned)width || (unsigned)y >= (unsigned)height) return 0;
         size_t i = (size_t)y * width + x;
@@ -138,45 +127,6 @@ struct Framebuffer {
         if ((unsigned)x >= (unsigned)width || (unsigned)y >= (unsigned)height) return 0;
         size_t i = (size_t)y * width + x;
         return indices ? palette.get(indices[i]) : pixels[i];
-    }
-
-    void plot(int x, int y, const Brush& brush) {
-        if ((unsigned)x >= (unsigned)width || (unsigned)y >= (unsigned)height) return;
-        size_t i = (size_t)y * width + x;
-        if (indices) indices[i] = brush.index; else pixels[i] = brush.rgba;
-    }
-
-    void hline(int x0, int x1, int y, const Brush& brush) {
-        if ((unsigned)y >= (unsigned)height) return;
-        if (x1 < x0) std::swap(x0, x1);
-        x0 = std::max(0, x0);
-        x1 = std::min(width - 1, x1);
-        if (x1 < x0) return;
-        size_t at = (size_t)y * width + x0, n = (size_t)(x1 - x0 + 1);
-        if (indices) std::memset(indices + at, brush.index, n);
-        else for (size_t k = 0; k < n; k++) pixels[at + k] = brush.rgba;
-    }
-
-    void fillRect(int x, int y, int w, int h, const Brush& brush) {
-        int x0 = std::max(0, x), y0 = std::max(0, y);
-        int64_t x1 = std::min<int64_t>(width, (int64_t)x + w), y1 = std::min<int64_t>(height, (int64_t)y + h);
-        if (x1 <= x0) return;
-        for (int yy = y0; yy < y1; yy++) hline(x0, (int)x1 - 1, yy, brush);
-    }
-
-    void clear(const Brush& brush) {
-        size_t n = pixelCount();
-        if (indices) std::memset(indices, brush.index, n);
-        else for (size_t k = 0; k < n; k++) pixels[k] = brush.rgba;
-    }
-
-    void scrollUp(int rows, const Brush& fill) {
-        if (rows <= 0) return;
-        if (rows >= height) { clear(fill); return; }
-        size_t keep = (size_t)(height - rows) * width, moved = (size_t)rows * width;
-        if (indices) { std::memmove(indices, indices + moved, keep); std::memset(indices + keep, fill.index, moved); return; }
-        std::memmove(pixels, pixels + moved, keep * 4);
-        for (size_t k = 0; k < moved; k++) pixels[keep + k] = fill.rgba;
     }
 };
 
@@ -204,18 +154,104 @@ inline bool makeMask(const Framebuffer& src, uint8_t threshold, bool darkIsRemov
     return true;
 }
 
-// ---- shapes ---------------------------------------------------------------------------------------------------------------------------------
+// ---- the surface: pixels and spans with clipping and alpha blending ------------------------------------------------------------------------------------
+/// Mixes `src` (alpha a) over `dst`: dst*(255-a)/255 + src*a/255 per channel; the result is opaque when one of them was.
+inline uint32_t mix(uint32_t dst, uint32_t src) {
+    uint32_t a = src >> 24;
+    if (a == 255 || (dst >> 24) == 0) return src;
+    if (a == 0) return dst;
+    uint32_t inv = 255 - a;
+    uint32_t r = ((src & 0xFF) * a + (dst & 0xFF) * inv + 127) / 255;
+    uint32_t g = (((src >> 8) & 0xFF) * a + ((dst >> 8) & 0xFF) * inv + 127) / 255;
+    uint32_t b = (((src >> 16) & 0xFF) * a + ((dst >> 16) & 0xFF) * inv + 127) / 255;
+    uint32_t outA = a + ((dst >> 24) * inv + 127) / 255;
+    return r | (g << 8) | (b << 16) | (std::min(outA, 255u) << 24);
+}
+
+/// What the drawing functions write through: the pixels of a framebuffer with clipping at the edge and - when `blend` - alpha blending. A color with alpha: in an RGBA target
+/// with blending alpha 255 is a copy, 0 draws nothing, in between it is mixed; without blending it is copied with its alpha. A palette target only copies: with blending a color
+/// from alpha 128 on, below that nothing; without blending always.
+struct Surface {
+    Framebuffer* fb;
+    uint32_t* pixels;
+    uint8_t* indices;
+    int width, height;
+    bool blend;
+
+    Surface(Framebuffer* f, bool b) : fb(f), pixels(f->pixels), indices(f->indices), width(f->width), height(f->height), blend(b) {}
+
+    bool isIndexed() const { return indices != nullptr; }
+
+    Pixel resolve(Paint paint) const {
+        Pixel p;
+        const Palette& palette = fb->palette;
+        if (indices) {
+            uint8_t index = paint.isIndex() ? (uint8_t)paint.index : palette.findNearest(paint.rgba);
+            p.rgba = paint.isIndex() ? palette.get(index) : paint.rgba;
+            p.index = index;
+            return p;
+        }
+        if (paint.isIndex()) { p.rgba = palette.get((uint8_t)paint.index); p.index = (uint8_t)paint.index; return p; }
+        p.rgba = paint.rgba; p.index = 0;
+        return p;
+    }
+
+    bool visible(const Pixel& p) const {
+        if (!blend) return true;
+        uint32_t a = p.rgba >> 24;
+        return indices ? a >= 128 : a != 0;
+    }
+    bool isCopy(const Pixel& p) const { return !blend || indices || (p.rgba >> 24) == 255; }
+
+    void put(int x, int y, const Pixel& p) {
+        if ((unsigned)x >= (unsigned)width || (unsigned)y >= (unsigned)height) return;
+        if (!visible(p)) return;
+        size_t i = (size_t)y * width + x;
+        if (indices) indices[i] = p.index;
+        else if (!blend || (p.rgba >> 24) == 255) pixels[i] = p.rgba;
+        else pixels[i] = mix(pixels[i], p.rgba);
+    }
+
+    /// A horizontal line from x0 to x1 (both included, any order) in row y, clipped.
+    void span(int y, int x0, int x1, const Pixel& p) {
+        if ((unsigned)y >= (unsigned)height) return;
+        if (x1 < x0) std::swap(x0, x1);
+        x0 = std::max(0, x0);
+        x1 = std::min(width - 1, x1);
+        if (x1 < x0 || !visible(p)) return;
+        size_t at = (size_t)y * width + x0, n = (size_t)(x1 - x0 + 1);
+        if (indices) std::memset(indices + at, p.index, n);
+        else if (!blend || (p.rgba >> 24) == 255) for (size_t k = 0; k < n; k++) pixels[at + k] = p.rgba;
+        else for (size_t k = 0; k < n; k++) pixels[at + k] = mix(pixels[at + k], p.rgba);
+    }
+
+    void rect(int x, int y, int w, int h, const Pixel& p) {
+        if (w <= 0 || h <= 0) return;
+        int y0 = std::max(0, y), y1 = (int)std::min<int64_t>(height, (int64_t)y + h);
+        int xr = (int)std::min<int64_t>((int64_t)x + w - 1, 0x7FFFFFFF);
+        for (int yy = y0; yy < y1; yy++) span(yy, x, xr, p);
+    }
+
+    /// The raw value of the pixel: the index in a palette target, else the color; 0 outside.
+    uint32_t raw(int x, int y) const {
+        if ((unsigned)x >= (unsigned)width || (unsigned)y >= (unsigned)height) return 0;
+        size_t i = (size_t)y * width + x;
+        return indices ? indices[i] : pixels[i];
+    }
+};
+
+// ---- shapes: they hand pixels and spans to a sink (a brush fills them, a pen stamps them) ---------------------------------------------------------------------
 namespace shapes {
 
-inline void line(Framebuffer& fb, int x0, int y0, int x1, int y1, const Brush& brush) {
+template <class Sink> void line(Sink& sink, int x0, int y0, int x1, int y1) {
     int64_t dxl = std::llabs((int64_t)x1 - x0), dyl = std::llabs((int64_t)y1 - y0);
-    if (y0 == y1) { fb.hline(x0, x1, y0, brush); return; }
+    if (y0 == y1) { sink.span(y0, x0, x1); return; }
     if (dxl > 0x7FFFFFFF / 2 || dyl > 0x7FFFFFFF / 2) return;   // absurd coordinates: draw nothing instead of overflowing
     int dx = (int)dxl, sx = x0 < x1 ? 1 : -1;
     int dy = -(int)dyl, sy = y0 < y1 ? 1 : -1;
     int err = dx + dy;
     while (true) {
-        fb.plot(x0, y0, brush);
+        sink.point(x0, y0);
         if (x0 == x1 && y0 == y1) break;
         int e2 = 2 * err;
         if (e2 >= dy) { err += dy; x0 += sx; }
@@ -223,13 +259,13 @@ inline void line(Framebuffer& fb, int x0, int y0, int x1, int y1, const Brush& b
     }
 }
 
-inline void rect(Framebuffer& fb, int x, int y, int w, int h, const Brush& brush) {
+template <class Sink> void rect(Sink& sink, int x, int y, int w, int h) {
     if (w <= 0 || h <= 0) return;
-    fb.hline(x, x + w - 1, y, brush);
-    if (h > 1) fb.hline(x, x + w - 1, y + h - 1, brush);
+    sink.span(y, x, x + w - 1);
+    if (h > 1) sink.span(y + h - 1, x, x + w - 1);
     for (int yy = y + 1; yy < y + h - 1; yy++) {
-        fb.plot(x, yy, brush);
-        if (w > 1) fb.plot(x + w - 1, yy, brush);
+        sink.point(x, yy);
+        if (w > 1) sink.point(x + w - 1, yy);
     }
 }
 
@@ -250,7 +286,7 @@ inline std::vector<int> ellipseSpans(int rx, int ry) {
     return spans;
 }
 
-inline void ellipse(Framebuffer& fb, int cx, int cy, int rx, int ry, const Brush& brush) {
+template <class Sink> void ellipse(Sink& sink, int cx, int cy, int rx, int ry) {
     if (rx < 0 || ry < 0) return;
     rx = std::min(rx, MAX_RADIUS);
     ry = std::min(ry, MAX_RADIUS);
@@ -264,44 +300,44 @@ inline void ellipse(Framebuffer& fb, int cx, int cy, int rx, int ry, const Brush
             for (int rowSign = -1; rowSign <= 1; rowSign += 2) {
                 if (dy == 0 && rowSign == 1) continue;
                 int y = cy + rowSign * dy;
-                fb.hline(cx + sign * from, cx + sign * dx, y, brush);
+                sink.span(y, cx + sign * from, cx + sign * dx);
             }
     }
 }
-inline void circle(Framebuffer& fb, int cx, int cy, int r, const Brush& brush) { ellipse(fb, cx, cy, r, r, brush); }
+template <class Sink> void circle(Sink& sink, int cx, int cy, int r) { ellipse(sink, cx, cy, r, r); }
 
-inline void fillEllipse(Framebuffer& fb, int cx, int cy, int rx, int ry, const Brush& brush) {
+template <class Sink> void fillEllipse(Sink& sink, int cx, int cy, int rx, int ry) {
     if (rx < 0 || ry < 0) return;
     rx = std::min(rx, MAX_RADIUS);
     ry = std::min(ry, MAX_RADIUS);
     std::vector<int> spans = ellipseSpans(rx, ry);
     for (int dy = 0; dy <= ry; dy++) {
-        fb.hline(cx - spans[(size_t)dy], cx + spans[(size_t)dy], cy + dy, brush);
-        if (dy != 0) fb.hline(cx - spans[(size_t)dy], cx + spans[(size_t)dy], cy - dy, brush);
+        sink.span(cy + dy, cx - spans[(size_t)dy], cx + spans[(size_t)dy]);
+        if (dy != 0) sink.span(cy - dy, cx - spans[(size_t)dy], cx + spans[(size_t)dy]);
     }
 }
-inline void fillCircle(Framebuffer& fb, int cx, int cy, int r, const Brush& brush) { fillEllipse(fb, cx, cy, r, r, brush); }
+template <class Sink> void fillCircle(Sink& sink, int cx, int cy, int r) { fillEllipse(sink, cx, cy, r, r); }
 
-inline void triangle(Framebuffer& fb, int x0, int y0, int x1, int y1, int x2, int y2, const Brush& brush) {
-    line(fb, x0, y0, x1, y1, brush);
-    line(fb, x1, y1, x2, y2, brush);
-    line(fb, x2, y2, x0, y0, brush);
+template <class Sink> void triangle(Sink& sink, int x0, int y0, int x1, int y1, int x2, int y2) {
+    line(sink, x0, y0, x1, y1);
+    line(sink, x1, y1, x2, y2);
+    line(sink, x2, y2, x0, y0);
 }
 
-inline void polygon(Framebuffer& fb, const std::vector<int>& points, const Brush& brush, bool closed) {
+template <class Sink> void polygon(Sink& sink, const std::vector<int>& points, bool closed) {
     int n = (int)(points.size() / 2);
     if (n < 2) return;
-    for (int i = 0; i + 1 < n; i++) line(fb, points[2 * i], points[2 * i + 1], points[2 * i + 2], points[2 * i + 3], brush);
-    if (closed && n > 2) line(fb, points[2 * (n - 1)], points[2 * (n - 1) + 1], points[0], points[1], brush);
+    for (int i = 0; i + 1 < n; i++) line(sink, points[2 * i], points[2 * i + 1], points[2 * i + 2], points[2 * i + 3]);
+    if (closed && n > 2) line(sink, points[2 * (n - 1)], points[2 * (n - 1) + 1], points[0], points[1]);
 }
 
 /// Even-odd fill: the rows between the crossings of the edges (half open, so a vertex counts once), then the outline.
-inline void fillPolygon(Framebuffer& fb, const std::vector<int>& points, const Brush& brush) {
+template <class Sink> void fillPolygon(Sink& sink, const std::vector<int>& points, int clipHeight) {
     int n = (int)(points.size() / 2);
-    if (n < 3) { polygon(fb, points, brush, false); return; }
+    if (n < 3) { polygon(sink, points, false); return; }
     int64_t minY = INT64_MAX, maxY = INT64_MIN;
     for (int i = 0; i < n; i++) { minY = std::min<int64_t>(minY, points[2 * i + 1]); maxY = std::max<int64_t>(maxY, points[2 * i + 1]); }
-    int yFrom = (int)std::max<int64_t>(minY, 0), yTo = (int)std::min<int64_t>(maxY, fb.height - 1);
+    int yFrom = (int)std::max<int64_t>(minY, 0), yTo = (int)std::min<int64_t>(maxY, clipHeight - 1);
     std::vector<int> crossings;
     for (int y = yFrom; y <= yTo; y++) {
         crossings.clear();
@@ -317,71 +353,191 @@ inline void fillPolygon(Framebuffer& fb, const std::vector<int>& points, const B
             crossings.push_back((int)std::max<int64_t>(std::min<int64_t>(x, 0x7FFFFFFF / 2), INT32_MIN / 2));
         }
         std::sort(crossings.begin(), crossings.end());
-        for (size_t i = 0; i + 1 < crossings.size(); i += 2) fb.hline(crossings[i], crossings[i + 1], y, brush);
+        for (size_t i = 0; i + 1 < crossings.size(); i += 2) sink.span(y, crossings[i], crossings[i + 1]);
     }
-    polygon(fb, points, brush, true);   // the outline belongs to the area (and closes gaps left by the rounding)
+    polygon(sink, points, true);   // the outline belongs to the area (and closes gaps left by the rounding)
 }
 
-inline void fillTriangle(Framebuffer& fb, int x0, int y0, int x1, int y1, int x2, int y2, const Brush& brush) {
-    fillPolygon(fb, std::vector<int>{x0, y0, x1, y1, x2, y2}, brush);
-}
-
-/// Scanline flood fill with its own stack. Without a border: what has the color of the start pixel; with one: everything except border and fill color.
-inline void flood(Framebuffer& fb, int x, int y, const Brush& brush, bool hasBorder, uint32_t border) {
-    if ((unsigned)x >= (unsigned)fb.width || (unsigned)y >= (unsigned)fb.height) return;
-    uint32_t fill = fb.isIndexed() ? brush.index : brush.rgba;
-    uint32_t target = fb.getRaw(x, y);
-    auto fillable = [&](int px, int py) {
-        uint32_t v = fb.getRaw(px, py);
-        return hasBorder ? (v != border && v != fill) : v == target;
-    };
-    if (!hasBorder && target == fill) return;
-    if (hasBorder && (target == border || target == fill)) return;
-    std::vector<std::pair<int, int>> stack;
-    stack.push_back({x, y});
-    while (!stack.empty()) {
-        auto [sx, sy] = stack.back();
-        stack.pop_back();
-        if (!fillable(sx, sy)) continue;
-        int left = sx, right = sx;
-        while (left > 0 && fillable(left - 1, sy)) left--;
-        while (right < fb.width - 1 && fillable(right + 1, sy)) right++;
-        fb.hline(left, right, sy, brush);
-        for (int ny = sy - 1; ny <= sy + 1; ny += 2) {
-            if ((unsigned)ny >= (unsigned)fb.height) continue;
-            bool inRun = false;
-            for (int px = left; px <= right; px++) {
-                bool ok = fillable(px, ny);
-                if (ok && !inRun) stack.push_back({px, ny});
-                inRun = ok;
-            }
-        }
-    }
-}
-inline void floodFill(Framebuffer& fb, int x, int y, const Brush& brush) { flood(fb, x, y, brush, false, 0); }
-inline void floodFillBorder(Framebuffer& fb, int x, int y, const Brush& brush, const Brush& border) {
-    flood(fb, x, y, brush, true, fb.isIndexed() ? border.index : border.rgba);
+template <class Sink> void fillTriangle(Sink& sink, int x0, int y0, int x1, int y1, int x2, int y2, int clipHeight) {
+    fillPolygon(sink, std::vector<int>{x0, y0, x1, y1, x2, y2}, clipHeight);
 }
 
 }  // namespace shapes
 
+// ---- brush: how an area is filled ------------------------------------------------------------------------------------------------------------------------
+/// A solid brush. It offers the fill functions (rectangle, circle, ellipse, triangle, polygon, flood fill); the renderer only hands it the surface.
+struct Brush {
+    Paint color;
+
+    struct FillSink {
+        Surface& surface;
+        Pixel pixel;
+        void point(int x, int y) { surface.put(x, y, pixel); }
+        void span(int y, int x0, int x1) { surface.span(y, x0, x1, pixel); }
+    };
+
+    void fillSpan(Surface& s, int y, int x0, int x1) const { FillSink k{s, s.resolve(color)}; k.span(y, x0, x1); }
+    void fillRect(Surface& s, int x, int y, int w, int h) const {
+        if (w <= 0 || h <= 0) return;
+        FillSink k{s, s.resolve(color)};
+        int y0 = std::max(0, y), y1 = (int)std::min<int64_t>(s.height, (int64_t)y + h);
+        int xr = (int)std::min<int64_t>((int64_t)x + w - 1, 0x7FFFFFFF);
+        for (int yy = y0; yy < y1; yy++) k.span(yy, x, xr);
+    }
+    void fillCircle(Surface& s, int cx, int cy, int r) const { FillSink k{s, s.resolve(color)}; shapes::fillCircle(k, cx, cy, r); }
+    void fillEllipse(Surface& s, int cx, int cy, int rx, int ry) const { FillSink k{s, s.resolve(color)}; shapes::fillEllipse(k, cx, cy, rx, ry); }
+    void fillTriangle(Surface& s, int x0, int y0, int x1, int y1, int x2, int y2) const { FillSink k{s, s.resolve(color)}; shapes::fillTriangle(k, x0, y0, x1, y1, x2, y2, s.height); }
+    void fillPolygon(Surface& s, const std::vector<int>& points) const { FillSink k{s, s.resolve(color)}; shapes::fillPolygon(k, points, s.height); }
+
+    /// Fills the 4-connected area around (x, y) that has the pixel value of the start; with a border: everything except border and fill color. The area is determined
+    /// first (the pixels stay untouched), then filled - so mixing a half transparent color does not change what belongs to the area.
+    void flood(Surface& s, int x, int y, bool hasBorder, Pixel border) const {
+        if ((unsigned)x >= (unsigned)s.width || (unsigned)y >= (unsigned)s.height) return;
+        bool indexed = s.isIndexed();
+        Pixel fillPixel = s.resolve(color);
+        uint32_t fill = indexed ? fillPixel.index : fillPixel.rgba;
+        uint32_t target = s.raw(x, y);
+        uint32_t borderRaw = indexed ? border.index : border.rgba;
+        bool copy = s.isCopy(fillPixel);
+
+        if (!hasBorder && target == fill && copy) return;
+        if (hasBorder && (target == borderRaw || (target == fill && copy))) return;
+
+        int w = s.width, h = s.height;
+        std::vector<uint8_t> seen((size_t)w * h, 0);
+        auto fillable = [&](int px, int py) {
+            if (seen[(size_t)py * w + px]) return false;
+            uint32_t v = s.raw(px, py);
+            return hasBorder ? (v != borderRaw && !(copy && v == fill)) : v == target;
+        };
+
+        struct Run { int y, x0, x1; };
+        std::vector<Run> runs;
+        std::vector<std::pair<int, int>> stack;
+        stack.push_back({x, y});
+        while (!stack.empty()) {
+            auto [sx, sy] = stack.back();
+            stack.pop_back();
+            if (!fillable(sx, sy)) continue;
+            int left = sx, right = sx;
+            while (left > 0 && fillable(left - 1, sy)) left--;
+            while (right < w - 1 && fillable(right + 1, sy)) right++;
+            for (int px = left; px <= right; px++) seen[(size_t)sy * w + px] = 1;
+            runs.push_back({sy, left, right});
+            for (int ny = sy - 1; ny <= sy + 1; ny += 2) {
+                if ((unsigned)ny >= (unsigned)h) continue;
+                bool inRun = false;
+                for (int px = left; px <= right; px++) {
+                    bool ok = fillable(px, ny);
+                    if (ok && !inRun) stack.push_back({px, ny});
+                    inRun = ok;
+                }
+            }
+        }
+        FillSink k{s, fillPixel};
+        for (const Run& r : runs) k.span(r.y, r.x0, r.x1);
+    }
+    void floodFill(Surface& s, int x, int y) const { flood(s, x, y, false, Pixel()); }
+    void floodFillBorder(Surface& s, int x, int y, Paint border) const { flood(s, x, y, true, s.resolve(border)); }
+};
+
+// ---- pen: points, lines, paths ---------------------------------------------------------------------------------------------------------------------------
+enum PenShape { PEN_ROUND = 0, PEN_SQUARE = 1 };
+
+/// A pen draws with a tip of `width` pixels. The tip is rendered once (the rows of its stamp) and copied to every pixel of a line - mixed when the color is half transparent
+/// (the union of all stamps is mixed once, so overlaps do not mix twice).
+struct Pen {
+    static constexpr int MAX_WIDTH = 512;
+    struct StampRow { int dy, dx0, dx1; };
+
+    Paint color;
+    int width = 1;
+    int shape = PEN_ROUND;
+    std::vector<StampRow> stamp;
+
+    Pen(Paint c, int w, int s) : color(c), width(std::max(1, std::min(w, MAX_WIDTH))), shape(s) { render(); }
+    void setWidth(int w) { width = std::max(1, std::min(w, MAX_WIDTH)); render(); }
+    void setShape(int s) { shape = s; render(); }
+
+    void render() {
+        int w = width, half = (w - 1) / 2;
+        stamp.clear();
+        for (int j = 0; j < w; j++) {
+            int first = -1, last = -1;
+            for (int i = 0; i < w; i++) {
+                bool inside = shape == PEN_SQUARE
+                    || (int64_t)(2 * i - (w - 1)) * (2 * i - (w - 1)) + (int64_t)(2 * j - (w - 1)) * (2 * j - (w - 1)) <= (int64_t)w * w - 1;
+                if (!inside) continue;
+                if (first < 0) first = i;
+                last = i;
+            }
+            if (first >= 0) stamp.push_back({j - half, first - half, last - half});
+        }
+    }
+
+    struct StampSink {
+        Surface& surface;
+        Pixel pixel;
+        const std::vector<StampRow>& stamp;
+        void point(int x, int y) { for (const StampRow& r : stamp) surface.span(y + r.dy, x + r.dx0, x + r.dx1, pixel); }
+        void span(int y, int x0, int x1) {
+            if (x1 < x0) std::swap(x0, x1);
+            for (const StampRow& r : stamp) surface.span(y + r.dy, x0 + r.dx0, x1 + r.dx1, pixel);
+        }
+    };
+
+    struct UnionSink {
+        Surface& surface;
+        Pixel pixel;
+        const std::vector<StampRow>& stamp;
+        struct Run { int y, x0, x1; };
+        std::vector<Run> runs;
+        void point(int x, int y) { for (const StampRow& r : stamp) runs.push_back({y + r.dy, x + r.dx0, x + r.dx1}); }
+        void span(int y, int x0, int x1) {
+            if (x1 < x0) std::swap(x0, x1);
+            for (const StampRow& r : stamp) runs.push_back({y + r.dy, x0 + r.dx0, x1 + r.dx1});
+        }
+        void flush() {
+            std::sort(runs.begin(), runs.end(), [](const Run& a, const Run& b) { return a.y != b.y ? a.y < b.y : a.x0 < b.x0; });
+            size_t i = 0;
+            while (i < runs.size()) {
+                int y = runs[i].y, x0 = runs[i].x0, x1 = runs[i].x1;
+                i++;
+                while (i < runs.size() && runs[i].y == y && runs[i].x0 <= x1 + 1) { x1 = std::max(x1, runs[i].x1); i++; }
+                surface.span(y, x0, x1, pixel);
+            }
+        }
+    };
+
+    template <class Emit> void stroke(Surface& s, Emit emit) const {
+        Pixel pixel = s.resolve(color);
+        if (!s.visible(pixel)) return;
+        if (s.isCopy(pixel)) {
+            StampSink sink{s, pixel, stamp};
+            emit(sink);
+        } else {
+            UnionSink sink{s, pixel, stamp, {}};
+            emit(sink);
+            sink.flush();
+        }
+    }
+
+    void drawPoint(Surface& s, int x, int y) const { stroke(s, [&](auto& k) { k.point(x, y); }); }
+    void drawLine(Surface& s, int x0, int y0, int x1, int y1) const { stroke(s, [&](auto& k) { shapes::line(k, x0, y0, x1, y1); }); }
+    void drawPath(Surface& s, const std::vector<int>& points, bool closed) const { stroke(s, [&](auto& k) { shapes::polygon(k, points, closed); }); }
+    void drawRect(Surface& s, int x, int y, int w, int h) const { stroke(s, [&](auto& k) { shapes::rect(k, x, y, w, h); }); }
+    void drawCircle(Surface& s, int cx, int cy, int r) const { stroke(s, [&](auto& k) { shapes::ellipse(k, cx, cy, r, r); }); }
+    void drawEllipse(Surface& s, int cx, int cy, int rx, int ry) const { stroke(s, [&](auto& k) { shapes::ellipse(k, cx, cy, rx, ry); }); }
+    void drawTriangle(Surface& s, int x0, int y0, int x1, int y1, int x2, int y2) const { stroke(s, [&](auto& k) { shapes::triangle(k, x0, y0, x1, y1, x2, y2); }); }
+    void drawPolygon(Surface& s, const std::vector<int>& points, bool closed) const { stroke(s, [&](auto& k) { shapes::polygon(k, points, closed); }); }
+};
+
 // ---- blitting ---------------------------------------------------------------------------------------------------------------------------------
 enum BlitMode { BLIT_COPY = 0, BLIT_TRANSPARENT = 1, BLIT_BLEND = 2 };
 
-inline uint32_t mix(uint32_t dst, uint32_t src) {
-    uint32_t a = src >> 24;
-    if (a == 255 || (dst >> 24) == 0) return src;
-    if (a == 0) return dst;
-    uint32_t inv = 255 - a;
-    uint32_t r = ((src & 0xFF) * a + (dst & 0xFF) * inv + 127) / 255;
-    uint32_t g = (((src >> 8) & 0xFF) * a + ((dst >> 8) & 0xFF) * inv + 127) / 255;
-    uint32_t b = (((src >> 16) & 0xFF) * a + ((dst >> 16) & 0xFF) * inv + 127) / 255;
-    uint32_t outA = a + ((dst >> 24) * inv + 127) / 255;
-    return r | (g << 8) | (b << 16) | (std::min(outA, 255u) << 24);
-}
-
-/// Copies a region (scaled with nearest neighbor, flipped for a negative size) between framebuffers of any color mode.
-inline void blit(Framebuffer& dst, const Framebuffer& srcIn, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode, int colorKey) {
+/// Copies a region (scaled with nearest neighbor, flipped for a negative size) between framebuffers of any color mode. Without alpha blending the mode Blend acts like Transparent.
+inline void blit(Framebuffer& dst, const Framebuffer& srcIn, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode, int colorKey, bool blend) {
+    if (!blend && mode == BLIT_BLEND) mode = BLIT_TRANSPARENT;
     if (sw <= 0 || sh <= 0 || dw == 0 || dh == 0) return;
     int64_t absDw = std::llabs((int64_t)dw), absDh = std::llabs((int64_t)dh);
     bool flipX = dw < 0, flipY = dh < 0;
@@ -452,20 +608,22 @@ inline void blit(Framebuffer& dst, const Framebuffer& srcIn, int sx, int sy, int
     }
 }
 
-// ---- the console: text and the drawing functions of a framebuffer ----------------------------------------------------------------------------------
-struct Canvas {
+// ---- the renderer: terminal text and the drawing functions of a framebuffer ----------------------------------------------------------------------------------
+struct Renderer {
     Framebuffer* target = nullptr;
     bool smallFont = false;      // the built-in font is 8x14 (the default) or 8x8
+    bool alphaBlending = true;
     int cellWidth = 8, cellHeight = 14, columns = 0, rows = 0, cursorRow = 0, cursorColumn = 0;
     Paint foreground = Paint::fromRgba(rgb(255, 255, 255));
     Paint background = Paint::fromRgba(rgb(0, 0, 0));
     bool hasBackground = true;
 
-    explicit Canvas(Framebuffer* fb, bool small = false) : target(fb), smallFont(small), cellHeight(small ? 8 : 14) { fbRetain(fb); updateGrid(); }
-    Canvas(const Canvas&) = delete;
-    Canvas& operator=(const Canvas&) = delete;
-    ~Canvas() { fbRelease(target); }
+    explicit Renderer(Framebuffer* fb, bool small = false) : target(fb), smallFont(small), cellHeight(small ? 8 : 14) { fbRetain(fb); updateGrid(); }
+    Renderer(const Renderer&) = delete;
+    Renderer& operator=(const Renderer&) = delete;
+    ~Renderer() { fbRelease(target); }
 
+    Surface surface() const { return Surface(target, alphaBlending); }
     void updateGrid() { columns = target->width / cellWidth; rows = target->height / cellHeight; }
     const uint8_t* glyph(char16_t c) const { uint32_t i = c < 256 ? c : '?'; return smallFont ? kGlyphs8x8[i] : kGlyphs8x14[i]; }
 
@@ -473,44 +631,70 @@ struct Canvas {
         cursorRow = std::max(0, std::min(row, std::max(0, rows - 1)));
         cursorColumn = std::max(0, std::min(column, std::max(0, columns - 1)));
     }
-    Brush clearBrush() const { return target->resolveBrush(hasBackground ? background : Paint::fromRgba(rgb(0, 0, 0))); }
-    void clear() { target->clear(clearBrush()); cursorRow = 0; cursorColumn = 0; }
+
+    // Clear and scrolling set pixels as they are (no blending)
+    Pixel clearPixel() const { return surface().resolve(hasBackground ? background : Paint::fromRgba(rgb(0, 0, 0))); }
+    void clearAll(const Pixel& p) {
+        size_t n = target->pixelCount();
+        if (target->indices) std::memset(target->indices, p.index, n);
+        else for (size_t k = 0; k < n; k++) target->pixels[k] = p.rgba;
+    }
+    void clear() { clearAll(clearPixel()); cursorRow = 0; cursorColumn = 0; }
+    void clearTo(Paint paint) { clearAll(surface().resolve(paint)); }
     void setColor(Paint fg, Paint bg) { foreground = fg; background = bg; hasBackground = true; }
 
-    void drawGlyph(int x, int y, char16_t c, const Brush& fg, bool hasBg, const Brush& bg) {
-        if (hasBg) target->fillRect(x, y, cellWidth, cellHeight, bg);
+    void scrollUp(int pixelRows, const Pixel& fill) {
+        int w = target->width, h = target->height;
+        if (pixelRows <= 0) return;
+        if (pixelRows >= h) { clearAll(fill); return; }
+        size_t keep = (size_t)(h - pixelRows) * w, moved = (size_t)pixelRows * w;
+        if (target->indices) { std::memmove(target->indices, target->indices + moved, keep); std::memset(target->indices + keep, fill.index, moved); return; }
+        std::memmove(target->pixels, target->pixels + moved, keep * 4);
+        for (size_t k = 0; k < moved; k++) target->pixels[keep + k] = fill.rgba;
+    }
+
+    /// One character with its upper left corner at (x, y): a background that is not visible is none, a foreground that is not visible draws no glyph pixels.
+    void drawGlyph(Surface& s, int x, int y, char16_t c, const Pixel& fg, bool hasBg, const Pixel& bg) {
+        if (hasBg && !s.visible(bg)) hasBg = false;
+        bool fgVisible = s.visible(fg);
+        if (!fgVisible && !hasBg) return;
+        if (hasBg) s.rect(x, y, cellWidth, cellHeight, bg);
+        if (!fgVisible) return;
         const uint8_t* rowsBits = glyph(c);
         for (int gy = 0; gy < cellHeight; gy++) {
             unsigned bits = rowsBits[gy];
             if (bits == 0) continue;
             for (int gx = 0; gx < cellWidth; gx++)
-                if ((bits >> (7 - gx)) & 1u) target->plot(x + gx, y + gy, fg);
+                if ((bits >> (7 - gx)) & 1u) s.put(x + gx, y + gy, fg);
         }
     }
 
     void newLine() {
         cursorColumn = 0;
         cursorRow++;
-        if (cursorRow >= rows) { target->scrollUp(cellHeight, clearBrush()); cursorRow = rows - 1; }
+        if (cursorRow >= rows) { scrollUp(cellHeight, clearPixel()); cursorRow = rows - 1; }
     }
     void advance() { cursorColumn++; if (cursorColumn >= columns) newLine(); }
 
     void print(const char16_t* text, uint32_t n) {
-        Brush fg = target->resolveBrush(foreground);
-        Brush bg = hasBackground ? target->resolveBrush(background) : Brush();
+        Surface s = surface();
+        Pixel fg = s.resolve(foreground);
+        Pixel bg = hasBackground ? s.resolve(background) : Pixel();
         for (uint32_t i = 0; i < n; i++) {
             char16_t c = text[i];
             if (c == '\n') { newLine(); continue; }
             if (c == '\r') continue;
-            drawGlyph(cursorColumn * cellWidth, cursorRow * cellHeight, c, fg, hasBackground, bg);
+            drawGlyph(s, cursorColumn * cellWidth, cursorRow * cellHeight, c, fg, hasBackground, bg);
             advance();
         }
     }
 
-    void drawText(int x, int y, const char16_t* text, uint32_t n, Paint fg, bool hasBg, Paint bg) {
-        Brush f = target->resolveBrush(fg);
-        Brush b = hasBg ? target->resolveBrush(bg) : Brush();
-        for (uint32_t i = 0; i < n; i++) { drawGlyph(x, y, text[i], f, hasBg, b); x += cellWidth; }
+    /// Text at pixel coordinates: the glyph pixels in the color of `fg`, with `bg` (null = none) the whole cell below.
+    void drawText(int x, int y, const char16_t* text, uint32_t n, const Brush& fg, const Brush* bg) {
+        Surface s = surface();
+        Pixel f = s.resolve(fg.color);
+        Pixel b = bg ? s.resolve(bg->color) : Pixel();
+        for (uint32_t i = 0; i < n; i++) { drawGlyph(s, x, y, text[i], f, bg != nullptr, b); x += cellWidth; }
     }
 };
 

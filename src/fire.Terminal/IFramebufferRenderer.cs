@@ -6,7 +6,7 @@ namespace fire.Terminal
     /// Framebuffers in einem Fenster - SDL (siehe Sdl.SdlFramebufferRenderer)
     /// ist nur EINE mögliche Implementierung. ConsoleWindow kennt nur diese
     /// Schnittstelle, nie SDL direkt - das Rendering-Backend lässt sich
-    /// dadurch später austauschen, ohne Framebuffer/TerminalCanvas/
+    /// dadurch später austauschen, ohne Framebuffer/Renderer/
     /// ConsoleWindow selbst anzufassen (siehe SPEC/CONSOLE.md-Notiz "damit
     /// ich das Rendering austauschen kann").</summary>
     public interface IFramebufferRenderer : IDisposable

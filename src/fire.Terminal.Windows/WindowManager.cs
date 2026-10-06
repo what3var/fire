@@ -99,7 +99,7 @@ namespace fire.Terminal.Windows
 
         /// <summary>Erzeugt UND öffnet sofort ein neues Fenster für den
         /// Framebuffer mit der ID `framebufferId` - anders als
-        /// FramebufferManager.CreateFramebuffer/ConsoleManager.CreateConsole
+        /// FramebufferManager.CreateFramebuffer/RendererManager.CreateRenderer
         /// (die nur das C#-Objekt anlegen) macht das hier auch gleich das
         /// eigentliche OS-Fenster sichtbar, da ein unsichtbar erzeugtes
         /// Fenster für den Aufrufer keinen Sinn ergäbe.</summary>

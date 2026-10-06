@@ -4,7 +4,7 @@ namespace fire.Terminal
 {
     /// <summary>
     /// Ein roher, direkt zugreifbarer Pixel-Puffer (R,G,B,A pro Pixel, siehe
-    /// PixelColor - zeilenweise) - das zentrale Objekt dieser Bibliothek: TerminalCanvas (Terminal-
+    /// PixelColor - zeilenweise) - das zentrale Objekt dieser Bibliothek: Renderer (Terminal-
     /// Emulation UND rohe Grafikoperationen) schreibt IMMER hierhin, nie
     /// direkt in ein Fenster; ein IFramebufferRenderer (z.B. SDL) liest den
     /// fertigen Inhalt nur noch aus, um ihn darzustellen. Dadurch bleibt der
@@ -14,14 +14,14 @@ namespace fire.Terminal
     ///
     /// Bewusst KEIN Alpha-Blending beim Schreiben (SetPixel/FillRect/...
     /// überschreiben ein Zielpixel immer vollständig, inklusive seines
-    /// Alpha-Werts) - "optional transparent" (siehe TerminalCanvas.
+    /// Alpha-Werts) - "optional transparent" (siehe Renderer.
     /// Background-Doku) bedeutet hier "eine Zelle NICHT mit Hintergrund
     /// überschreiben", nicht "mit Transparenz vermischen". Ein Renderer, der
     /// den Framebuffer seinerseits über eine bereits vorhandene Szene legt
     /// (z.B. Alpha-Compositing mehrerer Fenster), kann den Alpha-Kanal
     /// trotzdem auswerten - er wird hier nur nicht selbst verrechnet.
     /// </summary>
-    public sealed class Framebuffer
+    public sealed class Framebuffer : IRenderTarget
     {
         public int Width { get; }
         public int Height { get; }
@@ -56,6 +56,7 @@ namespace fire.Terminal
         /// <summary>Palette-Modus: der Index, der in einem Bild als durchsichtig gilt (GIF-Transparenz, PNG-Palette mit Alpha 0), oder -1.
         /// <see cref="Blitter"/> überspringt im Modus "Transparent" Pixel mit diesem Index.</summary>
         public int TransparentIndex { get; set; } = -1;
+
 
         private bool _dirty = true;
         private int _resolvedPaletteVersion = -1;
@@ -99,17 +100,7 @@ namespace fire.Terminal
         }
 
         /// <summary>Macht aus einer Farbangabe die Farbe für DIESEN Framebuffer (siehe <see cref="Paint"/>).</summary>
-        public Brush ResolveBrush(Paint paint)
-        {
-            if (Mode == ColorMode.Indexed)
-            {
-                byte index = paint.IsIndex ? (byte)paint.Index : Palette.FindNearest(new PixelColor(paint.Rgba));
-                return new Brush(Palette.GetPacked(index), index);
-            }
-            return paint.IsIndex
-                ? new Brush(Palette.GetPacked((byte)paint.Index), (byte)paint.Index)
-                : new Brush(paint.Rgba, 0);
-        }
+        public Pixel ResolvePixel(Paint paint) => Surface.ResolvePixel(this, paint);
 
         /// <summary>Der rohe Pixelwert an (x, y) - im Palette-Modus der Index, sonst der gepackte RGBA-Wert; 0 außerhalb. Zum Vergleichen
         /// von Pixeln (Flood-Fill), nicht als Farbe gedacht.</summary>
@@ -165,11 +156,11 @@ namespace fire.Terminal
         }
 
         // -----------------------------------------------------------
-        // Zeichnen mit einer aufgelösten Farbe (siehe ResolveBrush)
+        // Zeichnen mit einer aufgelösten Farbe (siehe ResolvePixel)
         // -----------------------------------------------------------
 
         /// <summary>Ein Pixel, außerhalb des Puffers still beschnitten.</summary>
-        public void Plot(int x, int y, in Brush brush)
+        public void Plot(int x, int y, in Pixel brush)
         {
             if ((uint)x >= (uint)Width || (uint)y >= (uint)Height) return;
             int i = y * Width + x;
@@ -182,7 +173,7 @@ namespace fire.Terminal
         }
 
         /// <summary>Eine waagerechte Linie von `x0` bis `x1` (beide eingeschlossen, in beliebiger Reihenfolge) in Zeile `y`, beschnitten.</summary>
-        public void HLine(int x0, int x1, int y, in Brush brush)
+        public void HLine(int x0, int x1, int y, in Pixel brush)
         {
             if ((uint)y >= (uint)Height) return;
             if (x1 < x0) (x0, x1) = (x1, x0);
@@ -197,7 +188,7 @@ namespace fire.Terminal
             else Pixels.AsSpan(y * Width + x0, x1 - x0 + 1).Fill(brush.Rgba);
         }
 
-        public void FillRect(int x, int y, int w, int h, in Brush brush)
+        public void FillRect(int x, int y, int w, int h, in Pixel brush)
         {
             int x0 = Math.Max(0, x), y0 = Math.Max(0, y);
             int x1 = Math.Min(Width, x + w), y1 = Math.Min(Height, y + h);
@@ -213,7 +204,7 @@ namespace fire.Terminal
                     Pixels.AsSpan(yy * Width + x0, x1 - x0).Fill(brush.Rgba);
         }
 
-        public void Clear(in Brush brush)
+        public void Clear(in Pixel brush)
         {
             if (Indices != null)
             {
@@ -237,7 +228,7 @@ namespace fire.Terminal
                 Pixels[y * Width + x] = color.Packed;
                 return;
             }
-            Plot(x, y, ResolveBrush(Paint.FromRgba(color)));
+            Plot(x, y, ResolvePixel(Paint.FromRgba(color)));
         }
 
         /// <summary>Die Farbe des Pixels (im Palette-Modus über die Palette); außerhalb: durchsichtig.</summary>
@@ -248,20 +239,20 @@ namespace fire.Terminal
             return new PixelColor(Pixels[y * Width + x]);
         }
 
-        public void Clear(PixelColor color) => Clear(ResolveBrush(Paint.FromRgba(color)));
+        public void Clear(PixelColor color) => Clear(ResolvePixel(Paint.FromRgba(color)));
 
         public void FillRect(int x, int y, int w, int h, PixelColor color) =>
-            FillRect(x, y, w, h, ResolveBrush(Paint.FromRgba(color)));
+            FillRect(x, y, w, h, ResolvePixel(Paint.FromRgba(color)));
 
         /// <summary>Verschiebt den GESAMTEN Inhalt um `pixelRows` Pixel-
         /// zeilen nach OBEN (Grundlage für Terminal-Scrolling, siehe
-        /// TerminalCanvas.NewLine) - die untersten `pixelRows` Zeilen werden
+        /// Renderer.NewLine) - die untersten `pixelRows` Zeilen werden
         /// mit `fill` aufgefüllt. Was oben herausfällt, ist UNWIDERRUFLICH
         /// verloren (kein Scrollback-Puffer, wie in SPEC/CONSOLE.md
         /// gefordert) - diese Methode hält absichtlich keine Historie vor.</summary>
-        public void ScrollUp(int pixelRows, PixelColor fill) => ScrollUp(pixelRows, ResolveBrush(Paint.FromRgba(fill)));
+        public void ScrollUp(int pixelRows, PixelColor fill) => ScrollUp(pixelRows, ResolvePixel(Paint.FromRgba(fill)));
 
-        public void ScrollUp(int pixelRows, in Brush fill)
+        public void ScrollUp(int pixelRows, in Pixel fill)
         {
             if (pixelRows <= 0) return;
             if (pixelRows >= Height)

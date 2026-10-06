@@ -44,7 +44,7 @@ namespace fire.Terminal
         /// gezeichnete Pixel NICHT rückwirkend, da ein Framebuffer-Pixel
         /// selbst keinen Palette-Index speichert, sondern schon beim
         /// Zeichnen zu einer konkreten PixelColor aufgelöst wurde - siehe
-        /// TerminalCanvas.SetPixel(byte)-Überladungen).</summary>
+        /// Renderer.SetPixel(byte)-Überladungen).</summary>
         public void SetColor(byte index, int color)
         {
             _entries[index] = color;

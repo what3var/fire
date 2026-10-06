@@ -208,7 +208,7 @@ namespace fire.Editor
             {
                 case "Panel":
                 case "Stack":
-                    context.DrawRectangle(Brush(ColorOf(element, "background", PanelColor), dim), BoolOf(element, "showBorder", false) ? border : null, rect);
+                    context.DrawRectangle(BoolOf(element, "filled", true) ? Brush(ColorOf(element, "background", PanelColor), dim) : null, BoolOf(element, "showBorder", false) ? border : null, rect);
                     foreach (var child in box.Children) Draw(context, child, x, y);
                     break;
                 case "Label":

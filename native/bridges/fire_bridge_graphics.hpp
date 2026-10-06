@@ -1,10 +1,10 @@
-// fire native bridge "graphics": the natives behind `#import "graphics"` (docs/CONSOLE.md) - framebuffers, the palette, images (PNG, BMP, GIF), the console (text and
-// drawing) and the slicer. The fire side (Framebuffer, Console, Slicer, ToolPath - fire source) is the same as in the VM; this file is what its `__GRPH...` functions do.
+// fire native bridge "graphics": the natives behind `#import "graphics"` (docs/CONSOLE.md) - framebuffers, the palette, images (PNG, BMP, GIF), the renderer (text and
+// drawing with brushes and pens) and the slicer. The fire side (Framebuffer, Renderer, Brush, Pen, Slicer, ToolPath - fire source) is the same as in the VM; this file is what its `__GRPH...` functions do.
 // The drawing itself is in graphics/ (a port of src/fire.Terminal that needs no operating system). A window that shows a framebuffer is the `windows` bridge.
 //
 // Included by the generated file (after fire_rt.hpp) when the program imports "graphics". Image files are read through the file system of the platform
 // (FIRE_PLATFORM_FS_HEADER, restricted by FIRE_IO_POLICY like the IO bridge). Differences to the VM: an unknown or destroyed resource id ends the program
-// with an error (the VM throws a .NET exception); the console uses the 8x14 font.
+// with an error (the VM throws a .NET exception); the renderer uses the 8x14 font.
 #pragma once
 
 #include <cstring>
@@ -16,12 +16,16 @@
 namespace fire {
 namespace gfx {
 
-/// The framebuffers and consoles by id (ids start at 1 and are not used again, like the VM's IdManager).
+/// The framebuffers, renderers, brushes and pens by id (ids start at 1 and are not used again, like the VM's IdManager).
 struct Tables {
     std::vector<Framebuffer*> framebuffers{1, nullptr};
-    std::vector<Canvas*> consoles{1, nullptr};
+    std::vector<Renderer*> renderers{1, nullptr};
+    std::vector<Brush*> brushes{1, nullptr};
+    std::vector<Pen*> pens{1, nullptr};
     ~Tables() {
-        for (Canvas* c : consoles) delete c;
+        for (Renderer* c : renderers) delete c;
+        for (Brush* b : brushes) delete b;
+        for (Pen* p : pens) delete p;
         for (Framebuffer* f : framebuffers) if (f) fbRelease(f);
     }
 };
@@ -34,10 +38,22 @@ inline Framebuffer* fbOf(Value id) {
     if (i > 0 && (size_t)i < t.framebuffers.size() && t.framebuffers[(size_t)i]) return t.framebuffers[(size_t)i];
     fatal(("No resource with ID " + std::to_string(i) + " (unknown or already destroyed).").c_str());
 }
-inline Canvas* consoleOf(Value id) {
+inline Renderer* rendererOf(Value id) {
     int64_t i = (int32_t)id.i;
     Tables& t = tables();
-    if (i > 0 && (size_t)i < t.consoles.size() && t.consoles[(size_t)i]) return t.consoles[(size_t)i];
+    if (i > 0 && (size_t)i < t.renderers.size() && t.renderers[(size_t)i]) return t.renderers[(size_t)i];
+    fatal(("No resource with ID " + std::to_string(i) + " (unknown or already destroyed).").c_str());
+}
+inline Brush* brushOf(Value id) {
+    int64_t i = (int32_t)id.i;
+    Tables& t = tables();
+    if (i > 0 && (size_t)i < t.brushes.size() && t.brushes[(size_t)i]) return t.brushes[(size_t)i];
+    fatal(("No resource with ID " + std::to_string(i) + " (unknown or already destroyed).").c_str());
+}
+inline Pen* penOf(Value id) {
+    int64_t i = (int32_t)id.i;
+    Tables& t = tables();
+    if (i > 0 && (size_t)i < t.pens.size() && t.pens[(size_t)i]) return t.pens[(size_t)i];
     fatal(("No resource with ID " + std::to_string(i) + " (unknown or already destroyed).").c_str());
 }
 inline int addFramebuffer(Framebuffer* fb) { tables().framebuffers.push_back(fb); return (int)tables().framebuffers.size() - 1; }
@@ -289,49 +305,42 @@ inline Value SlcSlice(Value id, Value lineWidth, Value pixelSize, Value overlap,
     return ArrV(outer);
 }
 
-// ---- the console ----------------------------------------------------------------------------------------------------------------------------------------
-inline Value ConCreate(Value fbId) {
+// ---- the renderer (text and drawing), brushes and pens --------------------------------------------------------------------------------------------------------
+inline Value RndCreate(Value fbId) {
     int64_t i = (int32_t)fbId.i;
     Tables& t = tables();
     if (!(i > 0 && (size_t)i < t.framebuffers.size() && t.framebuffers[(size_t)i])) return Int(-1);
-    t.consoles.push_back(new Canvas(t.framebuffers[(size_t)i]));
-    return Int((int64_t)t.consoles.size() - 1);
+    t.renderers.push_back(new Renderer(t.framebuffers[(size_t)i]));
+    return Int((int64_t)t.renderers.size() - 1);
 }
-inline Value ConDestroy(Value id) {
+inline Value RndDestroy(Value id) {
     int64_t i = (int32_t)id.i;
     Tables& t = tables();
-    if (i > 0 && (size_t)i < t.consoles.size() && t.consoles[(size_t)i]) { delete t.consoles[(size_t)i]; t.consoles[(size_t)i] = nullptr; return Bool(true); }
+    if (i > 0 && (size_t)i < t.renderers.size() && t.renderers[(size_t)i]) { delete t.renderers[(size_t)i]; t.renderers[(size_t)i] = nullptr; return Bool(true); }
     return Bool(false);
 }
-inline Value ConPrint(Value id, Value text) { const Str* s = strOf(text); consoleOf(id)->print(s->data, s->length); return Undef(); }
-inline Value ConLocate(Value id, Value row, Value column) { consoleOf(id)->locate(I(row), I(column)); return Undef(); }
-inline Value ConClear(Value id) { consoleOf(id)->clear(); return Undef(); }
-inline Value ConSetColor(Value id, Value fg, Value bg) { consoleOf(id)->setColor(Paint::fromArgument(I(fg)), Paint::fromArgument(I(bg))); return Undef(); }
-inline Value ConSetPixel(Value id, Value x, Value y, Value color) { Canvas* c = consoleOf(id); c->target->plot(I(x), I(y), c->target->resolveBrush(Paint::fromArgument(I(color)))); return Undef(); }
-inline Value ConGetPixel(Value id, Value x, Value y) { return Int((int32_t)consoleOf(id)->target->getPixel(I(x), I(y))); }
-inline Value ConGetPixelIndex(Value id, Value x, Value y) { return Int(consoleOf(id)->target->getIndex(I(x), I(y))); }
-inline Value ConFillRect(Value id, Value x, Value y, Value w, Value h, Value color) { Canvas* c = consoleOf(id); c->target->fillRect(I(x), I(y), I(w), I(h), c->target->resolveBrush(Paint::fromArgument(I(color)))); return Undef(); }
-inline Value ConDrawRect(Value id, Value x, Value y, Value w, Value h, Value color) { Canvas* c = consoleOf(id); shapes::rect(*c->target, I(x), I(y), I(w), I(h), c->target->resolveBrush(Paint::fromArgument(I(color)))); return Undef(); }
-inline Value ConDrawLine(Value id, Value x0, Value y0, Value x1, Value y1, Value color) { Canvas* c = consoleOf(id); shapes::line(*c->target, I(x0), I(y0), I(x1), I(y1), c->target->resolveBrush(Paint::fromArgument(I(color)))); return Undef(); }
-inline Value ConDrawText(Value id, Value x, Value y, Value text, Value fg, Value bg) {
-    Canvas* c = consoleOf(id);
-    uint32_t raw = (uint32_t)I(bg);
-    bool hasBg = false;
-    Paint background;
-    if (raw != 0 && (raw & 0xFFFFFF00u) == 0) { background = Paint::fromIndex((uint8_t)raw); hasBg = true; }
-    else if ((raw >> 24) != 0) { background = Paint::fromRgba(raw); hasBg = true; }
-    const Str* s = strOf(text);
-    c->drawText(I(x), I(y), s->data, s->length, Paint::fromArgument(I(fg)), hasBg, background);
+inline Value RndPrint(Value id, Value text) { const Str* s = strOf(text); rendererOf(id)->print(s->data, s->length); return Undef(); }
+inline Value RndLocate(Value id, Value row, Value column) { rendererOf(id)->locate(I(row), I(column)); return Undef(); }
+inline Value RndClear(Value id) { rendererOf(id)->clear(); return Undef(); }
+inline Value RndClearTo(Value id, Value color) { rendererOf(id)->clearTo(Paint::fromArgument(I(color))); return Undef(); }
+inline Value RndSetColor(Value id, Value fg, Value bg) { rendererOf(id)->setColor(Paint::fromArgument(I(fg)), Paint::fromArgument(I(bg))); return Undef(); }
+inline Value RndSetPixel(Value id, Value x, Value y, Value color) {
+    Surface s = rendererOf(id)->surface();
+    s.put(I(x), I(y), s.resolve(Paint::fromArgument(I(color))));
     return Undef();
 }
-inline Value ConCellWidth(Value id) { return Int(consoleOf(id)->cellWidth); }
-inline Value ConCellHeight(Value id) { return Int(consoleOf(id)->cellHeight); }
-inline Value ConDrawCircle(Value id, Value cx, Value cy, Value r, Value color) { Canvas* c = consoleOf(id); shapes::circle(*c->target, I(cx), I(cy), I(r), c->target->resolveBrush(Paint::fromArgument(I(color)))); return Undef(); }
-inline Value ConFillCircle(Value id, Value cx, Value cy, Value r, Value color) { Canvas* c = consoleOf(id); shapes::fillCircle(*c->target, I(cx), I(cy), I(r), c->target->resolveBrush(Paint::fromArgument(I(color)))); return Undef(); }
-inline Value ConDrawEllipse(Value id, Value cx, Value cy, Value rx, Value ry, Value color) { Canvas* c = consoleOf(id); shapes::ellipse(*c->target, I(cx), I(cy), I(rx), I(ry), c->target->resolveBrush(Paint::fromArgument(I(color)))); return Undef(); }
-inline Value ConFillEllipse(Value id, Value cx, Value cy, Value rx, Value ry, Value color) { Canvas* c = consoleOf(id); shapes::fillEllipse(*c->target, I(cx), I(cy), I(rx), I(ry), c->target->resolveBrush(Paint::fromArgument(I(color)))); return Undef(); }
-inline Value ConDrawTriangle(Value id, Value x0, Value y0, Value x1, Value y1, Value x2, Value y2, Value color) { Canvas* c = consoleOf(id); shapes::triangle(*c->target, I(x0), I(y0), I(x1), I(y1), I(x2), I(y2), c->target->resolveBrush(Paint::fromArgument(I(color)))); return Undef(); }
-inline Value ConFillTriangle(Value id, Value x0, Value y0, Value x1, Value y1, Value x2, Value y2, Value color) { Canvas* c = consoleOf(id); shapes::fillTriangle(*c->target, I(x0), I(y0), I(x1), I(y1), I(x2), I(y2), c->target->resolveBrush(Paint::fromArgument(I(color)))); return Undef(); }
+inline Value RndGetPixel(Value id, Value x, Value y) { return Int((int32_t)rendererOf(id)->target->getPixel(I(x), I(y))); }
+inline Value RndGetPixelIndex(Value id, Value x, Value y) { return Int(rendererOf(id)->target->getIndex(I(x), I(y))); }
+inline Value RndCellWidth(Value id) { return Int(rendererOf(id)->cellWidth); }
+inline Value RndCellHeight(Value id) { return Int(rendererOf(id)->cellHeight); }
+inline Value RndGetAlphaBlending(Value id) { return Bool(rendererOf(id)->alphaBlending); }
+inline Value RndSetAlphaBlending(Value id, Value on) { rendererOf(id)->alphaBlending = on.i != 0; return Undef(); }
+inline Value RndDrawText(Value id, Value x, Value y, Value text, Value fg, Value bg) {
+    Renderer* r = rendererOf(id);
+    const Str* s = strOf(text);
+    r->drawText(I(x), I(y), s->data, s->length, *brushOf(fg), I(bg) == 0 ? nullptr : brushOf(bg));
+    return Undef();
+}
 
 /// The points of a polygon from a script array `[x0, y0, x1, y1, ...]`: floats are cut off, an odd last element does not count.
 inline std::vector<int> readPoints(Value array) {
@@ -345,29 +354,97 @@ inline std::vector<int> readPoints(Value array) {
     }
     return points;
 }
-inline Value ConDrawPolygon(Value id, Value points, Value color, Value closed) {
+
+// fills (brush)
+inline Value RndFillRect(Value id, Value x, Value y, Value w, Value h, Value brush) { Renderer* r = rendererOf(id); Surface s = r->surface(); brushOf(brush)->fillRect(s, I(x), I(y), I(w), I(h)); return Undef(); }
+inline Value RndFill(Value id, Value brush) { Renderer* r = rendererOf(id); Surface s = r->surface(); brushOf(brush)->fillRect(s, 0, 0, r->target->width, r->target->height); return Undef(); }
+inline Value RndFillCircle(Value id, Value cx, Value cy, Value rad, Value brush) { Surface s = rendererOf(id)->surface(); brushOf(brush)->fillCircle(s, I(cx), I(cy), I(rad)); return Undef(); }
+inline Value RndFillEllipse(Value id, Value cx, Value cy, Value rx, Value ry, Value brush) { Surface s = rendererOf(id)->surface(); brushOf(brush)->fillEllipse(s, I(cx), I(cy), I(rx), I(ry)); return Undef(); }
+inline Value RndFillTriangle(Value id, Value x0, Value y0, Value x1, Value y1, Value x2, Value y2, Value brush) {
+    Surface s = rendererOf(id)->surface();
+    brushOf(brush)->fillTriangle(s, I(x0), I(y0), I(x1), I(y1), I(x2), I(y2));
+    return Undef();
+}
+inline Value RndFillPolygon(Value id, Value points, Value brush) {
     if (!leafAlive(points)) return destroyedError(points);
-    Canvas* c = consoleOf(id);
-    shapes::polygon(*c->target, readPoints(points), c->target->resolveBrush(Paint::fromArgument(I(color))), closed.i != 0);
+    Surface s = rendererOf(id)->surface();
+    brushOf(brush)->fillPolygon(s, readPoints(points));
     return Undef();
 }
-inline Value ConFillPolygon(Value id, Value points, Value color) {
+inline Value RndFloodFill(Value id, Value x, Value y, Value brush) { Surface s = rendererOf(id)->surface(); brushOf(brush)->floodFill(s, I(x), I(y)); return Undef(); }
+inline Value RndFloodFillBorder(Value id, Value x, Value y, Value brush, Value border) {
+    Surface s = rendererOf(id)->surface();
+    brushOf(brush)->floodFillBorder(s, I(x), I(y), Paint::fromArgument(I(border)));
+    return Undef();
+}
+
+// draws (pen)
+inline Value RndDrawPoint(Value id, Value x, Value y, Value pen) { Surface s = rendererOf(id)->surface(); penOf(pen)->drawPoint(s, I(x), I(y)); return Undef(); }
+inline Value RndDrawLine(Value id, Value x0, Value y0, Value x1, Value y1, Value pen) { Surface s = rendererOf(id)->surface(); penOf(pen)->drawLine(s, I(x0), I(y0), I(x1), I(y1)); return Undef(); }
+inline Value RndDrawPath(Value id, Value points, Value pen, Value closed) {
     if (!leafAlive(points)) return destroyedError(points);
-    Canvas* c = consoleOf(id);
-    shapes::fillPolygon(*c->target, readPoints(points), c->target->resolveBrush(Paint::fromArgument(I(color))));
+    Surface s = rendererOf(id)->surface();
+    penOf(pen)->drawPath(s, readPoints(points), closed.i != 0);
     return Undef();
 }
-inline Value ConFloodFill(Value id, Value x, Value y, Value color) { Canvas* c = consoleOf(id); shapes::floodFill(*c->target, I(x), I(y), c->target->resolveBrush(Paint::fromArgument(I(color)))); return Undef(); }
-inline Value ConFloodFillBorder(Value id, Value x, Value y, Value color, Value border) {
-    Canvas* c = consoleOf(id);
-    shapes::floodFillBorder(*c->target, I(x), I(y), c->target->resolveBrush(Paint::fromArgument(I(color))), c->target->resolveBrush(Paint::fromArgument(I(border))));
+inline Value RndDrawRect(Value id, Value x, Value y, Value w, Value h, Value pen) { Surface s = rendererOf(id)->surface(); penOf(pen)->drawRect(s, I(x), I(y), I(w), I(h)); return Undef(); }
+inline Value RndDrawCircle(Value id, Value cx, Value cy, Value rad, Value pen) { Surface s = rendererOf(id)->surface(); penOf(pen)->drawCircle(s, I(cx), I(cy), I(rad)); return Undef(); }
+inline Value RndDrawEllipse(Value id, Value cx, Value cy, Value rx, Value ry, Value pen) { Surface s = rendererOf(id)->surface(); penOf(pen)->drawEllipse(s, I(cx), I(cy), I(rx), I(ry)); return Undef(); }
+inline Value RndDrawTriangle(Value id, Value x0, Value y0, Value x1, Value y1, Value x2, Value y2, Value pen) {
+    Surface s = rendererOf(id)->surface();
+    penOf(pen)->drawTriangle(s, I(x0), I(y0), I(x1), I(y1), I(x2), I(y2));
     return Undef();
 }
-inline Value ConBlit(Value id, Value src, Value sx, Value sy, Value sw, Value sh, Value dx, Value dy, Value dw, Value dh, Value mode, Value key) {
-    Canvas* c = consoleOf(id);
-    blit(*c->target, *fbOf(src), I(sx), I(sy), I(sw), I(sh), I(dx), I(dy), I(dw), I(dh), I(mode), I(key));
+inline Value RndDrawPolygon(Value id, Value points, Value pen, Value closed) {
+    if (!leafAlive(points)) return destroyedError(points);
+    Surface s = rendererOf(id)->surface();
+    penOf(pen)->drawPolygon(s, readPoints(points), closed.i != 0);
     return Undef();
 }
+inline Value RndBlit(Value id, Value src, Value sx, Value sy, Value sw, Value sh, Value dx, Value dy, Value dw, Value dh, Value mode, Value key) {
+    Renderer* r = rendererOf(id);
+    blit(*r->target, *fbOf(src), I(sx), I(sy), I(sw), I(sh), I(dx), I(dy), I(dw), I(dh), I(mode), I(key), r->alphaBlending);
+    return Undef();
+}
+
+/// The colour as a script gives it: a palette index 0-255 or the direct value.
+inline Value colorNumber(const Paint& p) { return Int(p.isIndex() ? (int64_t)p.index : (int64_t)(int32_t)p.rgba); }
+
+// brushes
+inline Value BshCreateSolid(Value color) {
+    Tables& t = tables();
+    Brush* b = new Brush();
+    b->color = Paint::fromArgument(I(color));
+    t.brushes.push_back(b);
+    return Int((int64_t)t.brushes.size() - 1);
+}
+inline Value BshDestroy(Value id) {
+    int64_t i = (int32_t)id.i;
+    Tables& t = tables();
+    if (i > 0 && (size_t)i < t.brushes.size() && t.brushes[(size_t)i]) { delete t.brushes[(size_t)i]; t.brushes[(size_t)i] = nullptr; return Bool(true); }
+    return Bool(false);
+}
+inline Value BshGetColor(Value id) { return colorNumber(brushOf(id)->color); }
+inline Value BshSetColor(Value id, Value color) { brushOf(id)->color = Paint::fromArgument(I(color)); return Undef(); }
+
+// pens
+inline Value PenCreate(Value color, Value width, Value shape) {
+    Tables& t = tables();
+    t.pens.push_back(new Pen(Paint::fromArgument(I(color)), I(width), I(shape)));
+    return Int((int64_t)t.pens.size() - 1);
+}
+inline Value PenDestroy(Value id) {
+    int64_t i = (int32_t)id.i;
+    Tables& t = tables();
+    if (i > 0 && (size_t)i < t.pens.size() && t.pens[(size_t)i]) { delete t.pens[(size_t)i]; t.pens[(size_t)i] = nullptr; return Bool(true); }
+    return Bool(false);
+}
+inline Value PenGetColor(Value id) { return colorNumber(penOf(id)->color); }
+inline Value PenSetColor(Value id, Value color) { penOf(id)->color = Paint::fromArgument(I(color)); return Undef(); }
+inline Value PenGetWidth(Value id) { return Int(penOf(id)->width); }
+inline Value PenSetWidth(Value id, Value width) { penOf(id)->setWidth(I(width)); return Undef(); }
+inline Value PenGetShape(Value id) { return Int(penOf(id)->shape); }
+inline Value PenSetShape(Value id, Value shape) { penOf(id)->setShape(I(shape)); return Undef(); }
 
 }  // namespace gfx
 }  // namespace fire

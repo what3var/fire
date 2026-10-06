@@ -8,7 +8,7 @@ namespace fire.Terminal
     /// (siehe IdManager) - der Einstiegspunkt für ein rein funktionales,
     /// ID-basiertes API (z.B. für eine spätere Skriptsprachen-Anbindung):
     /// jede Methode nimmt/liefert nur Ints/Bytes, nie eine Objektreferenz.
-    /// Für C#-seitige Weiterverwendung (ConsoleManager, WindowManager) gibt
+    /// Für C#-seitige Weiterverwendung (RendererManager, WindowManager) gibt
     /// es zusätzlich <see cref="GetFramebuffer"/>, das die echte Instanz
     /// liefert.
     /// </summary>
@@ -66,7 +66,7 @@ namespace fire.Terminal
 
         public bool DestroyFramebuffer(int id) => _framebuffers.Destroy(id);
 
-        /// <summary>Für C#-seitige Weiterverwendung (z.B. ConsoleManager/
+        /// <summary>Für C#-seitige Weiterverwendung (z.B. RendererManager/
         /// WindowManager, die eine echte Framebuffer-Instanz brauchen) -
         /// kein Teil des rein-ID-basierten Oberflächen-APIs.</summary>
         public Framebuffer GetFramebuffer(int id) => _framebuffers.Get(id);

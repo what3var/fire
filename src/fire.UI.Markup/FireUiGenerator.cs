@@ -174,7 +174,7 @@ namespace fire.UI.Markup
                 var property = info.Def.Property(attribute.Name)!;
                 string? value = attribute.Value switch
                 {
-                    ExpressionValue expression => expression.Code,
+                    ExpressionValue expression => property.Kind == PropertyKind.Color && !expression.IsRaw ? $"new SolidBrush({expression.Code})" : expression.Code,
                     LiteralValue literal => Convert(property, literal.Text, attribute.Line, errors),
                     _ => null,
                 };
@@ -213,8 +213,8 @@ namespace fire.UI.Markup
                     errors.Add(new MarkupDiagnostic(line, $"'{property.Name}' needs Horizontal or Vertical, not '{text}'."));
                     return null;
                 case PropertyKind.Color:
-                    if (TryParseColor(trimmed, out int r, out int g, out int b)) return $"UI.Color.Rgb({r}, {g}, {b})";
-                    if (int.TryParse(trimmed, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int raw)) return raw.ToString(CultureInfo.InvariantCulture);
+                    if (TryParseColor(trimmed, out int r, out int g, out int b)) return $"new SolidBrush(UI.Color.Rgb({r}, {g}, {b}))";
+                    if (int.TryParse(trimmed, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int raw)) return $"new SolidBrush({raw.ToString(CultureInfo.InvariantCulture)})";
                     errors.Add(new MarkupDiagnostic(line, $"'{property.Name}' needs a colour like #RRGGBB (or a whole number or {{Enum Type.Member}}), not '{text}'."));
                     return null;
             }

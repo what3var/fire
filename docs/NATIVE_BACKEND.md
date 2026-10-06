@@ -342,8 +342,7 @@ Blockieren). Mitgeliefert: `std/fire_dev_posix.hpp` (termios; Linux `/dev/ttyS*|
 UART-Treibers. Die Gerätliste entsteht beim ersten Zugriff auf eine Geräte-Funktion und bei jedem `Refresh` (in einem VM-Programm ohne Editor ist sie vor dem ersten `Refresh` leer). Die Warte-Funktionen
 benutzen `#timeout` (`SetTimeout` setzt `g_defaultTimeoutTicks`), warten mit freigegebenem GIL und enden bei `terminate`.
 
-**`graphics`** (`fire_bridge_graphics.hpp`, Zeichencode in `bridges/graphics/`): `Framebuffer` (RGBA und Palette, Palette, Transparenz), `Console` (Text mit der 8x14-Schrift, Linien, Rechtecke,
-Kreise, Ellipsen, Dreiecke, Polygone, Füllen, `Blit` zwischen den Farbmodi), Bilder (PNG, BMP, GIF aus Bytes und aus Dateien) und der `Slicer`. Das ist ein Port von `src/fire.Terminal` ohne
+**`graphics`** (`fire_bridge_graphics.hpp`, Zeichencode in `bridges/graphics/`): `Framebuffer` (RGBA und Palette, Palette, Transparenz), `Renderer` (Text mit der 8x14-Schrift, Alpha-Blending schaltbar), `Brush` (Füllungen: Rechtecke, Kreise, Ellipsen, Dreiecke, Polygone, Flood-Fill) und `Pen` (Punkt, Linie, Pfad, Umrisse; vorgerenderte Spitze), `Blit` zwischen den Farbmodi, Bilder (PNG, BMP, GIF aus Bytes und aus Dateien) und der `Slicer`. Das ist ein Port von `src/fire.Terminal` ohne
 Betriebssystem und ohne Ausnahmen - dieselben Pixel kommen heraus (die Tests vergleichen Prüfsummen mit der VM). Dateien liest das Plattformpaket (`FIRE_PLATFORM_FS_HEADER`, begrenzt durch
 `FIRE_IO_POLICY` wie bei IO). Abweichungen: eine unbekannte oder zerstörte Ressourcen-ID beendet das Programm mit einer Meldung (die VM wirft eine .NET-Ausnahme); die verschachtelten Arrays,
 die `Slicer.Slice` liefert, gehören dem globalen Scope (die VM liefert freie Arrays, die ein `ToolPath` behält).

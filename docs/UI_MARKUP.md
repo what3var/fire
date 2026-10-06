@@ -73,20 +73,20 @@ upper case: `Text` = `text`).
 
 | element | properties | events |
 |---|---|---|
-| `Panel` (container) | `showBorder`, `background` | |
-| `Stack` (container) | `orientation` (`Horizontal`/`Vertical`), `horizontal`, `spacing`, `padding`, `showBorder`, `background` | |
-| `Label` | `text`, `color` | |
+| `Panel` (container) | `showBorder`, `background`, `filled` | |
+| `Stack` (container) | `orientation` (`Horizontal`/`Vertical`), `horizontal`, `spacing`, `padding`, `showBorder`, `background`, `filled` | |
+| `Label` | `text`, `color` (the text brush) | |
 | `Button` | `text` | `onClick` |
 | `CheckBox` | `text`, `isChecked` | `onChange` |
 | `TextBox` | `text`, `maxLength` | `onChange`, `onEnter` |
 
 `<Button>OK</Button>` is `<Button text="OK"/>`. A `Stack` lays out its children itself (their `x`/`y` are ignored), in a `Panel` they are positioned.
 
-**Values** are read by the type of the property: a whole number (`12`, `-3`, `0x1F`), `true`/`false`, a text, a colour (`#RRGGBB`, `#RGB` or the raw value, see `UI.Color`),
+**Values** are read by the type of the property: a whole number (`12`, `-3`, `0x1F`), `true`/`false`, a text, a colour (`#RRGGBB`, `#RGB` or the raw value, see `UI.Color`; colour properties are **brushes** - the generator wraps the value in `new SolidBrush(...)`),
 `Horizontal`/`Vertical`. A value that does not fit is an error. In braces a value can be
 
 - `{Enum Colors.Red}` (or `{Static Colors.Red}`): an enum member or constant of your script, used as it is - for every number or colour property;
-- `{Expr some.expression()}`: any fire expression;
+- `{Expr some.expression()}`: any fire expression (for a colour property it is a ready-made `Brush`, e.g. `{Expr new SolidBrush(0x80FF0000)}`);
 - `{Binding ...}`: a data binding (below).
 
 A text that starts with a brace is written `{}{like this}`.

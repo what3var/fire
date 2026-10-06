@@ -123,9 +123,9 @@ namespace fire.Runtime
         {
             var font = new fire.Terminal.IntegratedGlyphFont();
             var fbManager = new fire.Terminal.FramebufferManager();
-            var consoleManager = new fire.Terminal.ConsoleManager(fbManager, font);
+            var rendererManager = new fire.Terminal.RendererManager(fbManager, font);
 
-            fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, consoleManager);
+            fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, rendererManager);
             return fbManager;
         }
 
