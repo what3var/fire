@@ -27,6 +27,24 @@ namespace fire.Compiler
     /// aus der Wurzel-Datei oder einer eingefügten Datei stammt.</summary>
     public sealed record ProcessedSource(string Source, IReadOnlyList<string> Usings);
 
+    /// <summary>The files embedded in a program while it is preprocessed: the same file is stored once (the id of a resource is its index).</summary>
+    public sealed class ResourceTable
+    {
+        private readonly Dictionary<string, int> _byFullPath = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
+        public List<fire.Runtime.ResourceEntry> Entries { get; } = new();
+
+        /// <summary>Reads the file and returns its id; `name` is the path as it was written in the source.</summary>
+        public int Add(string name, string fullPath)
+        {
+            if (_byFullPath.TryGetValue(fullPath, out int id)) return id;
+            id = Entries.Count;
+            Entries.Add(new fire.Runtime.ResourceEntry { Name = name, Data = File.ReadAllBytes(fullPath) });
+            _byFullPath[fullPath] = id;
+            return id;
+        }
+    }
+
     public sealed class DirectiveContext
     {
         /// <summary>Verzeichnis, relativ zu dem Pfad-Argumente DIESER
@@ -134,6 +152,9 @@ namespace fire.Compiler
         /// <summary>The symbols of `#if` (see <see cref="ConditionalSymbols"/>), case-insensitive. Shared by everything processed with this registry, so a
         /// `#define` of one file is seen by the next. Empty at first; the linker and the runtime session fill it from the target.</summary>
         public HashSet<string> Symbols { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The files of `new Resource("path")` (docs/RESOURCES.md): where the preprocessor puts them. Without a table (live diagnostics) the text stays as it is.</summary>
+        public ResourceTable? Resources { get; set; }
 
         public DirectiveRegistry()
         {
@@ -309,7 +330,8 @@ namespace fire.Compiler
                 var match = DirectiveLine.Match(line);
                 if (!match.Success)
                 {
-                    sb.Append(conditional.Active ? line : "").Append('\n'); // a branch that is not taken: an empty line, the numbering stays
+                    // a branch that is not taken: an empty line, the numbering stays
+                    sb.Append(conditional.Active ? ResolveResources(line, basePath, lineNo + 1) : "").Append('\n');
                     continue;
                 }
 
@@ -373,6 +395,42 @@ namespace fire.Compiler
 
             conditional.EnsureClosed();
             return sb.ToString();
+        }
+
+        private static readonly Regex ResourceCall = new(@"\bnew\s+Resource\s*\(\s*""((?:[^""\\]|\\.)*)""\s*\)", RegexOptions.Compiled);
+
+        /// <summary>`new Resource("path")` in a line of code: the file (relative to the source file that mentions it) is embedded in the program and the path becomes the number of the
+        /// resource - `new Resource(3)`. What stands in a comment (`//`) or a string stays as it is.</summary>
+        private string ResolveResources(string line, string basePath, int lineNo)
+        {
+            if (_registry.Resources is not { } table || line.IndexOf("Resource", StringComparison.Ordinal) < 0) return line;
+            return ResourceCall.Replace(line, m =>
+            {
+                if (!IsCode(line, m.Index)) return m.Value;
+                string path = Regex.Unescape(m.Groups[1].Value);
+                string full = Path.GetFullPath(path, basePath);
+                if (!File.Exists(full))
+                    throw new PreprocessorException($"Resource file not found: '{path}' ('{full}', line {lineNo}).");
+                return $"new Resource({table.Add(path, full)})";
+            });
+        }
+
+        /// <summary>Is the position in the line code - not in a string and not behind a `//`?</summary>
+        private static bool IsCode(string line, int index)
+        {
+            bool inString = false;
+            for (int i = 0; i < index; i++)
+            {
+                char c = line[i];
+                if (inString)
+                {
+                    if (c == '\\') i++;
+                    else if (c == '"') inString = false;
+                }
+                else if (c == '"') inString = true;
+                else if (c == '/' && i + 1 < line.Length && line[i + 1] == '/') return false;
+            }
+            return !inString;
         }
 
         /// <summary>Liest die Argumentliste EINER Direktiven-Zeile - über

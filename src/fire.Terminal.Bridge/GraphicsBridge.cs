@@ -435,6 +435,11 @@ namespace fire.Terminal.Bridge
                     return fb
                 }
 
+                // Ein Bild aus einer eingebetteten Ressource (`Framebuffer.FromResource(new Resource("images/logo.png"))`): die Datei steckt im Programm.
+                static Framebuffer FromResource(resource, int mode = -1) {
+                    return Framebuffer.FromImage(resource.Bytes(), mode)
+                }
+
                 static Framebuffer FromFile(string path, int mode = -1) {
                     var fb = new Framebuffer(0, 0, -2)
                     fb.id = __GRPHFbLoadFile(path, mode)

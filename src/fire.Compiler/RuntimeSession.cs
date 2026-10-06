@@ -139,7 +139,7 @@ namespace fire.Compiler
                 else
                     natives.Register("print", args => VM.StringifyForPrint(args) is { } shown ? debugWriter(shown) : Value.MakeUndefined());
             }
-            natives.RegisterBaseTypeNatives();
+            natives.RegisterBaseTypeNatives(linkedProgram.Program.Resources);
 
             // WICHTIG: native Funktionen werden über ihren INDEX angesprungen - die Reihenfolge der Registrierung muss
             // exakt der beim Übersetzen entsprechen (siehe ImportedPreludes.Insert): graphics, windows, reflection, time, devices, io.

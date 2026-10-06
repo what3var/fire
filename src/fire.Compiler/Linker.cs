@@ -177,6 +177,8 @@ namespace fire.Compiler
             inputSources.AddRange(sources);
 
             var registry = DirectiveRegistry.CreateDefault(); // komplett leer, NICHT CreateDefault()
+            var resources = new ResourceTable();
+            registry.Resources = resources;
             foreach (var symbol in ConditionalSymbols.For(target, Engine, floatWidthOverride, Defines)) registry.Symbols.Add(symbol);
             registry.Register("import", 1, (ctx, args, line) =>
             {
@@ -306,6 +308,7 @@ namespace fire.Compiler
             var program = Parser.ParseMultiple(processedSources);
             var resolveResult = Resolver.Resolve(program, natives.Names);
             var compiled = Compiler.Compile(program, resolveResult, natives);
+            compiled.Resources = resources.Entries;   // the files of `new Resource("path")` travel with the program (a packed file, a native build)
 
             if (target != null)
                 foreach (var import in nativeImports)

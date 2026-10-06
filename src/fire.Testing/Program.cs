@@ -572,7 +572,7 @@ Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: Destruktor-Ausführung bei Kaskadenlöschung (SPEC 2.3) ===");
 
 string destructorSample = """
-class Resource {
+class Cleanup {
     string label
 
     construct(string label) {
@@ -585,7 +585,7 @@ class Resource {
 }
 
 {
-    var r = new Resource("cleanup-ran")
+    var r = new Cleanup("cleanup-ran")
     print(1)
 }
 print(2)
@@ -15757,6 +15757,47 @@ else
             print((DateTime.UtcNow() - start) >= TimeSpan.FromMilliseconds(100))
             """),
     }).ToArray();
+
+    // Resources: `new Resource("path")` is read when the program is compiled and travels with it (VM, packed file, native binary)
+    {
+        string resDir = Path.Combine(Path.GetTempPath(), "fire-resource-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(resDir);
+        File.WriteAllText(Path.Combine(resDir, "hello.txt"), "Gr\u00fc\u00dfe, Welt!\n", new System.Text.UTF8Encoding(false));
+        File.WriteAllBytes(Path.Combine(resDir, "data.bin"), new byte[] { 0, 1, 2, 250, 255 });
+        string rd = resDir.Replace('\\', '/');
+        string resScript = $$"""
+            var text = new Resource("{{rd}}/hello.txt")
+            print(text.Name().EndsWith("hello.txt"))
+            print(text.Length())
+            print(text.Text().Length)
+            print(text.Text().Substring(0, 5))
+            var again = new Resource("{{rd}}/hello.txt")
+            print(again.id == text.id)
+            var bin = new Resource("{{rd}}/data.bin")
+            var bytes = bin.Bytes()
+            print(bytes.length)
+            print(bytes[3])
+            // new Resource("{{rd}}/missing.bin")   <- in a comment: not embedded
+            print("new Resource(\"{{rd}}/missing.bin\")".Length > 0)
+            """;
+        string[] resExpected = { "True", "15", "13", "Gr\u00fc\u00dfe", "True", "5", "250", "True" };
+        string resOutput = vmOutput(resScript);
+        CheckNat("Ressourcen: new Resource(\"pfad\") in der VM (Text UTF-8, Bytes, dieselbe Datei einmal, Kommentar und String bleiben)", resOutput == string.Concat(resExpected.Select(l => l + "\n")), "  erhalten:\n" + resOutput);
+        // the program carries the bytes: a packed file (serialized program) and a program without the file at run time
+        {
+            var linked = new Linker().CompileAndLink(new[] { resScript });
+            var back = MemoryPack.MemoryPackSerializer.Deserialize<LinkedProgram>(MemoryPack.MemoryPackSerializer.Serialize(linked))!;
+            CheckNat("Ressourcen: das serialisierte Programm traegt die Dateien (2 Ressourcen, Bytes gleich)",
+                back.Program.Resources.Count == 2 && back.Program.Resources[1].Data.SequenceEqual(new byte[] { 0, 1, 2, 250, 255 }) && back.Program.Resources[0].Name.EndsWith("hello.txt"), "");
+        }
+        // a missing file is a compile error with the line
+        {
+            string message = "";
+            try { new Linker().CompileAndLink(new[] { "var a = 1\nvar r = new Resource(\"" + rd + "/gibt-es-nicht.png\")\n" }); } catch (Exception ex) { message = ex.Message; }
+            CheckNat("Ressourcen: eine fehlende Datei ist ein Uebersetzungsfehler mit Zeile", message.Contains("not found") && message.Contains("line 2"), message);
+        }
+        natCases = natCases.Append(("Ressourcen: new Resource(\"pfad\") ist eingebettet", resScript)).ToArray();
+    }
 
 
     string? cxx = FindCxx();

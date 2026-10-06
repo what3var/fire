@@ -480,6 +480,28 @@ namespace fire.Native
             }
             sb.AppendLine("};");
             sb.AppendLine("static const bool kUnitsReady = (unitsInit(kUnitInit, " + _units.Count + "), true);");
+            // the files of `new Resource("path")` are part of the binary (docs/RESOURCES.md)
+            var resources = _program.Program.Resources;
+            if (resources.Count > 0)
+            {
+                for (int r = 0; r < resources.Count; r++)
+                {
+                    var data = resources[r].Data;
+                    sb.Append($"static const uint8_t kRes{r}[] = {{");
+                    if (data.Length == 0) sb.Append('0');
+                    for (int b = 0; b < data.Length; b++)
+                    {
+                        if (b % 32 == 0) sb.Append("\n    ");
+                        sb.Append(data[b]).Append(',');
+                    }
+                    sb.AppendLine("};");
+                }
+                sb.AppendLine("static const ResEntry kResources[] = {");
+                for (int r = 0; r < resources.Count; r++)
+                    sb.AppendLine($"    {{{CString(resources[r].Name)}, kRes{r}, {resources[r].Data.Length}u}},");
+                sb.AppendLine("};");
+                sb.AppendLine($"static const bool kResourcesReady = (g_resources = kResources, g_resourceCount = {resources.Count}, true);");
+            }
             if (_externDecls.Count > 0)
             {
                 sb.AppendLine("#ifdef __APPLE__");
@@ -2034,6 +2056,13 @@ namespace fire.Native
                         int first = d - argc;
                         string a0 = argc > 2 ? S(first + 2) : "Undef()", a1 = argc > 3 ? S(first + 3) : "Undef()";
                         E($"{S(first)} = stringCall({S(first)}.i, {S(first + 1)}, {argc - 2}, {a0}, {a1}, &{OwnerList()});");
+                        Check();
+                        d = first + 1; SetR(first, true); return Next();
+                    }
+                    if (native == ResourceMethods.NativeName && argc == 2)
+                    {
+                        int first = d - 2;
+                        E($"{S(first)} = resourceCall({S(first)}.i, {S(first + 1)}, &{OwnerList()});");
                         Check();
                         d = first + 1; SetR(first, true); return Next();
                     }

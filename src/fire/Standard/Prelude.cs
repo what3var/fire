@@ -26,7 +26,7 @@ namespace fire.Standard
         /// `string` und `char` (`class extends string { ... }`, SPEC 5.5.1/8.12), die aus den
         /// Methoden-Tabellen in <see cref="StringMethods"/>/<see cref="CharMethods"/> erzeugt werden,
         /// damit die Methoden-IDs im fire-Text nicht von Hand gepflegt werden müssen.</summary>
-        public static readonly string Source = CoreSource + StringMethods.PreludeSource + CharMethods.PreludeSource;
+        public static readonly string Source = CoreSource + StringMethods.PreludeSource + CharMethods.PreludeSource + ResourceMethods.PreludeSource;
 
         private const string CoreSource = """
             class IndexOutOfBoundsException : Exception {
