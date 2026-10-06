@@ -92,4 +92,6 @@
     <Resource Include="Logo-64.png" />
   </ItemGroup>
 
+  <Import Project="..\BridgePackages.targets" />
+
 </Project>

@@ -20,4 +20,6 @@
     <ProjectReference Include="..\fire.Package.Manager\fire.Package.Manager.csproj" />
   </ItemGroup>
 
+  <Import Project="..\BridgePackages.targets" />
+
 </Project>

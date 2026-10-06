@@ -65,6 +65,19 @@ namespace fire.Native
             return result;
         }
 
+        /// <summary>The resource names (`bridges/...`, `platform/...`) that start with <paramref name="prefix"/>.</summary>
+        public static IReadOnlyList<string> ResourceNames(string prefix) =>
+            Asm.GetManifestResourceNames().Where(n => n.StartsWith(prefix, StringComparison.Ordinal)).OrderBy(n => n, StringComparer.Ordinal).ToList();
+
+        /// <summary>The text of an embedded runtime file (e.g. `bridges/fire_bridge_time.hpp`), or null.</summary>
+        public static string? ReadText(string resourceName)
+        {
+            using var stream = Asm.GetManifestResourceStream(resourceName);
+            if (stream == null) return null;
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
+        }
+
         private static void WriteResource(string name, string directory)
         {
             string target = Path.Combine(directory, name.Replace('/', Path.DirectorySeparatorChar));

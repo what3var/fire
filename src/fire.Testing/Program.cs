@@ -16026,6 +16026,29 @@ else
             catch (fire.Native.NativeNotSupportedException ex) { refused = ex.Message.Contains("pkgwin") && ex.Message.Contains("windows"); }
             CheckNat("Paket: ein natives Paket nur fuer andere Plattformen wird fuers Ziel abgelehnt", refused);
 
+            // the standard bridges as packages: built into a folder, installed when missing, not again when nothing changed; the compiler still resolves the names to its built-in bridges
+            {
+                string bridgeSource = Path.Combine(pkgDir, "BridgeSource");
+                var built = fire.Compiler.StandardBridgePackages.Build(bridgeSource);
+                var ioPackage = fire.Package.Manager.Fpk.ReadManifest(built.First(f => Path.GetFileName(f).StartsWith("fire-io-")));
+                var bridgeStore = new fire.Package.Manager.PackageStore(Path.Combine(pkgDir, "BridgePackages"));
+                var savedDefault = fire.Package.Manager.PackageStore.Default;
+                fire.Package.Manager.PackageStore.Default = bridgeStore;
+                try
+                {
+                    var first = fire.Package.Manager.StandardPackages.EnsureInstalled(null, bridgeSource);
+                    var second = fire.Package.Manager.StandardPackages.EnsureInstalled(null, bridgeSource);
+                    CheckNat("Bruecken-Pakete: je Standard-Bridge ein Paket mit Prelude und C++-Quellen, als standard markiert",
+                        built.Count == fire.Package.Manager.StandardPackages.Bridges.Count && ioPackage.Imports[0].Standard && ioPackage.Imports[0].Name == "io" && ioPackage.Imports[0].Prelude != null && ioPackage.Imports[0].Native?.Sources.Count > 0
+                        && fire.Package.Manager.Fpk.ReadManifest(built.First(f => Path.GetFileName(f).StartsWith("fire-linq-"))).Dependencies.Contains("fire-reflection"));
+                    CheckNat("Bruecken-Pakete: beim Start werden fehlende installiert (mit Abhaengigkeiten), danach nichts mehr",
+                        first.Count > 0 && bridgeStore.Installed().Count == fire.Package.Manager.StandardPackages.Bridges.Count && second.Count == 0 && bridgeStore.Find("fire-time") != null && bridgeStore.Find("fire-reflection") != null);
+                    string builtIn = vmOutput("#import \"time\"\nprint(TimeSpan.FromSeconds(90).TotalSeconds)");
+                    CheckNat("Bruecken-Pakete: #import \"time\" nimmt weiter die eingebaute Bridge (kein doppelter Import)", builtIn == "90\n", builtIn);
+                }
+                finally { fire.Package.Manager.PackageStore.Default = savedDefault; }
+            }
+
             // the toolchain provider: without a compiler the host is asked (cancel / change / install); the answer decides
             {
                 string? savedPath = Environment.GetEnvironmentVariable("PATH");

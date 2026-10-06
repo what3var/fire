@@ -76,7 +76,7 @@ namespace fire.Package.Manager
             {
                 string where = $"Import '{import.Name}': ";
                 if (!ImportNamePattern.IsMatch(import.Name ?? "")) { problems.Add($"Import name '{import.Name}' is not a name (letters, digits and '_', starting with a letter)."); continue; }
-                if (ReservedImportNames.Contains(import.Name!)) problems.Add(where + "this name belongs to the compiler.");
+                if (!import.Standard && ReservedImportNames.Contains(import.Name!)) problems.Add(where + "this name belongs to the compiler.");
                 if (!seen.Add(import.Name)) problems.Add(where + "the name is used twice.");
                 if (string.IsNullOrWhiteSpace(import.Prelude) && import.Native == null) problems.Add(where + "needs a 'prelude' and/or a 'native' part.");
                 if (!string.IsNullOrWhiteSpace(import.Prelude) && fileExists != null && !fileExists(import.Prelude)) problems.Add(where + $"the prelude '{import.Prelude}' does not exist.");
@@ -102,6 +102,9 @@ namespace fire.Package.Manager
     {
         /// <summary>The name in `#import "name"` (not case sensitive).</summary>
         public string Name { get; set; } = "";
+        /// <summary>The import is one of the standard bridges of the compiler (graphics, io, time, ...), packaged with its prelude and C++ sources: it may have the name of a built-in import.
+        /// The compiler still resolves such a name to its built-in implementation first.</summary>
+        public bool Standard { get; set; }
         /// <summary>The prelude: fire source that is added to the program (classes, functions). Optional.</summary>
         public string? Prelude { get; set; }
         /// <summary>Other imports (of the compiler or of packages) that this one switches on, as `ui` switches on `graphics`.</summary>
