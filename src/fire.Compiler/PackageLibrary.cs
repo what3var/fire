@@ -129,6 +129,7 @@ namespace fire.Compiler
             sb.AppendLine("#define FIRE_NDIMS 1");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{target.Native.Platform}/fire_fs.hpp\"");
+            sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{target.Native.Platform}/fire_dev.hpp\"");
             sb.AppendLine("#include \"fire_rt.hpp\"");
             foreach (var (name, text) in import.ReadNativeSources(HostPlatformKeys))
             {

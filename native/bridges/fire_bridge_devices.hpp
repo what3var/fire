@@ -1,17 +1,20 @@
 // fire native bridge "devices": the natives behind `#import "devices"` (SPEC 8.16) - the device manager, devices (serial ports, the loopback device), the receive
-// buffer of a device and the waiting functions (src/fire.Device.Bridge, src/fire.Device.Manager). The fire side (Device, DeviceManagerFacade - fire source) is the
-// same as in the VM; this file is what its `__DEV...` functions do.
+// buffer of a device and the waiting functions. The fire side (Device, DeviceManagerFacade - fire source, src/fire/Standard/DevicesPrelude.cs) calls the `__DEV...` functions
+// this file implements.
 //
-// Included by the generated file (after fire_rt.hpp) when the program imports "devices". Which devices exist is decided by the *drivers*:
-//   FIRE_DEVICES          a string with the drivers in the order they are registered: "serial" (the default: the serial ports of the platform), "loopback" (a simulated
-//                         device that sends back what it gets, identifier `loopback:echo`), e.g. -DFIRE_DEVICES="\"loopback,serial\""  (target configuration: defines)
-//   FIRE_DEFAULT_DEVICE   the identifier of the default device (`Device.Default`); none by default
-// The serial ports come from the platform package (FIRE_PLATFORM_DEV_HEADER: plat::dev::serialNames() and plat::dev::SerialPort, 115200 baud 8N1); a board without one
-// defines nothing and has no `serial` devices.
+// This file is the one implementation: the native build includes it (the package "devices" brings it as its C++ source), and the virtual machine runs it in a shared library built
+// from it (native/abi/fire_pkg_abi.h). What differs is where the devices come from - the *drivers*:
+//   - a native build: FIRE_DEVICES, a string with the drivers in the order they are registered: "serial" (the default: the serial ports of the platform), "loopback" (a simulated
+//     device that sends back what it gets, identifier `loopback:echo`), e.g. -DFIRE_DEVICES="\"loopback,serial\""  (target configuration: defines);
+//     FIRE_DEFAULT_DEVICE is the identifier of the default device (`Device.Default`); none by default. The serial ports come from the platform package
+//     (FIRE_PLATFORM_DEV_HEADER: plat::dev::serialNames() and plat::dev::SerialPort, 115200 baud 8N1); a board without one defines nothing and has no `serial` devices.
+//   - the library for the VM: the driver "host" - the devices are those of the host (the device manager of the editor with its drivers, sharing and packet trace; the callbacks
+//     `dev_*` of `fire_host`), the identifiers are the host's. The receive buffer, the handles and the matching of `WaitFor` stay in this file.
 //
-// Differences to the VM: there are no background threads. Received data is collected when the program asks (HasData, Read..., the waiting functions, Connect),
-// not while it does something else - the receive buffer of the operating system or of the UART driver holds it meanwhile. The device list is made when the program first uses
-// a device function (and again at every Refresh), so `Count()` is not 0 before the first Refresh like in a standalone VM program.
+// Differences between the two: a native build has no background threads - received data is collected when the program asks (HasData, Read..., the waiting functions, Connect), not
+// while it does something else (the receive buffer of the operating system or of the UART driver holds it meanwhile); the device list is made when the program first uses a device
+// function (and again at every Refresh). In the VM the waiting functions (`WaitFor`, `WaitForString`) are run by the VM itself (they have to be abortable and know the program's
+// `#timeout`): it calls `WaitStep` until it succeeds.
 #pragma once
 
 #include <cstring>
@@ -20,7 +23,11 @@
 #include <vector>
 
 #ifndef FIRE_DEVICES
+#ifdef FIRE_LIBRARY
+#define FIRE_DEVICES "host"
+#else
 #define FIRE_DEVICES "serial"
+#endif
 #endif
 #ifndef FIRE_DEFAULT_DEVICE
 #define FIRE_DEFAULT_DEVICE ""
@@ -45,6 +52,10 @@ public:
     virtual bool write(const uint8_t* data, size_t n) = 0;
     /// The bytes of a command line: the text and a line ending, in the encoding of the device.
     virtual Bytes encodeCommand(const std::u16string& text) const = 0;
+    /// Sends a command line. (The device of the host encodes it itself.)
+    virtual bool sendCommand(const std::u16string& text) { Bytes bytes = encodeCommand(text); return write(bytes.data(), bytes.size()); }
+    /// Does the device belong to a manager that stays after the program (the editor's)?
+    virtual bool shared() const { return false; }
     /// Collects what arrived since the last call, one packet per delivery.
     virtual void poll(std::vector<Bytes>& packets) = 0;
 };
@@ -147,6 +158,59 @@ private:
     int availability_ = Unchecked;
 };
 
+#ifdef FIRE_LIBRARY
+// ---- the devices of the host (the library for the VM) -----------------------------------------------------------------------------------------------
+inline const fire_host* devHost() {
+    const fire_host* host = libraryHost();
+    return host && host->size >= (int32_t)sizeof(fire_host) && host->dev_count ? host : nullptr;
+}
+inline std::string hostText(int32_t (*get)(int32_t, char*, int32_t), int32_t handle) {
+    char buffer[512];
+    int32_t n = get(handle, buffer, (int32_t)sizeof buffer - 1);
+    return n > 0 ? std::string(buffer, (size_t)(n < (int32_t)sizeof buffer ? n : (int32_t)sizeof buffer - 1)) : std::string();
+}
+inline std::string utf8Of(const std::u16string& text) {
+    std::string out;
+    for (size_t i = 0; i < text.size(); i++) {
+        uint32_t c = text[i];
+        if (c >= 0xD800 && c <= 0xDBFF && i + 1 < text.size() && text[i + 1] >= 0xDC00 && text[i + 1] <= 0xDFFF) { c = 0x10000 + ((c - 0xD800) << 10) + (text[i + 1] - 0xDC00); i++; }
+        else if (c >= 0xD800 && c <= 0xDFFF) c = 0xFFFD;
+        if (c < 0x80) out.push_back((char)c);
+        else if (c < 0x800) { out.push_back((char)(0xC0 | (c >> 6))); out.push_back((char)(0x80 | (c & 0x3F))); }
+        else if (c < 0x10000) { out.push_back((char)(0xE0 | (c >> 12))); out.push_back((char)(0x80 | ((c >> 6) & 0x3F))); out.push_back((char)(0x80 | (c & 0x3F))); }
+        else { out.push_back((char)(0xF0 | (c >> 18))); out.push_back((char)(0x80 | ((c >> 12) & 0x3F))); out.push_back((char)(0x80 | ((c >> 6) & 0x3F))); out.push_back((char)(0x80 | (c & 0x3F))); }
+    }
+    return out;
+}
+
+/// A device of the host: everything is forwarded to the host's device manager.
+class HostDevice : public Device {
+public:
+    explicit HostDevice(int32_t handle) : handle_(handle) {}
+    int availability() const override { return devHost()->dev_availability(handle_); }
+    int testAvailability() override { return devHost()->dev_test_availability(handle_); }
+    bool connected() const override { return devHost()->dev_connected(handle_) != 0; }
+    std::string portName() const override { return hostText(devHost()->dev_port_name, handle_); }
+    bool connect() override { return devHost()->dev_connect(handle_) != 0; }
+    void disconnect() override { devHost()->dev_disconnect(handle_); }
+    bool write(const uint8_t* data, size_t n) override { return devHost()->dev_write(handle_, data, (int32_t)n) != 0; }
+    Bytes encodeCommand(const std::u16string&) const override { return Bytes(); }   // (the host encodes: see sendCommand)
+    bool sendCommand(const std::u16string& text) override { return devHost()->dev_send_command(handle_, utf8Of(text).c_str()) != 0; }
+    bool shared() const override { return devHost()->dev_shared(handle_) != 0; }
+    void poll(std::vector<Bytes>& packets) override {
+        Bytes buffer(4096);
+        while (true) {
+            int32_t n = devHost()->dev_poll(handle_, buffer.data(), (int32_t)buffer.size());
+            if (n < 0) return;
+            if (n > (int32_t)buffer.size()) { buffer.resize((size_t)n); continue; }   // the packet is bigger: it was kept, ask again with room
+            packets.push_back(Bytes(buffer.begin(), buffer.begin() + n));
+        }
+    }
+private:
+    int32_t handle_;
+};
+#endif
+
 // ---- the receive buffer: packets, a consumed head --------------------------------------------------------------------------------------------
 struct ReceiveBuffer {
     std::vector<Bytes> packets;
@@ -193,6 +257,7 @@ struct Slot {
 struct DriverSlot {
     int handle = 0;
     std::string id;
+    bool verbatim = false;   // the identifiers of the devices are the names as they are (the host's), not `driver:name`
     std::vector<std::string> (*names)();
     Device* (*make)(const std::string&);
 };
@@ -201,6 +266,26 @@ inline std::vector<std::string> loopbackNames() { return {"echo"}; }
 inline Device* makeLoopback(const std::string& name) { return new Loopback(name); }
 inline std::vector<std::string> serialNames() { return plat::dev::serialNames(); }
 inline Device* makeSerial(const std::string& name) { return new Serial(name); }
+#ifdef FIRE_LIBRARY
+inline std::vector<std::string> hostNames() {
+    std::vector<std::string> names;
+    const fire_host* host = devHost();
+    if (!host) return names;
+    for (int32_t i = 0, n = host->dev_count(); i < n; i++) {
+        int32_t handle = host->dev_handle_at(i);
+        if (handle >= 0) names.push_back(hostText(host->dev_identifier, handle));
+    }
+    return names;
+}
+inline Device* makeHost(const std::string& name) {
+    const fire_host* host = devHost();
+    for (int32_t i = 0, n = host->dev_count(); i < n; i++) {
+        int32_t handle = host->dev_handle_at(i);
+        if (handle >= 0 && hostText(host->dev_identifier, handle) == name) return new HostDevice(handle);
+    }
+    return nullptr;
+}
+#endif
 
 struct Manager {
     int counter = 0;
@@ -223,7 +308,11 @@ inline void registerDriver(const std::string& id) {
     slot.id = id;
     slot.handle = m.counter++;
     if (id == "loopback") { slot.names = loopbackNames; slot.make = makeLoopback; }
+#ifdef FIRE_LIBRARY
+    else if (id == "host") { slot.names = hostNames; slot.make = makeHost; slot.verbatim = true; }
+#else
     else if (id == "serial") { slot.names = serialNames; slot.make = makeSerial; }
+#endif
     else return;
     m.drivers.push_back(slot);
 }
@@ -234,15 +323,17 @@ inline void refresh(bool fast) {
     for (const DriverSlot& driver : m.drivers) {
         std::vector<Slot*> toTest;
         for (const std::string& name : driver.names()) {
-            std::string identifier = driver.id + ":" + name;
+            std::string identifier = driver.verbatim ? name : driver.id + ":" + name;
             Slot* existing = nullptr;
             for (Slot* s : m.slots) if (s->identifier == identifier) { existing = s; break; }
             if (!existing) {
+                Device* made = driver.make(name);
+                if (!made) continue;
                 existing = new Slot();
                 existing->handle = m.counter++;
                 existing->identifier = identifier;
                 existing->driver = driver.id;
-                existing->device = driver.make(name);
+                existing->device = made;
                 m.slots.push_back(existing);
             }
             toTest.push_back(existing);
@@ -287,6 +378,7 @@ inline Slot* resolve(Value handle) {
     return s;
 }
 
+#ifndef FIRE_LIBRARY
 /// Waits until `pred` is true or the time is up; false then (also when `terminate` cuts the wait short: the main program keeps serving its queue).
 template <class P> inline bool waitUntil(P pred, int64_t ticks) {
     int64_t ms = (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS;
@@ -302,6 +394,7 @@ template <class P> inline bool waitUntil(P pred, int64_t ticks) {
     }
 #endif
 }
+#endif
 
 // ---- strings and buffers -------------------------------------------------------------------------------------------------------------------------
 inline Value ascii(const std::string& text, OwnList* list) {
@@ -324,7 +417,14 @@ inline Bytes toLatin1(Value text) {
 }
 
 // ---- the natives (called from the generated code as `dev::Name`: the part after `__DEV`) -------------------------------------------------
-inline Value MgrRefresh(Value fast) { init(); refresh(fast.i != 0); return Undef(); }
+inline Value MgrRefresh(Value fast) {
+    init();
+#ifdef FIRE_LIBRARY
+    if (const fire_host* host = devHost()) host->dev_refresh((int32_t)fast.i);   // the host looks at its drivers first
+#endif
+    refresh(fast.i != 0);
+    return Undef();
+}
 inline Value MgrHandleForIdentifier(Value identifier) {
     init();
     std::string id;
@@ -338,17 +438,27 @@ inline Value MgrHandleAt(Value index) {
     init();
     return Int(index.i >= 0 && index.i < (int64_t)manager().slots.size() ? manager().slots[(size_t)index.i]->handle : -1);
 }
-inline Value MgrIsShared() { return Bool(false); }
+inline Value MgrIsShared() {
+#ifdef FIRE_LIBRARY
+    if (const fire_host* host = devHost()) return Bool(host->dev_manager_shared() != 0);
+#endif
+    return Bool(false);
+}
 inline Value MgrDefaultHandle() {
     init();
+#ifdef FIRE_LIBRARY
+    std::string id;
+    if (const fire_host* host = devHost()) { int32_t handle = host->dev_default(); if (handle >= 0) id = hostText(host->dev_identifier, handle); }
+#else
     std::string id = FIRE_DEFAULT_DEVICE;
+#endif
     if (id.empty()) return Int(-1);
     for (Slot* slot : manager().slots) if (slot->identifier == id) return Int(slot->handle);
     return Int(-1);
 }
 
 inline Value Identifier(Value handle, OwnList* list) { init(); Slot* s = slotByHandle(handle.i); return ascii(s ? s->identifier : std::string(), list); }
-inline Value IsShared(Value) { return Bool(false); }
+inline Value IsShared(Value handle) { Slot* s = resolve(handle); return Bool(s && s->device->shared()); }
 inline Value IsConnected(Value handle) { Slot* s = resolve(handle); return Bool(s && s->device->connected()); }
 inline Value PortName(Value handle, OwnList* list) { Slot* s = resolve(handle); return ascii(s ? s->device->portName() : std::string(), list); }
 inline Value Availability(Value handle) { Slot* s = resolve(handle); return Int(s ? s->device->availability() : (int)Unavailable); }
@@ -360,8 +470,7 @@ inline Value DoCommand(Value handle, Value text) {
     Slot* s = resolve(handle);
     if (!s) return Bool(false);
     const Str* str = strOf(text);
-    Bytes bytes = s->device->encodeCommand(std::u16string(str->data, str->length));
-    return Bool(s->device->write(bytes.data(), bytes.size()));
+    return Bool(s->device->sendCommand(std::u16string(str->data, str->length)));
 }
 inline Value HasData(Value handle) { Slot* s = resolve(handle); return Bool(s && s->buffer.hasData()); }
 inline Value ReadString(Value handle, OwnList* list) {
@@ -389,6 +498,7 @@ inline Value Write(Value handle, Value buffer) {
     return Bool(s->device->write(b->bytes(), b->length));
 }
 
+#ifndef FIRE_LIBRARY
 /// 1: found (the buffer is cut behind it), 0: time up / device disconnected / program ended, -1: not a time.
 inline Value waitFor(Value handle, const Bytes& pattern, Value timeout) {
     Slot* s = resolve(handle);
@@ -411,6 +521,18 @@ inline Value WaitFor(Value handle, Value buffer, Value timeout) {
     if (!leafAlive(buffer)) return destroyedError(buffer);
     Buf* b = bufOf(buffer);
     return waitFor(handle, Bytes(b->bytes(), b->bytes() + b->length), timeout);
+}
+#endif
+
+/// One step of a wait (the VM runs the waiting functions itself and calls this until it succeeds): looks at what has arrived and cuts the buffer behind `pattern` if it is there.
+/// 1: found, 0: not yet, 2: not there and the device is disconnected (nothing more will come).
+inline Value WaitStep(Value handle, Value buffer) {
+    if (!leafAlive(buffer)) return destroyedError(buffer);
+    Slot* s = resolve(handle);
+    if (!s) return Int(2);
+    Buf* b = bufOf(buffer);
+    if (s->buffer.consumeThrough(Bytes(b->bytes(), b->bytes() + b->length))) return Int(1);
+    return Int(s->device->connected() ? 0 : 2);
 }
 
 }  // namespace dev

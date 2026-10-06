@@ -37,6 +37,7 @@ namespace fire.Runtime
 
         private static readonly Dictionary<string, Library> Libraries = new(StringComparer.OrdinalIgnoreCase);
         private static readonly object Lock = new();
+        private static readonly Dictionary<string, (string File, Func<string, string?>? Locate)> Locations = new(StringComparer.Ordinal);
 
         /// <summary>Registers the natives <paramref name="names"/> (in this order: calls address natives by index); <paramref name="libraryFiles"/> are the file names of the libraries they
         /// live in, <paramref name="locate"/> finds a library file on this machine (null: the packed program's payload provides it by name).</summary>
@@ -48,6 +49,7 @@ namespace fire.Runtime
                 string name = names[i];
                 string file = libraryFiles != null && i < libraryFiles.Count ? libraryFiles[i] : "";
                 if (natives.Has(name)) continue;
+                lock (Lock) Locations[name] = (file, locate);
                 if (file == HostLibrary)
                 {
                     // the host runs it itself (`Sleep`: the VM waits and can be aborted)
@@ -56,6 +58,15 @@ namespace fire.Runtime
                 }
                 natives.Register(name, args => Invoke(name, file, args, locate));
             }
+        }
+
+        /// <summary>Calls a native of a package by name from the host (a host function that works with the library, like the waiting functions of the devices: the VM waits, the library looks).</summary>
+        internal static Value Call(string name, params Value[] args)
+        {
+            (string File, Func<string, string?>? Locate) where;
+            lock (Lock)
+                if (!Locations.TryGetValue(name, out where)) throw new InvalidOperationException($"The native function '{name}' of a package is not registered.");
+            return Invoke(name, where.File, args, where.Locate);
         }
 
         /// <summary>A program has ended: every loaded library forgets what the program left behind (`fire_pkg_reset`: open streams, ...).</summary>

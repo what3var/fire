@@ -2047,7 +2047,7 @@ exception in `ToString()` runs to the enclosing `catch`. Without `ToString()` th
 
 ### 8.16 Devices (`#import "devices"`)
 
-The extension controls devices via the **DeviceManager** (`src/fire.Device.Manager`: drivers, devices, handles; `src/fire.Device.Bridge`: fire classes). A device has an identifier `driver:port`
+The extension controls devices via the **DeviceManager** (`src/fire.Device.Manager`: drivers, devices, handles; the package `fire-devices`: the fire classes and the C++ of `native/bridges/fire_bridge_devices.hpp`, which in the VM asks the host's device manager through the callbacks of the package ABI). A device has an identifier `driver:port`
 (`serial:COM3`, `loopback:echo`). The `serial` driver (115200 baud) is built in; `loopback` is a simulated echo device without hardware (everything you send comes back after a few milliseconds).
 
 You work at the **command level**: send text and bytes, wait for certain characters, execute commands as objects.

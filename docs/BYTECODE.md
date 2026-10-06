@@ -1288,7 +1288,7 @@ vermerkt statt umgesetzt):
 
 > **Stand:** `io` ist inzwischen ein Paket (`fire-io`): die Natives sind das C++ von `native/bridges/fire_bridge_io.hpp`, die VM führt sie in einer Shared Library über die Paket-ABI aus (docs/PACKAGE_NATIVES.md); `IoPolicy` und `IoStdio` bleiben die Entscheidung des Hosts und werden der Bibliothek über `fire_host` (Callbacks, `PackageHost` in fire.Runtime) gegeben. Das Projekt `fire.IO.Bridge` gibt es nicht mehr; der Text unten beschreibt die frühere C#-Bridge.
 
-`src/fire.IO.Bridge`: dasselbe Muster wie `GraphicsBridge`/`DeviceBridge` - `IoBridge.RegisterAll`
+`src/fire.IO.Bridge` (inzwischen ein Paket, s.u. und docs/PACKAGE_NATIVES.md): dasselbe Muster wie `GraphicsBridge`/`DeviceBridge` - `IoBridge.RegisterAll`
 (echt) / `RegisterStubs` (nur Namen, für Linker und Live-Diagnostik über `ImportedPreludes`),
 `IoBridge.PreludeSource` (fire, `namespace IO`), `NativeImports.IO = "io"`. Streams sind
 Handles (`ConcurrentDictionary<int, StreamEntry>` pro `RegisterAll`, jeder Stream mit eigener
@@ -1536,7 +1536,7 @@ Objekte nach dem Lauf noch verwenden (die Thread-Tests tun das); im Einzelschrit
    auf den Cache wird schnell (`Optimal`) gepackt. Layout: `[Einträge][Index][Fuß: int64 Index-Offset, int32 Index-Länge, "FIREPAK1"]` - gelesen wird über den
    Fuß, die frühere Marker-Suche (`DA 1D`) gibt es nicht mehr.
 
-**Welche DLLs.** `PackagePlan.Create(nativeImports, baseDir)`: Kern immer; je Import die Einstiegs-Assemblies (`graphics`: `fire.Terminal.Bridge`/`.Windows`/`.Sdl` + natives SDL3; `devices`: `fire.Device.Bridge`/
+**Welche DLLs.** `PackagePlan.Create(nativeImports, baseDir)`: Kern immer; je Import die Einstiegs-Assemblies (`graphics`: `fire.Terminal.Bridge`/`.Windows`/`.Sdl` + natives SDL3; `devices` (Paket `pkg:devices`): 
 `fire.Device.Manager` (+ `libSystem.IO.Ports.Native` außerhalb von Windows); `print`: nichts). Der Rest folgt aus den Assembly-Verweisen der DLLs (System.Reflection.Metadata): alles, was neben
 dem Compiler liegt und nicht zum .NET-Framework gehört, kommt mit. Plattform-Unterordner (`runtimes/win/lib/...`, `runtimes/unix/lib/...`) haben Vorrang vor dem Hauptordner (System.IO.Ports liefert dort
 nur eine Attrappe). `PackagePlan.Unresolved` (Verweis ohne Datei und nicht im Framework) lässt `Packer.PackProgram` mit einer Fehlermeldung abbrechen statt eine kaputte Datei zu erzeugen. Native Bibliotheken
@@ -1849,6 +1849,7 @@ diesen Zuständen in lokalen Variablen (nur für die häufigen Instruktionen, al
 
 - **Empfangspuffer (`ReceiveBuffer`).** Die Brücke hält je Gerät die empfangenen Pakete in der Reihenfolge ihres Eintreffens. `ReadString`/`Read` holen das nächste Paket (nach einem `WaitFor` den Rest des angebrochenen), `TryConsumeThrough(muster)`
   sucht die Bytefolge über die Paketgrenzen hinweg und schneidet hinter dem ersten Treffer ab. `IDevice.Write(byte[])` (neu, neben `SendCommand(string)`) schreibt rohe Bytes; `LoopbackDevice` echot sie wie Befehle.
+- **Stand:** `devices` ist inzwischen ein Paket (`fire-devices`): C++ (`fire_bridge_devices.hpp`) in einer Bibliothek, die Geräte kommen vom Geräte-Manager des Hosts (`dev_*` in `fire_host`, `PackageHost.Devices.cs`); `WaitFor*` läuft als Host-Funktion (`DeviceHostNatives`, `VM.WaitUntil`) und fragt die Bibliothek je Schritt (`__DEVWaitStep`). Der folgende Text beschreibt die frühere C#-Bridge.
 - **Warten ohne taub zu sein.** `WaitFor*` ist KEIN blockierender nativer Aufruf: die Brücke bekommt vom Host eine `WaitUntilFunction` (`DeviceBridge.RegisterAll(..., waitUntil)`, die Sitzungen übergeben `VM.WaitUntil`), die in kurzen Stücken wartet und dazwischen
   `PollSignalsAfterOp` ausführt (wie `Sleep`): `leave`/`terminate` beenden das Warten sofort, die Warteschlange des Hauptprogramms läuft. Ohne Host (Tests der Brücke) wird gepollt. Die Zeitangabe versteht `TimeNatives.TryTimeTicks` (TimeSpan, Zeitwert, Millisekunden).
 - **`#timeout`.** `Parser` -> `TimeoutDirective(Expr)`, `Compiler.Compile` emittiert den Ausdruck und `SetTimeout` am Programmanfang (nach `SetAutoSync`), die VM setzt `VM.DefaultTimeout` (statisch, damit Fire-Threads es sehen; der VM-Konstruktor eines Hauptprogramms setzt es auf 30 s zurück).

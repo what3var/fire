@@ -13,7 +13,7 @@ namespace fire.Runtime
         /// <summary>Das Fenster (`Window`, SDL) für einen Framebuffer - setzt `graphics` voraus. Getrennt von `graphics`, damit eine Plattform ohne Fenster statt dessen ein Display einbinden kann.</summary>
         public static string Windows => "windows";
 
-        public static string Devices => "devices";
+        public static string Devices => "devices";   // (a package; the name is kept for the packer, which knows its host parts)
 
 
         /// <summary>Die Oberflächen-Bibliothek (siehe fire.UI.Bridge) - setzt `graphics` voraus.</summary>

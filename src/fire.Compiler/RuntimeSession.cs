@@ -176,17 +176,11 @@ namespace fire.Compiler
             if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
                 ReflectionNatives.Register(natives);
 
-            // `deviceManager`: der Manager des Hosts (z.B. der geteilte des Editors, siehe DeviceManager.IsShared); ohne
-            // Angabe bekommt das Programm einen eigenen mit den eingebauten Treibern, der nach dem Lauf freigegeben wird.
-            IDisposable? deviceResources = null;
-            if (linkedProgram.NativeImports.Contains(NativeImports.Devices))
-                deviceResources = fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager ?? fire.Device.Manager.DeviceManager.DeviceManager.CreateDefault(), VM.WaitUntil);
-
             // `ioPolicy`: was Skripte im Dateisystem anfassen dürfen, `ioStdio`: wohin IO.Stdio führt - beides entscheidet der HOST (siehe IoPolicy/IoStdio),
             // Vorgabe: alles erlaubt, echte Konsole. Die Natives von `io` sind C++ in einer Bibliothek und fragen den Host über PackageHost.
             IDisposable? ioResources = null;
             if (linkedProgram.PackageNatives is { Count: > 0 })
-                ioResources = PackageHost.Begin(ioPolicy, ioStdio);
+                ioResources = PackageHost.Begin(ioPolicy, ioStdio, linkedProgram.NativeImports.Contains("pkg:devices"), deviceManager);   // `deviceManager`: the manager of the host (e.g. the shared one of the editor); without it the program gets one with the built-in drivers, freed after the run
 
             PackageImports.RegisterForRun(natives, linkedProgram);   // the natives of imports of packages: names only (they are C++)
 
@@ -197,7 +191,6 @@ namespace fire.Compiler
 
             session.SetVM(mainVm, windowManager, globalScope, natives, fbManager, consoleManager, linkedProgram.FirstUserSource);
             session.IoResources = ioResources;
-            session.DeviceResources = deviceResources;
 
             return session;
         }

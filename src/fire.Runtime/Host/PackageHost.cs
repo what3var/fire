@@ -9,10 +9,17 @@ namespace fire.Runtime
     /// (<see cref="IoPolicy"/>) and where the console goes (<see cref="IoStdio"/>). The library calls these functions back; they belong to the session that is running (<see cref="Begin"/>).
     /// When the session ends, the libraries are told to forget what the program left behind (`fire_pkg_reset`: e.g. open streams).
     /// </summary>
-    public static class PackageHost
+    public static partial class PackageHost
     {
         [StructLayout(LayoutKind.Sequential)]
-        private struct FireHost { public int Size; public IntPtr IoAllow, StdRead, StdWrite, StdFlush; }
+        internal struct FireHost
+        {
+            public int Size;
+            public IntPtr IoAllow, StdRead, StdWrite, StdFlush;
+            // the devices of the host (see PackageHost.Devices.cs)
+            public IntPtr DevRefresh, DevCount, DevHandleAt, DevIdentifier, DevDefault, DevManagerShared, DevShared, DevAvailability, DevTestAvailability, DevConnected, DevPortName, DevConnect,
+                DevDisconnect, DevWrite, DevSendCommand, DevPoll;
+        }
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int IoAllowFn(IntPtr pathUtf8, int access, IntPtr reason, int reasonSize);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int StdReadFn(int stream, IntPtr buffer, int count);
@@ -47,6 +54,7 @@ namespace fire.Runtime
                         StdWrite = Marshal.GetFunctionPointerForDelegate(_stdWrite),
                         StdFlush = Marshal.GetFunctionPointerForDelegate(_stdFlush),
                     };
+
                     _block = Marshal.AllocHGlobal(Marshal.SizeOf<FireHost>());
                     Marshal.StructureToPtr(host, _block, false);
                     return _block;
@@ -55,7 +63,7 @@ namespace fire.Runtime
         }
 
         /// <summary>A session starts: the policy and the console of the host for the natives of packages (null: everything is allowed, the real console). Dispose at its end.</summary>
-        public static IDisposable Begin(IoPolicy? policy, IoStdio? stdio)
+        public static IDisposable Begin(IoPolicy? policy, IoStdio? stdio, bool usesDevices = false, object? deviceManager = null)
         {
             IoPolicy previousPolicy;
             IoStdio previousStdio;
@@ -67,22 +75,26 @@ namespace fire.Runtime
                 _stdio = stdio ?? IoStdio.SystemConsole;
                 Array.Clear(StdStreams);
             }
-            return new Scope(previousPolicy, previousStdio);
+            // the devices of the host are only touched (and their assembly loaded) by a program that imports the devices package
+            object? previousDevices = usesDevices ? DeviceHost.Begin(deviceManager, Block) : null;
+            return new Scope(previousPolicy, previousStdio, previousDevices);
         }
 
         private sealed class Scope : IDisposable
         {
             private readonly IoPolicy _previousPolicy;
             private readonly IoStdio _previousStdio;
+            private readonly object? _previousDevices;
             private bool _done;
 
-            public Scope(IoPolicy policy, IoStdio stdio) { _previousPolicy = policy; _previousStdio = stdio; }
+            public Scope(IoPolicy policy, IoStdio stdio, object? previousDevices) { _previousPolicy = policy; _previousStdio = stdio; _previousDevices = previousDevices; }
 
             public void Dispose()
             {
                 if (_done) return;
                 _done = true;
                 PackageNativeBinding.ResetLibraries();   // what the program left open is closed
+                if (_previousDevices != null) DeviceHost.End(_previousDevices);
                 lock (Lock)
                 {
                     _policy = _previousPolicy;

@@ -42,6 +42,7 @@ namespace fire.Compiler
         {
             "time" => fire.Standard.TimePrelude.Source,
             "io" => fire.Standard.IoPrelude.Source,
+            "devices" => fire.Standard.DevicesPrelude.Source,
             _ => ImportedPreludes.TrySourceFor(bridge),
         };
 
@@ -51,6 +52,22 @@ namespace fire.Compiler
         {
             static PackageNativeFunction F(string name, int arguments, string cpp, bool list = false, bool host = false) =>
                 new() { Name = name, Arguments = arguments, Cpp = cpp, NeedsList = list, ReturnsReference = list, Host = host };
+            if (bridge == "devices")
+            {
+                // (`WaitFor`, `WaitForString`: the VM runs them itself and calls `__DEVWaitStep` of the library, see fire.Runtime.DeviceHostNatives)
+                foreach (var f in new[]
+                {
+                    F("__DEVMgrRefresh", 1, "dev::MgrRefresh"), F("__DEVMgrHandleForIdentifier", 1, "dev::MgrHandleForIdentifier"), F("__DEVMgrCount", 0, "dev::MgrCount"),
+                    F("__DEVMgrHandleAt", 1, "dev::MgrHandleAt"), F("__DEVMgrIsShared", 0, "dev::MgrIsShared"), F("__DEVMgrDefaultHandle", 0, "dev::MgrDefaultHandle"),
+                    F("__DEVIdentifier", 1, "dev::Identifier", list: true), F("__DEVIsShared", 1, "dev::IsShared"), F("__DEVIsConnected", 1, "dev::IsConnected"),
+                    F("__DEVPortName", 1, "dev::PortName", list: true), F("__DEVAvailability", 1, "dev::Availability"),
+                    F("__DEVTestAvailability", 1, "dev::TestAvailability"), F("__DEVConnect", 1, "dev::Connect"), F("__DEVDisconnect", 1, "dev::Disconnect"),
+                    F("__DEVDoCommand", 2, "dev::DoCommand"), F("__DEVHasData", 1, "dev::HasData"), F("__DEVReadString", 1, "dev::ReadString", list: true),
+                    F("__DEVRead", 1, "dev::Read", list: true), F("__DEVWriteString", 2, "dev::WriteString"), F("__DEVWrite", 2, "dev::Write"),
+                    F("__DEVWaitForString", 3, "dev::WaitForString", host: true), F("__DEVWaitFor", 3, "dev::WaitFor", host: true), F("__DEVWaitStep", 2, "dev::WaitStep"),
+                })
+                    yield return f;
+            }
             if (bridge == "io")
             {
                 foreach (var f in new[]
@@ -97,7 +114,7 @@ namespace fire.Compiler
         private static IEnumerable<string> ExceptionsOf(string bridge) => bridge switch
         {
             "time" => new[] { "TimeException" },
-            "io" => new[] { "DestroyedException" },   // a destroyed buffer is an error of the runtime (the native build then needs the exceptions)
+            "io" or "devices" => new[] { "DestroyedException" },   // a destroyed buffer is an error of the runtime (the native build then needs the exceptions)
             _ => Array.Empty<string>(),
         };
 

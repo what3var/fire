@@ -1,6 +1,5 @@
 ﻿using fire.Bytecode;
 using fire.Compiler.Assembly;
-using fire.Device.Bridge;
 using fire.Runtime;
 using fire.Terminal;
 using fire.Terminal.Bridge;

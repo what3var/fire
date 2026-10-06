@@ -1,6 +1,5 @@
 using fire.Bytecode;
 using fire.Package.Manager;
-using fire.Device.Bridge;
 using fire.Runtime;
 using fire.Terminal.Bridge;
 using fire.UI.Bridge;
@@ -34,7 +33,6 @@ namespace fire.Compiler
         {
             "graphics" => NativeImports.Graphics,
             "windows" => NativeImports.Windows,
-            "devices" => NativeImports.Devices,
             "ui" => NativeImports.Ui,
             "linq" => NativeImports.Linq,
             "reflection" => NativeImports.Reflection,
@@ -73,7 +71,6 @@ namespace fire.Compiler
         {
             "graphics" => GraphicsBridge.PreludeSource,
             "windows" => WindowsBridge.PreludeSource,
-            "devices" => DeviceBridge.PreludeSource,
             "ui" => UiBridge.PreludeSource,
             "linq" => fire.Standard.LinqPrelude.Source,
             "reflection" => fire.Standard.ReflectionPrelude.Source,
@@ -140,13 +137,6 @@ namespace fire.Compiler
             {
                 processedSources.Insert(1, preprocess(fire.Standard.ReflectionPrelude.Source));
                 ReflectionNatives.Register(natives); // beim Übersetzen zählen nur die Namen (der Compiler schreibt daraufhin Typ-Metadaten mit)
-                inserted++;
-            }
-
-            if (nativeImports.Contains(NativeImports.Devices))
-            {
-                processedSources.Insert(1, preprocess(DeviceBridge.PreludeSource));
-                DeviceBridge.RegisterStubs(natives);
                 inserted++;
             }
 

@@ -7191,7 +7191,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     PackCheck(!planPrint.Assemblies.Keys.Any(n => n.StartsWith("fire.Terminal") || n.StartsWith("fire.Device") || n.StartsWith("fire.IO") || n == "SDL3-CS" || n == "System.IO.Ports") && planPrint.Natives.Count == 0,
         "Plan: ohne Import keine Bridge, keine nativen Bibliotheken");
     var planIo = Plan(NativeImports.Print, "pkg:io");
-    PackCheck(planIo.Assemblies.Keys.SequenceEqual(planPrint.Assemblies.Keys) && !planIo.Assemblies.ContainsKey("fire.Terminal.Bridge") && !planIo.Assemblies.ContainsKey("fire.Device.Bridge"),
+    PackCheck(planIo.Assemblies.Keys.SequenceEqual(planPrint.Assemblies.Keys) && !planIo.Assemblies.ContainsKey("fire.Terminal.Bridge") && !planIo.Assemblies.ContainsKey("fire.Device.Manager"),
         "Plan: io ist ein Paket (C++ in einer Bibliothek): es bringt keine eigene DLL in das gepackte Programm");
     var planGfx = Plan(NativeImports.Print, NativeImports.Graphics);
     PackCheck(new[] { "fire.Terminal.Bridge", "fire.Terminal" }.All(planGfx.Assemblies.ContainsKey) && !planGfx.Assemblies.ContainsKey("fire.IO.Bridge")
@@ -7200,11 +7200,11 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     var planWin = Plan(NativeImports.Print, NativeImports.Graphics, NativeImports.Windows);
     PackCheck(new[] { "fire.Terminal.Bridge", "fire.Windows.Bridge", "fire.Terminal", "fire.Terminal.Windows", "fire.Terminal.Sdl", "SDL3-CS" }.All(planWin.Assemblies.ContainsKey) && planWin.Unresolved.Count == 0,
         "Plan: windows bindet Fenster-Bridge samt Terminal/Windows/SDL ein (Abhaengigkeiten aus den Metadaten)");
-    var planDev = Plan(NativeImports.Print, NativeImports.Devices);
+    var planDev = Plan(NativeImports.Print, "pkg:devices");
     var planUi = Plan(NativeImports.Print, NativeImports.Graphics, NativeImports.Windows, NativeImports.Ui);
     PackCheck(planUi.Assemblies.Keys.SequenceEqual(planWin.Assemblies.Keys) && planUi.Unresolved.Count == 0, "Plan: ui bringt keine eigene DLL mit (reiner fire-Quelltext, graphics und windows kommen ueber den Import)");
-    PackCheck(new[] { "fire.Device.Bridge", "fire.Device.Manager", "System.IO.Ports" }.All(planDev.Assemblies.ContainsKey) && !planDev.Assemblies.ContainsKey("SDL3-CS"),
-        "Plan: devices bindet Device-Bridge, Manager und System.IO.Ports ein");
+    PackCheck(new[] { "fire.Device.Manager", "System.IO.Ports" }.All(planDev.Assemblies.ContainsKey) && !planDev.Assemblies.ContainsKey("SDL3-CS"),
+        "Plan: devices (ein Paket) bindet den Geraetemanager des Hosts und System.IO.Ports ein");
     PackCheck(planGfx.Unresolved.Count == 0 && planDev.Unresolved.Count == 0 && planIo.Unresolved.Count == 0 && planPrint.Unresolved.Count == 0,
         "Plan: alle Verweise aufloesbar (Datei neben dem Compiler oder Teil des Frameworks)");
     PackCheck(planWin.Natives.Count == 0 || planWin.Natives.ContainsKey("SDL3.dll") || planWin.Natives.ContainsKey("libSDL3.so.0") || planWin.Natives.ContainsKey("libSDL3.dylib"),

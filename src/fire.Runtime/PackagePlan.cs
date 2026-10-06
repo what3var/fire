@@ -34,8 +34,9 @@ namespace fire.Runtime
             [NativeImports.Windows] = new(
                 new[] { "fire.Windows.Bridge", "fire.Terminal.Windows", "fire.Terminal.Sdl" },
                 new[] { "SDL3.dll", "libSDL3.so.0", "libSDL3.dylib" }),
+            // `devices` is a package (C++ in a library) that works with the device manager of the host: the manager and its serial driver come along
             [NativeImports.Devices] = new(
-                new[] { "fire.Device.Bridge", "fire.Device.Manager" },
+                new[] { "fire.Device.Manager" },
                 new[] { "libSystem.IO.Ports.Native.so", "libSystem.IO.Ports.Native.dylib" }),
             // reiner fire-Quelltext (im Programm selbst), braucht keine DLL - `graphics` kommt über den Import selbst dazu
             [NativeImports.Ui] = new(Array.Empty<string>(), Array.Empty<string>()),
@@ -68,8 +69,11 @@ namespace fire.Runtime
             var queue = new Queue<string>(CoreAssemblies);
             foreach (var import in nativeImports)
             {
-                if (import.StartsWith("pkg:", StringComparison.Ordinal)) continue;   // an import of a package: its prelude is part of the program, its natives are C++ (native backend only)
-                if (!Imports.TryGetValue(import, out var package))
+                // an import of a package: its prelude is part of the program, its natives are C++ in a library (which travels as a native file); only the standard packages that work with
+                // a part of the host bring DLLs along (`devices`: the device manager)
+                string importName = import.StartsWith("pkg:", StringComparison.Ordinal) ? import.Substring(4) : import;
+                if (import.StartsWith("pkg:", StringComparison.Ordinal) && importName != NativeImports.Devices) continue;
+                if (!Imports.TryGetValue(importName, out var package))
                     throw new InvalidOperationException($"Unknown import '{import}' - the packer does not know which DLLs it needs.");
                 foreach (var asm in package.Assemblies) queue.Enqueue(asm);
                 foreach (var native in package.Natives)

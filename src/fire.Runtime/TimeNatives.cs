@@ -77,6 +77,8 @@ namespace fire.Runtime
         {
             "Sleep" => TimeNatives.Sleep,
             "__time_unit_ticks" => TimeNatives.UnitTicks,
+            "__DEVWaitForString" => DeviceHostNatives.WaitForString,
+            "__DEVWaitFor" => DeviceHostNatives.WaitFor,
             _ => null,
         };
     }

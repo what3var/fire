@@ -11,9 +11,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\fire.Device.Bridge\fire.Device.Bridge.csproj" />
     <ProjectReference Include="..\fire.Terminal.Bridge\fire.Terminal.Bridge.csproj" />
     <ProjectReference Include="..\fire.Windows.Bridge\fire.Windows.Bridge.csproj" />
+    <ProjectReference Include="..\fire.Device.Manager\fire.Device.Manager.csproj" />
   </ItemGroup>
 
 </Project>

@@ -44,6 +44,25 @@ typedef struct fire_host {
     int32_t (*std_read)(int32_t stream, uint8_t* buffer, int32_t count);                              /* stream 0; bytes read, 0 at the end, < 0 error */
     int32_t (*std_write)(int32_t stream, const uint8_t* buffer, int32_t count);                       /* stream 1 output, 2 error; < 0 error */
     int32_t (*std_flush)(int32_t stream);
+    /* The devices of the host (the device manager of the editor, its drivers, the packet trace): the natives of the devices package have no drivers of their own in the VM, they use these.
+     * A device is a handle of the host; `size` tells which of these the host has (all of them from here on, or none). Received data is collected by the host (its drivers deliver on their own
+     * threads): dev_poll takes the next packet. */
+    int32_t (*dev_refresh)(int32_t fast_scan);
+    int32_t (*dev_count)(void);
+    int32_t (*dev_handle_at)(int32_t index);                                      /* -1: none */
+    int32_t (*dev_identifier)(int32_t handle, char* buffer, int32_t size);       /* the length of the identifier (UTF-8), -1: no such device */
+    int32_t (*dev_default)(void);                                                 /* the handle of the default device, -1: none */
+    int32_t (*dev_manager_shared)(void);                                          /* 1: the manager belongs to the host and stays after the program */
+    int32_t (*dev_shared)(int32_t handle);
+    int32_t (*dev_availability)(int32_t handle);                                  /* 0 unavailable, 1 unchecked, 2 available */
+    int32_t (*dev_test_availability)(int32_t handle);
+    int32_t (*dev_connected)(int32_t handle);
+    int32_t (*dev_port_name)(int32_t handle, char* buffer, int32_t size);
+    int32_t (*dev_connect)(int32_t handle);                                       /* 1: connected */
+    void (*dev_disconnect)(int32_t handle);
+    int32_t (*dev_write)(int32_t handle, const uint8_t* data, int32_t count);     /* 1: sent */
+    int32_t (*dev_send_command)(int32_t handle, const char* text_utf8);           /* a line: the text and a line ending in the encoding of the device; 1: sent */
+    int32_t (*dev_poll)(int32_t handle, uint8_t* buffer, int32_t size);           /* the next received packet: its length (taken if it fits, else kept), -1: none */
 } fire_host;
 
 /* The entry points of a package library. */

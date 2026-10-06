@@ -97,14 +97,11 @@ namespace fire.Runtime
             if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
                 ReflectionNatives.Register(natives);
 
-            if (linkedProgram.NativeImports.Contains(NativeImports.Devices))
-                session.DeviceResources = RegisterDevices(natives);
-
             // Dateisystem-/Stdio-Policy: die gepackte Runtime nutzt die Vorgabe (alles erlaubt, echte Konsole) -
             // Hosts mit eigener Policy (Editor) bauen ihre Session über fire.Compiler.RuntimeSession.
             // what the natives of packages (the io package) ask of the host: the real console, everything allowed - the packed runtime has no other host
             if (linkedProgram.PackageNatives is { Count: > 0 })
-                session.IoResources = PackageHost.Begin(null, null);
+                session.IoResources = PackageHost.Begin(null, null, linkedProgram.NativeImports.Contains("pkg:devices"));
 
             // the natives of imports of packages (C++ in shared libraries, the libraries of a packed program come from its payload): same names, same order
             PackageNativeBinding.Register(natives, linkedProgram.PackageNatives, linkedProgram.PackageNativeLibraries, null);
@@ -140,13 +137,5 @@ namespace fire.Runtime
             fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, windowManager);
         }
 
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private static IDisposable RegisterDevices(NativeRegistry natives)
-        {
-            // Ein eigener Manager mit den eingebauten Treibern; er gehört dem Programm und wird nach dem Lauf freigegeben.
-            var deviceManager = fire.Device.Manager.DeviceManager.DeviceManager.CreateDefault();
-
-            return fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager, VM.WaitUntil);
-        }
     }
 }

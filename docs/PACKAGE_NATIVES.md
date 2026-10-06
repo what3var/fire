@@ -147,6 +147,9 @@ In the VM your functions run in a shared library, so values are **copied** at th
   console goes (`std_read`/`std_write`/`std_flush`, the `IoStdio` of the host, e.g. the output window of the editor). In C++ they are `libraryHost()->io_allow(...)` etc.; the io package is the example
   (`console::`, `allowed()` in `native/bridges/fire_bridge_io.hpp`). When a program ends the VM calls `fire_pkg_reset` - the function named by `native.reset` in the manifest (`"reset": "io::reset"`): forget what the program
   left behind (open streams), the library stays loaded for the next program;
+* **devices**: the `dev_*` callbacks of `fire_host` give a library the device manager of the host (its drivers, handles, the shared devices of the editor, the packet trace). The devices package
+  uses them through a driver "host" (`HostDevice` in `native/bridges/fire_bridge_devices.hpp`); a native build uses the serial and loopback drivers in C++ instead. Waiting that must be abortable
+  and know the program's `#timeout` is a `host` function (`WaitFor`): the VM waits and asks the library once per step (`__DEVWaitStep`);
 * calls into one library are serialized (the runtime inside is not thread-safe).
 
 The library is built **by the compiler at first use** with a C++ compiler of the machine (g++, clang++ or MSVC `cl`; the first run of a script that imports the package takes a few

@@ -142,23 +142,10 @@ namespace fire.Native
         private bool _usesThreads;
         /// <summary>The runtime has to read the `ticks` of a TimeSpan (the time functions, the waiting functions of the devices, `#timeout`): `timeObjTicks` is generated.</summary>
         private bool _needsTimeObj;
-        private bool _usesDevices;
         private bool _usesGraphics;
         private bool _usesWindows;
         /// <summary>A `Takes` mode is used: `Takes.Children` needs the enumerator of the IEnumerable classes (fire_enumerateItems).</summary>
         private bool _usesTakeEnumerate;
-
-        /// <summary>The natives of `#import "devices"` (`__DEV` + name; the manager's start with `Mgr`): arguments, whether the result is a string/buffer, whether the program should
-        /// look at its signals afterwards (a wait ends at `terminate`).</summary>
-        private static readonly Dictionary<string, (int Argc, bool Reference, bool NeedsList, bool Waits)> DeviceBridgeNatives = new()
-        {
-            ["MgrRefresh"] = (1, false, false, false), ["MgrHandleForIdentifier"] = (1, false, false, false), ["MgrCount"] = (0, false, false, false), ["MgrHandleAt"] = (1, false, false, false),
-            ["MgrIsShared"] = (0, false, false, false), ["MgrDefaultHandle"] = (0, false, false, false),
-            ["Identifier"] = (1, true, true, false), ["IsShared"] = (1, false, false, false), ["IsConnected"] = (1, false, false, false), ["PortName"] = (1, true, true, false),
-            ["Availability"] = (1, false, false, false), ["TestAvailability"] = (1, false, false, false), ["Connect"] = (1, false, false, false), ["Disconnect"] = (1, false, false, false),
-            ["DoCommand"] = (2, false, false, false), ["HasData"] = (1, false, false, false), ["ReadString"] = (1, true, true, false), ["Read"] = (1, true, true, false),
-            ["WriteString"] = (2, false, false, false), ["Write"] = (2, false, false, false), ["WaitForString"] = (3, false, false, true), ["WaitFor"] = (3, false, false, true),
-        };
 
         /// <summary>The natives of `#import "graphics"` (`__GRPH` + name; `Fb` framebuffer, `Con` console, `Slc` slicer): arguments and whether the result is a string/buffer/array.</summary>
         private static readonly Dictionary<string, (int Argc, bool Reference)> GraphicsBridgeNatives = new()
@@ -457,12 +444,8 @@ namespace fire.Native
             foreach (var include in _target.Native.Includes) sb.AppendLine($"#include <{include}>");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.hpp\"");
             sb.AppendLine("#include \"fire_rt.hpp\"");
-            if (_usesDevices)
-            {
-                sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{_target.Native.Platform}/fire_dev.hpp\"");
-                sb.AppendLine("#include \"bridges/fire_bridge_devices.hpp\"");
-            }
             if (_packageImports.Count > 0 || _usesGraphics) sb.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{_target.Native.Platform}/fire_fs.hpp\"");   // (the io package, graphics)
+            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{_target.Native.Platform}/fire_dev.hpp\"");   // (the devices package)
             if (_usesGraphics) sb.AppendLine("#include \"bridges/fire_bridge_graphics.hpp\"");
             if (_usesWindows)
             {
@@ -1245,16 +1228,6 @@ namespace fire.Native
         {
             if (_needsTimeObj) return;
             _needsTimeObj = true;
-            _version++;
-        }
-
-        /// <summary>`#import "devices"`: the bridge needs the exceptions (a destroyed buffer) and `timeObjTicks` (a TimeSpan as a wait time).</summary>
-        private void UseDevices()
-        {
-            if (_usesDevices) return;
-            _usesDevices = true;
-            UseExceptions();
-            NeedTimeObj();
             _version++;
         }
 
@@ -2114,18 +2087,6 @@ namespace fire.Native
                         E($"{S(first)} = gfx::{name}({args});");
                         Check();
                         d = first + 1; SetR(first, grphNative.Reference); return Next();
-                    }
-                    if (native.StartsWith("__DEV", StringComparison.Ordinal) && DeviceBridgeNatives.TryGetValue(native.Substring(5), out var devNative) && devNative.Argc == argc)
-                    {
-                        UseDevices();
-                        string name = native.Substring(5);
-                        int first = d - argc;
-                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(devNative.NeedsList ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
-                        E($"{S(first)} = dev::{name}({args});");
-                        Check();
-                        // a wait ends at terminate: leave now, not at the next loop
-                        if (devNative.Waits && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
-                        d = first + 1; SetR(first, devNative.Reference); return Next();
                     }
                     if (_packageNatives.TryGetValue(native, out var packageNative) && packageNative.Argc == argc)
                     {
