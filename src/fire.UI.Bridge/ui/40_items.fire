@@ -1,0 +1,569 @@
+namespace UI {
+    // Eine Sicht auf eine Liste: gefiltert (`filter`: Lambda mit einem Parameter, true behaelt das Element), sortiert (nach der Eigenschaft `sortMember` oder mit `comparer`: Lambda
+    // mit zwei Parametern, negativ/0/positiv) und mit einem aktuellen Element (`current`). Die Listen-Steuerelemente zeigen `items`. Aendert sich die Quelle, aktualisiert sich die Sicht
+    // beim naechsten Zeichnen (bei gleicher Anzahl nach einer Aenderung im Element selbst: Refresh()).
+    class CollectionView {
+        List source
+        List items
+        var filter
+        string sortMember = ""
+        bool descending = false
+        var comparer
+        // Index des aktuellen Elements in `items`, -1: keins
+        int current = -1
+        int sourceCount = -1
+        bool dirty = true
+
+        construct(source) {
+            this.source = source
+            this.items = new List()
+        }
+
+        int count { get { return this.items.count } }
+
+        operator[](int index) { return this.items[index] }
+
+        // Wirkt beim naechsten Zeichnen (oder sofort mit Refresh).
+        Invalidate() { this.dirty = true }
+
+        // Baut `items` neu: filtern, dann stabil sortieren; das aktuelle Element bleibt aktuell, wenn es noch da ist.
+        Refresh() {
+            var keep = this.CurrentItem()
+            this.items = new List()
+            var test = this.filter
+            for (var i = 0; i < this.source.count; i = i + 1) {
+                var item = this.source[i]
+                if (test == undefined || test(item)) { this.items.Add(item) }
+            }
+            if (this.comparer != undefined || this.sortMember != "") { this.items = this.Sorted(this.items) }
+            this.sourceCount = this.source.count
+            this.dirty = false
+            this.current = -1
+            if (keep != undefined) { this.current = this.items.IndexOf(keep) }
+        }
+
+        // Aktualisiert die Sicht, wenn sich die Quelle (ihre Anzahl) oder die Einstellungen geaendert haben.
+        Update() {
+            if (this.dirty || this.source.count != this.sourceCount) { this.Refresh() }
+        }
+
+        int Compare(a, b) {
+            var cmp = this.comparer
+            var result = 0
+            if (cmp != undefined) { result = cmp(a, b) }
+            else { result = UI.M.Compare(UI.M.Member(a, this.sortMember), UI.M.Member(b, this.sortMember)) }
+            if (this.descending) { result = -result }
+            return result
+        }
+
+        // Stabiles Sortieren durch Mischen (merge sort).
+        Sorted(list) {
+            if (list.count < 2) { return list }
+            var middle = list.count / 2
+            var left = new List()
+            var right = new List()
+            for (var i = 0; i < list.count; i = i + 1) {
+                if (i < middle) { left.Add(list[i]) } else { right.Add(list[i]) }
+            }
+            left = this.Sorted(left)
+            right = this.Sorted(right)
+            var merged = new List()
+            var a = 0
+            var b = 0
+            while (a < left.count && b < right.count) {
+                if (this.Compare(left[a], right[b]) <= 0) {
+                    merged.Add(left[a])
+                    a = a + 1
+                } else {
+                    merged.Add(right[b])
+                    b = b + 1
+                }
+            }
+            while (a < left.count) {
+                merged.Add(left[a])
+                a = a + 1
+            }
+            while (b < right.count) {
+                merged.Add(right[b])
+                b = b + 1
+            }
+            return merged
+        }
+
+        CurrentItem() {
+            if (this.current < 0 || this.current >= this.items.count) { return undefined }
+            return this.items[this.current]
+        }
+
+        bool MoveCurrentTo(int index) {
+            if (index < 0 || index >= this.items.count) { return false }
+            this.current = index
+            return true
+        }
+
+        bool MoveCurrentToFirst() { return this.MoveCurrentTo(0) }
+        bool MoveCurrentToLast() { return this.MoveCurrentTo(this.items.count - 1) }
+        bool MoveCurrentToNext() { return this.MoveCurrentTo(this.current + 1) }
+        bool MoveCurrentToPrevious() { return this.MoveCurrentTo(this.current - 1) }
+
+        // Sortiert nach der Eigenschaft (waehrend `descending` die Richtung gibt).
+        SortBy(string member, bool descending = false) {
+            this.sortMember = member
+            this.descending = descending
+            this.comparer = undefined
+            this.dirty = true
+        }
+    }
+
+    // Eine Spalte einer ListView: Titel, die Eigenschaft der Elemente, die sie zeigt, und die Breite in Pixeln (-1: der Rest).
+    class GridColumn {
+        string header
+        string member
+        int width
+
+        construct(string header, string member = "", int width = 100) {
+            this.header = header
+            this.member = member
+            this.width = width
+        }
+    }
+
+    // Die gemeinsame Grundlage der Listen (ListBox, ListView): Elemente (`items`: eine Liste beliebiger Werte, oder `SetView` mit einer CollectionView), Auswahl, Bildlauf, Tastatur und Maus.
+    // Der Text einer Zeile ist die Eigenschaft `displayMember` des Elements (ohne Namen: das Element selbst als Text); mit `itemTemplate` (DataTemplate) baut jede Zeile
+    // ein eigenes Element (nur zum Anzeigen, nicht bedienbar), das die Zeilenhoehe bekommt.
+    class ItemsControl : Element {
+        List items
+        CollectionView view
+        string displayMember = ""
+        var itemTemplate
+        // -1: eine Zeichenhoehe plus Rand
+        int rowHeight = -1
+        Scroller scroller
+        int selectedIndex = -1
+        int hotIndex = -1
+        var onSelect
+        var onActivate
+        bool changed = false
+        bool activated = false
+        // die gebauten Zeilen-Elemente der Vorlage (nach Index)
+        List rowElements
+        int builtCount = -1
+        int headerHeight = 0
+        int viewW = 0
+        int viewH = 0
+
+        construct(int x = 0, int y = 0, int width = 160, int height = 120) : base(x, y, width, height) {
+            this.items = new List()
+            this.scroller = new Scroller(false)
+            this.rowElements = new List()
+        }
+
+        // Die Zeilen: die der Sicht, sonst die eigene Liste.
+        List Rows() {
+            if (this.view != undefined) { return this.view.items }
+            return this.items
+        }
+
+        int count { get { return this.Rows().count } }
+
+        bool Focusable() { return true }
+
+        // Haengt ein Element an; ein Objekt gehoert ab jetzt der Liste (Zahlen und Text gehoeren niemandem).
+        Add(item) {
+            UI.M.Own(this, item)
+            this.items.Add(item)
+            return item
+        }
+
+        Remove(item) {
+            var index = this.items.IndexOf(item)
+            if (index < 0) { return }
+            this.items.RemoveAt(index)
+            if (this.selectedIndex >= this.items.count) { this.selectedIndex = this.items.count - 1 }
+            this.Refresh()
+        }
+
+        Clear() {
+            this.items = new List()
+            this.selectedIndex = -1
+            this.scroller.offset = 0
+            this.Refresh()
+        }
+
+        // Ersetzt die Elemente durch `list`.
+        SetItems(list) {
+            list.TakeTo(this)
+            this.view = undefined
+            this.items = list
+            this.selectedIndex = -1
+            this.scroller.offset = 0
+            this.Refresh()
+        }
+
+        // Zeigt die Elemente einer CollectionView (die Auswahl folgt ihrem `current`).
+        SetView(source) {
+            source.TakeTo(this)
+            this.view = source
+            this.selectedIndex = source.current
+            this.scroller.offset = 0
+            this.Refresh()
+        }
+
+        // Nach einer Aenderung in den Elementen selbst: die Vorlagen-Zeilen neu bauen.
+        Refresh() {
+            this.DropRows()
+            if (this.view != undefined) { this.view.Update() }
+        }
+
+        DropRows() {
+            for (var i = 0; i < this.rowElements.count; i = i + 1) {
+                var row = this.rowElements[i]
+                if (row != undefined) { delete row }
+            }
+            this.rowElements = new List()
+            this.builtCount = -1
+        }
+
+        string ItemText(item) { return UI.M.Text(UI.M.Member(item, this.displayMember)) }
+
+        // Das ausgewaehlte Element (undefined: keins).
+        selectedItem {
+            get {
+                var rows = this.Rows()
+                if (this.selectedIndex < 0 || this.selectedIndex >= rows.count) { return undefined }
+                return rows[this.selectedIndex]
+            }
+            set {
+                this.Select(this.Rows().IndexOf(value))
+            }
+        }
+
+        int RowHeight(root) {
+            if (this.rowHeight >= 0) { return this.rowHeight }
+            return root.ch + 6
+        }
+
+        // Waehlt die Zeile (-1: keine), blaettert sie ins Bild und meldet die Aenderung.
+        Select(int index) {
+            var rows = this.Rows()
+            if (index >= rows.count) { index = rows.count - 1 }
+            if (index < -1) { index = -1 }
+            if (index == this.selectedIndex) { return }
+            this.selectedIndex = index
+            if (this.view != undefined) { this.view.current = index }
+            this.changed = true
+            var callback = this.onSelect
+            if (callback != undefined) { callback() }
+        }
+
+        bool TakeChanged() {
+            var was = this.changed
+            this.changed = false
+            return was
+        }
+
+        bool TakeActivated() {
+            var was = this.activated
+            this.activated = false
+            return was
+        }
+
+        Activate() {
+            this.activated = true
+            var callback = this.onActivate
+            if (callback != undefined) { callback() }
+        }
+
+        // Blaettert, bis die Zeile sichtbar ist.
+        EnsureVisible(root, int index) {
+            var h = this.RowHeight(root)
+            if (index * h < this.scroller.offset) { this.scroller.Set(index * h) }
+            else if ((index + 1) * h > this.scroller.offset + this.viewH) { this.scroller.Set((index + 1) * h - this.viewH) }
+        }
+
+        MeasureCore(root, int aw, int ah) {
+            if (this.view != undefined) { this.view.Update() }
+            var rows = this.Rows()
+            var widest = 0
+            for (var i = 0; i < rows.count; i = i + 1) { widest = UI.M.Max(widest, this.ItemText(rows[i]).Length) }
+            this.cw = widest * root.cw + 24
+            this.ch = rows.count * this.RowHeight(root) + this.headerHeight + 2
+        }
+
+        ArrangeCore(root, int w, int h) {
+            var rows = this.Rows()
+            var rh = this.RowHeight(root)
+            this.viewH = UI.M.Max(0, h - 2 - this.headerHeight)
+            this.scroller.extent = rows.count * rh
+            this.scroller.viewport = this.viewH
+            this.scroller.Set(this.scroller.offset)
+            this.viewW = w - 2
+            if (this.scroller.Needed()) { this.viewW = this.viewW - this.scroller.size }
+            if (this.itemTemplate != undefined) { this.BuildRows(root, rows) }
+        }
+
+        // Baut die Elemente der Zeilen (nur die sichtbaren, bei Bedarf).
+        BuildRows(root, rows) {
+            if (this.builtCount != rows.count) {
+                this.DropRows()
+                for (var i = 0; i < rows.count; i = i + 1) { this.rowElements.Add(undefined) }
+                this.builtCount = rows.count
+            }
+            var rh = this.RowHeight(root)
+            var first = this.scroller.offset / rh
+            var last = UI.M.Min(rows.count - 1, (this.scroller.offset + this.viewH) / rh)
+            var tpl = this.itemTemplate
+            for (var i = first; i <= last; i = i + 1) {
+                var row = this.rowElements[i]
+                if (row == undefined) {
+                    row = tpl.Build(rows[i])
+                    row.TakeTo(this)
+                    row.parent = this
+                    this.rowElements[i] = row
+                }
+                row.Measure(root, this.viewW, rh)
+                row.Arrange(root, 0, 0, this.viewW, rh)
+            }
+        }
+
+        // Eine Zeile zeichnen: (x, y) ist ihre linke obere Ecke, w x h die Groesse; `text` die Schriftfarbe (Brush).
+        DrawRow(root, int index, item, int x, int y, int w, int h, text) {
+            if (this.itemTemplate != undefined) {
+                var row = this.rowElements[index]
+                if (row != undefined && row.visible) { row.Draw(root, x + row.rx, y + row.ry) }
+                return
+            }
+            root.renderer.DrawText(x + 4, y + (h - root.ch) / 2, this.ItemText(item), text)
+        }
+
+        DrawHeader(root, int x, int y, int w) { }
+
+        Draw(root, int ax, int ay) {
+            this.ax = ax
+            this.ay = ay
+            var theme = root.theme
+            var r = root.renderer
+            var back = this.background
+            if (back == undefined) { back = theme.inputBack }
+            if (!this.enabled) { back = theme.faceDisabled }
+            r.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
+            this.DrawHeader(root, ax + 1, ay + 1, this.viewW)
+            var rows = this.Rows()
+            var rh = this.RowHeight(root)
+            var top = ay + 1 + this.headerHeight
+            root.PushClip(ax + 1, top, this.viewW, this.viewH)
+            var first = this.scroller.offset / rh
+            var last = UI.M.Min(rows.count - 1, (this.scroller.offset + this.viewH) / rh)
+            for (var i = first; i <= last; i = i + 1) {
+                var y = top + i * rh - this.scroller.offset
+                var text = theme.text
+                if (this.foreground != undefined) { text = this.foreground }
+                if (!this.enabled) { text = theme.textDisabled }
+                if (i == this.selectedIndex) {
+                    r.FillRect(ax + 1, y, this.viewW, rh, theme.selection)
+                    text = theme.selectionText
+                } else if (i == this.hotIndex && this.enabled) {
+                    r.FillRect(ax + 1, y, this.viewW, rh, theme.faceHover)
+                }
+                this.DrawRow(root, i, rows[i], ax + 1, y, this.viewW, rh, text)
+            }
+            root.PopClip()
+            if (this.scroller.Needed()) { this.scroller.Draw(root, ax + this.actualWidth - 1 - this.scroller.size, top, this.viewH) }
+            var border = theme.border
+            if (this.pen != undefined) { border = this.pen }
+            if (this.focused) { border = theme.borderFocus }
+            r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+        }
+
+        // Der Index der Zeile bei der Bildschirmposition, -1 ausserhalb der Zeilen.
+        int RowAt(root, int px, int py) {
+            var top = this.ay + 1 + this.headerHeight
+            if (py < top || py >= top + this.viewH || px < this.ax + 1 || px >= this.ax + 1 + this.viewW) { return -1 }
+            var index = (py - top + this.scroller.offset) / this.RowHeight(root)
+            if (index >= this.Rows().count) { return -1 }
+            return index
+        }
+
+        bool OverBar(int px, int py) {
+            return this.scroller.Needed() && px >= this.ax + this.actualWidth - 1 - this.scroller.size && py >= this.ay + 1 + this.headerHeight
+        }
+
+        MouseDown(root, int button, int px, int py) {
+            if (button != 1) { return }
+            if (this.OverBar(px, py)) {
+                this.scroller.Press(py - (this.ay + 1 + this.headerHeight), this.viewH)
+                return
+            }
+            this.HeaderClick(root, px, py)
+            var index = this.RowAt(root, px, py)
+            if (index >= 0) { this.Select(index) }
+        }
+
+        HeaderClick(root, int px, int py) { }
+
+        MouseMove(root, int px, int py) {
+            if (this.scroller.dragging) { this.scroller.Drag(py - (this.ay + 1 + this.headerHeight), this.viewH) }
+        }
+
+        MouseUp(root, int button, int px, int py) { this.scroller.Release() }
+
+        Hover(root, int px, int py) {
+            this.hotIndex = this.RowAt(root, px, py)
+            this.scroller.hover = this.OverBar(px, py)
+        }
+
+        bool MouseWheel(root, int dx, int dy) {
+            if (!this.scroller.Needed()) { return false }
+            this.scroller.By(-dy * this.RowHeight(root) * 3)
+            return true
+        }
+
+        KeyDown(root, int key, int mod) {
+            var rows = this.Rows()
+            var index = this.selectedIndex
+            var page = UI.M.Max(1, this.viewH / this.RowHeight(root))
+            if (key == UI.Keys.Down()) { index = index + 1 }
+            else if (key == UI.Keys.Up()) { index = index - 1 }
+            else if (key == UI.Keys.Home()) { index = 0 }
+            else if (key == UI.Keys.End()) { index = rows.count - 1 }
+            else if (key == UI.Keys.PageDown()) { index = index + page }
+            else if (key == UI.Keys.PageUp()) { index = index - page }
+            else if (key == UI.Keys.Enter()) {
+                if (index >= 0) { this.Activate() }
+                return
+            } else { return }
+            if (rows.count == 0) { return }
+            index = UI.M.Clamp(index, 0, rows.count - 1)
+            this.Select(index)
+            this.EnsureVisible(root, index)
+        }
+
+        Collect(list) {
+            if (this.visible && this.enabled && this.Focusable()) { list.Add(this) }
+        }
+
+        FindName(string name) {
+            if (this.name == name) { return this }
+            return undefined
+        }
+    }
+
+    // Eine einfache Auswahlliste: `items` (Zeilen), `selectedIndex`/`selectedItem`, `onSelect`/`TakeChanged()`, Enter oder `Activate()` meldet `onActivate`/`TakeActivated()`.
+    class ListBox : ItemsControl {
+        construct(int x = 0, int y = 0, int width = 160, int height = 120) : base(x, y, width, height) { }
+
+        string StyleKey() { return "ListBox" }
+    }
+
+    // Wie die ListBox, aber mit Spalten und einer Kopfzeile: `AddColumn("Name", "name", 120)` zeigt die Eigenschaft `name` der Elemente.
+    // Ein Klick auf einen Spaltentitel sortiert die Zeilen danach (mit einer CollectionView per `SortBy`, sonst die eigene Liste).
+    class ListView : ItemsControl {
+        List columns
+        // die Spalte, nach der zuletzt sortiert wurde, und die Richtung
+        string sortedBy = ""
+        bool sortDescending = false
+
+        construct(int x = 0, int y = 0, int width = 240, int height = 140) : base(x, y, width, height) {
+            this.columns = new List()
+        }
+
+        string StyleKey() { return "ListView" }
+
+        AddColumn(string header, string member = "", int width = 100) {
+            var column = new GridColumn(header, member, width)
+            column.TakeTo(this)
+            this.columns.Add(column)
+            return column
+        }
+
+        MeasureCore(root, int aw, int ah) {
+            this.headerHeight = this.RowHeight(root)
+            base.MeasureCore(root, aw, ah)
+            var w = 0
+            for (var i = 0; i < this.columns.count; i = i + 1) { w = w + UI.M.Max(this.columns[i].width, 0) }
+            this.cw = UI.M.Max(this.cw, w + 2)
+        }
+
+        // Die Breite der Spalte `index` (die letzte mit -1 nimmt den Rest).
+        int ColumnWidth(int index, int total) {
+            var w = this.columns[index].width
+            if (w >= 0) { return w }
+            var used = 0
+            for (var i = 0; i < this.columns.count; i = i + 1) { used = used + UI.M.Max(this.columns[i].width, 0) }
+            return UI.M.Max(20, total - used)
+        }
+
+        DrawHeader(root, int x, int y, int w) {
+            var theme = root.theme
+            var r = root.renderer
+            var h = this.headerHeight
+            r.FillRect(x, y, w, h, theme.face)
+            var cx = x
+            for (var i = 0; i < this.columns.count; i = i + 1) {
+                var column = this.columns[i]
+                var cwid = this.ColumnWidth(i, w)
+                root.PushClip(cx, y, cwid, h)
+                var tcolor = theme.text
+                r.DrawText(cx + 4, y + (h - root.ch) / 2, column.header, tcolor)
+                if (column.member != "" && column.member == this.sortedBy) {
+                    // ein Pfeil fuer die Sortierrichtung
+                    var ax2 = cx + cwid - 12
+                    var my = y + h / 2
+                    if (this.sortDescending) { r.FillTriangle(ax2, my - 2, ax2 + 6, my - 2, ax2 + 3, my + 2, tcolor) }
+                    else { r.FillTriangle(ax2, my + 2, ax2 + 6, my + 2, ax2 + 3, my - 2, tcolor) }
+                }
+                root.PopClip()
+                cx = cx + cwid
+                r.DrawLine(cx - 1, y, cx - 1, y + h - 1, theme.border)
+            }
+            r.DrawLine(x, y + h - 1, x + w - 1, y + h - 1, theme.border)
+        }
+
+        DrawRow(root, int index, item, int x, int y, int w, int h, text) {
+            if (this.itemTemplate != undefined || this.columns.count == 0) {
+                base.DrawRow(root, index, item, x, y, w, h, text)
+                return
+            }
+            var cx = x
+            for (var i = 0; i < this.columns.count; i = i + 1) {
+                var column = this.columns[i]
+                var cwid = this.ColumnWidth(i, w)
+                root.PushClip(cx, y, cwid, h)
+                root.renderer.DrawText(cx + 4, y + (h - root.ch) / 2, UI.M.Text(UI.M.Member(item, column.member)), text)
+                root.PopClip()
+                cx = cx + cwid
+            }
+        }
+
+        // Ein Klick auf einen Titel sortiert nach der Spalte (noch einmal: umgekehrt).
+        HeaderClick(root, int px, int py) {
+            if (py < this.ay + 1 || py >= this.ay + 1 + this.headerHeight) { return }
+            var x = this.ax + 1
+            for (var i = 0; i < this.columns.count; i = i + 1) {
+                var w = this.ColumnWidth(i, this.viewW)
+                if (px >= x && px < x + w) {
+                    this.SortBy(this.columns[i].member)
+                    return
+                }
+                x = x + w
+            }
+        }
+
+        SortBy(string member) {
+            if (member == "") { return }
+            if (member == this.sortedBy) { this.sortDescending = !this.sortDescending }
+            else {
+                this.sortedBy = member
+                this.sortDescending = false
+            }
+            if (this.view == undefined) {
+                // die eigene Liste: ueber eine Sicht sortieren
+                this.SetView(new CollectionView(this.items))
+            }
+            this.view.SortBy(member, this.sortDescending)
+            this.view.Update()
+            this.Refresh()
+            this.Select(-1)
+        }
+    }
+}

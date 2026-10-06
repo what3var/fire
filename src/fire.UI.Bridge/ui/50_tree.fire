@@ -1,0 +1,276 @@
+namespace UI {
+    // Ein Knoten eines TreeView: Text, ein beliebiger Wert (`value`), Kinder (Add), aufgeklappt oder nicht.
+    class TreeNode {
+        string text = ""
+        var value
+        List children
+        bool expanded = false
+        TreeNode parent
+
+        construct(string text = "", value = undefined) {
+            this.text = text
+            this.value = value
+            this.children = new List()
+        }
+
+        // Haengt einen Knoten als Kind an; er gehoert diesem Knoten.
+        Add(node) {
+            node.TakeTo(this)
+            node.parent = this
+            this.children.Add(node)
+            return node
+        }
+
+        bool HasChildren() { return this.children.count > 0 }
+
+        int Depth() {
+            var d = 0
+            var p = this.parent
+            while (p != undefined) {
+                d = d + 1
+                p = p.parent
+            }
+            return d
+        }
+
+        Expand() { this.expanded = true }
+        Collapse() { this.expanded = false }
+    }
+
+    // Ein Baum: `AddNode` haengt Knoten der obersten Ebene an. Klick auf das Kaestchen klappt auf und zu, Klick auf die Zeile waehlt, Tasten: Auf/Ab wandern, Rechts klappt auf
+    // (oder geht zum ersten Kind), Links klappt zu (oder geht zum Elternknoten), Enter klappt um.
+    class TreeView : Element {
+        List nodes
+        TreeNode selected
+        int indent = 16
+        int rowHeight = -1
+        Scroller scroller
+        var onSelect
+        bool changed = false
+        // die sichtbaren Knoten der letzten Anordnung, von oben nach unten
+        List visibleNodes
+        int hotIndex = -1
+        int viewW = 0
+        int viewH = 0
+
+        construct(int x = 0, int y = 0, int width = 200, int height = 160) : base(x, y, width, height) {
+            this.nodes = new List()
+            this.visibleNodes = new List()
+            this.scroller = new Scroller(false)
+        }
+
+        string StyleKey() { return "TreeView" }
+
+        bool Focusable() { return true }
+
+        AddNode(node) {
+            node.TakeTo(this)
+            this.nodes.Add(node)
+            return node
+        }
+
+        Clear() {
+            this.selected = undefined
+            this.nodes = new List()
+            this.visibleNodes = new List()
+        }
+
+        int RowHeight(root) {
+            if (this.rowHeight >= 0) { return this.rowHeight }
+            return root.ch + 6
+        }
+
+        Collect_(list, node) {
+            list.Add(node)
+            if (node.expanded) {
+                for (var i = 0; i < node.children.count; i = i + 1) { this.Collect_(list, node.children[i]) }
+            }
+        }
+
+        // Baut die Liste der sichtbaren Knoten neu.
+        Flatten() {
+            this.visibleNodes = new List()
+            for (var i = 0; i < this.nodes.count; i = i + 1) { this.Collect_(this.visibleNodes, this.nodes[i]) }
+        }
+
+        MeasureCore(root, int aw, int ah) {
+            this.Flatten()
+            var widest = 0
+            for (var i = 0; i < this.visibleNodes.count; i = i + 1) {
+                var n = this.visibleNodes[i]
+                widest = UI.M.Max(widest, n.Depth() * this.indent + 20 + root.cw * n.text.Length)
+            }
+            this.cw = widest + 4
+            this.ch = this.visibleNodes.count * this.RowHeight(root) + 2
+        }
+
+        ArrangeCore(root, int w, int h) {
+            this.viewH = UI.M.Max(0, h - 2)
+            this.scroller.extent = this.visibleNodes.count * this.RowHeight(root)
+            this.scroller.viewport = this.viewH
+            this.scroller.Set(this.scroller.offset)
+            this.viewW = w - 2
+            if (this.scroller.Needed()) { this.viewW = this.viewW - this.scroller.size }
+        }
+
+        int IndexOfSelected() {
+            if (this.selected == undefined) { return -1 }
+            return this.visibleNodes.IndexOf(this.selected)
+        }
+
+        Draw(root, int ax, int ay) {
+            this.ax = ax
+            this.ay = ay
+            var theme = root.theme
+            var r = root.renderer
+            var back = this.background
+            if (back == undefined) { back = theme.inputBack }
+            if (!this.enabled) { back = theme.faceDisabled }
+            r.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
+            var rh = this.RowHeight(root)
+            var top = ay + 1
+            root.PushClip(ax + 1, top, this.viewW, this.viewH)
+            var first = this.scroller.offset / rh
+            var last = UI.M.Min(this.visibleNodes.count - 1, (this.scroller.offset + this.viewH) / rh)
+            for (var i = first; i <= last; i = i + 1) {
+                var node = this.visibleNodes[i]
+                var y = top + i * rh - this.scroller.offset
+                var text = theme.text
+                if (this.foreground != undefined) { text = this.foreground }
+                if (!this.enabled) { text = theme.textDisabled }
+                if (node == this.selected) {
+                    r.FillRect(ax + 1, y, this.viewW, rh, theme.selection)
+                    text = theme.selectionText
+                } else if (i == this.hotIndex && this.enabled) {
+                    r.FillRect(ax + 1, y, this.viewW, rh, theme.faceHover)
+                }
+                var x = ax + 3 + node.Depth() * this.indent
+                if (node.HasChildren()) { this.DrawBox(root, x, y + (rh - 9) / 2, node.expanded, text) }
+                r.DrawText(x + 14, y + (rh - root.ch) / 2, node.text, text)
+            }
+            root.PopClip()
+            if (this.scroller.Needed()) { this.scroller.Draw(root, ax + this.actualWidth - 1 - this.scroller.size, top, this.viewH) }
+            var border = theme.border
+            if (this.pen != undefined) { border = this.pen }
+            if (this.focused) { border = theme.borderFocus }
+            r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+        }
+
+        // Das Kaestchen mit Plus (zu) oder Minus (auf).
+        DrawBox(root, int x, int y, bool open, color) {
+            var pen = new Pen(color.Color)
+            root.renderer.DrawRect(x, y, 9, 9, pen)
+            root.renderer.DrawLine(x + 2, y + 4, x + 6, y + 4, pen)
+            if (!open) { root.renderer.DrawLine(x + 4, y + 2, x + 4, y + 6, pen) }
+        }
+
+        int RowAt(root, int px, int py) {
+            var top = this.ay + 1
+            if (py < top || py >= top + this.viewH || px < this.ax + 1 || px >= this.ax + 1 + this.viewW) { return -1 }
+            var index = (py - top + this.scroller.offset) / this.RowHeight(root)
+            if (index >= this.visibleNodes.count) { return -1 }
+            return index
+        }
+
+        bool OverBar(int px, int py) {
+            return this.scroller.Needed() && px >= this.ax + this.actualWidth - 1 - this.scroller.size
+        }
+
+        SelectNode(node) {
+            if (node == this.selected) { return }
+            this.selected = node
+            this.changed = true
+            var callback = this.onSelect
+            if (callback != undefined) { callback() }
+        }
+
+        bool TakeChanged() {
+            var was = this.changed
+            this.changed = false
+            return was
+        }
+
+        // Blaettert, bis der Knoten sichtbar ist (er muss sichtbar, also sein Elternpfad aufgeklappt sein).
+        EnsureVisible(root, node) {
+            var index = this.visibleNodes.IndexOf(node)
+            if (index < 0) { return }
+            var h = this.RowHeight(root)
+            if (index * h < this.scroller.offset) { this.scroller.Set(index * h) }
+            else if ((index + 1) * h > this.scroller.offset + this.viewH) { this.scroller.Set((index + 1) * h - this.viewH) }
+        }
+
+        MouseDown(root, int button, int px, int py) {
+            if (button != 1) { return }
+            if (this.OverBar(px, py)) {
+                this.scroller.Press(py - (this.ay + 1), this.viewH)
+                return
+            }
+            var index = this.RowAt(root, px, py)
+            if (index < 0) { return }
+            var node = this.visibleNodes[index]
+            var boxX = this.ax + 3 + node.Depth() * this.indent
+            if (node.HasChildren() && px >= boxX && px < boxX + 12) {
+                node.expanded = !node.expanded
+                return
+            }
+            this.SelectNode(node)
+        }
+
+        MouseMove(root, int px, int py) {
+            if (this.scroller.dragging) { this.scroller.Drag(py - (this.ay + 1), this.viewH) }
+        }
+
+        MouseUp(root, int button, int px, int py) { this.scroller.Release() }
+
+        Hover(root, int px, int py) {
+            this.hotIndex = this.RowAt(root, px, py)
+            this.scroller.hover = this.OverBar(px, py)
+        }
+
+        bool MouseWheel(root, int dx, int dy) {
+            if (!this.scroller.Needed()) { return false }
+            this.scroller.By(-dy * this.RowHeight(root) * 3)
+            return true
+        }
+
+        KeyDown(root, int key, int mod) {
+            var index = this.IndexOfSelected()
+            var count = this.visibleNodes.count
+            if (count == 0) { return }
+            if (key == UI.Keys.Down()) { index = UI.M.Min(count - 1, index + 1) }
+            else if (key == UI.Keys.Up()) { index = UI.M.Max(0, index - 1) }
+            else if (key == UI.Keys.Home()) { index = 0 }
+            else if (key == UI.Keys.End()) { index = count - 1 }
+            else if (key == UI.Keys.Right()) {
+                if (index < 0) { index = 0 }
+                else {
+                    var n = this.visibleNodes[index]
+                    if (n.HasChildren()) {
+                        if (!n.expanded) { n.expanded = true }
+                        else { index = index + 1 }
+                    }
+                }
+            } else if (key == UI.Keys.Left()) {
+                if (index >= 0) {
+                    var n = this.visibleNodes[index]
+                    if (n.HasChildren() && n.expanded) { n.expanded = false }
+                    else if (n.parent != undefined) { index = this.visibleNodes.IndexOf(n.parent) }
+                }
+            } else if (key == UI.Keys.Enter()) {
+                if (index >= 0) {
+                    var n = this.visibleNodes[index]
+                    if (n.HasChildren()) { n.expanded = !n.expanded }
+                }
+                return
+            } else { return }
+            if (index < 0 || index >= this.visibleNodes.count) { return }
+            var node = this.visibleNodes[index]
+            this.SelectNode(node)
+            this.EnsureVisible(root, node)
+        }
+
+        Collect(list) {
+            if (this.visible && this.enabled && this.Focusable()) { list.Add(this) }
+        }
+    }
+}

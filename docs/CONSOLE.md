@@ -218,6 +218,10 @@ Pixel-/Index-Array, `MarkDirty`); der `Framebuffer` implementiert es, ein eigene
 - Aus: jedes Pixel wird kopiert (alle Pixel ohne Alpha-Prüfung; `BlitMode.Blend` verhält sich wie `Transparent`).
 - `Clear`, `Clear(farbe)` und das Scrollen setzen Pixel immer roh (ohne Blending).
 
+**Beschneidungsrechteck:** `renderer.SetClip(x, y, w, h)` beschränkt alle Zeichenfunktionen (Füllungen, Formen, Text, `Print`, `Blit...`) auf das Rechteck (geschnitten mit dem Framebuffer); `renderer.ResetClip()` hebt es auf
+(C#: `Renderer.SetClip/ResetClip/GetClip`, `Surface.ClipLeft/ClipTop/ClipRight/ClipBottom`, `Blitter.Blit(..., clipLeft, clipTop, clipRight, clipBottom)`). `Clear`, `Clear(farbe)` und das Scrollen des Terminals gelten immer für den ganzen Framebuffer. Die UI-Bibliothek
+nutzt es für Bildlauf-Ausschnitte und Listen (`Root.PushClip/PopClip`).
+
 C++-Spiegel: `native/bridges/graphics/fire_gfx.hpp` (`Surface`, `Brush`, `Pen`, `Renderer`) liefert dieselben Pixel; die nativen Funktionen heißen `__GRPHRnd...`, `__GRPHBsh...`, `__GRPHPen...`. Nur der Software-Renderer ist umgesetzt; eine Beschleunigung
 (GPU) bleibt hinter derselben Schnittstelle möglich.
 

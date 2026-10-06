@@ -4,7 +4,7 @@ The interface of a program can be designed in a markup file instead of being bui
 that defines **one class** - the base class of the code-behind. The code-behind (your script) inherits from it and overrides what it wants to react to, so it never needs to know
 more of the generated code than the names it chose itself.
 
-The elements are the ones of the library `ui` (docs/UI.md): `Panel`, `Stack`, `Label`, `Button`, `CheckBox`, `TextBox`.
+The elements are the ones of the library `ui` (docs/UI.md): the layout containers, the controls, lists, trees, menus, images and shapes.
 
 ```xml
 <!-- Greeter.fxml -->
@@ -68,31 +68,86 @@ that a window can be composed of views.
 
 ## Elements and properties
 
-Every element has `x y width height visible enabled` (as the `UI.Element` fields), `name`, and its own properties. The attribute names are those of the fire fields (the first letter may be
-upper case: `Text` = `text`).
+Every element has the properties it shares with all others - `x y width height visible enabled`, `margin` (`4`, `4,2` = horizontal, vertical, or `1,2,3,4` = left, top, right, bottom), `halign` (`Stretch Left Center Right`),
+`valign` (`Stretch Top Center Bottom`), `minWidth minHeight maxWidth maxHeight`, `background` `foreground` (colours), `pen` (a pen: `#RRGGBB` or `#RRGGBB,3` with the width), `style`, `template` (keys of
+resources, see below) - plus `name`, and its own properties. The attached properties of the containers are written as in XAML: `Grid.Row`, `Grid.Column`, `Grid.RowSpan`, `Grid.ColumnSpan`, `DockPanel.Dock` (`Left Top Right Bottom`).
+The attribute names are those of the fire fields (the first letter may be upper case: `Text` = `text`).
 
 | element | properties | events |
 |---|---|---|
-| `Panel` (container) | `showBorder`, `background`, `filled` | |
-| `Stack` (container) | `orientation` (`Horizontal`/`Vertical`), `horizontal`, `spacing`, `padding`, `showBorder`, `background`, `filled` | |
+| `Panel`, `Canvas` (container: children are positioned by `x`/`y`) | `showBorder`, `filled` | |
+| `Stack` (container, one row or column) | `orientation` (`Horizontal`/`Vertical`), `horizontal`, `spacing`, `padding`, `showBorder`, `filled` | |
+| `StackPanel` (like `Stack`, but fits its content instead of 100 x 100) | the same | |
+| `DockPanel` (container) | `lastChildFill`; the children say `DockPanel.Dock` | |
+| `WrapPanel` (container) | `vertical`, `itemWidth`, `itemHeight` | |
+| `Grid` (container) | `rows`, `columns` (`"60, *, auto"`); the children say `Grid.Row` and so on | |
+| `Border` (one child) | `padding`, `thickness` | |
+| `ScrollViewer` (one child) | `vmode`, `hmode` (`Disabled Auto Visible`) | |
+| `ToolBar` (container: buttons and `Separator`s) | `showBorder`, `filled` | |
 | `Label` | `text`, `color` (the text brush) | |
 | `Button` | `text` | `onClick` |
 | `CheckBox` | `text`, `isChecked` | `onChange` |
 | `TextBox` | `text`, `maxLength` | `onChange`, `onEnter` |
+| `AutoSuggestBox` (`<Suggestion>text</Suggestion>`) | `text`, `maxLength`, `maxSuggestions`, `displayMember` | `onChange`, `onEnter`, `onChosen` |
+| `ListBox` (`<Item>text</Item>`) | `displayMember`, `selectedIndex` | `onSelect`, `onActivate` |
+| `ListView` (`<Column header="Name" member="name" width="100"/>`) | `displayMember`, `selectedIndex` | `onSelect`, `onActivate` |
+| `TreeView` (`<TreeNode text="..." expanded="true">`, nested) | `indent` | `onSelect` |
+| `RadioButtons` (`<Item>text</Item>`) | `header`, `horizontal`, `spacing`, `selectedIndex` | `onChange` |
+| `MenuBar` (`<Menu header="File">` with `<MenuItem header="Open" shortcut="Ctrl+O" checkable="true" isChecked="true" enabled="false" onClick="Open">`, nested items, `<MenuSeparator/>`) | | `onClick` of the items |
+| `Separator` | | |
+| `Image` | `source` (a path: the file is embedded, see docs/RESOURCES.md), `stretch` (`None Fill Uniform UniformToFill`) | |
+| `Rectangle`, `Ellipse` | `fill` (colour), `stroke` (pen) | |
+| `Line` | `x1 y1 x2 y2`, `stroke` | |
+| `Path` | `data` (`"M 0 0 L 40 0 L 20 30 Z"`, see docs/UI.md), `fill`, `stroke` | |
+| `DrawingCanvas` | `continuous` | `onPaint(canvas)`, `onMouseDown(x, y, button)`, `onMouseMove(x, y)`, `onMouseUp(x, y, button)` |
 
-`<Button>OK</Button>` is `<Button text="OK"/>`. A `Stack` lays out its children itself (their `x`/`y` are ignored), in a `Panel` they are positioned.
+`<Button>OK</Button>` is `<Button text="OK"/>`, `<Item>Alice</Item>` is `<Item text="Alice"/>`. A `Stack`/`StackPanel`/`DockPanel`/`Grid`/`WrapPanel` lays out its children itself (their `x`/`y` are ignored), in a `Panel` or
+`Canvas` they are positioned. A handler of an event with parameters gets them after `sender`: `onMouseDown="Down"` calls `Down(sender, x, y, button)`.
 
 **Values** are read by the type of the property: a whole number (`12`, `-3`, `0x1F`), `true`/`false`, a text, a colour (`#RRGGBB`, `#RGB` or the raw value, see `UI.Color`; colour properties are **brushes** - the generator wraps the value in `new SolidBrush(...)`),
-`Horizontal`/`Vertical`. A value that does not fit is an error. In braces a value can be
+`Horizontal`/`Vertical`, one of the names of an enum (`Left`), a margin, a pen. A value that does not fit is an error. In braces a value can be
 
 - `{Enum Colors.Red}` (or `{Static Colors.Red}`): an enum member or constant of your script, used as it is - for every number or colour property;
 - `{Expr some.expression()}`: any fire expression (for a colour property it is a ready-made `Brush`, e.g. `{Expr new SolidBrush(0x80FF0000)}`);
-- `{Binding ...}`: a data binding (below).
+- `{Binding ...}`: a data binding (below); `{TemplateBinding ...}`: inside a control template (below).
 
 A text that starts with a brace is written `{}{like this}`.
 
 **Handlers:** `onClick="Ok"` calls the method `Ok(sender)` of the object. The generated base class defines it empty, so a derived class overrides it - and a handler you do not
-override does nothing. (The method has to be declared with exactly one parameter, like the generated one: a different parameter list would be an overload, not an override.)
+override does nothing. (The method has to be declared with exactly the parameters of the generated one: a different parameter list would be an overload, not an override.)
+
+## Styles, triggers and templates
+
+In `<Resources>` (next to the converters):
+
+```xml
+<Resources>
+  <!-- without a key: the style of ALL buttons (labels, ...) of this interface -->
+  <Style target="Label"><Setter property="color" value="#0000C8"/></Style>
+  <!-- with a key: for the elements that say style="Primary" -->
+  <Style key="Primary" target="Button" basedOn="Base">
+    <Setter property="background" value="#3366AA"/>
+    <Setter property="margin" value="2,1"/>
+    <Trigger property="hover" value="true">                <!-- while the button is hovered -->
+      <Setter property="background" value="#4477BB"/>
+    </Trigger>
+  </Style>
+  <ControlTemplate key="Fancy" target="Button">             <!-- the look of a control: ONE root element -->
+    <Border name="bd" background="#33AA66" padding="4">
+      <Label name="txt" text="{TemplateBinding text}"/>      <!-- follows the property of the control -->
+    </Border>
+    <Trigger property="pressed" value="true">
+      <Setter target="bd" property="background" value="#AA3333"/>   <!-- target: a part of the template -->
+    </Trigger>
+  </ControlTemplate>
+</Resources>
+<Button text="Go" style="Primary"/>
+<Button text="Go" template="Fancy"/>
+```
+
+`target` of a style or template is an element of this table (or `Element`: the shared properties). The properties of a setter are the ones of that element; a trigger tests one of them or `hover`, `pressed`, `focused`
+(more conditions with `<Condition property="..." value="..."/>`, in a template with `source="partName"` to test a part). A property that a method sets (`rows`, `data`) cannot be set by a style. Event handlers and `{Binding}` are not available
+inside a template (react to the control itself). Everything is explained in docs/UI.md (*Aussehen*); the generated script builds `UI.Style`, `UI.Trigger` and `UI.ControlTemplate` objects (`fxStyle_Key`, `fxTemplate_Key` are fields of the class).
 
 ## Data binding
 
@@ -109,11 +164,7 @@ or, with `ElementName`, to a property of another named element. It is built on `
 
 ## The editor
 
-`.fxml` files open in a markup editor (File > New UI Markup): XML with colours, next to it the **design view** - a picture of the interface as the library draws it (same sizes, same layout
-rules, the light theme of the library). It is only for looking; nothing in it reacts to the mouse. The element at the caret is outlined, the text of a binding is shown as `‹Path›`, and
-mistakes of the markup are listed under the picture and underlined in the text. *Insert* adds a snippet at the caret, *Generated script* opens the script that the markup becomes.
-
-## What it is not
-
-There is no resource system besides converters, no styles or templates, no markup for the layout panels of the library yet (`Grid`, `DockPanel`, `WrapPanel`, `Border` exist in code, see `docs/UI.md`; the markup knows `Panel` and `Stack`), and the properties are the fields of the
-`ui` elements. Bindings do not look *inside* a collection (`list.Add` is not a write that a probe sees, SPEC 8.14).
+`.fxml` files open in a markup editor (File > New UI Markup): XML with colours, next to it the **design view** - the picture of the interface drawn by the library `ui` itself (the same code that runs in your program, so sizes,
+layout, styles and templates are exact; the markup is translated into a script that only draws and is run in the background - no handler and none of your own code runs, `{Enum ...}` and `{Expr ...}` values are left out and a bound text
+is shown as `‹Path›`). It is only for looking; nothing in it reacts to the mouse. The element at the caret is outlined and mistakes of the markup are listed under the picture and underlined in the text (the last good picture stays
+while there are mistakes). Image files (`<Image source="logo.png"/>`) are looked for next to the markup file. *Insert* adds a snippet at the caret, *Generated script* opens the script that the markup becomes.

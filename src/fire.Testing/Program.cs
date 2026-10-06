@@ -7221,7 +7221,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         string withWin = LinkResult("#import \"windows\"\nvar x = EventType.Close");
         PackCheck(withWin == "graphics,print,windows", "Import: windows bringt graphics mit (" + withWin + ")");
         string withUi = LinkResult("#import \"ui\"\nvar x = EventType.Close");
-        PackCheck(withUi == "graphics,print,ui,windows", "Import: ui bringt graphics und windows mit (" + withUi + ")");
+        PackCheck(withUi == "graphics,print,reflection,ui,windows", "Import: ui bringt graphics, windows und reflection mit (" + withUi + ")");
         string gfxOnly = LinkResult("#import \"graphics\"\nvar fb = new Framebuffer(8, 8)");
         PackCheck(gfxOnly == "graphics,print", "Import: graphics allein ohne Fenster (" + gfxOnly + ")");
     }
@@ -7925,6 +7925,52 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             rp.AlphaBlending = false;
             rp.SetPixel(0, 0, P(255, 255, 255, 1));
             GfxCheck(pal.Indices[0] != 7, "Palette-Ziel ohne Blending: immer kopiert");
+        }
+
+        // Beschneidungsrechteck: Fuellungen, Linien, Text und Blit bleiben darin; ResetClip hebt es auf; Clear gilt nicht
+        {
+            var fb = new fire.Terminal.Framebuffer(40, 20);
+            var rd = new fire.Terminal.Renderer(fb, font);
+            var red = new fire.Terminal.SolidBrush(Rgb(255, 0, 0));
+            var white = new fire.Terminal.Pen(Rgb(255, 255, 255));
+            rd.SetClip(10, 5, 10, 8);
+            rd.FillRect(0, 0, 40, 20, red);
+            int inside = 0, outside = 0;
+            for (int y = 0; y < 20; y++)
+                for (int x = 0; x < 40; x++)
+                {
+                    bool isRed = fb.GetPixel(x, y).R == 255;
+                    bool inClip = x >= 10 && x < 20 && y >= 5 && y < 13;
+                    if (isRed && inClip) inside++;
+                    if (isRed && !inClip) outside++;
+                }
+            GfxCheck(inside == 80 && outside == 0, "Clip: eine Flaeche wird auf das Rechteck beschnitten");
+            rd.DrawLine(0, 6, 39, 6, white);
+            rd.DrawCircle(15, 9, 30, white);
+            int whiteOut = 0;
+            for (int y = 0; y < 20; y++)
+                for (int x = 0; x < 40; x++)
+                    if (fb.GetPixel(x, y).B == 255 && fb.GetPixel(x, y).G == 255 && !(x >= 10 && x < 20 && y >= 5 && y < 13)) whiteOut++;
+            GfxCheck(whiteOut == 0 && fb.GetPixel(10, 6).G == 255 && fb.GetPixel(19, 6).G == 255 && fb.GetPixel(9, 6).G == 0, "Clip: Linien und Kreise bleiben im Rechteck");
+            var bright = new fire.Terminal.SolidBrush(Rgb(0, 255, 0));
+            rd.DrawText(8, 5, "AB", bright, null);
+            int greenOut = 0;
+            for (int y = 0; y < 20; y++)
+                for (int x = 0; x < 40; x++)
+                    if (fb.GetPixel(x, y).G == 255 && fb.GetPixel(x, y).R == 0 && (x < 10 || y < 5 || y >= 13)) greenOut++;
+            GfxCheck(greenOut == 0, "Clip: Text wird am Rechteck abgeschnitten (auch im Schnellpfad)");
+            var spr = new fire.Terminal.Framebuffer(6, 6);
+            new fire.Terminal.Renderer(spr, font).FillRect(0, 0, 6, 6, new fire.Terminal.SolidBrush(Rgb(0, 0, 255)));
+            rd.Blit(spr, 0, 0, 6, 6, 17, 10, 6, 6);
+            GfxCheck(fb.GetPixel(19, 10).B == 255 && fb.GetPixel(20, 10).B == 0 && fb.GetPixel(18, 13).B == 0 && fb.GetPixel(18, 12).B == 255, "Clip: Blit wird beschnitten");
+            var clip = rd.GetClip();
+            GfxCheck(clip == (10, 5, 10, 8), "Clip: GetClip liefert das Rechteck");
+            rd.ResetClip();
+            rd.SetPixel(0, 0, Rgb(1, 2, 3));
+            GfxCheck(fb.GetPixel(0, 0).B == 3, "Clip: ResetClip hebt es auf");
+            rd.SetClip(30, 15, 5, 3);
+            rd.Clear(fire.Terminal.Paint.FromRgba(new fire.Terminal.PixelColor(9, 9, 9, 255)));
+            GfxCheck(fb.GetPixel(0, 0).R == 9, "Clip: Clear gilt fuer den ganzen Framebuffer");
         }
 
         // Pen: Breite 1 == die einfache Linie, breitere Stifte stempeln ihre Spitze
@@ -8726,7 +8772,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
 // the drawing of the UI library without events: run by the VM (fake renderer) below, natively (SDL dummy driver) in the native checks
 string uiDrawScript = """
-    var fb = new Framebuffer(320, 300)
+    var fb = new Framebuffer(640, 300)
     var win = new Window(fb, "Test")
     var ui = new UI.Root(fb, win)
     var panel = new UI.Panel(8, 8, 300, 150)
@@ -8754,7 +8800,70 @@ string uiDrawScript = """
     for (var i = 0; i < 6; i++) { var wb = new UI.Button("w" + i, 0, 0, 44, 18); wb.margin = new UI.Thickness(2); wr.Add(wb) }
     lay.AddAt(wr, 1, 0, 1, 3)
     ui.Add(lay)
+    // styles and templates: an implicit style for labels, a button whose look is a template with a part bound to its text and a hover trigger
+    var sty = new UI.Style("Label")
+    sty.Set("brush", new SolidBrush(UI.Color.Rgb(0, 0, 200)))
+    ui.resources.AddStyle(sty)
+    var tpl = new UI.ControlTemplate(func (owner) => {
+        var tb = new UI.Border()
+        tb.name = "tb"
+        tb.background = new SolidBrush(UI.Color.Rgb(40, 160, 80))
+        tb.padding = new UI.Thickness(2)
+        var tl = new UI.Label("")
+        tl.name = "tl"
+        tb.SetChild(tl)
+        return tb
+    })
+    tpl.Bind("tl", "text", "text")
+    var tt = new UI.Trigger("hover", true)
+    tt.Set("background", new SolidBrush(UI.Color.Rgb(200, 60, 60)), "tb")
+    tpl.AddTrigger(tt)
+    var tbtn = new UI.Button("tpl", 200, 100, -1, -1)
+    tbtn.template = tpl
+    panel.Add(tbtn)
+    // scrolling with the clip rectangle, lists, a tree, radio buttons, shapes, a drawing canvas and a menu with its popup
+    var sv = new UI.ScrollViewer(330, 8, 120, 90)
+    var col = new UI.StackPanel()
+    for (var i = 0; i < 9; i++) { col.Add(new UI.Label("row " + i)) }
+    sv.SetContent(col)
+    ui.Add(sv)
+    var lbx = new UI.ListBox(460, 8, 100, 90)
+    for (var i = 0; i < 8; i++) { lbx.Add("entry " + i) }
+    lbx.Select(2)
+    ui.Add(lbx)
+    var tv = new UI.TreeView(330, 108, 120, 90)
+    var top = tv.AddNode(new UI.TreeNode("root"))
+    top.Add(new UI.TreeNode("child a"))
+    var cb = top.Add(new UI.TreeNode("child b"))
+    cb.Add(new UI.TreeNode("leaf"))
+    top.expanded = true
+    ui.Add(tv)
+    var rbs = new UI.RadioButtons(460, 108)
+    rbs.Add("one")
+    rbs.Add("two")
+    rbs.Select(1)
+    ui.Add(rbs)
+    var shp = new UI.Path(undefined, 570, 8)
+    shp.SetData("M 0 0 L 50 0 C 60 20 60 40 25 50 Z")
+    shp.fill = new SolidBrush(UI.Color.Rgb(200, 120, 40))
+    shp.stroke = new Pen(UI.Color.Rgb(0, 0, 0))
+    ui.Add(shp)
+    var dcv = new UI.DrawingCanvas(570, 70, 60, 40)
+    dcv.onPaint = func (c) => {
+        c.renderer.FillRect(0, 0, 60, 40, new SolidBrush(UI.Color.Rgb(30, 30, 90)))
+        c.renderer.DrawLine(0, 0, 59, 39, new Pen(UI.Color.Rgb(255, 255, 255)))
+    }
+    ui.Add(dcv)
+    var mbar = new UI.MenuBar(330, 210, 300, -1)
+    var mfile = new UI.MenuItem("File")
+    mfile.Add(new UI.MenuItem("Open"))
+    mfile.Add(UI.MenuItem.Separator())
+    mfile.Add(new UI.MenuItem("Quit"))
+    mbar.Add(mfile)
+    ui.Add(mbar)
     print(ui.Tick())
+    mbar.Open(ui, 0)
+    ui.Tick()
     print("layout " + bd.rx + " " + bd.actualWidth + " " + wr.actualWidth + " " + wr.actualHeight + " " + wr.children[5].rx + "," + wr.children[5].ry)
     var bytes = fb.ReadBytes()
     var h = 17
@@ -8780,7 +8889,7 @@ string[] uiDrawExpected = Array.Empty<string>();
     List<string> RunUi(string script, VmExecutionMode mode)
     {
         var lines = new List<string>();
-        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, fire.UI.Bridge.UiBridge.PreludeSource, script };
+        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, fire.Standard.ReflectionPrelude.Source, fire.UI.Bridge.UiBridge.PreludeSource, script };
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
         var natives = new NativeRegistry();
@@ -8793,6 +8902,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => renderer);
         fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager);
         fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
+        ReflectionNatives.Register(natives);
 
         natives.Register("__TestClose", args => { renderer.Closed = true; return Value.MakeUndefined(); });
         natives.Register("__TestEvent", args =>
@@ -9112,6 +9222,563 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("f " + df.rx + "," + df.ry + " " + df.actualWidth + "x" + df.actualHeight)
         """, new[] { "l 0,0 30x100", "t 30,0 170x20", "r 160,20 40x80", "f 30,20 130x80" });
 
+    CheckUi("Styles: impliziter Style (Setter, Trigger mit Zurueckstellen, basedOn), expliziter Style, Gueltigkeitsbereich", uiHead + """
+        var red = new SolidBrush(UI.Color.Rgb(255, 0, 0))
+        var baseStyle = new UI.Style("Button")
+        baseStyle.Set("margin", new UI.Thickness(3))
+        var st = new UI.Style("Button")
+        st.basedOn = baseStyle
+        st.Set("background", red)
+        var tr = new UI.Trigger("hover", true)
+        tr.Set("width", 150)
+        st.AddTrigger(tr)
+        ui.resources.AddStyle(st)
+        var sp = new UI.StackPanel(0, 0, 300, 200)
+        var b1 = new UI.Button("one", 0, 0, 100, 20)
+        sp.Add(b1)
+        ui.Add(sp)
+        ui.Draw()
+        print("b1 " + b1.margin.left + " " + (b1.background == red) + " " + b1.actualWidth + " " + b1.rx + "," + b1.ry)
+        b1.hover = true
+        ui.Draw()
+        print("hover " + b1.actualWidth)
+        b1.hover = false
+        ui.Draw()
+        print("zurueck " + b1.actualWidth)
+        // ein Style im Panel gilt nur darunter und vor dem des Roots
+        var inner = new UI.StackPanel(0, 100, 300, 100)
+        var local = new UI.Style("Button")
+        local.Set("margin", new UI.Thickness(7))
+        inner.Resources().AddStyle(local)
+        var b2 = new UI.Button("two", 0, 0, 100, 20)
+        inner.Add(b2)
+        ui.Add(inner)
+        ui.Draw()
+        print("inner " + b2.margin.left + " " + (b2.background == red) + " " + b2.ry)
+        var s2 = new UI.Style()
+        s2.Set("margin", new UI.Thickness(9))
+        s2.Set("nichtda", 1)
+        b1.style = s2
+        ui.Draw()
+        print("explizit " + b1.margin.left + " " + (b1.background == red) + " " + b1.actualWidth)
+        """, new[] { "b1 3 True 100 3,3", "hover 150", "zurueck 100", "inner 7 False 7", "explizit 9 True 100" });
+
+    CheckUi("Vorlagen: ControlTemplate (Teile, Bindung ans Element, Trigger auf einen Teil), Bindung zwischen Elementen, Ressourcen", uiHead + """
+        var red = new SolidBrush(UI.Color.Rgb(255, 0, 0))
+        var tpl = new UI.ControlTemplate(func (owner) => {
+            var bd = new UI.Border()
+            bd.name = "bd"
+            bd.background = new SolidBrush(UI.Color.Rgb(0, 255, 0))
+            bd.padding = new UI.Thickness(4)
+            var t = new UI.Label("")
+            t.name = "txt"
+            bd.SetChild(t)
+            return bd
+        })
+        tpl.Bind("txt", "text", "text")
+        var tr = new UI.Trigger("pressed", true)
+        tr.Set("background", red, "bd")
+        tpl.AddTrigger(tr)
+        var sp = new UI.StackPanel(0, 0, 300, 200)
+        var b = new UI.Button("hello", 0, 0, -1, -1)
+        b.halign = UI.HAlign.Left
+        b.template = tpl
+        sp.Add(b)
+        ui.Add(sp)
+        ui.Draw()
+        print("groesse " + b.actualWidth + "x" + b.actualHeight)
+        var part = b.FindPart("bd")
+        var green = part.background
+        print("teil " + (part != undefined) + " " + (part.background != red) + " " + b.FindPart("txt").text)
+        b.pressed = true
+        ui.Draw()
+        print("gedrueckt " + (part.background == red))
+        b.pressed = false
+        ui.Draw()
+        print("losgelassen " + (part.background == green))
+        b.text = "hi"
+        ui.Draw()
+        print("text " + b.FindPart("txt").text + " " + b.actualWidth)
+        var tb = new UI.TextBox("abc")
+        var l2 = new UI.Label("")
+        var l3 = new UI.TextBox("")
+        sp.Add(tb)
+        sp.Add(l2)
+        sp.Add(l3)
+        l2.Bind("text", tb, "text")
+        l3.Bind("text", tb, "text", true)
+        ui.Draw()
+        print("bindung " + l2.text + " " + l3.text)
+        tb.text = "xyz"
+        ui.Draw()
+        print("quelle " + l2.text + " " + l3.text)
+        l3.text = "zurueck"
+        ui.Draw()
+        ui.Draw()
+        print("ziel " + tb.text + " " + l2.text)
+        var tplStyle = new UI.Style("CheckBox")
+        tplStyle.Set("template", tpl)
+        ui.resources.AddStyle(tplStyle)
+        var cb = new UI.CheckBox("kaestchen")
+        cb.halign = UI.HAlign.Left
+        sp.Add(cb)
+        ui.Draw()
+        print("stilvorlage " + cb.FindPart("txt").text + " " + cb.actualWidth)
+        sp.Resources().Set("akzent", 42)
+        ui.resources.Set("rot", red)
+        print("ressource " + b.FindResource("akzent") + " " + b.FindResource("fehlt") + " " + (b.FindResource("rot") == red))
+        """, new[] { "groesse 50x24", "teil True True hello", "gedrueckt True", "losgelassen True", "text hi 26", "bindung abc abc", "quelle xyz xyz", "ziel zurueck zurueck", "stilvorlage kaestchen 82", "ressource 42 undefined True" });
+
+    CheckUi("ScrollViewer: Leisten, Ausschnitt, Mausrad, Ziehen am Griff, Umbrechen ohne waagerechte Leiste", uiHead + """
+        var sv = new UI.ScrollViewer(0, 0, 100, 80)
+        sv.hmode = UI.ScrollMode.Auto
+        var big = new UI.Canvas(0, 0, 300, 200)
+        big.Add(new UI.Button("x", 280, 180, 20, 20))
+        sv.SetContent(big)
+        ui.Add(sv)
+        ui.Draw()
+        print("beide Leisten " + sv.showV + " " + sv.showH + " Ausschnitt " + sv.viewW + "x" + sv.viewH + " Inhalt " + sv.hbar.extent + "x" + sv.vbar.extent)
+        sv.vbar.Set(1000)
+        sv.hbar.Set(1000)
+        ui.Draw()
+        print("ganz unten rechts " + sv.hbar.offset + "," + sv.vbar.offset + " Kind bei " + big.rx + "," + big.ry)
+        ui.MouseWheel(0, 1, 20, 20)
+        ui.Draw()
+        print("Rad nach oben " + sv.vbar.offset)
+        ui.MouseWheel(0, -1, 20, 20)
+        ui.MouseWheel(0, -1, 20, 20)
+        ui.Draw()
+        print("Rad nach unten " + sv.vbar.offset)
+        ui.MouseWheel(-2, 0, 20, 20)
+        ui.Draw()
+        print("Rad seitlich " + sv.hbar.offset)
+        // am Griff der senkrechten Leiste ziehen: oben anfassen und ganz nach unten ziehen
+        sv.vbar.Set(0)
+        ui.Draw()
+        ui.MouseDown(1, 94, 4)
+        ui.MouseMove(94, 200)
+        ui.MouseUp(1, 94, 200)
+        ui.Draw()
+        print("gezogen " + sv.vbar.offset)
+        var sv2 = new UI.ScrollViewer(110, 0, 100, 80)
+        sv2.SetContent(new UI.Label("short"))
+        ui.Add(sv2)
+        ui.Draw()
+        print("klein " + sv2.showV + " " + sv2.showH)
+        var sv3 = new UI.ScrollViewer(0, 100, 100, 60)
+        var wp = new UI.WrapPanel()
+        for (var i = 0; i < 12; i = i + 1) { wp.Add(new UI.Button("b" + i, 0, 0, 30, 20)) }
+        sv3.SetContent(wp)
+        ui.Add(sv3)
+        ui.Draw()
+        print("umbrechen " + sv3.showV + " " + sv3.showH + " " + wp.actualWidth + "x" + wp.actualHeight + " Ausschnitt " + sv3.viewW)
+        """, new[] { "beide Leisten True True Ausschnitt 88x68 Inhalt 300x200", "ganz unten rechts 212,132 Kind bei -212,-132", "Rad nach oben 90", "Rad nach unten 132", "Rad seitlich 212", "gezogen 132", "klein False False", "umbrechen True False 88x120 Ausschnitt 88" });
+
+    CheckUi("Listen: ListBox (Auswahl, Tastatur, Rad), ListView (Spalten, Sortieren per Kopfzeile), CollectionView (Filter, Sortierung, aktuelles Element)", uiHead + """
+        class Person {
+            string name
+            int age
+            construct(string name, int age) {
+                this.name = name
+                this.age = age
+            }
+        }
+        var lb = new UI.ListBox(10, 10, 100, 80)
+        for (var i = 0; i < 12; i = i + 1) { lb.Add("item " + i) }
+        ui.Add(lb)
+        var lv = new UI.ListView(130, 10, 180, 100)
+        lv.AddColumn("Name", "name", 100)
+        lv.AddColumn("Age", "age", -1)
+        lv.Add(new Person("Carol", 41))
+        lv.Add(new Person("Alice", 30))
+        lv.Add(new Person("Bob", 25))
+        ui.Add(lv)
+        ui.Draw()
+        print("Liste " + lb.selectedIndex + " Leiste " + lb.scroller.Needed() + " Anzahl " + lb.count)
+        ui.MouseDown(1, 20, 25)
+        ui.MouseUp(1, 20, 25)
+        ui.Draw()
+        print("Klick " + lb.selectedIndex + " " + lb.selectedItem + " " + lb.TakeChanged() + " " + lb.TakeChanged())
+        ui.KeyDown(1073741905, 0)
+        ui.KeyDown(1073741905, 0)
+        print("Pfeil " + lb.selectedIndex + " " + lb.selectedItem)
+        ui.KeyDown(1073741898, 0)
+        print("Pos1 " + lb.selectedIndex)
+        ui.KeyDown(1073741901, 0)
+        ui.Draw()
+        print("Ende " + lb.selectedIndex + " Versatz " + lb.scroller.offset)
+        ui.MouseWheel(0, 1, 20, 30)
+        ui.Draw()
+        print("Rad " + lb.scroller.offset)
+        lb.selectedItem = "item 3"
+        print("per selectedItem " + lb.selectedIndex)
+        var entered = 0
+        lb.onActivate = func () => { entered = entered + 1 }
+        ui.KeyDown(13, 0)
+        print("Enter " + entered + " " + lb.TakeActivated())
+        // Kopfzeile: Klick sortiert
+        ui.MouseDown(1, 140, 15)
+        ui.MouseUp(1, 140, 15)
+        ui.Draw()
+        print("sortiert " + lv.Rows()[0].name + " " + lv.sortedBy)
+        ui.MouseDown(1, 140, 15)
+        ui.MouseUp(1, 140, 15)
+        ui.Draw()
+        print("umgekehrt " + lv.Rows()[0].name)
+        var cv = new UI.CollectionView(lv.items)
+        cv.filter = func (p) => p.age > 26
+        cv.SortBy("age", true)
+        cv.Update()
+        print("Sicht " + cv.count + " " + cv[0].name + " " + cv[1].name)
+        cv.MoveCurrentToFirst()
+        cv.MoveCurrentToNext()
+        print("aktuell " + cv.CurrentItem().name + " " + cv.MoveCurrentTo(5))
+        cv.comparer = func (a, b) => a.age - b.age
+        cv.Invalidate()
+        cv.Update()
+        print("eigener Vergleich " + cv[0].name + " aktuell " + cv.CurrentItem().name)
+        var names = new UI.ListBox(10, 100, 100, 80)
+        names.displayMember = "name"
+        names.SetView(new UI.CollectionView(lv.items))
+        ui.Add(names)
+        ui.Draw()
+        print("Anzeigeeigenschaft " + names.count + " " + names.ItemText(names.Rows()[1]))
+        names.view.sortMember = "name"
+        names.view.Invalidate()
+        ui.Draw()
+        print("sortierte Sicht " + names.ItemText(names.Rows()[0]))
+        names.Select(2)
+        print("aktuell der Sicht " + names.view.current + " " + names.selectedItem.name)
+        """, new[] { "Liste -1 Leiste True Anzahl 12", "Klick 0 item 0 True False", "Pfeil 2 item 2", "Pos1 0", "Ende 11 Versatz 162", "Rad 102", "per selectedItem 3", "Enter 1 True", "sortiert Alice name", "umgekehrt Carol", "Sicht 2 Carol Alice", "aktuell Alice False", "eigener Vergleich Carol aktuell Alice", "Anzeigeeigenschaft 3 Alice", "sortierte Sicht Alice", "aktuell der Sicht 2 Carol" });
+
+    CheckUi("TreeView: Auf- und Zuklappen, Auswahl, Tastatur", uiHead + """
+        var tv = new UI.TreeView(10, 10, 150, 100)
+        var a = tv.AddNode(new UI.TreeNode("Animals"))
+        var d = a.Add(new UI.TreeNode("Dogs"))
+        d.Add(new UI.TreeNode("Rex"))
+        d.Add(new UI.TreeNode("Fido"))
+        a.Add(new UI.TreeNode("Cats"))
+        var b = tv.AddNode(new UI.TreeNode("Plants"))
+        b.Add(new UI.TreeNode("Oak"))
+        a.expanded = true
+        ui.Add(tv)
+        ui.Draw()
+        print("sichtbar " + tv.visibleNodes.count)
+        ui.MouseDown(1, 32, 36)
+        ui.MouseUp(1, 32, 36)
+        ui.Draw()
+        print("Dogs aufgeklappt " + tv.visibleNodes.count + " " + d.expanded + " ausgewaehlt " + (tv.selected == undefined))
+        ui.MouseDown(1, 80, 36)
+        ui.MouseUp(1, 80, 36)
+        ui.Draw()
+        print("gewaehlt " + tv.selected.text + " " + tv.TakeChanged())
+        ui.KeyDown(1073741905, 0)
+        ui.KeyDown(1073741905, 0)
+        print("Pfeil ab " + tv.selected.text)
+        ui.KeyDown(1073741904, 0)
+        print("Links zum Eltern " + tv.selected.text)
+        ui.KeyDown(1073741904, 0)
+        ui.Draw()
+        print("Links klappt zu " + d.expanded + " " + tv.visibleNodes.count)
+        ui.KeyDown(1073741903, 0)
+        ui.KeyDown(1073741903, 0)
+        print("Rechts klappt auf, dann zum Kind " + d.expanded + " " + tv.selected.text)
+        ui.KeyDown(1073741898, 0)
+        print("Pos1 " + tv.selected.text + " Tiefe " + a.Depth() + " " + d.children[0].Depth())
+        ui.KeyDown(13, 0)
+        ui.Draw()
+        print("Enter klappt um " + a.expanded + " " + tv.visibleNodes.count)
+        """, new[] { "sichtbar 4", "Dogs aufgeklappt 6 True ausgewaehlt True", "gewaehlt Dogs True", "Pfeil ab Fido", "Links zum Eltern Dogs", "Links klappt zu False 4", "Rechts klappt auf, dann zum Kind True Cats", "Pos1 Animals Tiefe 0 2", "Enter klappt um False 2" });
+
+    CheckUi("Menues: MenuBar, Untermenue, Haken, gesperrte Zeile, Tastatur, Kontextmenue, Klick daneben", uiHead + """
+        var mb = new UI.MenuBar(0, 0, 320, -1)
+        var file = new UI.MenuItem("File")
+        var cnt = 0
+        file.Add(new UI.MenuItem("New", func () => { cnt = cnt + 1 }))
+        file.Add(UI.MenuItem.Separator())
+        var rec = file.Add(new UI.MenuItem("Recent"))
+        rec.Add(new UI.MenuItem("a.txt", func () => { cnt = cnt + 10 }))
+        var chk = file.Add(new UI.MenuItem("Check"))
+        chk.checkable = true
+        var off = file.Add(new UI.MenuItem("Off", func () => { cnt = cnt + 100 }))
+        off.enabled = false
+        mb.Add(file)
+        var edit = new UI.MenuItem("Edit")
+        edit.Add(new UI.MenuItem("Copy", func () => { cnt = cnt + 1000 }))
+        mb.Add(edit)
+        ui.Add(mb)
+        ui.Draw()
+        print("Leiste " + mb.actualWidth + "x" + mb.actualHeight)
+        ui.MouseMove(10, 5)
+        ui.MouseDown(1, 10, 5)
+        ui.MouseUp(1, 10, 5)
+        ui.Draw()
+        print("offen " + ui.popups.count + " " + mb.openIndex)
+        // der Zeiger ueber dem zweiten Titel wechselt das Menue
+        ui.MouseMove(60, 5)
+        ui.Draw()
+        print("gewechselt " + ui.popups.count + " " + mb.openIndex)
+        // zurueck zu File, Untermenue Recent per Zeiger oeffnen
+        ui.MouseMove(10, 5)
+        ui.Draw()
+        var menu = ui.popups[0]
+        var y = menu.RowTop(ui, 2) + 4
+        ui.MouseMove(menu.ax + 10, y)
+        ui.Draw()
+        print("Untermenue " + ui.popups.count)
+        var subMenu = ui.popups[1]
+        var sx = subMenu.ax + 10
+        var sy = subMenu.ay + 4
+        ui.MouseDown(1, sx, sy)
+        ui.MouseUp(1, sx, sy)
+        ui.Draw()
+        print("gewaehlt " + cnt + " offen " + ui.popups.count)
+        // Tastatur: Enter auf New
+        ui.MouseDown(1, 10, 5)
+        ui.MouseUp(1, 10, 5)
+        ui.Draw()
+        ui.KeyDown(1073741905, 0)
+        ui.KeyDown(13, 0)
+        print("Tastatur " + cnt + " offen " + ui.popups.count)
+        // Haken und gesperrte Zeile
+        ui.MouseDown(1, 10, 5)
+        ui.MouseUp(1, 10, 5)
+        ui.Draw()
+        var m2 = ui.popups[0]
+        var cx = m2.ax + 10
+        var cy = m2.RowTop(ui, 3) + 4
+        ui.MouseDown(1, cx, cy)
+        ui.MouseUp(1, cx, cy)
+        ui.MouseDown(1, 10, 5)
+        ui.MouseUp(1, 10, 5)
+        ui.Draw()
+        var m3 = ui.popups[0]
+        var dx = m3.ax + 10
+        var dy = m3.RowTop(ui, 4) + 4
+        ui.MouseDown(1, dx, dy)
+        ui.MouseUp(1, dx, dy)
+        ui.Draw()
+        print("Haken " + chk.isChecked + " gesperrt " + cnt + " offen " + ui.popups.count)
+        ui.KeyDown(27, 0)
+        print("Escape " + ui.popups.count)
+        // Kontextmenue
+        var cm = new List()
+        cm.Add(new UI.MenuItem("Copy", func () => { cnt = cnt + 5 }))
+        cm.Add(new UI.MenuItem("Paste", func () => { cnt = cnt + 50 }))
+        var target = new UI.Label("right click me", 150, 150)
+        target.contextMenu = cm
+        ui.Add(target)
+        ui.Draw()
+        ui.MouseDown(3, 155, 155)
+        ui.MouseUp(3, 155, 155)
+        ui.Draw()
+        print("Kontextmenue " + ui.popups.count)
+        ui.KeyDown(1073741905, 0)
+        ui.KeyDown(1073741905, 0)
+        ui.KeyDown(13, 0)
+        print("Paste " + cnt + " " + ui.popups.count)
+        ui.MouseDown(3, 155, 155)
+        ui.MouseUp(3, 155, 155)
+        ui.Draw()
+        ui.MouseDown(1, 5, 190)
+        ui.MouseUp(1, 5, 190)
+        ui.Draw()
+        print("Klick daneben " + ui.popups.count)
+        """, new[] { "Leiste 320x22", "offen 1 0", "gewechselt 1 1", "Untermenue 2", "gewaehlt 10 offen 0", "Tastatur 11 offen 0", "Haken True gesperrt 11 offen 1", "Escape 0", "Kontextmenue 1", "Paste 61 0", "Klick daneben 0" });
+
+    CheckUi("RadioButtons, AutoSuggestBox, ToolBar und Image (alle Dehnungsarten)", uiHead + """
+        var rb = new UI.RadioButtons(10, 10)
+        rb.header = "Size"
+        rb.Add("Small")
+        rb.Add("Medium")
+        rb.Add("Large")
+        ui.Add(rb)
+        var asb = new UI.AutoSuggestBox("", 150, 10, 150, 24)
+        asb.AddSuggestion("apple")
+        asb.AddSuggestion("apricot")
+        asb.AddSuggestion("banana")
+        asb.AddSuggestion("blueberry")
+        ui.Add(asb)
+        var tb = new UI.ToolBar(0, 120, 320, -1)
+        var clicks = 0
+        tb.AddButton("Open", func () => { clicks = clicks + 1 })
+        tb.AddSeparator()
+        tb.AddButton("Save")
+        ui.Add(tb)
+        ui.Draw()
+        print("RadioButtons " + rb.actualWidth + "x" + rb.actualHeight)
+        ui.MouseDown(1, 20, 30)
+        ui.MouseUp(1, 20, 30)
+        ui.Draw()
+        print("gewaehlt " + rb.selectedIndex + " " + rb.selectedItem + " " + rb.TakeChanged())
+        ui.KeyDown(1073741905, 0)
+        ui.KeyDown(1073741905, 0)
+        ui.KeyDown(1073741905, 0)
+        print("Pfeile " + rb.selectedIndex)
+        ui.KeyDown(1073741906, 0)
+        print("hoch " + rb.selectedIndex)
+        ui.MouseDown(1, 160, 20)
+        ui.MouseUp(1, 160, 20)
+        ui.TextInput("ap")
+        ui.Draw()
+        print("Vorschlaege " + ui.popups.count + " " + asb.popupList.count)
+        ui.KeyDown(1073741905, 0)
+        ui.Draw()
+        print("Auswahl " + asb.popupList.selectedIndex)
+        ui.KeyDown(13, 0)
+        ui.Draw()
+        print("uebernommen " + asb.text + " " + ui.popups.count + " " + asb.TakeChosen() + " " + asb.chosenItem)
+        asb.SetText("")
+        ui.TextInput("B")
+        ui.Draw()
+        print("ohne Gross/Klein " + asb.popupList.count)
+        ui.MouseDown(1, 160, 10 + 24 + 12)
+        ui.MouseUp(1, 160, 10 + 24 + 12)
+        ui.Draw()
+        print("Klick auf Vorschlag " + asb.text + " " + ui.popups.count)
+        asb.SetText("")
+        ui.TextInput("x")
+        ui.Draw()
+        print("kein Treffer " + ui.popups.count)
+        asb.provider = func (text) => {
+            var l = new List()
+            l.Add(text + "1")
+            l.Add(text + "2")
+            return l
+        }
+        ui.TextInput("y")
+        ui.Draw()
+        print("Anbieter " + asb.popupList.count + " " + asb.popupList.Rows()[1])
+        ui.KeyDown(27, 0)
+        print("Escape " + ui.popups.count)
+        ui.MouseDown(1, 20, 125)
+        ui.MouseUp(1, 20, 125)
+        ui.Draw()
+        print("Leiste " + clicks + " " + tb.children.count)
+        var img = new Framebuffer(16, 16)
+        var ir = new Renderer(img)
+        ir.FillRect(0, 0, 16, 16, new SolidBrush(UI.Color.Rgb(255, 0, 0)))
+        ir.FillRect(4, 4, 8, 8, new SolidBrush(UI.Color.Rgb(0, 0, 255)))
+        var im = new UI.Image(img, 10, 160, 60, 30)
+        ui.Add(im)
+        var im2 = new UI.Image(img, 100, 160, 60, 30)
+        im2.stretch = UI.Stretch.UniformToFill
+        ui.Add(im2)
+        var im3 = new UI.Image(img, 180, 160, 60, 30)
+        im3.stretch = UI.Stretch.Fill
+        ui.Add(im3)
+        var im4 = new UI.Image(img, 250, 160, 20, 20)
+        im4.stretch = UI.Stretch.None
+        ui.Add(im4)
+        ui.Draw()
+        var R = UI.Color.Rgb(255, 0, 0)
+        var B = UI.Color.Rgb(0, 0, 255)
+        print("Uniform " + (Px.Get(ui.renderer, 27, 163) == R) + " " + (Px.Get(ui.renderer, 40, 175) == B) + " " + (Px.Get(ui.renderer, 15, 175) == ui.theme.back.Color))
+        print("Fuellen " + (Px.Get(ui.renderer, 101, 161) == R) + " " + (Px.Get(ui.renderer, 130, 175) == B) + " " + (Px.Get(ui.renderer, 101, 175) == R))
+        print("Strecken " + (Px.Get(ui.renderer, 181, 161) == R) + " " + (Px.Get(ui.renderer, 210, 175) == B))
+        print("Keine " + (Px.Get(ui.renderer, 251, 161) == R) + " " + (Px.Get(ui.renderer, 260, 170) == B) + " " + im4.actualWidth)
+        """, new[] { "RadioButtons 68x74", "gewaehlt 0 Small True", "Pfeile 2", "hoch 1", "Vorschlaege 1 2", "Auswahl 0", "uebernommen apple 0 True apple", "ohne Gross/Klein 2", "Klick auf Vorschlag banana 0", "kein Treffer 0", "Anbieter 2 blueberry", "Escape 0", "Leiste 1 3", "Uniform True True True", "Fuellen True True True", "Strecken True True", "Keine True True 20" });
+
+    CheckUi("Formen: Rectangle, Ellipse, Line, Path (Pfaddaten, Kurven), Geometry, DrawingCanvas", uiHead + """
+        print(UI.M.Sin(30) + " " + UI.M.Sin(90) + " " + UI.M.Cos(60) + " " + UI.M.Sin(-30) + " " + UI.M.Sin(210) + " " + UI.M.Cos(0))
+        var r = new UI.Rectangle(10, 10, 60, 40)
+        r.fill = new SolidBrush(UI.Color.Rgb(255, 200, 0))
+        r.stroke = new Pen(UI.Color.Rgb(0, 0, 0))
+        ui.Add(r)
+        var e = new UI.Ellipse(80, 10, 60, 40)
+        e.fill = new SolidBrush(UI.Color.Rgb(0, 200, 100))
+        ui.Add(e)
+        var l = new UI.Line(0, 0, 50, 30)
+        l.stroke = new Pen(UI.Color.Rgb(200, 0, 0))
+        var lc = new UI.Canvas(150, 10, 60, 40)
+        lc.Add(l)
+        ui.Add(lc)
+        var p = new UI.Path(undefined, 10, 70)
+        p.SetData("M 0 0 L 40 0 L 40 30 L 20 50 L 0 30 Z")
+        p.fill = new SolidBrush(UI.Color.Rgb(100, 100, 255))
+        p.stroke = new Pen(UI.Color.Rgb(0, 0, 80))
+        ui.Add(p)
+        var p2 = new UI.Path(undefined, 80, 70)
+        p2.SetData("M 0 40 c 10 -40 40 -40 50 0 q -25 -30 -50 0 z")
+        p2.fill = new SolidBrush(UI.Color.Rgb(255, 120, 120))
+        ui.Add(p2)
+        var g = new UI.Geometry()
+        g.AddEllipse(30, 30, 28, 20)
+        var p3 = new UI.Path(g, 150, 70)
+        p3.stroke = new Pen(UI.Color.Rgb(0, 0, 0))
+        ui.Add(p3)
+        ui.Draw()
+        print("Rechteck " + (Px.Get(ui.renderer, 30, 30) == r.fill.Color) + " " + (Px.Get(ui.renderer, 10, 10) == r.stroke.Color) + " " + (Px.Get(ui.renderer, 9, 9) == ui.theme.back.Color))
+        print("Ellipse " + (Px.Get(ui.renderer, 110, 30) == e.fill.Color) + " " + (Px.Get(ui.renderer, 81, 11) == ui.theme.back.Color))
+        print("Strecke " + (Px.Get(ui.renderer, 150, 10) == l.stroke.Color) + " " + (Px.Get(ui.renderer, 200, 40) == l.stroke.Color) + " " + lc.children[0].actualWidth + "x" + lc.children[0].actualHeight)
+        print("Pfad " + p.actualWidth + "x" + p.actualHeight + " " + (Px.Get(ui.renderer, 30, 90) == p.fill.Color) + " " + (Px.Get(ui.renderer, 10, 70) == p.stroke.Color) + " " + p.data.figures.count + " " + p.data.figures[0].Count() + " " + p.data.figures[0].closed)
+        print("Kurve " + (Px.Get(ui.renderer, 105, 90) == p2.fill.Color) + " " + p2.data.figures[0].closed + " " + p2.actualWidth + "x" + p2.actualHeight)
+        print("Ellipse-Pfad " + g.figures[0].Count() + " " + p3.actualWidth + "x" + p3.actualHeight + " " + (Px.Get(ui.renderer, 150 + 30, 70 + 30) == ui.theme.back.Color))
+        var dc = new UI.DrawingCanvas(10, 150, 120, 40)
+        var paints = 0
+        dc.onPaint = func (c) => {
+            paints = paints + 1
+            c.renderer.FillRect(0, 0, c.framebuffer.Width(), c.framebuffer.Height(), new SolidBrush(UI.Color.Rgb(30, 30, 60)))
+        }
+        var downs = 0
+        var lastX = -1
+        dc.onMouseDown = func (x, y, b) => {
+            downs = downs + 1
+            lastX = x
+        }
+        ui.Add(dc)
+        ui.Draw()
+        ui.Draw()
+        print("Zeichenflaeche " + paints + " " + dc.framebuffer.Width() + "x" + dc.framebuffer.Height() + " " + (Px.Get(ui.renderer, 20, 160) == UI.Color.Rgb(30, 30, 60)))
+        dc.Invalidate()
+        ui.Draw()
+        print("neu gemalt " + paints)
+        dc.width = 80
+        ui.Draw()
+        print("Groesse geaendert " + paints + " " + dc.framebuffer.Width())
+        ui.MouseDown(1, 25, 170)
+        ui.MouseUp(1, 25, 170)
+        print("Maus " + downs + " " + lastX)
+        var src = new Framebuffer(30, 20)
+        new Renderer(src).FillRect(0, 0, 30, 20, new SolidBrush(UI.Color.Rgb(255, 0, 255)))
+        var dc2 = new UI.DrawingCanvas(150, 150, 30, 20)
+        dc2.SetSource(src)
+        ui.Add(dc2)
+        ui.Draw()
+        print("fremder Puffer " + (Px.Get(ui.renderer, 160, 160) == UI.Color.Rgb(255, 0, 255)) + " " + dc2.actualWidth)
+        """, new[] { "500 1000 500 -500 -500 1000", "Rechteck True True True", "Ellipse True True", "Strecke True True 51x31", "Pfad 41x51 True True 1 5 True", "Kurve True True 51x41", "Ellipse-Pfad 64 59x51 True", "Zeichenflaeche 1 120x40 True", "neu gemalt 2", "Groesse geaendert 3 80", "Maus 1 15", "fremder Puffer True 30" });
+
+    CheckUi("Listen mit DataTemplate und das Beschneidungsrechteck des Renderers", uiHead + """
+        var lb = new UI.ListBox(10, 10, 90, 80)
+        lb.itemTemplate = new UI.DataTemplate(func (item) => {
+            var st = new UI.StackPanel(0, 0, -1, -1, true, 4, 1)
+            st.Add(new UI.Label("#"))
+            st.Add(new UI.Label(item))
+            return st
+        })
+        lb.Add("one")
+        lb.Add("two")
+        lb.Add("three")
+        ui.Add(lb)
+        ui.Draw()
+        print("Vorlagenzeilen " + lb.rowElements.count + " " + lb.rowElements[1].children.count + " " + lb.rowElements[1].children[1].text)
+        ui.renderer.SetClip(150, 20, 10, 10)
+        ui.renderer.FillRect(100, 0, 100, 100, new SolidBrush(UI.Color.Rgb(255, 0, 0)))
+        ui.renderer.DrawText(148, 20, "AB", new SolidBrush(UI.Color.Rgb(0, 255, 0)))
+        ui.renderer.ResetClip()
+        var inside = 0
+        var outside = 0
+        for (var y = 0; y < 60; y = y + 1) {
+            for (var x = 100; x < 200; x = x + 1) {
+                var red = Px.Get(ui.renderer, x, y) == UI.Color.Rgb(255, 0, 0)
+                var inClip = x >= 150 && x < 160 && y >= 20 && y < 30
+                if (red && inClip) { inside = inside + 1 }
+                if (red && !inClip) { outside = outside + 1 }
+            }
+        }
+        print("Clip " + inside + " " + outside)
+        """, new[] { "Vorlagenzeilen 3 2 two", "Clip 61 0" });
+
     CheckUi("Tick zeichnet, verarbeitet Ereignisse und liefert false, sobald das Fenster geschlossen wurde", uiHead + """
         var b = new UI.Button("OK", 10, 10, 80, 26)
         ui.Add(b)
@@ -9183,6 +9850,18 @@ string[] uiDrawExpected = Array.Empty<string>();
         ExpectDiagnostic("Binding auf ein Element, das es nicht gibt", "<Window class=\"A\"><Label text=\"{Binding text, ElementName=x}\"/></Window>", "does not exist");
         ExpectDiagnostic("unbekannte Markup-Erweiterung", "<Window class=\"A\"><Label text=\"{Bind X}\"/></Window>", "Unknown markup extension");
         ExpectDiagnostic("Binding ohne Pfad", "<Window class=\"A\"><Label text=\"{Binding Mode=TwoWay}\"/></Window>", "needs a path");
+        ExpectDiagnostic("ein Teil ausserhalb seines Containers", "<Window class=\"A\"><Item>x</Item></Window>", "'Item' can only be inside");
+        ExpectDiagnostic("ein Container, der nur Teile nimmt", "<Window class=\"A\"><ListBox><Button/></ListBox></Window>", "can only contain 'Item'");
+        ExpectDiagnostic("Border nimmt nur ein Kind", "<Window class=\"A\"><Border><Label/><Label/></Border></Window>", "contains only one element");
+        ExpectDiagnostic("Style ohne Ziel", "<Window class=\"A\"><Resources><Style key=\"k\"/></Resources></Window>", "needs target");
+        ExpectDiagnostic("Style mit unbekanntem Ziel", "<Window class=\"A\"><Resources><Style target=\"Slider\"/></Resources></Window>", "Unknown style target");
+        ExpectDiagnostic("Setter mit unbekannter Eigenschaft", "<Window class=\"A\"><Resources><Style target=\"Button\"><Setter property=\"nope\" value=\"1\"/></Style></Resources></Window>", "has no property 'nope'");
+        ExpectDiagnostic("zwei Styles ohne Schluessel fuer dasselbe Ziel", "<Window class=\"A\"><Resources><Style target=\"Button\"/><Style target=\"Button\"/></Resources></Window>", "two styles without a key");
+        ExpectDiagnostic("basedOn ohne Ziel", "<Window class=\"A\"><Resources><Style key=\"a\" target=\"Button\" basedOn=\"b\"/></Resources></Window>", "does not exist");
+        ExpectDiagnostic("Stil, den es nicht gibt", "<Window class=\"A\"><Button style=\"Nope\"/></Window>", "Unknown style 'Nope'");
+        ExpectDiagnostic("TemplateBinding ausserhalb einer Vorlage", "<Window class=\"A\"><Label text=\"{TemplateBinding text}\"/></Window>", "only for the elements inside a ControlTemplate");
+        ExpectDiagnostic("Binding in einer Vorlage", "<Window class=\"A\"><Resources><ControlTemplate key=\"t\" target=\"Button\"><Label text=\"{Binding X}\"/></ControlTemplate></Resources></Window>", "not available inside a ControlTemplate");
+        ExpectDiagnostic("Vorlage mit unbekanntem Teil im Trigger", "<Window class=\"A\"><Resources><ControlTemplate key=\"t\" target=\"Button\"><Label name=\"a\"/><Trigger property=\"hover\" value=\"true\"><Setter target=\"b\" property=\"text\" value=\"x\"/></Trigger></ControlTemplate></Resources></Window>", "has no part 'b'");
         ExpectDiagnostic("unbekannter Binding-Modus", "<Window class=\"A\"><Label text=\"{Binding X, Mode=Sideways}\"/></Window>", "Unknown binding mode");
 
         string Generate(string markup) => fire.UI.Markup.FireUiGenerator.Generate(fire.UI.Markup.MarkupParser.Parse(markup), "T.fxml");
@@ -9196,6 +9875,10 @@ string[] uiDrawExpected = Array.Empty<string>();
         ExpectGenerateError("Zahl erwartet", "<Window class=\"A\"><Label x=\"abc\"/></Window>", "needs a whole number");
         ExpectGenerateError("true/false erwartet", "<Window class=\"A\"><Label visible=\"yes\"/></Window>", "needs true or false");
         ExpectGenerateError("Ausrichtung erwartet", "<Window class=\"A\"><Stack orientation=\"Diagonal\"/></Window>", "needs Horizontal or Vertical");
+        ExpectGenerateError("Abstand erwartet", "<Window class=\"A\"><Label margin=\"1,2,3\"/></Window>", "needs 1 number");
+        ExpectGenerateError("Auswahl erwartet", "<Window class=\"A\"><Label halign=\"Middle\"/></Window>", "needs one of Stretch, Left, Center, Right");
+        ExpectGenerateError("Stift erwartet", "<Window class=\"A\"><Rectangle stroke=\"black\"/></Window>", "needs a pen");
+        ExpectGenerateError("eine Eigenschaft, die eine Methode setzt, ist nicht bindbar", "<Window class=\"A\"><Grid rows=\"{Binding R}\"/></Window>", "cannot be bound");
         ExpectGenerateError("Farbe erwartet", "<Window class=\"A\"><Label color=\"red\"/></Window>", "needs a colour");
 
         string script = Generate("<Window class=\"Settings\" title=\"Hi &quot;you&quot;\" width=\"200\" height=\"100\"><Button name=\"ok\" text=\"OK\" onClick=\"Save\" x=\"0x10\"/></Window>");
@@ -9306,6 +9989,126 @@ string[] uiDrawExpected = Array.Empty<string>();
                     "abc p1 T1 p1 P1 T1 False False 255", "xyz", "p2 p2 P2", "p3 p3 P3", "False",
                     "other other", "other2", "p4", "T1||True", "p4",
                 });
+
+            File.WriteAllText(P("Rich.fxml"), """
+                <Window class="Rich" title="Rich" width="480" height="320">
+                  <Resources>
+                    <Style target="Label">
+                      <Setter property="color" value="#0000C8"/>
+                    </Style>
+                    <Style key="Primary" target="Button">
+                      <Setter property="background" value="#3366AA"/>
+                      <Setter property="foreground" value="#FFFFFF"/>
+                      <Setter property="margin" value="2,1"/>
+                      <Trigger property="hover" value="true">
+                        <Setter property="background" value="#4477BB"/>
+                      </Trigger>
+                    </Style>
+                    <ControlTemplate key="Fancy" target="Button">
+                      <Border name="bd" background="#33AA66" padding="4">
+                        <Label name="txt" text="{TemplateBinding text}"/>
+                      </Border>
+                      <Trigger property="pressed" value="true">
+                        <Setter target="bd" property="background" value="#AA3333"/>
+                      </Trigger>
+                    </ControlTemplate>
+                  </Resources>
+                  <DockPanel x="0" y="0" width="480" height="320">
+                    <MenuBar name="bar" DockPanel.Dock="Top">
+                      <Menu header="File">
+                        <MenuItem header="Open" shortcut="Ctrl+O" onClick="Open"/>
+                        <MenuSeparator/>
+                        <MenuItem header="Recent">
+                          <MenuItem header="a.txt"/>
+                        </MenuItem>
+                        <MenuItem header="Check" checkable="true" isChecked="true"/>
+                      </Menu>
+                      <Menu header="Edit"><MenuItem header="Copy"/></Menu>
+                    </MenuBar>
+                    <ToolBar DockPanel.Dock="Top">
+                      <Button name="one" text="One" onClick="One"/>
+                      <Separator/>
+                      <Button text="Two"/>
+                    </ToolBar>
+                    <Grid rows="*,auto" columns="150,*">
+                      <ListBox name="names" Grid.Row="0" Grid.Column="0" margin="4" onSelect="Picked">
+                        <Item>Alice</Item>
+                        <Item>Bob</Item>
+                        <Item text="Carol"/>
+                      </ListBox>
+                      <ScrollViewer Grid.Row="0" Grid.Column="1" margin="4">
+                        <StackPanel spacing="4" padding="4">
+                          <TreeView name="tree" height="80">
+                            <TreeNode text="root" expanded="true">
+                              <TreeNode text="child a"/>
+                              <TreeNode text="child b"><TreeNode text="leaf"/></TreeNode>
+                            </TreeNode>
+                          </TreeView>
+                          <RadioButtons name="radio" header="Size" selectedIndex="1"><Item>Small</Item><Item>Large</Item></RadioButtons>
+                          <Button name="styled" text="Styled" style="Primary"/>
+                          <Button name="templated" text="Templated" template="Fancy"/>
+                          <AutoSuggestBox name="sugg" width="150"><Suggestion>apple</Suggestion><Suggestion>banana</Suggestion></AutoSuggestBox>
+                          <Rectangle name="rect" width="60" height="20" fill="#FFCC00" stroke="#000000"/>
+                          <Path data="M 0 0 L 30 0 L 15 20 Z" fill="#66AAFF" stroke="#003366,2"/>
+                          <DrawingCanvas name="canvas" width="80" height="40" onPaint="Paint" onMouseDown="Down"/>
+                        </StackPanel>
+                      </ScrollViewer>
+                      <ListView name="table" Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" height="60">
+                        <Column header="Name" member="name" width="120"/>
+                        <Column header="Age" member="age"/>
+                      </ListView>
+                    </Grid>
+                  </DockPanel>
+                </Window>
+                """);
+            CheckUi("Markup: Layout-Container, Listen, Baum, Menues, Styles, Vorlagen und Formen aus dem Markup", $$"""
+                #include "{{P("Rich.fxml")}}"
+                class RichApp : RichBase {
+                    Picked(sender) { print("picked " + sender.selectedItem) }
+                    Open(sender) { print("open") }
+                    One(sender) { print("one") }
+                    Paint(sender, canvas) { print("paint " + canvas.framebuffer.Width() + "x" + canvas.framebuffer.Height() + " " + (canvas == sender)) }
+                    Down(sender, x, y, button) { print("down " + x + "," + y + " " + button) }
+                }
+                var app = new RichApp()
+                app.ui.Draw()
+                app.ui.Draw()
+                print("namen " + app.names.count + " baum " + app.tree.visibleNodes.count + " vorschlaege " + app.sugg.suggestions.count + " tabelle " + app.table.columns.count)
+                var n = app.names
+                app.ui.MouseDown(1, n.ax + 10, n.ay + 25)
+                app.ui.MouseUp(1, n.ax + 10, n.ay + 25)
+                var c = app.canvas
+                c.MouseDown(app.ui, 1, c.ax + 5, c.ay + 6)
+                app.ui.MouseDown(1, app.one.ax + 5, app.one.ay + 5)
+                app.ui.MouseUp(1, app.one.ax + 5, app.one.ay + 5)
+                print("Stil " + (app.styled.background != undefined) + " " + app.styled.margin.left + " " + (app.styled.style == app.fxStyle_Primary))
+                print("Vorlage " + (app.templated.templateRoot != undefined) + " " + app.templated.FindPart("txt").text)
+                print("implizit " + (app.rect.stroke != undefined) + " " + app.radio.selectedIndex + " " + app.radio.items.count)
+                app.bar.Open(app.ui, 0)
+                app.ui.Draw()
+                var menu = app.ui.popups[0]
+                var mx = menu.ax + 10
+                var my = menu.ay + 4
+                app.ui.MouseDown(1, mx, my)
+                app.ui.MouseUp(1, mx, my)
+                print("Menue " + app.ui.popups.count + " " + app.bar.menus.count)
+                """, new[] { "paint 80x40 True", "namen 3 baum 3 vorschlaege 2 tabelle 2", "picked Bob", "down 5,6 1", "one", "Stil True 2 True", "Vorlage True Templated", "implizit True 1 2", "open", "Menue 0 2" });
+
+            // die Entwurfsansicht: dieselbe Bibliothek zeichnet, ohne Handler und ohne den Code des Programms
+            {
+                var richDoc = fire.UI.Markup.MarkupParser.Parse(File.ReadAllText(P("Rich.fxml")));
+                var shot = fire.Compiler.UiPreview.Render(richDoc, P("Rich.fxml"));
+                var shown = richDoc.AllElements().Where(e => fire.UI.Markup.MarkupSchema.Find(e.Tag) is { IsPart: false }).ToList();
+                CheckMarkup("Markup: Entwurfsansicht - Bild in der Groesse des Fensters, ein Ort je Element", shot.Ok && shot.Width == 480 && shot.Height == 320 && shot.Rects.Count == shown.Count && shot.Rects[0].Width == 480, shot.Error ?? $"{shot.Width}x{shot.Height} {shot.Rects.Count}/{shown.Count}");
+                int styledAt = shown.FindIndex(e => e.Name == "styled");
+                var styledRect = shot.Rects.FirstOrDefault(r => r.Index == styledAt);
+                uint styledColor = 51u | (102u << 8) | (170u << 16) | (255u << 24);
+                CheckMarkup("Markup: Entwurfsansicht - der Style steckt im Bild (Hintergrund des Buttons mit style=\"Primary\")", shot.Ok && styledRect != null && shot.Pixels[(styledRect.Y + 3) * shot.Width + styledRect.X + 3] == styledColor);
+                var bound = fire.UI.Markup.MarkupParser.Parse("<Window class=\"B\" width=\"200\" height=\"100\"><Label text=\"{Binding Name}\"/><Label color=\"{Enum Colors.Red}\" text=\"x\"/><Button onClick=\"Nope\"/></Window>");
+                string previewScript = fire.UI.Markup.FireUiGenerator.GeneratePreview(bound);
+                CheckMarkup("Markup: Entwurfsansicht - ein gebundener Text zeigt den Pfad, Code des Programms und Handler fehlen", previewScript.Contains("\u2039Name\u203A") && !previewScript.Contains("Colors.Red") && !previewScript.Contains("Nope(") && fire.Compiler.UiPreview.Render(bound).Ok);
+                CheckMarkup("Markup: Entwurfsansicht - ein Fehler im Markup wird gemeldet, nichts wird ausgefuehrt", !fire.Compiler.UiPreview.Render(fire.UI.Markup.MarkupParser.Parse("<Window class=\"B\"><Label x=\"abc\"/></Window>")).Ok);
+            }
         }
         finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
     }

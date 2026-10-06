@@ -42,6 +42,9 @@ namespace fire.UI.Markup
     /// <summary>`{Binding Path, Mode=TwoWay, Converter=Key, ElementName=name}`: the value of a property of the data context (or of a named element) follows the property.</summary>
     public sealed record BindingValue(string Path, BindingMode Mode, string? Converter, string? ElementName) : MarkupValue;
 
+    /// <summary>`{TemplateBinding Property}` in a control template: the property of the part follows the property of the control that the template belongs to.</summary>
+    public sealed record TemplateBindingValue(string OwnerProperty) : MarkupValue;
+
     /// <summary>An attribute of an element.</summary>
     public sealed record MarkupAttribute(string Name, MarkupValue Value, int Line);
 
@@ -63,6 +66,39 @@ namespace fire.UI.Markup
     /// <summary>`<Converter key="Upper" type="UpperConverter"/>`: a converter that bindings refer to by its key.</summary>
     public sealed record ConverterDeclaration(string Key, string Type, int Line);
 
+    /// <summary>`<Setter property="background" value="#336699"/>`: gives a property a value (`Target`: the name of a part, inside a control template).</summary>
+    public sealed record SetterDeclaration(string Property, MarkupValue Value, string? Target, int Line);
+
+    /// <summary>`<Trigger property="hover" value="true">`: while all conditions hold (the first one is the attribute pair, more come from `<Condition .../>`), the setters apply.</summary>
+    public sealed class TriggerDeclaration
+    {
+        public int Line { get; init; }
+        /// <summary>Property, value, source (a part name, or null for the element itself), line.</summary>
+        public List<(string Property, MarkupValue Value, string? Source, int Line)> Conditions { get; } = new();
+        public List<SetterDeclaration> Setters { get; } = new();
+    }
+
+    /// <summary>`<Style key="Primary" target="Button" basedOn="Base">`: setters and triggers for one kind of element. Without a key it is the implicit style of the kind for the whole interface.</summary>
+    public sealed class StyleDeclaration
+    {
+        public string? Key { get; init; }
+        public string Target { get; init; } = "";
+        public string? BasedOn { get; init; }
+        public int Line { get; init; }
+        public List<SetterDeclaration> Setters { get; } = new();
+        public List<TriggerDeclaration> Triggers { get; } = new();
+    }
+
+    /// <summary>`<ControlTemplate key="Fancy" target="Button">`: the look of a control as a tree of elements (the single child element; parts have a `name`), with triggers.</summary>
+    public sealed class TemplateDeclaration
+    {
+        public string Key { get; init; } = "";
+        public string Target { get; init; } = "";
+        public int Line { get; init; }
+        public MarkupElement? Root { get; set; }
+        public List<TriggerDeclaration> Triggers { get; } = new();
+    }
+
     /// <summary>A parsed markup file.</summary>
     public sealed class MarkupDocument
     {
@@ -75,15 +111,22 @@ namespace fire.UI.Markup
         public int Width { get; init; } = 640;
         public int Height { get; init; } = 480;
         public List<ConverterDeclaration> Converters { get; } = new();
+        public List<StyleDeclaration> Styles { get; } = new();
+        public List<TemplateDeclaration> Templates { get; } = new();
         public List<MarkupElement> Children { get; } = new();
         public List<MarkupDiagnostic> Diagnostics { get; } = new();
 
         public bool HasErrors => Diagnostics.Count > 0;
 
-        /// <summary>Every element (depth first), the children before the next sibling.</summary>
-        public IEnumerable<MarkupElement> AllElements()
+        /// <summary>Every element of the interface (depth first), the children before the next sibling. The elements inside control templates are not among them (see <see cref="TemplateElements"/>).</summary>
+        public IEnumerable<MarkupElement> AllElements() => Walk(Children);
+
+        /// <summary>Every element inside the control templates.</summary>
+        public IEnumerable<MarkupElement> TemplateElements() => Walk(Templates.Where(t => t.Root != null).Select(t => t.Root!));
+
+        private static IEnumerable<MarkupElement> Walk(IEnumerable<MarkupElement> roots)
         {
-            var stack = new Stack<MarkupElement>(Children.AsEnumerable().Reverse());
+            var stack = new Stack<MarkupElement>(roots.Reverse());
             while (stack.Count > 0)
             {
                 var e = stack.Pop();

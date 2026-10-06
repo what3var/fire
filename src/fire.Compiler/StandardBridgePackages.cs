@@ -32,7 +32,7 @@ namespace fire.Compiler
         private static IEnumerable<string> RequiresOf(string bridge) => bridge switch
         {
             "windows" => new[] { "graphics" },
-            "ui" => new[] { "graphics", "windows" },
+            "ui" => new[] { "graphics", "windows", "reflection" },
             "linq" => new[] { "reflection" },
             _ => Array.Empty<string>(),
         };

@@ -33,6 +33,33 @@ namespace UI {
         bool pressed = false
         bool focused = false
         Element parent
+        // Aussehen: undefined = das Steuerelement nimmt die Farben des Themes (Zustaende wie hover aendern sie dann selbst)
+        Brush background
+        Brush foreground
+        Pen pen
+        // Name (fuer die Teile einer Vorlage, siehe FindPart)
+        string name = ""
+        // Eigene Ressourcen (undefined, bis man ein ResourceDictionary zuweist) und Style (undefined: der implizite Style, siehe StyleKey)
+        ResourceDictionary resources
+        Style style
+        // Vorlage fuer das Aussehen von Steuerelementen (ControlTemplate); templateRoot ist der daraus gebaute Teilbaum
+        ControlTemplate template
+        Element templateRoot
+        Root host
+        // Zustand von Style, Vorlage, Bindungen
+        bool styled = false
+        Style appliedStyle
+        List styleStates
+        List templateStates
+        List templateParts
+        List bindings
+
+        // Kontextmenue (Liste von MenuItem), das ein Rechtsklick auf das Element oder einen Nachfahren zeigt (siehe Root.ShowMenu)
+        List contextMenu
+        // Schwebendes Element (siehe Root.ShowPopup): wird beim Schliessen zerstoert / hat es geoeffnet / will die Tasten, solange es oben liegt
+        bool transient = false
+        Element owner
+        bool grabsKeys = false
 
         // Ergebnis des Layouts
         // cw/ch: Inhaltsgroesse (ohne Rand), dw/dh: gewuenschte Groesse (mit Rand)
@@ -57,6 +84,137 @@ namespace UI {
             this.margin = new Thickness(0)
         }
 
+        // Der Schluessel, unter dem implizite Styles fuer diese Art Element stehen (ResourceDictionary.AddStyle); abgeleitete Klassen erben ihn.
+        string StyleKey() { return "Element" }
+
+        // Das Element (oder ein Nachfahre) mit diesem Namen, sonst undefined.
+        FindName(string name) {
+            if (this.name == name) { return this }
+            return undefined
+        }
+
+        // Ein Teil der Vorlage dieses Elements (oder das Element selbst bei "").
+        FindPart(string part) {
+            if (part == "") { return this }
+            if (this.templateRoot != undefined) { return this.templateRoot.FindName(part) }
+            return this.FindName(part)
+        }
+
+        // Der erste Style fuer `key` ab diesem Element nach oben (zuletzt die Ressourcen des Roots), sonst undefined.
+        FindStyle(string key) {
+            var e = this
+            while (e != undefined) {
+                if (e.resources != undefined) {
+                    var found = e.resources.FindStyle(key)
+                    if (found != undefined) { return found }
+                }
+                e = e.parent
+            }
+            if (this.host != undefined) { return this.host.resources.FindStyle(key) }
+            return undefined
+        }
+
+        // Die Ressource zu `key` ab diesem Element nach oben (zuletzt die des Roots), sonst undefined. Vor dem ersten Layout gibt es nur die der Vorfahren.
+        FindResource(string key) {
+            var e = this
+            while (e != undefined) {
+                if (e.resources != undefined && e.resources.Has(key)) { return e.resources.Get(key) }
+                e = e.parent
+            }
+            if (this.host != undefined) { return this.host.resources.Get(key) }
+            return undefined
+        }
+
+        // Legt die Ressourcen dieses Elements an, falls es noch keine hat, und liefert sie.
+        Resources() {
+            if (this.resources == undefined) { this.resources = new ResourceDictionary() }
+            return this.resources
+        }
+
+        // Einen Trigger des Styles bei diesem Element anmelden.
+        AddTrigger(trigger) {
+            if (this.styleStates == undefined) { this.styleStates = new List() }
+            var state = new TriggerState(trigger)
+            state.TakeTo(this)
+            this.styleStates.Add(state)
+        }
+
+        // Verbindet eine Eigenschaft dieses Elements mit der eines anderen Objekts (siehe Binding).
+        Bind(string property, source, string sourceProperty, bool twoWay = false, converter = undefined) {
+            if (this.bindings == undefined) { this.bindings = new List() }
+            var binding = new Binding(this, property, source, sourceProperty, twoWay, converter)
+            binding.TakeTo(this)
+            this.bindings.Add(binding)
+            return binding
+        }
+
+        ClearStyle() {
+            if (this.styleStates == undefined) { return }
+            for (var i = 0; i < this.styleStates.count; i = i + 1) {
+                var state = this.styleStates[i]
+                if (state.active) { state.Deactivate() }
+                delete state
+            }
+            this.styleStates = new List()
+        }
+
+        // Baut die Teile aus der Vorlage.
+        BuildTemplate() {
+            var make = this.template.factory
+            var tree = make(this)
+            tree.TakeTo(this)
+            tree.parent = this
+            this.templateRoot = tree
+            this.templateParts = new List()
+            for (var i = 0; i < this.template.bindings.count; i = i + 1) {
+                this.templateParts.Add(tree.FindName(this.template.bindings[i].part))
+            }
+            this.templateStates = new List()
+            for (var j = 0; j < this.template.triggers.count; j = j + 1) {
+                var state = new TriggerState(this.template.triggers[j])
+                state.TakeTo(this)
+                this.templateStates.Add(state)
+            }
+        }
+
+        // Vor jedem Layout: Style anwenden (beim ersten Mal), Vorlage bauen, Bindungen abgleichen, Trigger pruefen.
+        Prepare(root) {
+            this.host = root
+            if (!this.styled) {
+                this.styled = true
+                if (this.style == undefined) {
+                    var found = this.FindStyle(this.StyleKey())
+                    if (found != undefined) {
+                        this.appliedStyle = found
+                        found.Apply(this)
+                    }
+                }
+            }
+            if (this.style != undefined && this.style != this.appliedStyle) {
+                this.ClearStyle()
+                this.appliedStyle = this.style
+                this.style.Apply(this)
+            }
+            if (this.template != undefined && this.templateRoot == undefined) { this.BuildTemplate() }
+            if (this.bindings != undefined) {
+                for (var b = 0; b < this.bindings.count; b = b + 1) { this.bindings[b].Sync() }
+            }
+            if (this.templateRoot != undefined) {
+                for (var i = 0; i < this.template.bindings.count; i = i + 1) {
+                    var part = this.templateParts[i]
+                    if (part == undefined) { continue }
+                    var binding = this.template.bindings[i]
+                    if (!Reflect.Has(this, binding.ownerProperty) || !Reflect.Has(part, binding.partProperty)) { continue }
+                    var value = Reflect.Get(this, binding.ownerProperty)
+                    if (Reflect.Get(part, binding.partProperty) != value) { Reflect.Set(part, binding.partProperty, value) }
+                }
+                for (var k = 0; k < this.templateStates.count; k = k + 1) { this.templateStates[k].Update(this) }
+            }
+            if (this.styleStates != undefined) {
+                for (var j = 0; j < this.styleStates.count; j = j + 1) { this.styleStates[j].Update(this) }
+            }
+        }
+
         // Kann das Element den Tastaturfokus bekommen (Tab, Klick)?
         bool Focusable() { return false }
 
@@ -72,6 +230,7 @@ namespace UI {
                 this.dh = 0
                 return
             }
+            this.Prepare(root)
             var mw = this.margin.left + this.margin.right
             var mh = this.margin.top + this.margin.bottom
             var iw = aw
@@ -85,7 +244,7 @@ namespace UI {
             if (this.maxHeight >= 0 && (ih < 0 || ih > this.maxHeight)) { ih = this.maxHeight }
             this.cw = 0
             this.ch = 0
-            this.MeasureCore(root, iw, ih)
+            this.MeasureContent(root, iw, ih)
             var w = this.cw
             var h = this.ch
             if (this.width >= 0) { w = this.width }
@@ -126,7 +285,38 @@ namespace UI {
             this.ry = py + mt + oy
             this.actualWidth = w
             this.actualHeight = h
-            this.ArrangeCore(root, w, h)
+            this.ArrangeContent(root, w, h)
+        }
+
+        // Mit Vorlage bestimmt ihr Baum die Groesse, sonst der Inhalt des Elements selbst.
+        MeasureContent(root, int iw, int ih) {
+            var t = this.templateRoot
+            if (t == undefined) {
+                this.MeasureCore(root, iw, ih)
+                return
+            }
+            t.Measure(root, iw, ih)
+            this.cw = t.dw
+            this.ch = t.dh
+        }
+
+        ArrangeContent(root, int w, int h) {
+            var t = this.templateRoot
+            if (t == undefined) {
+                this.ArrangeCore(root, w, h)
+                return
+            }
+            t.Arrange(root, 0, 0, w, h)
+        }
+
+        // Zeichnet die Vorlage; false, wenn es keine gibt (dann zeichnet sich das Steuerelement selbst).
+        bool DrawTemplate(root, int ax, int ay) {
+            var t = this.templateRoot
+            this.ax = ax
+            this.ay = ay
+            if (t == undefined) { return false }
+            if (t.visible) { t.Draw(root, ax + t.rx, ay + t.ry) }
+            return true
         }
 
         Draw(root, int ax, int ay) {
@@ -150,6 +340,19 @@ namespace UI {
             return px >= this.ax && px < this.ax + this.actualWidth && py >= this.ay && py < this.ay + this.actualHeight
         }
 
+        // Das Mausrad: dy > 0 heisst nach oben. Liefert true, wenn das Element es verbraucht hat (sonst fragt der Root den Container).
+        bool MouseWheel(root, int dx, int dy) { return false }
+
+        // Fuer ein schwebendes Element: ein Klick ausserhalb. Es schliesst sich (und verbraucht den Klick, wenn er sein Besitzer `owner` traf).
+        bool PopupOutside(root, int px, int py) {
+            var consumed = this.owner != undefined && this.owner.Contains(px, py)
+            root.ClosePopup(this)
+            return consumed
+        }
+
+        // Der Zeiger bewegt sich ueber dem Element (ohne gedrueckte Maustaste auf ihm).
+        Hover(root, int px, int py) { }
+
         MouseDown(root, int button, int px, int py) { }
         MouseUp(root, int button, int px, int py) { }
         MouseMove(root, int px, int py) { }
@@ -162,11 +365,9 @@ namespace UI {
     class Panel : Element {
         List children
         bool showBorder = false
-        // Hintergrund: undefined = der Brush `panel` des Themes; mit filled = false gibt es keinen (durchsichtig)
-        Brush background
+        // Hintergrund (`background`, siehe Element): undefined = der Brush `panel` des Themes; mit filled = false gibt es keinen (durchsichtig)
+        // Rahmen (showBorder, `pen`): undefined = der Pen `border` des Themes
         bool filled = true
-        // Rahmen (showBorder): undefined = der Pen `border` des Themes
-        Pen pen
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
             this.children = new List()
@@ -262,10 +463,23 @@ namespace UI {
                 this.children[i].Collect(list)
             }
         }
+
+        string StyleKey() { return "Panel" }
+
+        FindName(string name) {
+            if (this.name == name) { return this }
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var found = this.children[i].FindName(name)
+                if (found != undefined) { return found }
+            }
+            return undefined
+        }
     }
 
     // Wie Panel, aber durchsichtig und ohne Rahmen: Kinder an festen Positionen (x/y).
     class Canvas : Panel {
+        string StyleKey() { return "Canvas" }
+
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
             this.filled = false
         }
@@ -275,6 +489,8 @@ namespace UI {
     // gewuenschte Groesse, quer dazu den ganzen Platz (halign/valign wirken dort). `spacing` ist der Abstand zwischen den Kindern, `padding` der
     // Rand innen.
     class StackPanel : Panel {
+        string StyleKey() { return "StackPanel" }
+
         bool horizontal
         int spacing
         int padding
@@ -346,6 +562,8 @@ namespace UI {
     // Die Kinder liegen an den Raendern (`dock`: Left, Top, Right, Bottom) in der Reihenfolge, in der sie hinzugefuegt wurden; was uebrig bleibt, fuellt das
     // letzte Kind (lastChildFill).
     class DockPanel : Panel {
+        string StyleKey() { return "DockPanel" }
+
         bool lastChildFill = true
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
@@ -429,6 +647,8 @@ namespace UI {
     // Reiht die Kinder auf und beginnt eine neue Zeile (Spalte, wenn vertikal), wenn der Platz nicht reicht. itemWidth/itemHeight (>= 0) geben jedem Kind
     // diese Groesse.
     class WrapPanel : Panel {
+        string StyleKey() { return "WrapPanel" }
+
         bool vertical = false
         int itemWidth = -1
         int itemHeight = -1
@@ -545,6 +765,9 @@ namespace UI {
         construct(int mode, int value) {
             this.mode = mode
             this.value = value
+            // eine feste Spur hat ihre Groesse schon, bevor das Layout die Spuren der anderen Achse braucht
+            this.size = 0
+            if (mode == 1) { this.size = value }
         }
 
         // "auto", "*", "2*" oder eine Zahl (Pixel)
@@ -563,6 +786,8 @@ namespace UI {
     // Zeilen und Spalten: `grid.SetColumns("100, auto, *, 2*")`, `grid.SetRows("auto, *")`; ein Kind sitzt in der Zelle (gridRow, gridColumn) und kann ueber
     // gridRowSpan/gridColumnSpan mehrere belegen. Ohne Angabe gibt es eine Zeile und eine Spalte mit `*`.
     class Grid : Panel {
+        string StyleKey() { return "Grid" }
+
         List rows
         List columns
 
@@ -801,8 +1026,6 @@ namespace UI {
     // Ein Kind mit Rahmen, Hintergrund und Innenabstand (padding). thickness ist die Breite des Rahmens in Pixeln (0: keiner).
     class Border : Element {
         Element child
-        Brush background
-        Pen pen
         int thickness = 1
         Thickness padding
 
@@ -870,6 +1093,14 @@ namespace UI {
         Collect(list) {
             if (!this.visible || !this.enabled) { return }
             if (this.child != undefined) { this.child.Collect(list) }
+        }
+
+        string StyleKey() { return "Border" }
+
+        FindName(string name) {
+            if (this.name == name) { return this }
+            if (this.child != undefined) { return this.child.FindName(name) }
+            return undefined
         }
     }
 }

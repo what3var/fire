@@ -236,7 +236,7 @@ namespace fire.Terminal.Bridge
             "GetAlphaBlending", "SetAlphaBlending", "DrawText",
             "FillRect", "Fill", "FillCircle", "FillEllipse", "FillTriangle", "FillPolygon", "FloodFill", "FloodFillBorder",
             "DrawPoint", "DrawLine", "DrawPath", "DrawRect", "DrawCircle", "DrawEllipse", "DrawTriangle", "DrawPolygon",
-            "Blit",
+            "Blit", "SetClip", "ResetClip",
         };
 
         private static readonly string[] BrushFunctionNames = { "CreateSolid", "Destroy", "GetColor", "SetColor" };
@@ -306,6 +306,8 @@ namespace fire.Terminal.Bridge
                 ["DrawEllipse"] = args => Nothing(() => mgr.DrawEllipse(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]))),
                 ["DrawTriangle"] = args => Nothing(() => mgr.DrawTriangle(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]), I(args[7]))),
                 ["DrawPolygon"] = args => Nothing(() => mgr.DrawPolygon(I(args[0]), ReadPoints(args[1]), I(args[2]), args[3].AsBool())),
+                ["SetClip"] = args => Nothing(() => mgr.SetClip(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]))),
+                ["ResetClip"] = args => Nothing(() => mgr.ResetClip(I(args[0]))),
                 ["Blit"] = args => Nothing(() => mgr.Blit(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]), I(args[7]), I(args[8]), I(args[9]), I(args[10]), I(args[11]))),
             });
         }
@@ -687,6 +689,11 @@ namespace fire.Terminal.Bridge
                     get { return __GRPHRndGetAlphaBlending(this.id) }
                     set { __GRPHRndSetAlphaBlending(this.id, value) }
                 }
+
+                // Beschränkt das Zeichnen (Füllungen, Formen, Text, Blit) auf das Rechteck (x, y, w, h) des Framebuffers; ResetClip hebt es auf (wieder der ganze Framebuffer).
+                // Es gilt nicht für Clear/ClearTo.
+                SetClip(int x, int y, int w, int h) { __GRPHRndSetClip(this.id, x, y, w, h) }
+                ResetClip() { __GRPHRndResetClip(this.id) }
 
                 // ---- Terminal ----
                 Print(string text) { __GRPHRndPrint(this.id, text) }

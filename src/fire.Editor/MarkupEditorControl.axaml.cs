@@ -7,6 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using fire.Compiler;
 using fire.UI.Markup;
 
 namespace fire.Editor
@@ -105,7 +106,6 @@ namespace fire.Editor
             Editor.TextArea.TextView.Redraw();
 
             _document = MarkupParser.Parse(text);
-            Preview.SetDocument(_document);
             Preview.HighlightLine = GetCaretLine();
 
             // the problems of the markup itself, and - when it reads well - the ones the generator finds (values that do not fit their property)
@@ -115,6 +115,8 @@ namespace fire.Editor
                 try { FireUiGenerator.Generate(_document, FilePath ?? ""); }
                 catch (MarkupException ex) { problems.AddRange(ex.Diagnostics); }
             }
+            // the picture: only a markup that reads well is drawn (the last picture stays while there are mistakes)
+            if (problems.Count == 0) DrawPreview(_document);
             _problemLines = problems.Select(p => p.Line).ToList();
             Problems.ItemsSource = problems.Select(p => p.ToString()).ToList();
             Problems.IsVisible = problems.Count > 0;
@@ -123,6 +125,35 @@ namespace fire.Editor
         }
 
         private List<int> _problemLines = new();
+
+        private int _previewVersion;
+        private static readonly object PreviewLock = new();
+
+        /// <summary>Draws the interface with the library (in the background, one picture at a time; a result that a newer text has outdated is dropped).</summary>
+        private void DrawPreview(MarkupDocument document)
+        {
+            int version = ++_previewVersion;
+            string? path = FilePath;
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                UiPreviewResult result;
+                lock (PreviewLock) result = UiPreview.Render(document, path);
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (version != _previewVersion) return;
+                    if (result.Ok)
+                    {
+                        Preview.SetRender(document, result);
+                        PreviewError.IsVisible = false;
+                    }
+                    else
+                    {
+                        PreviewError.Text = result.Error ?? "The design view could not draw the interface.";
+                        PreviewError.IsVisible = true;
+                    }
+                });
+            });
+        }
 
         private void Problems_SelectionChanged(object? sender, SelectionChangedEventArgs e)
         {
@@ -159,7 +190,24 @@ namespace fire.Editor
             ("TextBox", "<TextBox name=\"name\" width=\"200\" text=\"{Binding Name, Mode=TwoWay}\"/>"),
             ("Stack", "<Stack width=\"200\" height=\"100\" orientation=\"Vertical\" spacing=\"6\">\n  \n</Stack>"),
             ("Panel", "<Panel x=\"0\" y=\"0\" width=\"200\" height=\"100\" showBorder=\"true\">\n  \n</Panel>"),
+            ("StackPanel", "<StackPanel spacing=\"6\" padding=\"4\">\n  \n</StackPanel>"),
+            ("Grid", "<Grid rows=\"auto, *\" columns=\"100, *\">\n  <Label Grid.Row=\"0\" Grid.Column=\"0\" text=\"Name:\"/>\n  <TextBox Grid.Row=\"0\" Grid.Column=\"1\"/>\n</Grid>"),
+            ("DockPanel", "<DockPanel width=\"400\" height=\"300\">\n  <ToolBar DockPanel.Dock=\"Top\">\n    <Button text=\"Open\"/>\n  </ToolBar>\n  \n</DockPanel>"),
+            ("ScrollViewer", "<ScrollViewer width=\"200\" height=\"100\">\n  <StackPanel>\n    \n  </StackPanel>\n</ScrollViewer>"),
+            ("ListBox", "<ListBox name=\"list\" width=\"160\" height=\"100\" onSelect=\"Picked\">\n  <Item>One</Item>\n  <Item>Two</Item>\n</ListBox>"),
+            ("ListView", "<ListView width=\"240\" height=\"120\">\n  <Column header=\"Name\" member=\"name\" width=\"120\"/>\n  <Column header=\"Age\" member=\"age\"/>\n</ListView>"),
+            ("TreeView", "<TreeView width=\"200\" height=\"120\">\n  <TreeNode text=\"root\" expanded=\"true\">\n    <TreeNode text=\"child\"/>\n  </TreeNode>\n</TreeView>"),
+            ("RadioButtons", "<RadioButtons header=\"Size\" selectedIndex=\"0\">\n  <Item>Small</Item>\n  <Item>Large</Item>\n</RadioButtons>"),
+            ("AutoSuggestBox", "<AutoSuggestBox width=\"160\">\n  <Suggestion>apple</Suggestion>\n  <Suggestion>banana</Suggestion>\n</AutoSuggestBox>"),
+            ("MenuBar", "<MenuBar>\n  <Menu header=\"File\">\n    <MenuItem header=\"Open\" onClick=\"Open\"/>\n    <MenuSeparator/>\n    <MenuItem header=\"Quit\" onClick=\"Quit\"/>\n  </Menu>\n</MenuBar>"),
+            ("ToolBar", "<ToolBar>\n  <Button text=\"One\" onClick=\"One\"/>\n  <Separator/>\n  <Button text=\"Two\"/>\n</ToolBar>"),
+            ("Image", "<Image source=\"logo.png\" width=\"64\" height=\"64\" stretch=\"Uniform\"/>"),
+            ("Rectangle", "<Rectangle width=\"60\" height=\"30\" fill=\"#FFCC00\" stroke=\"#000000\"/>"),
+            ("Path", "<Path data=\"M 0 0 L 40 0 L 20 30 Z\" fill=\"#66AAFF\" stroke=\"#003366\"/>"),
+            ("DrawingCanvas", "<DrawingCanvas name=\"canvas\" width=\"200\" height=\"120\" onPaint=\"Paint\"/>"),
             ("Converter", "<Resources>\n  <Converter key=\"Upper\" type=\"UpperConverter\"/>\n</Resources>"),
+            ("Style", "<Resources>\n  <Style key=\"Primary\" target=\"Button\">\n    <Setter property=\"background\" value=\"#3366AA\"/>\n    <Setter property=\"foreground\" value=\"#FFFFFF\"/>\n    <Trigger property=\"hover\" value=\"true\">\n      <Setter property=\"background\" value=\"#4477BB\"/>\n    </Trigger>\n  </Style>\n</Resources>"),
+            ("ControlTemplate", "<Resources>\n  <ControlTemplate key=\"Fancy\" target=\"Button\">\n    <Border name=\"bd\" background=\"#33AA66\" padding=\"4\">\n      <Label text=\"{TemplateBinding text}\"/>\n    </Border>\n    <Trigger property=\"pressed\" value=\"true\">\n      <Setter target=\"bd\" property=\"background\" value=\"#AA3333\"/>\n    </Trigger>\n  </ControlTemplate>\n</Resources>"),
         };
 
         private void Template_Click(object? sender, RoutedEventArgs e)

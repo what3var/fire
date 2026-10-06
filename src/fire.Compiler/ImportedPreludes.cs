@@ -62,7 +62,7 @@ namespace fire.Compiler
                 yield break;
             }
             if (importKey == NativeImports.Windows) yield return NativeImports.Graphics; // Window zeigt einen Framebuffer
-            if (importKey == NativeImports.Ui) { yield return NativeImports.Graphics; yield return NativeImports.Windows; }
+            if (importKey == NativeImports.Ui) { yield return NativeImports.Graphics; yield return NativeImports.Windows; yield return NativeImports.Reflection; } // Styles und Trigger setzen Eigenschaften per Name
             if (importKey == NativeImports.Linq) yield return NativeImports.Reflection; // SelectProperty/SelectField arbeiten mit Selektoren
             yield return importKey;
         }

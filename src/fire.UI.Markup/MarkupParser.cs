@@ -74,7 +74,7 @@ namespace fire.UI.Markup
             foreach (var child in root.Elements())
             {
                 if (string.Equals(child.Name.LocalName, "Resources", StringComparison.OrdinalIgnoreCase)) ReadResources(child, document, errors);
-                else ReadElement(child, document.Children, errors);
+                else ReadElement(child, document.Children, errors, null);
             }
 
             document.Diagnostics.AddRange(errors);
@@ -95,9 +95,12 @@ namespace fire.UI.Markup
         {
             foreach (var item in resources.Elements())
             {
-                if (!string.Equals(item.Name.LocalName, "Converter", StringComparison.OrdinalIgnoreCase))
+                string kind = item.Name.LocalName;
+                if (string.Equals(kind, "Style", StringComparison.OrdinalIgnoreCase)) { ReadStyle(item, document, errors); continue; }
+                if (string.Equals(kind, "ControlTemplate", StringComparison.OrdinalIgnoreCase)) { ReadTemplate(item, document, errors); continue; }
+                if (!string.Equals(kind, "Converter", StringComparison.OrdinalIgnoreCase))
                 {
-                    errors.Add(new MarkupDiagnostic(Line(item), $"Unknown resource '{item.Name.LocalName}' (known: Converter)."));
+                    errors.Add(new MarkupDiagnostic(Line(item), $"Unknown resource '{item.Name.LocalName}' (known: Converter, Style, ControlTemplate)."));
                     continue;
                 }
                 string? key = (string?)item.Attribute("key"), type = (string?)item.Attribute("type");
@@ -113,13 +116,168 @@ namespace fire.UI.Markup
             }
         }
 
-        private static void ReadElement(XElement node, List<MarkupElement> into, List<MarkupDiagnostic> errors)
+        private static string? KeyOf(XElement node, string what, List<MarkupDiagnostic> errors, bool required)
+        {
+            string? key = (string?)node.Attribute("key");
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                if (required) errors.Add(new MarkupDiagnostic(Line(node), $"A '{what}' needs key=\"...\"."));
+                return null;
+            }
+            if (!MarkupSchema.IsIdentifier(key))
+            {
+                errors.Add(new MarkupDiagnostic(Line(node), $"'{key}' is not a valid key."));
+                return null;
+            }
+            return key;
+        }
+
+        private static void CheckAttributes(XElement node, string[] known, List<MarkupDiagnostic> errors)
+        {
+            foreach (var attribute in node.Attributes().Where(a => !a.IsNamespaceDeclaration))
+                if (!known.Contains(attribute.Name.LocalName))
+                    errors.Add(new MarkupDiagnostic(Line(attribute), $"'{node.Name.LocalName}' has no attribute '{attribute.Name.LocalName}' (known: {string.Join(", ", known)})."));
+        }
+
+        private static void ReadStyle(XElement node, MarkupDocument document, List<MarkupDiagnostic> errors)
+        {
+            CheckAttributes(node, new[] { "key", "target", "basedOn" }, errors);
+            string? key = KeyOf(node, "Style", errors, false);
+            string? targetName = (string?)node.Attribute("target");
+            var target = targetName == null ? null : MarkupSchema.FindTarget(targetName);
+            if (target == null)
+            {
+                errors.Add(new MarkupDiagnostic(Line(node), targetName == null ? "A 'Style' needs target=\"...\" (the kind of element it is for, e.g. Button)."
+                    : $"Unknown style target '{targetName}' (an element of the markup, or Element)."));
+                return;
+            }
+            var style = new StyleDeclaration { Key = key, Target = target.Tag, BasedOn = (string?)node.Attribute("basedOn"), Line = Line(node) };
+            foreach (var child in node.Elements())
+            {
+                if (string.Equals(child.Name.LocalName, "Setter", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (ReadSetter(child, target, null, errors) is { } setter) style.Setters.Add(setter);
+                }
+                else if (string.Equals(child.Name.LocalName, "Trigger", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (ReadTrigger(child, target, null, errors) is { } trigger) style.Triggers.Add(trigger);
+                }
+                else errors.Add(new MarkupDiagnostic(Line(child), $"A 'Style' contains 'Setter' and 'Trigger', not '{child.Name.LocalName}'."));
+            }
+            document.Styles.Add(style);
+        }
+
+        private static SetterDeclaration? ReadSetter(XElement node, ElementDef target, TemplateDeclaration? template, List<MarkupDiagnostic> errors)
+        {
+            CheckAttributes(node, template == null ? new[] { "property", "value" } : new[] { "property", "value", "target" }, errors);
+            string? property = (string?)node.Attribute("property"), value = (string?)node.Attribute("value"), part = (string?)node.Attribute("target");
+            if (string.IsNullOrWhiteSpace(property) || value == null)
+            {
+                errors.Add(new MarkupDiagnostic(Line(node), "A 'Setter' needs property=\"...\" and value=\"...\"."));
+                return null;
+            }
+            if (template == null && target.Property(property) == null)
+            {
+                errors.Add(new MarkupDiagnostic(Line(node), $"'{target.Tag}' has no property '{property}' (known: {string.Join(", ", target.Properties.Select(p => p.Name))})."));
+                return null;
+            }
+            var parsed = ReadValue(value, Line(node), errors);
+            if (parsed == null) return null;
+            if (parsed is BindingValue or TemplateBindingValue)
+            {
+                errors.Add(new MarkupDiagnostic(Line(node), "A 'Setter' takes a plain value, not a binding."));
+                return null;
+            }
+            return new SetterDeclaration(property, parsed, part, Line(node));
+        }
+
+        private static TriggerDeclaration? ReadTrigger(XElement node, ElementDef target, TemplateDeclaration? template, List<MarkupDiagnostic> errors)
+        {
+            CheckAttributes(node, template == null ? new[] { "property", "value" } : new[] { "property", "value", "source" }, errors);
+            var trigger = new TriggerDeclaration { Line = Line(node) };
+            bool ok = true;
+            void Condition(XElement from)
+            {
+                string? property = (string?)from.Attribute("property"), value = (string?)from.Attribute("value"), source = (string?)from.Attribute("source");
+                if (string.IsNullOrWhiteSpace(property) || value == null)
+                {
+                    errors.Add(new MarkupDiagnostic(Line(from), "A trigger condition needs property=\"...\" and value=\"...\"."));
+                    ok = false;
+                    return;
+                }
+                if (source == null && target.Property(property) == null && !MarkupSchema.StateProperties.Any(p => p.Name == property))
+                {
+                    errors.Add(new MarkupDiagnostic(Line(from), $"'{target.Tag}' has no property '{property}' to test (known: {string.Join(", ", target.Properties.Select(p => p.Name).Concat(MarkupSchema.StateProperties.Select(p => p.Name)))})."));
+                    ok = false;
+                    return;
+                }
+                var parsed = ReadValue(value, Line(from), errors);
+                if (parsed == null || parsed is BindingValue or TemplateBindingValue)
+                {
+                    if (parsed != null) errors.Add(new MarkupDiagnostic(Line(from), "A trigger condition compares with a plain value, not a binding."));
+                    ok = false;
+                    return;
+                }
+                trigger.Conditions.Add((property, parsed, source, Line(from)));
+            }
+            Condition(node);
+            foreach (var child in node.Elements())
+            {
+                if (string.Equals(child.Name.LocalName, "Condition", StringComparison.OrdinalIgnoreCase)) Condition(child);
+                else if (string.Equals(child.Name.LocalName, "Setter", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (ReadSetter(child, target, template, errors) is { } setter) trigger.Setters.Add(setter);
+                }
+                else errors.Add(new MarkupDiagnostic(Line(child), $"A 'Trigger' contains 'Condition' and 'Setter', not '{child.Name.LocalName}'."));
+            }
+            return ok ? trigger : null;
+        }
+
+        private static void ReadTemplate(XElement node, MarkupDocument document, List<MarkupDiagnostic> errors)
+        {
+            CheckAttributes(node, new[] { "key", "target" }, errors);
+            string? key = KeyOf(node, "ControlTemplate", errors, true);
+            string? targetName = (string?)node.Attribute("target");
+            var target = targetName == null ? null : MarkupSchema.FindTarget(targetName);
+            if (key == null) return;
+            if (target == null)
+            {
+                errors.Add(new MarkupDiagnostic(Line(node), targetName == null ? "A 'ControlTemplate' needs target=\"...\" (the kind of control it is for, e.g. Button)."
+                    : $"Unknown template target '{targetName}'."));
+                return;
+            }
+            var template = new TemplateDeclaration { Key = key, Target = target.Tag, Line = Line(node) };
+            var roots = new List<MarkupElement>();
+            foreach (var child in node.Elements())
+            {
+                if (string.Equals(child.Name.LocalName, "Trigger", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (ReadTrigger(child, target, template, errors) is { } trigger) template.Triggers.Add(trigger);
+                }
+                else ReadElement(child, roots, errors, null);
+            }
+            if (roots.Count != 1) errors.Add(new MarkupDiagnostic(Line(node), "A 'ControlTemplate' contains exactly one element: the root of the parts."));
+            else template.Root = roots[0];
+            document.Templates.Add(template);
+        }
+
+        private static void ReadElement(XElement node, List<MarkupElement> into, List<MarkupDiagnostic> errors, ElementDef? parent)
         {
             var def = MarkupSchema.Find(node.Name.LocalName);
             if (def == null)
             {
                 errors.Add(new MarkupDiagnostic(Line(node),
-                    $"Unknown element '{node.Name.LocalName}' (known: {string.Join(", ", MarkupSchema.Elements.Select(e => e.Tag))})."));
+                    $"Unknown element '{node.Name.LocalName}' (known: {string.Join(", ", MarkupSchema.Elements.Where(e => !e.IsPart).Select(e => e.Tag))})."));
+                return;
+            }
+            if (def.IsPart && (parent == null || !def.PartOf.Contains(parent.Tag)))
+            {
+                errors.Add(new MarkupDiagnostic(Line(node), $"'{def.Tag}' can only be inside {string.Join(" or ", def.PartOf.Select(t => "'" + t + "'"))}."));
+                return;
+            }
+            if (!def.IsPart && parent is { Children: ChildMode.Parts })
+            {
+                errors.Add(new MarkupDiagnostic(Line(node), $"'{parent.Tag}' can only contain {string.Join(", ", parent.PartTags.Select(t => "'" + t + "'"))}, not '{def.Tag}'."));
                 return;
             }
 
@@ -133,10 +291,10 @@ namespace fire.UI.Markup
                     if (!MarkupSchema.IsIdentifier(attribute.Value)) errors.Add(new MarkupDiagnostic(line, $"'{attribute.Value}' is not a valid name."));
                     else element.Name = attribute.Value;
                 }
-                else if (def.Event(name) is { } eventName)
+                else if (def.Event(name) is { } eventDef)
                 {
-                    if (!MarkupSchema.IsIdentifier(attribute.Value)) errors.Add(new MarkupDiagnostic(line, $"'{attribute.Value}' is not a valid method name for '{eventName}'."));
-                    else element.Handlers.Add((eventName, attribute.Value, line));
+                    if (!MarkupSchema.IsIdentifier(attribute.Value)) errors.Add(new MarkupDiagnostic(line, $"'{attribute.Value}' is not a valid method name for '{eventDef.Name}'."));
+                    else element.Handlers.Add((eventDef.Name, attribute.Value, line));
                 }
                 else if (def.Property(name) is { } property)
                 {
@@ -145,7 +303,7 @@ namespace fire.UI.Markup
                 }
                 else
                 {
-                    var known = def.Properties.Select(p => p.Name).Concat(def.Events).Append("name");
+                    var known = def.Properties.Select(p => p.Name).Concat(def.Events.Select(e => e.Name)).Append("name");
                     errors.Add(new MarkupDiagnostic(line, $"'{def.Tag}' has no property or event '{name}' (known: {string.Join(", ", known)})."));
                 }
             }
@@ -161,12 +319,17 @@ namespace fire.UI.Markup
 
             foreach (var child in node.Elements())
             {
-                if (!def.IsContainer)
+                if (def.Children == ChildMode.None)
                 {
-                    errors.Add(new MarkupDiagnostic(Line(child), $"'{def.Tag}' cannot contain elements (only Panel and Stack can)."));
+                    errors.Add(new MarkupDiagnostic(Line(child), $"'{def.Tag}' cannot contain elements."));
                     continue;
                 }
-                ReadElement(child, element.Children, errors);
+                if (def.Children == ChildMode.Single && element.Children.Count >= 1)
+                {
+                    errors.Add(new MarkupDiagnostic(Line(child), $"'{def.Tag}' contains only one element."));
+                    continue;
+                }
+                ReadElement(child, element.Children, errors, def);
             }
             into.Add(element);
         }
@@ -202,8 +365,15 @@ namespace fire.UI.Markup
                     return new ExpressionValue(rest, IsRaw: true);
                 case "binding":
                     return ReadBinding(rest, line, errors);
+                case "templatebinding":
+                    if (!MarkupSchema.IsIdentifier(rest))
+                    {
+                        errors.Add(new MarkupDiagnostic(line, $"'{{TemplateBinding ...}}' needs a property name, not '{rest}'."));
+                        return null;
+                    }
+                    return new TemplateBindingValue(rest);
                 default:
-                    errors.Add(new MarkupDiagnostic(line, $"Unknown markup extension '{{{keyword} ...}}' (known: Binding, Enum, Static, Expr; use '{{}}' in front of a text that starts with a brace)."));
+                    errors.Add(new MarkupDiagnostic(line, $"Unknown markup extension '{{{keyword} ...}}' (known: Binding, TemplateBinding, Enum, Static, Expr; use '{{}}' in front of a text that starts with a brace)."));
                     return null;
             }
         }
@@ -247,6 +417,118 @@ namespace fire.UI.Markup
             return ok ? new BindingValue(path, mode, converter, elementName) : null;
         }
 
+        /// <summary>Keys of styles and templates, references to them, and everything inside the control templates.</summary>
+        private static void ValidateResources(MarkupDocument document)
+        {
+            var keys = new Dictionary<string, int>();
+            void Key(string? key, int line)
+            {
+                if (key == null) return;
+                if (keys.ContainsKey(key)) document.Diagnostics.Add(new MarkupDiagnostic(line, $"The key '{key}' of a style or template is used twice."));
+                else keys[key] = line;
+            }
+            foreach (var style in document.Styles) Key(style.Key, style.Line);
+            foreach (var template in document.Templates) Key(template.Key, template.Line);
+
+            var implicitTargets = new HashSet<string>();
+            foreach (var style in document.Styles)
+            {
+                if (style.Key == null && !implicitTargets.Add(style.Target))
+                    document.Diagnostics.Add(new MarkupDiagnostic(style.Line, $"There are two styles without a key for '{style.Target}'."));
+                if (style.BasedOn != null)
+                {
+                    var based = document.Styles.FirstOrDefault(o => o.Key == style.BasedOn);
+                    if (based == null) document.Diagnostics.Add(new MarkupDiagnostic(style.Line, $"The style 'basedOn=\"{style.BasedOn}\"' does not exist (it needs a key)."));
+                    else
+                    {
+                        // a cycle of basedOn
+                        var seen = new HashSet<StyleDeclaration> { style };
+                        for (var next = based; next != null; next = next.BasedOn == null ? null : document.Styles.FirstOrDefault(o => o.Key == next.BasedOn))
+                            if (!seen.Add(next)) { document.Diagnostics.Add(new MarkupDiagnostic(style.Line, $"The styles '{style.Key}' and '{style.BasedOn}' are based on each other.")); break; }
+                    }
+                }
+            }
+
+            // references from the attributes
+            foreach (var element in document.AllElements().Concat(document.TemplateElements()))
+            {
+                var def = MarkupSchema.Find(element.Tag);
+                if (def == null) continue;
+                foreach (var attribute in element.Attributes)
+                {
+                    if (attribute.Value is not LiteralValue literal) continue;
+                    var property = def.Property(attribute.Name);
+                    if (property?.Kind == PropertyKind.StyleRef && !document.Styles.Any(s => s.Key == literal.Text.Trim()))
+                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"Unknown style '{literal.Text.Trim()}' (give a <Style key=\"...\"> in the Resources)."));
+                    if (property?.Kind == PropertyKind.TemplateRef && !document.Templates.Any(t => t.Key == literal.Text.Trim()))
+                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"Unknown template '{literal.Text.Trim()}' (give a <ControlTemplate key=\"...\"> in the Resources)."));
+                }
+            }
+            foreach (var style in document.Styles)
+                foreach (var setter in style.Setters.Concat(style.Triggers.SelectMany(t => t.Setters)))
+                {
+                    var def = MarkupSchema.FindTarget(style.Target);
+                    var property = def?.Property(setter.Property);
+                    if (setter.Value is LiteralValue literal && property?.Kind == PropertyKind.StyleRef && !document.Styles.Any(s => s.Key == literal.Text.Trim()))
+                        document.Diagnostics.Add(new MarkupDiagnostic(setter.Line, $"Unknown style '{literal.Text.Trim()}'."));
+                    if (setter.Value is LiteralValue literal2 && property?.Kind == PropertyKind.TemplateRef && !document.Templates.Any(t => t.Key == literal2.Text.Trim()))
+                        document.Diagnostics.Add(new MarkupDiagnostic(setter.Line, $"Unknown template '{literal2.Text.Trim()}'."));
+                }
+
+            // inside a template
+            foreach (var template in document.Templates)
+            {
+                if (template.Root == null) continue;
+                var target = MarkupSchema.FindTarget(template.Target)!;
+                var parts = new Dictionary<string, MarkupElement>();
+                var all = new List<MarkupElement>();
+                var stack = new Stack<MarkupElement>(new[] { template.Root });
+                while (stack.Count > 0)
+                {
+                    var e = stack.Pop();
+                    all.Add(e);
+                    foreach (var c in e.Children) stack.Push(c);
+                }
+                foreach (var e in all)
+                {
+                    if (e.Name != null && !parts.TryAdd(e.Name, e))
+                        document.Diagnostics.Add(new MarkupDiagnostic(e.Line, $"The part name '{e.Name}' is used twice in the template '{template.Key}'."));
+                    if (e.Handlers.Count > 0)
+                        document.Diagnostics.Add(new MarkupDiagnostic(e.Line, "Event handlers are not available inside a ControlTemplate (react to the control itself)."));
+                    foreach (var attribute in e.Attributes)
+                    {
+                        if (attribute.Value is BindingValue)
+                            document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "'{Binding ...}' is not available inside a ControlTemplate; use '{TemplateBinding Property}'."));
+                        if (attribute.Value is TemplateBindingValue tb && target.Property(tb.OwnerProperty) == null && !MarkupSchema.StateProperties.Any(p => p.Name == tb.OwnerProperty))
+                            document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"'{template.Target}' has no property '{tb.OwnerProperty}' to bind to."));
+                    }
+                }
+                foreach (var trigger in template.Triggers)
+                {
+                    foreach (var (_, _, source, line) in trigger.Conditions)
+                        if (source != null && !parts.ContainsKey(source))
+                            document.Diagnostics.Add(new MarkupDiagnostic(line, $"The template '{template.Key}' has no part '{source}'."));
+                    foreach (var setter in trigger.Setters)
+                    {
+                        if (setter.Target == null)
+                        {
+                            if (target.Property(setter.Property) == null)
+                                document.Diagnostics.Add(new MarkupDiagnostic(setter.Line, $"'{template.Target}' has no property '{setter.Property}'."));
+                        }
+                        else if (!parts.TryGetValue(setter.Target, out var part))
+                            document.Diagnostics.Add(new MarkupDiagnostic(setter.Line, $"The template '{template.Key}' has no part '{setter.Target}'."));
+                        else if (MarkupSchema.Find(part.Tag)?.Property(setter.Property) == null)
+                            document.Diagnostics.Add(new MarkupDiagnostic(setter.Line, $"'{part.Tag}' has no property '{setter.Property}'."));
+                    }
+                }
+            }
+            // a trigger of a style cannot name parts
+            foreach (var style in document.Styles)
+                foreach (var trigger in style.Triggers)
+                    foreach (var setter in trigger.Setters.Where(x => x.Target != null))
+                        document.Diagnostics.Add(new MarkupDiagnostic(setter.Line, "'target' is only for the setters of a ControlTemplate."));
+        }
+
         /// <summary>The checks that need the whole document: unique names, converters and elements that bindings name.</summary>
         private static void Validate(MarkupDocument document)
         {
@@ -269,9 +551,13 @@ namespace fire.UI.Markup
                     handlerNames.Add(handler);
                 }
 
+            ValidateResources(document);
+
             foreach (var element in document.AllElements())
                 foreach (var attribute in element.Attributes)
                 {
+                    if (attribute.Value is TemplateBindingValue)
+                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "'{TemplateBinding ...}' is only for the elements inside a ControlTemplate."));
                     if (attribute.Value is not BindingValue binding) continue;
                     if (binding.ElementName != null && !names.ContainsKey(binding.ElementName))
                         document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"The binding names the element '{binding.ElementName}', which does not exist (give it name=\"...\")."));

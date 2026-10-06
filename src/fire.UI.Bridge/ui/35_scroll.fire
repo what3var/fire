@@ -1,0 +1,252 @@
+namespace UI {
+    // Wie eine Bildlaufleiste verschwindet oder erscheint (ScrollViewer.hmode/vmode).
+    enum ScrollMode { Disabled = 0, Auto = 1, Visible = 2 }
+
+    // Die Rechnung hinter einer Bildlaufleiste in EINER Richtung: Inhaltsgroesse (`extent`), sichtbarer Ausschnitt (`viewport`), Verschiebung (`offset`).
+    // Zeichnet die Leiste und verarbeitet das Ziehen am Griff; ScrollViewer und die Listen nutzen sie.
+    class Scroller {
+        bool horizontal = false
+        int offset = 0
+        int extent = 0
+        int viewport = 0
+        // Breite der Leiste in Pixeln
+        int size = 12
+        bool dragging = false
+        int grab = 0
+        bool hover = false
+
+        construct(bool horizontal = false) { this.horizontal = horizontal }
+
+        int Max() { return UI.M.Max(0, this.extent - this.viewport) }
+
+        bool Needed() { return this.extent > this.viewport }
+
+        Set(int value) {
+            this.offset = UI.M.Clamp(value, 0, this.Max())
+        }
+
+        By(int delta) { this.Set(this.offset + delta) }
+
+        // Laenge und Anfang des Griffs in einer Leiste der Laenge `track`
+        int ThumbLength(int track) {
+            if (this.extent <= 0) { return track }
+            var length = track * this.viewport / this.extent
+            return UI.M.Clamp(length, 12, track)
+        }
+
+        int ThumbStart(int track) {
+            var room = track - this.ThumbLength(track)
+            var max = this.Max()
+            if (max == 0) { return 0 }
+            return room * this.offset / max
+        }
+
+        // Zeichnet die Leiste in das Rechteck (x, y, Laenge `track` in Laufrichtung, `size` quer).
+        Draw(root, int x, int y, int track) {
+            var theme = root.theme
+            var start = this.ThumbStart(track)
+            var length = this.ThumbLength(track)
+            var thumb = theme.scrollThumb
+            if (this.hover || this.dragging) { thumb = theme.scrollThumbHover }
+            if (this.horizontal) {
+                root.renderer.FillRect(x, y, track, this.size, theme.scrollTrack)
+                root.renderer.FillRect(x + start + 1, y + 2, length - 2, this.size - 4, thumb)
+            } else {
+                root.renderer.FillRect(x, y, this.size, track, theme.scrollTrack)
+                root.renderer.FillRect(x + 2, y + start + 1, this.size - 4, length - 2, thumb)
+            }
+        }
+
+        // Ein Klick bei der Position `pos` (Laufrichtung, vom Anfang der Leiste): am Griff beginnt das Ziehen, daneben blaettert eine Seite.
+        Press(int pos, int track) {
+            var start = this.ThumbStart(track)
+            var length = this.ThumbLength(track)
+            if (pos >= start && pos < start + length) {
+                this.dragging = true
+                this.grab = pos - start
+            } else if (pos < start) {
+                this.By(-this.viewport)
+            } else {
+                this.By(this.viewport)
+            }
+        }
+
+        // Der Zeiger bewegt sich beim Ziehen zur Position `pos`.
+        Drag(int pos, int track) {
+            if (!this.dragging) { return }
+            var room = track - this.ThumbLength(track)
+            if (room <= 0) { return }
+            this.Set((pos - this.grab) * this.Max() / room)
+        }
+
+        Release() { this.dragging = false }
+    }
+
+    // Zeigt EIN Kind (`content`) in einem Ausschnitt und blendet Bildlaufleisten ein, wenn es nicht hineinpasst. Mit `hmode`/`vmode`
+    // (UI.ScrollMode: Disabled, Auto, Visible) einstellbar; Disabled heisst: in dieser Richtung bekommt das Kind genau den Platz des Ausschnitts
+    // (ein WrapPanel bricht dann um). Das Mausrad blaettert senkrecht (mit Umschalt waagerecht).
+    class ScrollViewer : Element {
+        Element content
+        Scroller vbar
+        Scroller hbar
+        int vmode = UI.ScrollMode.Auto
+        int hmode = UI.ScrollMode.Disabled
+        // beim letzten Layout: sichtbare Leisten und Groesse des Ausschnitts
+        bool showV = false
+        bool showH = false
+        int viewW = 0
+        int viewH = 0
+
+        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+            this.vbar = new Scroller(false)
+            this.hbar = new Scroller(true)
+        }
+
+        string StyleKey() { return "ScrollViewer" }
+
+        // Das Kind gehoert ab jetzt dem ScrollViewer.
+        SetContent(element) {
+            if (this.content != undefined) { this.content.parent = undefined }
+            this.content = element
+            element.TakeTo(this)
+            element.parent = this
+        }
+
+        MeasureCore(root, int aw, int ah) {
+            var c = this.content
+            if (c == undefined) {
+                this.cw = 0
+                this.ch = 0
+                return
+            }
+            var bar = this.vbar.size
+            // Erst ohne Leisten messen: bei Disabled mit dem vollen Platz, sonst unbegrenzt.
+            var mw = -1
+            var mh = -1
+            if (this.hmode == UI.ScrollMode.Disabled) { mw = aw }
+            if (this.vmode == UI.ScrollMode.Disabled) { mh = ah }
+            this.showV = this.vmode == UI.ScrollMode.Visible
+            this.showH = this.hmode == UI.ScrollMode.Visible
+            if (this.showV && mw >= 0) { mw = UI.M.Max(0, mw - bar) }
+            if (this.showH && mh >= 0) { mh = UI.M.Max(0, mh - bar) }
+            c.Measure(root, mw, mh)
+            // braucht das Kind mehr Platz als da ist, kommen Leisten dazu (und nehmen Platz weg)
+            if (!this.showV && this.vmode == UI.ScrollMode.Auto && ah >= 0 && c.dh > ah - (this.ShownBar(this.showH)) ) { this.showV = true }
+            if (!this.showH && this.hmode == UI.ScrollMode.Auto && aw >= 0 && c.dw > aw - (this.ShownBar(this.showV))) { this.showH = true }
+            if (this.showV && !this.showH && this.hmode == UI.ScrollMode.Auto && aw >= 0 && c.dw > aw - bar) { this.showH = true }
+            if (this.showV || this.showH) {
+                if (this.hmode == UI.ScrollMode.Disabled && mw >= 0) { mw = UI.M.Max(0, aw - this.ShownBar(this.showV)) }
+                if (this.vmode == UI.ScrollMode.Disabled && mh >= 0) { mh = UI.M.Max(0, ah - this.ShownBar(this.showH)) }
+                c.Measure(root, mw, mh)
+                // mit der Leiste kann die andere noetig geworden sein
+                if (!this.showH && this.hmode == UI.ScrollMode.Auto && aw >= 0 && c.dw > aw - this.ShownBar(this.showV)) { this.showH = true }
+                if (!this.showV && this.vmode == UI.ScrollMode.Auto && ah >= 0 && c.dh > ah - this.ShownBar(this.showH)) { this.showV = true }
+            }
+            var w = c.dw + this.ShownBar(this.showV)
+            var h = c.dh + this.ShownBar(this.showH)
+            if (aw >= 0) { w = UI.M.Min(w, aw) }
+            if (ah >= 0) { h = UI.M.Min(h, ah) }
+            this.cw = w
+            this.ch = h
+        }
+
+        // Die Breite, die eine Leiste wegnimmt (0, wenn sie nicht gezeigt wird).
+        int ShownBar(bool shown) {
+            if (shown) { return this.vbar.size }
+            return 0
+        }
+
+        ArrangeCore(root, int w, int h) {
+            var c = this.content
+            if (c == undefined) { return }
+            this.viewW = UI.M.Max(0, w - this.ShownBar(this.showV))
+            this.viewH = UI.M.Max(0, h - this.ShownBar(this.showH))
+            this.vbar.extent = c.dh
+            this.vbar.viewport = this.viewH
+            this.hbar.extent = c.dw
+            this.hbar.viewport = this.viewW
+            this.vbar.Set(this.vbar.offset)
+            this.hbar.Set(this.hbar.offset)
+            // das Kind bekommt mindestens den Ausschnitt, damit es dort strecken kann
+            c.Arrange(root, -this.hbar.offset, -this.vbar.offset, UI.M.Max(c.dw, this.viewW), UI.M.Max(c.dh, this.viewH))
+        }
+
+        Draw(root, int ax, int ay) {
+            if (this.DrawTemplate(root, ax, ay)) { return }
+            var c = this.content
+            if (this.background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.background) }
+            if (c != undefined && c.visible) {
+                root.PushClip(ax, ay, this.viewW, this.viewH)
+                c.Draw(root, ax + c.rx, ay + c.ry)
+                root.PopClip()
+            }
+            if (this.showV) { this.vbar.Draw(root, ax + this.viewW, ay, this.viewH) }
+            if (this.showH) { this.hbar.Draw(root, ax, ay + this.viewH, this.viewW) }
+            if (this.showV && this.showH) { root.renderer.FillRect(ax + this.viewW, ay + this.viewH, this.vbar.size, this.hbar.size, root.theme.scrollTrack) }
+        }
+
+        // Im Ausschnitt das Kind, auf den Leisten der ScrollViewer selbst.
+        HitTest(int px, int py) {
+            if (!this.visible) { return undefined }
+            if (!this.Contains(px, py)) { return undefined }
+            var c = this.content
+            if (c != undefined && px < this.ax + this.viewW && py < this.ay + this.viewH) {
+                var hit = c.HitTest(px, py)
+                if (hit != undefined) { return hit }
+            }
+            return this
+        }
+
+        Collect(list) {
+            if (!this.visible || !this.enabled) { return }
+            if (this.content != undefined) { this.content.Collect(list) }
+        }
+
+        FindName(string name) {
+            if (this.name == name) { return this }
+            if (this.content != undefined) { return this.content.FindName(name) }
+            return undefined
+        }
+
+        bool MouseWheel(root, int dx, int dy) {
+            var step = root.ch * 3
+            if (dx != 0 && this.showH) {
+                this.hbar.By(-dx * step)
+                return true
+            }
+            if (dy != 0 && this.showV) {
+                this.vbar.By(-dy * step)
+                return true
+            }
+            if (dy != 0 && this.showH) {
+                this.hbar.By(-dy * step)
+                return true
+            }
+            return false
+        }
+
+        MouseDown(root, int button, int px, int py) {
+            if (button != 1) { return }
+            if (this.showV && px >= this.ax + this.viewW && py < this.ay + this.viewH) { this.vbar.Press(py - this.ay, this.viewH) }
+            else if (this.showH && py >= this.ay + this.viewH && px < this.ax + this.viewW) { this.hbar.Press(px - this.ax, this.viewW) }
+        }
+
+        MouseMove(root, int px, int py) {
+            if (this.vbar.dragging) { this.vbar.Drag(py - this.ay, this.viewH) }
+            if (this.hbar.dragging) { this.hbar.Drag(px - this.ax, this.viewW) }
+        }
+
+        MouseUp(root, int button, int px, int py) {
+            this.vbar.Release()
+            this.hbar.Release()
+        }
+
+        // Verschiebt den Ausschnitt so, dass das Rechteck (x, y, w, h) des Inhalts (in Inhalts-Koordinaten) sichtbar ist.
+        ScrollIntoView(int x, int y, int w, int h) {
+            if (y < this.vbar.offset) { this.vbar.Set(y) }
+            else if (y + h > this.vbar.offset + this.viewH) { this.vbar.Set(y + h - this.viewH) }
+            if (x < this.hbar.offset) { this.hbar.Set(x) }
+            else if (x + w > this.hbar.offset + this.viewW) { this.hbar.Set(x + w - this.viewW) }
+        }
+    }
+}

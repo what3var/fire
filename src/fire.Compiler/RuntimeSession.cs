@@ -124,7 +124,7 @@ namespace fire.Compiler
             return registry;
         }
 
-        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null, string? basePath = null, fire.Device.Manager.DeviceManager.DeviceManager? deviceManager = null, int? floatWidth = null, IReadOnlyList<string>? defines = null)
+        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null, string? basePath = null, fire.Device.Manager.DeviceManager.DeviceManager? deviceManager = null, int? floatWidth = null, IReadOnlyList<string>? defines = null, Func<IFramebufferRenderer>? windowRenderer = null)
         {
             var linker = new Linker { BasePath = basePath, Defines = defines };
             var natives = new NativeRegistry();
@@ -168,7 +168,7 @@ namespace fire.Compiler
                 // `#import "windows"`: das SDL-Fenster zum Framebuffer (direkt hinter graphics registriert, wie beim Uebersetzen)
                 if (linkedProgram.NativeImports.Contains(NativeImports.Windows))
                 {
-                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v));
+                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v), windowRenderer);   // windowRenderer: null = a SDL window
                     fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, windowManager);
                 }
             }

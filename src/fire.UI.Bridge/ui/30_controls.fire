@@ -1,7 +1,7 @@
 namespace UI {
     class Label : Element {
         string text
-        // Textfarbe: undefined = der Brush `text` des Themes
+        // Textfarbe: undefined = `foreground`, dann der Brush `text` des Themes
         Brush brush
 
         construct(string text, int x = 0, int y = 0) : base(x, y, -1, -1) {
@@ -13,9 +13,12 @@ namespace UI {
             this.ch = root.ch
         }
 
+        string StyleKey() { return "Label" }
+
         Draw(root, int ax, int ay) {
-            base.Draw(root, ax, ay)
+            if (this.DrawTemplate(root, ax, ay)) { return }
             var c = this.brush
+            if (c == undefined) { c = this.foreground }
             if (c == undefined) { c = root.theme.text }
             if (!this.enabled) { c = root.theme.textDisabled }
             root.renderer.DrawText(ax, ay, this.text, c)
@@ -32,6 +35,8 @@ namespace UI {
         }
 
         bool Focusable() { return true }
+
+        string StyleKey() { return "Button" }
 
         // Ohne feste Groesse (width/height = -1) so gross wie der Text plus Rand
         MeasureCore(root, int aw, int ah) {
@@ -53,18 +58,21 @@ namespace UI {
         }
 
         Draw(root, int ax, int ay) {
-            base.Draw(root, ax, ay)
+            if (this.DrawTemplate(root, ax, ay)) { return }
             var theme = root.theme
             var face = theme.face
             if (!this.enabled) { face = theme.faceDisabled }
+            else if (this.background != undefined) { face = this.background }
             else if (this.pressed && this.hover) { face = theme.facePressed }
             else if (this.hover) { face = theme.faceHover }
             root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, face)
             var border = theme.border
+            if (this.pen != undefined) { border = this.pen }
             if (this.focused) { border = theme.borderFocus }
             root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
 
             var color = theme.text
+            if (this.foreground != undefined) { color = this.foreground }
             if (!this.enabled) { color = theme.textDisabled }
             var tx = ax + (this.actualWidth - root.cw * this.text.Length) / 2
             var ty = ay + (this.actualHeight - root.ch) / 2
@@ -99,6 +107,8 @@ namespace UI {
 
         bool Focusable() { return true }
 
+        string StyleKey() { return "CheckBox" }
+
         // Wurde der Zustand seit dem letzten Abfragen geändert? (setzt den Merker zurück)
         bool TakeChanged() {
             var was = this.changed
@@ -121,15 +131,17 @@ namespace UI {
 
         Draw(root, int ax, int ay) {
             var box = 14
-            base.Draw(root, ax, ay)
+            if (this.DrawTemplate(root, ax, ay)) { return }
 
             var theme = root.theme
             var by = ay + (this.actualHeight - box) / 2
             var back = theme.inputBack
             if (!this.enabled) { back = theme.faceDisabled }
+            else if (this.background != undefined) { back = this.background }
             else if (this.hover) { back = theme.faceHover }
             root.renderer.FillRect(ax, by, box, box, back)
             var border = theme.border
+            if (this.pen != undefined) { border = this.pen }
             if (this.focused) { border = theme.borderFocus }
             root.renderer.DrawRect(ax, by, box, box, border)
             if (this.isChecked) {
@@ -138,6 +150,7 @@ namespace UI {
                 root.renderer.FillRect(ax + 3, by + 3, box - 6, box - 6, mark)
             }
             var color = theme.text
+            if (this.foreground != undefined) { color = this.foreground }
             if (!this.enabled) { color = theme.textDisabled }
             root.renderer.DrawText(ax + box + 6, ay + (this.actualHeight - root.ch) / 2, this.text, color)
         }
@@ -176,6 +189,8 @@ namespace UI {
 
         bool Focusable() { return true }
 
+        string StyleKey() { return "TextBox" }
+
         bool TakeChanged() {
             var was = this.changed
             this.changed = false
@@ -208,8 +223,10 @@ namespace UI {
             var theme = root.theme
             var back = theme.inputBack
             if (!this.enabled) { back = theme.faceDisabled }
+            else if (this.background != undefined) { back = this.background }
             root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
             var border = theme.border
+            if (this.pen != undefined) { border = this.pen }
             if (this.focused) { border = theme.borderFocus }
             root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
 
@@ -223,6 +240,7 @@ namespace UI {
             if (count > fit) { count = fit }
             if (count < 0) { count = 0 }
             var color = theme.text
+            if (this.foreground != undefined) { color = this.foreground }
             if (!this.enabled) { color = theme.textDisabled }
             var ty = ay + (this.actualHeight - root.ch) / 2
             if (count > 0) {

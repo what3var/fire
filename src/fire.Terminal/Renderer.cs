@@ -37,8 +37,35 @@ namespace fire.Terminal
         /// <summary>Alpha-Blending (siehe Klassen-Doku). Vorgabe: an.</summary>
         public bool AlphaBlending { get; set; } = true;
 
-        /// <summary>Die Fläche des Ziels für einen Zeichenaufruf.</summary>
-        public Surface Surface => new(_target, AlphaBlending);
+        /// <summary>Die Fläche des Ziels für einen Zeichenaufruf (mit dem Beschneidungsrechteck, siehe <see cref="SetClip"/>).</summary>
+        public Surface Surface => new(_target, AlphaBlending, _clipLeft, _clipTop, _clipRight, _clipBottom);
+
+        private int _clipLeft, _clipTop, _clipRight = int.MaxValue, _clipBottom = int.MaxValue;
+
+        /// <summary>Beschränkt das Zeichnen (Formen, Text, Füllungen) auf das Rechteck (x, y, w, h); es wird mit dem Ziel geschnitten. Gilt auch für `Blit`, nicht für `Clear` und das Scrollen des Terminals. <see cref="ResetClip"/> hebt es auf.</summary>
+        public void SetClip(int x, int y, int w, int h)
+        {
+            _clipLeft = x;
+            _clipTop = y;
+            _clipRight = (int)Math.Min((long)x + Math.Max(0, w), int.MaxValue);
+            _clipBottom = (int)Math.Min((long)y + Math.Max(0, h), int.MaxValue);
+        }
+
+        /// <summary>Hebt das Beschneidungsrechteck auf: wieder das ganze Ziel.</summary>
+        public void ResetClip()
+        {
+            _clipLeft = 0;
+            _clipTop = 0;
+            _clipRight = int.MaxValue;
+            _clipBottom = int.MaxValue;
+        }
+
+        /// <summary>Das Beschneidungsrechteck als (x, y, Breite, Höhe) im Ziel.</summary>
+        public (int X, int Y, int Width, int Height) GetClip()
+        {
+            var s = Surface;
+            return (s.ClipLeft, s.ClipTop, Math.Max(0, s.ClipRight - s.ClipLeft), Math.Max(0, s.ClipBottom - s.ClipTop));
+        }
 
         /// <summary>Die 256-Farben-Palette des Ziels (siehe Framebuffer.Palette).</summary>
         public Palette Palette => Target.Palette;
@@ -193,7 +220,7 @@ namespace fire.Terminal
             bool direct = fgVisible && surface.IsCopy(foreground) && (!hasBackground || surface.IsCopy(background));
 
             if (direct && !surface.IsIndexed && Font is IBitmapGlyphFont bitmapFont && cw <= 8
-                && x >= 0 && y >= 0 && x + cw <= surface.Width && y + ch <= surface.Height)
+                && x >= surface.ClipLeft && y >= surface.ClipTop && x + cw <= surface.ClipRight && y + ch <= surface.ClipBottom)
             {
                 var rows = bitmapFont.GetGlyphRows(c);
                 var pixels = surface.Pixels;
@@ -268,7 +295,7 @@ namespace fire.Terminal
             if (!surface.IsIndexed && Font is IBitmapGlyphFont bitmapFont && cw == 8 && text.Length > 0
                 && surface.Visible(foreground) && surface.IsCopy(foreground)
                 && (!hasBackground || (surface.Visible(background) && surface.IsCopy(background)))
-                && x >= 0 && y >= 0 && y + ch <= surface.Height && (long)x + (long)cw * text.Length <= surface.Width)
+                && x >= surface.ClipLeft && y >= surface.ClipTop && y + ch <= surface.ClipBottom && (long)x + (long)cw * text.Length <= surface.ClipRight)
             {
                 int stride = surface.Width;
                 uint fg = foreground.Rgba, bg = background.Rgba;
@@ -395,7 +422,7 @@ namespace fire.Terminal
         // ---- Kopieren ----
 
         public void Blit(IRenderTarget source, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, BlitMode mode = BlitMode.Copy, int colorKey = -1) =>
-            Blitter.Blit(Target, source, sx, sy, sw, sh, dx, dy, dw, dh, mode, colorKey, AlphaBlending);
+            Blitter.Blit(Target, source, sx, sy, sw, sh, dx, dy, dw, dh, mode, colorKey, AlphaBlending, _clipLeft, _clipTop, _clipRight, _clipBottom);
     }
 
     /// <summary>Schreibt die Zeilen eines 8 Pixel breiten Zeichens in den Pixelpuffer - ohne Bereichsprüfung: der Aufrufer hat

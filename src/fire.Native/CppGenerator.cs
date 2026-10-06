@@ -160,7 +160,7 @@ namespace fire.Native
             ["RndDrawText"] = (6, false), ["RndFillRect"] = (6, false), ["RndFill"] = (2, false), ["RndFillCircle"] = (5, false), ["RndFillEllipse"] = (6, false),
             ["RndFillTriangle"] = (8, false), ["RndFillPolygon"] = (3, false), ["RndFloodFill"] = (4, false), ["RndFloodFillBorder"] = (5, false),
             ["RndDrawPoint"] = (4, false), ["RndDrawLine"] = (6, false), ["RndDrawPath"] = (4, false), ["RndDrawRect"] = (6, false), ["RndDrawCircle"] = (5, false),
-            ["RndDrawEllipse"] = (6, false), ["RndDrawTriangle"] = (8, false), ["RndDrawPolygon"] = (4, false), ["RndBlit"] = (12, false), ["BshCreateSolid"] = (1, false),
+            ["RndDrawEllipse"] = (6, false), ["RndDrawTriangle"] = (8, false), ["RndDrawPolygon"] = (4, false), ["RndBlit"] = (12, false), ["RndSetClip"] = (5, false), ["RndResetClip"] = (1, false), ["BshCreateSolid"] = (1, false),
             ["BshDestroy"] = (1, false), ["BshGetColor"] = (1, false), ["BshSetColor"] = (2, false), ["PenCreate"] = (3, false), ["PenDestroy"] = (1, false),
             ["PenGetColor"] = (1, false), ["PenSetColor"] = (2, false), ["PenGetWidth"] = (1, false), ["PenSetWidth"] = (2, false), ["PenGetShape"] = (1, false),
             ["PenSetShape"] = (2, false),
@@ -207,11 +207,20 @@ namespace fire.Native
         // -------------------------------------------------------------------------------------------------------------
         // Registries
         // -------------------------------------------------------------------------------------------------------------
+        // `Klasse.Methode` zu einer Funktion (fuer Fehlermeldungen), sonst "a lambda or a function of the script"
+        private string Describe(FunctionProto proto)
+        {
+            foreach (var rc in _program.Program.Classes.Values)
+                foreach (var m in rc.Methods)
+                    if (m.Value.Contains(proto)) return $"'{rc.Name}.{m.Key}'";
+            return "a lambda or a function of the script";
+        }
+
         private Func GetFunc(FunctionProto proto, FuncKind kind, int captureCount = 0)
         {
             if (_funcByProto.TryGetValue(proto, out var existing))
             {
-                if (existing.Kind != kind) throw new NativeNotSupportedException($"a function is used both as {existing.Kind} and as {kind}");
+                if (existing.Kind != kind) throw new NativeNotSupportedException($"a function is used both as {existing.Kind} and as {kind}: {Describe(proto)}");
                 if (existing.CaptureCount != captureCount) throw new NativeNotSupportedException("a lambda is created with different numbers of captures");
                 return existing;
             }
@@ -682,7 +691,7 @@ namespace fire.Native
             foreach (var (name, argc) in _dispatchers.ToList())
             {
                 foreach (var cls in _classList.ToList())
-                    if (cls.Rc.FindMethodWithAccess(name, argc).Proto is { } method)
+                    if (cls.Rc.FindMethodWithAccess(name, argc).Proto is { IsStatic: false } method)   // a static method of the same name (`Reflect.Set`) is not what a call on an object means
                     {
                         GetFunc(method, FuncKind.Method);
                         DefaultArgs(method, argc, "self", "list");   // registers the functions of the default values
@@ -794,7 +803,7 @@ namespace fire.Native
         {
             var byFunc = new Dictionary<Func, List<int>>();
             foreach (var cls in _classList)
-                if (cls.Rc.FindMethodWithAccess(name, argc).Proto is { } method)
+                if (cls.Rc.FindMethodWithAccess(name, argc).Proto is { IsStatic: false } method)
                 {
                     var f = _funcByProto[method];
                     if (!byFunc.TryGetValue(f, out var ids)) byFunc[f] = ids = new List<int>();
