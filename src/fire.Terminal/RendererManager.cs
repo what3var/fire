@@ -57,7 +57,7 @@ namespace fire.Terminal
             _renderers.Get(id).SetColor(Paint.FromArgument(foreground), Paint.FromArgument(background));
 
         public void SetPixel(int id, int x, int y, int color) => _renderers.Get(id).SetPixel(x, y, Paint.FromArgument(color));
-        public int GetPixel(int id, int x, int y) => _renderers.Get(id).GetPixel(x, y);
+        public int GetPixel(int id, int x, int y) => Paint.ToArgument(_renderers.Get(id).GetPixel(x, y).Packed);
 
         /// <summary>Der Palette-Index des Pixels (im Palette-Framebuffer der gespeicherte, sonst der nächstliegende Eintrag).</summary>
         public int GetPixelIndex(int id, int x, int y) => _renderers.Get(id).GetPixelIndex(x, y);

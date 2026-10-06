@@ -329,7 +329,11 @@ inline Value RndSetPixel(Value id, Value x, Value y, Value color) {
     s.put(I(x), I(y), s.resolve(Paint::fromArgument(I(color))));
     return Undef();
 }
-inline Value RndGetPixel(Value id, Value x, Value y) { return Int((int32_t)rendererOf(id)->target->getPixel(I(x), I(y))); }
+/// A pixel as a number for the script: a value that would read as a palette index (only the R byte used, so always transparent) is the canonical transparent 0x100.
+inline Value RndGetPixel(Value id, Value x, Value y) {
+    uint32_t p = rendererOf(id)->target->getPixel(I(x), I(y));
+    return Int((p & 0xFFFFFF00u) == 0 ? 0x100 : (int32_t)p);
+}
 inline Value RndGetPixelIndex(Value id, Value x, Value y) { return Int(rendererOf(id)->target->getIndex(I(x), I(y))); }
 inline Value RndCellWidth(Value id) { return Int(rendererOf(id)->cellWidth); }
 inline Value RndCellHeight(Value id) { return Int(rendererOf(id)->cellHeight); }

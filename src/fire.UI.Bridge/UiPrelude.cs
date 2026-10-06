@@ -27,7 +27,7 @@ namespace fire.UI.Bridge
                 // Farben sind rohe 32-Bit-Werte: r + g*256 + b*65536 + a*16777216 (a = 255: deckend).
                 class Color {
                     static int Rgb(int r, int g, int b) { return r + g * 256 + b * 65536 + 0xFF000000 }
-                    static int Transparent() { return 0 }
+                    static int Transparent() { return 256 }
                 }
 
                 // Tastencodes, wie sie KeyDown liefert (SDL3-Keycodes).

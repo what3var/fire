@@ -8014,6 +8014,21 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             GfxCheck(Enumerable.Range(0, 8).SelectMany(x => Enumerable.Range(0, 14).Select(y => f2.GetPixel(x, y))).All(c => c.Packed == 0 || c.Packed == new fire.Terminal.PixelColor(255, 255, 255, 255).Packed), "DrawText: ein Hintergrund mit Alpha 0 ist keiner");
         }
 
+        // Palette-Index und durchsichtige Farbe: der Index belegt nur das R-Byte (Alpha bleibt 0); die kanonische durchsichtige Farbe (0,1,0,0) = 256 ist kein Index
+        {
+            GfxCheck(fire.Terminal.Paint.FromArgument(14).IsIndex && fire.Terminal.Paint.FromArgument(0).IsIndex, "Zahl 0-255 ist ein Palette-Index (nur das R-Byte, Alpha 0)");
+            GfxCheck(!fire.Terminal.Paint.FromArgument(fire.Terminal.Paint.Transparent).IsIndex && fire.Terminal.PixelColor.Transparent.Packed == 256 && fire.Terminal.PixelColor.Transparent.A == 0, "Transparent = (0,1,0,0) = 256: durchsichtig, aber kein Palette-Index");
+            GfxCheck(fire.Terminal.Paint.ToArgument(0) == 256 && fire.Terminal.Paint.ToArgument(7) == 256 && fire.Terminal.Paint.ToArgument(0xFF102030u) == unchecked((int)0xFF102030u) && fire.Terminal.Paint.ToArgument(0x00102030u) == 0x00102030, "ToArgument: nur Werte, die als Index gelesen wuerden, werden zu Transparent");
+            var fb = new fire.Terminal.Framebuffer(4, 2);
+            var cv = new fire.Terminal.Renderer(fb, font);
+            cv.FillRect(0, 0, 4, 2, new fire.Terminal.SolidBrush(Rgb(30, 40, 50)));
+            // ein leeres Pixel zurueckschreiben (GetPixel -> SetPixel) laesst es durchsichtig statt Palette-Schwarz
+            fb.SetPixel(1, 0, fire.Terminal.PixelColor.Transparent);
+            int read = fire.Terminal.Paint.ToArgument(fb.GetPixel(1, 0).Packed);
+            cv.SetPixel(2, 0, fire.Terminal.Paint.FromArgument(read));
+            GfxCheck(read == 256 && fb.GetPixel(2, 0).Packed == new fire.Terminal.PixelColor(30, 40, 50, 255).Packed, "ein durchsichtiges Pixel als Zahl zurueckgeschrieben zeichnet nichts (kein Palette-Schwarz)");
+        }
+
         // ein anderes Ziel: ein eigenes IRenderTarget (hier ein Ausschnitt-freier Wrapper um zwei Arrays)
         {
             var t = new ArrayTarget(6, 3);
