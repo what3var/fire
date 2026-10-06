@@ -25,7 +25,7 @@
             </Grid>
         </GroupBox>
 
-        <TabControl Grid.Row="1" Margin="2,6,2,2">
+        <TabControl Grid.Row="1" Margin="2,6,2,2" x:Name="tabs">
             <TabItem Header="Target">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="6">
@@ -96,6 +96,10 @@
                             <Button Grid.Column="2" Content="New..." Click="NewToolchain_Click" Padding="10,2"/>
                         </Grid>
                         <TextBlock x:Name="txtToolchainHint" TextWrapping="Wrap" Margin="4,6" Opacity="0.7"/>
+                        <StackPanel Orientation="Horizontal" Margin="4,0,0,4">
+                            <Button Content="Detect" Padding="14,2" Margin="0,0,8,0" Click="Detect_Click" ToolTip="Looks for a C++ toolchain on this machine (the portable w64devkit of fire first)"/>
+                            <Button Content="Test" Padding="14,2" Click="Test_Click" ToolTip="Compiles and runs a small program with the toolchain as it is set up here"/>
+                        </StackPanel>
                         <Grid Margin="0,6,0,0">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>

@@ -78,9 +78,9 @@ namespace fire.Compiler
 
             var config = new NativeConfig();
             var target = TargetProfile.Host;
-            ToolchainDef? toolchain = null;
-            foreach (string candidate in new[] { config.ResolveToolchain(target).EffectiveKind, "gcc", "clang", "msvc" })
-                if (ToolchainDef.BuiltIn.TryGetValue(candidate, out var def) && ToolchainDetector.Find(def) != null) { toolchain = def; break; }
+            // a toolchain of this machine; none: the host offers to provide one (install w64devkit, change the toolchain, cancel)
+            ToolchainDef? toolchain = ToolchainProvider.Require(config.ResolveToolchain(target),
+                $"The package '{import.Package.Name}' contains native code (C++) that has to be compiled on this machine, for the virtual machine.");
             if (toolchain == null)
                 throw new PackageException($"The native part of the package '{import.Package.Name}' has to be built with a C++ compiler (g++, clang++ or cl), and none was found on this machine. " +
                     "Install one, or use a native build, or install a package that brings a prebuilt library for " + Rid + ".");

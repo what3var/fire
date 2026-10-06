@@ -154,6 +154,7 @@ namespace fire.Editor
             if (DockManager.Layout.Descendents().OfType<LayoutAnchorable>().FirstOrDefault(a => a.ContentId == "devices") is { } devicesPane)
                 devicesPane.ToggleAutoHide();
 
+            RegisterToolchainPrompts();
             CollectPanels();
             _defaultLayout = SerializeLayout();
             Loaded += (_, _) => LoadLayout();
@@ -1510,24 +1511,54 @@ namespace fire.Editor
                 foreach (var doc in _documents) doc.Script?.Revalidate();
         }
 
-        private void NativeBuildSettings_Click(object sender, RoutedEventArgs e)
+        private void NativeBuildSettings_Click(object sender, RoutedEventArgs e) => ShowNativeBuildSettings(toolchainPage: false);
+
+        /// <summary>Shows the native build settings (on the toolchain page when a toolchain is needed) and saves them; true when they were saved. A toolchain that works is also
+        /// remembered for the whole machine (the natives of packages are compiled with it, too).</summary>
+        private bool ShowNativeBuildSettings(bool toolchainPage)
         {
             fire.Native.NativeConfig config;
             string savePath;
             try { config = LoadNativeConfig(out savePath); }
-            catch (fire.Native.NativeConfigException ex) { MessageBox.Show(this, ex.Message, "Native Build Settings", MessageBoxButton.OK, MessageBoxImage.Error); return; }
+            catch (fire.Native.NativeConfigException ex) { MessageBox.Show(this, ex.Message, "Native Build Settings", MessageBoxButton.OK, MessageBoxImage.Error); return false; }
             var dialog = new NativeBuildDialog(config, savePath) { Owner = this };
-            if (dialog.ShowDialog() != true) return;
+            if (toolchainPage) dialog.SelectToolchainTab();
+            if (dialog.ShowDialog() != true) return false;
             try
             {
+                var chosen = dialog.Result.ResolveToolchain(dialog.Result.ResolveTarget());
+                if (chosen.EffectiveKind is not ("files" or "custom") && fire.Native.ToolchainDetector.Find(chosen) is { } compilerPath)
+                    fire.Native.ToolchainSetup.SaveMachineToolchain(new fire.Native.ToolchainDef { Extends = chosen.EffectiveKind, Kind = chosen.EffectiveKind, Compiler = compilerPath, Std = chosen.Std, Optimization = chosen.Optimization, Args = chosen.Args });
                 dialog.Result.Save(savePath);
                 foreach (var doc in _documents) doc.Script?.InvalidateConditionalSymbols();   // the `#if` branches that are greyed out depend on the engine, the target and the defines
                 UpdateStatus($"Saved {savePath}");
+                return true;
             }
-            catch (IOException ex)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 MessageBox.Show(this, ex.Message, "Native Build Settings", MessageBoxButton.OK, MessageBoxImage.Error);
+                return false;
             }
+        }
+
+        /// <summary>The questions of the toolchain provider (a native build or a package with native code needs a C++ toolchain and there is none): they come from any thread, the answers are
+        /// given on the interface thread. The text says why a toolchain is needed, so that a download or a compiler is no surprise.</summary>
+        private void RegisterToolchainPrompts()
+        {
+            fire.Native.ToolchainProvider.Ask = request => Dispatcher.Invoke(() =>
+            {
+                var dialog = new ToolchainPromptDialog(request) { Owner = this };
+                dialog.ShowDialog();
+                return dialog.Choice;
+            });
+            fire.Native.ToolchainProvider.ChangeToolchain = () => Dispatcher.Invoke(() => ShowNativeBuildSettings(toolchainPage: true));
+            fire.Native.ToolchainProvider.RunInstall = work => Dispatcher.Invoke(() =>
+            {
+                var dialog = new ToolchainProgressDialog(work) { Owner = this };
+                dialog.ShowDialog();
+                return dialog.Succeeded;
+            });
+            fire.Native.ToolchainProvider.Log = message => Dispatcher.BeginInvoke(() => UpdateStatus(message));
         }
 
         /// <summary>Translates the active script to C++ for the configured target and builds it with the configured toolchain (or writes the files of a project).</summary>

@@ -51,7 +51,7 @@ namespace fire.Compiler
             foreach (var key in program.NativeImports.Where(IsPackageKey))
                 if (PackageStore.Default.FindKey(key) is { } import && import.Import.Native is { Functions.Count: > 0 })
                 {
-                    try { located[PackageLibrary.FileNameFor(import)] = PackageLibrary.Ensure(import, log ?? (m => Console.Error.WriteLine(m))); }
+                    try { located[PackageLibrary.FileNameFor(import)] = PackageLibrary.Ensure(import, log ?? (m => (fire.Native.ToolchainProvider.Log ?? Console.Error.WriteLine)(m))); }
                     catch (PackageException ex) { FailedLibraries[PackageLibrary.FileNameFor(import)] = ex.Message; }
                 }
             PackageNativeBinding.Register(natives, program.PackageNatives, program.PackageNativeLibraries,

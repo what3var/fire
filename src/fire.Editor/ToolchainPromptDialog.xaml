@@ -1,0 +1,28 @@
+<Window x:Class="fire.Editor.ToolchainPromptDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="C++ toolchain needed" Width="560" SizeToContent="Height" MinHeight="300"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" ResizeMode="NoResize">
+    <StackPanel Margin="14">
+        <TextBlock x:Name="txtMessage" TextWrapping="Wrap" Margin="0,0,0,12"/>
+
+        <Button x:Name="btnInstall" Click="Install_Click" HorizontalContentAlignment="Left" Padding="10,6" Margin="0,0,0,8" IsDefault="True">
+            <StackPanel>
+                <TextBlock Text="Install the toolchain automatically" FontWeight="SemiBold"/>
+                <TextBlock x:Name="txtInstallHint" TextWrapping="Wrap" Opacity="0.75"/>
+            </StackPanel>
+        </Button>
+        <Button x:Name="btnChange" Click="Change_Click" HorizontalContentAlignment="Left" Padding="10,6" Margin="0,0,0,8">
+            <StackPanel>
+                <TextBlock Text="Change the toolchain..." FontWeight="SemiBold"/>
+                <TextBlock Text="Set it up yourself: the toolchain settings open, then the operation is tried again." TextWrapping="Wrap" Opacity="0.75"/>
+            </StackPanel>
+        </Button>
+        <Button Click="Cancel_Click" HorizontalContentAlignment="Left" Padding="10,6" IsCancel="True">
+            <StackPanel>
+                <TextBlock Text="Cancel" FontWeight="SemiBold"/>
+                <TextBlock Text="Stop the operation." Opacity="0.75"/>
+            </StackPanel>
+        </Button>
+    </StackPanel>
+</Window>

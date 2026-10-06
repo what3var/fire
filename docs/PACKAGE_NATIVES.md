@@ -158,7 +158,24 @@ A **packed standalone program** (`fire.Compiler build`, the VM inside) carries t
 libraries of the built-in bridges (SDL, serial ports). A program is packed for the machine that packs it: pack on the system you want to run it on, or build natively
 (`--engine native`), which needs no libraries at all.
 
-## 5. Checklist
+## 5. The C++ toolchain (for users)
+
+A native build and the natives of packages need a C++ compiler on the machine. fire looks for one in this order: the toolchain chosen for the machine (`Toolchain\toolchain.json` next to
+the program), the portable toolchains in `Toolchain\` next to the program (**w64devkit** first), well-known places (w64devkit, MSYS2, MinGW, LLVM) and the PATH (`g++`, `clang++`, `cl`).
+
+When there is none, nothing fails silently - the user is told *why* a compiler is needed ("The package 'x' contains native code (C++) ..." or "A native build translates the program to
+C++ ...") and offered:
+
+* **Install the toolchain automatically** (Windows x64): the portable w64devkit (a GCC, about 80 MB) is downloaded from its GitHub release and unpacked to `Toolchain\w64devkit\` next to the
+  program. Nothing is installed on the system; it is configured automatically (the machine toolchain is set to it).
+* **Change the toolchain...** (editor): the toolchain settings open (*File > Native Build Settings > Toolchain*); afterwards the operation is tried again, and the question comes again if there is still none.
+  The settings have **Detect** (finds a toolchain on the machine, w64devkit first) and **Test** (compiles and runs a small program with the toolchain as set up).
+* **Cancel**: stops the operation.
+
+On the command line the same question is a text: `Fix automatically? [F]ix / [C]ancel (f):` (only when somebody can answer; in scripts and CI the build just reports that there is no compiler).
+On Linux and macOS the toolchain has to come from the package manager (`g++`/`clang++`, `xcode-select --install`): the message says so.
+
+## 6. Checklist
 
 1. The function is `inline Value name(Value ...)` (and `OwnList* list` last, if it allocates) in `namespace fire`, in a header that includes what it uses.
 2. Everything you allocate for the result is allocated in `list`.

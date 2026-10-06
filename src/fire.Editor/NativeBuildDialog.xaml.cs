@@ -202,6 +202,39 @@ namespace fire.Editor
             };
         }
 
+        /// <summary>Opens the dialog on the toolchain page (when a toolchain is needed).</summary>
+        public void SelectToolchainTab() => tabs.SelectedIndex = 1;
+
+        /// <summary>"Detect": looks for a toolchain on this machine - the portable w64devkit first - and fills in the kind and the compiler.</summary>
+        private void Detect_Click(object sender, RoutedEventArgs e)
+        {
+            var found = ToolchainSetup.Detect();
+            if (found == null)
+            {
+                MessageBox.Show(this, ToolchainSetup.CanInstall
+                    ? "No C++ toolchain was found on this machine. It can be installed automatically the next time a native build or a package with native code needs it (the portable w64devkit is downloaded)."
+                    : "No C++ toolchain was found on this machine. Install g++ or clang++ with the package manager of your system.", "Detect toolchain", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            string kind = found.Value.Toolchain.EffectiveKind;
+            for (int i = 0; i < cmbKind.Items.Count; i++)
+                if (cmbKind.Items[i] is ComboBoxItem item && string.Equals(item.Content as string, kind, StringComparison.OrdinalIgnoreCase)) cmbKind.SelectedIndex = i;
+            txtCompiler.Text = found.Value.Path;
+            UpdateToolchainHint();
+            MessageBox.Show(this, $"Found: {found.Value.Path}", "Detect toolchain", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        /// <summary>"Test": compiles and runs a small program with the toolchain as it is set up in the fields.</summary>
+        private async void Test_Click(object sender, RoutedEventArgs e)
+        {
+            var def = ToolchainFromFields();
+            Cursor = System.Windows.Input.Cursors.Wait;
+            fire.Compiler.NativeBuildResult result;
+            try { result = await System.Threading.Tasks.Task.Run(() => fire.Compiler.NativeBuilder.TestToolchain(def)); }
+            finally { Cursor = null; }
+            MessageBox.Show(this, (result.Ok ? "The toolchain works.\n\n" : "The toolchain does not work.\n\n") + result.Log, "Test toolchain", MessageBoxButton.OK, result.Ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+
         private void NewToolchain_Click(object sender, RoutedEventArgs e)
         {
             var asked = AskNameAndBase("New toolchain", "Name of the toolchain", "Based on", _config.ToolchainNames.ToList(), _currentToolchain);

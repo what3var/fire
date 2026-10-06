@@ -16025,6 +16025,45 @@ else
             try { fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#import \"pkgwin\"\nprint(PkgWin.F(1))" }, null, null, VmExecutionMode.Release, null, TargetProfile.Linux), TargetProfile.Linux); }
             catch (fire.Native.NativeNotSupportedException ex) { refused = ex.Message.Contains("pkgwin") && ex.Message.Contains("windows"); }
             CheckNat("Paket: ein natives Paket nur fuer andere Plattformen wird fuers Ziel abgelehnt", refused);
+
+            // the toolchain provider: without a compiler the host is asked (cancel / change / install); the answer decides
+            {
+                string? savedPath = Environment.GetEnvironmentVariable("PATH");
+                var savedAsk = fire.Native.ToolchainProvider.Ask;
+                var savedChange = fire.Native.ToolchainProvider.ChangeToolchain;
+                try
+                {
+                    var wantedToolchain = fire.Native.ToolchainDef.BuiltIn["gcc"];
+                    Environment.SetEnvironmentVariable("PATH", "");
+                    bool noneFound = fire.Native.ToolchainDetector.Find(wantedToolchain) == null && fire.Native.ToolchainSetup.Detect() == null;
+                    if (noneFound)
+                    {
+                        fire.Native.ToolchainRequest? seen = null;
+                        fire.Native.ToolchainProvider.Ask = r => { seen = r; return fire.Native.ToolchainChoice.Cancel; };
+                        var canceled = fire.Native.ToolchainProvider.Require(wantedToolchain, "A package needs it (test).");
+                        bool cancelOk = canceled == null && seen != null && seen.Message.Contains("A package needs it (test).") && seen.Message.Contains("none was found");
+                        fire.Native.ToolchainProvider.Ask = r => fire.Native.ToolchainChoice.Change;
+                        fire.Native.ToolchainProvider.ChangeToolchain = () => { Environment.SetEnvironmentVariable("PATH", savedPath); return true; };
+                        var changed = fire.Native.ToolchainProvider.Require(wantedToolchain, "test");
+                        Environment.SetEnvironmentVariable("PATH", "");
+                        fire.Native.ToolchainProvider.Ask = null;
+                        var unasked = fire.Native.ToolchainProvider.Require(wantedToolchain, "test");
+                        CheckNat("Toolchain: ohne Compiler wird der Host gefragt (abbrechen = nichts; aendern = es wird neu gesucht; ohne Host keine Frage)", cancelOk && changed != null && unasked == null);
+                    }
+                    else CheckNat("Toolchain: (uebersprungen - ein Compiler liegt ausserhalb des PATH)", true);
+                }
+                finally
+                {
+                    Environment.SetEnvironmentVariable("PATH", savedPath);
+                    fire.Native.ToolchainProvider.Ask = savedAsk;
+                    fire.Native.ToolchainProvider.ChangeToolchain = savedChange;
+                }
+                if (fire.Native.ToolchainSetup.Detect() is { } detected)
+                {
+                    var test = fire.Compiler.NativeBuilder.TestToolchain(detected.Toolchain);
+                    CheckNat("Toolchain: der Test uebersetzt und startet ein kleines Programm", test.Ok, test.Log);
+                }
+            }
         }
         finally
         {

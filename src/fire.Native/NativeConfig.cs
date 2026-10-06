@@ -111,8 +111,8 @@ namespace fire.Native
                 if (ToolchainDef.BuiltIn.TryGetValue(name, out var builtIn)) return builtIn;
                 throw new NativeConfigException($"unknown toolchain '{name}' (known: {string.Join(", ", ToolchainNames)})");
             }
-            foreach (string candidate in new[] { "gcc", "clang", "msvc" })
-                if (ToolchainDetector.Find(ToolchainDef.BuiltIn[candidate]) != null) return ToolchainDef.BuiltIn[candidate];
+            if (ToolchainSetup.LoadMachineToolchain() is { } chosen && ToolchainDetector.Find(chosen) != null) return chosen;   // the toolchain chosen for the machine (or installed by fire)
+            if (ToolchainSetup.Detect() is { } detected) return detected.Toolchain;
             return ToolchainDef.BuiltIn["gcc"];
         }
     }

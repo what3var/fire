@@ -63,15 +63,7 @@ namespace fire.Native
         {
             if (toolchain.EffectiveKind is "files" or "custom") return null;
             string name = toolchain.EffectiveCompiler;
-            if (Path.IsPathRooted(name)) return File.Exists(name) ? name : null;
-            bool windows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-            foreach (string dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-            {
-                string candidate = Path.Combine(dir.Trim('"'), name);
-                if (File.Exists(candidate)) return candidate;
-                if (windows && File.Exists(candidate + ".exe")) return candidate + ".exe";
-            }
-            return null;
+            return ToolchainSetup.FindProgram(name);
         }
 
         /// <summary>The built-in toolchains that can be used on this machine right now.</summary>

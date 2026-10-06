@@ -74,9 +74,15 @@ namespace fire.Compiler
             {
                 string cppFile = WriteFiles(workDir, cpp, target, SourceName, configDirectory);
                 string exe = Path.GetFullPath(output);
-                var (exeName, arguments) = CompilerCommand(toolchain, target, cppFile, workDir, exe);
                 if (toolchain.EffectiveKind != "custom" && ToolchainDetector.Find(toolchain) == null)
-                    return new NativeBuildResult(false, exe, $"The compiler '{toolchain.EffectiveCompiler}' was not found. Install it, name another one in the toolchain of {NativeConfig.FileName}, or build with the toolchain 'files' and compile the sources yourself.");
+                {
+                    // nothing to compile with: offer to provide a toolchain (the host asks the user: install, change, cancel)
+                    var provided = ToolchainProvider.Require(toolchain, "A native build translates the program to C++ and compiles it with a C++ toolchain.");
+                    if (provided == null)
+                        return new NativeBuildResult(false, exe, $"The compiler '{toolchain.EffectiveCompiler}' was not found. Install it, name another one in the toolchain of {NativeConfig.FileName}, or build with the toolchain 'files' and compile the sources yourself.");
+                    toolchain = provided;
+                }
+                var (exeName, arguments) = CompilerCommand(toolchain, target, cppFile, workDir, exe);
                 log.AppendLine($"{exeName} {arguments}");
                 var (ok, text) = Run(exeName, arguments, workDir);
                 log.Append(text);
@@ -159,8 +165,11 @@ namespace fire.Compiler
         {
             try
             {
-                using var p = Process.Start(new ProcessStartInfo(exe, arguments)
-                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir })!;
+                var psi = new ProcessStartInfo(exe, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir };
+                // a portable toolchain (w64devkit) finds its other programs through the PATH: its folder comes first
+                if (Path.IsPathRooted(exe) && Path.GetDirectoryName(exe) is { Length: > 0 } toolDir)
+                    psi.Environment["PATH"] = toolDir + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
+                using var p = Process.Start(psi)!;
                 var err = p.StandardError.ReadToEndAsync();
                 string output = p.StandardOutput.ReadToEnd();
                 p.WaitForExit();
@@ -177,6 +186,35 @@ namespace fire.Compiler
             Directory.CreateDirectory(target);
             foreach (string file in Directory.GetFiles(source)) File.Copy(file, Path.Combine(target, Path.GetFileName(file)), true);
             foreach (string dir in Directory.GetDirectories(source)) CopyDirectory(dir, Path.Combine(target, Path.GetFileName(dir)));
+        }
+
+        /// <summary>Tries a toolchain: compiles a small C++ program (with the standard library and threads) for the host and runs it. The log says what was run and what came out.</summary>
+        public static NativeBuildResult TestToolchain(ToolchainDef toolchain)
+        {
+            var log = new StringBuilder();
+            if (toolchain.EffectiveKind == "files") return new NativeBuildResult(true, "", "The toolchain 'files' only writes the sources; there is nothing to test.");
+            string work = Path.Combine(Path.GetTempPath(), "fire-toolchain-test-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(work);
+                string cpp = Path.Combine(work, "test.cpp");
+                File.WriteAllText(cpp, "#include <cstdio>\n#include <cmath>\n#include <string>\n#include <thread>\nint main() { std::string s = \"toolchain \"; std::thread t([&] { s += \"ok\"; }); t.join(); std::printf(\"%s %g\\n\", s.c_str(), std::sqrt(16.0)); return 0; }\n");
+                string exe = Path.Combine(work, OperatingSystem.IsWindows() ? "test.exe" : "test");
+                var (exeName, arguments) = CompilerCommand(toolchain, TargetProfile.Host, cpp, work, exe);
+                if (toolchain.EffectiveKind != "custom" && ToolchainDetector.Find(toolchain) == null)
+                    return new NativeBuildResult(false, exe, $"The compiler '{toolchain.EffectiveCompiler}' was not found.");
+                log.AppendLine($"{exeName} {arguments}");
+                var (ok, text) = Run(exeName, arguments, work);
+                log.Append(text);
+                if (!ok || !File.Exists(exe)) return new NativeBuildResult(false, exe, log.ToString());
+                var (ran, output) = Run(exe, "", work);
+                log.Append(output);
+                return new NativeBuildResult(ran && output.Contains("toolchain ok 4"), exe, log.ToString());
+            }
+            finally
+            {
+                try { Directory.Delete(work, true); } catch (IOException) { }
+            }
         }
 
         /// <summary>The name of the program that a native build produces by default (<c>out</c>, <c>out.exe</c> on Windows).</summary>
