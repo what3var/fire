@@ -26,6 +26,7 @@ namespace UI {
         Add(item) {
             UI.M.Own(this, item)
             this.items.Add(item)
+            this.Invalidate()
             return item
         }
 
@@ -110,8 +111,7 @@ namespace UI {
         }
 
         Draw(root, int ax, int ay) {
-            this.ax = ax
-            this.ay = ay
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
             var text = theme.text
@@ -272,8 +272,8 @@ namespace UI {
             this.suppress = false
         }
 
-        Draw(root, int ax, int ay) {
-            base.Draw(root, ax, ay)
+        Poll(root) {
+            base.Poll(root)
             // ein Klick in der Liste hat gewaehlt
             if (this.popupList.TakeChanged() && this.popupList.selectedIndex >= 0 && this.ListOpen()) { this.Choose(this.popupList.selectedItem) }
             if (!this.focused && this.ListOpen()) { this.CloseList() }
@@ -317,8 +317,7 @@ namespace UI {
         }
 
         Draw(root, int ax, int ay) {
-            this.ax = ax
-            this.ay = ay
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             var pen = this.pen
             if (pen == undefined) { pen = root.theme.border }
             if (this.parent != undefined && this.parent is of StackPanel && this.parent.horizontal) {
@@ -354,7 +353,9 @@ namespace UI {
         Draw(root, int ax, int ay) {
             base.Draw(root, ax, ay)
             // eine Linie unter der Leiste
-            root.renderer.DrawLine(ax, ay + this.actualHeight - 1, ax + this.actualWidth - 1, ay + this.actualHeight - 1, root.theme.border)
+            if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
+                root.renderer.DrawLine(ax, ay + this.actualHeight - 1, ax + this.actualWidth - 1, ay + this.actualHeight - 1, root.theme.border)
+            }
         }
     }
 
@@ -380,8 +381,7 @@ namespace UI {
         }
 
         Draw(root, int ax, int ay) {
-            this.ax = ax
-            this.ay = ay
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.background) }
             if (this.source == undefined) { return }
             var sw = this.source.Width()

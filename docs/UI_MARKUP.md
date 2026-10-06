@@ -57,11 +57,12 @@ For `<Window class="Greeter">` the script defines `class GreeterBase` (`base="..
 | `framebuffer`, `window`, `ui` | a `Window`: the framebuffer, the window and the `UI.Root` that is created for it (title, width, height from the attributes) |
 | `view` | a `View` (below) instead of the three above: a `UI.Panel` |
 | one method per handler name | `Ok(sender) { }` - empty; the derived class overrides it. `sender` is the element |
-| `Run()`, `OnTick()` | a window: `Run()` loops `ui.Tick()` until the window is closed and calls `OnTick()` once per cycle (override it for a loop of your own) |
+| `Run(other = undefined)`, `OnTick()` | a window: `Run()` loops `ui.Tick()` until the window is closed and calls `OnTick()` once per cycle (override it for a loop of your own); `Run(other)` opens another window first (below) |
+| `Open(other)` | a window: another window of the markup (an object of another generated class) or a `UI.Root` is attached to this one: this window's `Run`/`Tick` works it off as well, its own `OnTick()` is called in each cycle, until it is closed. Keep the other window alive as long as it is open (the call moves it under this window) |
 | `Attach(container)` | a view: adds the panel to a container (`ui` itself, a `Panel` or a `Stack`) |
 | `dataContext`, `SetDataContext(obj)` | only with bindings, see below |
 
-The names of the generated members start with `fx`, plus `framebuffer window ui view dataContext SetDataContext Run OnTick Attach`: a named element or a handler must not use them.
+The names of the generated members start with `fx`, plus `framebuffer window ui view dataContext SetDataContext Run OnTick Attach Open`: a named element or a handler must not use them.
 
 `<View class="Settings" width="300" height="200">` is the root of a part of an interface: no window of its own, but a panel that a window adds with `Attach` - the same markup language, so
 that a window can be composed of views.
@@ -148,6 +149,35 @@ In `<Resources>` (next to the converters):
 `target` of a style or template is an element of this table (or `Element`: the shared properties). The properties of a setter are the ones of that element; a trigger tests one of them or `hover`, `pressed`, `focused`
 (more conditions with `<Condition property="..." value="..."/>`, in a template with `source="partName"` to test a part). A property that a method sets (`rows`, `data`) cannot be set by a style. Event handlers and `{Binding}` are not available
 inside a template (react to the control itself). Everything is explained in docs/UI.md (*Aussehen*); the generated script builds `UI.Style`, `UI.Trigger` and `UI.ControlTemplate` objects (`fxStyle_Key`, `fxTemplate_Key` are fields of the class).
+
+## Lists with data: DataTemplate, CollectionView, itemsSource
+
+`ListBox` and `ListView` can take their rows from data instead of `<Item>` children:
+
+```xml
+<Resources>
+  <DataTemplate key="Person">                          <!-- one row: ONE root element; bindings go to the ITEM -->
+    <StackPanel horizontal="true" spacing="6">
+      <Label text="{Binding name, Converter=Upper}"/>
+      <Label text="{Binding address.city}"/>
+    </StackPanel>
+  </DataTemplate>
+  <DataTemplate key="Plain"><Label text="{Binding}"/></DataTemplate>      <!-- {Binding} without a path: the item itself -->
+  <CollectionView key="ByName" source="{Binding people}" sortBy="name" descending="false" filter="{Expr func (p) on this => { return p.age > 17 }}"/>
+</Resources>
+<ListBox view="ByName" itemTemplate="Person" selectedIndex="{Binding selected, Mode=TwoWay}"/>
+<ListBox itemsSource="{Binding names}" itemTemplate="Plain"/>
+```
+
+- **`itemsSource`** is a list: `{Binding path}` (a list of the data context - when the context replaces the list the control follows, when the list changes the rows change) or `{Expr ...}`. The control does not own the list.
+- **`<CollectionView key=...>`** is a sorted / filtered view of a list (`UI.CollectionView`): `source` (`{Binding}` or `{Expr}`, read only), `sortBy` (a property of the items), `descending`, `filter` and `comparer`
+  (`{Expr ...}`: lambdas; write `&lt;` for `<` inside an attribute, as everywhere in XML). A list says `view="Key"`; give either `view` or `itemsSource`. The view is a field of the class, `fxView_Key`, so the code-behind can change it (`fxView_ByName.SortBy("age")`, `Invalidate()`).
+- **`<DataTemplate key=...>`** builds one set of elements per item (`UI.DataTemplate`, the field is `fxData_Key`). `{Binding Path, Mode=..., Converter=...}` inside it binds to the item (`Path` through objects, empty = the item
+  itself, which is read only); `TwoWay` writes into the item. There are no names, handlers, `ElementName` or `TemplateBinding` in a data template, and the rows only show data (they do not take input).
+  A text property shows any value as its text. Without `itemTemplate` a row shows the item as text (`displayMember` names the property).
+- `selectedIndex="{Binding selected, Mode=TwoWay}"` ties the selection to the data context in both directions.
+- The design view cannot run the data: a list with `itemsSource` or `view` shows three empty rows, and the bound texts of the data template read `‹path›`.
+- Keys of styles, templates, data templates and views share one namespace.
 
 ## Data binding
 

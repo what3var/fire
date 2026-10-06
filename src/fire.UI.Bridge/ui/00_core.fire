@@ -124,6 +124,52 @@ namespace UI {
             return undefined
         }
 
+        // Der Wert hinter einem Pfad "a.b.c" (jeder Teil eine Eigenschaft); ein leerer Pfad ist das Objekt selbst, undefined, wenn unterwegs etwas fehlt.
+        static PathGet(item, string path) {
+            if (path == "") { return item }
+            var current = item
+            var start = 0
+            for (var i = 0; i <= path.Length; i = i + 1) {
+                if (i == path.Length || path.CharAt(i).ToInt() == 46) {
+                    if (current == undefined || UI.M.IsPlain(current)) { return undefined }
+                    current = UI.M.Member(current, path.Substring(start, i - start))
+                    start = i + 1
+                }
+            }
+            return current
+        }
+
+        // Gibt es den Pfad (alle Teile bis zum letzten sind Objekte, der letzte Teil eine Eigenschaft)?
+        static bool PathHas(item, string path) {
+            if (path == "") { return item != undefined }
+            var current = item
+            var start = 0
+            for (var i = 0; i <= path.Length; i = i + 1) {
+                if (i == path.Length || path.CharAt(i).ToInt() == 46) {
+                    if (current == undefined || UI.M.IsPlain(current)) { return false }
+                    var name = path.Substring(start, i - start)
+                    if (!Reflect.Has(current, name)) { return false }
+                    if (i < path.Length) { current = Reflect.Get(current, name) }
+                    start = i + 1
+                }
+            }
+            return true
+        }
+
+        // Setzt den Wert hinter dem Pfad (der Pfad muss mit PathHas vorhanden sein und darf nicht leer sein).
+        static PathSet(item, string path, value) {
+            var current = item
+            var start = 0
+            for (var i = 0; i <= path.Length; i = i + 1) {
+                if (i == path.Length || path.CharAt(i).ToInt() == 46) {
+                    var name = path.Substring(start, i - start)
+                    if (i == path.Length) { Reflect.Set(current, name, value) }
+                    else { current = Reflect.Get(current, name) }
+                    start = i + 1
+                }
+            }
+        }
+
         // Der Wert als Text ("" fuer undefined).
         static string Text(value) {
             if (value == undefined) { return "" }

@@ -58,9 +58,9 @@ Neben `Label`, `Button`, `CheckBox` und `TextBox` (siehe Aufbau) bringt die Bibl
 ## Aufbau
 
 - **`UI.Root(Framebuffer, Window)`**: legt einen `Renderer` zum Zeichnen an (`root.renderer`), schaltet die Ereignis-Warteschlange des Fensters ein und hält die oberste Ebene (`content`, ein `Panel`), das `theme`
-  (`UI.Theme`: alle Farben als `Brush`-Felder - `back`, `panel`, `face`, `faceHover`, `facePressed`, `faceDisabled`, `inputBack`, `accent`, `text`, `textDisabled` - und `Pen`-Felder `border`, `borderFocus`, `caret`) und Fokus/Hover/gedrückt-Zustand. `Add(element)` hängt ein Element an, `Draw()` zeichnet alles neu, `Tick()` ist ein Zyklus (zeichnen, `window.Tick()`, alle
-  angekommenen Ereignisse verteilen; false, sobald das Fenster geschlossen ist), `Run()` ruft `Tick` bis zum Schließen. `Tick` zeichnet jedes Mal die ganze Oberfläche - es gibt kein
-  "schmutzig"-Bookkeeping, eine Änderung an einem Feld (`label.text = ...`) ist deshalb beim nächsten Tick sichtbar.
+  (`UI.Theme`: alle Farben als `Brush`-Felder - `back`, `panel`, `face`, `faceHover`, `facePressed`, `faceDisabled`, `inputBack`, `accent`, `text`, `textDisabled` - und `Pen`-Felder `border`, `borderFocus`, `caret`) und Fokus/Hover/gedrückt-Zustand. `Add(element)` hängt ein Element an, `Update()` bringt die Oberfläche auf den Stand und malt, was sich geändert hat (siehe *Zeichnen nur bei Änderungen*), `Draw()` zeichnet alles neu, `Tick()` ist ein Zyklus
+  (`Update()`, `window.Tick()`, alle angekommenen Ereignisse verteilen; false, sobald das Fenster geschlossen ist), `Run()` ruft `Tick` bis zum Schließen - `Run(anderes)` hängt vorher ein weiteres Fenster an
+  (siehe *Mehrere Fenster*). Eine Änderung an einem Feld (`label.text = ...`) ist beim nächsten Tick sichtbar.
 - **Elemente** (`UI.Element` als Basis: `x`, `y`, `width`, `height` relativ zum Container, `visible`, `enabled`, dazu `hover`/`pressed`/`focused`):
   `Panel` (Container, `showBorder`, `background` = Brush, `filled`, `pen` = Stift des Rahmens), `Stack` (ordnet Kinder unter- oder nebeneinander an: `horizontal`, `spacing`, `padding`), `Label` (`brush`), `Button`, `CheckBox`, `TextBox`.
 - **Reagieren:** jedes bedienbare Element kennt beides - ein Lambda-Feld (`onClick`, `onChange`, `onEnter`) und einen abfragbaren Merker (`TakeClicked()`, `TakeChanged()`, `TakeEntered()`; liefert
@@ -106,7 +106,11 @@ färbt Hover/Druck selbst; ein gesetztes `background` gilt in jedem Zustand, bis
   (`trigger.Set("background", brush, "teil")`), und Bedingungen auf das Steuerelement (`hover`, `pressed`, `focused`, `isChecked`, `enabled`). Größe, Klicks und Fokus bleiben beim Steuerelement.
   `element.FindPart("name")` liefert einen Teil. `TextBox` zeichnet sich immer selbst (Einfügemarke und Auswahl).
 - **`UI.DataTemplate(func (item) => element)`**: baut aus einem Datenelement das Element, das es zeigt (`template.Build(item)`; die Listen-Steuerelemente nutzen es).
-- **Bindung zwischen Elementen:** `element.Bind("text", quelle, "text")` (optional `twoWay`, `converter` = `UI.Converter`) gleicht bei jedem Layout ab; die Quelle ist ein beliebiges Objekt.
+- **Bindung zwischen Elementen:** `element.Bind("text", quelle, "text")` (optional `twoWay`, `converter` = `UI.Converter`, `once` = nur einmal übertragen) gleicht bei jedem Durchlauf von `Update` ab; die Quelle ist
+  ein beliebiges Objekt, der Pfad darf durch Objekte gehen (`"adresse.ort"`); ein leerer Pfad ist die Quelle selbst (bei einer Zeile mit `DataTemplate` das Datenelement, nur lesend). Eine Text-Eigenschaft zeigt jeden Wert als Text.
+- **Listen:** `ListBox`/`ListView` zeigen `items`; `list.itemsSource = liste` zeigt eine fremde Liste, ohne sie zu besitzen (Änderungen darin erscheinen von selbst, die Liste austauschen geht auch),
+  `list.SetView(view, false)` eine `CollectionView` (`view.source` ist austauschbar; mit `own = false` gehört sie nicht der Liste), `list.itemTemplate = DataTemplate` baut die Zeilen. Wird `selectedIndex` von außen gesetzt
+  (zum Beispiel durch eine Bindung), verhält sich das wie eine Auswahl (`onSelect`).
 - **Ressourcen:** `element.Resources().Set("schluessel", wert)`, `root.resources.Set(...)`; `element.FindResource("schluessel")` sucht vom Element nach oben, zuletzt im Root (vor dem ersten Layout nur
   bei den Vorfahren); `undefined`, wenn es sie nicht gibt. Ein `ResourceDictionary` besitzt seine Werte (und Styles).
 
@@ -121,10 +125,37 @@ stil.AddTrigger(hover)
 ui.resources.AddStyle(stil)               // alle Button
 ```
 
+## Zeichnen nur bei Änderungen
+
+`Root.Update()` (und damit `Tick()`) malt nur, wenn sich etwas geändert hat, und dann nur den Bereich, der sich geändert hat; ein ruhiges Fenster kostet fast nichts, `Update()` liefert dann `false`.
+Dahinter steckt keine Buchführung des Programms: der Root beobachtet die Felder der Elemente mit `probe` (SPEC 8.14 - nur beobachtete Objekte nehmen den langsamen Schreibpfad, und nur ein Schreibzugriff, der den Wert
+wirklich ändert, meldet sich), dazu fragt `Update()` bei jedem Durchlauf ab, was nicht über Felder läuft: Bindungen, Trigger, Styles, Vorlagen, Listen (Zeilenzahl, `CollectionView`) und die Zeiger-Zustände der Elemente.
+
+- Ändert sich nur der Inhalt eines Elements (Text, Farbe, Hover), wird der Bereich dieses Elements neu gemalt (die Vereinigung der Bereiche aller geänderten Elemente, ein Pixel größer).
+  Rutscht dabei ein Element woanders hin oder ändert sich seine Größe (zum Beispiel ein längerer Text in einem `StackPanel`), wird alles neu angeordnet und ganz neu gemalt.
+- Änderungen am Theme (`root.theme.back = ...`) und an Fenstergröße/Schrift malen alles neu.
+- **Nicht** beobachtet werden Änderungen *im Inneren* eines Brushes, Stifts, einer `Geometry` oder eines Bildes, das ein Element nutzt (ein `SolidBrush`, dessen Farbe man verändert): dann `element.Invalidate()`
+  (oder `root.Invalidate()` für alles) aufrufen, oder den Brush austauschen. `Draw()` zeichnet immer alles. Ein `DrawingCanvas` mit `continuous = true` malt in jedem Zyklus neu.
+- Eigene Elemente: `Draw` beginnt mit `if (!this.NeedsDraw(root, ax, ay)) { return }` und malt nur, was in den Bereich fällt; Änderungen, die keine Felder sind, meldet das Element mit `Invalidate()`
+  oder in `Poll(root)`.
+
+## Mehrere Fenster
+
+Ein Programm kann mehrere Fenster haben - jedes ist ein `UI.Root` mit eigenem Framebuffer und `Window`. `ui.Attach(anderes)` hängt den Root eines weiteren Fensters an: `ui.Tick()` (und `ui.Run()`) macht dann
+in jedem Zyklus auch dessen Zyklus, bis sein Fenster geschlossen wird (das schließt es nur aus der Liste; das Ende von `Run` bestimmt das Fenster, an das angehängt wurde). `ui.Run(anderes)` hängt an und läuft.
+`ui.Detach(anderes)` nimmt es wieder heraus; `ui.attached` ist die Liste. `ui.onTick` ist ein Lambda ohne Parameter, das der Zyklus dieses Roots am Ende ruft. Nur das Hauptfenster wartet auf den Bildaufbau (VSync),
+die angehängten nicht, damit n Fenster nicht n-mal warten. Der angehängte Root (und was ihn besitzt) muss so lange leben wie sein Fenster - zum Beispiel als Feld des öffnenden Fensters.
+
+```
+var main = new UI.Root(fb1, win1)
+var tools = new UI.Root(fb2, win2)
+main.Run(tools)           // beide Fenster laufen in einer Schleife; main schließen beendet das Programm
+```
+
 ## Oberfläche im Markup
 
 Die Oberfläche lässt sich auch in einer Markup-Datei (`.fxml`, XML wie XAML) entwerfen; daraus entsteht eine Basisklasse, von der der eigene Code erbt - mit Handlern, benannten Elementen und Datenbindung
-(mit `probe`) samt Convertern. Siehe `docs/UI_MARKUP.md`; der Editor zeigt dazu eine Entwurfsansicht.
+(mit `probe`) samt Convertern, auch `DataTemplate`, `CollectionView` und Listen, die ihre Daten aus dem Datenkontext holen. Siehe `docs/UI_MARKUP.md`; der Editor zeigt dazu eine Entwurfsansicht.
 
 ## Grenzen
 

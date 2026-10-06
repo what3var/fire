@@ -99,6 +99,23 @@ namespace fire.UI.Markup
         public List<TriggerDeclaration> Triggers { get; } = new();
     }
 
+    /// <summary>`<DataTemplate key="Person">`: how one data item of a list looks - the single child element. `{Binding Path}` inside it binds to the ITEM (an empty path, `{Binding}`, is the item itself).</summary>
+    public sealed class DataTemplateDeclaration
+    {
+        public string Key { get; init; } = "";
+        public int Line { get; init; }
+        public MarkupElement? Root { get; set; }
+    }
+
+    /// <summary>`<CollectionView key="Sorted" source="{Binding People}" sortBy="name" descending="true" filter="{Expr ...}"/>`: a sorted/filtered view of a list that lists show (`view="Sorted"`).
+    /// Its attributes are in <see cref="Element"/> (tag `CollectionView`, see <see cref="MarkupSchema.CollectionViewDef"/>).</summary>
+    public sealed class ViewDeclaration
+    {
+        public string Key { get; init; } = "";
+        public int Line { get; init; }
+        public MarkupElement Element { get; init; } = new();
+    }
+
     /// <summary>A parsed markup file.</summary>
     public sealed class MarkupDocument
     {
@@ -113,6 +130,8 @@ namespace fire.UI.Markup
         public List<ConverterDeclaration> Converters { get; } = new();
         public List<StyleDeclaration> Styles { get; } = new();
         public List<TemplateDeclaration> Templates { get; } = new();
+        public List<DataTemplateDeclaration> DataTemplates { get; } = new();
+        public List<ViewDeclaration> Views { get; } = new();
         public List<MarkupElement> Children { get; } = new();
         public List<MarkupDiagnostic> Diagnostics { get; } = new();
 
@@ -123,6 +142,9 @@ namespace fire.UI.Markup
 
         /// <summary>Every element inside the control templates.</summary>
         public IEnumerable<MarkupElement> TemplateElements() => Walk(Templates.Where(t => t.Root != null).Select(t => t.Root!));
+
+        /// <summary>Every element inside the data templates.</summary>
+        public IEnumerable<MarkupElement> DataTemplateElements() => Walk(DataTemplates.Where(t => t.Root != null).Select(t => t.Root!));
 
         private static IEnumerable<MarkupElement> Walk(IEnumerable<MarkupElement> roots)
         {

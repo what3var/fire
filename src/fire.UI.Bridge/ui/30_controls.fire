@@ -16,6 +16,7 @@ namespace UI {
         string StyleKey() { return "Label" }
 
         Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
             var c = this.brush
             if (c == undefined) { c = this.foreground }
@@ -58,6 +59,7 @@ namespace UI {
         }
 
         Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
             var theme = root.theme
             var face = theme.face
@@ -131,6 +133,7 @@ namespace UI {
 
         Draw(root, int ax, int ay) {
             var box = 14
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
 
             var theme = root.theme
@@ -219,7 +222,7 @@ namespace UI {
         int Fit(root) { return (this.actualWidth - 8) / root.cw }
 
         Draw(root, int ax, int ay) {
-            base.Draw(root, ax, ay)
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var back = theme.inputBack
             if (!this.enabled) { back = theme.faceDisabled }

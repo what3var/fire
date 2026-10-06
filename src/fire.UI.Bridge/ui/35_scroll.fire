@@ -14,15 +14,31 @@ namespace UI {
         bool dragging = false
         int grab = 0
         bool hover = false
+        // das Element, das die Leiste zeigt: es wird neu gemalt, wenn sich etwas an der Leiste aendert
+        var owner
 
         construct(bool horizontal = false) { this.horizontal = horizontal }
+
+        Changed() {
+            var o = this.owner
+            if (o != undefined) { o.Invalidate() }
+        }
+
+        SetHover(bool value) {
+            if (this.hover == value) { return }
+            this.hover = value
+            this.Changed()
+        }
 
         int Max() { return UI.M.Max(0, this.extent - this.viewport) }
 
         bool Needed() { return this.extent > this.viewport }
 
         Set(int value) {
-            this.offset = UI.M.Clamp(value, 0, this.Max())
+            var next = UI.M.Clamp(value, 0, this.Max())
+            if (next == this.offset) { return }
+            this.offset = next
+            this.Changed()
         }
 
         By(int delta) { this.Set(this.offset + delta) }
@@ -63,6 +79,7 @@ namespace UI {
             var length = this.ThumbLength(track)
             if (pos >= start && pos < start + length) {
                 this.dragging = true
+                this.Changed()
                 this.grab = pos - start
             } else if (pos < start) {
                 this.By(-this.viewport)
@@ -79,7 +96,12 @@ namespace UI {
             this.Set((pos - this.grab) * this.Max() / room)
         }
 
-        Release() { this.dragging = false }
+        Release() {
+            if (this.dragging) {
+                this.dragging = false
+                this.Changed()
+            }
+        }
     }
 
     // Zeigt EIN Kind (`content`) in einem Ausschnitt und blendet Bildlaufleisten ein, wenn es nicht hineinpasst. Mit `hmode`/`vmode`
@@ -100,6 +122,13 @@ namespace UI {
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
             this.vbar = new Scroller(false)
             this.hbar = new Scroller(true)
+            this.vbar.owner = this
+            this.hbar.owner = this
+        }
+
+        Poll(root) {
+            base.Poll(root)
+            if (this.content != undefined) { this.content.Poll(root) }
         }
 
         string StyleKey() { return "ScrollViewer" }
@@ -110,6 +139,7 @@ namespace UI {
             this.content = element
             element.TakeTo(this)
             element.parent = this
+            this.Invalidate()
         }
 
         MeasureCore(root, int aw, int ah) {
@@ -172,6 +202,7 @@ namespace UI {
         }
 
         Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
             var c = this.content
             if (this.background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.background) }

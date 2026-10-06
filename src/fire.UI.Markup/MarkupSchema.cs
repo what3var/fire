@@ -27,6 +27,14 @@ namespace fire.UI.Markup
         StyleRef,
         /// <summary>The key of a `ControlTemplate` of the `Resources`.</summary>
         TemplateRef,
+        /// <summary>The key of a `DataTemplate` of the `Resources` (`itemTemplate`).</summary>
+        DataTemplateRef,
+        /// <summary>The key of a `CollectionView` of the `Resources` (`view`).</summary>
+        ViewRef,
+        /// <summary>A list (`itemsSource`, `source`): only `{Binding ...}` or `{Expr ...}`, no plain value.</summary>
+        Collection,
+        /// <summary>Any value that only code can make (a filter or comparer lambda): only `{Expr ...}`.</summary>
+        Code,
     }
 
     /// <summary>A property of an element of the markup: its name in the markup, the field of the fire class it sets and its type.</summary>
@@ -126,6 +134,19 @@ namespace fire.UI.Markup
 
         private static readonly string[] ItemParts = { "Item" };
 
+        private static readonly PropertyDef[] ListSources =
+        {
+            new("itemsSource", PropertyKind.Collection), new("itemTemplate", PropertyKind.DataTemplateRef),
+            new("view", PropertyKind.ViewRef) { Method = "SetView" },
+        };
+
+        /// <summary>The attributes of a `&lt;CollectionView&gt;` of the Resources (it is no element of the interface: it has no common properties). `sortBy` and `descending` are set together by `SortBy`.</summary>
+        public static readonly ElementDef CollectionViewDef = new("CollectionView", "UI.CollectionView", ChildMode.None, "new UI.CollectionView(undefined)", new PropertyDef[]
+        {
+            new("source", PropertyKind.Collection), new("sortBy", PropertyKind.Text), new("descending", PropertyKind.Bool),
+            new("filter", PropertyKind.Code), new("comparer", PropertyKind.Code),
+        }, Array.Empty<EventDef>());
+
         public static readonly IReadOnlyList<ElementDef> Elements = new[]
         {
             Define("Panel", true, "new UI.Panel(0, 0, 100, 100)", PanelLook),
@@ -170,11 +191,11 @@ namespace fire.UI.Markup
             Define("ListBox", ChildMode.Parts, "new UI.ListBox(0, 0, 160, 120)", new PropertyDef[]
             {
                 new("displayMember", PropertyKind.Text), new("selectedIndex", PropertyKind.Int),
-            }, new[] { new EventDef("onSelect"), new EventDef("onActivate") }) with { PartTags = ItemParts },
+            }.Concat(ListSources).ToArray(), new[] { new EventDef("onSelect"), new EventDef("onActivate") }) with { PartTags = ItemParts },
             Define("ListView", ChildMode.Parts, "new UI.ListView(0, 0, 240, 140)", new PropertyDef[]
             {
                 new("displayMember", PropertyKind.Text), new("selectedIndex", PropertyKind.Int),
-            }, new[] { new EventDef("onSelect"), new EventDef("onActivate") }) with { PartTags = new[] { "Column", "Item" } },
+            }.Concat(ListSources).ToArray(), new[] { new EventDef("onSelect"), new EventDef("onActivate") }) with { PartTags = new[] { "Column", "Item" } },
             Define("TreeView", ChildMode.Parts, "new UI.TreeView(0, 0, 200, 160)", new PropertyDef[]
             {
                 new("indent", PropertyKind.Int),
@@ -267,7 +288,7 @@ namespace fire.UI.Markup
         /// <summary>The names the generated class uses itself; a named element must not take them.</summary>
         public static readonly IReadOnlySet<string> ReservedNames = new HashSet<string>
         {
-            "framebuffer", "window", "ui", "view", "dataContext", "SetDataContext", "Run", "OnTick", "Attach",
+            "framebuffer", "window", "ui", "view", "dataContext", "SetDataContext", "Run", "OnTick", "Attach", "Open",
         };
 
         private static readonly Regex Identifier = new("^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);

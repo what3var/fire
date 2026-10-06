@@ -199,7 +199,7 @@ namespace fire.Editor
             ("TreeView", "<TreeView width=\"200\" height=\"120\">\n  <TreeNode text=\"root\" expanded=\"true\">\n    <TreeNode text=\"child\"/>\n  </TreeNode>\n</TreeView>"),
             ("RadioButtons", "<RadioButtons header=\"Size\" selectedIndex=\"0\">\n  <Item>Small</Item>\n  <Item>Large</Item>\n</RadioButtons>"),
             ("AutoSuggestBox", "<AutoSuggestBox width=\"160\">\n  <Suggestion>apple</Suggestion>\n  <Suggestion>banana</Suggestion>\n</AutoSuggestBox>"),
-            ("MenuBar", "<MenuBar>\n  <Menu header=\"File\">\n    <MenuItem header=\"Open\" onClick=\"Open\"/>\n    <MenuSeparator/>\n    <MenuItem header=\"Quit\" onClick=\"Quit\"/>\n  </Menu>\n</MenuBar>"),
+            ("MenuBar", "<MenuBar>\n  <Menu header=\"File\">\n    <MenuItem header=\"Open\" onClick=\"OpenFile\"/>\n    <MenuSeparator/>\n    <MenuItem header=\"Quit\" onClick=\"Quit\"/>\n  </Menu>\n</MenuBar>"),
             ("ToolBar", "<ToolBar>\n  <Button text=\"One\" onClick=\"One\"/>\n  <Separator/>\n  <Button text=\"Two\"/>\n</ToolBar>"),
             ("Image", "<Image source=\"logo.png\" width=\"64\" height=\"64\" stretch=\"Uniform\"/>"),
             ("Rectangle", "<Rectangle width=\"60\" height=\"30\" fill=\"#FFCC00\" stroke=\"#000000\"/>"),
@@ -207,6 +207,9 @@ namespace fire.Editor
             ("DrawingCanvas", "<DrawingCanvas name=\"canvas\" width=\"200\" height=\"120\" onPaint=\"Paint\"/>"),
             ("Converter", "<Resources>\n  <Converter key=\"Upper\" type=\"UpperConverter\"/>\n</Resources>"),
             ("Style", "<Resources>\n  <Style key=\"Primary\" target=\"Button\">\n    <Setter property=\"background\" value=\"#3366AA\"/>\n    <Setter property=\"foreground\" value=\"#FFFFFF\"/>\n    <Trigger property=\"hover\" value=\"true\">\n      <Setter property=\"background\" value=\"#4477BB\"/>\n    </Trigger>\n  </Style>\n</Resources>"),
+            ("DataTemplate", "<Resources>\n  <DataTemplate key=\"Person\">\n    <StackPanel horizontal=\"true\" spacing=\"6\">\n      <Label text=\"{Binding name}\"/>\n      <Label text=\"{Binding age}\"/>\n    </StackPanel>\n  </DataTemplate>\n</Resources>"),
+            ("CollectionView", "<Resources>\n  <CollectionView key=\"ByName\" source=\"{Binding people}\" sortBy=\"name\"/>\n</Resources>"),
+            ("List from data", "<ListBox view=\"ByName\" itemTemplate=\"Person\" width=\"200\" height=\"120\"/>"),
             ("ControlTemplate", "<Resources>\n  <ControlTemplate key=\"Fancy\" target=\"Button\">\n    <Border name=\"bd\" background=\"#33AA66\" padding=\"4\">\n      <Label text=\"{TemplateBinding text}\"/>\n    </Border>\n    <Trigger property=\"pressed\" value=\"true\">\n      <Setter target=\"bd\" property=\"background\" value=\"#AA3333\"/>\n    </Trigger>\n  </ControlTemplate>\n</Resources>"),
         };
 

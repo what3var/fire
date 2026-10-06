@@ -237,8 +237,7 @@ namespace UI {
         string StyleKey() { return "Rectangle" }
 
         Draw(root, int ax, int ay) {
-            this.ax = ax
-            this.ay = ay
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.fill != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.fill) }
             if (this.stroke != undefined) { root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, this.stroke) }
         }
@@ -251,8 +250,7 @@ namespace UI {
         string StyleKey() { return "Ellipse" }
 
         Draw(root, int ax, int ay) {
-            this.ax = ax
-            this.ay = ay
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             var rx = this.actualWidth / 2
             var ry = this.actualHeight / 2
             var mx = ax + rx
@@ -285,8 +283,7 @@ namespace UI {
         }
 
         Draw(root, int ax, int ay) {
-            this.ax = ax
-            this.ay = ay
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.stroke != undefined) { root.renderer.DrawLine(ax + this.x1, ay + this.y1, ax + this.x2, ay + this.y2, this.stroke) }
         }
     }
@@ -318,8 +315,7 @@ namespace UI {
         }
 
         Draw(root, int ax, int ay) {
-            this.ax = ax
-            this.ay = ay
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.data == undefined) { return }
             for (var i = 0; i < this.data.figures.count; i = i + 1) {
                 var f = this.data.figures[i]
@@ -356,8 +352,28 @@ namespace UI {
 
         string StyleKey() { return "DrawingCanvas" }
 
-        // Beim naechsten Zeichnen laeuft onPaint wieder.
-        Invalidate() { this.dirty = true }
+        // Beim naechsten Zyklus laeuft onPaint wieder und die Flaeche wird neu gezeigt (auch nach einem Zeichnen mit `renderer` von aussen).
+        Invalidate() {
+            this.dirty = true
+            base.Invalidate()
+        }
+
+        // onPaint laeuft hier (nicht beim Malen): was es an den Elementen aendert, meldet sich dann wie jede andere Aenderung.
+        Poll(root) {
+            base.Poll(root)
+            if (this.continuous) { this.dirty = true }
+            // das Element hat eine andere Groesse als die Flaeche: sie wird neu angelegt und neu gemalt
+            if (!this.external && this.framebuffer != undefined && (this.framebuffer.Width() != this.actualWidth || this.framebuffer.Height() != this.actualHeight)) { this.dirty = true }
+            if (this.external || !this.dirty || this.actualWidth <= 0 || this.actualHeight <= 0) { return }
+            // die eigenen Felder aendern sich hier, das ist keine Aenderung der Oberflaeche
+            root.painting = true
+            this.Ensure(this.actualWidth, this.actualHeight)
+            this.dirty = false
+            root.painting = false
+            var paint = this.onPaint
+            if (paint != undefined) { paint(this) }
+            base.Invalidate()
+        }
 
         // Zeigt `source` (einen Framebuffer, den man selbst besitzt) statt der eigenen Flaeche.
         SetSource(source) {
@@ -397,15 +413,8 @@ namespace UI {
         }
 
         Draw(root, int ax, int ay) {
-            this.ax = ax
-            this.ay = ay
-            this.Ensure(this.actualWidth, this.actualHeight)
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.framebuffer == undefined) { return }
-            if (!this.external && (this.dirty || this.continuous)) {
-                this.dirty = false
-                var paint = this.onPaint
-                if (paint != undefined) { paint(this) }
-            }
             root.PushClip(ax, ay, this.actualWidth, this.actualHeight)
             root.renderer.Blit(this.framebuffer, ax, ay, this.blendMode)
             root.PopClip()

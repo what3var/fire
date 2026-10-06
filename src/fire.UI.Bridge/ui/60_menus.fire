@@ -98,8 +98,7 @@ namespace UI {
         }
 
         Draw(root, int ax, int ay) {
-            this.ax = ax
-            this.ay = ay
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
             var back = this.background
@@ -255,6 +254,8 @@ namespace UI {
     class MenuBar : Element {
         List menus
         int openIndex = -1
+        // der Titel unter dem Zeiger (-1: keiner)
+        int hotIndex = -1
         MenuPopup open
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
@@ -296,13 +297,17 @@ namespace UI {
             return x
         }
 
-        Draw(root, int ax, int ay) {
-            this.ax = ax
-            this.ay = ay
+        // Ein Menue, das sich geschlossen hat, ist nicht mehr offen.
+        Poll(root) {
+            base.Poll(root)
             if (this.open != undefined && !root.IsPopup(this.open)) {
                 this.open = undefined
                 this.openIndex = -1
             }
+        }
+
+        Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var back = this.background
             if (back == undefined) { back = theme.panel }
@@ -316,7 +321,7 @@ namespace UI {
                 if (i == this.openIndex) {
                     root.renderer.FillRect(x, ay, w, this.actualHeight, theme.selection)
                     text = theme.selectionText
-                } else if (this.hover && root.mouseX >= x && root.mouseX < x + w && root.mouseY >= ay && root.mouseY < ay + this.actualHeight) {
+                } else if (i == this.hotIndex) {
                     root.renderer.FillRect(x, ay, w, this.actualHeight, theme.faceHover)
                 }
                 if (!item.enabled) { text = theme.textDisabled }
@@ -348,8 +353,9 @@ namespace UI {
 
         // Bei offenem Menue oeffnet der Zeiger ueber einem anderen Titel dessen Menue.
         Hover(root, int px, int py) {
+            this.hotIndex = this.IndexAt(root, px)
             if (this.open == undefined) { return }
-            var index = this.IndexAt(root, px)
+            var index = this.hotIndex
             if (index >= 0 && index != this.openIndex) { this.Open(root, index) }
         }
     }

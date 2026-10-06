@@ -69,11 +69,30 @@ namespace fire.UI.Markup
                 infos[element] = new Info { Element = element, Def = def, Local = "e" + counter++, Field = null };
             }
 
+            // the elements inside data templates have none either (there is one set of elements per item)
+            foreach (var element in document.DataTemplateElements())
+            {
+                var def = MarkupSchema.Find(element.Tag)!;
+                infos[element] = new Info { Element = element, Def = def, Local = "e" + counter++, Field = null };
+            }
+            // a collection view is held by a field `fxView_Key` (a binding of its `source` needs it)
+            foreach (var view in document.Views)
+                infos[view.Element] = new Info { Element = view.Element, Def = MarkupSchema.CollectionViewDef, Local = "vw" + counter++, Field = "fxView_" + view.Key };
+
             // converters: the declared ones and the built-in ones that are used
             var converters = new List<(string Key, string Type)>();
             foreach (var declared in document.Converters) converters.Add((declared.Key, declared.Type));
+            string ConverterField(string key)
+            {
+                if (converters.All(c => c.Key != key) && MarkupSchema.BuiltInConverters.TryGetValue(key, out var builtIn)) converters.Add((key, builtIn));
+                return "fxConv_" + key;
+            }
+            // the converters that data templates use
+            foreach (var element in document.DataTemplateElements())
+                foreach (var attribute in element.Attributes)
+                    if (attribute.Value is BindingValue { Converter: { } used }) ConverterField(used);
             var bindings = new List<Binding>();
-            foreach (var element in preview ? Enumerable.Empty<MarkupElement>() : document.AllElements())
+            foreach (var element in preview ? Enumerable.Empty<MarkupElement>() : document.AllElements().Concat(document.Views.Select(v => v.Element)))
             {
                 var info = infos[element];
                 foreach (var attribute in element.Attributes)
@@ -87,13 +106,7 @@ namespace fire.UI.Markup
                     }
                     info.Field ??= "fxEl" + info.Local.Substring(1);
 
-                    string? converterField = null;
-                    if (value.Converter != null)
-                    {
-                        if (converters.All(c => c.Key != value.Converter) && MarkupSchema.BuiltInConverters.TryGetValue(value.Converter, out var builtIn))
-                            converters.Add((value.Converter, builtIn));
-                        converterField = "fxConv_" + value.Converter;
-                    }
+                    string? converterField = value.Converter != null ? ConverterField(value.Converter) : null;
 
                     string source = "this.dataContext";
                     if (value.ElementName != null)
@@ -128,7 +141,9 @@ namespace fire.UI.Markup
             foreach (var info in infos.Values.Where(i => i.Field != null)) code.Line($"{info.Def.Class} {info.Field}");
             foreach (var style in document.Styles.Where(st => st.Key != null)) code.Line($"UI.Style fxStyle_{style.Key}");
             foreach (var template in document.Templates) code.Line($"UI.ControlTemplate fxTemplate_{template.Key}");
-            foreach (var (key, type) in converters) code.Line($"{type} fxConv_{key}");
+            foreach (var template in document.DataTemplates) code.Line($"UI.DataTemplate fxData_{template.Key}");
+            // the design view does not run the program, so the classes of its converters do not exist there (and nothing uses them)
+            foreach (var (key, type) in preview ? new List<(string Key, string Type)>() : converters) code.Line($"{type} fxConv_{key}");
             if (bindings.Count > 0)
             {
                 code.Line("// the data context of the bindings: set it with SetDataContext(object)");
@@ -156,13 +171,14 @@ namespace fire.UI.Markup
                 if (preview) code.Line("this.ui.Add(this.view)");
             }
             if (preview) code.Line("this.fxAll = new List()");
-            foreach (var (key, type) in converters) code.Line($"this.fxConv_{key} = new {type}()");
+            foreach (var (key, type) in preview ? new List<(string Key, string Type)>() : converters) code.Line($"this.fxConv_{key} = new {type}()");
             foreach (var b in bindings) code.Line($"this.fxHandles{b.Index} = new List()");
 
             string container = document.Kind == MarkupRootKind.Window ? "this.ui" : "this.view";
             EmitResources(code, document, infos, document.Kind == MarkupRootKind.Window ? "this.ui.resources" : "this.view.Resources()", errors);
             foreach (var child in document.Children) EmitElement(code, infos, child, container, null, errors);
             if (bindings.Count > 0) code.Line("this.fxBindAll()");
+            if (document.Kind == MarkupRootKind.Window && !preview) code.Line("this.ui.onTick = func () on this => { this.OnTick() }");
             code.Indent--;
             code.Line("}");
             code.Line();
@@ -198,12 +214,23 @@ namespace fire.UI.Markup
             }
             else if (document.Kind == MarkupRootKind.Window)
             {
-                code.Line("// called once per cycle of Run() - override it for a loop of your own");
+                code.Line("// called once per cycle of this window (in Run(), also when it is attached to another window) - override it for a loop of your own");
                 code.Line("OnTick() { }");
                 code.Line();
-                code.Line("// shows the window and runs until it is closed");
-                code.Line("Run() {");
-                code.Line("    while (this.ui.Tick()) { this.OnTick() }");
+                code.Line("// shows the window and runs until it is closed; with `other` (another window of the markup, or a UI.Root) that window is opened as well and worked off by the same loop");
+                code.Line("Run(other = undefined) {");
+                code.Line("    if (other != undefined) { this.Open(other) }");
+                code.Line("    while (this.ui.Tick()) { }");
+                code.Line("}");
+                code.Line();
+                code.Line("// opens another window (another object of a window of the markup, or a UI.Root): this window's Run/Tick works it off from now on until its window is closed");
+                code.Line("Open(other) {");
+                code.Line("    var root = other");
+                code.Line("    if (!(other is of UI.Root)) {");
+                code.Line("        root = other.ui");
+                code.Line("        other.TakeTo(this)");
+                code.Line("    }");
+                code.Line("    this.ui.Attach(root)");
                 code.Line("}");
             }
             else
@@ -224,7 +251,7 @@ namespace fire.UI.Markup
         /// <summary>Writes the code that builds the element and everything inside it, and adds it to `parent` (the code of the container). `template` is set for the elements of a control template
         /// (they have no fields; a part that is the target of a binding or a setter gets its name); `parentDef` is the definition of the container.</summary>
         private static void EmitElement(Writer code, Dictionary<MarkupElement, Info> infos, MarkupElement element, string? parent, ElementDef? parentDef, List<MarkupDiagnostic> errors,
-            List<(string Part, string PartProperty, string OwnerProperty)>? partBindings = null, ElementDef? templateTarget = null)
+            List<(string Part, string PartProperty, string OwnerProperty)>? partBindings = null, ElementDef? templateTarget = null, string? dataItem = null)
         {
             var info = infos[element];
             string local = info.Local;
@@ -266,7 +293,20 @@ namespace fire.UI.Markup
                 if (attribute.Value is BindingValue shown)
                 {
                     // the design view shows the path of a bound text; the other bound properties keep their default
-                    if (s_preview && info.Def.Property(attribute.Name) is { Kind: PropertyKind.Text, Method: null } textProperty) code.Line($"{local}.{textProperty.FieldName} = {Quote("‹" + shown.Path + "›")}");
+                    if (s_preview && info.Def.Property(attribute.Name) is { Kind: PropertyKind.Text, Method: null } textProperty)
+                        code.Line($"{local}.{textProperty.FieldName} = {Quote("‹" + (shown.Path.Length == 0 ? "item" : shown.Path) + "›")}");
+                    else if (dataItem != null && !s_preview)
+                    {
+                        // inside a data template: the property follows a property of the item (checked at every layout, see UI.Binding)
+                        var bound = info.Def.Property(attribute.Name)!;
+                        if (bound.Method != null)
+                            errors.Add(new MarkupDiagnostic(attribute.Line, $"'{attribute.Name}' of '{info.Def.Tag}' cannot be bound."));
+                        else
+                        {
+                            string converter = shown.Converter != null ? "this.fxConv_" + shown.Converter : "undefined";
+                            code.Line($"{local}.Bind({Quote(bound.FieldName)}, {dataItem}, {Quote(shown.Path)}, {(shown.Mode == BindingMode.TwoWay ? "true" : "false")}, {converter}, {(shown.Mode == BindingMode.OneTime ? "true" : "false")})");
+                        }
+                    }
                     continue; // made by the binding
                 }
                 var property = info.Def.Property(attribute.Name)!;
@@ -280,11 +320,17 @@ namespace fire.UI.Markup
                     }
                     continue;
                 }
+                if (s_preview && property.Kind == PropertyKind.ViewRef) continue; // the design view shows sample rows instead
                 string? value = ValueCode(property, attribute, errors);
                 if (value == null) continue;
                 if (property.Method != null) code.Line($"{local}.{property.Method}({value})");
                 else code.Line($"{local}.{property.FieldName} = {value}");
             }
+
+            // the design view cannot run the data: a list that gets its rows from one shows three empty ones
+            if (s_preview && info.Def.Property("itemsSource") != null && (element.Find("itemsSource") != null || element.Find("view") != null)
+                && !element.Children.Any(c => c.Tag == "Item"))
+                for (int row = 0; row < 3; row++) code.Line($"{local}.Add(\"\")");
 
             foreach (var (eventName, handler, _) in s_preview ? new List<(string Event, string Handler, int Line)>() : element.Handlers)
             {
@@ -293,7 +339,7 @@ namespace fire.UI.Markup
                 code.Line($"{local}.{eventName} = func ({parameters}) on this => {{ {handler}({local}{string.Concat(args.Select(a => ", " + a))}) }}");
             }
 
-            foreach (var child in element.Children) EmitElement(code, infos, child, local, info.Def, errors, partBindings, templateTarget);
+            foreach (var child in element.Children) EmitElement(code, infos, child, local, info.Def, errors, partBindings, templateTarget, dataItem);
             if (parent != null)
             {
                 // a part knows how its container takes it; any other element is taken the way its container says (`Add`, `SetChild`, `SetContent`)
@@ -321,7 +367,7 @@ namespace fire.UI.Markup
 
         private static void EmitResources(Writer code, MarkupDocument document, Dictionary<MarkupElement, Info> infos, string resources, List<MarkupDiagnostic> errors)
         {
-            if (document.Styles.Count == 0 && document.Templates.Count == 0) return;
+            if (document.Styles.Count == 0 && document.Templates.Count == 0 && document.DataTemplates.Count == 0 && document.Views.Count == 0) return;
             int counter = 0;
 
             string SetterCode(SetterDeclaration setter, ElementDef def, string owner, string? partTag)
@@ -394,6 +440,42 @@ namespace fire.UI.Markup
                     code.Line($"this.fxStyle_{style.Key} = {v}");
                 }
                 else code.Line($"{resources}.AddStyle({v})");
+            }
+
+            // collection views and data templates (the views first: a list refers to them)
+            foreach (var view in document.Views)
+            {
+                string v = "vw" + counter++;
+                var element = view.Element;
+                code.Line($"var {v} = {MarkupSchema.CollectionViewDef.Create}");
+                string? sortBy = element.Find("sortBy")?.Value is LiteralValue sort ? sort.Text.Trim() : null;
+                bool descending = element.Find("descending")?.Value is LiteralValue desc && desc.Text.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+                if (element.Find("descending")?.Value is LiteralValue d2 && !d2.Text.Trim().Equals("true", StringComparison.OrdinalIgnoreCase) && !d2.Text.Trim().Equals("false", StringComparison.OrdinalIgnoreCase))
+                    errors.Add(new MarkupDiagnostic(element.Find("descending")!.Line, $"'descending' needs true or false, not '{d2.Text}'."));
+                if (sortBy != null) code.Line($"{v}.SortBy({Quote(sortBy)}, {(descending ? "true" : "false")})");
+                else if (descending) code.Line($"{v}.descending = true");
+                foreach (var name in new[] { "filter", "comparer", "source" })
+                {
+                    var attribute = element.Find(name);
+                    if (attribute == null || attribute.Value is BindingValue) continue; // a binding makes the source
+                    string? value = ValueCode(MarkupSchema.CollectionViewDef.Property(name)!, attribute, errors);
+                    if (value != null) code.Line($"{v}.{name} = {value}");
+                }
+                code.Line($"{resources}.Set({Quote(view.Key)}, {v})");
+                code.Line($"this.fxView_{view.Key} = {v}");
+            }
+            foreach (var template in document.DataTemplates)
+            {
+                if (template.Root == null) continue;
+                string v = "dt" + counter++;
+                code.Line($"var {v} = new UI.DataTemplate(func (item) on this => {{");
+                code.Indent++;
+                EmitElement(code, infos, template.Root, null, null, errors, dataItem: "item");
+                code.Line($"return {infos[template.Root].Local}");
+                code.Indent--;
+                code.Line("})");
+                code.Line($"{resources}.Set({Quote(template.Key)}, {v})");
+                code.Line($"this.fxData_{template.Key} = {v}");
             }
 
             foreach (var template in document.Templates)
@@ -488,6 +570,14 @@ namespace fire.UI.Markup
                     return "this.fxStyle_" + trimmed;
                 case PropertyKind.TemplateRef:
                     return "this.fxTemplate_" + trimmed;
+                case PropertyKind.DataTemplateRef:
+                    return "this.fxData_" + trimmed;
+                case PropertyKind.ViewRef:
+                    return "this.fxView_" + trimmed + ", false"; // the view belongs to the window, not to the list (SetView(view, own))
+                case PropertyKind.Collection:
+                case PropertyKind.Code:
+                    errors.Add(new MarkupDiagnostic(line, $"'{property.Name}' needs {{Binding ...}} or {{Expr ...}}."));
+                    return null;
             }
             return null;
         }

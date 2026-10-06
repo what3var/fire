@@ -12,7 +12,11 @@ namespace UI {
         // Index des aktuellen Elements in `items`, -1: keins
         int current = -1
         int sourceCount = -1
+        // die Quelle, aus der `items` zuletzt gebaut wurde (wird `source` ausgetauscht, baut Update neu)
+        var seenSource
         bool dirty = true
+        // zaehlt die Neuberechnungen: wer die Sicht zeigt, merkt daran, dass sich `items` geaendert hat
+        int revision = 0
 
         construct(source) {
             this.source = source
@@ -31,12 +35,15 @@ namespace UI {
             var keep = this.CurrentItem()
             this.items = new List()
             var test = this.filter
-            for (var i = 0; i < this.source.count; i = i + 1) {
+            for (var i = 0; this.source != undefined && i < this.source.count; i = i + 1) {
                 var item = this.source[i]
                 if (test == undefined || test(item)) { this.items.Add(item) }
             }
             if (this.comparer != undefined || this.sortMember != "") { this.items = this.Sorted(this.items) }
-            this.sourceCount = this.source.count
+            this.sourceCount = -1
+            if (this.source != undefined) { this.sourceCount = this.source.count }
+            this.seenSource = this.source
+            this.revision = this.revision + 1
             this.dirty = false
             this.current = -1
             if (keep != undefined) { this.current = this.items.IndexOf(keep) }
@@ -44,7 +51,8 @@ namespace UI {
 
         // Aktualisiert die Sicht, wenn sich die Quelle (ihre Anzahl) oder die Einstellungen geaendert haben.
         Update() {
-            if (this.dirty || this.source.count != this.sourceCount) { this.Refresh() }
+            if (this.source == undefined) { return }
+            if (this.dirty || this.source != this.seenSource || this.source.count != this.sourceCount) { this.Refresh() }
         }
 
         int Compare(a, b) {
@@ -148,6 +156,10 @@ namespace UI {
         // die gebauten Zeilen-Elemente der Vorlage (nach Index)
         List rowElements
         int builtCount = -1
+        // was Poll zuletzt gesehen hat: Zeilenzahl der Liste und Stand der Sicht
+        int seenCount = -1
+        int seenRevision = -1
+        int seenSelected = -1
         int headerHeight = 0
         int viewW = 0
         int viewH = 0
@@ -155,6 +167,7 @@ namespace UI {
         construct(int x = 0, int y = 0, int width = 160, int height = 120) : base(x, y, width, height) {
             this.items = new List()
             this.scroller = new Scroller(false)
+            this.scroller.owner = this
             this.rowElements = new List()
         }
 
@@ -172,6 +185,7 @@ namespace UI {
         Add(item) {
             UI.M.Own(this, item)
             this.items.Add(item)
+            this.Invalidate()
             return item
         }
 
@@ -180,32 +194,43 @@ namespace UI {
             if (index < 0) { return }
             this.items.RemoveAt(index)
             if (this.selectedIndex >= this.items.count) { this.selectedIndex = this.items.count - 1 }
+            this.seenSelected = this.selectedIndex
             this.Refresh()
         }
 
         Clear() {
             this.items = new List()
             this.selectedIndex = -1
-            this.scroller.offset = 0
+            this.seenSelected = -1
+            this.scroller.Set(0)
             this.Refresh()
         }
 
-        // Ersetzt die Elemente durch `list`.
-        SetItems(list) {
-            list.TakeTo(this)
+        // Die Liste der Elemente; sie zuzuweisen zeigt die Liste, ohne sie zu besitzen (sie gehoert dem, der sie hat, z.B. dem Fenster; Aenderungen darin
+        // zeigt die Liste von selbst).
+        itemsSource {
+            get { return this.items }
+            set { this.SetItems(value, false) }
+        }
+
+        // Ersetzt die Elemente durch `list`; `own`: die Liste gehoert ab jetzt diesem Steuerelement.
+        SetItems(list, bool own = true) {
+            if (own) { list.TakeTo(this) }
             this.view = undefined
             this.items = list
             this.selectedIndex = -1
-            this.scroller.offset = 0
+            this.seenSelected = -1
+            this.scroller.Set(0)
             this.Refresh()
         }
 
         // Zeigt die Elemente einer CollectionView (die Auswahl folgt ihrem `current`).
-        SetView(source) {
-            source.TakeTo(this)
+        SetView(source, bool own = true) {
+            if (own) { source.TakeTo(this) }
             this.view = source
             this.selectedIndex = source.current
-            this.scroller.offset = 0
+            this.seenSelected = source.current
+            this.scroller.Set(0)
             this.Refresh()
         }
 
@@ -213,6 +238,35 @@ namespace UI {
         Refresh() {
             this.DropRows()
             if (this.view != undefined) { this.view.Update() }
+            this.Invalidate()
+        }
+
+        // Aendert sich die Liste von aussen (list.Add) oder die Sicht, wird neu gemalt.
+        Poll(root) {
+            base.Poll(root)
+            if (this.selectedIndex != this.seenSelected) {
+                // von aussen gesetzt (z.B. durch eine Bindung): wie eine Auswahl behandeln
+                var want = this.selectedIndex
+                this.selectedIndex = this.seenSelected
+                this.Select(want)
+            }
+            if (this.view != undefined) {
+                this.view.Update()
+                if (this.view.revision != this.seenRevision) {
+                    this.seenRevision = this.view.revision
+                    this.DropRows()
+                    this.Invalidate()
+                }
+            }
+            var n = this.Rows().count
+            if (n != this.seenCount) {
+                this.seenCount = n
+                this.Invalidate()
+            }
+            for (var i = 0; i < this.rowElements.count; i = i + 1) {
+                var row = this.rowElements[i]
+                if (row != undefined) { row.Poll(root) }
+            }
         }
 
         DropRows() {
@@ -250,6 +304,7 @@ namespace UI {
             if (index < -1) { index = -1 }
             if (index == this.selectedIndex) { return }
             this.selectedIndex = index
+            this.seenSelected = index
             if (this.view != undefined) { this.view.current = index }
             this.changed = true
             var callback = this.onSelect
@@ -320,6 +375,7 @@ namespace UI {
                     row.TakeTo(this)
                     row.parent = this
                     this.rowElements[i] = row
+                    row.Poll(root)
                 }
                 row.Measure(root, this.viewW, rh)
                 row.Arrange(root, 0, 0, this.viewW, rh)
@@ -339,8 +395,7 @@ namespace UI {
         DrawHeader(root, int x, int y, int w) { }
 
         Draw(root, int ax, int ay) {
-            this.ax = ax
-            this.ay = ay
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
             var back = this.background
@@ -409,7 +464,7 @@ namespace UI {
 
         Hover(root, int px, int py) {
             this.hotIndex = this.RowAt(root, px, py)
-            this.scroller.hover = this.OverBar(px, py)
+            this.scroller.SetHover(this.OverBar(px, py))
         }
 
         bool MouseWheel(root, int dx, int dy) {

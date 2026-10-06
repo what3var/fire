@@ -48,6 +48,9 @@ namespace UI {
         Root host
         // Zustand von Style, Vorlage, Bindungen
         bool styled = false
+        // der Root beobachtet die Felder dieses Elements (Probe), und es wurde schon einmal angeordnet
+        bool watched = false
+        bool laid = false
         Style appliedStyle
         List styleStates
         List templateStates
@@ -63,18 +66,18 @@ namespace UI {
 
         // Ergebnis des Layouts
         // cw/ch: Inhaltsgroesse (ohne Rand), dw/dh: gewuenschte Groesse (mit Rand)
-        int cw
-        int ch
-        int dw
-        int dh
+        int cw = 0
+        int ch = 0
+        int dw = 0
+        int dh = 0
         // Lage im Container und Groesse nach Arrange
-        int rx
-        int ry
-        int actualWidth
-        int actualHeight
+        int rx = 0
+        int ry = 0
+        int actualWidth = 0
+        int actualHeight = 0
         // Position auf dem Bildschirm beim letzten Zeichnen
-        int ax
-        int ay
+        int ax = 0
+        int ay = 0
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) {
             this.x = x
@@ -140,9 +143,9 @@ namespace UI {
         }
 
         // Verbindet eine Eigenschaft dieses Elements mit der eines anderen Objekts (siehe Binding).
-        Bind(string property, source, string sourceProperty, bool twoWay = false, converter = undefined) {
+        Bind(string property, source, string sourceProperty, bool twoWay = false, converter = undefined, bool once = false) {
             if (this.bindings == undefined) { this.bindings = new List() }
-            var binding = new Binding(this, property, source, sourceProperty, twoWay, converter)
+            var binding = new Binding(this, property, source, sourceProperty, twoWay, converter, once)
             binding.TakeTo(this)
             this.bindings.Add(binding)
             return binding
@@ -177,9 +180,30 @@ namespace UI {
             }
         }
 
-        // Vor jedem Layout: Style anwenden (beim ersten Mal), Vorlage bauen, Bindungen abgleichen, Trigger pruefen.
+        // Das Element hat sich geaendert: sein Bereich wird beim naechsten Update neu gemalt (Aenderungen an den Feldern des Elements melden sich selbst; fuer Aenderungen
+        // IN einem Objekt, das es benutzt - ein Brush, eine Liste, eine Geometrie -, ruft man das selbst auf).
+        Invalidate() {
+            var r = this.host
+            if (r != undefined) { r.InvalidateRect(this.ax, this.ay, this.actualWidth, this.actualHeight) }
+        }
+
+        // Vor jedem Anordnen und Malen (Root.Update): Style anwenden (beim ersten Mal), Vorlage bauen, Bindungen abgleichen, Trigger pruefen, und die Nachfahren abfragen.
+        // Aenderungen, die dabei entstehen, melden sich bei der Oberflaeche wie jede andere.
+        Poll(root) {
+            this.Prepare(root)
+            if (this.templateRoot != undefined) { this.templateRoot.Poll(root) }
+        }
+
+        // Muss das Element (an der Bildschirmposition ax, ay) gemalt werden - liegt es im Bereich, der gerade neu gemalt wird? Setzt dabei ax und ay.
+        bool NeedsDraw(root, int ax, int ay) {
+            this.ax = ax
+            this.ay = ay
+            return root.Needs(ax, ay, this.actualWidth, this.actualHeight)
+        }
+
         Prepare(root) {
             this.host = root
+            root.Watch(this)
             if (!this.styled) {
                 this.styled = true
                 if (this.style == undefined) {
@@ -230,7 +254,6 @@ namespace UI {
                 this.dh = 0
                 return
             }
-            this.Prepare(root)
             var mw = this.margin.left + this.margin.right
             var mh = this.margin.top + this.margin.bottom
             var iw = aw
@@ -261,6 +284,7 @@ namespace UI {
         // Der Platz im Container ist (px, py, pw, ph), der Rand eingeschlossen.
         Arrange(root, int px, int py, int pw, int ph) {
             if (!this.visible) {
+                if (this.actualWidth != 0 || this.actualHeight != 0) { root.layoutMoved = true }
                 this.actualWidth = 0
                 this.actualHeight = 0
                 return
@@ -281,8 +305,15 @@ namespace UI {
             else if (this.halign == UI.HAlign.Right) { ox = ew - w }
             if (this.valign == UI.VAlign.Center) { oy = (eh - h) / 2 }
             else if (this.valign == UI.VAlign.Bottom) { oy = eh - h }
-            this.rx = px + ml + ox
-            this.ry = py + mt + oy
+            var nx = px + ml + ox
+            var ny = py + mt + oy
+            // hat sich die Lage oder Groesse geaendert (oder ist es das erste Mal), muss alles neu gemalt werden: was daneben liegt, kann mitgerutscht sein
+            if (!this.laid || this.rx != nx || this.ry != ny || this.actualWidth != w || this.actualHeight != h) {
+                root.layoutMoved = true
+                this.laid = true
+            }
+            this.rx = nx
+            this.ry = ny
             this.actualWidth = w
             this.actualHeight = h
             this.ArrangeContent(root, w, h)
@@ -378,6 +409,7 @@ namespace UI {
             child.TakeTo(this)
             child.parent = this
             this.children.Add(child)
+            this.Invalidate()
         }
 
         // Nimmt das Kind aus dem Panel (es wird nicht zerstoert, gehoert aber weiter dem Panel).
@@ -386,6 +418,7 @@ namespace UI {
                 if (this.children[i] == child) {
                     this.children.RemoveAt(i)
                     child.parent = undefined
+                    this.Invalidate()
                     return
                 }
             }
@@ -399,6 +432,12 @@ namespace UI {
                 delete child
             }
             this.children = new List()
+            this.Invalidate()
+        }
+
+        Poll(root) {
+            base.Poll(root)
+            for (var i = 0; i < this.children.count; i = i + 1) { this.children[i].Poll(root) }
         }
 
         // Canvas-Anordnung: jedes Kind will so gross sein, wie es ist; die Groesse des Panels ist die der Kinder, soweit es keine feste hat.
@@ -425,15 +464,17 @@ namespace UI {
 
         Draw(root, int ax, int ay) {
             base.Draw(root, ax, ay)
-            if (this.filled) {
-                var brush = this.background
-                if (brush == undefined) { brush = root.theme.panel }
-                root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, brush)
-            }
-            if (this.showBorder) {
-                var pen = this.pen
-                if (pen == undefined) { pen = root.theme.border }
-                root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, pen)
+            if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
+                if (this.filled) {
+                    var brush = this.background
+                    if (brush == undefined) { brush = root.theme.panel }
+                    root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, brush)
+                }
+                if (this.showBorder) {
+                    var pen = this.pen
+                    if (pen == undefined) { pen = root.theme.border }
+                    root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, pen)
+                }
             }
             this.DrawChildren(root, ax, ay)
         }
@@ -1039,6 +1080,12 @@ namespace UI {
             this.child = element
             element.TakeTo(this)
             element.parent = this
+            this.Invalidate()
+        }
+
+        Poll(root) {
+            base.Poll(root)
+            if (this.child != undefined) { this.child.Poll(root) }
         }
 
         MeasureCore(root, int aw, int ah) {
@@ -1071,11 +1118,13 @@ namespace UI {
 
         Draw(root, int ax, int ay) {
             base.Draw(root, ax, ay)
-            if (this.background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.background) }
-            if (this.thickness > 0) {
-                var pen = this.pen
-                if (pen == undefined) { pen = root.theme.border }
-                root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, pen)
+            if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
+                if (this.background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.background) }
+                if (this.thickness > 0) {
+                    var pen = this.pen
+                    if (pen == undefined) { pen = root.theme.border }
+                    root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, pen)
+                }
             }
             if (this.child != undefined && this.child.visible) { this.child.Draw(root, ax + this.child.rx, ay + this.child.ry) }
         }

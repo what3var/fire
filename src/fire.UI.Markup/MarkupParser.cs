@@ -98,9 +98,11 @@ namespace fire.UI.Markup
                 string kind = item.Name.LocalName;
                 if (string.Equals(kind, "Style", StringComparison.OrdinalIgnoreCase)) { ReadStyle(item, document, errors); continue; }
                 if (string.Equals(kind, "ControlTemplate", StringComparison.OrdinalIgnoreCase)) { ReadTemplate(item, document, errors); continue; }
+                if (string.Equals(kind, "DataTemplate", StringComparison.OrdinalIgnoreCase)) { ReadDataTemplate(item, document, errors); continue; }
+                if (string.Equals(kind, "CollectionView", StringComparison.OrdinalIgnoreCase)) { ReadView(item, document, errors); continue; }
                 if (!string.Equals(kind, "Converter", StringComparison.OrdinalIgnoreCase))
                 {
-                    errors.Add(new MarkupDiagnostic(Line(item), $"Unknown resource '{item.Name.LocalName}' (known: Converter, Style, ControlTemplate)."));
+                    errors.Add(new MarkupDiagnostic(Line(item), $"Unknown resource '{item.Name.LocalName}' (known: Converter, Style, ControlTemplate, DataTemplate, CollectionView)."));
                     continue;
                 }
                 string? key = (string?)item.Attribute("key"), type = (string?)item.Attribute("type");
@@ -261,6 +263,37 @@ namespace fire.UI.Markup
             document.Templates.Add(template);
         }
 
+        private static void ReadDataTemplate(XElement node, MarkupDocument document, List<MarkupDiagnostic> errors)
+        {
+            CheckAttributes(node, new[] { "key" }, errors);
+            string? key = KeyOf(node, "DataTemplate", errors, true);
+            if (key == null) return;
+            var template = new DataTemplateDeclaration { Key = key, Line = Line(node) };
+            var roots = new List<MarkupElement>();
+            foreach (var child in node.Elements()) ReadElement(child, roots, errors, null);
+            if (roots.Count != 1) errors.Add(new MarkupDiagnostic(Line(node), "A 'DataTemplate' contains exactly one element: what is shown for one item."));
+            else template.Root = roots[0];
+            document.DataTemplates.Add(template);
+        }
+
+        private static void ReadView(XElement node, MarkupDocument document, List<MarkupDiagnostic> errors)
+        {
+            var def = MarkupSchema.CollectionViewDef;
+            CheckAttributes(node, def.Properties.Select(p => p.Name).Append("key").ToArray(), errors);
+            string? key = KeyOf(node, "CollectionView", errors, true);
+            if (key == null) return;
+            if (node.HasElements) errors.Add(new MarkupDiagnostic(Line(node.Elements().First()), "A 'CollectionView' contains no elements."));
+            var element = new MarkupElement { Tag = def.Tag, Line = Line(node) };
+            foreach (var attribute in node.Attributes().Where(a => !a.IsNamespaceDeclaration && a.Name.LocalName != "key"))
+            {
+                var property = def.Property(attribute.Name.LocalName);
+                if (property == null) continue; // reported by CheckAttributes
+                var value = ReadValue(attribute.Value, Line(attribute), errors);
+                if (value != null) element.Attributes.Add(new MarkupAttribute(property.Name, value, Line(attribute)));
+            }
+            document.Views.Add(new ViewDeclaration { Key = key, Line = Line(node), Element = element });
+        }
+
         private static void ReadElement(XElement node, List<MarkupElement> into, List<MarkupDiagnostic> errors, ElementDef? parent)
         {
             var def = MarkupSchema.Find(node.Name.LocalName);
@@ -409,7 +442,9 @@ namespace fire.UI.Markup
                 }
             }
 
-            if (string.IsNullOrEmpty(path) || !MarkupSchema.IsDottedName(path))
+            // no path (or `.`): the item itself, which only a DataTemplate can bind to (checked in Validate)
+            if (string.IsNullOrEmpty(path) || path == ".") path = "";
+            else if (!MarkupSchema.IsDottedName(path))
             {
                 errors.Add(new MarkupDiagnostic(line, $"A binding needs a path like Name or Player.Hp, not '{path}'."));
                 return null;
@@ -420,6 +455,19 @@ namespace fire.UI.Markup
         /// <summary>Keys of styles and templates, references to them, and everything inside the control templates.</summary>
         private static void ValidateResources(MarkupDocument document)
         {
+            void CheckConverter(BindingValue binding, int line)
+            {
+                if (binding.Converter != null && !document.Converters.Any(c => c.Key == binding.Converter) && !MarkupSchema.BuiltInConverters.ContainsKey(binding.Converter))
+                    document.Diagnostics.Add(new MarkupDiagnostic(line,
+                        $"Unknown converter '{binding.Converter}' (declare it in <Resources>, or use one of: {string.Join(", ", MarkupSchema.BuiltInConverters.Keys)})."));
+            }
+            foreach (var view in document.Views)
+                foreach (var attribute in view.Element.Attributes)
+                    if (attribute.Value is BindingValue viewBinding)
+                    {
+                        if (viewBinding.Path.Length == 0) document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "A binding needs a path like Name or Player.Hp."));
+                        CheckConverter(viewBinding, attribute.Line);
+                    }
             var keys = new Dictionary<string, int>();
             void Key(string? key, int line)
             {
@@ -429,6 +477,8 @@ namespace fire.UI.Markup
             }
             foreach (var style in document.Styles) Key(style.Key, style.Line);
             foreach (var template in document.Templates) Key(template.Key, template.Line);
+            foreach (var template in document.DataTemplates) Key(template.Key, template.Line);
+            foreach (var view in document.Views) Key(view.Key, view.Line);
 
             var implicitTargets = new HashSet<string>();
             foreach (var style in document.Styles)
@@ -450,29 +500,58 @@ namespace fire.UI.Markup
             }
 
             // references from the attributes
-            foreach (var element in document.AllElements().Concat(document.TemplateElements()))
+            void CheckReference(PropertyDef? property, string text, int line)
+            {
+                string key = text.Trim();
+                if (property?.Kind == PropertyKind.StyleRef && !document.Styles.Any(s => s.Key == key))
+                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"Unknown style '{key}' (give a <Style key=\"...\"> in the Resources)."));
+                if (property?.Kind == PropertyKind.TemplateRef && !document.Templates.Any(t => t.Key == key))
+                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"Unknown template '{key}' (give a <ControlTemplate key=\"...\"> in the Resources)."));
+                if (property?.Kind == PropertyKind.DataTemplateRef && !document.DataTemplates.Any(t => t.Key == key))
+                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"Unknown data template '{key}' (give a <DataTemplate key=\"...\"> in the Resources)."));
+                if (property?.Kind == PropertyKind.ViewRef && !document.Views.Any(v => v.Key == key))
+                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"Unknown view '{key}' (give a <CollectionView key=\"...\"> in the Resources)."));
+            }
+            void CheckValueKind(PropertyDef? property, MarkupValue value, int line)
+            {
+                if (property == null) return;
+                if (property.Kind == PropertyKind.Collection && value is LiteralValue)
+                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"'{property.Name}' is a list: give {{Binding ...}} or {{Expr ...}}."));
+                if (property.Kind == PropertyKind.Code && value is not ExpressionValue)
+                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"'{property.Name}' is code: give {{Expr ...}}."));
+            }
+            foreach (var element in document.AllElements().Concat(document.TemplateElements()).Concat(document.DataTemplateElements()))
             {
                 var def = MarkupSchema.Find(element.Tag);
                 if (def == null) continue;
                 foreach (var attribute in element.Attributes)
                 {
-                    if (attribute.Value is not LiteralValue literal) continue;
                     var property = def.Property(attribute.Name);
-                    if (property?.Kind == PropertyKind.StyleRef && !document.Styles.Any(s => s.Key == literal.Text.Trim()))
-                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"Unknown style '{literal.Text.Trim()}' (give a <Style key=\"...\"> in the Resources)."));
-                    if (property?.Kind == PropertyKind.TemplateRef && !document.Templates.Any(t => t.Key == literal.Text.Trim()))
-                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"Unknown template '{literal.Text.Trim()}' (give a <ControlTemplate key=\"...\"> in the Resources)."));
+                    if (attribute.Value is LiteralValue literal) CheckReference(property, literal.Text, attribute.Line);
+                    CheckValueKind(property, attribute.Value, attribute.Line);
                 }
+                if (element.Find("view") != null && element.Find("itemsSource") != null)
+                    document.Diagnostics.Add(new MarkupDiagnostic(element.Line, $"'{element.Tag}' shows a 'view' or an 'itemsSource', not both."));
             }
+            foreach (var view in document.Views)
+                foreach (var attribute in view.Element.Attributes)
+                {
+                    var property = MarkupSchema.CollectionViewDef.Property(attribute.Name);
+                    CheckValueKind(property, attribute.Value, attribute.Line);
+                    if (attribute.Value is BindingValue { Mode: BindingMode.TwoWay })
+                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "The source of a 'CollectionView' is read only (Mode=OneWay or OneTime)."));
+                    if (attribute.Name == "sortBy" && attribute.Value is LiteralValue sort && !MarkupSchema.IsIdentifier(sort.Text.Trim()))
+                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"'sortBy' needs the name of a property, not '{sort.Text}'."));
+                    if (attribute.Name == "descending" && attribute.Value is not LiteralValue)
+                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "'descending' needs true or false."));
+                }
             foreach (var style in document.Styles)
                 foreach (var setter in style.Setters.Concat(style.Triggers.SelectMany(t => t.Setters)))
                 {
                     var def = MarkupSchema.FindTarget(style.Target);
                     var property = def?.Property(setter.Property);
-                    if (setter.Value is LiteralValue literal && property?.Kind == PropertyKind.StyleRef && !document.Styles.Any(s => s.Key == literal.Text.Trim()))
-                        document.Diagnostics.Add(new MarkupDiagnostic(setter.Line, $"Unknown style '{literal.Text.Trim()}'."));
-                    if (setter.Value is LiteralValue literal2 && property?.Kind == PropertyKind.TemplateRef && !document.Templates.Any(t => t.Key == literal2.Text.Trim()))
-                        document.Diagnostics.Add(new MarkupDiagnostic(setter.Line, $"Unknown template '{literal2.Text.Trim()}'."));
+                    if (setter.Value is LiteralValue literal) CheckReference(property, literal.Text, setter.Line);
+                    CheckValueKind(property, setter.Value, setter.Line);
                 }
 
             // inside a template
@@ -522,6 +601,32 @@ namespace fire.UI.Markup
                     }
                 }
             }
+            // inside a data template: bindings go to the item; nothing that needs a name or a handler
+            foreach (var template in document.DataTemplates)
+            {
+                if (template.Root == null) continue;
+                var stack = new Stack<MarkupElement>(new[] { template.Root });
+                while (stack.Count > 0)
+                {
+                    var e = stack.Pop();
+                    foreach (var c in e.Children) stack.Push(c);
+                    if (e.Name != null)
+                        document.Diagnostics.Add(new MarkupDiagnostic(e.Line, "Elements inside a DataTemplate have no name (there is one set of elements per item)."));
+                    if (e.Handlers.Count > 0)
+                        document.Diagnostics.Add(new MarkupDiagnostic(e.Line, "Event handlers are not available inside a DataTemplate (the rows only show data)."));
+                    foreach (var attribute in e.Attributes)
+                    {
+                        if (attribute.Value is TemplateBindingValue)
+                            document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "'{TemplateBinding ...}' is only for the elements inside a ControlTemplate."));
+                        if (attribute.Value is not BindingValue binding) continue;
+                        if (binding.ElementName != null)
+                            document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "'ElementName' is not available inside a DataTemplate: a binding goes to the item."));
+                        if (binding.Path.Length == 0 && binding.Mode == BindingMode.TwoWay)
+                            document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "A binding to the item itself is read only (Mode=OneWay or OneTime)."));
+                        CheckConverter(binding, attribute.Line);
+                    }
+                }
+            }
             // a trigger of a style cannot name parts
             foreach (var style in document.Styles)
                 foreach (var trigger in style.Triggers)
@@ -553,12 +658,19 @@ namespace fire.UI.Markup
 
             ValidateResources(document);
 
+            foreach (var view in document.Views)
+                foreach (var attribute in view.Element.Attributes)
+                    if (attribute.Value is BindingValue { ElementName: { } viewElement } && !names.ContainsKey(viewElement))
+                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"The binding names the element '{viewElement}', which does not exist (give it name=\"...\")."));
+
             foreach (var element in document.AllElements())
                 foreach (var attribute in element.Attributes)
                 {
                     if (attribute.Value is TemplateBindingValue)
                         document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "'{TemplateBinding ...}' is only for the elements inside a ControlTemplate."));
                     if (attribute.Value is not BindingValue binding) continue;
+                    if (binding.Path.Length == 0)
+                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "A binding needs a path like Name or Player.Hp (a binding without a path is for the elements of a DataTemplate)."));
                     if (binding.ElementName != null && !names.ContainsKey(binding.ElementName))
                         document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"The binding names the element '{binding.ElementName}', which does not exist (give it name=\"...\")."));
                     if (binding.Converter != null && !document.Converters.Any(c => c.Key == binding.Converter) && !MarkupSchema.BuiltInConverters.ContainsKey(binding.Converter))

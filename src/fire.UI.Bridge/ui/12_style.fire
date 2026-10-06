@@ -224,7 +224,8 @@ namespace UI {
     }
 
     // Verbindet eine Eigenschaft eines Elements mit der eines anderen Objekts. Es wird bei jedem Layout abgeglichen (ohne Ereignisse): aendert sich die Quelle,
-    // folgt das Ziel; mit `twoWay` folgt auch die Quelle dem Ziel. `converter`: ein UI.Converter (undefined: Werte unveraendert).
+    // folgt das Ziel; mit `twoWay` folgt auch die Quelle dem Ziel; mit `once` wird nur ein Mal uebertragen. `sourceProperty` ist ein Pfad ("name", "address.city");
+    // leer ist die Quelle selbst (z.B. das Datenelement einer DataTemplate-Zeile, nur lesend). Eine Text-Eigenschaft zeigt jeden Wert als Text. `converter`: ein UI.Converter (undefined: Werte unveraendert).
     class Binding {
         Element target
         string targetProperty
@@ -232,36 +233,41 @@ namespace UI {
         string sourceProperty
         bool twoWay = false
         var converter
+        bool once = false
         // Stand beim letzten Abgleich
         bool synced = false
         var lastSource
         var lastTarget
 
-        construct(Element target, string targetProperty, source, string sourceProperty, bool twoWay = false, converter = undefined) {
+        construct(Element target, string targetProperty, source, string sourceProperty, bool twoWay = false, converter = undefined, bool once = false) {
             this.target = target
             this.targetProperty = targetProperty
             this.source = source
             this.sourceProperty = sourceProperty
             this.twoWay = twoWay
             this.converter = converter
+            this.once = once
         }
 
         Sync() {
-            if (!Reflect.Has(this.source, this.sourceProperty) || !Reflect.Has(this.target, this.targetProperty)) { return }
-            var s = Reflect.Get(this.source, this.sourceProperty)
+            if (this.once && this.synced) { return }
+            if (!UI.M.PathHas(this.source, this.sourceProperty) || !Reflect.Has(this.target, this.targetProperty)) { return }
+            var s = UI.M.PathGet(this.source, this.sourceProperty)
             var t = Reflect.Get(this.target, this.targetProperty)
-            if (this.twoWay && this.synced && t != this.lastTarget) {
+            if (this.twoWay && this.sourceProperty != "" && this.synced && t != this.lastTarget) {
                 // das Ziel hat sich geaendert: zurueck in die Quelle
                 var back = t
                 if (this.converter != undefined) { back = this.converter.ConvertBack(t) }
-                if (back != s) { Reflect.Set(this.source, this.sourceProperty, back) }
-                this.lastSource = Reflect.Get(this.source, this.sourceProperty)
+                if (back != s) { UI.M.PathSet(this.source, this.sourceProperty, back) }
+                this.lastSource = UI.M.PathGet(this.source, this.sourceProperty)
                 this.lastTarget = t
                 return
             }
             if (!this.synced || s != this.lastSource) {
                 var forward = s
                 if (this.converter != undefined) { forward = this.converter.Convert(s) }
+                // a text property shows any other value as its text
+                if (t is of string && forward != undefined && !(forward is of string)) { forward = UI.M.Text(forward) }
                 if (forward != t) { Reflect.Set(this.target, this.targetProperty, forward) }
                 this.lastSource = s
                 this.lastTarget = Reflect.Get(this.target, this.targetProperty)

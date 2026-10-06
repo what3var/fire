@@ -9735,6 +9735,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("neu gemalt " + paints)
         dc.width = 80
         ui.Draw()
+        ui.Draw()
         print("Groesse geaendert " + paints + " " + dc.framebuffer.Width())
         ui.MouseDown(1, 25, 170)
         ui.MouseUp(1, 25, 170)
@@ -9746,7 +9747,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Add(dc2)
         ui.Draw()
         print("fremder Puffer " + (Px.Get(ui.renderer, 160, 160) == UI.Color.Rgb(255, 0, 255)) + " " + dc2.actualWidth)
-        """, new[] { "500 1000 500 -500 -500 1000", "Rechteck True True True", "Ellipse True True", "Strecke True True 51x31", "Pfad 41x51 True True 1 5 True", "Kurve True True 51x41", "Ellipse-Pfad 64 59x51 True", "Zeichenflaeche 1 120x40 True", "neu gemalt 2", "Groesse geaendert 3 80", "Maus 1 15", "fremder Puffer True 30" });
+        """, new[] { "500 1000 500 -500 -500 1000", "Rechteck True True True", "Ellipse True True", "Strecke True True 51x31", "Pfad 41x51 True True 1 5 True", "Kurve True True 51x41", "Ellipse-Pfad 64 59x51 True", "Zeichenflaeche 1 120x40 True", "neu gemalt 2", "Groesse geaendert 4 80", "Maus 1 15", "fremder Puffer True 30" });
 
     CheckUi("Listen mit DataTemplate und das Beschneidungsrechteck des Renderers", uiHead + """
         var lb = new UI.ListBox(10, 10, 90, 80)
@@ -9863,6 +9864,24 @@ string[] uiDrawExpected = Array.Empty<string>();
         ExpectDiagnostic("Binding in einer Vorlage", "<Window class=\"A\"><Resources><ControlTemplate key=\"t\" target=\"Button\"><Label text=\"{Binding X}\"/></ControlTemplate></Resources></Window>", "not available inside a ControlTemplate");
         ExpectDiagnostic("Vorlage mit unbekanntem Teil im Trigger", "<Window class=\"A\"><Resources><ControlTemplate key=\"t\" target=\"Button\"><Label name=\"a\"/><Trigger property=\"hover\" value=\"true\"><Setter target=\"b\" property=\"text\" value=\"x\"/></Trigger></ControlTemplate></Resources></Window>", "has no part 'b'");
         ExpectDiagnostic("unbekannter Binding-Modus", "<Window class=\"A\"><Label text=\"{Binding X, Mode=Sideways}\"/></Window>", "Unknown binding mode");
+        const string dtHead = "<Window class=\"A\"><Resources>";
+        ExpectDiagnostic("DataTemplate: ein Binding ohne Pfad ausserhalb", "<Window class=\"A\"><Label text=\"{Binding}\"/></Window>", "without a path is for the elements of a DataTemplate");
+        ExpectDiagnostic("DataTemplate: genau ein Element", dtHead + "<DataTemplate key=\"d\"><Label/><Label/></DataTemplate></Resources></Window>", "contains exactly one element");
+        ExpectDiagnostic("DataTemplate: ohne Schluessel", dtHead + "<DataTemplate><Label/></DataTemplate></Resources></Window>", "needs key");
+        ExpectDiagnostic("DataTemplate: keine Namen", dtHead + "<DataTemplate key=\"d\"><Label name=\"a\"/></DataTemplate></Resources></Window>", "have no name");
+        ExpectDiagnostic("DataTemplate: keine Handler", dtHead + "<DataTemplate key=\"d\"><Button onClick=\"Go\"/></DataTemplate></Resources></Window>", "Event handlers are not available inside a DataTemplate");
+        ExpectDiagnostic("DataTemplate: kein ElementName", dtHead + "<DataTemplate key=\"d\"><Label text=\"{Binding x, ElementName=y}\"/></DataTemplate></Resources></Window>", "'ElementName' is not available inside a DataTemplate");
+        ExpectDiagnostic("DataTemplate: das Element selbst ist nur lesbar", dtHead + "<DataTemplate key=\"d\"><TextBox text=\"{Binding Mode=TwoWay}\"/></DataTemplate></Resources></Window>", "read only");
+        ExpectDiagnostic("DataTemplate: unbekannter Converter", dtHead + "<DataTemplate key=\"d\"><Label text=\"{Binding x, Converter=Nope}\"/></DataTemplate></Resources></Window>", "Unknown converter 'Nope'");
+        ExpectDiagnostic("DataTemplate: Schluessel doppelt", dtHead + "<DataTemplate key=\"d\"><Label/></DataTemplate><DataTemplate key=\"d\"><Label/></DataTemplate></Resources></Window>", "used twice");
+        ExpectDiagnostic("itemTemplate, das es nicht gibt", "<Window class=\"A\"><ListBox itemTemplate=\"Nope\"/></Window>", "Unknown data template 'Nope'");
+        ExpectDiagnostic("view, die es nicht gibt", "<Window class=\"A\"><ListBox view=\"Nope\"/></Window>", "Unknown view 'Nope'");
+        ExpectDiagnostic("itemsSource nimmt keinen festen Wert", "<Window class=\"A\"><ListBox itemsSource=\"abc\"/></Window>", "is a list: give {Binding ...} or {Expr ...}");
+        ExpectDiagnostic("view und itemsSource zusammen", dtHead + "<CollectionView key=\"v\"/></Resources><ListBox view=\"v\" itemsSource=\"{Binding xs}\"/></Window>", "a 'view' or an 'itemsSource', not both");
+        ExpectDiagnostic("CollectionView: nur Lesen", dtHead + "<CollectionView key=\"v\" source=\"{Binding xs, Mode=TwoWay}\"/></Resources></Window>", "read only");
+        ExpectDiagnostic("CollectionView: filter ist Code", dtHead + "<CollectionView key=\"v\" filter=\"abc\"/></Resources></Window>", "is code: give {Expr ...}");
+        ExpectDiagnostic("CollectionView: unbekanntes Attribut", dtHead + "<CollectionView key=\"v\" sorted=\"a\"/></Resources></Window>", "no attribute 'sorted'");
+        ExpectDiagnostic("Schluessel von Vorlage und View teilen sich den Namensraum", dtHead + "<DataTemplate key=\"d\"><Label/></DataTemplate><CollectionView key=\"d\"/></Resources></Window>", "used twice");
 
         string Generate(string markup) => fire.UI.Markup.FireUiGenerator.Generate(fire.UI.Markup.MarkupParser.Parse(markup), "T.fxml");
         void ExpectGenerateError(string title, string markup, string expected)
@@ -10016,7 +10035,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                   <DockPanel x="0" y="0" width="480" height="320">
                     <MenuBar name="bar" DockPanel.Dock="Top">
                       <Menu header="File">
-                        <MenuItem header="Open" shortcut="Ctrl+O" onClick="Open"/>
+                        <MenuItem header="Open" shortcut="Ctrl+O" onClick="OpenFile"/>
                         <MenuSeparator/>
                         <MenuItem header="Recent">
                           <MenuItem header="a.txt"/>
@@ -10065,7 +10084,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 #include "{{P("Rich.fxml")}}"
                 class RichApp : RichBase {
                     Picked(sender) { print("picked " + sender.selectedItem) }
-                    Open(sender) { print("open") }
+                    OpenFile(sender) { print("open") }
                     One(sender) { print("one") }
                     Paint(sender, canvas) { print("paint " + canvas.framebuffer.Width() + "x" + canvas.framebuffer.Height() + " " + (canvas == sender)) }
                     Down(sender, x, y, button) { print("down " + x + "," + y + " " + button) }
@@ -10109,6 +10128,162 @@ string[] uiDrawExpected = Array.Empty<string>();
                 CheckMarkup("Markup: Entwurfsansicht - ein gebundener Text zeigt den Pfad, Code des Programms und Handler fehlen", previewScript.Contains("\u2039Name\u203A") && !previewScript.Contains("Colors.Red") && !previewScript.Contains("Nope(") && fire.Compiler.UiPreview.Render(bound).Ok);
                 CheckMarkup("Markup: Entwurfsansicht - ein Fehler im Markup wird gemeldet, nichts wird ausgefuehrt", !fire.Compiler.UiPreview.Render(fire.UI.Markup.MarkupParser.Parse("<Window class=\"B\"><Label x=\"abc\"/></Window>")).Ok);
             }
+
+            // DataTemplate, CollectionView, itemsSource/itemTemplate/view im Markup
+            File.WriteAllText(P("Data.fxml"), """
+                <Window class="Data" title="Data" width="360" height="240">
+                  <Resources>
+                    <Converter key="Up" type="UpperConverter"/>
+                    <DataTemplate key="Person">
+                      <StackPanel horizontal="true" spacing="6">
+                        <Label text="{Binding name, Converter=Up}"/>
+                        <Label text="{Binding age}"/>
+                      </StackPanel>
+                    </DataTemplate>
+                    <DataTemplate key="Plain">
+                      <Label text="{Binding}"/>
+                    </DataTemplate>
+                    <CollectionView key="ByName" source="{Binding people}" sortBy="name" descending="true"/>
+                    <CollectionView key="Young" source="{Binding people}" sortBy="age" filter="{Expr func (p) on this => { return p.age &lt; 30 }}"/>
+                  </Resources>
+                  <StackPanel padding="4" spacing="4">
+                    <ListBox name="viaView" width="200" height="90" view="ByName" itemTemplate="Person" selectedIndex="{Binding sel, Mode=TwoWay}"/>
+                    <ListBox name="direct" width="200" height="60" itemsSource="{Binding names}" itemTemplate="Plain"/>
+                    <ListBox name="young" width="200" height="40" view="Young" itemTemplate="Person"/>
+                  </StackPanel>
+                </Window>
+                """);
+            CheckUi("Markup: DataTemplate, CollectionView und itemsSource folgen dem Datenkontext", $$"""
+                #include "{{P("Data.fxml")}}"
+                class UpperConverter : UI.Converter {
+                    Convert(value) { return value.ToUpper() }
+                    ConvertBack(value) { return value }
+                }
+                class Person {
+                    string name
+                    int age
+                    construct(string name, int age) {
+                        this.name = name
+                        this.age = age
+                    }
+                }
+                class Model {
+                    List people
+                    List names
+                    int sel = -1
+                }
+                class Data : DataBase { }
+                var app = new Data()
+                var m = new Model()
+                m.people = new List()
+                m.people.Add(new Person("Carol", 31))
+                m.people.Add(new Person("Alice", 25))
+                m.people.Add(new Person("Bob", 40))
+                m.names = new List()
+                m.names.Add("one")
+                m.names.Add("two")
+                app.SetDataContext(m)
+                app.ui.Draw()
+                app.ui.Draw()
+                print("zeilen " + app.viaView.count + " " + app.direct.count + " " + app.young.count + " erste " + app.viaView.selectedItem)
+                print("zeile " + app.viaView.rowElements[0].children[0].text + " " + app.viaView.rowElements[0].children[1].text + " " + app.direct.rowElements[1].text)
+                m.people.Add(new Person("Dave", 22))
+                m.names.Add("three")
+                app.ui.Draw()
+                print("mehr " + app.viaView.count + " " + app.direct.count + " jung " + app.young.count + " " + app.young.view[0].name)
+                m.sel = 1
+                app.ui.Draw()
+                print("Auswahl " + app.viaView.selectedIndex + " " + app.viaView.selectedItem.name)
+                app.viaView.Select(3)
+                app.ui.Draw()
+                print("zurueck " + m.sel)
+                var other = new List()
+                other.Add("x")
+                m.names = other
+                app.ui.Draw()
+                print("neue Liste " + app.direct.count + " " + app.ui.Update())
+                """, new[] { "zeilen 3 2 1 erste undefined", "zeile CAROL 31 two", "mehr 4 3 jung 2 Dave", "Auswahl 1 Carol", "zurueck 3", "neue Liste 1 False" });
+
+            // die Entwurfsansicht zeigt die Zeilen, ohne die Daten zu kennen
+            {
+                var dataDoc = fire.UI.Markup.MarkupParser.Parse(File.ReadAllText(P("Data.fxml")));
+                var dataShot = fire.Compiler.UiPreview.Render(dataDoc, P("Data.fxml"));
+                string dataPreview = fire.UI.Markup.FireUiGenerator.GeneratePreview(dataDoc);
+                CheckMarkup("Markup: Entwurfsansicht - Listen mit itemTemplate/view/itemsSource werden gezeichnet (ohne die Daten)", dataShot.Ok && dataPreview.Contains("\u2039name\u203A") && !dataPreview.Contains("SetView") && dataPreview.Contains("Add(\"\")"), dataShot.Error ?? dataPreview);
+            }
+
+            // Invalidierung: nur neu zeichnen, was sich geaendert hat
+            CheckUi("Invalidierung: Update zeichnet nur bei Aenderungen, Hover und Text zeichnen nur den betroffenen Bereich", uiHead + """
+                var a = new UI.Label("alpha", 10, 10)
+                var b = new UI.Button("btn", 10, 40, 80, 24)
+                var c = new UI.Label("gamma", 200, 150)
+                ui.Add(a)
+                ui.Add(b)
+                ui.Add(c)
+                print("first " + ui.Update())
+                print("idle " + ui.Update())
+                var sentinel = UI.Color.Rgb(1, 2, 3)
+                ui.renderer.SetPixel(250, 20, sentinel)
+                b.hover = true
+                print("hover " + ui.Update() + " rest bleibt " + (Px.Get(ui.renderer, 250, 20) == sentinel))
+                print("idle " + ui.Update())
+                ui.renderer.SetPixel(250, 20, sentinel)
+                c.x = 190
+                print("Layout " + ui.Update() + " alles neu " + (Px.Get(ui.renderer, 250, 20) != sentinel))
+                ui.renderer.SetPixel(250, 20, sentinel)
+                ui.theme.back = new SolidBrush(UI.Color.Rgb(10, 10, 10))
+                print("Theme " + ui.Update() + " alles neu " + (Px.Get(ui.renderer, 250, 20) != sentinel))
+                ui.renderer.SetPixel(250, 20, sentinel)
+                b.Invalidate()
+                print("Invalidate " + ui.Update() + " rest bleibt " + (Px.Get(ui.renderer, 250, 20) == sentinel))
+                ui.renderer.SetPixel(250, 20, sentinel)
+                ui.Draw()
+                print("Draw " + (Px.Get(ui.renderer, 250, 20) != sentinel))
+                """, new[] { "first True", "idle False", "hover True rest bleibt True", "idle False", "Layout True alles neu True", "Theme True alles neu True", "Invalidate True rest bleibt True", "Draw True" });
+
+            // mehrere Fenster ohne Markup: Attach/Detach/Tick
+            CheckUi("Mehrere Fenster: Root.Attach haengt ein Fenster an, Tick arbeitet beide ab, Detach loest es", """
+                class Px { static int Get(console, int x, int y) { var v = console.GetPixel(x, y); if (v < 0) { v = v + 4294967296 } return v } }
+                var fb1 = new Framebuffer(100, 60)
+                var w1 = new Window(fb1, "one")
+                var ui1 = new UI.Root(fb1, w1)
+                var fb2 = new Framebuffer(100, 60)
+                var w2 = new Window(fb2, "two")
+                var ui2 = new UI.Root(fb2, w2)
+                var ticks = 0
+                ui2.onTick = func () => { ticks = ticks + 1 }
+                ui2.Add(new UI.Button("two", 5, 5, 60, 20))
+                ui1.Add(new UI.Label("one", 5, 5))
+                ui1.Attach(ui2)
+                ui1.Attach(ui2)
+                print("angehaengt " + ui1.attached.count)
+                print(ui1.Tick())
+                print(ui1.Tick())
+                print("ticks " + ticks + " gezeichnet " + (Px.Get(ui2.renderer, 10, 10) == ui2.theme.face.Color))
+                ui1.Detach(ui2)
+                ui1.Tick()
+                print("nach Detach " + ticks)
+                """, new[] { "angehaengt 1", "True", "True", "ticks 2 gezeichnet True", "nach Detach 2" });
+
+            // mehrere Fenster: ein Fenster oeffnet ein anderes, Tick arbeitet beide ab
+            File.WriteAllText(P("Main.fxml"), "<Window class=\"Main\" width=\"120\" height=\"80\"><Button name=\"b\" text=\"main\"/></Window>");
+            File.WriteAllText(P("Tool.fxml"), "<Window class=\"Tool\" title=\"Tool\" width=\"100\" height=\"60\"><Label name=\"l\" text=\"tool\"/></Window>");
+            CheckUi("Markup: Open/Run(other) - das erzeugte Fenster haengt ein anderes an, ein Tick arbeitet beide ab", $$"""
+                #include "{{P("Main.fxml")}}"
+                #include "{{P("Tool.fxml")}}"
+                var mainTicks = 0
+                var toolTicks = 0
+                class Main : MainBase { OnTick() { mainTicks = mainTicks + 1 } }
+                class Tool : ToolBase { OnTick() { toolTicks = toolTicks + 1 } }
+                var a = new Main()
+                var t = new Tool()
+                a.Open(t)
+                a.ui.Tick()
+                a.ui.Tick()
+                print("ticks " + mainTicks + " " + toolTicks + " angehaengt " + a.ui.attached.count)
+                t.l.text = "changed"
+                print("Update " + t.ui.Update())
+                """, new[] { "ticks 2 2 angehaengt 1", "Update True" });
         }
         finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
     }

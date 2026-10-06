@@ -50,6 +50,7 @@ namespace UI {
         // die sichtbaren Knoten der letzten Anordnung, von oben nach unten
         List visibleNodes
         int hotIndex = -1
+        int seenSignature = -1
         int viewW = 0
         int viewH = 0
 
@@ -57,6 +58,7 @@ namespace UI {
             this.nodes = new List()
             this.visibleNodes = new List()
             this.scroller = new Scroller(false)
+            this.scroller.owner = this
         }
 
         string StyleKey() { return "TreeView" }
@@ -66,6 +68,7 @@ namespace UI {
         AddNode(node) {
             node.TakeTo(this)
             this.nodes.Add(node)
+            this.Invalidate()
             return node
         }
 
@@ -73,6 +76,29 @@ namespace UI {
             this.selected = undefined
             this.nodes = new List()
             this.visibleNodes = new List()
+            this.Invalidate()
+        }
+
+        // Ein Merkmal der sichtbaren Knoten (Anzahl, Texte, Aufgeklapptes): aendert es sich - zum Beispiel durch `node.expanded = true` -, wird neu gemalt.
+        int Signature() {
+            var list = new List()
+            for (var i = 0; i < this.nodes.count; i = i + 1) { this.Collect_(list, this.nodes[i]) }
+            var sig = list.count
+            for (var i = 0; i < list.count; i = i + 1) {
+                var n = list[i]
+                sig = (sig * 31 + n.text.Length * 7 + n.Depth()) % 1000000007
+                if (n.expanded) { sig = (sig * 31 + 1) % 1000000007 }
+            }
+            return sig
+        }
+
+        Poll(root) {
+            base.Poll(root)
+            var sig = this.Signature()
+            if (sig != this.seenSignature) {
+                this.seenSignature = sig
+                this.Invalidate()
+            }
         }
 
         int RowHeight(root) {
@@ -119,8 +145,7 @@ namespace UI {
         }
 
         Draw(root, int ax, int ay) {
-            this.ax = ax
-            this.ay = ay
+            if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
             var back = this.background
@@ -224,7 +249,7 @@ namespace UI {
 
         Hover(root, int px, int py) {
             this.hotIndex = this.RowAt(root, px, py)
-            this.scroller.hover = this.OverBar(px, py)
+            this.scroller.SetHover(this.OverBar(px, py))
         }
 
         bool MouseWheel(root, int dx, int dy) {
