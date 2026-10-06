@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 namespace fire.Terminal
 {
     /// <summary>Die eingebaute 8x14-/8x8-Bitmap-Schrift (CP437). Die Tabellen sind statisch (einmal je Prozess statt je Instanz)
-    /// und über <see cref="GetGlyphRows"/> zeilenweise lesbar - TerminalCanvas zeichnet damit ohne eine Abfrage pro Pixel.</summary>
+    /// und über <see cref="GetGlyphRows"/> zeilenweise lesbar - Renderer zeichnet damit ohne eine Abfrage pro Pixel.</summary>
     public class IntegratedGlyphFont : IBitmapGlyphFont
     {
         private bool _smallFont;

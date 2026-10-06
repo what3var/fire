@@ -29,18 +29,20 @@ namespace fire.Runtime
         {
             [NativeImports.Print] = new(Array.Empty<string>(), Array.Empty<string>()),
             [NativeImports.Graphics] = new(
-                new[] { "fire.Terminal.Bridge", "fire.Terminal.Windows", "fire.Terminal.Sdl" },
+                new[] { "fire.Terminal.Bridge" }, Array.Empty<string>()),
+            // das SDL-Fenster: eigene Assembly samt SDL (`graphics` allein kommt ohne aus)
+            [NativeImports.Windows] = new(
+                new[] { "fire.Windows.Bridge", "fire.Terminal.Windows", "fire.Terminal.Sdl" },
                 new[] { "SDL3.dll", "libSDL3.so.0", "libSDL3.dylib" }),
+            // `devices` is a package (C++ in a library) that works with the device manager of the host: the manager and its serial driver come along
             [NativeImports.Devices] = new(
-                new[] { "fire.Device.Bridge", "fire.Device.Manager" },
+                new[] { "fire.Device.Manager" },
                 new[] { "libSystem.IO.Ports.Native.so", "libSystem.IO.Ports.Native.dylib" }),
-            [NativeImports.IO] = new(new[] { "fire.IO.Bridge" }, Array.Empty<string>()),
             // reiner fire-Quelltext (im Programm selbst), braucht keine DLL - `graphics` kommt über den Import selbst dazu
             [NativeImports.Ui] = new(Array.Empty<string>(), Array.Empty<string>()),
             // reiner fire-Quelltext, braucht keine DLL
             [NativeImports.Linq] = new(Array.Empty<string>(), Array.Empty<string>()),
             [NativeImports.Reflection] = new(Array.Empty<string>(), Array.Empty<string>()),
-            [NativeImports.Time] = new(Array.Empty<string>(), Array.Empty<string>()),
         };
 
         /// <summary>Verwaltete DLLs: Assembly-Name -> Pfad.</summary>
@@ -53,17 +55,26 @@ namespace fire.Runtime
         /// sonst fehlt der fertigen Datei zur Laufzeit etwas).</summary>
         public SortedSet<string> Unresolved { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-        public static PackagePlan Create(IEnumerable<string> nativeImports, string baseDir)
+        public static PackagePlan Create(IEnumerable<string> nativeImports, string baseDir, IEnumerable<string>? extraNativeFiles = null)
         {
             var plan = new PackagePlan();
             var searchDirs = SearchDirectories(baseDir);
             var frameworkDir = RuntimeEnvironment.GetRuntimeDirectory();
 
+            // the shared libraries of the natives of packages travel in the payload like the native libraries of the bridges
+            if (extraNativeFiles != null)
+                foreach (var file in extraNativeFiles)
+                    if (File.Exists(file)) plan.Natives[Path.GetFileName(file)] = file;
+
             var queue = new Queue<string>(CoreAssemblies);
             foreach (var import in nativeImports)
             {
-                if (!Imports.TryGetValue(import, out var package))
-                    throw new InvalidOperationException($"Unbekannter Import '{import}' - der Packer weiß nicht, welche DLLs er braucht.");
+                // an import of a package: its prelude is part of the program, its natives are C++ in a library (which travels as a native file); only the standard packages that work with
+                // a part of the host bring DLLs along (`devices`: the device manager)
+                string importName = import.StartsWith("pkg:", StringComparison.Ordinal) ? import.Substring(4) : import;
+                if (import.StartsWith("pkg:", StringComparison.Ordinal) && importName != NativeImports.Devices) continue;
+                if (!Imports.TryGetValue(importName, out var package))
+                    throw new InvalidOperationException($"Unknown import '{import}' - the packer does not know which DLLs it needs.");
                 foreach (var asm in package.Assemblies) queue.Enqueue(asm);
                 foreach (var native in package.Natives)
                 {

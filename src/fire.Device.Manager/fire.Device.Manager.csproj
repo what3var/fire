@@ -14,7 +14,7 @@
     <!-- SerialPort ist Teil des Shared Frameworks unter Windows, braucht
          aber unter Linux/macOS ein eigenes Paket - schadet unter Windows
          nicht, macht das Projekt dafür überall baubar. -->
-    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+    <PackageReference Include="System.IO.Ports" Version="10.0.12" />
   </ItemGroup>
 
 </Project>

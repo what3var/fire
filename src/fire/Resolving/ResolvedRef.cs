@@ -11,8 +11,9 @@ namespace fire.Resolving
         /// Ausführungsposition nach oben (0 = aktueller Scope selbst). Slot = Index
         /// innerhalb des dortigen Scopes. RequiredUnit: geforderte Einheit (SPEC
         /// "Einheiten-Deklarationen"), wenn die Deklaration ein explizites
-        /// `: einheit` hatte - `null` sonst (jeder Wert zulässig, wie bisher).</summary>
-        public sealed record Local(int Depth, int Slot, string? RequiredUnit = null) : ResolvedRef;
+        /// `: einheit` hatte - `null` sonst (jeder Wert zulässig, wie bisher).
+        /// ByRef: ein `ref`-Parameter - der Slot haelt einen Zeiger auf die Variable des Aufrufers, Lesen und Schreiben gehen durch ihn hindurch.</summary>
+        public sealed record Local(int Depth, int Slot, string? RequiredUnit = null, bool ByRef = false) : ResolvedRef;
 
         /// <summary>Globale Variable (Top-Level-Deklaration). Slot = Index im
         /// globalen Scope. RequiredUnit: wie bei Local.</summary>
@@ -39,6 +40,10 @@ namespace fire.Resolving
         /// `try Name(...)` (Ast.TryCallExpr) aufrufbar, nie als direkter
         /// Aufruf `Name(...)` wie Native/Extern.</summary>
         public sealed record TryableNative(string Name) : ResolvedRef;
+
+        /// <summary>`try obj.Take...(...)` (Ast.TryCallExpr mit einem Methodenaufruf, SPEC 2.2): die Ownership-Methode (`TakeLocal`, `TakeUpwards`, `TakeGlobal`, `TakeTo`) verschiebt
+        /// nur, wenn der Aufrufer der Besitzer ist, und liefert, ob sie es getan hat.</summary>
+        public sealed record TryTake(string Name) : ResolvedRef;
 
         /// <summary>Ein Zugriff auf ein `enum`-Mitglied (`EnumName.Mitglied`) -
         /// löst zur Compile-Zeit direkt zum passenden Int-Wert auf, keine

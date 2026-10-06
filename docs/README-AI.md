@@ -34,10 +34,11 @@ Exitcodes: 0 ok bzw. der Ganzzahlwert von `terminate(wert)`, 1 Kompilier-/Laufze
 
 ## Editor (`src/ScriptLang.Editor`)
 
-Ein kleiner WPF-Editor mit Syntax-Highlighting und einem Step-Debugger, in
+Ein kleiner Editor (`spark`) mit Syntax-Highlighting und einem Step-Debugger, in
 einem eigenen Unterprojekt, das per Projektreferenz direkt auf
 Lexer/Parser/Resolver/Compiler/VM des Hauptprojekts zugreift (keine
-kopierten/verlinkten DLLs). **Nur unter Windows lauffähig** (WPF). Öffnen
+kopierten/verlinkten DLLs). **Auf Avalonia** (Fluent-Theme, AvaloniaEdit, Dock.Avalonia) und damit unter
+Windows, Linux und macOS lauffähig (früher WPF). Öffnen
 über `ScriptLang.sln` im Repo-Root, oder direkt:
 
 ```bash
@@ -184,10 +185,10 @@ vollwertiges Debugger-/IDE-Feature-Set):
 
 ### Andockbare Bereiche, Fehlerliste, Symbolleisten (`MainWindow`)
 
-Die Bereiche des Editors (Dokument-Tabs, Ausgabe, Fehlerliste, Threads, Scope, Stack, Geräte) liegen in einem `DockingManager` der NuGet-Bibliothek **Dirkster.AvalonDock** (+ Theme `Vs2013Light`): per Ziehen an den Titeln an jede
-Seite andockbar, als Registerkarten stapelbar, frei schwebend oder automatisch ausblendend. Menü "Ansicht" blendet Bereiche wieder ein, "Layout zurücksetzen" stellt die Vorgabe wieder her. Das Layout wird beim
-Schließen nach `%AppData%/fire/editor-layout.xml` gespeichert und beim Start geladen (`XmlLayoutSerializer`, Schlüssel = `ContentId` aus `MainWindow.xaml`; ein nicht ladbares Layout fällt still auf die Vorgabe
-zurück). Nach dem Laden sind die Layout-Elemente neue Objekte - deshalb merkt sich `MainWindow` sie in `_panels` (aus dem Serializer-Callback) statt der XAML-Objekte.
+Die Bereiche des Editors (Dokument-Tabs, Ausgabe, Fehlerliste, Threads, Scope, Stack, Geräte) liegen in einem `DockControl` der NuGet-Bibliothek **Dock.Avalonia** (Fluent-Theme, in `App.axaml` auf die Farben von fire umgestellt): per Ziehen an den Titeln an jede
+Seite andockbar, als Registerkarten stapelbar, frei schwebend oder an den Rand angeheftet (die Geräte-Übersicht startet so). Menü "View" blendet Bereiche wieder ein, "Reset Layout" stellt die Vorgabe wieder her. Das Layout (`SparkFactory`) wird beim
+Schließen nach `%AppData%/fire/editor-layout.json` gespeichert und beim Start geladen (`AvaloniaDockSerializer`, Schlüssel = `Id` der Bereiche; ein nicht ladbares Layout fällt still auf die Vorgabe
+zurück). Ein geladenes Layout besteht aus neuen Objekten mit gewöhnlichen Listen - `MainWindow.ApplyLayout` macht sie beobachtbar, setzt die Inhalte der Bereiche wieder ein und hängt die offenen Dokument-Tabs (nicht Teil des Layouts) neu an.
 
 Die Fehlerliste ist ein `DataGrid` (Symbol, Beschreibung, Datei, Zeile; Spalten verschieb-/vergrößer-/sortierbar, Doppelklick auf eine Zeile springt in den Editor, Filterknopf "n Fehler"); die Zeilen sind
 `ErrorListItem`. Symbolleisten (Datei, Ausführen, Debuggen, Modus/Erstellen) rufen dieselben Handler wie Menü und Tastenkürzel; der Modus (Debug/Release/Performance) ist eine ComboBox, die mit dem Menü synchron bleibt.

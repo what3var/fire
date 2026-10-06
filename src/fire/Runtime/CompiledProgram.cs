@@ -51,8 +51,8 @@ namespace fire.Runtime
                 {
                     if (!Classes.TryGetValue(rc.Base.Name, out var canonicalBase))
                         throw new InvalidOperationException(
-                            $"Basisklasse '{rc.Base.Name}' von '{rc.Name}' fehlt in Classes - beschädigter/" +
-                            "unvollständiger Programm-Cache?");
+                            $"Base class '{rc.Base.Name}' of '{rc.Name}' is missing in Classes - corrupt/" +
+                            "incomplete program cache?");
                     rc.Base = canonicalBase;
                 }
 

@@ -62,7 +62,7 @@ namespace fire.Runtime
                 if (entry == null) return null;
                 var bytes = _reader.Read(entry);
                 if (bytes == null)
-                    throw new BadImageFormatException($"'{name.Name}' in der Programmdatei ist beschädigt (Prüfsumme stimmt nicht).");
+                    throw new BadImageFormatException($"'{name.Name}' in the program file is corrupt (checksum mismatch).");
 
                 var assembly = context.LoadFromStream(new MemoryStream(bytes));
                 _loaded[name.Name] = assembly;

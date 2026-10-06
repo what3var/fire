@@ -2,7 +2,7 @@
 	
 <PropertyGroup>
 	<OutputType>Exe</OutputType>
-	<TargetFramework>net10.0-windows</TargetFramework>
+	<TargetFramework>net10.0</TargetFramework>
 	<ImplicitUsings>enable</ImplicitUsings>
 	<Nullable>enable</Nullable>
 	<RootNamespace>fire.Compiler</RootNamespace>
@@ -16,6 +16,11 @@
   <ItemGroup>
     <ProjectReference Include="..\fire.Runtime\fire.Runtime.csproj" />
     <ProjectReference Include="..\fire.UI.Bridge\fire.UI.Bridge.csproj" />
+    <ProjectReference Include="..\fire.UI.Markup\fire.UI.Markup.csproj" />
+    <ProjectReference Include="..\fire.Native\fire.Native.csproj" />
+    <ProjectReference Include="..\fire.Package.Manager\fire.Package.Manager.csproj" />
   </ItemGroup>
+
+  <Import Project="..\BridgePackages.targets" />
 
 </Project>

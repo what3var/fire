@@ -52,6 +52,10 @@ namespace fire.Values
 
         public bool IsUnitless => Dimensions.Count == 0;
 
+        /// <summary>Das Symbol einer benannten Einheit (`mm`), null bei einer abgeleiteten (der native Backend schreibt es in seine Einheitentabelle).</summary>
+        [MemoryPackIgnore]
+        public string? DisplaySymbol => _displaySymbol;
+
         // ---------------------------------------------------------------
         // Eingebaute Präfixe (dezimal)
         // ---------------------------------------------------------------
@@ -273,7 +277,7 @@ namespace fire.Values
         public Unit To { get; }
 
         public UnitMismatchException(Unit from, Unit to)
-            : base($"Einheiten inkompatibel: '{from}' kann nicht nach '{to}' umgerechnet werden.")
+            : base($"Incompatible units: '{from}' cannot be converted to '{to}'.")
         {
             From = from;
             To = to;

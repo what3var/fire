@@ -41,6 +41,17 @@ namespace fire.Standard
                 }
             }
 
+            // what the ownership methods take along (SPEC 2.2): `x.TakeUpwards(Takes.Locals)`
+            enum Takes { This = 0, Children = 1, Locals = 2, All = 3 }
+
+            class DestroyedException : Exception {
+                string message
+
+                construct(string message) {
+                    this.message = message
+                }
+            }
+
             class AccessDeniedException : Exception {
                 string message
 
@@ -66,14 +77,17 @@ namespace fire.Standard
             //   var home = new Command<IDevice>()
             //   home.Command = d => { d.WriteString("G28\n") }
             //   Device.Default.DoCommand(home)
+            /// <summary>A command as an object that is executed without a context.</summary>
             interface ICommand {
                 Execute()
             }
 
+            /// <summary>A command as an object that is executed with a context - e.g. `ICommand<IDevice>` is run by `Device.DoCommand` with the device as its context.</summary>
             interface ICommand<T> {
                 Execute(T context)
             }
 
+            /// <summary>A command object without a context. The lambda in `Command` is its body; derive from the class and override `Execute` if you need more.</summary>
             class Command : ICommand {
                 lambda Command
 
@@ -83,7 +97,8 @@ namespace fire.Standard
                     this.Command = command
                 }
 
-                // Ruft das Lambda auf; ohne Lambda geschieht nichts. Liefert dessen Ergebnis.
+                /// <summary>Calls the lambda `Command`; without a lambda nothing happens.</summary>
+                /// <returns>The result of the lambda, or `undefined`.</returns>
                 Execute() {
                     var body = this.Command
                     if (body == undefined) {
@@ -93,6 +108,7 @@ namespace fire.Standard
                 }
             }
 
+            /// <summary>A command object with a context of type T (e.g. `Command<IDevice>`). The lambda in `Command` receives the context as its argument.</summary>
             class Command<T> : ICommand<T> {
                 lambda<T> Command
 
@@ -102,6 +118,9 @@ namespace fire.Standard
                     this.Command = command
                 }
 
+                /// <summary>Calls the lambda `Command` with the context; without a lambda nothing happens.</summary>
+                /// <param name="context">What the command works on, e.g. the device.</param>
+                /// <returns>The result of the lambda, or `undefined`.</returns>
                 Execute(T context) {
                     var body = this.Command
                     if (body == undefined) {
@@ -138,6 +157,28 @@ namespace fire.Standard
 
                 GetCurrent() {
                     return this.items[this.index]
+                }
+            }
+
+            // The enumerator of a List: reads through the list, so it stays valid when the list grows (its backing array is replaced).
+            class ListIter : IEnumerator {
+                class list
+                int count
+                int index
+
+                construct(class list, int count) {
+                    this.list = list
+                    this.count = count
+                    this.index = -1
+                }
+
+                MoveNext() {
+                    this.index = this.index + 1
+                    return this.index < this.count
+                }
+
+                GetCurrent() {
+                    return this.list.items[this.index]
                 }
             }
 
@@ -190,11 +231,15 @@ namespace fire.Standard
                         newItems[i] = this.items[i]
                         i = i + 1
                     }
+                    // the new array belongs to the list (a local array dies with this method), the old one is released
+                    var old = this.items
                     this.items = newItems
+                    newItems.TakeTo(this)
+                    delete old
                 }
 
                 GetEnumerator() {
-                    return new ListEnumerator(this.items, this.count)
+                    return new ListIter(this, this.count)
                 }
             }
             """;

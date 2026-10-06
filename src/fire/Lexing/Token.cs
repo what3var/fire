@@ -30,6 +30,7 @@ namespace fire.Lexing
         Operator, // 'operator' - Operator-Überladung (siehe Parser.ParseOperatorMember)
         Sync, Flat,
         Copy, // 'copy ausdruck' - tiefe Kopie (siehe Ast.UnaryOp.DeepCopy); 'flat ausdruck' ist die flache (UnaryOp.FlatCopy)
+        Take, // 'take ausdruck' - der Besitz geht an den Aufruf bzw. an den Besitzer des Zuweisungsziels (siehe Ast.UnaryOp.Take, SPEC 2.2)
         Leave, Terminate,
         Actor, Process,
 
@@ -65,6 +66,11 @@ namespace fire.Lexing
         public string Lexeme { get; }
         public int Line { get; }
         public int Column { get; }
+
+        // Länge des Tokens im QUELLTEXT (in Zeichen). Bei Strings/Chars weicht sie von Lexeme.Length ab (Lexeme ist der Inhalt ohne
+        // Anführungszeichen und nach Escape-Verarbeitung; bei `$"..."` nur ein Platzhalter) - gebraucht für Editor-Hervorhebung.
+        // Vom Lexer in Tokenize gesetzt; 0 bei von Hand erzeugten Tokens.
+        public int Length { get; init; }
 
         // Nur für numerische Literale gesetzt: der direkt am Literal
         // anhängende Einheiten-Suffix ("mm", "km", ...), oder null/"" wenn keiner.

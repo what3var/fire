@@ -9,7 +9,7 @@ namespace fire.Benchmarks
     {
         public static readonly BenchmarkScript[] All =
         {
-            new("loop", "while/for-Schleife mit int-Arithmetik und Modulo (Stack, Locals, Sprünge)", """
+            new("loop", "while/for loop with int arithmetic and modulo (stack, locals, jumps)", """
                 var sum = 0
                 for (var i = 0; i < 1500000; i = i + 1) {
                     sum = sum + i % 7
@@ -17,7 +17,7 @@ namespace fire.Benchmarks
                 print(sum)
                 """),
 
-            new("float", "float-Arithmetik in einer Schleife", """
+            new("float", "float arithmetic in a loop", """
                 var x = 0.0
                 for (var i = 0; i < 600000; i = i + 1) {
                     x = x + i * 0.5 - x / 3.0
@@ -25,7 +25,7 @@ namespace fire.Benchmarks
                 print(x)
                 """),
 
-            new("fib", "rekursive statische Methode (Aufruf-/Return-Kosten, Scope pro Aufruf)", """
+            new("fib", "recursive static method (call/return cost, one scope per call)", """
                 class M {
                     static int Fib(int n) {
                         if (n < 2) { return n }
@@ -35,7 +35,7 @@ namespace fire.Benchmarks
                 print(M.Fib(23))
                 """),
 
-            new("method", "Instanzmethoden und Feldzugriffe (CallMethod, GetField/SetField)", """
+            new("method", "Instance methods and field accesses (CallMethod, GetField/SetField)", """
                 class Counter {
                     int count
                     int step
@@ -50,7 +50,7 @@ namespace fire.Benchmarks
                 print(c.Get())
                 """),
 
-            new("array", "Array füllen und aufsummieren (ArrayGet/ArraySet)", """
+            new("array", "Fill an array and sum it up (ArrayGet/ArraySet)", """
                 var n = 100000
                 var a = new int[n]
                 var total = 0
@@ -61,7 +61,7 @@ namespace fire.Benchmarks
                 print(total)
                 """),
 
-            new("string", "String-Verkettung und Prelude-String-Methoden (Erweiterung -> native ID)", """
+            new("string", "String concatenation and prelude string methods (extension -> native ID)", """
                 var s = "Hello, World, again"
                 var n = 0
                 for (var i = 0; i < 40000; i = i + 1) {
@@ -72,7 +72,7 @@ namespace fire.Benchmarks
                 print(n + text.Length)
                 """),
 
-            new("alloc", "Objekte anlegen und wieder freigeben (Ownership, Scope.Release, Konstruktor)", """
+            new("alloc", "Create and release objects (ownership, Scope.Release, constructor)", """
                 class Point {
                     int x
                     int y
@@ -95,7 +95,7 @@ namespace fire.Benchmarks
                 print(acc)
                 """),
 
-            new("list", "List aus dem Prelude: Add und foreach", """
+            new("list", "List from the prelude: Add and foreach", """
                 var l = new List()
                 for (var i = 0; i < 40000; i = i + 1) { l.Add(i) }
                 var total = 0

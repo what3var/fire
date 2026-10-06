@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using fire.Values;
 
@@ -36,6 +37,9 @@ namespace fire.Runtime
         private Value[]? _slots;
         private int _slotCount;
         private OwnedSet _owned;
+        // Argumente, die ein Aufruf mit dem Ergebnis eines anderen Aufrufs bekam (`f(g())`, SPEC 2.1): sie gehoeren dem Aufruf und sterben als letztes, nach allem, was die aufgerufene Funktion selbst angelegt hat
+        private OwnedSet _args;
+        private List<IOwnedLeaf>? _leaves; // besessene Arrays und Puffer (selten: meist null)
 
         public Scope(Scope? parent, bool isGlobal = false)
         {
@@ -73,7 +77,7 @@ namespace fire.Runtime
         public static Scope CreatePooled(Scope? parent) => new Scope(parent) { _pooled = true };
 
         /// <summary>Kann diese Scope jetzt in den Pool zurück (siehe oben)?</summary>
-        public bool CanRecycle => _pooled && !_escaped && _owned.IsEmpty;
+        public bool CanRecycle => _pooled && !_escaped && _owned.IsEmpty && _args.IsEmpty && (_leaves == null || _leaves.Count == 0);
 
         /// <summary>Ein Pointer auf einen Slot dieser Scope existiert (ScopeSlotPointerTarget): die Scope darf nie wiederverwendet werden,
         /// der Pointer bliebe sonst auf die Variablen eines ganz anderen Blocks gerichtet.</summary>
@@ -162,7 +166,7 @@ namespace fire.Runtime
         }
 
         private void ThrowBadSlot(int index) =>
-            throw new System.ArgumentOutOfRangeException(nameof(index), $"Slot {index} ist nicht definiert (Slots: {_slotCount}).");
+            throw new System.ArgumentOutOfRangeException(nameof(index), $"Slot {index} is not defined (slots: {_slotCount}).");
 
         /// <summary>Anzahl belegter Slots - für Debug-/Inspektionszwecke (siehe
         /// VM.DebugLocals), von der normalen Ausführung selbst nicht gebraucht.</summary>
@@ -181,10 +185,10 @@ namespace fire.Runtime
         // -----------------------------------------------------------
         // IOwner
         // -----------------------------------------------------------
-        public IReadOnlyList<ObjectInstance> OwnedObjects => _owned.AsList();
+        public IReadOnlyList<ObjectInstance> OwnedObjects => _args.IsEmpty ? _owned.AsList() : new List<ObjectInstance>(_owned.AsList().Concat(_args.AsList())).AsReadOnly();
         /// <summary>Besitzt diese Scope gerade Objekte? Verlassen ist sonst ein reines Umhängen des Parent-Zeigers
         /// (siehe VM.Step, ExitScope).</summary>
-        public bool HasOwned => !_owned.IsEmpty;
+        public bool HasOwned => !_owned.IsEmpty || !_args.IsEmpty || _leaves is { Count: > 0 };
 
         /// <summary>Gesetzt für den globalen Scope des Hauptprogramms, sobald ein `fire`-Thread läuft (siehe GlobalsBroker): jedes Objekt,
         /// das ihm gehört - auch eines, das erst später entsteht - gehört dann zum geteilten Bereich (siehe
@@ -196,25 +200,49 @@ namespace fire.Runtime
             _owned.Add(obj);
             if (SharingLock != null) obj.MarkGlobalsDomain(SharingLock);
         }
-        public void RemoveOwned(ObjectInstance obj) => _owned.Remove(obj);
+        public void RemoveOwned(ObjectInstance obj) { _owned.Remove(obj); if (!_args.IsEmpty) _args.Remove(obj); }
+
+        /// <summary>Ein Argument des Aufrufs, das dieser Scope besitzt (siehe <c>_args</c>).</summary>
+        public void AddArgument(ObjectInstance obj)
+        {
+            _args.Add(obj);
+            if (SharingLock != null) obj.MarkGlobalsDomain(SharingLock);
+        }
+        public void AddLeaf(IOwnedLeaf leaf) => (_leaves ??= new List<IOwnedLeaf>()).Add(leaf);
+        public void RemoveLeaf(IOwnedLeaf leaf) => _leaves?.Remove(leaf);
 
         /// <summary>Wie <see cref="Release"/>, aber nur für Objekte, die `filter` bejaht - die übrigen bleiben im Besitz dieser Scope
         /// (für das Ende eines Fire-Threads: seine Globals-Schnappschüsse und `taking`-Kopien sind Kopien von Objekten des
         /// Hauptprogramms und dürfen dort keine Destruktoren auslösen, z.B. ein geteiltes Handle schließen).</summary>
         public void ReleaseWhere(IDestructRunner runner, Func<ObjectInstance, bool> filter)
         {
-            if (_owned.IsEmpty) return;
+            if (_owned.IsEmpty) return;   // (Arrays und Puffer bleiben: Fire-Thread-Schnappschuesse sind Kopien des Hauptprogramms)
             var all = _owned.ToArray();
-            foreach (var obj in all)
-                if (filter(obj)) obj.Destroy(runner);
+            DestroyBatch.Enter();
+            try
+            {
+                foreach (var obj in all)
+                {
+                    if (filter(obj)) obj.Destroy(runner);
+                    else obj.DestroyOwnedNonCopies(runner);   // (a copy stays, what the thread made inside of it does not)
+                }
+            }
+            finally { DestroyBatch.Exit(); }
             _owned.RemoveDestroyed();
         }
 
         /// <summary>Wird beim Verlassen des Scopes aufgerufen: zerstört kaskadierend alle noch von diesem Scope besessenen Objekte.</summary>
         public void Release(IDestructRunner runner)
         {
-            if (_owned.IsEmpty) return; // nichts zu tun - der häufigste Fall bei einfachen Blöcken/Schleifenkörpern
-            _owned.DestroyAll(runner);
+            if (_owned.IsEmpty && _args.IsEmpty && _leaves == null) return;
+            DestroyBatch.Enter();   // (what an array owns dies in the same batch as the objects of the scope)
+            try
+            {
+                if (!_owned.IsEmpty) _owned.DestroyAll(runner);
+                if (_leaves != null) LeafOwnership.DestroyAll(_leaves, runner);
+                if (!_args.IsEmpty) _args.DestroyAll(runner);
+            }
+            finally { DestroyBatch.Exit(); } // (sonst: nichts zu tun - der häufigste Fall bei einfachen Blöcken/Schleifenkörpern)
         }
     }
 }

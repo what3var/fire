@@ -15,7 +15,7 @@ namespace fire.Runtime
         {
             if (!PayloadLoader.Install())
             {
-                Console.Error.WriteLine("Diese Datei enthält kein Fire-Programm (Payload fehlt). Fire-Programme werden mit dem Compiler erzeugt.");
+                Console.Error.WriteLine("This file does not contain a fire program (payload missing). Fire programs are produced with the compiler.");
                 return 1;
             }
             return Run();
@@ -38,7 +38,7 @@ namespace fire.Runtime
 
             if (prog == null)
             {
-                Console.Error.WriteLine("Das Programm in dieser Datei ist beschädigt oder unlesbar.");
+                Console.Error.WriteLine("The program in this file is corrupt or unreadable.");
                 return;
             }
 

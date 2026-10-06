@@ -172,6 +172,13 @@ namespace fire.Bytecode
         [MemoryPackIgnore]
         public Value[] ConstantsArray => _constantsArray ??= Constants.ToArray();
 
+        /// <summary>Replaces a constant in place (used when float constants are narrowed to 32 bits, see FloatNarrowing).</summary>
+        public void ReplaceConstant(int index, Value v)
+        {
+            _constantsArray = null;
+            Constants[index] = v;
+        }
+
         public int AddConstant(Value v)
         {
             _constantsArray = null;

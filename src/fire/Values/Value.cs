@@ -47,6 +47,17 @@ namespace fire.Values
         }
 
         // ---------------------------------------------------------------
+        // Program-wide float precision (SPEC 8.2.1): with `#floatwidth 32` every float is a 32-bit IEEE float.
+        // The memory stays a double - each float result is rounded to the nearest float, which is exactly what a
+        // float32 CPU (or a native build with `float`) computes for + - * / (a double has more than 2p+2 bits).
+        // Set by the host before a program runs (RuntimeSession/Session.Build) from LinkedProgram.FloatWidth.
+        // ---------------------------------------------------------------
+        public static bool SingleFloats;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static double Fl(double v) => SingleFloats ? (double)(float)v : v;
+
+        // ---------------------------------------------------------------
         // Factories
         // ---------------------------------------------------------------
         public static Value MakeBool(bool value) =>
@@ -56,7 +67,7 @@ namespace fire.Values
             new(ValueKind.Int, value, unit ?? Values.Unit.Unitless, width);
 
         public static Value MakeFloat(double value, Unit? unit = null, NumericWidth width = NumericWidth.W64) =>
-            new(ValueKind.Float, BitConverter.DoubleToInt64Bits(value), unit ?? Values.Unit.Unitless, width);
+            new(ValueKind.Float, BitConverter.DoubleToInt64Bits(width == NumericWidth.W64 ? Fl(value) : value), unit ?? Values.Unit.Unitless, width);
 
         public static Value MakeChar(char value) =>
             new(ValueKind.Char, value, null);
@@ -155,7 +166,7 @@ namespace fire.Values
         private void RequireKind(ValueKind expected)
         {
             if (Kind != expected)
-                throw new VmInvariantViolationException($"Value ist vom Typ {Kind}, nicht {expected}.");
+                throw new VmInvariantViolationException($"Value is of type {Kind}, not {expected}.");
         }
 
         // ---------------------------------------------------------------
@@ -167,7 +178,7 @@ namespace fire.Values
         public Value CoerceUnit(Unit targetUnit)
         {
             if (Kind != ValueKind.Int && Kind != ValueKind.Float && Kind != ValueKind.Undefined)
-                throw new InvalidOperationException($"Typ {Kind} trägt keine Einheit und kann nicht umgerechnet werden.");
+                throw new InvalidOperationException($"Type {Kind} carries no unit and cannot be converted.");
 
             var currentUnit = Unit ?? Values.Unit.Unitless;
             if (currentUnit.Equals(targetUnit))
@@ -202,7 +213,7 @@ namespace fire.Values
                     return MakeFloat(0, Unit);
                 default:
                     throw new InvalidOperationException(
-                        $"Kann Typ {Kind} nicht nach {targetKind} coercen.");
+                        $"Cannot coerce type {Kind} to {targetKind}.");
             }
         }
 
@@ -230,7 +241,7 @@ namespace fire.Values
             if (!BothNumericSameUnit(a, b)) return false;
             a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
                 ? new Value(ValueKind.Int, a._bits + b._bits, a._ref)
-                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() + b.ToDouble()), a._ref);
+                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() + b.ToDouble())), a._ref);
             return true;
         }
 
@@ -240,7 +251,7 @@ namespace fire.Values
             if (!BothNumericSameUnit(a, b)) return false;
             a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
                 ? new Value(ValueKind.Int, a._bits - b._bits, a._ref)
-                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() - b.ToDouble()), a._ref);
+                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() - b.ToDouble())), a._ref);
             return true;
         }
 
@@ -251,7 +262,7 @@ namespace fire.Values
             if (!BothNumericSameUnit(a, b) || !ReferenceEquals(a._ref, Values.Unit.Unitless)) return false;
             a = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int
                 ? new Value(ValueKind.Int, a._bits * b._bits, a._ref)
-                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() * b.ToDouble()), a._ref);
+                : new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() * b.ToDouble())), a._ref);
             return true;
         }
 
@@ -297,7 +308,7 @@ namespace fire.Values
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
                     return new Value(ValueKind.Int, a._bits + b._bits, a._ref);
-                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() + b.ToDouble()), a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() + b.ToDouble())), a._ref);
             }
 
             if (a.Kind == ValueKind.Pointer && b.Kind == ValueKind.Int)
@@ -313,7 +324,7 @@ namespace fire.Values
                 return MakeString(a.ToString() + b.ToString());
 
             RequireNumeric(a); RequireNumeric(b);
-            RequireSameUnit(a, b);
+            AlignUnits(ref a, ref b);
 
             if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
                 return MakeFloat(a.ToDouble() + b.ToDouble(), a.Unit);
@@ -326,17 +337,17 @@ namespace fire.Values
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
                     return new Value(ValueKind.Int, a._bits - b._bits, a._ref);
-                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() - b.ToDouble()), a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() - b.ToDouble())), a._ref);
             }
 
             if (a.Kind == ValueKind.Pointer && b.Kind == ValueKind.Int)
                 return a.OffsetPointer(-b._intValue);
             if (a.Kind == ValueKind.Pointer && b.Kind == ValueKind.Pointer)
-                throw new InvalidOperationException(
-                    "Pointer-Differenz ('ptr1 - ptr2') wird aktuell nicht unterstützt.");
+                return MakeInt(a.AsPointer().DistanceTo(b.AsPointer())
+                    ?? throw new InvalidOperationException("Pointer difference ('ptr1 - ptr2') needs two pointers into the same array or the same variable."));
 
             RequireNumeric(a); RequireNumeric(b);
-            RequireSameUnit(a, b);
+            AlignUnits(ref a, ref b);
 
             if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
                 return MakeFloat(a.ToDouble() - b.ToDouble(), a.Unit);
@@ -349,10 +360,7 @@ namespace fire.Values
         /// gültig).</summary>
         private Value OffsetPointer(long elementOffset)
         {
-            var target = AsPointer();
-            var moved = target.Advance(elementOffset)
-                ?? throw new InvalidOperationException("Pointer-Arithmetik außerhalb eines gültigen Bereichs.");
-            return MakePointer(moved);
+            return MakePointer(AsPointer().Advance(elementOffset));
         }
 
         public static Value Modulo(Value a, Value b)
@@ -361,11 +369,11 @@ namespace fire.Values
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
                     return new Value(ValueKind.Int, a._bits % b._bits, a._ref);
-                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() % b.ToDouble()), a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() % b.ToDouble())), a._ref);
             }
 
             RequireNumeric(a); RequireNumeric(b);
-            RequireSameUnit(a, b);
+            AlignUnits(ref a, ref b);
 
             if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
                 return MakeFloat(a.ToDouble() % b.ToDouble(), a.Unit);
@@ -379,7 +387,7 @@ namespace fire.Values
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
                     return new Value(ValueKind.Int, a._bits / b._bits, a._ref);
-                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() / b.ToDouble()), a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() / b.ToDouble())), a._ref);
             }
 
             RequireNumeric(a); RequireNumeric(b);
@@ -397,7 +405,7 @@ namespace fire.Values
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
                     return new Value(ValueKind.Int, a._bits * b._bits, a._ref);
-                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(a.ToDouble() * b.ToDouble()), a._ref);
+                return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() * b.ToDouble())), a._ref);
             }
 
             RequireNumeric(a); RequireNumeric(b);
@@ -408,7 +416,7 @@ namespace fire.Values
             return MakeInt(a._intValue * b._intValue, resultUnit);
         }
 
-        private double ToDouble() => Kind == ValueKind.Float ? _floatValue : _intValue;
+        private double ToDouble() => Kind == ValueKind.Float ? _floatValue : (SingleFloats ? (double)(float)_intValue : _intValue);
 
         public static Value Negate(Value v)
         {
@@ -419,21 +427,21 @@ namespace fire.Values
         public static Value LogicalNot(Value v)
         {
             if (v.Kind != ValueKind.Bool)
-                throw new InvalidOperationException($"'!' (Negation) erwartet bool, nicht {v.Kind}.");
+                throw new InvalidOperationException($"'!' (negation) expects bool, not {v.Kind}.");
             return MakeBool(!v._boolValue);
         }
 
         public static Value BitNot(Value v)
         {
             if (v.Kind != ValueKind.Int)
-                throw new InvalidOperationException($"'~' erwartet int, nicht {v.Kind}.");
+                throw new InvalidOperationException($"'~' expects int, not {v.Kind}.");
             return MakeInt(~v._intValue, v.Unit);
         }
 
         private static void RequireInt(Value v, string opSymbol)
         {
             if (v.Kind != ValueKind.Int)
-                throw new InvalidOperationException($"'{opSymbol}' erwartet int, nicht {v.Kind}.");
+                throw new InvalidOperationException($"'{opSymbol}' expects int, not {v.Kind}.");
         }
 
         public static Value BitAnd(Value a, Value b)
@@ -532,7 +540,7 @@ namespace fire.Values
                 return MakeFloat(truncated, Unit, width);
             }
 
-            throw new InvalidOperationException($"TruncateTo ist nur für int/float gültig, nicht {Kind}.");
+            throw new InvalidOperationException($"TruncateTo is only valid for int/float, not {Kind}.");
         }
 
         // 8-Bit-Minifloat: 1 Vorzeichen- + 4 Exponenten- (Bias 7) + 3 Mantissenbits
@@ -576,14 +584,53 @@ namespace fire.Values
                 return a.ToDouble().CompareTo(b.ToDouble());
 
             RequireNumeric(a); RequireNumeric(b);
-            RequireSameUnit(a, b);
+            AlignUnits(ref a, ref b);
             return a.ToDouble().CompareTo(b.ToDouble());
         }
 
         private static void RequireNumeric(Value v)
         {
             if (v.Kind != ValueKind.Int && v.Kind != ValueKind.Float)
-                throw new InvalidOperationException($"Typ {v.Kind} ist nicht numerisch.");
+                throw new InvalidOperationException($"Type {v.Kind} is not numeric.");
+        }
+
+        /// <summary>Operands of the same dimension but a different scale (`500mm + 2m`) are converted
+        /// implicitly - no `:` needed. The type never changes: floats stay floats (result in the unit of the left
+        /// operand); two ints stay ints. For ints the finer unit (`mm`) is the target as long as the converted value
+        /// does not overflow; otherwise the coarser unit (`m`) is the target and the fraction is cut off.
+        /// Units of different dimensions (`mm + kg`, `mm + unitless`) are still an error.</summary>
+        private static void AlignUnits(ref Value a, ref Value b)
+        {
+            if (ReferenceEquals(a._ref, b._ref) && a.Kind is ValueKind.Int or ValueKind.Float) return;
+            var ua = a.Unit ?? Values.Unit.Unitless;
+            var ub = b.Unit ?? Values.Unit.Unitless;
+            if (ua.Equals(ub)) return;
+            if (!ua.IsCompatibleWith(ub)) throw new UnitMismatchException(ua, ub);
+
+            if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
+            {
+                // fine = the unit with the smaller scale (more of them per length), coarse = the other one
+                bool aIsFine = ua.Scale <= ub.Scale;
+                ref Value fine = ref (aIsFine ? ref a : ref b);
+                ref Value coarse = ref (aIsFine ? ref b : ref a);
+                var uFine = aIsFine ? ua : ub;
+                var uCoarse = aIsFine ? ub : ua;
+
+                double up = coarse._intValue * uCoarse.ConversionFactorTo(uFine);
+                if (up >= -9.2e18 && up <= 9.2e18)
+                {
+                    coarse = MakeInt((long)up, uFine);                       // 2m -> 2000mm
+                }
+                else
+                {
+                    double down = fine._intValue * uFine.ConversionFactorTo(uCoarse);
+                    fine = MakeInt((long)down, uCoarse);                     // 500mm -> 0m (fraction cut off)
+                }
+                return;
+            }
+
+            double factor = ub.ConversionFactorTo(ua);
+            b = b.Kind == ValueKind.Int ? MakeFloat(b._intValue * factor, ua) : MakeFloat(b._floatValue * factor, ua);
         }
 
         private static void RequireSameUnit(Value a, Value b)
@@ -628,14 +675,17 @@ namespace fire.Values
             _ => HashCode.Combine(Kind, _ref),
         };
 
+        // single floats print their own shortest representation (0.1f is "0.1", not "0.10000000149011612")
+        private string FloatText() => SingleFloats ? ((float)_floatValue).ToString() : _floatValue.ToString();
+
         public override string ToString() => Kind switch
         {
             ValueKind.Bool => _boolValue.ToString(),
             ValueKind.Int => Unit is { IsUnitless: false } u ? $"{_intValue}{u}" : _intValue.ToString(),
-            ValueKind.Float => Unit is { IsUnitless: false } u2 ? $"{_floatValue}{u2}" : _floatValue.ToString(),
+            ValueKind.Float => Unit is { IsUnitless: false } u2 ? $"{FloatText()}{u2}" : FloatText(),
             ValueKind.Char => _charValue.ToString(),
             ValueKind.String => Unsafe.As<string>(_ref) ?? "",
-            ValueKind.Class => $"<object {_ref}>",
+            ValueKind.Class => $"<object {(_ref as fire.Runtime.ObjectInstance)?.ClassName}>",
             ValueKind.Lambda => "<lambda>",
             ValueKind.Pointer => "<pointer>",
             ValueKind.Array => "<array>",
@@ -690,8 +740,8 @@ namespace fire.Values
 
                 default:
                     throw new InvalidOperationException(
-                        $"Unbekannter Format-Spezifizierer '{spec}' (bekannt: X/x, B, D, F, E, jeweils mit " +
-                        "optionaler Nachkommastellen-/Breitenangabe wie 'F2'/'X4'/'D5').");
+                        $"Unknown format specifier '{spec}' (known: X/x, B, D, F, E, each with " +
+                        "an optional decimals/width suffix like 'F2'/'X4'/'D5').");
             }
         }
 
@@ -699,7 +749,7 @@ namespace fire.Values
         {
             if (Array.IndexOf(allowed, Kind) < 0)
                 throw new InvalidOperationException(
-                    $"Format-Spezifizierer '{spec}' erwartet {string.Join("/", allowed)}, nicht {Kind}.");
+                    $"Format specifier '{spec}' expects {string.Join("/", allowed)}, not {Kind}.");
         }
     }
 }

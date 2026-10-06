@@ -1,18 +1,24 @@
 using System;
 using System.Collections.Generic;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Input;
-using ICSharpCode.AvalonEdit;
-using ICSharpCode.AvalonEdit.Document;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Input.Platform;
+using AvaloniaEdit;
+using AvaloniaEdit.Document;
 
 namespace fire.Editor
 {
-    /// <summary>Bearbeiten-Funktionen, die ScriptEditorControl und
-    /// MarkdownEditorControl gleichermaßen brauchen (Bearbeiten-Menü des
-    /// Hauptfensters und Kontextmenüs), einmal für AvalonEdits TextEditor.</summary>
+    /// <summary>Bearbeiten-Funktionen, die ScriptEditorControl und MarkdownEditorControl gleichermaßen brauchen (Bearbeiten-Menü des Hauptfensters und Kontextmenüs), einmal für den
+    /// AvaloniaEdit-TextEditor.</summary>
     internal static class EditorCommands
     {
+        /// <summary>Is there text on the clipboard (enables Paste)?</summary>
+        public static async System.Threading.Tasks.Task<bool> ClipboardHasText(TopLevel top)
+        {
+            try { return top.Clipboard != null && !string.IsNullOrEmpty(await top.Clipboard.TryGetTextAsync()); }
+            catch (Exception) { return false; }
+        }
+
         /// <summary>Springt in Zeile `line` (1-basiert, wird auf den gültigen Bereich begrenzt), Cursor an den Zeilenanfang.</summary>
         public static void GoToLine(this TextEditor editor, int line)
         {
@@ -42,10 +48,9 @@ namespace fire.Editor
             return lines;
         }
 
-        /// <summary>Beim Rechtsklick den Cursor unter die Maus setzen - außer, der Klick liegt in einer bestehenden
-        /// Auswahl (dann soll sie für Kopieren/Ausschneiden erhalten bleiben). Liefert den Textoffset unter der Maus
-        /// (oder den Cursor, wenn dort kein Text liegt).</summary>
-        public static int PlaceCaretForContextMenu(this TextEditor editor, MouseButtonEventArgs e)
+        /// <summary>Beim Rechtsklick den Cursor unter die Maus setzen - außer, der Klick liegt in einer bestehenden Auswahl (dann soll sie für Kopieren/Ausschneiden erhalten bleiben).
+        /// Liefert den Textoffset unter der Maus (oder den Cursor, wenn dort kein Text liegt).</summary>
+        public static int PlaceCaretForContextMenu(this TextEditor editor, PointerPressedEventArgs e)
         {
             var pos = editor.GetPositionFromPoint(e.GetPosition(editor));
             if (pos == null) return editor.CaretOffset;
@@ -66,28 +71,30 @@ namespace fire.Editor
             internal MenuItem? Item;
         }
 
-        /// <summary>Baut ein Kontextmenü aus Gruppen von Einträgen (null = Trennlinie); Standard-Bearbeiten-Einträge hängt
-        /// <see cref="StandardEntries"/> an.</summary>
+        /// <summary>Baut ein Kontextmenü aus Gruppen von Einträgen (null = Trennlinie); Standard-Bearbeiten-Einträge hängt <see cref="StandardEntries"/> an.</summary>
         public static ContextMenu BuildMenu(IEnumerable<Entry?> entries)
         {
             var menu = new ContextMenu();
+            var items = new List<object>();
             var all = new List<Entry>();
             foreach (var entry in entries)
             {
                 if (entry == null)
                 {
-                    if (menu.Items.Count > 0 && menu.Items[^1] is not Separator) menu.Items.Add(new Separator());
+                    if (items.Count > 0 && items[^1] is not Separator) items.Add(new Separator());
                     continue;
                 }
-                var item = new MenuItem { Header = entry.Header, InputGestureText = entry.Gesture };
+                var item = new MenuItem { Header = entry.Header };
+                MenuGestures.Apply(item, entry.Gesture);
                 var execute = entry.Execute;
                 item.Click += (_, _) => execute();
                 entry.Item = item;
-                menu.Items.Add(item);
+                items.Add(item);
                 all.Add(entry);
             }
-            if (menu.Items.Count > 0 && menu.Items[^1] is Separator) menu.Items.RemoveAt(menu.Items.Count - 1);
-            menu.Opened += (_, _) =>
+            if (items.Count > 0 && items[^1] is Separator) items.RemoveAt(items.Count - 1);
+            foreach (var item in items) menu.Items.Add(item);
+            menu.Opening += (_, _) =>
             {
                 foreach (var entry in all)
                     if (entry.Enabled != null) entry.Item!.IsEnabled = entry.Enabled();
@@ -95,27 +102,31 @@ namespace fire.Editor
             return menu;
         }
 
-        /// <summary>Liegt Text in der Zwischenablage? (Sie kann kurz von einem anderen Programm gesperrt sein - dann: nein.)</summary>
-        public static bool ClipboardHasText()
-        {
-            try { return Clipboard.ContainsText(); }
-            catch (System.Runtime.InteropServices.COMException) { return false; }
-        }
-
         /// <summary>Rückgängig/Wiederholen, Ausschneiden/Kopieren/Einfügen/Löschen, Alles auswählen, Suchen.</summary>
         public static IEnumerable<Entry?> StandardEntries(TextEditor editor, Action find)
         {
-            yield return new Entry { Header = "_Rückgängig", Gesture = "Strg+Z", Execute = () => editor.Undo(), Enabled = () => editor.Document.UndoStack.CanUndo };
-            yield return new Entry { Header = "_Wiederholen", Gesture = "Strg+Y", Execute = () => editor.Redo(), Enabled = () => editor.Document.UndoStack.CanRedo };
+            yield return new Entry { Header = "_Undo", Gesture = "Ctrl+Z", Execute = () => editor.Undo(), Enabled = () => !editor.IsReadOnly && editor.Document.UndoStack.CanUndo };
+            yield return new Entry { Header = "_Redo", Gesture = "Ctrl+Y", Execute = () => editor.Redo(), Enabled = () => !editor.IsReadOnly && editor.Document.UndoStack.CanRedo };
             yield return null;
-            yield return new Entry { Header = "A_usschneiden", Gesture = "Strg+X", Execute = () => editor.Cut(), Enabled = () => editor.SelectionLength > 0 };
-            yield return new Entry { Header = "_Kopieren", Gesture = "Strg+C", Execute = () => editor.Copy(), Enabled = () => editor.SelectionLength > 0 };
-            yield return new Entry { Header = "_Einfügen", Gesture = "Strg+V", Execute = () => editor.Paste(), Enabled = ClipboardHasText };
-            yield return new Entry { Header = "_Löschen", Gesture = "Entf", Execute = () => editor.Delete(), Enabled = () => editor.SelectionLength > 0 };
+            yield return new Entry { Header = "Cu_t", Gesture = "Ctrl+X", Execute = () => editor.Cut(), Enabled = () => !editor.IsReadOnly && editor.SelectionLength > 0 };
+            yield return new Entry { Header = "_Copy", Gesture = "Ctrl+C", Execute = () => editor.Copy(), Enabled = () => editor.SelectionLength > 0 };
+            yield return new Entry { Header = "_Paste", Gesture = "Ctrl+V", Execute = () => editor.Paste(), Enabled = () => !editor.IsReadOnly };
+            yield return new Entry { Header = "_Delete", Gesture = "Del", Execute = () => editor.Delete(), Enabled = () => !editor.IsReadOnly && editor.SelectionLength > 0 };
             yield return null;
-            yield return new Entry { Header = "_Alles auswählen", Gesture = "Strg+A", Execute = () => editor.SelectAll() };
+            yield return new Entry { Header = "Select _All", Gesture = "Ctrl+A", Execute = () => editor.SelectAll() };
             yield return null;
-            yield return new Entry { Header = "_Suchen...", Gesture = "Strg+F", Execute = find };
+            yield return new Entry { Header = "_Find...", Gesture = "Ctrl+F", Execute = find };
+        }
+    }
+
+    /// <summary>The keyboard shortcut shown next to a menu item. Avalonia shows a <see cref="KeyGesture"/>; a text that is not one (`F12 / Ctrl+Click`) goes behind the header instead.</summary>
+    internal static class MenuGestures
+    {
+        public static void Apply(MenuItem item, string? gesture)
+        {
+            if (string.IsNullOrEmpty(gesture)) return;
+            try { item.InputGesture = KeyGesture.Parse(gesture); }
+            catch (Exception) { item.Header = $"{item.Header}    ({gesture})"; }
         }
     }
 }

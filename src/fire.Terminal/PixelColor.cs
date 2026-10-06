@@ -54,15 +54,16 @@ namespace fire.Terminal
         /// Klassen-Doku) - macht `SetColor(index, farbe)`/Grafikfunktionen
         /// möglich, die wahlweise eine PixelColor ODER direkt einen rohen
         /// int-Farbwert entgegennehmen, ohne zwei separate Aufrufstellen im
-        /// aufrufenden Code zu brauchen (siehe TerminalCanvas/Palette).</summary>
+        /// aufrufenden Code zu brauchen (siehe Renderer/Palette).</summary>
         public static implicit operator int(PixelColor color) => unchecked((int)color.Packed);
 
-        /// <summary>Vollständig durchsichtig - siehe TerminalCanvas.
+        /// <summary>Vollständig durchsichtig, als (0, 1, 0, 0) und nicht (0, 0, 0, 0): als Zahl (256) wird sie nicht für den Palette-Index 0 gehalten
+        /// (siehe <see cref="Paint.ToArgument"/>). Siehe Renderer.
         /// Background-Doku ("optional transparent") und Framebuffer.SetPixel
         /// (schreibt den Alpha-Wert unverändert ins Zielpixel, MISCHT NICHT
         /// - ein Framebuffer dieser Bibliothek führt selbst kein Alpha-
         /// Blending durch, siehe dortige Doku).</summary>
-        public static readonly PixelColor Transparent = new(0, 0, 0, 0);
+        public static readonly PixelColor Transparent = new(0, 1, 0, 0);
 
         public static PixelColor FromRgb(byte r, byte g, byte b) => new(r, g, b, 255);
 

@@ -13,7 +13,9 @@ namespace fire.Runtime
         private DeadOwner() { }
 
         public IReadOnlyList<ObjectInstance> OwnedObjects => Array.Empty<ObjectInstance>();
-        public void AddOwned(ObjectInstance obj) => throw new OwnershipException("Ein zerstörtes Objekt kann nichts mehr besitzen.");
+        public void AddOwned(ObjectInstance obj) => throw new OwnershipException("A destroyed object cannot own anything any more.");
         public void RemoveOwned(ObjectInstance obj) { }
+        public void AddLeaf(IOwnedLeaf leaf) => throw new OwnershipException("A destroyed object cannot own anything any more.");
+        public void RemoveLeaf(IOwnedLeaf leaf) { }
     }
 }

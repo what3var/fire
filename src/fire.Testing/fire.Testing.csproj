@@ -2,19 +2,20 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Die (WPF-freie) Vervollständigungs-Logik des Editors, zum Testen direkt eingebunden -
-         das Editor-Projekt selbst ist nur unter Windows baubar. -->
+    <!-- The logic of the editor that has no user interface (completion, navigation, Markdown), linked in directly for the tests. -->
     <Compile Include="..\fire.Editor\ScriptSymbolIndex.cs" Link="Editor\ScriptSymbolIndex.cs" />
     <Compile Include="..\fire.Editor\ScriptSymbolIndex.Types.cs" Link="Editor\ScriptSymbolIndex.Types.cs" />
     <Compile Include="..\fire.Editor\CompletionEngine.cs" Link="Editor\CompletionEngine.cs" />
     <Compile Include="..\fire.Editor\NavigationEngine.cs" Link="Editor\NavigationEngine.cs" />
     <Compile Include="..\fire.Editor\BuiltinMembers.cs" Link="Editor\BuiltinMembers.cs" />
+    <Compile Include="..\fire.Editor\MarkdownParser.cs" Link="Editor\MarkdownParser.cs" />
+    <Compile Include="..\fire.Editor\DocComments.cs" Link="Editor\DocComments.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,0 +1,33 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ae="using:AvaloniaEdit"
+             xmlns:local="using:fire.Editor"
+             x:Class="fire.Editor.MarkupEditorControl">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" BorderBrush="#3C3544" BorderThickness="0,0,0,1" Padding="4,2">
+            <StackPanel Orientation="Horizontal" Spacing="2">
+                <Button Classes="tool" Click="Template_Click" ToolTip.Tip="Insert an element at the caret"><TextBlock Text="Insert"/></Button>
+                <Button Classes="tool" Click="Script_Click" ToolTip.Tip="Show the script that is generated from this markup"><TextBlock Text="Generated script"/></Button>
+                <Border Width="1" Background="#3C3544" Margin="4,2"/>
+                <ToggleButton x:Name="PreviewToggle" Classes="tool" IsChecked="True" Click="PreviewToggle_Click" ToolTip.Tip="Show or hide the design view (Ctrl+Shift+V)"><TextBlock Text="Design view"/></ToggleButton>
+            </StackPanel>
+        </Border>
+
+        <Grid x:Name="ContentGrid" ColumnDefinitions="*,Auto,*">
+            <ae:TextEditor x:Name="Editor" Grid.Column="0"
+                           FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="14"
+                           ShowLineNumbers="True" WordWrap="False"
+                           HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                           Padding="6,4"/>
+
+            <GridSplitter x:Name="Splitter" Grid.Column="1" Width="5" Background="#1B181E"/>
+
+            <Grid x:Name="PreviewPanel" Grid.Column="2" RowDefinitions="*,Auto" Background="#1B181E">
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                    <local:MarkupPreviewControl x:Name="Preview" HorizontalAlignment="Left" VerticalAlignment="Top"/>
+                </ScrollViewer>
+                <ListBox x:Name="Problems" Grid.Row="1" MaxHeight="150" Background="#242028" IsVisible="False" SelectionChanged="Problems_SelectionChanged"/>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</UserControl>

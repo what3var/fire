@@ -79,6 +79,9 @@ namespace fire.Compiler
         /// korrekte Anzahl an Scopes, die sie beim Sprung schließen müssen.</summary>
         private int _currentScopeDepth;
 
+        /// <summary>Kompiliert das Hauptprogramm (nicht den Koerper einer Funktion, Methode oder Lambda).</summary>
+        private bool IsTopLevelCode { get; set; }
+
         /// <summary>Pro aktiver Schleife (verschachtelbar, daher ein Stack):
         /// die Scope-Tiefe GENAU beim Betreten des Schleifenkörpers (für die
         /// Anzahl nötiger ExitScope-Opcodes bei einem break/continue, siehe
@@ -136,6 +139,8 @@ namespace fire.Compiler
             public TryPhase Phase;
             public int OuterDepth;
             public int LoopCount;
+            /// <summary>Anzahl der Stack-Bewohner (siehe _residents) beim Betreten des `try`: sie liegen unter dem Stand, auf den der Handler den Stack zurücksetzt.</summary>
+            public int ResidentsAtStart;
 
             /// <summary>Stellen (Operanden von `Jump`), die in den `finally`-Block springen und noch auf seine Adresse warten.</summary>
             public readonly List<int> FinallyJumpPatches = new();
@@ -257,8 +262,9 @@ namespace fire.Compiler
         private HashSet<string>? _knownClassNames;
 
         private Compiler(ResolveResult resolveResult, NativeRegistry natives)
-            : this(resolveResult.References, natives, null, resolveResult.NoShadowGlobals ? 0 : resolveResult.GlobalSlotCount, null, new List<CompilerException>())
+            : this(resolveResult.References, natives, null, resolveResult.NoShadowGlobals ? 0 : resolveResult.GlobalSlotCount, null, new List<CompilerException>(), RefParamTable.Build(resolveResult.Classes.Values))
         {
+            IsTopLevelCode = true;
         }
 
         /// <summary>Alle bisher gefundenen Fehler (siehe CompilerException) -
@@ -266,6 +272,47 @@ namespace fire.Compiler
         /// Lambda-/Konstruktor-Bodys), wird von Compile() am Ende
         /// ausgewertet.</summary>
         private readonly List<CompilerException> _errors;
+
+        /// <summary>Welche Parameter welcher Methoden/Konstruktoren `ref` sind (SPEC 5.4.2) - der Aufrufer muss wissen, wo er eine Adresse statt eines Werts uebergibt.</summary>
+        private readonly RefParamTable _refParams;
+
+        /// <summary>Die `ref`-Parameter aller Methoden und Konstruktoren des Programms. Ein Aufruf (`obj.M(a, b)`) wird erst zur Laufzeit an eine Klasse
+        /// gebunden - der Aufrufer uebergibt deshalb die Adresse, wenn IRGENDEINE Methode dieses Namens (und dieser Argumentanzahl) dort `ref` hat; die VM
+        /// gibt einem gewoehnlichen Parameter beim Binden den Wert.</summary>
+        private sealed class RefParamTable
+        {
+            private readonly Dictionary<(string Name, int Argc), bool[]> _methods = new();
+            private readonly Dictionary<(string Class, int Argc), bool[]> _constructors = new();
+
+            public static RefParamTable Build(IEnumerable<ClassDecl> classes)
+            {
+                var table = new RefParamTable();
+                // ALLE Methoden nehmen teil (auch die ohne `ref`), damit ein Widerspruch zwischen Klassen auffaellt
+                foreach (var cls in classes)
+                    foreach (var member in cls.Members)
+                    {
+                        if (member is MethodDecl md) table.Register(table._methods, md.Name, md.Params, md.Line, $"method '{md.Name}'");
+                        else if (member is ConstructorDecl cd) table.Register(table._constructors, cls.Name, cd.Params, cd.Line, $"the constructor of '{cls.Name}'");
+                    }
+                return table;
+            }
+
+            private void Register(Dictionary<(string, int), bool[]> map, string key, IReadOnlyList<LambdaParam> parms, int line, string what)
+            {
+                int required = parms.TakeWhile(p => p.DefaultValue == null).Count();
+                for (int argc = required; argc <= parms.Count; argc++)
+                {
+                    var mask = parms.Take(argc).Select(p => p.ByRef).ToArray();
+                    if (map.TryGetValue((key, argc), out var existing))
+                        for (int i = 0; i < argc; i++) existing[i] |= mask[i];
+                    else map[(key, argc)] = mask;
+                }
+            }
+
+            /// <summary>Die `ref`-Maske einer Methode (null: kein Parameter ist `ref`).</summary>
+            public bool[]? ForMethod(string name, int argc) => _methods.TryGetValue((name, argc), out var m) && m.Any(x => x) ? m : null;
+            public bool[]? ForConstructor(string cls, int argc) => _constructors.TryGetValue((cls, argc), out var m) && m.Any(x => x) ? m : null;
+        }
 
         /// <summary>Nutzt das Programm die Reflection-Bibliothek (`#import "reflection"`)? Dann schreibt der Compiler die deklarierten Typen als
         /// <see cref="ClassMeta"/> mit und markiert die Klassen der Bibliothek.</summary>
@@ -275,8 +322,9 @@ namespace fire.Compiler
         /// in einen eigenen Chunk (FunctionProto): teilt sich die Resolver-
         /// Referenzen und die Native-Registry mit dem äußeren Compiler, baut aber
         /// einen eigenen, frischen Chunk.</summary>
-        private Compiler(IReadOnlyDictionary<Expr, ResolvedRef> refs, NativeRegistry natives, RuntimeClass? enclosingClass, int globalSlotCount, HashSet<string>? knownClassNames, List<CompilerException> errors)
+        private Compiler(IReadOnlyDictionary<Expr, ResolvedRef> refs, NativeRegistry natives, RuntimeClass? enclosingClass, int globalSlotCount, HashSet<string>? knownClassNames, List<CompilerException> errors, RefParamTable refParams)
         {
+            _refParams = refParams;
             _errors = errors;
             _refs = refs;
             _natives = natives;
@@ -648,7 +696,7 @@ namespace fire.Compiler
             for (int i = 0; i < parms.Count; i++)
             {
                 if (parms[i].DefaultValue == null) continue;
-                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
+                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
                 inner.CompileExpr(parms[i].DefaultValue!);
                 inner._chunk.EmitOp(OpCode.Return);
                 defaults[i] = new FunctionProto(inner._chunk, 0, AccessModifier.Private);
@@ -671,7 +719,7 @@ namespace fire.Compiler
 
         private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer, bool isStatic = false)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
             inner._chunk.OwnerClass = rc;
             if (initializer != null)
             {
@@ -704,8 +752,28 @@ namespace fire.Compiler
         /// Prüfung liest den Wert also einfach per LoadLocal zurück, prüft
         /// ihn (CheckLambdaSignature) und verwirft die Kopie wieder (Pop) -
         /// der eigentliche Slot-Wert bleibt unangetastet.</summary>
+        private static uint RefMaskOf(IReadOnlyList<LambdaParam> parms)
+        {
+            uint mask = 0;
+            for (int i = 0; i < parms.Count; i++)
+                if (parms[i].ByRef)
+                {
+                    if (i >= 16) throw new NotSupportedException("Only the first 16 parameters of a method can be 'ref'.");
+                    mask |= 1u << i;
+                }
+            return mask;
+        }
+
         private void EmitLambdaParamChecks(Compiler inner, IReadOnlyList<LambdaParam> parms)
         {
+            for (int i = 0; i < parms.Count; i++)
+                if (parms[i].ByRef)
+                {
+                    inner._chunk.EmitOp(OpCode.RequireRefParam);
+                    inner._chunk.EmitU16(i);
+                    inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(parms[i].Name)));
+                }
+
             for (int i = 0; i < parms.Count; i++)
             {
                 var sig = parms[i].Type?.LambdaSignature;
@@ -731,6 +799,7 @@ namespace fire.Compiler
                 inner._chunk.EmitOp(OpCode.LoadLocal);
                 inner._chunk.EmitU16(0);
                 inner._chunk.EmitU16((ushort)i);
+                if (parms[i].ByRef) inner._chunk.EmitOp(OpCode.PtrRead);
                 inner._chunk.EmitOp(OpCode.CheckLambdaSignature);
                 inner._chunk.EmitByte((byte)sig.ParamTypeNames.Count);
                 inner._chunk.EmitOp(OpCode.Pop);
@@ -749,6 +818,7 @@ namespace fire.Compiler
                 inner._chunk.EmitOp(OpCode.LoadLocal);
                 inner._chunk.EmitU16(0);
                 inner._chunk.EmitU16((ushort)i);
+                if (parms[i].ByRef) inner._chunk.EmitOp(OpCode.PtrRead);
                 EmitCheckUnitIfNeeded(inner, unit);
                 inner._chunk.EmitOp(OpCode.Pop);
             }
@@ -795,7 +865,7 @@ namespace fire.Compiler
         /// kollidieren.</summary>
         private void CompileFireStmt(FireStmt fs)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams);
             int slot = _globalSlotCount;
             foreach (var capture in fs.TakingCaptures)
                 inner._chunk.MarkLocalName(0, slot++, capture.VarName);
@@ -845,7 +915,7 @@ namespace fire.Compiler
         /// HandleDeliveredThreadException), nicht hier an dieser Stelle.</summary>
         private void CompileCatchThreadsDecl(CatchThreadsDecl decl)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams);
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -867,7 +937,7 @@ namespace fire.Compiler
         /// keine "Art" von terminate) und mit dem anderen Register-Opcode.</summary>
         private void CompileCatchTerminateDecl(CatchTerminateDecl decl)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams);
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -883,7 +953,7 @@ namespace fire.Compiler
 
         private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access, bool isStatic = false)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
             inner._chunk.OwnerClass = rc;
             // SPEC "Statische Mitglieder": eine statische Methode hat kein
             // gebundenes 'this' - der innere Compiler merkt sich das, um
@@ -897,7 +967,7 @@ namespace fire.Compiler
             foreach (var stmt in body.Statements) inner.CompileStmt(stmt);
             inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
-            return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic);
+            return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic) { RefMask = RefMaskOf(parms) };
         }
 
         /// <summary>Konstruktor-Proto: [Basis-Konstruktor-Aufruf (explizit mit
@@ -909,7 +979,7 @@ namespace fire.Compiler
         /// einheitlich über denselben Mechanismus.</summary>
         private FunctionProto CompileConstructorProto(RuntimeClass rc, ConstructorDecl? ctor, AccessModifier access)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
             inner._chunk.OwnerClass = rc;
 
             if (ctor != null)
@@ -922,7 +992,7 @@ namespace fire.Compiler
             if (rc.Base != null)
             {
                 var baseArgs = ctor?.BaseArgs;
-                uint baseCopyMask = baseArgs != null ? inner.CompileArgs(baseArgs, scopeCreating: true) : 0;
+                ulong baseCopyMask = baseArgs != null ? inner.CompileArgs(baseArgs, scopeCreating: true, _refParams.ForConstructor(rc.Base.Name, baseArgs.Count)) : 0;
                 inner.EmitCopyArgsPrefix(baseCopyMask);
 
                 inner._chunk.EmitOp(OpCode.ConstructBase);
@@ -964,7 +1034,7 @@ namespace fire.Compiler
             inner._chunk.EmitOp(OpCode.Return);
 
             var paramDefaults = ctor != null ? CompileParamDefaults(rc, ctor.Params) : Array.Empty<FunctionProto?>();
-            return new FunctionProto(inner._chunk, ctor?.Params.Count ?? 0, access, paramDefaults);
+            return new FunctionProto(inner._chunk, ctor?.Params.Count ?? 0, access, paramDefaults) { RefMask = ctor != null ? RefMaskOf(ctor.Params) : 0 };
         }
 
         // -----------------------------------------------------------
@@ -1099,13 +1169,24 @@ namespace fire.Compiler
                         }
                     // Bewohner des Stacks (die Enumeratoren der umgebenden `foreach`, die Abschlüsse der umgebenden `finally`-Blöcke) liegen unter dem
                     // Rückgabewert: sonst blieben sie dort liegen und verschöben die Operanden des Aufrufers (`1 + f()` mit einem `return` im `foreach` von `f`).
-                    for (int r = _residents.Count - 1; r >= 0; r--)
+                    // Liegt ein `try` mit `finally` offen, fängt `DoReturn` das `return` dort ab und setzt den Stack auf den Stand zurück, den dessen Handler beim Betreten
+                    // hatte: die Bewohner darunter (z.B. der Abschluss eines umgebenden `finally`) gehören dem `finally`-Block, der gleich läuft, und bleiben liegen -
+                    // erst das `return` ohne offenes `try` nimmt alle weg.
+                    int keepResidents = 0;
+                    for (int k = _tryStack.Count - 1; k >= 0; k--)
+                        if (_tryStack[k].Stmt.Finally != null) { keepResidents = _tryStack[k].ResidentsAtStart; break; }
+                    for (int r = _residents.Count - 1; r >= keepResidents; r--)
                         for (int n = 0; n < _residents[r]; n++)
                         {
                             _chunk.EmitOp(OpCode.Swap);
                             _chunk.EmitOp(OpCode.Pop);
                         }
                     _chunk.EmitOp(OpCode.Return);
+                    break;
+
+                case DeleteStmt del:
+                    CompileExpr(del.Target);
+                    _chunk.EmitOp(OpCode.Delete);
                     break;
 
                 case ThrowStmt th:
@@ -1208,8 +1289,8 @@ namespace fire.Compiler
                     // Sollte NIE hier ankommen - siehe derselbe Fall im
                     // Resolver (ResolveStmt) für die Erklärung.
                     throw new NotSupportedException(
-                        $"Interner Fehler: 'class extends {cx.TargetRef.BaseName}' wurde nicht zusammengeführt " +
-                        "(Programm muss über Parser.Parse()/ParseMultiple() erzeugt werden).");
+                        $"Internal error: 'class extends {cx.TargetRef.BaseName}' was not merged " +
+                        "(the program must be produced by Parser.Parse()/ParseMultiple()).");
 
                 case ExternDecl:
                     // Reine Signatur-Deklaration, erzeugt selbst keinen Code (nur
@@ -1226,7 +1307,7 @@ namespace fire.Compiler
                     break;
 
                 default:
-                    throw new NotSupportedException($"Statement {stmt.GetType().Name} wird nicht unterstützt.");
+                    throw new NotSupportedException($"Statement {stmt.GetType().Name} is not supported.");
             }
         }
 
@@ -1341,7 +1422,7 @@ namespace fire.Compiler
             if (!_refs.TryGetValue(target, out var reference)) return false;
             switch (reference)
             {
-                case ResolvedRef.Local { RequiredUnit: null } local:
+                case ResolvedRef.Local { RequiredUnit: null, ByRef: false } local:
                     _chunk.EmitOp(OpCode.ArithLocalConstPop);
                     _chunk.EmitU16(local.Depth);
                     _chunk.EmitU16(local.Slot);
@@ -1566,51 +1647,14 @@ namespace fire.Compiler
         /// nicht den Array-WERT, auf den sie gerade noch gezeigt haben.</summary>
         private void CompileArrayAlloc(IReadOnlyList<Expr?> ranks, int rankIndex)
         {
-            CompileExpr(ranks[rankIndex]!);
-            _chunk.EmitOp(OpCode.NewArray);
-
-            bool hasNextRank = rankIndex + 1 < ranks.Count && ranks[rankIndex + 1] != null;
-            if (!hasNextRank) return;
-
-            _chunk.EmitOp(OpCode.EnterScope);
-            _chunk.EmitOp(OpCode.DeclareLocal); // Slot 0: äußeres Array (konsumiert den Stack-Top)
-            EmitLoadConst(Value.MakeInt(0));
-            _chunk.EmitOp(OpCode.DeclareLocal); // Slot 1: Schleifenindex i
-
-            int loopStart = _chunk.Here;
-            _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(1); // i
-            _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(0); // arr
-            _chunk.EmitOp(OpCode.GetField);
-            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString("length")));
-            _chunk.EmitOp(OpCode.Lt);
-            _chunk.EmitOp(OpCode.JumpIfFalse);
-            int endJumpAt = _chunk.Here;
-            _chunk.EmitU16(0);
-
-            // arr[i] = <rekursiv alloziertes inneres Array>
-            _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(0); // arr
-            _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(1); // i
-            CompileArrayAlloc(ranks, rankIndex + 1);
-            _chunk.EmitOp(OpCode.ArraySet);
-            _chunk.EmitOp(OpCode.Pop); // ArraySet lässt den zugewiesenen Wert auf dem Stack (wie jede Zuweisung) - hier als Statement verwerfen
-
-            // i = i + 1
-            _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(1);
-            EmitLoadConst(Value.MakeInt(1));
-            _chunk.EmitOp(OpCode.Add);
-            _chunk.EmitOp(OpCode.StoreLocal); _chunk.EmitU16(0); _chunk.EmitU16(1);
-            _chunk.EmitOp(OpCode.Pop); // StoreLocal lässt den zugewiesenen Wert auf dem Stack - verwerfen
-
-            _chunk.EmitOp(OpCode.Jump);
-            _chunk.EmitU16(loopStart);
-
-            _chunk.PatchU16(endJumpAt, _chunk.Here);
-
-            // Fertiges äußeres Array vor dem ExitScope zurück auf den Stack
-            // (siehe Doc-Kommentar oben - unbedenklich, da Arrays nicht am
-            // Ownership-System hängen).
-            _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(0);
-            _chunk.EmitOp(OpCode.ExitScope);
+            // Alle Raenge mit Groesse (bis zum ersten ohne): jede Groesse wird EINMAL ausgewertet, NewJagged legt das ganze Gebilde an.
+            // Die inneren Arrays gehoeren dem aeusseren (SPEC 2.5) - sie leben und sterben mit ihm.
+            int sized = 0;
+            while (rankIndex + sized < ranks.Count && ranks[rankIndex + sized] != null) sized++;
+            for (int i = 0; i < sized; i++) CompileExpr(ranks[rankIndex + i]!);
+            if (sized == 1) { _chunk.EmitOp(OpCode.NewArray); return; }
+            _chunk.EmitOp(OpCode.NewJagged);
+            _chunk.EmitByte((byte)sized);
         }
 
         private void CompileTry(TryStmt t)
@@ -1622,7 +1666,7 @@ namespace fire.Compiler
             _chunk.EmitOp(OpCode.RegisterHandler);
             _chunk.EmitU16(templateIdx);
 
-            var tryContext = new TryCompileContext { Stmt = t, Phase = TryPhase.Try, OuterDepth = _currentScopeDepth, LoopCount = _loopStack.Count };
+            var tryContext = new TryCompileContext { Stmt = t, Phase = TryPhase.Try, OuterDepth = _currentScopeDepth, LoopCount = _loopStack.Count, ResidentsAtStart = _residents.Count };
             _tryStack.Add(tryContext);
             CompileBlockNewScope(t.TryBlock);
             _tryStack.RemoveAt(_tryStack.Count - 1);
@@ -1761,7 +1805,7 @@ namespace fire.Compiler
 
                 case BaseExpr:
                     throw new NotSupportedException(
-                        "'base' ist nur als 'base.Methode(...)' gültig, nicht als eigenständiger Wert.");
+                        "'base' is only valid as 'base.Method(...)', not as a standalone value.");
 
                 case IsInExpr iin:
                     CompileExpr(iin.Operand);
@@ -1784,7 +1828,7 @@ namespace fire.Compiler
 
                 case NewExpr ne:
                 {
-                    uint newCopyMask = CompileArgs(ne.Args, scopeCreating: true);
+                    ulong newCopyMask = CompileArgs(ne.Args, scopeCreating: true, _refParams.ForConstructor(ResolveNewClassName(ne), ne.Args.Count));
                     EmitCopyArgsPrefix(newCopyMask);
                     _chunk.EmitOp(OpCode.NewObject);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
@@ -1803,8 +1847,23 @@ namespace fire.Compiler
 
                 case ArrayLiteralExpr al:
                     foreach (var el in al.Elements) CompileExpr(el);
-                    _chunk.EmitOp(OpCode.MakeArrayLiteral);
-                    _chunk.EmitU16(al.Elements.Count);
+                    // ein im Literal selbst erzeugtes Array/Puffer (`[[1, 2], [3]]`) gehoert dem aeusseren (SPEC 2.5)
+                    uint partMask = 0;
+                    if (al.Elements.Count <= 32)
+                        for (int i = 0; i < al.Elements.Count; i++)
+                            if (al.Elements[i] is ArrayLiteralExpr or NewArrayExpr or NewBufferExpr) partMask |= 1u << i;
+                    if (partMask == 0)
+                    {
+                        _chunk.EmitOp(OpCode.MakeArrayLiteral);
+                        _chunk.EmitU16(al.Elements.Count);
+                    }
+                    else
+                    {
+                        _chunk.EmitOp(OpCode.MakeArrayLiteralParts);
+                        _chunk.EmitU16(al.Elements.Count);
+                        _chunk.EmitU16((int)(partMask & 0xFFFF));
+                        _chunk.EmitU16((int)(partMask >> 16));
+                    }
                     break;
 
                 case InterpolatedStringExpr ise:
@@ -1918,6 +1977,13 @@ namespace fire.Compiler
                     // ResolvedRef, nur der TryCallExpr-Knoten selbst hat
                     // ResolvedRef.TryableNative) - nur die Argumente.
                     var innerCall = (CallExpr)tryCallExpr.Call;
+                    if (_refs.TryGetValue(tryCallExpr, out var takeRef) && takeRef is ResolvedRef.TryTake tryTake)
+                    {
+                        // `try obj.Take...(...)`: dieselbe Aufrufform wie die Ownership-Methode, unter dem Namen `try<Name>` (die VM liefert den bool)
+                        var takeMember = (MemberExpr)innerCall.Callee;
+                        CompileCall(new CallExpr(innerCall.Line, new MemberExpr(takeMember.Line, takeMember.Target, "try" + tryTake.Name), innerCall.Args));
+                        break;
+                    }
                     foreach (var arg in innerCall.Args) CompileExpr(arg);
                     if (_refs.TryGetValue(tryCallExpr, out var tcRef) && tcRef is ResolvedRef.TryableNative tn)
                     {
@@ -1928,7 +1994,7 @@ namespace fire.Compiler
                     else
                     {
                         throw new NotSupportedException(
-                            "TryCallExpr ohne aufgelöste TryableNative-Referenz - sollte der Resolver bereits abgefangen haben.");
+                            "TryCallExpr without a resolved TryableNative reference - the resolver should have caught this.");
                     }
                     break;
                 }
@@ -1938,7 +2004,7 @@ namespace fire.Compiler
                     break;
 
                 default:
-                    throw new NotSupportedException($"Ausdruckstyp {expr.GetType().Name} wird nicht unterstützt.");
+                    throw new NotSupportedException($"Expression type {expr.GetType().Name} is not supported.");
             }
         }
 
@@ -1967,7 +2033,7 @@ namespace fire.Compiler
 
         private void CompileLambda(LambdaExpr lambda)
         {
-            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames, _errors);
+            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames, _errors, _refParams);
             inner._chunk.OwnerClass = _enclosingClass;
             for (int i = 0; i < lambda.Params.Count; i++)
                 inner._chunk.MarkLocalName(0, i, lambda.Params[i].Name);
@@ -1990,7 +2056,7 @@ namespace fire.Compiler
             var captures = _refs.TryGetValue(lambda, out var captureRef) && captureRef is ResolvedRef.LambdaCaptures lc ? lc.Variables : null;
             if (captures != null)
             {
-                if (captures.Count > 255) throw new NotSupportedException("Eine Lambda kann höchstens 255 äußere Variablen erfassen.");
+                if (captures.Count > 255) throw new NotSupportedException("A lambda can capture at most 255 outer variables.");
                 foreach (var captured in captures) CompileExpr(captured);
             }
 
@@ -2023,50 +2089,123 @@ namespace fire.Compiler
         /// (Präfix <see cref="OpCode.CopyArgs"/>, siehe <see cref="EmitCopyArgsPrefix"/>): die Kopie gehört dann der Scope der
         /// aufgerufenen Funktion (SPEC 2.4). Bei nativen Funktionen gibt es diese Scope nicht - dort bleibt es eine gewöhnliche
         /// Kopie (Owner: aktueller Scope). Liefert die Kopier-Maske (2 Bit je Argument, 0 = keine).</summary>
-        private uint CompileArgs(IReadOnlyList<Expr> args, bool scopeCreating)
+        private ulong CompileArgs(IReadOnlyList<Expr> args, bool scopeCreating, bool[]? refs = null)
         {
-            uint mask = 0;
+            ulong mask = 0;
             for (int i = 0; i < args.Count; i++)
             {
-                if (scopeCreating && args[i] is UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy } copyArg)
+                if (refs != null && i < refs.Length && refs[i] && IsAddressable(args[i]))
+                {
+                    if (i >= 16) throw new NotSupportedException("A 'ref' argument is only possible for the first 16 arguments of a call.");
+                    CompileRefArgument(args[i], i);
+                    mask |= 3UL << (4 * i);
+                }
+                else if (args[i] is UnaryExpr { Op: UnaryOp.Take } takeArg)
+                {
+                    // `f(take x)` (SPEC 2.2): x belongs to the call of f from now on; natives and built-ins have no call scope - there it goes to the current scope
+                    CompileExpr(takeArg.Operand);
+                    if (scopeCreating && i < 16) { _chunk.EmitOp(OpCode.TakeCheck); mask |= 5UL << (4 * i); }
+                    else EmitTakeToScope(0);
+                }
+                else if (scopeCreating && args[i] is UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy } copyArg)
                 {
                     if (i >= 16)
-                        throw new NotSupportedException("`flat`/`copy` als Argument ist nur für die ersten 16 Argumente eines Aufrufs möglich.");
-                    mask |= (copyArg.Op == UnaryOp.DeepCopy ? 2u : 1u) << (2 * i);
+                        throw new NotSupportedException("`flat`/`copy` as an argument is only possible for the first 16 arguments of a call.");
+                    mask |= (copyArg.Op == UnaryOp.DeepCopy ? 2UL : 1UL) << (4 * i);
                     CompileExpr(copyArg.Operand);
                 }
                 else
                 {
                     CompileExpr(args[i]);
+                    // `f(g())`: the returned value goes into the parameter, so it belongs to the called function (SPEC 2.1), not to the caller
+                    if (scopeCreating && i < 16 && args[i] is CallExpr) mask |= 4UL << (4 * i);
                 }
             }
             return mask;
         }
 
+        /// <summary>Ein Argument fuer einen `ref`-Parameter: statt des Werts die Adresse einer Variable, eines Felds oder eines Array-Elements (SPEC 5.4.2).</summary>
+        /// <summary>Hat der Ausdruck eine Adresse (Variable, Feld, Array-Element)? Nur dann wird sie fuer einen `ref`-Parameter uebergeben; sonst der Wert -
+        /// bindet der Aufruf dann an einen `ref`-Parameter, meldet die VM, dass dort eine Variable stehen muss.</summary>
+        private bool IsAddressable(Expr arg) => arg switch
+        {
+            IdentifierExpr id => _refs.TryGetValue(id, out var r) && r is ResolvedRef.Local or ResolvedRef.Global or ResolvedRef.ImplicitThisMember,
+            MemberExpr me => !(_refs.TryGetValue(me, out var m) && m is ResolvedRef.StaticMember or ResolvedRef.EnumMember),
+            IndexExpr => true,
+            _ => false,
+        };
+
+        private void CompileRefArgument(Expr arg, int index)
+        {
+            string Fail(string what) => $"Argument {index + 1} is passed to a 'ref' parameter, so it has to be a variable, a field or an array element{what}.";
+            switch (arg)
+            {
+                case IdentifierExpr id:
+                    switch (_refs[id])
+                    {
+                        case ResolvedRef.Local local: EmitAddressOfLocal(local); return;
+                        case ResolvedRef.Global global:
+                            _chunk.EmitOp(OpCode.AddressOfGlobal);
+                            _chunk.EmitU16(global.Slot);
+                            return;
+                        case ResolvedRef.ImplicitThisMember:
+                            _chunk.EmitOp(OpCode.LoadThis);
+                            _chunk.EmitOp(OpCode.AddressOfField);
+                            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
+                            return;
+                        default: throw new NotSupportedException(Fail($" ('{id.Name}' is none of these)"));
+                    }
+                case MemberExpr me when !(_refs.TryGetValue(me, out var memberRef) && memberRef is ResolvedRef.StaticMember or ResolvedRef.EnumMember):
+                    CompileExpr(me.Target);
+                    _chunk.EmitOp(OpCode.AddressOfField);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
+                    return;
+                case IndexExpr ix:
+                    CompileExpr(ix.Target);
+                    CompileExpr(ix.Index);
+                    _chunk.EmitOp(OpCode.AddressOfIndex);
+                    return;
+                default:
+                    throw new NotSupportedException(Fail(" - an expression has no address"));
+            }
+        }
+
+        private void EmitTakeToScope(int depth)
+        {
+            _chunk.EmitOp(OpCode.TakeToScope);
+            _chunk.EmitU16(depth);
+        }
+
         /// <summary>Emittiert das Präfix `CopyArgs` (nur wenn eine Maske da ist) - direkt VOR den Aufruf-Opcode.</summary>
-        private void EmitCopyArgsPrefix(uint mask)
+        private void EmitCopyArgsPrefix(ulong mask)
         {
             if (mask == 0) return;
             _chunk.EmitOp(OpCode.CopyArgs);
-            _chunk.EmitU16((int)(mask & 0xFFFF));
-            _chunk.EmitU16((int)(mask >> 16));
+            for (int part = 0; part < 4; part++) _chunk.EmitU16((int)((mask >> (16 * part)) & 0xFFFF));
         }
 
         /// <summary>Kompiliert `new X(...)` bzw. `flat x`/`copy x` für den Fall, dass der künftige OWNER (ein Objekt) schon
         /// auf dem Stack liegt (SPEC 2.1/2.4: direkt einem Feld zugewiesen). Liefert false, wenn `value` keins von beiden ist
         /// (dann ist nichts emittiert).</summary>
         private static bool IsOwnedCreation(Expr value) =>
-            value is NewExpr or UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy };
+            value is NewExpr or NewArrayExpr or ArrayLiteralExpr or NewBufferExpr or CallExpr or UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy };
 
         private bool TryCompileOwnedCreation(Expr value)
         {
             if (value is NewExpr ne)
             {
-                uint mask = CompileArgs(ne.Args, scopeCreating: true);
+                ulong mask = CompileArgs(ne.Args, scopeCreating: true, _refParams.ForConstructor(ResolveNewClassName(ne), ne.Args.Count));
                 EmitCopyArgsPrefix(mask);
                 _chunk.EmitOp(OpCode.NewObjectOwned);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
                 _chunk.EmitByte((byte)ne.Args.Count);
+                return true;
+            }
+            if (value is NewArrayExpr or ArrayLiteralExpr or NewBufferExpr or CallExpr)
+            {
+                // [owner] -> [owner, array] -> [array]: ein direkt einem Feld zugewiesenes Array/ein Puffer gehoert dem Objekt (SPEC 2.1)
+                CompileExpr(value);
+                _chunk.EmitOp(OpCode.OwnValue);
                 return true;
             }
             if (value is UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy } copyExpr)
@@ -2113,7 +2252,7 @@ namespace fire.Compiler
                 {
                     // SPEC "Statische Mitglieder" - bloßer Name statt
                     // 'ClassName.Method(...)'.
-                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(calleeId.Name, call.Args.Count)));
                     _chunk.EmitOp(OpCode.CallStaticMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(callSm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(calleeId.Name)));
@@ -2129,7 +2268,7 @@ namespace fire.Compiler
                     // VM.CallMethod: Args zuerst gepoppt, dann erst 'target')
                     // - 'this' also VOR den Argumenten pushen.
                     _chunk.EmitOp(OpCode.LoadThis);
-                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(calleeId.Name, call.Args.Count)));
                     _chunk.EmitOp(OpCode.CallMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(calleeId.Name)));
                     _chunk.EmitByte((byte)call.Args.Count);
@@ -2147,7 +2286,7 @@ namespace fire.Compiler
                     // eingefrorenen Wurfstelle zurück (siehe VM.ResumeException).
                     if (call.Args.Count > 1)
                         throw new NotSupportedException(
-                            "'resume' erwartet höchstens ein Argument (den Fortsetzungswert).");
+                            "'resume' expects at most one argument (the resume value).");
 
                     CompileExpr(me.Target);
                     if (call.Args.Count == 1)
@@ -2169,7 +2308,7 @@ namespace fire.Compiler
                 // ResolvedRef.StaticMember, vom Resolver aufgelöst).
                 if (_refs.TryGetValue(me, out var calleeMemberRef) && calleeMemberRef is ResolvedRef.StaticMember sm)
                 {
-                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count)));
                     _chunk.EmitOp(OpCode.CallStaticMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
@@ -2187,9 +2326,9 @@ namespace fire.Compiler
                     // wenn 'this' zur Laufzeit eine Instanz von C : B ist).
                     if (_enclosingClass?.Base == null)
                         throw new NotSupportedException(
-                            "'base.Method(...)' außerhalb einer Klasse mit Basisklasse - sollte der Resolver bereits abgefangen haben.");
+                            "'base.Method(...)' outside of a class with a base class - the resolver should have caught this.");
 
-                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count)));
 
                     _chunk.EmitOp(OpCode.CallBaseMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(_enclosingClass.Base.Name)));
@@ -2199,7 +2338,7 @@ namespace fire.Compiler
                 }
 
                 CompileExpr(me.Target);
-                EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+                EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count)));
                 _chunk.EmitOp(OpCode.CallMethod);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
                 _chunk.EmitByte((byte)call.Args.Count);
@@ -2233,14 +2372,46 @@ namespace fire.Compiler
                 EmitCoerceUnitStatic(fire.Values.Unit.Unitless);
         }
 
+        /// <summary>Liest eine lokale Variable; bei einem `ref`-Parameter haelt der Slot einen Zeiger auf die Variable des Aufrufers - dann wird dereferenziert.</summary>
+        private void EmitLoadVariable(ResolvedRef.Local local)
+        {
+            _chunk.EmitOp(OpCode.LoadLocal);
+            _chunk.EmitU16(local.Depth);
+            _chunk.EmitU16(local.Slot);
+            if (local.ByRef) _chunk.EmitOp(OpCode.PtrRead);
+        }
+
+        /// <summary>Schreibt den obersten Wert in eine lokale Variable und laesst ihn auf dem Stack (wie StoreLocal); bei einem `ref`-Parameter durch den Zeiger.</summary>
+        private void EmitStoreVariable(ResolvedRef.Local local)
+        {
+            if (!local.ByRef)
+            {
+                _chunk.EmitOp(OpCode.StoreLocal);
+                _chunk.EmitU16(local.Depth);
+                _chunk.EmitU16(local.Slot);
+                return;
+            }
+            _chunk.EmitOp(OpCode.LoadLocal);   // [wert, zeiger]
+            _chunk.EmitU16(local.Depth);
+            _chunk.EmitU16(local.Slot);
+            _chunk.EmitOp(OpCode.Swap);        // [zeiger, wert]
+            _chunk.EmitOp(OpCode.PtrWrite);    // schreibt und liefert den Wert
+        }
+
+        /// <summary>Die Adresse einer lokalen Variable; ein `ref`-Parameter ist selbst schon ein Zeiger.</summary>
+        private void EmitAddressOfLocal(ResolvedRef.Local local)
+        {
+            _chunk.EmitOp(local.ByRef ? OpCode.LoadLocal : OpCode.AddressOfLocal);
+            _chunk.EmitU16(local.Depth);
+            _chunk.EmitU16(local.Slot);
+        }
+
         private void CompileIdentifierLoad(IdentifierExpr id)
         {
             switch (_refs[id])
             {
                 case ResolvedRef.Local local:
-                    _chunk.EmitOp(OpCode.LoadLocal);
-                    _chunk.EmitU16(local.Depth);
-                    _chunk.EmitU16(local.Slot);
+                    EmitLoadVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     _chunk.EmitOp(OpCode.LoadGlobal);
@@ -2248,12 +2419,12 @@ namespace fire.Compiler
                     break;
                 case ResolvedRef.Native native:
                     throw new NotSupportedException(
-                        $"'{native.Name}' ist eine native Funktion und kann nur direkt aufgerufen werden " +
-                        $"({native.Name}(...)), nicht als Wert verwendet werden.");
+                        $"'{native.Name}' is a native function and can only be called directly " +
+                        $"({native.Name}(...)), not used as a value.");
                 case ResolvedRef.Extern ext:
                     throw new NotSupportedException(
-                        $"'{ext.Name}' ist eine extern deklarierte Funktion und kann nur direkt aufgerufen werden, " +
-                        $"nicht als Wert verwendet werden.");
+                        $"'{ext.Name}' is a function declared extern and can only be called directly, " +
+                        $"not used as a value.");
                 case ResolvedRef.StaticMember sm:
                     // SPEC "Statische Mitglieder" - bloßer Name statt
                     // 'ClassName.Name' (siehe Resolver.ResolveIdentifierRef).
@@ -2305,6 +2476,11 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.Dup);
                     TryCompileOwnedCreation(a.Value);
                 }
+                else if (a.Value is UnaryExpr { Op: UnaryOp.Take } takeValue)
+                {
+                    CompileExpr(takeValue.Operand);          // [obj, wert]
+                    _chunk.EmitOp(OpCode.TakeToObject);      // the object owns the value from now on (SPEC 2.2)
+                }
                 else
                 {
                     CompileExpr(a.Value);
@@ -2327,18 +2503,29 @@ namespace fire.Compiler
             {
                 CompileExpr(ix.Target);
                 CompileExpr(ix.Index);
-                CompileExpr(a.Value);
+                if (a.Value is UnaryExpr { Op: UnaryOp.Take } takeElement)
+                {
+                    CompileExpr(takeElement.Operand);
+                    _chunk.EmitOp(OpCode.TakeToArray);       // the array owns the value from now on (SPEC 2.2)
+                }
+                else CompileExpr(a.Value);
                 _chunk.EmitOp(OpCode.ArraySet);
                 return;
             }
 
             if (a.Target is not IdentifierExpr id)
                 throw new NotSupportedException(
-                    "Ungültiges Zuweisungsziel für den Bytecode-Compiler.");
+                    "Invalid assignment target for the bytecode compiler.");
 
             // Bloßer Feldname in einer Klasse (`feld = new X()` / `feld = copy x`): wie `this.feld = ...` gehört das neue
             // Objekt dem Objekt, nicht der Scope (SPEC 2.1/2.4) - sonst würde es beim Verlassen der Methode zerstört,
             // während das Feld noch darauf zeigt.
+            if (a.Value is UnaryExpr { Op: UnaryOp.Take } takeVar)
+            {
+                CompileTakeAssign(id, takeVar);
+                return;
+            }
+
             if (_refs[id] is ResolvedRef.ImplicitThisMember && IsOwnedCreation(a.Value))
             {
                 _chunk.EmitOp(OpCode.LoadThis);
@@ -2361,21 +2548,22 @@ namespace fire.Compiler
                     // Anfangsprüfung einfach durch eine spätere, "falsche"
                     // Zuweisung umgehen.
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
-                    _chunk.EmitOp(OpCode.StoreLocal);
-                    _chunk.EmitU16(local.Depth);
-                    _chunk.EmitU16(local.Slot);
+                    // an assignment from an inner block to a variable of an outer one: the value must not die with the block (SPEC 2.1)
+                    if (local.Depth > 0 && !local.ByRef) _chunk.EmitOp(OpCode.HoistValue);
+                    EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
+                    if (_currentScopeDepth > 0 && IsTopLevelCode) _chunk.EmitOp(OpCode.HoistValue);   // top-level block assigning to a global
                     _chunk.EmitOp(OpCode.StoreGlobal);
                     _chunk.EmitU16(global.Slot);
                     break;
                 case ResolvedRef.Native native:
                     throw new NotSupportedException(
-                        $"Zuweisung an '{native.Name}' ist nicht möglich - das ist eine native Funktion.");
+                        $"Cannot assign to '{native.Name}' - it is a native function.");
                 case ResolvedRef.Extern ext:
                     throw new NotSupportedException(
-                        $"Zuweisung an '{ext.Name}' ist nicht möglich - das ist eine extern deklarierte Funktion.");
+                        $"Cannot assign to '{ext.Name}' - it is a function declared extern.");
                 case ResolvedRef.StaticMember sm:
                     // SPEC "Statische Mitglieder" - bloßer Name statt
                     // 'ClassName.Name = ...' (siehe Resolver.
@@ -2397,6 +2585,35 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.SetField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
+            }
+        }
+
+        /// <summary>`name = take x` (SPEC 2.2): x belongs to whoever holds `name` - the scope of the variable, or the object for a field.</summary>
+        private void CompileTakeAssign(IdentifierExpr id, UnaryExpr take)
+        {
+            CompileExpr(take.Operand);
+            switch (_refs[id])
+            {
+                case ResolvedRef.Local local:
+                    EmitCheckUnitIfNeeded(this, local.RequiredUnit);
+                    EmitTakeToScope(local.ByRef ? 0 : local.Depth);
+                    EmitStoreVariable(local);
+                    break;
+                case ResolvedRef.Global global:
+                    EmitCheckUnitIfNeeded(this, global.RequiredUnit);
+                    EmitTakeToScope(0xFFFF);
+                    _chunk.EmitOp(OpCode.StoreGlobal);
+                    _chunk.EmitU16(global.Slot);
+                    break;
+                case ResolvedRef.ImplicitThisMember:
+                    _chunk.EmitOp(OpCode.LoadThis);         // [wert, this]
+                    _chunk.EmitOp(OpCode.Swap);             // [this, wert]
+                    _chunk.EmitOp(OpCode.TakeToObject);
+                    _chunk.EmitOp(OpCode.SetField);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
+                    break;
+                default:
+                    throw new NotSupportedException($"'take' needs a holder: '{id.Name}' is not a variable or a field.");
             }
         }
 
@@ -2485,7 +2702,7 @@ namespace fire.Compiler
             }
 
             if (e.Target is not IdentifierExpr id)
-                throw new NotSupportedException("Ungültiges Ziel für '++'/'--' im Bytecode-Compiler.");
+                throw new NotSupportedException("Invalid target for '++'/'--' in the bytecode compiler.");
 
             var refKind = _refs[id];
 
@@ -2538,16 +2755,14 @@ namespace fire.Compiler
                 switch (refKind)
                 {
                     case ResolvedRef.Local local:
-                        _chunk.EmitOp(OpCode.LoadLocal);
-                        _chunk.EmitU16(local.Depth);
-                        _chunk.EmitU16(local.Slot);
+                        EmitLoadVariable(local);
                         break;
                     case ResolvedRef.Global global:
                         _chunk.EmitOp(OpCode.LoadGlobal);
                         _chunk.EmitU16(global.Slot);
                         break;
                     default:
-                        throw new NotSupportedException($"'++'/'--' auf '{id.Name}' ist nicht möglich.");
+                        throw new NotSupportedException($"'++'/'--' on '{id.Name}' is not possible.");
                 }
             }
             void EmitStore()
@@ -2560,9 +2775,7 @@ namespace fire.Compiler
                         // `++`/`--` ist ja auch nur eine (kompakter geschriebene)
                         // Zuweisung.
                         EmitCheckUnitIfNeeded(this, local.RequiredUnit);
-                        _chunk.EmitOp(OpCode.StoreLocal);
-                        _chunk.EmitU16(local.Depth);
-                        _chunk.EmitU16(local.Slot);
+                        EmitStoreVariable(local);
                         break;
                     case ResolvedRef.Global global:
                         EmitCheckUnitIfNeeded(this, global.RequiredUnit);
@@ -2588,6 +2801,13 @@ namespace fire.Compiler
                 return;
             }
 
+            if (u.Op == UnaryOp.Take)
+            {
+                // `var a = take x` (SPEC 2.2): x belongs to the current scope (other places - arguments, assignments - are handled where they occur)
+                CompileExpr(u.Operand);
+                EmitTakeToScope(0);
+                return;
+            }
             if (u.Op is UnaryOp.FlatCopy or UnaryOp.DeepCopy)
             {
                 CompileExpr(u.Operand);
@@ -2619,9 +2839,7 @@ namespace fire.Compiler
                     switch (_refs[id])
                     {
                         case ResolvedRef.Local local:
-                            _chunk.EmitOp(OpCode.AddressOfLocal);
-                            _chunk.EmitU16(local.Depth);
-                            _chunk.EmitU16(local.Slot);
+                            EmitAddressOfLocal(local);
                             return;
                         case ResolvedRef.Global global:
                             _chunk.EmitOp(OpCode.AddressOfGlobal);
@@ -2629,7 +2847,7 @@ namespace fire.Compiler
                             return;
                         default:
                             throw new NotSupportedException(
-                                "'&' ist nur auf lokale/globale Variablen oder Objektfelder anwendbar.");
+                                "'&' can only be applied to local/global variables or object fields.");
                     }
 
                 case MemberExpr me:
@@ -2640,7 +2858,7 @@ namespace fire.Compiler
 
                 default:
                     throw new NotSupportedException(
-                        "'&' ist nur auf Variablen oder Objektfelder anwendbar (kein gültiges Adressierungsziel).");
+                        "'&' can only be applied to variables or object fields (not a valid address target).");
             }
         }
 
@@ -2806,7 +3024,7 @@ namespace fire.Compiler
             TokenType.KwFloat => TypeTag.Float,
             TokenType.KwChar => TypeTag.Char,
             TokenType.KwString => TypeTag.String,
-            _ => throw new NotSupportedException($"Coercion-Ziel {t} wird nicht unterstützt."),
+            _ => throw new NotSupportedException($"Coercion target {t} is not supported."),
         };
 
         // -----------------------------------------------------------

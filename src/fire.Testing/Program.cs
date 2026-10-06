@@ -8,6 +8,24 @@ using fire.Resolving;
 using fire.Runtime;
 using fire.Values;
 
+// The standard bridges that run as packages (time, ...): built and installed into a store of their own for this run (the C++ libraries of their natives are built on first use).
+var standardRoot = Path.Combine(Path.GetTempPath(), "fire-test-standard-" + Guid.NewGuid().ToString("N"));
+StandardBridgePackages.Build(Path.Combine(standardRoot, "PackageSource"));
+fire.Package.Manager.PackageStore.Default = new fire.Package.Manager.PackageStore(Path.Combine(standardRoot, "Packages"));
+foreach (var problem in fire.Package.Manager.StandardPackages.EnsureInstalled(m => Console.WriteLine(m), Path.Combine(standardRoot, "PackageSource")).Count == 0 ? new[] { "the standard packages were not installed" } : System.Array.Empty<string>())
+    Console.WriteLine(problem);
+
+// `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
+string IoPreludeSource() => fire.Package.Manager.PackageStore.Default.FindImport("io")!.ReadPrelude()!;
+IDisposable UseIoPackage(NativeRegistry natives, fire.IO.Bridge.IoPolicy? policy, fire.IO.Bridge.IoStdio? stdio)
+{
+    var ioImport = fire.Package.Manager.PackageStore.Default.FindImport("io")!;
+    var (ioNames, ioLibraries) = fire.Compiler.PackageImports.NativesOf(new[] { ioImport.Key });
+    string ioLibrary = fire.Compiler.PackageLibrary.Ensure(ioImport);
+    fire.Runtime.PackageNativeBinding.Register(natives, ioNames, ioLibraries, _ => ioLibrary);
+    return fire.Runtime.PackageHost.Begin(policy, stdio);
+}
+
 // Kleiner manueller Smoke-Test für Lexer + Parser + Unit-System, bis der
 // Evaluator existiert. Bei dir lokal: `dotnet run` im src/fire-Ordner.
 
@@ -104,6 +122,17 @@ foreach (var token in tokens)
 {
     if (token.Type == TokenType.Eof) break;
     Console.WriteLine(token);
+}
+
+// Token.Length = Laenge im Quelltext (Editor-Hervorhebung): Anfuehrungszeichen, Escapes, `$"..."` und Char-Literale zaehlen mit.
+{
+    string src = "var a = \"x\\ny\" + $\"v{1}\" + 'c' + 42mm";
+    var lengths = new Lexer(src).Tokenize().Where(t => t.Type is TokenType.StringLiteral or TokenType.InterpolatedStringLiteral or TokenType.CharLiteral or TokenType.IntLiteral)
+        .Select(t => src.Substring(t.Column - 1, t.Length)).ToList();
+    var expectedTexts = new List<string> { "\"x\\ny\"", "$\"v{1}\"", "'c'", "42mm" };
+    bool ok = lengths.SequenceEqual(expectedTexts);
+    Console.WriteLine(ok ? "OK: Token.Length deckt String-/Char-/Zahl-Literale vollstaendig ab"
+        : $"FEHLER: Token.Length\n  erwartet: {string.Join(" | ", expectedTexts)}\n  erhalten: {string.Join(" | ", lengths)}");
 }
 
 Console.WriteLine();
@@ -5214,13 +5243,13 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
     {
         var lines = new List<string>();
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var sources = new[] { fire.Standard.Prelude.Source, fire.IO.Bridge.IoBridge.PreludeSource, script }
+        var sources = new[] { fire.Standard.Prelude.Source, IoPreludeSource(), script }
             .Select(s => Preprocessor.Process(s, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList();
         var program = Parser.ParseMultiple(sources);
         var natives = new NativeRegistry();
         natives.Register("print", args => { lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
         natives.RegisterBaseTypeNatives();
-        fire.IO.Bridge.IoBridge.RegisterAll(natives, policy, stdio);
+        using var ioHost = UseIoPackage(natives, policy, stdio);
         var resolveResult = Resolver.Resolve(program, natives.Names);
         var compiled = Compiler.Compile(program, resolveResult, natives);
         var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes);
@@ -5880,7 +5909,7 @@ Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...
         print("s".Foo())
         int i = 5
         print(i.Foo())
-        """, "AUSNAHME: 'Foo' (0 Argument(e)) ist keine bekannte eingebaute Methode auf einem Wert vom Typ Int.");
+        """, "AUSNAHME: 'Foo' (0 argument(s)) is not a known built-in method on a value of type Int.");
 
     CheckExt("char-Methoden des Prelude", """
         char c = 'a'
@@ -5910,17 +5939,17 @@ Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...
 
     CheckExt("native Funktion: falsches Argument wird gemeldet", $$"""
         print({{fire.Standard.StringMethods.NativeName}}(1, 5, "x"))
-        """, "AUSNAHME: __StringCall(id, text, ...) erwartet die Zeichenkette als zweites Argument.");
+        """, "AUSNAHME: __StringCall(id, text, ...) expects the string as the second argument.");
 
-    CheckExtError("Feld in Basistyp-Erweiterung", "class extends string { int count }", "nur Methoden");
-    CheckExtError("Property in Basistyp-Erweiterung", "class extends string { int Size { get { return 1 } } }", "Property 'Size' nicht erlaubt");
-    CheckExtError("Auto-Property in Basistyp-Erweiterung", "class extends int { int Size { get; set; } }", "nicht erlaubt");
-    CheckExtError("Konstruktor in Basistyp-Erweiterung", "class extends string { construct() { } }", "Konstruktor");
-    CheckExtError("Destruktor in Basistyp-Erweiterung", "class extends string { destruct() { } }", "Destruktor");
-    CheckExtError("statische Methode in Basistyp-Erweiterung", "class extends string { static int F() { return 1 } }", "statische Methode 'F'");
-    CheckExtError("Operator in Basistyp-Erweiterung", "class extends string { operator+(other) { return this } }", "Operatoren");
-    CheckExtError("byte nicht erweiterbar", "class extends byte { int F() { return 1 } }", "'byte' lässt sich nicht erweitern");
-    CheckExtError("unbekannte Klasse bleibt ein Fehler", "class extends Gibtsnicht { F() { } }", "nicht bekannt");
+    CheckExtError("Feld in Basistyp-Erweiterung", "class extends string { int count }", "may only contain methods");
+    CheckExtError("Property in Basistyp-Erweiterung", "class extends string { int Size { get { return 1 } } }", "property 'Size' is not allowed");
+    CheckExtError("Auto-Property in Basistyp-Erweiterung", "class extends int { int Size { get; set; } }", "is not allowed");
+    CheckExtError("Konstruktor in Basistyp-Erweiterung", "class extends string { construct() { } }", "a constructor is not allowed");
+    CheckExtError("Destruktor in Basistyp-Erweiterung", "class extends string { destruct() { } }", "a destructor is not allowed");
+    CheckExtError("statische Methode in Basistyp-Erweiterung", "class extends string { static int F() { return 1 } }", "static method 'F'");
+    CheckExtError("Operator in Basistyp-Erweiterung", "class extends string { operator+(other) { return this } }", "Operators cannot be overloaded");
+    CheckExtError("byte nicht erweiterbar", "class extends byte { int F() { return 1 } }", "'byte' cannot be extended");
+    CheckExtError("unbekannte Klasse bleibt ein Fehler", "class extends Gibtsnicht { F() { } }", "is not known");
     CheckExtError("doppelte Methode (Prelude + eigene)", "class extends string { int IndexOf(value) { return 0 } }", "IndexOf");
 
     Console.WriteLine(extFailures == 0 ? "Alle Basistyp-Erweiterungs-Pruefungen bestanden." : $"FEHLER: {extFailures} Pruefung(en) fehlgeschlagen.");
@@ -6028,12 +6057,12 @@ Console.WriteLine("=== Array als Rueckgabetyp (int[] Name(), leere Klammern) ===
         print(parts.Length)
         """, "3");
 
-    CheckArrError("Feld mit int[] Typ", "class A { int[] values }", "hinter dem Namen");
-    CheckArrError("Parameter mit int[] Typ", "class A { F(int[] p) { } }", "hinter dem Namen");
-    CheckArrError("lokale Variable mit int[] Typ", "int[] v = [1, 2]", "hinter dem Namen");
-    CheckArrError("extern mit Array-Rueckgabe", "extern int[] Foo()", "hinter dem Namen");
+    CheckArrError("Feld mit int[] Typ", "class A { int[] values }", "after the name");
+    CheckArrError("Parameter mit int[] Typ", "class A { F(int[] p) { } }", "after the name");
+    CheckArrError("lokale Variable mit int[] Typ", "int[] v = [1, 2]", "after the name");
+    CheckArrError("extern mit Array-Rueckgabe", "extern int[] Foo()", "after the name");
     CheckArrError("unbekannte Klasse im Array-Rueckgabetyp", "class A { Gibtsnicht[] F() { return [] } }", "Gibtsnicht");
-    CheckArrError("byte[8] bleibt widerspruechlich", "class A { byte[8] F() { return 1 } }", "'byte' hat bereits");
+    CheckArrError("byte[8] bleibt widerspruechlich", "class A { byte[8] F() { return 1 } }", "'byte' already has");
 
     Console.WriteLine(arrFailures == 0 ? "Alle Array-Rueckgabetyp-Pruefungen bestanden." : $"FEHLER: {arrFailures} Pruefung(en) fehlgeschlagen.");
 }
@@ -6097,6 +6126,97 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         }
     }
 
+    CheckPerf("Besitz: Zuweisung schiebt nach oben (bis in die Funktions-Scope), Aufrufergebnis direkt ins Feld, Rueckgabe direkt in einen Parameter", """
+        class Box { int items[]; string name; construct(string n) { this.name = n } destruct() { print("free " + this.name) } }
+        class Util {
+            static int[] Make(int n) { var a = new int[n]; a[0] = n; return a }
+            static Box MakeBox(string n) { return new Box(n) }
+            static int Len(int xs[]) { return xs.length }
+            static int[] Pass(int xs[]) { return xs }
+            static int Probe(int xs[]) { return xs[0] }
+            static int Loop() {
+                var last = [0]
+                for (var i = 1; i <= 3; i = i + 1) {
+                    last = Make(i)
+                    if (i == 2) { var x = Make(9); last = x }
+                }
+                return last[0]
+            }
+            static Box BoxLoop() {
+                var b = new Box("b0")
+                for (var i = 1; i <= 2; i = i + 1) { b = MakeBox("b" + i) }
+                return b
+            }
+        }
+        print(Util.Loop())
+        var kept = Util.BoxLoop()
+        print(kept.name)
+        // loop at top level, variable global
+        var g = [0]
+        for (var i = 1; i <= 3; i = i + 1) { g = Util.Make(i + 10) }
+        print(g[0])
+        if (true) { g = Util.Make(42) }
+        print(g[0])
+        // direct assignment of a call result to a field
+        class Holder {
+            int data[]
+            Box child
+            construct() { this.data = Util.Make(5); this.child = Util.MakeBox("child") }
+        }
+        var h = new Holder()
+        print(h.data[0] + " " + h.child.name)
+        // return value directly into a parameter: it belongs to the called function
+        var survivor = Util.Make(3)
+        print(Util.Len(Util.Make(4)))
+        print(Util.Probe(Util.Pass(Util.Make(6))))
+        try { print(Util.Pass(Util.Make(8))[0]) } catch (e) { print("died with the callee") }
+        delete h
+        print("end")
+        """, new[] { "3", "free b0", "free b1", "b2", "13", "42", "5 child", "4", "6", "8", "free child", "end", "free b2" });
+
+    CheckPerf("return in ineinander liegenden finally-Bloecken: die Bewohner des Stacks bleiben fuer das naechste finally liegen", """
+        class T {
+            static int Nested(int n) {
+                try {
+                    n = n + 0
+                } finally {
+                    try {
+                        try {
+                        } finally {
+                            if (n > 1) { return 1 }
+                        }
+                    } finally {
+                        if (n > 0) { return 4 }
+                    }
+                }
+            }
+            static int WithLoops(int n) {
+                var xs = [1, 2, 3]
+                try {
+                    foreach (x in xs) {
+                        try {
+                            foreach (y in xs) {
+                                try { if (y == n) { return x * 10 + y } } finally { if (n == 3) { return 99 } }
+                            }
+                        } finally {
+                            n = n + 0
+                        }
+                    }
+                } finally {
+                    foreach (z in xs) { if (z == 2 && n == 0) { return 77 } }
+                }
+                return -1
+            }
+        }
+        print(T.Nested(2))
+        print(T.Nested(1))
+        print(T.Nested(0))
+        print(1 + T.WithLoops(1) + 2)
+        print(T.WithLoops(2))
+        print(T.WithLoops(3))
+        print(T.WithLoops(0))
+        """, new[] { "4", "4", "undefined", "14", "12", "99", "77" });
+
     // --- Value: Gleichheit und Arithmetik (kompaktes Layout, Schnellpfade)
     CheckPerf("Gleichheit: Art, Einheit und Breite", """
         print(1 == 1)
@@ -6138,7 +6258,7 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
 
     CheckPerf("Einheiten-Konflikt bleibt ein Fehler", """
         print(1mm + 2)
-        """, new[] { "AUSNAHME: Einheiten inkompatibel: 'mm' kann nicht nach 'unitless' umgerechnet werden." });
+        """, new[] { "AUSNAHME: Incompatible units: 'mm' cannot be converted to 'unitless'." });
 
     // --- Stack und Scope-Slots wachsen
     CheckPerf("tiefe Rekursion (Stack und Frames wachsen)", """
@@ -6208,6 +6328,153 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         var inc = func (a) => { return a + 1 }
         print(add(2, 3) + inc(4))
         """, new[] { "95", "10" });
+
+    CheckPerf("ref-Parameter: Variablen, Felder, Array-Elemente, Puffer, Konstruktor, Weitergabe, Basistypen und Strings als Kopie", """
+        class Box { int n; string s; construct() { this.n = 1; this.s = "a" } }
+        class U {
+            static Swap(ref a, ref b) { var t = a; a = b; b = t }
+            static Inc(ref int x) { x++; x = x + 10 }
+            static Twice(ref int x) { U.Inc(x); U.Inc(x) }
+            static Append(ref string s, string t) { s = s + t }
+            static Plain(int x) { x = 99 }
+            static int Sum(ref int a, int b) { return a + b }
+        }
+        class Counter {
+            int total
+            construct(ref int seed) { this.total = seed; seed = 100 }
+            Add(ref int v) { v = v + this.total }
+            Bump(ref int v) { this.total = this.total + 1; v = this.total }
+            Self() { this.Bump(total) }
+        }
+        var x = 1
+        var y = 2
+        U.Swap(x, y)
+        print(x + " " + y)
+        U.Inc(x)
+        print(x)
+        U.Twice(y)
+        print(y)
+        var s = "hi"
+        U.Append(s, "!!")
+        print(s)
+        var z = 5
+        U.Plain(z)
+        print(z)
+        var b = new Box()
+        U.Swap(b.n, b.s)
+        print(b.n + " " + b.s)
+        var arr = [1, 2, 3]
+        U.Inc(arr[1])
+        U.Swap(arr[0], arr[2])
+        print(arr[0] + " " + arr[1] + " " + arr[2])
+        var buf = new byte[2]
+        U.Inc(buf[1])
+        print(buf[1])
+        var seed = 7
+        var c = new Counter(seed)
+        print(seed + " " + c.total)
+        var k = 3
+        c.Add(k)
+        print(k)
+        c.Self()
+        print(c.total)
+        print(U.Sum(k, 1))
+        var f = (int v) => { U.Inc(v); return v }
+        print(f(5))
+        {
+            var loc = 4
+            U.Inc(loc)
+            print(loc)
+        }
+        try { U.Inc(arr[9]) } catch (e) { print("oob " + e.message) }
+        """, new[] { "2 1", "13", "23", "hi!!", "5", "a 1", "3 13 1", "11", "100 7", "10", "8", "11", "16", "15", "oob Array index 9 out of range (length 3)." });
+
+    CheckPerf("ref-Parameter: gewoehnliche Methode gleichen Namens (List.Add) bekommt den Wert, ein Wert fuer ein ref ist ein Fehler", """
+        class Counter { int total; construct() { this.total = 0 } Add(ref int v) { v = v + 1 } }
+        var l = new List()
+        var q = 3
+        l.Add(q)
+        l.Add(5)
+        print(l.count + " " + q)
+        var c = new Counter()
+        c.Add(q)
+        print(q)
+        """, new[] { "2 3", "4" }, new[] { VmExecutionMode.Release });
+    foreach (var (refSource, refMessage) in new[]
+    {
+        ("var f = func (ref x) { x = 1 }", "only possible in methods and constructors"),
+        ("class A { M(ref int x = 1) { } }", "cannot have a default value"),
+    })
+    {
+        string refResult;
+        try { new Linker().CompileAndLink(new[] { refSource }, null, null, VmExecutionMode.Release); refResult = "kein Fehler"; }
+        catch (Exception ex) { refResult = ex.Message; }
+        bool refOk = refResult.Contains(refMessage);
+        if (!refOk) perfFailures++;
+        Console.WriteLine(refOk ? $"OK: ref-Parameter: Fehler '{refMessage}'" : $"FEHLER: ref-Parameter: erwartet '{refMessage}', erhalten '{refResult}'");
+    }
+
+    CheckPerf("Arrays und Puffer im Besitzmodell: Scope, Feld, return, TakeTo/TakeGlobal/Take, delete, zerstoerte Benutzung, innere Arrays", """
+        class Holder {
+            int data[]
+            construct() { this.data = [1, 2, 3] }
+            Fill() { var tmp = new int[2]; tmp[0] = 7; this.data = tmp; tmp.TakeTo(this) }
+            Bad() { var tmp = new int[2]; this.data = tmp }
+        }
+        class Res { string n; construct(string n) { this.n = n } destruct() { print("free " + this.n) } }
+        class Make {
+            static int[] Create() { var a = [4, 5, 6]; return a }
+            static int[] Pair() { var a = new int[2]; { var b = new int[1]; b.TakeUpwards(); a[0] = b[0] } return a }
+        }
+        var h = new Holder()
+        print(h.data[1])
+        h.Fill()
+        print(h.data[0])
+        var r = Make.Create()
+        print(r[2])
+        var p = Make.Pair()
+        print(p.length)
+        h.Bad()
+        try { print(h.data[0]) } catch (DestroyedException e) { print("destroyed: " + e.message) }
+        var x = [1, 2]
+        delete x
+        try { print(x[0]) } catch (e) { print("after delete: " + e.message) }
+        try { print(x.length) } catch (e) { print("len: " + e.message) }
+        var m = new int[2][3]
+        m[1][2] = 9
+        print(m[1][2])
+        delete m
+        try { print(m[0]) } catch (e) { print("matrix gone") }
+        var b = new byte[4]
+        b[1] = 5
+        b.TakeGlobal()
+        print(b[1])
+        {
+            var inner = [9, 9]
+            inner.TakeLocal()
+            var r2 = new Res("r2")
+            r2.TakeLocal()
+        }
+        print("end")
+        var rr = new Res("kept")
+        delete rr
+        print("last")
+        {
+            var tmp = [1]
+            tmp.TakeGlobal()
+            var g = tmp
+        }
+        print("done")
+        class Cell { int vals[]; construct() { this.vals = new int[3]; this.vals[0] = 5 } }
+        var c = new Cell()
+        print(c.vals[0])
+        var grid = [[1, 2], [3, 4]]
+        print(grid[1][0])
+        class Fn { static int[][] Make() { return [[7, 8], [9]] } }
+        print(Fn.Make()[0][1])
+        var words = "a,b,c".Split(",")
+        print(words.length)
+        """, new[] { "2", "7", "6", "2", "destroyed: Access to a destroyed array.", "after delete: Access to a destroyed array.", "len: Access to a destroyed array.", "9", "matrix gone", "5", "free r2", "end", "free kept", "last", "done", "5", "3", "8", "3" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
 
     CheckPerf("Objekte: Ownership und Destruktor pro Schleifendurchlauf", """
         class D { int id; construct(int id) { this.id = id } destruct() { print("d" + this.id) } }
@@ -6454,18 +6721,19 @@ Console.WriteLine("=== Kopieren: flat x / copy x (SPEC 2.4) ===");
         actor Counter { int n; construct() { this.n = 0 } }
         var c = new Counter()
         var d = copy c
-        """, "Actor");
+        """, "actor");
 
     CheckCloneError("zerstoertes Objekt", cloneClasses + """
         var leaked = new Box("x")
         {
             var t = new Box("t")
             leaked = t
+            delete t
         }
         var d = copy leaked
-        """, "zerstört");
+        """, "destroyed");
 
-    CheckCloneError("Kopier-Praefix ohne Operand", "var x = copy", "Unerwartetes Token");
+    CheckCloneError("Kopier-Praefix ohne Operand", "var x = copy", "Unexpected token");
 
     Console.WriteLine(cloneFailures == 0 ? "Alle Kopier-Pruefungen bestanden." : $"FEHLER: {cloneFailures} Pruefung(en) fehlgeschlagen.");
 }
@@ -6503,14 +6771,14 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     {
         var lines = new List<string>();
         var sources = withIo
-            ? new[] { fire.Standard.Prelude.Source, fire.IO.Bridge.IoBridge.PreludeSource, script }
+            ? new[] { fire.Standard.Prelude.Source, IoPreludeSource(), script }
             : new[] { fire.Standard.Prelude.Source, script };
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var program = Parser.ParseMultiple(sources.Select(s => Preprocessor.Process(s, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
         var natives = new NativeRegistry();
         natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
         natives.RegisterBaseTypeNatives();
-        IDisposable? io = withIo ? fire.IO.Bridge.IoBridge.RegisterAll(natives) : null;
+        IDisposable? io = withIo ? UseIoPackage(natives, null, null) : null;
         var resolveResult = Resolver.Resolve(program, natives.Names);
         var compiled = Compiler.Compile(program, resolveResult, natives);
         var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes, executionMode: mode);
@@ -6922,21 +7190,41 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     PackCheck(planPrint.Assemblies.ContainsKey("fire") && planPrint.Assemblies.ContainsKey("MemoryPack.Core"), "Plan: Kern (fire, MemoryPack) ist immer dabei");
     PackCheck(!planPrint.Assemblies.Keys.Any(n => n.StartsWith("fire.Terminal") || n.StartsWith("fire.Device") || n.StartsWith("fire.IO") || n == "SDL3-CS" || n == "System.IO.Ports") && planPrint.Natives.Count == 0,
         "Plan: ohne Import keine Bridge, keine nativen Bibliotheken");
-    var planIo = Plan(NativeImports.Print, NativeImports.IO);
-    PackCheck(planIo.Assemblies.ContainsKey("fire.IO.Bridge") && !planIo.Assemblies.ContainsKey("fire.Terminal.Bridge") && !planIo.Assemblies.ContainsKey("fire.Device.Bridge"),
-        "Plan: io bindet nur die IO-Bridge ein");
+    var planIo = Plan(NativeImports.Print, "pkg:io");
+    PackCheck(planIo.Assemblies.Keys.SequenceEqual(planPrint.Assemblies.Keys) && !planIo.Assemblies.ContainsKey("fire.Terminal.Bridge") && !planIo.Assemblies.ContainsKey("fire.Device.Manager"),
+        "Plan: io ist ein Paket (C++ in einer Bibliothek): es bringt keine eigene DLL in das gepackte Programm");
     var planGfx = Plan(NativeImports.Print, NativeImports.Graphics);
-    PackCheck(new[] { "fire.Terminal.Bridge", "fire.Terminal", "fire.Terminal.Windows", "fire.Terminal.Sdl", "SDL3-CS" }.All(planGfx.Assemblies.ContainsKey) && !planGfx.Assemblies.ContainsKey("fire.IO.Bridge"),
-        "Plan: graphics bindet Terminal-Bridge samt Terminal/Windows/SDL ein (Abhaengigkeiten aus den Metadaten)");
-    var planDev = Plan(NativeImports.Print, NativeImports.Devices);
-    var planUi = Plan(NativeImports.Print, NativeImports.Graphics, NativeImports.Ui);
-    PackCheck(planUi.Assemblies.Keys.SequenceEqual(planGfx.Assemblies.Keys) && planUi.Unresolved.Count == 0, "Plan: ui bringt keine eigene DLL mit (reiner fire-Quelltext, graphics kommt ueber den Import)");
-    PackCheck(new[] { "fire.Device.Bridge", "fire.Device.Manager", "System.IO.Ports" }.All(planDev.Assemblies.ContainsKey) && !planDev.Assemblies.ContainsKey("SDL3-CS"),
-        "Plan: devices bindet Device-Bridge, Manager und System.IO.Ports ein");
+    PackCheck(new[] { "fire.Terminal.Bridge", "fire.Terminal" }.All(planGfx.Assemblies.ContainsKey) && !planGfx.Assemblies.ContainsKey("fire.IO.Bridge")
+        && !planGfx.Assemblies.Keys.Any(n => n is "fire.Terminal.Windows" or "fire.Terminal.Sdl" or "fire.Windows.Bridge" or "SDL3-CS") && planGfx.Natives.Count == 0,
+        "Plan: graphics bindet Terminal-Bridge und Terminal ein - ohne Fenster, SDL und native Bibliotheken");
+    var planWin = Plan(NativeImports.Print, NativeImports.Graphics, NativeImports.Windows);
+    PackCheck(new[] { "fire.Terminal.Bridge", "fire.Windows.Bridge", "fire.Terminal", "fire.Terminal.Windows", "fire.Terminal.Sdl", "SDL3-CS" }.All(planWin.Assemblies.ContainsKey) && planWin.Unresolved.Count == 0,
+        "Plan: windows bindet Fenster-Bridge samt Terminal/Windows/SDL ein (Abhaengigkeiten aus den Metadaten)");
+    var planDev = Plan(NativeImports.Print, "pkg:devices");
+    var planUi = Plan(NativeImports.Print, NativeImports.Graphics, NativeImports.Windows, NativeImports.Ui);
+    PackCheck(planUi.Assemblies.Keys.SequenceEqual(planWin.Assemblies.Keys) && planUi.Unresolved.Count == 0, "Plan: ui bringt keine eigene DLL mit (reiner fire-Quelltext, graphics und windows kommen ueber den Import)");
+    PackCheck(new[] { "fire.Device.Manager", "System.IO.Ports" }.All(planDev.Assemblies.ContainsKey) && !planDev.Assemblies.ContainsKey("SDL3-CS"),
+        "Plan: devices (ein Paket) bindet den Geraetemanager des Hosts und System.IO.Ports ein");
     PackCheck(planGfx.Unresolved.Count == 0 && planDev.Unresolved.Count == 0 && planIo.Unresolved.Count == 0 && planPrint.Unresolved.Count == 0,
         "Plan: alle Verweise aufloesbar (Datei neben dem Compiler oder Teil des Frameworks)");
-    PackCheck(planGfx.Natives.Count == 0 || planGfx.Natives.ContainsKey("SDL3.dll") || planGfx.Natives.ContainsKey("libSDL3.so.0") || planGfx.Natives.ContainsKey("libSDL3.dylib"),
-        "Plan: graphics bringt SDL3 mit, wo es die Plattform gibt");
+    PackCheck(planWin.Natives.Count == 0 || planWin.Natives.ContainsKey("SDL3.dll") || planWin.Natives.ContainsKey("libSDL3.so.0") || planWin.Natives.ContainsKey("libSDL3.dylib"),
+        "Plan: windows bringt SDL3 mit, wo es die Plattform gibt");
+    // `windows` ist von `graphics` getrennt: das Fenster gibt es nur mit dem eigenen Import, der `graphics` mitbringt; `graphics` allein kennt kein Window
+    {
+        string LinkResult(string src)
+        {
+            try { var linked = new Linker().CompileAndLink(new[] { src }); return string.Join(",", linked.NativeImports.OrderBy(x => x)); }
+            catch (Exception ex) { return "FEHLER " + ex.Message; }
+        }
+        string onlyGfx = LinkResult("#import \"graphics\"\nvar w = new Window(new Framebuffer(8, 8), \"t\")");
+        PackCheck(onlyGfx.StartsWith("FEHLER") && onlyGfx.Contains("Window"), "Import: graphics allein kennt kein Window (" + onlyGfx.Split('\n')[0] + ")");
+        string withWin = LinkResult("#import \"windows\"\nvar x = EventType.Close");
+        PackCheck(withWin == "graphics,print,windows", "Import: windows bringt graphics mit (" + withWin + ")");
+        string withUi = LinkResult("#import \"ui\"\nvar x = EventType.Close");
+        PackCheck(withUi == "graphics,print,ui,windows", "Import: ui bringt graphics und windows mit (" + withUi + ")");
+        string gfxOnly = LinkResult("#import \"graphics\"\nvar fb = new Framebuffer(8, 8)");
+        PackCheck(gfxOnly == "graphics,print", "Import: graphics allein ohne Fenster (" + gfxOnly + ")");
+    }
     bool unknownImportRejected = false;
     try { Plan("gibtsnicht"); } catch (InvalidOperationException) { unknownImportRejected = true; }
     PackCheck(unknownImportRejected, "Plan: unbekannter Import wird abgelehnt statt still ignoriert");
@@ -7031,7 +7319,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
             // Ohne Payload (nackte Runtime) gibt es eine klare Meldung statt eines Absturzes.
             var bare = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(baseDir, stubName)) { RedirectStandardError = true, RedirectStandardOutput = true })!;
             var bareErr = bare.StandardError.ReadToEnd(); bare.WaitForExit(20000);
-            PackCheck(bare.ExitCode == 1 && bareErr.Contains("Payload"), "Ende-zu-Ende: nackte Runtime ohne Payload meldet das verstaendlich");
+            PackCheck(bare.ExitCode == 1 && bareErr.Contains("payload"), "Ende-zu-Ende: nackte Runtime ohne Payload meldet das verstaendlich");
 
             long PackProgramSize(string source)
             {
@@ -7131,7 +7419,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
     }
 
-    // Dieselbe Schrift, aber OHNE Bitmap-Zeilen: TerminalCanvas muss dann den allgemeinen Weg (IsPixelSet je Pixel) nehmen.
+    // Dieselbe Schrift, aber OHNE Bitmap-Zeilen: Renderer muss dann den allgemeinen Weg (IsPixelSet je Pixel) nehmen.
     var slowFont = new PixelOnlyFont(new fire.Terminal.IntegratedGlyphFont());
     var rng = new Random(7);
     foreach (bool small in new[] { false, true })
@@ -7142,21 +7430,21 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         {
             var fbFast = new fire.Terminal.Framebuffer(203, 97); // krumme Groesse: Raster endet nicht am Rand, Texte ragen hinaus
             var fbSlow = new fire.Terminal.Framebuffer(203, 97);
-            var fast = new fire.Terminal.TerminalCanvas(fbFast, fastFont);
-            var slowCanvas = new fire.Terminal.TerminalCanvas(fbSlow, slow);
+            var fast = new fire.Terminal.Renderer(fbFast, fastFont);
+            var slowCanvas = new fire.Terminal.Renderer(fbSlow, slow);
             foreach (var cv in new[] { fast, slowCanvas })
             {
                 cv.Foreground = new fire.Terminal.PixelColor(200, 100, 50);
                 cv.Background = opaque ? new fire.Terminal.PixelColor(10, 20, 30) : null;
-                cv.Target.Clear(new fire.Terminal.PixelColor(1, 2, 3));
+                ((fire.Terminal.Framebuffer)cv.Target).Clear(new fire.Terminal.PixelColor(1, 2, 3));
             }
             // Zeichen des ganzen Bereichs (auch > 255), an zufaelligen Positionen inkl. teilweise ausserhalb
             for (int i = 0; i < 400; i++)
             {
                 char ch = (char)rng.Next(0, 400);
                 int x = rng.Next(-12, 215), y = rng.Next(-16, 110);
-                fast.DrawGlyph(x, y, ch, fast.Foreground, fast.Background);
-                slowCanvas.DrawGlyph(x, y, ch, slowCanvas.Foreground, slowCanvas.Background);
+                foreach (var cv in new[] { fast, slowCanvas })
+                    cv.DrawGlyph(x, y, ch, new fire.Terminal.SolidBrush(cv.Foreground), cv.Background is fire.Terminal.PixelColor bg ? new fire.Terminal.SolidBrush(bg) : null);
             }
             // Print mit Umbruch und Scrollen
             string text = string.Join("\n", Enumerable.Range(0, 40).Select(n => new string((char)('A' + n % 26), 10 + n % 40)));
@@ -7169,12 +7457,12 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
     {
         var fb = new fire.Terminal.Framebuffer(100, 40);
-        var cv = new fire.Terminal.TerminalCanvas(fb, new fire.Terminal.IntegratedGlyphFont());
-        cv.DrawText(3, 5, "Hallo", fire.Terminal.PixelColor.White);
+        var cv = new fire.Terminal.Renderer(fb, new fire.Terminal.IntegratedGlyphFont());
+        cv.DrawText(3, 5, "Hallo", new fire.Terminal.SolidBrush(fire.Terminal.PixelColor.White));
         FontCheck(cv.MeasureText("Hallo") == 5 * cv.CellWidth, "MeasureText: Zeichenzahl mal Zellbreite");
         var fb2 = new fire.Terminal.Framebuffer(100, 40);
-        var cv2 = new fire.Terminal.TerminalCanvas(fb2, new fire.Terminal.IntegratedGlyphFont());
-        for (int i = 0; i < 5; i++) cv2.DrawGlyph(3 + i * cv2.CellWidth, 5, "Hallo"[i], fire.Terminal.PixelColor.White, null);
+        var cv2 = new fire.Terminal.Renderer(fb2, new fire.Terminal.IntegratedGlyphFont());
+        for (int i = 0; i < 5; i++) cv2.DrawGlyph(3 + i * cv2.CellWidth, 5, "Hallo"[i], new fire.Terminal.SolidBrush(fire.Terminal.PixelColor.White));
         FontCheck(fb.Pixels.SequenceEqual(fb2.Pixels), "DrawText == DrawGlyph je Zeichen");
         cv.Locate(0, 0); cv.Print("\u20AC\u4E2D"); // Zeichen ausserhalb der Tabelle: kein Absturz
         FontCheck(true, "Zeichen > 255 werfen nicht");
@@ -7199,7 +7487,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     var RGBA = fire.Terminal.ColorMode.Rgba;
     var IDX = fire.Terminal.ColorMode.Indexed;
     fire.Terminal.PixelColor Col(byte r, byte g, byte b) => new fire.Terminal.PixelColor(r, g, b);
-    fire.Terminal.Brush Idx(fire.Terminal.Framebuffer fb, int i) => fb.ResolveBrush(fire.Terminal.Paint.FromIndex((byte)i));
+    fire.Terminal.Pixel Idx(fire.Terminal.Framebuffer fb, int i) => fb.ResolvePixel(fire.Terminal.Paint.FromIndex((byte)i));
+    fire.Terminal.Brush Bsh(int i) => new fire.Terminal.SolidBrush(fire.Terminal.Paint.FromIndex((byte)i));
+    fire.Terminal.Pen Pn(int i) => new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex((byte)i));
 
     // Menge der gesetzten Pixel (Palette: Index != 0, RGBA: Wert != 0) als "x,y"-Menge
     HashSet<(int, int)> Lit(fire.Terminal.Framebuffer fb)
@@ -7215,7 +7505,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     {
         var fb = new fire.Terminal.Framebuffer(4, 3, IDX);
         GfxCheck(fb.IsIndexed && fb.Indices != null && fb.Indices.Length == 12, "Palette-Framebuffer hat 1 Byte je Pixel");
-        fb.Plot(1, 1, new fire.Terminal.Brush(0, 9));
+        fb.Plot(1, 1, new fire.Terminal.Pixel(0, 9));
         fb.Resolve();
         GfxCheck(fb.Pixels[1 * 4 + 1] == fb.Palette.GetPacked(9) && fb.Pixels[0] == fb.Palette.GetPacked(0), "Resolve: Pixels = Palette[Index]");
         fb.Palette.SetColor(9, unchecked((int)new fire.Terminal.PixelColor(1, 2, 3).Packed));
@@ -7224,7 +7514,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         fb.Indices![0] = 200; fb.MarkDirty(); fb.Resolve();
         GfxCheck(fb.Pixels[0] == fb.Palette.GetPacked(200), "MarkDirty nach direktem Schreiben der Indizes");
         GfxCheck(fb.GetPixel(0, 0).Packed == fb.Palette.GetPacked(200) && fb.GetIndex(0, 0) == 200, "GetPixel/GetIndex im Palette-Modus");
-        fb.Plot(-1, 0, new fire.Terminal.Brush(0, 5)); fb.Plot(4, 0, new fire.Terminal.Brush(0, 5)); fb.Plot(0, 3, new fire.Terminal.Brush(0, 5));
+        fb.Plot(-1, 0, new fire.Terminal.Pixel(0, 5)); fb.Plot(4, 0, new fire.Terminal.Pixel(0, 5)); fb.Plot(0, 3, new fire.Terminal.Pixel(0, 5));
         GfxCheck(fb.GetIndex(0, 0) == 200 && fb.GetRaw(-1, 0) == 0, "Plot ausserhalb: still beschnitten");
 
         var rgba = new fire.Terminal.Framebuffer(2, 2);
@@ -7244,11 +7534,11 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var rgba = new fire.Terminal.Framebuffer(2, 2);
         var idx = new fire.Terminal.Framebuffer(2, 2, IDX);
         var red = fire.Terminal.PixelColor.FromRgb(255, 0, 0);
-        var viaIndex = rgba.ResolveBrush(fire.Terminal.Paint.FromIndex(4));
+        var viaIndex = rgba.ResolvePixel(fire.Terminal.Paint.FromIndex(4));
         GfxCheck(viaIndex.Rgba == rgba.Palette.GetPacked(4), "RGBA-Framebuffer: ein Index wird ueber die Palette zur Farbe");
-        GfxCheck(rgba.ResolveBrush(fire.Terminal.Paint.FromRgba(red)).Rgba == red.Packed, "RGBA-Framebuffer: ein direkter Wert bleibt");
-        GfxCheck(idx.ResolveBrush(fire.Terminal.Paint.FromIndex(4)).Index == 4, "Palette-Framebuffer: ein Index bleibt");
-        byte nearest = idx.ResolveBrush(fire.Terminal.Paint.FromRgba(fire.Terminal.PixelColor.FromRgb(250, 3, 3))).Index;
+        GfxCheck(rgba.ResolvePixel(fire.Terminal.Paint.FromRgba(red)).Rgba == red.Packed, "RGBA-Framebuffer: ein direkter Wert bleibt");
+        GfxCheck(idx.ResolvePixel(fire.Terminal.Paint.FromIndex(4)).Index == 4, "Palette-Framebuffer: ein Index bleibt");
+        byte nearest = idx.ResolvePixel(fire.Terminal.Paint.FromRgba(fire.Terminal.PixelColor.FromRgb(250, 3, 3))).Index;
         GfxCheck(idx.Palette.GetColor(nearest).R >= 200 && idx.Palette.GetColor(nearest).G <= 50 && idx.Palette.GetColor(nearest).B <= 50, "Palette-Framebuffer: ein direkter Wert wird der naechste Palette-Eintrag (rot -> rotlich)");
         GfxCheck(idx.Palette.FindNearest(fire.Terminal.PixelColor.FromRgb(0, 0, 0)) == 0 && idx.Palette.FindNearest(idx.Palette.GetColor(200)) <= 200 && idx.Palette.GetPacked(idx.Palette.FindNearest(idx.Palette.GetColor(200))) == idx.Palette.GetPacked(200), "FindNearest findet eine exakt vorhandene Farbe");
     }
@@ -7258,21 +7548,21 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var font = new fire.Terminal.IntegratedGlyphFont();
         var fbRgba = new fire.Terminal.Framebuffer(203, 97);
         var fbIdx = new fire.Terminal.Framebuffer(203, 97, IDX);
-        var cRgba = new fire.Terminal.TerminalCanvas(fbRgba, font);
-        var cIdx = new fire.Terminal.TerminalCanvas(fbIdx, font);
+        var cRgba = new fire.Terminal.Renderer(fbRgba, font);
+        var cIdx = new fire.Terminal.Renderer(fbIdx, font);
         foreach (var cv in new[] { cRgba, cIdx })
         {
             cv.SetColor(fire.Terminal.Paint.FromIndex(14), fire.Terminal.Paint.FromIndex(1));
             cv.Clear();
-            cv.FillRect(5, 5, 40, 20, (byte)12);
-            cv.DrawRect(2, 2, 60, 30, (byte)10);
-            cv.DrawLine(0, 0, 202, 96, (byte)9);
-            cv.DrawText(7, 40, "Hallo Welt", fire.Terminal.Paint.FromIndex(15), null);
-            cv.DrawText(100, 80, "ragt hinaus", fire.Terminal.Paint.FromIndex(13), fire.Terminal.Paint.FromIndex(4));
+            cv.FillRect(5, 5, 40, 20, Bsh(12));
+            cv.DrawRect(2, 2, 60, 30, Pn(10));
+            cv.DrawLine(0, 0, 202, 96, Pn(9));
+            cv.DrawText(7, 40, "Hallo Welt", Bsh(15));
+            cv.DrawText(100, 80, "ragt hinaus", Bsh(13), Bsh(4));
             cv.Locate(0, 0);
             cv.Print(string.Join("\n", Enumerable.Range(0, 12).Select(n => new string((char)('A' + n % 26), 8 + n))));
-            cv.SetPixel(1, 1, (byte)200);
-            cv.FillRect(170, 2, 20, 10, (byte)12);
+            cv.SetPixel(1, 1, fire.Terminal.Paint.FromIndex(200));
+            cv.FillRect(170, 2, 20, 10, Bsh(12));
         }
         fbIdx.Resolve();
         GfxCheck(fbRgba.Pixels.SequenceEqual(fbIdx.Pixels), "Clear/FillRect/DrawRect/DrawLine/DrawText/Print/Scrollen: Palette-Framebuffer zeigt dieselben Pixel wie der RGBA-Framebuffer");
@@ -7283,12 +7573,12 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         GfxCheck(fbIdx.GetPixel(175, 5).Packed == fire.Terminal.PixelColor.FromRgb(1, 2, 3).Packed && fbRgba.GetPixel(175, 5).Packed == fbRgba.Palette.GetPacked(12), "Palette-Animation wirkt nur im Palette-Framebuffer");
 
         // die Palette gehoert dem Framebuffer, nicht der Konsole
-        GfxCheck(ReferenceEquals(cIdx.Palette, fbIdx.Palette), "TerminalCanvas.Palette ist die des Ziel-Framebuffers");
+        GfxCheck(ReferenceEquals(cIdx.Palette, fbIdx.Palette), "Renderer.Palette ist die des Ziel-Framebuffers");
 
         // Index-Farbe bleibt Index: eine spaetere Palette-Aenderung faerbt NEU gezeichneten Text um
         cRgba.SetColor(fire.Terminal.Paint.FromIndex(3), null);
         fbRgba.Palette.SetColor(3, unchecked((int)fire.Terminal.PixelColor.FromRgb(9, 8, 7).Packed));
-        cRgba.DrawText(0, 90, "x", fire.Terminal.Paint.FromIndex(3), null);
+        cRgba.DrawText(0, 90, "x", Bsh(3));
         bool found = false;
         for (int y = 90; y < 97 && !found; y++) for (int x = 0; x < 8; x++) if (fbRgba.GetPixel(x, y).Packed == fire.Terminal.PixelColor.FromRgb(9, 8, 7).Packed) { found = true; break; }
         GfxCheck(found, "ein Palette-Index wird erst beim Zeichnen aufgeloest");
@@ -7301,7 +7591,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             for (int r = 0; r <= 12; r++)
             {
                 var fb = new fire.Terminal.Framebuffer(60, 60, mode);
-                fire.Terminal.Shapes.FillCircle(fb, 30, 30, r, Idx(fb, 5));
+                Shp.FillCircle(fb, 30, 30, r, 5);
                 var filled = Lit(fb);
                 var expected = new HashSet<(int, int)>();
                 for (int dy = -r; dy <= r; dy++) for (int dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r) expected.Add((30 + dx, 30 + dy));
@@ -7310,10 +7600,10 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             }
         }
         var fbC = new fire.Terminal.Framebuffer(60, 60);
-        fire.Terminal.Shapes.FillCircle(fbC, 30, 30, 10, Idx(fbC, 5));
+        Shp.FillCircle(fbC, 30, 30, 10, 5);
         var area = Lit(fbC);
         var fbO = new fire.Terminal.Framebuffer(60, 60);
-        fire.Terminal.Shapes.Circle(fbO, 30, 30, 10, Idx(fbO, 5));
+        Shp.Circle(fbO, 30, 30, 10, 5);
         var ring = Lit(fbO);
         GfxCheck(ring.IsSubsetOf(area) && ring.Count > 30 && ring.Count < area.Count, "Circle: die Linie liegt in der Flaeche und ist ein Ring");
         // der Ring ist 4-symmetrisch und schliesst die Flaeche ein: kein innerer Flaechenpunkt hat einen Nachbarn ausserhalb der Flaeche ohne selbst auf dem Ring zu liegen
@@ -7323,43 +7613,43 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         GfxCheck(closed, "Circle: jedes Flaechenpixel am Rand liegt auf der Linie (keine Luecken)");
 
         var fbE = new fire.Terminal.Framebuffer(80, 60);
-        fire.Terminal.Shapes.FillEllipse(fbE, 40, 30, 20, 8, Idx(fbE, 5));
+        Shp.FillEllipse(fbE, 40, 30, 20, 8, 5);
         var ell = Lit(fbE);
         GfxCheck(ell.Contains((40 - 20, 30)) && ell.Contains((40 + 20, 30)) && ell.Contains((40, 30 - 8)) && ell.Contains((40, 30 + 8)) && !ell.Contains((40 - 21, 30)) && !ell.Contains((40, 30 + 9)),
             "FillEllipse: Halbachsen rx=20, ry=8 treffen genau die Spitzen");
         var fbE2 = new fire.Terminal.Framebuffer(80, 60);
-        fire.Terminal.Shapes.Ellipse(fbE2, 40, 30, 20, 8, Idx(fbE2, 5));
+        Shp.Ellipse(fbE2, 40, 30, 20, 8, 5);
         var ellRing = Lit(fbE2);
         GfxCheck(ellRing.IsSubsetOf(ell) && ellRing.Contains((20, 30)) && ellRing.Contains((40, 22)) && !ellRing.Contains((40, 30)), "Ellipse: Linie in der Flaeche, Mitte frei");
         var fbL = new fire.Terminal.Framebuffer(30, 30);
-        fire.Terminal.Shapes.Ellipse(fbL, 15, 15, 6, 0, Idx(fbL, 5));
+        Shp.Ellipse(fbL, 15, 15, 6, 0, 5);
         GfxCheck(Lit(fbL).SetEquals(Enumerable.Range(9, 13).Select(x => (x, 15))), "Ellipse mit ry=0: eine waagerechte Linie");
         var fbV = new fire.Terminal.Framebuffer(30, 30);
-        fire.Terminal.Shapes.FillEllipse(fbV, 15, 15, 0, 4, Idx(fbV, 5));
+        Shp.FillEllipse(fbV, 15, 15, 0, 4, 5);
         GfxCheck(Lit(fbV).SetEquals(Enumerable.Range(11, 9).Select(y => (15, y))), "FillEllipse mit rx=0: eine senkrechte Linie");
         var fbN = new fire.Terminal.Framebuffer(30, 30);
-        fire.Terminal.Shapes.FillCircle(fbN, 15, 15, -1, Idx(fbN, 5));
-        fire.Terminal.Shapes.Circle(fbN, -100, -100, 20, Idx(fbN, 5));
-        fire.Terminal.Shapes.FillCircle(fbN, 15, 15, int.MaxValue, Idx(fbN, 5));
+        Shp.FillCircle(fbN, 15, 15, -1, 5);
+        Shp.Circle(fbN, -100, -100, 20, 5);
+        Shp.FillCircle(fbN, 15, 15, int.MaxValue, 5);
         GfxCheck(true, "negativer Radius, Kreis ausserhalb und riesiger Radius werfen nicht");
     }
 
     // ---- Dreieck und Polygon ----
     {
         var fb = new fire.Terminal.Framebuffer(40, 40);
-        fire.Terminal.Shapes.FillTriangle(fb, 5, 5, 25, 5, 5, 25, Idx(fb, 5));
+        Shp.FillTriangle(fb, 5, 5, 25, 5, 5, 25, 5);
         var tri = Lit(fb);
         GfxCheck(tri.Contains((5, 5)) && tri.Contains((25, 5)) && tri.Contains((5, 25)) && tri.Contains((10, 10)) && !tri.Contains((20, 20)) && !tri.Contains((26, 5)) && !tri.Contains((4, 5)), "FillTriangle: Ecken und Inneres, nicht ausserhalb");
         bool rows = true;
         for (int y = 5; y <= 25; y++) { int n = tri.Count(p => p.Item2 == y); if (Math.Abs(n - (26 - (y - 5) - 5 + 1)) > 1) rows = false; }
         GfxCheck(rows, "FillTriangle: Zeilenbreiten wie bei der Geraden (rechtwinkliges Dreieck)");
         var fbT = new fire.Terminal.Framebuffer(40, 40);
-        fire.Terminal.Shapes.Triangle(fbT, 5, 5, 25, 5, 5, 25, Idx(fbT, 5));
+        Shp.Triangle(fbT, 5, 5, 25, 5, 5, 25, 5);
         var outline = Lit(fbT);
         GfxCheck(outline.IsSubsetOf(tri) && !outline.Contains((10, 10)) && outline.Contains((15, 5)) && outline.Contains((5, 15)), "Triangle: nur der Umriss, in der Flaeche enthalten");
 
         var fbR = new fire.Terminal.Framebuffer(40, 40);
-        fire.Terminal.Shapes.FillPolygon(fbR, new[] { 4, 6, 20, 6, 20, 15, 4, 15 }, Idx(fbR, 5));
+        Shp.FillPolygon(fbR, new[] { 4, 6, 20, 6, 20, 15, 4, 15 }, 5);
         var fbR2 = new fire.Terminal.Framebuffer(40, 40);
         fbR2.FillRect(4, 6, 17, 10, Idx(fbR2, 5));
         GfxCheck(Lit(fbR).SetEquals(Lit(fbR2)), "FillPolygon eines Rechtecks == FillRect (Randpixel gehoeren dazu)");
@@ -7367,22 +7657,22 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         // Even-Odd: ein Stern aus einem Fuenfeck (Pentagramm) hat ein leeres Zentrum
         var fbS = new fire.Terminal.Framebuffer(60, 60);
         int[] star = { 30, 3, 47, 55, 3, 22, 57, 22, 13, 55 };
-        fire.Terminal.Shapes.FillPolygon(fbS, star, Idx(fbS, 5));
+        Shp.FillPolygon(fbS, star, 5);
         var starSet = Lit(fbS);
         GfxCheck(starSet.Contains((30, 12)) && !starSet.Contains((30, 30)) && starSet.Count > 200, "FillPolygon: Even-Odd (das Zentrum eines Pentagramms bleibt leer)");
 
         var fbP = new fire.Terminal.Framebuffer(40, 40);
-        fire.Terminal.Shapes.Polygon(fbP, new[] { 5, 5, 30, 5, 30, 30 }, Idx(fbP, 5), closed: false);
+        Shp.Polygon(fbP, new[] { 5, 5, 30, 5, 30, 30 }, 5, closed: false);
         var open = Lit(fbP);
         GfxCheck(open.Contains((30, 20)) && !open.Contains((15, 18)) && open.Count == 26 + 25, "Polygon offen: Kantenzug ohne Schlusslinie");
-        fire.Terminal.Shapes.Polygon(fbP, new int[0], Idx(fbP, 5));
-        fire.Terminal.Shapes.FillPolygon(fbP, new[] { 1, 1, 9, 9 }, Idx(fbP, 5));
-        fire.Terminal.Shapes.FillPolygon(fbP, new[] { 1, 1, 9, 9, 7 }, Idx(fbP, 5));
+        Shp.Polygon(fbP, new int[0], 5);
+        Shp.FillPolygon(fbP, new[] { 1, 1, 9, 9 }, 5);
+        Shp.FillPolygon(fbP, new[] { 1, 1, 9, 9, 7 }, 5);
         GfxCheck(true, "zu wenige Punkte / ungerade Punktzahl werfen nicht");
 
         var fbBig = new fire.Terminal.Framebuffer(20, 20);
-        fire.Terminal.Shapes.FillTriangle(fbBig, -1000000, -1000000, 1000000, 5, 5, 1000000, Idx(fbBig, 5));
-        fire.Terminal.Shapes.Line(fbBig, int.MinValue, 0, int.MaxValue, 7, Idx(fbBig, 5));
+        Shp.FillTriangle(fbBig, -1000000, -1000000, 1000000, 5, 5, 1000000, 5);
+        Shp.Line(fbBig, int.MinValue, 0, int.MaxValue, 7, 5);
         GfxCheck(true, "riesige Koordinaten: kein Ueberlauf, kein Absturz");
     }
 
@@ -7391,8 +7681,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         foreach (var mode in new[] { RGBA, IDX })
         {
             var fb = new fire.Terminal.Framebuffer(30, 20, mode);
-            fire.Terminal.Shapes.Rect(fb, 5, 5, 15, 10, Idx(fb, 7));
-            fire.Terminal.Shapes.FloodFill(fb, 10, 10, Idx(fb, 3));
+            Shp.Rect(fb, 5, 5, 15, 10, 7);
+            Shp.FloodFill(fb, 10, 10, 3);
             int inside = 0, outside = 0, wall = 0;
             for (int y = 0; y < 20; y++) for (int x = 0; x < 30; x++)
             {
@@ -7403,24 +7693,24 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
                 if (v == 7) wall++;
             }
             GfxCheck(inside == 13 * 8 && outside == 0 && wall == 2 * 15 + 2 * 8, $"FloodFill fuellt genau das Innere des Rahmens [{mode}]");
-            fire.Terminal.Shapes.FloodFill(fb, 0, 0, Idx(fb, 3));
+            Shp.FloodFill(fb, 0, 0, 3);
             GfxCheck(fb.GetIndex(0, 0) == 3 && fb.GetIndex(29, 19) == 3 && fb.GetIndex(5, 5) == 7, $"FloodFill aussen: fuellt den Rest, der Rahmen bleibt [{mode}]");
-            fire.Terminal.Shapes.FloodFill(fb, 0, 0, Idx(fb, 3)); // schon gefuellt: nichts
-            fire.Terminal.Shapes.FloodFill(fb, -5, 100, Idx(fb, 3));
+            Shp.FloodFill(fb, 0, 0, 3); // schon gefuellt: nichts
+            Shp.FloodFill(fb, -5, 100, 3);
         }
         var fbB = new fire.Terminal.Framebuffer(20, 20, IDX);
-        fire.Terminal.Shapes.Rect(fbB, 2, 2, 10, 10, Idx(fbB, 7));
-        fire.Terminal.Shapes.Line(fbB, 4, 4, 9, 4, Idx(fbB, 2)); // eine andere Farbe im Innern
-        fire.Terminal.Shapes.FloodFillBorder(fbB, 5, 6, Idx(fbB, 3), Idx(fbB, 7));
+        Shp.Rect(fbB, 2, 2, 10, 10, 7);
+        Shp.Line(fbB, 4, 4, 9, 4, 2); // eine andere Farbe im Innern
+        Shp.FloodFillBorder(fbB, 5, 6, 3, 7);
         GfxCheck(fbB.GetIndex(5, 4) == 3 && fbB.GetIndex(5, 6) == 3 && fbB.GetIndex(2, 2) == 7 && fbB.GetIndex(15, 15) == 0, "FloodFillBorder: fuellt bis zur Randfarbe, auch ueber andere Farben hinweg");
         // grosse Flaeche: kein Stapelueberlauf
         var fbHuge = new fire.Terminal.Framebuffer(600, 600, IDX);
-        fire.Terminal.Shapes.FloodFill(fbHuge, 0, 0, Idx(fbHuge, 4));
+        Shp.FloodFill(fbHuge, 0, 0, 4);
         GfxCheck(fbHuge.GetIndex(599, 599) == 4 && fbHuge.GetIndex(300, 300) == 4, "FloodFill einer ganzen 600x600-Flaeche");
         // Spirale: lange, verwinkelte Flaeche
         var fbSp = new fire.Terminal.Framebuffer(64, 64);
-        for (int i = 2; i < 60; i += 4) fire.Terminal.Shapes.Rect(fbSp, i, i, 64 - 2 * i, 64 - 2 * i, Idx(fbSp, 7));
-        fire.Terminal.Shapes.FloodFill(fbSp, 0, 0, Idx(fbSp, 2));
+        for (int i = 2; i < 60; i += 4) Shp.Rect(fbSp, i, i, 64 - 2 * i, 64 - 2 * i, 7);
+        Shp.FloodFill(fbSp, 0, 0, 2);
         GfxCheck(fbSp.GetIndex(1, 1) == 2 && fbSp.GetIndex(3, 3) == 0, "FloodFill bleibt hinter einer Wand");
     }
 
@@ -7552,29 +7842,37 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         try { mgr.SetPaletteColor(a, 256, 0); GfxCheck(false, "Palette-Index 256 wird abgelehnt"); }
         catch (ArgumentOutOfRangeException) { GfxCheck(true, "Palette-Index 256 wird abgelehnt"); }
 
-        // ConsoleManager: Farbangaben als Zahlen
-        var cm = new fire.Terminal.ConsoleManager(mgr, new fire.Terminal.IntegratedGlyphFont());
+        // RendererManager: Farbangaben als Zahlen (Pinsel und Stifte werden als ID uebergeben)
+        var cm = new fire.Terminal.RendererManager(mgr, new fire.Terminal.IntegratedGlyphFont());
         int fbId = mgr.CreateFramebuffer(40, 20, IDX);
-        int con = cm.CreateConsole(fbId);
-        cm.FillRect(con, 0, 0, 10, 10, 9);
+        int con = cm.CreateRenderer(fbId);
+        int bI9 = cm.CreateSolidBrush(9);
+        cm.FillRect(con, 0, 0, 10, 10, bI9);
         cm.SetPixel(con, 12, 12, 33);
-        cm.FillRect(con, 20, 0, 5, 5, unchecked((int)0xFF0000FFu)); // direkter Wert (rot) -> naechster Palette-Eintrag
+        int bRed = cm.CreateSolidBrush(unchecked((int)0xFF0000FFu)); // direkter Wert (rot) -> naechster Palette-Eintrag
+        cm.FillRect(con, 20, 0, 5, 5, bRed);
         GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(3, 3) == 9 && mgr.GetFramebuffer(fbId).GetIndex(12, 12) == 33 && cm.GetPixelIndex(con, 12, 12) == 33
-            && mgr.GetFramebuffer(fbId).Palette.GetColor(mgr.GetFramebuffer(fbId).GetIndex(22, 2)).R >= 170, "ConsoleManager: 0-255 = Palette-Index, sonst direkter Wert");
+            && mgr.GetFramebuffer(fbId).Palette.GetColor(mgr.GetFramebuffer(fbId).GetIndex(22, 2)).R >= 170, "RendererManager: 0-255 = Palette-Index, sonst direkter Wert");
         cm.SetColor(con, 14, 1);
         cm.Print(con, "Hi");
-        GfxCheck(Enumerable.Range(0, 8).Any(x => Enumerable.Range(0, 14).Any(y => mgr.GetFramebuffer(fbId).GetIndex(x, y) == 14)), "ConsoleManager.SetColor mit Palette-Indizes (Print schreibt Index 14)");
-        cm.DrawText(con, 0, 10, "T", 15, 0);
-        GfxCheck(true, "DrawText mit Palette-Index und transparentem Hintergrund");
-        cm.FillCircle(con, 30, 12, 4, 6); cm.DrawCircle(con, 30, 12, 6, 7); cm.FillEllipse(con, 10, 15, 5, 2, 8); cm.DrawEllipse(con, 10, 15, 6, 3, 9);
-        cm.FillTriangle(con, 1, 1, 8, 1, 1, 8, 2); cm.DrawTriangle(con, 1, 1, 8, 1, 1, 8, 3);
-        cm.FillPolygon(con, new[] { 20, 10, 30, 10, 25, 18 }, 4); cm.DrawPolygon(con, new[] { 20, 10, 30, 10, 25, 18 }, 5, true);
-        cm.FloodFill(con, 35, 2, 6); cm.FloodFillBorder(con, 35, 2, 7, 6);
-        GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(30, 12) != 0, "ConsoleManager: Kreis/Ellipse/Dreieck/Polygon/FloodFill laufen im Palette-Framebuffer");
+        GfxCheck(Enumerable.Range(0, 8).Any(x => Enumerable.Range(0, 14).Any(y => mgr.GetFramebuffer(fbId).GetIndex(x, y) == 14)), "RendererManager.SetColor mit Palette-Indizes (Print schreibt Index 14)");
+        cm.DrawText(con, 0, 10, "T", cm.CreateSolidBrush(15), 0);
+        GfxCheck(true, "DrawText mit Palette-Index und ohne Hintergrund");
+        int[] bs = Enumerable.Range(0, 10).Select(i => cm.CreateSolidBrush(i)).ToArray();
+        int[] ps = Enumerable.Range(0, 10).Select(i => cm.CreatePen(i, 1, 0)).ToArray();
+        cm.FillCircle(con, 30, 12, 4, bs[6]); cm.DrawCircle(con, 30, 12, 6, ps[7]); cm.FillEllipse(con, 10, 15, 5, 2, bs[8]); cm.DrawEllipse(con, 10, 15, 6, 3, ps[9]);
+        cm.FillTriangle(con, 1, 1, 8, 1, 1, 8, bs[2]); cm.DrawTriangle(con, 1, 1, 8, 1, 1, 8, ps[3]);
+        cm.FillPolygon(con, new[] { 20, 10, 30, 10, 25, 18 }, bs[4]); cm.DrawPolygon(con, new[] { 20, 10, 30, 10, 25, 18 }, ps[5], true);
+        cm.FloodFill(con, 35, 2, bs[6]); cm.FloodFillBorder(con, 35, 2, bs[7], 6);
+        cm.DrawPoint(con, 3, 17, ps[2]); cm.DrawLine(con, 0, 19, 39, 19, ps[3]); cm.DrawPath(con, new[] { 0, 18, 10, 18, 10, 16 }, ps[4], false); cm.DrawRect(con, 30, 2, 6, 6, ps[5]);
+        GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(30, 12) != 0, "RendererManager: Kreis/Ellipse/Dreieck/Polygon/FloodFill/Punkt/Linie/Pfad laufen im Palette-Framebuffer");
         int src2 = mgr.CreateFramebuffer(4, 4, IDX);
-        mgr.GetFramebuffer(src2).FillRect(0, 0, 4, 4, mgr.GetFramebuffer(src2).ResolveBrush(fire.Terminal.Paint.FromIndex(44)));
+        mgr.GetFramebuffer(src2).FillRect(0, 0, 4, 4, mgr.GetFramebuffer(src2).ResolvePixel(fire.Terminal.Paint.FromIndex(44)));
         cm.Blit(con, src2, 0, 0, 4, 4, 30, 14, 4, 4, 0, -1);
-        GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(31, 15) == 44, "ConsoleManager.Blit kopiert einen anderen Framebuffer");
+        GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(31, 15) == 44, "RendererManager.Blit kopiert einen anderen Framebuffer");
+        GfxCheck(cm.GetBrushColor(bI9) == 9 && cm.GetPenColor(ps[3]) == 3 && cm.GetPenWidth(ps[3]) == 1, "Pinsel und Stifte: Farbe und Breite lesen");
+        cm.SetPenWidth(ps[3], 3); cm.SetPenColor(ps[3], 5); cm.SetBrushColor(bI9, 7);
+        GfxCheck(cm.GetPenWidth(ps[3]) == 3 && cm.GetPenColor(ps[3]) == 5 && cm.GetBrushColor(bI9) == 7 && cm.DestroyBrush(bI9) && !cm.DestroyBrush(bI9), "Pinsel und Stifte: Eigenschaften aendern, zerstoeren");
     }
 
     // ---- Fenster: Tick rechnet das sichtbare Abbild eines Palette-Framebuffers aus (Resolve), bevor der Renderer es bekommt ----
@@ -7591,6 +7889,153 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         wm.Tick(win);
         GfxCheck(fb.Pixels[1 * 8 + 2] == fire.Terminal.PixelColor.FromRgb(7, 8, 9).Packed, "Window.Tick nach einer Palette-Aenderung (ohne dass sich ein Index aenderte)");
         wm.DestroyWindow(win);
+    }
+
+    // ---- Brush, Pen, Alpha-Blending ----
+    {
+        var font = new fire.Terminal.IntegratedGlyphFont();
+        var P = (byte r, byte g, byte b, byte a) => fire.Terminal.Paint.FromRgba(new fire.Terminal.PixelColor(r, g, b, a));
+        fire.Terminal.Paint Rgb(byte r, byte g, byte b) => P(r, g, b, 255);
+
+        // Blending: Alpha 255 = Kopie, 0 = nichts, dazwischen gemischt (nur im 32-Bit-Ziel), abschaltbar
+        {
+            var fb = new fire.Terminal.Framebuffer(8, 4);
+            var rd = new fire.Terminal.Renderer(fb, font);
+            rd.FillRect(0, 0, 8, 4, new fire.Terminal.SolidBrush(Rgb(0, 0, 100)));
+            rd.FillRect(0, 0, 2, 2, new fire.Terminal.SolidBrush(P(200, 100, 0, 128)));
+            rd.FillRect(2, 0, 2, 2, new fire.Terminal.SolidBrush(P(200, 100, 0, 0)));
+            rd.FillRect(4, 0, 2, 2, new fire.Terminal.SolidBrush(Rgb(9, 8, 7)));
+            var mixed = fb.GetPixel(0, 0);
+            GfxCheck(Math.Abs(mixed.R - 100) <= 2 && Math.Abs(mixed.G - 50) <= 2 && Math.Abs(mixed.B - 50) <= 2 && mixed.A == 255, "Alpha-Blending: Alpha 128 wird mit dem Untergrund gemischt");
+            GfxCheck(fb.GetPixel(2, 0).B == 100 && fb.GetPixel(4, 0).R == 9, "Alpha 0 zeichnet nichts, Alpha 255 kopiert");
+            rd.AlphaBlending = false;
+            rd.FillRect(0, 2, 2, 1, new fire.Terminal.SolidBrush(P(200, 100, 0, 128)));
+            GfxCheck(fb.GetPixel(0, 2).Packed == new fire.Terminal.PixelColor(200, 100, 0, 128).Packed, "ohne AlphaBlending wird die Farbe samt Alpha kopiert");
+            rd.AlphaBlending = true;
+            rd.Clear(fire.Terminal.Paint.FromIndex(0));
+            GfxCheck(fb.GetPixel(5, 3).Packed == fb.Palette.GetPacked(0), "Clear(Paint) setzt ohne Mischen");
+
+            // 8-Bit-Ziel: ab Alpha 128 Kopie (naechster Eintrag), darunter nichts
+            var pal = new fire.Terminal.Framebuffer(4, 1, IDX);
+            var rp = new fire.Terminal.Renderer(pal, font);
+            rp.FillRect(0, 0, 4, 1, new fire.Terminal.SolidBrush(fire.Terminal.Paint.FromIndex(7)));
+            rp.SetPixel(0, 0, P(255, 255, 255, 127));
+            rp.SetPixel(1, 0, P(255, 255, 255, 128));
+            GfxCheck(pal.Indices![0] == 7 && pal.Indices[1] != 7, "Palette-Ziel: Alpha 127 wird nicht gezeichnet, ab 128 kopiert");
+            rp.AlphaBlending = false;
+            rp.SetPixel(0, 0, P(255, 255, 255, 1));
+            GfxCheck(pal.Indices[0] != 7, "Palette-Ziel ohne Blending: immer kopiert");
+        }
+
+        // Pen: Breite 1 == die einfache Linie, breitere Stifte stempeln ihre Spitze
+        {
+            foreach (var mode in new[] { RGBA, IDX })
+            {
+                var a = new fire.Terminal.Framebuffer(40, 30, mode);
+                var b = new fire.Terminal.Framebuffer(40, 30, mode);
+                new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5)).DrawLine(new fire.Terminal.Surface(a, true), 2, 3, 35, 20);
+                var ra = new fire.Terminal.Renderer(b, font);
+                ra.DrawLine(2, 3, 35, 20, new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5), 1, fire.Terminal.PenShape.Square));
+                GfxCheck(Lit(a).SetEquals(Lit(b)) && Lit(a).Count > 30, $"Pen Breite 1: Round == Square == die Bresenham-Linie [{mode}]");
+            }
+            var fb = new fire.Terminal.Framebuffer(30, 30);
+            var rd = new fire.Terminal.Renderer(fb, font);
+            rd.DrawPoint(10, 10, new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5), 3, fire.Terminal.PenShape.Square));
+            var sq = Lit(fb);
+            GfxCheck(sq.SetEquals(Enumerable.Range(9, 3).SelectMany(x => Enumerable.Range(9, 3).Select(y => (x, y)))), "Pen Quadrat Breite 3: ein 3x3-Stempel, mittig");
+            var fr = new fire.Terminal.Framebuffer(30, 30);
+            new fire.Terminal.Renderer(fr, font).DrawPoint(10, 10, new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5), 7, fire.Terminal.PenShape.Round));
+            var disc = Lit(fr);
+            GfxCheck(disc.Contains((10, 7)) && disc.Contains((7, 10)) && disc.Contains((13, 10)) && !disc.Contains((7, 7)) && !disc.Contains((13, 13)) && disc.Count > 30 && disc.Count < 49, "Pen rund Breite 7: Kreisscheibe (Ecken fehlen)");
+            // eine breite Linie ist die Vereinigung der Stempel entlang der Linie
+            var fl = new fire.Terminal.Framebuffer(40, 20);
+            var pen3 = new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5), 3, fire.Terminal.PenShape.Square);
+            new fire.Terminal.Renderer(fl, font).DrawLine(5, 10, 30, 10, pen3);
+            GfxCheck(Lit(fl).SetEquals(Enumerable.Range(4, 28).SelectMany(x => Enumerable.Range(9, 3).Select(y => (x, y)))), "Pen Breite 3: waagerechte Linie = 3 Zeilen von x-1 bis x+1");
+            // Pfad, Umrisse
+            var fp = new fire.Terminal.Framebuffer(30, 30);
+            var rp = new fire.Terminal.Renderer(fp, font);
+            rp.DrawPath(new[] { 2, 2, 20, 2, 20, 20 }, new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5)), false);
+            var open = Lit(fp);
+            GfxCheck(open.Contains((10, 2)) && open.Contains((20, 10)) && !open.Contains((10, 10)) && open.Count == 19 + 18, "DrawPath offen: Kantenzug");
+            rp.Clear(fire.Terminal.Paint.FromIndex(0));
+            rp.DrawPath(new[] { 2, 2, 20, 2, 20, 20 }, new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5)), true);
+            GfxCheck(Lit(fp).Contains((10, 11)), "DrawPath geschlossen: mit Schlusslinie");
+            // Pen-Eigenschaften
+            var changing = new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5));
+            changing.Width = 5; changing.Shape = fire.Terminal.PenShape.Square;
+            var fc = new fire.Terminal.Framebuffer(20, 20);
+            new fire.Terminal.Renderer(fc, font).DrawPoint(10, 10, changing);
+            GfxCheck(Lit(fc).Count == 25, "Pen: Breite und Form nachtraeglich aendern rendert die Spitze neu");
+            changing.Width = 100000;
+            GfxCheck(changing.Width == fire.Terminal.Pen.MaxWidth, "Pen: die Breite wird begrenzt");
+        }
+
+        // halbdurchsichtiger Stift: die ueberlappenden Stempel mischen NICHT mehrfach (die Vereinigung wird einmal gemischt)
+        {
+            var fb = new fire.Terminal.Framebuffer(30, 10);
+            var rd = new fire.Terminal.Renderer(fb, font);
+            rd.FillRect(0, 0, 30, 10, new fire.Terminal.SolidBrush(Rgb(0, 0, 0)));
+            rd.DrawLine(2, 5, 25, 5, new fire.Terminal.Pen(P(200, 200, 200, 128), 5, fire.Terminal.PenShape.Square));
+            uint inner = fb.GetPixel(10, 5).Packed, edge = fb.GetPixel(10, 3).Packed, start = fb.GetPixel(2, 5).Packed;
+            GfxCheck(inner == edge && inner == start && fb.GetPixel(10, 5).R is >= 99 and <= 101, "halbdurchsichtiger breiter Stift: gleichmaessig gemischt, ohne dunklere Ueberlappung");
+            var fr = new fire.Terminal.Framebuffer(30, 10);
+            var rr = new fire.Terminal.Renderer(fr, font);
+            rr.FillRect(0, 0, 30, 10, new fire.Terminal.SolidBrush(Rgb(0, 0, 0)));
+            rr.DrawRect(3, 1, 20, 7, new fire.Terminal.Pen(P(200, 200, 200, 128), 1));
+            GfxCheck(fr.GetPixel(3, 1).R == fr.GetPixel(10, 1).R && fr.GetPixel(3, 4).R == fr.GetPixel(3, 1).R, "halbdurchsichtiger Umriss: auch die Ecken nur einmal gemischt");
+        }
+
+        // Brush: Fills samt FloodFill, gemischt; FloodFill einer halbdurchsichtigen Farbe bleibt in der Flaeche
+        {
+            var fb = new fire.Terminal.Framebuffer(30, 20);
+            var rd = new fire.Terminal.Renderer(fb, font);
+            rd.FillRect(0, 0, 30, 20, new fire.Terminal.SolidBrush(Rgb(0, 0, 100)));
+            rd.DrawRect(5, 5, 15, 10, new fire.Terminal.Pen(Rgb(255, 255, 255)));
+            rd.FloodFill(10, 10, new fire.Terminal.SolidBrush(P(200, 0, 0, 128)));
+            var inside = fb.GetPixel(10, 10);
+            GfxCheck(Math.Abs(inside.R - 100) <= 2 && Math.Abs(inside.B - 50) <= 2 && fb.GetPixel(2, 2).R == 0 && fb.GetPixel(5, 5).R == 255, "FloodFill mit halbdurchsichtiger Farbe: die Flaeche wird einmal gemischt, Rahmen und Aussen bleiben");
+            GfxCheck(Enumerable.Range(6, 13).All(x => Enumerable.Range(6, 8).All(y => fb.GetPixel(x, y).Packed == inside.Packed)), "FloodFill (gemischt): jedes Pixel der Flaeche gleich");
+            rd.Fill(new fire.Terminal.SolidBrush(Rgb(1, 2, 3)));
+            GfxCheck(fb.GetPixel(0, 0).Packed == new fire.Terminal.PixelColor(1, 2, 3).Packed && fb.GetPixel(29, 19).Packed == new fire.Terminal.PixelColor(1, 2, 3).Packed, "Renderer.Fill fuellt alles");
+        }
+
+        // Text: Vordergrund und Hintergrund als Pinsel, auch halbdurchsichtig
+        {
+            var fb = new fire.Terminal.Framebuffer(40, 20);
+            var rd = new fire.Terminal.Renderer(fb, font);
+            rd.FillRect(0, 0, 40, 20, new fire.Terminal.SolidBrush(Rgb(0, 0, 0)));
+            rd.DrawText(0, 0, "A", new fire.Terminal.SolidBrush(P(255, 255, 255, 128)), new fire.Terminal.SolidBrush(P(0, 255, 0, 255)));
+            var cell = Enumerable.Range(0, 8).SelectMany(x => Enumerable.Range(0, 14).Select(y => fb.GetPixel(x, y))).ToList();
+            GfxCheck(cell.Any(c => c.R is >= 127 and <= 129 && c.G is >= 254) && cell.Any(c => c.R == 0 && c.G == 255), "DrawText: halbdurchsichtiger Vordergrund ueber deckendem Hintergrund (gemischt)");
+            var f2 = new fire.Terminal.Framebuffer(40, 20);
+            var r2 = new fire.Terminal.Renderer(f2, font);
+            r2.DrawText(0, 0, "A", new fire.Terminal.SolidBrush(P(255, 255, 255, 255)), new fire.Terminal.SolidBrush(P(0, 255, 0, 0)));
+            GfxCheck(Enumerable.Range(0, 8).SelectMany(x => Enumerable.Range(0, 14).Select(y => f2.GetPixel(x, y))).All(c => c.Packed == 0 || c.Packed == new fire.Terminal.PixelColor(255, 255, 255, 255).Packed), "DrawText: ein Hintergrund mit Alpha 0 ist keiner");
+        }
+
+        // Palette-Index und durchsichtige Farbe: der Index belegt nur das R-Byte (Alpha bleibt 0); die kanonische durchsichtige Farbe (0,1,0,0) = 256 ist kein Index
+        {
+            GfxCheck(fire.Terminal.Paint.FromArgument(14).IsIndex && fire.Terminal.Paint.FromArgument(0).IsIndex, "Zahl 0-255 ist ein Palette-Index (nur das R-Byte, Alpha 0)");
+            GfxCheck(!fire.Terminal.Paint.FromArgument(fire.Terminal.Paint.Transparent).IsIndex && fire.Terminal.PixelColor.Transparent.Packed == 256 && fire.Terminal.PixelColor.Transparent.A == 0, "Transparent = (0,1,0,0) = 256: durchsichtig, aber kein Palette-Index");
+            GfxCheck(fire.Terminal.Paint.ToArgument(0) == 256 && fire.Terminal.Paint.ToArgument(7) == 256 && fire.Terminal.Paint.ToArgument(0xFF102030u) == unchecked((int)0xFF102030u) && fire.Terminal.Paint.ToArgument(0x00102030u) == 0x00102030, "ToArgument: nur Werte, die als Index gelesen wuerden, werden zu Transparent");
+            var fb = new fire.Terminal.Framebuffer(4, 2);
+            var cv = new fire.Terminal.Renderer(fb, font);
+            cv.FillRect(0, 0, 4, 2, new fire.Terminal.SolidBrush(Rgb(30, 40, 50)));
+            // ein leeres Pixel zurueckschreiben (GetPixel -> SetPixel) laesst es durchsichtig statt Palette-Schwarz
+            fb.SetPixel(1, 0, fire.Terminal.PixelColor.Transparent);
+            int read = fire.Terminal.Paint.ToArgument(fb.GetPixel(1, 0).Packed);
+            cv.SetPixel(2, 0, fire.Terminal.Paint.FromArgument(read));
+            GfxCheck(read == 256 && fb.GetPixel(2, 0).Packed == new fire.Terminal.PixelColor(30, 40, 50, 255).Packed, "ein durchsichtiges Pixel als Zahl zurueckgeschrieben zeichnet nichts (kein Palette-Schwarz)");
+        }
+
+        // ein anderes Ziel: ein eigenes IRenderTarget (hier ein Ausschnitt-freier Wrapper um zwei Arrays)
+        {
+            var t = new ArrayTarget(6, 3);
+            var rd = new fire.Terminal.Renderer(t, font);
+            rd.FillRect(1, 1, 3, 1, new fire.Terminal.SolidBrush(Rgb(5, 6, 7)));
+            GfxCheck(t.Pixels[1 * 6 + 1] == new fire.Terminal.PixelColor(5, 6, 7).Packed && t.Pixels[1 * 6 + 4] == 0, "Renderer zeichnet in jedes IRenderTarget");
+        }
     }
 
     Console.WriteLine(gfxFailures == 0 ? "Alle Grafik-Pruefungen bestanden." : $"FEHLER: {gfxFailures} Grafik-Pruefung(en) fehlgeschlagen.");
@@ -7840,15 +8285,16 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     List<string> RunGf(string script, VmExecutionMode mode, Func<string, byte[]>? reader = null)
     {
         var lines = new List<string>();
-        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, script };
+        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, script };
         var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase))).ToList());
         var natives = new NativeRegistry();
         natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
         natives.RegisterBaseTypeNatives();
         var fbManager = new fire.Terminal.FramebufferManager();
-        var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
+        var conManager = new fire.Terminal.RendererManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
         var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => new FakeRenderer());
-        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, winManager, reader ?? (path => ImageFixtures.Get(path)));
+        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, reader ?? (path => ImageFixtures.Get(path)));
+        fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
         // die Bytes einer Testdatei als Puffer, und ein Puffer mit Unsinn
         natives.Register("__TestImage", args => Value.MakeBuffer(new ByteBuffer(ImageFixtures.Get(args[0].AsString()), ByteConversions.HostByteOrder)));
         natives.Register("__TestGarbage", args => Value.MakeBuffer(new ByteBuffer(System.Text.Encoding.ASCII.GetBytes("kein Bild"), ByteConversions.HostByteOrder)));
@@ -7879,20 +8325,20 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     string GfDrawExpected()
     {
         var fb = new fire.Terminal.Framebuffer(40, 40);
-        var five = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(5));
-        var zero = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(0));
-        var four = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(4));
+        var five = fb.ResolvePixel(fire.Terminal.Paint.FromIndex(5));
+        var zero = fb.ResolvePixel(fire.Terminal.Paint.FromIndex(0));
+        var four = fb.ResolvePixel(fire.Terminal.Paint.FromIndex(4));
         int Count() { int n = 0; for (int y = 0; y < 40; y++) for (int x = 0; x < 40; x++) if (fb.GetRaw(x, y) == five.Rgba) n++; return n; }
         var counts = new List<int>();
         void Reset() => fb.FillRect(0, 0, 40, 40, zero);
-        fire.Terminal.Shapes.FillCircle(fb, 20, 20, 3, five); counts.Add(Count()); Reset();
-        fire.Terminal.Shapes.Circle(fb, 20, 20, 10, five); counts.Add(Count()); Reset();
-        fire.Terminal.Shapes.FillEllipse(fb, 20, 20, 8, 3, five); counts.Add(Count()); Reset();
-        fire.Terminal.Shapes.FillTriangle(fb, 2, 2, 22, 2, 2, 22, five); counts.Add(Count()); Reset();
-        fire.Terminal.Shapes.FillPolygon(fb, new[] { 5, 5, 15, 5, 15, 12, 5, 12 }, five); counts.Add(Count()); Reset();
-        fire.Terminal.Shapes.Rect(fb, 5, 5, 10, 10, five); fire.Terminal.Shapes.FloodFill(fb, 8, 8, five); counts.Add(Count()); Reset();
-        fire.Terminal.Shapes.Polygon(fb, new[] { 2, 2, 30, 2, 30, 30 }, five, closed: false); counts.Add(Count()); Reset();
-        fire.Terminal.Shapes.Rect(fb, 5, 5, 10, 10, four); fire.Terminal.Shapes.FloodFillBorder(fb, 8, 8, five, four); counts.Add(Count());
+        Shp.FillCircle(fb, 20, 20, 3, 5); counts.Add(Count()); Reset();
+        Shp.Circle(fb, 20, 20, 10, 5); counts.Add(Count()); Reset();
+        Shp.FillEllipse(fb, 20, 20, 8, 3, 5); counts.Add(Count()); Reset();
+        Shp.FillTriangle(fb, 2, 2, 22, 2, 2, 22, 5); counts.Add(Count()); Reset();
+        Shp.FillPolygon(fb, new[] { 5, 5, 15, 5, 15, 12, 5, 12 }, 5); counts.Add(Count()); Reset();
+        Shp.Rect(fb, 5, 5, 10, 10, 5); Shp.FloodFill(fb, 8, 8, 5); counts.Add(Count()); Reset();
+        Shp.Polygon(fb, new[] { 2, 2, 30, 2, 30, 30 }, 5, closed: false); counts.Add(Count()); Reset();
+        Shp.Rect(fb, 5, 5, 10, 10, 4); Shp.FloodFillBorder(fb, 8, 8, 5, 4); counts.Add(Count());
         return string.Join(" ", counts);
     }
 
@@ -7923,14 +8369,14 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     CheckGf("Farbangaben: 0-255 = Palette-Index, sonst direkter Wert - in beiden Farbmodi", gfHead + """
         var rgba = new Framebuffer(16, 8)
         var pal = new Framebuffer(16, 8, ColorMode.Palette)
-        var a = new Console(rgba)
-        var b = new Console(pal)
-        a.FillRect(0, 0, 4, 4, 9)
-        b.FillRect(0, 0, 4, 4, 9)
+        var a = new Renderer(rgba)
+        var b = new Renderer(pal)
+        a.FillRect(0, 0, 4, 4, new SolidBrush(9))
+        b.FillRect(0, 0, 4, 4, new SolidBrush(9))
         print(Px.Get(a, 1, 1) == rgba.GetPaletteColor(9))
         print(b.GetPixelIndex(1, 1))
-        a.FillRect(4, 0, 4, 4, 4278190335)
-        b.FillRect(4, 0, 4, 4, 4278190335)
+        a.FillRect(4, 0, 4, 4, new SolidBrush(4278190335))
+        b.FillRect(4, 0, 4, 4, new SolidBrush(4278190335))
         print(Px.Get(a, 5, 1) == 4278190335)
         print(b.GetPixelIndex(5, 1))
         print(a.GetPixelIndex(5, 1) == b.GetPixelIndex(5, 1))
@@ -7945,10 +8391,10 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     CheckGf("Palette-Animation: ein Palette-Eintrag aendern faerbt alle Pixel mit diesem Index um (nur im Palette-Framebuffer)", gfHead + """
         var rgba = new Framebuffer(8, 8)
         var pal = new Framebuffer(8, 8, ColorMode.Palette)
-        var a = new Console(rgba)
-        var b = new Console(pal)
-        a.FillRect(0, 0, 8, 8, 5)
-        b.FillRect(0, 0, 8, 8, 5)
+        var a = new Renderer(rgba)
+        var b = new Renderer(pal)
+        a.FillRect(0, 0, 8, 8, new SolidBrush(5))
+        b.FillRect(0, 0, 8, 8, new SolidBrush(5))
         var before = Px.Get(a, 3, 3)
         pal.SetPaletteRgb(5, 200, 100, 50)
         rgba.SetPaletteRgb(5, 200, 100, 50)
@@ -7958,7 +8404,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
     CheckGf("Text in einem Palette-Framebuffer: Print und DrawText mit Palette-Indizes", gfHead + """
         var fb = new Framebuffer(80, 28, ColorMode.Palette)
-        var con = new Console(fb)
+        var con = new Renderer(fb)
         con.SetColor(14, 1)
         con.Clear()
         con.Print("Hi")
@@ -7969,7 +8415,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             if (con.GetPixelIndex(x, y) == 1) { bg = bg + 1 }
         } }
         print((fg > 10) + " " + (fg + bg == 16 * 14))
-        con.DrawText(0, 14, "T", 12, 0)
+        con.DrawText(0, 14, "T", new SolidBrush(12))
         var t = 0
         for (var y = 14; y < 28; y = y + 1) { for (var x = 0; x < 8; x = x + 1) { if (con.GetPixelIndex(x, y) == 12) { t = t + 1 } } }
         print(t > 5)
@@ -7985,31 +8431,31 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             }
             static Run(int mode) {
                 var fb = new Framebuffer(40, 40, mode)
-                var con = new Console(fb)
-                con.FillCircle(20, 20, 3, 5)
+                var con = new Renderer(fb)
+                con.FillCircle(20, 20, 3, new SolidBrush(5))
                 var circle = Draw.Count(con, 40, 40)
-                con.FillRect(0, 0, 40, 40, 0)
-                con.DrawCircle(20, 20, 10, 5)
+                con.FillRect(0, 0, 40, 40, new SolidBrush(0))
+                con.DrawCircle(20, 20, 10, new Pen(5))
                 var ring = Draw.Count(con, 40, 40)
-                con.FillRect(0, 0, 40, 40, 0)
-                con.FillEllipse(20, 20, 8, 3, 5)
+                con.FillRect(0, 0, 40, 40, new SolidBrush(0))
+                con.FillEllipse(20, 20, 8, 3, new SolidBrush(5))
                 var ellipse = Draw.Count(con, 40, 40)
-                con.FillRect(0, 0, 40, 40, 0)
-                con.FillTriangle(2, 2, 22, 2, 2, 22, 5)
+                con.FillRect(0, 0, 40, 40, new SolidBrush(0))
+                con.FillTriangle(2, 2, 22, 2, 2, 22, new SolidBrush(5))
                 var tri = Draw.Count(con, 40, 40)
-                con.FillRect(0, 0, 40, 40, 0)
-                con.FillPolygon([5, 5, 15, 5, 15, 12, 5, 12], 5)
+                con.FillRect(0, 0, 40, 40, new SolidBrush(0))
+                con.FillPolygon([5, 5, 15, 5, 15, 12, 5, 12], new SolidBrush(5))
                 var rect = Draw.Count(con, 40, 40)
-                con.FillRect(0, 0, 40, 40, 0)
-                con.DrawRect(5, 5, 10, 10, 5)
-                con.FloodFill(8, 8, 5)
+                con.FillRect(0, 0, 40, 40, new SolidBrush(0))
+                con.DrawRect(5, 5, 10, 10, new Pen(5))
+                con.FloodFill(8, 8, new SolidBrush(5))
                 var flood = Draw.Count(con, 40, 40)
-                con.FillRect(0, 0, 40, 40, 0)
-                con.DrawPolygon([2, 2, 30, 2, 30, 30], 5, false)
+                con.FillRect(0, 0, 40, 40, new SolidBrush(0))
+                con.DrawPolygon([2, 2, 30, 2, 30, 30], new Pen(5), false)
                 var open = Draw.Count(con, 40, 40)
-                con.FillRect(0, 0, 40, 40, 0)
-                con.DrawRect(5, 5, 10, 10, 4)
-                con.FloodFillBorder(8, 8, 5, 4)
+                con.FillRect(0, 0, 40, 40, new SolidBrush(0))
+                con.DrawRect(5, 5, 10, 10, new Pen(4))
+                con.FloodFillBorder(8, 8, new SolidBrush(5), 4)
                 var border = Draw.Count(con, 40, 40)
                 return circle + " " + ring + " " + ellipse + " " + tri + " " + rect + " " + flood + " " + open + " " + border
             }
@@ -8041,7 +8487,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         try { Framebuffer.FromImage(__TestGarbage()) } catch (e) { print((e is of ImageException) + " " + e.message) }
         try { Framebuffer.FromImage(__TestImage("png_rgb8"), 7) } catch (e) { print(e is of ImageException) }
         print("weiter")
-        """, new[] { "1 13", "True Datei nicht da: fehlt.png", "True verboten: verboten.png", "True Unbekanntes Bildformat (erwartet: PNG, BMP oder GIF).", "True", "weiter" },
+        """, new[] { "1 13", "True Datei nicht da: fehlt.png", "True verboten: verboten.png", "True Unknown image format (expected: PNG, BMP or GIF).", "True", "weiter" },
         reader: path => path switch
         {
             "fehlt.png" => throw new System.IO.FileNotFoundException("Datei nicht da: " + path),
@@ -8073,21 +8519,21 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         try { print(b.GetPaletteColor(-1)) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
         print(b.ReadByte(0))
         """, new[] { "0 50 16", $"1 5 {4278190080L + 33 * 65536 + 22 * 256 + 11}", "99", "falsche Groesse: True",
-            "True Erwarte genau 6 Byte, erhalten 16.",
-            "True Eine Palette hat 768 (RGB) oder 1024 (RGBA) Byte, erhalten 16.",
-            "True Palette-Index 256 außerhalb von 0-255.",
-            "True Palette-Index -1 außerhalb von 0-255.", "99" });
+            "True Expected exactly 6 bytes, got 16.",
+            "True A palette has 768 (RGB) or 1024 (RGBA) bytes, got 16.",
+            "True Palette index 256 outside of 0-255.",
+            "True Palette index -1 outside of 0-255.", "99" });
 
     CheckGf("Blit: geladenes Bild in einen anderen Framebuffer (auch ueber die Farbmodi), Ausschnitt, Skalierung, Spiegelung, Transparenz", gfHead + """
         var img = Framebuffer.FromImage(__TestImage("png_pal4"))
         var rgba = new Framebuffer(30, 20)
-        var a = new Console(rgba)
+        var a = new Renderer(rgba)
         a.Blit(img, 2, 3)
         print(Px.Get(a, 2, 3) == img.GetPaletteColor(img.ReadByte(0)))
         print(Px.Get(a, 14, 9) == img.GetPaletteColor(img.ReadByte(6 * 13 + 12)))
         var pal = new Framebuffer(30, 20, ColorMode.Palette)
         pal.WritePalette(img.ReadPalette(true))
-        var b = new Console(pal)
+        var b = new Renderer(pal)
         b.Blit(img, 0, 0)
         print(pal.ReadByte(5) == img.ReadByte(5))
         b.BlitRegion(img, 3, 2, 4, 3, 20, 10)
@@ -8097,8 +8543,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         b.BlitScaled(img, 0, 0, 13, 7, 13, 0, -13, 7)
         print(pal.ReadByte(13) == img.ReadByte(12) && pal.ReadByte(25) == img.ReadByte(0))
         var bg = new Framebuffer(13, 7, ColorMode.Palette)
-        var c = new Console(bg)
-        c.FillRect(0, 0, 13, 7, 200)
+        var c = new Renderer(bg)
+        c.FillRect(0, 0, 13, 7, new SolidBrush(200))
         var sprite = Framebuffer.FromImage(__TestImage("pil_gif_trans"))
         c.Blit(sprite, 0, 0, BlitMode.Transparent)
         var kept = 0
@@ -8106,17 +8552,17 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(kept > 0 && kept < 91)
         var tc = Framebuffer.FromImage(__TestImage("png_rgba8"))
         var dst = new Framebuffer(13, 7)
-        var d = new Console(dst)
-        d.FillRect(0, 0, 13, 7, 4278190335)
+        var d = new Renderer(dst)
+        d.FillRect(0, 0, 13, 7, new SolidBrush(4278190335))
         d.Blit(tc, 0, 0, BlitMode.Transparent)
         print(Px.Get(d, 0, 0) == 4278190335)
         """, new[] { "True", "True", "True", "True", "True", "True", "True", "True" });
 
     CheckGf("Slicer aus fire: ToMask, Slicer.Slice liefert eine List von ToolPath, Fehler als GraphicsException", gfHead + """
         var img = new Framebuffer(120, 70)
-        var con = new Console(img)
-        con.FillRect(0, 0, 120, 70, 4294967295)
-        con.FillRect(10, 10, 100, 50, 4278190080)
+        var con = new Renderer(img)
+        con.FillRect(0, 0, 120, 70, new SolidBrush(4294967295))
+        con.FillRect(10, 10, 100, 50, new SolidBrush(4278190080))
         var mask = img.ToMask()
         print(mask.Mode() + " " + mask.Width() + "x" + mask.Height() + " " + mask.ReadByte(0) + " " + mask.ReadByte(20 * 120 + 20))
         var slicer = new Slicer(1, 0.1)
@@ -8140,7 +8586,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         slicer.overlap = 0.99
         try { slicer.Slice(mask) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
         foreach (p in new Slicer(1, 0.1).Slice(mask)) { print(p.kind) }
-        """, new[] { "1 120x70 0 1", "0.5", "4", "True True True True", "1", "0", "True Linienstärke und Pixelgröße müssen größer als 0 sein.", "True Die Überlappung muss zwischen 0 und 0.95 liegen.", "0", "0", "0", "1" });
+        """, new[] { "1 120x70 0 1", "0.5", "4", "True True True True", "1", "0", "True Line thickness and pixel size must be greater than 0.", "True The overlap must be between 0 and 0.95.", "0", "0", "0", "1" });
 
     // ---- Echte Dateien ueber die Sitzung des Hosts: die IoPolicy entscheidet, was Framebuffer.FromFile lesen darf ----
     {
@@ -8178,7 +8624,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             }
             CheckSession("FromFile ohne Richtlinie (alles erlaubt)", null, r => r == "geladen 1 13x7");
             CheckSession("FromFile mit Richtlinie, die das Verzeichnis erlaubt", fire.IO.Bridge.IoPolicy.Rooted(imgDir, readOnly: true), r => r == "geladen 1 13x7");
-            CheckSession("FromFile mit DenyAll: ImageException mit dem Grund der Richtlinie", fire.IO.Bridge.IoPolicy.DenyAll, r => r == "True Dateizugriff ist für dieses Programm nicht erlaubt.");
+            CheckSession("FromFile mit DenyAll: ImageException mit dem Grund der Richtlinie", fire.IO.Bridge.IoPolicy.DenyAll, r => r == "True File access is not allowed for this program.");
             CheckSession("FromFile ausserhalb des erlaubten Verzeichnisses: ImageException", fire.IO.Bridge.IoPolicy.Rooted(otherDir), r => r.StartsWith("True "));
         }
         finally
@@ -8228,7 +8674,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     fire.Terminal.Framebuffer Rect(int w, int h, int x0, int y0, int x1, int y1)
     {
         var fb = new fire.Terminal.Framebuffer(w, h, fire.Terminal.ColorMode.Indexed);
-        fb.FillRect(x0, y0, x1 - x0, y1 - y0, fb.ResolveBrush(fire.Terminal.Paint.FromIndex(1)));
+        fb.FillRect(x0, y0, x1 - x0, y1 - y0, fb.ResolvePixel(fire.Terminal.Paint.FromIndex(1)));
         return fb;
     }
     {
@@ -8265,7 +8711,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     {
         // zwei getrennte Flaechen und ein Loch: ein Ring um das Loch
         var fb = new fire.Terminal.Framebuffer(200, 80, fire.Terminal.ColorMode.Indexed);
-        var one = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(1)); var zero = fb.ResolveBrush(fire.Terminal.Paint.FromIndex(0));
+        var one = fb.ResolvePixel(fire.Terminal.Paint.FromIndex(1)); var zero = fb.ResolvePixel(fire.Terminal.Paint.FromIndex(0));
         fb.FillRect(10, 10, 60, 60, one); fb.FillRect(110, 10, 80, 60, one); fb.FillRect(130, 30, 20, 20, zero);
         var outlines = new fire.Terminal.ImageSlicer(1.0, 0.1) { Strategy = fire.Terminal.FillStrategy.OutlineOnly }.Slice(fb);
         SlCheck(outlines.Count == 3 && outlines.All(p => p.Closed), "zwei Flaechen, eine mit Loch: drei geschlossene Randkonturen");
@@ -8277,6 +8723,31 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
     Console.WriteLine(slFailures == 0 ? "Alle Slicer-Pruefungen bestanden." : $"FEHLER: {slFailures} Slicer-Pruefung(en) fehlgeschlagen.");
 }
+
+// the drawing of the UI library without events: run by the VM (fake renderer) below, natively (SDL dummy driver) in the native checks
+string uiDrawScript = """
+    var fb = new Framebuffer(320, 200)
+    var win = new Window(fb, "Test")
+    var ui = new UI.Root(fb, win)
+    var panel = new UI.Panel(8, 8, 300, 150)
+    ui.Add(panel)
+    panel.Add(new UI.Label("Hello UI", 6, 6))
+    panel.Add(new UI.Button("OK", 6, 26, 80, 26))
+    panel.Add(new UI.CheckBox("check me", 100, 30, true))
+    var box = new UI.TextBox("text", 6, 64, 160, 24)
+    panel.Add(box)
+    var stack = new UI.Stack(180, 60, 100, 80)
+    stack.Add(new UI.Button("one", 0, 0, 80, 20))
+    stack.Add(new UI.Button("two", 0, 0, 80, 20))
+    panel.Add(stack)
+    print(ui.Tick())
+    var bytes = fb.ReadBytes()
+    var h = 17
+    for (var i = 0; i < bytes.length; i++) { h = (h * 31 + bytes[i]) % 1000000007 }
+    print("hash " + h)
+    print(ui.Tick())
+    """;
+string[] uiDrawExpected = Array.Empty<string>();
 
 // ---------------------------------------------------------------------------
 // UI-Bibliothek (#import "ui"): headless - echte Framebuffer/Konsole/WindowManager, nur der Renderer ist eine Attrappe
@@ -8294,7 +8765,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     List<string> RunUi(string script, VmExecutionMode mode)
     {
         var lines = new List<string>();
-        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.UI.Bridge.UiBridge.PreludeSource, script };
+        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, fire.UI.Bridge.UiBridge.PreludeSource, script };
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
         var natives = new NativeRegistry();
@@ -8303,9 +8774,10 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
         var renderer = new FakeRenderer();
         var fbManager = new fire.Terminal.FramebufferManager();
-        var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
+        var conManager = new fire.Terminal.RendererManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
         var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => renderer);
-        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, winManager);
+        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager);
+        fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
 
         natives.Register("__TestClose", args => { renderer.Closed = true; return Value.MakeUndefined(); });
         natives.Register("__TestEvent", args =>
@@ -8323,6 +8795,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             lines.Add("UNBEHANDELT: " + new UncaughtScriptException(vm.UnhandledException).Message);
         return lines;
     }
+
+    uiDrawExpected = RunUi(uiDrawScript, VmExecutionMode.Release).ToArray();
 
     void CheckUi(string title, string script, string[] expected)
     {
@@ -8389,20 +8863,20 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         ui.Add(b)
         ui.Draw()
         var t = ui.theme
-        print("back " + (Px.Get(ui.console, 300, 190) == t.back))
-        print("face " + (Px.Get(ui.console, 12, 12) == t.face))
-        print("border " + (Px.Get(ui.console, 10, 10) == t.border))
+        print("back " + (Px.Get(ui.renderer, 300, 190) == t.back.Color))
+        print("face " + (Px.Get(ui.renderer, 12, 12) == t.face.Color))
+        print("border " + (Px.Get(ui.renderer, 10, 10) == t.border.Color))
         var textPixels = 0
         for (var y = 10; y < 36; y = y + 1) {
             for (var x = 10; x < 90; x = x + 1) {
-                if (Px.Get(ui.console, x, y) == t.text) { textPixels = textPixels + 1 }
+                if (Px.Get(ui.renderer, x, y) == t.text.Color) { textPixels = textPixels + 1 }
             }
         }
         print("text " + (textPixels > 20))
         __TestEvent(9, 20.0, 20.0)
         ui.Tick()
         ui.Draw()
-        print("hover " + (Px.Get(ui.console, 12, 12) == t.faceHover))
+        print("hover " + (Px.Get(ui.renderer, 12, 12) == t.faceHover.Color))
         """, new[] { "back True", "face True", "border True", "text True", "hover True" });
 
     CheckUi("CheckBox: Klick und Leertaste schalten um", uiHead + """
@@ -8536,7 +9010,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var b = new UI.Button("OK", 10, 10, 80, 26)
         ui.Add(b)
         print("offen " + ui.Tick())
-        print("gezeichnet " + (Px.Get(ui.console, 12, 12) == ui.theme.face))
+        print("gezeichnet " + (Px.Get(ui.renderer, 12, 12) == ui.theme.face.Color))
         __TestClose()
         print("offen " + ui.Tick() + " geschlossen " + ui.closed)
         """, new[] { "offen True", "gezeichnet True", "offen False geschlossen True" });
@@ -8570,6 +9044,166 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(w3.VSync)
         """, new[] { "True", "False", "True", "False" });
 
+    // ---- UI markup (.fxml): parsing, diagnostics, the generated script, and the generated class running against the library ----
+    {
+        Console.WriteLine("--- UI-Markup ---");
+        void CheckMarkup(string title, bool ok, string detail = "")
+        {
+            if (!ok) uiFailures++;
+            Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title} {detail}");
+        }
+
+        string Diagnose(string markup) =>
+            string.Join(" | ", fire.UI.Markup.MarkupParser.Parse(markup).Diagnostics.Select(d => d.ToString()));
+
+        CheckMarkup("Markup: ein gueltiges Dokument hat keine Diagnosen",
+            fire.UI.Markup.MarkupParser.Parse("<Window class=\"A\"><Button name=\"b\" text=\"x\" onClick=\"Go\"/></Window>").Diagnostics.Count == 0);
+
+        void ExpectDiagnostic(string title, string markup, string expected)
+        {
+            string actual = Diagnose(markup);
+            CheckMarkup($"Markup: {title}", actual.Contains(expected, StringComparison.Ordinal), $"erwartet '{expected}', erhalten '{actual}'");
+        }
+        ExpectDiagnostic("Fehler im XML mit Zeile", "<Window class=\"A\">\n<Button>\n</Window>", "line 3");
+        ExpectDiagnostic("das Wurzelelement", "<Foo class=\"A\"/>", "must be 'Window' or 'View'");
+        ExpectDiagnostic("class fehlt", "<Window/>", "needs the attribute class");
+        ExpectDiagnostic("unbekanntes Element mit Zeile", "<Window class=\"A\">\n<Slider/>\n</Window>", "line 2: Unknown element 'Slider'");
+        ExpectDiagnostic("unbekannte Eigenschaft", "<Window class=\"A\"><Label colour=\"#fff\"/></Window>", "has no property or event 'colour'");
+        ExpectDiagnostic("ein Button hat keine Kinder", "<Window class=\"A\"><Button><Label/></Button></Window>", "cannot contain elements");
+        ExpectDiagnostic("Name doppelt", "<Window class=\"A\"><Label name=\"a\"/><Label name=\"a\"/></Window>", "used twice");
+        ExpectDiagnostic("reservierter Name", "<Window class=\"A\"><Label name=\"ui\"/></Window>", "used by the generated class");
+        ExpectDiagnostic("Handlername gleich Elementname", "<Window class=\"A\"><Label name=\"a\"/><Button onClick=\"a\"/></Window>", "already used");
+        ExpectDiagnostic("unbekannter Converter", "<Window class=\"A\"><Label text=\"{Binding X, Converter=Nope}\"/></Window>", "Unknown converter 'Nope'");
+        ExpectDiagnostic("Binding auf ein Element, das es nicht gibt", "<Window class=\"A\"><Label text=\"{Binding text, ElementName=x}\"/></Window>", "does not exist");
+        ExpectDiagnostic("unbekannte Markup-Erweiterung", "<Window class=\"A\"><Label text=\"{Bind X}\"/></Window>", "Unknown markup extension");
+        ExpectDiagnostic("Binding ohne Pfad", "<Window class=\"A\"><Label text=\"{Binding Mode=TwoWay}\"/></Window>", "needs a path");
+        ExpectDiagnostic("unbekannter Binding-Modus", "<Window class=\"A\"><Label text=\"{Binding X, Mode=Sideways}\"/></Window>", "Unknown binding mode");
+
+        string Generate(string markup) => fire.UI.Markup.FireUiGenerator.Generate(fire.UI.Markup.MarkupParser.Parse(markup), "T.fxml");
+        void ExpectGenerateError(string title, string markup, string expected)
+        {
+            string actual;
+            try { Generate(markup); actual = "(keine Ausnahme)"; }
+            catch (fire.UI.Markup.MarkupException ex) { actual = ex.Message; }
+            CheckMarkup($"Markup: {title}", actual.Contains(expected, StringComparison.Ordinal), $"erwartet '{expected}', erhalten '{actual}'");
+        }
+        ExpectGenerateError("Zahl erwartet", "<Window class=\"A\"><Label x=\"abc\"/></Window>", "needs a whole number");
+        ExpectGenerateError("true/false erwartet", "<Window class=\"A\"><Label visible=\"yes\"/></Window>", "needs true or false");
+        ExpectGenerateError("Ausrichtung erwartet", "<Window class=\"A\"><Stack orientation=\"Diagonal\"/></Window>", "needs Horizontal or Vertical");
+        ExpectGenerateError("Farbe erwartet", "<Window class=\"A\"><Label color=\"red\"/></Window>", "needs a colour");
+
+        string script = Generate("<Window class=\"Settings\" title=\"Hi &quot;you&quot;\" width=\"200\" height=\"100\"><Button name=\"ok\" text=\"OK\" onClick=\"Save\" x=\"0x10\"/></Window>");
+        CheckMarkup("Markup: die erzeugte Basisklasse, der Handler und das Fenster",
+            script.Contains("class SettingsBase {") && script.Contains("Save(sender) { }") && script.Contains("new Framebuffer(200, 100)")
+            && script.Contains("UI.Button ok") && script.Contains("e0.x = 0x10") && script.Contains("#import \"ui\"") && script.Contains("\"Hi \\\"you\\\"\""), script);
+        CheckMarkup("Markup: eine View hat Attach statt Run",
+            Generate("<View class=\"V\" base=\"VBase2\"/>") is var viewScript && viewScript.Contains("class VBase2 {") && viewScript.Contains("Attach(container)") && !viewScript.Contains("Run()"));
+
+        // the generated classes against the library: a window (events through the fake window) and a view (bindings)
+        string dir = Path.Combine(Path.GetTempPath(), "fire-markup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string P(string name) => Path.Combine(dir, name).Replace('\\', '/');
+            File.WriteAllText(P("Form.fxml"), """
+                <Window class="Form" title="Form" width="320" height="200">
+                  <Stack name="box" x="10" y="10" width="300" height="180" orientation="Vertical" spacing="6">
+                    <Label name="caption">Name:</Label>
+                    <TextBox name="field" width="200" onChange="FieldChanged"/>
+                    <CheckBox name="flag" text="Flag" onChange="FlagChanged"/>
+                    <Button name="go" text="Go" width="60" onClick="Go"/>
+                  </Stack>
+                </Window>
+                """);
+            CheckUi("Markup: ein Fenster - Handler der abgeleiteten Klasse laufen bei Klick, Tippen und Haken", $$"""
+                #include "{{P("Form.fxml")}}"
+                class MyForm : FormBase {
+                    int clicks = 0
+                    Go(sender) { this.clicks = this.clicks + 1 }
+                    FieldChanged(sender) { print("text " + sender.text) }
+                    FlagChanged(sender) { print("flag " + sender.isChecked) }
+                }
+                var f = new MyForm()
+                f.ui.Draw()
+                f.ui.Draw()   // labels and check boxes know their height only after the first drawing, which moves the elements below them in a Stack
+                print(f.box.horizontal + " " + f.field.width + " " + f.caption.text)
+                // a click on the button (its screen position is known after drawing)
+                var bx = f.go.ax + 5
+                var by = f.go.ay + 5
+                __TestEvent(8, 1, bx + 0.0, by + 0.0)
+                __TestEvent(11, 1, bx + 0.0, by + 0.0)
+                f.ui.Tick()
+                print("clicks " + f.clicks)
+                // focus the text field with a click, type into it
+                var tx = f.field.ax + 5
+                var ty = f.field.ay + 5
+                __TestEvent(8, 1, tx + 0.0, ty + 0.0)
+                __TestEvent(11, 1, tx + 0.0, ty + 0.0)
+                __TestEvent(3, "h")
+                __TestEvent(3, "i")
+                f.ui.Tick()
+                print("field " + f.field.text)
+                f.flag.Toggle()
+                """, new[] { "False 200 Name:", "clicks 1", "text h", "text hi", "field hi", "flag True" });
+
+            File.WriteAllText(P("Panel.fxml"), """
+                <View class="Panel1" width="300" height="200">
+                  <Panel width="300" height="200">
+                    <TextBox name="src" x="5" y="5" width="120" text="abc"/>
+                    <Label name="mirror" x="5" y="40" text="{Binding Path=text, ElementName=src}"/>
+                    <Label name="player" x="5" y="60" text="{Binding Player.Name}"/>
+                    <Label name="once" x="5" y="80" text="{Binding Title, Mode=OneTime}"/>
+                    <TextBox name="edit" x="5" y="100" width="120" text="{Binding Player.Name, Mode=TwoWay}"/>
+                    <Label name="shout" x="5" y="120" text="{Binding Player.Name, Converter=Upper}"/>
+                    <CheckBox name="cb" x="5" y="130" text="{Binding Title}" isChecked="{Binding Player.Active, Converter=Not, Mode=TwoWay}"/>
+                    <Label name="empty" x="5" y="150" visible="{Binding Title, Converter=IsEmpty}" color="{Enum Colors.Red}"/>
+                  </Panel>
+                  <Resources><Converter key="Upper" type="UpperConverter"/></Resources>
+                </View>
+                """);
+            CheckUi("Markup: Bindings mit Probes - Pfad, Element, TwoWay, Converter, OneTime, Austausch im Pfad, Trennen", $$"""
+                #include "{{P("Panel.fxml")}}"
+                enum Colors { Black = 0, Red = 255 }
+                class UpperConverter : UI.Converter { Convert(value) { return value.ToUpper() } }
+                class Player { string Name = "p1"
+                               bool Active = true }
+                class Model { Player Player
+                              string Title = "T1" }
+                var d = new Panel1Base()
+                var m = new Model()
+                m.Player = new Player()
+                d.SetDataContext(m)
+                print(d.mirror.text + " " + d.player.text + " " + d.once.text + " " + d.edit.text + " " + d.shout.text + " " + d.cb.text + " " + d.cb.isChecked + " " + d.empty.visible + " " + d.empty.brush.Color)
+                d.src.text = "xyz"
+                print(d.mirror.text)
+                m.Player.Name = "p2"
+                print(d.player.text + " " + d.edit.text + " " + d.shout.text)
+                d.edit.text = "p3"
+                print(m.Player.Name + " " + d.player.text + " " + d.shout.text)
+                d.cb.isChecked = true
+                print(m.Player.Active)
+                var np = new Player()
+                np.Name = "other"
+                m.Player = np
+                print(d.player.text + " " + d.edit.text)
+                np.Name = "other2"
+                print(d.player.text)
+                d.edit.text = "p4"
+                print(np.Name)
+                m.Title = ""
+                print(d.once.text + "|" + d.cb.text + "|" + d.empty.visible)
+                d.SetDataContext(undefined)
+                np.Name = "after"
+                print(d.player.text)
+                """, new[]
+                {
+                    "abc p1 T1 p1 P1 T1 False False 255", "xyz", "p2 p2 P2", "p3 p3 P3", "False",
+                    "other other", "other2", "p4", "T1||True", "p4",
+                });
+        }
+        finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
+    }
+
     Console.WriteLine(uiFailures == 0 ? "Alle UI-Pruefungen bestanden." : $"FEHLER: {uiFailures} UI-Pruefung(en) fehlgeschlagen.");
 }
 
@@ -8585,7 +9219,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     List<string> RunCb(string script, VmExecutionMode mode)
     {
         var lines = new List<string>();
-        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, script };
+        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, script };
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
         var natives = new NativeRegistry();
@@ -8596,11 +9230,12 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         VM? vm = null;
         IReadOnlyDictionary<string, RuntimeClass>? classes = null;
         var fbManager = new fire.Terminal.FramebufferManager();
-        var conManager = new fire.Terminal.ConsoleManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
+        var conManager = new fire.Terminal.RendererManager(fbManager, new fire.Terminal.IntegratedGlyphFont());
         var winManager = new fire.Terminal.Windows.WindowManager(fbManager,
             (l, v) => FireRuntime.RunCallback(l, v, natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode, vm),
             () => renderer);
-        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, winManager);
+        fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager);
+        fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
 
         var kept = new List<LambdaValue>();
         natives.Register("__TestEvent", args => { renderer.Push((int)args[0].AsInt(), args); return Value.MakeUndefined(); });
@@ -9082,6 +9717,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     Console.WriteLine(glFailures == 0 ? "Alle Globals-Pruefungen bestanden." : $"FEHLER: {glFailures} Globals-Pruefung(en) fehlgeschlagen.");
 }
 
+// The scripts of the device checks with their expected output, for the native backend (a loopback device)
+var devNativeCases = new List<(string Title, string Script, string[] Expected, string? DefaultId)>();
+
 // ---------------------------------------------------------------------------
 // Geraete: geteilter DeviceManager, Standardgeraet, EnsureConnected, IsShared, Paketverfolgung, Paketprotokoll
 // ---------------------------------------------------------------------------
@@ -9113,6 +9751,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     void CheckDev(string title, string script, string[] expected, bool shared = true, string? defaultId = null,
         Action<fire.Device.Manager.DeviceManager.DeviceManager>? after = null)
     {
+        if (after == null && !title.StartsWith("IsShared") && !script.Contains("#import \"graphics\"")) devNativeCases.Add((title, script, expected, defaultId));
         foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
         {
             string[] actual;
@@ -9145,7 +9784,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         } catch (DeviceNotFoundException e) {
             print("keins: " + e.message)
         }
-        """, new[] { "False", "keins: Kein Standardgerät gewählt" });
+        """, new[] { "False", "keins: No default device selected" });
 
     CheckDev("Standardgeraet: Device.Default, IsConnected (Property und Methode), EnsureConnected, Senden/Empfangen", """
         #import "devices"
@@ -9250,6 +9889,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
     CheckDev("WaitForString: was vor dem Treffer lag, ist verbraucht; was danach kam, bleibt lesbar", """
         #import "devices"
+        #import "time"
         var d = Device.Default.EnsureConnected()
         d.WriteString("vorspann|nutzlast")
         print(d.WaitForString("|"))
@@ -9258,6 +9898,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         d.WriteString("zwei")
         print(d.WaitForString("ei"))
         print("[" + d.ReadString() + "]")
+        var tries = 0
+        while (!d.HasData() && tries < 200) { Sleep(TimeSpan.FromMilliseconds(10)); tries = tries + 1 }   // the echo of "zwei" arrives a moment later
         print("[" + d.ReadString() + "]")
         """, new[] { "True", "[nutzlast]", "True", "[ns]", "[zwei]" }, defaultId: "loopback:echo");
 
@@ -9294,7 +9936,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var ms = (DateTime.Now() - t0).TotalMilliseconds
         print((ms >= 330) + " " + (ms < 5000))
         try { d.WaitForString("a", "x") } catch (e) { print((e is of DeviceArgumentException) + " " + e.message) }
-        """, new[] { "False", "False", "False", "True True", "True Ungültige Wartezeit (erwartet: TimeSpan, Zeitwert wie 5s oder Millisekunden)" }, defaultId: "loopback:echo");
+        """, new[] { "False", "False", "False", "True True", "True Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)" }, defaultId: "loopback:echo");
 
     CheckDev("#timeout: die Standard-Wartezeit ohne eigene Zeitangabe (sonst 30 Sekunden)", """
         #import "devices"
@@ -9410,8 +10052,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(Type.Of(fb).Name)
         print(new DeviceManagerFacade().Count())
         print(IO.File.Exists("/gibt/es/nicht"))
-        var con = new Console(fb)
-        con.FillRect(0, 0, 2, 2, 256)
+        var con = new Renderer(fb)
+        con.AlphaBlending = false      // ohne Mischen wird der Wert samt Alpha 0 einfach kopiert
+        con.FillRect(0, 0, 2, 2, new SolidBrush(256))
         print(con.GetPixel(1, 1))
         """, new[] { "8x4", "True", "Framebuffer", "1", "False", "256" });
 
@@ -9562,13 +10205,14 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             var (session, lines) = BuildDbg("""
                 #import "graphics"
                 var fb = new Framebuffer(16, 16)
-                var con = new Console(fb)
+                var con = new Renderer(fb)
+                con.AlphaBlending = false
                 var viaMethod = 0
                 var direct = 0
                 for (var i = 0; i < 5; i = i + 1) {
-                    con.FillRect(i, 0, 1, 1, 256 + i)
+                    con.FillRect(i, 0, 1, 1, new SolidBrush(256 + i))
                     viaMethod = viaMethod + con.GetPixel(i, 0) + con.CellWidth()
-                    direct = direct + __GRPHConGetPixel(con.id, i, 0) + __GRPHConCellWidth(con.id)
+                    direct = direct + __GRPHRndGetPixel(con.id, i, 0) + __GRPHRndCellWidth(con.id)
                 }
                 print(viaMethod == direct)
                 print(viaMethod)
@@ -9611,8 +10255,12 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         }
         if (script.Contains("#import \"time\""))
         {
-            fire.Runtime.TimeNatives.Register(natives);
-            sources.Add(fire.Standard.TimePrelude.Source);
+            // time is a package: its prelude, and its natives in the library built from the C++ of the package (the VM runs Sleep itself)
+            var timeImport = fire.Package.Manager.PackageStore.Default.FindImport("time")!;
+            sources.Add(timeImport.ReadPrelude()!);
+            var (timeNames, timeLibraries) = fire.Compiler.PackageImports.NativesOf(new[] { timeImport.Key });
+            string timeLibrary = fire.Compiler.PackageLibrary.Ensure(timeImport);
+            fire.Runtime.PackageNativeBinding.Register(natives, timeNames, timeLibraries, _ => timeLibrary);
         }
         sources.Add(script);
         var program = Parser.ParseMultiple(sources
@@ -9708,8 +10356,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             "2024-12-24 18:00:00 True 28 True",
             "2024-03-15 00:00:00 14:30:05",
             "1970-01-02 00:00:00 86400",
-            "1 Ungültiges Datum/ungültige Zeit: 2024-13-1 0:0:0.0",
-            "2 Kein gültiges Datum: 'quatsch'",
+            "1 Invalid date/time: 2024-13-1 0:0:0.0",
+            "2 Not a valid date: 'quatsch'",
             "True",
             "utc local",
         });
@@ -9742,7 +10390,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var ms = (DateTime.UtcNow() - t0).TotalMilliseconds
         print((ms >= 190) + " " + (ms < 2000))
         try { Sleep("x") } catch (e) { print(e.message) }
-        """, new[] { "True True", "Sleep erwartet eine TimeSpan, einen Zeitwert oder Millisekunden, erhalten: String." });
+        """, new[] { "True True", "Sleep expects a TimeSpan, a time value or milliseconds, got: String." });
 
     CheckLq("Sleep arbeitet die Warteschlange ab (automatischer Globals-Sync); mit #nosync nicht; fire global-Auftraege auch", timeHead + """
         var counter = 0
@@ -9824,7 +10472,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             }
         }
         T.Run()
-        """, new[] { "AUSNAHME: 'n' ist im Lambda eine KOPIE der \u00e4u\u00dferen Variablen (Capture) und kann dort nicht zugewiesen werden (eine neue lokale Variable mit anderem Namen anlegen) (4)" });
+        """, new[] { "AUSNAHME: 'n' is a COPY of the outer variable inside the lambda (capture) and cannot be assigned there (declare a new local variable with a different name) (4)" });
 
     CheckLq("Capture: ein Objekt wird als Referenz geteilt", """
         class Box { int n; construct() { this.n = 0 } }
@@ -9896,7 +10544,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
     CheckLq("LINQ: First auf einer leeren Folge wirft LinqEmptyException", linqHead + """
         try { Linq.From([]).First() } catch (e) { print("leer: " + e.message) }
-        """, new[] { "leer: Die Folge enthaelt kein Element" });
+        """, new[] { "leer: The sequence contains no element" });
 
     CheckLq("LINQ: foreach ueber eine Abfrage, ToArray, Query auf einem Array", linqHead + """
         var arr = Linq.From([3, 1, 2]).OrderBy(x => x).ToArray()
@@ -10030,7 +10678,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         """, new[] { "mk fin", "5", "mk2 fin", "6", "res fin", "11", "second", "~Box 5", "~Box 6" });
 
     CheckLq("Arrays sind IEnumerable: is of, GetEnumerator, foreach, fluent LINQ direkt auf dem Array (class extends array)", linqHead + """
-        class Bag : IEnumerable { GetEnumerator() { return new ListEnumerator([1, 2], 2) } }
+        class Bag : IEnumerable { GetEnumerator() { var items = [1, 2]; var e = new ListEnumerator(items, 2); items.TakeTo(e); return e } }
         class T {
             static Count(class src) { var n = 0; foreach (x in src) { n = n + 1 } return n }
             static Run() {
@@ -10067,10 +10715,10 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         """, new[]
         {
             "a,b 6,2 3,1 6,2", "ab ba",
-            "1 'Double' ist eine Property, erwartet (lambda field<...>): ein Feld",
-            "2 'price' ist ein Feld, erwartet (lambda property<...>): eine Property",
-            "3 'nope' ist kein Mitglied",
-            "4 Die Lambda ist kein Selektor: sie braucht genau einen Parameter, und ihr Körper darf nur eine Mitgliedskette darauf sein (`c => c.radius`, `p => p.address.city`).",
+            "1 'Double' is a property, expected (lambda field<...>): a field",
+            "2 'price' is a field, expected (lambda property<...>): a property",
+            "3 'nope' is not a member",
+            "4 The lambda is not a selector: it needs exactly one parameter, and its body may only be a member chain on it (`c => c.radius`, `p => p.address.city`).",
         });
 
     CheckLq("## ist ein Synonym fuer !=", """
@@ -10216,9 +10864,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(c.PeekSecret())
         """, new[]
         {
-            "1 Feld 'secret' von 'Circle' ist private und von hier aus nicht zugreifbar.",
-            "2 'Hidden' von 'Circle' ist private und von hier aus nicht zugreifbar.",
-            "3 Das Feld 'id' von 'Circle' ist 'readonly' und lässt sich nicht zuweisen.",
+            "1 Field 'secret' of 'Circle' is private and cannot be accessed from here.",
+            "2 'Hidden' of 'Circle' is private and cannot be accessed from here.",
+            "3 The field 'id' of 'Circle' is 'readonly' and cannot be assigned.",
             "4 Einheit",
             "42",
         }, debugRelease);
@@ -10241,11 +10889,11 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print("weiter")
         """, new[]
         {
-            "1 'P' hat kein lesbares Mitglied 'nope'.",
-            "2 Die Property 'Age' von 'P' hat keinen Setter (nur 'get').",
-            "3 'P' hat keine Methode 'Nope' mit 0 Parameter(n).",
-            "4 Reflect.Get: erwartet ein Objekt, erhalten: Int.",
-            "5 Unbekannte Klasse 'Gibts'.",
+            "1 'P' has no readable member 'nope'.",
+            "2 The property 'Age' of 'P' has no setter (only 'get').",
+            "3 'P' has no method 'Nope' with 0 parameter(s).",
+            "4 Reflect.Get: expects an object, got: Int.",
+            "5 Unknown class 'Gibts'.",
             "6 kein Alter",
             "7 boom",
             "weiter",
@@ -10275,8 +10923,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         try { W.Show(5, new P()) } catch (e) { print("2 " + e.message) }
         """, new[]
         {
-            "1 Die Lambda ist kein Selektor: sie braucht genau einen Parameter, und ihr Körper darf nur eine Mitgliedskette darauf sein (`c => c.radius`, `p => p.address.city`).",
-            "2 Ein Selektor ('lambda member<...>' o.ä.) erwartet eine Lambda wie `c => c.radius`, erhalten: Int.",
+            "1 The lambda is not a selector: it needs exactly one parameter, and its body may only be a member chain on it (`c => c.radius`, `p => p.address.city`).",
+            "2 A selector ('lambda member<...>' etc.) expects a lambda like `c => c.radius`, got: Int.",
         });
 
     // gepackt: Metadaten und try/catch muessen die Serialisierung ueberleben (catch-Klauseln gingen frueher verloren)
@@ -10409,9 +11057,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         """, new[]
         {
             "r 1 4", "5", "50",
-            "'C' hat kein Mitglied 'nope' - dort lässt sich keine Probe anmelden.",
-            "Die Art einer Probe ist \"changed\" oder \"changing\", erhalten: \"gestern\".",
-            "Der Handler einer Probe darf höchstens 4 Parameter haben (Objekt, Name, alt, neu), hat 5.",
+            "'C' has no member 'nope' - no probe can be registered there.",
+            "The kind of a probe is \"changed\" or \"changing\", got: \"gestern\".",
+            "The handler of a probe may have at most 4 parameters (object, name, old, new), it has 5.",
         }, debugRelease);
 
     CheckRf("Selektor-Arten: field, property, member (Feld oder Property), method (nur Methode), selector (alles)", """
@@ -10441,15 +11089,15 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         {
             "v=1 P=7 v=1 P=7",
             "v:field P:property Twice:method 42",
-            "1 'P' ist eine Property, erwartet (lambda field<...>): ein Feld",
-            "2 'v' ist ein Feld, erwartet (lambda property<...>): eine Property",
-            "3 'Twice' ist eine Methode, erwartet (lambda member<...>): ein Feld oder eine Property",
-            "4 'nope' ist kein Mitglied",
-            "5 'Twice' ist eine Methode - Call(obj, args) ruft sie auf",
-            "6 'v' ist keine Methode",
+            "1 'P' is a property, expected (lambda field<...>): a field",
+            "2 'v' is a field, expected (lambda property<...>): a property",
+            "3 'Twice' is a method, expected (lambda member<...>): a field or a property",
+            "4 'nope' is not a member",
+            "5 'Twice' is a method - Call(obj, args) calls it",
+            "6 'v' is not a method",
             "Twice->8",
-            "7 'v' ist ein Feld, erwartet (lambda method<...>): eine Methode",
-            "8 'P' ist eine Property, erwartet (lambda method<...>): eine Methode",
+            "7 'v' is a field, expected (lambda method<...>): a method",
+            "8 'P' is a property, expected (lambda method<...>): a method",
         });
 
     Console.WriteLine(rfFailures == 0 ? "Alle Reflection-Pruefungen bestanden." : $"FEHLER: {rfFailures} Reflection-Pruefung(en) fehlgeschlagen.");
@@ -10500,6 +11148,20 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         }
     }
 
+    // like CheckSc, but not in the Performance mode (it does not check for destroyed objects)
+    void CheckScChecked(string title, string script, string[] expected)
+    {
+        foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release })
+        {
+            string[] actual;
+            try { actual = RunSc(script, mode).ToArray(); }
+            catch (Exception ex) { actual = new[] { "AUSNAHME: " + CompileErrors.Describe(ex) }; }
+            bool ok = actual.SequenceEqual(expected);
+            if (!ok) scFailures++;
+            Console.WriteLine(ok ? $"OK: {title} [{mode}]" : $"FEHLER: {title} [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+        }
+    }
+
     const string scHead = """
         class D {
             string n
@@ -10507,6 +11169,312 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             destruct() { print("~" + this.n) }
         }
         """;
+
+    CheckScChecked("Zerstoerte Objekte: Benutzung nach dem Zerstoerungsstapel ist eine DestroyedException, im Stapel noch erlaubt; return nimmt den Baum der Locals mit", """
+        class D {
+            string n
+            D next
+            construct(string n) { this.n = n }
+            destruct() { print("~" + this.n) }
+        }
+        class W {
+            D target
+            construct(D target) { this.target = target }
+            destruct() { print("~W sees " + this.target.n) }
+        }
+        class T {
+            static Dead() {
+                var a = new D("a")
+                return a.n
+            }
+            // the destructor of w uses d, which was destroyed before it in the same scope: allowed until the scope is gone
+            static Batch() {
+                var d = new D("d")
+                var w = new W(d)
+            }
+            // a returned list takes its elements along
+            static Items() {
+                var list = new List()
+                for (var i = 0; i < 3; i = i + 1) { var x = new D("i" + i); x.TakeTo(list); list.Add(x) }
+                return list
+            }
+            // by reference only: everything local travels with the returned object
+            static Ring() {
+                var a = new D("ra")
+                var b = new D("rb")
+                a.next = b
+                b.next = a
+                return a
+            }
+            // not returned: gone
+            static Lost() {
+                var keep = new D("lost")
+                return 1
+            }
+            // taken out of an owner that dies with the scope
+            static Inner() {
+                var outer = new D("outer")
+                outer.next = new D("inner")
+                outer.next.TakeTo(outer)
+                return outer.next
+            }
+        }
+        var x = new D("x")
+        delete x
+        try { print(x.n) } catch (DestroyedException e) { print("dead: " + e.message) }
+        try { x.next = x } catch (DestroyedException e) { print("dead set") }
+        T.Batch()
+        print("batch done")
+        var items = T.Items()
+        print(items.count + " " + items[2].n)
+        var ring = T.Ring()
+        print(ring.next.next.n)
+        T.Lost()
+        print(T.Inner().n)
+        print("end")
+        """, new[] { "~x", "dead: Access to a destroyed object.", "dead set", "~d", "~W sees d", "batch done", "3 i2", "ra", "~lost", "~outer", "inner", "end", "~i0", "~i1", "~i2", "~ra", "~rb", "~inner" });
+
+    CheckScChecked("Takes: This, Children, Locals, All bei TakeUpwards/TakeTo/TakeGlobal und fuer Arrays", """
+        class N {
+            string name
+            N next
+            N other
+            construct(string name) { this.name = name }
+            destruct() { print("~" + this.name) }
+        }
+        class F {
+            // This: the child stays behind and dies with the function
+            static UpThis(holder) {
+                var p = new N("p1")
+                var q = new N("q1")
+                p.next = q
+                p.TakeUpwards()
+                holder.next = p
+            }
+            // Locals: the child travels along (to the object that points to it)
+            static UpLocals(holder) {
+                var p = new N("p2")
+                var q = new N("q2")
+                p.next = q
+                p.TakeUpwards(Takes.Locals)
+                holder.next = p
+            }
+            // Children: what the fields point to directly, not what those point to
+            static UpChildren(holder) {
+                var p = new N("p3")
+                var q = new N("q3")
+                var r = new N("r3")
+                p.next = q
+                q.next = r
+                p.TakeUpwards(Takes.Children)
+                holder.next = p
+            }
+            // All: also what is owned by somebody else
+            static TakeAll(holder, foreign) {
+                var p = new N("p4")
+                p.other = foreign
+                p.TakeUpwards(Takes.All)
+                holder.next = p
+            }
+            // TakeTo with a mode, and TakeGlobal
+            static ToObject(holder) {
+                var p = new N("p5")
+                var q = new N("q5")
+                p.next = q
+                p.TakeTo(holder, Takes.Locals)
+            }
+            static Global() {
+                var p = new N("p6")
+                var q = new N("q6")
+                p.next = q
+                p.TakeGlobal(Takes.Children)
+                return 0
+            }
+            // an array travels with the objects it holds
+            static Arr() {
+                var a = [new N("a1"), new N("a2")]
+                a.TakeUpwards(Takes.Locals)
+                return a
+            }
+        }
+        var h = new N("h")
+        var foreign = new N("foreign")
+        F.UpThis(h)
+        print("1 " + h.next.name)
+        try { print(h.next.next.name) } catch (DestroyedException e) { print("q1 dead") }
+        F.UpLocals(h)
+        print("2 " + h.next.next.name)
+        F.UpChildren(h)
+        print("3 " + h.next.next.name)
+        try { print(h.next.next.next.name) } catch (DestroyedException e) { print("r3 dead") }
+        F.TakeAll(h, foreign)
+        print("4 " + h.next.other.name)
+        F.ToObject(h)
+        print("5 " + h.next.name)
+        F.Global()
+        print("6")
+        var arr = F.Arr()
+        print("7 " + arr[0].name + arr[1].name)
+        print("end")
+        """, new[] { "~q1", "1 p1", "q1 dead", "2 q2", "~r3", "3 q3", "r3 dead", "4 foreign", "5 p4", "6", "7 a1a2", "end", "~h", "~p5", "~q5", "~p1", "~p2", "~q2", "~p3", "~q3", "~p4", "~foreign", "~p6", "~q6", "~a1", "~a2" });
+
+    CheckScChecked("try x.Take...: verschiebt nur der Besitzer (bool); Takes.Children nimmt die Items von Array und IEnumerable mit", """
+        class Item { string n
+          construct(string n) { this.n = n }
+          destruct() { print("~" + this.n) } }
+        class Holder { var kept
+          construct() { }
+          // x is the result of a call passed straight on: it belongs to this method's scope, so the Holder may take it
+          Adopt(x) { return try x.TakeTo(this) }
+          AdoptNew(x) { return try x.TakeTo(this) }
+          // the thing is owned by this object: only the owner moves it
+          Release() { return try this.kept.TakeLocal() }
+        }
+        class F { static Make(string n) { return new Item(n) } }
+        var h = new Holder()
+        print(h.Adopt(F.Make("fresh")))
+        var mine = new Item("mine")
+        print(h.AdoptNew(mine))
+        print(h.AdoptNew(new Item("tmp")))
+        // children of a list: the items go to the list
+        class Bag { var list
+          construct() { this.list = new List() } }
+        var items = new List()
+        var a = new Item("la")
+        var b = new Item("lb")
+        items.Add(a)
+        items.Add(b)
+        var arr = [new Item("a1"), new Item("a2")]
+        class T { static Run(items, arr) {
+            items.TakeLocal(Takes.Children)
+            arr.TakeLocal(Takes.Children)
+            return 0
+        } }
+        T.Run(items, arr)
+        print("end")
+        """, new[] { "True", "False", "False", "~la", "~lb", "~a1", "~a2", "end", "~fresh", "~mine", "~tmp" });
+
+    CheckScChecked("TakeTo(list, Takes), TakeLocal", """
+        class Item { string n
+          construct(string n) { this.n = n }
+          destruct() { print("~" + this.n) } }
+        class F {
+          static Fill() {
+            var list = new List()
+            for (var i = 0; i < 3; i++) { var it = new Item("i" + i); it.TakeTo(list); list.Add(it) }
+            return list
+          }
+          static FillChildren() {
+            var list = new List()
+            var a = new Item("c1")
+            var b = new Item("c2")
+            list.Add(a)
+            list.Add(b)
+            a.TakeTo(list, Takes.Children)
+            return list
+          }
+          static Local(holder) {
+            var x = new Item("x")
+            x.TakeLocal()
+            print(try x.TakeLocal())
+            return 0
+          }
+        }
+        var l = F.Fill()
+        print(l.count + " " + l[2].n)
+        var l2 = F.FillChildren()
+        print(l2.count)
+        F.Local(0)
+        print("end")
+        """, new[] { "3 i2", "2", "True", "~x", "end", "~i0", "~i1", "~i2", "~c1", "~c2" });
+
+    CheckScChecked("take: Argument, Feld, Array-Element, Variable; zerstoertes Objekt", """
+        class Item { string n
+          construct(string n) { this.n = n }
+          destruct() { print("~" + this.n) } }
+        class Box { Item slot
+          items = [new Item("x0")]
+          Put(x) { x.TakeTo(this); print("put " + x.n) }
+          destruct() { print("~box") } }
+        class T {
+          static Eat(x) { var mine = new Item("mine"); print("eat " + x.n) }
+          static Keep(x, b) { x.TakeTo(b); print("kept") }
+          static Drop(x, b) { print(try x.TakeTo(b)) }
+        }
+        var a = new Item("a")
+        T.Eat(take a)
+        print("1")
+        var box = new Box()
+        var b = new Item("b")
+        T.Keep(take b, box)
+        print("2")
+        var c = new Item("c")
+        box.slot = take c
+        var d = new Item("d")
+        T.Drop(d, box)
+        T.Drop(take d, box)
+        print("3")
+        {
+          var inner = new Item("inner")
+          var out = new Item("out")
+          var x
+          x = take out
+          box.items[0] = take inner
+        }
+        print("4")
+        var e = new Item("e")
+        var f = take e
+        print("5")
+        try { print(a.n) } catch (DestroyedException ex) { print("dead a") }
+        try { T.Eat(take a) } catch (DestroyedException ex) { print("dead take") }
+        print("end")
+        """, new[] { "eat a","~mine","~a","1","~x0","kept","2","False","True","3","~out","4","5","dead a","dead take","end","~box","~b","~c","~d","~inner","~e" });
+
+    CheckScChecked("Ein Array besitzt, was return und Takes mitnehmen", """
+        class Item { string n
+          var arr
+          construct(string n) { this.n = n }
+          destruct() { print("~" + this.n) } }
+        class F {
+          static Make() {
+            var a = [new Item("a1"), new Item("a2")]
+            return a
+          }
+          static Inner() {
+            var holder = new Item("holder")
+            var a = [new Item("b1")]
+            holder.arr = a
+            a.TakeTo(holder)
+            return a
+          }
+        }
+        var arr = F.Make()
+        arr.TakeGlobal()
+        class G { static Run() { var x = F.Make(); print(x.length); return 0 } }
+        G.Run()
+        print("after G")
+        var inner = F.Inner()
+        print(inner[0].n)
+        delete arr
+        print("deleted")
+        print("end")
+        """, new[] { "2", "~a1", "~a2", "after G", "~holder", "b1", "~a1", "~a2", "deleted", "end", "~b1" });
+
+    CheckScChecked("Ein weitergereichtes Argument stirbt nach dem Aufruf, nach den Locals des Aufgerufenen", """
+        class D { string n
+          construct(string n) { this.n = n }
+          destruct() { print("~" + this.n) } }
+        class W { D d
+          construct(D d) { this.d = d } }
+        class F { static Make() { return new D("arg") }
+          static Use(D x) { var local = new D("local"); print("in Use") }
+          static Pass(D x) { return x } }
+        F.Use(F.Make())
+        print("after Use")
+        var kept = F.Pass(F.Make())
+        print("kept " + kept.n)
+        print("end")
+        """, new[] { "in Use", "~local", "~arg", "after Use", "kept arg", "end", "~arg" });
 
     CheckSc("return aus verschachtelten Bloecken zerstoert die Objekte ALLER verlassenen Scopes (innerster zuerst)", scHead + """
         class T {
@@ -10749,11 +11717,26 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     CheckSc("TakeUpwards haengt ein Objekt an die umgebende Scope (hier die der Schleife): es ueberlebt den Block, nicht die Schleife", scHead + """
         class T {
             static Run() {
+                for (var i = 0; i < 3; i = i + 1) {
+                    var a = new D("a" + i)
+                    var b = new D("b" + i)
+                    if (i == 1) { b.TakeUpwards() }
+                }
+                print("nach der Schleife")
+            }
+        }
+        T.Run()
+        print("ende")
+        """, new[] { "~a0", "~b0", "~a1", "~a2", "~b2", "~b1", "nach der Schleife", "ende" });
+
+    CheckSc("Zuweisung an eine aeussere Variable schiebt den Besitz bis in die Funktions-Scope (nicht aus der Funktion hinaus)", scHead + """
+        class T {
+            static Run() {
                 var keep
                 for (var i = 0; i < 3; i = i + 1) {
                     var a = new D("a" + i)
                     var b = new D("b" + i)
-                    if (i == 1) { b.TakeUpwards(); keep = b }
+                    if (i == 1) { keep = b }
                 }
                 print("nach der Schleife " + keep.n)
                 var u = 0
@@ -10763,7 +11746,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         }
         T.Run()
         print("ende")
-        """, new[] { "~a0", "~b0", "~a1", "~a2", "~b2", "~b1", "nach der Schleife b1", "3 b1", "ende" });
+        """, new[] { "~a0", "~b0", "~a1", "~a2", "~b2", "nach der Schleife b1", "3 b1", "~b1", "ende" });
 
     CheckSc("Destruktoren in Schleifen mit gemischten Bloecken (mit/ohne Objekte) und verschachtelten Aufrufen", scHead + """
         class T {
@@ -10826,6 +11809,34 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         print(User.Use(new Sq()))
         """, new[] { "4" });
 
+    CheckSc("Einheiten: gleiche Dimension, andere Skalierung wird implizit umgerechnet (ohne ':'), ints bleiben ints", """
+        print(500mm + 2m)
+        print(2m + 500mm)
+        print(2m - 500mm)
+        print(1m > 500mm)
+        print(5mm < 1m)
+        print(1500mm % 1m)
+        var x = 3m
+        x = x + 250cm
+        print(x)
+        print((2m + 500mm) / 3)
+        """, new[] { "2500mm", "2500mm", "1500mm", "True", "True", "500mm", "550cm", "833mm" });
+
+    CheckSc("Einheiten: Floats bleiben Floats und behalten die Einheit des linken Operanden", """
+        print(1.5mm + 1m)
+        print(2.5m + 250mm)
+        print((1.5mm + 1m) / 2)
+        """, new[] { "1001.5mm", "2.75m", "500.75mm" });
+
+    CheckSc("Einheiten: bei Ueberlauf wird die groebere Einheit Ziel, das Komma faellt weg", """
+        print(1500mm + 900000000000000000m)
+        print(900000000000000000m + 1500mm)
+        """, new[] { "900000000000000001m", "900000000000000001m" });
+
+    CheckSc("Einheiten: verschiedene Dimensionen bleiben ein Fehler", """
+        print(5mm + 2kg)
+        """, new[] { "AUSNAHME: Incompatible units: 'mm' cannot be converted to 'kg'." });
+
     Console.WriteLine(scFailures == 0 ? "Alle Scope-Pruefungen bestanden." : $"FEHLER: {scFailures} Scope-Pruefung(en) fehlgeschlagen.");
 }
 
@@ -10840,13 +11851,4611 @@ static int CountOccurrences(string haystack, string needle)
     return count;
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------
+// Editor-Hilfe: Anker fuer Ueberschriften (Links wie "Datei.md#abschnitt") und die mitgelieferte "First Steps.md"
+// ---------------------------------------------------------------------------------------------------------------------------
+{
+    Console.WriteLine("=== Markdown-Anker und First Steps ===");
+    int mdFailures = 0;
+    void CheckMd(string title, string actual, string expected)
+    {
+        bool ok = actual == expected;
+        if (!ok) mdFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}\n  erwartet: {expected}\n  erhalten: {actual}");
+    }
+
+    CheckMd("Anker: Kleinbuchstaben, Leerzeichen zu Bindestrichen, Satzzeichen weg", fire.Editor.MdAnchors.Slug("First Steps!"), "first-steps");
+    CheckMd("Anker: Kommas und Zahlen", fire.Editor.MdAnchors.Slug("Variables, types and 2 units"), "variables-types-and-2-units");
+    var usedAnchors = new HashSet<string>();
+    CheckMd("Anker: erste Ueberschrift", fire.Editor.MdAnchors.Unique("Setup", usedAnchors), "setup");
+    CheckMd("Anker: zweite gleichnamige Ueberschrift bekommt -1", fire.Editor.MdAnchors.Unique("Setup", usedAnchors), "setup-1");
+    CheckMd("Anker: dritte gleichnamige Ueberschrift bekommt -2", fire.Editor.MdAnchors.Unique("Setup", usedAnchors), "setup-2");
+
+    // Jeder Link "(#anker)" der mitgelieferten Hilfeseiten muss auf eine Ueberschrift zeigen, jeder Link auf eine andere Seite auf eine vorhandene Datei.
+    string helpDir = Path.Combine(Path.GetDirectoryName(GetTestDataDir())!, "..", "fire.Editor", "Help");
+    foreach (var helpFile in new[] { "First Steps.md", "Embedding.md" })
+    {
+        string helpPath = Path.Combine(helpDir, helpFile);
+        if (File.Exists(helpPath))
+        {
+            string helpText = File.ReadAllText(helpPath);
+            var anchors = new HashSet<string>();
+            foreach (var block in fire.Editor.MarkdownParser.Parse(helpText))
+                if (block is fire.Editor.MdHeading h)
+                    fire.Editor.MdAnchors.Unique(fire.Editor.MarkdownParser.PlainText(h.Content), anchors);
+            var missing = System.Text.RegularExpressions.Regex.Matches(helpText, @"\]\(#([^)]+)\)")
+                .Select(m => m.Groups[1].Value).Where(a => !anchors.Contains(a)).ToList();
+            CheckMd($"{helpFile}: alle Inhaltsverzeichnis-Links zeigen auf Ueberschriften", string.Join(",", missing), "");
+            var brokenFiles = System.Text.RegularExpressions.Regex.Matches(helpText, @"\]\(([^)#:]+\.md)(?:#[^)]*)?\)")
+                .Select(m => Uri.UnescapeDataString(m.Groups[1].Value)).Where(f => !File.Exists(Path.Combine(helpDir, f))).ToList();
+            CheckMd($"{helpFile}: Links auf andere Hilfeseiten zeigen auf vorhandene Dateien", string.Join(",", brokenFiles), "");
+        }
+        else
+        {
+            mdFailures++;
+            Console.WriteLine($"FEHLER: {helpFile} nicht gefunden: {helpPath}");
+        }
+    }
+
+    Console.WriteLine(mdFailures == 0 ? "Alle Markdown-Pruefungen bestanden." : $"FEHLER: {mdFailures} Markdown-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Editor: Dokumentationskommentare (///) fuer Klassen, Felder, Properties und Methoden
+// ---------------------------------------------------------------------------------------------------------------------------
+{
+    Console.WriteLine("=== Dokumentationskommentare (///) ===");
+    int docFailures = 0;
+    void CheckDoc(string title, bool ok, string detail = "")
+    {
+        if (!ok) docFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title} {detail}");
+    }
+
+    var plain = fire.Editor.DocComments.Parse("Draws a circle.\nSecond line of the same paragraph.\n\nNew paragraph.");
+    CheckDoc("Parse: reiner Text, Zeilen eines Absatzes werden verbunden, Leerzeile trennt Absaetze",
+        plain?.Summary == "Draws a circle. Second line of the same paragraph.\nNew paragraph.", plain?.Summary);
+
+    var tagged = fire.Editor.DocComments.Parse("<summary>\nAdds <c>two</c> numbers, see <see cref=\"Sub\"/>.\n</summary>\n<param name=\"a\">first &lt;int&gt;</param>\n<param name=\"b\">second</param>\n<returns>the sum</returns>\n<remarks>Fast.</remarks>");
+    CheckDoc("Parse: summary, c, see cref, Entities", tagged?.Summary == "Adds two numbers, see Sub.", tagged?.Summary);
+    CheckDoc("Parse: Parameter in Reihenfolge mit Text", tagged != null && tagged.Parameters.Count == 2 && tagged.Parameters[0] == ("a", "first <int>") && tagged.Parameters[1] == ("b", "second"));
+    CheckDoc("Parse: returns und remarks", tagged?.Returns == "the sum" && tagged?.Remarks == "Fast.");
+    CheckDoc("Parse: leerer Kommentar ist kein Dokument", fire.Editor.DocComments.Parse("  \n ") == null);
+
+    string docSource = """
+        /// A calculator.
+        /// Works on ints.
+        class Calc {
+            /// <summary>Adds two numbers.</summary>
+            /// <param name="a">first</param>
+            /// <param name="b">second &amp; last</param>
+            /// <returns>the sum</returns>
+            int Add(int a, int b) { return a + b }
+
+            /// Current total.
+            int total
+
+            /// <summary>Doubled total</summary>
+            int Double { get { return this.total * 2 } }
+
+            // an ordinary comment is no documentation
+            Plain() { }
+
+            /// separated from its method by a blank line
+
+            Separated() { }
+        }
+        var c = new Calc()
+        c.Add(1, 2)
+        c.total
+        c.Double
+        c.Plain()
+        c.Separated()
+        """;
+
+    var docIndex = fire.Editor.ScriptSymbolIndex.Build(docSource);
+    fire.Editor.ResolvedSymbol? SymbolAt(string needle)
+    {
+        int offset = docSource.LastIndexOf(needle, StringComparison.Ordinal) + 1;
+        return fire.Editor.NavigationEngine.TryResolveSymbol(docSource, offset, docIndex);
+    }
+
+    var calcDoc = SymbolAt("Calc()")?.Documentation;
+    CheckDoc("Klasse: /// ueber der Deklaration, mehrere Zeilen werden verbunden", calcDoc?.Summary == "A calculator. Works on ints.", calcDoc?.Summary);
+    var addSymbol = SymbolAt("Add(1");
+    var addDoc = addSymbol?.Documentation;
+    CheckDoc("Methode: summary, Parameter und returns", addDoc?.Summary == "Adds two numbers." && addDoc.Parameters.Count == 2
+        && addDoc.Parameters[1].Text == "second & last" && addDoc.Returns == "the sum", addDoc?.ToPlainText());
+    CheckDoc("Methode: die Kopfzeile nennt Klasse und Signatur", addSymbol?.Header.Contains("Calc.Add(int a, int b)") == true, addSymbol?.Header);
+    CheckDoc("Feld: einfacher /// Text", SymbolAt("total\nc.Double")?.Documentation?.Summary == "Current total.");
+    CheckDoc("Property: summary", SymbolAt("Double\nc.Plain")?.Documentation?.Summary == "Doubled total");
+    CheckDoc("Gewoehnlicher // Kommentar ist keine Dokumentation", SymbolAt("Plain()\nc.Sep")?.Documentation == null);
+    CheckDoc("Leerzeile zwischen /// und Deklaration: keine Dokumentation", SymbolAt("Separated()")?.Documentation == null);
+    CheckDoc("Die Deklarationsstelle selbst loest ebenfalls auf (Cursor auf dem Namen in der Klasse)",
+        fire.Editor.NavigationEngine.TryResolveSymbol(docSource, docSource.IndexOf("Add(int a") + 1, docIndex)?.Documentation?.Summary == "Adds two numbers.");
+
+    var items = fire.Editor.CompletionEngine.GetSuggestions(docSource + "\nc.", docSource.Length + 3, fire.Editor.ScriptSymbolIndex.Build(docSource + "\nc."));
+    CheckDoc("Vervollstaendigung: Eintraege tragen ihre Dokumentation, andere nicht",
+        items.FirstOrDefault(i => i.Text == "Add")?.Documentation?.Summary == "Adds two numbers." && items.FirstOrDefault(i => i.Text == "Plain")?.Documentation == null);
+    var classItems = fire.Editor.CompletionEngine.GetSuggestions(docSource + "\nvar d = new Ca", docSource.Length + 15, fire.Editor.ScriptSymbolIndex.Build(docSource + "\nvar d = new Ca"));
+    CheckDoc("Vervollstaendigung: Klassen tragen ihre Dokumentation", classItems.FirstOrDefault(i => i.Text == "Calc")?.Documentation?.Summary == "A calculator. Works on ints.");
+
+    // Aufrufkontext: Tooltip bleibt waehrend der Argumente, new Foo( springt auf den Konstruktor
+    string callSource = """
+        /// A point.
+        class Point {
+            int x
+            /// <summary>Creates the origin.</summary>
+            construct() { this.x = 0 }
+            /// <summary>Creates a point.</summary>
+            /// <param name="x">the x value</param>
+            construct(int x) { this.x = x }
+            /// <summary>Moves it.</summary>
+            Move(int dx, int dy) { }
+        }
+        """;
+    fire.Editor.ResolvedSymbol? CallAt(string text)
+    {
+        string full = callSource + "\n" + text;
+        var idx = fire.Editor.ScriptSymbolIndex.Build(full);
+        var call = fire.Editor.NavigationEngine.FindOpenCall(full, full.Length);
+        return call == null ? null : fire.Editor.NavigationEngine.TryResolveCall(full, call, idx);
+    }
+    CheckDoc("Aufruf: nach 'new Point(' zeigt der Tooltip den Konstruktor", CallAt("var p = new Point(")?.Documentation?.Summary == "Creates the origin.", CallAt("var p = new Point(")?.Documentation?.Summary);
+    CheckDoc("Aufruf: mit einem Argument wird der passende Konstruktor gewaehlt", CallAt("var p = new Point(5")?.Documentation?.Summary == "Creates a point.", CallAt("var p = new Point(5")?.Documentation?.Summary);
+    CheckDoc("Aufruf: Konstruktor-Kopfzeile", CallAt("var p = new Point(5")?.Header.Contains("new Point(int x)") == true, CallAt("var p = new Point(5")?.Header);
+    CheckDoc("Aufruf: Methode bleibt waehrend der Argumente dokumentiert", CallAt("var p = new Point(1)\np.Move(1, ")?.Documentation?.Summary == "Moves it.", CallAt("var p = new Point(1)\np.Move(1, ")?.Documentation?.Summary);
+    CheckDoc("Aufruf: nach der schliessenden Klammer gibt es keinen offenen Aufruf", CallAt("var p = new Point(1)") == null);
+    CheckDoc("Aufruf: Klammern in Strings zaehlen nicht", CallAt("var p = new Point(\"(\")") == null);
+
+    Console.WriteLine(docFailures == 0 ? "Alle Dokumentationskommentar-Pruefungen bestanden." : $"FEHLER: {docFailures} Dokumentationskommentar-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Hilfeseite "Embedding.md": die dort gezeigten Host-Beispiele muessen mit der echten API laufen
+// ---------------------------------------------------------------------------------------------------------------------------
+{
+    Console.WriteLine("=== Embedding.md: Host-Beispiele ===");
+    int embFailures = 0;
+    void CheckEmb(string title, bool ok, string? detail = null)
+    {
+        if (!ok) embFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}" + (detail == null ? "" : $"\n  erhalten: {detail}"));
+    }
+
+    // Skript ausfuehren, print einsammeln
+    var printed = new List<string>();
+    Func<Value[], Value> writer = args => { printed.Add(args[0].ToString()!); return Value.MakeUndefined(); };
+    var hello = RuntimeSession.Build(new[] { "var name = \"fire\"\nprint($\"Hello from {name}!\")" }, null, writer);
+    hello.Run();
+    CheckEmb("Skript ausfuehren: print geht an den debugWriter", string.Join("|", printed) == "Hello from fire!", string.Join("|", printed));
+
+    // Mehrere Quellen werden zu einem Programm verbunden
+    printed.Clear();
+    RuntimeSession.Build(new[] { "var a = 20", "print(a + 22)" }, VmExecutionMode.Release, writer).Run();
+    CheckEmb("Mehrere Quellen, ausdrueckliche Betriebsart", string.Join("|", printed) == "42", string.Join("|", printed));
+
+    // Uebersetzungsfehler
+    List<string>? compileMessages = null;
+    try { RuntimeSession.Build(new[] { "var x = ;\nprint(unknownName)" }, null, writer); }
+    catch (Exception ex) when (ex is ParseException or ResolverException or CompilerException or NotSupportedException or PreprocessorException)
+    {
+        compileMessages = CompileErrors.Messages(ex).ToList();
+    }
+    CheckEmb("Uebersetzungsfehler: Build wirft, CompileErrors liefert Meldungen", compileMessages is { Count: > 0 }, compileMessages == null ? "keine Exception" : null);
+
+    // Nicht behandelte Exception: Run kehrt normal zurueck
+    var failing = RuntimeSession.Build(new[] { "class Oops {\n    string message\n    construct(string message) { this.message = message }\n}\nthrow new Oops(\"boom\")" }, null, writer);
+    failing.Run();
+    var failingVm = failing.VirtualMachine!;
+    CheckEmb("Nicht behandelte Exception steht in vm.UnhandledException",
+        failingVm.UnhandledException != null && new UncaughtScriptException(failingVm.UnhandledException).Message.Contains("boom"));
+
+    // IoStdio.Custom und IoPolicy werden von Build angenommen
+    var stdioOut = new System.Text.StringBuilder();
+    var stdio = fire.IO.Bridge.IoStdio.Custom(text => stdioOut.Append(text), text => stdioOut.Append("[error] ").Append(text), new MemoryStream(System.Text.Encoding.UTF8.GetBytes("in\n")));
+    var policy = fire.IO.Bridge.IoPolicy.Rooted(Path.GetTempPath(), readOnly: false);
+    printed.Clear();
+    RuntimeSession.Build(new[] { "print(1)" }, null, writer, ioPolicy: policy, ioStdio: stdio).Run();
+    CheckEmb("ioPolicy und ioStdio sind Parameter von Build", string.Join("|", printed) == "1");
+
+    // terminate(wert): Exitcode ueber VM.ExitValue; das naechste Programm startet wieder normal
+    RuntimeSession.Build(new[] { "terminate(7)" }, null, writer).Run();
+    var exit = VM.ExitValue;
+    CheckEmb("terminate(7): VM.ExitValue ist 7", exit.Kind == ValueKind.Int && exit.AsInt() == 7);
+    printed.Clear();
+    RuntimeSession.Build(new[] { "print(\"again\")" }, null, writer).Run();
+    CheckEmb("Nach terminate laeuft das naechste Programm im selben Prozess normal", string.Join("|", printed) == "again", string.Join("|", printed));
+    CheckEmb("Ein normal beendetes Programm hat keinen Exitwert", VM.ExitValue.Kind == ValueKind.Undefined);
+
+    // Skript auf einem Hintergrundthread
+    printed.Clear();
+    var bgSession = RuntimeSession.Build(new[] { "print(\"background\")" }, null, writer);
+    var bgThread = new Thread(() => bgSession.Run()) { IsBackground = true };
+    bgThread.Start();
+    CheckEmb("Hintergrundthread: Run laeuft dort", bgThread.Join(10000) && string.Join("|", printed) == "background");
+
+    // Untere Ebene: eigene extern-Funktion per ExternRegistry
+    var lowNatives = NativeRegistry.CreateDefault();
+    var lowExterns = new ExternRegistry();
+    lowExterns.Register("HostAdd", args => (long)args[0]! + (long)args[1]!);
+    var lowProgram = Parser.Parse("extern int HostAdd(int a, int b)\nprint(HostAdd(2, 3))");
+    var lowResolved = Resolver.Resolve(lowProgram, lowNatives.Names);
+    var lowCompiled = Compiler.Compile(lowProgram, lowResolved, lowNatives);
+    var lowOut = new StringWriter();
+    var oldOut = Console.Out;
+    Console.SetOut(lowOut);
+    try { new VM(lowCompiled.TopLevel, new Scope(null, isGlobal: true), lowNatives, lowCompiled.Classes, lowExterns).Run(); }
+    finally { Console.SetOut(oldOut); }
+    CheckEmb("Eigene C#-Funktion per extern + ExternRegistry", lowOut.ToString().Trim() == "5", lowOut.ToString());
+
+    Console.WriteLine(embFailures == 0 ? "Alle Embedding-Pruefungen bestanden." : $"FEHLER: {embFailures} Embedding-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Native-Backend (fire.Native): derselbe Quelltext laeuft in der VM und als erzeugtes C++ - die Ausgabe muss identisch sein
+// ---------------------------------------------------------------------------------------------------------------------------
+if (Environment.GetEnvironmentVariable("FIRE_TEST_NO_NATIVE") == "1") Console.WriteLine("(FIRE_TEST_NO_NATIVE: the native checks are skipped)");
+else
+{
+    Console.WriteLine("=== Native-Backend: erzeugtes C++ gegen die VM ===");
+    int natFailures = 0;
+    void CheckNat(string title, bool ok, string? detail = null)
+    {
+        if (!ok) natFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}" + (detail == null ? "" : $"\n{detail}"));
+    }
+
+    string? FindCxx()
+    {
+        foreach (var name in new[] { "g++", "clang++", "c++" })
+        {
+            try
+            {
+                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(name, "--version") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+                p.WaitForExit();
+                if (p.ExitCode == 0) return name;
+            }
+            catch (Exception) { }
+        }
+        return null;
+    }
+
+    string vmOutput(string source)
+    {
+        // `terminate` and `catch threads/terminate` are process-wide state of the VM: an earlier case must not leave its handlers behind
+        VM.ResetTerminateForTests();
+        GlobalHandlers.ResetForTests();
+        var lines = new List<string>();
+        var session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, args => { lines.Add(args[0].ToString()!); return Value.MakeUndefined(); });
+        session.Run();
+        return string.Join("\n", lines) + (lines.Count > 0 ? "\n" : "");
+    }
+
+    var natCases = new (string Name, string Source)[]
+    {
+        ("Ganzzahl-Arithmetik und Bit-Operationen", """
+            print(7 / 2)
+            print(-7 / 2)
+            print(7 % 3)
+            print(-7 % 3)
+            print(1 << 4)
+            print(256 >> 2)
+            print(6 & 3)
+            print(6 | 3)
+            print(6 # 3)
+            print(~5)
+            print(-(3 + 4))
+            var big = 9223372036854775807
+            print(big + 1)
+            print(big * 2)
+            """),
+        ("Gleitkomma und Ausgabeformat", """
+            print(1.5 + 2)
+            print(10 / 4.0)
+            print(0.1 + 0.2)
+            print(1.0 / 3)
+            print(1000000.0 * 1000000.0 * 1000.0)
+            print(1000000.0 * 1000000.0 * 100.0)
+            print(1000000.0 * 1000000.0 * 10000.0)
+            print(1000000.0 * 1000000.0 * 100000.0)
+            print(123456789.0 * 1000000000.0 * 1000000000.0)
+            print(0.00001)
+            print(0.000123)
+            print(0.000001 * 2.5)
+            print(0.0001 * 1)
+            print(100.0)
+            print(-2.5 * 4)
+            print(7.5 % 2)
+            """),
+        ("Vergleiche und Logik", """
+            print(1 < 2)
+            print(2 <= 2)
+            print(3 > 4)
+            print(3 >= 3)
+            print(1 == 1)
+            print(1 == 1.0)
+            print(1.5 != 2.5)
+            print(!(1 < 2))
+            print(true && false || true)
+            print(false || false)
+            var x = 5
+            print(x > 3 && x < 10)
+            """),
+        ("Schleifen, break, continue und verschachtelte Bloecke", """
+            var total = 0
+            var i = 0
+            while (i < 20) {
+                i++
+                if (i % 2 == 0) { continue }
+                if (i > 15) { break }
+                total = total + i
+            }
+            print(total)
+            for (var a = 0; a < 4; a++) {
+                for (var b = 0; b < 4; b++) {
+                    var p = a * b
+                    if (p == 2 || p == 6) { print(p) }
+                }
+            }
+            """),
+        ("Statische Methoden und Rekursion", """
+            class MathX {
+                static int Gcd(int a, int b) {
+                    if (b == 0) { return a }
+                    return MathX.Gcd(b, a % b)
+                }
+                static float Half(float x) { return x / 2 }
+                static int Fact(int n) {
+                    if (n <= 1) { return 1 }
+                    return n * MathX.Fact(n - 1)
+                }
+            }
+            print(MathX.Gcd(48, 18))
+            print(MathX.Half(5.0))
+            print(MathX.Fact(15))
+            """),
+        ("Einheiten gleicher Art", """
+            print(500mm + 250mm)
+            print(5mm < 3mm)
+            var l = 2.5m
+            print(l - 1m)
+            print(l)
+            var n = 3mm
+            n = n + 4mm
+            print(n)
+            """),
+        ("Zeichenketten und Zeichen als Ausgabe", """
+            print("Hello, wörld")
+            print("tab\there")
+            var s = "same"
+            print(s == "same")
+            print(s != "other")
+            """),
+        ("float 32 (#floatwidth 32): Rundung, Ausgabe, Ganzzahl-nach-float", """
+            #floatwidth 32
+            print(0.1 + 0.2)
+            print(1.0 / 3)
+            print(16777216.0 + 1.0)
+            print(16777217 + 0.0)
+            print(123456789.0)
+            print(1000.0 * 1000000.0)
+            print(1000.0 * 100000.0)
+            print(0.00001)
+            print(0.0001 * 1)
+            print(7.5 % 2)
+            print(2.5 < 2.75)
+            var s = 0.0
+            for (var i = 0; i < 1000; i = i + 1) { s = s + 0.1 }
+            print(s)
+            print(-1.5 * 3)
+            """),
+        ("float 32: Einheiten und Kontrollfluss", """
+            #floatwidth 32
+            var total = 0.0mm
+            for (var i = 0; i < 100; i = i + 1) { total = total + 0.3mm }
+            print(total)
+            class F { static float Mean(float a, float b) { return (a + b) / 2 } }
+            print(F.Mean(0.1, 0.2))
+            """),
+        ("Strings: Konkatenation, Laenge, Methoden, Format, Vergleich", """
+            var name = "fire"
+            print("Hello, " + name + "!")
+            var n = 3
+            print("n=" + n + " f=" + 2.5 + " b=" + true + " c=" + 'x' + " u=" + undefined)
+            print("mm: " + 5mm + " " + 2.5mm)
+            var s = "Hello, wörld"
+            print(s.Length)
+            print(s.ToUpper())
+            print(s.ToLower())
+            print(s.Substring(7, 3))
+            print(s.Substring(7))
+            print(s.IndexOf("w"))
+            print(s.IndexOf("o", 5))
+            print(s.IndexOf("zz"))
+            print(s.LastIndexOf("o"))
+            print(s.LastIndexOf("l", 5))
+            print(s.LastIndexOf(""))
+            print(s.Contains("lo"))
+            print(s.StartsWith("Hell"))
+            print(s.EndsWith("ld"))
+            print(s.CharAt(4))
+            print(s.Replace("l", "LL"))
+            print("  padded\t ".Trim() + "|")
+            print("  padded ".TrimStart() + "|")
+            print("  padded ".TrimEnd() + "|")
+            print("7".PadLeft(3) + "|" + "7".PadLeft(3, '0') + "|" + "ab".PadRight(5, '.') + "|")
+            print($"{name}: {n} {2.5:F2} {255:X4} {255:x} {7:D3} {-7:D3} {5:B8} {1234.5678:F1}")
+            print($"{0.5:F0} {1.5:F0} {2.5:F0} {0.125:F2} {1.005:F2}")
+            var text = ""
+            for (var i = 0; i < 5; i = i + 1) { text = text + "ab" }
+            print(text)
+            print(text.Length)
+            var t = s
+            s = "other"
+            print(t)
+            print(s == "other")
+            print(s != t)
+            print("a" + 1 + 2)
+            print('q'.IsLetter())
+            print('7'.IsDigit())
+            print('a'.ToUpper())
+            print('Z'.ToLower())
+            print(' '.IsWhiteSpace())
+            print('x'.ToInt())
+            """),
+        ("Strings: Lebensdauer (Rueckgabe, Felder, innere Bloecke, Aliase, Objekte mit Zeichenketten)", """
+            class Person {
+                string name
+                construct(string name) { this.name = name }
+                destruct() { print("bye " + this.name) }
+                string Greet() { return "hi " + this.name }
+                Rename(string n) { this.name = n + "!" }
+            }
+            class Maker {
+                static string Join(string a, string b) {
+                    var r = a + "-" + b
+                    return r
+                }
+                static string Pick(int i) {
+                    if (i > 0) { return "positive" }
+                    var inner = "non" + "-" + "positive"
+                    return inner
+                }
+            }
+            var outer = "start"
+            {
+                var inner = "in" + "ner"
+                outer = outer + ":" + inner
+            }
+            print(outer)
+            var p = new Person("Ada")
+            print(p.Greet())
+            p.Rename("Grace")
+            print(p.Greet())
+            var kept = p.name
+            p.Rename("Linus")
+            print(kept)
+            print(p.name)
+            var joined = Maker.Join("a", "b")
+            print(Maker.Join(joined, "c"))
+            print(Maker.Pick(1) + " " + Maker.Pick(0))
+            var words = ["one", "two"]
+            words[1] = words[0] + words[1]
+            print(words[1])
+            var all = ""
+            foreach (w in words) { all = all + w + ";" }
+            print(all)
+            {
+                var q = new Person("Temp")
+                var local = q.Greet()
+                print(local)
+            }
+            var alias = outer
+            outer = "changed"
+            print(alias)
+            print(outer)
+            """),
+        ("Strings: ToString() von Klassen, in print, + und $\"\"", """
+            class Money {
+                int cents
+                construct(int cents) { this.cents = cents }
+                string ToString() { return "$" + this.cents / 100 + "." + this.cents % 100 }
+            }
+            var m = new Money(1999)
+            print(m)
+            print("price: " + m)
+            print(m + " total")
+            print($"[{m}]")
+            """),
+        ("Strings: Unicode (Umlaute, Griechisch, Kyrillisch, Surrogatpaare)", """
+            var s = "Größe ÀÉÎõ αβγ жя"
+            print(s.Length)
+            print(s.ToUpper())
+            print(s.ToLower())
+            var emoji = "a😀b"
+            print(emoji.Length)
+            print(emoji)
+            print(emoji.IndexOf("b"))
+            print("é".Length)
+            print("ÄÖÜ".ToLower() + "äöü".ToUpper())
+            print('é'.IsLetter())
+            print("x" + 'ä' + 'ö')
+            """),
+        ("Arrays: Literal, new, Zugriff, ++, length, verschachtelt, foreach, Puffer, Zeichenkette indexieren", """
+            var names = ["Ada", "Grace", "Linus"]
+            var total = 0
+            foreach (n in names) {
+                total = total + n.Length
+                print(n)
+            }
+            print(total)
+            var a = new int[4]
+            a[1] = 5
+            a[1]++
+            ++a[1]
+            a[2] = a[1] * 2
+            print(a[1] + a.length)
+            print(a[2])
+            print(a[0])
+            var m = [[1, 2], [3, 4]]
+            print(m[1][0] + m[0][1])
+            m[0][0] = 10
+            print(m[0][0])
+            var b = new byte[3]
+            b[0] = 200
+            b[2] = b[0] + 100
+            print(b[0] + b.length)
+            print(b[2])
+            var cs = "xyz"
+            print(cs[1])
+            var parts = "a,b,,c".Split(",")
+            print(parts.Length)
+            foreach (p in parts) { print("[" + p + "]") }
+            print("x".Split("").Length)
+            var mixed = [1, "two", 3.5, true, 'c']
+            foreach (e in mixed) { print(e) }
+            var sum = 0
+            for (var i = 1; i < 3; i = i + 1) { sum = sum + a[i] }
+            print(sum)
+            """),
+        ("Listen aus dem Prelude (List, Add, Index, foreach, Wachstum)", """
+            var l = new List()
+            for (var i = 0; i < 20; i = i + 1) { l.Add(i * i) }
+            var sum = 0
+            foreach (v in l) { sum = sum + v }
+            print(sum)
+            print(l[3])
+            l[3] = 100
+            print(l[3])
+            print(l.count)
+            var names = new List(["x", "y", "z"])
+            var joined = ""
+            foreach (n in names) { joined = joined + n }
+            print(joined)
+            """),
+        ("Benchmark array", """
+            var n = 100000
+            var a = new int[n]
+            var total = 0
+            for (var pass = 0; pass < 5; pass = pass + 1) {
+                for (var i = 0; i < n; i = i + 1) { a[i] = i + pass }
+                for (var i = 0; i < n; i = i + 1) { total = total + a[i] }
+            }
+            print(total)
+            """),
+        ("Benchmark string", """
+            var s = "Hello, World, again"
+            var n = 0
+            for (var i = 0; i < 40000; i = i + 1) {
+                n = n + s.IndexOf("o") + s.Substring(3, 4).Length + s.Length
+            }
+            var text = ""
+            for (var i = 0; i < 2000; i = i + 1) { text = text + "ab" }
+            print(n + text.Length)
+            """),
+        ("Benchmark list", """
+            var l = new List()
+            for (var i = 0; i < 40000; i = i + 1) { l.Add(i) }
+            var total = 0
+            foreach (v in l) { total = total + v }
+            print(total)
+            """),
+        ("Lambdas: Captures als Kopie, on-Ziel, Verschachtelung, Signaturpruefung, Lambdas in Listen", """
+            var add = func (a, b) => { return a + b }
+            print(add(2, 3))
+            var twice = x => x * 2
+            print(twice(21))
+            var limit = 3
+            var f = x => x > limit
+            limit = 10
+            print(f(5))
+            class T {
+                int n
+                construct(int n) { this.n = n }
+                static Run() {
+                    var k = 7
+                    var g = (a) => a + k
+                    k = 100
+                    return g(1)
+                }
+                Make() {
+                    var inc = func (x) on this => { this.n = this.n + x; return this.n }
+                    return inc
+                }
+            }
+            print(T.Run())
+            var t = new T(10)
+            var inc = t.Make()
+            print(inc(5))
+            print(inc(5))
+            var fs = new List()
+            for (var i = 0; i < 3; i = i + 1) { fs.Add(() => i * 10) }
+            foreach (h in fs) { print(h()) }
+            var greet = (name) => "hi " + name
+            print(greet("Ada"))
+            var compose = (f1, f2) => (x) => f2(f1(x))
+            var both = compose(twice, x => x + 1)
+            print(both(5))
+            var acc = 0
+            for (var j = 0; j < 100; j = j + 1) { acc = add(acc, j) }
+            print(acc)
+            lambda w = func () => { print("zero") }
+            w()
+            int lambda<int> sq = x => x * x
+            print(sq(9))
+            """),
+        ("Benchmark lambda", """
+            var add = func (a, b) => { return a + b }
+            var acc = 0
+            for (var i = 0; i < 200000; i = i + 1) {
+                acc = add(acc, i)
+            }
+            print(acc)
+            """),
+        ("Objekte: Klassen, Felder, Konstruktoren, Vererbung, Destruktoren, statische Felder", """
+            class Animal {
+                int id
+                int legs = 4
+                static int count = 0
+                construct(int id) { this.id = id; Animal.count = Animal.count + 1 }
+                destruct() { print(0 - this.id) }
+                Speak() { print(this.id) }
+                int Legs() { return this.legs }
+            }
+            class Dog : Animal {
+                int tricks
+                construct(int id) : base(id) { this.tricks = 2 }
+                Speak() { base.Speak(); print(100 + this.tricks) }
+            }
+            class Holder {
+                Dog pet
+                construct() { this.pet = new Dog(7) }
+            }
+            class Maker {
+                static Dog Make(int id) { var d = new Dog(id); return d }
+            }
+            var d = new Dog(1)
+            d.Speak()
+            print(d.Legs())
+            var h = new Holder()
+            h.pet.Speak()
+            {
+                var inner = new Animal(5)
+                inner.Speak()
+            }
+            var m = Maker.Make(9)
+            m.Speak()
+            print(Animal.count)
+            """),
+        ("Objekte: virtuelle Methoden und gleiche Feldnamen in verschiedenen Klassen", """
+            class Shape {
+                int w
+                int h
+                construct(int w, int h) { this.w = w; this.h = h }
+                int Area() { return 0 }
+                Describe() { print(this.Area()) }
+            }
+            class Rect : Shape {
+                construct(int w, int h) : base(w, h) { }
+                int Area() { return this.w * this.h }
+            }
+            class Square : Rect {
+                construct(int s) : base(s, s) { }
+            }
+            class Triangle : Shape {
+                construct(int w, int h) : base(w, h) { }
+                int Area() { return this.w * this.h / 2 }
+            }
+            class Other {
+                int pad
+                int w
+                construct() { this.pad = 1; this.w = 99 }
+                int Area() { return this.w }
+            }
+            var shapes = new Shape(3, 4)
+            shapes.Describe()
+            var r = new Rect(3, 4)
+            r.Describe()
+            var q = new Square(5)
+            q.Describe()
+            var t = new Triangle(6, 5)
+            t.Describe()
+            var o = new Other()
+            print(o.Area())
+            print(o.w)
+            print(q.w)
+            """),
+        ("Objekte: Besitz - Rueckgabe, Bloecke, Schleifen, break/continue, fruehes return", """
+            class Res {
+                int id
+                construct(int id) { this.id = id; print(this.id) }
+                destruct() { print(0 - this.id) }
+            }
+            class F {
+                static Res Make(int id) {
+                    var tmp = new Res(id + 1000)
+                    if (id > 5) {
+                        var inner = new Res(id + 2000)
+                        return new Res(id)
+                    }
+                    var kept = new Res(id)
+                    return kept
+                }
+                static int Early(int n) {
+                    var guard = new Res(n + 500)
+                    if (n > 0) { return n }
+                    return 0 - 1
+                }
+            }
+            var a = F.Make(1)
+            var b = F.Make(9)
+            print(F.Early(3))
+            print(F.Early(0))
+            for (var i = 0; i < 4; i = i + 1) {
+                var loopRes = new Res(10 + i)
+                if (i == 1) { continue }
+                if (i == 3) { break }
+                print(loopRes.id)
+            }
+            {
+                var x = new Res(70)
+                {
+                    var y = new Res(71)
+                }
+                print(1)
+            }
+            print(a.id + b.id)
+            """),
+        ("Objekte: Besitzer-Kaskade und verkettete Objekte", """
+            class Node {
+                int value
+                Node next
+                construct(int value) { this.value = value }
+                destruct() { print(0 - this.value) }
+                Add(int v) {
+                    if (this.next == undefined) { this.next = new Node(v) }
+                    else { this.next.Add(v) }
+                }
+                int Sum() {
+                    if (this.next == undefined) { return this.value }
+                    return this.value + this.next.Sum()
+                }
+            }
+            var head = new Node(1)
+            head.Add(2)
+            head.Add(3)
+            head.Add(4)
+            print(head.Sum())
+            {
+                var local = new Node(10)
+                local.Add(20)
+                print(local.Sum())
+            }
+            print(head.next.next.value)
+            """),
+        ("Benchmark method", """
+            class Counter {
+                int count
+                int step
+                construct() { this.count = 0; this.step = 2 }
+                Inc() { this.count = this.count + this.step }
+                int Get() { return this.count }
+            }
+            var c = new Counter()
+            for (var i = 0; i < 250000; i = i + 1) {
+                c.Inc()
+            }
+            print(c.Get())
+            """),
+        ("Ausnahmen: throw, catch nach Typ, Destruktoren beim Abwickeln, finally", """
+            class Err : Exception {
+                string message
+                int code
+                construct(string m, int c) { this.message = m; this.code = c }
+            }
+            class Other : Exception {
+                construct() { }
+            }
+            class Res {
+                string name
+                construct(string n) { this.name = n; print("open " + n) }
+                destruct() { print("close " + name) }
+            }
+            class T {
+                static int Deep(int n) {
+                    var r = new Res("deep" + n)
+                    if (n == 0) { throw new Err("bottom", 42) }
+                    return T.Deep(n - 1) + 1
+                }
+                static int Safe(int x) {
+                    try {
+                        return T.Deep(x)
+                    } catch (Other o) {
+                        print("wrong handler")
+                        return -1
+                    } finally {
+                        print("finally in Safe " + x)
+                    }
+                }
+            }
+            try {
+                var a = new Res("A")
+                print(T.Safe(2))
+            } catch (Err e) {
+                print("caught " + e.message + " " + e.code)
+            } finally {
+                print("outer finally")
+            }
+            print("next")
+            try {
+                throw new Other()
+            } catch (e) {
+                print("catch-all")
+            }
+            """),
+        ("Ausnahmen: resume an der Wurfstelle, Indexfehler als Ausnahme", """
+            class Ask : Exception {
+                string what
+                construct(string w) { this.what = w }
+            }
+            class T {
+                static int Value(string k) {
+                    var v = throw new Ask(k)
+                    return v
+                }
+            }
+            try {
+                var x = T.Value("a") + T.Value("b")
+                print("x = " + x)
+            } catch (Ask e) {
+                print("asked " + e.what)
+                e.resume(10)
+            }
+            print("done")
+            var arr = new int[3]
+            try {
+                arr[1] = 5
+                print(arr[1])
+                print(arr[7])
+                print("after read")
+                arr[9] = 1
+                print("after write")
+            } catch (IndexOutOfBoundsException e) {
+                print("index " + e.index + " of " + e.length)
+                e.resume(0)
+            }
+            try {
+                print("abc".Substring(5))
+            } catch (e) {
+                print("sub: " + e.message)
+            }
+            """),
+        ("Ausnahmen: finally bei break, continue, return, Weiterwerfen", """
+            class E1 : Exception { construct() { } }
+            var i = 0
+            while (i < 6) {
+                try {
+                    i = i + 1
+                    if (i == 2) { continue }
+                    if (i == 4) { break }
+                    print("body " + i)
+                } finally {
+                    print("fin " + i)
+                }
+            }
+            print("after loop " + i)
+            class F {
+                static int G(int n) {
+                    for (var k = 0; k < 10; k = k + 1) {
+                        try {
+                            if (k == n) { return k * 10 }
+                        } finally {
+                            print("G fin " + k)
+                        }
+                    }
+                    return -1
+                }
+                static int H() {
+                    try {
+                        try {
+                            throw new E1()
+                        } finally {
+                            print("inner fin")
+                        }
+                    } catch (E1 e) {
+                        print("H caught")
+                        return 7
+                    } finally {
+                        print("H outer fin")
+                    }
+                }
+            }
+            print(F.G(2))
+            print(F.H())
+            try {
+                try {
+                    throw new E1()
+                } catch (E1 e) {
+                    print("rethrow")
+                    throw e
+                }
+            } catch (e) {
+                print("outer caught")
+            }
+            """),
+        ("Ausnahmen: Klassenhierarchie, continue/break im catch, return durch finally", """
+            class Base : Exception {
+                string message
+                construct(string m) { this.message = m }
+            }
+            class Derived : Base {
+                construct(string m) : base(m) { }
+            }
+            class Res {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("free " + n) }
+            }
+            class W {
+                int count
+                construct() { this.count = 0 }
+                int Step(int k) {
+                    this.count = this.count + 1
+                    if (k % 3 == 0) { throw new Derived("k=" + k) }
+                    return k
+                }
+            }
+            var w = new W()
+            var sum = 0
+            for (var i = 1; i <= 8; i = i + 1) {
+                try {
+                    var r = new Res("r" + i)
+                    sum = sum + w.Step(i)
+                    if (i == 7) { continue }
+                    print("ok " + i)
+                } catch (Base e) {
+                    print("caught " + e.message)
+                    if (i == 6) { break }
+                    continue
+                } finally {
+                    print("fin " + i)
+                }
+                print("tail " + i)
+            }
+            print("sum " + sum + " count " + w.count)
+            // nested try in catch, rethrow from nested
+            try {
+                try {
+                    throw new Derived("first")
+                } catch (Base e) {
+                    try {
+                        throw new Derived("second")
+                    } catch (Derived d) {
+                        print("inner " + d.message)
+                    }
+                    print("after inner")
+                    throw e
+                }
+            } catch (e) {
+                print("outer " + e.message)
+            }
+            // return in catch with finally, finally return replaces
+            class R {
+                static int A() {
+                    try {
+                        throw new Derived("x")
+                    } catch (e) {
+                        return 1
+                    } finally {
+                        print("A fin")
+                    }
+                }
+                static int B() {
+                    try {
+                        return 1
+                    } finally {
+                        print("B fin")
+                        return 2
+                    }
+                }
+                static string C() {
+                    var arr = [1, 2, 3]
+                    foreach (v in arr) {
+                        try {
+                            if (v == 2) { return "two" }
+                        } finally {
+                            print("C fin " + v)
+                        }
+                    }
+                    return "none"
+                }
+            }
+            print(R.A())
+            print(R.B())
+            print(R.C())
+            """),
+        ("Abbruch: nicht gefangene Ausnahme beendet das Programm", """
+            class Boom : Exception {
+                construct() { }
+            }
+            class Res {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("free " + n) }
+            }
+            class T {
+                static F(int n) {
+                    var r = new Res("f" + n)
+                    if (n == 0) { throw new Boom() }
+                    T.F(n - 1)
+                }
+            }
+            var g = new Res("global")
+            print("start")
+            T.F(2)
+            print("never")
+            """),
+        ("Ausnahmen: Lambdas, ToString, Konstruktor, catch ohne try", """
+            class Boom : Exception {
+                string message
+                construct(string m) { this.message = m }
+            }
+            class Bad {
+                string ToString() { throw new Boom("tostring") }
+            }
+            var f = (int x) => {
+                if (x > 2) { throw new Boom("big " + x) }
+                return x * 2
+            }
+            for (var i = 1; i < 5; i = i + 1) {
+                try {
+                    print(f(i))
+                } catch (Boom b) {
+                    print("lambda threw: " + b.message)
+                }
+            }
+            try {
+                var b = new Bad()
+                print("v: " + b)
+            } catch (Boom e) {
+                print("ts: " + e.message)
+            }
+            try {
+                print(new Bad())
+            } catch (Boom e) {
+                print("print: " + e.message)
+            }
+            class C {
+                construct(int x) {
+                    if (x < 0) { throw new Boom("ctor") }
+                }
+            }
+            try { var c = new C(-1) } catch (e) { print("ctor failed " + e.message) }
+            var u = 3
+            {
+                catch (e) { print("implicit " + e.message) }
+                throw new Boom("blocky")
+            }
+            print("end " + u)
+            """),
+        ("Abbruch: finally vor dem Abbruch, Methoden, resume aus verschachtelten Aufrufen", """
+            class Oops : Exception {
+                string message
+                construct(string m) { this.message = m }
+            }
+            class Node {
+                string name
+                Node child
+                construct(string n) { this.name = n; print("new " + n) }
+                destruct() { print("del " + name) }
+            }
+            class Svc {
+                int tries
+                string log
+                construct() { this.tries = 0; this.log = "" }
+                string Run(int n) {
+                    var tmp = "run" + n
+                    try {
+                        this.tries = this.tries + 1
+                        var node = new Node("n" + n)
+                        if (n % 2 == 1) { throw new Oops("odd " + tmp) }
+                        this.log = this.log + tmp + ","
+                        return "ok " + tmp
+                    } catch (Oops o) {
+                        this.log = this.log + "!" + o.message + ","
+                        return "failed " + o.message
+                    } finally {
+                        this.log = this.log + "f" + n + ","
+                    }
+                }
+                int Parse(string text) {
+                    // resume with a default value
+                    var v = throw new Oops("parse " + text)
+                    return v
+                }
+            }
+            var s = new Svc()
+            for (var i = 0; i < 4; i = i + 1) { print(s.Run(i)) }
+            print(s.log + " tries=" + s.tries)
+            var total = 0
+            try {
+                total = s.Parse("a") + s.Parse("b") + 1
+            } catch (Oops o) {
+                print("fix " + o.message)
+                o.resume(100)
+            }
+            print("total " + total)
+
+            // deep resume from a nested call
+            class Handler2 {
+                static Fix(Oops o) { o.resume(5) }
+            }
+            try {
+                var q = throw new Oops("q")
+                print("q=" + q)
+            } catch (Oops o) {
+                Handler2.Fix(o)
+            }
+
+            // uncaught through finally: finally runs, then the program ends
+            try {
+                print("before")
+                throw new Oops("final")
+            } finally {
+                print("cleanup")
+            }
+            print("unreachable")
+            """),
+        ("Ausnahmen: break/continue aus verschachtelten catch-Bloecken, foreach", """
+            class A : Exception { string message; construct(string m) { this.message = m } }
+            class B : Exception { construct() { } }
+            var items = [1, 2, 3, 4, 5, 6]
+            // break/continue from catch and try bodies inside a foreach
+            foreach (v in items) {
+                try {
+                    if (v == 1) { continue }
+                    if (v == 3) { throw new A("three") }
+                    if (v == 5) { throw new B() }
+                    print("v" + v)
+                } catch (A a) {
+                    print("A " + a.message)
+                    continue
+                } catch (B b) {
+                    print("B stops")
+                    break
+                } finally {
+                    print("fin " + v)
+                }
+                print("end " + v)
+            }
+            // two levels of catch: break from the inner catch leaves the outer catch too
+            for (var i = 0; i < 3; i = i + 1) {
+                try {
+                    throw new A("outer" + i)
+                } catch (A a) {
+                    try {
+                        throw new B()
+                    } catch (B b) {
+                        print("inner at " + i)
+                        if (i == 1) { break }
+                        continue
+                    }
+                    print("not here")
+                }
+            }
+            // return in nested catches through finally blocks
+            class X {
+                static int F(int n) {
+                    try {
+                        try {
+                            throw new A("a")
+                        } catch (A a) {
+                            try {
+                                throw new B()
+                            } catch (B b) {
+                                return n + 1
+                            } finally {
+                                print("f1")
+                            }
+                        } finally {
+                            print("f2")
+                        }
+                    } finally {
+                        print("f3")
+                    }
+                }
+                static int G(int n) {
+                    foreach (v in [1, 2, 3]) {
+                        try {
+                            if (v == n) { throw new A("g") }
+                        } catch (A a) {
+                            return v * 100
+                        } finally {
+                            print("G" + v)
+                        }
+                    }
+                    return 0
+                }
+            }
+            print(X.F(1))
+            print(X.G(2))
+            print(X.G(9))
+            // a try that is left with an exception thrown in the catch and caught outside
+            try {
+                try {
+                    throw new A("1")
+                } catch (A a) {
+                    throw new B()
+                } finally {
+                    print("mid finally")
+                }
+            } catch (B b) {
+                print("got B")
+            }
+            """),
+        ("Ausnahmen: Einheiten und Indexfehler von Zeichenketten/Puffern", """
+            class M {
+                int len : mm = 0mm
+                construct() { this.len = 1mm }
+            }
+            var m = new M()
+            print(m.len)
+            try {
+                m.len = 7
+                print("no error")
+            } catch (UnitMismatchException e) {
+                print("unit: " + e.message)
+            }
+            float w : mm = 5mm
+            try {
+                w = 3
+            } catch (e) {
+                print("w: " + e.message + " | " + e.expectedUnit + " | " + e.actualUnit)
+            }
+            print(w)
+            var s = "hello"
+            try {
+                print(s.CharAt(10))
+            } catch (IndexOutOfBoundsException e) {
+                print(e.message + " " + e.index + " " + e.length)
+            }
+            try {
+                print(s[9])
+            } catch (IndexOutOfBoundsException e) {
+                print(e.message)
+            }
+            try {
+                var b = new byte[2]
+                b[5] = 1
+            } catch (IndexOutOfBoundsException e) {
+                print(e.message)
+            }
+            """),
+        ("Ausnahmen: try in Konstruktor, Lambda und foreach, Zeichenketten beim Werfen", """
+            class Bad : Exception { string message; construct(string m) { this.message = m } }
+            class Thing {
+                string state
+                int value
+                construct(int v) {
+                    this.state = "init"
+                    try {
+                        if (v < 0) { throw new Bad("negative") }
+                        this.value = v
+                        this.state = "ok"
+                    } catch (Bad b) {
+                        this.value = 0
+                        this.state = "recovered " + b.message
+                        return
+                    } finally {
+                        print("ctor finally " + v)
+                    }
+                    print("ctor end " + v)
+                }
+                destruct() {
+                    try { print("dtor " + this.state) } finally { print("dtor fin") }
+                }
+            }
+            var a = new Thing(5)
+            var b = new Thing(-1)
+            print(a.state + " / " + b.state)
+            var f = (int x) => {
+                try {
+                    if (x == 0) { throw new Bad("zero") }
+                    return 100 / x
+                } catch (e) {
+                    return -1
+                } finally {
+                    print("lambda fin " + x)
+                }
+            }
+            print(f(0))
+            print(f(4))
+            var words = ["a", "b", "c"]
+            var out = ""
+            foreach (w in words) {
+                try {
+                    if (w == "b") { throw new Bad("b!") }
+                    out = out + w
+                } catch (e) {
+                    out = out + "[" + e.message + "]"
+                }
+            }
+            print(out)
+            // exception thrown while building a string, temporaries must not leak or crash
+            var s = ""
+            for (var i = 0; i < 20; i = i + 1) {
+                try {
+                    s = s + "x" + i
+                    if (i % 7 == 6) { throw new Bad("seven " + s) }
+                } catch (Bad e) {
+                    s = e.message + "|"
+                }
+            }
+            print(s)
+            """),
+        ("ref-Parameter: Variablen, Felder, Array-Elemente, Puffer, Konstruktor, Weitergabe", """
+            class Box { int n; string s; construct() { this.n = 1; this.s = "a" } }
+            class U {
+                static Swap(ref a, ref b) { var t = a; a = b; b = t }
+                static Inc(ref int x) { x++; x = x + 10 }
+                static Twice(ref int x) { U.Inc(x); U.Inc(x) }
+                static Append(ref string s, string t) { s = s + t }
+                static Plain(int x) { x = 99 }
+                static int Sum(ref int a, int b) { return a + b }
+            }
+            class Counter {
+                int total
+                construct(ref int seed) { this.total = seed; seed = 100 }
+                Add(ref int v) { v = v + this.total }
+                Bump(ref int v) { this.total = this.total + 1; v = this.total }
+                Self() { this.Bump(total) }
+            }
+            var x = 1
+            var y = 2
+            U.Swap(x, y)
+            print(x + " " + y)
+            U.Inc(x)
+            print(x)
+            U.Twice(y)
+            print(y)
+            var s = "hi"
+            U.Append(s, "!!")
+            print(s)
+            var z = 5
+            U.Plain(z)
+            print(z)
+            var b = new Box()
+            U.Swap(b.n, b.s)
+            print(b.n + " " + b.s)
+            var arr = [1, 2, 3]
+            U.Inc(arr[1])
+            U.Swap(arr[0], arr[2])
+            print(arr[0] + " " + arr[1] + " " + arr[2])
+            var buf = new byte[2]
+            U.Inc(buf[1])
+            print(buf[1])
+            var seed = 7
+            var c = new Counter(seed)
+            print(seed + " " + c.total)
+            var k = 3
+            c.Add(k)
+            print(k)
+            c.Self()
+            print(c.total)
+            print(U.Sum(k, 1))
+            var f = (int v) => { U.Inc(v); return v }
+            print(f(5))
+            {
+                var loc = 4
+                U.Inc(loc)
+                print(loc)
+            }
+            try { U.Inc(arr[9]) } catch (e) { print("oob " + e.message) }
+            """),
+        ("ref-Parameter: Strings und Arrays ueber Felder und Elemente, Schleifen", """
+            class Holder { string name; construct(string n) { this.name = n } }
+            class U {
+                static Swap(ref a, ref b) { var t = a; a = b; b = t }
+                static Grow(ref string s, int n) {
+                    for (var i = 0; i < n; i = i + 1) { s = s + i }
+                }
+                static Pick(ref string s, string alt) { if (s == "") { s = alt } return s }
+                static Fill(ref arr) { var made = [1, 2, 3]; made.TakeGlobal(); arr = made }
+                static int Step(ref int n) { n = n - 1; return n }
+            }
+            var words = ["x", "y", "z"]
+            U.Swap(words[0], words[2])
+            print(words[0] + words[1] + words[2])
+            var h = new Holder("h")
+            var s = "start"
+            U.Swap(h.name, s)
+            print(h.name + " " + s)
+            U.Grow(h.name, 5)
+            print(h.name)
+            var e = ""
+            print(U.Pick(e, "alt") + e)
+            var arr = 0
+            U.Fill(arr)
+            print(arr[1])
+            var n = 5
+            var total = 0
+            while (U.Step(n) > 0) { total = total + n }
+            print(total)
+            for (var i = 0; i < 100; i = i + 1) { var t = "q" + i; U.Grow(t, 3); U.Swap(t, s) }
+            print(s)
+            """),
+        ("ref-Parameter: List.Add und eine Methode mit ref gleichen Namens", """
+            class Counter {
+                int total
+                construct() { this.total = 0 }
+                Add(ref int v) { v = v + 1 }
+            }
+            var l = new List()
+            var q = 3
+            l.Add(q)
+            l.Add(5)
+            print(l.count + " " + q)
+            var c = new Counter()
+            c.Add(q)
+            print(q)
+            """),
+        ("Besitz: Arrays und Puffer (Scope, Feld, return, Take-Methoden, delete, zerstoerte Benutzung)", """
+            class Holder {
+                int data[]
+                construct() { this.data = [1, 2, 3] }
+                Fill() { var tmp = new int[2]; tmp[0] = 7; this.data = tmp; tmp.TakeTo(this) }
+                Bad() { var tmp = new int[2]; this.data = tmp }
+            }
+            class Res { string n; construct(string n) { this.n = n } destruct() { print("free " + this.n) } }
+            class Make {
+                static int[] Create() { var a = [4, 5, 6]; return a }
+                static int[] Pair() { var a = new int[2]; { var b = new int[1]; b.TakeUpwards(); a[0] = b[0] } return a }
+            }
+            var h = new Holder()
+            print(h.data[1])
+            h.Fill()
+            print(h.data[0])
+            var r = Make.Create()
+            print(r[2])
+            var p = Make.Pair()
+            print(p.length)
+            h.Bad()
+            try { print(h.data[0]) } catch (DestroyedException e) { print("destroyed: " + e.message) }
+            var x = [1, 2]
+            delete x
+            try { print(x[0]) } catch (e) { print("after delete: " + e.message) }
+            try { print(x.length) } catch (e) { print("len: " + e.message) }
+            var m = new int[2][3]
+            m[1][2] = 9
+            print(m[1][2])
+            delete m
+            try { print(m[0]) } catch (e) { print("matrix gone") }
+            var b = new byte[4]
+            b[1] = 5
+            b.TakeGlobal()
+            print(b[1])
+            {
+                var inner = [9, 9]
+                inner.TakeLocal()
+                var r2 = new Res("r2")
+                r2.TakeLocal()
+            }
+            print("end")
+            var rr = new Res("kept")
+            delete rr
+            print("last")
+            {
+                var tmp = [1]
+                tmp.TakeGlobal()
+                var g = tmp
+            }
+            print("done")
+            class Cell { int vals[]; construct() { this.vals = new int[3]; this.vals[0] = 5 } }
+            var c = new Cell()
+            print(c.vals[0])
+            var grid = [[1, 2], [3, 4]]
+            print(grid[1][0])
+            class Fn { static int[][] Make() { return [[7, 8], [9]] } }
+            print(Fn.Make()[0][1])
+            var words = "a,b,c".Split(",")
+            print(words.length)
+            """),
+        ("Besitz: Kaskade, TakeUpwards, TakeTo, innere Arrays, List-Wachstum, Ausnahmen", """
+            class Node {
+                string name
+                int items[]
+                construct(string n) { this.name = n; this.items = new int[2]; print("new " + n) }
+                destruct() { print("free " + this.name) }
+            }
+            class Keeper {
+                int store[]
+                Node kid
+                construct() { this.store = [1, 2, 3]; this.kid = new Node("kid") }
+            }
+            class Util {
+                static int[] Up() {
+                    var a = [7, 8]
+                    {
+                        var inner = new int[3]
+                        inner.TakeUpwards()
+                        inner[0] = 5
+                        a[0] = inner[0]
+                    }
+                    return a
+                }
+                static int Sum(int xs[]) { var t = 0; foreach (x in xs) { t = t + x } return t }
+            }
+            var k = new Keeper()
+            print(k.store[2])
+            var kept = k.store
+            delete k
+            try { print(kept[0]) } catch (DestroyedException e) { print("store died with its owner") }
+            var up = Util.Up()
+            print(up[0])
+            var big = new int[3][2]
+            big[2][1] = 4
+            print(big[2][1] + " " + big.length + " " + big[0].length)
+            var g = [[1, 2], [3, 4, 5]]
+            print(Util.Sum(g[1]))
+            var buf = new byte[3]
+            var holder = new Node("holder")
+            buf.TakeTo(holder)
+            holder.items.TakeGlobal()
+            print(buf.length)
+            delete holder
+            try { print(buf.length) } catch (e) { print("buffer died with holder") }
+            class Pool {
+                static int[] Make(int n) {
+                    var tmp = new int[n]
+                    for (var i = 0; i < n; i = i + 1) { tmp[i] = i * i }
+                    return tmp
+                }
+            }
+            var total = 0
+            for (var round = 0; round < 50; round = round + 1) {
+                var a = Pool.Make(20)
+                total = total + a[19]
+                var s = [a[1], a[2]]
+                total = total + s[1]
+            }
+            print(total)
+            var l = new List()
+            for (var i = 0; i < 40; i = i + 1) { l.Add(i) }
+            var sum = 0
+            foreach (v in l) { sum = sum + v }
+            print(sum + " " + l.count)
+            try {
+                var local = new int[4]
+                local[9] = 1
+            } catch (e) {
+                print("oob")
+            }
+            var cur = 0
+            {
+                var scratch = [1, 2]
+                scratch.TakeLocal()
+                cur = scratch[1]
+            }
+            print(cur)
+            """),
+        ("Besitz: Zuweisung nach oben, Direktzuweisung von Aufrufergebnissen, Rueckgabe direkt in einen Parameter", """
+            class Box { int items[]; string name; construct(string n) { this.name = n } destruct() { print("free " + this.name) } }
+            class Util {
+                static int[] Make(int n) { var a = new int[n]; a[0] = n; return a }
+                static Box MakeBox(string n) { return new Box(n) }
+                static int Len(int xs[]) { return xs.length }
+                static int[] Pass(int xs[]) { return xs }
+                static int Probe(int xs[]) { return xs[0] }
+                static int Loop() {
+                    var last = [0]
+                    for (var i = 1; i <= 3; i = i + 1) {
+                        last = Make(i)
+                        if (i == 2) { var x = Make(9); last = x }
+                    }
+                    return last[0]
+                }
+                static Box BoxLoop() {
+                    var b = new Box("b0")
+                    for (var i = 1; i <= 2; i = i + 1) { b = MakeBox("b" + i) }
+                    return b
+                }
+            }
+            print(Util.Loop())
+            var kept = Util.BoxLoop()
+            print(kept.name)
+            // loop at top level, variable global
+            var g = [0]
+            for (var i = 1; i <= 3; i = i + 1) { g = Util.Make(i + 10) }
+            print(g[0])
+            if (true) { g = Util.Make(42) }
+            print(g[0])
+            // direct assignment of a call result to a field
+            class Holder {
+                int data[]
+                Box child
+                construct() { this.data = Util.Make(5); this.child = Util.MakeBox("child") }
+            }
+            var h = new Holder()
+            print(h.data[0] + " " + h.child.name)
+            // return value directly into a parameter: it belongs to the called function
+            var survivor = Util.Make(3)
+            print(Util.Len(Util.Make(4)))
+            print(Util.Probe(Util.Pass(Util.Make(6))))
+            try { print(Util.Pass(Util.Make(8))[0]) } catch (e) { print("died with the callee") }
+            delete h
+            print("end")
+            """),
+        ("return in ineinander liegenden finally-Bloecken und foreach", """
+            class T {
+                static int Nested(int n) {
+                    try {
+                        n = n + 0
+                    } finally {
+                        try {
+                            try {
+                            } finally {
+                                if (n > 1) { return 1 }
+                            }
+                        } finally {
+                            if (n > 0) { return 4 }
+                        }
+                    }
+                }
+                static int WithLoops(int n) {
+                    var xs = [1, 2, 3]
+                    try {
+                        foreach (x in xs) {
+                            try {
+                                foreach (y in xs) {
+                                    try { if (y == n) { return x * 10 + y } } finally { if (n == 3) { return 99 } }
+                                }
+                            } finally {
+                                n = n + 0
+                            }
+                        }
+                    } finally {
+                        foreach (z in xs) { if (z == 2 && n == 0) { return 77 } }
+                    }
+                    return -1
+                }
+            }
+            print(T.Nested(2))
+            print(T.Nested(1))
+            print(T.Nested(0))
+            print(1 + T.WithLoops(1) + 2)
+            print(T.WithLoops(2))
+            print(T.WithLoops(3))
+            print(T.WithLoops(0))
+            """),
+        ("Standardargumente: Methoden, Konstruktoren, base, Erweiterungen, Lambdas, virtuelle Aufrufe", """
+            class Counter {
+                static int n = 0
+                static int Next() { Counter.n = Counter.n + 1; return Counter.n }
+            }
+            class Greeter {
+                string greeting
+                construct(string g = "Hi", int times = 2) { this.greeting = g; print("ctor " + g + " " + times) }
+                string Greet(string name, string suffix = "!", int n = Counter.Next()) { return this.greeting + ", " + name + suffix + n }
+                string Own(string mark = this.greeting + "?") { return mark }
+                static int Sum(int a, int b = 10, int c = 100) { return a + b + c }
+            }
+            class Loud : Greeter {
+                construct(string g = "HEY") : base(g) { }
+                string Greet(string name, string suffix = "!!", int n = 7) { return base.Greet(name, suffix) + "/" + n }
+            }
+            class extends string {
+                string Wrap(string left = "[", string right = "]") { return left + this + right }
+            }
+            var g = new Greeter()
+            var h = new Greeter("Yo")
+            var k = new Greeter("Hello", 5)
+            var l = new Loud()
+            print(g.Greet("Ann"))
+            print(g.Greet("Bob", "?"))
+            print(h.Greet("Cy", ".", 3))
+            print(l.Greet("Di"))
+            print(l.Greet("Ed", "~"))
+            print(h.Own())
+            print(h.Own("x"))
+            print(Greeter.Sum(1))
+            print(Greeter.Sum(1, 2))
+            print(Greeter.Sum(1, 2, 3))
+            print("abc".Wrap())
+            print("abc".Wrap("<"))
+            print("abc".Wrap("<", ">"))
+            var f = func (x, y = 10) => { return x + y }
+            print(f(5))
+            print(f(5, 20))
+            var q = func (int x = 42, string s = "z") => { return s + x }
+            print(q())
+            print(q(7))
+            print(q(7, "a"))
+            var list = [g, h, l]
+            var total = 0
+            for (var i = 0; i < 3; i = i + 1) { print(list[i].Greet("Zed")) }
+            """),
+        ("Properties: get/set, nur lesen/schreiben, vererbt, statisch, ueber den Dispatcher", """
+            class Circle {
+                float radius
+                string label = "c"
+                construct(float radius) { this.radius = radius }
+                float Diameter {
+                    get { return this.radius * 2 }
+                    set { this.radius = value / 2 }
+                }
+                float Area { get { return this.radius * this.radius * 3 } }
+                string Label {
+                    get { return "<" + this.label + ">" }
+                    set { this.label = value + "!" }
+                }
+                string Secret { set { this.label = "secret " + value } }
+                static int count = 0
+                static int Count { get { return Circle.count } set { Circle.count = value * 10 } }
+            }
+            class Ring : Circle {
+                float hole = 1.0
+                construct(float r) : base(r) { }
+                float Width { get { return this.radius - this.hole } }
+                float Area { get { return this.radius * 3 - 3 } }
+            }
+            var c = new Circle(5.0)
+            print(c.Diameter)
+            c.Diameter = 20.0
+            print(c.radius)
+            print(c.Area)
+            print(c.Label)
+            c.Label = "big"
+            print(c.Label)
+            c.Secret = "x"
+            print(c.label)
+            c.radius = c.Diameter + 1
+            print(c.radius)
+            var r = new Ring(4.0)
+            print(r.Width)
+            print(r.Area)
+            print(r.Diameter)
+            r.Diameter = 6.0
+            print(r.Width)
+            Circle.Count = 3
+            print(Circle.Count)
+            var all = [c, r]
+            var sum = 0.0
+            for (var i = 0; i < 2; i = i + 1) { sum = sum + all[i].Diameter }
+            print(sum)
+            """),
+        ("Operator-Ueberladung: Arithmetik, Vergleiche, ==/!= getrennt, Rueckfall auf die eingebaute Operation, in Bedingungen", """
+            class Vec {
+                float x
+                float y
+                construct(float x, float y) { this.x = x; this.y = y }
+                operator+(class o) { return new Vec(this.x + o.x, this.y + o.y) }
+                operator-(class o) { return new Vec(this.x - o.x, this.y - o.y) }
+                operator*(float k) { return new Vec(this.x * k, this.y * k) }
+                operator==(class o) { return this.x == o.x && this.y == o.y }
+                operator<(class o) { return this.x * this.x + this.y * this.y < o.x * o.x + o.y * o.y }
+                operator>(class o) { return o < this }
+                string ToString() { return "(" + this.x + "," + this.y + ")" }
+            }
+            class Money {
+                int cents
+                construct(int c) { this.cents = c }
+                operator+(class o) { return new Money(this.cents + o.cents) }
+                operator!=(class o) { return this.cents != o.cents }
+                operator<<(int n) { return new Money(this.cents << n) }
+                operator%(int n) { return this.cents % n }
+                string ToString() { return "$" + this.cents }
+            }
+            class Plain { int v; construct(int v) { this.v = v } }
+            var a = new Vec(1.0, 2.0)
+            var b = new Vec(3.0, 4.0)
+            print((a + b).ToString())
+            print((b - a).ToString())
+            print((a * 2.0).ToString())
+            print(a == b)
+            print(a == new Vec(1.0, 2.0))
+            print(a < b)
+            print(a > b)
+            var m = new Money(250) + new Money(50)
+            print(m.ToString())
+            print(m != new Money(300))
+            print(m != new Money(1))
+            print((m << 2).ToString())
+            print(m % 7)
+            var p = new Plain(1)
+            var q = new Plain(1)
+            print(p == q)
+            print(p == p)
+            print(p != q)
+            print(1 + 2)
+            print("a" + "b")
+            print("v=" + a)
+            if (a < b) { print("lt") } else { print("ge") }
+            if (b < a) { print("lt") } else { print("ge") }
+            var s = a
+            for (var i = 0; i < 3; i = i + 1) { s = s + b }
+            print(s.ToString())
+            print(m + new Money(1))
+            """),
+        ("Einheiten: Umrechnung, Algebra (m*m, m/s), Vergleiche, Coercing mit : und !", """
+            var a = 500mm
+            print(a + 2m)
+            print(2m + a)
+            print(a * 2m)
+            print(2m * 3m)
+            print(1m / 1mm)
+            print(3km / 2h)
+            print(2m < 300cm)
+            print(5kg:g)
+            print(1.5 * 2m)
+            print((2m * 3m * 4m))
+            print(7mm % 2m)
+            print(2m ^ 2m)
+            print(a == 500mm)
+            print(a == 0.5m)
+            print(1.5m + 100cm)
+            var x = 10m
+            var y = 3s
+            var v = x / y
+            print(v)
+            print(v * 6s)
+            print(5mm is in m)
+            print(5mm is in kg)
+            print(5 is of int)
+            var q = 7m
+            print(q:mm)
+            print(q:cm!)
+            var w = 5mm
+            print(w:cm)
+            var z = 5
+            print(z!float)
+            print(1.5km!int)
+            """),
+        ("is of / is in / is from / is under, Potenz, Typ-Coercing", """
+            interface Shape { }
+            class Animal { }
+            class Dog : Animal { }
+            class Sq : Shape { }
+            class Holder { Animal pet; Holder inner
+                construct() { this.pet = new Dog(); this.inner = new Holder2() } }
+            class Holder2 { Animal pet
+                construct() { this.pet = new Animal() } }
+            var d = new Dog()
+            var s = new Sq()
+            print(d is of Animal)
+            print(d is of Dog)
+            print(s is of Animal)
+            print(s is of Shape)
+            print(d is of class)
+            print(5 is of int)
+            print(5 is of float)
+            print(2.5 is of float)
+            print("x" is of string)
+            print([1, 2] is of IEnumerable)
+            print(undefined is of undefined)
+            print(5mm is in m)
+            print(5mm is in kg)
+            print(5 is in m)
+            print(3kg is in g)
+            var h = new Holder()
+            print(h.pet is from h)
+            print(h.inner is from h)
+            print(h.inner.pet is from h)
+            print(h.inner.pet is under h)
+            print(h.inner.pet is from h.inner)
+            print(h is from h.inner)
+            print(2 ^ 10)
+            print(2.0 ^ 0.5)
+            print(2 ^ -1)
+            print(3m ^ 2m)
+            var i = 7
+            print(i!float / 2)
+            print(i / 2)
+            var f = 7.5
+            print(f!int)
+            print(2.5!int)
+            print(3.5!int)
+            """),
+        ("Zahlenformat E und F, X, B im Zusammenspiel", """
+            var x = 12345.678
+            print($"{x:E}")
+            print($"{x:E2}")
+            print($"{x:e3}")
+            print($"{x:E0}")
+            var small = 0.000123
+            print($"{small:E3}")
+            var n = 42
+            print($"{n:E}")
+            print($"{n:E1}")
+            var z = 0.0
+            print($"{z:E2}")
+            print($"{x:F}")
+            print($"{x:F1}")
+            print($"{n:X4}")
+            print($"{n:B8}")
+            var big = 1500000000000.0 * 1000000000000.0
+            print($"{big:E2}")
+            var neg = -0.5
+            print($"{neg:E1}")
+            """),
+        ("copy und flat: Objekte, Zyklen, Arrays, Puffer, Feldzuweisung, als Argument (die Kopie gehoert der aufgerufenen Funktion)", """
+            class Leaf { string name; int data[]
+                construct(string n) { this.name = n; this.data = new int[2]; this.data[0] = 7 }
+                destruct() { print("~" + this.name) } }
+            class Node { string label; Leaf leaf; Node next; int nums[]
+                construct(string l) { this.label = l; this.leaf = new Leaf(l + "-leaf"); this.nums = [1, 2, 3] }
+                destruct() { print("~" + this.label) } }
+            class Box { Node held
+                construct(Node n) { this.held = copy n }
+                Node Same() { return this.held } }
+            class Eat {
+                static string Consume(Node n) { n.label = "eaten"; return n.label }
+                static Node Keep(Node n) { return n }
+                static int Sum(int xs[]) { var t = 0; for (var i = 0; i < xs.length; i = i + 1) { t = t + xs[i] }
+                    return t }
+            }
+            var a = new Node("a")
+            var f = flat a
+            var c = copy a
+            print(f.label + " " + (f.leaf == a.leaf) + " " + (f.nums == a.nums))
+            print(c.label + " " + (c.leaf == a.leaf) + " " + (c.nums == a.nums))
+            c.leaf.name = "changed"
+            print(a.leaf.name)
+            f.label = "f2"
+            print(a.label)
+            a.next = a
+            var cyc = copy a
+            print(cyc.next == cyc)
+            print(cyc.next == a)
+            var b = new Box(a)
+            print(b.held.label + " " + (b.held == a))
+            print(Eat.Consume(copy a))
+            print(a.label)
+            print(Eat.Consume(flat a))
+            var kept = Eat.Keep(copy a)
+            print(kept.label)
+            var arr = [1, 2, 3]
+            var arr2 = copy arr
+            arr2[0] = 99
+            print(arr[0] + " " + arr2[0])
+            var fa = flat arr
+            fa[1] = 5
+            print(arr[1] + " " + Eat.Sum(copy arr))
+            var buf = new byte[4]
+            buf[0] = 9
+            var buf2 = copy buf
+            buf2[0] = 1
+            print(buf[0] + " " + buf2[0])
+            var nested = [[1, 2], [3]]
+            var n2 = copy nested
+            n2[0][0] = 50
+            print(nested[0][0] + " " + n2[0][0])
+            var s = copy "text"
+            print(s)
+            var q = copy 5
+            print(q)
+            print("end")
+            """),
+        ("Zugriffsmodifikatoren: private/protected bei Feldern, Methoden, statischen Mitgliedern, Properties, Konstruktoren", """
+            class Base {
+                private int secret
+                protected int shared
+                int open
+                construct() { this.secret = 1; this.shared = 2; this.open = 3 }
+                private int Hidden() { return this.secret * 10 }
+                protected int Guarded() { return this.shared * 10 }
+                int Reveal() { return this.Hidden() + this.Guarded() }
+                private static int Counter() { return 7 }
+                static int PublicCounter() { return Base.Counter() }
+                int Total { get { return this.secret + this.shared } set { this.secret = value } }
+                private int Hush { get { return this.secret } set { this.secret = value } }
+                Reset() { this.Total = 100; this.Hush = 3 }
+            }
+            class Child : Base {
+                int Peek() { return this.shared + this.Guarded() }
+                int PeekSecret() { return this.secret }
+            }
+            class Locked {
+                private construct() { }
+                static Locked Make() { return new Locked() }
+            }
+            var b = new Base()
+            var c = new Child()
+            print(b.open)
+            print(b.Reveal())
+            print(c.Peek())
+            print(Base.PublicCounter())
+            try { print(b.secret) } catch (AccessDeniedException e) { print("denied 1: " + e.message) }
+            try { b.secret = 5 } catch (AccessDeniedException e) { print("denied 2: " + e.message) }
+            try { print(b.shared) } catch (AccessDeniedException e) { print("denied 3: " + e.message) }
+            try { print(b.Hidden()) } catch (AccessDeniedException e) { print("denied 4: " + e.message) }
+            try { print(b.Guarded()) } catch (AccessDeniedException e) { print("denied 5: " + e.message) }
+            try { print(Base.Counter()) } catch (AccessDeniedException e) { print("denied 6: " + e.message) }
+            try { print(c.PeekSecret()) } catch (AccessDeniedException e) { print("denied 7: " + e.message) }
+            try { b.Hush = 5 } catch (AccessDeniedException e) { print("denied 8: " + e.message) }
+            try { print(b.Hush) } catch (AccessDeniedException e) { print("denied 8b: " + e.message) }
+            try { var l = new Locked() } catch (AccessDeniedException e) { print("denied 9: " + e.message) }
+            print(Locked.Make() is of Locked)
+            print(b.Total)
+            b.Reset()
+            print(b.Total)
+            var lam = func () => { return b.open }
+            print(lam())
+            """),
+        ("Zugriffsmodifikatoren: #performance prueft nicht", """
+            #performance
+            class Base {
+                private int secret
+                protected int shared
+                int open
+                construct() { this.secret = 1; this.shared = 2; this.open = 3 }
+                private int Hidden() { return this.secret * 10 }
+                protected int Guarded() { return this.shared * 10 }
+                int Reveal() { return this.Hidden() + this.Guarded() }
+                private static int Counter() { return 7 }
+                static int PublicCounter() { return Base.Counter() }
+                int Total { get { return this.secret + this.shared } set { this.secret = value } }
+                private int Hush { get { return this.secret } set { this.secret = value } }
+                Reset() { this.Total = 100; this.Hush = 3 }
+            }
+            class Child : Base {
+                int Peek() { return this.shared + this.Guarded() }
+                int PeekSecret() { return this.secret }
+            }
+            class Locked {
+                private construct() { }
+                static Locked Make() { return new Locked() }
+            }
+            var b = new Base()
+            var c = new Child()
+            print(b.open)
+            print(b.Reveal())
+            print(c.Peek())
+            print(Base.PublicCounter())
+            try { print(b.secret) } catch (AccessDeniedException e) { print("denied 1: " + e.message) }
+            try { b.secret = 5 } catch (AccessDeniedException e) { print("denied 2: " + e.message) }
+            try { print(b.shared) } catch (AccessDeniedException e) { print("denied 3: " + e.message) }
+            try { print(b.Hidden()) } catch (AccessDeniedException e) { print("denied 4: " + e.message) }
+            try { print(b.Guarded()) } catch (AccessDeniedException e) { print("denied 5: " + e.message) }
+            try { print(Base.Counter()) } catch (AccessDeniedException e) { print("denied 6: " + e.message) }
+            try { print(c.PeekSecret()) } catch (AccessDeniedException e) { print("denied 7: " + e.message) }
+            try { b.Hush = 5 } catch (AccessDeniedException e) { print("denied 8: " + e.message) }
+            try { print(b.Hush) } catch (AccessDeniedException e) { print("denied 8b: " + e.message) }
+            try { var l = new Locked() } catch (AccessDeniedException e) { print("denied 9: " + e.message) }
+            print(Locked.Make() is of Locked)
+            print(b.Total)
+            b.Reset()
+            print(b.Total)
+            var lam = func () => { return b.open }
+            print(lam())
+            """),
+        ("Reflection: Type, Member, Get/Set/Call/New/Has, Selektoren, Zugriffsregeln; probe/silence", """
+            #import "reflection"
+            class Circle {
+                float radius
+                private int secret
+                string label = "c"
+                construct(float r) { this.radius = r; this.secret = 42 }
+                float Diameter { get { return this.radius * 2 } set { this.radius = value / 2 } }
+                float Area { get { return this.radius * this.radius * 3 } }
+                float Scale(float k) { return this.radius * k }
+                Grow() { this.radius = this.radius + 1 }
+            }
+            class Ring : Circle {
+                float hole
+                construct(float r, float h) : base(r) { this.hole = h }
+            }
+            var c = new Circle(5.0)
+            var t = Type.Of(c)
+            print(t.Name)
+            print(t.Base == undefined)
+            print(t.Fields().count)
+            print(t.Properties().count)
+            var names = ""
+            foreach (m in t.All) { names = names + m.Kind + ":" + m.Name + " " }
+            print(names)
+            print(Reflect.Get(c, "radius"))
+            print(Reflect.Get(c, "Diameter"))
+            Reflect.Set(c, "Diameter", 20.0)
+            print(c.radius)
+            print(Reflect.Call(c, "Scale", [2.0]))
+            Reflect.Call(c, "Grow", [])
+            print(c.radius)
+            print(Reflect.Has(c, "radius") + " " + Reflect.Has(c, "nothing") + " " + Reflect.Has(c, "Area") + " " + Reflect.Has(c, "Grow"))
+            var r = Reflect.New("Ring", [3.0, 1.0])
+            print(Type.Of(r).Name + " " + r.hole)
+            print(Type.Of(r).Base.Name)
+            print(Type.Of(r).IsSubclassOf(Type.Of(c)))
+            print(Type.Named("Nope") == undefined)
+            try { Reflect.Get(c, "zzz") } catch (e) { print(e.message) }
+            try { Reflect.Set(c, "Area", 1.0) } catch (e) { print(e.message) }
+            try { Reflect.Call(c, "Nope", []) } catch (e) { print(e.message) }
+            try { Reflect.New("Circle", []) } catch (e) { print(e.message) }
+            try { Reflect.Get(5, "x") } catch (e) { print(e.message) }
+            try { print(Reflect.Get(c, "secret")) } catch (e) { print("private: " + e.message) }
+            var cl = Type.Names()
+            print(cl.length > 3)
+            class W {
+                static Watch(lambda field<Circle> sel, Circle x) {
+                    print(sel.Name + " " + sel.Kind)
+                    print(sel.Get(x))
+                }
+            }
+            W.Watch(q => q.radius, c)
+            var mem = Type.Of(c).Find("Scale")
+            print(mem.Kind + " " + mem.ParamCount() + " " + mem.TypeName)
+            print(mem.Call(c, [3.0]))
+            class Cfg {
+                int volume
+                string name
+                Cfg sub
+                construct() { this.volume = 1; this.name = "n" }
+                int Level { get { return this.volume * 10 } set { this.volume = value / 10 } }
+            }
+            var cfg = new Cfg()
+            var h1 = probe cfg.volume changed { print("changed: " + old + " -> " + value) }
+            var h2 = probe cfg.volume changing (o, n) => n <= 100
+            cfg.volume = 5
+            cfg.volume = 500
+            print(cfg.volume)
+            cfg.volume = 5
+            probe cfg.name changed (obj, member, o, n) => print(member + ": " + o + " -> " + n)
+            cfg.name = "other"
+            cfg.name = "other"
+            silence h1
+            cfg.volume = 7
+            print(cfg.volume)
+            probe cfg.* changed (obj, member, o, n) => print("any " + member + " " + n)
+            cfg.volume = 8
+            cfg.name = "z"
+            cfg.Level = 90
+            silence cfg.*
+            cfg.volume = 9
+            print(cfg.volume)
+            var h3 = Reflect.Probe(cfg, "volume", "changed", func (o, n) => print("reflect " + o + " " + n))
+            cfg.volume = 10
+            Reflect.SilenceHandle(h3)
+            cfg.volume = 11
+            try { Reflect.Probe(cfg, "nope", "changed", func () => 1) } catch (e) { print(e.message) }
+            try { Reflect.Probe(cfg, "volume", "weird", func () => 1) } catch (e) { print(e.message) }
+            var c2 = new Cfg()
+            probe c2.volume changed { print("c2 " + value) }
+            c2.volume = 4
+            delete c2
+            """),
+        ("Besitz: #performance prueft zerstoerte Arrays nicht (FIRE_UNCHECKED), Ergebnis wie die VM", """
+            #performance
+            var a = new int[100]
+            for (var i = 0; i < 100; i = i + 1) { a[i] = i }
+            var m = new int[4][4]
+            m[3][3] = 9
+            var b = [[1, 2], [3]]
+            print(a[99] + m[3][3] + b[1][0])
+            """),
+        ("Benchmark alloc", """
+            class Point {
+                int x
+                int y
+                construct(int x, int y) { this.x = x; this.y = y }
+            }
+            var sum = 0
+            for (var i = 0; i < 60000; i = i + 1) {
+                var p = new Point(i, i + 1)
+                sum = sum + p.x + p.y
+            }
+            print(sum)
+            """),
+        ("Benchmark loop", """
+            var sum = 0
+            for (var i = 0; i < 1500000; i = i + 1) {
+                sum = sum + i % 7
+            }
+            print(sum)
+            """),
+        ("Benchmark float", """
+            var x = 0.0
+            for (var i = 0; i < 600000; i = i + 1) {
+                x = x + i * 0.5 - x / 3.0
+            }
+            print(x)
+            """),
+        ("Benchmark fib", """
+            class M {
+                static int Fib(int n) {
+                    if (n < 2) { return n }
+                    return M.Fib(n - 1) + M.Fib(n - 2)
+                }
+            }
+            print(M.Fib(23))
+            """),
+    };
+
+    // extern: C functions of the C library (Linux; other systems name the library differently)
+    if (OperatingSystem.IsLinux())
+        natCases = natCases.Append(("extern: Funktionen der C-Bibliothek (Zahlen, Zeichenketten, Zeiger auf Variablen)", """
+            #extern "libc.so.6"
+            extern int abs(int n)
+            extern int atoi(string s)
+            extern int strlen(string s)
+            extern string getenv(string name)
+            extern int toupper(int c)
+            extern float atof(string s)
+            extern int sscanf(string text, string format, int* out)
+            print(abs(-5))
+            print(atoi("1234") + 1)
+            print(strlen("hello"))
+            print(strlen("äö"))
+            print(getenv("FIRE_SURELY_UNSET_VARIABLE") == undefined)
+            print(toupper(97))
+            print(atof("2.5") * 2)
+            unsafe {
+                var n = 0
+                var matched = sscanf("42", "%ld", &n)
+                print(matched)
+                print(n)
+            }
+            """)).ToArray();
+
+    // Fire threads (THREADING_DESIGN): only programs whose output does not depend on how the threads interleave
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Threads: leave im Hauptprogramm wartet auf Fire-Threads, dann werden die Globals zerstoert", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            var g = new Item(1)
+            fire {
+                var i = 0
+                while (i < 300000) { i = i + 1 }
+                print("thread fertig")
+            }
+            leave
+            print("nie")
+            """),
+        ("Threads: terminate im Hauptprogramm stoppt Fire-Threads (finally laeuft), Globals zuletzt", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            var g = new Item(1)
+            fire {
+                try { while (true) { } } finally { print("thread finally") }
+            }
+            var j = 0
+            while (j < 1000) { j = j + 1 }
+            terminate(5)
+            print("nie")
+            """),
+        ("Threads: terminate in einem Fire-Thread stoppt auch das Hauptprogramm", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            var g = new Item(1)
+            fire {
+                var k = 0
+                while (k < 1000) { k = k + 1 }
+                terminate(3)
+                print("nie im thread")
+            }
+            try { while (true) { } } finally { print("main finally") }
+            print("nie")
+            """),
+        ("Threads: terminate in einer Property haelt sofort an, danach geordnet", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            class P {
+                int v {
+                    get {
+                        print("im getter")
+                        terminate(1)
+                        print("nie getter")
+                        return 5
+                    }
+                }
+            }
+            var g = new Item(1)
+            var p = new P()
+            try {
+                var x = p.v
+                print("nie x")
+            } finally {
+                print("finally")
+            }
+            print("nie")
+            """),
+        ("Threads: Programmende wartet auf Fire-Threads, dann werden die Globals zerstoert", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            var g = new Item(1)
+            fire {
+                var i = 0
+                while (i < 300000) { i = i + 1 }
+                print("thread fertig")
+            }
+            print("main fertig")
+            """),
+        ("Threads: catch terminate(v) laeuft im Hauptprogramm", """
+            catch terminate(v)
+            {
+                print("Main-Thread: catch terminate(v) -> " + v)
+            }
+            var i = 0
+            while (i < 2000000) {
+                i = i + 1
+                if (i == 5) {
+                    terminate(77)
+                }
+            }
+            print("NIE ERREICHT")
+            """),
+        ("Threads: catch threads() faengt die Ausnahme eines Threads", """
+            catch threads()
+            {
+                print("Main-Thread: catch threads() gefangen")
+            }
+            class MyError {
+                string message
+                construct(string message) { this.message = message }
+            }
+            fire {
+                throw new MyError("boom aus echter Sprachsyntax")
+            }
+            var i = 0
+            while (i < 2000000) {
+                i = i + 1
+            }
+            print("Hauptprogramm fertig")
+            """),
+        ("Threads: taking: der Thread bekommt eine isolierte Kopie, die Zerstoerung ruft keinen Destruktor", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            var b = new Box("orig")
+            b.item = new Item(5)
+            fire taking b {
+                print("thread sieht " + b.name + " " + b.item.n)
+                b.name = "geaendert"
+                b.item.n = 6
+            }
+            var i = 0
+            while (i < 3000000) { i = i + 1 }
+            print("main " + b.name + " " + b.item.n)
+            """),
+        ("Threads: leave laeuft durch finally, kein catch faengt es", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            fire {
+                try {
+                    try { print("a"); leave; print("nie") } catch (e) { print("nie catch") } finally { print("fin1") }
+                } finally { print("fin2") }
+                print("nie")
+            }
+            var i = 0
+            while (i < 3000000) { i = i + 1 }
+            print("fertig")
+            """),
+        ("Threads: leave aus einer Funktion im Thread, finally laeuft", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            var Work = func (n) => {
+                var it = new Item(n)
+                if (n == 2) { leave }
+                print("work " + n)
+            }
+            fire {
+                var a = new Item(100)
+                Work(1)
+                try { Work(2) } catch (e) { print("nie") } finally { print("fin") }
+                print("nie")
+            }
+            var i = 0
+            while (i < 3000000) { i = i + 1 }
+            print("fertig")
+            """),
+        ("Threads: Thread startet Thread", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            fire {
+                print("outer")
+                fire { print("inner") }
+                var i = 0
+                while (i < 1000000) { i = i + 1 }
+                print("outer end")
+            }
+            var i = 0
+            while (i < 6000000) { i = i + 1 }
+            print("fertig")
+            """),
+        ("Threads: sync: die Kopie schreibt ins Original zurueck", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            var player = new Box("p")
+            player.item = new Item(100)
+            var done = 0
+            fire taking player {
+                player.item.n = player.item.n - 10
+                var r = sync player
+                print("sync = " + r)
+                sync global { done = 1 }
+            }
+            while (done == 0) { sync globals }
+            print("main item " + player.item.n)
+            """),
+        ("Threads: sync: Arrays und Objekte (Fall A/B/C)", """
+            class Item {
+                int n
+                construct(int n) { this.n = n }
+                destruct() { print("~I" + this.n) }
+            }
+            class Box {
+                string name
+                Item item
+                Item extra
+                construct(string name) { this.name = name }
+                destruct() { print("~B" + this.name) }
+            }
+            class Inv {
+                int gold
+                var items
+                Item best
+                construct() { this.gold = 0; this.items = [1, 2]; this.best = new Item(1) }
+            }
+            var inv = new Inv()
+            var done = 0
+            fire taking inv {
+                inv.gold = 5
+                inv.items = [10, 20, 30]
+                inv.best.n = 99
+                sync inv
+                sync global { done = 1 }
+            }
+            while (done == 0) { sync globals }
+            print(inv.gold + " " + inv.items.length + " " + inv.best.n)
+            for (var i = 0; i < inv.items.length; i = i + 1) { print(inv.items[i]) }
+            """),
+        ("Threads: Actor: fire with + process", """
+            actor Logger {
+                string lastMessage
+                construct() {
+                    this.lastMessage = ""
+                }
+                log(string msg) {
+                    this.lastMessage = msg
+                    print("Logger (Heimat-Thread): " + msg)
+                }
+            }
+            var logger = new Logger()
+            fire with logger {
+                logger.log("hallo vom fire-Thread")
+            }
+            process logger
+            print("Hauptprogramm: logger.lastMessage = " + logger.lastMessage)
+            """),
+        ("Threads: Actor: try process", """
+            actor Counter {
+                int value
+                construct() {
+                    this.value = 0
+                }
+                increment() {
+                    this.value = this.value + 1
+                }
+            }
+            var counter = new Counter()
+            var before = try process counter
+            print("try process VOR jeder Nachricht (erwartet false): " + before)
+            fire with counter {
+                counter.increment()
+            }
+            process counter
+            print("Hauptprogramm: counter.value = " + counter.value)
+            """),
+        ("Threads: Actor: Aufruf ist immer eine Nachricht", """
+            actor Greeter {
+                string name
+                construct(string name) {
+                    this.name = name
+                }
+                greet() {
+                    print("greet() ist jetzt gelaufen")
+                }
+            }
+            var greeter = new Greeter("Welt")
+            greeter.greet()
+            print("Vor process: greet() ist noch NICHT gelaufen")
+            process greeter
+            print("Nach process: siehe oben")
+            """),
+        ("Threads: Actor: mehrere Nachrichten in Reihenfolge", """
+            actor Worker {
+                int sum
+                int pending
+                construct() { this.sum = 0; this.pending = 3 }
+                add(int x) { this.sum = this.sum + x; this.pending = this.pending - 1 }
+                done() { print("done " + this.sum) }
+            }
+            var w = new Worker()
+            fire with w { for (var i = 1; i <= 3; i = i + 1) { w.add(i * 10) } w.done() }
+            while (w.pending > 0 || true) {
+                process w
+                if (w.pending == 0) { break }
+            }
+            process w
+            """),
+        ("Threads: Globals: Schreiben erst bei sync globals (#nosync)", """
+            #nosync
+            var counter = 0
+            fire { counter = 5 }
+            var handled = 0
+            while (handled == 0) { handled = sync globals }
+            print("counter " + counter + " bearbeitet " + handled)
+            """),
+        ("Threads: Globals: #nosync haelt den Wert", """
+            #nosync
+            var counter = 0
+            var seen = 0
+            fire { counter = 5 }
+            for (var i = 0; i < 200000; i = i + 1) { seen = seen + counter }
+            print("gesehen " + seen)
+            """),
+        ("Threads: Globals: automatisches Abarbeiten", """
+            var counter = 0
+            fire { counter = 5 }
+            var spins = 0
+            while (counter == 0 && spins < 100000000) { spins = spins + 1 }
+            print("counter " + counter)
+            """),
+        ("Threads: Globals: fire global und Methodenaufrufe ohne sync globals", """
+            class Box { int n; construct() { this.n = 0 } Add(int d) { this.n = this.n + d } }
+            var box = new Box()
+            var done = 0
+            fire { box.Add(2); box.Add(3); fire global { done = done + 1 } }
+            var spins = 0
+            while (done == 0 && spins < 100000000) { spins = spins + 1 }
+            print("n " + box.n + " done " + done)
+            """),
+        ("Threads: Globals: Methodenaufruf wartet bei #nosync", """
+            #nosync
+            class Box { int n; construct() { this.n = 0 } Add(int d) { this.n = this.n + d } }
+            var box = new Box()
+            var finished = 0
+            fire { box.Add(4) }
+            for (var i = 0; i < 300000; i = i + 1) { finished = finished + box.n }
+            print("vorher " + finished)
+            while (box.n == 0) { sync globals }
+            print("nachher " + box.n)
+            """),
+        ("Threads: Globals: der Thread liest live", """
+            var flag = 0
+            var done = 0
+            fire {
+                while (flag == 0) { }
+                sync global { done = done + 1 }
+            }
+            flag = 1
+            while (done == 0) { sync globals }
+            print("fertig " + done)
+            """),
+        ("Threads: Globals: Methoden auf globalen Objekten laufen atomar", """
+            class Counter {
+                int n
+                construct() { this.n = 0 }
+                Inc() { var old = this.n; this.n = old + 1 }
+            }
+            var c = new Counter()
+            var done = 0
+            fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+            fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+            fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+            fire { for (var i = 0; i < 100; i = i + 1) { c.Inc() } sync global { done = done + 1 } }
+            while (done < 4) { sync globals }
+            print("n " + c.n)
+            """),
+        ("Threads: Globals: sync global ist atomar", """
+            var total = 0
+            var done = 0
+            fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+            fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+            fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+            fire { for (var i = 0; i < 100; i = i + 1) { sync global { total = total + 1 } } sync global { done = done + 1 } }
+            while (done < 4) { sync globals }
+            print("total " + total)
+            """),
+        ("Threads: Globals: Block sieht Locals des Threads", """
+            var total = 0
+            var done = 0
+            fire {
+                var step = 7
+                sync global { total = total + step }
+                done = 1
+            }
+            while (done == 0) { sync globals }
+            print("total " + total)
+            """),
+        ("Threads: Globals: fire global mit taking", """
+            var total = 0
+            var started = 0
+            fire {
+                var x = 7
+                fire global taking x { total = total + x }
+                fire global taking x { total = total + x * 10 }
+            }
+            while (total == 0) { sync globals }
+            while (total < 77) { sync globals }
+            print("total " + total)
+            """),
+        ("Threads: Globals: fire global mit Objekt als taking", """
+            class Box { int v; construct(int v) { this.v = v } }
+            var seen = 0
+            fire {
+                var b = new Box(5)
+                fire global taking b { seen = seen + b.v }
+                b.v = 100
+            }
+            while (seen == 0) { sync globals }
+            print("seen " + seen)
+            """),
+        ("Threads: Globals: Programmende bedient Threads", """
+            class G { int v; construct() { this.v = 1 } destruct() { print("~G " + this.v) } }
+            var g = new G()
+            fire { g.v = 9 }
+            print("ende")
+            """),
+        ("Threads: Globals: Ausnahme im Block beendet die Sektion", """
+            class Exception { string message; construct(string message) { this.message = message } }
+            var total = 0
+            var done = 0
+            fire {
+                try { sync global { total = total + 1; throw new Exception("x") } } catch (e) { }
+                sync global { total = total + 10; done = 1 }
+            }
+            while (done == 0) { sync globals }
+            print("total " + total)
+            """),
+        ("Threads: Globals: Array der Globals", """
+            var arr = new int[5]
+            var done = 0
+            fire {
+                for (var i = 0; i < 5; i = i + 1) { arr[i] = i * 2 }
+                sync global { done = 1 }
+            }
+            while (done == 0) { sync globals }
+            var sum = 0
+            for (var i = 0; i < 5; i = i + 1) { sum = sum + arr[i] }
+            print("sum " + sum)
+            """),
+        ("Threads: Globals: statisches Feld", """
+            class Cfg { static int hits = 0 }
+            var done = 0
+            fire { Cfg.hits = 3; sync global { done = 1 } }
+            while (done == 0) { sync globals }
+            print("hits " + Cfg.hits)
+            """),
+        ("Threads: Globals: Thread startet Thread, beide schreiben", """
+            var total = 0
+            var done = 0
+            fire {
+                sync global { total = total + 1 }
+                fire { sync global { total = total + 10; done = 1 } }
+            }
+            while (done == 0) { sync globals }
+            print("total " + total)
+            """),
+        ("Threads: Globals: terminate im Thread beendet sync-globals-Schleife", """
+            fire { terminate(1) }
+            while (true) { sync globals }
+            """),
+        ("Threads: Globals: sync globals ohne Threads liefert 0", """
+            print("n " + (sync globals))
+            """),
+        ("Threads: Globals: break/continue aus sync global", """
+            var total = 0
+            var done = 0
+            fire {
+                for (var i = 0; i < 10; i = i + 1) {
+                    sync global { if (i == 3) { break } total = total + 1 }
+                }
+                for (var j = 0; j < 4; j = j + 1) {
+                    sync global { if (j % 2 == 0) { continue } total = total + 10 }
+                }
+                sync global { done = 1 }
+            }
+            while (done == 0) { sync globals }
+            print("total " + total)
+            """),
+    }).ToArray();
+
+    // The IO bridge (bridges/fire_bridge_io.hpp); the console is tested separately (a program with input)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("IO: Dateien, Verzeichnisse, Text, Fehler (FileNotFound, DirectoryNotFound, FileExists)", """
+            #import "io"
+            var dir = IO.Path.Combine(IO.Path.Temp(), "fire_io_test_i1")
+            if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
+            IO.Directory.Create(IO.Path.Combine(dir, "sub/deeper"))
+            print(IO.Directory.Exists(dir))
+            var f = IO.Path.Combine(dir, "a.txt")
+            IO.File.WriteAllText(f, "Hallo Welt\nZeile 2 äöü €\r\nZeile 3 é 😀\n\nletzte")
+            print(IO.File.Exists(f) + " " + IO.File.Size(f))
+            print(IO.File.ReadAllText(f))
+            foreach (line in IO.File.ReadAllLines(f)) { print("[" + line + "]") }
+            IO.File.AppendAllText(f, "\nangehaengt")
+            print(IO.File.ReadAllLines(f).count)
+            var reader = new IO.TextReader(f)
+            print(reader.ReadLine())
+            print(reader.ReadLine())
+            reader.Close()
+            var w = IO.File.CreateText(IO.Path.Combine(dir, "b.txt"))
+            w.WriteLine("eins")
+            w.WriteLine("zwei")
+            w.Close()
+            print(IO.File.ReadAllText(IO.Path.Combine(dir, "b.txt")))
+            IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt"))
+            IO.File.Move(IO.Path.Combine(dir, "b.txt"), IO.Path.Combine(dir, "sub/deeper/d.txt"))
+            foreach (p in IO.Directory.GetFiles(dir, "*", true)) { print(IO.Path.FileName(p)) }
+            foreach (p in IO.Directory.GetFiles(dir, "*.txt")) { print("top " + IO.Path.FileName(p)) }
+            foreach (p in IO.Directory.GetDirectories(dir, "*", true)) { print("dir " + IO.Path.FileName(p)) }
+            try { IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt")) } catch (IO.FileExistsException e) { print("exists") }
+            IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt"), true)
+            try { IO.File.ReadAllText(IO.Path.Combine(dir, "nope.txt")) } catch (IO.FileNotFoundException e) { print("not found") }
+            try { IO.File.WriteAllText(IO.Path.Combine(dir, "nodir/x.txt"), "x") } catch (IO.DirectoryNotFoundException e) { print("no dir") }
+            try { IO.Directory.Delete(dir) } catch (IO.IOException e) { print("not empty") }
+            var t = IO.File.ModifiedTime(f)
+            print(t > 1000000000s)
+            IO.File.Delete(f)
+            IO.File.Delete(f)
+            print(IO.File.Exists(f))
+            IO.Directory.Delete(dir, true)
+            print(IO.Directory.Exists(dir))
+            """),
+        ("IO: MemoryStream, UTF-8, Pfade", """
+            #import "io"
+            var m = new IO.MemoryStream()
+            m.Write(IO.Utf8.GetBytes("0123456789"))
+            print(m.Length + " " + m.Position)
+            m.Position = 3
+            var b = new byte[4]
+            print(m.Read(b, 0, 4))
+            print(IO.Utf8.GetString(b))
+            print(m.Position)
+            m.Seek(-2, IO.SeekOrigin.End)
+            print(IO.Utf8.GetString(m.ReadAll()))
+            m.Length = 5
+            print(m.Length + " " + m.Position)
+            m.Length = 8
+            print(m.ToBuffer().length)
+            var buf = m.ToBuffer()
+            print(buf[0] + " " + buf[4] + " " + buf[5] + " " + buf[7])
+            print(m.ReadByte())
+            m.Position = 0
+            print(m.ReadByte() + " " + m.ReadByte())
+            m.Close()
+            try { m.ReadByte() } catch (IO.IOException e) { print("closed") }
+            print(IO.Utf8.GetString(IO.Utf8.GetBytes("äöü€😀")) == "äöü€😀")
+            print(IO.Utf8.GetBytes("äöü€😀").length)
+            var bad = new byte[5]
+            bad[0] = 65
+            bad[1] = 255
+            bad[2] = 195
+            bad[3] = 66
+            bad[4] = 226
+            print(IO.Utf8.GetString(bad).length)
+            var bom = new byte[4]
+            bom[0] = 239
+            bom[1] = 187
+            bom[2] = 191
+            bom[3] = 65
+            print(IO.Utf8.GetString(bom))
+            print(IO.Path.Combine("a", "b") + " " + IO.Path.Combine("a/", "b") + " " + IO.Path.Combine("a", "/b") + " [" + IO.Path.Combine("", "b") + "]")
+            print(IO.Path.FileName("/x/y/z.tar.gz") + " " + IO.Path.Stem("/x/y/z.tar.gz") + " " + IO.Path.Extension("/x/y/z.tar.gz"))
+            print("[" + IO.Path.Extension(".gitignore") + "] [" + IO.Path.Stem(".gitignore") + "] [" + IO.Path.Extension("noext") + "] [" + IO.Path.Extension("dot.") + "] [" + IO.Path.FileName("dir/") + "]")
+            print(IO.Path.Parent("/x/y/z") + "|" + IO.Path.Parent("/x") + "|" + IO.Path.Parent("x") + "|" + IO.Path.Parent("a/b/") + "|" + IO.Path.Parent("a//b") + "|" + IO.Path.Parent("/"))
+            print(IO.Path.IsRooted("/x") + " " + IO.Path.IsRooted("x") + " " + IO.Path.Separator())
+            print(IO.Path.FullPath("/a/b/../c/./d//e") )
+            print(IO.Path.FullPath("x/../y") == IO.Path.Combine(IO.Directory.Current(), "y"))
+            print(IO.Path.Temp().length > 1)
+            print("done")
+            """),
+        ("IO: FileStream (Modi, Zugriff, Position, Laenge, Fehlercodes), TextReader/TextWriter", """
+            #import "io"
+            var dir = IO.Path.Combine(IO.Path.Temp(), "fire_io_test_i4")
+            if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
+            IO.Directory.Create(dir)
+            var p = IO.Path.Combine(dir, "data.bin")
+            var s = new IO.FileStream(p, IO.FileMode.Create)
+            print(s.CanRead + " " + s.CanWrite + " " + s.CanSeek)
+            var data = new byte[10]
+            for (var i = 0; i < 10; i++) { data[i] = i * 3 }
+            print(s.Write(data, 0, 10))
+            print(s.Length + " " + s.Position)
+            s.Position = 2
+            var chunk = new byte[4]
+            print(s.Read(chunk, 0, 4) + " " + chunk[0] + " " + chunk[3])
+            s.Seek(-3, IO.SeekOrigin.End)
+            print(s.ReadByte() + " " + s.ReadByte() + " " + s.ReadByte() + " " + s.ReadByte())
+            s.Position = 5
+            s.WriteByte(200)
+            s.Position = 5
+            print(s.ReadByte())
+            s.Length = 4
+            print(s.Length + " " + s.Position)
+            s.Length = 12
+            s.Position = 0
+            var all = s.ReadAll()
+            print(all.length + " " + all[3] + " " + all[11])
+            s.Flush()
+            s.Close()
+            try { s.Position } catch (IO.StreamClosedException e) { print("closed " + e.code) }
+            var r = new IO.FileStream(p)
+            print(r.CanRead + " " + r.CanWrite)
+            try { r.Write(data, 0, 1) } catch (IO.IOException e) { print("read only " + e.code) }
+            try { r.Seek(-5, IO.SeekOrigin.Begin) } catch (IO.IOException e) { print("before start " + e.code) }
+            try { r.Read(chunk, 2, 4) } catch (IO.IOException e) { print("range " + e.code) }
+            r.Close()
+            var a = new IO.FileStream(p, IO.FileMode.Append)
+            print(a.CanRead + " " + a.CanWrite + " " + a.Position)
+            a.Write(data, 0, 3)
+            print(a.Length)
+            a.Close()
+            try { var n = new IO.FileStream(p, IO.FileMode.CreateNew) } catch (IO.FileExistsException e) { print("exists " + e.code) }
+            try { var n = new IO.FileStream(IO.Path.Combine(dir, "missing")) } catch (IO.FileNotFoundException e) { print("missing " + e.code) }
+            try { var n = new IO.FileStream(IO.Path.Combine(dir, "nodir/x"), IO.FileMode.Create) } catch (IO.DirectoryNotFoundException e) { print("nodir " + e.code) }
+            try { var n = new IO.FileStream(dir) } catch (IO.IOException e) { print("dir " + e.code) }
+            try { var n = new IO.FileStream("  ") } catch (IO.IOException e) { print("blank " + e.code) }
+            var oc = new IO.FileStream(IO.Path.Combine(dir, "oc.bin"), IO.FileMode.OpenOrCreate)
+            oc.Write(data, 0, 2)
+            oc.Close()
+            var oc2 = new IO.FileStream(IO.Path.Combine(dir, "oc.bin"), IO.FileMode.OpenOrCreate, IO.FileAccess.ReadWrite)
+            print(oc2.Length)
+            oc2.Close()
+            var w = new IO.FileStream(p, IO.FileMode.Open, IO.FileAccess.ReadWrite)
+            w.Seek(0, IO.SeekOrigin.End)
+            w.Write(data, 0, 1)
+            w.Position = 0
+            print(w.ReadByte())
+            w.Close()
+            print(IO.File.Size(p))
+            IO.File.WriteAllLines(IO.Path.Combine(dir, "lines.txt"), ["alpha", "beta", "", "gamma"])
+            var rd = new IO.TextReader(IO.Path.Combine(dir, "lines.txt"))
+            print(rd.EndOfStream)
+            var count = 0
+            foreach (l in rd) { count = count + 1 }
+            print(count + " " + rd.EndOfStream)
+            rd.Close()
+            var lines = IO.File.ReadAllLines(IO.Path.Combine(dir, "lines.txt"))
+            print(lines.count + " [" + lines[2] + "] " + lines[3])
+            var open = IO.File.OpenText(IO.Path.Combine(dir, "lines.txt"))
+            print(open.ReadLine() + "|" + open.ReadAll().length)
+            open.Close()
+            try { open.ReadLine() } catch (IO.StreamClosedException e) { print("reader closed") }
+            IO.File.AppendAllText(IO.Path.Combine(dir, "lines.txt"), "tail")
+            print(IO.File.ReadAllText(IO.Path.Combine(dir, "lines.txt")).length)
+            print(IO.Directory.GetFiles(dir).count)
+            IO.Directory.Delete(dir, true)
+            print(IO.Directory.Exists(dir))
+            """),
+    }).ToArray();
+
+    // Graphics (bridges/fire_bridge_graphics.hpp)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Grafik: Framebuffer, Zeichnen, Palette, Blit, Fehler, Slicer (Konsole)", """
+            #import "graphics"
+            // a checksum of the pixels, order dependent
+            class Util {
+                static Hash(Framebuffer fb) {
+                    var bytes = fb.ReadBytes()
+                    var h = 17
+                    for (var i = 0; i < bytes.length; i++) { h = (h * 31 + bytes[i]) % 1000000007 }
+                    return h
+                }
+            }
+            var fb = new Framebuffer(64, 48)
+            var con = new Renderer(fb)
+            print(fb.Width() + "x" + fb.Height() + " mode " + fb.Mode() + " bytes " + fb.ByteCount())
+            con.Clear()
+            print("clear " + Util.Hash(fb))
+            con.FillRect(2, 3, 10, 7, new SolidBrush(4))
+            con.DrawRect(1, 1, 20, 15, new Pen(14))
+            con.DrawLine(0, 0, 63, 47, new Pen(0xFF00FF00))
+            con.DrawLine(0, 47, 63, 0, new Pen(12))
+            con.DrawLine(5, 20, 50, 20, new Pen(0xFFFF8000))
+            print("basic " + Util.Hash(fb))
+            con.DrawCircle(30, 24, 10, new Pen(15))
+            con.FillCircle(10, 35, 6, new SolidBrush(9))
+            con.DrawEllipse(40, 30, 12, 5, new Pen(11))
+            con.FillEllipse(45, 10, 8, 4, new SolidBrush(13))
+            con.DrawCircle(0, 0, 0, new Pen(7))
+            con.FillCircle(5, 5, 1, new SolidBrush(7))
+            print("round " + Util.Hash(fb))
+            con.DrawTriangle(2, 40, 14, 30, 22, 46, new Pen(10))
+            con.FillTriangle(50, 40, 60, 30, 62, 46, new SolidBrush(3))
+            con.DrawPolygon([5, 5, 25, 8, 20, 25, 8, 20], new Pen(2), true)
+            con.DrawPolygon([30, 5, 40, 5, 35, 12], new Pen(5), false)
+            con.FillPolygon([0, 0, 12, 4, 6, 12, 10, 20, 0, 14], new SolidBrush(6))
+            print("poly " + Util.Hash(fb))
+            con.FloodFill(20, 40, new SolidBrush(200))
+            con.FloodFillBorder(60, 2, new SolidBrush(100), 14)
+            print("flood " + Util.Hash(fb))
+            con.SetColor(15, 1)
+            con.Locate(0, 0)
+            con.Print("Hello, fire!\nSecond line äöü ÿ")
+            con.DrawText(3, 30, "Text", new SolidBrush(0xFF0000FF))
+            con.DrawText(3, 38, "Bg", new SolidBrush(0xFFFFFFFF), new SolidBrush(0xFF800000))
+            print("text " + Util.Hash(fb) + " " + con.CellWidth() + "x" + con.CellHeight())
+            print(con.GetPixel(2, 3) + " " + con.GetPixel(200, 3) + " " + con.GetPixelIndex(2, 3))
+            for (var i = 0; i < 8; i++) { con.Print("scroll " + i + "\n") }
+            print("scroll " + Util.Hash(fb))
+
+            // palette mode
+            var pal = new Framebuffer(32, 24, ColorMode.Palette)
+            var pcon = new Renderer(pal)
+            pcon.Clear()
+            pcon.FillRect(2, 2, 12, 9, new SolidBrush(4))
+            pcon.DrawCircle(20, 12, 8, new Pen(0xFF3366FF))
+            pcon.DrawLine(0, 23, 31, 0, new Pen(40))
+            pcon.FillTriangle(3, 20, 10, 14, 14, 22, new SolidBrush(200))
+            pcon.Print("Pal")
+            pal.SetPaletteRgb(4, 10, 200, 30)
+            print("pal " + Util.Hash(pal) + " " + pal.GetPaletteColor(4) + " " + pal.ReadPalette().length + " " + pal.ReadPalette(true).length)
+            pal.TransparentIndex = 0
+            print(pal.TransparentIndex)
+            // blit between modes and with scaling / flipping
+            con.Blit(pal, 40, 2)
+            con.BlitScaled(pal, 0, 0, 32, 24, 0, 24, -48, 20, BlitMode.Transparent)
+            con.BlitRegion(pal, 4, 4, 10, 8, 20, 36, BlitMode.Blend)
+            pcon.Blit(fb, 0, 0, 0, 0)
+            con.Blit(fb, 5, 5)
+            print("blit " + Util.Hash(fb) + " " + Util.Hash(pal))
+            var raw = new byte[16]
+            for (var i = 0; i < 16; i++) { raw[i] = (i * 37) % 256 }
+            raw[3] = 255
+            raw[7] = 128
+            raw[11] = 0
+            raw[15] = 255
+            var small = Framebuffer.FromPixels(2, 2, raw, ColorMode.Rgba)
+            print(small.ReadByte(5) + " " + small.ReadBytes().length)
+            small.WriteByte(0, 99)
+            print(small.ReadByte(0))
+            var sc = new Renderer(small)
+            print(sc.GetPixel(0, 0) + " " + sc.GetPixel(1, 0) + " " + sc.GetPixel(0, 1))
+            var idx = Framebuffer.FromPixels(2, 2, new byte[4], ColorMode.Palette)
+            print(idx.Mode() + " " + idx.ByteCount())
+            var mask = fb.ToMask(100, true, 128)
+            print(mask.Mode() + " " + Util.Hash(mask) + " " + mask.TransparentIndex)
+            try { Framebuffer.FromPixels(2, 2, new byte[3], ColorMode.Rgba) } catch (ImageException e) { print(e.message) }
+            try { small.WriteBytes(new byte[3]) } catch (GraphicsException e) { print(e.message) }
+            try { small.GetPaletteColor(300) } catch (GraphicsException e) { print(e.message) }
+            try { small.WritePalette(new byte[10]) } catch (GraphicsException e) { print(e.message) }
+            try { var bad = new Framebuffer(0, 5) } catch (HandleUnavailableException e) { print("bad size") }
+            try { var bad = new Framebuffer(5, 5, 7) } catch (HandleUnavailableException e) { print("bad mode") }
+            try { Framebuffer.FromImage(new byte[4]) } catch (ImageException e) { print(e.message) }
+            try { Framebuffer.FromImage(new byte[0]) } catch (ImageException e) { print(e.message) }
+            // the slicer
+            var slicer = new Slicer(2.0, 1.0)
+            var paths = slicer.Slice(mask)
+            print(paths.count)
+            var total = 0
+            foreach (p in paths) { total = total + p.Count() }
+            print(total)
+            if (paths.count > 0) { print(paths[0].kind + " " + paths[0].closed + " " + paths[0].Count() + " " + paths[0].X(0) + " " + paths[0].Y(0)) }
+            var zz = new Slicer(1.5, 1.0)
+            zz.strategy = FillStrategy.ZigZag
+            zz.flipY = false
+            var zp = zz.Slice(mask)
+            print(zp.count)
+            """),
+        ("Grafik: Bilder PNG/BMP/GIF aus Bytes", """
+            #import "graphics"
+            class Img {
+                static Bytes(a) { var b = new byte[a.length]; for (var i = 0; i < a.length; i++) { b[i] = a[i] } return b }
+                static Show(string name, data) {
+                    var fb = Framebuffer.FromImage(data)
+                    print(name + " " + fb.Width() + "x" + fb.Height() + " mode " + fb.Mode() + " transparent " + fb.TransparentIndex)
+                    var bytes = fb.ReadBytes()
+                    var line = ""
+                    for (var i = 0; i < bytes.length; i++) { line = line + bytes[i] + " " }
+                    print(line)
+                    if (fb.Mode() == 1) { print("palette0 " + fb.GetPaletteColor(0) + " palette1 " + fb.GetPaletteColor(1)) }
+                }
+            }
+            var png1 = Img.Bytes([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,6,0,0,0,31,21,196,137,0,0,0,13,73,68,65,84,120,218,99,252,207,192,80,15,0,4,133,1,128,132,169,140,33,0,0,0,0,73,69,78,68,174,66,96,130])
+            Img.Show("png1", png1)
+            var gif = Img.Bytes([71,73,70,56,57,97,1,0,1,0,128,0,0,255,255,255,0,0,0,33,249,4,1,0,0,0,0,44,0,0,0,0,1,0,1,0,0,2,2,68,1,0,59])
+            Img.Show("gif", gif)
+            var bmp = Img.Bytes([66,77,78,0,0,0,0,0,0,0,54,0,0,0,40,0,0,0,3,0,0,0,2,0,0,0,1,0,24,0,0,0,0,0,24,0,0,0,19,11,0,0,19,11,0,0,0,0,0,0,0,0,0,0,30,20,10,60,50,40,90,80,70,0,0,0,0,0,255,0,255,0,255,0,0,0,0,0])
+            Img.Show("bmp", bmp)
+            var png2 = Img.Bytes([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,4,0,0,0,3,8,2,0,0,0,59,150,57,145,0,0,0,41,73,68,65,84,120,156,13,197,49,1,0,32,0,195,176,42,65,201,148,84,201,148,160,100,2,33,79,0,194,41,25,130,39,166,58,11,75,254,235,118,31,169,95,11,245,222,135,168,195,0,0,0,0,73,69,78,68,174,66,96,130])
+            Img.Show("png2", png2)
+            """),
+        ("Grafik: Bild aus einer Datei laden (IO-Richtlinie)", """
+            #import "graphics"
+            #import "io"
+            class Img {
+                static Bytes(a) { var b = new byte[a.length]; for (var i = 0; i < a.length; i++) { b[i] = a[i] } return b }
+            }
+            var bmp = Img.Bytes([66,77,78,0,0,0,0,0,0,0,54,0,0,0,40,0,0,0,3,0,0,0,2,0,0,0,1,0,24,0,0,0,0,0,24,0,0,0,19,11,0,0,19,11,0,0,0,0,0,0,0,0,0,0,30,20,10,60,50,40,90,80,70,0,0,0,0,0,255,0,255,0,255,0,0,0,0,0])
+            var dir = IO.Path.Combine(IO.Path.Temp(), "fire_gfx_test_g3")
+            IO.Directory.Create(dir)
+            var path = IO.Path.Combine(dir, "t.bmp")
+            IO.File.WriteAllBytes(path, bmp)
+            var fb = Framebuffer.FromFile(path)
+            print(fb.Width() + "x" + fb.Height() + " " + fb.ByteCount())
+            var raw = fb.ReadBytes()
+            var line = ""
+            for (var i = 0; i < raw.length; i++) { line = line + raw[i] + " " }
+            print(line)
+            try { Framebuffer.FromFile(IO.Path.Combine(dir, "missing.png")) } catch (ImageException e) { print("missing " + (e.message.Length > 0)) }
+            IO.File.Delete(path)
+            IO.Directory.Delete(dir)
+            """),
+    }).ToArray();
+
+    // Ownership (SPEC 2.2, 2.3): dead objects, what `return` takes along, `Takes`
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Besitz: zerstoerte Objekte sind tot, im Zerstoerungsstapel noch benutzbar, return nimmt den Baum der Locals mit", """
+            class D {
+                string n
+                D next
+                construct(string n) { this.n = n }
+                destruct() { print("~" + this.n) }
+            }
+            class W {
+                D target
+                construct(D target) { this.target = target }
+                destruct() { print("~W sees " + this.target.n) }
+            }
+            class T {
+                static Dead() {
+                    var a = new D("a")
+                    return a.n
+                }
+                // the destructor of w uses d, which was destroyed before it in the same scope: allowed until the scope is gone
+                static Batch() {
+                    var d = new D("d")
+                    var w = new W(d)
+                }
+                // a returned list takes its elements along
+                static Items() {
+                    var list = new List()
+                    for (var i = 0; i < 3; i = i + 1) { var x = new D("i" + i); x.TakeTo(list); list.Add(x) }
+                    return list
+                }
+                // by reference only: everything local travels with the returned object
+                static Ring() {
+                    var a = new D("ra")
+                    var b = new D("rb")
+                    a.next = b
+                    b.next = a
+                    return a
+                }
+                // not returned: gone
+                static Lost() {
+                    var keep = new D("lost")
+                    return 1
+                }
+                // taken out of an owner that dies with the scope
+                static Inner() {
+                    var outer = new D("outer")
+                    outer.next = new D("inner")
+                    outer.next.TakeTo(outer)
+                    return outer.next
+                }
+            }
+            var x = new D("x")
+            delete x
+            try { print(x.n) } catch (DestroyedException e) { print("dead: " + e.message) }
+            try { x.next = x } catch (DestroyedException e) { print("dead set") }
+            T.Batch()
+            print("batch done")
+            var items = T.Items()
+            print(items.count + " " + items[2].n)
+            var ring = T.Ring()
+            print(ring.next.next.n)
+            T.Lost()
+            print(T.Inner().n)
+            print("end")
+            """),
+        ("Besitz: Takes.This/Children/Locals/All bei TakeUpwards/TakeTo/TakeGlobal und fuer Arrays", """
+            class N {
+                string name
+                N next
+                N other
+                construct(string name) { this.name = name }
+                destruct() { print("~" + this.name) }
+            }
+            class F {
+                // This: the child stays behind and dies with the function
+                static UpThis(holder) {
+                    var p = new N("p1")
+                    var q = new N("q1")
+                    p.next = q
+                    p.TakeUpwards()
+                    holder.next = p
+                }
+                // Locals: the child travels along (to the object that points to it)
+                static UpLocals(holder) {
+                    var p = new N("p2")
+                    var q = new N("q2")
+                    p.next = q
+                    p.TakeUpwards(Takes.Locals)
+                    holder.next = p
+                }
+                // Children: what the fields point to directly, not what those point to
+                static UpChildren(holder) {
+                    var p = new N("p3")
+                    var q = new N("q3")
+                    var r = new N("r3")
+                    p.next = q
+                    q.next = r
+                    p.TakeUpwards(Takes.Children)
+                    holder.next = p
+                }
+                // All: also what is owned by somebody else
+                static TakeAll(holder, foreign) {
+                    var p = new N("p4")
+                    p.other = foreign
+                    p.TakeUpwards(Takes.All)
+                    holder.next = p
+                }
+                // TakeTo with a mode, and TakeGlobal
+                static ToObject(holder) {
+                    var p = new N("p5")
+                    var q = new N("q5")
+                    p.next = q
+                    p.TakeTo(holder, Takes.Locals)
+                }
+                static Global() {
+                    var p = new N("p6")
+                    var q = new N("q6")
+                    p.next = q
+                    p.TakeGlobal(Takes.Children)
+                    return 0
+                }
+                // an array travels with the objects it holds
+                static Arr() {
+                    var a = [new N("a1"), new N("a2")]
+                    a.TakeUpwards(Takes.Locals)
+                    return a
+                }
+            }
+            var h = new N("h")
+            var foreign = new N("foreign")
+            F.UpThis(h)
+            print("1 " + h.next.name)
+            try { print(h.next.next.name) } catch (DestroyedException e) { print("q1 dead") }
+            F.UpLocals(h)
+            print("2 " + h.next.next.name)
+            F.UpChildren(h)
+            print("3 " + h.next.next.name)
+            try { print(h.next.next.next.name) } catch (DestroyedException e) { print("r3 dead") }
+            F.TakeAll(h, foreign)
+            print("4 " + h.next.other.name)
+            F.ToObject(h)
+            print("5 " + h.next.name)
+            F.Global()
+            print("6")
+            var arr = F.Arr()
+            print("7 " + arr[0].name + arr[1].name)
+            print("end")
+            """),
+        ("Besitz: Liste mit Objekten aus einer Funktion, Zugriff auf ein geloeschtes Objekt", """
+            class Item { int n
+              construct(int n) { this.n = n }
+              destruct() { print("~Item" + this.n) } }
+            class F { static Make() {
+                var l = new List()
+                l.Add(new Item(1))
+                l.Add(new Item(2))
+                return l
+            } }
+            var l = F.Make()
+            print("made " + l.count)
+            print(l[0].n + l[1].n)
+            class G { static Gone() { var i = new Item(9); return i }
+              static Lost() { var a = new Item(7); return 1 } }
+            var kept = G.Gone()
+            print(kept.n)
+            delete kept
+            try { print(kept.n) } catch (DestroyedException e) { print("caught " + e.message) }
+            class P { Item it
+              construct() { this.it = new Item(5) } }
+            var p = new P()
+            var ref = p.it
+            delete p
+            try { print(ref.n) } catch (DestroyedException e) { print("caught2") }
+            """),
+    }).ToArray();
+
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Besitz: try x.Take... und Takes.Children (Array, IEnumerable)", """
+            class Item { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class Holder { var kept
+              construct() { }
+              // x is the result of a call passed straight on: it belongs to this method's scope, so the Holder may take it
+              Adopt(x) { return try x.TakeTo(this) }
+              AdoptNew(x) { return try x.TakeTo(this) }
+              // the thing is owned by this object: only the owner moves it
+              Release() { return try this.kept.TakeLocal() }
+            }
+            class F { static Make(string n) { return new Item(n) } }
+            var h = new Holder()
+            print(h.Adopt(F.Make("fresh")))
+            var mine = new Item("mine")
+            print(h.AdoptNew(mine))
+            print(h.AdoptNew(new Item("tmp")))
+            // children of a list: the items go to the list
+            class Bag { var list
+              construct() { this.list = new List() } }
+            var items = new List()
+            var a = new Item("la")
+            var b = new Item("lb")
+            items.Add(a)
+            items.Add(b)
+            var arr = [new Item("a1"), new Item("a2")]
+            class T { static Run(items, arr) {
+                items.TakeLocal(Takes.Children)
+                arr.TakeLocal(Takes.Children)
+                return 0
+            } }
+            T.Run(items, arr)
+            print("end")
+            """),
+    }).ToArray();
+
+    // Ownership: arrays own, call arguments, List.Take
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Besitz: TakeTo(list, Takes), TakeLocal", """
+            class Item { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class F {
+              static Fill() {
+                var list = new List()
+                for (var i = 0; i < 3; i++) { var it = new Item("i" + i); it.TakeTo(list); list.Add(it) }
+                return list
+              }
+              static FillChildren() {
+                var list = new List()
+                var a = new Item("c1")
+                var b = new Item("c2")
+                list.Add(a)
+                list.Add(b)
+                a.TakeTo(list, Takes.Children)
+                return list
+              }
+              static Local(holder) {
+                var x = new Item("x")
+                x.TakeLocal()
+                print(try x.TakeLocal())
+                return 0
+              }
+            }
+            var l = F.Fill()
+            print(l.count + " " + l[2].n)
+            var l2 = F.FillChildren()
+            print(l2.count)
+            F.Local(0)
+            print("end")
+            """),
+        ("Besitz: take als Argument und in Zuweisungen", """
+            class Item { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class Box { Item slot
+              items = [new Item("x0")]
+              Put(x) { x.TakeTo(this); print("put " + x.n) }
+              destruct() { print("~box") } }
+            class T {
+              static Eat(x) { var mine = new Item("mine"); print("eat " + x.n) }
+              static Keep(x, b) { x.TakeTo(b); print("kept") }
+              static Drop(x, b) { print(try x.TakeTo(b)) }
+            }
+            var a = new Item("a")
+            T.Eat(take a)
+            print("1")
+            var box = new Box()
+            var b = new Item("b")
+            T.Keep(take b, box)
+            print("2")
+            var c = new Item("c")
+            box.slot = take c
+            var d = new Item("d")
+            T.Drop(d, box)
+            T.Drop(take d, box)
+            print("3")
+            {
+              var inner = new Item("inner")
+              var out = new Item("out")
+              var x
+              x = take out
+              box.items[0] = take inner
+            }
+            print("4")
+            var e = new Item("e")
+            var f = take e
+            print("5")
+            try { print(a.n) } catch (DestroyedException ex) { print("dead a") }
+            try { T.Eat(take a) } catch (DestroyedException ex) { print("dead take") }
+            print("end")
+            """),
+        ("Besitz: take in Konstruktor, Rueckgabe, Array-Element", """
+            class Item { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class Holder { Item kept
+              construct(it) { this.kept = take it; print("holder " + this.kept.n) } 
+              destruct() { print("~holder") } }
+            class Cell { int v }
+            class T {
+              static Make(tag) { var t = new Item(tag); var u = take t; return u }
+              static Num(x) { return x + 1 }
+              static Fill(arr, a, b) {
+                arr[0] = take a
+                arr[1] = take b
+                print("filled")
+              }
+            }
+            var h
+            {
+              var it = new Item("i1")
+              h = new Holder(take it)
+            }
+            print("1")
+            var m = T.Make("m")
+            print(m.n)
+            print(T.Num(take 5))
+            var arr = new Item[2]
+            {
+              var p = new Item("p")
+              var q = new Item("q")
+              T.Fill(arr, p, q)
+              print("block end")
+            }
+            print("2")
+            var data = new int[3]
+            var holder2 = new Holder(new Item("fresh"))
+            var ar2 = [new Item("z")]
+            print(ar2[0].n)
+            print("end")
+            """),
+        ("Besitz: try nimmt nur das Argument des eigenen Aufrufs", """
+            class Item { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class T {
+              static Make(n) { return new Item(n) }
+              static Deep(x, b) { print("deep " + (try x.TakeTo(b))) }
+              static Mid(x, b) { T.Deep(x, b); print("mid " + (try x.TakeTo(b))) }
+              static Pass(x, b) { T.Mid(T.Make("inner"), b); T.Deep(take x, b) }
+            }
+            var box = new Item("box")
+            T.Mid(T.Make("a"), box)
+            var c = new Item("c")
+            T.Mid(take c, box)
+            T.Pass(new Item("p"), box)
+            print("end")
+            """),
+        ("Besitz: Takes.Locals ueber den Methoden-Verteiler", """
+            class Item { string n
+              var child
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class Fake { TakeTo(a, b) { print("fake") } }
+            class T {
+              static F(box) {
+                var a = new Item("a")
+                var b = new Item("b")
+                a.child = b
+                a.TakeTo(box, Takes.Locals)
+                var c = new Item("c")
+                print("F end")
+              }
+            }
+            var box = new Item("box")
+            T.F(box)
+            print("after F")
+            var f = new Fake()
+            f.TakeTo(1, 2)
+            print("end")
+            """),
+        ("Besitz: Ein Array besitzt, was return und Takes mitnehmen", """
+            class Item { string n
+              var arr
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class F {
+              static Make() {
+                var a = [new Item("a1"), new Item("a2")]
+                return a
+              }
+              static Inner() {
+                var holder = new Item("holder")
+                var a = [new Item("b1")]
+                holder.arr = a
+                a.TakeTo(holder)
+                return a
+              }
+            }
+            var arr = F.Make()
+            arr.TakeGlobal()
+            class G { static Run() { var x = F.Make(); print(x.length); return 0 } }
+            G.Run()
+            print("after G")
+            var inner = F.Inner()
+            print(inner[0].n)
+            delete arr
+            print("deleted")
+            print("end")
+            """),
+        ("Besitz: Ein weitergereichtes Argument stirbt nach dem Aufruf, nach den Locals des Aufgerufenen", """
+            class D { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class W { D d
+              construct(D d) { this.d = d } }
+            class F { static Make() { return new D("arg") }
+              static Use(D x) { var local = new D("local"); print("in Use") }
+              static Pass(D x) { return x } }
+            F.Use(F.Make())
+            print("after Use")
+            var kept = F.Pass(F.Make())
+            print("kept " + kept.n)
+            print("end")
+            """),
+    }).ToArray();
+
+    // Differences that were aligned
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Ausnahmen: Destruktor-Reihenfolge beim Verlassen eines catch (Wurfort zuerst, dann der catch)", """
+            class D { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class Boom : Exception { string message
+              construct(string m) { this.message = m } }
+            class F {
+              static Thrower() {
+                var t = new D("thrower-local")
+                throw new Boom("x")
+              }
+              static Run() {
+                var outer = new D("outer-local")
+                try {
+                  var inTry = new D("in-try")
+                  F.Thrower()
+                } catch (Boom e) {
+                  var inCatch = new D("in-catch")
+                  print("caught " + e.message)
+                }
+                print("after catch")
+              }
+            }
+            F.Run()
+            print("end")
+            """),
+        ("print eines Objekts ohne ToString zeigt die Klasse", """
+            class P { int x
+              construct() { this.x = 3 } }
+            class Q { int y
+              construct() { this.y = 4 }
+              ToString() { return "Q(" + this.y + ")" } }
+            var p = new P()
+            var q = new Q()
+            print(p)
+            print(q)
+            print("" + p)
+            print("v " + q)
+            """),
+    }).ToArray();
+
+    // Pointers (SPEC 8.3)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Zeiger (unsafe): Variablen, Felder, ref-Parameter, Parameter vom Typ int*, Tausch", """
+            class Box { int v = 1
+              string s = "a" }
+            class F {
+              static Inc(int* p) { unsafe { *p = *p + 1 } }
+              static Swap(int* a, int* b) { unsafe { var t = *a; *a = *b; *b = t } }
+            }
+            var x = 5
+            unsafe {
+                int* p = &x
+                *p = *p + 10
+                print(x)
+                F.Inc(p)
+                print(x)
+                var y = 7
+                F.Swap(&x, &y)
+                print(x + " " + y)
+                var b = new Box()
+                int* pv = &b.v
+                *pv = 42
+                print(b.v)
+                string* ps = &b.s
+                *ps = *ps + "z"
+                print(b.s)
+                int* r = &x
+                r = r + 0
+                print(*r)
+            }
+            """),
+        ("Zeiger (unsafe): Grenzen, Versatz bei Variablen und Feldern, Differenz", """
+            class Box { int v = 1
+              int w = 2 }
+            class F {
+              static Read(ref int first, int n) {
+                var t = 0
+                unsafe { int* p = &first
+                  for (var i = 0; i < n; i++) { t = t + *p; p = p + 1 } }
+                return t
+              }
+              static Back(ref int first) {
+                var t = 0
+                unsafe { int* p = &first
+                  p = p + 2
+                  t = *p; p = p - 1; t = t * 10 + *p; p = p - 1; t = t * 10 + *p
+                  int* q = p + 2
+                  print(q - p)
+                  print(p == q - 2)
+                  try { p = p - 1; print(*p) } catch (e) { print("before: " + e.message) }
+                }
+                return t
+              }
+              static Bytes(ref byte first, int n) {
+                var t = 0
+                unsafe { byte* p = &first
+                  for (var i = 0; i < n; i++) { t = t + *p; *p = 0; p = p + 1 } }
+                return t
+              }
+              static Gone(ref int first) {
+                return first
+              }
+            }
+            var a = [1, 2, 3]
+            print(F.Read(a[1], 2))
+            try { print(F.Read(a[1], 3)) } catch (e) { print("oob: " + e.message) }
+            print(F.Back(a[0]))
+            var buf = new byte[3]
+            buf[0] = 5; buf[1] = 6; buf[2] = 7
+            print(F.Bytes(buf[1], 2))
+            try { print(F.Bytes(buf[1], 3)) } catch (e) { print("oob buf: " + e.message) }
+            print(buf[1] + " " + buf[2])
+            var x = 10
+            var y = 20
+            unsafe {
+              int* p = &x
+              try { print(*(p + 1)) } catch (e) { print("var: " + e.message) }
+              int* q = p + 1
+              try { *q = 99 } catch (e) { print("var write: " + e.message) }
+              print(y)
+              print(q == p)
+              print(q - 1 == p)
+              print(*(q - 1))
+              var b = new Box()
+              int* pf = &b.v
+              try { int* pg = pf + 1; print(*pg) } catch (e) { print("field: " + e.message) }
+              print(pf == pf + 0)
+            }
+            print("end")
+            """),
+        ("Zeiger (unsafe): Arithmetik ueber Array- und Puffer-Elemente (ref), Vergleich, Zeiger auf Zeiger", """
+            class F {
+              static Sum(ref int first, int n) {
+                var t = 0
+                unsafe {
+                  int* p = &first
+                  for (var i = 0; i < n; i++) { t = t + *p; p = p + 1 }
+                }
+                return t
+              }
+              static Zero(ref int first, int n) {
+                unsafe {
+                  int* p = &first
+                  for (var i = 0; i < n; i++) { *p = 0; p = p + 1 }
+                }
+              }
+              static Bytes(ref byte first, int n) {
+                var t = 0
+                unsafe {
+                  byte* p = &first
+                  for (var i = 0; i < n; i++) { t = t + *p; p = p + 1 }
+                }
+                return t
+              }
+            }
+            var a = [1, 2, 3, 4, 5]
+            print(F.Sum(a[1], 3))
+            F.Zero(a[2], 2)
+            print(a[0] + " " + a[1] + " " + a[2] + " " + a[3] + " " + a[4])
+            var buf = new byte[4]
+            buf[0] = 1; buf[1] = 2; buf[2] = 3; buf[3] = 4
+            print(F.Bytes(buf[1], 3))
+            var x = 1
+            var y = 1
+            unsafe {
+              int* p = &x
+              int* q = &x
+              print(p == q)
+              int* r = &y
+              print(p == r)
+              int** pp = &p
+              **pp = 99
+            }
+            print(x)
+            """),
+    }).ToArray();
+
+    // Time and Sleep (bridges/fire_bridge_time.hpp)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Time: TimeSpan, DateTime, Formate, Parse, Sleep", """
+            #import "time"
+            var a = TimeSpan.FromSeconds(90)
+            print(a)
+            print(new TimeSpan(1, 2, 3, 4, 5))
+            print(TimeSpan.FromMilliseconds(1500) * 2)
+            print(TimeSpan.FromHours(2.5).Negate())
+            var d = new DateTime(2024, 3, 15, 14, 30, 5, 123)
+            print(d)
+            print(d.ToString("dd.MM.yyyy HH:mm:ss.fff"))
+            print(d.ToString("o"))
+            print(d.ToString("dddd, d MMMM yyyy h:mm tt"))
+            print(d.ToString("D"))
+            print(d.ToString("G"))
+            print(d.Year + "-" + d.Month + "-" + d.Day + " " + d.Hour + ":" + d.Minute + " dow " + d.DayOfWeek + " doy " + d.DayOfYear)
+            print(d.AddMonths(11))
+            print(d.AddMonths(-3))
+            print(new DateTime(2024, 1, 31).AddMonths(1))
+            print(d.AddDays(20.5))
+            print(d + TimeSpan.FromHours(10))
+            print((d + TimeSpan.FromHours(10)) - d)
+            print(DateTime.DaysInMonth(2023, 2) + " " + DateTime.DaysInMonth(2024, 2) + " " + DateTime.IsLeapYear(1900))
+            print(d.Date())
+            print(d.TimeOfDay())
+            print(d.ToUnixSeconds())
+            print(DateTime.FromUnixSeconds(1700000000).ToString("yyyy-MM-dd HH:mm:ss"))
+            print(DateTime.Parse("2024-03-15 14:30:00"))
+            print(DateTime.Parse("2024-03-15T14:30:00.5Z"))
+            print(DateTime.Parse("2024-03-15T14:30:00+02:00"))
+            print(DateTime.Parse("3/15/2024"))
+            print(DateTime.Parse("March 15, 2024 3:45 PM"))
+            print(DateTime.Parse("Fri, 15 Mar 2024 14:30:00 GMT"))
+            print(DateTime.TryParse("rubbish"))
+            print(d < d.AddDays(1))
+            print(d.ToUtc().Kind)
+            Sleep(5ms)
+            Sleep(TimeSpan.FromMilliseconds(5))
+            Sleep(2)
+            Sleep(0.002s)
+            print("slept")
+            var t0 = DateTime.UtcNow()
+            Sleep(60ms)
+            var el = DateTime.UtcNow() - t0
+            print(el >= TimeSpan.FromMilliseconds(55))
+            print(el < TimeSpan.FromMilliseconds(500))
+            """),
+        ("Time: Formatstrings, Fehler (TimeException), Parse-Formen, Sleep mit falschen Angaben", """
+            #import "time"
+            class Thing { int x
+              construct() { this.x = 1 } }
+            var d = new DateTime(2024, 12, 5, 0, 7, 9, 50)
+            var f = ["yyyy", "yy", "y", "yyy", "M", "MM", "MMM", "MMMM", "d", "dd", "ddd", "dddd", "H", "HH", "h", "hh", "m", "mm", "s", "ss", "t", "tt", "f", "ff", "fff", "ffffff", "F", "FF", "ss.FFF", "ss.FFFFFF", "'quoted' yyyy", "\"dq\" MM", "yyyy\\MM", "%d", "%y", "d/M/yyyy", "HH:mm:ss", "g", "m", "u", "s", "r", "t", "T", "y", "M", "f", "F", "O", "dddd dd MMMM yyyy 'at' H:mm", "x yy z"]
+            foreach (x in f) {
+                try { print(x + " => " + d.ToString(x)) } catch (TimeException e) { print(x + " => error: " + e.message) }
+            }
+            foreach (bad in ["", "yyyyyyyy", "fffffffff", "Z", "q", "%", "\\", "'abc", "hhh"]) {
+                try { print("[" + bad + "] => " + d.ToString(bad)) } catch (TimeException e) { print("error: " + e.message) }
+            }
+            try { var x = new DateTime(2023, 2, 29) } catch (TimeException e) { print("error: " + e.message) }
+            try { var x = new DateTime(2023, 13, 1) } catch (TimeException e) { print("error: " + e.message) }
+            try { var x = new DateTime(2023, 1, 1, 24, 0, 0) } catch (TimeException e) { print("error: " + e.message) }
+            try { print(DateTime.DaysInMonth(2023, 13)) } catch (TimeException e) { print("error: " + e.message) }
+            try { Sleep("x") } catch (TimeException e) { print("error: " + e.message) }
+            try { Sleep(3m) } catch (TimeException e) { print("error: " + e.message) }
+            try { Sleep(new Thing()) } catch (TimeException e) { print("error: " + e.message) }
+            try { Sleep(true) } catch (TimeException e) { print("error: " + e.message) }
+            try { Sleep(undefined) } catch (TimeException e) { print("error: " + e.message) }
+            try { print(new DateTime(9999, 12, 31).AddDays(2)) } catch (TimeException e) { print("error: " + e.message) }
+            try { print(new DateTime(9999, 12, 31).AddMonths(1)) } catch (TimeException e) { print("error: " + e.message) }
+            try { print(new DateTime(1, 1, 1).AddYears(-1)) } catch (TimeException e) { print("error: " + e.message) }
+            try { print(DateTime.Parse("nonsense")) } catch (TimeException e) { print("error: " + e.message) }
+            try { print(TimeSpan.FromSeconds(2m)) } catch (Exception e) { print("error") }
+            print(TimeSpan.Of(1.5s))
+            print(TimeSpan.Of(250ms).TotalMilliseconds)
+            print(TimeSpan.Of(2))
+            print(new TimeSpan(0, 0, 0, 0, 1).ToString())
+            print(new TimeSpan(-5).ToString())
+            print(new TimeSpan(10, 0, 0, 0))
+            for (var y = 1; y <= 3; y++) { print(new DateTime(2000 + y * 400, 2, 29).DayOfWeek) }
+            print(new DateTime(1, 1, 1).DayName() + " " + new DateTime(9999, 12, 31).DayName() + " " + new DateTime(1900, 3, 1).DayOfYear + " " + new DateTime(2000, 12, 31).DayOfYear)
+            print(new DateTime(1, 1, 1).Ticks)
+            print(new DateTime(9999, 12, 31, 23, 59, 59, 999).Ticks)
+            print(DateTime.Parse("1999-12-31 23:59:59").AddSeconds(1))
+            print(DateTime.Parse("12/31/99"))
+            print(DateTime.Parse("1/2/30"))
+            print(DateTime.Parse("14:30"))
+            print(DateTime.Parse("2:30:15 PM"))
+            print(DateTime.Parse("12:00 AM"))
+            print(DateTime.Parse("Mar 5 2020"))
+            print(DateTime.Parse("5 March 2020 08:15"))
+            print(DateTime.Parse("2024-03-15 14:30:00 +0530"))
+            print(DateTime.Parse("2024/03/15"))
+            print(DateTime.TryParse("2024-02-30") == undefined)
+            """),
+        ("Threads: Sleep gibt den anderen Threads frei, das Hauptprogramm bedient dabei die Sektionen", """
+            #import "time"
+            var done = 0
+            var log = []
+            class Counter { int n
+              construct() { this.n = 0 }
+              Add() { this.n = this.n + 1 }
+            }
+            var c = new Counter()
+            fire {
+                for (var i = 0; i < 5; i++) { Sleep(10ms); c.Add() }
+                done = done + 1
+            }
+            fire {
+                for (var i = 0; i < 5; i++) { Sleep(7); c.Add() }
+                done = done + 1
+            }
+            // the main program sleeps and meanwhile serves the sections of the threads
+            Sleep(600ms)
+            print("after sleep: " + done + " " + c.n)
+            while (done < 2) { Sleep(5ms) }
+            print("n = " + c.n)
+            """),
+        ("Threads: terminate beendet Sleep sofort", """
+            #import "time"
+            // terminate cuts a sleep short and runs the handler; a thread that sleeps ends too
+            fire {
+                Sleep(5s)
+                print("never")
+            }
+            catch terminate(v) { print("handler " + v) }
+            Sleep(50ms)
+            print("before terminate")
+            terminate(7)
+            Sleep(10s)
+            print("never either")
+            """),
+        ("Threads: eine Ausnahme eines Threads erreicht das Hauptprogramm waehrend Sleep", """
+            #import "time"
+            class Boom { string message
+              construct() { this.message = "from thread" } }
+            // a sleeping thread does not hold the others up; an exception of a thread reaches the main program during its Sleep
+            fire {
+                Sleep(20ms)
+                throw new Boom()
+            }
+            catch threads(Boom e) { print("caught in main: " + e.message) }
+            var start = DateTime.UtcNow()
+            Sleep(400ms)
+            print("main woke up")
+            print((DateTime.UtcNow() - start) >= TimeSpan.FromMilliseconds(100))
+            """),
+    }).ToArray();
+
+
+    string? cxx = FindCxx();
+    if (cxx == null)
+        Console.WriteLine("(kein C++-Compiler gefunden - die Native-Backend-Pruefungen werden uebersprungen)");
+    else
+    {
+        string workDir = Path.Combine(Path.GetTempPath(), "fire-native-test-" + Guid.NewGuid().ToString("N"));
+        fire.Native.NativeRuntimeFiles.WriteTo(workDir);
+        fire.Native.NativeRuntimeFiles.WriteSimulatorTo(Path.Combine(workDir, "sim"));
+
+        // Memory errors in the generated code (ownership, freeing) must not slip through: run the cases under the sanitizers when the compiler has them.
+        string sanitize = "";
+        {
+            string probeFile = Path.Combine(workDir, "probe.cpp");
+            File.WriteAllText(probeFile, "int main() { return 0; }\n");
+            using var probe = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cxx, $"-fsanitize=address,undefined \"{probeFile}\" -o \"{probeFile}.bin\"") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false })!;
+            probe.StandardError.ReadToEnd(); probe.StandardOutput.ReadToEnd(); probe.WaitForExit();
+            if (probe.ExitCode == 0 && System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(probeFile + ".bin") { UseShellExecute = false, RedirectStandardError = true }) is { } run) { run.StandardError.ReadToEnd(); run.WaitForExit(); if (run.ExitCode == 0) sanitize = "-fsanitize=address,undefined -fno-sanitize-recover=undefined "; }
+        }
+        Console.WriteLine(sanitize.Length > 0 ? "(die Faelle laufen unter AddressSanitizer/UBSan)" : "(Sanitizer nicht verfuegbar)");
+
+        // The VM runs sequentially: the precision of float is process-wide while a program runs.
+        var vmResults = natCases.Select(c => { var text = vmOutput(c.Source); Value.SingleFloats = false; return text; }).ToArray();
+
+        var compiled = natCases.Select((c, index) => Task.Run(() =>
+        {
+            string expected = vmResults[index];
+            string cpp;
+            try { cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release)); }
+            catch (fire.Native.NativeNotSupportedException ex) { return (c.Name, expected, $"nicht uebersetzbar: {ex.Message}"); }
+            string cppFile = Path.Combine(workDir, $"case{index}.cpp"), exeFile = Path.Combine(workDir, $"case{index}.bin");
+            File.WriteAllText(cppFile, cpp);
+
+            string RunTool(string tool, string arguments, out int exit)
+            {
+                using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool, arguments)
+                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir })!;
+                var errTask = p.StandardError.ReadToEndAsync();
+                string output = p.StandardOutput.ReadToEnd();
+                p.WaitForExit();
+                exit = p.ExitCode;
+                return output + errTask.Result;
+            }
+
+            string build = RunTool(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"", out int buildExit);
+            if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C++-Compiler: " + build);
+            if (c.Name.StartsWith("Abbruch:"))
+            {
+                // an exception that nothing catches: the program ends with exit code 1 after the output so far (the VM stops the same way)
+                using var run = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exeFile) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir })!;
+                var stderrTask = run.StandardError.ReadToEndAsync();
+                string stdout = run.StandardOutput.ReadToEnd();
+                run.WaitForExit();
+                return (c.Name, expected, run.ExitCode == 1 && stderrTask.Result.Contains("Unhandled exception") ? stdout : $"Exitcode {run.ExitCode}: {stdout}{stderrTask.Result}");
+            }
+            string actual = RunTool(exeFile, "", out int runExit);
+            // `terminate(n)` with a whole number is the exit code of the process (like the command line runner)
+            return (c.Name, expected, runExit == 0 || (c.Name.StartsWith("Threads:") && c.Source.Contains("terminate(")) ? actual : $"Exitcode {runExit}: {actual}");
+        })).ToArray();
+        Task.WaitAll(compiled);
+
+        foreach (var task in compiled)
+        {
+            var (name, expected, actual) = task.Result;
+            CheckNat($"Native == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
+        }
+
+        // The switch itself: VM output differs between the precisions, the directive is validated, the override wins
+        string out64 = vmOutput("print(0.1 + 0.2)\nprint(1.0 / 3)"), out32 = vmOutput("#floatwidth 32\nprint(0.1 + 0.2)\nprint(1.0 / 3)");
+        Value.SingleFloats = false;
+        CheckNat("#floatwidth: 64 Bit ist der Standard", out64 == "0.30000000000000004\n0.3333333333333333\n", out64);
+        CheckNat("#floatwidth 32: float rechnet und druckt mit 32 Bit", out32 == "0.3\n0.33333334\n", out32);
+        var overridden = new Linker().CompileAndLink(new[] { "#floatwidth 64\nprint(1)" }, null, null, null, floatWidthOverride: 32);
+        CheckNat("Linker: floatWidthOverride gewinnt gegen die Direktive", overridden.FloatWidth == 32 && new Linker().CompileAndLink(new[] { "print(1)" }).FloatWidth == 64);
+        try { new Linker().CompileAndLink(new[] { "#floatwidth 16\nprint(1)" }); CheckNat("#floatwidth 16 wird abgelehnt", false); }
+        catch (Exception ex) { CheckNat("#floatwidth 16 wird abgelehnt", ex.Message.Contains("32 or 64"), ex.Message); }
+        var cli32 = CommandLineParser.Parse(new[] { "run", "a.script", "-f", "32" });
+        var cliBad = CommandLineParser.Parse(new[] { "run", "a.script", "-f", "16" });
+        CheckNat("Befehlszeile: -f 32 / -f 16", cli32.Error == null && cli32.FloatWidth == 32 && cliBad.Error != null && CommandLineParser.Parse(new[] { "run", "a.script" }).FloatWidth == null);
+        var narrowed = new Linker().CompileAndLink(new[] { "var x = 0.1\nprint(x)" }, null, null, null, floatWidthOverride: 32);
+        CheckNat("Konstanten werden auf 32 Bit gerundet", narrowed.Program.TopLevel.Constants.Any(c => c.Kind == ValueKind.Float && c.AsFloat() == (double)0.1f));
+
+        // Zielprofil
+        var esp = TargetProfile.Esp32;
+        var espLinked = new Linker().CompileAndLink(new[] { "print(0.1 + 0.2)" }, null, null, null, null, esp);
+        CheckNat("Zielprofil esp32: float ist 32 Bit, wenn nichts anderes gesagt wird", espLinked.FloatWidth == 32);
+        CheckNat("Zielprofil: #floatwidth gewinnt gegen das Ziel, -f gegen beides",
+            new Linker().CompileAndLink(new[] { "#floatwidth 64\nprint(1)" }, null, null, null, null, esp).FloatWidth == 64
+            && new Linker().CompileAndLink(new[] { "#floatwidth 64\nprint(1)" }, null, null, null, 32, TargetProfile.Windows).FloatWidth == 32
+            && new Linker().CompileAndLink(new[] { "print(1)" }, null, null, null, null, TargetProfile.Windows).FloatWidth == 64);
+        try { new Linker().CompileAndLink(new[] { "#import \"graphics\"\nprint(1)" }, null, null, null, null, esp); CheckNat("Zielprofil: nicht verfuegbare Bibliothek wird abgelehnt", false); }
+        catch (NotSupportedException ex) { CheckNat("Zielprofil: nicht verfuegbare Bibliothek wird abgelehnt", ex.Message.Contains("'graphics'") && ex.Message.Contains("'esp32'"), ex.Message); }
+        CheckNat("Zielprofil: Windows erlaubt die Grafik, esp32 hat Devices/IO/Time", TargetProfile.Windows.HasImport("graphics") && esp.HasImport("devices") && esp.HasImport("io") && esp.HasImport("time") && !esp.HasImport("ui"));
+        CheckNat("Zielprofil: Namen und Host", TargetProfile.TryGet("ESP32", out var byName) && byName == esp && !TargetProfile.TryGet("amiga", out _) && TargetProfile.All.Contains(TargetProfile.Host));
+        string espCpp = fire.Native.CppGenerator.Generate(espLinked, esp);
+        CheckNat("esp32: Einstieg app_main statt main, Defines, 32-Bit-float",
+            espCpp.Contains("extern \"C\" void app_main(void)") && !espCpp.Contains("int main()") && espCpp.Contains("#define FIRE_TARGET_ESP32 1")
+            && espCpp.Contains("#define FIRE_HAL_ESP32 1") && espCpp.Contains("#define FIRE_DEFAULT_STACK_BYTES 8192") && espCpp.Contains("#define FIRE_FLOAT32 1"));
+        {
+            string espFile = Path.Combine(workDir, "esp.cpp");
+            File.WriteAllText(espFile, espCpp);
+            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cxx, $"-std=c++17 -Wall -Wextra -c \"{espFile}\" -I\"{workDir}\" -I\"{Path.Combine(workDir, "sim")}\" -o \"{espFile}.o\"") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false })!;
+            string espBuild = p.StandardError.ReadToEnd() + p.StandardOutput.ReadToEnd();
+            p.WaitForExit();
+            CheckNat("esp32: das erzeugte C++ uebersetzt ohne Warnung", p.ExitCode == 0 && !espBuild.Contains("warning"), espBuild);
+        }
+        var cliEsp = CommandLineParser.Parse(new[] { "native", "a.script", "-t", "esp32" });
+        CheckNat("Befehlszeile: -t esp32 / unbekanntes Ziel / -t ausserhalb von native",
+            cliEsp.Error == null && cliEsp.Target == esp && CommandLineParser.Parse(new[] { "native", "a.script", "-t", "amiga" }).TargetName == "amiga"
+            && CommandLineParser.Parse(new[] { "run", "a.script", "-t", "esp32" }).Error != null && CommandLineParser.Parse(new[] { "native", "a.script" }).Target == null);
+
+        string RunProc(string tool, string arguments, string dir, out int exit, string? input = null)
+        {
+            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool, arguments)
+            { RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = input != null, UseShellExecute = false, WorkingDirectory = dir })!;
+            if (input != null) { p.StandardInput.Write(input); p.StandardInput.Close(); }
+            var errTask = p.StandardError.ReadToEndAsync();
+            string output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit();
+            exit = p.ExitCode;
+            return output + errTask.Result;
+        }
+        // ---- Geraete: dieselben Skripte wie in den Geraete-Pruefungen der VM, nativ mit dem Loopback-Geraet (FIRE_DEVICES), gegen die erwarteten Ausgaben
+        {
+            var devTasks = devNativeCases.Select((c, index) => Task.Run(() =>
+            {
+                var defines = new List<string> { "FIRE_DEVICES=\"loopback\"" };
+                if (c.DefaultId != null) defines.Add($"FIRE_DEFAULT_DEVICE=\"{c.DefaultId}\"");
+                var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Defines = defines } };
+                string cpp;
+                try { cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { c.Script }, null, null, VmExecutionMode.Release, null, target), target); }
+                catch (fire.Native.NativeNotSupportedException ex) { return (c.Title, "", $"nicht uebersetzbar: {ex.Message}"); }
+                string file = Path.Combine(workDir, $"dev{index}.cpp"), exe = Path.Combine(workDir, $"dev{index}.bin");
+                File.WriteAllText(file, cpp);
+                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{file}\" -I\"{workDir}\" -o \"{exe}\"", workDir, out int buildExit);
+                if (buildExit != 0 || build.Contains("warning:")) return (c.Title, "", "C++-Compiler: " + build);
+                string actual = RunProc(exe, "", workDir, out int runExit);
+                return (c.Title, string.Concat(c.Expected.Select(l => l + "\n")), runExit == 0 ? actual : $"Exitcode {runExit}: {actual}");
+            })).ToArray();
+            Task.WaitAll(devTasks);
+            foreach (var task in devTasks)
+            {
+                var (title, expected, actual) = task.Result;
+                CheckNat($"Geraete nativ: {title}", expected == actual, $"  erwartet:\n{expected}\n  erhalten:\n{actual}");
+            }
+            CheckNat("Geraete nativ: es gibt Faelle", devNativeCases.Count >= 10, devNativeCases.Count.ToString());
+        }
+
+        // ---- Fenster (bridges/fire_bridge_windows.hpp): SDL2 mit dem Dummy-Treiber; die Ereignisse stellt FIRE_DISPLAY_SELFTEST bereit (die VM nutzt SDL3, hier gibt es keinen Vergleich)
+        {
+            string sdlProbe = Path.Combine(workDir, "sdlprobe.cpp");
+            File.WriteAllText(sdlProbe, "#if __has_include(<SDL2/SDL.h>)\n#include <SDL2/SDL.h>\n#else\n#include <SDL.h>\n#endif\nint main() { return SDL_Init(0); }\n");
+            RunProc(cxx, $"-std=c++17 \"{sdlProbe}\" -lSDL2 -o \"{sdlProbe}.bin\"", workDir, out int sdlExit);
+            var windowCases = new (string Title, string Script, string[] Expected, string Define)[]
+            {
+                ("Fenster: Framebuffer anzeigen, VSync, Tick, Ereignisse anmelden", """
+            #import "windows"
+            var fb = new Framebuffer(64, 48)
+            var con = new Renderer(fb)
+            con.Clear()
+            con.FillRect(4, 4, 20, 10, new SolidBrush(12))
+            var win = new Window(fb, "fire test")
+            print(win.VSync)
+            win.VSync = false
+            print(win.VSync)
+            print(win.EnableEvents())
+            print(win.Tick())
+            print(win.NextEvent())
+            print(win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key") }))
+            print(win.RegisterClose(func() => { print("close") }))
+            print(win.RegisterTextInput(func(string t) => { print("text " + t) }))
+            for (var i = 0; i < 3; i++) { con.FillRect(i * 5, 20, 4, 4, new SolidBrush(9)); win.Tick() }
+            print(win.Tick())
+            """, new[] { "True", "False", "True", "True", "undefined", "True", "True", "True", "True" }, ""),
+                ("Fenster: Ereignisse als Callbacks und aus der Warteschlange, Schliessen beendet Tick", """
+            #import "windows"
+            var fb = new Framebuffer(64, 48)
+            var win = new Window(fb, "events")
+            var log = ""
+            win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("keydown " + k + " " + s + " " + m + " " + r) })
+            win.RegisterKeyUp(func(int k, int s, int m, bool r) => { print("keyup " + k + " " + s + " " + m + " " + r) })
+            win.RegisterMouseDown(func(int b, float x, float y) => { print("down " + b + " " + x + " " + y) })
+            win.RegisterMouseUp(func(int b, float x, float y) => { print("up " + b + " " + x + " " + y) })
+            win.RegisterMouseMove(func(float x, float y, int st) => { print("move " + x + " " + y + " " + st) })
+            win.RegisterMouseMoveRelative(func(float x, float y, int st) => { print("rel " + x + " " + y + " " + st) })
+            win.RegisterMouseScroll(func(float sx, float sy, float x, float y) => { print("scroll " + sx + " " + sy) })
+            win.RegisterTextInput(func(string t) => { print("text " + t + " " + t.Length) })
+            win.RegisterCloseRequest(func() => { print("closerequest") })
+            win.RegisterClose(func() => { print("close") })
+            win.EnableEvents()
+            var open = win.Tick()
+            print("open " + open)
+            var e = win.NextEvent()
+            while (e != undefined) {
+                var line = ""
+                for (var i = 0; i < e.length; i++) { line = line + e[i] + " " }
+                print("queued " + line)
+                e = win.NextEvent()
+            }
+            print(win.NextEvent())
+            """, new[] { "keydown 97 4 1 False", "keyup 97 4 0 False", "down 1 32 24", "up 1 32 24", "move 10 12 1", "rel 3 -2 1", "scroll 0 1.5", "text éx 2", "closerequest", "close", "open False", "queued 24 97 4 1 False ", "queued 25 97 4 0 False ", "queued 8 1 32 24 ", "queued 11 1 32 24 ", "queued 9 10 12 1 ", "queued 10 3 -2 1 ", "queued 12 0 1.5 0 0 ", "queued 3 éx ", "queued 2 ", "queued 1 ", "undefined" }, "-DFIRE_DISPLAY_SELFTEST "),
+            };
+            var windowTarget = TargetProfile.Host;
+            foreach (var wc in windowCases)
+            {
+                string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { wc.Script }, null, null, VmExecutionMode.Release, null, windowTarget), windowTarget);
+                CheckNat($"Fenster: {wc.Title}: das Programm bittet um SDL2", cpp.Contains("// fire-link: SDL2") && cpp.Contains("fire_display.hpp"), "");
+                if (sdlExit != 0) { Console.WriteLine("(SDL2 nicht verfuegbar: das Fenster wird nicht ausgefuehrt)"); continue; }
+                string file = Path.Combine(workDir, "window_" + Math.Abs(wc.Title.GetHashCode()) + ".cpp"), exe = file + ".bin";
+                File.WriteAllText(file, cpp);
+                var command = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], windowTarget, file, workDir, exe);
+                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}{wc.Define}\"{file}\" -I\"{workDir}\" -lSDL2 -o \"{exe}\"", workDir, out int buildExit);
+                if (buildExit != 0 || build.Contains("warning:")) { CheckNat($"Fenster: {wc.Title}", false, "C++-Compiler: " + build); continue; }
+                Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
+                string actual = RunProc(exe, "", workDir, out int runExit);
+                string expected = string.Concat(wc.Expected.Select(l => l + "\n"));
+                CheckNat($"Fenster: {wc.Title}", runExit == 0 && actual == expected, $"  erwartet:\n{expected}\n  erhalten:\n{actual}");
+                CheckNat($"Fenster: {wc.Title}: der Build haengt -lSDL2 an", command.Arguments.Contains("-lSDL2"), command.Arguments);
+            }
+        }
+
+        // ---- UI-Bibliothek: dieselben Elemente nativ (Fenster mit dem Dummy-Treiber) gegen die VM mit der Attrappe
+        {
+            string sdlProbe2 = Path.Combine(workDir, "sdlprobe.cpp.bin");
+            if (!File.Exists(sdlProbe2)) Console.WriteLine("(SDL2 nicht verfuegbar: die UI wird nicht nativ ausgefuehrt)");
+            else
+            {
+                string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#import \"ui\"\n" + uiDrawScript }, null, null, VmExecutionMode.Release));
+                string file = Path.Combine(workDir, "uidraw.cpp"), exe = file + ".bin";
+                File.WriteAllText(file, cpp);
+                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{file}\" -I\"{workDir}\" -lSDL2 -o \"{exe}\"", workDir, out int buildExit);
+                if (buildExit != 0 || build.Contains("warning:")) CheckNat("UI nativ == VM", false, "C++-Compiler: " + build);
+                else
+                {
+                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
+                    string actual = RunProc(exe, "", workDir, out int runExit);
+                    string expected = string.Concat(uiDrawExpected.Select(l => l + "\n"));
+                    CheckNat("UI nativ == VM: Label, Button, CheckBox, TextBox, Stack zeichnen", runExit == 0 && actual == expected && uiDrawExpected.Length == 3, $"  erwartet (VM):\n{expected}\n  erhalten:\n{actual}");
+                }
+            }
+        }
+
+        // ---- Plattformschicht: dieselben Thread-Programme auf FreeRTOS (Tasks, Semaphoren) - hier auf dem Simulator (native/sim, pthreads)
+        {
+            string[] rtosCases = { "Actor: fire with", "Actor: mehrere", "sync: die Kopie", "sync: Arrays", "taking: der Thread", "terminate im Hauptprogramm", "catch threads()",
+                "Globals: sync global ist atomar", "Globals: fire global mit taking", "Thread startet Thread", "Globals: #nosync haelt", "leave aus einer Funktion" };
+            var rtosIndexes = Enumerable.Range(0, natCases.Length).Where(i => natCases[i].Name.StartsWith("Threads:") && rtosCases.Any(c => natCases[i].Name.Contains(c))).ToArray();
+            var rtosTasks = rtosIndexes.Select(index => Task.Run(() =>
+            {
+                string expected = vmResults[index];
+                string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos);
+                string file = Path.Combine(workDir, $"rtos{index}.cpp"), exe = Path.Combine(workDir, $"rtos{index}.bin");
+                // the board's startup code would call the entry point from a task; here main does
+                File.WriteAllText(file, cpp + "\nint main() { fire_start(); return 0; }\n");
+                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{file}\" -I\"{workDir}\" -I\"{Path.Combine(workDir, "sim")}\" -o \"{exe}\"", workDir, out int buildExit);
+                if (buildExit != 0 || build.Contains("warning:")) return (natCases[index].Name, expected, "C++-Compiler: " + build);
+                string actual = RunProc(exe, "", workDir, out _);   // (a FreeRTOS program has no exit code)
+                return (natCases[index].Name, expected, actual);
+            })).ToArray();
+            Task.WaitAll(rtosTasks);
+            foreach (var task in rtosTasks)
+            {
+                var (name, expected, actual) = task.Result;
+                CheckNat($"FreeRTOS == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (FreeRTOS):\n{actual}");
+            }
+            CheckNat("FreeRTOS: es gibt Faelle", rtosIndexes.Length >= 10, rtosIndexes.Length.ToString());
+        }
+
+        // ---- Zielkonfiguration (fire.native.json) und `build` mit dem nativen Motor
+        {
+            var config = fire.Native.NativeConfig.Parse("""
+                {
+                  // a comment, and a trailing comma
+                  "engine": "native", "target": "board",
+                  "targets": {
+                    "board": { "extends": "freertos", "includes": ["my_rtos.h"], "defines": ["BOARD_X=3", "FIRE_THREAD_PRIORITY=5"], "stackBytes": 6000,
+                               "entry": { "name": "board_main", "externC": false }, "toolchain": "mine" },
+                    "pc": { "platform": "posix", "compileArgs": ["-pthread"], },
+                  },
+                  "toolchains": { "mine": { "extends": "gcc", "optimization": "-O1", "args": ["-Wall"] } }
+                }
+                """);
+            var board = config.ResolveTarget();
+            CheckNat("Konfiguration: Ziel erbt vom eingebauten und ueberschreibt", board.Name == "board" && board.Native.Platform == "freertos" && board.FloatWidth == 32
+                && board.DefaultStackBytes == 6000 && board.Native.Includes.SequenceEqual(new[] { "my_rtos.h" }) && board.Native.Entry.Name == "board_main"
+                && !board.Native.Entry.ExternC && board.Native.Entry.Kind == fire.Runtime.EntryKind.Function && board.IsEmbedded);
+            var tc = config.ResolveToolchain(board);
+            CheckNat("Konfiguration: Toolchain erbt vom eingebauten", tc.EffectiveKind == "gcc" && tc.Optimization == "-O1" && tc.EffectiveCompiler == "g++" && tc.Std == "c++17" && tc.Args!.SequenceEqual(new[] { "-Wall" }));
+            bool unknownTarget = false;
+            try { config.ResolveTarget("amiga"); } catch (fire.Native.NativeConfigException) { unknownTarget = true; }
+            CheckNat("Konfiguration: unbekanntes Ziel wird abgelehnt, Standard ist der Rechner", unknownTarget && new fire.Native.NativeConfig().ResolveTarget() == TargetProfile.Host);
+            var roundTrip = fire.Native.NativeConfig.Parse(config.ToJson());
+            CheckNat("Konfiguration: speichern und wieder lesen", roundTrip.ResolveTarget("board").Native.Defines.SequenceEqual(new[] { "BOARD_X=3", "FIRE_THREAD_PRIORITY=5" }) && roundTrip.Engine == "native");
+            string boardCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release, null, board), board);
+            int incAt = boardCpp.IndexOf("#include <my_rtos.h>", StringComparison.Ordinal), platAt = boardCpp.IndexOf("#define FIRE_PLATFORM_HEADER \"platform/freertos/fire_platform.hpp\"", StringComparison.Ordinal);
+            CheckNat("Konfiguration: Defines, Includes vor der Plattform und Einsprung stehen im C++", boardCpp.Contains("#define BOARD_X 3") && incAt > 0 && platAt > incAt
+                && boardCpp.Contains("void board_main(void) {") && !boardCpp.Contains("extern \"C\" void board_main") && boardCpp.IndexOf("#define BOARD_X 3", StringComparison.Ordinal) < incAt);
+
+            // conditional compilation (#if): symbols come from the target, the engine and -D
+            {
+                string Pp(string src, TargetProfile t, string engine = "vm", params string[] defs)
+                {
+                    var reg = new DirectiveRegistry();
+                    foreach (var sym in ConditionalSymbols.For(t, engine, null, defs)) reg.Symbols.Add(sym);
+                    return Preprocessor.Process(src, ".", reg).Source;
+                }
+                string[] Lines(string text) => text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Where(l => l.Length > 0).ToArray();
+                string pick = "#if windows\nW\n#elif esp32 && native\nE\n#elif linux || macos\nP\n#else\nO\n#endif\n";
+                CheckNat("#if: das Ziel waehlt den Zweig", Lines(Pp(pick, TargetProfile.Windows)).SequenceEqual(new[] { "W" }) && Lines(Pp(pick, TargetProfile.Esp32, "native")).SequenceEqual(new[] { "E" })
+                    && Lines(Pp(pick, TargetProfile.Esp32, "vm")).SequenceEqual(new[] { "O" }) && Lines(Pp(pick, TargetProfile.Linux)).SequenceEqual(new[] { "P" }) && Lines(Pp(pick, TargetProfile.MacOs)).SequenceEqual(new[] { "P" }));
+                string numbered = "a\n#if false\nb\nc\n#endif\nd\n";
+                CheckNat("#if: die Zeilennummern bleiben erhalten", Pp(numbered, TargetProfile.Linux).Split('\n').ToList().IndexOf("d") == 5 && Lines(Pp(numbered, TargetProfile.Linux)).SequenceEqual(new[] { "a", "d" }));
+                CheckNat("#if: Ausdruecke (!, &&, ||, Klammern, true/false, Gross-/Kleinschreibung)",
+                    Lines(Pp("#if !(windows || macos) && LINUX\nyes\n#endif\n#if false || (true && !linux)\nno\n#endif\n#if float32\nf32\n#endif\n", TargetProfile.Linux)).SequenceEqual(new[] { "yes" })
+                    && Lines(Pp("#if float32\nf32\n#endif\n", TargetProfile.Esp32)).SequenceEqual(new[] { "f32" }));
+                string nested = "#if linux\n1\n#if windows\n2\n#else\n3\n#endif\n#else\n4\n#if broken ((\n5\n#elif also broken\n6\n#endif\n#unknownthing\n#endif\n";
+                CheckNat("#if: verschachtelt, ein nicht gewaehlter Zweig wird nicht gelesen", Lines(Pp(nested, TargetProfile.Linux)).SequenceEqual(new[] { "1", "3" }));
+                CheckNat("#define, #undef, #ifdef, #ifndef", Lines(Pp("#ifdef X\nA\n#endif\n#define X\n#ifdef X\nB\n#endif\n#ifndef X\nC\n#endif\n#undef X\n#ifndef X\nD\n#endif\n#if Y\nE\n#endif\n", TargetProfile.Linux, "vm", "Y"))
+                    .SequenceEqual(new[] { "B", "D", "E" }));
+                string ifErr(string src) { try { Pp(src, TargetProfile.Linux); return "no error"; } catch (PreprocessorException ex) { return ex.Message; } }
+                CheckNat("#if: Fehler (fehlendes #endif, #else/#endif/#elif ohne #if, zweites #else, #elif nach #else, falscher Ausdruck, #error)",
+                    ifErr("#if linux\nx\n").Contains("no '#endif'") && ifErr("#else\n").Contains("without '#if'") && ifErr("#endif\n").Contains("without '#if'") && ifErr("#elif a\n").Contains("without '#if'")
+                    && ifErr("#if a\n#else\n#else\n#endif\n").Contains("second '#else'") && ifErr("#if a\n#else\n#elif b\n#endif\n").Contains("after '#else'") && ifErr("#if a ||\n#endif\n").Contains("ends too early")
+                    && ifErr("#if (a\n#endif\n").Contains("')' is missing") && ifErr("#if a $ b\n#endif\n").Contains("unexpected character") && ifErr("#if linux\n#error nur Windows\n#endif\n").Contains("#error nur Windows") && ifErr("#if windows\n#error nicht gelesen\n#endif\n") == "no error");
+                var gated = "#if esp32\n#import \"graphics\"\n#endif\n#if linux\n#import \"time\"\n#endif\n";
+                CheckNat("#if: ein #import in einem nicht gewaehlten Zweig zaehlt nicht (Editor)", ImportedPreludes.FindImportNames(gated, ConditionalSymbols.For(TargetProfile.Linux)).SequenceEqual(new[] { "time" })
+                    && ImportedPreludes.FindImportNames(gated, ConditionalSymbols.For(TargetProfile.Esp32)).SequenceEqual(new[] { "graphics" }));
+                var greySource = "a\n#if esp32\nb\n#else\nc\n#endif\n#ifdef EXTRA\nd\n#endif\ne";
+                var greyLinux = ConditionalSymbols.InactiveLines(greySource, ConditionalSymbols.For(TargetProfile.Linux));
+                var greyDefined = ConditionalSymbols.InactiveLines(greySource, ConditionalSymbols.For(TargetProfile.Esp32, "native", null, new[] { "EXTRA" }));
+                CheckNat("#if: die Zeilen nicht gewaehlter Zweige werden erkannt (Editor: ausgegraut)",
+                    string.Join(",", greyLinux.Select(x => x ? "1" : "0")) == "0,0,1,0,0,0,0,1,0,0" && string.Join(",", greyDefined.Select(x => x ? "1" : "0")) == "0,0,0,0,1,0,0,0,0,0");
+                string ifDir = Path.Combine(workDir, "ifbuild");
+                Directory.CreateDirectory(ifDir);
+                string ifScript = Path.Combine(ifDir, "cond.script");
+                File.WriteAllText(ifScript, "#if native\nprint(\"engine native\")\n#elif vm\nprint(\"engine vm\")\n#endif\n#if EXTRA\nprint(\"extra\")\n#endif\n#if windows\nprint(\"windows\")\n#elif posix\nprint(\"posix\")\n#endif\n");
+                File.WriteAllText(Path.Combine(ifDir, "fire.native.json"), "{ \"engine\": \"native\", \"target\": \"" + TargetProfile.Host.Name + "\", \"toolchain\": \"" + (cxx.Contains("clang") ? "clang" : "gcc") + "\" }");
+                string ifExe = Path.Combine(ifDir, "cond.out");
+                int ifCode = CommandLineRunner.Run(new[] { "build", ifScript, "-D", "EXTRA", "-o", ifExe }, new StringWriter(), new StringWriter());
+                string ifRan = ifCode == 0 ? RunProc(ifExe, "", ifDir, out _) : "";
+                CheckNat("#if: build --engine native setzt native, das Ziel und -D", ifCode == 0 && ifRan == "engine native\nextra\n" + (TargetProfile.Host.Name == "windows" ? "windows" : "posix") + "\n", ifRan);
+                var badDefine = CommandLineParser.Parse(new[] { "run", ifScript, "-D", "1x" });
+                CheckNat("#if: -D braucht einen Namen", badDefine.Error != null && CommandLineParser.Parse(new[] { "run", ifScript, "-DA", "--define", "B", "-D=C" }).Defines.SequenceEqual(new[] { "A", "B", "C" }));
+            }
+
+            // the console through IO.Stdio: the standard input is read (lines end with \n, \r\n or \r), output and errors go to their streams
+            {
+                string ioDir = Path.Combine(workDir, "iobuild");
+                Directory.CreateDirectory(ioDir);
+                string ioScript = Path.Combine(ioDir, "console.script");
+                File.WriteAllText(ioScript, "#import \"io\"\nprint(\"first\")\nvar a = IO.Stdio.ReadLine()\nIO.Stdio.WriteLine(\"a=\" + a)\nIO.Stdio.ErrorLine(\"to stderr\")\nvar b = IO.Stdio.ReadLine()\nvar rest = IO.Stdio.ReadAll()\nprint(\"b=\" + b + \" rest=\" + rest.length)\nprint(IO.Stdio.ReadLine() == undefined)\nvar so = IO.Stdio.Out()\nvar w = new IO.TextWriter(so, true)\nw.WriteLine(\"via writer\")\nw.Flush()\n");
+                File.WriteAllText(Path.Combine(ioDir, "fire.native.json"), "{ \"engine\": \"native\", \"target\": \"" + TargetProfile.Host.Name + "\", \"toolchain\": \"" + (cxx.Contains("clang") ? "clang" : "gcc") + "\" }");
+                string ioExe = Path.Combine(ioDir, "console.out");
+                int ioCode = CommandLineRunner.Run(new[] { "build", ioScript, "-o", ioExe }, new StringWriter(), new StringWriter());
+                string ioRan = ioCode == 0 ? RunProc(ioExe, "", ioDir, out _, "one\r\ntwo\nthree\rfour") : "";
+                string[] ioLines = ioRan.Split('\n');
+                CheckNat("IO: Standardeingabe, -ausgabe und -fehler", ioCode == 0 && ioLines.Contains("first") && ioLines.Contains("a=one") && ioLines.Contains("to stderr") && ioLines.Contains("b=two rest=10") && ioLines.Contains("True") && ioLines.Contains("via writer"), ioRan);
+            }
+
+            // build --engine native through the command line runner: a program, and the files of a project
+            string dir = Path.Combine(workDir, "build");
+            Directory.CreateDirectory(dir);
+            string script = Path.Combine(dir, "hello.script");
+            File.WriteAllText(script, "var n = 0\nfire { sync global { n = 41 + 1 } }\nwhile (n == 0) { sync globals }\nprint(\"n \" + n)\n");
+            File.WriteAllText(Path.Combine(dir, "fire.native.json"), "{ \"engine\": \"native\", \"target\": \"" + TargetProfile.Host.Name + "\", \"toolchain\": \"" + (cxx.Contains("clang") ? "clang" : "gcc") + "\" }");
+            string exeOut = Path.Combine(dir, "hello.out");
+            var outW = new StringWriter(); var errW = new StringWriter();
+            int code = CommandLineRunner.Run(new[] { "build", script, "-o", exeOut }, outW, errW);
+            string ran = code == 0 ? RunProc(exeOut, "", dir, out _) : "";
+            CheckNat("build: der native Motor aus fire.native.json baut ein Programm", code == 0 && ran == "n 42\n", $"{code}\n{outW}\n{errW}\n{ran}");
+            string projectOut = Path.Combine(dir, "project");
+            var out2 = new StringWriter(); var err2 = new StringWriter();
+            int code2 = CommandLineRunner.Run(new[] { "build", script, "-t", "esp32", "-o", projectOut }, out2, err2);
+            CheckNat("build: Ziel esp32 schreibt die Dateien eines ESP-IDF-Komponenten", code2 == 0 && File.Exists(Path.Combine(projectOut, "fire_program.cpp")) && File.Exists(Path.Combine(projectOut, "fire_rt.hpp"))
+                && File.Exists(Path.Combine(projectOut, "platform", "esp32", "fire_platform.hpp")) && File.Exists(Path.Combine(projectOut, "platform", "freertos", "fire_platform.hpp"))
+                && File.ReadAllText(Path.Combine(projectOut, "CMakeLists.txt")).Contains("idf_component_register") && File.ReadAllText(Path.Combine(projectOut, "fire_program.cpp")).Contains("void app_main(void)"), $"{code2}\n{out2}\n{err2}");
+            var err3 = new StringWriter();
+            int code3 = CommandLineRunner.Run(new[] { "build", script, "-t", "amiga", "-o", Path.Combine(dir, "x") }, new StringWriter(), err3);
+            CheckNat("build: unbekanntes Ziel ist ein Fehler der Befehlszeile", code3 == CommandLineRunner.ExitUsage && err3.ToString().Contains("amiga"), err3.ToString());
+            var out4 = new StringWriter();
+            int code4 = CommandLineRunner.Run(new[] { "build", script, "--engine", "vm", "-o", Path.Combine(dir, "vm.exe") }, out4, new StringWriter());
+            CheckNat("build: --engine vm gewinnt gegen die Konfiguration", code4 == 0 && File.Exists(Path.Combine(dir, "vm.exe")));
+        }
+
+        // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
+        try
+        {
+            fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#import \"windows\"\nvar x = __GRPHWinCreate(1)" }, null, null, VmExecutionMode.Release));
+            CheckNat("Nicht unterstuetzte Opcodes werden abgelehnt", false, "keine Ausnahme");
+        }
+        catch (fire.Native.NativeNotSupportedException ex)
+        {
+            CheckNat("Nicht unterstuetzte native Funktionen werden abgelehnt", ex.Message.Contains("native function"), ex.Message);
+        }
+        try { Directory.Delete(workDir, true); } catch (IOException) { }
+    }
+
+    // ---- Pakete (ember): fpk, Store, Quellen, #import "name" in VM und nativ ----
+    {
+        Console.WriteLine("=== Pakete (ember) ===");
+        string pkgDir = Path.Combine(Path.GetTempPath(), "fire-pkg-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(pkgDir);
+        var savedStore = fire.Package.Manager.PackageStore.Default;
+        try
+        {
+            // a package whose parts are files in a folder of its own; returns the path of the forge file
+            string MakeForge(string name, string version, string importName, string? prelude, string? nativeCpp, Action<fire.Package.Manager.PackageManifest>? tweak = null)
+            {
+                string dir = Path.Combine(pkgDir, "src-" + name + "-" + version);
+                Directory.CreateDirectory(dir);
+                var m = new fire.Package.Manager.PackageManifest { Name = name, Version = version, Author = "tester", Description = "test package " + name };
+                var import = new fire.Package.Manager.PackageImport { Name = importName };
+                if (prelude != null) { File.WriteAllText(Path.Combine(dir, importName + ".fire"), prelude); import.Prelude = Path.Combine(dir, importName + ".fire"); }
+                if (nativeCpp != null)
+                {
+                    File.WriteAllText(Path.Combine(dir, importName + ".hpp"), nativeCpp);
+                    import.Native = new fire.Package.Manager.PackageNative { Sources = { Path.Combine(dir, importName + ".hpp") } };
+                }
+                m.Imports.Add(import);
+                tweak?.Invoke(m);
+                string json = Path.Combine(dir, "forge.json");
+                m.Save(json);
+                return json;
+            }
+
+            // the template: forging it works as it is, the package.json has relative paths, the kept description absolute ones and forges the same package again
+            string exJson = Path.Combine(pkgDir, "example", "mathkit.json");
+            fire.Package.Manager.Templates.Example(exJson, writeFiles: true).Save(exJson);
+            var forged = fire.Package.Manager.Fpk.Forge(exJson, Path.Combine(pkgDir, "out"));
+            var inside = fire.Package.Manager.Fpk.ReadManifest(forged.PackagePath);
+            var kept = fire.Package.Manager.PackageManifest.Load(forged.JsonCopyPath);
+            CheckNat("Paket: ember create + forge: package.json im fpk mit relativen Pfaden, die Beschreibung daneben mit absoluten",
+                File.Exists(forged.PackagePath) && inside.Name == "mathkit" && inside.Imports[0].Prelude == "mathkit/mathkit.fire" && inside.Imports[0].Native!.Sources[0] == "mathkit/mathkit.hpp"
+                && Path.IsPathRooted(kept.Imports[0].Prelude!) && Path.IsPathRooted(kept.Imports[0].Native!.Sources[0]) && forged.JsonCopyPath.Replace('\\', '/').EndsWith("out/json/mathkit-1.0.0.json"));
+            var again = fire.Package.Manager.Fpk.Forge(forged.JsonCopyPath, Path.Combine(pkgDir, "out2"));
+            CheckNat("Paket: die kopierte Beschreibung baut dasselbe Paket noch einmal", again.Manifest.ToJson() == forged.Manifest.ToJson());
+            var blank = fire.Package.Manager.Templates.Blank();
+            CheckNat("Paket: ember blank hat alle Felder, aber leer, und ist ungueltig", blank.Imports.Count == 1 && blank.Name == "" && blank.Validate().Count >= 3);
+            var reserved = new fire.Package.Manager.PackageManifest { Name = "x", Version = "1.0", Imports = { new fire.Package.Manager.PackageImport { Name = "io", Prelude = "a.fire" } } };
+            CheckNat("Paket: ein Importname des Compilers ist verboten, eine fehlende Datei beim Schmieden ein Fehler",
+                reserved.Validate().Any(p => p.Contains("belongs to the compiler")) && PkgThrows(() => fire.Package.Manager.Fpk.Forge(MakeForge("missing", "1.0.0", "missing", "class A {}", null, m => m.Imports[0].Prelude = Path.Combine(pkgDir, "nothere.fire")), Path.Combine(pkgDir, "out"))));
+
+            // the store: install, find the import (not case sensitive), replace, remove
+            var store = new fire.Package.Manager.PackageStore(Path.Combine(pkgDir, "Packages"));
+            string demoFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkgdemo", "1.0.0", "pkgdemo", "class PkgDemo { static Twice(x) { return x * 2 } }", null), Path.Combine(pkgDir, "out")).PackagePath;
+            store.Install(demoFpk);
+            CheckNat("Paket: installieren, den Import finden (Gross-/Kleinschreibung egal) und entfernen",
+                store.Find("PKGDEMO") is { Version: "1.0.0" } && store.FindImport("PkgDemo")?.Key == "pkg:pkgdemo" && store.FindImport("PkgDemo")!.ReadPrelude()!.Contains("Twice")
+                && store.Remove("pkgdemo") && store.Find("pkgdemo") == null && !store.Remove("pkgdemo"));
+
+            // a zip that leaves its folder is refused
+            string evil = Path.Combine(pkgDir, "evil.fpk");
+            using (var zip = System.IO.Compression.ZipFile.Open(evil, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                var m = new fire.Package.Manager.PackageManifest { Name = "evil", Version = "1.0.0", Imports = { new fire.Package.Manager.PackageImport { Name = "evil", Prelude = "../evil.fire" } } };
+                using (var w = new StreamWriter(zip.CreateEntry("package.json").Open())) w.Write(m.ToJson());
+                using (var w = new StreamWriter(zip.CreateEntry("../evil.fire").Open())) w.Write("class E {}");
+            }
+            CheckNat("Paket: ein fpk mit einem Pfad aus dem Ordner heraus wird abgelehnt", PkgThrows(() => store.Install(evil)) && !File.Exists(Path.Combine(pkgDir, "evil.fire")));
+
+            // the sources: a folder of packages (two versions, a dependency) and an index with checksums
+            string sourceDir = Path.Combine(pkgDir, "PackageSource");
+            Directory.CreateDirectory(sourceDir);
+            foreach (var (n, v, dep) in new[] { ("libbase", "1.0.0", ""), ("libtop", "1.0.0", "libbase"), ("libtop", "1.2.0", "libbase"), ("libtop", "1.10.0", "libbase") })
+            {
+                string forge = MakeForge(n, v, n, $"class {n}V{v.Replace(".", "_")} {{ }}", null, m => { if (dep.Length > 0) m.Dependencies.Add(dep); });
+                File.Copy(fire.Package.Manager.Fpk.Forge(forge, Path.Combine(pkgDir, "built")).PackagePath, Path.Combine(sourceDir, $"{n}-{v}.fpk"), true);
+            }
+            var service = new fire.Package.Manager.PackageManagerService(new fire.Package.Manager.PackageStore(Path.Combine(pkgDir, "P2")), new fire.Package.Manager.IPackageSource[] { new fire.Package.Manager.FolderSource(sourceDir) });
+            var found = service.Find("lib");
+            var top = found.First(l => l.Name == "libtop");
+            CheckNat("Paket: find sucht in Namen und Beschreibung, die neueste Version zaehlt numerisch (1.10 > 1.2)", found.Count == 2 && top.Versions.Count == 3 && top.Latest!.Version == "1.10.0" && service.Find("LIBTOP").Count == 1 && service.Find("nothing like it").Count == 0);
+            var pkgLog = new List<string>();
+            service.Install("libtop@1.2.0", pkgLog.Add);
+            CheckNat("Paket: install holt die gewuenschte Version samt Abhaengigkeit, ein zweites Mal ist nichts zu tun",
+                service.Store.Find("libtop")?.Version == "1.2.0" && service.Store.Find("libbase") != null && PkgThrows(() => service.Install("libtop@9.9.9")) && service.Install("libtop@1.2.0", pkgLog.Add).Count == 0);
+            bool refusedDependency = PkgThrows(() => service.Remove("libbase"));
+            service.Remove("libtop");
+            service.Remove("libbase");
+            CheckNat("Paket: remove verweigert, was ein anderes Paket braucht", refusedDependency && service.Store.Installed().Count == 0);
+            string indexFile = Path.Combine(sourceDir, "index.json");
+            File.WriteAllText(indexFile, fire.Package.Manager.PackageIndex.Build(sourceDir, null));
+            var indexed = new fire.Package.Manager.IndexSource(indexFile).List();
+            CheckNat("Paket: ein Index (ember index) nennt Namen, Autor, Beschreibung, Versionen und Pruefsummen", indexed.Count == 2 && indexed.First(l => l.Name == "libtop").Versions.Count == 3 && indexed.First(l => l.Name == "libtop").Author == "tester"
+                && indexed.All(l => l.Versions.All(v => v.Sha256 is { Length: 64 } && File.Exists(v.Url))));
+            var viaIndex = new fire.Package.Manager.PackageManagerService(new fire.Package.Manager.PackageStore(Path.Combine(pkgDir, "P3")), new fire.Package.Manager.IPackageSource[] { new fire.Package.Manager.IndexSource(indexFile) });
+            viaIndex.Install("libbase");
+            var broken = new fire.Package.Manager.PackageVersion("1.0.0", Path.Combine(sourceDir, "libbase-1.0.0.fpk"), new string('0', 64));
+            CheckNat("Paket: install ueber einen Index, eine falsche Pruefsumme wird abgelehnt", viaIndex.Store.Find("libbase") != null && PkgThrows(() => new fire.Package.Manager.IndexSource(indexFile).Fetch(broken, Path.Combine(pkgDir, "dl"))));
+
+            // #import "name": the prelude of a package in the VM; an unknown import points to ember
+            fire.Package.Manager.PackageStore.Default = new fire.Package.Manager.PackageStore(Path.Combine(pkgDir, "Packages"));
+            fire.Package.Manager.PackageStore.Default.Install(demoFpk);
+            string vmPkg = vmOutput("#import \"pkgdemo\"\nprint(PkgDemo.Twice(21))");
+            string unknown;
+            try { vmOutput("#import \"nosuchpackage\"\nprint(1)"); unknown = ""; } catch (Exception ex) { unknown = ex.Message; }
+            CheckNat("Paket: #import \"name\" bringt die Prelude eines installierten Pakets (VM); ein unbekannter Import verweist auf ember", vmPkg == "42\n" && unknown.Contains("not a known extension") && unknown.Contains("ember"), vmPkg + unknown);
+            var onEsp = new Linker().CompileAndLink(new[] { "#import \"pkgdemo\"\nprint(PkgDemo.Twice(2))" }, null, null, VmExecutionMode.Release, null, TargetProfile.Esp32);
+            CheckNat("Paket: ein Import eines Pakets ist auf jedem Ziel erlaubt (die Plattformen nennt der native Teil)", onEsp.NativeImports.Contains("pkg:pkgdemo"));
+
+            // the natives (C++): not in the VM, in the native backend the source is part of the generated file; needsList gives the native the list of the scope
+            string natPrelude = "class PkgNat { static Twice(x) { return __pk_twice(x) }\n static Squares(n) { return __pk_squares(n) } }";
+            string natCpp = "#include <cstdint>\nnamespace fire {\ninline Value pk_twice(Value a) { return Int(a.i * 2); }\n"
+                + "inline Value pk_squares(Value n, OwnList* list) { Arr* a = allocArr((uint32_t)n.i, list); for (int64_t i = 0; i < n.i; i++) a->items()[i] = Int(i * i); return ArrV(a); }\n}\n";
+            string natFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pknat", "1.0.0", "pknat", natPrelude, natCpp, m =>
+            {
+                m.Imports[0].Native!.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = "__pk_twice", Arguments = 1, Cpp = "pk_twice" });
+                m.Imports[0].Native!.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = "__pk_squares", Arguments = 1, Cpp = "pk_squares", NeedsList = true, ReturnsReference = true });
+            }), Path.Combine(pkgDir, "out")).PackagePath;
+            fire.Package.Manager.PackageStore.Default.Install(natFpk);
+            string natScript = "#import \"pknat\"\nprint(PkgNat.Twice(21))\nvar s = PkgNat.Squares(4)\nprint(s.length)\nprint(s[3])";
+            string pkgCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natScript }, null, null, VmExecutionMode.Release));
+            CheckNat("Paket: der C++-Quelltext des Natives steht im erzeugten C++", pkgCpp.Contains("---- package pknat 1.0.0, import \"pknat\"") && pkgCpp.Contains("inline Value pk_twice") && pkgCpp.Contains("= pk_squares("));
+            string? pkgCxx = FindCxx();
+            if (pkgCxx != null)
+            {
+                string run = Path.Combine(pkgDir, "run");
+                fire.Native.NativeRuntimeFiles.WriteTo(run);
+                File.WriteAllText(Path.Combine(run, "pkg.cpp"), pkgCpp);
+                string RunTool(string tool, string args, string? workDirectory = null)
+                {
+                    using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool, args) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDirectory ?? run })!;
+                    var err = p.StandardError.ReadToEndAsync();
+                    string output = p.StandardOutput.ReadToEnd();
+                    p.WaitForExit();
+                    return (p.ExitCode == 0 ? "" : $"[exit {p.ExitCode}] ") + output + err.Result;
+                }
+                string build = RunTool(pkgCxx, $"-std=c++17 -pthread -O1 -Wall -Wextra \"{Path.Combine(run, "pkg.cpp")}\" -I\"{run}\" -o \"{Path.Combine(run, "pkg.bin")}\"");
+                string result = build.Length == 0 ? RunTool(Path.Combine(run, "pkg.bin"), "") : "C++-Compiler: " + build;
+                CheckNat("Paket: das C++-Native laeuft im uebersetzten Programm (Zahlen, ein Array aus der Scope-Liste)", result == "42\n4\n9\n", result);
+
+                // the same natives in the virtual machine: built into a shared library with the C ABI, called through it (numbers, text, arrays, buffers cross; errors are reported)
+                string vmNative;
+                try { vmNative = vmOutput(natScript); } catch (Exception ex) { vmNative = ex.Message; }
+                CheckNat("Paket: dasselbe C++-Native laeuft in der VM ueber eine Shared Library (C-ABI) und liefert dasselbe wie nativ", vmNative == result, vmNative);
+                string abiCpp = "#include <cstdint>\nnamespace fire {\n"
+                    + "inline Value ab_upper(Value s, OwnList* list) { const Str* t = strOf(s); Str* r = allocStr(t->length, list); for (uint32_t i = 0; i < t->length; i++) strChars(r)[i] = t->data[i] >= 'a' && t->data[i] <= 'z' ? (char16_t)(t->data[i] - 32) : t->data[i]; return StrV(r); }\n"
+                    + "inline Value ab_sum(Value arr) { Arr* a = arrOf(arr); double t = 0; for (uint32_t i = 0; i < a->length; i++) t += (double)toR(a->items()[i]); return Float((Real)t); }\n"
+                    + "inline Value ab_bytes(Value buf, OwnList* list) { Buf* b = bufOf(buf); Buf* r = allocBuf(b->length, list); for (uint32_t i = 0; i < b->length; i++) r->bytes()[i] = (uint8_t)(b->bytes()[i] + 1); return BufV(r); }\n"
+                    + "inline Value ab_fill(Value buf, Value v) { Buf* b = bufOf(buf); for (uint32_t i = 0; i < b->length; i++) b->bytes()[i] = (uint8_t)v.i; return Int(b->length); }\n"
+                    + "inline Value ab_fail(Value n) { return indexError(\"Array index\", n.i, 3); }\n}\n";
+                string abiFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkabi", "1.0.0", "pkabi", "class PkAbi { static Upper(s) { return __ab_upper(s) }\n static Sum(a) { return __ab_sum(a) }\n static Bytes(b) { return __ab_bytes(b) }\n static Fill(b, v) { return __ab_fill(b, v) }\n static Fail(n) { return __ab_fail(n) } }", abiCpp, m =>
+                {
+                    foreach (var (n, c, argc, list) in new[] { ("__ab_upper", "ab_upper", 1, true), ("__ab_sum", "ab_sum", 1, false), ("__ab_bytes", "ab_bytes", 1, true), ("__ab_fill", "ab_fill", 2, false), ("__ab_fail", "ab_fail", 1, false) })
+                        m.Imports[0].Native!.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = n, Arguments = argc, Cpp = c, NeedsList = list, ReturnsReference = list });
+                }), Path.Combine(pkgDir, "out")).PackagePath;
+                fire.Package.Manager.PackageStore.Default.Install(abiFpk);
+                string abiScript = "#import \"pkabi\"\nprint(PkAbi.Upper(\"hello w\u00f6rld\"))\nprint(PkAbi.Sum([1, 2.5, 3]))\nvar b = new byte[3]\nb[0] = 1; b[1] = 2; b[2] = 255\nvar c = PkAbi.Bytes(b)\nprint(c[0] + \" \" + c[1] + \" \" + c[2] + \" \" + b[2])";
+                string abiVm;
+                try { abiVm = vmOutput(abiScript); } catch (Exception ex) { abiVm = ex.Message; }
+                string abiFail;
+                try { vmOutput("#import \"pkabi\"\nPkAbi.Fail(7)"); abiFail = ""; } catch (Exception ex) { abiFail = ex.Message; }
+                CheckNat("Paket: Zahlen, Text (UTF-16), Arrays und Byte-Puffer gehen ueber die C-ABI hin und zurueck",
+                    abiVm == "HELLO W\u00f6RLD\n6.5\n2 3 0 255\n", abiVm);
+                string fillVm;
+                try { fillVm = vmOutput("#import \"pkabi\"\nvar big = new byte[1000000]\nprint(PkAbi.Fill(big, 7))\nprint(big[0] + \" \" + big[500000] + \" \" + big[999999])\nvar small = new byte[4]\nPkAbi.Fill(small, 9)\nprint(small[3])"); } catch (Exception ex) { fillVm = ex.Message; }
+                CheckNat("Paket: ein Byte-Puffer geht ohne Kopie an die Native (in place beschrieben, auch ein grosser wie ein Framebuffer)", fillVm == "1000000\n7 7 7\n9\n", fillVm);
+                CheckNat("Paket: ein Fehler der Native (hier IndexOutOfBounds) meldet die VM mit seinem Text", abiFail.Contains("Array index 7 out of range"), abiFail);
+
+                // per platform: sources of the target are added; the VM uses those of this machine
+                string whichFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkwhich", "1.0.0", "pkwhich", "class PkWhich { static Which() { return __pk_which() } }", "namespace fire { }\n", m =>
+                {
+                    string d = Path.Combine(pkgDir, "which");
+                    Directory.CreateDirectory(d);
+                    var native = m.Imports[0].Native!;
+                    foreach (var (key, value) in new[] { ("posix", 1), ("windows", 2), ("freertos", 3) })
+                    {
+                        File.WriteAllText(Path.Combine(d, key + ".hpp"), $"namespace fire {{ inline Value pk_which_{key}() {{ return Int({value}); }} }}\n");
+                        native.PlatformSources[key] = new List<string> { Path.Combine(d, key + ".hpp") };
+                    }
+                    File.WriteAllText(Path.Combine(d, "common.hpp"), "namespace fire {\n#if defined(FIRE_HAL_WINDOWS)\ninline Value pk_which() { return pk_which_windows(); }\n#elif defined(FIRE_HAL_FREERTOS)\ninline Value pk_which() { return pk_which_freertos(); }\n#else\ninline Value pk_which() { return pk_which_posix(); }\n#endif\n}\n");
+                    native.Sources.Clear();
+                    native.Sources.Add(Path.Combine(d, "common.hpp"));
+                    native.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = "__pk_which", Arguments = 0, Cpp = "pk_which" });
+                }), Path.Combine(pkgDir, "out")).PackagePath;
+                fire.Package.Manager.PackageStore.Default.Install(whichFpk);
+                string whichScript = "#import \"pkwhich\"\nprint(PkWhich.Which())";
+                string cppLinux = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { whichScript }, null, null, VmExecutionMode.Release, null, TargetProfile.Linux), TargetProfile.Linux);
+                string cppRtos = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { whichScript }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos);
+                string vmWhich;
+                try { vmWhich = vmOutput(whichScript); } catch (Exception ex) { vmWhich = ex.Message; }
+                CheckNat("Paket: platformSources - jedes Ziel bekommt seine Quellen (Linux: posix, FreeRTOS: freertos), die VM die der eigenen Plattform",
+                    cppLinux.Contains("pk_which_posix() {") && !cppLinux.Contains("pk_which_freertos() {") && !cppLinux.Contains("pk_which_windows() {") && cppRtos.Contains("pk_which_freertos() {") && !cppRtos.Contains("pk_which_posix() {")
+                    && vmWhich == (OperatingSystem.IsWindows() ? "2\n" : "1\n"), vmWhich);
+
+                // a program that is packed carries the library of its package: it runs where the package is not installed
+                string packed = Path.Combine(pkgDir, "packed.bin");
+                new Linker().CompileAndLink(new[] { natScript }, null, packed, VmExecutionMode.Release);
+                var storeForPack = fire.Package.Manager.PackageStore.Default;
+                fire.Package.Manager.PackageStore.Default = new fire.Package.Manager.PackageStore(Path.Combine(pkgDir, "EmptyStore"));
+                string packedRun = "";
+                if (File.Exists(packed) && !OperatingSystem.IsWindows())
+                {
+                    using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(packed) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+                    var err = p.StandardError.ReadToEndAsync();
+                    packedRun = p.StandardOutput.ReadToEnd() + err.Result;
+                    p.WaitForExit();
+                }
+                CheckNat("Paket: ein gepacktes Programm bringt die Bibliothek seiner Pakete mit (laeuft ohne das Paket)", OperatingSystem.IsWindows() || packedRun == "42\n4\n9\n", packedRun);
+                fire.Package.Manager.PackageStore.Default = storeForPack;
+            }
+            // the platform of the native part: a package for windows only is refused for another target
+            string winOnly = fire.Package.Manager.Fpk.Forge(MakeForge("pkgwin", "1.0.0", "pkgwin", "class PkgWin { static F(x) { return __pk_win(x) } }", "namespace fire { inline Value pk_win(Value a) { return a; } }\n", m =>
+            {
+                m.Imports[0].Native!.Platforms.Add("windows");
+                m.Imports[0].Native!.Functions.Add(new fire.Package.Manager.PackageNativeFunction { Name = "__pk_win", Arguments = 1, Cpp = "pk_win" });
+            }), Path.Combine(pkgDir, "out")).PackagePath;
+            fire.Package.Manager.PackageStore.Default.Install(winOnly);
+            bool refused = false;
+            try { fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#import \"pkgwin\"\nprint(PkgWin.F(1))" }, null, null, VmExecutionMode.Release, null, TargetProfile.Linux), TargetProfile.Linux); }
+            catch (fire.Native.NativeNotSupportedException ex) { refused = ex.Message.Contains("pkgwin") && ex.Message.Contains("windows"); }
+            CheckNat("Paket: ein natives Paket nur fuer andere Plattformen wird fuers Ziel abgelehnt", refused);
+
+            // the standard bridges as packages: built into a folder, installed when missing, not again when nothing changed; the compiler still resolves the names to its built-in bridges
+            {
+                string bridgeSource = Path.Combine(pkgDir, "BridgeSource");
+                var built = fire.Compiler.StandardBridgePackages.Build(bridgeSource);
+                var ioPackage = fire.Package.Manager.Fpk.ReadManifest(built.First(f => Path.GetFileName(f).StartsWith("fire-io-")));
+                var bridgeStore = new fire.Package.Manager.PackageStore(Path.Combine(pkgDir, "BridgePackages"));
+                var savedDefault = fire.Package.Manager.PackageStore.Default;
+                fire.Package.Manager.PackageStore.Default = bridgeStore;
+                try
+                {
+                    var first = fire.Package.Manager.StandardPackages.EnsureInstalled(null, bridgeSource);
+                    var second = fire.Package.Manager.StandardPackages.EnsureInstalled(null, bridgeSource);
+                    CheckNat("Bruecken-Pakete: je Standard-Bridge ein Paket mit Prelude und C++-Quellen, als standard markiert",
+                        built.Count == fire.Package.Manager.StandardPackages.Bridges.Count && ioPackage.Imports[0].Standard && ioPackage.Imports[0].Name == "io" && ioPackage.Imports[0].Prelude != null && ioPackage.Imports[0].Native?.Sources.Count > 0
+                        && fire.Package.Manager.Fpk.ReadManifest(built.First(f => Path.GetFileName(f).StartsWith("fire-linq-"))).Dependencies.Contains("fire-reflection"));
+                    CheckNat("Bruecken-Pakete: beim Start werden fehlende installiert (mit Abhaengigkeiten), danach nichts mehr",
+                        first.Count > 0 && bridgeStore.Installed().Count == fire.Package.Manager.StandardPackages.Bridges.Count && second.Count == 0 && bridgeStore.Find("fire-time") != null && bridgeStore.Find("fire-reflection") != null);
+                    string builtIn = vmOutput("#import \"time\"\nprint(TimeSpan.FromSeconds(90).TotalSeconds)");
+                    CheckNat("Bruecken-Pakete: #import \"time\" nimmt weiter die eingebaute Bridge (kein doppelter Import)", builtIn == "90\n", builtIn);
+                }
+                finally { fire.Package.Manager.PackageStore.Default = savedDefault; }
+            }
+
+            // the toolchain provider: without a compiler the host is asked (cancel / change / install); the answer decides
+            {
+                string? savedPath = Environment.GetEnvironmentVariable("PATH");
+                var savedAsk = fire.Native.ToolchainProvider.Ask;
+                var savedChange = fire.Native.ToolchainProvider.ChangeToolchain;
+                try
+                {
+                    var wantedToolchain = fire.Native.ToolchainDef.BuiltIn["gcc"];
+                    Environment.SetEnvironmentVariable("PATH", "");
+                    bool noneFound = fire.Native.ToolchainDetector.Find(wantedToolchain) == null && fire.Native.ToolchainSetup.Detect() == null;
+                    if (noneFound)
+                    {
+                        fire.Native.ToolchainRequest? seen = null;
+                        fire.Native.ToolchainProvider.Ask = r => { seen = r; return fire.Native.ToolchainChoice.Cancel; };
+                        var canceled = fire.Native.ToolchainProvider.Require(wantedToolchain, "A package needs it (test).");
+                        bool cancelOk = canceled == null && seen != null && seen.Message.Contains("A package needs it (test).") && seen.Message.Contains("none was found");
+                        fire.Native.ToolchainProvider.Ask = r => fire.Native.ToolchainChoice.Change;
+                        fire.Native.ToolchainProvider.ChangeToolchain = () => { Environment.SetEnvironmentVariable("PATH", savedPath); return true; };
+                        var changed = fire.Native.ToolchainProvider.Require(wantedToolchain, "test");
+                        Environment.SetEnvironmentVariable("PATH", "");
+                        fire.Native.ToolchainProvider.Ask = null;
+                        var unasked = fire.Native.ToolchainProvider.Require(wantedToolchain, "test");
+                        CheckNat("Toolchain: ohne Compiler wird der Host gefragt (abbrechen = nichts; aendern = es wird neu gesucht; ohne Host keine Frage)", cancelOk && changed != null && unasked == null);
+                    }
+                    else CheckNat("Toolchain: (uebersprungen - ein Compiler liegt ausserhalb des PATH)", true);
+                }
+                finally
+                {
+                    Environment.SetEnvironmentVariable("PATH", savedPath);
+                    fire.Native.ToolchainProvider.Ask = savedAsk;
+                    fire.Native.ToolchainProvider.ChangeToolchain = savedChange;
+                }
+                if (fire.Native.ToolchainSetup.Detect() is { } detected)
+                {
+                    var test = fire.Compiler.NativeBuilder.TestToolchain(detected.Toolchain);
+                    CheckNat("Toolchain: der Test uebersetzt und startet ein kleines Programm", test.Ok, test.Log);
+                }
+            }
+        }
+        finally
+        {
+            fire.Package.Manager.PackageStore.Default = savedStore;
+            try { Directory.Delete(pkgDir, true); } catch (IOException) { }
+        }
+
+        bool PkgThrows(Action action)
+        {
+            try { action(); return false; }
+            catch (fire.Package.Manager.PackageException) { return true; }
+        }
+    }
+
+    Console.WriteLine(natFailures == 0 ? "Alle Native-Backend-Pruefungen bestanden." : $"FEHLER: {natFailures} Native-Backend-Pruefung(en) fehlgeschlagen.");
+}
+
 static class PackerNativeProbe
 {
     [System.Runtime.InteropServices.DllImport("libfiretestnative")] private static extern int Nonexistent();
     public static int Call() => Nonexistent();
 }
 
-/// <summary>Schrift ohne Bitmap-Zeilen (nur IsPixelSet) - erzwingt den allgemeinen Zeichenweg von TerminalCanvas.</summary>
+/// <summary>Schrift ohne Bitmap-Zeilen (nur IsPixelSet) - erzwingt den allgemeinen Zeichenweg von Renderer.</summary>
 sealed class PixelOnlyFont : fire.Terminal.IGlyphFont
 {
     private readonly fire.Terminal.IntegratedGlyphFont _inner;
@@ -10902,4 +16511,39 @@ sealed class volatile_bool
 {
     private volatile bool _value;
     public bool Value { get => _value; set => _value = value; }
+}
+
+/// <summary>Die Zeichenfunktionen mit einem Palette-Index als Farbe (ein SolidBrush bzw. Pen auf dem Framebuffer) - kurze Form fuer die Pruefungen der Rastergeometrie.</summary>
+static class Shp
+{
+    private static fire.Terminal.Surface S(fire.Terminal.Framebuffer fb) => new(fb, true);
+    private static fire.Terminal.Brush B(int i) => new fire.Terminal.SolidBrush(fire.Terminal.Paint.FromIndex((byte)i));
+    private static fire.Terminal.Pen P(int i) => new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex((byte)i));
+
+    public static void FillCircle(fire.Terminal.Framebuffer fb, int cx, int cy, int r, int i) => B(i).FillCircle(S(fb), cx, cy, r);
+    public static void Circle(fire.Terminal.Framebuffer fb, int cx, int cy, int r, int i) => P(i).DrawCircle(S(fb), cx, cy, r);
+    public static void FillEllipse(fire.Terminal.Framebuffer fb, int cx, int cy, int rx, int ry, int i) => B(i).FillEllipse(S(fb), cx, cy, rx, ry);
+    public static void Ellipse(fire.Terminal.Framebuffer fb, int cx, int cy, int rx, int ry, int i) => P(i).DrawEllipse(S(fb), cx, cy, rx, ry);
+    public static void FillTriangle(fire.Terminal.Framebuffer fb, int x0, int y0, int x1, int y1, int x2, int y2, int i) => B(i).FillTriangle(S(fb), x0, y0, x1, y1, x2, y2);
+    public static void Triangle(fire.Terminal.Framebuffer fb, int x0, int y0, int x1, int y1, int x2, int y2, int i) => P(i).DrawTriangle(S(fb), x0, y0, x1, y1, x2, y2);
+    public static void FillPolygon(fire.Terminal.Framebuffer fb, int[] points, int i) => B(i).FillPolygon(S(fb), points);
+    public static void Polygon(fire.Terminal.Framebuffer fb, int[] points, int i, bool closed = true) => P(i).DrawPolygon(S(fb), points, closed);
+    public static void Rect(fire.Terminal.Framebuffer fb, int x, int y, int w, int h, int i) => P(i).DrawRect(S(fb), x, y, w, h);
+    public static void Line(fire.Terminal.Framebuffer fb, int x0, int y0, int x1, int y1, int i) => P(i).DrawLine(S(fb), x0, y0, x1, y1);
+    public static void FloodFill(fire.Terminal.Framebuffer fb, int x, int y, int i) => B(i).FloodFill(S(fb), x, y);
+    public static void FloodFillBorder(fire.Terminal.Framebuffer fb, int x, int y, int i, int border) => B(i).FloodFillBorder(S(fb), x, y, fire.Terminal.Paint.FromIndex((byte)border));
+}
+
+/// <summary>Ein minimales eigenes Renderziel (zwei Arrays, kein Framebuffer) - zeigt, dass der Renderer nur das IRenderTarget braucht.</summary>
+sealed class ArrayTarget : fire.Terminal.IRenderTarget
+{
+    public ArrayTarget(int width, int height) { Width = width; Height = height; Pixels = new uint[width * height]; }
+    public int Width { get; }
+    public int Height { get; }
+    public fire.Terminal.ColorMode Mode => fire.Terminal.ColorMode.Rgba;
+    public fire.Terminal.Palette Palette { get; } = new();
+    public uint[] Pixels { get; }
+    public byte[]? Indices => null;
+    public int TransparentIndex => -1;
+    public void MarkDirty() { }
 }

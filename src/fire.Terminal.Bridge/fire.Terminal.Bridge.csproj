@@ -3,12 +3,11 @@
   <!--
     Die Brücke zwischen der Skriptsprache (fire) und der Grafik-API
     (fire.Terminal/.Windows) - siehe docs/CONSOLE.md. Registriert
-    FramebufferManager/ConsoleManager/WindowManager als native Funktionen
+    FramebufferManager/RendererManager/WindowManager als native Funktionen
     (NativeRegistry.RegisterGroup) und liefert den passenden fire-
     Quelltext (GraphicsBridge.PreludeSource), der diese nativen Funktionen
     hinter drei gewöhnlichen Klassen (Framebuffer/Console/Window) versteckt.
 
-    net8.0-windows, da WindowManager (fire.Terminal.Windows) das
     voraussetzt.
   -->
   <PropertyGroup>
@@ -24,7 +23,6 @@
   <ItemGroup>
     <ProjectReference Include="..\fire\fire.csproj" />
     <ProjectReference Include="..\fire.Terminal\fire.Terminal.csproj" />
-    <ProjectReference Include="..\fire.Terminal.Windows\fire.Terminal.Windows.csproj" />
   </ItemGroup>
 
 </Project>

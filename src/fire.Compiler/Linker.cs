@@ -1,6 +1,5 @@
 ﻿using fire.Bytecode;
 using fire.Compiler.Assembly;
-using fire.Device.Bridge;
 using fire.Runtime;
 using fire.Terminal;
 using fire.Terminal.Bridge;
@@ -22,7 +21,13 @@ namespace fire.Compiler
         /// Verzeichnis der aktiven Datei.</summary>
         public string? BasePath { get; set; }
 
-        public static AssemblyInfo ExtractAssemblyInfo(IReadOnlyList<string> sources)
+        /// <summary>The engine the program is built for, a symbol of `#if` (`vm` or `native`).</summary>
+        public string Engine { get; set; } = ConditionalSymbols.DefaultEngine;
+
+        /// <summary>Further symbols of `#if` (`-D name` on the command line).</summary>
+        public IReadOnlyList<string>? Defines { get; set; }
+
+        public static AssemblyInfo ExtractAssemblyInfo(IReadOnlyList<string> sources, IEnumerable<string>? defines = null)
         {
             var assemblyInfo = new AssemblyInfo();
             var alreadyIncluded = new HashSet<string>();
@@ -33,6 +38,7 @@ namespace fire.Compiler
             inputSources.AddRange(sources);
 
             var registry = DirectiveRegistry.CreateDefault(); // komplett leer, NICHT CreateDefault()
+            foreach (var symbol in ConditionalSymbols.For(null, ConditionalSymbols.DefaultEngine, null, defines)) registry.Symbols.Add(symbol);
             registry.Register("import", 1, (ctx, args, line) =>
             {
                 return null;
@@ -57,6 +63,11 @@ namespace fire.Compiler
                 assemblyInfo.ExecutionMode = VmExecutionMode.Performance;
                 return null;
             });
+            registry.Register("floatwidth", 1, (ctx, args, line) =>
+            {
+                ParseFloatWidth(args[0]); // validated here, applied by CompileAndLink
+                return null;
+            });
 
             assemblyInfo.FileVersion = "0.0.0.0";
             assemblyInfo.ProductVersion = "0.0.0.0";
@@ -65,7 +76,7 @@ namespace fire.Compiler
             registry.Register("name", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'name'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'name' directive.");
 
                 assemblyInfo.ProductName = args[0].AsString();
                 return null;
@@ -73,7 +84,7 @@ namespace fire.Compiler
             registry.Register("codename", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'codename'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'codename' directive.");
 
                 assemblyInfo.InternalName = args[0].AsString();
                 return null;
@@ -81,7 +92,7 @@ namespace fire.Compiler
             registry.Register("description", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'description'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'description' directive.");
 
                 assemblyInfo.FileDescription = args[0].AsString();
                 return null;
@@ -89,7 +100,7 @@ namespace fire.Compiler
             registry.Register("author", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'author'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'author' directive.");
 
                 assemblyInfo.CompanyName = args[0].AsString();
                 return null;
@@ -97,7 +108,7 @@ namespace fire.Compiler
             registry.Register("comments", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'comments'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'comments' directive.");
 
                 assemblyInfo.Comments = args[0].AsString();
                 return null;
@@ -105,7 +116,7 @@ namespace fire.Compiler
             registry.Register("icon", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'icon'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'icon' directive.");
 
                 assemblyInfo.IconPath = args[0].AsString();
                 return null;
@@ -113,7 +124,7 @@ namespace fire.Compiler
             registry.Register("version", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'version'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'version' directive.");
 
                 assemblyInfo.ProductVersion = args[0].AsString();
                 return null;
@@ -121,7 +132,7 @@ namespace fire.Compiler
             registry.Register("fileversion", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'fileversion'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'fileversion' directive.");
 
                 assemblyInfo.FileVersion = args[0].AsString();
                 return null;
@@ -136,8 +147,19 @@ namespace fire.Compiler
             return assemblyInfo;
         }
 
-        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string? outname = null, VmExecutionMode? executionModeOverride = null)
+        /// <summary>The value of `#floatwidth n` (32 or 64).</summary>
+        public static int ParseFloatWidth(Value arg)
         {
+            if (arg.Kind == ValueKind.Int && arg.AsInt() is 32 or 64) return (int)arg.AsInt();
+            throw new Exception("The 'floatwidth' directive expects 32 or 64.");
+        }
+
+        /// <param name="floatWidthOverride">32 or 64: precision of `float` for this build (command line); overrides `#floatwidth` and the target.</param>
+        /// <param name="target">The target the program is built for: its `#import` libraries are checked and its float precision is the
+        /// default (`#floatwidth` and <paramref name="floatWidthOverride"/> win). Null = no restriction, 64 bits.</param>
+        public LinkedProgram CompileAndLink(IReadOnlyList<string> sources, Func<Value[], Value>? debugWriter = null, string? outname = null, VmExecutionMode? executionModeOverride = null, int? floatWidthOverride = null, TargetProfile? target = null)
+        {
+            int? directiveFloatWidth = null;
             var assemblyInfo = new AssemblyInfo();
             var natives = new NativeRegistry();
             var nativeImports = new HashSet<string>();
@@ -155,6 +177,7 @@ namespace fire.Compiler
             inputSources.AddRange(sources);
 
             var registry = DirectiveRegistry.CreateDefault(); // komplett leer, NICHT CreateDefault()
+            foreach (var symbol in ConditionalSymbols.For(target, Engine, floatWidthOverride, Defines)) registry.Symbols.Add(symbol);
             registry.Register("import", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind == ValueKind.String)
@@ -162,7 +185,7 @@ namespace fire.Compiler
                     foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(args[0].AsString()))) nativeImports.Add(key);
                     return null;
                 }
-                throw new Exception($"Falsche Argumente für 'import'-Direktive.");
+                throw new Exception($"Wrong arguments for the 'import' directive.");
             });
 
             assemblyInfo.Subsystem = Utilities.SubsystemType.Console;
@@ -184,6 +207,11 @@ namespace fire.Compiler
                 assemblyInfo.ExecutionMode = VmExecutionMode.Performance;
                 return null;
             });
+            registry.Register("floatwidth", 1, (ctx, args, line) =>
+            {
+                directiveFloatWidth = ParseFloatWidth(args[0]);
+                return null;
+            });
 
             assemblyInfo.FileVersion = "0.0.0.0";
             assemblyInfo.ProductVersion = "0.0.0.0";
@@ -193,7 +221,7 @@ namespace fire.Compiler
             registry.Register("name", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'name'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'name' directive.");
 
                 assemblyInfo.ProductName = args[0].AsString();
                 return null;
@@ -201,7 +229,7 @@ namespace fire.Compiler
             registry.Register("codename", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'codename'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'codename' directive.");
 
                 assemblyInfo.InternalName = args[0].AsString();
                 return null;
@@ -209,7 +237,7 @@ namespace fire.Compiler
             registry.Register("description", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'description'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'description' directive.");
 
                 assemblyInfo.FileDescription = args[0].AsString();
                 return null;
@@ -217,7 +245,7 @@ namespace fire.Compiler
             registry.Register("author", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'author'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'author' directive.");
 
                 assemblyInfo.CompanyName = args[0].AsString();
                 return null;
@@ -225,7 +253,7 @@ namespace fire.Compiler
             registry.Register("comments", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'comments'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'comments' directive.");
 
                 assemblyInfo.Comments = args[0].AsString();
                 return null;
@@ -233,7 +261,7 @@ namespace fire.Compiler
             registry.Register("icon", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'icon'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'icon' directive.");
 
                 assemblyInfo.IconPath = args[0].AsString();
                 return null;
@@ -241,7 +269,7 @@ namespace fire.Compiler
             registry.Register("version", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'version'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'version' directive.");
 
                 assemblyInfo.ProductVersion = args[0].AsString();
                 return null;
@@ -249,7 +277,7 @@ namespace fire.Compiler
             registry.Register("fileversion", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind != ValueKind.String)
-                    throw new Exception($"Falsche Argumente für 'fileversion'-Direktive.");
+                    throw new Exception($"Wrong arguments for the 'fileversion' directive.");
 
                 assemblyInfo.FileVersion = args[0].AsString();
                 return null;
@@ -279,7 +307,18 @@ namespace fire.Compiler
             var resolveResult = Resolver.Resolve(program, natives.Names);
             var compiled = Compiler.Compile(program, resolveResult, natives);
 
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode);
+            if (target != null)
+                foreach (var import in nativeImports)
+                    if (!target.HasImport(import))
+                        throw new NotSupportedException($"The library '{import}' is not available on the target '{target.Name}' (available: {string.Join(", ", target.Imports!)}).");
+            int floatWidth = floatWidthOverride ?? directiveFloatWidth ?? target?.FloatWidth ?? 64;
+            if (floatWidth != 32 && floatWidth != 64) throw new ArgumentOutOfRangeException(nameof(floatWidthOverride), "The float width must be 32 or 64.");
+            if (floatWidth == 32) FloatNarrowing.Apply(compiled);
+
+            var packageNatives = PackageImports.NativesOf(nativeImports);
+            // a program that is packed carries the libraries of its packages: they are built now (a native build does not need them: it takes the C++ source)
+            List<string>? packageLibraryFiles = !string.IsNullOrEmpty(outname) && Engine != "native" ? PackageImports.EnsureLibraries(nativeImports) : null;
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles };
 
             if (!string.IsNullOrEmpty(outname))
             {

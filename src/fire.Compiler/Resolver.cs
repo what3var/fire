@@ -158,6 +158,12 @@ namespace fire.Compiler
         /// Direktive im Quelltext steht).</summary>
         private bool _noShadowGlobals;
 
+        /// <summary>Die endgültige Anzahl der globalen Slots des Hauptprogramms (aus einem ersten Durchlauf), oder null im ersten Durchlauf. Die Slots eines
+        /// `fire`-Blocks (Erfassungen und eigene Variablen) liegen HINTER allen Globals des Hauptprogramms - auch hinter denen, die erst nach dem `fire`
+        /// deklariert werden; sonst würden sie mit diesen zusammenfallen (der Thread liest dann die geteilte Variable statt seiner eigenen).</summary>
+        private int? _finalGlobalCount;
+        private bool _sawFire;
+
         /// <summary>Wie `_functionDepth`, aber für `break`/`continue`: Anzahl
         /// umschließender Schleifen (0 = kein `break`/`continue` gültig) bzw.
         /// `try`/`catch`/`finally`-Blöcke seit der letzten Schleife (>0 = ein
@@ -228,13 +234,9 @@ namespace fire.Compiler
         public static ResolveResult Resolve(
             IReadOnlyList<Stmt> program, IEnumerable<string>? nativeNames = null, IEnumerable<string>? tryableNativeNames = null)
         {
-            var resolver = new Resolver(nativeNames, tryableNativeNames);
-            resolver.CollectClasses(program);
-            resolver.CollectExterns(program);
-            resolver.CollectEnums(program);
-            resolver._noShadowGlobals = program.Any(s => s is NoShadowDirective);
-            foreach (var stmt in program)
-                resolver.ResolveStmt(stmt);
+            var resolver = Run(program, nativeNames, tryableNativeNames, null);
+            // A program with `fire` resolves a second time, now that the number of its globals is known (see _finalGlobalCount).
+            if (resolver._sawFire && resolver._errors.Count == 0) resolver = Run(program, nativeNames, tryableNativeNames, resolver._globalScope.Slots.Count);
 
             // Ab dem ersten Fehler steht fest, dass es kein Ergebnis gibt -
             // aber erst HIER, nachdem alles aufgelöst wurde, damit der
@@ -252,6 +254,18 @@ namespace fire.Compiler
             };
         }
 
+        private static Resolver Run(IReadOnlyList<Stmt> program, IEnumerable<string>? nativeNames, IEnumerable<string>? tryableNativeNames, int? finalGlobalCount)
+        {
+            var resolver = new Resolver(nativeNames, tryableNativeNames) { _finalGlobalCount = finalGlobalCount };
+            resolver.CollectClasses(program);
+            resolver.CollectExterns(program);
+            resolver.CollectEnums(program);
+            resolver._noShadowGlobals = program.Any(s => s is NoShadowDirective);
+            foreach (var stmt in program)
+                resolver.ResolveStmt(stmt);
+            return resolver;
+        }
+
         // -----------------------------------------------------------
         // extern-Deklarationen vorab einsammeln (erlaubt Aufrufe vor der
         // Deklaration im Quelltext, wie bei Klassen).
@@ -266,7 +280,7 @@ namespace fire.Compiler
                 // Skript, die native Registry liefert die Implementierung dazu.
                 if (_externs.ContainsKey(ed.Name))
                 {
-                    AddError(new ResolverException($"'{ed.Name}' ist bereits als extern deklariert", ed.Line));
+                    AddError(new ResolverException($"'{ed.Name}' is already declared as extern", ed.Line));
                     continue;
                 }
                 _externs[ed.Name] = ed;
@@ -286,12 +300,12 @@ namespace fire.Compiler
                 if (stmt is not EnumDecl ed) continue;
                 if (_enums.ContainsKey(ed.Name))
                 {
-                    AddError(new ResolverException($"'{ed.Name}' ist bereits als enum deklariert", ed.Line));
+                    AddError(new ResolverException($"'{ed.Name}' is already declared as an enum", ed.Line));
                     continue;
                 }
                 if (IsKnownClassName(ed.Name))
                 {
-                    AddError(new ResolverException($"'{ed.Name}' ist bereits als Klasse deklariert", ed.Line));
+                    AddError(new ResolverException($"'{ed.Name}' is already declared as a class", ed.Line));
                     continue;
                 }
 
@@ -306,7 +320,7 @@ namespace fire.Compiler
                 {
                     if (members.ContainsKey(m.Name))
                     {
-                        AddError(new ResolverException($"Enum-Mitglied '{ed.Name}.{m.Name}' ist bereits deklariert", ed.Line));
+                        AddError(new ResolverException($"Enum member '{ed.Name}.{m.Name}' is already declared", ed.Line));
                         continue;
                     }
 
@@ -316,8 +330,8 @@ namespace fire.Compiler
                         if (m.ValueExpr is not LiteralExpr { Value.Kind: ValueKind.Int } lit)
                         {
                             AddError(new ResolverException(
-                                $"Enum-Mitglied '{ed.Name}.{m.Name}': Wert muss ein Int-Literal sein " +
-                                "(beliebige Ausdrücke werden hier nicht ausgewertet).", ed.Line));
+                                $"Enum member '{ed.Name}.{m.Name}': the value must be an int literal " +
+                                "(arbitrary expressions are not evaluated here).", ed.Line));
                             members[m.Name] = next; // Mitglied bleibt bekannt (siehe oben)
                             next++;
                             continue;
@@ -367,13 +381,13 @@ namespace fire.Compiler
                 {
                     case ClassDecl cd:
                         if (_classes.ContainsKey(cd.Name))
-                            AddError(new ResolverException($"Klasse '{GenericClassNames.PlainName(cd.Name)}' ist bereits definiert", cd.Line));
+                            AddError(new ResolverException($"Class '{GenericClassNames.PlainName(cd.Name)}' is already defined", cd.Line));
                         else
                             _classes[cd.Name] = cd;
                         break;
                     case InterfaceDecl id:
                         if (_interfaces.ContainsKey(id.Name))
-                            AddError(new ResolverException($"Interface '{id.Name}' ist bereits definiert", id.Line));
+                            AddError(new ResolverException($"Interface '{id.Name}' is already defined", id.Line));
                         else
                             _interfaces[id.Name] = id;
                         break;
@@ -391,14 +405,14 @@ namespace fire.Compiler
                     {
                         if (baseName != null)
                             AddError(new ResolverException(
-                                $"Klasse '{DisplayName(cd)}' kann nicht mehrere Basisklassen haben ('{baseName}' und '{n}')", cd.Line));
+                                $"Class '{DisplayName(cd)}' cannot have multiple base classes ('{baseName}' and '{n}')", cd.Line));
                         else
                             baseName = n;
                     }
                     else if (!_interfaces.ContainsKey(n))
                     {
                         AddError(new ResolverException(
-                            $"'{baseRef.BaseName}' bei Klasse '{DisplayName(cd)}' ist weder eine bekannte Klasse noch ein bekanntes Interface", cd.Line));
+                            $"'{baseRef.BaseName}' of class '{DisplayName(cd)}' is neither a known class nor a known interface", cd.Line));
                     }
                 }
             }
@@ -500,8 +514,8 @@ namespace fire.Compiler
             {
                 if (!ClassHasMethod(cd, m.Name, m.Params.Count))
                     throw new ResolverException(
-                        $"Klasse '{cd.Name}' implementiert Interface '{iface.Name}' nicht vollständig " +
-                        $"(fehlende Methode '{m.Name}' mit {m.Params.Count} Parameter(n))", cd.Line);
+                        $"Class '{cd.Name}' does not implement interface '{iface.Name}' completely " +
+                        $"(missing method '{m.Name}' with {m.Params.Count} parameter(s))", cd.Line);
             }
         }
 
@@ -584,17 +598,17 @@ namespace fire.Compiler
             {
                 if (ne.TypeArgs != null && ne.TypeArgs.Count > 0)
                     throw new ResolverException(
-                        $"Klasse '{className}' ist nicht generisch, akzeptiert also keine " +
-                        "Typ-Argumente in spitzen Klammern", ne.Line);
+                        $"Class '{className}' is not generic, so it does not accept " +
+                        "type arguments in angle brackets", ne.Line);
                 return;
             }
 
             var typeArgs = ne.TypeArgs ?? Array.Empty<string>();
             if (typeArgs.Count != typeParams.Count)
                 throw new ResolverException(
-                    $"Klasse '{className}' ist generisch mit {typeParams.Count} Typ-Parameter(n) - " +
-                    $"'new {className}<...>' braucht explizite Typ-Argumente dafür " +
-                    $"(erhalten: {typeArgs.Count})", ne.Line);
+                    $"Class '{className}' is generic with {typeParams.Count} type parameter(s) - " +
+                    $"'new {className}<...>' needs explicit type arguments for it " +
+                    $"(got: {typeArgs.Count})", ne.Line);
 
             for (int i = 0; i < typeParams.Count; i++)
             {
@@ -606,8 +620,8 @@ namespace fire.Compiler
                     group => group.Constraints.All(c => SatisfiesConstraint(arg, c)));
                 if (!satisfied)
                     throw new ResolverException(
-                        $"Typ-Argument '{arg}' für Typ-Parameter '{tp.Name}' von '{className}' erfüllt " +
-                        "keine der 'where'-Bedingungen", ne.Line);
+                        $"Type argument '{arg}' for type parameter '{tp.Name}' of '{className}' does not satisfy " +
+                        "any of the 'where' conditions", ne.Line);
             }
         }
 
@@ -646,16 +660,16 @@ namespace fire.Compiler
             if (tr.LambdaSignature is { IsSelector: true } selector)
             {
                 if (!_classes.ContainsKey("Reflect"))
-                    throw new ResolverException($"'lambda {selector.SelectorKind}<...>' (Selektor) braucht die Reflection-Bibliothek: #import \"reflection\"", line);
+                    throw new ResolverException($"'lambda {selector.SelectorKind}<...>' (selector) needs the reflection library: #import \"reflection\"", line);
                 foreach (var target in selector.ParamTypeNames)
                     if (!PrimitiveTypeNames.Contains(target) && !_currentTypeParamNames.ContainsKey(target) && !IsKnownClassName(target))
-                        throw new ResolverException($"Unbekannter Typ '{target}' in 'lambda {selector.SelectorKind}<{target}>'", line);
+                        throw new ResolverException($"Unknown type '{target}' in 'lambda {selector.SelectorKind}<{target}>'", line);
                 return;
             }
             if (PrimitiveTypeNames.Contains(tr.BaseName)) return;
             if (_currentTypeParamNames.ContainsKey(tr.BaseName)) return;
             if (!IsKnownClassName(ResolveTypeRef(tr)) && !_interfaces.ContainsKey(ResolveBaseRef(tr)))
-                throw new ResolverException($"Unbekannter Typ '{tr.BaseName}'", line);
+                throw new ResolverException($"Unknown type '{tr.BaseName}'", line);
         }
 
         /// <summary>Validiert einen vollständigen TypeRef: Basisname wie
@@ -669,10 +683,10 @@ namespace fire.Compiler
 
             if (type.BaseName != "int" && type.BaseName != "float")
                 throw new ResolverException(
-                    $"Bitbreite ist nur für 'int'/'float' gültig, nicht für '{type.BaseName}'", line);
+                    $"A bit width is only valid for 'int'/'float', not for '{type.BaseName}'", line);
             if (type.BitWidth is not (8 or 16 or 32 or 64))
                 throw new ResolverException(
-                    $"Ungültige Bitbreite {type.BitWidth} (erlaubt: 8/16/32/64)", line);
+                    $"Invalid bit width {type.BitWidth} (allowed: 8/16/32/64)", line);
         }
 
         private void ResolveArrayRanks(IReadOnlyList<Expr?> ranks)
@@ -696,6 +710,9 @@ namespace fire.Compiler
             /// `: einheit` hatte - siehe Define/ResolveIdentifierRef.</summary>
             public readonly Dictionary<string, string> RequiredUnits = new();
 
+            /// <summary>Namen der `ref`-Parameter dieses Scopes (der Slot haelt einen Zeiger auf die Variable des Aufrufers).</summary>
+            public readonly HashSet<string> RefNames = new();
+
             /// <summary>Namen, die in DIESEM (Lambda-)Scope als Capture (Kopie einer äußeren Variablen) liegen - Zuweisung ist ein Fehler,
             /// eine eigene Deklaration mit demselben Namen verdeckt sie (siehe Define).</summary>
             public readonly HashSet<string> CaptureNames = new();
@@ -710,12 +727,12 @@ namespace fire.Compiler
         private void PushScope() => _current = new ResolverScope(_current);
         private void PopScope() => _current = _current.Parent!;
 
-        private void Define(string name, int line, bool isReadonly = false, string? requiredUnit = null)
+        private void Define(string name, int line, bool isReadonly = false, string? requiredUnit = null, bool isRef = false)
         {
             if (_current.Slots.ContainsKey(name))
             {
                 if (!_current.CaptureNames.Remove(name))
-                    throw new ResolverException($"'{name}' ist in diesem Scope bereits deklariert", line);
+                    throw new ResolverException($"'{name}' is already declared in this scope", line);
                 // Der Lambda-Körper deklariert selbst einen Namen, den der Resolver vorsorglich als Capture angelegt hat: die Deklaration verdeckt
                 // ihn (der Capture-Slot bleibt ungenutzt unter einem unzugänglichen Schlüssel, die Slot-Zählung bleibt lückenlos).
                 int captureSlot = _current.Slots[name];
@@ -723,8 +740,10 @@ namespace fire.Compiler
                 _current.Slots["\u0001capture:" + name] = captureSlot;
                 _current.ReadonlySlots.Remove(name);
                 _current.RequiredUnits.Remove(name);
+                _current.RefNames.Remove(name);
             }
             _current.Slots[name] = _current.Slots.Count;
+            if (isRef) _current.RefNames.Add(name);
             if (isReadonly) _current.ReadonlySlots.Add(name);
             if (requiredUnit != null) _current.RequiredUnits[name] = requiredUnit;
         }
@@ -740,7 +759,7 @@ namespace fire.Compiler
                     scope.RequiredUnits.TryGetValue(name, out var requiredUnit);
                     return scope.IsGlobal
                         ? new ResolvedRef.Global(slot, requiredUnit)
-                        : new ResolvedRef.Local(depth, slot, requiredUnit);
+                        : new ResolvedRef.Local(depth, slot, requiredUnit, scope.RefNames.Contains(name));
                 }
                 depth++;
                 scope = scope.Parent;
@@ -752,8 +771,8 @@ namespace fire.Compiler
                 return new ResolvedRef.Extern(name);
             if (_tryableNativeNames.Contains(name))
                 throw new ResolverException(
-                    $"'{name}' ist als 'tryable' registriert - nur mit 'try {name}(...)' aufrufbar, " +
-                    "nicht als direkter Aufruf.", line);
+                    $"'{name}' is registered as 'tryable' - it can only be called with 'try {name}(...)', " +
+                    "not as a direct call.", line);
 
             // SPEC "Implizite Mitglieder-Referenzen" - innerhalb einer Klasse
             // darf ein Feld/eine Methode/eine Property auch OHNE
@@ -772,8 +791,8 @@ namespace fire.Compiler
                         return new ResolvedRef.StaticMember(found.Value.ClassName);
                     if (_inStaticMethod)
                         throw new ResolverException(
-                            $"'{name}' ist ein Instanzmitglied - in einer statischen Methode/einem statischen " +
-                            "Feld-Initialisierer ohne gebundenes 'this' nicht erreichbar", line);
+                            $"'{name}' is an instance member - it is not reachable in a static method or static " +
+                            "field initializer without a bound 'this'", line);
                     return new ResolvedRef.ImplicitThisMember();
                 }
             }
@@ -783,7 +802,7 @@ namespace fire.Compiler
             if (_inBoundLambda)
                 return new ResolvedRef.ImplicitThisMember();
 
-            throw new ResolverException($"Unbekannter Bezeichner '{name}'", line);
+            throw new ResolverException($"Unknown identifier '{name}'", line);
         }
 
         /// <summary>Läuft dieselbe Scope-Kette wie ResolveIdentifierRef ab, nur um
@@ -906,13 +925,13 @@ namespace fire.Compiler
                     break; // wirkt erst zur Laufzeit (siehe Compiler.Compile: SetTimeout)
 
                 case VarDeclStmt vd:
-                    if (vd.Initializer != null) ResolveExpr(vd.Initializer);
+                    if (vd.Initializer != null) ResolveExprAllowTake(vd.Initializer);
                     if (vd.Type != null) ValidateTypeRef(vd.Type, vd.Line);
                     ResolveArrayRanks(vd.ArrayRanks);
                     if (vd.IsReadonly && vd.Initializer == null &&
                         !(vd.ArrayRanks.Count > 0 && vd.ArrayRanks[0] != null))
                         throw new ResolverException(
-                            $"'readonly {vd.Name}' braucht einen Initializer (oder eine Array-Größe)", vd.Line);
+                            $"'readonly {vd.Name}' needs an initializer (or an array size)", vd.Line);
                     // 'var arr[4] = [1,2,3,4]' (explizite Größe UND ein
                     // Array-Literal als Initializer) - nur eine BESTE-EFFORT-
                     // Prüfung, wenn die Größe selbst ein Ganzzahl-LITERAL ist
@@ -929,8 +948,8 @@ namespace fire.Compiler
                         && sizeLit.Value.Kind == ValueKind.Int
                         && sizeLit.Value.AsInt() != arrLit.Elements.Count)
                         throw new ResolverException(
-                            $"'{vd.Name}[{sizeLit.Value.AsInt()}]' erwartet {sizeLit.Value.AsInt()} Elemente, " +
-                            $"der Array-Literal-Initializer hat aber {arrLit.Elements.Count}", vd.Line);
+                            $"'{vd.Name}[{sizeLit.Value.AsInt()}]' expects {sizeLit.Value.AsInt()} elements, " +
+                            $"but the array literal initializer has {arrLit.Elements.Count}", vd.Line);
                     Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.Unit);
                     break;
 
@@ -959,12 +978,16 @@ namespace fire.Compiler
 
                 case ReturnStmt rs:
                     if (_functionDepth == 0)
-                        throw new ResolverException("'return' außerhalb einer Funktion/Methode", rs.Line);
+                        throw new ResolverException("'return' outside of a function/method", rs.Line);
                     if (rs.Value != null) ResolveExpr(rs.Value);
                     break;
 
                 case ThrowStmt ts:
                     ResolveExpr(ts.Value);
+                    break;
+
+                case DeleteStmt ds:
+                    ResolveExpr(ds.Target);
                     break;
 
                 case TryStmt trys:
@@ -973,16 +996,16 @@ namespace fire.Compiler
 
                 case BreakStmt bs:
                     if (_loopDepth == 0)
-                        throw new ResolverException("'break' außerhalb einer Schleife ('while'/'for'/'foreach')", bs.Line);
+                        throw new ResolverException("'break' outside of a loop ('while'/'for'/'foreach')", bs.Line);
                     if (_tryDepth > 0)
-                        throw new ResolverException("'break' kann nicht aus einem 'finally'-Block heraus verwendet werden (Einschränkung dieser Ausbaustufe - siehe BYTECODE.md)", bs.Line);
+                        throw new ResolverException("'break' cannot be used to leave a 'finally' block (a limitation of this stage - see BYTECODE.md)", bs.Line);
                     break;
 
                 case ContinueStmt cs:
                     if (_loopDepth == 0)
-                        throw new ResolverException("'continue' außerhalb einer Schleife ('while'/'for'/'foreach')", cs.Line);
+                        throw new ResolverException("'continue' outside of a loop ('while'/'for'/'foreach')", cs.Line);
                     if (_tryDepth > 0)
-                        throw new ResolverException("'continue' kann nicht aus einem 'finally'-Block heraus verwendet werden (Einschränkung dieser Ausbaustufe - siehe BYTECODE.md)", cs.Line);
+                        throw new ResolverException("'continue' cannot be used to leave a 'finally' block (a limitation of this stage - see BYTECODE.md)", cs.Line);
                     break;
 
                 case FireStmt fireStmt:
@@ -998,7 +1021,7 @@ namespace fire.Compiler
                     break;
 
                 case PostGlobalStmt postGlobal:
-                    foreach (var arg in postGlobal.Args) ResolveExpr(arg);
+                    foreach (var arg in postGlobal.Args) ResolveExprAllowTake(arg);
                     ResolveLambda(postGlobal.Lambda);
                     break;
 
@@ -1014,7 +1037,7 @@ namespace fire.Compiler
 
                 case CatchThreadsDecl threadsDecl:
                     if (threadsDecl.TypeRef != null && !IsKnownClassName(ResolveTypeRef(threadsDecl.TypeRef)))
-                        AddError(new ResolverException($"Unbekannter Exception-Typ '{threadsDecl.TypeRef.BaseName}'", threadsDecl.Line));
+                        AddError(new ResolverException($"Unknown exception type '{threadsDecl.TypeRef.BaseName}'", threadsDecl.Line));
                     ResolveGlobalHandlerBody(threadsDecl.VarName, threadsDecl.Body);
                     break;
 
@@ -1046,8 +1069,8 @@ namespace fire.Compiler
                     // falls das Programm auf einem anderen Weg als über
                     // Parser.Parse()/ParseMultiple() erzeugt wurde.
                     throw new ResolverException(
-                        $"Interner Fehler: 'class extends {cx.TargetRef.BaseName}' wurde nicht zusammengeführt " +
-                        "(Programm muss über Parser.Parse()/ParseMultiple() erzeugt werden).", cx.Line);
+                        $"Internal error: 'class extends {cx.TargetRef.BaseName}' was not merged " +
+                        "(the program must be produced by Parser.Parse()/ParseMultiple()).", cx.Line);
 
                 case ExternDecl ed:
                     if (ed.ReturnType != null) ValidateTypeRef(ed.ReturnType, ed.Line);
@@ -1066,7 +1089,7 @@ namespace fire.Compiler
 
                 default:
                     throw new ResolverException(
-                        $"Unerwartetes Statement {stmt.GetType().Name} an dieser Stelle", stmt.Line);
+                        $"Unexpected statement {stmt.GetType().Name} at this position", stmt.Line);
             }
         }
 
@@ -1133,7 +1156,7 @@ namespace fire.Compiler
                 // Ein unbekannter Exception-Typ hindert nicht die Auflösung
                 // des catch-Körpers (und der übrigen Blöcke).
                 if (c.TypeRef != null && !IsKnownClassName(ResolveTypeRef(c.TypeRef)))
-                    AddError(new ResolverException($"Unbekannter Exception-Typ '{c.TypeRef.BaseName}'", c.Line));
+                    AddError(new ResolverException($"Unknown exception type '{c.TypeRef.BaseName}'", c.Line));
 
                 PushScope();
                 Define(c.VarName, c.Line);
@@ -1194,8 +1217,8 @@ namespace fire.Compiler
                         case ConstructorDecl ctor:
                             if (!seenConstructorArities.Add(ctor.Params.Count))
                                 AddError(new ResolverException(
-                                    $"Konstruktor mit {ctor.Params.Count} Parameter(n) ist in dieser Klasse " +
-                                    "bereits definiert (eine Überladung braucht eine andere Parameteranzahl).", ctor.Line));
+                                    $"A constructor with {ctor.Params.Count} parameter(s) is already defined " +
+                                    "in this class (an overload needs a different number of parameters).", ctor.Line));
                             ResolveFunctionLike(ctor.Params, ctor.Body, ctor.BaseArgs, isConstructor: true);
                             break;
 
@@ -1212,8 +1235,8 @@ namespace fire.Compiler
                                     Guard(() => ValidateTypeRef(md.ReturnType, md.Line));
                                 if (!seenMethodSignatures.Add((md.Name, md.Params.Count)))
                                     AddError(new ResolverException(
-                                        $"Methode '{md.Name}' mit {md.Params.Count} Parameter(n) ist in dieser Klasse " +
-                                        "bereits definiert (eine Überladung braucht eine andere Parameteranzahl).", md.Line));
+                                        $"Method '{md.Name}' with {md.Params.Count} parameter(s) is already defined " +
+                                        "in this class (an overload needs a different number of parameters).", md.Line));
                                 ResolveFunctionLike(md.Params, md.Body, baseArgs: null, isConstructor: false, isStatic: md.IsStatic);
                             }
                             finally
@@ -1277,8 +1300,8 @@ namespace fire.Compiler
                 if (p.DefaultValue != null) { seenOptional = true; continue; }
                 if (seenOptional)
                     throw new ResolverException(
-                        $"Parameter '{p.Name}' ohne Standardwert darf nicht nach einem optionalen Parameter " +
-                        "stehen (optionale Parameter müssen am Ende zusammenhängen).", line);
+                        $"Parameter '{p.Name}' without a default value must not follow an optional parameter " +
+                        "(optional parameters must be contiguous at the end).", line);
             }
         }
 
@@ -1312,15 +1335,15 @@ namespace fire.Compiler
             {
                 if (p.Type != null) Guard(() => ValidateTypeRef(p.Type, body.Line));
                 ResolveArrayRanks(p.ArrayRanks);
-                Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.Unit));
+                Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.Unit, isRef: p.ByRef));
             }
 
             if (baseArgs != null)
             {
                 if (!_currentClassHasBase)
                     AddError(new ResolverException(
-                        "'base(...)' nur in einer Klasse mit Basisklasse gültig", body.Line));
-                foreach (var a in baseArgs) ResolveExpr(a);
+                        "'base(...)' is only valid in a class with a base class", body.Line));
+                foreach (var a in baseArgs) ResolveExprAllowTake(a);
             }
 
             // WICHTIG: NICHT von 'baseArgs != null' ableiten - das heißt nur
@@ -1358,6 +1381,14 @@ namespace fire.Compiler
         /// (siehe ResolveStmt), die Auflösung macht mit den Geschwister-
         /// Ausdrücken weiter - z.B. werden bei `f(a, b)` beide unbekannten
         /// Bezeichner gemeldet, nicht nur `a`.</summary>
+        /// <summary>`take x` is valid directly as an argument and as the value of an assignment/declaration (SPEC 2.2): the places register it here before resolving.</summary>
+        private readonly HashSet<Expr> _takeAllowed = new();
+        private void ResolveExprAllowTake(Expr expr)
+        {
+            if (expr is UnaryExpr { Op: UnaryOp.Take }) _takeAllowed.Add(expr);
+            ResolveExpr(expr);
+        }
+
         private void ResolveExpr(Expr expr)
         {
             var state = SaveState();
@@ -1386,23 +1417,26 @@ namespace fire.Compiler
                 case ThisExpr te:
                     if (_inStaticMethod)
                         throw new ResolverException(
-                            "'this' ist in einer statischen Methode/einem statischen Feld-Initialisierer nicht gültig " +
-                            "(keine Instanz gebunden)", te.Line);
+                            "'this' is not valid in a static method or static field initializer " +
+                            "(no instance bound)", te.Line);
                     break; // Laufzeit entscheidet, ob/was 'this' aktuell gebunden ist
 
                 case BaseExpr be:
                     if (_inStaticMethod)
                         throw new ResolverException(
-                            "'base' ist in einer statischen Methode nicht gültig (keine Instanz gebunden)", be.Line);
+                            "'base' is not valid in a static method (no instance bound)", be.Line);
                     if (_currentClass == null || !_currentClassHasBase)
                         throw new ResolverException(
-                            "'base' nur innerhalb einer Klasse mit Basisklasse gültig", be.Line);
+                            "'base' is only valid inside a class with a base class", be.Line);
                     break;
 
                 case UnaryExpr u:
+                    if (u.Op == UnaryOp.Take && !_takeAllowed.Remove(u))
+                        throw new ResolverException(
+                            "'take' is only valid as an argument of a call or on the right of '=' / 'var x =' (SPEC 2.2)", u.Line);
                     if ((u.Op == UnaryOp.Dereference || u.Op == UnaryOp.AddressOf) && _unsafeDepth == 0)
                         throw new ResolverException(
-                            $"'{(u.Op == UnaryOp.Dereference ? "*" : "&")}' ist nur innerhalb eines 'unsafe'-Blocks gültig", u.Line);
+                            $"'{(u.Op == UnaryOp.Dereference ? "*" : "&")}' is only valid inside an 'unsafe' block", u.Line);
                     ResolveExpr(u.Operand);
                     break;
 
@@ -1436,7 +1470,7 @@ namespace fire.Compiler
 
                 case CallExpr call:
                     ResolveExpr(call.Callee);
-                    foreach (var a in call.Args) ResolveExpr(a);
+                    foreach (var a in call.Args) ResolveExprAllowTake(a);
                     break;
 
                 case MemberExpr me:
@@ -1456,7 +1490,7 @@ namespace fire.Compiler
                     if (enumName != null && _enums.TryGetValue(enumName, out var enumMembers))
                     {
                         if (!enumMembers.TryGetValue(me.Name, out long enumValue))
-                            throw new ResolverException($"'{enumName}' hat kein Mitglied '{me.Name}'", me.Line);
+                            throw new ResolverException($"'{enumName}' has no member '{me.Name}'", me.Line);
                         _refs[me] = new ResolvedRef.EnumMember(enumValue);
                         break;
                     }
@@ -1504,7 +1538,9 @@ namespace fire.Compiler
                     break;
 
                 case AssignExpr asg:
-                    ResolveExpr(asg.Value);
+                    ResolveExprAllowTake(asg.Value);
+                    if (asg.Value is UnaryExpr { Op: UnaryOp.Take } && asg.Target is UnaryExpr { Op: UnaryOp.Dereference })
+                        throw new ResolverException("'take' needs a holder: a variable, a field or an array element (not a pointer)", asg.Line);
                     ResolveAssignTarget(asg.Target);
                     break;
 
@@ -1529,23 +1565,23 @@ namespace fire.Compiler
                         string resolvedNewClassName = GenericClassNames.ResolveNewTarget(
                             ne.ClassRef, ne.TypeArgs?.Count ?? 0, IsKnownClassName);
                         if (!IsKnownClassName(resolvedNewClassName))
-                            throw new ResolverException($"Unbekannte Klasse '{ne.ClassRef.BaseName}'", ne.Line);
+                            throw new ResolverException($"Unknown class '{ne.ClassRef.BaseName}'", ne.Line);
                         if (_classes.TryGetValue(resolvedNewClassName, out var newTargetCd))
                             CheckTypeArgs(newTargetCd, ne);
                         else if (ne.TypeArgs != null && ne.TypeArgs.Count > 0)
                             throw new ResolverException(
-                                $"'{ne.ClassRef.BaseName}' ist nicht generisch, akzeptiert also keine Typ-Argumente in spitzen Klammern",
+                                $"'{ne.ClassRef.BaseName}' is not generic, so it does not accept type arguments in angle brackets",
                                 ne.Line);
                     });
-                    foreach (var a in ne.Args) ResolveExpr(a);
+                    foreach (var a in ne.Args) ResolveExprAllowTake(a);
                     break;
 
                 case NewArrayExpr na:
                     ValidateTypeRef(na.ElementType, na.Line);
                     if (na.SizeExprs.Count == 0 || na.SizeExprs[0] == null)
                         throw new ResolverException(
-                            "'new Type[...]' braucht mindestens für die erste Dimension eine Größe " +
-                            "(z.B. 'new int[3]' oder 'new int[3][]' - nicht 'new int[]').", na.Line);
+                            "'new Type[...]' needs a size at least for the first dimension " +
+                            "(e.g. 'new int[3]' or 'new int[3][]' - not 'new int[]').", na.Line);
                     ResolveArrayRanks(na.SizeExprs);
                     break;
 
@@ -1591,7 +1627,7 @@ namespace fire.Compiler
                     break;
 
                 default:
-                    throw new ResolverException($"Unbekannter Ausdruckstyp {expr.GetType().Name}", expr.Line);
+                    throw new ResolverException($"Unknown expression type {expr.GetType().Name}", expr.Line);
             }
         }
 
@@ -1608,20 +1644,32 @@ namespace fire.Compiler
         /// TryCallExpr-Knoten selbst, die der Compiler abfragt.</summary>
         private void ResolveTryCallExpr(TryCallExpr tc)
         {
+            // `try obj.Take...(...)` (SPEC 2.2): die Ownership-Methode verschiebt nur, wenn der Aufrufer der Besitzer ist
+            if (tc.Call is CallExpr takeCall && takeCall.Callee is MemberExpr takeMember && takeMember.Name is "TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo")
+            {
+                int baseArgs = takeMember.Name == "TakeTo" ? 1 : 0;
+                if (takeCall.Args.Count != baseArgs && takeCall.Args.Count != baseArgs + 1)
+                    throw new ResolverException($"'try {takeMember.Name}(...)' expects {(baseArgs == 1 ? "the target object and optionally a Takes mode" : "optionally a Takes mode")}", tc.Line);
+                ResolveExpr(takeMember.Target);
+                foreach (var a in takeCall.Args) ResolveExprAllowTake(a);
+                _refs[tc] = new ResolvedRef.TryTake(takeMember.Name);
+                return;
+            }
+
             if (tc.Call is not CallExpr innerCall || innerCall.Callee is not IdentifierExpr calleeIdent)
                 throw new ResolverException(
-                    "'try' vor einem Aufruf erwartet einen direkten Aufruf einer registrierten Funktion " +
-                    "(kein Methodenaufruf, kein Lambda-Aufruf)", tc.Line);
+                    "'try' before a call expects a direct call of a registered function " +
+                    "(no method call except obj.TakeLocal/TakeUpwards/TakeGlobal/TakeTo, no lambda call)", tc.Line);
 
             if (!_tryableNativeNames.Contains(calleeIdent.Name))
                 throw new ResolverException(
                     _nativeNames.Contains(calleeIdent.Name) || _externs.ContainsKey(calleeIdent.Name)
-                        ? $"'{calleeIdent.Name}' ist keine 'tryable' registrierte Funktion - nur mit 'try' " +
-                          "aufrufbare APIs dürfen so aufgerufen werden, normale native/extern-Funktionen nicht."
-                        : $"'{calleeIdent.Name}' ist keine bekannte 'tryable' registrierte native Funktion.",
+                        ? $"'{calleeIdent.Name}' is not a function registered as 'tryable' - only APIs that can be " +
+                          "called with 'try' may be called like this, ordinary native/extern functions may not."
+                        : $"'{calleeIdent.Name}' is not a known native function registered as 'tryable'.",
                     tc.Line);
 
-            foreach (var a in innerCall.Args) ResolveExpr(a);
+            foreach (var a in innerCall.Args) ResolveExprAllowTake(a);
             _refs[tc] = new ResolvedRef.TryableNative(calleeIdent.Name);
         }
 
@@ -1632,11 +1680,11 @@ namespace fire.Compiler
                 case IdentifierExpr id:
                     if (IsCapturedVariable(id.Name))
                         throw new ResolverException(
-                            $"'{id.Name}' ist im Lambda eine KOPIE der äußeren Variablen (Capture) und kann dort nicht zugewiesen werden " +
-                            "(eine neue lokale Variable mit anderem Namen anlegen)", id.Line);
+                            $"'{id.Name}' is a COPY of the outer variable inside the lambda (capture) and cannot be assigned there " +
+                            "(declare a new local variable with a different name)", id.Line);
                     if (IsReadonlyVariable(id.Name))
                         throw new ResolverException(
-                            $"'{id.Name}' ist 'readonly' und kann nach der Deklaration nicht mehr zugewiesen werden", id.Line);
+                            $"'{id.Name}' is 'readonly' and cannot be assigned after its declaration", id.Line);
                     _refs[id] = ResolveIdentifierRef(id.Name, id.Line);
                     break;
                 case MemberExpr me:
@@ -1650,8 +1698,8 @@ namespace fire.Compiler
                     // siehe FieldDecl-Doku.
                     if (me.Target is ThisExpr && _currentClass != null && IsReadonlyField(_currentClass, me.Name) && !_inConstructor)
                         throw new ResolverException(
-                            $"'{_currentClass.Name}.{me.Name}' ist 'readonly' und kann nur innerhalb eines " +
-                            "Konstruktors der deklarierenden Klasse zugewiesen werden", me.Line);
+                            $"'{_currentClass.Name}.{me.Name}' is 'readonly' and can only be assigned inside a " +
+                            "constructor of the declaring class", me.Line);
                     // 'ClassName.Member = ...' (SPEC "Statische Mitglieder") -
                     // dieselbe Erkennung wie beim Lesen (siehe ResolveExpr/
                     // TryResolveStaticMemberAccess), hier separat nötig, weil
@@ -1684,11 +1732,11 @@ namespace fire.Compiler
                 case UnaryExpr { Op: UnaryOp.Dereference } deref:
                     if (_unsafeDepth == 0)
                         throw new ResolverException(
-                            "'*' als Zuweisungsziel ist nur innerhalb eines 'unsafe'-Blocks gültig", deref.Line);
+                            "'*' as an assignment target is only valid inside an 'unsafe' block", deref.Line);
                     ResolveExpr(deref.Operand);
                     break;
                 default:
-                    throw new ResolverException("Ungültiges Zuweisungsziel", target.Line);
+                    throw new ResolverException("Invalid assignment target", target.Line);
             }
         }
 
@@ -1735,6 +1783,7 @@ namespace fire.Compiler
         /// statt zugelassen).</summary>
         private void ResolveFireStmt(FireStmt fs)
         {
+            _sawFire = true;
             foreach (var capture in fs.TakingCaptures)
                 ResolveExpr(capture.Source);
             if (fs.WithSource != null)
@@ -1769,18 +1818,27 @@ namespace fire.Compiler
             // gleichnamige Hauptprogramm-Global) und ist selbst ganz normal
             // beschreibbar wie bisher, NICHT readonly.
             int nextCaptureSlot = _noShadowGlobals ? 0 : _globalScope.Slots.Count;
+            if (!_noShadowGlobals && _finalGlobalCount is int finalCount)
+            {
+                // the slots of the globals that are declared later belong to the main program: keep them free in the body (placeholders)
+                for (; nextCaptureSlot < finalCount; nextCaptureSlot++) _current.Slots["\u0001global:" + nextCaptureSlot] = nextCaptureSlot;
+            }
             var capturesSeen = new HashSet<string>();
             foreach (var capture in fs.TakingCaptures)
             {
                 if (!capturesSeen.Add(capture.VarName))
-                    throw new ResolverException($"'{capture.VarName}' wurde in diesem 'fire' bereits erfasst", fs.Line);
+                    throw new ResolverException($"'{capture.VarName}' was already captured in this 'fire'", fs.Line);
+                // A capture with the name of a global replaces its shadow; the old entry stays under a hidden key so that the slot count (the
+                // slot of the next variable of the body) stays right.
+                if (_current.Slots.TryGetValue(capture.VarName, out int shadowed)) _current.Slots["\u0001shadow:" + capture.VarName] = shadowed;
                 _current.Slots[capture.VarName] = nextCaptureSlot++;
                 _current.ReadonlySlots.Remove(capture.VarName);
             }
             if (fs.WithVarName != null)
             {
                 if (!capturesSeen.Add(fs.WithVarName))
-                    throw new ResolverException($"'{fs.WithVarName}' wurde in diesem 'fire' bereits erfasst", fs.Line);
+                    throw new ResolverException($"'{fs.WithVarName}' was already captured in this 'fire'", fs.Line);
+                if (_current.Slots.TryGetValue(fs.WithVarName, out int shadowedWith)) _current.Slots["\u0001shadow:" + fs.WithVarName] = shadowedWith;
                 _current.Slots[fs.WithVarName] = nextCaptureSlot++;
                 _current.ReadonlySlots.Remove(fs.WithVarName);
             }
@@ -1880,7 +1938,7 @@ namespace fire.Compiler
 
                 found.RequiredUnits.TryGetValue(name, out var requiredUnit);
                 var outer = new IdentifierExpr(lambda.Line, name);
-                _refs[outer] = new ResolvedRef.Local(depth, found.Slots[name], requiredUnit);
+                _refs[outer] = new ResolvedRef.Local(depth, found.Slots[name], requiredUnit, found.RefNames.Contains(name));   // (the capture copies the VALUE of a ref parameter)
                 Define(name, lambda.Line, requiredUnit: requiredUnit);
                 _current.CaptureNames.Add(name);
                 (captures ??= new List<IdentifierExpr>()).Add(outer);

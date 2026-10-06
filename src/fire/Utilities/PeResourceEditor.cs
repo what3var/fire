@@ -87,7 +87,7 @@ namespace fire.Utilities
 
             IntPtr handle = BeginUpdateResource(exePath, bDeleteExistingResources: false);
             if (handle == IntPtr.Zero)
-                throw new Win32Exception(Marshal.GetLastWin32Error(), $"BeginUpdateResource für '{exePath}' fehlgeschlagen.");
+                throw new Win32Exception(Marshal.GetLastWin32Error(), $"BeginUpdateResource for '{exePath}' failed.");
 
             try
             {
@@ -115,7 +115,7 @@ namespace fire.Utilities
                     Update(handle, RT_GROUP_ICON, groupId, groupData);
 
                 if (!EndUpdateResource(handle, fDiscard: false))
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "EndUpdateResource fehlgeschlagen.");
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "EndUpdateResource failed.");
             }
             catch
             {
@@ -140,13 +140,13 @@ namespace fire.Utilities
 
             IntPtr handle = BeginUpdateResource(exePath, bDeleteExistingResources: false);
             if (handle == IntPtr.Zero)
-                throw new Win32Exception(Marshal.GetLastWin32Error(), $"BeginUpdateResource für '{exePath}' fehlgeschlagen.");
+                throw new Win32Exception(Marshal.GetLastWin32Error(), $"BeginUpdateResource for '{exePath}' failed.");
 
             try
             {
                 Update(handle, RT_VERSION, (IntPtr)1, data);
                 if (!EndUpdateResource(handle, fDiscard: false))
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "EndUpdateResource fehlgeschlagen.");
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "EndUpdateResource failed.");
             }
             catch
             {
@@ -163,7 +163,7 @@ namespace fire.Utilities
         {
             uint length = data != null ? (uint)data.Length : 0;
             if (!UpdateResource(handle, type, name, LANG_NEUTRAL, data, length))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "UpdateResource fehlgeschlagen.");
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "UpdateResource failed.");
         }
 
         /// <summary>Listet alle Ressourcen-IDs eines bestimmten Typs, die
@@ -212,7 +212,7 @@ namespace fire.Utilities
             reader.ReadUInt16(); // reserved, immer 0
             ushort type = reader.ReadUInt16();
             if (type != 1)
-                throw new InvalidDataException($"'{icoPath}' ist keine gültige .ico-Datei (Typ {type}, erwartet 1).");
+                throw new InvalidDataException($"'{icoPath}' is not a valid .ico file (type {type}, expected 1).");
             ushort count = reader.ReadUInt16();
 
             var entries = new List<(byte Width, byte Height, byte ColorCount, ushort Planes, ushort BitCount, uint BytesInRes, uint ImageOffset)>();

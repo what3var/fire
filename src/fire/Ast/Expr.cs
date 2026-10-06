@@ -38,7 +38,9 @@ namespace fire.Ast
     /// da die Sprache dynamisch typisiert ist und der Aufrufer nicht
     /// grundsätzlich wissen kann, wie viele Parameter das Ziel hat/welche
     /// davon optional sind.</summary>
-    public sealed record LambdaParam(string Name, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, Expr? DefaultValue = null);
+    /// <summary>ByRef: der Parameter ist mit vorangestelltem `ref` deklariert - das Argument wird per Referenz uebergeben (SPEC 5.4.2): die Funktion
+    /// liest und schreibt die Variable (das Feld, das Array-Element) des Aufrufers. Ohne `ref` werden Basistypen und Strings kopiert.</summary>
+    public sealed record LambdaParam(string Name, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, Expr? DefaultValue = null, bool ByRef = false);
 
     // AutoCapture: äußere LOKALE Variablen, die der Körper benutzt, werden beim Erzeugen als Wert kopiert (SPEC 4.2);
     // false für `fire global { }` (dort gilt allein `taking`).
@@ -143,7 +145,7 @@ namespace fire.Ast
     // FlatCopy (`flat x`) und DeepCopy (`copy x`) sind Kopier-Präfixe (SPEC 2.4): `flat` kopiert das Objekt selbst
     // samt seiner wertartigen Mitglieder, Referenzen bleiben wie im Original; `copy` ist eine Tiefenkopie (jede
     // erreichbare Instanz genau einmal kopiert). Der Compiler behandelt sie wie `new` bei der Owner-Wahl (SPEC 2.1).
-    public enum UnaryOp { Negate, LogicalNot, BitNot, Dereference, AddressOf, FlatCopy, DeepCopy }
+    public enum UnaryOp { Negate, LogicalNot, BitNot, Dereference, AddressOf, FlatCopy, DeepCopy, Take }
     public sealed record UnaryExpr(int Line, UnaryOp Op, Expr Operand) : Expr(Line);
 
     public enum BinaryOp { Add, Sub, Mul, Div, Mod, Eq, NotEq, Lt, LtEq, Gt, GtEq, And, Or, BitAnd, BitOr, BitXor, ShiftLeft, ShiftRight, Power }

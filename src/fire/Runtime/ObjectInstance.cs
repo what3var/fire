@@ -40,16 +40,30 @@ namespace fire.Runtime
         /// Program.cs) - Fields fällt dann komplett auf den Dictionary-
         /// Fallback zurück, funktional unverändert, nur ohne den
         /// Geschwindigkeitsvorteil.</summary>
-        public RuntimeClass? RtClass { get; }
+        public RuntimeClass? RtClass { get; private set; }
 
         public IOwner Owner { get; private set; }
         public FieldStore Fields { get; }
 
         // Die besessenen Kinder (siehe OwnedSet): die meisten Objekte besitzen keins, die übrigen meist genau eins.
         private OwnedSet _owned;
+        private List<IOwnedLeaf>? _leaves; // besessene Arrays und Puffer
         private bool _destroyed;
 
         public bool IsDestroyed => _destroyed;
+
+        /// <summary>Zerstört UND der Zerstörungsstapel ist zu Ende (siehe <see cref="DestroyBatch"/>): ab jetzt ist jede Benutzung ein Fehler (SPEC 2.5).
+        /// Bis dahin darf ein Destruktor die anderen Objekte seines Scopes noch benutzen, auch die schon zerstörten.</summary>
+        public bool IsDead => _dead;
+        private bool _dead;
+
+        /// <summary>Der Zerstörungsstapel ist zu Ende: das Objekt ist tot. Seine Klasse wird vergessen, damit die Inline-Caches der VM (sie vergleichen die
+        /// Klasse) es nicht mehr treffen - der langsame Pfad meldet die Benutzung.</summary>
+        internal void Kill()
+        {
+            _dead = true;
+            RtClass = null;
+        }
 
         /// <summary>Eindeutige, monoton steigende ID - siehe ThreadShareLock.Order-Doku (Grundlage einer künftigen globalen
         /// Lock-Reihenfolge über mehrere Bäume hinweg). Wird erst beim ERSTEN Lesen vergeben (die atomare Zählung bei jedem
@@ -120,6 +134,10 @@ namespace fire.Runtime
         /// `sync flat`, die ja wissen müssen, wohin zurückgeschrieben wird.
         /// Null für ein Objekt, das keine Kopie ist (der Normalfall).</summary>
         public ObjectInstance? SyncOrigin { get; set; }
+
+        /// <summary>Jeder Knoten einer `taking`-Kopie (nicht nur die Wurzel, die `SyncOrigin` trägt): am Ende des Fire-Threads bleiben
+        /// diese Objekte unberührt - sie sind Kopien von Objekten des Hauptprogramms und lösen dort keine Destruktoren aus.</summary>
+        public bool IsTakingCopy { get; set; }
 
         /// <summary>Gesetzt (bei `new`, siehe VM.NewObject), wenn diese
         /// Instanz von einer `actor`-Deklaration stammt (docs/
@@ -212,6 +230,8 @@ namespace fire.Runtime
             else if (ThreadLock != null) obj.ActivateThreadSharing(ThreadLock);
         }
         public void RemoveOwned(ObjectInstance obj) => _owned.Remove(obj);
+        public void AddLeaf(IOwnedLeaf leaf) => (_leaves ??= new List<IOwnedLeaf>()).Add(leaf);
+        public void RemoveLeaf(IOwnedLeaf leaf) => _leaves?.Remove(leaf);
 
         // -----------------------------------------------------------
         // Ownership-Transfer: TakeUpwards / TakeGlobal / TakeTo (SPEC 2.2)
@@ -224,10 +244,10 @@ namespace fire.Runtime
         {
             if (Owner is not Scope currentScope)
                 throw new OwnershipException(
-                    "TakeUpwards ist nur gültig, wenn der aktuelle Owner ein Scope ist.");
+                    "TakeUpwards is only valid if the current owner is a scope.");
             if (currentScope.Parent == null)
                 throw new OwnershipException(
-                    "TakeUpwards: der aktuelle Scope hat keinen Parent-Scope (bereits global).");
+                    "TakeUpwards: the current scope has no parent scope (already global).");
             Reparent(currentScope.Parent);
         }
 
@@ -251,7 +271,7 @@ namespace fire.Runtime
 
             if (IsAncestorOf(target))
                 throw new OwnershipException(
-                    "TakeTo: Zyklus erkannt - das Zielobjekt ist bereits (direkt oder transitiv) im Besitz dieses Objekts.");
+                    "TakeTo: cycle detected - the target object is already owned (directly or transitively) by this object.");
 
             Reparent(target);
         }
@@ -268,6 +288,22 @@ namespace fire.Runtime
         /// "return übergibt Ownership an den aufrufenden Scope"), nicht Teil der
         /// öffentlichen Skript-API (dafür bleiben TakeUpwards/TakeGlobal/TakeTo).</summary>
         public void ReparentTo(Scope newOwner) => Reparent(newOwner);
+
+        /// <summary>Das Objekt wird zum Argument des Aufrufs von <paramref name="scope"/> (siehe Scope.AddArgument): es stirbt als letztes.</summary>
+        public void ReparentToArgument(Scope scope)
+        {
+            if (_destroyed) return;
+            Owner.RemoveOwned(this);
+            Owner = scope;
+            scope.AddArgument(this);
+        }
+
+        /// <summary>Wie <see cref="ReparentTo"/> für einen beliebigen Owner (Scope oder Objekt) - für OwnershipWalk. Ein zerstörtes Objekt bleibt, wo es ist.</summary>
+        internal void ReparentToOwner(IOwner newOwner)
+        {
+            if (_destroyed) return;
+            Reparent(newOwner);
+        }
 
         /// <summary>true, wenn <paramref name="candidate"/> irgendwo unterhalb von
         /// diesem Objekt im Ownership-Baum hängt (direkt oder transitiv) -
@@ -303,6 +339,7 @@ namespace fire.Runtime
             {
                 if (ReferenceEquals(current, ownerCandidate)) return true;
                 if (current is ObjectInstance oi) current = oi.Owner;
+                else if (current is fire.Values.ScriptArray array && array.LeafOwner != null) current = array.LeafOwner;
                 else return false;
             }
         }
@@ -310,6 +347,18 @@ namespace fire.Runtime
         // -----------------------------------------------------------
         // Kaskadenlöschung (SPEC 2.3)
         // -----------------------------------------------------------
+
+        /// <summary>Ende eines Fire-Threads für eine `taking`-Kopie (sie bleibt unberührt, sie löst keinen Destruktor aus): was der Thread selbst darin
+        /// angelegt hat, wird zerstört; Kopien darin werden genauso behandelt.</summary>
+        public void DestroyOwnedNonCopies(IDestructRunner runner)
+        {
+            var children = new List<ObjectInstance>(_owned.AsList());
+            foreach (var child in children)
+            {
+                if (child.IsTakingCopy) child.DestroyOwnedNonCopies(runner);
+                else child.Destroy(runner);
+            }
+        }
 
         /// <summary>Zerstört dieses Objekt: ruft zuerst destruct() auf (über den
         /// vom Evaluator bereitgestellten Runner), dann kaskadierend alle noch von
@@ -320,6 +369,13 @@ namespace fire.Runtime
         {
             if (_destroyed) return;
             _destroyed = true;
+            DestroyBatch.Enter();
+            try { DestroyCore(runner); }
+            finally { DestroyBatch.Exit(this); }
+        }
+
+        private void DestroyCore(IDestructRunner runner)
+        {
 
             // Proben leben mit dem Objekt
             if (Probes != null) ProbeRegistry.Forget(Probes.RemoveAll());
@@ -329,10 +385,35 @@ namespace fire.Runtime
                 runner.RunDestructor(this);
 
             _owned.DestroyAll(runner);
+            LeafOwnership.DestroyAll(_leaves, runner);
 
             // Ein zerstörtes Objekt gehört niemandem mehr: sein bisheriger Owner (meist eine Scope, die gleich wiederverwendet wird)
             // darf nicht länger auf es zeigen. `Owner` bleibt nie null - ein Platzhalter nimmt Anfragen an den toten Besitzer entgegen.
             Owner = DeadOwner.Instance;
+        }
+    }
+
+    /// <summary>Der Zerstörungsstapel: das Verlassen eines Scopes, ein `delete`, das Ende des Programms zerstören mehrere Objekte nacheinander (in der Reihenfolge der
+    /// Erzeugung). Ein Destruktor sieht die anderen Objekte des Stapels noch - auch die schon zerstörten (der Destruktor eines Writers leert einen Stream, der vor
+    /// ihm zerstört wurde). Erst wenn der äußerste Stapel endet, sind sie tot (<see cref="ObjectInstance.IsDead"/>): danach wirft ihre Benutzung eine DestroyedException.
+    /// Pro Thread, weil jeder Thread seine eigenen Scopes verlässt.</summary>
+    internal static class DestroyBatch
+    {
+        [System.ThreadStatic] private static int _depth;
+        [System.ThreadStatic] private static List<ObjectInstance>? _zombies;
+
+        public static void Enter() => _depth++;
+
+        /// <summary>Verlässt den Stapel; <paramref name="destroyed"/> (ein Objekt, das im Stapel zerstört wurde) stirbt, sobald der äußerste endet.</summary>
+        public static void Exit(ObjectInstance? destroyed = null)
+        {
+            if (destroyed != null) (_zombies ??= new List<ObjectInstance>()).Add(destroyed);
+            if (--_depth > 0) return;
+            _depth = 0;
+            var zombies = _zombies;
+            if (zombies == null) return;
+            _zombies = null;
+            foreach (var obj in zombies) obj.Kill();
         }
     }
 }

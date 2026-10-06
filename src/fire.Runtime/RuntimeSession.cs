@@ -38,8 +38,8 @@ namespace fire.Runtime
             // Private constructor to prevent direct instantiation
         }
 
-        /// <summary>Sicherheitsnetz des Hosts: schließt nach dem Lauf alle Streams, die ein Skript offen gelassen hat
-        /// (siehe IoBridge.RegisterAll). Der Destruktor von `IO.FileStream` &amp; Co. schließt sie normalerweise schon.</summary>
+        /// <summary>Policy und Konsole des Hosts für die Natives von Paketen (siehe PackageHost); am Ende des Laufs schließt es, was das Skript offen gelassen hat.
+        /// Der Destruktor von `IO.FileStream` &amp; Co. schließt Streams normalerweise schon.</summary>
         protected IDisposable? IoResources { get; set; }
 
         /// <summary>Räumt die Geräte-Brücke nach dem Lauf auf (siehe DeviceBridge.RegisterAll).</summary>
@@ -70,6 +70,7 @@ namespace fire.Runtime
 
         public static Session Build(LinkedProgram linkedProgram, VmExecutionMode executionMode, Func<Value[], Value>? debugWriter = null)
         {
+            Value.SingleFloats = linkedProgram.FloatWidth == 32; // the precision of float is process-wide while a program runs
             var natives = new NativeRegistry();
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Print))
@@ -86,20 +87,24 @@ namespace fire.Runtime
             // WICHTIG: native Funktionen werden über ihren INDEX angesprungen - die Reihenfolge der Registrierung muss
             // exakt der beim Übersetzen entsprechen (siehe ImportedPreludes.Insert): graphics, reflection, time, devices, io.
             if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
-                RegisterGraphics(session, natives);
+            {
+                // der Manager reist als object: jede Methode, die den Typ nennt, laedt beim JIT-Kompilieren fire.Terminal (siehe Klassen-Doku)
+                object fbManager = RegisterGraphics(natives);
+                if (linkedProgram.NativeImports.Contains(NativeImports.Windows))
+                    RegisterWindows(session, natives, fbManager);
+            }
 
             if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
                 ReflectionNatives.Register(natives);
-            if (linkedProgram.NativeImports.Contains(NativeImports.Time))
-                TimeNatives.Register(natives);
-
-            if (linkedProgram.NativeImports.Contains(NativeImports.Devices))
-                session.DeviceResources = RegisterDevices(natives);
 
             // Dateisystem-/Stdio-Policy: die gepackte Runtime nutzt die Vorgabe (alles erlaubt, echte Konsole) -
             // Hosts mit eigener Policy (Editor) bauen ihre Session über fire.Compiler.RuntimeSession.
-            if (linkedProgram.NativeImports.Contains(NativeImports.IO))
-                session.IoResources = RegisterIo(natives);
+            // what the natives of packages (the io package) ask of the host: the real console, everything allowed - the packed runtime has no other host
+            if (linkedProgram.PackageNatives is { Count: > 0 })
+                session.IoResources = PackageHost.Begin(null, null, linkedProgram.NativeImports.Contains("pkg:devices"));
+
+            // the natives of imports of packages (C++ in shared libraries, the libraries of a packed program come from its payload): same names, same order
+            PackageNativeBinding.Register(natives, linkedProgram.PackageNatives, linkedProgram.PackageNativeLibraries, null);
 
             var globalScope = new Scope(null, isGlobal: true);
 
@@ -114,27 +119,23 @@ namespace fire.Runtime
         // Jede dieser Methoden ist die EINZIGE Stelle, die ihre Bridge-Typen erwähnt (siehe Klassen-Doku).
 
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static void RegisterGraphics(Session session, NativeRegistry natives)
+        private static object RegisterGraphics(NativeRegistry natives)
         {
             var font = new fire.Terminal.IntegratedGlyphFont();
             var fbManager = new fire.Terminal.FramebufferManager();
-            var consoleManager = new fire.Terminal.ConsoleManager(fbManager, font);
-            var windowManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => session.CallLambda(l, v));
+            var rendererManager = new fire.Terminal.RendererManager(fbManager, font);
 
-            fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, consoleManager, windowManager);
+            fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, rendererManager);
+            return fbManager;
         }
 
+        /// <summary>`#import "windows"`: das SDL-Fenster (eigene Assembly samt SDL - ein Programm nur mit `graphics` laedt sie nie).</summary>
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static IDisposable RegisterDevices(NativeRegistry natives)
+        private static void RegisterWindows(Session session, NativeRegistry natives, object framebuffers)
         {
-            // Ein eigener Manager mit den eingebauten Treibern; er gehört dem Programm und wird nach dem Lauf freigegeben.
-            var deviceManager = fire.Device.Manager.DeviceManager.DeviceManager.CreateDefault();
-
-            return fire.Device.Bridge.DeviceBridge.RegisterAll(natives, deviceManager, VM.WaitUntil);
+            var windowManager = new fire.Terminal.Windows.WindowManager((fire.Terminal.FramebufferManager)framebuffers, (l, v) => session.CallLambda(l, v));
+            fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, windowManager);
         }
 
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private static IDisposable? RegisterIo(NativeRegistry natives) =>
-            fire.IO.Bridge.IoBridge.RegisterAll(natives, null, null);
     }
 }

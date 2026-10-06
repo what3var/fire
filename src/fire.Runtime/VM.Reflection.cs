@@ -50,7 +50,7 @@ namespace fire.Runtime
                 return true;
             }
             obj = null!;
-            ReflectFail($"{what}: erwartet ein Objekt, erhalten: {target.Kind}.");
+            ReflectFail($"{what}: expects an object, got: {target.Kind}.");
             return false;
         }
 
@@ -78,7 +78,7 @@ namespace fire.Runtime
             if (!ReflectRequireObject(target, "Reflect.Get", out var obj)) return default;
             var rc = ResolveClass(obj.ClassName);
             if (!obj.HasFieldLocked(name) && rc.FindMethod("get_" + name, 0) == null)
-                return ReflectFail($"'{obj.ClassName}' hat kein lesbares Mitglied '{name}'.");
+                return ReflectFail($"'{obj.ClassName}' has no readable member '{name}'.");
             Push(target);
             if (!GetFieldSlowCore(name, -1)) { _nativeRedirected = true; return default; }
             return Pop();
@@ -90,15 +90,15 @@ namespace fire.Runtime
             var rc = ResolveClass(obj.ClassName);
             if (!obj.HasFieldLocked(name) && rc.FindMethod("set_" + name, 1) == null)
                 return ReflectFail(rc.FindMethod("get_" + name, 0) != null
-                    ? $"Die Property '{name}' von '{obj.ClassName}' hat keinen Setter (nur 'get')."
-                    : $"'{obj.ClassName}' hat kein beschreibbares Mitglied '{name}'.");
+                    ? $"The property '{name}' of '{obj.ClassName}' has no setter (only 'get')."
+                    : $"'{obj.ClassName}' has no writable member '{name}'.");
             for (var c = rc; c != null; c = c.Base)
             {
                 if (c.Meta == null) continue;
                 foreach (var m in c.Meta.Members)
                     if (m.Kind == "field" && m.Name == name && !m.IsStatic)
                     {
-                        if (m.IsReadonly) return ReflectFail($"Das Feld '{name}' von '{c.Name}' ist 'readonly' und lässt sich nicht zuweisen.");
+                        if (m.IsReadonly) return ReflectFail($"The field '{name}' of '{c.Name}' is 'readonly' and cannot be assigned.");
                         goto checkedReadonly;
                     }
             }
@@ -116,9 +116,9 @@ namespace fire.Runtime
             var rc = ResolveClass(obj.ClassName);
             var proto = rc.FindMethodWithAccess(name, args.Length).Item1;
             if (proto == null)
-                return ReflectFail($"'{obj.ClassName}' hat keine Methode '{name}' mit {args.Length} Parameter(n).");
+                return ReflectFail($"'{obj.ClassName}' has no method '{name}' with {args.Length} parameter(s).");
             if (proto.IsStatic)
-                return ReflectFail($"'{name}' ist eine statische Methode - Reflect.Call ruft nur Instanzmethoden auf.");
+                return ReflectFail($"'{name}' is a static method - Reflect.Call only calls instance methods.");
             var result = _threadBroker != null && _sectionDepth == 0 && obj.InGlobalsDomain
                 ? CallGlobalsMethodInSection(obj, name, args)
                 : CallMethodNested(obj, name, args);
@@ -129,13 +129,13 @@ namespace fire.Runtime
         public Value ReflectNew(string className, Value[] args)
         {
             if (!_classes.TryGetValue(className, out var rc))
-                return ReflectFail($"Unbekannte Klasse '{className}'.");
+                return ReflectFail($"Unknown class '{className}'.");
             var ctor = rc.FindConstructor(args.Length);
             if (ctor == null)
-                return ReflectFail($"'{className}' hat keinen Konstruktor mit {args.Length} Parameter(n).");
+                return ReflectFail($"'{className}' has no constructor with {args.Length} parameter(s).");
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(rc, ctor.Access ?? AccessModifier.Public))
             {
-                ThrowAccessDenied($"Der Konstruktor von '{className}' ist {DescribeAccess(ctor.Access ?? AccessModifier.Public)} und von hier aus nicht aufrufbar.");
+                ThrowAccessDenied($"The constructor of '{className}' is {DescribeAccess(ctor.Access ?? AccessModifier.Public)} and cannot be called from here.");
                 _nativeRedirected = true;
                 return default;
             }

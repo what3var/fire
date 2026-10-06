@@ -18,13 +18,46 @@ namespace fire.Values
     /// Skript-Exception werfen" ein Konzept der VM/des Interpreters ist,
     /// keins dieser reinen Datenstruktur.
     /// </summary>
-    public sealed class ScriptArray
+    public sealed class ScriptArray : fire.Runtime.IOwnedLeaf, fire.Runtime.IOwner
     {
         public Value[] Items { get; }
 
+        /// <summary>Der Owner (SPEC 2): ein Scope oder ein Objekt; null fuer ein Array, das ausserhalb der VM entstand und nie zerstoert wird.</summary>
+        public fire.Runtime.IOwner? LeafOwner { get; set; }
+
+        /// <summary>Zerstoert (der Owner wurde verlassen/zerstoert oder `delete`): der Zugriff ist ein Fehler (Debug/Release).</summary>
+        public bool IsDestroyed { get; private set; }
+
+        /// <summary>Innere Arrays einer mehrdimensionalen Allokation (`new int[3][4]`): sie gehoeren zum aeusseren Array und werden mit ihm zerstoert.</summary>
+        public System.Collections.Generic.List<fire.Runtime.IOwnedLeaf>? Parts { get; set; }
+
+        // Ein Array kann Objekte besitzen (SPEC 2.2): was `Takes` und `return` an einem Array mitnehmen, gehoert dem Array und stirbt mit ihm.
+        private fire.Runtime.OwnedSet _ownedObjects;
+        public System.Collections.Generic.IReadOnlyList<fire.Runtime.ObjectInstance> OwnedObjects => _ownedObjects.AsList();
+        public void AddOwned(fire.Runtime.ObjectInstance obj) => _ownedObjects.Add(obj);
+        public void RemoveOwned(fire.Runtime.ObjectInstance obj) => _ownedObjects.Remove(obj);
+        public void AddLeaf(fire.Runtime.IOwnedLeaf leaf) => (Parts ??= new System.Collections.Generic.List<fire.Runtime.IOwnedLeaf>()).Add(leaf);
+        public void RemoveLeaf(fire.Runtime.IOwnedLeaf leaf) => Parts?.Remove(leaf);
+
+        public void MarkDestroyed(fire.Runtime.IDestructRunner runner)
+        {
+            if (IsDestroyed) return;
+            // was dem Array gehoert, stirbt vor ihm (die Destruktoren sehen es noch)
+            if (!_ownedObjects.IsEmpty) _ownedObjects.DestroyAll(runner);
+            IsDestroyed = true;
+            Special = true;
+            LeafOwner = null;
+            if (Parts != null) foreach (var part in Parts.ToArray()) part.MarkDestroyed(runner);
+            Parts = null;
+        }
+
         /// <summary>Wurde dieses Array von einem Fire-Thread über die Globals erreicht (siehe GlobalsBroker)? Dann gehört es zum geteilten
         /// Bereich: Elementzugriffe laufen unter dem Baum-Lock, und ein Fire-Thread ändert Elemente nur innerhalb einer Sektion.</summary>
-        public bool IsShared { get; set; }
+        public bool IsShared { get => _shared; set { _shared = value; Special = value || IsDestroyed; } }
+        private bool _shared;
+
+        /// <summary>Geteilt oder zerstoert: die Schnellpfade der VM (Elementzugriff) nehmen dann den langsamen Weg, der beides beachtet.</summary>
+        public bool Special { get; private set; }
         public int Length => Items.Length;
 
         public ScriptArray(int length)

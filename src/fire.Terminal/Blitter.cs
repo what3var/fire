@@ -29,9 +29,12 @@ namespace fire.Terminal
         /// Ist `dw` oder `dh` negativ, wird in der jeweiligen Richtung gespiegelt (|dw| x |dh| Pixel ab (dx, dy)); sind sie 0, geschieht nichts.
         /// Quell- und Zielgröße dürfen verschieden sein (Skalierung durch den nächsten Nachbarn). Ausschnitt und Ziel werden beschnitten.
         /// `colorKey` (nur Palette-Quelle, Modus Transparent/Blend): der Index, der durchsichtig ist; -1 = der TransparentIndex der Quelle.</summary>
-        public static void Blit(Framebuffer dst, Framebuffer src, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh,
-            BlitMode mode = BlitMode.Copy, int colorKey = -1)
+        public static void Blit(IRenderTarget dst, IRenderTarget src, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh,
+            BlitMode mode = BlitMode.Copy, int colorKey = -1, bool blend = true)
         {
+            // ohne Alpha-Blending (Renderer.AlphaBlending) mischt auch der Modus Blend nicht: er verhält sich wie Transparent
+            if (!blend && mode == BlitMode.Blend) mode = BlitMode.Transparent;
+            bool srcIndexed = src.Indices != null, dstIndexed = dst.Indices != null;
             if (sw <= 0 || sh <= 0 || dw == 0 || dh == 0) return;
 
             long absDw = Math.Abs((long)dw), absDh = Math.Abs((long)dh);
@@ -42,14 +45,14 @@ namespace fire.Terminal
 
             // Quell-Pixel eines Ziel-Pixels: sxp = sx + floor((i + 0.5) * sw / absDw) - die Mitte des Zielpixels bestimmt das Quellpixel
             Span<uint> srcTable = stackalloc uint[256];
-            if (src.IsIndexed) src.Palette.CopyPacked(srcTable);
+            if (srcIndexed) src.Palette.CopyPacked(srcTable);
 
             Span<byte> map = stackalloc byte[256];                // Palette-Quelle -> Palette-Ziel
-            bool directIndices = src.IsIndexed && dst.IsIndexed && SamePalette(src.Palette, dst.Palette);
-            if (src.IsIndexed && dst.IsIndexed && !directIndices)
+            bool directIndices = srcIndexed && dstIndexed && SamePalette(src.Palette, dst.Palette);
+            if (srcIndexed && dstIndexed && !directIndices)
                 for (int i = 0; i < 256; i++) map[i] = dst.Palette.FindNearest(new PixelColor(srcTable[i]));
 
-            int key = src.IsIndexed ? (colorKey >= 0 ? colorKey : src.TransparentIndex) : -1;
+            int key = srcIndexed ? (colorKey >= 0 ? colorKey : src.TransparentIndex) : -1;
 
             // nur die sichtbaren Zielzeilen/-spalten durchlaufen
             long dxStart = Math.Max(0, -(long)dx), dxEnd = Math.Min(absDw, dst.Width - (long)dx);
@@ -57,7 +60,7 @@ namespace fire.Terminal
             if (dxEnd <= dxStart || dyEnd <= dyStart) return;
 
             // ein Zwischenspeicher für Nachschlagen im Palette-Ziel bei RGBA-Quelle (viele gleiche Farben, die Suche kostet 256 Vergleiche)
-            Dictionary<uint, byte>? nearest = !src.IsIndexed && dst.IsIndexed ? new() : null;
+            Dictionary<uint, byte>? nearest = !srcIndexed && dstIndexed ? new() : null;
 
             for (long j = dyStart; j < dyEnd; j++)
             {
@@ -75,11 +78,11 @@ namespace fire.Terminal
                     int srcPos = (int)(srcY * src.Width + srcX);
                     int dstPos = dstY * dst.Width + dstX;
 
-                    if (src.IsIndexed)
+                    if (srcIndexed)
                     {
                         byte idx = src.Indices![srcPos];
                         if (mode != BlitMode.Copy && idx == key) continue;
-                        if (dst.IsIndexed)
+                        if (dstIndexed)
                             dst.Indices![dstPos] = directIndices ? idx : map[idx];
                         else
                         {
@@ -93,7 +96,7 @@ namespace fire.Terminal
                         uint c = src.Pixels[srcPos];
                         uint alpha = c >> 24;
                         if (mode != BlitMode.Copy && alpha == 0) continue;
-                        if (dst.IsIndexed)
+                        if (dstIndexed)
                         {
                             if (mode == BlitMode.Blend && alpha < 128) continue;
                             if (!nearest!.TryGetValue(c, out byte found))
@@ -105,26 +108,14 @@ namespace fire.Terminal
                 }
             }
 
-            if (dst.IsIndexed) dst.MarkDirty();
+            if (dstIndexed) dst.MarkDirty();
         }
 
         /// <summary>Der ganze Inhalt von `src` mit der linken oberen Ecke bei (dx, dy), ohne Skalierung.</summary>
-        public static void Blit(Framebuffer dst, Framebuffer src, int dx, int dy, BlitMode mode = BlitMode.Copy, int colorKey = -1) =>
-            Blit(dst, src, 0, 0, src.Width, src.Height, dx, dy, src.Width, src.Height, mode, colorKey);
+        public static void Blit(IRenderTarget dst, IRenderTarget src, int dx, int dy, BlitMode mode = BlitMode.Copy, int colorKey = -1, bool blend = true) =>
+            Blit(dst, src, 0, 0, src.Width, src.Height, dx, dy, src.Width, src.Height, mode, colorKey, blend);
 
-        /// <summary>Mischt `src` (Alpha a) über `dst`: dst*(255-a)/255 + src*a/255 je Kanal; das Ergebnis ist deckend, wenn eines von beiden deckend war.</summary>
-        private static uint Mix(uint dst, uint src)
-        {
-            uint a = src >> 24;
-            if (a == 255 || (dst >> 24) == 0) return src;  // deckend, oder das Ziel ist selbst durchsichtig (nichts zum Mischen)
-            if (a == 0) return dst;
-            uint inv = 255 - a;
-            uint r = ((src & 0xFF) * a + (dst & 0xFF) * inv + 127) / 255;
-            uint g = (((src >> 8) & 0xFF) * a + ((dst >> 8) & 0xFF) * inv + 127) / 255;
-            uint b = (((src >> 16) & 0xFF) * a + ((dst >> 16) & 0xFF) * inv + 127) / 255;
-            uint outA = a + ((dst >> 24) * inv + 127) / 255;   // Alpha-Komposition "over"
-            return r | (g << 8) | (b << 16) | (Math.Min(outA, 255u) << 24);
-        }
+        private static uint Mix(uint dst, uint src) => Surface.Mix(dst, src);
 
         private static bool SamePalette(Palette a, Palette b)
         {
@@ -134,7 +125,7 @@ namespace fire.Terminal
             return true;
         }
 
-        private static Framebuffer Snapshot(Framebuffer fb)
+        private static IRenderTarget Snapshot(IRenderTarget fb)
         {
             var copy = new Framebuffer(fb.Width, fb.Height, fb.Mode) { TransparentIndex = fb.TransparentIndex };
             Array.Copy(fb.Pixels, copy.Pixels, fb.Pixels.Length);

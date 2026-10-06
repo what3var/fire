@@ -67,7 +67,7 @@ namespace fire.Runtime
             // mindestens ein Element haben (siehe Klassenkommentar zur
             // Synchronität von Zähler und Queue-Inhalt).
             bool ok = _queue.TryDequeue(out message);
-            System.Diagnostics.Debug.Assert(ok, "ActorMailbox: Signal ohne zugehörige Nachricht - Zähler/Queue sind auseinandergelaufen.");
+            System.Diagnostics.Debug.Assert(ok, "ActorMailbox: signal without a matching message - counter and queue have diverged.");
             return ok;
         }
     }

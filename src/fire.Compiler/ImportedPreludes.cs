@@ -1,9 +1,9 @@
 using fire.Bytecode;
-using fire.Device.Bridge;
-using fire.IO.Bridge;
+using fire.Package.Manager;
 using fire.Runtime;
 using fire.Terminal.Bridge;
 using fire.UI.Bridge;
+using fire.Windows.Bridge;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -32,13 +32,14 @@ namespace fire.Compiler
         public static string ParseImportName(string name) => name.ToLowerInvariant() switch
         {
             "graphics" => NativeImports.Graphics,
-            "devices" => NativeImports.Devices,
-            "io" => NativeImports.IO,
+            "windows" => NativeImports.Windows,
             "ui" => NativeImports.Ui,
             "linq" => NativeImports.Linq,
             "reflection" => NativeImports.Reflection,
-            "time" => NativeImports.Time,
-            _ => throw new Exception($"'{name}' ist keine bekannte Erweiterung."),
+            _ => PackageStore.Default.FindImport(name)?.Key
+                 ?? throw new Exception(StandardPackages.Bridges.Contains(name.ToLowerInvariant())
+                     ? $"The standard package '{StandardPackages.PackageNameOf(name.ToLowerInvariant())}' for `#import \"{name}\"` is not installed (start ember or spark once, or `ember install {StandardPackages.PackageNameOf(name.ToLowerInvariant())}`)."
+                     : $"'{name}' is not a known extension (installed packages: `ember list`, available ones: `ember find`)."),
         };
 
         /// <summary>Der fire-Quelltext der Prelude der Erweiterung `importName`
@@ -46,9 +47,22 @@ namespace fire.Compiler
         /// einer unbekannten Erweiterung.</summary>
         /// <summary>Die Erweiterungen, die `importKey` (Schlüssel aus <see cref="NativeImports"/>) selbst mitbringt: `ui` baut auf
         /// `graphics` auf und schaltet es mit zu. Jede Stelle, die ein `#import` auswertet, trägt alle Schlüssel daraus ein.</summary>
-        public static IEnumerable<string> WithDependencies(string importKey)
+        public static IEnumerable<string> WithDependencies(string importKey) => WithDependencies(importKey, new HashSet<string>());
+
+        private static IEnumerable<string> WithDependencies(string importKey, HashSet<string> visited)
         {
-            if (importKey == NativeImports.Ui) yield return NativeImports.Graphics;
+            if (importKey.StartsWith(PackageStore.KeyPrefix, StringComparison.Ordinal))
+            {
+                // an import of a package: what it requires (imports of the compiler or of packages) comes with it
+                if (!visited.Add(importKey)) yield break;
+                if (PackageStore.Default.FindKey(importKey) is { } package)
+                    foreach (var required in package.Import.Requires)
+                        foreach (var key in WithDependencies(ParseImportName(required), visited)) yield return key;
+                yield return importKey;
+                yield break;
+            }
+            if (importKey == NativeImports.Windows) yield return NativeImports.Graphics; // Window zeigt einen Framebuffer
+            if (importKey == NativeImports.Ui) { yield return NativeImports.Graphics; yield return NativeImports.Windows; }
             if (importKey == NativeImports.Linq) yield return NativeImports.Reflection; // SelectProperty/SelectField arbeiten mit Selektoren
             yield return importKey;
         }
@@ -56,13 +70,13 @@ namespace fire.Compiler
         public static string? TrySourceFor(string importName) => importName.ToLowerInvariant() switch
         {
             "graphics" => GraphicsBridge.PreludeSource,
-            "devices" => DeviceBridge.PreludeSource,
-            "io" => IoBridge.PreludeSource,
+            "windows" => WindowsBridge.PreludeSource,
             "ui" => UiBridge.PreludeSource,
             "linq" => fire.Standard.LinqPrelude.Source,
             "reflection" => fire.Standard.ReflectionPrelude.Source,
-            "time" => fire.Standard.TimePrelude.Source,
-            _ => null,
+            _ => importName.StartsWith(PackageStore.KeyPrefix, StringComparison.Ordinal)
+                ? PackageStore.Default.FindKey(importName)?.ReadPrelude()   // the key of an import of a package (what the editor works with)
+                : PackageStore.Default.FindImport(importName)?.ReadPrelude(),
         };
 
         private static readonly Regex ImportDirective =
@@ -73,8 +87,9 @@ namespace fire.Compiler
         /// Editor, der auf unverarbeitetem, evtl. gerade erst getipptem Text
         /// arbeitet). Unbekannte Namen sind enthalten - prüfen mit
         /// <see cref="TrySourceFor"/>.</summary>
-        public static IEnumerable<string> FindImportNames(string source) =>
-            ImportDirective.Matches(source).Select(m => m.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase);
+        public static IEnumerable<string> FindImportNames(string source, ISet<string>? symbols = null) =>
+            ImportDirective.Matches(ConditionalSymbols.Apply(source, symbols ?? ConditionalSymbols.For(null)))
+                .Select(m => m.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>Setzt die Preludes aller in `nativeImports` enthaltenen
         /// Erweiterungen (jeweils durch `preprocess` vorverarbeitet) direkt
@@ -93,6 +108,14 @@ namespace fire.Compiler
             {
                 processedSources.Insert(1, preprocess(GraphicsBridge.PreludeSource));
                 GraphicsBridge.RegisterStubs(natives);
+                inserted++;
+            }
+
+            if (nativeImports.Contains(NativeImports.Windows))
+            {
+                // hinter `graphics`: die Prelude-Reihenfolge (jede Einfuegung steht VOR den frueheren) und die der nativen Funktionen sind unabhaengig voneinander
+                processedSources.Insert(1, preprocess(WindowsBridge.PreludeSource));
+                WindowsBridge.RegisterStubs(natives);
                 inserted++;
             }
 
@@ -117,25 +140,12 @@ namespace fire.Compiler
                 inserted++;
             }
 
-            if (nativeImports.Contains(NativeImports.Time))
+            // the imports of packages (last, like their natives): the prelude, and the natives as names (the calls need them; the virtual machine fails when one runs, see PackageImports)
+            foreach (var key in nativeImports.Where(k => k.StartsWith(PackageStore.KeyPrefix, StringComparison.Ordinal)).OrderBy(k => k, StringComparer.Ordinal))
             {
-                processedSources.Insert(1, preprocess(fire.Standard.TimePrelude.Source));
-                TimeNatives.Register(natives); // beim Übersetzen zählen nur die Namen
-                inserted++;
-            }
-
-            if (nativeImports.Contains(NativeImports.Devices))
-            {
-                processedSources.Insert(1, preprocess(DeviceBridge.PreludeSource));
-                DeviceBridge.RegisterStubs(natives);
-                inserted++;
-            }
-
-            if (nativeImports.Contains(NativeImports.IO))
-            {
-                processedSources.Insert(1, preprocess(IoBridge.PreludeSource));
-                IoBridge.RegisterStubs(natives);
-                inserted++;
+                var package = PackageStore.Default.FindKey(key) ?? throw new Exception($"The import '{key.Substring(PackageStore.KeyPrefix.Length)}' belongs to a package that is not installed.");
+                if (package.ReadPrelude() is { } prelude) { processedSources.Insert(1, preprocess(prelude)); inserted++; }
+                PackageImports.RegisterNames(natives, package);
             }
 
             return inserted;

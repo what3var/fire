@@ -239,7 +239,7 @@ namespace fire.Bytecode
         {
             if (!Constructors.TryAdd(proto.ParamCount, proto))
                 throw new System.InvalidOperationException(
-                    $"Interner Fehler: Konstruktor mit {proto.ParamCount} Parametern wurde zweimal registriert.");
+                    $"Internal error: a constructor with {proto.ParamCount} parameters was registered twice.");
         }
 
         public FunctionProto? Destructor { get; set; }
@@ -313,7 +313,7 @@ namespace fire.Bytecode
 
             if (overloads.Any(p => p.ParamCount == proto.ParamCount))
                 throw new System.InvalidOperationException(
-                    $"Interner Fehler: Methode '{name}' mit {proto.ParamCount} Parametern wurde zweimal registriert.");
+                    $"Internal error: method '{name}' with {proto.ParamCount} parameters was registered twice.");
 
             overloads.Add(proto);
         }

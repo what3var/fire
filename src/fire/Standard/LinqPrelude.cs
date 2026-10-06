@@ -57,7 +57,7 @@ namespace fire.Standard
                 class inner
                 class pred
                 class current
-                construct(class inner, class pred) { this.inner = inner; this.pred = pred }
+                construct(class inner, class pred) { this.inner = inner; this.pred = pred; inner.TakeTo(this) }
                 MoveNext() {
                     var p = this.pred
                     while (this.inner.MoveNext()) {
@@ -73,7 +73,7 @@ namespace fire.Standard
                 class inner
                 class fn
                 class current
-                construct(class inner, class fn) { this.inner = inner; this.fn = fn }
+                construct(class inner, class fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
                 MoveNext() {
                     if (!this.inner.MoveNext()) { return false }
                     var f = this.fn
@@ -88,7 +88,7 @@ namespace fire.Standard
                 class fn
                 class sub
                 class current
-                construct(class inner, class fn) { this.inner = inner; this.fn = fn }
+                construct(class inner, class fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
                 MoveNext() {
                     var f = this.fn
                     while (true) {
@@ -97,7 +97,9 @@ namespace fire.Standard
                             this.sub = undefined
                         }
                         if (!this.inner.MoveNext()) { return false }
-                        this.sub = Linq.Iter(f(this.inner.GetCurrent()))
+                        var next = Linq.Iter(f(this.inner.GetCurrent()))
+                        next.TakeTo(this)
+                        this.sub = next
                     }
                 }
                 GetCurrent() { return this.current }
@@ -106,7 +108,7 @@ namespace fire.Standard
             class LinqTakeEnumerator : IEnumerator {
                 class inner
                 int left
-                construct(class inner, int n) { this.inner = inner; this.left = n }
+                construct(class inner, int n) { this.inner = inner; this.left = n; inner.TakeTo(this) }
                 MoveNext() {
                     if (this.left <= 0) { return false }
                     this.left = this.left - 1
@@ -118,7 +120,7 @@ namespace fire.Standard
             class LinqSkipEnumerator : IEnumerator {
                 class inner
                 int skip
-                construct(class inner, int n) { this.inner = inner; this.skip = n }
+                construct(class inner, int n) { this.inner = inner; this.skip = n; inner.TakeTo(this) }
                 MoveNext() {
                     while (this.skip > 0) {
                         this.skip = this.skip - 1
@@ -134,7 +136,7 @@ namespace fire.Standard
                 class pred
                 class current
                 bool done
-                construct(class inner, class pred) { this.inner = inner; this.pred = pred; this.done = false }
+                construct(class inner, class pred) { this.inner = inner; this.pred = pred; this.done = false; inner.TakeTo(this) }
                 MoveNext() {
                     if (this.done) { return false }
                     var p = this.pred
@@ -152,7 +154,7 @@ namespace fire.Standard
                 class inner
                 class pred
                 bool started
-                construct(class inner, class pred) { this.inner = inner; this.pred = pred; this.started = false }
+                construct(class inner, class pred) { this.inner = inner; this.pred = pred; this.started = false; inner.TakeTo(this) }
                 MoveNext() {
                     if (this.started) { return this.inner.MoveNext() }
                     this.started = true
@@ -169,7 +171,7 @@ namespace fire.Standard
                 class first
                 class second
                 bool inSecond
-                construct(class first, class second) { this.first = first; this.second = second; this.inSecond = false }
+                construct(class first, class second) { this.first = first; this.second = second; this.inSecond = false; first.TakeTo(this); second.TakeTo(this) }
                 MoveNext() {
                     if (!this.inSecond) {
                         if (this.first.MoveNext()) { return true }
@@ -188,7 +190,7 @@ namespace fire.Standard
                 class b
                 class fn
                 class current
-                construct(class a, class b, class fn) { this.a = a; this.b = b; this.fn = fn }
+                construct(class a, class b, class fn) { this.a = a; this.b = b; this.fn = fn; a.TakeTo(this); b.TakeTo(this) }
                 MoveNext() {
                     if (!this.a.MoveNext()) { return false }
                     if (!this.b.MoveNext()) { return false }
@@ -237,6 +239,15 @@ namespace fire.Standard
                     return new Query(() => Linq.Iter(s))
                 }
 
+                // A query over a collection that was built for it (the result of an eager operator): the query owns the collection -
+                // it reads it lazily, long after the function that built it has returned.
+                static FromOwned(class source) {
+                    var s = source
+                    var query = new Query(() => Linq.Iter(s))
+                    source.TakeTo(query)
+                    return query
+                }
+
                 static Range(int start, int count) {
                     return new Query(() => new LinqRangeEnumerator(start, count))
                 }
@@ -244,7 +255,7 @@ namespace fire.Standard
                 static Repeat(class value, int count) {
                     var items = new class[count]
                     for (var i = 0; i < count; i = i + 1) { items[i] = value }
-                    return Linq.From(items)
+                    return Linq.FromOwned(items)
                 }
 
                 // Stabiles Sortieren (Mergesort): liefert die `items` in der Reihenfolge der `keys` (gleich lange Arrays)
@@ -308,18 +319,24 @@ namespace fire.Standard
                 // `Select(fn)` läuft der Zugriff über die Reflection (mit deren Zugriffsregeln) und ein Mitglied der falschen Art ist eine ReflectionException.
                 SelectField(lambda field<class> sel) {
                     var f = this.factory
-                    var path = sel.Path
-                    return new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "field")))
+                    var path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
+                    var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "field")))
+                    path.TakeTo(query)
+                    return query
                 }
                 SelectProperty(lambda property<class> sel) {
                     var f = this.factory
-                    var path = sel.Path
-                    return new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "property")))
+                    var path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
+                    var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "property")))
+                    path.TakeTo(query)
+                    return query
                 }
                 SelectMember(lambda member<class> sel) {
                     var f = this.factory
-                    var path = sel.Path
-                    return new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "member")))
+                    var path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
+                    var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "member")))
+                    path.TakeTo(query)
+                    return query
                 }
                 SelectMany(lambda<int> fn) {
                     var f = this.factory
@@ -357,14 +374,14 @@ namespace fire.Standard
                     var items = this.ToArray()
                     var keys = new class[items.length]
                     for (var i = 0; i < items.length; i = i + 1) { keys[i] = key(items[i]) }
-                    return Linq.From(Linq.Sort(items, keys, desc))
+                    return Linq.FromOwned(Linq.Sort(items, keys, desc))
                 }
                 Reverse() {
                     var items = this.ToArray()
                     var n = items.length
                     var result = new class[n]
                     for (var i = 0; i < n; i = i + 1) { result[i] = items[n - 1 - i] }
-                    return Linq.From(result)
+                    return Linq.FromOwned(result)
                 }
                 Distinct() {
                     var seen = new List()
@@ -373,7 +390,7 @@ namespace fire.Standard
                         foreach (y in seen) { if (x == y) { known = true } }
                         if (!known) { seen.Add(x) }
                     }
-                    return Linq.From(seen)
+                    return Linq.FromOwned(seen)
                 }
 
                 // ---- Abschluss-Operatoren
@@ -390,11 +407,11 @@ namespace fire.Standard
                 }
                 First() {
                     foreach (x in this) { return x }
-                    throw new LinqEmptyException("Die Folge enthaelt kein Element")
+                    throw new LinqEmptyException("The sequence contains no element")
                 }
                 First(lambda<int> pred) {
                     foreach (x in this) { if (pred(x)) { return x } }
-                    throw new LinqEmptyException("Die Folge enthaelt kein passendes Element")
+                    throw new LinqEmptyException("The sequence contains no matching element")
                 }
                 FirstOrDefault(class fallback) {
                     foreach (x in this) { return x }
@@ -408,7 +425,7 @@ namespace fire.Standard
                     var found = false
                     var last = undefined
                     foreach (x in this) { last = x; found = true }
-                    if (!found) { throw new LinqEmptyException("Die Folge enthaelt kein Element") }
+                    if (!found) { throw new LinqEmptyException("The sequence contains no element") }
                     return last
                 }
                 ElementAt(int index) {
@@ -417,7 +434,7 @@ namespace fire.Standard
                         if (i == index) { return x }
                         i = i + 1
                     }
-                    throw new LinqEmptyException("Index " + index + " liegt ausserhalb der Folge")
+                    throw new LinqEmptyException("Index " + index + " is outside of the sequence")
                 }
                 Any() {
                     foreach (x in this) { return true }
@@ -463,7 +480,7 @@ namespace fire.Standard
                         else if (smallest) { if (x < best) { best = x } }
                         else { if (x > best) { best = x } }
                     }
-                    if (!found) { throw new LinqEmptyException("Die Folge enthaelt kein Element") }
+                    if (!found) { throw new LinqEmptyException("The sequence contains no element") }
                     return best
                 }
                 Average() { return this.Average(x => x) }
@@ -471,7 +488,7 @@ namespace fire.Standard
                     var s = 0.0
                     var n = 0
                     foreach (x in this) { s = s + fn(x); n = n + 1 }
-                    if (n == 0) { throw new LinqEmptyException("Die Folge enthaelt kein Element") }
+                    if (n == 0) { throw new LinqEmptyException("The sequence contains no element") }
                     return s / n
                 }
                 Aggregate(class seed, lambda<int, int> fn) {

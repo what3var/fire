@@ -1,0 +1,40 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ae="using:AvaloniaEdit"
+             x:Class="fire.Editor.MarkdownEditorControl">
+    <DockPanel>
+        <Border x:Name="FormatBar" DockPanel.Dock="Top" BorderBrush="#3C3544" BorderThickness="0,0,0,1" Padding="4,2">
+            <StackPanel x:Name="FormatPanel" Orientation="Horizontal" Spacing="2">
+                <Button Classes="tool" Click="Bold_Click" ToolTip.Tip="Bold (Ctrl+B)"><TextBlock FontWeight="Bold" Text="F"/></Button>
+                <Button Classes="tool" Click="Italic_Click" ToolTip.Tip="Italic (Ctrl+I)"><TextBlock FontStyle="Italic" Text="K"/></Button>
+                <Button Classes="tool" Click="Strike_Click" ToolTip.Tip="Strikethrough"><TextBlock TextDecorations="Strikethrough" Text="D"/></Button>
+                <Button Classes="tool" Click="InlineCode_Click" ToolTip.Tip="Code (Ctrl+E)"><TextBlock FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" Text="&lt;/&gt;"/></Button>
+                <Border Width="1" Background="#3C3544" Margin="4,2"/>
+                <Button Classes="tool" Click="Heading_Click" ToolTip.Tip="Heading: change level (Ctrl+H)"><TextBlock FontWeight="Bold" Text="H"/></Button>
+                <Button Classes="tool" Click="BulletList_Click" ToolTip.Tip="Bulleted list"><TextBlock Text="&#x2022;&#x2261;"/></Button>
+                <Button Classes="tool" Click="NumberedList_Click" ToolTip.Tip="Numbered list"><TextBlock Text="1."/></Button>
+                <Button Classes="tool" Click="Quote_Click" ToolTip.Tip="Quote"><TextBlock Text="&#x201C;"/></Button>
+                <Button Classes="tool" Click="CodeBlock_Click" ToolTip.Tip="Code block"><TextBlock FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" Text="{}{ }"/></Button>
+                <Button Classes="tool" Click="Link_Click" ToolTip.Tip="Link (Ctrl+K)"><TextBlock Text="Link"/></Button>
+                <Button Classes="tool" Click="Table_Click" ToolTip.Tip="Insert table"><TextBlock Text="Table"/></Button>
+                <Border Width="1" Background="#3C3544" Margin="4,2"/>
+                <ToggleButton x:Name="PreviewToggle" Classes="tool" IsChecked="True" Click="PreviewToggle_Click" ToolTip.Tip="Show or hide the preview (Ctrl+Shift+V)"><TextBlock Text="Preview"/></ToggleButton>
+            </StackPanel>
+        </Border>
+
+        <Grid x:Name="ContentGrid" ColumnDefinitions="*,Auto,*">
+            <ae:TextEditor x:Name="Editor" Grid.Column="0"
+                           FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="14"
+                           WordWrap="True"
+                           ShowLineNumbers="False"
+                           HorizontalScrollBarVisibility="Disabled"
+                           VerticalScrollBarVisibility="Auto"
+                           Padding="6,4"/>
+
+            <GridSplitter x:Name="Splitter" Grid.Column="1" Width="5" Background="#1B181E"/>
+
+            <ScrollViewer x:Name="Preview" Grid.Column="2" Background="#242028"
+                          HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"/>
+        </Grid>
+    </DockPanel>
+</UserControl>

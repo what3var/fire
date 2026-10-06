@@ -13,7 +13,7 @@ namespace fire.Editor
     /// ihrem EIGENEN echten Hintergrund-Thread (siehe RunLoop), NIEMALS auf
     /// dem UI-Thread selbst - sonst würde jeder länger laufende Schritt
     /// ("Weiter", "Bis Ende durchlaufen", oder sogar nur "Step Over" über
-    /// eine lang laufende Zeile) die komplette Anwendung einfrieren, da WPF
+    /// eine lang laufende Zeile) die komplette Anwendung einfrieren, da die Oberfläche
     /// währenddessen keine Maus-/Tastatur-/Zeichenereignisse mehr verarbeiten
     /// kann.
     ///

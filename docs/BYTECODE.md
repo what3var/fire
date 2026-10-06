@@ -212,9 +212,13 @@ referenziert, nie umgekehrt).
   `Add`/`Sub`-Opcodes – `Value.Add`/`Value.Subtract` erkennen den
   Pointer-Fall zur Laufzeit selbst (kein eigener Opcode nötig, dieselbe
   Technik wie bei der String-Konkatenation über `+`). "n weiter" bedeutet
-  "n logische Elemente weiter" (bei einem Scope-Slot-Pointer: n Slots in
-  derselben, ohnehin zusammenhängend gespeicherten Slot-Liste; bei einem
-  Feld-Pointer nur bei `n=0` gültig, da Felder nicht zusammenhängend liegen).
+  "n logische Elemente weiter": ein Zeiger auf ein Array-/Puffer-Element rückt
+  im Array; ein Zeiger auf eine Variable (`ScopeSlotPointerTarget`) oder ein Feld
+  (`FieldPointerTarget`) ist ein "Array mit einem Element" - er merkt sich den
+  Versatz, benutzt werden darf nur der Versatz 0. Lesen/Schreiben ausserhalb des
+  Bereichs (oder in ein zerstörtes Array) wirft `PointerRangeException`, die die VM
+  in die fangbare `IndexOutOfBoundsException`/`DestroyedException` verwandelt.
+  `ptr1 - ptr2` (`PointerTarget.DistanceTo`) liefert die Elementzahl dazwischen.
 - **`unsafe { }`** selbst erzeugt keinen eigenen Code – die Berechtigung
   (Dereferenzierung/Address-of nur innerhalb eines solchen Blocks) prüft
   bereits der Resolver (`_unsafeDepth`-Zähler), der Compiler kompiliert den
@@ -994,7 +998,7 @@ weiterhin beim ersten Syntaxfehler ab (kein Wiederaufsetzen).
 
 **Live-Diagnostik und Preludes**: die Editor-Live-Diagnostik (`LiveDiagnostics`)
 kompiliert wie der Linker: Standard-Prelude UND die Preludes der per
-`#import "graphics"`/`"devices"` zugeschalteten Erweiterungen (samt ihrer
+`#import "graphics"`/`"windows"`/`"devices"` zugeschalteten Erweiterungen (samt ihrer
 nativen Platzhalter), gemeinsam in `ImportedPreludes` (von `Linker.CompileAndLink`
 und `LiveDiagnostics` benutzt). Ein `#import` in einer ANDEREN Projektdatei gilt
 auch für die gerade bearbeitete (`AnalyzeInProject`), wie beim echten Kompilieren
@@ -1282,7 +1286,9 @@ vermerkt statt umgesetzt):
 
 ## 23. IO-Bridge (`#import "io"`) und zwei Sprachänderungen dazu
 
-`src/fire.IO.Bridge`: dasselbe Muster wie `GraphicsBridge`/`DeviceBridge` - `IoBridge.RegisterAll`
+> **Stand:** `io` ist inzwischen ein Paket (`fire-io`): die Natives sind das C++ von `native/bridges/fire_bridge_io.hpp`, die VM führt sie in einer Shared Library über die Paket-ABI aus (docs/PACKAGE_NATIVES.md); `IoPolicy` und `IoStdio` bleiben die Entscheidung des Hosts und werden der Bibliothek über `fire_host` (Callbacks, `PackageHost` in fire.Runtime) gegeben. Das Projekt `fire.IO.Bridge` gibt es nicht mehr; der Text unten beschreibt die frühere C#-Bridge.
+
+`src/fire.IO.Bridge` (inzwischen ein Paket, s.u. und docs/PACKAGE_NATIVES.md): dasselbe Muster wie `GraphicsBridge`/`DeviceBridge` - `IoBridge.RegisterAll`
 (echt) / `RegisterStubs` (nur Namen, für Linker und Live-Diagnostik über `ImportedPreludes`),
 `IoBridge.PreludeSource` (fire, `namespace IO`), `NativeImports.IO = "io"`. Streams sind
 Handles (`ConcurrentDictionary<int, StreamEntry>` pro `RegisterAll`, jeder Stream mit eigener
@@ -1530,8 +1536,8 @@ Objekte nach dem Lauf noch verwenden (die Thread-Tests tun das); im Einzelschrit
    auf den Cache wird schnell (`Optimal`) gepackt. Layout: `[Einträge][Index][Fuß: int64 Index-Offset, int32 Index-Länge, "FIREPAK1"]` - gelesen wird über den
    Fuß, die frühere Marker-Suche (`DA 1D`) gibt es nicht mehr.
 
-**Welche DLLs.** `PackagePlan.Create(nativeImports, baseDir)`: Kern immer; je Import die Einstiegs-Assemblies (`graphics`: `fire.Terminal.Bridge`/`.Windows`/`.Sdl` + natives SDL3; `devices`: `fire.Device.Bridge`/
-`fire.Device.Manager` (+ `libSystem.IO.Ports.Native` außerhalb von Windows); `io`: `fire.IO.Bridge`; `print`: nichts). Der Rest folgt aus den Assembly-Verweisen der DLLs (System.Reflection.Metadata): alles, was neben
+**Welche DLLs.** `PackagePlan.Create(nativeImports, baseDir)`: Kern immer; je Import die Einstiegs-Assemblies (`graphics`: `fire.Terminal.Bridge`/`.Windows`/`.Sdl` + natives SDL3; `devices` (Paket `pkg:devices`): 
+`fire.Device.Manager` (+ `libSystem.IO.Ports.Native` außerhalb von Windows); `print`: nichts). Der Rest folgt aus den Assembly-Verweisen der DLLs (System.Reflection.Metadata): alles, was neben
 dem Compiler liegt und nicht zum .NET-Framework gehört, kommt mit. Plattform-Unterordner (`runtimes/win/lib/...`, `runtimes/unix/lib/...`) haben Vorrang vor dem Hauptordner (System.IO.Ports liefert dort
 nur eine Attrappe). `PackagePlan.Unresolved` (Verweis ohne Datei und nicht im Framework) lässt `Packer.PackProgram` mit einer Fehlermeldung abbrechen statt eine kaputte Datei zu erzeugen. Native Bibliotheken
 werden nur für die Plattform des Compilers eingebunden (passend zum apphost, den er mitbringt).
@@ -1543,7 +1549,7 @@ wenn der Standard-Kontext eine Assembly nicht findet, also genau beim ersten ech
 
 **Regel für `fire.Runtime`.** Der JIT löst einen Typ schon beim Übersetzen einer Methode auf, die ihn in Signatur, lokaler Variable oder Aufruf erwähnt. Deshalb steht jeder Zugriff auf Bridge-Typen in
 `Session.RegisterGraphics/RegisterDevices/RegisterIo` (`[MethodImpl(NoInlining)]`, nur betreten wenn der Import da ist); `Session` selbst hat keine Bridge-Typen in Feldern/Properties/Parametern (die früheren
-Properties `WindowManager`/`FramebufferManager`/`ConsoleManager` und die Parameter `ioPolicy`/`ioStdio` von `Session.Build` sind entfallen - Hosts mit eigener Policy nutzen `fire.Compiler.RuntimeSession`). Ebenso
+Properties `WindowManager`/`FramebufferManager`/`RendererManager` und die Parameter `ioPolicy`/`ioStdio` von `Session.Build` sind entfallen - Hosts mit eigener Policy nutzen `fire.Compiler.RuntimeSession`). Ebenso
 darf `Main` keinen Typ aus `fire.dll` erwähnen. Neue Bridge = Eintrag in `PackagePlan.Imports` + eigene `Register...`-Methode.
 
 **Icon/Version.** `PeResourceEditor` ändert die PE-Ressourcen und verschiebt damit Dateiinhalt: das geschieht jetzt auf einer Kopie des apphost VOR dem Bündeln (`PackProgram(..., customizeApphost)`), sonst wäre
@@ -1570,7 +1576,7 @@ pixelweise Weg. Spalten/Zeilen-Raster und Zellgröße sind einmal berechnet (`Up
 opak 370 -> 32 ns/Zeichen, transparent 270 -> 26 ns/Zeichen. Der Test-Block "Font-Rendering" vergleicht schnellen und allgemeinen Weg Pixel für Pixel (beide Schriftgrößen, opak/transparent, Positionen
 über den Rand hinaus, Scrollen). `IntegratedGlyphFont`: Tabellen statisch, Zeichen > 255 als `?`.
 
-**Pixel-Text.** `TerminalCanvas.DrawText/MeasureText`, `ConsoleManager.DrawText/GetCellWidth/GetCellHeight`, in der Bridge `Console.FillRect/DrawRect/DrawLine/DrawText/CellWidth/CellHeight` (rohe Farben).
+**Pixel-Text.** `Renderer.DrawText/MeasureText`, `RendererManager.DrawText/GetCellWidth/GetCellHeight`, in der Bridge `Renderer.FillRect/DrawRect/DrawLine/DrawText/CellWidth/CellHeight` (inzwischen mit Brush/Pen statt rohen Farben).
 
 **Ereignisse.** `WindowManager.EnableEventQueue/NextEvent/EncodeEvent` (siehe `docs/CONSOLE.md`), `Window.EnableEvents()/NextEvent()`. `SdlFramebufferRenderer` rechnet die Mausposition von Fenster- auf
 Framebuffer-Koordinaten um (`SDL.GetWindowSize`) und startet die Texteingabe. `WindowManager(framebuffers, runner, rendererFactory)`.
@@ -1843,9 +1849,20 @@ diesen Zuständen in lokalen Variablen (nur für die häufigen Instruktionen, al
 
 - **Empfangspuffer (`ReceiveBuffer`).** Die Brücke hält je Gerät die empfangenen Pakete in der Reihenfolge ihres Eintreffens. `ReadString`/`Read` holen das nächste Paket (nach einem `WaitFor` den Rest des angebrochenen), `TryConsumeThrough(muster)`
   sucht die Bytefolge über die Paketgrenzen hinweg und schneidet hinter dem ersten Treffer ab. `IDevice.Write(byte[])` (neu, neben `SendCommand(string)`) schreibt rohe Bytes; `LoopbackDevice` echot sie wie Befehle.
+- **Stand:** `devices` ist inzwischen ein Paket (`fire-devices`): C++ (`fire_bridge_devices.hpp`) in einer Bibliothek, die Geräte kommen vom Geräte-Manager des Hosts (`dev_*` in `fire_host`, `PackageHost.Devices.cs`); `WaitFor*` läuft als Host-Funktion (`DeviceHostNatives`, `VM.WaitUntil`) und fragt die Bibliothek je Schritt (`__DEVWaitStep`). Der folgende Text beschreibt die frühere C#-Bridge.
 - **Warten ohne taub zu sein.** `WaitFor*` ist KEIN blockierender nativer Aufruf: die Brücke bekommt vom Host eine `WaitUntilFunction` (`DeviceBridge.RegisterAll(..., waitUntil)`, die Sitzungen übergeben `VM.WaitUntil`), die in kurzen Stücken wartet und dazwischen
   `PollSignalsAfterOp` ausführt (wie `Sleep`): `leave`/`terminate` beenden das Warten sofort, die Warteschlange des Hauptprogramms läuft. Ohne Host (Tests der Brücke) wird gepollt. Die Zeitangabe versteht `TimeNatives.TryTimeTicks` (TimeSpan, Zeitwert, Millisekunden).
 - **`#timeout`.** `Parser` -> `TimeoutDirective(Expr)`, `Compiler.Compile` emittiert den Ausdruck und `SetTimeout` am Programmanfang (nach `SetAutoSync`), die VM setzt `VM.DefaultTimeout` (statisch, damit Fire-Threads es sehen; der VM-Konstruktor eines Hauptprogramms setzt es auf 30 s zurück).
 - **Generische Basisklassen und Interfaces.** `TypeRef.TypeArgCount` trägt die ANZAHL der Typ-Argumente einer Basisklassen-/Interface-Angabe (`class Home : Command<IDevice>`); `Resolver.ResolveBaseRef` und die Basisverknüpfung des Compilers lösen sie über
   `GenericClassNames.ResolveNewTarget` auf (wie `new Name<...>`). `InterfaceDecl.TypeParams` macht Interfaces generisch; `Parser.DisambiguateGenericClasses` gibt einem generischen Interface neben einem nicht-generischen gleichen Namens den Schlüssel `Name`N`. Ein Interface
   darf als Parametertyp stehen (`Resolver.ValidateTypeName`). `Command`/`Command<T>`/`ICommand`/`ICommand<T>` stehen in der Standard-Prelude.
+
+## 46. `take`, Besitz in Argumenten, Zeiger-Bereiche
+
+- **`take x`** (SPEC 2.2): `TokenType.Take` / `UnaryOp.Take`, geparst in `ParseUnary` wie `copy`. Der Resolver erlaubt es nur direkt als Argument eines Aufrufs (`new`, Methode, Funktion, `try x.TakeTo(...)`, Basiskonstruktor) und als Wert von
+  `=`/`var x =` (`ResolveExprAllowTake`), sonst Fehler. Der Compiler übersetzt es je nach Stelle: als Argument eines Aufrufs mit eigener Scope (`CompileArgs`) steht im `CopyArgs`-Präfix der Wert 5 für das Argument (die VM nimmt es in
+  `ApplyCopyMask` - `TakeArgument` - unbedingt in die Argumentmenge der aufgerufenen Scope, `ReparentToArgument`, vorher prüft `TakeCheck` auf Totes); bei einer nativen Funktion/einem eingebauten Aufruf oder in `var a = take x` geht der Wert
+  mit `TakeToScope 0` in den aktuellen Scope; `v = take x` mit `TakeToScope depth` (0xFFFF: global) in den Scope der Variablen, `obj.feld = take x` mit `TakeToObject` (Stack `[obj, wert]`), `a[i] = take x` mit `TakeToArray` (Stack `[array, index, wert]`).
+  Alle laufen über `OwnershipWalk.TakeValue(wert, halter, runner)` (Zyklenprüfung, ein Ziel in Zerstörung nimmt den Wert mit).
+- **Zeiger-Bereiche.** `ScopeSlotPointerTarget`/`FieldPointerTarget` tragen einen Versatz (`Advance` addiert nur), benutzbar ist nur Versatz 0; `ElementPointerTarget` prüft Index und Zerstörtheit. Sie werfen `PointerRangeException`, die
+  `TryReadPointer`/`TryWritePointer` der VM in `IndexOutOfBoundsException`/`DestroyedException` verwandeln. `ptr - ptr` ist `PointerTarget.DistanceTo`.

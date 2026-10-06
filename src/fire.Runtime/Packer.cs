@@ -42,9 +42,9 @@ namespace fire.Runtime
                 if (!File.Exists(required))
                     throw new FileNotFoundException($"Zum Packen fehlt '{Path.GetFileName(required)}' im Ordner des Compilers ({baseDir}).", required);
 
-            var plan = PackagePlan.Create(program.NativeImports, baseDir);
+            var plan = PackagePlan.Create(program.NativeImports, baseDir, program.PackageLibraryFiles);
             if (plan.Unresolved.Count > 0)
-                throw new InvalidOperationException("Zum Packen fehlen Abhängigkeiten im Ordner des Compilers: " + string.Join(", ", plan.Unresolved));
+                throw new InvalidOperationException("Dependencies required for packing are missing in the compiler folder: " + string.Join(", ", plan.Unresolved));
 
             // apphost kopieren und ggf. anpassen (Icon/Version).
             var tempStub = outName + "." + Guid.NewGuid().ToString("N") + ".stub";

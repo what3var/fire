@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The markup of user interfaces (X(A)ML): parses a .fxml file and generates the fire script of the interface (see docs/UI_MARKUP.md).
+    No dependencies - the compiler (the `#include` of a .fxml file, `ui` command) and the editor (design preview) both use it.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>fire.UI.Markup</RootNamespace>
+    <AssemblyName>fire.UI.Markup</AssemblyName>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+</Project>

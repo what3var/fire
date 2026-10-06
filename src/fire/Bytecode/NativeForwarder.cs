@@ -6,7 +6,7 @@ namespace fire.Bytecode
     /// <summary>
     /// Eine Methode, die nichts weiter tut, als eine native Funktion mit `this.feld` und ihren eigenen Parametern aufzurufen:
     ///
-    /// <code>Print(string text) { __GRPHConPrint(this.id, text) }</code>
+    /// <code>Print(string text) { __GRPHRndPrint(this.id, text) }</code>
     ///
     /// So sind alle Methoden der Brücken-Preludes (Grafik, Geräte, Dateien, ...) gebaut. Für solche Methoden spart die VM
     /// den ganzen Aufruf-Apparat (Scope, Slots, Frame, Rückkehr) und ruft die native Funktion direkt auf (siehe VM.OpCallMethod:

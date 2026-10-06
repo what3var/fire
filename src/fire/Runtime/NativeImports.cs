@@ -10,9 +10,11 @@ namespace fire.Runtime
 
         public static string Graphics => "graphics";
 
-        public static string Devices => "devices";
+        /// <summary>Das Fenster (`Window`, SDL) für einen Framebuffer - setzt `graphics` voraus. Getrennt von `graphics`, damit eine Plattform ohne Fenster statt dessen ein Display einbinden kann.</summary>
+        public static string Windows => "windows";
 
-        public static string IO => "io";
+        public static string Devices => "devices";   // (a package; the name is kept for the packer, which knows its host parts)
+
 
         /// <summary>Die Oberflächen-Bibliothek (siehe fire.UI.Bridge) - setzt `graphics` voraus.</summary>
         public static string Ui => "ui";
@@ -23,7 +25,5 @@ namespace fire.Runtime
         /// <summary>Die Reflection-Bibliothek (`Type.Of(obj)`, `Reflect.Get(...)`, siehe fire.Standard.ReflectionPrelude, native Seite: fire.Runtime.ReflectionNatives).</summary>
         public static string Reflection => "reflection";
 
-        /// <summary>`DateTime`, `TimeSpan` und `Sleep` (siehe fire.Standard.TimePrelude, native Seite: fire.Runtime.TimeNatives).</summary>
-        public static string Time => "time";
     }
 }

@@ -23,9 +23,11 @@ namespace fire.Values
         public abstract Value Read();
         public abstract void Write(Value v);
 
-        /// <summary>Liefert ein neues PointerTarget, das um `elementOffset`
-        /// logische Elemente verschoben ist, oder null, wenn das nicht gültig
-        /// ist (z.B. Verschiebung über ein einzelnes Feld hinaus).</summary>
-        public abstract PointerTarget? Advance(long elementOffset);
+        /// <summary>Liefert ein neues PointerTarget, das um `elementOffset` logische Elemente verschoben ist. Die Verschiebung ist immer erlaubt (auch ueber das Ende hinaus, wie in C);
+        /// erst das Lesen/Schreiben ausserhalb des Bereichs wirft eine <c>PointerRangeException</c>. Ein Zeiger auf eine Variable oder ein Feld ist ein "Array" mit einem Element.</summary>
+        public abstract PointerTarget Advance(long elementOffset);
+
+        /// <summary>`this - other` in Elementen, wenn beide in dasselbe Array/dieselbe Variable zeigen, sonst null.</summary>
+        public abstract long? DistanceTo(PointerTarget other);
     }
 }

@@ -1,0 +1,12 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="fire.Editor.StackPanelControl">
+    <DataGrid x:Name="StackView" FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="12" BorderThickness="0"
+              AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column" GridLinesVisibility="None">
+        <DataGrid.Columns>
+            <DataGridTextColumn Header="#" Width="40" Binding="{Binding Position}"/>
+            <DataGridTextColumn Header="Type" Width="80" Binding="{Binding Type}"/>
+            <DataGridTextColumn Header="Value (top = latest)" Width="360" Binding="{Binding Text}"/>
+        </DataGrid.Columns>
+    </DataGrid>
+</UserControl>

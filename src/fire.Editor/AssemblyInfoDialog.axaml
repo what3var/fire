@@ -1,0 +1,87 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="fire.Editor.AssemblyInfoDialog"
+        Title="AssemblyInfo" Width="520" SizeToContent="Height" WindowStartupLocation="CenterOwner" CanResize="False" ShowInTaskbar="False">
+    <Window.Styles>
+        <Style Selector="Border.group">
+            <Setter Property="BorderBrush" Value="#3C3544"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="3"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="Padding" Value="8,4,8,8"/>
+        </Style>
+        <Style Selector="TextBlock.groupheader">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,0,0,4"/>
+        </Style>
+        <Style Selector="TextBlock.label">
+            <Setter Property="Margin" Value="0,6,0,2"/>
+            <Setter Property="Foreground" Value="#A094A8"/>
+        </Style>
+    </Window.Styles>
+    <Grid Margin="8" ColumnDefinitions="*,*" RowDefinitions="*,Auto">
+        <StackPanel Grid.Column="0" Grid.Row="0">
+            <Border Classes="group">
+                <StackPanel>
+                    <TextBlock Classes="groupheader" Text="Build Execution Mode"/>
+                    <RadioButton x:Name="ModeDebug" GroupName="mode" Content="Debug"/>
+                    <RadioButton x:Name="ModeRelease" GroupName="mode" Content="Release"/>
+                    <RadioButton x:Name="ModePerformance" GroupName="mode" Content="Performance"/>
+                </StackPanel>
+            </Border>
+            <Border Classes="group">
+                <StackPanel>
+                    <TextBlock Classes="groupheader" Text="Subsystem"/>
+                    <RadioButton x:Name="SubsystemGui" GroupName="subsystem" Content="GUI"/>
+                    <RadioButton x:Name="SubsystemConsole" GroupName="subsystem" Content="Console"/>
+                </StackPanel>
+            </Border>
+            <Border Classes="group">
+                <StackPanel>
+                    <TextBlock Classes="groupheader" Text="Version"/>
+                    <TextBlock Classes="label" Text="File version"/>
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <TextBox Width="60" Text="{Binding FileMajor}"/><TextBlock Text="." VerticalAlignment="Center"/>
+                        <TextBox Width="60" Text="{Binding FileMinor}"/><TextBlock Text="." VerticalAlignment="Center"/>
+                        <TextBox Width="60" Text="{Binding FileBuild}"/><TextBlock Text="." VerticalAlignment="Center"/>
+                        <TextBox Width="60" Text="{Binding FileRevision}"/>
+                    </StackPanel>
+                    <TextBlock Classes="label" Text="Product version"/>
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <TextBox Width="60" Text="{Binding ProductMajor}"/><TextBlock Text="." VerticalAlignment="Center"/>
+                        <TextBox Width="60" Text="{Binding ProductMinor}"/><TextBlock Text="." VerticalAlignment="Center"/>
+                        <TextBox Width="60" Text="{Binding ProductBuild}"/><TextBlock Text="." VerticalAlignment="Center"/>
+                        <TextBox Width="60" Text="{Binding ProductRevision}"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <Border Classes="group">
+                <StackPanel>
+                    <TextBlock Classes="groupheader" Text="Icon"/>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Image x:Name="IconImage" Width="64" Height="64"/>
+                        <Button Content="Loading..." VerticalAlignment="Bottom" Padding="8,2" MinWidth="72" Click="Load_Click"/>
+                    </StackPanel>
+                    <TextBlock x:Name="IconPathText" Foreground="#A094A8" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Grid.Row="0">
+            <Border Classes="group">
+                <StackPanel>
+                    <TextBlock Classes="groupheader" Text="Assembly Info"/>
+                    <TextBlock Classes="label" Text="ProductName"/><TextBox Text="{Binding ProductName}"/>
+                    <TextBlock Classes="label" Text="FileDescription"/><TextBox Text="{Binding FileDescription}"/>
+                    <TextBlock Classes="label" Text="CompanyName"/><TextBox Text="{Binding CompanyName}"/>
+                    <TextBlock Classes="label" Text="Copyright"/><TextBox Text="{Binding LegalCopyright}"/>
+                    <TextBlock Classes="label" Text="Internal Name"/><TextBox Text="{Binding InternalName}"/>
+                    <TextBlock Classes="label" Text="Comments"/><TextBox Text="{Binding Comments}" AcceptsReturn="True" MinHeight="48"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+        <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,8,0,0">
+            <Button Padding="8,2" MinWidth="72" HorizontalContentAlignment="Center" Classes="accent" IsDefault="True" Click="Save_Click" Content="Save"/>
+            <Button Padding="8,2" MinWidth="72" HorizontalContentAlignment="Center" IsCancel="True" Click="Cancel_Click" Content="Cancel"/>
+        </StackPanel>
+    </Grid>
+</Window>

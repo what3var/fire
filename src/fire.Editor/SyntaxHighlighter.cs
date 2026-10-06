@@ -15,6 +15,8 @@ namespace fire.Editor
         Number,
         Identifier,
         Comment,
+        /// <summary>A line of a branch of `#if` that is not taken (greyed out).</summary>
+        Inactive,
     }
 
     public readonly struct HighlightSpan
@@ -64,7 +66,7 @@ namespace fire.Editor
             TokenType.With, TokenType.Extends,
             TokenType.Switch, TokenType.Case, TokenType.Default, TokenType.Break, TokenType.Continue,
             TokenType.Where,
-            TokenType.Fire, TokenType.Taking, TokenType.Sync, TokenType.Flat, TokenType.Copy,
+            TokenType.Fire, TokenType.Taking, TokenType.Sync, TokenType.Flat, TokenType.Copy, TokenType.Take,
             TokenType.Operator,
             TokenType.Leave, TokenType.Terminate, TokenType.Actor, TokenType.Process,
             TokenType.True, TokenType.False, TokenType.Undefined,
@@ -76,6 +78,34 @@ namespace fire.Editor
             TokenType.KwBool, TokenType.KwInt, TokenType.KwFloat, TokenType.KwChar, TokenType.KwString,
             TokenType.KwByte,
         };
+
+        /// <summary>Like <see cref="Highlight(string)"/>, and the lines of branches of `#if` that are not taken under <paramref name="symbols"/> are greyed out (SPEC 8.1.7): what is in them is
+        /// not read by the compiler, so it gets no colours of its own.</summary>
+        public static List<HighlightSpan> Highlight(string source, ISet<string>? symbols)
+        {
+            if (symbols == null || string.IsNullOrEmpty(source) || source.IndexOf('#') < 0) return Highlight(source);
+            var inactive = ConditionalSymbols.InactiveLines(source, symbols);
+            if (!inactive.Contains(true)) return Highlight(source);
+
+            // The inactive lines are blanked (same offsets): the lexer does not trip over what is not code in this configuration, and they get no colours of their own.
+            int[] lineStarts = ComputeLineStarts(source);
+            var blanked = source.ToCharArray();
+            var greyed = new List<HighlightSpan>();
+            for (int line = 0; line < inactive.Length && line < lineStarts.Length; line++)
+            {
+                if (!inactive[line]) continue;
+                int start = lineStarts[line];
+                int end = line + 1 < lineStarts.Length ? lineStarts[line + 1] - 1 : source.Length;   // without the line break
+                if (end > start && source[end - 1] == '\r') end--;
+                if (end <= start) continue;
+                for (int k = start; k < end; k++) blanked[k] = ' ';
+                greyed.Add(new HighlightSpan(start, end - start, HighlightCategory.Inactive));
+            }
+            var result = Highlight(new string(blanked));
+            result.AddRange(greyed);
+            result.Sort((x, y) => x.Start.CompareTo(y.Start));
+            return result;
+        }
 
         public static List<HighlightSpan> Highlight(string source)
         {
@@ -101,7 +131,7 @@ namespace fire.Editor
 
                 int start = ToOffset(lineStarts, tok.Line, tok.Column);
                 if (start < 0 || start < lastEnd || start > source.Length) continue;
-                int length = Math.Min(tok.Lexeme.Length, source.Length - start);
+                int length = Math.Min(tok.Length > 0 ? tok.Length : tok.Lexeme.Length, source.Length - start);
 
                 ScanCommentsInGap(source, lastEnd, start, spans);
 

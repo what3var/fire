@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 
@@ -48,12 +49,40 @@ namespace fire.Device.Manager.Drivers.Loopback
 
             var bytes = (byte[])data.Clone();
             OnRawDataSent?.Invoke(bytes);
-            ThreadPool.QueueUserWorkItem(_ =>
+
+            // The echoes are delivered one after the other by a single worker, so they arrive in the order they were
+            // written (one thread-pool item per write could overtake each other).
+            lock (_echoGate)
             {
-                Thread.Sleep(5);
-                if (IsConnected) OnRawDataReceived?.Invoke((byte[])bytes.Clone());
-            });
+                _echoQueue.Enqueue(bytes);
+                if (_delivering) return true;
+                _delivering = true;
+            }
+            ThreadPool.QueueUserWorkItem(_ => DeliverEchoes());
             return true;
+        }
+
+        private readonly object _echoGate = new();
+        private readonly Queue<byte[]> _echoQueue = new();
+        private bool _delivering;
+
+        private void DeliverEchoes()
+        {
+            while (true)
+            {
+                byte[] next;
+                lock (_echoGate)
+                {
+                    if (_echoQueue.Count == 0)
+                    {
+                        _delivering = false;
+                        return;
+                    }
+                    next = _echoQueue.Dequeue();
+                }
+                Thread.Sleep(5);
+                if (IsConnected) OnRawDataReceived?.Invoke(next);
+            }
         }
 
         public void Dispose() => Disconnect();

@@ -66,7 +66,7 @@ namespace fire.Runtime
         {
             if (map.TryGetValue(node, out var existing)) return existing;
 
-            var copy = new ObjectInstance(node.ClassName, copyOwner, node.RtClass);
+            var copy = new ObjectInstance(node.ClassName, copyOwner, node.RtClass) { IsTakingCopy = true };
             map[node] = copy;
 
             // Unter dem Baum-Lock lesen (node kann seit ActivateThreadSharing
@@ -103,8 +103,8 @@ namespace fire.Runtime
                     var target = (ObjectInstance)v.AsObjectRef();
                     if (!IsWithinTree(target, treeRoot))
                         throw new TakingViolationException(
-                            $"'taking' abgelehnt: ein Feld verweist auf eine Instanz von " +
-                            $"'{target.ClassName}', die nicht zum eigenen Ownership-Baum gehört.");
+                            $"'taking' rejected: a field refers to an instance of " +
+                            $"'{target.ClassName}', which is not part of its own ownership tree.");
                     var childCopy = CopyNode(target, treeRoot, copyOwner, map);
                     return Value.MakeClassRef(childCopy);
                 }
@@ -120,13 +120,13 @@ namespace fire.Runtime
 
                 case ValueKind.Lambda:
                     throw new TakingViolationException(
-                        "'taking' abgelehnt: Lambda-Werte können in dieser Ausbaustufe nicht " +
-                        "kopiert werden (siehe ObjectCopier-Klassenkommentar).");
+                        "'taking' rejected: lambda values cannot be " +
+                        "copied at this stage (see the ObjectCopier class comment).");
 
                 case ValueKind.Pointer:
                     throw new TakingViolationException(
-                        "'taking' abgelehnt: rohe Pointer können in dieser Ausbaustufe nicht " +
-                        "kopiert werden (siehe ObjectCopier-Klassenkommentar).");
+                        "'taking' rejected: raw pointers cannot be " +
+                        "copied at this stage (see the ObjectCopier class comment).");
 
                 default:
                     // bool/int/float/char/string/undefined - wertartig, direkt kopierbar.

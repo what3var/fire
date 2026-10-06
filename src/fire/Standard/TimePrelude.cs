@@ -2,7 +2,7 @@ namespace fire.Standard
 {
     /// <summary>
     /// `#import "time"`: <c>TimeSpan</c> (eine Dauer) und <c>DateTime</c> (ein Zeitpunkt), in fire geschrieben über ein paar native Funktionen
-    /// (<c>fire.Runtime.TimeNatives</c>), dazu der Befehl <c>Sleep(zeit)</c>. Beide zählen in Ticks zu 100 ns wie in .NET (`DateTime` ab 0001-01-01).
+    /// (the C++ of native/bridges/fire_bridge_time.hpp; the VM runs it in a shared library through the package ABI), dazu der Befehl <c>Sleep(zeit)</c>. Beide zählen in Ticks zu 100 ns wie in .NET (`DateTime` ab 0001-01-01).
     /// Siehe SPEC 8.15.
     /// </summary>
     public static class TimePrelude
@@ -116,7 +116,7 @@ namespace fire.Standard
                 }
                 static Parse(string text) {
                     var d = DateTime.TryParse(text)
-                    if (d == undefined) { throw new TimeException("Kein gültiges Datum: '" + text + "'") }
+                    if (d == undefined) { throw new TimeException("Not a valid date: '" + text + "'") }
                     return d
                 }
                 static FromUnixSeconds(class s) { return DateTime.FromTicks(621355968000000000 + __time_to_ticks(s, 10000000), "utc") }

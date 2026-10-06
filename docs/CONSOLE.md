@@ -8,9 +8,10 @@ Wiederverwendung in einer späteren, eigenständigen Laufzeit (Runtime).
 
 ```
 ScriptLang.Terminal            (net8.0, PLATTFORMUNABHÄNGIG)
-  PixelColor, Palette, Framebuffer, TerminalCanvas,
+  PixelColor, Palette, Framebuffer, Renderer,
   IGlyphFont, IFramebufferRenderer, IdManager,
-  FramebufferManager, ConsoleManager
+  FramebufferManager, RendererManager
+  IRenderTarget, Surface (Blending), Brush/SolidBrush, Pen, Shapes (sink-basiert)
 
 ScriptLang.Terminal.Sdl        (net8.0, referenziert nur .Terminal)
   SdlFramebufferRenderer         – IFramebufferRenderer über SDL3-CS
@@ -23,8 +24,11 @@ ScriptLang.Terminal.Windows    (net8.0-windows, referenziert .Terminal + .Sdl)
 ScriptLang.Terminal.Demo       (net8.0-windows, referenziert .Windows)
   Program.cs                      – Standalone-Demo (rohes C#-Manager-API)
 
-ScriptLang.Terminal.Bridge     (net8.0-windows, referenziert ScriptLang + .Terminal + .Windows)
-  GraphicsBridge.cs                – native Funktionsregistrierung + ScriptLang-Prelude
+ScriptLang.Terminal.Bridge     (referenziert ScriptLang + .Terminal - KEIN Fenster, kein SDL)
+  GraphicsBridge.cs                – Framebuffer, Renderer, Brush, Pen, Slicer: native Funktionsregistrierung + ScriptLang-Prelude (`#import "graphics"`)
+
+fire.Windows.Bridge            (referenziert fire + .Terminal + .Windows)
+  WindowsBridge.cs                 – `Window`, `EventType` und der WindowManager als native Funktionen (`#import "windows"`)
 
 ScriptLang.Terminal.Bridge.Test (net8.0-windows, referenziert .Bridge)
   Program.cs                      – End-to-End-Test: Skript ruft die Grafik-API auf
@@ -37,8 +41,11 @@ Genau das ist die Schicht, die später möglichst 1:1 portierbar bleiben soll
 
 ## Die Brücke zur Skriptsprache (`ScriptLang.Terminal.Bridge`)
 
-`GraphicsBridge.RegisterAll(natives, framebuffers, consoles, windows)`
-registriert die drei Manager als native Funktionen - über
+**Grafik und Fenster sind getrennt** (`#import "graphics"` und `#import "windows"`): `graphics` bringt `Framebuffer`, `Renderer`, `Brush`, `Pen` und `Slicer` und braucht
+weder SDL noch ein Fenster - auf einer Plattform ohne Fenster (Embedded) importiert ein Programm nur `graphics` und bindet statt `Window` ein Display ein.
+`#import "windows"` bringt `Window` und `EventType` (SDL, eigene Assembly `fire.Windows.Bridge`) und schaltet `graphics` mit zu; `#import "ui"` schaltet beide zu.
+`GraphicsBridge.RegisterAll(natives, framebuffers, consoles, readFile)` und `WindowsBridge.RegisterAll(natives, windows)`
+registrieren die Manager als native Funktionen - über
 `NativeRegistry.RegisterGroup(prefix, functions)` (SPEC 8.1.6): jede
 Funktionsgruppe bekommt ein eigenes Namens-Präfix
 (`__GRPHFb`/`__GRPHCon`/`__GRPHWin`), der tatsächlich registrierte Name ist
@@ -65,7 +72,7 @@ class Framebuffer {
 }
 ```
 
-Jede Klasse (`Framebuffer`/`Console`/`Window`) registriert sich in ihrem
+Jede Klasse (`Framebuffer`/`Renderer`/`Window`) registriert sich in ihrem
 Konstruktor selbst beim passenden Manager (über die native `Create`-
 Funktion) und merkt sich die zurückgelieferte ID als Feld - jede weitere
 Methode reicht `this.id` automatisch an die zugehörige native Funktion
@@ -79,7 +86,7 @@ demselben Muster wie die eingebaute `IndexOutOfBoundsException` (SPEC 8.5).
 `destruct()` gibt die Manager-Ressource automatisch frei, wenn das Skript-
 Objekt vom Ownership-Modell zerstört wird.
 
-Seit den Farbmodi und Bildern kennt die Prelude zusätzlich `enum ColorMode`, `enum BlitMode`, `GraphicsException` und `ImageException` und erweitert `Framebuffer` (Modus, Rohdaten, Palette, `FromFile`/`FromImage`/`FromPixels`) und `Console` (Formen, `Blit`).
+Seit den Farbmodi und Bildern kennt die Prelude zusätzlich `enum ColorMode`, `enum BlitMode`, `GraphicsException` und `ImageException` und erweitert `Framebuffer` (Modus, Rohdaten, Palette, `FromFile`/`FromImage`/`FromPixels`) und `Renderer` (Formen, `Blit`).
 Die statischen Fabrikmethoden legen den Framebuffer über einen leeren Rahmen an (`new Framebuffer(0, 0, -2)`, intern) und setzen dessen `id`; schlägt eine native Bild-Funktion fehl, liefert sie `-1` und der Grund steht in `__GRPHFbLastError()`, aus dem die Prelude die Exception macht
 (wie bei den IO-Funktionen mit Fehlercodes). Neue native Funktionen stehen immer AM ENDE ihrer Gruppe (Reihenfolge = Index, Stubs und echte Funktionen in derselben Reihenfolge).
 
@@ -90,11 +97,11 @@ Grafik-Brücke, und das eigentliche Nutzer-Skript.
 
 ### Zeichnen mit Pixel-Koordinaten, Text, Mausposition, Ereignis-Warteschlange
 
-- **Text schnell:** `TerminalCanvas.DrawGlyph`/`Print` schreiben ein Zeichen zeilenweise (eine Schrift mit `IBitmapGlyphFont`, z.B. `IntegratedGlyphFont`): pro Bitmap-Zeile
+- **Text schnell:** `Renderer.DrawGlyph`/`Print` schreiben ein Zeichen zeilenweise (eine Schrift mit `IBitmapGlyphFont`, z.B. `IntegratedGlyphFont`): pro Bitmap-Zeile
   ein Tabellenzugriff (`GlyphMasks`, Masken für vier Pixel je `Vector128`) und ein `ConditionalSelect` statt einer Abfrage je Pixel - ca. 30 ns statt 370 ns pro Zeichen (80x30 Zeichen: ~0,07 ms
   statt ~0,9 ms). Liegt die Zelle nicht vollständig im Framebuffer oder hat die Schrift keine Bitmap-Zeilen, bleibt der pixelweise Weg (`IsPixelSet` + `SetPixel` mit Clipping). Zeichen
   außerhalb der 256 der Tabelle werden als `?` gezeichnet. `Framebuffer.FillRect` füllt zeilenweise per `Span.Fill`.
-- **`Console`-Methoden mit Pixel-Koordinaten** (Bridge): `SetPixel`, `FillRect`, `DrawRect`, `DrawLine`, `DrawText(x, y, text, color, background)`, `CellWidth()`, `CellHeight()` und die Formen des Abschnitts "Mehr Zeichenfunktionen".
+- **`Renderer`-Methoden mit Pixel-Koordinaten** (Bridge): `SetPixel`, `FillRect`, `DrawRect`, `DrawLine`, `DrawText(x, y, text, color, background)`, `CellWidth()`, `CellHeight()` und die Formen des Abschnitts "Mehr Zeichenfunktionen".
   Eine Farbe ist eine Zahl: **0 bis 255 ist ein Palette-Index, jede andere ein direkter Wert** (`r + g*256 + b*65536 + a*16777216`, Alpha 255 = deckend) - siehe "Farbmodi und Farbangaben". Beim HINTERGRUND von `DrawText` ist `0`
   (und jeder direkte Wert mit Alpha 0) "transparent"; einen Palette-Index als Textuntergrund gibt es dort nicht (vorher ein Rechteck füllen). `GetPixel` liefert die Farbe als 32-Bit-Zahl MIT Vorzeichen (deckende Farben also negativ).
 - **Mausposition in Framebuffer-Pixeln:** SDL meldet Fenster-Koordinaten, das Fenster darf aber skaliert werden (der Framebuffer wird gestreckt); `SdlFramebufferRenderer` rechnet Position und Bewegung
@@ -109,16 +116,16 @@ Grafik-Brücke, und das eigentliche Nutzer-Skript.
 
 ## Drei unabhängig verwaltete Ressourcenarten, jede über eine eigene ID
 
-Der zentrale Architekturpunkt dieser Ausbaustufe: **Framebuffer**, **Konsolen**
-(`TerminalCanvas`) und **Fenster** (`ConsoleWindow`) sind DREI GETRENNTE,
+Der zentrale Architekturpunkt dieser Ausbaustufe: **Framebuffer**, **Renderer**
+(vormals Konsole) und **Fenster** (`ConsoleWindow`) sind DREI GETRENNTE,
 jeweils über einen eigenen Manager mit aufsteigenden IDs verwaltete
 Ressourcenarten - kein Objekt "besitzt" mehr ein anderes automatisch:
 
 ```
 FramebufferManager  .CreateFramebuffer(w, h)      -> int fbId
                      .DestroyFramebuffer(fbId)     -> bool
-ConsoleManager       .CreateConsole(fbId)          -> int consoleId   (an EINEN Framebuffer gebunden)
-                     .DestroyConsole(consoleId)    -> bool
+RendererManager       .CreateRenderer(fbId)          -> int rendererId   (an EINEN Framebuffer gebunden)
+                     .DestroyRenderer(rendererId)    -> bool
 WindowManager        .CreateWindow(fbId)           -> int windowId    (zeigt EINEN Framebuffer an)
                      .DestroyWindow(windowId)      -> bool
 ```
@@ -131,7 +138,7 @@ API**: praktisch jede Operation (Print/Color/Locate/SetPixel/DrawLine/...)
 ist eine Methode, die nur eine Ressourcen-ID plus Primitive (int/byte/string)
 nimmt, NIE eine Objektreferenz - genau die Form, die sich später 1:1 an eine
 Skriptsprachen-Bridge (`NativeRegistry`-Funktionen) weiterreichen lässt.
-`GetFramebuffer(id)`/`GetConsole(id)`/`GetWindow(id)` sind die einzigen
+`GetFramebuffer(id)`/`GetRenderer(id)`/`GetWindow(id)` sind die einzigen
 Ausnahmen (liefern die echte C#-Instanz) - für C#-seitige Weiterverwendung,
 kein Teil der eigentlichen Oberfläche.
 
@@ -159,14 +166,14 @@ Fenster umzuhängen, ohne die Konsole/den Inhalt neu aufzubauen.
   ohnehin frei überschreibbar ist, zählt das für die Defaults mehr als
   historische Exaktheit.
 - Die Palette gehört dem **Framebuffer** (`Framebuffer.Palette`), nicht der Konsole: mehrere Konsolen auf demselben Framebuffer teilen sie, und bei einem Palette-Framebuffer IST sie die Farbtabelle des Bildes.
-  (Früher hatte jede `TerminalCanvas` eine eigene; wer die Konsole auf einen anderen Framebuffer umhängt, bekommt dessen Palette.)
+  (Früher hatte jede `Renderer` eine eigene; wer die Konsole auf einen anderen Framebuffer umhängt, bekommt dessen Palette.)
 - **Zwei Überladungen** für Color/SetPixel/DrawLine/DrawRect/FillRect: eine
   nimmt einen direkten `PixelColor`/`int`-Wert, eine einen `byte`-
-  Palette-Index (schlägt intern in der Palette nach). Über `ConsoleManager`
+  Palette-Index (schlägt intern in der Palette nach). Über `RendererManager`
   heißen die Index-Varianten `...ByIndex` (z.B. `SetPixelByIndex`), da C#
   hier keine reine Überladung nach Rückgabetyp/ID-Signatur zulässt.
 
-## Farbmodi und Farbangaben (`ColorMode`, `Paint`, `Brush`)
+## Farbmodi und Farbangaben (`ColorMode`, `Paint`, `Pixel`)
 
 Ein Framebuffer hat einen **Farbmodus** (`new Framebuffer(w, h, ColorMode.Rgba | ColorMode.Palette)` in fire, `ColorMode.Rgba | Indexed` in C#):
 
@@ -175,30 +182,58 @@ Ein Framebuffer hat einen **Farbmodus** (`new Framebuffer(w, h, ColorMode.Rgba |
   (Paletten-Animation). Das sichtbare Abbild (`Framebuffer.Pixels`, was die Renderer lesen) wird erst bei Bedarf aus den Indizes und der Palette berechnet (`Framebuffer.Resolve()`, vom Fenster und vom SDL-Renderer vor
   dem Anzeigen aufgerufen, nur wenn sich etwas geändert hat); `Framebuffer.Indices` ist die Index-Ebene (nach direktem Schreiben `MarkDirty()`). `Framebuffer.TransparentIndex` merkt den durchsichtigen Index eines geladenen Bildes.
 
-Welche Farbe ein Aufruf meint, sagt die **Farbangabe** (`Paint`): **eine Zahl von 0 bis 255 ist ein Palette-Index, jede andere ein direkter RGBA-Wert** - dieselbe Regel wie schon bei `Console.SetColor`. Der Framebuffer löst sie für sich auf (`ResolveBrush`
--> `Brush`): in einem RGBA-Framebuffer wird ein Index über die Palette zur Farbe, in einem Palette-Framebuffer ein direkter Wert auf den nächsten Eintrag der Palette abgebildet (kleinster Abstand in R, G, B; Alpha zählt nicht,
-`Palette.FindNearest`). So zeichnet jeder Aufruf in jedem Modus, und ein RGBA-Framebuffer kann nach Belieben mit Palette-Indizes arbeiten ("hybrid"). Ein Palette-Index bleibt bis zum Zeichnen ein Index: `Console.SetColor(14, 1)`
+**Speicherlayout und Palette-Index.** Ein Pixel ist ein 32-Bit-Wort `r + g*256 + b*65536 + a*16777216`, im Speicher die Bytes R, G, B, A (SDL: `ABGR8888` = `RGBA32` auf Little-Endian). Ein Palette-Index (0-255) belegt dabei nur das unterste Byte, also den **R-Kanal**; G, B und **Alpha bleiben 0** - der Index überschreibt den Alpha-Kanal nie, ein Wechsel des Kanals oder des SDL-Formats ist nicht nötig. Die einzige Kollision sind durchsichtige Farben mit G = B = 0 (vor allem `0` = durchsichtiges Schwarz, das als QBasic-Schwarz, Index 0, gelesen würde). Darum ist die **kanonische durchsichtige Farbe `(0, 1, 0, 0)` = 256** (`PixelColor.Transparent`, `Paint.Transparent`, `UI.Color.Transparent()`): komplett durchsichtig, aber kein Index. `GetPixel` gibt ein Pixel, das als Index gelesen würde (also immer ein durchsichtiges), als 256 zurück - so bleibt ein gelesenes und wieder geschriebenes Pixel durchsichtig (`Paint.ToArgument`).
+
+Welche Farbe ein Aufruf meint, sagt die **Farbangabe** (`Paint`): **eine Zahl von 0 bis 255 ist ein Palette-Index, jede andere ein direkter RGBA-Wert** - dieselbe Regel wie schon bei `Renderer.SetColor`. Der Framebuffer löst sie für sich auf (`ResolvePixel`
+-> `Pixel`): in einem RGBA-Framebuffer wird ein Index über die Palette zur Farbe, in einem Palette-Framebuffer ein direkter Wert auf den nächsten Eintrag der Palette abgebildet (kleinster Abstand in R, G, B; Alpha zählt nicht,
+`Palette.FindNearest`). So zeichnet jeder Aufruf in jedem Modus, und ein RGBA-Framebuffer kann nach Belieben mit Palette-Indizes arbeiten ("hybrid"). Ein Palette-Index bleibt bis zum Zeichnen ein Index: `Renderer.SetColor(14, 1)`
 färbt NEU gezeichneten Text um, wenn man die Palette danach ändert. Bereits gezeichnete Pixel eines RGBA-Framebuffers ändern sich nicht (sie speichern Farben), die eines Palette-Framebuffers schon.
 
 **Änderung gegenüber früher:** `FillRect`/`DrawRect`/`DrawLine`/`DrawText`/`SetPixel` behandelten jede Zahl als direkten Wert; jetzt sind 0-255 Palette-Indizes. Ein direkter Wert mit nur dem niedrigsten Byte (Alpha 0, R beliebig, G = B = 0) war ohnehin
-durchsichtig und nicht sinnvoll als Farbe; `0` (Schwarz) ist jetzt Palette-Eintrag 0 (deckendes Schwarz) statt durchsichtigem Schwarz. `Console.SetColor(vordergrund, hintergrund)` war defekt (der Hintergrund wurde falsch aufgelöst) und folgt jetzt derselben Regel.
+durchsichtig und nicht sinnvoll als Farbe; `0` (Schwarz) ist jetzt Palette-Eintrag 0 (deckendes Schwarz) statt durchsichtigem Schwarz. `Renderer.SetColor(vordergrund, hintergrund)` war defekt (der Hintergrund wurde falsch aufgelöst) und folgt jetzt derselben Regel.
 
 **Palette aus fire** (`Framebuffer`): `GetPaletteColor(i)` (vorzeichenlose Zahl), `SetPaletteColor(i, farbe)`, `SetPaletteRgb(i, r, g, b)`, `ReadPalette(mitAlpha = false)` / `WritePalette(puffer)` als Puffer (768 Byte R,G,B oder 1024 Byte R,G,B,A), `TransparentIndex`.
 Ein falscher Index oder eine falsche Pufferlänge ist eine `GraphicsException`.
 
+## Renderer, Brush, Pen, Alpha-Blending
+
+Die Konsole heißt jetzt **Renderer** (`Renderer`, `RendererManager`, natives `__GRPHRnd...`; Cursor, `Print`, `Locate`, Zellen, Textfarben bleiben wie sie waren). Er zeichnet auf ein **`IRenderTarget`** (Breite, Höhe, Modus, Palette,
+Pixel-/Index-Array, `MarkDirty`); der `Framebuffer` implementiert es, ein eigenes Ziel (z.B. ein Fenster-Puffer) kann es ebenfalls.
+
+**Zeichenfunktionen nehmen keine Farben mehr, sondern Pinsel und Stifte.** Beide tragen eine Farbe nach dem bekannten Schema (`Paint`: 0-255 = Palette-Index, sonst direkter RGBA-Wert) und bieten die eigentlichen Zeichenfunktionen an; der Renderer reicht ihnen nur die Oberfläche (`Surface`: Ziel + Blending-Schalter):
+
+- **`Brush`** (abstrakt, jetzt `SolidBrush(farbe)`): alle Füllungen und die Flächenfüllung - `FillRect`, `FillCircle`, `FillEllipse`, `FillTriangle`, `FillPolygon`, `FloodFill`, `FloodFillBorder`. Am Renderer: `r.FillRect(x, y, w, h, pinsel)`, `r.Fill(pinsel)` (ganzer Schirm),
+  `r.FillCircle(cx, cy, rad, pinsel)`, `r.FillEllipse(cx, cy, rx, ry, pinsel)`, `r.FillTriangle(x0, y0, x1, y1, x2, y2, pinsel)`, `r.FillPolygon(punkte, pinsel)`, `r.FloodFill(x, y, pinsel)`, `r.FloodFillBorder(x, y, pinsel, randFarbe)`.
+  Die Fläche eines Flood-Fills wird zuerst festgestellt und dann gefüllt (eine halbdurchsichtige Füllung ändert die Fläche also nicht mitten im Füllen).
+- **`Pen(farbe, breite = 1, form = PenShape.Round)`**: Punkt, Linie oder Pfad - `DrawPoint(x, y, stift)`, `DrawLine(x0, y0, x1, y1, stift)`, `DrawPath(punkte, stift, geschlossen = false)`; dazu die Umrisse `DrawRect`, `DrawCircle`, `DrawEllipse`, `DrawTriangle`,
+  `DrawPolygon` (sie sind Pfade). Breite 1..512; `PenShape.Round` (Kreisspitze: Pixel mit `(2i-(w-1))^2 + (2j-(w-1))^2 <= w^2-1`) oder `PenShape.Square`. Die Spitze wird **vorgerendert** (die Zeilen des Stempels) und dann nur noch kopiert bzw. gemischt;
+  ein halbdurchsichtiger Stift mischt die VEREINIGUNG aller Stempel genau einmal (Überlappungen werden nicht doppelt gemischt).
+- Eigenschaften: `SolidBrush.Color`, `Pen.Color/Width/Shape` (änderbar; ein Stift rendert dann neu).
+- Text: `DrawText(x, y, text, vordergrundPinsel, hintergrundPinsel = undefined)`; ohne Hintergrundpinsel bleibt die Zelle unberührt. `SetPixel`/`GetPixel`/`GetPixelIndex` und `Clear`/`Clear(farbe)` bleiben farbbasiert.
+
+**Alpha-Blending** ist schaltbar (`renderer.AlphaBlending`, Vorgabe an; C#: `Renderer.AlphaBlending`):
+
+- Gemischt wird nur in einem **32-Bit-(RGBA-)Puffer** und nur bei an. Ein deckendes Pixel (Alpha 255) wird kopiert, ein durchsichtiges (0) lässt das Ziel unverändert, dazwischen wird nach Alpha gemischt (`Surface.Mix`, in C# und C++ identisch).
+- In einem **Palette-Puffer** gibt es kein Blending: Alpha >= 128 = Kopie, sonst bleibt das Ziel unverändert.
+- Aus: jedes Pixel wird kopiert (alle Pixel ohne Alpha-Prüfung; `BlitMode.Blend` verhält sich wie `Transparent`).
+- `Clear`, `Clear(farbe)` und das Scrollen setzen Pixel immer roh (ohne Blending).
+
+C++-Spiegel: `native/bridges/graphics/fire_gfx.hpp` (`Surface`, `Brush`, `Pen`, `Renderer`) liefert dieselben Pixel; die nativen Funktionen heißen `__GRPHRnd...`, `__GRPHBsh...`, `__GRPHPen...`. Nur der Software-Renderer ist umgesetzt; eine Beschleunigung
+(GPU) bleibt hinter derselben Schnittstelle möglich.
+
 ## Mehr Zeichenfunktionen
 
-Alle in Pixel-Koordinaten, am Rand still beschnitten, in beiden Farbmodi mit denselben Pixeln (`Shapes`, ganzzahlig, ohne Fließkomma; `TerminalCanvas.DrawCircle` & Co., `Console` in fire):
+Alle in Pixel-Koordinaten, am Rand still beschnitten, in beiden Farbmodi mit denselben Pixeln (`Shapes`, ganzzahlig, ohne Fließkomma; sie schreiben in eine Senke - Pinsel füllen Zeilen, Stifte stempeln). Füllungen gehören dem `Brush`, Umrisse dem `Pen` (siehe oben):
 
-- **Kreis, Ellipse:** `DrawCircle(cx, cy, r, farbe)`, `FillCircle`, `DrawEllipse(cx, cy, rx, ry, farbe)`, `FillEllipse`. Die Fläche ist die Menge der Pixel um die Mitte mit `(2dx)^2/(2rx+1)^2 + (2dy)^2/(2ry+1)^2 <= 1` (beim Kreis `dx^2 + dy^2 <= r^2 + r`);
+- **Kreis, Ellipse:** `DrawCircle(cx, cy, r, stift)`, `FillCircle(cx, cy, r, pinsel)`, `DrawEllipse(cx, cy, rx, ry, stift)`, `FillEllipse`. Die Fläche ist die Menge der Pixel um die Mitte mit `(2dx)^2/(2rx+1)^2 + (2dy)^2/(2ry+1)^2 <= 1` (beim Kreis `dx^2 + dy^2 <= r^2 + r`);
   Linie und Füllung kommen aus denselben Zeilen, die Linie ist also lückenlos und liegt genau auf dem Rand der Fläche. Radius 0 = ein Pixel; ein negativer Radius zeichnet nichts; Radien über 16384 werden begrenzt (`Shapes.MaxRadius`).
-- **Dreieck, Polygon:** `DrawTriangle`/`FillTriangle` (sechs Koordinaten), `DrawPolygon(punkte, farbe, geschlossen = true)` / `FillPolygon(punkte, farbe)` mit `punkte` = Array `[x0, y0, x1, y1, ...]`. Gefüllt wird nach der Even-Odd-Regel (ein Pentagramm
+- **Dreieck, Polygon:** `DrawTriangle`/`FillTriangle` (sechs Koordinaten), `DrawPolygon(punkte, stift, geschlossen = true)` / `FillPolygon(punkte, pinsel)` mit `punkte` = Array `[x0, y0, x1, y1, ...]`. Gefüllt wird nach der Even-Odd-Regel (ein Pentagramm
   hat ein leeres Zentrum), die Randpixel gehören zur Fläche. Zu wenige Punkte zeichnen höchstens einen Strich, nie eine Ausnahme.
-- **Fläche füllen:** `FloodFill(x, y, farbe)` füllt die 4er-zusammenhängende Fläche, die die Farbe (den Index) des Startpixels hat; `FloodFillBorder(x, y, farbe, rand)` füllt bis zu Pixeln der Farbe `rand` (wie `PAINT` in QBasic). Zeilenweise mit eigenem Stapel, also
+- **Fläche füllen:** `FloodFill(x, y, pinsel)` füllt die 4er-zusammenhängende Fläche, die die Farbe (den Index) des Startpixels hat; `FloodFillBorder(x, y, pinsel, rand)` füllt bis zu Pixeln der Farbe `rand` (wie `PAINT` in QBasic). Zeilenweise mit eigenem Stapel, also
   auch für ganze Bildschirme ohne Rekursionstiefe.
 - **Kopieren (`Blit`):** `Blit(quelle, x, y, modus = 0, schluessel = -1)` kopiert einen anderen Framebuffer (z.B. ein geladenes Bild), `BlitRegion(quelle, sx, sy, sw, sh, dx, dy, ...)` einen Ausschnitt, `BlitScaled(quelle, sx, sy, sw, sh, dx, dy, dw, dh, ...)` skaliert auf
   `dw x dh` (nächster Nachbar; eine NEGATIVE Breite/Höhe spiegelt). `BlitMode`: `Copy` (alles), `Transparent` (durchsichtige Quellpixel bleiben aus: RGBA-Quelle Alpha 0, Palette-Quelle der Farbschlüssel `schluessel` bzw. der `TransparentIndex` des Bildes),
-  `Blend` (halbdurchsichtige RGBA-Pixel werden nach Alpha mit dem Ziel gemischt; in einem Palette-Ziel zählt Alpha ab 128 als deckend). Über die Farbmodi hinweg: Palette -> RGBA über die Palette der Quelle; RGBA -> Palette auf den nächsten Eintrag der Ziel-Palette;
+  `Blend` (halbdurchsichtige RGBA-Pixel werden nach Alpha mit dem Ziel gemischt - nur bei eingeschaltetem `AlphaBlending` und RGBA-Ziel; in einem Palette-Ziel zählt Alpha ab 128 als deckend). Über die Farbmodi hinweg: Palette -> RGBA über die Palette der Quelle; RGBA -> Palette auf den nächsten Eintrag der Ziel-Palette;
   Palette -> Palette direkt, wenn beide Paletten gleich sind, sonst über den nächsten Eintrag (wer ein Bild mit seiner eigenen Palette auf den Schirm bringen will, übernimmt vorher dessen Palette: `schirm.WritePalette(bild.ReadPalette(true))`). Derselbe Framebuffer als Quelle und Ziel ist erlaubt.
 - `GetPixelIndex(x, y)`: der Palette-Index des Pixels (RGBA: der nächste Eintrag).
 
@@ -265,7 +300,7 @@ auf die rohen Pixel-Daten:
 
 ## Kernideen (weiterhin gültig)
 
-- **Ein Framebuffer ist die einzige Wahrheit.** `TerminalCanvas` schreibt
+- **Ein Framebuffer ist die einzige Wahrheit.** `Renderer` schreibt
   ausschließlich in einen `Framebuffer` (nie direkt ins Fenster); ein
   `IFramebufferRenderer` liest den fertigen Inhalt nur noch aus.
 - **`PixelColor`: feste Byte-Reihenfolge, ohne Overhead abrufbar.** `R`, `G`,
@@ -274,9 +309,9 @@ auf die rohen Pixel-Daten:
   `[StructLayout(LayoutKind.Explicit)]` liegt zusätzlich ein `Packed`-Feld
   (uint) auf DENSELBEN 4 Bytes - beide Sichten sind buchstäblich derselbe
   Speicher, keine Umrechnung, kein zusätzlicher Speicherverbrauch.
-- **"Wählbarer Framebuffer".** `TerminalCanvas.Target` (bzw.
-  `ConsoleManager.SetTargetFramebuffer`) ist jederzeit umschaltbar – Cursor-
-  Position, Farben UND Palette gehören dem `TerminalCanvas`-Objekt selbst,
+- **"Wählbarer Framebuffer".** `Renderer.Target` (bzw.
+  `RendererManager.SetTargetFramebuffer`) ist jederzeit umschaltbar – Cursor-
+  Position, Farben UND Palette gehören dem `Renderer`-Objekt selbst,
   nicht dem jeweiligen Puffer.
 - **Terminal-Emulation ist QBasic-artig.** `Print`/`Color`/`Locate` verändern
   Text, Vorder-/Hintergrundfarbe und Cursor-Position. Jedes geschriebene

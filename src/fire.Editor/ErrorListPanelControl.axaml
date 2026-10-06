@@ -1,0 +1,32 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="fire.Editor.ErrorListPanelControl">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" BorderBrush="#3C3544" BorderThickness="0,0,0,1" Padding="4,2">
+            <ToggleButton x:Name="ErrorFilterButton" Classes="tool" IsChecked="True" Click="ErrorFilter_Click" ToolTip.Tip="Show or hide errors" HorizontalAlignment="Left">
+                <StackPanel Orientation="Horizontal" Spacing="5">
+                    <TextBlock Text="&#x2716;" FontSize="13" Foreground="#E5566F" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="ErrorCountText" Text="0 errors" VerticalAlignment="Center"/>
+                </StackPanel>
+            </ToggleButton>
+        </Border>
+
+        <!-- several columns like in Visual Studio: resizable, sortable by a click on the header; a double click jumps to the line -->
+        <DataGrid x:Name="ErrorGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserResizeColumns="True" CanUserReorderColumns="True" CanUserSortColumns="True"
+                  SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="Horizontal" BorderThickness="0" FontSize="12"
+                  DoubleTapped="ErrorGrid_DoubleTapped">
+            <DataGrid.Columns>
+                <DataGridTemplateColumn Header="" Width="28" SortMemberPath="Severity" CanUserResize="False">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="&#x2716;" Foreground="#E5566F" HorizontalAlignment="Center" VerticalAlignment="Center" ToolTip.Tip="{Binding Severity}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*"/>
+                <DataGridTextColumn Header="File" Binding="{Binding File}" Width="160"/>
+                <DataGridTextColumn Header="Line" Binding="{Binding Line}" Width="60"/>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</UserControl>

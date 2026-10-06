@@ -59,7 +59,7 @@ namespace fire.Runtime
                     return _known[idx];
                 if (_extra != null && _extra.TryGetValue(name, out var v))
                     return v;
-                throw new KeyNotFoundException($"Kein Feld namens '{name}'.");
+                throw new KeyNotFoundException($"No field named '{name}'.");
             }
             set
             {
@@ -88,6 +88,13 @@ namespace fire.Runtime
                 return true;
             value = default;
             return false;
+        }
+
+        /// <summary>Hängt die Werte aller Felder an (für den Gang durch den Graphen der Verweise, siehe OwnershipWalk).</summary>
+        internal void AppendValues(List<Value> sink)
+        {
+            sink.AddRange(_known);
+            if (_extra != null) sink.AddRange(_extra.Values);
         }
 
         public bool ContainsKey(string name)

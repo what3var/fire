@@ -98,12 +98,12 @@ namespace fire.Bytecode
         public int IndexOf(string name) =>
             _indexByName.TryGetValue(name, out var idx)
                 ? idx
-                : throw new InvalidOperationException($"Keine native Funktion namens '{name}' registriert.");
+                : throw new InvalidOperationException($"No native function named '{name}' is registered.");
 
         public int TryableIndexOf(string name) =>
             _tryableIndexByName.TryGetValue(name, out var idx)
                 ? idx
-                : throw new InvalidOperationException($"Keine 'tryable' native Funktion namens '{name}' registriert.");
+                : throw new InvalidOperationException($"No 'tryable' native function named '{name}' is registered.");
 
         public bool Has(string name) => _indexByName.ContainsKey(name);
 

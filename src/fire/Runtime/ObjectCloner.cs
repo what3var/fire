@@ -43,11 +43,16 @@ namespace fire.Runtime
                     if (deep) return new DeepCopier(owner, null).RunOnContainer(source);
                     var items = new ScriptArray(array.Length);
                     Array.Copy(array.Items, items.Items, array.Length);
+                    LeafOwnership.Adopt(items, owner);
                     return Value.MakeArray(items);
                 }
 
                 case ValueKind.Buffer:
-                    return Value.MakeBuffer(source.AsBuffer().Clone());
+                {
+                    var copy = source.AsBuffer().Clone();
+                    LeafOwnership.Adopt(copy, owner);
+                    return Value.MakeBuffer(copy);
+                }
 
                 default:
                     // Wertartig (bool/int/float/char/string/undefined) und Referenzen ohne eigenen Inhalt
@@ -75,10 +80,10 @@ namespace fire.Runtime
         {
             if (obj.IsDestroyed)
                 throw new InvalidOperationException(
-                    $"Ein bereits zerstörtes Objekt ('{obj.ClassName}') lässt sich nicht kopieren.");
+                    $"An already destroyed object ('{obj.ClassName}') cannot be copied.");
             if (IsActor(obj))
                 throw new InvalidOperationException(
-                    $"Ein Actor ('{obj.ClassName}') lässt sich nicht kopieren - Actor-Referenzen werden geteilt.");
+                    $"An actor ('{obj.ClassName}') cannot be copied - actor references are shared.");
         }
 
         private static bool IsActor(ObjectInstance obj) => obj.Mailbox != null || (obj.RtClass?.IsActor ?? false);
@@ -228,6 +233,7 @@ namespace fire.Runtime
                         var array = v.AsArray();
                         if (_arrayCopies.TryGetValue(array, out var existing)) return Value.MakeArray(existing);
                         var copy = new ScriptArray(array.Length);
+                        LeafOwnership.Adopt(copy, _rootOwner);   // jedes kopierte Array gehoert dem Owner der Kopie (Elemente wechseln ihren Besitzer nie)
                         _arrayCopies[array] = copy; // vor dem Füllen eintragen: ein Array darf sich selbst enthalten
                         for (int i = 0; i < array.Length; i++)
                             copy.Items[i] = MapValue(array.Items[i]);
@@ -238,7 +244,10 @@ namespace fire.Runtime
                     {
                         var buffer = v.AsBuffer();
                         if (!_bufferCopies.TryGetValue(buffer, out var copy))
+                        {
                             _bufferCopies[buffer] = copy = buffer.Clone();
+                            LeafOwnership.Adopt(copy, _rootOwner);
+                        }
                         return Value.MakeBuffer(copy);
                     }
 
