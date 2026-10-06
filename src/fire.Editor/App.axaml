@@ -1,6 +1,7 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:dock="using:Dock.Avalonia.Themes.Fluent"
+             xmlns:local="using:fire.Editor"
              x:Class="fire.Editor.App"
              RequestedThemeVariant="Dark">
     <Application.Resources>
@@ -10,6 +11,56 @@
         <SolidColorBrush x:Key="DockApplicationAccentBrushHigh" Color="#E8447F"/>
         <SolidColorBrush x:Key="DockApplicationAccentBrushIndicator" Color="#D6246E"/>
         <SolidColorBrush x:Key="DockThemeAccentBrush" Color="#B70052"/>
+        <!-- since Dock 12 the blues of the theme are final brushes of their own (the DockApplicationAccent... keys above are resolved inside the theme and no longer reach them) -->
+        <SolidColorBrush x:Key="DockTabActiveBackgroundBrush" Color="#B70052"/>
+        <SolidColorBrush x:Key="DockTabActiveIndicatorBrush" Color="#E8447F"/>
+        <SolidColorBrush x:Key="DockTabHoverBackgroundBrush" Color="#8F0040"/>
+        <SolidColorBrush x:Key="DockTabSelectedForegroundBrush" Color="#E8447F"/>
+        <SolidColorBrush x:Key="DockTabCloseHoverBackgroundBrush" Color="#D6246E"/>
+        <SolidColorBrush x:Key="DockChromeButtonDangerHoverBrush" Color="#D6246E"/>
+        <SolidColorBrush x:Key="DockTargetIndicatorBrush" Color="#D6246E"/>
+        <SolidColorBrush x:Key="DockSplitterHoverBrush" Color="#B70052"/>
+        <SolidColorBrush x:Key="DockSplitterDragBrush" Color="#E8447F"/>
+
+
+        <!-- tool bars (ToolBarControls.cs): see-through, so that the acrylic of the main window shows; a bar has a grip on its left side -->
+        <ControlTheme x:Key="{x:Type local:ToolBar}" TargetType="local:ToolBar">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="ItemsPanel">
+                <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="2"/>
+                </ItemsPanelTemplate>
+            </Setter>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}" Margin="0,0,6,0" Padding="2,1">
+                        <DockPanel>
+                            <Border DockPanel.Dock="Left" Width="5" Margin="2,4,4,4" Opacity="0.55"
+                                    Background="{DynamicResource DockSeparatorBrush}" CornerRadius="2"/>
+                            <ItemsPresenter Name="PART_ItemsPresenter" ItemsPanel="{TemplateBinding ItemsPanel}"
+                                            VerticalAlignment="Center"/>
+                        </DockPanel>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
+        <ControlTheme x:Key="{x:Type local:ToolBarTray}" TargetType="local:ToolBarTray">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="ItemsPanel">
+                <ItemsPanelTemplate>
+                    <WrapPanel Orientation="Horizontal"/>
+                </ItemsPanelTemplate>
+            </Setter>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                        <ItemsPresenter Name="PART_ItemsPresenter" ItemsPanel="{TemplateBinding ItemsPanel}"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
     </Application.Resources>
 
     <Application.Styles>

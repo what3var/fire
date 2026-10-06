@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:dock="using:Dock.Avalonia.Controls"
+        xmlns:local="using:fire.Editor"
         x:Class="fire.Editor.MainWindow"
         Title="spark" Width="1300" Height="820" Icon="/Logo-64.png"
         DragDrop.AllowDrop="True"
@@ -16,29 +17,48 @@
     </Window.Resources>
 
     <Window.Styles>
-        <Style Selector="Border.toolbar Button">
+        <Style Selector="local|ToolBar Button">
             <Setter Property="Padding" Value="6,4"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
-        <Style Selector="Border.toolbar Button:disabled">
+        <Style Selector="local|ToolBar Button:disabled">
             <Setter Property="Opacity" Value="0.4"/>
         </Style>
-        <Style Selector="Border.toolbar Image">
+        <Style Selector="local|ToolBar Image">
             <Setter Property="Width" Value="18"/>
             <Setter Property="Height" Value="18"/>
         </Style>
-        <Style Selector="Border.toolbar PathIcon">
+        <Style Selector="local|ToolBar PathIcon">
             <Setter Property="Width" Value="16"/>
             <Setter Property="Height" Value="16"/>
         </Style>
-        <Style Selector="Border.toolbar Rectangle.separator">
+        <Style Selector="local|ToolBar Rectangle.separator">
             <Setter Property="Width" Value="1"/>
             <Setter Property="Margin" Value="6,4"/>
             <Setter Property="Fill" Value="#4A4252"/>
         </Style>
         <Style Selector="Menu > MenuItem">
             <Setter Property="Padding" Value="8,4"/>
+        </Style>
+        <!-- the menu bar is see-through as well (the acrylic behind it shows); only hovering and opening tint it -->
+        <Style Selector="Menu">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="Menu > MenuItem /template/ Border#PART_LayoutRoot">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="Menu > MenuItem:pointerover /template/ Border#PART_LayoutRoot">
+            <Setter Property="Background" Value="#33FFFFFF"/>
+        </Style>
+        <Style Selector="Menu > MenuItem:selected /template/ Border#PART_LayoutRoot">
+            <Setter Property="Background" Value="#44FFFFFF"/>
+        </Style>
+        <Style Selector="local|ToolBar Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#33FFFFFF"/>
+        </Style>
+        <Style Selector="local|ToolBar SplitButton">
+            <Setter Property="Background" Value="Transparent"/>
         </Style>
     </Window.Styles>
 	<Grid>
@@ -70,6 +90,7 @@
 					/>
 				</ExperimentalAcrylicBorder.Material>
 			</ExperimentalAcrylicBorder>
+			<StackPanel>
 			<Menu>
 				<MenuItem Header="_File">
 					<MenuItem Header="_New Script" Click="New_Click" InputGesture="Ctrl+N">
@@ -167,12 +188,10 @@
 					<MenuItem Header="_Embedding fire in your Application" Click="HelpEmbedding_Click"/>
 				</MenuItem>
 			</Menu>
-		</Panel>
-        <Border DockPanel.Dock="Top" Classes="toolbar" BorderBrush="#3C3544" BorderThickness="0,0,0,1" Padding="4,2">
-            <WrapPanel Orientation="Horizontal">
-                <!-- File -->
-				
-                <SplitButton Click="New_Click" ToolTip.Tip="New script (Ctrl+N)" Padding="2" Background="Transparent" VerticalAlignment="Center">
+				<!-- the tool bars sit on the same acrylic as the menu: the bars and the tray have no background of their own -->
+				<local:ToolBarTray Margin="2,0,0,2">
+					<local:ToolBar>
+						<SplitButton Click="New_Click" ToolTip.Tip="New script (Ctrl+N)" Padding="2" Background="Transparent" VerticalAlignment="Center">
                     <Image Source="/icons/Material-ScriptOutline.png"/>
                     <SplitButton.Flyout>
                         <MenuFlyout>
@@ -188,34 +207,30 @@
                 </SplitButton>
                 <Button Click="Open_Click" ToolTip.Tip="Open... (Ctrl+O)"><PathIcon Data="{StaticResource IconOpen}"/></Button>
                 <Button x:Name="btnSave" Click="Save_Click" ToolTip.Tip="Save (Ctrl+S)"><PathIcon Data="{StaticResource IconSave}"/></Button>
-                <Rectangle Classes="separator"/>
-
-                <!-- Run -->
-                <Button Click="Run_Click" ToolTip.Tip="Start / continue to the next breakpoint (F5) - compiles if necessary and restarts after the program has ended">
+					</local:ToolBar>
+					<local:ToolBar>
+						<Button Click="Run_Click" ToolTip.Tip="Start / continue to the next breakpoint (F5) - compiles if necessary and restarts after the program has ended">
                     <StackPanel Orientation="Horizontal" Spacing="5"><Image Source="/icons/Material-Play.png"/><TextBlock Text="Start" VerticalAlignment="Center"/></StackPanel>
                 </Button>
                 <Button Click="Restart_Click" ToolTip.Tip="Recompile and start (Ctrl+F5)"><Image Source="/icons/Material-Restart.png"/></Button>
                 <Button Click="RunToEnd_Click" ToolTip.Tip="Run to the end without stopping at breakpoints"><Image Source="/icons/Material-PlayOutline.png"/></Button>
                 <Button Click="Stop_Click" ToolTip.Tip="Stop (Shift+F5)"><Image Source="/icons/Material-Stop.png"/></Button>
-                <Rectangle Classes="separator"/>
-
-                <!-- Debug -->
-                <Button Click="Step_Click" ToolTip.Tip="Step over (F10)"><Image Source="/icons/Material-DebugStepOver.png"/></Button>
+					</local:ToolBar>
+					<local:ToolBar>
+						<Button Click="Step_Click" ToolTip.Tip="Step over (F10)"><Image Source="/icons/Material-DebugStepOver.png"/></Button>
                 <Button Click="StepInto_Click" ToolTip.Tip="Step into (F11)"><Image Source="/icons/Material-DebugStepInto.png"/></Button>
                 <Button Click="StepOut_Click" ToolTip.Tip="Step out of the current function (Shift+F11)"><Image Source="/icons/Material-DebugStepOut.png"/></Button>
                 <Button Click="ToggleBreakpoint_Click" ToolTip.Tip="Toggle breakpoint (F9)">
                     <StackPanel Orientation="Horizontal" Spacing="5"><Image Source="/icons/Material-PauseCircle.png"/><TextBlock Text="Breakpoint" VerticalAlignment="Center"/></StackPanel>
                 </Button>
-                <Rectangle Classes="separator"/>
-
-                <!-- Default device -->
-                <TextBlock Text="Default device:" VerticalAlignment="Center" Margin="2,0,6,0"/>
+					</local:ToolBar>
+					<local:ToolBar>
+						<TextBlock Text="Default device:" VerticalAlignment="Center" Margin="2,0,6,0"/>
                 <ComboBox x:Name="cmbDefaultDevice" Width="170" SelectionChanged="cmbDefaultDevice_SelectionChanged" MinHeight="28" Padding="8,2"
                           ToolTip.Tip="The device a script receives as Device.Default"/>
-                <Rectangle Classes="separator"/>
-
-                <!-- Build -->
-                <TextBlock Text="Mode:" VerticalAlignment="Center" Margin="2,0,6,0"/>
+					</local:ToolBar>
+					<local:ToolBar>
+						<TextBlock Text="Mode:" VerticalAlignment="Center" Margin="2,0,6,0"/>
                 <ComboBox x:Name="cmbMode" Width="130" SelectionChanged="cmbMode_SelectionChanged" MinHeight="28" Padding="8,2"
                           ToolTip.Tip="Execution mode: Debug, Release or Performance">
                     <ComboBoxItem Content="Debug" Tag="Debug"/>
@@ -224,9 +239,10 @@
                 </ComboBox>
                 <Button Click="Build_Click" ToolTip.Tip="Build standalone (self-contained file)..."><TextBlock Text="Build" VerticalAlignment="Center"/></Button>
                 <Button Click="BuildSettings_Click" ToolTip.Tip="Build settings (name, version, icon, ...)"><PathIcon Data="{StaticResource IconSettings}"/></Button>
-            </WrapPanel>
-        </Border>
-
+					</local:ToolBar>
+				</local:ToolBarTray>
+			</StackPanel>
+		</Panel>
         <Border DockPanel.Dock="Bottom" BorderBrush="#3C3544" BorderThickness="0,1,0,0" Padding="10,3">
             <DockPanel>
                 <TextBlock x:Name="CaretText" DockPanel.Dock="Right" Text="Line 1" Margin="16,0,0,0"/>
