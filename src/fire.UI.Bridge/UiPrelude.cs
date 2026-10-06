@@ -46,6 +46,41 @@ namespace fire.UI.Bridge
                     static int End() { return 1073741901 }
                 }
 
+                // Converters of the data bindings of the markup (docs/UI_MARKUP.md): Convert goes from the source to the property of the element, ConvertBack the other
+                // way (TwoWay). Derive from Converter for your own and override what you need.
+                class Converter {
+                    Convert(value) { return value }
+                    ConvertBack(value) { return value }
+                }
+
+                class NotConverter : Converter {
+                    Convert(value) { return !value }
+                    ConvertBack(value) { return !value }
+                }
+
+                class IsEmptyConverter : Converter {
+                    Convert(value) {
+                        if (value == undefined) { return true }
+                        var text = "" + value
+                        return text == ""
+                    }
+                }
+
+                class NotEmptyConverter : Converter {
+                    Convert(value) {
+                        if (value == undefined) { return false }
+                        var text = "" + value
+                        return text != ""
+                    }
+                }
+
+                class TextConverter : Converter {
+                    Convert(value) {
+                        if (value == undefined) { return "" }
+                        return "" + value
+                    }
+                }
+
                 // Die Farben der Oberfläche (Root.theme) - einzelne Felder lassen sich nach dem Anlegen des Roots ändern.
                 class Theme {
                     int back

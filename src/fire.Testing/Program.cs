@@ -8887,6 +8887,166 @@ string[] uiDrawExpected = Array.Empty<string>();
         print(w3.VSync)
         """, new[] { "True", "False", "True", "False" });
 
+    // ---- UI markup (.fxml): parsing, diagnostics, the generated script, and the generated class running against the library ----
+    {
+        Console.WriteLine("--- UI-Markup ---");
+        void CheckMarkup(string title, bool ok, string detail = "")
+        {
+            if (!ok) uiFailures++;
+            Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title} {detail}");
+        }
+
+        string Diagnose(string markup) =>
+            string.Join(" | ", fire.UI.Markup.MarkupParser.Parse(markup).Diagnostics.Select(d => d.ToString()));
+
+        CheckMarkup("Markup: ein gueltiges Dokument hat keine Diagnosen",
+            fire.UI.Markup.MarkupParser.Parse("<Window class=\"A\"><Button name=\"b\" text=\"x\" onClick=\"Go\"/></Window>").Diagnostics.Count == 0);
+
+        void ExpectDiagnostic(string title, string markup, string expected)
+        {
+            string actual = Diagnose(markup);
+            CheckMarkup($"Markup: {title}", actual.Contains(expected, StringComparison.Ordinal), $"erwartet '{expected}', erhalten '{actual}'");
+        }
+        ExpectDiagnostic("Fehler im XML mit Zeile", "<Window class=\"A\">\n<Button>\n</Window>", "line 3");
+        ExpectDiagnostic("das Wurzelelement", "<Foo class=\"A\"/>", "must be 'Window' or 'View'");
+        ExpectDiagnostic("class fehlt", "<Window/>", "needs the attribute class");
+        ExpectDiagnostic("unbekanntes Element mit Zeile", "<Window class=\"A\">\n<Slider/>\n</Window>", "line 2: Unknown element 'Slider'");
+        ExpectDiagnostic("unbekannte Eigenschaft", "<Window class=\"A\"><Label colour=\"#fff\"/></Window>", "has no property or event 'colour'");
+        ExpectDiagnostic("ein Button hat keine Kinder", "<Window class=\"A\"><Button><Label/></Button></Window>", "cannot contain elements");
+        ExpectDiagnostic("Name doppelt", "<Window class=\"A\"><Label name=\"a\"/><Label name=\"a\"/></Window>", "used twice");
+        ExpectDiagnostic("reservierter Name", "<Window class=\"A\"><Label name=\"ui\"/></Window>", "used by the generated class");
+        ExpectDiagnostic("Handlername gleich Elementname", "<Window class=\"A\"><Label name=\"a\"/><Button onClick=\"a\"/></Window>", "already used");
+        ExpectDiagnostic("unbekannter Converter", "<Window class=\"A\"><Label text=\"{Binding X, Converter=Nope}\"/></Window>", "Unknown converter 'Nope'");
+        ExpectDiagnostic("Binding auf ein Element, das es nicht gibt", "<Window class=\"A\"><Label text=\"{Binding text, ElementName=x}\"/></Window>", "does not exist");
+        ExpectDiagnostic("unbekannte Markup-Erweiterung", "<Window class=\"A\"><Label text=\"{Bind X}\"/></Window>", "Unknown markup extension");
+        ExpectDiagnostic("Binding ohne Pfad", "<Window class=\"A\"><Label text=\"{Binding Mode=TwoWay}\"/></Window>", "needs a path");
+        ExpectDiagnostic("unbekannter Binding-Modus", "<Window class=\"A\"><Label text=\"{Binding X, Mode=Sideways}\"/></Window>", "Unknown binding mode");
+
+        string Generate(string markup) => fire.UI.Markup.FireUiGenerator.Generate(fire.UI.Markup.MarkupParser.Parse(markup), "T.fxml");
+        void ExpectGenerateError(string title, string markup, string expected)
+        {
+            string actual;
+            try { Generate(markup); actual = "(keine Ausnahme)"; }
+            catch (fire.UI.Markup.MarkupException ex) { actual = ex.Message; }
+            CheckMarkup($"Markup: {title}", actual.Contains(expected, StringComparison.Ordinal), $"erwartet '{expected}', erhalten '{actual}'");
+        }
+        ExpectGenerateError("Zahl erwartet", "<Window class=\"A\"><Label x=\"abc\"/></Window>", "needs a whole number");
+        ExpectGenerateError("true/false erwartet", "<Window class=\"A\"><Label visible=\"yes\"/></Window>", "needs true or false");
+        ExpectGenerateError("Ausrichtung erwartet", "<Window class=\"A\"><Stack orientation=\"Diagonal\"/></Window>", "needs Horizontal or Vertical");
+        ExpectGenerateError("Farbe erwartet", "<Window class=\"A\"><Label color=\"red\"/></Window>", "needs a colour");
+
+        string script = Generate("<Window class=\"Settings\" title=\"Hi &quot;you&quot;\" width=\"200\" height=\"100\"><Button name=\"ok\" text=\"OK\" onClick=\"Save\" x=\"0x10\"/></Window>");
+        CheckMarkup("Markup: die erzeugte Basisklasse, der Handler und das Fenster",
+            script.Contains("class SettingsBase {") && script.Contains("Save(sender) { }") && script.Contains("new Framebuffer(200, 100)")
+            && script.Contains("UI.Button ok") && script.Contains("e0.x = 0x10") && script.Contains("#import \"ui\"") && script.Contains("\"Hi \\\"you\\\"\""), script);
+        CheckMarkup("Markup: eine View hat Attach statt Run",
+            Generate("<View class=\"V\" base=\"VBase2\"/>") is var viewScript && viewScript.Contains("class VBase2 {") && viewScript.Contains("Attach(container)") && !viewScript.Contains("Run()"));
+
+        // the generated classes against the library: a window (events through the fake window) and a view (bindings)
+        string dir = Path.Combine(Path.GetTempPath(), "fire-markup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string P(string name) => Path.Combine(dir, name).Replace('\\', '/');
+            File.WriteAllText(P("Form.fxml"), """
+                <Window class="Form" title="Form" width="320" height="200">
+                  <Stack name="box" x="10" y="10" width="300" height="180" orientation="Vertical" spacing="6">
+                    <Label name="caption">Name:</Label>
+                    <TextBox name="field" width="200" onChange="FieldChanged"/>
+                    <CheckBox name="flag" text="Flag" onChange="FlagChanged"/>
+                    <Button name="go" text="Go" width="60" onClick="Go"/>
+                  </Stack>
+                </Window>
+                """);
+            CheckUi("Markup: ein Fenster - Handler der abgeleiteten Klasse laufen bei Klick, Tippen und Haken", $$"""
+                #include "{{P("Form.fxml")}}"
+                class MyForm : FormBase {
+                    int clicks = 0
+                    Go(sender) { this.clicks = this.clicks + 1 }
+                    FieldChanged(sender) { print("text " + sender.text) }
+                    FlagChanged(sender) { print("flag " + sender.isChecked) }
+                }
+                var f = new MyForm()
+                f.ui.Draw()
+                f.ui.Draw()   // labels and check boxes know their height only after the first drawing, which moves the elements below them in a Stack
+                print(f.box.horizontal + " " + f.field.width + " " + f.caption.text)
+                // a click on the button (its screen position is known after drawing)
+                var bx = f.go.ax + 5
+                var by = f.go.ay + 5
+                __TestEvent(8, 1, bx + 0.0, by + 0.0)
+                __TestEvent(11, 1, bx + 0.0, by + 0.0)
+                f.ui.Tick()
+                print("clicks " + f.clicks)
+                // focus the text field with a click, type into it
+                var tx = f.field.ax + 5
+                var ty = f.field.ay + 5
+                __TestEvent(8, 1, tx + 0.0, ty + 0.0)
+                __TestEvent(11, 1, tx + 0.0, ty + 0.0)
+                __TestEvent(3, "h")
+                __TestEvent(3, "i")
+                f.ui.Tick()
+                print("field " + f.field.text)
+                f.flag.Toggle()
+                """, new[] { "False 200 Name:", "clicks 1", "text h", "text hi", "field hi", "flag True" });
+
+            File.WriteAllText(P("Panel.fxml"), """
+                <View class="Panel1" width="300" height="200">
+                  <Panel width="300" height="200">
+                    <TextBox name="src" x="5" y="5" width="120" text="abc"/>
+                    <Label name="mirror" x="5" y="40" text="{Binding Path=text, ElementName=src}"/>
+                    <Label name="player" x="5" y="60" text="{Binding Player.Name}"/>
+                    <Label name="once" x="5" y="80" text="{Binding Title, Mode=OneTime}"/>
+                    <TextBox name="edit" x="5" y="100" width="120" text="{Binding Player.Name, Mode=TwoWay}"/>
+                    <Label name="shout" x="5" y="120" text="{Binding Player.Name, Converter=Upper}"/>
+                    <CheckBox name="cb" x="5" y="130" text="{Binding Title}" isChecked="{Binding Player.Active, Converter=Not, Mode=TwoWay}"/>
+                    <Label name="empty" x="5" y="150" visible="{Binding Title, Converter=IsEmpty}" color="{Enum Colors.Red}"/>
+                  </Panel>
+                  <Resources><Converter key="Upper" type="UpperConverter"/></Resources>
+                </View>
+                """);
+            CheckUi("Markup: Bindings mit Probes - Pfad, Element, TwoWay, Converter, OneTime, Austausch im Pfad, Trennen", $$"""
+                #include "{{P("Panel.fxml")}}"
+                enum Colors { Black = 0, Red = 255 }
+                class UpperConverter : UI.Converter { Convert(value) { return value.ToUpper() } }
+                class Player { string Name = "p1"
+                               bool Active = true }
+                class Model { Player Player
+                              string Title = "T1" }
+                var d = new Panel1Base()
+                var m = new Model()
+                m.Player = new Player()
+                d.SetDataContext(m)
+                print(d.mirror.text + " " + d.player.text + " " + d.once.text + " " + d.edit.text + " " + d.shout.text + " " + d.cb.text + " " + d.cb.isChecked + " " + d.empty.visible + " " + d.empty.color)
+                d.src.text = "xyz"
+                print(d.mirror.text)
+                m.Player.Name = "p2"
+                print(d.player.text + " " + d.edit.text + " " + d.shout.text)
+                d.edit.text = "p3"
+                print(m.Player.Name + " " + d.player.text + " " + d.shout.text)
+                d.cb.isChecked = true
+                print(m.Player.Active)
+                var np = new Player()
+                np.Name = "other"
+                m.Player = np
+                print(d.player.text + " " + d.edit.text)
+                np.Name = "other2"
+                print(d.player.text)
+                d.edit.text = "p4"
+                print(np.Name)
+                m.Title = ""
+                print(d.once.text + "|" + d.cb.text + "|" + d.empty.visible)
+                d.SetDataContext(undefined)
+                np.Name = "after"
+                print(d.player.text)
+                """, new[]
+                {
+                    "abc p1 T1 p1 P1 T1 False False 255", "xyz", "p2 p2 P2", "p3 p3 P3", "False",
+                    "other other", "other2", "p4", "T1||True", "p4",
+                });
+        }
+        finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
+    }
+
     Console.WriteLine(uiFailures == 0 ? "Alle UI-Pruefungen bestanden." : $"FEHLER: {uiFailures} UI-Pruefung(en) fehlgeschlagen.");
 }
 

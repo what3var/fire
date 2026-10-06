@@ -283,6 +283,13 @@ namespace fire.Compiler
                 throw new PreprocessorException($"'{fullPath}' could not be read: {ex.Message}", ex);
             }
 
+            // a markup file of a user interface (docs/UI_MARKUP.md) is included as the script generated from it
+            if (string.Equals(Path.GetExtension(fullPath), ".fxml", StringComparison.OrdinalIgnoreCase))
+            {
+                try { includedSource = fire.UI.Markup.FireUiGenerator.Generate(fire.UI.Markup.MarkupParser.Parse(includedSource), fullPath); }
+                catch (fire.UI.Markup.MarkupException ex) { throw new PreprocessorException($"'{Path.GetFileName(fullPath)}': {ex.Message}", ex); }
+            }
+
             _includeChain.Add(fullPath);
             string? includedDir = Path.GetDirectoryName(fullPath);
             string result = ProcessInner(includedSource, includedDir ?? ".", alreadyIncluded);

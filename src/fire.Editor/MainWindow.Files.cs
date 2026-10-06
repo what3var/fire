@@ -14,7 +14,8 @@ namespace fire.Editor
         private static readonly FilePickerFileType ScriptFiles = new("fire files") { Patterns = new[] { "*.script", "*.fi", "*.fic" } };
         private static readonly FilePickerFileType MarkdownFiles = new("Markdown") { Patterns = new[] { "*.md", "*.markdown" } };
         private static readonly FilePickerFileType PacketLogFiles = new("Packet logs") { Patterns = new[] { "*.fplog" } };
-        private static readonly FilePickerFileType AllDocuments = new("All documents") { Patterns = new[] { "*.script", "*.fi", "*.fic", "*.md", "*.markdown", "*.fplog" } };
+        private static readonly FilePickerFileType UiMarkupFiles = new("UI markup") { Patterns = new[] { "*.fxml" } };
+        private static readonly FilePickerFileType AllDocuments = new("All documents") { Patterns = new[] { "*.script", "*.fi", "*.fic", "*.md", "*.markdown", "*.fplog", "*.fxml" } };
 
         private static string SafeFileName(string name) =>
             string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ' ' ? '-' : c));
@@ -49,6 +50,19 @@ namespace fire.Editor
         private void New_Click(object? sender, RoutedEventArgs e) => NewScript("");
 
         private void NewMarkdown_Click(object? sender, RoutedEventArgs e) => NewMarkdown("");
+
+        private const string UiMarkupTemplate = """
+            <Window class="MainWindow" title="My window" width="400" height="300">
+              <Stack x="10" y="10" width="380" height="280" spacing="6">
+                <Label text="Hello"/>
+                <TextBox name="nameBox" width="200" text="{Binding Name, Mode=TwoWay}"/>
+                <Button name="ok" text="OK" onClick="Ok"/>
+              </Stack>
+            </Window>
+
+            """;
+
+        private void NewUiMarkup_Click(object? sender, RoutedEventArgs e) => CreateDocument(DocumentKind.UiMarkup, UiMarkupTemplate, null);
 
         private void OpenReadOnly_Click(object? sender, RoutedEventArgs e) => OpenMarkdownDialog(MarkdownViewMode.ReadOnly);
         private void OpenViewer_Click(object? sender, RoutedEventArgs e) => OpenMarkdownDialog(MarkdownViewMode.Viewer);
@@ -135,7 +149,7 @@ namespace fire.Editor
 
         private async void Open_Click(object? sender, RoutedEventArgs e)
         {
-            var files = await PickFiles("Open", AllDocuments, ScriptFiles, MarkdownFiles, PacketLogFiles);
+            var files = await PickFiles("Open", AllDocuments, ScriptFiles, MarkdownFiles, UiMarkupFiles, PacketLogFiles);
             foreach (var file in files) OpenFile(file);
         }
 
@@ -220,6 +234,7 @@ namespace fire.Editor
             string? path = doc.Kind switch
             {
                 DocumentKind.Markdown => await PickSavePath("Save", suggested, "md", MarkdownFiles),
+                DocumentKind.UiMarkup => await PickSavePath("Save", suggested, "fxml", UiMarkupFiles),
                 DocumentKind.PacketLog => await PickSavePath("Save", suggested, fire.Device.Manager.DeviceManager.PacketLog.FileExtension.TrimStart('.'), PacketLogFiles),
                 _ => await PickSavePath("Save", suggested, "script", ScriptFiles),
             };

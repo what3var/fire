@@ -68,6 +68,7 @@ namespace fire.Compiler
               fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64]
               fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>]
+              fire.Compiler ui    <file.fxml> [-o <file>]
 
             run     compiles the files into one program and runs it.
             build   turns them into a program: a self-contained executable that carries the VM (default: out.exe), or - with --engine native, or "engine": "native" in
@@ -82,6 +83,7 @@ namespace fire.Compiler
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
             -D name Defines the symbol "name" for #if (repeatable, also --define name or -Dname).
             -o      Name of the file produced by build or native.
+            ui      writes the script generated from the markup of a user interface (docs/UI_MARKUP.md) - not needed to build: `#include "x.fxml"` does it on the fly.
 
             File names without spaces do not need quotation marks.
             """;

@@ -64,6 +64,8 @@ namespace fire.Editor
             Markdown,
             /// <summary>A packet trace (recorded live or loaded from a .fplog file).</summary>
             PacketLog,
+            /// <summary>The markup of a user interface (.fxml, docs/UI_MARKUP.md) with its design view.</summary>
+            UiMarkup,
         }
 
         /// <summary>An open tab. `Layout` is the docking element that shows the view (the view - the editor control - stays the same when the layout is rebuilt).</summary>
@@ -86,6 +88,7 @@ namespace fire.Editor
             public ScriptEditorControl? Script => View as ScriptEditorControl;
             public MarkdownEditorControl? Markdown => View as MarkdownEditorControl;
             public PacketTraceControl? Trace => View as PacketTraceControl;
+            public MarkupEditorControl? Design => View as MarkupEditorControl;
 
             /// <summary>File name or "Untitled N" (Markdown: with .md).</summary>
             public string DisplayName => View.FilePath != null
@@ -120,6 +123,7 @@ namespace fire.Editor
             string ext = Path.GetExtension(path).ToLowerInvariant();
             if (ext is ".md" or ".markdown" or ".mdown") return DocumentKind.Markdown;
             if (ext == fire.Device.Manager.DeviceManager.PacketLog.FileExtension) return DocumentKind.PacketLog;
+            if (ext == ".fxml") return DocumentKind.UiMarkup;
             return DocumentKind.Script;
         }
 
@@ -517,6 +521,7 @@ namespace fire.Editor
             {
                 DocumentKind.Markdown => new MarkdownEditorControl { Mode = mode },
                 DocumentKind.PacketLog => new PacketTraceControl(),
+                DocumentKind.UiMarkup => new MarkupEditorControl(),
                 _ => new ScriptEditorControl(),
             };
 
@@ -538,6 +543,9 @@ namespace fire.Editor
 
             if (doc.Markdown is { } md)
                 md.OpenFileRequested += (p, anchor, newTab) => HandleMarkdownLink(doc, p, anchor, newTab);
+
+            if (doc.Design is { } design)
+                design.ShowScriptRequested += () => ShowGeneratedScript(doc);
 
             if (doc.Script is { } script)
             {
@@ -671,7 +679,27 @@ namespace fire.Editor
             if (int.TryParse(text?.Trim(), out int line)) doc.View.GoToLine(line);
         }
 
-        private void ToggleMarkdownPreview_Click(object? sender, RoutedEventArgs e) => ActiveDocument?.Markdown?.TogglePreview();
+        private void ToggleMarkdownPreview_Click(object? sender, RoutedEventArgs e)
+        {
+            ActiveDocument?.Markdown?.TogglePreview();
+            ActiveDocument?.Design?.TogglePreview();
+        }
+
+        /// <summary>Opens the script that is generated from a markup in a new tab (to look at; the script of a markup is never stored, `#include "x.fxml"` generates it on the fly).</summary>
+        private void ShowGeneratedScript(OpenDocument markup)
+        {
+            if (markup.Design is not { } design) return;
+            bool ok = design.TryGenerate(out string script);
+            if (!ok)
+            {
+                UpdateStatus("The markup has mistakes: " + script);
+                _ = Dialogs.Message(this, script, "UI markup");
+                return;
+            }
+            string name = Path.GetFileNameWithoutExtension(markup.DisplayName) + ".generated";
+            var generated = CreateDocument(DocumentKind.Script, script, null, untitledName: name);
+            UpdateStatus($"Generated script of {markup.DisplayName}.");
+        }
 
         // -----------------------------------------------------------
         // Devices (menu, default device selection, packet trace)
@@ -781,7 +809,7 @@ namespace fire.Editor
                     GoToDefinition_Click(this, e); e.Handled = true; break;
                 case Key.W when ctrl:
                     CloseDocument_Click(this, e); e.Handled = true; break;
-                case Key.V when ctrl && shift && ActiveDocument?.Markdown != null:
+                case Key.V when ctrl && shift && (ActiveDocument?.Markdown != null || ActiveDocument?.Design != null):
                     ToggleMarkdownPreview_Click(this, e); e.Handled = true; break;
             }
         }

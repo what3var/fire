@@ -8,8 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Die (WPF-freie) Vervollständigungs-Logik des Editors, zum Testen direkt eingebunden -
-         das Editor-Projekt selbst ist nur unter Windows baubar. -->
+    <!-- The logic of the editor that has no user interface (completion, navigation, Markdown), linked in directly for the tests. -->
     <Compile Include="..\fire.Editor\ScriptSymbolIndex.cs" Link="Editor\ScriptSymbolIndex.cs" />
     <Compile Include="..\fire.Editor\ScriptSymbolIndex.Types.cs" Link="Editor\ScriptSymbolIndex.Types.cs" />
     <Compile Include="..\fire.Editor\CompletionEngine.cs" Link="Editor\CompletionEngine.cs" />

@@ -763,6 +763,7 @@ namespace fire.Editor
                 try { resolved = Path.GetFullPath(Path.Combine(dir ?? ".", inc.RelativePath)); }
                 catch { continue; }
                 if (!File.Exists(resolved)) continue;
+                if (resolved.EndsWith(".fxml", StringComparison.OrdinalIgnoreCase)) continue; // the markup of an interface: no script text to look into
 
                 string includedSource;
                 try { includedSource = File.ReadAllText(resolved); }

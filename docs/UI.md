@@ -44,6 +44,11 @@ while (ui.Tick()) {                      // zeichnen, Fenster-Zyklus, Ereignisse
   Zeichen (Texteingabe-Ereignisse), Pfeile, Pos1/Ende, Rücktaste/Entf, Klick setzt die Einfügemarke, der sichtbare Ausschnitt wandert mit, `maxLength`, Enter meldet `entered`.
 - **Zeichnen:** flach, mit der eingebauten 8x14-Schrift (`root.cw`/`root.ch` sind Breite und Höhe eines Zeichens); `UI.Color.Rgb(r, g, b)` baut die rohen Farbwerte, `UI.Keys` nennt die Tastencodes.
 
+## Oberfläche im Markup
+
+Die Oberfläche lässt sich auch in einer Markup-Datei (`.fxml`, XML wie XAML) entwerfen; daraus entsteht eine Basisklasse, von der der eigene Code erbt - mit Handlern, benannten Elementen und Datenbindung
+(mit `probe`) samt Convertern. Siehe `docs/UI_MARKUP.md`; der Editor zeigt dazu eine Entwurfsansicht.
+
 ## Grenzen
 
 - Nur absolute Positionierung und das einfache `Stack`-Layout; keine Scroll-Container, kein Clipping der Kinder am Container, keine Mehrzeilen-Textfelder, keine Auswahllisten.

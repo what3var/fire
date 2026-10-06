@@ -48,6 +48,7 @@
                 <MenuItem Header="New _Markdown Document" Click="NewMarkdown_Click" InputGesture="Ctrl+Shift+N">
                     <MenuItem.Icon><Image Source="/icons/Material-FileDocumentOutline.png"/></MenuItem.Icon>
                 </MenuItem>
+                <MenuItem Header="New _UI Markup" Click="NewUiMarkup_Click"/>
                 <MenuItem Header="_Open..." Click="Open_Click" InputGesture="Ctrl+O"/>
                 <MenuItem Header="Open Markdown _Read-Only..." Click="OpenReadOnly_Click"/>
                 <MenuItem Header="Open Markdown in _Viewer..." Click="OpenViewer_Click"/>
@@ -123,7 +124,7 @@
                 <MenuItem Header="S_tack" Tag="stack" ToggleType="CheckBox" Click="ViewPanel_Click"/>
                 <MenuItem Header="_Devices" Tag="devices" ToggleType="CheckBox" Click="ViewPanel_Click"/>
                 <Separator/>
-                <MenuItem Header="Toggle Markdown _Preview" Click="ToggleMarkdownPreview_Click" InputGesture="Ctrl+Shift+V"/>
+                <MenuItem Header="Toggle Markdown / Design _Preview" Click="ToggleMarkdownPreview_Click" InputGesture="Ctrl+Shift+V"/>
                 <Separator/>
                 <MenuItem Header="_Reset Layout" Click="ResetLayout_Click"/>
             </MenuItem>
@@ -146,6 +147,7 @@
                             <MenuItem Header="New Markdown Document" Click="NewMarkdown_Click" InputGesture="Ctrl+Shift+N">
                                 <MenuItem.Icon><Image Source="/icons/Material-FileDocumentOutline.png"/></MenuItem.Icon>
                             </MenuItem>
+                            <MenuItem Header="New UI Markup" Click="NewUiMarkup_Click"/>
                         </MenuFlyout>
                     </SplitButton.Flyout>
                 </SplitButton>

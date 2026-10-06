@@ -1002,6 +1002,9 @@ already inserted file are silently skipped – like
 when two files include the same third file. Circular includes
 are detected and abort with a clear error.
 
+**Markup of a user interface**: a file ending in `.fxml` is not read as text but translated first - `#include "Form.fxml"` inserts the fire script generated from it (docs/UI_MARKUP.md): the base
+class of the code-behind with the elements, handlers and data bindings of the interface. Mistakes in the markup abort with the line of the markup file.
+
 **Global composition instead of separate insertion trees**: "only
 once in total" has applied since the directive stage (see 8.1.5) across the
 ENTIRE compilation, not only within a single root
