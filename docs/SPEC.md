@@ -2186,6 +2186,11 @@ The package `fire-i2c` (docs/NETWORK.md is the reference): `I2c.Bus` (write, rea
 The package `fire-spi` (docs/NETWORK.md is the reference): `Spi.Device` (a bus with one chip select: full-duplex `Transfer`, `Write`, `Read`, `WriteRead`, mode/speed/bit order), `Spi.Board` (the devices of the machine) and `Spi.Sim` (the simulated device `"sim"`: loopback or
 queued answers, a log of what was sent); `/dev/spidevB.C` of Linux or the SPI master driver of ESP-IDF underneath. Transfers are done in the call; errors are `Spi.SpiException` (with a `code`) and subclasses.
 
+### 8.26 WiFi (`#import "wifi"`)
+
+The package `fire-wifi` (docs/NETWORK.md is the reference): `WiFi.Station` (scan, join, state, address), `WiFi.AccessPoint`, `WiFi.Board` (the radios of the machine) and `WiFi.Sim` (the simulated radio `"sim"` that every platform has); the WiFi driver of ESP-IDF underneath, "not
+supported" where the operating system owns the network. It needs `time`; scanning and joining poll the natives and sleep between the questions. Errors are `WiFi.WiFiException` (with a `code`) and subclasses (`AuthException`, `NotFoundException`, `TimeoutException`, ...).
+
 ## 9. Open points
 
 The only earlier point here – the method declaration syntax

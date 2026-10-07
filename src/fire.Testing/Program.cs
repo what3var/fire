@@ -17095,6 +17095,63 @@ else
             """),
     }).ToArray();
 
+    // WiFi (bridges/fire_bridge_wifi.hpp): the simulated radio "sim" - scan, join, failures, access point - the same in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("WiFi: simuliertes Funkmodul - Scan, Verbinden, Fehler, Zugangspunkt", """
+            #import "wifi"
+
+            print("ifaces " + WiFi.Board.Interfaces()[0] + " " + WiFi.Board.Interfaces().count + " " + WiFi.Board.Available())
+            var sta = new WiFi.Station()
+            print("name " + sta.Name + " state " + sta.State + " ip [" + sta.Ip + "] mac " + sta.Mac + " rssi " + sta.Rssi)
+            print("empty scan " + sta.Scan().count)
+            WiFi.Sim.AddNetwork("home", "secret-pass", -55, 6)
+            WiFi.Sim.AddNetwork("cafe", "", -70, 1)
+            WiFi.Sim.AddNetwork("far", "farfarfar", -85, 11)
+            var nets = sta.Scan()
+            print("scan " + nets.count)
+            for (var i = 0; i < nets.count; i++) {
+                var n = nets[i]
+                print(n.ssid + " " + n.rssi + " ch" + n.channel + " auth" + n.auth + " secure " + n.Secure + " " + n.bssid)
+            }
+            sta.Connect("home", "secret-pass", 2s)
+            print("connected " + sta.IsConnected + " ssid " + sta.Ssid + " ip " + sta.Ip + " rssi " + sta.Rssi)
+            print("scan while connected " + sta.Scan().count)
+            sta.Disconnect()
+            print("after disconnect " + sta.State + " [" + sta.Ssid + "]")
+            try { sta.Connect("home", "wrong-password", 2s) } catch (WiFi.AuthException e) { print("auth " + e.code + " " + e.message) }
+            try { sta.Connect("nowhere", "", 2s) } catch (WiFi.NotFoundException e) { print("notfound " + e.code) }
+            sta.Connect("cafe")
+            print("open " + sta.Ssid + " " + sta.Rssi)
+            WiFi.Sim.Drop()
+            print("dropped " + sta.State + " [" + sta.Ip + "]")
+            WiFi.Sim.Delays(100000, 0)
+            try { sta.Connect("home", "secret-pass", 30ms) } catch (WiFi.TimeoutException e) { print("timeout " + e.code) }
+            WiFi.Sim.Delays(3, 0)
+            sta.Start("home", "secret-pass")
+            var seen = 0
+            sta.onState = (s) => { seen = seen + 1; print("state change " + s) }
+            for (var i = 0; i < 10; i++) { sta.Poll() }
+            print("polled " + sta.IsConnected)
+            WiFi.Sim.RemoveNetwork("home")
+            print("network gone " + sta.State)
+
+            var ap = new WiFi.AccessPoint("sim")
+            print("ap running " + ap.IsRunning + " clients ")
+            ap.Start("fire-board", "password123", 6, 2)
+            print("ap " + ap.IsRunning + " " + ap.Ip + " " + ap.Mac + " " + ap.Clients)
+            print("join " + WiFi.Sim.ClientJoins() + " " + WiFi.Sim.ClientJoins() + " clients " + ap.Clients)
+            try { WiFi.Sim.ClientJoins() } catch (WiFi.WiFiException e) { print("full " + e.code) }
+            try { ap.Start("x", "short") } catch (WiFi.WiFiException e) { print("short password " + e.code) }
+            try { ap.Start("x", "", 20) } catch (WiFi.WiFiException e) { print("channel " + e.code) }
+            ap.Stop()
+            print("stopped " + ap.IsRunning)
+            try { new WiFi.Station("nothing") } catch (WiFi.NotFoundException e) { print("no interface " + e.code) }
+            sta.Close()
+            try { sta.State } catch (WiFi.WiFiException e) { print("closed " + e.code) }
+            """),
+    }).ToArray();
+
     // Network (bridges/fire_bridge_net.hpp): TCP, UDP and name resolution on the loopback interface - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {

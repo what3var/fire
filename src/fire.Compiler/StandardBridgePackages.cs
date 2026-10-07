@@ -36,6 +36,7 @@ namespace fire.Compiler
             "linq" => new[] { "reflection" },
             "random" => new[] { "time" },
             "gpio" => new[] { "time" },
+            "wifi" => new[] { "time" },
             "http" => new[] { "net", "tls", "io", "time" },
             "tls" => new[] { "net", "io", "time" },
             "net" => new[] { "io", "time" },   // a connection is an IO.Stream; the time limits need the clock
@@ -53,6 +54,7 @@ namespace fire.Compiler
             "gpio" => fire.Standard.GpioPrelude.Source,
             "i2c" => fire.Standard.I2cPrelude.Source,
             "spi" => fire.Standard.SpiPrelude.Source,
+            "wifi" => fire.Standard.WifiPrelude.Source,
             "io" => fire.Standard.IoPrelude.Source,
             "devices" => fire.Standard.DevicesPrelude.Source,
             _ => ImportedPreludes.TrySourceFor(bridge),
@@ -151,6 +153,22 @@ namespace fire.Compiler
                     F("__SpiTransfer", 6, "spi::Transfer"), F("__SpiWrite", 4, "spi::Write"), F("__SpiRead", 4, "spi::Read"), F("__SpiClose", 1, "spi::Close"),
                     F("__SpiSimReply", 3, "spi::SimReply"), F("__SpiSimLoopback", 0, "spi::SimLoopback"), F("__SpiSimSentCount", 0, "spi::SimSentCount"), F("__SpiSimSentByte", 1, "spi::SimSentByte"),
                     F("__SpiSimInfo", 1, "spi::SimInfo"), F("__SpiSimClear", 0, "spi::SimClear"),
+                })
+                    yield return f;
+            }
+            if (bridge == "wifi")
+            {
+                foreach (var f in new[]
+                {
+                    F("__WiFiLastError", 0, "wifi::LastError"), F("__WiFiLastErrorMessage", 0, "wifi::LastErrorMessage", list: true), F("__WiFiOpenCount", 0, "wifi::OpenCount"),
+                    F("__WiFiSupported", 0, "wifi::Supported"), F("__WiFiInterfaces", 0, "wifi::Interfaces", list: true), F("__WiFiOpen", 1, "wifi::Open"), F("__WiFiClose", 1, "wifi::Close"),
+                    F("__WiFiScanBegin", 1, "wifi::ScanBegin"), F("__WiFiScanStep", 1, "wifi::ScanStep"), F("__WiFiScanCount", 1, "wifi::ScanCount"), F("__WiFiScanSsid", 2, "wifi::ScanSsid", list: true),
+                    F("__WiFiScanBssid", 2, "wifi::ScanBssid", list: true), F("__WiFiScanInfo", 3, "wifi::ScanInfo"),
+                    F("__WiFiConnectBegin", 3, "wifi::ConnectBegin"), F("__WiFiConnectState", 1, "wifi::ConnectState"), F("__WiFiDisconnect", 1, "wifi::Disconnect"),
+                    F("__WiFiStationText", 2, "wifi::StationText", list: true), F("__WiFiStationRssi", 1, "wifi::StationRssi"),
+                    F("__WiFiApStart", 5, "wifi::ApStart"), F("__WiFiApStop", 1, "wifi::ApStop"), F("__WiFiApRunning", 1, "wifi::ApRunning"), F("__WiFiApText", 2, "wifi::ApText", list: true), F("__WiFiApClients", 1, "wifi::ApClients"),
+                    F("__WiFiSimAddNetwork", 4, "wifi::SimAddNetwork"), F("__WiFiSimRemoveNetwork", 1, "wifi::SimRemoveNetwork"), F("__WiFiSimDrop", 0, "wifi::SimDrop"), F("__WiFiSimDelays", 2, "wifi::SimDelays"),
+                    F("__WiFiSimApClients", 1, "wifi::SimApClients"), F("__WiFiSimReset", 0, "wifi::SimReset"),
                 })
                     yield return f;
             }
@@ -253,6 +271,7 @@ namespace fire.Compiler
                     if (bridge == "gpio") native.Reset = "gpio::reset";
                     if (bridge == "i2c") native.Reset = "i2c::reset";
                     if (bridge == "spi") native.Reset = "spi::reset";
+                    if (bridge == "wifi") native.Reset = "wifi::reset";
                     if (bridge == "net")
                     {
                         native.Reset = "net::reset";

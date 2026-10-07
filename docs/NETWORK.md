@@ -1,6 +1,6 @@
 # Networking and hardware buses - design and steps
 
-Status: **networking (`fire-net`, `fire-http`, `fire-tls`) GPIO (`fire-gpio`), I2C (`fire-i2c`) and SPI (`fire-spi`) are built**, see the references below; WiFi is still a plan. The steps are also kept as tasks (Net 1-3, GPIO, I2C, SPI, WiFi). Everything is a **package** (`ember`, docs/PACKAGES.md): the compiler and the
+Status: **networking (`fire-net`, `fire-http`, `fire-tls`) GPIO (`fire-gpio`), I2C (`fire-i2c`), SPI (`fire-spi`) and WiFi (`fire-wifi`) are built**, see the references below; nothing of the hardware is tried on a board yet. The steps are also kept as tasks (Net 1-3, GPIO, I2C, SPI, WiFi). Everything is a **package** (`ember`, docs/PACKAGES.md): the compiler and the
 runtime do not change, a program that does not `#import` it does not carry it. Like `time`, `io` and `devices`, each one is a prelude in fire plus C++ in `native/bridges/` over a thin
 platform layer in `native/platform/<name>/` (`plat::`), so the same code runs in the VM (through the package ABI, docs/PACKAGE_NATIVES.md) and in a native build, and a platform without the
 feature fails with a clear "not supported" error instead of not compiling.
@@ -213,6 +213,41 @@ chip.Mode = 3                                      // clock polarity and phase; 
 * Errors are `Spi.SpiException` (with a `code`): `NotFoundException` (3), `BusyException` (4), `PermissionException` (5: on Linux the user must be in the group `spi`), `UnsupportedException` (6) and `TimeoutException` (8). Bad arguments (mode, speed, buffer range) are code 1.
 * Not tried on hardware yet: the Linux backend compiles against the kernel headers; the ESP32 file compiles against a stand-in of the driver headers.
 
+## WiFi (`#import "wifi"`, the package `fire-wifi`)
+
+The radio of a board: scan for networks, join one as a **station**, be an **access point**. It needs `time`. The natives are `native/bridges/fire_bridge_wifi.hpp` over `plat::wifi` (`native/platform/std/fire_wifi_*.hpp`): the **WiFi driver of ESP-IDF** (`esp_wifi`, `esp_event`,
+`esp_netif`, `nvs_flash`) on an ESP32. Where the operating system owns the network (Windows, Linux, macOS) there is no radio for a program to control: the list of interfaces is empty, and the package reports "not supported" (`WiFi.Board.Available()` is false). Every platform has the
+**simulated radio** `"sim"`. Once the station has an address the lwIP sockets of the `net` package (and `http`, `tls`) work - **the network packages do not know about WiFi**; a program joins the network first and then opens its sockets. Ethernet on the ESP32 would follow the same pattern.
+
+```
+#import "wifi"
+
+var wifi = new WiFi.Station()                               // the first real interface, or "sim" (a name works too: new WiFi.Station("wifi"))
+foreach (var n in wifi.Scan()) { print(n.ssid + " " + n.rssi + " dBm, channel " + n.channel + ", secure: " + n.Secure) }     // strongest first
+wifi.Connect("home", ReadPasswordFromSomewhere(), 20s)       // waits until joined (default limit 20 s); an empty password joins an open network
+print(wifi.Ip + " " + wifi.Ssid + " " + wifi.Rssi)
+var page = Http.Client().Get("http://example.org/").Text()   // the net package works now
+wifi.Disconnect()
+
+var ap = new WiFi.AccessPoint()
+ap.Start("fire-board", "password123")                       // Start(ssid, password = "", channel = 1, maxClients = 4); no password: an open network
+print(ap.Ip + " " + ap.Clients)                             // the stations get their addresses from the board (default 192.168.4.1/24)
+ap.Stop()
+```
+
+* **Nothing waits inside the natives**: a scan or a join takes seconds on a real radio, so the fire code asks again and again (`ScanStep`, `ConnectState`) with a pause of 1 to 20 ms in between. The program stays abortable (`terminate`) and the other threads keep running. Limits are
+  a `TimeSpan`, a time value (`500ms`, `5s`) or a number (milliseconds); an exceeded limit is `WiFi.TimeoutException`.
+* `Station.Start(ssid, password)` joins without waiting; `State` (`WiFi.State.Idle/Connecting/Connected`) and `IsConnected` ask, `Poll()` calls `onState(state)` when the state has changed - for a program that does other things meanwhile. A failed join throws the exception of the failure
+  from `State`/`Poll`.
+* **Errors** are `WiFi.WiFiException` (with a `code`): `NotFoundException` (3: the network is not in range), `BusyException` (4: e.g. a scan while the station is joining), `UnsupportedException` (6), `AuthException` (8: the network refused the login - wrong password),
+  `TimeoutException` (9) and `NotConnectedException` (10). Bad arguments (name or password length, channel) are code 1. Passwords are 8 to 63 characters (or empty). **Credentials are never part of a generated file**: pass them at run time (read them from a file or the program's settings).
+* **ESP32 notes:** the first call starts the driver (NVS, `esp_netif`, the default event loop - if the program did that itself, it is not done twice) and the station and the access point share the one radio (the access point runs on the channel of the station when both are on). A join is tried
+  up to 3 more times (`FIRE_WIFI_RETRIES`) when the radio fails for other reasons than a missing network or a wrong password. A scan lists up to 48 networks (`FIRE_WIFI_MAX_SCAN`). Add the components `esp_wifi`, `esp_event`, `esp_netif` and `nvs_flash` to the project.
+  (Not tried on a board yet; the file compiles against a stand-in of the driver headers. The mapping of the driver's disconnect reasons to NotFound/Auth is from its documentation.)
+* **The simulated radio** has the networks that `WiFi.Sim.AddNetwork(ssid, password = "", rssi = -60, channel = 1)` puts in the air; a scan finds them, a join works with the right password (`AuthException` otherwise, `NotFoundException` for an unknown name) and the station gets
+  `192.168.1.50`. `WiFi.Sim.Delays(joinQuestions, scanQuestions)` sets how many questions an answer takes (default 2 and 1: the waiting code is really exercised), `Drop()` loses the connection, `RemoveNetwork(ssid)` takes a network away, `ClientJoins()`/`ClientLeaves()` let stations
+  join the simulated access point (`192.168.4.1`), `Reset()` starts over. It is not a network: the sockets of the net package keep using the network of the PC.
+
 ## Hardware buses (the device platform)
 
 The device platform of `devices` today knows serial ports and loopback devices. GPIO, I2C and SPI are added the same way: a driver per platform under `native/platform/std/fire_<bus>_*.hpp`
@@ -230,6 +265,4 @@ On Linux an unavailable bus is not an error of the program: the list of buses is
 4. **GPIO** - done: package `fire-gpio`, Linux + ESP32 + stub, simulated chip, tests, docs.
 5. **I2C** - done: package `fire-i2c`, Linux + ESP32 + stub, simulated bus with register-file devices, tests, docs.
 6. **SPI** - done: package `fire-spi`, Linux + ESP32 + stub, simulated loopback device, tests, docs.
-7. **WiFi (ESP32)** - a second step after `net`, through the device platform: `fire-wifi` brings a `WiFi` device (`Scan()`, `Connect(ssid, password)`, `StartAccessPoint(...)`, state changes as device
-   events); once it is connected, `plat::net` (lwIP) already works - the network package never knows about WiFi. On Linux/Windows the package reports "not supported" (the OS owns the network); an
-   Ethernet interface on the ESP32 later follows the same pattern. Credentials are never part of the generated source files (a runtime call or a settings file of the target).
+7. **WiFi (ESP32)** - done: package `fire-wifi` (station, access point, scan), ESP-IDF backend, simulated radio, tests, docs; see "WiFi" below.
