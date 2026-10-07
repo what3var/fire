@@ -34,6 +34,7 @@ namespace fire.Compiler
             "windows" => new[] { "graphics" },
             "ui" => new[] { "graphics", "windows", "reflection" },
             "linq" => new[] { "reflection" },
+            "random" => new[] { "time" },   // the seed of a generator without a seed comes from the clock
             _ => Array.Empty<string>(),
         };
 
@@ -41,6 +42,7 @@ namespace fire.Compiler
         private static string? PreludeOf(string bridge) => bridge switch
         {
             "time" => fire.Standard.TimePrelude.Source,
+            "random" => fire.Standard.RandomPrelude.Source,
             "io" => fire.Standard.IoPrelude.Source,
             "devices" => fire.Standard.DevicesPrelude.Source,
             _ => ImportedPreludes.TrySourceFor(bridge),

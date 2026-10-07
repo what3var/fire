@@ -2143,6 +2143,18 @@ Besides the libraries of the compiler, `#import "name"` also finds the imports o
 and/or natives as C++ source for the native backend, and is installed for the machine with the package manager `ember` (also in the editor). An unknown import is an error
 that points to `ember`. The natives of a package are C++ (docs/PACKAGE_NATIVES.md): a native build puts the source into the generated file, the virtual machine calls a shared library that the compiler builds from it for the machine. See docs/PACKAGES.md.
 
+### 8.19 Random numbers (`#import "random"`)
+
+`PseudoRandom` is a pseudo random number generator written in fire (the package `fire-random`, no natives): xoshiro128** with four 32-bit words computed in the 64-bit `int`, so the same seed gives the
+same numbers in the virtual machine, in a native build and on every platform. It brings `time` along: `new PseudoRandom()` starts from the clock (`DateTime.UtcNow().Ticks`; two generators made within the same
+100 ns tick get the same sequence - give them seeds then), `new PseudoRandom(seed)` from a number.
+
+- `Next()`: 0 .. 2147483646 (like .NET); `Next(max)`: 0 .. max - 1 (any `max` above 0, also above 2^32); `Next(min, max)`: min .. max - 1. The values are unbiased (no modulo skew). A `max` that is not above 0 (or `max <= min`) throws `RandomException`.
+- `NextUInt32()`: 32 random bits (0 .. 4294967295); `NextInt()`: any `int` (63 bits and the sign); `NextFloat()`: 0.0 up to (not including) 1.0 with 53 random bits; `NextBool()`.
+- `Pick(list)`: a random element (`undefined` for an empty list); `Shuffle(list)`: mixes the list in place (Fisher-Yates) and returns it; `Seed(seed)` starts the sequence again.
+
+Not for secrets: the sequence can be predicted from a few outputs.
+
 ## 9. Open points
 
 The only earlier point here – the method declaration syntax

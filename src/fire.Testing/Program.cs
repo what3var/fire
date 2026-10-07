@@ -16691,6 +16691,62 @@ else
             """),
     }).ToArray();
 
+    // PseudoRandom (#import "random"): pure fire, the same numbers in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Random: PseudoRandom - Folge fuer einen Seed, Bereiche, Mischen, Fehler", """
+            #import "random"
+            var r = new PseudoRandom(42)
+            print(r.NextUInt32() + " " + r.NextUInt32() + " " + r.NextUInt32())
+            print(new PseudoRandom(42).NextUInt32() == 2014437610)
+            print(new PseudoRandom(43).NextUInt32() != 2014437610)
+            var seen = new List()
+            for (var i = 0; i < 6; i = i + 1) { seen.Add(0) }
+            var inRange = true
+            var floats = true
+            var big = true
+            var between = true
+            for (var i = 0; i < 600; i = i + 1) {
+                var d = r.Next(6)
+                if (d < 0 || d > 5) { inRange = false } else { seen[d] = seen[d] + 1 }
+                var f = r.NextFloat()
+                if (f < 0.0 || f >= 1.0) { floats = false }
+                var n = r.Next()
+                if (n < 0 || n >= 2147483647) { inRange = false }
+                var w = r.Next(10000000000)
+                if (w < 0 || w >= 10000000000) { big = false }
+                var m = r.Next(-5, 5)
+                if (m < -5 || m >= 5) { between = false }
+            }
+            var all = true
+            for (var i = 0; i < 6; i = i + 1) { if (seen[i] < 60) { all = false } }
+            print("Bereiche " + inRange + " " + floats + " " + big + " " + between + " jede Seite oft genug " + all)
+            var list = new List()
+            for (var i = 0; i < 20; i = i + 1) { list.Add(i) }
+            var shuffled = r.Shuffle(list)
+            var sum = 0
+            var moved = 0
+            for (var i = 0; i < 20; i = i + 1) { sum = sum + shuffled[i]; if (shuffled[i] != i) { moved = moved + 1 } }
+            print("Mischen " + shuffled.count + " " + sum + " " + (moved > 5))
+            print(r.Pick(list) >= 0)
+            print(r.Pick(new List()))
+            var bools = 0
+            for (var i = 0; i < 400; i = i + 1) { if (r.NextBool()) { bools = bools + 1 } }
+            print("Bool " + (bools > 120 && bools < 280))
+            var ints = r.NextInt() != r.NextInt()
+            print("NextInt " + ints)
+            var a = new PseudoRandom()
+            print(a.Next() >= 0)
+            try { r.Next(0) } catch (RandomException e) { print("Fehler " + e.message) }
+            try { r.Next(5, 5) } catch (RandomException e) { print("Fehler " + e.message) }
+            var s1 = new PseudoRandom(7)
+            var s2 = new PseudoRandom(7)
+            var same = true
+            for (var i = 0; i < 100; i = i + 1) { if (s1.Next(1000) != s2.Next(1000)) { same = false } }
+            print("gleicher Seed " + same)
+            """),
+    }).ToArray();
+
     // Time and Sleep (bridges/fire_bridge_time.hpp)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
