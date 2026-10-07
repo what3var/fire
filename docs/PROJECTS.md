@@ -162,6 +162,8 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
   (the libraries, the project's symbols for `#if`).
 * Old window layouts without the Solution Explorer fall back to the default layout once.
 
+* **Git**: the state of the files in the explorer, commit, history, branches, pull and push - see docs/GIT.md.
+
 ## Open points
 
 * Solution configurations (Debug/Release sets of settings), project templates in `ember create`, file watching so that files added outside of the editor show up at once

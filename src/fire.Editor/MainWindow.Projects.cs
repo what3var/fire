@@ -158,6 +158,7 @@ namespace fire.Editor
         {
             mnuCloseWorkspace.IsEnabled = _workspace.IsOpen;
             RefreshProjectUi();
+            RefreshGit();
             ScriptEditorControl.NoteProjectChanged();
             fire.Package.Manager.PackageStore.Default.ClearOverlay();   // the natives of the projects are put back by the next build or analysis
             // what belongs to which project (and the libraries) may have changed: check the open scripts again
@@ -168,7 +169,7 @@ namespace fire.Editor
         private void RefreshProjectUi()
         {
             var doc = ActiveDocument;
-            _solutionPanel.Refresh(_workspace, FullPathOf(doc));
+            _solutionPanel.Refresh(_workspace, FullPathOf(doc), _gitRoot == null ? null : _gitStates, _gitBranch);
             var project = ContextProject();
             ContextText.Text = project != null
                 ? $"Build: {project.Name} ({(project.Project.Type == OutputType.Library ? "library" : "project")})"
@@ -430,6 +431,7 @@ namespace fire.Editor
 
         private async Task OnSolutionCommand(string command, ExplorerNode? node)
         {
+            if (command.StartsWith("git-", StringComparison.Ordinal)) { await OnGitExplorerCommand(command, node); return; }
             var project = node?.Project ?? CommandProject(node);
             switch (command)
             {

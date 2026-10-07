@@ -115,6 +115,24 @@
 					<MenuItem Header="_Reload Project (read the folder again)" x:Name="mnuReloadProject" Click="ReloadProject_Click"/>
 					<MenuItem Header="Project Pr_operties..." x:Name="mnuProjectProperties" Click="ProjectProperties_Click"/>
 				</MenuItem>
+				<MenuItem Header="_Git" x:Name="mnuGit" SubmenuOpened="GitMenu_SubmenuOpened">
+					<MenuItem Header="_Create Repository..." x:Name="mnuGitInit" Click="GitInit_Click"/>
+					<MenuItem Header="C_lone Repository..." Click="GitClone_Click"/>
+					<Separator/>
+					<MenuItem Header="_Commit..." x:Name="mnuGitCommit" Click="GitCommit_Click"/>
+					<MenuItem Header="P_ull" x:Name="mnuGitPull" Click="GitPull_Click"/>
+					<MenuItem Header="_Push" x:Name="mnuGitPush" Click="GitPush_Click"/>
+					<MenuItem Header="_Fetch" x:Name="mnuGitFetch" Click="GitFetch_Click"/>
+					<MenuItem Header="_Server Address..." x:Name="mnuGitServer" Click="GitServer_Click"/>
+					<Separator/>
+					<MenuItem Header="_History..." x:Name="mnuGitHistory" Click="GitHistory_Click"/>
+					<MenuItem Header="History of This _File..." x:Name="mnuGitFileHistory" Click="GitFileHistory_Click"/>
+					<MenuItem Header="Show Changes of This File" x:Name="mnuGitFileChanges" Click="GitFileChanges_Click"/>
+					<MenuItem Header="Discard Changes of This File..." x:Name="mnuGitFileDiscard" Click="GitFileDiscard_Click"/>
+					<Separator/>
+					<MenuItem Header="_Branches..." x:Name="mnuGitBranches" Click="GitBranches_Click"/>
+					<MenuItem Header="_Refresh" Click="GitRefresh_Click"/>
+				</MenuItem>
 				<MenuItem Header="_Run">
 					<MenuItem Header="_Start / Continue (to next breakpoint)" Click="Run_Click" InputGesture="F5"/>
 					<MenuItem Header="Re_compile and Start" Click="Restart_Click" InputGesture="Ctrl+F5"/>
@@ -222,6 +240,7 @@
         <Border DockPanel.Dock="Bottom" BorderBrush="#3C3544" BorderThickness="0,1,0,0" Padding="10,3">
             <DockPanel>
                 <TextBlock x:Name="CaretText" DockPanel.Dock="Right" Text="Line 1" Margin="16,0,0,0"/>
+                <TextBlock x:Name="GitText" DockPanel.Dock="Right" Text="" Margin="16,0,0,0" Foreground="#A094A8" ToolTip.Tip="The git branch (↑ commits to push, ↓ commits to pull) and the number of changed files"/>
                 <TextBlock x:Name="ContextText" DockPanel.Dock="Right" Text="" Margin="16,0,0,0" Foreground="#A094A8" ToolTip.Tip="What Start and Build act on: the project of the active document, or the single file"/>
                 <TextBlock x:Name="StatusText" Text="Ready." TextTrimming="CharacterEllipsis"/>
             </DockPanel>

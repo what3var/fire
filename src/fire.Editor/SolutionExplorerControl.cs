@@ -14,6 +14,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.VisualTree;
+using fire.Git;
 using fire.Projects;
 
 namespace fire.Editor
@@ -34,6 +35,9 @@ namespace fire.Editor
         public LoadedProject? Project { get; init; }
         public ProjectReference? Reference { get; init; }
         public bool IsBold { get; init; }
+        /// <summary>The git state of a file (null: none), and for a folder, project or solution whether something below it is changed.</summary>
+        public GitFileState? GitState { get; set; }
+        public bool GitChangedBelow { get; set; }
         /// <summary>The project of the active document is shown in the accent color.</summary>
         public bool IsActive { get; init; }
         /// <summary>The identity of a row across refreshes (for the expanded state).</summary>
@@ -59,6 +63,8 @@ namespace fire.Editor
         private readonly ObservableCollection<ExplorerNode> _roots = new();
         private readonly HashSet<string> _collapsed = new();
         private readonly ContextMenu _menu = new();
+        private IReadOnlyDictionary<string, GitFileState>? _git;
+        private string? _branch;
 
         /// <summary>A file was double clicked (or Enter was pressed on it).</summary>
         public event Action<string>? FileOpenRequested;
@@ -117,15 +123,35 @@ namespace fire.Editor
                 Foreground = node.IsActive ? EditorTheme.Solid(EditorTheme.AccentTextColor) : node.Kind == ExplorerKind.References ? EditorTheme.TextDim : EditorTheme.Text,
                 VerticalAlignment = VerticalAlignment.Center,
             });
+            if (node.GitState is { } gs)
+                panel.Children.Add(new TextBlock { Text = GitMark(gs), Foreground = GitBrush(gs), FontWeight = FontWeight.Bold, FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
+            else if (node.GitChangedBelow)
+                panel.Children.Add(new TextBlock { Text = "●", Foreground = GitBrush(GitFileState.Modified), FontSize = 9, VerticalAlignment = VerticalAlignment.Center });
             if (node.Suffix.Length > 0)
                 panel.Children.Add(new TextBlock { Text = node.Suffix, Foreground = EditorTheme.TextDim, FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
             return panel;
         }
 
+        private static string GitMark(GitFileState s) => s switch
+        {
+            GitFileState.Modified => "M", GitFileState.Added => "A", GitFileState.Untracked => "U", GitFileState.Deleted => "D", GitFileState.Renamed => "R", GitFileState.Conflicted => "!", _ => "",
+        };
+
+        private static readonly IBrush GitModified = new SolidColorBrush(Color.FromRgb(0xF0, 0xA0, 0x40));
+        private static readonly IBrush GitNew = new SolidColorBrush(Color.FromRgb(0x7F, 0xD9, 0x7F));
+        private static readonly IBrush GitBad = new SolidColorBrush(Color.FromRgb(0xE8, 0x6A, 0x6A));
+
+        private static IBrush GitBrush(GitFileState s) => s switch
+        {
+            GitFileState.Added or GitFileState.Untracked => GitNew, GitFileState.Deleted or GitFileState.Conflicted => GitBad, _ => GitModified,
+        };
+
         // ---- building the tree ----------------------------------------------------------------------------------------------------------------
         /// <summary>Shows the workspace; `activeFile` is the file of the active document (its project is marked).</summary>
-        public void Refresh(Workspace workspace, string? activeFile)
+        public void Refresh(Workspace workspace, string? activeFile, IReadOnlyDictionary<string, GitFileState>? git = null, string? branch = null)
         {
+            _git = git;
+            _branch = branch;
             RememberCollapsed(_roots);
             _roots.Clear();
             if (!workspace.IsOpen) { Show(false); return; }
@@ -136,7 +162,7 @@ namespace fire.Editor
             ExplorerNode? solutionNode = null;
             if (workspace.Solution != null)
             {
-                solutionNode = new ExplorerNode { Kind = ExplorerKind.Solution, Text = $"Solution '{workspace.Solution.Name}'", Suffix = $"{workspace.Projects.Count} project{(workspace.Projects.Count == 1 ? "" : "s")}", Path = workspace.Solution.FilePath, Key = "sln", IsBold = true };
+                solutionNode = new ExplorerNode { Kind = ExplorerKind.Solution, Text = $"Solution '{workspace.Solution.Name}'", Suffix = $"{workspace.Projects.Count} project{(workspace.Projects.Count == 1 ? "" : "s")}" + (_branch != null ? ", git: " + _branch : ""), Path = workspace.Solution.FilePath, Key = "sln", IsBold = true };
                 _roots.Add(solutionNode);
             }
             var folderNodes = new Dictionary<string, ExplorerNode>(ProjectFiles.PathComparer);
@@ -162,6 +188,7 @@ namespace fire.Editor
                 if (solutionNode != null) FolderNode(Path.GetDirectoryName(project.Directory)!).Children.Add(node); else _roots.Add(node);
             }
             if (solutionNode != null) SortFolders(solutionNode);
+            if (_git != null) MarkGit(_roots);
             ApplyCollapsed(_roots);
         }
 
@@ -244,6 +271,18 @@ namespace fire.Editor
             return node;
         }
 
+        /// <summary>Puts the git state on the files, and a mark on every folder, project and solution that has a changed file below it.</summary>
+        private bool MarkGit(IEnumerable<ExplorerNode> nodes)
+        {
+            bool any = false;
+            foreach (var n in nodes)
+            {
+                if (n.Kind is ExplorerKind.File or ExplorerKind.Content && n.Path != null && _git!.TryGetValue(System.IO.Path.GetFullPath(n.Path), out var state)) { n.GitState = state; any = true; }
+                if (MarkGit(n.Children)) { n.GitChangedBelow = true; any = true; }
+            }
+            return any;
+        }
+
         private void RememberCollapsed(IEnumerable<ExplorerNode> nodes)
         {
             foreach (var n in nodes)
@@ -276,6 +315,18 @@ namespace fire.Editor
             return item;
         }
 
+        private void AddGitFileItems(ExplorerNode node)
+        {
+            if (node.GitState != null)
+            {
+                _menu.Items.Add(Item("Git: Show Changes", "git-diff", node));
+                _menu.Items.Add(Item("Git: Commit This File...", "git-commit", node));
+                _menu.Items.Add(Item("Git: Discard Changes...", "git-discard", node));
+            }
+            _menu.Items.Add(Item("Git: History of This File", "git-history-file", node));
+            _menu.Items.Add(new Separator());
+        }
+
         private bool FillMenu()
         {
             _menu.Items.Clear();
@@ -285,6 +336,8 @@ namespace fire.Editor
             switch (node.Kind)
             {
                 case ExplorerKind.Solution:
+                    if (_git != null) { Add("Git: Commit...", "git-commit"); Add("Git: Pull", "git-pull"); Add("Git: Push", "git-push"); _menu.Items.Add(new Separator()); }
+                    else Add("Git: Create Repository...", "git-init");
                     Add("Add New Project...", "add-new-project");
                     Add("Add Existing Project...", "add-existing-project");
                     Add("New Folder...", "new-folder");
@@ -332,6 +385,7 @@ namespace fire.Editor
                     Add("Open Folder", "reveal");
                     break;
                 case ExplorerKind.Content:
+                    if (_git != null) AddGitFileItems(node);
                     Add("Open", "open");
                     if (node.Path != null && new[] { ".png", ".bmp", ".gif" }.Contains(System.IO.Path.GetExtension(node.Path).ToLowerInvariant())) Add("Edit Pixels", "open-pixel");
                     Add("Open as Text", "open-text");
@@ -340,6 +394,7 @@ namespace fire.Editor
                     Add("Delete File...", "delete-file");
                     break;
                 case ExplorerKind.File:
+                    if (_git != null) AddGitFileItems(node);
                     Add("Open", "open");
                     Add("Open as Hex", "open-hex");
                     Add("Remove from Project", "remove");

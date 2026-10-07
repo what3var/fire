@@ -39,6 +39,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.UI.Markup", "src\fire.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Project", "src\fire.Project\fire.Project.csproj", "{C3B15001-98B7-437D-A4CE-6A0953280C89}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Git", "src\fire.Git\fire.Git.csproj", "{D4C26112-A9C8-4E8E-B5DF-7B1A64391D9A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -113,6 +115,10 @@ Global
 		{C3B15001-98B7-437D-A4CE-6A0953280C89}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C3B15001-98B7-437D-A4CE-6A0953280C89}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C3B15001-98B7-437D-A4CE-6A0953280C89}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D4C26112-A9C8-4E8E-B5DF-7B1A64391D9A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D4C26112-A9C8-4E8E-B5DF-7B1A64391D9A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D4C26112-A9C8-4E8E-B5DF-7B1A64391D9A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D4C26112-A9C8-4E8E-B5DF-7B1A64391D9A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -125,5 +131,6 @@ Global
 		{A6906FAA-BC7E-4922-AABF-EDBF30658C40} = {AFDFD6BF-3DAF-4E73-881A-56B2C7D568CB}
 		{DA35DC00-FEAF-4930-B9BF-F15931A6B0A7} = {AFDFD6BF-3DAF-4E73-881A-56B2C7D568CB}
 		{C3B15001-98B7-437D-A4CE-6A0953280C89} = {AFDFD6BF-3DAF-4E73-881A-56B2C7D568CB}
+		{D4C26112-A9C8-4E8E-B5DF-7B1A64391D9A} = {AFDFD6BF-3DAF-4E73-881A-56B2C7D568CB}
 	EndGlobalSection
 EndGlobal

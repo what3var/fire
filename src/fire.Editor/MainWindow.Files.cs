@@ -297,6 +297,7 @@ namespace fire.Editor
             doc.View.MarkSaved();
             UpdateTitle(doc);
             UpdateStatus($"Saved: {path}");
+            RefreshGit();
             return true;
         }
     }

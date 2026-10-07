@@ -200,6 +200,7 @@ namespace fire.Editor
             AddHandler(DragDrop.DropEvent, Window_Drop);
 
             InitProjects();
+            InitGit();
 
             _debugger = new DebuggerPanels(_threadsPanel, _scopePanel, _stackPanel);
             _debugger.AttachSession(_session);
