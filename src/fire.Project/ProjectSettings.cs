@@ -19,6 +19,8 @@ namespace fire.Projects
         public string? Codename { get; set; }
         public string? Description { get; set; }
         public string? Author { get; set; }
+        /// <summary>The license of a library that is packed (an identifier like `MIT`, or a short text); goes into the package.</summary>
+        public string? License { get; set; }
         public string? Comments { get; set; }
         /// <summary>The icon of the program (a path relative to the file that holds the setting).</summary>
         public string? Icon { get; set; }
@@ -36,7 +38,7 @@ namespace fire.Projects
         public string? Output { get; set; }
 
         [JsonIgnore]
-        public bool IsEmpty => Subsystem == null && Mode == null && FloatWidth == null && Name == null && Codename == null && Description == null && Author == null && Comments == null && Icon == null
+        public bool IsEmpty => Subsystem == null && Mode == null && FloatWidth == null && Name == null && Codename == null && Description == null && Author == null && License == null && Comments == null && Icon == null
             && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Output == null;
 
         public static readonly IReadOnlyList<string> Subsystems = new[] { "console", "gui" };
@@ -54,6 +56,7 @@ namespace fire.Projects
             r.Codename = high?.Codename ?? low?.Codename;
             r.Description = high?.Description ?? low?.Description;
             r.Author = high?.Author ?? low?.Author;
+            r.License = high?.License ?? low?.License;
             r.Comments = high?.Comments ?? low?.Comments;
             r.Icon = high?.Icon ?? low?.Icon;
             r.Version = high?.Version ?? low?.Version;

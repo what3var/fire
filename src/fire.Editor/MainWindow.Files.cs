@@ -15,8 +15,9 @@ namespace fire.Editor
         private static readonly FilePickerFileType ScriptFiles = new("fire files") { Patterns = new[] { "*.script", "*.fi", "*.fic" } };
         private static readonly FilePickerFileType MarkdownFiles = new("Markdown") { Patterns = new[] { "*.md", "*.markdown" } };
         private static readonly FilePickerFileType PacketLogFiles = new("Packet logs") { Patterns = new[] { "*.fplog" } };
+        private static readonly FilePickerFileType PictureFiles = new("Pictures (PNG, BMP)") { Patterns = new[] { "*.png", "*.bmp" } };
         private static readonly FilePickerFileType UiMarkupFiles = new("UI markup") { Patterns = new[] { "*.fxml" } };
-        private static readonly FilePickerFileType AllDocuments = new("All documents") { Patterns = new[] { "*.script", "*.fi", "*.fic", "*.md", "*.markdown", "*.fplog", "*.fxml", "*" + FireProject.Extension, "*" + FireSolution.Extension } };
+        private static readonly FilePickerFileType AllDocuments = new("All documents") { Patterns = new[] { "*.script", "*.fi", "*.fic", "*.md", "*.markdown", "*.fplog", "*.fxml", "*.h", "*.hpp", "*.cpp", "*.c", "*.txt", "*.png", "*.bmp", "*.gif", "*.jpg", "*" + FireProject.Extension, "*" + FireSolution.Extension } };
 
         private static string SafeFileName(string name) =>
             string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ' ' ? '-' : c));
@@ -62,6 +63,24 @@ namespace fire.Editor
             </Window>
 
             """;
+
+        /// <summary>File > New Pixel Image: asks for the size and the kind (palette of 256 colours, or true colour) and opens a new picture in the pixel editor.</summary>
+        private async void NewPixelImage_Click(object? sender, RoutedEventArgs e)
+        {
+            string? size = await Dialogs.Input(this, "Size in pixels (width x height):", "New Pixel Image", "32 x 32");
+            if (size == null) return;
+            var parts = size.Split(new[] { 'x', 'X', '×', ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 2 || !int.TryParse(parts[0], out int w) || !int.TryParse(parts[1], out int h) || w < 1 || h < 1 || (long)w * h > 16_000_000)
+            {
+                await Dialogs.Message(this, "Write the size like 32 x 32 (at most 16 million pixels).", "New Pixel Image");
+                return;
+            }
+            var kind = await Dialogs.Ask(this, "Colours: the palette of 256 colours (the first one is transparent), or true colour (every pixel its own colour)?", "New Pixel Image",
+                ("256 colours", Dialogs.Answer.Yes), ("True colour", Dialogs.Answer.No), ("Cancel", Dialogs.Answer.Cancel));
+            if (kind == Dialogs.Answer.Cancel) return;
+            var doc = CreateDocument(DocumentKind.Pixel, "", null, untitledName: "Untitled.png");
+            ((PixelEditorControl)doc.View).NewPicture(w, h, kind == Dialogs.Answer.Yes);
+        }
 
         private void NewUiMarkup_Click(object? sender, RoutedEventArgs e) => CreateDocument(DocumentKind.UiMarkup, UiMarkupTemplate, null);
 
@@ -150,7 +169,7 @@ namespace fire.Editor
 
         private async void Open_Click(object? sender, RoutedEventArgs e)
         {
-            var files = await PickFiles("Open", AllDocuments, ScriptFiles, MarkdownFiles, UiMarkupFiles, PacketLogFiles);
+            var files = await PickFiles("Open", AllDocuments, ScriptFiles, MarkdownFiles, UiMarkupFiles, PacketLogFiles, AllFilesType);
             foreach (var file in files) OpenFile(file);
         }
 
@@ -176,7 +195,7 @@ namespace fire.Editor
         }
 
         /// <summary>Opens a file in a new tab (script or Markdown by extension) - if it is open already, only switches there.</summary>
-        private OpenDocument? OpenFile(string path, MarkdownViewMode mode = MarkdownViewMode.Edit)
+        private OpenDocument? OpenFile(string path, MarkdownViewMode mode = MarkdownViewMode.Edit, DocumentKind? forceKind = null)
         {
             string full = Path.GetFullPath(path);
             // a project or a solution opens the workspace, not a tab
@@ -187,26 +206,37 @@ namespace fire.Editor
             }
             var existing = _documents.FirstOrDefault(d => d.View.FilePath != null &&
                 string.Equals(Path.GetFullPath(d.View.FilePath), full, StringComparison.OrdinalIgnoreCase));
-            if (existing != null)
+            if (existing != null && (forceKind == null || existing.Kind == forceKind))
             {
                 Activate(existing);
                 return existing;
             }
-
-            string text;
-            try { text = File.ReadAllText(full); }
-            catch (Exception ex)
+            if (existing != null)
             {
-                _ = Dialogs.Message(this, ex.Message, "Open failed");
-                return null;
+                // the file is open in another kind of editor: it is replaced (two editors of one file would overwrite each other)
+                if (existing.View.IsModified) { Activate(existing); _ = Dialogs.Message(this, $"'{existing.DisplayName}' has unsaved changes: save or close it first.", "Open"); return existing; }
+                _factory.CloseDockable(existing.Layout);
             }
+
+            string text = "";
+            var kind = forceKind ?? KindOfPath(full);
+            if (kind is not (DocumentKind.Image or DocumentKind.Pixel or DocumentKind.Hex))   // a picture is loaded from its file, not read as text
+            {
+                try { text = File.ReadAllText(full); }
+                catch (Exception ex)
+                {
+                    _ = Dialogs.Message(this, ex.Message, "Open failed");
+                    return null;
+                }
+            }
+            else if (!File.Exists(full)) { _ = Dialogs.Message(this, $"'{full}' does not exist.", "Open failed"); return null; }
 
             // An untouched, empty "Untitled" document (e.g. the welcome script) is replaced by it.
             var pristine = _documents.Count == 1 && _documents[0].Kind != DocumentKind.PacketLog
                 && _documents[0].View.FilePath == null && !_documents[0].View.IsModified
                 ? _documents[0] : null;
 
-            var doc = CreateDocument(KindOfPath(full), text, full, mode: mode);
+            var doc = CreateDocument(kind, text, full, mode: mode);
             if (pristine != null) _factory.CloseDockable(pristine.Layout);
             UpdateStatus($"Opened: {full}");
             return doc;
@@ -242,6 +272,9 @@ namespace fire.Editor
             {
                 DocumentKind.Markdown => await PickSavePath("Save", suggested, "md", MarkdownFiles),
                 DocumentKind.UiMarkup => await PickSavePath("Save", suggested, "fxml", UiMarkupFiles),
+                DocumentKind.Text => await PickSavePath("Save", suggested, "txt"),
+                DocumentKind.Pixel => await PickSavePath("Save picture (PNG or BMP)", suggested, "png", PictureFiles),
+                DocumentKind.Hex => await PickSavePath("Save", suggested, "bin"),
                 DocumentKind.PacketLog => await PickSavePath("Save", suggested, fire.Device.Manager.DeviceManager.PacketLog.FileExtension.TrimStart('.'), PacketLogFiles),
                 _ => await PickSavePath("Save", suggested, "script", ScriptFiles),
             };
@@ -250,7 +283,11 @@ namespace fire.Editor
 
         private async Task<bool> WriteDocument(OpenDocument doc, string path)
         {
-            try { File.WriteAllText(path, doc.View.GetText()); }
+            try
+            {
+                if (doc.View is IBinaryDocument binary) File.WriteAllBytes(path, binary.GetBytes());
+                else File.WriteAllText(path, doc.View.GetText());
+            }
             catch (Exception ex)
             {
                 await Dialogs.Message(this, ex.Message, "Save failed");

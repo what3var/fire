@@ -73,9 +73,11 @@ namespace fire.Editor
                 var cwd = basePath ?? System.IO.Directory.GetCurrentDirectory();
                 var nativeImports = new HashSet<string>();
                 var projectImports = new List<string>();   // libraries of the project that are imported
+                ProjectNativeOverlay.Register(plan);
+                if (ProjectNativeOverlay.OwnKey(plan) is { } ownNativeKey) nativeImports.Add(ownNativeKey);
                 foreach (var name in extraImports)
                 {
-                    if (ProjectLibraries.TryImport(plan, name, projectImports)) continue;
+                    if (ProjectLibraries.TryImport(plan, name, projectImports, nativeImports)) continue;
                     try { foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name))) nativeImports.Add(key); }
                     catch (Exception) { /* unbekannte Erweiterung - meldet deren eigene Datei */ }
                 }
@@ -87,7 +89,7 @@ namespace fire.Editor
                 // sie beim tatsächlichen Ausführen längst akzeptiert wird.
                 // Der Callback merkt sich die zugeschalteten Erweiterungen,
                 // deren Preludes unten eingesetzt werden.
-                var registry = RuntimeSession.CreateProjectDirectiveRegistry(name => nativeImports.Add(name), tryLibrary: name => ProjectLibraries.TryImport(plan, name, projectImports));
+                var registry = RuntimeSession.CreateProjectDirectiveRegistry(name => nativeImports.Add(name), tryLibrary: name => ProjectLibraries.TryImport(plan, name, projectImports, nativeImports));
                 var processed = new List<ProcessedSource>();
                 foreach (var s in new[] { fire.Standard.Prelude.Source, source })
                     processed.Add(Preprocessor.Process(s, cwd, alreadyIncluded, registry));

@@ -22,6 +22,8 @@ namespace fire.Projects
         /// <summary>The names of the packages it references.</summary>
         public IReadOnlyList<ProjectReference> Packages { get; init; } = Array.Empty<ProjectReference>();
         public ProjectSettings Settings { get; init; } = new();
+        /// <summary>The C++ natives of the library (null: none).</summary>
+        public NativePart? Native { get; init; }
         public string Name => Project.Name;
     }
 
@@ -41,6 +43,10 @@ namespace fire.Projects
         /// <summary>The settings that apply: the project's over the solution's, with paths made absolute.</summary>
         public ProjectSettings Settings { get; private init; } = new();
         public IReadOnlyList<string> Errors { get; private init; } = Array.Empty<string>();
+        /// <summary>The C++ natives of the project itself (null: none).</summary>
+        public NativePart? Native { get; private init; }
+        /// <summary>The native parts of the project and of all libraries that are reachable (they are known to the build whether a library is imported or not; an import turns one on).</summary>
+        public IEnumerable<NativePart> NativeParts => (Native != null ? new[] { Native } : Array.Empty<NativePart>()).Concat(Libraries.Values.Where(l => l.Native != null).Select(l => l.Native!));
         public bool IsValid => Errors.Count == 0;
 
         public IReadOnlyList<string> SourceTexts => Sources.Select(s => s.Text).ToList();
@@ -98,13 +104,12 @@ namespace fire.Projects
                 var files = new List<SourceFile>();
                 foreach (var f in lib.Files)
                 {
-                    try { files.Add(new SourceFile(f, ReadText(f, textOf), lib.Name)); }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { errors.Add($"{lib.Name}: cannot read '{f}': {ex.Message}"); }
+                    if (TryReadSource(f, textOf, lib.Name, errors, lib.Name + ": ") is { } source) files.Add(source);
                 }
                 var plan = new LibraryPlan
                 {
                     ImportName = lib.Project.ImportName, Project = lib, Sources = files, Requires = requires, Packages = libPackages,
-                    Settings = Merge(lib, workspace),
+                    Settings = Merge(lib, workspace), Native = ProjectNatives.Resolve(lib, errors),
                 };
                 byProjectPath[lib.FilePath] = plan;
                 if (libraries.TryGetValue(plan.ImportName, out var clash) && clash.Project != lib)
@@ -142,17 +147,35 @@ namespace fire.Projects
             var sources = new List<SourceFile>();
             foreach (var f in project.Files)
             {
-                try { sources.Add(new SourceFile(f, ReadText(f, textOf), project.Name)); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { errors.Add($"Cannot read '{f}': {ex.Message}"); }
+                if (TryReadSource(f, textOf, project.Name, errors, "") is { } source) sources.Add(source);
             }
             if (sources.Count == 0 && project.Project.Type == OutputType.Exe && errors.Count == 0) errors.Add($"The project '{project.Name}' has no files.");
 
             return new BuildPlan
             {
                 Project = project, Sources = sources, Libraries = libraries, Packages = packages,
-                Settings = Merge(project, workspace), Errors = errors,
+                Settings = Merge(project, workspace), Errors = errors, Native = ProjectNatives.Resolve(project, errors),
             };
         }
+
+        /// <summary>Reads a source file of a project; the markup of a user interface (`.fxml`) is read as the script that is generated from it - the same text that `#include "x.fxml"` would insert.
+        /// Null (and an error) when the file cannot be read or is no valid markup.</summary>
+        private static SourceFile? TryReadSource(string path, Func<string, string?>? textOf, string projectName, List<string> errors, string prefix)
+        {
+            try
+            {
+                string text = ReadText(path, textOf);
+                if (FireProject.IsMarkupFile(path)) text = GenerateMarkupScript(path, text);
+                return new SourceFile(path, text, projectName);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { errors.Add($"{prefix}Cannot read '{path}': {ex.Message}"); }
+            catch (fire.UI.Markup.MarkupException ex) { errors.Add($"{prefix}{System.IO.Path.GetFileName(path)}: {ex.Message}"); }
+            return null;
+        }
+
+        /// <summary>The script generated from the markup of a user interface (docs/UI_MARKUP.md); throws MarkupException when the markup is not valid.</summary>
+        public static string GenerateMarkupScript(string path, string markup) =>
+            fire.UI.Markup.FireUiGenerator.Generate(fire.UI.Markup.MarkupParser.Parse(markup), path);
 
         private static ProjectSettings Merge(LoadedProject p, Workspace workspace)
         {

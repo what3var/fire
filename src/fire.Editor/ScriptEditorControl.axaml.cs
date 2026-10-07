@@ -252,15 +252,25 @@ namespace fire.Editor
         private DocTipKind _docTipKind;
         private (int ParenOffset, string Header)? _callTipKey;
         private string? _indexedSource;
+        private int _indexedVersion;
         private ScriptSymbolIndex? _index;
 
-        /// <summary>The symbol index of `source`, reused as long as the text does not change.</summary>
+        /// <summary>Counts the changes of any script (and of the project): the symbols that come from other files of the project are looked up again after one.</summary>
+        public static int TextVersion { get; private set; }
+        public static void NoteProjectChanged() => TextVersion++;
+
+        /// <summary>The other files of the project the document belongs to (path and text), and the libraries it imports: their classes, enums and namespaces are known here without
+        /// `#include`, as they are to the build. null: the document stands alone.</summary>
+        public Func<IReadOnlyList<(string Path, string Text)>>? ProjectFilesProvider { get; set; }
+
+        /// <summary>The symbol index of `source`, reused as long as the text (and the project) does not change.</summary>
         private ScriptSymbolIndex IndexFor(string source)
         {
-            if (_index == null || !string.Equals(_indexedSource, source, StringComparison.Ordinal))
+            if (_index == null || _indexedVersion != TextVersion || !string.Equals(_indexedSource, source, StringComparison.Ordinal))
             {
-                _index = ScriptSymbolIndex.Build(source);
+                _index = ScriptSymbolIndex.Build(source, Array.Empty<string>(), ProjectFilesProvider?.Invoke() ?? Array.Empty<(string, string)>());
                 _indexedSource = source;
+                _indexedVersion = TextVersion;
             }
             return _index;
         }
@@ -429,6 +439,7 @@ namespace fire.Editor
 
         private void Editor_TextChanged(object? sender, EventArgs e)
         {
+            TextVersion++;
             if (_docTipKind == DocTipKind.Hover) CloseDocTip();
             OnCaretOrTextChanged();
             if (!_loading) SetModified(true);
@@ -520,7 +531,7 @@ namespace fire.Editor
         {
             string source = Editor.Text;
             int offset = Editor.CaretOffset;
-            var index = ScriptSymbolIndex.Build(source);
+            var index = IndexFor(source);
             var items = CompletionEngine.GetSuggestions(source, offset, index);
 
             if (items.Count == 0)
@@ -655,7 +666,7 @@ namespace fire.Editor
         private NavigationTarget? FindDefinitionAt(int offset)
         {
             string source = Editor.Text;
-            var index = ScriptSymbolIndex.Build(source);
+            var index = IndexFor(source);
             return NavigationEngine.TryResolve(source, offset, index)
                 ?? TryResolveAcrossIncludes(source, offset, index);
         }

@@ -46,7 +46,8 @@ namespace fire.Compiler
 
         private static IEnumerable<string> BuiltDirectories(InstalledImport import)
         {
-            yield return Path.Combine(import.Package.Directory, "lib", Rid);
+            if (import.Package.BuildDirectory != null) yield return Path.Combine(import.Package.BuildDirectory, Rid);
+            else yield return Path.Combine(import.Package.Directory, "lib", Rid);
             yield return Path.Combine(Path.GetTempPath(), "fire-packages", Safe(import.Package.Name) + "-" + Safe(import.Package.Version), Rid);
         }
 

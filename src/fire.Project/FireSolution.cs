@@ -16,6 +16,9 @@ namespace fire.Projects
         public string Name { get; set; } = "";
         /// <summary>The project files (relative to the solution file), in the order they are shown.</summary>
         public List<string> Projects { get; set; } = new();
+        /// <summary>Folders of the solution (relative to the solution file) that hold projects; projects made in a folder live in a subfolder of it. Folders that hold a project are shown anyway - this
+        /// list keeps the empty ones.</summary>
+        public List<string> Folders { get; set; } = new();
         /// <summary>The project that runs when the solution is run: its name; not set: the first program in the list.</summary>
         public string? Startup { get; set; }
         /// <summary>Settings for every project of the solution (a project's own settings go before them).</summary>
@@ -60,6 +63,7 @@ namespace fire.Projects
             shape["format"] = Format;
             shape["name"] = Name;
             shape["projects"] = Projects;
+            if (Folders.Count > 0) shape["folders"] = Folders;
             if (Startup != null) shape["startup"] = Startup;
             if (Settings != null && !Settings.IsEmpty) shape["settings"] = Settings;
             return JsonSerializer.Serialize(shape, Options);

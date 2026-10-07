@@ -56,10 +56,10 @@ namespace fire.Compiler
 
                 var manifest = new PackageManifest
                 {
-                    Name = project.Name, Version = version, Author = plan.Settings.Author ?? "", Description = plan.Settings.Description ?? "", License = "",
+                    Name = project.Name, Version = version, Author = plan.Settings.Author ?? "", Description = plan.Settings.Description ?? "", License = plan.Settings.License ?? "",
                 };
                 var lib = plan.Libraries.Values.Where(l => plan.Project.Project.References.Any(r => r.IsProject && Path.GetFullPath(r.Project!.Replace('\\', '/'), project.Directory) == l.Project.FilePath)).ToList();
-                var packageImport = new PackageImport { Name = import, Prelude = preludePath };
+                var packageImport = new PackageImport { Name = import, Prelude = preludePath, Native = plan.Native?.Native };   // the C++ goes into the package (copied by the forge)
                 foreach (var l in lib) { packageImport.Requires.Add(l.ImportName); manifest.Dependencies.Add(l.Name); }
                 foreach (var pkg in plan.Packages) if (!manifest.Dependencies.Contains(pkg.Package!)) manifest.Dependencies.Add(pkg.Package!);
                 manifest.Imports.Add(packageImport);
@@ -74,6 +74,31 @@ namespace fire.Compiler
                 try { Directory.Delete(workDir, true); } catch (IOException) { }
             }
         }
+
+        /// <summary>The next version: `part` is `major`, `minor` or `patch` (the lower numbers become 0). `1.2.3` -> `1.2.4`; a version with four numbers keeps the fourth out (a package has three).</summary>
+        public static string BumpVersion(string? version, string part = "patch")
+        {
+            var v = PackageVersion(version).Split('.').Select(int.Parse).ToArray();
+            switch (part.ToLowerInvariant())
+            {
+                case "major": v[0]++; v[1] = 0; v[2] = 0; break;
+                case "minor": v[1]++; v[2] = 0; break;
+                case "patch": v[2]++; break;
+                default: throw new ProjectException($"'{part}' is not major, minor or patch.");
+            }
+            return string.Join('.', v);
+        }
+
+        /// <summary>Is `text` a version a package can have (`1.2.3`: three numbers)?</summary>
+        public static bool IsPackageVersion(string? text)
+        {
+            var parts = (text ?? "").Split('.');
+            return parts.Length == 3 && parts.All(p => p.Length > 0 && p.All(char.IsDigit));
+        }
+
+        /// <summary>The file the package of a library gets in `outputDirectory` (see <see cref="PackLibrary"/>).</summary>
+        public static string PackagePathFor(BuildPlan plan, string? outputDirectory = null) =>
+            Path.Combine(Path.GetFullPath(outputDirectory ?? plan.Settings.Output ?? Path.Combine(plan.Project.Directory, "bin")), $"{plan.Project.Name}-{PackageVersion(plan.Settings.Version)}.fpk");
 
         /// <summary>`1.2.3.0` or `1.2` as a package version (three numbers); anything else: 1.0.0.</summary>
         public static string PackageVersion(string? version)
@@ -102,11 +127,11 @@ namespace fire.Compiler
                     var m = Include.Match(line);
                     if (!m.Success) { sb.AppendLine(line); continue; }
                     string target = Path.GetFullPath(m.Groups[1].Value, Path.GetDirectoryName(Path.GetFullPath(path))!);
-                    if (string.Equals(Path.GetExtension(target), ".fxml", StringComparison.OrdinalIgnoreCase)) throw new ProjectException($"{Path.GetFileName(path)}: a markup file ({m.Groups[1].Value}) cannot be included in a library that is packed.");
                     if (chain.Contains(target, ProjectFiles.PathComparer)) throw new ProjectException($"Circular include of '{target}'.");
                     string included;
-                    try { included = File.ReadAllText(target); }
+                    try { included = File.ReadAllText(target); if (FireProject.IsMarkupFile(target)) included = BuildPlan.GenerateMarkupScript(target, included); }
                     catch (IOException ex) { throw new ProjectException($"{Path.GetFileName(path)}: '{m.Groups[1].Value}' could not be read: {ex.Message}"); }
+                    catch (fire.UI.Markup.MarkupException ex) { throw new ProjectException($"{Path.GetFileName(target)}: {ex.Message}"); }
                     Add(target, included, chain.Append(target).ToList());
                 }
             }

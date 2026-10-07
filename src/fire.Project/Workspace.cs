@@ -13,6 +13,10 @@ namespace fire.Projects
         /// <summary>The files in compile order (see ProjectFiles); <see cref="Refresh"/> reads the folder again.</summary>
         public IReadOnlyList<string> Files { get; private set; } = Array.Empty<string>();
         public IReadOnlyList<string> Problems { get; private set; } = Array.Empty<string>();
+        /// <summary>The other files in the project folder: resources, C++ sources, notes (not compiled).</summary>
+        public IReadOnlyList<string> ContentFiles { get; private set; } = Array.Empty<string>();
+        /// <summary>The folders below the project folder (relative paths with `/`), also the empty ones.</summary>
+        public IReadOnlyList<string> Folders { get; private set; } = Array.Empty<string>();
         private HashSet<string> _fileSet = new(ProjectFiles.PathComparer);
 
         public LoadedProject(FireProject project, bool inSolution)
@@ -27,6 +31,8 @@ namespace fire.Projects
             var problems = new List<string>(Project.Validate());
             Files = ProjectFiles.Resolve(Project, problems);
             Problems = problems;
+            ContentFiles = ProjectFiles.ContentFiles(Project.Directory!, Files);
+            Folders = ProjectFiles.Folders(Project.Directory!);
             _fileSet = new HashSet<string>(Files, ProjectFiles.PathComparer);
         }
 
@@ -161,6 +167,48 @@ namespace fire.Projects
             return Open(full);
         }
 
+        /// <summary>Makes a solution from a template (see <see cref="ProjectTemplates"/>): the solution file in `folder`, and for a template that makes a project the project `name` in `folder/name`. Opens it.</summary>
+        public static Workspace CreateSolution(ProjectTemplate template, string folder, string name)
+        {
+            string path = ProjectTemplates.CreateSolution(template, folder, name);
+            return Open(path);
+        }
+
+        /// <summary>Makes a project from a template in the folder `parentFolder/name` (saved) and adds it to the solution, or - without a solution - opens it on its own.</summary>
+        public LoadedProject CreateProject(ProjectTemplate template, string parentFolder, string name)
+        {
+            string path = ProjectTemplates.CreateProject(template, parentFolder, name);
+            if (Solution == null) { Load(path); return _members[0]; }
+            var loaded = LoadProject(path, inSolution: true);
+            AddToSolution(loaded);
+            RaiseChanged();
+            return loaded;
+        }
+
+        /// <summary>Makes a folder in the solution (a project made there lives in a subfolder of it); the empty ones are kept in the solution file.</summary>
+        public string AddFolder(string fullPath)
+        {
+            if (Solution == null) throw new ProjectException("There is no solution: open or create one first.");
+            string full = Path.GetFullPath(fullPath);
+            string rel = ProjectFiles.Relative(Solution.Directory!, full);
+            if (rel.StartsWith("..")) throw new ProjectException("A folder of the solution has to be inside the solution folder.");
+            System.IO.Directory.CreateDirectory(full);
+            if (!Solution.Folders.Any(f => ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Replace('\\', '/'), Solution.Directory!), full))) Solution.Folders.Add(rel);
+            Solution.Save();
+            RaiseChanged();
+            return full;
+        }
+
+        /// <summary>Takes a folder out of the solution file (the folder and what is in it stay on disk).</summary>
+        public void RemoveFolder(string fullPath)
+        {
+            if (Solution == null) return;
+            string full = Path.GetFullPath(fullPath);
+            Solution.Folders.RemoveAll(f => ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Replace('\\', '/'), Solution.Directory!), full));
+            Solution.Save();
+            RaiseChanged();
+        }
+
         /// <summary>Makes a new project (saved; a program with one file `main.script` when `withMain`) and adds it to the solution if one is open.</summary>
         public LoadedProject CreateProject(string path, OutputType type, string? name = null, bool withMain = true)
         {
@@ -231,11 +279,41 @@ namespace fire.Projects
         {
             string full = Path.GetFullPath(filePath);
             if (project.Contains(full)) return;
+            if (!FireProject.IsSourceFile(full)) { project.Refresh(); RaiseChanged(); return; }   // a file that is no source (a resource, a header, ...) is not compiled: it is content of the project folder
             if (project.Project.Files.Count == 0) project.Project.Files.AddRange(FireProject.DefaultFiles);   // naming a file must not drop the files that the default patterns take
             project.Project.Files.Add(ProjectFiles.Relative(project.Directory, full));
             project.Project.Save();
             project.Refresh();
             RaiseChanged();
+        }
+
+        /// <summary>Copies a file into a folder of the project (a resource, a picture, data: nothing is compiled from it until the code says `new Resource("...")`). Returns the new path; an existing file is
+        /// not overwritten (a ProjectException).</summary>
+        public string AddContentFile(LoadedProject project, string sourcePath, string destinationFolder)
+        {
+            string folder = Path.GetFullPath(destinationFolder);
+            if (!ProjectFiles.Relative(project.Directory, folder).Equals(".") && ProjectFiles.Relative(project.Directory, folder).StartsWith("..")) throw new ProjectException("The folder is not inside the project.");
+            string target = Path.Combine(folder, Path.GetFileName(sourcePath));
+            if (ProjectFiles.PathComparer.Equals(Path.GetFullPath(sourcePath), target)) { project.Refresh(); RaiseChanged(); return target; }   // it is there already
+            if (File.Exists(target)) throw new ProjectException($"'{Path.GetFileName(sourcePath)}' exists already in {ProjectFiles.Relative(project.Directory, folder)}.");
+            System.IO.Directory.CreateDirectory(folder);
+            File.Copy(sourcePath, target);
+            project.Refresh();
+            RaiseChanged();
+            return target;
+        }
+
+        /// <summary>Gives the project a native part (C++ in the folder `native/`) if it has none, with a starting header that has one example function. Returns the path of the header.</summary>
+        public string AddNative(LoadedProject project)
+        {
+            string ident = project.Project.ImportName.ToLowerInvariant();
+            string header = Path.Combine(project.Directory, "native", ident + ".hpp");
+            System.IO.Directory.CreateDirectory(Path.GetDirectoryName(header)!);
+            if (!File.Exists(header)) File.WriteAllText(header, ProjectTemplates.NativeHeader(project.Name, project.Project.ImportName));
+            if (project.Project.Native == null) { project.Project.Native = new ProjectNative(); project.Project.Save(); }
+            project.Refresh();
+            RaiseChanged();
+            return header;
         }
 
         /// <summary>Takes a file out of a project (saved; the file itself stays): an explicit entry is removed, a file that a pattern takes is excluded.</summary>

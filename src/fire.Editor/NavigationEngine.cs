@@ -112,7 +112,7 @@ namespace fire.Editor
                     string qualified = dotted + "." + identifier;
                     string? qualifiedClass = index.TryFindClass(qualified, offset);
                     if (qualifiedClass != null && index.Classes.TryGetValue(qualifiedClass, out var qc) && qc.DeclLine > 0)
-                        return new ResolvedSymbol(new NavigationTarget(null, qc.DeclLine, qc.PreludeName), qc);
+                        return new ResolvedSymbol(ClassTarget(qc), qc);
                     string? qualifiedEnum = index.TryFindEnum(qualified, offset);
                     if (qualifiedEnum != null && index.EnumDeclLines.ContainsKey(qualifiedEnum))
                         return new ResolvedSymbol(EnumTarget(index, qualifiedEnum));
@@ -145,7 +145,7 @@ namespace fire.Editor
 
             string? classKey = index.TryFindClass(identifier, offset);
             if (classKey != null && index.Classes.TryGetValue(classKey, out var cls) && cls.DeclLine > 0)
-                return new ResolvedSymbol(new NavigationTarget(null, cls.DeclLine, cls.PreludeName), cls);
+                return new ResolvedSymbol(ClassTarget(cls), cls);
 
             string? enumKey = index.TryFindEnum(identifier, offset);
             if (enumKey != null && index.EnumDeclLines.ContainsKey(enumKey))
@@ -266,7 +266,7 @@ namespace fire.Editor
             {
                 var overloads = index.MembersOf(method.Owner).Where(m => m.Name == method.Name && m.Kind == MemberKind.Method && m.Documentation != null).ToList();
                 var chosen = PickOverload(overloads, call.RequiredArgs);
-                return chosen != null ? new ResolvedSymbol(new NavigationTarget(null, chosen.DeclLine, chosen.Source?.PreludeName), null, chosen) : symbol;
+                return chosen != null ? new ResolvedSymbol(new NavigationTarget(chosen.Source?.FilePath, chosen.DeclLine, chosen.Source?.PreludeName), null, chosen) : symbol;
             }
 
             return symbol;
@@ -287,7 +287,7 @@ namespace fire.Editor
         /// <summary>Ziel eines Mitglieds: stammt es aus einer Prelude (auch ein geerbtes einer Prelude-Basisklasse), ist das
         /// Ziel dort - nicht in der angeklickten Klasse.</summary>
         private static NavigationTarget MemberTarget(ScriptSymbolIndex index, MemberInfo member) =>
-            new(null, member.DeclLine, member.Source?.PreludeName);
+            new(member.Source?.FilePath, member.DeclLine, member.Source?.PreludeName);
 
         private static ResolvedSymbol MemberSymbol(ScriptSymbolIndex index, MemberInfo member) =>
             new(MemberTarget(index, member), null, member);
@@ -296,8 +296,12 @@ namespace fire.Editor
         private static NavigationTarget EnumTarget(ScriptSymbolIndex index, string enumKey)
         {
             index.EnumPreludes.TryGetValue(enumKey, out var prelude);
-            return new NavigationTarget(null, index.EnumDeclLines[enumKey], prelude);
+            index.EnumFiles.TryGetValue(enumKey, out var file);
+            return new NavigationTarget(file, index.EnumDeclLines[enumKey], prelude);
         }
+
+        /// <summary>Where a class is declared: in the document (no file), in a prelude, or in another file of the project.</summary>
+        private static NavigationTarget ClassTarget(ClassInfo c) => new(c.Source?.FilePath, c.DeclLine, c.PreludeName);
 
         /// <summary>Das Mitglied `identifier` zu einem hergeleiteten Empfänger-Typ (siehe ScriptSymbolIndex.ResolveReceiver).</summary>
         private static ResolvedSymbol? ResolveMemberOfType(ScriptSymbolIndex index, ExprType type, string identifier)
@@ -318,7 +322,7 @@ namespace fire.Editor
                         // `Geometry.Circle`: eine Klasse/ein Enum im Namespace.
                         string full = type.Name + "." + identifier;
                         if (index.Classes.TryGetValue(full, out var cls) && cls.DeclLine > 0)
-                            return new ResolvedSymbol(new NavigationTarget(null, cls.DeclLine, cls.PreludeName), cls);
+                            return new ResolvedSymbol(ClassTarget(cls), cls);
                         if (index.EnumDeclLines.ContainsKey(full)) return new ResolvedSymbol(EnumTarget(index, full));
                         return null;
                     }

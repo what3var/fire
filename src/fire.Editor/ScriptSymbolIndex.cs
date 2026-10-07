@@ -299,7 +299,32 @@ namespace fire.Editor
 
         /// <summary>Wie Build(source); `extraImports` gelten zusätzlich zu den `#import`-Zeilen in `source` als
         /// zugeschaltet (z.B. wenn eine Prelude angezeigt wird, die selbst von einer anderen Erweiterung abhängt).</summary>
-        public static ScriptSymbolIndex Build(string source, IEnumerable<string> extraImports)
+        public static ScriptSymbolIndex Build(string source, IEnumerable<string> extraImports) => Build(source, extraImports, Array.Empty<(string, string)>());
+
+        /// <summary>The file this index describes when it was built as one of the other files of a project (null: the document itself, or a prelude).</summary>
+        public string? FilePath { get; private set; }
+
+        /// <summary>The file of an enum that is declared in another file of the project (key as in <see cref="EnumDeclLines"/>).</summary>
+        public Dictionary<string, string> EnumFiles { get; } = new();
+
+        private static readonly Dictionary<string, (string Text, ScriptSymbolIndex Index)> ProjectFileIndexes = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The index of another file of the project, kept as long as its text does not change.</summary>
+        private static ScriptSymbolIndex IndexOfProjectFile(string path, string text)
+        {
+            lock (ProjectFileIndexes)
+            {
+                if (ProjectFileIndexes.TryGetValue(path, out var known) && string.Equals(known.Text, text, StringComparison.Ordinal)) return known.Index;
+            }
+            var index = Build(text);
+            index.FilePath = path;
+            lock (ProjectFileIndexes) ProjectFileIndexes[path] = (text, index);
+            return index;
+        }
+
+        /// <summary>Like Build(source, extraImports); `projectFiles` are the other files of the project (and the imported libraries): what they declare is known without an `#include`, for
+        /// completion, tooltips and "go to definition" - as it is for the build.</summary>
+        public static ScriptSymbolIndex Build(string source, IEnumerable<string> extraImports, IEnumerable<(string Path, string Text)> projectFiles)
         {
             List<Token> tokens;
             try
@@ -315,6 +340,11 @@ namespace fire.Editor
             index.UsingNamespaces.AddRange(FindUsings(source));
             index.Harvest();
             index.HarvestIncludes(source);
+            foreach (var (path, text) in projectFiles)
+            {
+                try { index.MergeInPrelude(IndexOfProjectFile(path, text), ownDeclarationsOnly: true); }
+                catch (Exception) { /* a file that cannot be scanned adds nothing */ }
+            }
             index.MergeInPrelude(PreludeIndex.Value);
             // Preludes der per '#import' zugeschalteten Erweiterungen (siehe
             // ImportedPreludes) - `Framebuffer`/`Device`/... sollen genauso
@@ -358,10 +388,11 @@ namespace fire.Editor
         /// die reine Prelude-Definition zu ersetzen), sonst würde eine
         /// erweiterte `List` im Editor plötzlich ihre eigenen Add/Get/...-
         /// Methoden "verlieren".</summary>
-        private void MergeInPrelude(ScriptSymbolIndex prelude)
+        private void MergeInPrelude(ScriptSymbolIndex prelude, bool ownDeclarationsOnly = false)
         {
             foreach (var (name, preludeClass) in prelude.Classes)
             {
+                if (ownDeclarationsOnly && preludeClass.IsFromPrelude) continue;   // the preludes are merged by this index itself
                 if (Classes.TryGetValue(name, out var existing))
                 {
                     if (existing.DeclLine != 0) continue; // echte eigene (Neu-)Deklaration gewinnt
@@ -386,9 +417,10 @@ namespace fire.Editor
             foreach (var ns in prelude.Namespaces)
                 Namespaces.Add(ns);
             foreach (var (name, members) in prelude.EnumMembers)
-                if (!EnumMembers.ContainsKey(name))
+                if (!EnumMembers.ContainsKey(name) && !(ownDeclarationsOnly && prelude.EnumPreludes.ContainsKey(name)))
                 {
                     EnumMembers[name] = members;
+                    if (ownDeclarationsOnly && prelude.FilePath != null) EnumFiles[name] = prelude.FilePath;
                     if (prelude.EnumDeclLines.TryGetValue(name, out var line)) EnumDeclLines[name] = line;
                     if (prelude.PreludeName != null) EnumPreludes[name] = prelude.PreludeName;
                 }

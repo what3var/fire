@@ -60,6 +60,7 @@
 						</MenuItem.Icon>
 					</MenuItem>
 					<MenuItem Header="New _UI Markup" Click="NewUiMarkup_Click"/>
+					<MenuItem Header="New _Pixel Image..." Click="NewPixelImage_Click"/>
 					<MenuItem Header="_Open..." Click="Open_Click" InputGesture="Ctrl+O"/>
 					<Separator/>
 					<MenuItem Header="New _Project..." Click="NewProject_Click"/>

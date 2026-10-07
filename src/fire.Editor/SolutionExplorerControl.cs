@@ -18,7 +18,7 @@ using fire.Projects;
 
 namespace fire.Editor
 {
-    internal enum ExplorerKind { Solution, Project, References, Reference, Folder, File }
+    internal enum ExplorerKind { Solution, SolutionFolder, Project, References, Reference, Folder, File, Content }
 
     /// <summary>A row of the solution explorer.</summary>
     internal sealed class ExplorerNode : INotifyPropertyChanged
@@ -77,10 +77,10 @@ namespace fire.Editor
             _tree.ContextMenu = _menu;
             _menu.Opening += (_, e) => { if (!FillMenu()) e.Cancel = true; };
             _tree.AddHandler(PointerPressedEvent, OnPointerPressed, RoutingStrategies.Tunnel);
-            _tree.DoubleTapped += (_, e) => { if (_tree.SelectedItem is ExplorerNode { Kind: ExplorerKind.File, Path: { } p }) { FileOpenRequested?.Invoke(p); e.Handled = true; } };
+            _tree.DoubleTapped += (_, e) => { if (_tree.SelectedItem is ExplorerNode { Kind: ExplorerKind.File or ExplorerKind.Content, Path: { } p }) { FileOpenRequested?.Invoke(p); e.Handled = true; } };
             _tree.KeyDown += (_, e) =>
             {
-                if (e.Key == Key.Enter && _tree.SelectedItem is ExplorerNode { Kind: ExplorerKind.File, Path: { } p }) { FileOpenRequested?.Invoke(p); e.Handled = true; }
+                if (e.Key == Key.Enter && _tree.SelectedItem is ExplorerNode { Kind: ExplorerKind.File or ExplorerKind.Content, Path: { } p }) { FileOpenRequested?.Invoke(p); e.Handled = true; }
                 else if (e.Key == Key.Delete && _tree.SelectedItem is ExplorerNode node) { CommandRequested?.Invoke("remove", node); e.Handled = true; }
             };
 
@@ -139,12 +139,53 @@ namespace fire.Editor
                 solutionNode = new ExplorerNode { Kind = ExplorerKind.Solution, Text = $"Solution '{workspace.Solution.Name}'", Suffix = $"{workspace.Projects.Count} project{(workspace.Projects.Count == 1 ? "" : "s")}", Path = workspace.Solution.FilePath, Key = "sln", IsBold = true };
                 _roots.Add(solutionNode);
             }
+            var folderNodes = new Dictionary<string, ExplorerNode>(ProjectFiles.PathComparer);
+            // the folders of the solution: those that hold a project (a project made in a folder lives in a subfolder of it) and the ones that are listed (empty ones)
+            ExplorerNode FolderNode(string fullDir)
+            {
+                string solutionDir = workspace.Solution!.Directory!;
+                string rel = ProjectFiles.Relative(solutionDir, fullDir);
+                if (rel == "." || rel.StartsWith("..") || Path.IsPathRooted(rel)) return solutionNode!;
+                if (folderNodes.TryGetValue(fullDir, out var existing)) return existing;
+                var parent = FolderNode(Path.GetDirectoryName(fullDir)!);
+                var folder = new ExplorerNode { Kind = ExplorerKind.SolutionFolder, Text = Path.GetFileName(fullDir), Path = fullDir, Key = "sdir:" + fullDir };
+                folderNodes[fullDir] = folder;
+                parent.Children.Add(folder);
+                return folder;
+            }
+            if (solutionNode != null)
+                foreach (var listed in workspace.Solution!.Folders.OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+                    FolderNode(Path.GetFullPath(listed.Replace('\\', '/'), workspace.Solution.Directory!));
             foreach (var project in workspace.Projects)
             {
                 var node = ProjectNode(workspace, project, ReferenceEquals(project, startup) && workspace.Solution != null, ReferenceEquals(project, activeProject));
-                if (solutionNode != null) solutionNode.Children.Add(node); else _roots.Add(node);
+                if (solutionNode != null) FolderNode(Path.GetDirectoryName(project.Directory)!).Children.Add(node); else _roots.Add(node);
             }
+            if (solutionNode != null) SortFolders(solutionNode);
             ApplyCollapsed(_roots);
+        }
+
+        /// <summary>In a project: References first, then folders by name, then the files (sources, in compile order; then the content files by name).</summary>
+        private static void SortProjectChildren(ExplorerNode node)
+        {
+            var references = node.Children.Where(c => c.Kind == ExplorerKind.References).ToList();
+            var folders = node.Children.Where(c => c.Kind == ExplorerKind.Folder).OrderBy(c => c.Text, StringComparer.OrdinalIgnoreCase).ToList();
+            var sources = node.Children.Where(c => c.Kind == ExplorerKind.File).ToList();
+            var content = node.Children.Where(c => c.Kind == ExplorerKind.Content).OrderBy(c => c.Text, StringComparer.OrdinalIgnoreCase).ToList();
+            node.Children.Clear();
+            foreach (var n in references) node.Children.Add(n);
+            foreach (var f in folders) { SortProjectChildren(f); node.Children.Add(f); }
+            foreach (var n in sources.Concat(content)) node.Children.Add(n);
+        }
+
+        /// <summary>Folders before projects (each by name), projects in the order of the solution.</summary>
+        private static void SortFolders(ExplorerNode node)
+        {
+            var folders = node.Children.Where(c => c.Kind == ExplorerKind.SolutionFolder).OrderBy(c => c.Text, StringComparer.OrdinalIgnoreCase).ToList();
+            var rest = node.Children.Where(c => c.Kind != ExplorerKind.SolutionFolder).ToList();
+            node.Children.Clear();
+            foreach (var f in folders) { SortFolders(f); node.Children.Add(f); }
+            foreach (var r in rest) node.Children.Add(r);
         }
 
         private ExplorerNode ProjectNode(Workspace workspace, LoadedProject project, bool isStartup, bool isActive)
@@ -165,15 +206,13 @@ namespace fire.Editor
                 }
                 node.Children.Add(references);
             }
-            // the files as a tree of folders below the project folder (files from elsewhere under "..")
+            // the files as a tree of folders below the project folder (files from elsewhere under ".."); the content files (resources, C++ sources, notes) next to them, empty folders too
             var folders = new Dictionary<string, ExplorerNode>(StringComparer.Ordinal);
-            foreach (var file in project.Files)
+            ExplorerNode FolderOf(string[] parts, int count)
             {
-                string rel = ProjectFiles.Relative(project.Directory, file);
                 var parent = node;
-                string[] parts = rel.Split('/');
                 string accumulated = "";
-                for (int i = 0; i < parts.Length - 1; i++)
+                for (int i = 0; i < count; i++)
                 {
                     accumulated += parts[i] + "/";
                     string folderKey = project.FilePath + "|" + accumulated;
@@ -185,9 +224,23 @@ namespace fire.Editor
                     }
                     parent = folder;
                 }
-                bool isEntry = project.Project.Type == OutputType.Exe && ProjectFiles.PathComparer.Equals(file, project.Files.LastOrDefault());
-                parent.Children.Add(new ExplorerNode { Kind = ExplorerKind.File, Text = parts[^1], Suffix = isEntry && project.Files.Count > 1 ? "entry" : "", Path = file, Project = project, Key = "file:" + file });
+                return parent;
             }
+            foreach (var folder in project.Folders) { var parts = folder.Split('/'); FolderOf(parts, parts.Length); }
+            foreach (var file in project.Files)
+            {
+                string rel = ProjectFiles.Relative(project.Directory, file);
+                string[] parts = rel.Split('/');
+                bool isEntry = project.Project.Type == OutputType.Exe && ProjectFiles.PathComparer.Equals(file, project.Files.LastOrDefault());
+                FolderOf(parts, parts.Length - 1).Children.Add(new ExplorerNode { Kind = ExplorerKind.File, Text = parts[^1], Suffix = isEntry && project.Files.Count > 1 ? "entry" : "", Path = file, Project = project, Key = "file:" + file });
+            }
+            foreach (var file in project.ContentFiles)
+            {
+                string rel = ProjectFiles.Relative(project.Directory, file);
+                string[] parts = rel.Split('/');
+                FolderOf(parts, parts.Length - 1).Children.Add(new ExplorerNode { Kind = ExplorerKind.Content, Text = parts[^1], Path = file, Project = project, Key = "content:" + file });
+            }
+            SortProjectChildren(node);
             return node;
         }
 
@@ -234,15 +287,27 @@ namespace fire.Editor
                 case ExplorerKind.Solution:
                     Add("Add New Project...", "add-new-project");
                     Add("Add Existing Project...", "add-existing-project");
+                    Add("New Folder...", "new-folder");
                     _menu.Items.Add(new Separator());
                     Add("Open Solution Folder", "reveal");
                     Add("Solution Properties...", "solution-properties");
                     _menu.Items.Add(new Separator());
                     Add("Close Solution", "close-workspace");
                     break;
+                case ExplorerKind.SolutionFolder:
+                    Add("Add New Project Here...", "add-new-project");
+                    Add("Add Existing Project...", "add-existing-project");
+                    Add("New Folder...", "new-folder");
+                    _menu.Items.Add(new Separator());
+                    Add("Open Folder", "reveal");
+                    Add("Remove Folder from Solution", "remove-folder");
+                    break;
                 case ExplorerKind.Project:
                     Add("Add New File...", "add-new-file");
                     Add("Add Existing File...", "add-existing-file");
+                    Add("Add Resource (copy a file in)...", "add-resource");
+                    Add("New Folder...", "new-project-folder");
+                    Add(node.Project!.Project.Native == null ? "Add Native Code (C++)" : "Add C++ File...", "add-native");
                     Add("Add Reference...", "add-reference");
                     _menu.Items.Add(new Separator());
                     if (node.Project!.Project.Type == OutputType.Exe) Add("Set as Startup Project", "set-startup");
@@ -262,10 +327,21 @@ namespace fire.Editor
                     break;
                 case ExplorerKind.Folder:
                     Add("Add New File Here...", "add-new-file");
+                    Add("Add Resource Here (copy a file in)...", "add-resource");
+                    Add("New Folder...", "new-project-folder");
                     Add("Open Folder", "reveal");
+                    break;
+                case ExplorerKind.Content:
+                    Add("Open", "open");
+                    if (node.Path != null && new[] { ".png", ".bmp", ".gif" }.Contains(System.IO.Path.GetExtension(node.Path).ToLowerInvariant())) Add("Edit Pixels", "open-pixel");
+                    Add("Open as Text", "open-text");
+                    Add("Open as Hex", "open-hex");
+                    Add("Show in Folder", "reveal");
+                    Add("Delete File...", "delete-file");
                     break;
                 case ExplorerKind.File:
                     Add("Open", "open");
+                    Add("Open as Hex", "open-hex");
                     Add("Remove from Project", "remove");
                     Add("Show in Folder", "reveal");
                     break;
