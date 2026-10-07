@@ -265,12 +265,14 @@ namespace fire.Compiler
             registry.Resources = resources;
             foreach (var symbol in ConditionalSymbols.For(target, Engine, floatWidthOverride, EffectiveDefines())) registry.Symbols.Add(symbol);
             var projectImports = new List<string>();   // libraries of the project that a source imports
+            ProjectNativeOverlay.Register(Plan);   // the C++ natives of the project and its libraries are found like those of installed packages
+            if (ProjectNativeOverlay.OwnKey(Plan) is { } ownNativeKey) nativeImports.Add(ownNativeKey);
             registry.Register("import", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind == ValueKind.String)
                 {
                     string importName = args[0].AsString();
-                    if (ProjectLibraries.TryImport(Plan, importName, projectImports)) return null;   // a library of the project: its files come with it
+                    if (ProjectLibraries.TryImport(Plan, importName, projectImports, nativeImports)) return null;   // a library of the project: its files come with it
                     foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(importName))) nativeImports.Add(key);
                     return null;
                 }
@@ -373,6 +375,10 @@ namespace fire.Compiler
             });
 
 
+
+            // the files of a project are part of the program anyway: an `#include` of one of them (also of a markup file) adds nothing, so that nothing is declared twice
+            if (Plan != null)
+                foreach (var projectFile in Plan.SourcePaths) alreadyIncluded.Add(Path.GetFullPath(projectFile));
 
             for (int i = 0; i < inputSources.Count; i++)
             {

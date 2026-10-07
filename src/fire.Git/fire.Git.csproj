@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Git for the editor (docs/GIT.md): the state of the files of a solution, commit, history, diff, branches, fetch/pull/push. No user interface in here. It uses LibGit2Sharp (MIT): libgit2 comes with
+    the package for Windows, Linux and macOS (x64 and arm64), so the end user does not have to install git. LibGit2Sharp targets net8.0, which runs on net10.0.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>fire.Git</RootNamespace>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LibGit2Sharp" Version="0.32.0" />
+  </ItemGroup>
+
+</Project>

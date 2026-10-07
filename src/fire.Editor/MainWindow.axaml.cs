@@ -67,6 +67,14 @@ namespace fire.Editor
             PacketLog,
             /// <summary>The markup of a user interface (.fxml, docs/UI_MARKUP.md) with its design view.</summary>
             UiMarkup,
+            /// <summary>A text file that is no fire code: the C++ of natives, notes, data.</summary>
+            Text,
+            /// <summary>A picture (a resource of a project), to look at.</summary>
+            Image,
+            /// <summary>A picture in the pixel editor (palette of 256 colours or true colour).</summary>
+            Pixel,
+            /// <summary>Any file as bytes in the hex editor.</summary>
+            Hex,
         }
 
         /// <summary>An open tab. `Layout` is the docking element that shows the view (the view - the editor control - stays the same when the layout is rebuilt).</summary>
@@ -119,12 +127,33 @@ namespace fire.Editor
         /// <summary>The active document, if it is a fire script.</summary>
         private ScriptEditorControl? ActiveScript => ActiveDocument?.Script;
 
+        private static readonly HashSet<string> ImageExtensions = new() { ".png", ".bmp", ".gif", ".jpg", ".jpeg" };
+        private static readonly HashSet<string> TextExtensions = new() { ".txt", ".json", ".xml", ".csv", ".ini", ".cfg", ".yaml", ".yml", ".html", ".htm", ".css", ".js", ".log", ".tsv", ".toml", ".cmake", ".mk", ".sh", ".bat", ".cs" };
+
+        private static readonly HashSet<string> ScriptExtensions = new() { ".script", ".fi", ".fic", ".fire", "" };
+
+        /// <summary>Does the file start with bytes that no text has (a zero byte in the first 8 KB)? A file that cannot be read is not binary (opening it reports the problem).</summary>
+        private static bool LooksBinary(string path)
+        {
+            try
+            {
+                using var stream = File.OpenRead(path);
+                var buffer = new byte[8192];
+                int n = stream.Read(buffer, 0, buffer.Length);
+                return buffer.AsSpan(0, n).Contains((byte)0);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+        }
+
         private static DocumentKind KindOfPath(string path)
         {
             string ext = Path.GetExtension(path).ToLowerInvariant();
             if (ext is ".md" or ".markdown" or ".mdown") return DocumentKind.Markdown;
             if (ext == fire.Device.Manager.DeviceManager.PacketLog.FileExtension) return DocumentKind.PacketLog;
             if (ext == ".fxml") return DocumentKind.UiMarkup;
+            if (ImageExtensions.Contains(ext)) return DocumentKind.Image;
+            if (TextExtensions.Contains(ext) || CppHighlighter.IsCppFile(path)) return DocumentKind.Text;
+            if (!ScriptExtensions.Contains(ext) && LooksBinary(path)) return DocumentKind.Hex;   // data that is no text: bytes
             return DocumentKind.Script;
         }
 
@@ -171,6 +200,7 @@ namespace fire.Editor
             AddHandler(DragDrop.DropEvent, Window_Drop);
 
             InitProjects();
+            InitGit();
 
             _debugger = new DebuggerPanels(_threadsPanel, _scopePanel, _stackPanel);
             _debugger.AttachSession(_session);
@@ -594,6 +624,10 @@ namespace fire.Editor
                 DocumentKind.Markdown => new MarkdownEditorControl { Mode = mode },
                 DocumentKind.PacketLog => new PacketTraceControl(),
                 DocumentKind.UiMarkup => new MarkupEditorControl(),
+                DocumentKind.Text => new TextFileEditorControl(),
+                DocumentKind.Image => new ImageViewerControl(),
+                DocumentKind.Pixel => new PixelEditorControl(),
+                DocumentKind.Hex => new HexEditorControl(),
                 _ => new ScriptEditorControl(),
             };
 
@@ -618,6 +652,9 @@ namespace fire.Editor
 
             if (doc.Design is { } design)
                 design.ShowScriptRequested += () => ShowGeneratedScript(doc);
+
+            if (view is ImageViewerControl viewer)
+                viewer.EditRequested += () => { if (viewer.FilePath != null) OpenFile(viewer.FilePath, forceKind: DocumentKind.Pixel); };
 
             if (doc.Script is { } script)
             {

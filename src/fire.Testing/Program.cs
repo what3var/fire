@@ -13228,6 +13228,8 @@ static int CountOccurrences(string haystack, string needle)
 }
 
 ProjectTests.Run();
+ImageTests.Run();
+GitTests.Run();
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // Native-Backend (fire.Native): derselbe Quelltext laeuft in der VM und als erzeugtes C++ - die Ausgabe muss identisch sein

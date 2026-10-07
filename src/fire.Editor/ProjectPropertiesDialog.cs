@@ -20,7 +20,7 @@ namespace fire.Editor
         private readonly ComboBox _mode = Choice(ProjectSettings.Modes);
         private readonly ComboBox _floatWidth = Choice(new[] { "32", "64" });
         private readonly ComboBox _engine = Choice(ProjectSettings.Engines);
-        private readonly TextBox _name = Box(), _codename = Box(), _description = Box(), _author = Box(), _comments = Box(), _icon = Box(), _version = Box(), _fileVersion = Box();
+        private readonly TextBox _name = Box(), _codename = Box(), _description = Box(), _author = Box(), _license = Box(), _comments = Box(), _icon = Box(), _version = Box(), _fileVersion = Box();
         private readonly TextBox _defines = Box(), _target = Box(), _toolchain = Box(), _output = Box();
 
         public Control View { get; }
@@ -58,6 +58,7 @@ namespace fire.Editor
             Add("Internal name", _codename, Hint(inherited?.Codename));
             Add("Description", _description, Hint(inherited?.Description));
             Add("Author / company", _author, Hint(inherited?.Author));
+            Add("License (package)", _license, Hint(inherited?.License) ?? "MIT, ...");
             Add("Comments", _comments, Hint(inherited?.Comments));
             Add("Icon", _icon, Hint(inherited?.Icon));
             Add("Version", _version, Hint(inherited?.Version) ?? "1.0.0.0");
@@ -78,7 +79,7 @@ namespace fire.Editor
         private void Show(ProjectSettings s)
         {
             Select(_subsystem, s.Subsystem); Select(_mode, s.Mode); Select(_floatWidth, s.FloatWidth?.ToString()); Select(_engine, s.Engine);
-            _name.Text = s.Name; _codename.Text = s.Codename; _description.Text = s.Description; _author.Text = s.Author; _comments.Text = s.Comments; _icon.Text = s.Icon;
+            _name.Text = s.Name; _codename.Text = s.Codename; _description.Text = s.Description; _author.Text = s.Author; _license.Text = s.License; _comments.Text = s.Comments; _icon.Text = s.Icon;
             _version.Text = s.Version; _fileVersion.Text = s.FileVersion; _defines.Text = s.Defines == null ? "" : string.Join(", ", s.Defines);
             _target.Text = s.Target; _toolchain.Text = s.Toolchain; _output.Text = s.Output;
         }
@@ -90,7 +91,7 @@ namespace fire.Editor
             return new ProjectSettings
             {
                 Subsystem = Read(_subsystem), Mode = Read(_mode), FloatWidth = int.TryParse(Read(_floatWidth), out int w) ? w : null, Engine = Read(_engine),
-                Name = Read(_name), Codename = Read(_codename), Description = Read(_description), Author = Read(_author), Comments = Read(_comments), Icon = Read(_icon),
+                Name = Read(_name), Codename = Read(_codename), Description = Read(_description), Author = Read(_author), License = Read(_license), Comments = Read(_comments), Icon = Read(_icon),
                 Version = Read(_version), FileVersion = Read(_fileVersion), Defines = defines.Count > 0 ? defines : null,
                 Target = Read(_target), Toolchain = Read(_toolchain), Output = Read(_output),
             };

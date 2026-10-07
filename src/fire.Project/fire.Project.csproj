@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\fire.Package.Manager\fire.Package.Manager.csproj" />
+    <ProjectReference Include="..\fire.UI.Markup\fire.UI.Markup.csproj" />
   </ItemGroup>
 
 </Project>

@@ -89,7 +89,8 @@ namespace fire.Projects
                 {
                     walked ??= Walk(dir);
                     var regex = PatternToRegex(entry);
-                    foreach (var rel in walked.Where(r => regex.IsMatch(r)).OrderBy(r => r, StringComparer.OrdinalIgnoreCase).ThenBy(r => r, StringComparer.Ordinal))
+                    // markup files first: the classes generated from them are there before the scripts use them
+                    foreach (var rel in walked.Where(r => regex.IsMatch(r)).OrderBy(r => FireProject.IsMarkupFile(r) ? 0 : 1).ThenBy(r => r, StringComparer.OrdinalIgnoreCase).ThenBy(r => r, StringComparer.Ordinal))
                     {
                         if (Excluded(rel)) continue;
                         string full = Path.GetFullPath(rel, dir);
@@ -115,6 +116,78 @@ namespace fire.Projects
                     int at = result.FindIndex(f => PathComparer.Equals(f, entryFull));
                     if (at < 0) problems?.Add($"The entry file '{project.Entry}' of the project '{project.Name}' is not one of its files.");
                     else { result.RemoveAt(at); result.Add(entryFull); }
+                }
+            }
+            return result;
+        }
+
+        /// <summary>All folders below `directory` (relative, with `/`), also the empty ones: the editor shows them so that a folder that was just made is there.</summary>
+        public static List<string> Folders(string directory)
+        {
+            var found = new List<string>();
+            void Visit(string dir, string rel)
+            {
+                IEnumerable<string> subs;
+                try { subs = System.IO.Directory.EnumerateDirectories(dir); } catch (Exception) { return; }
+                foreach (var sub in subs.OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+                {
+                    string name = Path.GetFileName(sub);
+                    if (SkippedFolders.Contains(name, StringComparer.OrdinalIgnoreCase) || name.StartsWith('.')) continue;
+                    bool nestedProject;
+                    try { nestedProject = System.IO.Directory.EnumerateFiles(sub, "*" + FireProject.Extension).Any(); } catch (Exception) { nestedProject = false; }
+                    if (nestedProject) continue;
+                    found.Add(rel + name);
+                    if (found.Count > 2000) return;
+                    Visit(sub, rel + name + "/");
+                }
+            }
+            Visit(directory, "");
+            return found;
+        }
+
+        /// <summary>Everything in the folder of the project that is not compiled and not a project or solution file (resources, C++ sources, notes): the content of the project, shown by the editor
+        /// and used by `new Resource("...")` and by the natives. `limit` keeps a project in a huge folder from listing it all.</summary>
+        public static List<string> ContentFiles(string directory, IReadOnlyCollection<string> compiled, int limit = 5000)
+        {
+            var compiledSet = new HashSet<string>(compiled, PathComparer);
+            var result = new List<string>();
+            foreach (var rel in Walk(directory).OrderBy(r => r, StringComparer.OrdinalIgnoreCase).ThenBy(r => r, StringComparer.Ordinal))
+            {
+                string name = Path.GetFileName(rel);
+                if (name.StartsWith('.')) continue;
+                string ext = Path.GetExtension(name);
+                if (ext.Equals(FireProject.Extension, StringComparison.OrdinalIgnoreCase) || ext.Equals(FireSolution.Extension, StringComparison.OrdinalIgnoreCase)) continue;
+                string full = Path.GetFullPath(rel, directory);
+                if (compiledSet.Contains(full)) continue;
+                result.Add(full);
+                if (result.Count >= limit) break;
+            }
+            return result;
+        }
+
+        /// <summary>The files that `patterns` (files and patterns relative to `directory`, in this order) name: the matches of one pattern by name; a named file that does not exist is a problem.</summary>
+        public static List<string> Expand(string directory, IEnumerable<string> patterns, List<string>? problems = null, Func<string, int>? rank = null)
+        {
+            var result = new List<string>();
+            var seen = new HashSet<string>(PathComparer);
+            List<string>? walked = null;
+            foreach (var entry in patterns)
+            {
+                if (IsPattern(entry))
+                {
+                    walked ??= Walk(directory);
+                    var regex = PatternToRegex(entry);
+                    foreach (var rel in walked.Where(r => regex.IsMatch(r)).OrderBy(r => rank?.Invoke(r) ?? 0).ThenBy(r => r, StringComparer.OrdinalIgnoreCase).ThenBy(r => r, StringComparer.Ordinal))
+                    {
+                        string full = Path.GetFullPath(rel, directory);
+                        if (seen.Add(full)) result.Add(full);
+                    }
+                }
+                else
+                {
+                    string full = Path.GetFullPath(entry.Replace('\\', '/'), directory);
+                    if (!File.Exists(full)) { problems?.Add($"The file '{entry}' does not exist."); continue; }
+                    if (seen.Add(full)) result.Add(full);
                 }
             }
             return result;

@@ -214,6 +214,146 @@ static class ProjectTests
         string preludeText = File.ReadAllText(prelude);
         Check("Pack: ein #include wird beim Packen eingesetzt", !preludeText.Contains("#include") && preludeText.Contains("class Part") && preludeText.Contains("class Whole"), preludeText);
         Check("Pack: der Befehl der Befehlszeile baut Programm und Bibliothek", CommandLine(slnPath, outDir));
+        TemplatesAndMarkup(root);
+    }
+
+    private static void TemplatesAndMarkup(string root)
+    {
+        string m0;
+        // ---- versions of packages ---------------------------------------------------------------------------------------------------------
+        Check("Version: der naechste Patch, Minor und Major", ProjectBuilder.BumpVersion("1.2.3") == "1.2.4" && ProjectBuilder.BumpVersion("1.2.3", "minor") == "1.3.0" && ProjectBuilder.BumpVersion("1.2.3", "major") == "2.0.0" && ProjectBuilder.BumpVersion(null) == "1.0.1" && ProjectBuilder.BumpVersion("2.5.0.0") == "2.5.1");
+        Check("Version: ein Paket hat drei Zahlen", ProjectBuilder.IsPackageVersion("1.0.0") && !ProjectBuilder.IsPackageVersion("1.0") && !ProjectBuilder.IsPackageVersion("1.x.0") && !ProjectBuilder.IsPackageVersion(""));
+        string licDir = Path.Combine(root, "lic");
+        Write(licDir, "Lic/Lic.fireproj", """{ "name": "Lic", "type": "library", "settings": { "version": "3.1.4", "license": "MIT", "description": "d", "author": "a" } }""");
+        Write(licDir, "Lic/lic.script", "namespace Lic { class A { static int One() { return 1 } } }\n");
+        var lic = Workspace.Open(Path.Combine(licDir, "Lic", "Lic.fireproj"));
+        var licPlan = BuildPlan.Create(lic, lic.Projects[0]);
+        string licPack = ProjectBuilder.PackLibrary(licPlan, Path.Combine(licDir, "out"));
+        Check("Pack: der Dateiname kommt aus Name und Version", licPack == ProjectBuilder.PackagePathFor(licPlan, Path.Combine(licDir, "out")) && Path.GetFileName(licPack) == "Lic-3.1.4.fpk", licPack);
+        var licManifest = fire.Package.Manager.Fpk.ReadManifest(licPack);
+        Check("Pack: Lizenz, Beschreibung, Autor und Version stehen im Manifest", licManifest.License == "MIT" && licManifest.Description == "d" && licManifest.Author == "a" && licManifest.Version == "3.1.4", licManifest.License);
+
+        // ---- templates: a solution of its own folder, the project in a folder of its own ------------------------------------------------
+        string t = Path.Combine(root, "templates");
+        Check("Vorlagen: Namen werden geprueft", ProjectTemplates.CheckName("Ok Name") == null && ProjectTemplates.CheckName("") != null && ProjectTemplates.CheckName("a/b") != null && ProjectTemplates.CheckName(".x") != null);
+        Check("Vorlagen: der vorgeschlagene Ordner ist $HOME/spark/{Name}", ProjectTemplates.DefaultSolutionFolder("Demo") == Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "spark", "Demo"));
+        Check("Vorlagen: fuer die Mappe mit 'Leer', fuer ein Projekt ohne", ProjectTemplates.ForSolution.Count == 5 && ProjectTemplates.ForSolution[0].Kind == TemplateKind.Empty && ProjectTemplates.ForProject.Count == 4);
+
+        var empty = Workspace.CreateSolution(ProjectTemplates.Find("empty")!, Path.Combine(t, "E"), "E");
+        Check("Vorlagen: leer = eine Mappe ohne Projekt", empty.Solution != null && empty.Projects.Count == 0 && File.Exists(Path.Combine(t, "E", "E.firesln")) && !Directory.Exists(Path.Combine(t, "E", "E")));
+
+        var terminal = Workspace.CreateSolution(ProjectTemplates.Find("terminal")!, Path.Combine(t, "T"), "T");
+        Check("Vorlagen: Terminal = Mappe im eigenen Ordner, das Projekt im Unterordner gleichen Namens",
+            File.Exists(Path.Combine(t, "T", "T.firesln")) && File.Exists(Path.Combine(t, "T", "T", "T.fireproj")) && File.Exists(Path.Combine(t, "T", "T", "main.script")) && terminal.Projects.Count == 1 && terminal.Projects[0].Name == "T");
+        Check("Vorlagen: Terminal gibt Hello, World! aus", RunPlan(BuildPlan.Create(terminal, terminal.Projects[0])).Trim() == "Hello, World!");
+
+        var desktop = Workspace.CreateSolution(ProjectTemplates.Find("desktop")!, Path.Combine(t, "D"), "D");
+        var desktopPlan = BuildPlan.Create(desktop, desktop.Projects[0]);
+        Check("Vorlagen: Desktop ist ein Programm ohne Konsole und uebersetzt", desktop.Projects[0].Project.Settings.Subsystem == "gui" && desktopPlan.IsValid && Ok(() => ProjectBuilder.Check(desktopPlan)), string.Join("\n", desktopPlan.Errors) + Catch(() => ProjectBuilder.Check(desktopPlan)));
+
+        var library = Workspace.CreateSolution(ProjectTemplates.Find("library")!, Path.Combine(t, "L"), "L");
+        var libraryPlan = BuildPlan.Create(library, library.Projects[0]);
+        Check("Vorlagen: Library ist eine Bibliothek ohne Einsprung und uebersetzt", library.Projects[0].Project.Type == OutputType.Library && libraryPlan.IsValid && Ok(() => ProjectBuilder.Check(libraryPlan)), Catch(() => ProjectBuilder.Check(libraryPlan)));
+
+        var nativeLib = Workspace.CreateSolution(ProjectTemplates.Find("native-library")!, Path.Combine(t, "N"), "N");
+        Check("Vorlagen: Native Library legt das C++ in den Ordner native/", nativeLib.Projects[0].Project.Native != null && File.Exists(Path.Combine(t, "N", "N", "native", "n.hpp")) && File.ReadAllText(Path.Combine(t, "N", "N", "N.fireproj")).Contains("\"native\""));
+
+        // natives: the functions are found in the C++, an application uses them through the library, in the virtual machine (a shared library is built from the C++ now)
+        string nativeApp = Path.Combine(t, "N");
+        var nativeSolution = Workspace.Open(Path.Combine(nativeApp, "N.firesln"));
+        string header = Path.Combine(nativeApp, "N", "native", "n.hpp");
+        File.AppendAllText(header, "\nnamespace fire {\ninline Value n_twice(Value a) { return Int(a.i * 2); }\ninline Value n_text(OwnList* list) { Str* s = allocStr(3, list); strChars(s)[0] = 'a'; strChars(s)[1] = 'b'; strChars(s)[2] = 'c'; return StrV(s); }\n}\n");
+        File.WriteAllText(Path.Combine(nativeApp, "N", "n.script"), "namespace N {\n    class Native {\n        static int Add(int a, int b) { return __n_add(a, b) }\n        static int Twice(int a) { return __n_twice(a) }\n        static string Text() { return __n_text() }\n    }\n}\n");
+        var found = ProjectNatives.Resolve(nativeSolution.Projects[0])!;
+        Check("Natives: die Funktionen stehen im C++ und werden gefunden", found.Native.Functions.Select(f => f.Name).OrderBy(n => n).SequenceEqual(new[] { "__n_add", "__n_text", "__n_twice" }) && found.Native.Functions.First(f => f.Name == "__n_text").NeedsList && found.Native.Functions.First(f => f.Name == "__n_add").Arguments == 2, string.Join(",", found.Native.Functions.Select(f => f.Name + "/" + f.Arguments)));
+        Check("Natives: auch in Kommentaren steht nichts", ProjectNatives.Discover("// inline Value nope(Value a) { return a; }\n/* inline Value nor(Value a) */\ninline Value yes(Value a) { return a; }\ninline int helper(int x) { return x; }\n").Select(f => f.Cpp).SequenceEqual(new[] { "yes" }));
+
+        var appDir = Path.Combine(t, "N", "App");
+        Directory.CreateDirectory(appDir);
+        File.WriteAllText(Path.Combine(appDir, "App.fireproj"), """{ "name": "App", "references": [ { "project": "../N/N.fireproj" } ] }""");
+        File.WriteAllText(Path.Combine(appDir, "main.script"), "#import \"N\"\nprint(N.Native.Add(2, 3))\nprint(N.Native.Twice(21))\nprint(N.Native.Text())\n");
+        nativeSolution.AddProject(Path.Combine(appDir, "App.fireproj"));
+        var nativeAppPlan = BuildPlan.Create(nativeSolution, nativeSolution.FindByName("App")!);
+        Check("Natives: der Plan kennt die Natives der Bibliothek", nativeAppPlan.IsValid && nativeAppPlan.NativeParts.Count() == 1, string.Join("\n", nativeAppPlan.Errors));
+        string nativeOut = "";
+        string nativeErr = Catch(() => nativeOut = RunPlan(nativeAppPlan));
+        Check("Natives: das Programm ruft das C++ der Bibliothek in der VM", nativeOut.Trim() == "5\n42\nabc", nativeErr + nativeOut);
+        // the same program as a native build: the C++ of the library goes into the generated file
+        string nativeExe = Path.Combine(t, "N", "app-native");
+        var nativeBuildOut = new StringWriter(); var nativeBuildErr = new StringWriter();
+        int nativeBuildCode = CommandLineRunner.Run(new[] { "build", Path.Combine(nativeApp, "N.firesln"), "-p", "App", "--engine", "native", "-o", nativeExe }, nativeBuildOut, nativeBuildErr);
+        string nativeRun = "";
+        if (nativeBuildCode == 0 && File.Exists(nativeExe))
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(nativeExe) { RedirectStandardOutput = true, UseShellExecute = false };
+            using var proc = System.Diagnostics.Process.Start(psi)!;
+            nativeRun = proc.StandardOutput.ReadToEnd().Replace("\r\n", "\n"); proc.WaitForExit();
+        }
+        Check("Natives: ein nativer Build uebernimmt das C++ der Bibliothek", nativeRun.Trim() == "5\n42\nabc", nativeBuildErr.ToString() + nativeBuildOut + nativeRun);
+        var nativeLibPlan = BuildPlan.Create(nativeSolution, nativeSolution.FindByName("N")!);
+        Check("Natives: die Bibliothek selbst uebersetzt (die Natives sind bekannt)", Ok(() => ProjectBuilder.Check(nativeLibPlan)), Catch(() => ProjectBuilder.Check(nativeLibPlan)));
+        string nativePack = ProjectBuilder.PackLibrary(nativeLibPlan, Path.Combine(t, "N", "out"));
+        var nativeManifest = fire.Package.Manager.Fpk.ReadManifest(nativePack);
+        var nativeImport = nativeManifest.Imports[0];
+        Check("Natives: das Paket enthaelt das C++ und die Funktionen", nativeImport.Native != null && nativeImport.Native.Functions.Count == 3 && nativeImport.Native.Sources.Count == 1 && nativeImport.Prelude != null, nativeImport.Native?.Sources.Count.ToString());
+        var noSources = new FireProject { Name = "Empty", Type = OutputType.Library, Native = new ProjectNative(), FilePath = Path.Combine(t, "Empty", "Empty.fireproj") };
+        Directory.CreateDirectory(Path.Combine(t, "Empty")); noSources.Save();
+        var emptyWs = Workspace.Open(noSources.FilePath!);
+        Check("Natives: ohne C++-Dateien meldet der Plan es", BuildPlan.Create(emptyWs, emptyWs.Projects[0]).Errors.Any(e => e.Contains("no C++ files")));
+
+        // a project made in a folder of the solution lives in a subfolder of it; the folder is kept in the solution file
+        var inFolder = Workspace.CreateSolution(ProjectTemplates.Find("terminal")!, Path.Combine(t, "F"), "F");
+        string libsFolder = inFolder.AddFolder(Path.Combine(t, "F", "libs"));
+        var made = inFolder.CreateProject(ProjectTemplates.Find("library")!, libsFolder, "Util");
+        Check("Vorlagen: ein Projekt in einem Ordner der Mappe liegt in dessen Unterordner", made.FilePath == Path.Combine(t, "F", "libs", "Util", "Util.fireproj") && inFolder.Projects.Count == 2 && File.Exists(made.FilePath));
+        var reopened = Workspace.Open(Path.Combine(t, "F", "F.firesln"));
+        Check("Vorlagen: Ordner und Projekte stehen in der Mappendatei", reopened.Solution!.Folders.Count == 1 && reopened.Solution.Folders[0] == "libs" && reopened.Projects.Count == 2 && reopened.FindByName("Util") != null);
+        Check("Vorlagen: ein Ordner ausserhalb der Mappe wird abgelehnt", Throws(() => inFolder.AddFolder(Path.Combine(t, "elsewhere"))));
+        Check("Vorlagen: ein vorhandenes Projekt wird nicht ueberschrieben", Throws(() => ProjectTemplates.CreateProject(ProjectTemplates.Find("terminal")!, Path.Combine(t, "T"), "T")));
+        var standalone = new Workspace();
+        string alone = ProjectTemplates.CreateProject(ProjectTemplates.Find("terminal")!, Path.Combine(t, "alone"), "Solo");
+        standalone.Load(alone);
+        Check("Vorlagen: ein Projekt ohne Mappe bekommt ebenfalls seinen Ordner", alone == Path.Combine(t, "alone", "Solo", "Solo.fireproj") && standalone.Solution == null && standalone.Projects.Count == 1);
+
+        // content of a project: resources are copied into a folder of it, natives get the folder native/
+        string pic = Write(root, "outside/logo.png", "not really a picture");
+        var content = terminal.Projects[0];
+        string copied = terminal.AddContentFile(content, pic, Path.Combine(content.Directory, "resources"));
+        Check("Inhalt: eine Ressource wird in den Unterordner des Projekts kopiert und gehoert nicht zum Code", copied == Path.Combine(content.Directory, "resources", "logo.png") && File.Exists(copied) && content.ContentFiles.Contains(copied) && !content.Files.Contains(copied) && content.Folders.Contains("resources"));
+        Check("Inhalt: eine vorhandene Datei wird nicht ueberschrieben", Throws(() => terminal.AddContentFile(content, pic, Path.Combine(content.Directory, "resources"))));
+        Check("Inhalt: ein Ordner ausserhalb des Projekts wird abgelehnt", Throws(() => terminal.AddContentFile(content, pic, Path.Combine(t, "elsewhere"))));
+        string nativeHeaderPath = terminal.AddNative(content);
+        Check("Inhalt: Natives bekommen den Ordner native/ und eine Kopfdatei", nativeHeaderPath == Path.Combine(content.Directory, "native", "t.hpp") && File.Exists(nativeHeaderPath) && content.Project.Native != null && File.ReadAllText(content.FilePath).Contains("\"native\"") && content.Folders.Contains("native"));
+        Check("Inhalt: die Funktion der Kopfdatei wird gefunden", ProjectNatives.Resolve(content)!.Native.Functions.Any(f => f.Name == "__t_add"));
+        Check("Inhalt: Notizen und Kopfdateien sind keine Quelldateien", content.Files.All(f => FireProject.IsSourceFile(f)) && !FireProject.IsSourceFile("native/t.hpp") && FireProject.IsSourceFile("a.fxml"));
+
+        // a resource is compiled in when the code asks for it: the path is relative to the file that writes it
+        Write(m0 = Path.Combine(root, "res"), "R/R.fireproj", """{ "name": "R" }""");
+        Write(m0, "R/data/hello.txt", "hello from a resource");
+        Write(m0, "R/code/main.script", "print(new Resource(\"../data/hello.txt\").Text())\n");
+        var resWs = Workspace.Open(Path.Combine(m0, "R", "R.fireproj"));
+        Check("Inhalt: new Resource(...) holt die Datei aus dem Projektordner (Pfad relativ zur Quelldatei)", RunPlan(BuildPlan.Create(resWs, resWs.Projects[0])).Trim() == "hello from a resource" && !resWs.Projects[0].Files.Any(f => f.EndsWith("hello.txt")));
+
+        // ---- the code of a project is included on its own: no #include, markup files too ---------------------------------------------------
+        string m = Path.Combine(root, "markup");
+        Write(m, "Ui/Ui.fireproj", """{ "name": "Ui" }""");
+        Write(m, "Ui/win.fxml", "<Window class=\"MainWindow\" title=\"x\" width=\"100\" height=\"100\">\n  <Label text=\"Hi\"/>\n</Window>\n");
+        Write(m, "Ui/helper.script", "class Helper { static int Two() { return 2 } }\n");
+        Write(m, "Ui/main.script", "#include \"helper.script\"\n#include \"win.fxml\"\nprint(Helper.Two())\n");
+        var ui = Workspace.Open(Path.Combine(m, "Ui", "Ui.fireproj"));
+        var uiPlan = BuildPlan.Create(ui, ui.Projects[0]);
+        Check("Projekt: eine .fxml-Datei gehoert zu den Dateien und wird als erzeugtes Skript uebersetzt", ui.Projects[0].Files.Any(f => f.EndsWith("win.fxml")) && uiPlan.IsValid && uiPlan.Sources.First(s => s.FileName == "win.fxml").Text.Contains("class MainWindow"), string.Join("\n", uiPlan.Errors));
+        Check("Projekt: Markup steht vor den Skripten", Path.GetFileName(ui.Projects[0].Files[0]) == "win.fxml");
+        Check("Projekt: ein #include einer Datei des Projekts fuegt nichts doppelt ein", RunPlan(uiPlan).Trim() == "2", Catch(() => RunPlan(uiPlan)));
+        Write(m, "Ui/broken.fxml", "<Window");
+        ui.Projects[0].Refresh();
+        var brokenPlan = BuildPlan.Create(ui, ui.Projects[0]);
+        Check("Projekt: ungueltiges Markup ist ein Fehler mit dem Dateinamen", !brokenPlan.IsValid && brokenPlan.Errors.Any(e => e.Contains("broken.fxml")), string.Join("\n", brokenPlan.Errors));
+        File.Delete(Path.Combine(m, "Ui", "broken.fxml"));
+        ui.Projects[0].Refresh();
+        string data = Write(m, "Ui/data.txt", "just data");
+        ui.AddFile(ui.Projects[0], data);
+        Check("Projekt: eine Datei, die kein Quelltext ist, wird nicht mitkompiliert", !ui.Projects[0].Files.Any(f => f.EndsWith("data.txt")) && !ui.Projects[0].Project.Files.Any(f => f.EndsWith("data.txt")));
     }
 
     private static bool CommandLine(string slnPath, string outDir)

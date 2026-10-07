@@ -30,10 +30,11 @@ namespace fire.Compiler
             return result;
         }
 
-        /// <summary>Is `name` the import name of a library of the plan? Adds the (canonical) name to `imports` when it is.</summary>
-        public static bool TryImport(BuildPlan? plan, string name, List<string> imports)
+        /// <summary>Is `name` the import name of a library of the plan? Adds the (canonical) name to `imports` when it is - and, for a library with C++ natives, their key to `nativeImports`.</summary>
+        public static bool TryImport(BuildPlan? plan, string name, List<string> imports, HashSet<string>? nativeImports = null)
         {
             if (plan == null || !plan.Libraries.TryGetValue(name, out var library)) return false;
+            if (ProjectNativeOverlay.KeyOfLibrary(plan, name) is { } nativeKey) nativeImports?.Add(nativeKey);   // the C++ of the library comes with it
             if (!imports.Contains(library.ImportName, StringComparer.OrdinalIgnoreCase)) imports.Add(library.ImportName);
             return true;
         }

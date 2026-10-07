@@ -31,12 +31,26 @@ compiler (`fire run|build x.fireproj`), by the editor (spark) and by the tests.
 ```
 
 **Files.** `files` are paths and patterns relative to the project file (`*` any characters but `/`, `**` any folders, `?`, `{a,b}`); a pattern matches in name order, a path
-keeps its place. Without `files` the project takes every fire file (`*.script`, `*.fi`, `*.fic`) below its folder - except `bin`, `obj`, hidden folders and the folders of
-*other* projects. A program runs its files one after the other as one program (top-level code in the order of the files), so the **entry file is put last**: what the other
-files declare is known by then. A file is never `#include`d *and* listed (it would be there twice).
+keeps its place. Without `files` the project takes every fire file (`*.script`, `*.fi`, `*.fic`) and every UI markup file (`*.fxml`) below its folder - except `bin`, `obj`, hidden
+folders and the folders of *other* projects. A program runs its files one after the other as one program (top-level code in the order of the files), so the **entry file is put
+last**: what the other files declare is known by then.
 
-**Settings** (all optional): `subsystem` (`console`/`gui`), `mode` (`debug`/`release`/`performance`), `floatWidth` (32/64), `name`, `codename`, `description`, `author`, `comments`,
-`icon`, `version`, `fileVersion` (the assembly information), `defines` (symbols for `#if`), `engine` (`vm`/`native`), `target`, `toolchain`, `output`. Paths are relative to the
+**The code of a project is included on its own** - for the build and for the editor (colours of classes, completion, tooltips, "go to definition", the errors that are underlined). No
+`#include` is needed to use what another file of the project declares. A **markup file** (`.fxml`, docs/UI_MARKUP.md) of the project counts as the script that is generated from it
+(markup files come first, so that their classes are there before the scripts use them). An `#include` of a file that is part of the project adds nothing (it is there anyway), so nothing
+is declared twice. Files that are not code - pictures, data, C++ sources - are the **content** of the project: they live in its folder (shown by the editor, not compiled), see below.
+
+**Content.** Everything else in the project folder is content: resources, the C++ of the natives, notes. `new Resource("images/logo.png")` takes a file of the folder into the program when
+it is compiled (docs/RESOURCES.md: the path is relative to the file that writes it); the editor copies files in (*Add Resource*) into a folder you choose.
+
+**Natives.** A project with `"native": {}` has C++ natives in its folder `native/` (docs/PACKAGE_NATIVES.md): every `inline Value name(Value a, ...)` in a file there is the fire function
+`__name` (a last parameter `OwnList* list` says that the function allocates its result and returns it). A library project wraps them in classes; programs that reference the library use
+them (in the virtual machine a shared library is built from the C++ for the machine; a native build puts the C++ into the generated file), and the package that is packed carries the C++.
+`native` can also name `sources` (files and patterns, default `native/**`), `platformSources`, `platforms`, `linkLibraries`, `exceptions`, `reset` and `functions` (to say more about a function,
+like `returnsReference`) - the same as in a package.
+
+**Settings** (all optional): `subsystem` (`console`/`gui`), `mode` (`debug`/`release`/`performance`), `floatWidth` (32/64), `name`, `codename`, `description`, `author`, `license`
+(a library that is packed), `comments`, `icon`, `version`, `fileVersion` (the assembly information), `defines` (symbols for `#if`), `engine` (`vm`/`native`), `target`, `toolchain`, `output`. Paths are relative to the
 file that holds them.
 
 ### Precedence
@@ -80,6 +94,10 @@ How it works (and why this is the answer to "references to other fire assemblies
 * **Packages are the binary form.** `fire build Core.fireproj` (or "Pack" in the editor) checks the library and writes `Core-1.2.0.fpk` - an ordinary package of `ember` with the
   library's files as its prelude (an `#include` is inlined), the import name, the version of the settings, and the libraries and packages it references as `dependencies` and
   `requires`. Installed (`ember install`), any program `#import "Core"`s it - without the project. A solution project and its package are interchangeable.
+* **The package takes its metadata from the project**: name (the project's), import name (`import`, default the name), version (`settings.version`, three numbers), description, author, license
+  (`settings.*`, the solution's go behind the project's), the libraries and packages it references (as dependencies and `requires`). *Pack as Package* (project menu, context menu of a
+  library) asks for version, description, author, license and the folder, writes the answers back into the project and can raise the patch number afterwards (`1.2.3` -> `1.2.4`, ready for the
+  next package). The file is `Name-1.2.3.fpk`; a version that exists is replaced (the dialog says so).
 * **Packages as references.** `{ "package": "fire-http" }` names a package that has to be installed; the build says so if it is not (`ember install fire-http`) and a packed library
   lists it as a dependency.
 
@@ -97,10 +115,44 @@ fire.Compiler build All.firesln                 # a program: bin/App (or the "ou
 fire.Compiler build Core/Core.fireproj          # a library: bin/Core-1.2.0.fpk (-o names the folder)
 ```
 
+## New solutions and projects
+
+*File > New Solution* asks for a **name**, a **folder** and a **template** (a list). A solution lives in a folder of its own - proposed: `$HOME/spark/{name}` - and a template other than
+*Empty* makes a project of the same name in a folder of its own below it:
+
+```
+$HOME/spark/Demo/Demo.firesln
+$HOME/spark/Demo/Demo/Demo.fireproj
+$HOME/spark/Demo/Demo/main.script
+```
+
+| template | makes |
+|---|---|
+| Empty | the solution only |
+| Terminal | a program for the console: prints `Hello, World!` |
+| Desktop | a program with a window (`subsystem: gui`): a label and a button with `#import "ui"` |
+| Library | a library with a class `Greeter` in `namespace {Name}`; no entry point |
+| Native Library | a library with C++ natives: `native/{name}.hpp` with an example function, wrapped by a class |
+
+*New Project* (Project menu, context menu of the solution) asks for the same, with the **location** instead of a solution folder: the project gets a folder `{location}/{name}`. The location is
+proposed as the solution folder; a folder of the solution (*New Folder* on the solution or on a folder; folders that hold projects are shown, empty ones are kept in the solution file as
+`folders`) puts the project into a subfolder of it. Without a solution a project is made on its own (proposed location `$HOME/spark`).
+
 ## The editor
 
-* **Solution Explorer** (a tool window): the solution, its projects (programs and libraries), their files and references. Double-click opens a file; the context menus add a new file,
-  an existing file, a reference, set the startup project, build/run/pack, reveal in the file manager, remove, and open the project's properties.
+* **Solution Explorer** (a tool window): the solution, its folders and projects (programs and libraries), their files - the code in compile order, the content (resources, C++) next to it,
+  also empty folders - and references. Double-click opens a file in the editor that fits: scripts, markup (with the design view), C++ and other text (a text editor; C++ with colours),
+  pictures (a viewer), other data files (the hex editor). The context menus add a new file, an existing file, a resource (the file is *copied* into a folder of the project), a folder, native
+  code (C++), a reference, set the startup project, build/run/pack, reveal in the file manager, remove, and open the project's properties; a file can also be opened *as text*, *as hex* or - a
+  picture - in the *pixel editor*.
+* **Viewer for pictures**: any size and colour depth the platform decodes (PNG, BMP, GIF, JPEG), zoom with sharp pixels (Ctrl+wheel), a grid of pixels, a chequerboard that shows what is
+  transparent; *Edit pixels* opens the picture in the pixel editor.
+* **Pixel editor** (File > New Pixel Image, or *Edit pixels*): a palette of 256 colours - the palette of fire with entry 0 transparent - or true colour; pencil, eraser, line, rectangle (filled or
+  not), fill, colour picker; the left button draws with the first colour, the right button with the second (transparent at the start); double-click a palette entry to change its colour
+  (`#RRGGBB` or `#RRGGBBAA`); size, conversion between palette and true colour, zoom, grid, undo. It reads PNG, BMP and GIF and saves PNG (an indexed picture stays indexed, with the transparent
+  entry) and BMP (no transparent entry).
+* **Hex editor**: offset, 16 bytes in hex and as text; typing overwrites (hex digits or, in the text column, characters), Insert puts in a zero byte, Delete takes a byte out, Ctrl+G jumps to an
+  offset, Find looks for bytes (`DE AD BE EF`) or text (`"abc"`); files up to 128 MB; undo.
 * **File menu**: New Project / New Solution / Open Project or Solution / Close. **Project menu**: add a new or existing project to the solution, set the startup project, reload the project (read its folder
   again), **Project properties** (tabs *Project*, *Build settings*, *References*, *Solution*; the settings of the solution are the ones that every project without its own value gets).
 * The documents stay documents: files of the project open in tabs like any other file, files outside open next to them, and every command that builds looks at the active tab. The status bar
@@ -109,6 +161,8 @@ fire.Compiler build Core/Core.fireproj          # a library: bin/Core-1.2.0.fpk 
 * Breakpoints belong to a file of the project (not to "the" script), also in library files; the debugger shows the file it is in. Live diagnostics of a file are made in the context of its project
   (the libraries, the project's symbols for `#if`).
 * Old window layouts without the Solution Explorer fall back to the default layout once.
+
+* **Git**: the state of the files in the explorer, commit, history, branches, pull and push - see docs/GIT.md.
 
 ## Open points
 

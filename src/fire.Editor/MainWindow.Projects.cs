@@ -15,6 +15,7 @@ namespace fire.Editor
     // Projects and solutions (docs/PROJECTS.md): the workspace, the solution explorer, the Project menu, what Start and Build act on.
     public partial class MainWindow
     {
+        private static readonly FilePickerFileType AllFilesType = new("All files") { Patterns = new[] { "*" } };
         private static readonly FilePickerFileType ProjectFilesType = new("fire projects and solutions") { Patterns = new[] { "*" + FireProject.Extension, "*" + FireSolution.Extension } };
         private static readonly FilePickerFileType ProjectOnlyType = new("fire projects") { Patterns = new[] { "*" + FireProject.Extension } };
         private static readonly FilePickerFileType SolutionOnlyType = new("fire solutions") { Patterns = new[] { "*" + FireSolution.Extension } };
@@ -91,8 +92,60 @@ namespace fire.Editor
             return LiveDiagnostics.Analyze(source, script.BaseDirectory);
         }
 
+        private readonly Dictionary<string, (DateTime Stamp, string Text)> _fileTexts = new(ProjectFiles.PathComparer);
+
+        /// <summary>The text of a file of the project: the open buffer (also an unsaved one), else the file (read again when it changed).</summary>
+        private string? TextOfFile(string path)
+        {
+            if (OpenText(path) is { } open) return open;
+            try
+            {
+                var stamp = File.GetLastWriteTimeUtc(path);
+                if (_fileTexts.TryGetValue(path, out var known) && known.Stamp == stamp) return known.Text;
+                string text = File.ReadAllText(path);
+                _fileTexts[path] = (stamp, text);
+                return text;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        }
+
+        /// <summary>The script of a file of the project: its text, or for the markup of a user interface (`.fxml`) the script that is generated from it (null if it is not valid).</summary>
+        private string? ScriptTextOfFile(string path)
+        {
+            string? text = TextOfFile(path);
+            if (text == null || !FireProject.IsMarkupFile(path)) return text;
+            try { return BuildPlan.GenerateMarkupScript(path, text); }
+            catch (fire.UI.Markup.MarkupException) { return null; }
+        }
+
+        /// <summary>The other files of the project of a document, and the files of the libraries that it imports (`#import "Name"`): what they declare is known to completion, tooltips
+        /// and "go to definition" without `#include`, as it is to the build.</summary>
+        private IReadOnlyList<(string Path, string Text)> ProjectFilesFor(ScriptEditorControl script)
+        {
+            var result = new List<(string, string)>();
+            if (!_workspace.IsOpen || script.FilePath == null || _workspace.FindProjectOf(script.FilePath) is not { } project) return result;
+            string self = Path.GetFullPath(script.FilePath);
+            foreach (var file in project.Files)
+                if (!ProjectFiles.PathComparer.Equals(file, self) && ScriptTextOfFile(file) is { } text) result.Add((file, text));
+            var imports = new HashSet<string>(ImportedPreludes.FindImportNames(script.GetText()).Concat(result.SelectMany(r => ImportedPreludes.FindImportNames(r.Item2))), StringComparer.OrdinalIgnoreCase);
+            if (imports.Count > 0)
+                foreach (var reference in project.Project.References.Where(r => r.IsProject))
+                {
+                    try
+                    {
+                        var library = _workspace.LoadProject(Path.GetFullPath(reference.Project!.Replace('\\', '/'), project.Directory));
+                        if (!imports.Contains(library.Project.ImportName)) continue;
+                        foreach (var file in library.Files)
+                            if (ScriptTextOfFile(file) is { } text) result.Add((file, text));
+                    }
+                    catch (Exception ex) when (ex is ProjectException or IOException) { /* a library that cannot be read adds nothing */ }
+                }
+            return result;
+        }
+
         private void AttachProjectSupport(ScriptEditorControl script)
         {
+            script.ProjectFilesProvider = () => ProjectFilesFor(script);
             script.DiagnosticsProvider = source => AnalyzeDocument(script, source);
             script.ExtraDefines = () => ProjectDefinesOf(script);
         }
@@ -105,6 +158,9 @@ namespace fire.Editor
         {
             mnuCloseWorkspace.IsEnabled = _workspace.IsOpen;
             RefreshProjectUi();
+            RefreshGit();
+            ScriptEditorControl.NoteProjectChanged();
+            fire.Package.Manager.PackageStore.Default.ClearOverlay();   // the natives of the projects are put back by the next build or analysis
             // what belongs to which project (and the libraries) may have changed: check the open scripts again
             foreach (var doc in _documents) { doc.Script?.InvalidateConditionalSymbols(); doc.Script?.Revalidate(); }
         }
@@ -113,7 +169,7 @@ namespace fire.Editor
         private void RefreshProjectUi()
         {
             var doc = ActiveDocument;
-            _solutionPanel.Refresh(_workspace, FullPathOf(doc));
+            _solutionPanel.Refresh(_workspace, FullPathOf(doc), _gitRoot == null ? null : _gitStates, _gitBranch);
             var project = ContextProject();
             ContextText.Text = project != null
                 ? $"Build: {project.Name} ({(project.Project.Type == OutputType.Library ? "library" : "project")})"
@@ -164,58 +220,57 @@ namespace fire.Editor
 
         private async void NewSolution_Click(object? sender, RoutedEventArgs e)
         {
-            string? path = await PickSavePath("New Solution", "MySolution", "firesln", SolutionOnlyType);
-            if (path == null) return;
+            var dialog = new NewProjectDialog(solution: true);
+            if (await dialog.ShowDialog<bool?>(this) != true || dialog.Template == null) return;
             try
             {
-                new FireSolution { Name = Path.GetFileNameWithoutExtension(path) }.Save(path);
-                _workspace.Load(path);
+                // the dialog's location is the folder of the solution itself: `{location}/{name}.firesln`, the project in `{location}/{name}`
+                _workspace.Load(ProjectTemplates.CreateSolution(dialog.Template, dialog.Location, dialog.Name));
             }
             catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "New Solution"); return; }
-            UpdateStatus($"Solution {_workspace.Name} created: add projects with Project > Add New Project.");
             ShowSolutionExplorer();
+            if (_workspace.Projects.FirstOrDefault()?.Files.FirstOrDefault() is { } first) OpenFile(first);
+            UpdateStatus(dialog.Template.MakesProject ? $"Solution {_workspace.Name} created with the project {_workspace.Name}." : $"Solution {_workspace.Name} created: add projects with Project > Add New Project.");
         }
 
-        private async void NewProject_Click(object? sender, RoutedEventArgs e) => await NewProject(addToSolution: _workspace.Solution != null);
+        private async void NewProject_Click(object? sender, RoutedEventArgs e) => await NewProject(addToSolution: _workspace.Solution != null, null);
 
         private async void AddNewProject_Click(object? sender, RoutedEventArgs e)
         {
             if (_workspace.Solution == null) { await Dialogs.Message(this, "There is no solution: create one with File > New Solution.", "Add Project"); return; }
-            await NewProject(addToSolution: true);
+            await NewProject(addToSolution: true, null);
         }
 
-        /// <summary>Asks for the kind and the place of a new project and makes it (into the open solution when there is one, else it is opened on its own).</summary>
-        private async Task NewProject(bool addToSolution)
+        /// <summary>Asks for the name, the place and the template of a new project and makes it in a folder of its own (`{location}/{name}`): into the open solution when there is one (the location
+        /// is the solution folder or the folder `folder`, e.g. a folder of the solution), else it is opened on its own.</summary>
+        private async Task NewProject(bool addToSolution, string? folder)
         {
-            var kind = await Dialogs.Ask(this, "What kind of project?\n\nA program runs; a library has no entry point and is used by other projects (Add Reference) or packed as a package.", "New Project",
-                ("Program", Dialogs.Answer.Yes), ("Library", Dialogs.Answer.No), ("Cancel", Dialogs.Answer.Cancel));
-            if (kind == Dialogs.Answer.Cancel) return;
-            string? path = await PickSavePath("New Project (choose the folder and the name)", kind == Dialogs.Answer.Yes ? "MyProgram" : "MyLibrary", "fireproj", ProjectOnlyType);
-            if (path == null) return;
+            string? location = addToSolution && _workspace.Solution != null ? folder ?? _workspace.Solution.Directory : null;
+            var dialog = new NewProjectDialog(solution: false, location);
+            if (await dialog.ShowDialog<bool?>(this) != true || dialog.Template == null) return;
             try
             {
-                var type = kind == Dialogs.Answer.Yes ? OutputType.Exe : OutputType.Library;
                 LoadedProject created;
-                if (addToSolution && _workspace.Solution != null) created = _workspace.CreateProject(path, type);
+                if (addToSolution && _workspace.Solution != null) created = _workspace.CreateProject(dialog.Template, dialog.Location, dialog.Name);
                 else
                 {
-                    var project = new FireProject { Name = Path.GetFileNameWithoutExtension(path), Type = type };
-                    string dir = Path.GetDirectoryName(Path.GetFullPath(path))!;
-                    Directory.CreateDirectory(dir);
-                    string main = Path.Combine(dir, type == OutputType.Library ? project.ImportName.ToLowerInvariant() + ".script" : "main.script");
-                    if (!File.Exists(main))
-                        File.WriteAllText(main, type == OutputType.Library
-                            ? $"// The library {project.Name}: classes and functions, no statements at the top level.\nclass Greeter {{\n    static string Hello(string name) {{ return \"Hello, \" + name }}\n}}\n"
-                            : $"print(\"Hello from {project.Name}\")\n");
-                    project.Save(path);
-                    _workspace.Load(path);
+                    _workspace.Load(ProjectTemplates.CreateProject(dialog.Template, dialog.Location, dialog.Name));
                     created = _workspace.Projects[0];
                 }
                 ShowSolutionExplorer();
                 if (created.Files.FirstOrDefault() is { } first) OpenFile(first);
-                UpdateStatus($"Project {created.Name} created.");
+                UpdateStatus($"Project {created.Name} created in {created.Directory}.");
             }
             catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "New Project"); }
+        }
+
+        private async Task NewSolutionFolder(string parent)
+        {
+            string? name = await Dialogs.Input(this, "Name of the new folder:", "New Folder");
+            if (string.IsNullOrWhiteSpace(name)) return;
+            if (ProjectTemplates.CheckName(name.Trim()) is { } problem) { await Dialogs.Message(this, problem, "New Folder"); return; }
+            try { _workspace.AddFolder(Path.Combine(parent, name.Trim())); }
+            catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "New Folder"); }
         }
 
         private async void AddExistingProject_Click(object? sender, RoutedEventArgs e)
@@ -263,17 +318,27 @@ namespace fire.Editor
             {
                 if (File.Exists(full)) { await Dialogs.Message(this, $"'{name}' exists already; use Add Existing File.", "Add New File"); return; }
                 Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-                File.WriteAllText(full, "");
+                File.WriteAllText(full, FireProject.IsMarkupFile(full) ? NewMarkupText(Path.GetFileNameWithoutExtension(full)) : "");
                 _workspace.AddFile(project, full);
                 OpenFile(full);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { await Dialogs.Message(this, ex.Message, "Add New File"); }
         }
 
+        /// <summary>The starting text of a new markup file in a project: the class of its window is named like the file (the classes of a program have to differ).</summary>
+        private static string NewMarkupText(string fileName)
+        {
+            var chars = fileName.Select(c => char.IsLetterOrDigit(c) && c < 128 || c == '_' ? c : '_').ToArray();
+            string name = new string(chars);
+            if (name.Length == 0 || !char.IsLetter(name[0])) name = "W" + name;
+            name = char.ToUpperInvariant(name[0]) + name.Substring(1);
+            return UiMarkupTemplate.Replace("class=\"MainWindow\"", $"class=\"{name}\"").Replace("title=\"My window\"", $"title=\"{name}\"");
+        }
+
         private async Task AddExistingFile(LoadedProject? project)
         {
             if (project == null) return;
-            foreach (var file in await PickFiles("Add Existing File", ScriptFiles))
+            foreach (var file in await PickFiles("Add Existing File", ScriptFiles, UiMarkupFiles))
             {
                 try { _workspace.AddFile(project, file); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { await Dialogs.Message(this, ex.Message, "Add Existing File"); }
@@ -321,25 +386,43 @@ namespace fire.Editor
             catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "Project Properties"); }
         }
 
-        /// <summary>Checks the library and writes `name-version.fpk` (a package that ember installs and other programs `#import`).</summary>
+        /// <summary>Asks for the version and the metadata, checks the library and writes `name-version.fpk` (a package that ember installs and other programs `#import`). The answers are kept in the
+        /// project's settings; the version can be raised afterwards for the next package.</summary>
         private async Task PackLibrary(LoadedProject? project)
         {
             if (project == null) return;
             if (project.Project.Type != OutputType.Library) { await Dialogs.Message(this, $"'{project.Name}' is a program: only a library is packed.", "Pack Library"); return; }
+            var effective = ProjectSettings.Merge(project.Project.Settings, _workspace.Solution?.Settings);
+            string suggested = effective.Output != null ? Path.GetFullPath(effective.Output, project.Directory) : Path.Combine(project.Directory, "bin");
+            var dialog = new PackDialog(project, effective, suggested);
+            if (await dialog.ShowDialog<bool?>(this) != true) return;
+
+            var settings = project.Project.Settings;
+            settings.Version = dialog.Version;
+            if (dialog.Description != null) settings.Description = dialog.Description;
+            if (dialog.Author != null) settings.Author = dialog.Author;
+            if (dialog.License != null) settings.License = dialog.License;
+            try { _workspace.SaveProject(project); }
+            catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "Pack Library"); return; }
+
             var plan = CreatePlan(project);
-            string suggested = Path.Combine(project.Directory, "bin");
-            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = $"Folder for the package of {project.Name}", SuggestedStartLocation = await StorageProvider.TryGetFolderFromPathAsync(Directory.Exists(suggested) ? suggested : project.Directory) });
-            if (folders.Count == 0 || folders[0].TryGetLocalPath() is not { } folder) return;
-            UpdateStatus($"Packing {project.Name}...");
+            UpdateStatus($"Packing {project.Name} {dialog.Version}...");
             string? error = null, result = null;
             await Task.Run(() =>
             {
-                try { result = ProjectBuilder.PackLibrary(plan, folder); }
+                try { result = ProjectBuilder.PackLibrary(plan, dialog.Folder); }
                 catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException or fire.Package.Manager.PackageException || CommandLineRunner.IsCompileErrorForEditor(ex)) { error = CompileErrors.Describe(ex); }
             });
             if (error != null) { UpdateStatus("Packing failed."); await Dialogs.Message(this, error, "Pack Library"); return; }
+            string next = "";
+            if (dialog.BumpAfterwards)
+            {
+                settings.Version = ProjectBuilder.BumpVersion(dialog.Version);
+                try { _workspace.SaveProject(project); next = $"\n\nThe version of the project is {settings.Version} now."; }
+                catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { next = "\n\n(The next version could not be saved: " + ex.Message + ")"; }
+            }
             UpdateStatus($"Packed {result}");
-            await Dialogs.Message(this, $"{result}\n\nInstall it with the Package Manager (or `ember install`); programs then write #import \"{project.Project.ImportName}\".", "Pack Library");
+            await Dialogs.Message(this, $"{result}\n\nInstall it with the Package Manager (or `ember install`); programs then write #import \"{project.Project.ImportName}\"." + next, "Pack Library");
         }
 
         // -----------------------------------------------------------
@@ -348,15 +431,21 @@ namespace fire.Editor
 
         private async Task OnSolutionCommand(string command, ExplorerNode? node)
         {
+            if (command.StartsWith("git-", StringComparison.Ordinal)) { await OnGitExplorerCommand(command, node); return; }
             var project = node?.Project ?? CommandProject(node);
             switch (command)
             {
-                case "new-project": await NewProject(addToSolution: false); break;
+                case "new-project": await NewProject(addToSolution: _workspace.Solution != null, null); break;
                 case "open-workspace": OpenWorkspace_Click(this, new RoutedEventArgs()); break;
-                case "add-new-project": await NewProject(addToSolution: true); break;
+                case "add-new-project": await NewProject(addToSolution: true, node?.Kind == ExplorerKind.SolutionFolder ? node.Path : null); break;
+                case "new-folder": if (_workspace.Solution != null) await NewSolutionFolder(node?.Kind == ExplorerKind.SolutionFolder && node.Path != null ? node.Path : _workspace.Solution.Directory!); break;
+                case "remove-folder": if (node?.Path != null) _workspace.RemoveFolder(node.Path); break;
                 case "add-existing-project": AddExistingProject_Click(this, new RoutedEventArgs()); break;
                 case "close-workspace": CloseWorkspace_Click(this, new RoutedEventArgs()); break;
                 case "open": if (node?.Path != null) OpenFile(node.Path); break;
+                case "open-pixel": if (node?.Path != null) OpenFile(node.Path, forceKind: DocumentKind.Pixel); break;
+                case "open-text": if (node?.Path != null) OpenFile(node.Path, forceKind: DocumentKind.Text); break;
+                case "open-hex": if (node?.Path != null) OpenFile(node.Path, forceKind: DocumentKind.Hex); break;
                 case "add-new-file": await AddNewFile(project, node?.Kind == ExplorerKind.Folder ? node.Path : null); break;
                 case "add-existing-file": await AddExistingFile(project); break;
                 case "add-reference": await AddReference(project); break;
@@ -368,7 +457,101 @@ namespace fire.Editor
                 case "run-project": await RunProject(project); break;
                 case "reveal": Reveal(node); break;
                 case "remove": await RemoveNode(node); break;
+                case "add-resource": await AddResource(project, node); break;
+                case "new-project-folder": await NewProjectFolder(project, node); break;
+                case "add-native": await AddNative(project, node); break;
+                case "delete-file": await DeleteContentFile(node); break;
             }
+        }
+
+        /// <summary>The folder a command of a node concerns: the folder itself, the project folder for a project (or a file: the folder it is in).</summary>
+        private static string? FolderOf(ExplorerNode? node, LoadedProject project) => node?.Kind switch
+        {
+            ExplorerKind.Folder => node.Path,
+            ExplorerKind.File or ExplorerKind.Content => node.Path != null ? Path.GetDirectoryName(node.Path) : null,
+            _ => project.Directory,
+        };
+
+        /// <summary>Copies files into the project (resources: nothing is compiled from them until the code says `new Resource("...")`): into the folder that was clicked, for the project itself into a
+        /// subfolder to be named (proposed: resources).</summary>
+        private async Task AddResource(LoadedProject? project, ExplorerNode? node)
+        {
+            if (project == null) return;
+            string folder = FolderOf(node, project) ?? project.Directory;
+            if (node?.Kind == ExplorerKind.Project)
+            {
+                string? sub = await Dialogs.Input(this, "Copy the files into this folder of the project (empty: the project folder):", "Add Resource", "resources");
+                if (sub == null) return;
+                sub = sub.Trim();
+                folder = sub.Length == 0 ? project.Directory : Path.GetFullPath(sub, project.Directory);
+                if (ProjectFiles.Relative(project.Directory, folder).StartsWith("..")) { await Dialogs.Message(this, "The folder has to be inside the project.", "Add Resource"); return; }
+            }
+            var files = await PickFiles("Add Resource (the files are copied into " + ProjectFiles.Relative(project.Directory, folder) + ")", AllFilesType);
+            int copied = 0;
+            foreach (var file in files)
+            {
+                try { _workspace.AddContentFile(project, file, folder); copied++; }
+                catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "Add Resource"); }
+            }
+            if (copied > 0) UpdateStatus($"{copied} file{(copied == 1 ? "" : "s")} copied into {ProjectFiles.Relative(project.Directory, folder)}: use new Resource(\"{ProjectFiles.Relative(project.Directory, Path.Combine(folder, Path.GetFileName(files[0])))}\") in the code.");
+        }
+
+        private async Task NewProjectFolder(LoadedProject? project, ExplorerNode? node)
+        {
+            if (project == null) return;
+            string? name = await Dialogs.Input(this, "Name of the new folder:", "New Folder");
+            if (string.IsNullOrWhiteSpace(name)) return;
+            if (ProjectTemplates.CheckName(name.Trim()) is { } problem) { await Dialogs.Message(this, problem, "New Folder"); return; }
+            try
+            {
+                Directory.CreateDirectory(Path.Combine(FolderOf(node, project) ?? project.Directory, name.Trim()));
+                project.Refresh();
+                _workspace.Refresh();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "New Folder"); }
+        }
+
+        /// <summary>Gives the project C++ natives (the folder `native/` with a header that has one example function) - or, when it has them, adds another C++ file to the folder.</summary>
+        private async Task AddNative(LoadedProject? project, ExplorerNode? node)
+        {
+            if (project == null) return;
+            try
+            {
+                if (project.Project.Native == null)
+                {
+                    string header = _workspace.AddNative(project);
+                    OpenFile(header);
+                    UpdateStatus("The project has natives now: every `inline Value name(Value a, ...)` in native/ is a function `__name` that fire code can call.");
+                    return;
+                }
+                string? name = await Dialogs.Input(this, "Name of the new C++ file:", "Add C++ File", "more.hpp");
+                if (string.IsNullOrWhiteSpace(name)) return;
+                name = name.Trim();
+                if (Path.GetExtension(name).Length == 0) name += ".hpp";
+                string folder = node?.Kind == ExplorerKind.Folder && node.Path != null ? node.Path : Path.Combine(project.Directory, "native");
+                string full = Path.GetFullPath(name, folder);
+                if (File.Exists(full)) { await Dialogs.Message(this, $"'{name}' exists already.", "Add C++ File"); return; }
+                Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+                File.WriteAllText(full, "#pragma once\n#include <cstdint>\n\nnamespace fire {\n\n}  // namespace fire\n");
+                project.Refresh();
+                _workspace.Refresh();
+                OpenFile(full);
+            }
+            catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "Native Code"); }
+        }
+
+        private async Task DeleteContentFile(ExplorerNode? node)
+        {
+            if (node?.Path == null || node.Project == null) return;
+            if (await Dialogs.Ask(this, $"Delete '{Path.GetFileName(node.Path)}' from the disk?", "Delete File", ("Delete", Dialogs.Answer.Yes), ("Cancel", Dialogs.Answer.Cancel)) != Dialogs.Answer.Yes) return;
+            try
+            {
+                if (_documents.FirstOrDefault(d => d.View.FilePath != null && ProjectFiles.PathComparer.Equals(Path.GetFullPath(d.View.FilePath), Path.GetFullPath(node.Path))) is { } open) _factory.CloseDockable(open.Layout);
+                File.Delete(node.Path);
+                node.Project.Refresh();
+                _workspace.Refresh();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "Delete File"); }
         }
 
         private async Task RunProject(LoadedProject? project)
@@ -413,6 +596,7 @@ namespace fire.Editor
                 ExplorerKind.Folder => node.Path,
                 ExplorerKind.Project => node.Project?.Directory,
                 ExplorerKind.Solution => node.Path != null ? Path.GetDirectoryName(node.Path) : null,
+                ExplorerKind.SolutionFolder => node.Path,
                 _ => null,
             };
             if (target == null || !Directory.Exists(target)) return;
