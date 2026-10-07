@@ -572,7 +572,7 @@ Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: Destruktor-Ausführung bei Kaskadenlöschung (SPEC 2.3) ===");
 
 string destructorSample = """
-class Resource {
+class Cleanup {
     string label
 
     construct(string label) {
@@ -585,7 +585,7 @@ class Resource {
 }
 
 {
-    var r = new Resource("cleanup-ran")
+    var r = new Cleanup("cleanup-ran")
     print(1)
 }
 print(2)
@@ -7221,7 +7221,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         string withWin = LinkResult("#import \"windows\"\nvar x = EventType.Close");
         PackCheck(withWin == "graphics,print,windows", "Import: windows bringt graphics mit (" + withWin + ")");
         string withUi = LinkResult("#import \"ui\"\nvar x = EventType.Close");
-        PackCheck(withUi == "graphics,print,ui,windows", "Import: ui bringt graphics und windows mit (" + withUi + ")");
+        PackCheck(withUi == "graphics,print,reflection,ui,windows", "Import: ui bringt graphics, windows und reflection mit (" + withUi + ")");
         string gfxOnly = LinkResult("#import \"graphics\"\nvar fb = new Framebuffer(8, 8)");
         PackCheck(gfxOnly == "graphics,print", "Import: graphics allein ohne Fenster (" + gfxOnly + ")");
     }
@@ -7925,6 +7925,52 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             rp.AlphaBlending = false;
             rp.SetPixel(0, 0, P(255, 255, 255, 1));
             GfxCheck(pal.Indices[0] != 7, "Palette-Ziel ohne Blending: immer kopiert");
+        }
+
+        // Beschneidungsrechteck: Fuellungen, Linien, Text und Blit bleiben darin; ResetClip hebt es auf; Clear gilt nicht
+        {
+            var fb = new fire.Terminal.Framebuffer(40, 20);
+            var rd = new fire.Terminal.Renderer(fb, font);
+            var red = new fire.Terminal.SolidBrush(Rgb(255, 0, 0));
+            var white = new fire.Terminal.Pen(Rgb(255, 255, 255));
+            rd.SetClip(10, 5, 10, 8);
+            rd.FillRect(0, 0, 40, 20, red);
+            int inside = 0, outside = 0;
+            for (int y = 0; y < 20; y++)
+                for (int x = 0; x < 40; x++)
+                {
+                    bool isRed = fb.GetPixel(x, y).R == 255;
+                    bool inClip = x >= 10 && x < 20 && y >= 5 && y < 13;
+                    if (isRed && inClip) inside++;
+                    if (isRed && !inClip) outside++;
+                }
+            GfxCheck(inside == 80 && outside == 0, "Clip: eine Flaeche wird auf das Rechteck beschnitten");
+            rd.DrawLine(0, 6, 39, 6, white);
+            rd.DrawCircle(15, 9, 30, white);
+            int whiteOut = 0;
+            for (int y = 0; y < 20; y++)
+                for (int x = 0; x < 40; x++)
+                    if (fb.GetPixel(x, y).B == 255 && fb.GetPixel(x, y).G == 255 && !(x >= 10 && x < 20 && y >= 5 && y < 13)) whiteOut++;
+            GfxCheck(whiteOut == 0 && fb.GetPixel(10, 6).G == 255 && fb.GetPixel(19, 6).G == 255 && fb.GetPixel(9, 6).G == 0, "Clip: Linien und Kreise bleiben im Rechteck");
+            var bright = new fire.Terminal.SolidBrush(Rgb(0, 255, 0));
+            rd.DrawText(8, 5, "AB", bright, null);
+            int greenOut = 0;
+            for (int y = 0; y < 20; y++)
+                for (int x = 0; x < 40; x++)
+                    if (fb.GetPixel(x, y).G == 255 && fb.GetPixel(x, y).R == 0 && (x < 10 || y < 5 || y >= 13)) greenOut++;
+            GfxCheck(greenOut == 0, "Clip: Text wird am Rechteck abgeschnitten (auch im Schnellpfad)");
+            var spr = new fire.Terminal.Framebuffer(6, 6);
+            new fire.Terminal.Renderer(spr, font).FillRect(0, 0, 6, 6, new fire.Terminal.SolidBrush(Rgb(0, 0, 255)));
+            rd.Blit(spr, 0, 0, 6, 6, 17, 10, 6, 6);
+            GfxCheck(fb.GetPixel(19, 10).B == 255 && fb.GetPixel(20, 10).B == 0 && fb.GetPixel(18, 13).B == 0 && fb.GetPixel(18, 12).B == 255, "Clip: Blit wird beschnitten");
+            var clip = rd.GetClip();
+            GfxCheck(clip == (10, 5, 10, 8), "Clip: GetClip liefert das Rechteck");
+            rd.ResetClip();
+            rd.SetPixel(0, 0, Rgb(1, 2, 3));
+            GfxCheck(fb.GetPixel(0, 0).B == 3, "Clip: ResetClip hebt es auf");
+            rd.SetClip(30, 15, 5, 3);
+            rd.Clear(fire.Terminal.Paint.FromRgba(new fire.Terminal.PixelColor(9, 9, 9, 255)));
+            GfxCheck(fb.GetPixel(0, 0).R == 9, "Clip: Clear gilt fuer den ganzen Framebuffer");
         }
 
         // Pen: Breite 1 == die einfache Linie, breitere Stifte stempeln ihre Spitze
@@ -8637,6 +8683,57 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 }
 
 // ---------------------------------------------------------------------------
+// Netzwerk (#import "net"): die Richtlinie des Hosts (NetPolicy) fuer Verbindungen, Listener, Datagramme und Namen
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Netzwerk: Host-Richtlinie ===");
+    int netFailures = 0;
+    List<string> NetSession(string script, fire.Runtime.NetPolicy? policy)
+    {
+        var lines = new List<string>();
+        var session = fire.Compiler.RuntimeSession.Build(new[] { "#import \"net\"\n" + script }, VmExecutionMode.Release,
+            args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); }, netPolicy: policy);
+        session.Run();
+        return lines;
+    }
+    void CheckNet(string title, string script, fire.Runtime.NetPolicy? policy, string[] expected)
+    {
+        string[] actual;
+        try { actual = NetSession(script, policy).ToArray(); }
+        catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
+        bool ok = actual.SequenceEqual(expected);
+        if (!ok) netFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+    }
+
+    const string everything = """
+        try { var l = new Net.TcpListener("127.0.0.1", 0); print("listen ok " + (l.Port > 0)); l.Close() } catch (Net.PermissionException e) { print("listen denied " + e.code) }
+        try { var u = new Net.UdpSocket("127.0.0.1", 0); print("udp ok"); u.Close() } catch (Net.PermissionException e) { print("udp denied " + e.code) }
+        try { print("resolve " + Net.Dns.Resolve("127.0.0.1").count) } catch (Net.PermissionException e) { print("resolve denied " + e.code) }
+        try { var c = new Net.TcpClient("127.0.0.1", 9, 500); print("connected?") } catch (Net.PermissionException e) { print("connect denied " + e.code) } catch (Net.NetException e) { print("connect failed " + e.code) }
+        try { var c = new Net.TcpClient("example.invalid", 80, 500); print("connected?") } catch (Net.PermissionException e) { print("outside denied " + e.code) } catch (Net.NetException e) { print("outside failed " + e.code) }
+        """;
+    CheckNet("Host-Richtlinie: alles erlaubt (Vorgabe)", everything, null,
+        new[] { "listen ok True", "udp ok", "resolve 1", "connect failed 3", "outside failed 10" });
+    CheckNet("Host-Richtlinie: DenyAll - jede Art von Zugriff wird zur PermissionException (Code 8)", everything, fire.Runtime.NetPolicy.DenyAll,
+        new[] { "listen denied 8", "udp denied 8", "resolve denied 8", "connect denied 8", "outside denied 8" });
+    CheckNet("Host-Richtlinie: LoopbackOnly - dieser Rechner geht, andere Namen nicht", everything, fire.Runtime.NetPolicy.LoopbackOnly,
+        new[] { "listen ok True", "udp ok", "resolve 1", "connect failed 3", "outside denied 8" });
+    CheckNet("Host-Richtlinie: Hosts - nur die genannten (hier: host:port; Namen davon aufloesen darf man), Lauschen nur wenn erlaubt", everything, fire.Runtime.NetPolicy.Hosts(new[] { "127.0.0.1:9", "example.invalid:443" }),
+        new[] { "listen denied 8", "udp denied 8", "resolve 1", "connect failed 3", "outside denied 8" });
+    CheckNet("Host-Richtlinie: Hosts mit allowListen erlaubt Lauschen auf localhost", everything, fire.Runtime.NetPolicy.Hosts(new[] { "*" }, allowListen: true),
+        new[] { "listen ok True", "udp ok", "resolve 1", "connect failed 3", "outside failed 10" });
+    CheckNet("Offene Sockets am Programmende: das naechste Programm startet sauber (fire_pkg_reset)", """
+        var l = new Net.TcpListener("127.0.0.1", 0)
+        var c = new Net.TcpClient("127.0.0.1", l.Port)
+        print("offen")
+        """, null, new[] { "offen" });
+
+    Console.WriteLine(netFailures == 0 ? "Alle Netzwerk-Pruefungen bestanden." : $"FEHLER: {netFailures} Netzwerk-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
 // Slicer: Maske aus einem Framebuffer (ToMask) in Werkzeugbahnen zerlegen
 // ---------------------------------------------------------------------------
 {
@@ -8726,7 +8823,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
 // the drawing of the UI library without events: run by the VM (fake renderer) below, natively (SDL dummy driver) in the native checks
 string uiDrawScript = """
-    var fb = new Framebuffer(320, 200)
+    var fb = new Framebuffer(640, 300)
     var win = new Window(fb, "Test")
     var ui = new UI.Root(fb, win)
     var panel = new UI.Panel(8, 8, 300, 150)
@@ -8740,7 +8837,85 @@ string uiDrawScript = """
     stack.Add(new UI.Button("one", 0, 0, 80, 20))
     stack.Add(new UI.Button("two", 0, 0, 80, 20))
     panel.Add(stack)
+    // the layout panels: a grid with a fixed, a star and an auto column, a border with padding, a wrap panel that spans all columns
+    var lay = new UI.Grid(8, 170, 300, 120)
+    lay.SetColumns("60, *, auto")
+    lay.SetRows("24, *")
+    lay.AddAt(new UI.Button("grid", 0, 0, -1, -1), 0, 0)
+    var bd = new UI.Border()
+    bd.padding = new UI.Thickness(2)
+    bd.SetChild(new UI.Label("border"))
+    lay.AddAt(bd, 0, 1)
+    lay.AddAt(new UI.Label("auto"), 0, 2)
+    var wr = new UI.WrapPanel()
+    for (var i = 0; i < 6; i++) { var wb = new UI.Button("w" + i, 0, 0, 44, 18); wb.margin = new UI.Thickness(2); wr.Add(wb) }
+    lay.AddAt(wr, 1, 0, 1, 3)
+    ui.Add(lay)
+    // styles and templates: an implicit style for labels, a button whose look is a template with a part bound to its text and a hover trigger
+    var sty = new UI.Style("Label")
+    sty.Set("brush", new SolidBrush(UI.Color.Rgb(0, 0, 200)))
+    ui.resources.AddStyle(sty)
+    var tpl = new UI.ControlTemplate(func (owner) => {
+        var tb = new UI.Border()
+        tb.name = "tb"
+        tb.background = new SolidBrush(UI.Color.Rgb(40, 160, 80))
+        tb.padding = new UI.Thickness(2)
+        var tl = new UI.Label("")
+        tl.name = "tl"
+        tb.SetChild(tl)
+        return tb
+    })
+    tpl.Bind("tl", "text", "text")
+    var tt = new UI.Trigger("hover", true)
+    tt.Set("background", new SolidBrush(UI.Color.Rgb(200, 60, 60)), "tb")
+    tpl.AddTrigger(tt)
+    var tbtn = new UI.Button("tpl", 200, 100, -1, -1)
+    tbtn.template = tpl
+    panel.Add(tbtn)
+    // scrolling with the clip rectangle, lists, a tree, radio buttons, shapes, a drawing canvas and a menu with its popup
+    var sv = new UI.ScrollViewer(330, 8, 120, 90)
+    var col = new UI.StackPanel()
+    for (var i = 0; i < 9; i++) { col.Add(new UI.Label("row " + i)) }
+    sv.SetContent(col)
+    ui.Add(sv)
+    var lbx = new UI.ListBox(460, 8, 100, 90)
+    for (var i = 0; i < 8; i++) { lbx.Add("entry " + i) }
+    lbx.Select(2)
+    ui.Add(lbx)
+    var tv = new UI.TreeView(330, 108, 120, 90)
+    var top = tv.AddNode(new UI.TreeNode("root"))
+    top.Add(new UI.TreeNode("child a"))
+    var cb = top.Add(new UI.TreeNode("child b"))
+    cb.Add(new UI.TreeNode("leaf"))
+    top.expanded = true
+    ui.Add(tv)
+    var rbs = new UI.RadioButtons(460, 108)
+    rbs.Add("one")
+    rbs.Add("two")
+    rbs.Select(1)
+    ui.Add(rbs)
+    var shp = new UI.Path(undefined, 570, 8)
+    shp.SetData("M 0 0 L 50 0 C 60 20 60 40 25 50 Z")
+    shp.fill = new SolidBrush(UI.Color.Rgb(200, 120, 40))
+    shp.stroke = new Pen(UI.Color.Rgb(0, 0, 0))
+    ui.Add(shp)
+    var dcv = new UI.DrawingCanvas(570, 70, 60, 40)
+    dcv.onPaint = func (c) => {
+        c.renderer.FillRect(0, 0, 60, 40, new SolidBrush(UI.Color.Rgb(30, 30, 90)))
+        c.renderer.DrawLine(0, 0, 59, 39, new Pen(UI.Color.Rgb(255, 255, 255)))
+    }
+    ui.Add(dcv)
+    var mbar = new UI.MenuBar(330, 210, 300, -1)
+    var mfile = new UI.MenuItem("File")
+    mfile.Add(new UI.MenuItem("Open"))
+    mfile.Add(UI.MenuItem.Separator())
+    mfile.Add(new UI.MenuItem("Quit"))
+    mbar.Add(mfile)
+    ui.Add(mbar)
     print(ui.Tick())
+    mbar.Open(ui, 0)
+    ui.Tick()
+    print("layout " + bd.rx + " " + bd.actualWidth + " " + wr.actualWidth + " " + wr.actualHeight + " " + wr.children[5].rx + "," + wr.children[5].ry)
     var bytes = fb.ReadBytes()
     var h = 17
     for (var i = 0; i < bytes.length; i++) { h = (h * 31 + bytes[i]) % 1000000007 }
@@ -8765,7 +8940,7 @@ string[] uiDrawExpected = Array.Empty<string>();
     List<string> RunUi(string script, VmExecutionMode mode)
     {
         var lines = new List<string>();
-        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, fire.UI.Bridge.UiBridge.PreludeSource, script };
+        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, fire.Standard.ReflectionPrelude.Source, fire.UI.Bridge.UiBridge.PreludeSource, script };
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
         var natives = new NativeRegistry();
@@ -8778,6 +8953,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => renderer);
         fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager);
         fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
+        ReflectionNatives.Register(natives);
 
         natives.Register("__TestClose", args => { renderer.Closed = true; return Value.MakeUndefined(); });
         natives.Register("__TestEvent", args =>
@@ -9003,8 +9179,657 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Draw()
         var first = ui.content.children[0]
         print(first.text + " " + first.ax)
-        print(ui.content.children[1].width)
+        print(ui.content.children[1].actualWidth)
         """, new[] { "Lokal 10", "32" });
+
+    // ---- Layout: Measure/Arrange wie WPF, in ganzen Pixeln ----
+    CheckUi("Layout: StackPanel (Abstand, Innenabstand, Stretch quer), unsichtbare Kinder zaehlen nicht", uiHead + """
+        var sp = new UI.StackPanel(10, 10, 200, 200, false, 5, 2)
+        var la = new UI.Label("ab")
+        var ba = new UI.Button("x", 0, 0, 100, 20)
+        var bb = new UI.Button("y", 0, 0, 100, 20)
+        sp.Add(la)
+        sp.Add(ba)
+        sp.Add(bb)
+        ui.Add(sp)
+        ui.Draw()
+        print("label " + la.rx + "," + la.ry + " " + la.actualWidth + "x" + la.actualHeight)
+        print("btn1 " + ba.rx + "," + ba.ry + " " + ba.actualWidth + "x" + ba.actualHeight)
+        print("btn2 " + bb.rx + "," + bb.ry + " abs " + bb.ax + "," + bb.ay)
+        ba.visible = false
+        ui.Draw()
+        print("ohne btn1: btn2 " + bb.rx + "," + bb.ry)
+        """, new[] { "label 2,2 196x14", "btn1 2,21 100x20", "btn2 2,46 abs 12,56", "ohne btn1: btn2 2,21" });
+
+    CheckUi("Layout: Ausrichtung, Rand, Mindest- und Hoechstgroesse", uiHead + """
+        var sp2 = new UI.StackPanel(0, 0, 200, 100)
+        var c = new UI.Button("c", 0, 0, 60, 20)
+        c.halign = UI.HAlign.Center
+        var r = new UI.Button("r", 0, 0, 60, 20)
+        r.halign = UI.HAlign.Right
+        r.margin = new UI.Thickness(5)
+        sp2.Add(c)
+        sp2.Add(r)
+        ui.Add(sp2)
+        var sp3 = new UI.StackPanel(0, 100, 300, 100)
+        var m1 = new UI.Button("m", 0, 0, 10, 10)
+        m1.minWidth = 30
+        var m2 = new UI.Button("m", 0, 0, 100, 10)
+        m2.maxWidth = 40
+        sp3.Add(m1)
+        sp3.Add(m2)
+        ui.Add(sp3)
+        ui.Draw()
+        print("mitte " + c.rx + " rechts " + r.rx + "," + r.ry)
+        print("min/max " + m1.actualWidth + " " + m2.actualWidth)
+        var t = new UI.Thickness(3, 4)
+        var u = new UI.Thickness(1, 2, 3, 4)
+        print(t.left + " " + t.top + " " + t.right + " " + t.bottom + " | " + u.left + " " + u.top + " " + u.right + " " + u.bottom)
+        """, new[] { "mitte 70 rechts 135,25", "min/max 30 40", "3 4 3 4 | 1 2 3 4" });
+
+    CheckUi("Layout: Grid (feste, Stern- und Auto-Spuren, Spannen), WrapPanel und Border", uiHead + """
+        var g = new UI.Grid(0, 0, 300, 100)
+        g.SetColumns("50, *, auto")
+        g.SetRows("20, *")
+        var g1 = new UI.Button("a", 0, 0, -1, -1)
+        var g2 = new UI.Border()
+        var g3 = new UI.Label("lbl")
+        g.AddAt(g1, 0, 0)
+        g.AddAt(g2, 1, 1)
+        g.AddAt(g3, 0, 2)
+        ui.Add(g)
+        var w = new UI.WrapPanel(0, 100, 100, 100)
+        for (var i = 0; i < 7; i = i + 1) { var it = new UI.Button("w", 0, 0, 30, 10); w.Add(it) }
+        ui.Add(w)
+        var bo = new UI.Border(150, 100, 100, 60)
+        bo.padding = new UI.Thickness(3)
+        var inner = new UI.Label("in")
+        bo.SetChild(inner)
+        ui.Add(bo)
+        ui.Draw()
+        print("g1 " + g1.rx + "," + g1.ry + " " + g1.actualWidth + "x" + g1.actualHeight)
+        print("g2 " + g2.rx + "," + g2.ry + " " + g2.actualWidth + "x" + g2.actualHeight)
+        print("g3 " + g3.rx + "," + g3.ry + " " + g3.actualWidth + "x" + g3.actualHeight)
+        var last = w.children[6]
+        print("wrap " + last.rx + "," + last.ry)
+        print("border " + inner.rx + "," + inner.ry + " " + inner.actualWidth + "x" + inner.actualHeight)
+        """, new[] { "g1 0,0 50x20", "g2 50,20 226x80", "g3 276,0 24x20", "wrap 0,20", "border 4,4 92x52" });
+
+    CheckUi("Layout: DockPanel (Raender in der Reihenfolge, der Rest fuellt)", uiHead + """
+        var d = new UI.DockPanel(0, 0, 200, 100)
+        var dl = new UI.Button("l", 0, 0, 30, -1)
+        var dt = new UI.Button("t", 0, 0, -1, 20)
+        var dr = new UI.Button("r", 0, 0, 40, -1)
+        var df = new UI.Button("f", 0, 0, -1, -1)
+        d.AddDocked(dl, UI.Dock.Left)
+        d.AddDocked(dt, UI.Dock.Top)
+        d.AddDocked(dr, UI.Dock.Right)
+        d.Add(df)
+        ui.Add(d)
+        ui.Draw()
+        print("l " + dl.rx + "," + dl.ry + " " + dl.actualWidth + "x" + dl.actualHeight)
+        print("t " + dt.rx + "," + dt.ry + " " + dt.actualWidth + "x" + dt.actualHeight)
+        print("r " + dr.rx + "," + dr.ry + " " + dr.actualWidth + "x" + dr.actualHeight)
+        print("f " + df.rx + "," + df.ry + " " + df.actualWidth + "x" + df.actualHeight)
+        """, new[] { "l 0,0 30x100", "t 30,0 170x20", "r 160,20 40x80", "f 30,20 130x80" });
+
+    CheckUi("Styles: impliziter Style (Setter, Trigger mit Zurueckstellen, basedOn), expliziter Style, Gueltigkeitsbereich", uiHead + """
+        var red = new SolidBrush(UI.Color.Rgb(255, 0, 0))
+        var baseStyle = new UI.Style("Button")
+        baseStyle.Set("margin", new UI.Thickness(3))
+        var st = new UI.Style("Button")
+        st.basedOn = baseStyle
+        st.Set("background", red)
+        var tr = new UI.Trigger("hover", true)
+        tr.Set("width", 150)
+        st.AddTrigger(tr)
+        ui.resources.AddStyle(st)
+        var sp = new UI.StackPanel(0, 0, 300, 200)
+        var b1 = new UI.Button("one", 0, 0, 100, 20)
+        sp.Add(b1)
+        ui.Add(sp)
+        ui.Draw()
+        print("b1 " + b1.margin.left + " " + (b1.background == red) + " " + b1.actualWidth + " " + b1.rx + "," + b1.ry)
+        b1.hover = true
+        ui.Draw()
+        print("hover " + b1.actualWidth)
+        b1.hover = false
+        ui.Draw()
+        print("zurueck " + b1.actualWidth)
+        // ein Style im Panel gilt nur darunter und vor dem des Roots
+        var inner = new UI.StackPanel(0, 100, 300, 100)
+        var local = new UI.Style("Button")
+        local.Set("margin", new UI.Thickness(7))
+        inner.Resources().AddStyle(local)
+        var b2 = new UI.Button("two", 0, 0, 100, 20)
+        inner.Add(b2)
+        ui.Add(inner)
+        ui.Draw()
+        print("inner " + b2.margin.left + " " + (b2.background == red) + " " + b2.ry)
+        var s2 = new UI.Style()
+        s2.Set("margin", new UI.Thickness(9))
+        s2.Set("nichtda", 1)
+        b1.style = s2
+        ui.Draw()
+        print("explizit " + b1.margin.left + " " + (b1.background == red) + " " + b1.actualWidth)
+        """, new[] { "b1 3 True 100 3,3", "hover 150", "zurueck 100", "inner 7 False 7", "explizit 9 True 100" });
+
+    CheckUi("Vorlagen: ControlTemplate (Teile, Bindung ans Element, Trigger auf einen Teil), Bindung zwischen Elementen, Ressourcen", uiHead + """
+        var red = new SolidBrush(UI.Color.Rgb(255, 0, 0))
+        var tpl = new UI.ControlTemplate(func (owner) => {
+            var bd = new UI.Border()
+            bd.name = "bd"
+            bd.background = new SolidBrush(UI.Color.Rgb(0, 255, 0))
+            bd.padding = new UI.Thickness(4)
+            var t = new UI.Label("")
+            t.name = "txt"
+            bd.SetChild(t)
+            return bd
+        })
+        tpl.Bind("txt", "text", "text")
+        var tr = new UI.Trigger("pressed", true)
+        tr.Set("background", red, "bd")
+        tpl.AddTrigger(tr)
+        var sp = new UI.StackPanel(0, 0, 300, 200)
+        var b = new UI.Button("hello", 0, 0, -1, -1)
+        b.halign = UI.HAlign.Left
+        b.template = tpl
+        sp.Add(b)
+        ui.Add(sp)
+        ui.Draw()
+        print("groesse " + b.actualWidth + "x" + b.actualHeight)
+        var part = b.FindPart("bd")
+        var green = part.background
+        print("teil " + (part != undefined) + " " + (part.background != red) + " " + b.FindPart("txt").text)
+        b.pressed = true
+        ui.Draw()
+        print("gedrueckt " + (part.background == red))
+        b.pressed = false
+        ui.Draw()
+        print("losgelassen " + (part.background == green))
+        b.text = "hi"
+        ui.Draw()
+        print("text " + b.FindPart("txt").text + " " + b.actualWidth)
+        var tb = new UI.TextBox("abc")
+        var l2 = new UI.Label("")
+        var l3 = new UI.TextBox("")
+        sp.Add(tb)
+        sp.Add(l2)
+        sp.Add(l3)
+        l2.Bind("text", tb, "text")
+        l3.Bind("text", tb, "text", true)
+        ui.Draw()
+        print("bindung " + l2.text + " " + l3.text)
+        tb.text = "xyz"
+        ui.Draw()
+        print("quelle " + l2.text + " " + l3.text)
+        l3.text = "zurueck"
+        ui.Draw()
+        ui.Draw()
+        print("ziel " + tb.text + " " + l2.text)
+        var tplStyle = new UI.Style("CheckBox")
+        tplStyle.Set("template", tpl)
+        ui.resources.AddStyle(tplStyle)
+        var cb = new UI.CheckBox("kaestchen")
+        cb.halign = UI.HAlign.Left
+        sp.Add(cb)
+        ui.Draw()
+        print("stilvorlage " + cb.FindPart("txt").text + " " + cb.actualWidth)
+        sp.Resources().Set("akzent", 42)
+        ui.resources.Set("rot", red)
+        print("ressource " + b.FindResource("akzent") + " " + b.FindResource("fehlt") + " " + (b.FindResource("rot") == red))
+        """, new[] { "groesse 50x24", "teil True True hello", "gedrueckt True", "losgelassen True", "text hi 26", "bindung abc abc", "quelle xyz xyz", "ziel zurueck zurueck", "stilvorlage kaestchen 82", "ressource 42 undefined True" });
+
+    CheckUi("ScrollViewer: Leisten, Ausschnitt, Mausrad, Ziehen am Griff, Umbrechen ohne waagerechte Leiste", uiHead + """
+        var sv = new UI.ScrollViewer(0, 0, 100, 80)
+        sv.hmode = UI.ScrollMode.Auto
+        var big = new UI.Canvas(0, 0, 300, 200)
+        big.Add(new UI.Button("x", 280, 180, 20, 20))
+        sv.SetContent(big)
+        ui.Add(sv)
+        ui.Draw()
+        print("beide Leisten " + sv.showV + " " + sv.showH + " Ausschnitt " + sv.viewW + "x" + sv.viewH + " Inhalt " + sv.hbar.extent + "x" + sv.vbar.extent)
+        sv.vbar.Set(1000)
+        sv.hbar.Set(1000)
+        ui.Draw()
+        print("ganz unten rechts " + sv.hbar.offset + "," + sv.vbar.offset + " Kind bei " + big.rx + "," + big.ry)
+        ui.MouseWheel(0, 1, 20, 20)
+        ui.Draw()
+        print("Rad nach oben " + sv.vbar.offset)
+        ui.MouseWheel(0, -1, 20, 20)
+        ui.MouseWheel(0, -1, 20, 20)
+        ui.Draw()
+        print("Rad nach unten " + sv.vbar.offset)
+        ui.MouseWheel(-2, 0, 20, 20)
+        ui.Draw()
+        print("Rad seitlich " + sv.hbar.offset)
+        // am Griff der senkrechten Leiste ziehen: oben anfassen und ganz nach unten ziehen
+        sv.vbar.Set(0)
+        ui.Draw()
+        ui.MouseDown(1, 94, 4)
+        ui.MouseMove(94, 200)
+        ui.MouseUp(1, 94, 200)
+        ui.Draw()
+        print("gezogen " + sv.vbar.offset)
+        var sv2 = new UI.ScrollViewer(110, 0, 100, 80)
+        sv2.SetContent(new UI.Label("short"))
+        ui.Add(sv2)
+        ui.Draw()
+        print("klein " + sv2.showV + " " + sv2.showH)
+        var sv3 = new UI.ScrollViewer(0, 100, 100, 60)
+        var wp = new UI.WrapPanel()
+        for (var i = 0; i < 12; i = i + 1) { wp.Add(new UI.Button("b" + i, 0, 0, 30, 20)) }
+        sv3.SetContent(wp)
+        ui.Add(sv3)
+        ui.Draw()
+        print("umbrechen " + sv3.showV + " " + sv3.showH + " " + wp.actualWidth + "x" + wp.actualHeight + " Ausschnitt " + sv3.viewW)
+        """, new[] { "beide Leisten True True Ausschnitt 88x68 Inhalt 300x200", "ganz unten rechts 212,132 Kind bei -212,-132", "Rad nach oben 90", "Rad nach unten 132", "Rad seitlich 212", "gezogen 132", "klein False False", "umbrechen True False 88x120 Ausschnitt 88" });
+
+    CheckUi("Listen: ListBox (Auswahl, Tastatur, Rad), ListView (Spalten, Sortieren per Kopfzeile), CollectionView (Filter, Sortierung, aktuelles Element)", uiHead + """
+        class Person {
+            string name
+            int age
+            construct(string name, int age) {
+                this.name = name
+                this.age = age
+            }
+        }
+        var lb = new UI.ListBox(10, 10, 100, 80)
+        for (var i = 0; i < 12; i = i + 1) { lb.Add("item " + i) }
+        ui.Add(lb)
+        var lv = new UI.ListView(130, 10, 180, 100)
+        lv.AddColumn("Name", "name", 100)
+        lv.AddColumn("Age", "age", -1)
+        lv.Add(new Person("Carol", 41))
+        lv.Add(new Person("Alice", 30))
+        lv.Add(new Person("Bob", 25))
+        ui.Add(lv)
+        ui.Draw()
+        print("Liste " + lb.selectedIndex + " Leiste " + lb.scroller.Needed() + " Anzahl " + lb.count)
+        ui.MouseDown(1, 20, 25)
+        ui.MouseUp(1, 20, 25)
+        ui.Draw()
+        print("Klick " + lb.selectedIndex + " " + lb.selectedItem + " " + lb.TakeChanged() + " " + lb.TakeChanged())
+        ui.KeyDown(1073741905, 0)
+        ui.KeyDown(1073741905, 0)
+        print("Pfeil " + lb.selectedIndex + " " + lb.selectedItem)
+        ui.KeyDown(1073741898, 0)
+        print("Pos1 " + lb.selectedIndex)
+        ui.KeyDown(1073741901, 0)
+        ui.Draw()
+        print("Ende " + lb.selectedIndex + " Versatz " + lb.scroller.offset)
+        ui.MouseWheel(0, 1, 20, 30)
+        ui.Draw()
+        print("Rad " + lb.scroller.offset)
+        lb.selectedItem = "item 3"
+        print("per selectedItem " + lb.selectedIndex)
+        var entered = 0
+        lb.onActivate = func () => { entered = entered + 1 }
+        ui.KeyDown(13, 0)
+        print("Enter " + entered + " " + lb.TakeActivated())
+        // Kopfzeile: Klick sortiert
+        ui.MouseDown(1, 140, 15)
+        ui.MouseUp(1, 140, 15)
+        ui.Draw()
+        print("sortiert " + lv.Rows()[0].name + " " + lv.sortedBy)
+        ui.MouseDown(1, 140, 15)
+        ui.MouseUp(1, 140, 15)
+        ui.Draw()
+        print("umgekehrt " + lv.Rows()[0].name)
+        var cv = new UI.CollectionView(lv.items)
+        cv.filter = func (p) => p.age > 26
+        cv.SortBy("age", true)
+        cv.Update()
+        print("Sicht " + cv.count + " " + cv[0].name + " " + cv[1].name)
+        cv.MoveCurrentToFirst()
+        cv.MoveCurrentToNext()
+        print("aktuell " + cv.CurrentItem().name + " " + cv.MoveCurrentTo(5))
+        cv.comparer = func (a, b) => a.age - b.age
+        cv.Invalidate()
+        cv.Update()
+        print("eigener Vergleich " + cv[0].name + " aktuell " + cv.CurrentItem().name)
+        var names = new UI.ListBox(10, 100, 100, 80)
+        names.displayMember = "name"
+        names.SetView(new UI.CollectionView(lv.items))
+        ui.Add(names)
+        ui.Draw()
+        print("Anzeigeeigenschaft " + names.count + " " + names.ItemText(names.Rows()[1]))
+        names.view.sortMember = "name"
+        names.view.Invalidate()
+        ui.Draw()
+        print("sortierte Sicht " + names.ItemText(names.Rows()[0]))
+        names.Select(2)
+        print("aktuell der Sicht " + names.view.current + " " + names.selectedItem.name)
+        """, new[] { "Liste -1 Leiste True Anzahl 12", "Klick 0 item 0 True False", "Pfeil 2 item 2", "Pos1 0", "Ende 11 Versatz 162", "Rad 102", "per selectedItem 3", "Enter 1 True", "sortiert Alice name", "umgekehrt Carol", "Sicht 2 Carol Alice", "aktuell Alice False", "eigener Vergleich Carol aktuell Alice", "Anzeigeeigenschaft 3 Alice", "sortierte Sicht Alice", "aktuell der Sicht 2 Carol" });
+
+    CheckUi("TreeView: Auf- und Zuklappen, Auswahl, Tastatur", uiHead + """
+        var tv = new UI.TreeView(10, 10, 150, 100)
+        var a = tv.AddNode(new UI.TreeNode("Animals"))
+        var d = a.Add(new UI.TreeNode("Dogs"))
+        d.Add(new UI.TreeNode("Rex"))
+        d.Add(new UI.TreeNode("Fido"))
+        a.Add(new UI.TreeNode("Cats"))
+        var b = tv.AddNode(new UI.TreeNode("Plants"))
+        b.Add(new UI.TreeNode("Oak"))
+        a.expanded = true
+        ui.Add(tv)
+        ui.Draw()
+        print("sichtbar " + tv.visibleNodes.count)
+        ui.MouseDown(1, 32, 36)
+        ui.MouseUp(1, 32, 36)
+        ui.Draw()
+        print("Dogs aufgeklappt " + tv.visibleNodes.count + " " + d.expanded + " ausgewaehlt " + (tv.selected == undefined))
+        ui.MouseDown(1, 80, 36)
+        ui.MouseUp(1, 80, 36)
+        ui.Draw()
+        print("gewaehlt " + tv.selected.text + " " + tv.TakeChanged())
+        ui.KeyDown(1073741905, 0)
+        ui.KeyDown(1073741905, 0)
+        print("Pfeil ab " + tv.selected.text)
+        ui.KeyDown(1073741904, 0)
+        print("Links zum Eltern " + tv.selected.text)
+        ui.KeyDown(1073741904, 0)
+        ui.Draw()
+        print("Links klappt zu " + d.expanded + " " + tv.visibleNodes.count)
+        ui.KeyDown(1073741903, 0)
+        ui.KeyDown(1073741903, 0)
+        print("Rechts klappt auf, dann zum Kind " + d.expanded + " " + tv.selected.text)
+        ui.KeyDown(1073741898, 0)
+        print("Pos1 " + tv.selected.text + " Tiefe " + a.Depth() + " " + d.children[0].Depth())
+        ui.KeyDown(13, 0)
+        ui.Draw()
+        print("Enter klappt um " + a.expanded + " " + tv.visibleNodes.count)
+        """, new[] { "sichtbar 4", "Dogs aufgeklappt 6 True ausgewaehlt True", "gewaehlt Dogs True", "Pfeil ab Fido", "Links zum Eltern Dogs", "Links klappt zu False 4", "Rechts klappt auf, dann zum Kind True Cats", "Pos1 Animals Tiefe 0 2", "Enter klappt um False 2" });
+
+    CheckUi("Menues: MenuBar, Untermenue, Haken, gesperrte Zeile, Tastatur, Kontextmenue, Klick daneben", uiHead + """
+        var mb = new UI.MenuBar(0, 0, 320, -1)
+        var file = new UI.MenuItem("File")
+        var cnt = 0
+        file.Add(new UI.MenuItem("New", func () => { cnt = cnt + 1 }))
+        file.Add(UI.MenuItem.Separator())
+        var rec = file.Add(new UI.MenuItem("Recent"))
+        rec.Add(new UI.MenuItem("a.txt", func () => { cnt = cnt + 10 }))
+        var chk = file.Add(new UI.MenuItem("Check"))
+        chk.checkable = true
+        var off = file.Add(new UI.MenuItem("Off", func () => { cnt = cnt + 100 }))
+        off.enabled = false
+        mb.Add(file)
+        var edit = new UI.MenuItem("Edit")
+        edit.Add(new UI.MenuItem("Copy", func () => { cnt = cnt + 1000 }))
+        mb.Add(edit)
+        ui.Add(mb)
+        ui.Draw()
+        print("Leiste " + mb.actualWidth + "x" + mb.actualHeight)
+        ui.MouseMove(10, 5)
+        ui.MouseDown(1, 10, 5)
+        ui.MouseUp(1, 10, 5)
+        ui.Draw()
+        print("offen " + ui.popups.count + " " + mb.openIndex)
+        // der Zeiger ueber dem zweiten Titel wechselt das Menue
+        ui.MouseMove(60, 5)
+        ui.Draw()
+        print("gewechselt " + ui.popups.count + " " + mb.openIndex)
+        // zurueck zu File, Untermenue Recent per Zeiger oeffnen
+        ui.MouseMove(10, 5)
+        ui.Draw()
+        var menu = ui.popups[0]
+        var y = menu.RowTop(ui, 2) + 4
+        ui.MouseMove(menu.ax + 10, y)
+        ui.Draw()
+        print("Untermenue " + ui.popups.count)
+        var subMenu = ui.popups[1]
+        var sx = subMenu.ax + 10
+        var sy = subMenu.ay + 4
+        ui.MouseDown(1, sx, sy)
+        ui.MouseUp(1, sx, sy)
+        ui.Draw()
+        print("gewaehlt " + cnt + " offen " + ui.popups.count)
+        // Tastatur: Enter auf New
+        ui.MouseDown(1, 10, 5)
+        ui.MouseUp(1, 10, 5)
+        ui.Draw()
+        ui.KeyDown(1073741905, 0)
+        ui.KeyDown(13, 0)
+        print("Tastatur " + cnt + " offen " + ui.popups.count)
+        // Haken und gesperrte Zeile
+        ui.MouseDown(1, 10, 5)
+        ui.MouseUp(1, 10, 5)
+        ui.Draw()
+        var m2 = ui.popups[0]
+        var cx = m2.ax + 10
+        var cy = m2.RowTop(ui, 3) + 4
+        ui.MouseDown(1, cx, cy)
+        ui.MouseUp(1, cx, cy)
+        ui.MouseDown(1, 10, 5)
+        ui.MouseUp(1, 10, 5)
+        ui.Draw()
+        var m3 = ui.popups[0]
+        var dx = m3.ax + 10
+        var dy = m3.RowTop(ui, 4) + 4
+        ui.MouseDown(1, dx, dy)
+        ui.MouseUp(1, dx, dy)
+        ui.Draw()
+        print("Haken " + chk.isChecked + " gesperrt " + cnt + " offen " + ui.popups.count)
+        ui.KeyDown(27, 0)
+        print("Escape " + ui.popups.count)
+        // Kontextmenue
+        var cm = new List()
+        cm.Add(new UI.MenuItem("Copy", func () => { cnt = cnt + 5 }))
+        cm.Add(new UI.MenuItem("Paste", func () => { cnt = cnt + 50 }))
+        var target = new UI.Label("right click me", 150, 150)
+        target.contextMenu = cm
+        ui.Add(target)
+        ui.Draw()
+        ui.MouseDown(3, 155, 155)
+        ui.MouseUp(3, 155, 155)
+        ui.Draw()
+        print("Kontextmenue " + ui.popups.count)
+        ui.KeyDown(1073741905, 0)
+        ui.KeyDown(1073741905, 0)
+        ui.KeyDown(13, 0)
+        print("Paste " + cnt + " " + ui.popups.count)
+        ui.MouseDown(3, 155, 155)
+        ui.MouseUp(3, 155, 155)
+        ui.Draw()
+        ui.MouseDown(1, 5, 190)
+        ui.MouseUp(1, 5, 190)
+        ui.Draw()
+        print("Klick daneben " + ui.popups.count)
+        """, new[] { "Leiste 320x22", "offen 1 0", "gewechselt 1 1", "Untermenue 2", "gewaehlt 10 offen 0", "Tastatur 11 offen 0", "Haken True gesperrt 11 offen 1", "Escape 0", "Kontextmenue 1", "Paste 61 0", "Klick daneben 0" });
+
+    CheckUi("RadioButtons, AutoSuggestBox, ToolBar und Image (alle Dehnungsarten)", uiHead + """
+        var rb = new UI.RadioButtons(10, 10)
+        rb.header = "Size"
+        rb.Add("Small")
+        rb.Add("Medium")
+        rb.Add("Large")
+        ui.Add(rb)
+        var asb = new UI.AutoSuggestBox("", 150, 10, 150, 24)
+        asb.AddSuggestion("apple")
+        asb.AddSuggestion("apricot")
+        asb.AddSuggestion("banana")
+        asb.AddSuggestion("blueberry")
+        ui.Add(asb)
+        var tb = new UI.ToolBar(0, 120, 320, -1)
+        var clicks = 0
+        tb.AddButton("Open", func () => { clicks = clicks + 1 })
+        tb.AddSeparator()
+        tb.AddButton("Save")
+        ui.Add(tb)
+        ui.Draw()
+        print("RadioButtons " + rb.actualWidth + "x" + rb.actualHeight)
+        ui.MouseDown(1, 20, 30)
+        ui.MouseUp(1, 20, 30)
+        ui.Draw()
+        print("gewaehlt " + rb.selectedIndex + " " + rb.selectedItem + " " + rb.TakeChanged())
+        ui.KeyDown(1073741905, 0)
+        ui.KeyDown(1073741905, 0)
+        ui.KeyDown(1073741905, 0)
+        print("Pfeile " + rb.selectedIndex)
+        ui.KeyDown(1073741906, 0)
+        print("hoch " + rb.selectedIndex)
+        ui.MouseDown(1, 160, 20)
+        ui.MouseUp(1, 160, 20)
+        ui.TextInput("ap")
+        ui.Draw()
+        print("Vorschlaege " + ui.popups.count + " " + asb.popupList.count)
+        ui.KeyDown(1073741905, 0)
+        ui.Draw()
+        print("Auswahl " + asb.popupList.selectedIndex)
+        ui.KeyDown(13, 0)
+        ui.Draw()
+        print("uebernommen " + asb.text + " " + ui.popups.count + " " + asb.TakeChosen() + " " + asb.chosenItem)
+        asb.SetText("")
+        ui.TextInput("B")
+        ui.Draw()
+        print("ohne Gross/Klein " + asb.popupList.count)
+        ui.MouseDown(1, 160, 10 + 24 + 12)
+        ui.MouseUp(1, 160, 10 + 24 + 12)
+        ui.Draw()
+        print("Klick auf Vorschlag " + asb.text + " " + ui.popups.count)
+        asb.SetText("")
+        ui.TextInput("x")
+        ui.Draw()
+        print("kein Treffer " + ui.popups.count)
+        asb.provider = func (text) => {
+            var l = new List()
+            l.Add(text + "1")
+            l.Add(text + "2")
+            return l
+        }
+        ui.TextInput("y")
+        ui.Draw()
+        print("Anbieter " + asb.popupList.count + " " + asb.popupList.Rows()[1])
+        ui.KeyDown(27, 0)
+        print("Escape " + ui.popups.count)
+        ui.MouseDown(1, 20, 125)
+        ui.MouseUp(1, 20, 125)
+        ui.Draw()
+        print("Leiste " + clicks + " " + tb.children.count)
+        var img = new Framebuffer(16, 16)
+        var ir = new Renderer(img)
+        ir.FillRect(0, 0, 16, 16, new SolidBrush(UI.Color.Rgb(255, 0, 0)))
+        ir.FillRect(4, 4, 8, 8, new SolidBrush(UI.Color.Rgb(0, 0, 255)))
+        var im = new UI.Image(img, 10, 160, 60, 30)
+        ui.Add(im)
+        var im2 = new UI.Image(img, 100, 160, 60, 30)
+        im2.stretch = UI.Stretch.UniformToFill
+        ui.Add(im2)
+        var im3 = new UI.Image(img, 180, 160, 60, 30)
+        im3.stretch = UI.Stretch.Fill
+        ui.Add(im3)
+        var im4 = new UI.Image(img, 250, 160, 20, 20)
+        im4.stretch = UI.Stretch.None
+        ui.Add(im4)
+        ui.Draw()
+        var R = UI.Color.Rgb(255, 0, 0)
+        var B = UI.Color.Rgb(0, 0, 255)
+        print("Uniform " + (Px.Get(ui.renderer, 27, 163) == R) + " " + (Px.Get(ui.renderer, 40, 175) == B) + " " + (Px.Get(ui.renderer, 15, 175) == ui.theme.back.Color))
+        print("Fuellen " + (Px.Get(ui.renderer, 101, 161) == R) + " " + (Px.Get(ui.renderer, 130, 175) == B) + " " + (Px.Get(ui.renderer, 101, 175) == R))
+        print("Strecken " + (Px.Get(ui.renderer, 181, 161) == R) + " " + (Px.Get(ui.renderer, 210, 175) == B))
+        print("Keine " + (Px.Get(ui.renderer, 251, 161) == R) + " " + (Px.Get(ui.renderer, 260, 170) == B) + " " + im4.actualWidth)
+        """, new[] { "RadioButtons 68x74", "gewaehlt 0 Small True", "Pfeile 2", "hoch 1", "Vorschlaege 1 2", "Auswahl 0", "uebernommen apple 0 True apple", "ohne Gross/Klein 2", "Klick auf Vorschlag banana 0", "kein Treffer 0", "Anbieter 2 blueberry", "Escape 0", "Leiste 1 3", "Uniform True True True", "Fuellen True True True", "Strecken True True", "Keine True True 20" });
+
+    CheckUi("Formen: Rectangle, Ellipse, Line, Path (Pfaddaten, Kurven), Geometry, DrawingCanvas", uiHead + """
+        print(UI.M.Sin(30) + " " + UI.M.Sin(90) + " " + UI.M.Cos(60) + " " + UI.M.Sin(-30) + " " + UI.M.Sin(210) + " " + UI.M.Cos(0))
+        var r = new UI.Rectangle(10, 10, 60, 40)
+        r.fill = new SolidBrush(UI.Color.Rgb(255, 200, 0))
+        r.stroke = new Pen(UI.Color.Rgb(0, 0, 0))
+        ui.Add(r)
+        var e = new UI.Ellipse(80, 10, 60, 40)
+        e.fill = new SolidBrush(UI.Color.Rgb(0, 200, 100))
+        ui.Add(e)
+        var l = new UI.Line(0, 0, 50, 30)
+        l.stroke = new Pen(UI.Color.Rgb(200, 0, 0))
+        var lc = new UI.Canvas(150, 10, 60, 40)
+        lc.Add(l)
+        ui.Add(lc)
+        var p = new UI.Path(undefined, 10, 70)
+        p.SetData("M 0 0 L 40 0 L 40 30 L 20 50 L 0 30 Z")
+        p.fill = new SolidBrush(UI.Color.Rgb(100, 100, 255))
+        p.stroke = new Pen(UI.Color.Rgb(0, 0, 80))
+        ui.Add(p)
+        var p2 = new UI.Path(undefined, 80, 70)
+        p2.SetData("M 0 40 c 10 -40 40 -40 50 0 q -25 -30 -50 0 z")
+        p2.fill = new SolidBrush(UI.Color.Rgb(255, 120, 120))
+        ui.Add(p2)
+        var g = new UI.Geometry()
+        g.AddEllipse(30, 30, 28, 20)
+        var p3 = new UI.Path(g, 150, 70)
+        p3.stroke = new Pen(UI.Color.Rgb(0, 0, 0))
+        ui.Add(p3)
+        ui.Draw()
+        print("Rechteck " + (Px.Get(ui.renderer, 30, 30) == r.fill.Color) + " " + (Px.Get(ui.renderer, 10, 10) == r.stroke.Color) + " " + (Px.Get(ui.renderer, 9, 9) == ui.theme.back.Color))
+        print("Ellipse " + (Px.Get(ui.renderer, 110, 30) == e.fill.Color) + " " + (Px.Get(ui.renderer, 81, 11) == ui.theme.back.Color))
+        print("Strecke " + (Px.Get(ui.renderer, 150, 10) == l.stroke.Color) + " " + (Px.Get(ui.renderer, 200, 40) == l.stroke.Color) + " " + lc.children[0].actualWidth + "x" + lc.children[0].actualHeight)
+        print("Pfad " + p.actualWidth + "x" + p.actualHeight + " " + (Px.Get(ui.renderer, 30, 90) == p.fill.Color) + " " + (Px.Get(ui.renderer, 10, 70) == p.stroke.Color) + " " + p.data.figures.count + " " + p.data.figures[0].Count() + " " + p.data.figures[0].closed)
+        print("Kurve " + (Px.Get(ui.renderer, 105, 90) == p2.fill.Color) + " " + p2.data.figures[0].closed + " " + p2.actualWidth + "x" + p2.actualHeight)
+        print("Ellipse-Pfad " + g.figures[0].Count() + " " + p3.actualWidth + "x" + p3.actualHeight + " " + (Px.Get(ui.renderer, 150 + 30, 70 + 30) == ui.theme.back.Color))
+        var dc = new UI.DrawingCanvas(10, 150, 120, 40)
+        var paints = 0
+        dc.onPaint = func (c) => {
+            paints = paints + 1
+            c.renderer.FillRect(0, 0, c.framebuffer.Width(), c.framebuffer.Height(), new SolidBrush(UI.Color.Rgb(30, 30, 60)))
+        }
+        var downs = 0
+        var lastX = -1
+        dc.onMouseDown = func (x, y, b) => {
+            downs = downs + 1
+            lastX = x
+        }
+        ui.Add(dc)
+        ui.Draw()
+        ui.Draw()
+        print("Zeichenflaeche " + paints + " " + dc.framebuffer.Width() + "x" + dc.framebuffer.Height() + " " + (Px.Get(ui.renderer, 20, 160) == UI.Color.Rgb(30, 30, 60)))
+        dc.Invalidate()
+        ui.Draw()
+        print("neu gemalt " + paints)
+        dc.width = 80
+        ui.Draw()
+        ui.Draw()
+        print("Groesse geaendert " + paints + " " + dc.framebuffer.Width())
+        ui.MouseDown(1, 25, 170)
+        ui.MouseUp(1, 25, 170)
+        print("Maus " + downs + " " + lastX)
+        var src = new Framebuffer(30, 20)
+        new Renderer(src).FillRect(0, 0, 30, 20, new SolidBrush(UI.Color.Rgb(255, 0, 255)))
+        var dc2 = new UI.DrawingCanvas(150, 150, 30, 20)
+        dc2.SetSource(src)
+        ui.Add(dc2)
+        ui.Draw()
+        print("fremder Puffer " + (Px.Get(ui.renderer, 160, 160) == UI.Color.Rgb(255, 0, 255)) + " " + dc2.actualWidth)
+        """, new[] { "500 1000 500 -500 -500 1000", "Rechteck True True True", "Ellipse True True", "Strecke True True 51x31", "Pfad 41x51 True True 1 5 True", "Kurve True True 51x41", "Ellipse-Pfad 64 59x51 True", "Zeichenflaeche 1 120x40 True", "neu gemalt 2", "Groesse geaendert 4 80", "Maus 1 15", "fremder Puffer True 30" });
+
+    CheckUi("Listen mit DataTemplate und das Beschneidungsrechteck des Renderers", uiHead + """
+        var lb = new UI.ListBox(10, 10, 90, 80)
+        lb.itemTemplate = new UI.DataTemplate(func (item) => {
+            var st = new UI.StackPanel(0, 0, -1, -1, true, 4, 1)
+            st.Add(new UI.Label("#"))
+            st.Add(new UI.Label(item))
+            return st
+        })
+        lb.Add("one")
+        lb.Add("two")
+        lb.Add("three")
+        ui.Add(lb)
+        ui.Draw()
+        print("Vorlagenzeilen " + lb.rowElements.count + " " + lb.rowElements[1].children.count + " " + lb.rowElements[1].children[1].text)
+        ui.renderer.SetClip(150, 20, 10, 10)
+        ui.renderer.FillRect(100, 0, 100, 100, new SolidBrush(UI.Color.Rgb(255, 0, 0)))
+        ui.renderer.DrawText(148, 20, "AB", new SolidBrush(UI.Color.Rgb(0, 255, 0)))
+        ui.renderer.ResetClip()
+        var inside = 0
+        var outside = 0
+        for (var y = 0; y < 60; y = y + 1) {
+            for (var x = 100; x < 200; x = x + 1) {
+                var red = Px.Get(ui.renderer, x, y) == UI.Color.Rgb(255, 0, 0)
+                var inClip = x >= 150 && x < 160 && y >= 20 && y < 30
+                if (red && inClip) { inside = inside + 1 }
+                if (red && !inClip) { outside = outside + 1 }
+            }
+        }
+        print("Clip " + inside + " " + outside)
+        """, new[] { "Vorlagenzeilen 3 2 two", "Clip 61 0" });
 
     CheckUi("Tick zeichnet, verarbeitet Ereignisse und liefert false, sobald das Fenster geschlossen wurde", uiHead + """
         var b = new UI.Button("OK", 10, 10, 80, 26)
@@ -9077,7 +9902,37 @@ string[] uiDrawExpected = Array.Empty<string>();
         ExpectDiagnostic("Binding auf ein Element, das es nicht gibt", "<Window class=\"A\"><Label text=\"{Binding text, ElementName=x}\"/></Window>", "does not exist");
         ExpectDiagnostic("unbekannte Markup-Erweiterung", "<Window class=\"A\"><Label text=\"{Bind X}\"/></Window>", "Unknown markup extension");
         ExpectDiagnostic("Binding ohne Pfad", "<Window class=\"A\"><Label text=\"{Binding Mode=TwoWay}\"/></Window>", "needs a path");
+        ExpectDiagnostic("ein Teil ausserhalb seines Containers", "<Window class=\"A\"><Item>x</Item></Window>", "'Item' can only be inside");
+        ExpectDiagnostic("ein Container, der nur Teile nimmt", "<Window class=\"A\"><ListBox><Button/></ListBox></Window>", "can only contain 'Item'");
+        ExpectDiagnostic("Border nimmt nur ein Kind", "<Window class=\"A\"><Border><Label/><Label/></Border></Window>", "contains only one element");
+        ExpectDiagnostic("Style ohne Ziel", "<Window class=\"A\"><Resources><Style key=\"k\"/></Resources></Window>", "needs target");
+        ExpectDiagnostic("Style mit unbekanntem Ziel", "<Window class=\"A\"><Resources><Style target=\"Slider\"/></Resources></Window>", "Unknown style target");
+        ExpectDiagnostic("Setter mit unbekannter Eigenschaft", "<Window class=\"A\"><Resources><Style target=\"Button\"><Setter property=\"nope\" value=\"1\"/></Style></Resources></Window>", "has no property 'nope'");
+        ExpectDiagnostic("zwei Styles ohne Schluessel fuer dasselbe Ziel", "<Window class=\"A\"><Resources><Style target=\"Button\"/><Style target=\"Button\"/></Resources></Window>", "two styles without a key");
+        ExpectDiagnostic("basedOn ohne Ziel", "<Window class=\"A\"><Resources><Style key=\"a\" target=\"Button\" basedOn=\"b\"/></Resources></Window>", "does not exist");
+        ExpectDiagnostic("Stil, den es nicht gibt", "<Window class=\"A\"><Button style=\"Nope\"/></Window>", "Unknown style 'Nope'");
+        ExpectDiagnostic("TemplateBinding ausserhalb einer Vorlage", "<Window class=\"A\"><Label text=\"{TemplateBinding text}\"/></Window>", "only for the elements inside a ControlTemplate");
+        ExpectDiagnostic("Binding in einer Vorlage", "<Window class=\"A\"><Resources><ControlTemplate key=\"t\" target=\"Button\"><Label text=\"{Binding X}\"/></ControlTemplate></Resources></Window>", "not available inside a ControlTemplate");
+        ExpectDiagnostic("Vorlage mit unbekanntem Teil im Trigger", "<Window class=\"A\"><Resources><ControlTemplate key=\"t\" target=\"Button\"><Label name=\"a\"/><Trigger property=\"hover\" value=\"true\"><Setter target=\"b\" property=\"text\" value=\"x\"/></Trigger></ControlTemplate></Resources></Window>", "has no part 'b'");
         ExpectDiagnostic("unbekannter Binding-Modus", "<Window class=\"A\"><Label text=\"{Binding X, Mode=Sideways}\"/></Window>", "Unknown binding mode");
+        const string dtHead = "<Window class=\"A\"><Resources>";
+        ExpectDiagnostic("DataTemplate: ein Binding ohne Pfad ausserhalb", "<Window class=\"A\"><Label text=\"{Binding}\"/></Window>", "without a path is for the elements of a DataTemplate");
+        ExpectDiagnostic("DataTemplate: genau ein Element", dtHead + "<DataTemplate key=\"d\"><Label/><Label/></DataTemplate></Resources></Window>", "contains exactly one element");
+        ExpectDiagnostic("DataTemplate: ohne Schluessel", dtHead + "<DataTemplate><Label/></DataTemplate></Resources></Window>", "needs key");
+        ExpectDiagnostic("DataTemplate: keine Namen", dtHead + "<DataTemplate key=\"d\"><Label name=\"a\"/></DataTemplate></Resources></Window>", "have no name");
+        ExpectDiagnostic("DataTemplate: keine Handler", dtHead + "<DataTemplate key=\"d\"><Button onClick=\"Go\"/></DataTemplate></Resources></Window>", "Event handlers are not available inside a DataTemplate");
+        ExpectDiagnostic("DataTemplate: kein ElementName", dtHead + "<DataTemplate key=\"d\"><Label text=\"{Binding x, ElementName=y}\"/></DataTemplate></Resources></Window>", "'ElementName' is not available inside a DataTemplate");
+        ExpectDiagnostic("DataTemplate: das Element selbst ist nur lesbar", dtHead + "<DataTemplate key=\"d\"><TextBox text=\"{Binding Mode=TwoWay}\"/></DataTemplate></Resources></Window>", "read only");
+        ExpectDiagnostic("DataTemplate: unbekannter Converter", dtHead + "<DataTemplate key=\"d\"><Label text=\"{Binding x, Converter=Nope}\"/></DataTemplate></Resources></Window>", "Unknown converter 'Nope'");
+        ExpectDiagnostic("DataTemplate: Schluessel doppelt", dtHead + "<DataTemplate key=\"d\"><Label/></DataTemplate><DataTemplate key=\"d\"><Label/></DataTemplate></Resources></Window>", "used twice");
+        ExpectDiagnostic("itemTemplate, das es nicht gibt", "<Window class=\"A\"><ListBox itemTemplate=\"Nope\"/></Window>", "Unknown data template 'Nope'");
+        ExpectDiagnostic("view, die es nicht gibt", "<Window class=\"A\"><ListBox view=\"Nope\"/></Window>", "Unknown view 'Nope'");
+        ExpectDiagnostic("itemsSource nimmt keinen festen Wert", "<Window class=\"A\"><ListBox itemsSource=\"abc\"/></Window>", "is a list: give {Binding ...} or {Expr ...}");
+        ExpectDiagnostic("view und itemsSource zusammen", dtHead + "<CollectionView key=\"v\"/></Resources><ListBox view=\"v\" itemsSource=\"{Binding xs}\"/></Window>", "a 'view' or an 'itemsSource', not both");
+        ExpectDiagnostic("CollectionView: nur Lesen", dtHead + "<CollectionView key=\"v\" source=\"{Binding xs, Mode=TwoWay}\"/></Resources></Window>", "read only");
+        ExpectDiagnostic("CollectionView: filter ist Code", dtHead + "<CollectionView key=\"v\" filter=\"abc\"/></Resources></Window>", "is code: give {Expr ...}");
+        ExpectDiagnostic("CollectionView: unbekanntes Attribut", dtHead + "<CollectionView key=\"v\" sorted=\"a\"/></Resources></Window>", "no attribute 'sorted'");
+        ExpectDiagnostic("Schluessel von Vorlage und View teilen sich den Namensraum", dtHead + "<DataTemplate key=\"d\"><Label/></DataTemplate><CollectionView key=\"d\"/></Resources></Window>", "used twice");
 
         string Generate(string markup) => fire.UI.Markup.FireUiGenerator.Generate(fire.UI.Markup.MarkupParser.Parse(markup), "T.fxml");
         void ExpectGenerateError(string title, string markup, string expected)
@@ -9090,6 +9945,10 @@ string[] uiDrawExpected = Array.Empty<string>();
         ExpectGenerateError("Zahl erwartet", "<Window class=\"A\"><Label x=\"abc\"/></Window>", "needs a whole number");
         ExpectGenerateError("true/false erwartet", "<Window class=\"A\"><Label visible=\"yes\"/></Window>", "needs true or false");
         ExpectGenerateError("Ausrichtung erwartet", "<Window class=\"A\"><Stack orientation=\"Diagonal\"/></Window>", "needs Horizontal or Vertical");
+        ExpectGenerateError("Abstand erwartet", "<Window class=\"A\"><Label margin=\"1,2,3\"/></Window>", "needs 1 number");
+        ExpectGenerateError("Auswahl erwartet", "<Window class=\"A\"><Label halign=\"Middle\"/></Window>", "needs one of Stretch, Left, Center, Right");
+        ExpectGenerateError("Stift erwartet", "<Window class=\"A\"><Rectangle stroke=\"black\"/></Window>", "needs a pen");
+        ExpectGenerateError("eine Eigenschaft, die eine Methode setzt, ist nicht bindbar", "<Window class=\"A\"><Grid rows=\"{Binding R}\"/></Window>", "cannot be bound");
         ExpectGenerateError("Farbe erwartet", "<Window class=\"A\"><Label color=\"red\"/></Window>", "needs a colour");
 
         string script = Generate("<Window class=\"Settings\" title=\"Hi &quot;you&quot;\" width=\"200\" height=\"100\"><Button name=\"ok\" text=\"OK\" onClick=\"Save\" x=\"0x10\"/></Window>");
@@ -9200,6 +10059,282 @@ string[] uiDrawExpected = Array.Empty<string>();
                     "abc p1 T1 p1 P1 T1 False False 255", "xyz", "p2 p2 P2", "p3 p3 P3", "False",
                     "other other", "other2", "p4", "T1||True", "p4",
                 });
+
+            File.WriteAllText(P("Rich.fxml"), """
+                <Window class="Rich" title="Rich" width="480" height="320">
+                  <Resources>
+                    <Style target="Label">
+                      <Setter property="color" value="#0000C8"/>
+                    </Style>
+                    <Style key="Primary" target="Button">
+                      <Setter property="background" value="#3366AA"/>
+                      <Setter property="foreground" value="#FFFFFF"/>
+                      <Setter property="margin" value="2,1"/>
+                      <Trigger property="hover" value="true">
+                        <Setter property="background" value="#4477BB"/>
+                      </Trigger>
+                    </Style>
+                    <ControlTemplate key="Fancy" target="Button">
+                      <Border name="bd" background="#33AA66" padding="4">
+                        <Label name="txt" text="{TemplateBinding text}"/>
+                      </Border>
+                      <Trigger property="pressed" value="true">
+                        <Setter target="bd" property="background" value="#AA3333"/>
+                      </Trigger>
+                    </ControlTemplate>
+                  </Resources>
+                  <DockPanel x="0" y="0" width="480" height="320">
+                    <MenuBar name="bar" DockPanel.Dock="Top">
+                      <Menu header="File">
+                        <MenuItem header="Open" shortcut="Ctrl+O" onClick="OpenFile"/>
+                        <MenuSeparator/>
+                        <MenuItem header="Recent">
+                          <MenuItem header="a.txt"/>
+                        </MenuItem>
+                        <MenuItem header="Check" checkable="true" isChecked="true"/>
+                      </Menu>
+                      <Menu header="Edit"><MenuItem header="Copy"/></Menu>
+                    </MenuBar>
+                    <ToolBar DockPanel.Dock="Top">
+                      <Button name="one" text="One" onClick="One"/>
+                      <Separator/>
+                      <Button text="Two"/>
+                    </ToolBar>
+                    <Grid rows="*,auto" columns="150,*">
+                      <ListBox name="names" Grid.Row="0" Grid.Column="0" margin="4" onSelect="Picked">
+                        <Item>Alice</Item>
+                        <Item>Bob</Item>
+                        <Item text="Carol"/>
+                      </ListBox>
+                      <ScrollViewer Grid.Row="0" Grid.Column="1" margin="4">
+                        <StackPanel spacing="4" padding="4">
+                          <TreeView name="tree" height="80">
+                            <TreeNode text="root" expanded="true">
+                              <TreeNode text="child a"/>
+                              <TreeNode text="child b"><TreeNode text="leaf"/></TreeNode>
+                            </TreeNode>
+                          </TreeView>
+                          <RadioButtons name="radio" header="Size" selectedIndex="1"><Item>Small</Item><Item>Large</Item></RadioButtons>
+                          <Button name="styled" text="Styled" style="Primary"/>
+                          <Button name="templated" text="Templated" template="Fancy"/>
+                          <AutoSuggestBox name="sugg" width="150"><Suggestion>apple</Suggestion><Suggestion>banana</Suggestion></AutoSuggestBox>
+                          <Rectangle name="rect" width="60" height="20" fill="#FFCC00" stroke="#000000"/>
+                          <Path data="M 0 0 L 30 0 L 15 20 Z" fill="#66AAFF" stroke="#003366,2"/>
+                          <DrawingCanvas name="canvas" width="80" height="40" onPaint="Paint" onMouseDown="Down"/>
+                        </StackPanel>
+                      </ScrollViewer>
+                      <ListView name="table" Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" height="60">
+                        <Column header="Name" member="name" width="120"/>
+                        <Column header="Age" member="age"/>
+                      </ListView>
+                    </Grid>
+                  </DockPanel>
+                </Window>
+                """);
+            CheckUi("Markup: Layout-Container, Listen, Baum, Menues, Styles, Vorlagen und Formen aus dem Markup", $$"""
+                #include "{{P("Rich.fxml")}}"
+                class RichApp : RichBase {
+                    Picked(sender) { print("picked " + sender.selectedItem) }
+                    OpenFile(sender) { print("open") }
+                    One(sender) { print("one") }
+                    Paint(sender, canvas) { print("paint " + canvas.framebuffer.Width() + "x" + canvas.framebuffer.Height() + " " + (canvas == sender)) }
+                    Down(sender, x, y, button) { print("down " + x + "," + y + " " + button) }
+                }
+                var app = new RichApp()
+                app.ui.Draw()
+                app.ui.Draw()
+                print("namen " + app.names.count + " baum " + app.tree.visibleNodes.count + " vorschlaege " + app.sugg.suggestions.count + " tabelle " + app.table.columns.count)
+                var n = app.names
+                app.ui.MouseDown(1, n.ax + 10, n.ay + 25)
+                app.ui.MouseUp(1, n.ax + 10, n.ay + 25)
+                var c = app.canvas
+                c.MouseDown(app.ui, 1, c.ax + 5, c.ay + 6)
+                app.ui.MouseDown(1, app.one.ax + 5, app.one.ay + 5)
+                app.ui.MouseUp(1, app.one.ax + 5, app.one.ay + 5)
+                print("Stil " + (app.styled.background != undefined) + " " + app.styled.margin.left + " " + (app.styled.style == app.fxStyle_Primary))
+                print("Vorlage " + (app.templated.templateRoot != undefined) + " " + app.templated.FindPart("txt").text)
+                print("implizit " + (app.rect.stroke != undefined) + " " + app.radio.selectedIndex + " " + app.radio.items.count)
+                app.bar.Open(app.ui, 0)
+                app.ui.Draw()
+                var menu = app.ui.popups[0]
+                var mx = menu.ax + 10
+                var my = menu.ay + 4
+                app.ui.MouseDown(1, mx, my)
+                app.ui.MouseUp(1, mx, my)
+                print("Menue " + app.ui.popups.count + " " + app.bar.menus.count)
+                """, new[] { "paint 80x40 True", "namen 3 baum 3 vorschlaege 2 tabelle 2", "picked Bob", "down 5,6 1", "one", "Stil True 2 True", "Vorlage True Templated", "implizit True 1 2", "open", "Menue 0 2" });
+
+            // die Entwurfsansicht: dieselbe Bibliothek zeichnet, ohne Handler und ohne den Code des Programms
+            {
+                var richDoc = fire.UI.Markup.MarkupParser.Parse(File.ReadAllText(P("Rich.fxml")));
+                var shot = fire.Compiler.UiPreview.Render(richDoc, P("Rich.fxml"));
+                var shown = richDoc.AllElements().Where(e => fire.UI.Markup.MarkupSchema.Find(e.Tag) is { IsPart: false }).ToList();
+                CheckMarkup("Markup: Entwurfsansicht - Bild in der Groesse des Fensters, ein Ort je Element", shot.Ok && shot.Width == 480 && shot.Height == 320 && shot.Rects.Count == shown.Count && shot.Rects[0].Width == 480, shot.Error ?? $"{shot.Width}x{shot.Height} {shot.Rects.Count}/{shown.Count}");
+                int styledAt = shown.FindIndex(e => e.Name == "styled");
+                var styledRect = shot.Rects.FirstOrDefault(r => r.Index == styledAt);
+                uint styledColor = 51u | (102u << 8) | (170u << 16) | (255u << 24);
+                CheckMarkup("Markup: Entwurfsansicht - der Style steckt im Bild (Hintergrund des Buttons mit style=\"Primary\")", shot.Ok && styledRect != null && shot.Pixels[(styledRect.Y + 3) * shot.Width + styledRect.X + 3] == styledColor);
+                var bound = fire.UI.Markup.MarkupParser.Parse("<Window class=\"B\" width=\"200\" height=\"100\"><Label text=\"{Binding Name}\"/><Label color=\"{Enum Colors.Red}\" text=\"x\"/><Button onClick=\"Nope\"/></Window>");
+                string previewScript = fire.UI.Markup.FireUiGenerator.GeneratePreview(bound);
+                CheckMarkup("Markup: Entwurfsansicht - ein gebundener Text zeigt den Pfad, Code des Programms und Handler fehlen", previewScript.Contains("\u2039Name\u203A") && !previewScript.Contains("Colors.Red") && !previewScript.Contains("Nope(") && fire.Compiler.UiPreview.Render(bound).Ok);
+                CheckMarkup("Markup: Entwurfsansicht - ein Fehler im Markup wird gemeldet, nichts wird ausgefuehrt", !fire.Compiler.UiPreview.Render(fire.UI.Markup.MarkupParser.Parse("<Window class=\"B\"><Label x=\"abc\"/></Window>")).Ok);
+            }
+
+            // DataTemplate, CollectionView, itemsSource/itemTemplate/view im Markup
+            File.WriteAllText(P("Data.fxml"), """
+                <Window class="Data" title="Data" width="360" height="240">
+                  <Resources>
+                    <Converter key="Up" type="UpperConverter"/>
+                    <DataTemplate key="Person">
+                      <StackPanel horizontal="true" spacing="6">
+                        <Label text="{Binding name, Converter=Up}"/>
+                        <Label text="{Binding age}"/>
+                      </StackPanel>
+                    </DataTemplate>
+                    <DataTemplate key="Plain">
+                      <Label text="{Binding}"/>
+                    </DataTemplate>
+                    <CollectionView key="ByName" source="{Binding people}" sortBy="name" descending="true"/>
+                    <CollectionView key="Young" source="{Binding people}" sortBy="age" filter="{Expr func (p) on this => { return p.age &lt; 30 }}"/>
+                  </Resources>
+                  <StackPanel padding="4" spacing="4">
+                    <ListBox name="viaView" width="200" height="90" view="ByName" itemTemplate="Person" selectedIndex="{Binding sel, Mode=TwoWay}"/>
+                    <ListBox name="direct" width="200" height="60" itemsSource="{Binding names}" itemTemplate="Plain"/>
+                    <ListBox name="young" width="200" height="40" view="Young" itemTemplate="Person"/>
+                  </StackPanel>
+                </Window>
+                """);
+            CheckUi("Markup: DataTemplate, CollectionView und itemsSource folgen dem Datenkontext", $$"""
+                #include "{{P("Data.fxml")}}"
+                class UpperConverter : UI.Converter {
+                    Convert(value) { return value.ToUpper() }
+                    ConvertBack(value) { return value }
+                }
+                class Person {
+                    string name
+                    int age
+                    construct(string name, int age) {
+                        this.name = name
+                        this.age = age
+                    }
+                }
+                class Model {
+                    List people
+                    List names
+                    int sel = -1
+                }
+                class Data : DataBase { }
+                var app = new Data()
+                var m = new Model()
+                m.people = new List()
+                m.people.Add(new Person("Carol", 31))
+                m.people.Add(new Person("Alice", 25))
+                m.people.Add(new Person("Bob", 40))
+                m.names = new List()
+                m.names.Add("one")
+                m.names.Add("two")
+                app.SetDataContext(m)
+                app.ui.Draw()
+                app.ui.Draw()
+                print("zeilen " + app.viaView.count + " " + app.direct.count + " " + app.young.count + " erste " + app.viaView.selectedItem)
+                print("zeile " + app.viaView.rowElements[0].children[0].text + " " + app.viaView.rowElements[0].children[1].text + " " + app.direct.rowElements[1].text)
+                m.people.Add(new Person("Dave", 22))
+                m.names.Add("three")
+                app.ui.Draw()
+                print("mehr " + app.viaView.count + " " + app.direct.count + " jung " + app.young.count + " " + app.young.view[0].name)
+                m.sel = 1
+                app.ui.Draw()
+                print("Auswahl " + app.viaView.selectedIndex + " " + app.viaView.selectedItem.name)
+                app.viaView.Select(3)
+                app.ui.Draw()
+                print("zurueck " + m.sel)
+                var other = new List()
+                other.Add("x")
+                m.names = other
+                app.ui.Draw()
+                print("neue Liste " + app.direct.count + " " + app.ui.Update())
+                """, new[] { "zeilen 3 2 1 erste undefined", "zeile CAROL 31 two", "mehr 4 3 jung 2 Dave", "Auswahl 1 Carol", "zurueck 3", "neue Liste 1 False" });
+
+            // die Entwurfsansicht zeigt die Zeilen, ohne die Daten zu kennen
+            {
+                var dataDoc = fire.UI.Markup.MarkupParser.Parse(File.ReadAllText(P("Data.fxml")));
+                var dataShot = fire.Compiler.UiPreview.Render(dataDoc, P("Data.fxml"));
+                string dataPreview = fire.UI.Markup.FireUiGenerator.GeneratePreview(dataDoc);
+                CheckMarkup("Markup: Entwurfsansicht - Listen mit itemTemplate/view/itemsSource werden gezeichnet (ohne die Daten)", dataShot.Ok && dataPreview.Contains("\u2039name\u203A") && !dataPreview.Contains("SetView") && dataPreview.Contains("Add(\"\")"), dataShot.Error ?? dataPreview);
+            }
+
+            // Invalidierung: nur neu zeichnen, was sich geaendert hat
+            CheckUi("Invalidierung: Update zeichnet nur bei Aenderungen, Hover und Text zeichnen nur den betroffenen Bereich", uiHead + """
+                var a = new UI.Label("alpha", 10, 10)
+                var b = new UI.Button("btn", 10, 40, 80, 24)
+                var c = new UI.Label("gamma", 200, 150)
+                ui.Add(a)
+                ui.Add(b)
+                ui.Add(c)
+                print("first " + ui.Update())
+                print("idle " + ui.Update())
+                var sentinel = UI.Color.Rgb(1, 2, 3)
+                ui.renderer.SetPixel(250, 20, sentinel)
+                b.hover = true
+                print("hover " + ui.Update() + " rest bleibt " + (Px.Get(ui.renderer, 250, 20) == sentinel))
+                print("idle " + ui.Update())
+                ui.renderer.SetPixel(250, 20, sentinel)
+                c.x = 190
+                print("Layout " + ui.Update() + " alles neu " + (Px.Get(ui.renderer, 250, 20) != sentinel))
+                ui.renderer.SetPixel(250, 20, sentinel)
+                ui.theme.back = new SolidBrush(UI.Color.Rgb(10, 10, 10))
+                print("Theme " + ui.Update() + " alles neu " + (Px.Get(ui.renderer, 250, 20) != sentinel))
+                ui.renderer.SetPixel(250, 20, sentinel)
+                b.Invalidate()
+                print("Invalidate " + ui.Update() + " rest bleibt " + (Px.Get(ui.renderer, 250, 20) == sentinel))
+                ui.renderer.SetPixel(250, 20, sentinel)
+                ui.Draw()
+                print("Draw " + (Px.Get(ui.renderer, 250, 20) != sentinel))
+                """, new[] { "first True", "idle False", "hover True rest bleibt True", "idle False", "Layout True alles neu True", "Theme True alles neu True", "Invalidate True rest bleibt True", "Draw True" });
+
+            // mehrere Fenster ohne Markup: Attach/Detach/Tick
+            CheckUi("Mehrere Fenster: Root.Attach haengt ein Fenster an, Tick arbeitet beide ab, Detach loest es", """
+                class Px { static int Get(console, int x, int y) { var v = console.GetPixel(x, y); if (v < 0) { v = v + 4294967296 } return v } }
+                var fb1 = new Framebuffer(100, 60)
+                var w1 = new Window(fb1, "one")
+                var ui1 = new UI.Root(fb1, w1)
+                var fb2 = new Framebuffer(100, 60)
+                var w2 = new Window(fb2, "two")
+                var ui2 = new UI.Root(fb2, w2)
+                var ticks = 0
+                ui2.onTick = func () => { ticks = ticks + 1 }
+                ui2.Add(new UI.Button("two", 5, 5, 60, 20))
+                ui1.Add(new UI.Label("one", 5, 5))
+                ui1.Attach(ui2)
+                ui1.Attach(ui2)
+                print("angehaengt " + ui1.attached.count)
+                print(ui1.Tick())
+                print(ui1.Tick())
+                print("ticks " + ticks + " gezeichnet " + (Px.Get(ui2.renderer, 10, 10) == ui2.theme.face.Color))
+                ui1.Detach(ui2)
+                ui1.Tick()
+                print("nach Detach " + ticks)
+                """, new[] { "angehaengt 1", "True", "True", "ticks 2 gezeichnet True", "nach Detach 2" });
+
+            // mehrere Fenster: ein Fenster oeffnet ein anderes, Tick arbeitet beide ab
+            File.WriteAllText(P("Main.fxml"), "<Window class=\"Main\" width=\"120\" height=\"80\"><Button name=\"b\" text=\"main\"/></Window>");
+            File.WriteAllText(P("Tool.fxml"), "<Window class=\"Tool\" title=\"Tool\" width=\"100\" height=\"60\"><Label name=\"l\" text=\"tool\"/></Window>");
+            CheckUi("Markup: Open/Run(other) - das erzeugte Fenster haengt ein anderes an, ein Tick arbeitet beide ab", $$"""
+                #include "{{P("Main.fxml")}}"
+                #include "{{P("Tool.fxml")}}"
+                var mainTicks = 0
+                var toolTicks = 0
+                class Main : MainBase { OnTick() { mainTicks = mainTicks + 1 } }
+                class Tool : ToolBase { OnTick() { toolTicks = toolTicks + 1 } }
+                var a = new Main()
+                var t = new Tool()
+                a.Open(t)
+                a.ui.Tick()
+                a.ui.Tick()
+                print("ticks " + mainTicks + " " + toolTicks + " angehaengt " + a.ui.attached.count)
+                t.l.text = "changed"
+                print("Update " + t.ui.Update())
+                """, new[] { "ticks 2 2 angehaengt 1", "Update True" });
         }
         finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
     }
@@ -12091,6 +13226,8 @@ static int CountOccurrences(string haystack, string needle)
 
     Console.WriteLine(embFailures == 0 ? "Alle Embedding-Pruefungen bestanden." : $"FEHLER: {embFailures} Embedding-Pruefung(en) fehlgeschlagen.");
 }
+
+ProjectTests.Run();
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // Native-Backend (fire.Native): derselbe Quelltext laeuft in der VM und als erzeugtes C++ - die Ausgabe muss identisch sein
@@ -15607,6 +16744,598 @@ else
             """),
     }).ToArray();
 
+    // PseudoRandom (#import "random"): pure fire, the same numbers in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Random: PseudoRandom - Folge fuer einen Seed, Bereiche, Mischen, Fehler", """
+            #import "random"
+            var r = new PseudoRandom(42)
+            print(r.NextUInt32() + " " + r.NextUInt32() + " " + r.NextUInt32())
+            print(new PseudoRandom(42).NextUInt32() == 2014437610)
+            print(new PseudoRandom(43).NextUInt32() != 2014437610)
+            var seen = new List()
+            for (var i = 0; i < 6; i = i + 1) { seen.Add(0) }
+            var inRange = true
+            var floats = true
+            var big = true
+            var between = true
+            for (var i = 0; i < 600; i = i + 1) {
+                var d = r.Next(6)
+                if (d < 0 || d > 5) { inRange = false } else { seen[d] = seen[d] + 1 }
+                var f = r.NextFloat()
+                if (f < 0.0 || f >= 1.0) { floats = false }
+                var n = r.Next()
+                if (n < 0 || n >= 2147483647) { inRange = false }
+                var w = r.Next(10000000000)
+                if (w < 0 || w >= 10000000000) { big = false }
+                var m = r.Next(-5, 5)
+                if (m < -5 || m >= 5) { between = false }
+            }
+            var all = true
+            for (var i = 0; i < 6; i = i + 1) { if (seen[i] < 60) { all = false } }
+            print("Bereiche " + inRange + " " + floats + " " + big + " " + between + " jede Seite oft genug " + all)
+            var list = new List()
+            for (var i = 0; i < 20; i = i + 1) { list.Add(i) }
+            var shuffled = r.Shuffle(list)
+            var sum = 0
+            var moved = 0
+            for (var i = 0; i < 20; i = i + 1) { sum = sum + shuffled[i]; if (shuffled[i] != i) { moved = moved + 1 } }
+            print("Mischen " + shuffled.count + " " + sum + " " + (moved > 5))
+            print(r.Pick(list) >= 0)
+            print(r.Pick(new List()))
+            var bools = 0
+            for (var i = 0; i < 400; i = i + 1) { if (r.NextBool()) { bools = bools + 1 } }
+            print("Bool " + (bools > 120 && bools < 280))
+            var ints = r.NextInt() != r.NextInt()
+            print("NextInt " + ints)
+            var a = new PseudoRandom()
+            print(a.Next() >= 0)
+            try { r.Next(0) } catch (RandomException e) { print("Fehler " + e.message) }
+            try { r.Next(5, 5) } catch (RandomException e) { print("Fehler " + e.message) }
+            var s1 = new PseudoRandom(7)
+            var s2 = new PseudoRandom(7)
+            var same = true
+            for (var i = 0; i < 100; i = i + 1) { if (s1.Next(1000) != s2.Next(1000)) { same = false } }
+            print("gleicher Seed " + same)
+            """),
+    }).ToArray();
+
+    // TLS (bridges/fire_bridge_tls.hpp) and HTTPS: a certificate for localhost is made here (the tests trust exactly it); needs the development files of OpenSSL on this machine
+    {
+        bool hasOpenSsl = new[] { "/usr/include/openssl/ssl.h", "/usr/local/include/openssl/ssl.h", "/opt/homebrew/include/openssl/ssl.h", "/usr/include/x86_64-linux-gnu/openssl/ssl.h" }.Any(File.Exists);
+        if (!hasOpenSsl)
+        {
+            Console.WriteLine("(Tls/Https: uebersprungen - die Entwicklerdateien von OpenSSL (openssl/ssl.h) sind auf diesem Rechner nicht da)");
+        }
+        else
+        {
+            using var rsa = System.Security.Cryptography.RSA.Create(2048);
+            var request = new System.Security.Cryptography.X509Certificates.CertificateRequest("CN=localhost", rsa, System.Security.Cryptography.HashAlgorithmName.SHA256, System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+            var san = new System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder();
+            san.AddDnsName("localhost");
+            san.AddIpAddress(System.Net.IPAddress.Loopback);
+            request.CertificateExtensions.Add(san.Build());
+            request.CertificateExtensions.Add(new System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension(false, false, 0, true));
+            using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(5));
+            string FireText(string pem) => "\"" + pem.Replace("\r", "").Replace("\n", "\\n") + "\"";
+            string certText = FireText(certificate.ExportCertificatePem()), keyText = FireText(rsa.ExportPkcs8PrivateKeyPem());
+            string tlsHead = "#import \"tls\"\n#import \"http\"\n#import \"time\"\nvar certPem = " + certText + "\nvar keyPem = " + keyText + "\n";
+            natCases = natCases.Concat(new (string Name, string Source)[]
+            {
+                ("Tls: Handshake, verschluesselte Daten, Zertifikatspruefung (unbekannt, falscher Name, ausgeschaltet) ueber Loopback", tlsHead + """
+                    print("available " + Tls.Support.Available())
+                    var probe = new Net.TcpListener("127.0.0.1", 0)
+                    var port = probe.Port
+                    probe.Close()
+                    fire {
+                        var l = new Net.TcpListener("127.0.0.1", port)
+                        var server = new Tls.Server(certPem, keyPem)
+                        var served = 0
+                        while (served < 5) {
+                            var tcp = l.TryAccept(10000)
+                            if (tcp == undefined) { break }
+                            served = served + 1
+                            try {
+                                var s = server.Accept(tcp, 5000)
+                                var buf = new byte[64]
+                                var n = s.Read(buf, 0, 64)
+                                s.WriteString("echo:" + IO.Utf8.GetString(buf, 0, n))
+                                s.Close()
+                            } catch (Net.NetException e) { }
+                        }
+                        server.Close()
+                        l.Close()
+                    }
+                    Sleep(400)
+                    var o = new Tls.Options()
+                    o.caPem = certPem
+                    var s = Tls.Stream.Connect("localhost", port, o)
+                    print("connected " + s.Info.StartsWith("TLSv1"))
+                    s.WriteString("hello tls")
+                    var buf = new byte[64]
+                    var n = s.Read(buf, 0, 64)
+                    print("got " + IO.Utf8.GetString(buf, 0, n))
+                    print("eof " + s.Read(buf, 0, 64))
+                    s.Close()
+                    try { var t = Tls.Stream.Connect("localhost", port) } catch (Tls.CertificateException e) { print("untrusted " + e.code) }
+                    var tcp2 = new Net.TcpClient("127.0.0.1", port)
+                    try { var w = new Tls.Stream(tcp2, "wrong.example", o, 5000) } catch (Tls.CertificateException e) { print("wrong name " + e.code) }
+                    var o2 = new Tls.Options()
+                    o2.verify = false
+                    var u = Tls.Stream.Connect("localhost", port, o2)
+                    u.WriteString("unchecked")
+                    var m = u.Read(buf, 0, 64)
+                    print("unchecked " + IO.Utf8.GetString(buf, 0, m))
+                    u.Close()
+                    var tcp3 = new Net.TcpClient("127.0.0.1", port)
+                    var v = new Tls.Stream(tcp3, "127.0.0.1", o, 5000)
+                    v.WriteString("by ip")
+                    var k = v.Read(buf, 0, 64)
+                    print("by ip " + IO.Utf8.GetString(buf, 0, k))
+                    v.Close()
+                    """),
+                ("Https: Client und Server ueber TLS (https://-URL, Zertifikat des Tests, Zertifikatsfehler)", tlsHead + """
+                    var probe = new Net.TcpListener("127.0.0.1", 0)
+                    var port = probe.Port
+                    probe.Close()
+                    fire {
+                        var server = new Http.Server("127.0.0.1", port)
+                        server.UseTls(certPem, keyPem)
+                        server.Route("GET", "/hello", func (r) => Http.Response.FromText("secure " + r.Query("name", "world")))
+                        server.Route("POST", "/echo", func (r) => r.Text().ToUpper())
+                        var served = 0
+                        while (served < 4) {
+                            if (server.ServeOne(10000)) { served = served + 1 }
+                        }
+                        server.Close()
+                    }
+                    Sleep(400)
+                    var client = new Http.Client()
+                    client.timeout = 10000
+                    var o = new Tls.Options()
+                    o.caPem = certPem
+                    client.tls = o
+                    var site = "https://localhost:" + port
+                    var r1 = client.Get(site + "/hello?name=Anna")
+                    print(r1.status + " [" + r1.Text() + "] " + r1.url.StartsWith("https://"))
+                    var r2 = client.Post(site + "/echo", "grüß dich")
+                    print(r2.status + " [" + r2.Text() + "]")
+                    var strict = new Http.Client()
+                    strict.timeout = 5000
+                    try { strict.Get(site + "/hello") } catch (Tls.CertificateException e) { print("untrusted " + e.code) }
+                    var loose = new Tls.Options()
+                    loose.verify = false
+                    strict.tls = loose
+                    print(strict.Get(site + "/hello?name=loose").Text())
+                    """),
+            }).ToArray();
+        }
+    }
+
+    // GPIO (bridges/fire_bridge_gpio.hpp): the simulated chip "sim" - outputs, inputs, wires, pulls, edges, errors - the same in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Gpio: simulierter Chip - Ausgang, Eingang, Draht, Pull, Flanken, Fehler", """
+            #import "gpio"
+            print("chips " + Gpio.Board.Chips()[0] + " " + (Gpio.Board.Chips().count >= 1))
+            var led = new Gpio.Pin("sim", 1).Output()
+            var btn = new Gpio.Pin("sim", 2).Input(Gpio.Pull.Down, Gpio.Edge.Both)
+            print("props " + led.Chip + " " + led.Line + " " + led.IsOutput + " " + btn.IsInput + " " + led.IsClosed)
+            Gpio.Sim.Wire(1, 2)
+            print("low " + btn.Read() + " " + btn.ReadInt() + " " + led.Read())
+            led.Write(true)
+            print("high " + btn.Read() + " edge " + btn.TakeEdge())
+            var first = btn.EdgeTime
+            print("none " + btn.TakeEdge())
+            print("toggle " + led.Toggle() + " " + btn.Read() + " edge " + btn.TakeEdge() + " " + (btn.EdgeTime >= first))
+            Gpio.Sim.Unwire(1, 2)
+            var up = new Gpio.Pin("sim", 3).Input(Gpio.Pull.Up, Gpio.Edge.Falling)
+            print("pull up " + up.Read())
+            Gpio.Sim.Drive(3, false)
+            print("driven " + up.Read() + " " + Gpio.Sim.Level(3) + " edge " + up.WaitEdge(200ms))
+            Gpio.Sim.Drive(3, true)
+            print("rising is not watched: " + up.WaitEdge(30ms) + " " + up.Read())
+            Gpio.Sim.Release(3)
+            print("released " + up.Read())
+            print("timeout " + up.WaitEdge(20))
+
+            class Counter {
+                int rising
+                int falling
+                construct() { this.rising = 0; this.falling = 0 }
+                Count(e, t) {
+                    if (e == Gpio.Edge.Rising) { this.rising = this.rising + 1 }
+                    if (e == Gpio.Edge.Falling) { this.falling = this.falling + 1 }
+                }
+            }
+            var counter = new Counter()
+            var watch = new Gpio.Pin("sim", 4).Input(Gpio.Pull.None, Gpio.Edge.Both)
+            watch.onEdge = (e, t) => { counter.Count(e, t) }
+            for (var i = 0; i < 3; i++) {
+                Gpio.Sim.Drive(4, true)
+                Gpio.Sim.Drive(4, false)
+            }
+            print("poll " + watch.Poll() + " " + counter.rising + " " + counter.falling)
+            for (var i = 0; i < 40; i++) { Gpio.Sim.Drive(4, i % 2 == 0) }
+            print("queue " + watch.Poll())
+
+            var out1 = new Gpio.Pin("sim", 5).Output(true)
+            var out2 = new Gpio.Pin("sim", 6).Output(false)
+            Gpio.Sim.Wire(5, 6)
+            print("fight " + Gpio.Sim.Level(5) + " " + out1.Read() + " " + out2.Read())
+            out2.Write(true)
+            print("agree " + Gpio.Sim.Level(6))
+            Gpio.Sim.Reset()
+
+            try { var x = new Gpio.Pin("sim", 1).Input() } catch (Gpio.BusyException e) { print("busy " + e.code) }
+            led.Close()
+            var again = new Gpio.Pin("sim", 1).Output()
+            print("reclaimed " + again.IsOutput)
+            try { var x = new Gpio.Pin("sim", 99) } catch (Gpio.NotFoundException e) { print("no line " + e.code) }
+            try { var x = new Gpio.Pin("nochip", 1) } catch (Gpio.NotFoundException e) { print("no chip " + e.code) }
+            try { again.TakeEdge() } catch (Gpio.GpioException e) { print("output edge " + e.code) }
+            try { btn.Write(true) } catch (Gpio.GpioException e) { print("input write " + e.code) }
+            try { new Gpio.Pin("sim", 7).Read() } catch (Gpio.GpioException e) { print("unset " + e.code) }
+            try { Gpio.Sim.Wire(1, 40) } catch (Gpio.NotFoundException e) { print("wire " + e.code) }
+            try { led.Read() } catch (Gpio.GpioException e) { print("closed " + e.code) }
+            """),
+    }).ToArray();
+
+    // I2C (bridges/fire_bridge_i2c.hpp): the simulated bus "sim" with register-file devices - the same in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("I2c: simulierter Bus - Geraete, Register, Scan, Fehler", """
+            #import "i2c"
+
+            print("buses " + I2c.Board.Buses()[0] + " " + I2c.Board.Buses().count)
+            var bus = new I2c.Bus("sim")
+            print("name " + bus.Name)
+            print("scan empty " + bus.Scan().count)
+            I2c.Sim.Add(0x50)
+            I2c.Sim.Add(0x76)
+            I2c.Sim.SetRegister(0x76, 0xD0, 0x58)
+            print("probe " + bus.Probe(0x50) + " " + bus.Probe(0x51))
+            var found = bus.Scan()
+            print("scan " + found.count + " " + found[0] + " " + found[1])
+            print("id " + bus.ReadRegister(0x76, 0xD0))
+            bus.WriteRegister(0x76, 0xF4, 0x27)
+            print("wrote " + I2c.Sim.GetRegister(0x76, 0xF4) + " " + bus.ReadRegister(0x76, 0xF4))
+            var data = new byte[4]
+            data[0] = 1
+            data[1] = 2
+            data[2] = 3
+            data[3] = 4
+            bus.WriteRegisters(0x50, 0x10, data)
+            var back = bus.ReadRegisters(0x50, 0x10, 4)
+            print("block " + back[0] + back[1] + back[2] + back[3])
+            var raw = new byte[3]
+            raw[0] = 0x12
+            raw[1] = 99
+            raw[2] = 100
+            bus.Write(0x50, raw)
+            bus.Write(0x50, raw, 0, 1)
+            var two = bus.Read(0x50, 2)
+            print("seq " + two[0] + " " + two[1])
+            var viaWr = bus.WriteRead(0x50, raw, 2, 1)
+            print("wr " + viaWr[0] + " " + viaWr[1])
+            bus.Speed = 400000
+            print("speed " + bus.Speed)
+            bus.WriteByte(0x50, 0x20)
+            try { bus.Write(0x60, raw) } catch (I2c.NoAckException e) { print("noack " + e.code + " " + e.message) }
+            try { bus.Read(0x60, 1) } catch (I2c.I2cException e) { print("noack2 " + e.code) }
+            try { bus.Probe(200) } catch (I2c.I2cException e) { print("addr " + e.code) }
+            try { bus.Write(0x50, raw, 2, 5) } catch (I2c.I2cException e) { print("range " + e.code) }
+            try { new I2c.Bus(7) } catch (I2c.NotFoundException e) { print("nobus " + e.code) }
+            try { I2c.Sim.SetRegister(0x33, 1, 1) } catch (I2c.NoAckException e) { print("simdev " + e.code) }
+            I2c.Sim.Remove(0x50)
+            print("removed " + bus.Probe(0x50))
+            bus.Close()
+            try { bus.Probe(1) } catch (I2c.I2cException e) { print("closed " + e.code) }
+            print("avail " + I2c.Board.Available())
+            """),
+    }).ToArray();
+
+    // SPI (bridges/fire_bridge_spi.hpp): the simulated device "sim" (loopback, queued answers, log of what was sent) - the same in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Spi: simuliertes Geraet - Loopback, Antworten, Protokoll, Einstellungen, Fehler", """
+            #import "spi"
+
+            print("devices " + Spi.Board.Devices()[0] + " " + Spi.Board.Devices().count + " " + Spi.Board.Available())
+            var chip = new Spi.Device("sim", 0, 2000000)
+            print("name " + chip.Name + " " + chip.Mode + " " + chip.Speed + " " + chip.LsbFirst)
+            print("sim setup " + Spi.Sim.Mode() + " " + Spi.Sim.Speed() + " " + Spi.Sim.LsbFirst())
+            var cmd = new byte[4]
+            cmd[0] = 0x9F
+            cmd[1] = 1
+            cmd[2] = 2
+            cmd[3] = 255
+            var echo = chip.Transfer(cmd)
+            print("loopback " + echo.length + " " + echo[0] + " " + echo[1] + " " + echo[2] + " " + echo[3])
+            chip.Write(cmd, 1, 2)
+            print("sent " + Spi.Sim.SentCount() + " " + Spi.Sim.Transfers())
+            var sent = Spi.Sim.Sent()
+            print("log " + sent[0] + " " + sent[3] + " " + sent[4] + " " + sent[5])
+            var zeros = chip.Read(3)
+            print("read echoes zeros " + zeros[0] + zeros[1] + zeros[2])
+            var reply = new byte[4]
+            reply[0] = 0
+            reply[1] = 0xEF
+            reply[2] = 0x40
+            reply[3] = 0x18
+            Spi.Sim.Reply(reply)
+            var one = new byte[1]
+            one[0] = 0x9F
+            var id = chip.WriteRead(one, 3)
+            print("id " + id[0] + " " + id[1] + " " + id[2])
+            var after = chip.Read(2)
+            print("empty queue " + after[0] + after[1])
+            Spi.Sim.Loopback()
+            var back = chip.Transfer(one)
+            print("loop again " + back[0])
+            var src = new byte[3]
+            src[0] = 7
+            src[1] = 8
+            src[2] = 9
+            var dst = new byte[5]
+            chip.TransferInto(src, 0, dst, 2, 3)
+            print("into " + dst[0] + dst[1] + dst[2] + dst[3] + dst[4])
+            chip.Mode = 3
+            chip.Speed = 500000
+            chip.LsbFirst = true
+            print("changed " + Spi.Sim.Mode() + " " + Spi.Sim.Speed() + " " + Spi.Sim.LsbFirst() + " " + chip.Mode)
+            chip.Configure(1, 1000)
+            print("configure " + Spi.Sim.Mode() + " " + chip.LsbFirst)
+            Spi.Sim.Clear()
+            print("cleared " + Spi.Sim.SentCount() + " " + Spi.Sim.Transfers())
+            try { chip.Mode = 5 } catch (Spi.SpiException e) { print("mode " + e.code) }
+            try { chip.Write(cmd, 3, 5) } catch (Spi.SpiException e) { print("range " + e.code) }
+            try { new Spi.Device("sim", 0, 0) } catch (Spi.SpiException e) { print("speed " + e.code) }
+            try { new Spi.Device("9.9") } catch (Spi.NotFoundException e) { print("nodev " + e.code) }
+            chip.Close()
+            try { chip.Transfer(cmd) } catch (Spi.SpiException e) { print("closed " + e.code) }
+            """),
+    }).ToArray();
+
+    // WiFi (bridges/fire_bridge_wifi.hpp): the simulated radio "sim" - scan, join, failures, access point - the same in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("WiFi: simuliertes Funkmodul - Scan, Verbinden, Fehler, Zugangspunkt", """
+            #import "wifi"
+
+            print("ifaces " + WiFi.Board.Interfaces()[0] + " " + WiFi.Board.Interfaces().count + " " + WiFi.Board.Available())
+            var sta = new WiFi.Station()
+            print("name " + sta.Name + " state " + sta.State + " ip [" + sta.Ip + "] mac " + sta.Mac + " rssi " + sta.Rssi)
+            print("empty scan " + sta.Scan().count)
+            WiFi.Sim.AddNetwork("home", "secret-pass", -55, 6)
+            WiFi.Sim.AddNetwork("cafe", "", -70, 1)
+            WiFi.Sim.AddNetwork("far", "farfarfar", -85, 11)
+            var nets = sta.Scan()
+            print("scan " + nets.count)
+            for (var i = 0; i < nets.count; i++) {
+                var n = nets[i]
+                print(n.ssid + " " + n.rssi + " ch" + n.channel + " auth" + n.auth + " secure " + n.Secure + " " + n.bssid)
+            }
+            sta.Connect("home", "secret-pass", 2s)
+            print("connected " + sta.IsConnected + " ssid " + sta.Ssid + " ip " + sta.Ip + " rssi " + sta.Rssi)
+            print("scan while connected " + sta.Scan().count)
+            sta.Disconnect()
+            print("after disconnect " + sta.State + " [" + sta.Ssid + "]")
+            try { sta.Connect("home", "wrong-password", 2s) } catch (WiFi.AuthException e) { print("auth " + e.code + " " + e.message) }
+            try { sta.Connect("nowhere", "", 2s) } catch (WiFi.NotFoundException e) { print("notfound " + e.code) }
+            sta.Connect("cafe")
+            print("open " + sta.Ssid + " " + sta.Rssi)
+            WiFi.Sim.Drop()
+            print("dropped " + sta.State + " [" + sta.Ip + "]")
+            WiFi.Sim.Delays(100000, 0)
+            try { sta.Connect("home", "secret-pass", 30ms) } catch (WiFi.TimeoutException e) { print("timeout " + e.code) }
+            WiFi.Sim.Delays(3, 0)
+            sta.Start("home", "secret-pass")
+            var seen = 0
+            sta.onState = (s) => { seen = seen + 1; print("state change " + s) }
+            for (var i = 0; i < 10; i++) { sta.Poll() }
+            print("polled " + sta.IsConnected)
+            WiFi.Sim.RemoveNetwork("home")
+            print("network gone " + sta.State)
+
+            var ap = new WiFi.AccessPoint("sim")
+            print("ap running " + ap.IsRunning + " clients ")
+            ap.Start("fire-board", "password123", 6, 2)
+            print("ap " + ap.IsRunning + " " + ap.Ip + " " + ap.Mac + " " + ap.Clients)
+            print("join " + WiFi.Sim.ClientJoins() + " " + WiFi.Sim.ClientJoins() + " clients " + ap.Clients)
+            try { WiFi.Sim.ClientJoins() } catch (WiFi.WiFiException e) { print("full " + e.code) }
+            try { ap.Start("x", "short") } catch (WiFi.WiFiException e) { print("short password " + e.code) }
+            try { ap.Start("x", "", 20) } catch (WiFi.WiFiException e) { print("channel " + e.code) }
+            ap.Stop()
+            print("stopped " + ap.IsRunning)
+            try { new WiFi.Station("nothing") } catch (WiFi.NotFoundException e) { print("no interface " + e.code) }
+            sta.Close()
+            try { sta.State } catch (WiFi.WiFiException e) { print("closed " + e.code) }
+            """),
+    }).ToArray();
+
+    // Network (bridges/fire_bridge_net.hpp): TCP, UDP and name resolution on the loopback interface - the same in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Net: TCP, UDP, DNS ueber Loopback, Zeitlimits, Fehler", """
+            #import "net"
+            var l = new Net.TcpListener("127.0.0.1", 0)
+            print("port " + (l.Port > 0) + " " + l.Host)
+            var c = new Net.TcpClient("127.0.0.1", l.Port)
+            var s = l.Accept(2000)
+            print("pending " + l.Pending(0))
+            c.WriteString("hello")
+            var buf = new byte[16]
+            var n = s.Read(buf, 0, 16)
+            print("got " + n + " " + IO.Utf8.GetString(buf, 0, n))
+            print("remote " + s.RemoteHost + " " + (s.RemotePort == c.LocalPort) + " " + (c.RemotePort == l.Port))
+            s.WriteString("pong!")
+            c.ReadTimeout = 500
+            var m = c.Read(buf, 0, 16)
+            print("reply " + IO.Utf8.GetString(buf, 0, m))
+            try { c.Read(buf, 0, 16) } catch (Net.TimeoutException e) { print("timeout " + e.code) }
+            var big = new byte[40000]
+            for (var i = 0; i < big.length; i++) { big[i] = i % 251 }
+            s.Write(big, 0, big.length)
+            var total = 0
+            var ok = true
+            var chunk = new byte[4096]
+            c.ReadTimeout = 5000
+            while (total < big.length) {
+                var got = c.Read(chunk, 0, 4096)
+                if (got <= 0) { break }
+                for (var i = 0; i < got; i++) { if (chunk[i] != (total + i) % 251) { ok = false } }
+                total = total + got
+            }
+            print("big " + total + " " + ok)
+            s.Shutdown(1)
+            print("eof " + c.Read(buf, 0, 16))
+            print("waitReadable " + c.WaitReadable(0))
+            c.Close()
+            s.Close()
+            print("closed " + c.IsClosed)
+            try { c.Read(buf, 0, 1) } catch (Net.ClosedException e) { print("closed " + e.code) }
+            print("accept timeout " + (l.TryAccept(50) == undefined))
+            l.Close()
+            try { var x = new Net.TcpClient("127.0.0.1", 1, 1000) } catch (Net.RefusedException e) { print("refused " + e.code) }
+            var u1 = new Net.UdpSocket("127.0.0.1", 0)
+            var u2 = new Net.UdpSocket()
+            print("udp avail " + u1.Available)
+            u2.SendString("datagram", "127.0.0.1", u1.Port)
+            var got2 = u1.ReceiveFrom(buf, 0, 16, 2000)
+            print("udp " + got2 + " " + IO.Utf8.GetString(buf, 0, got2) + " from " + u1.FromHost + " " + (u1.FromPort == u2.Port))
+            u1.SendTo(buf, 0, 3, "127.0.0.1", u2.Port)
+            print("udp back " + u2.ReceiveFrom(buf, 0, 16, 2000))
+            try { u1.ReceiveFrom(buf, 0, 16, 100) } catch (Net.TimeoutException e) { print("udp timeout") }
+            var addresses = Net.Dns.Resolve("127.0.0.1")
+            print("dns " + addresses.count + " " + addresses[0] + " " + (Net.Dns.Resolve("localhost").count > 0))
+            try { Net.Dns.Resolve("no-such-host.invalid") } catch (Net.ResolveException e) { print("resolve " + e.code) }
+            try { var bad = new Net.TcpListener("127.0.0.1", 70000) } catch (Net.NetException e) { print("port " + e.code) }
+            var l2 = new Net.TcpListener("127.0.0.1", 0)
+            try { var l3 = new Net.TcpListener("127.0.0.1", l2.Port) } catch (Net.NetException e) { print("in use " + e.code) }
+            """),
+        ("Http: Client und Server (Routen, Redirects, chunked, Body bis Verbindungsende, Fehler) ueber Loopback", """
+            #import "http"
+            #import "time"
+            class Boom : Exception {
+                string message
+                construct(string message) { this.message = message }
+            }
+            // ---- pure helpers
+            var u = Http.Url.Parse("HTTP://User@Example.org:8080/a/b?x=1#frag")
+            print(u.scheme + " " + u.host + " " + u.port + " " + u.path)
+            print(Http.Url.Parse("https://example.org").path + " " + Http.Url.Parse("https://example.org").port + " " + Http.Url.Parse("http://[::1]:81/x").host)
+            print(u.Resolve("/c") + " | " + u.Resolve("d") + " | " + u.Resolve("http://other/z"))
+            try { Http.Url.Parse("ftp://x/") } catch (Http.HttpException e) { print("bad scheme " + e.code) }
+            try { Http.Url.Parse("no-scheme") } catch (Http.HttpException e) { print("bad url " + e.code) }
+            print(Http.Uri.Encode("a b/ü?&=") + " " + Http.Uri.Decode("a%20b%2Fx%C3%BC+%zz%4") + " " + Http.Uri.Decode("a+b", true))
+            var h = new Http.Headers()
+            h.Set("Content-Type", "text/x").Add("X-A", "1").Add("x-a", "2")
+            print(h.Get("content-type") + " " + h.Get("X-A") + " " + h.Count + " " + h.Has("nothing"))
+            h.Set("X-A", "3")
+            print(h.Count + " " + h.Get("x-a"))
+            var req = new Http.Request("GET", "/p%20q?name=Anna+M&a=b%26c&flag")
+            print(req.path + " " + req.Query("name") + " " + req.Query("a") + " [" + req.Query("flag") + "] " + req.Query("none", "dflt"))
+
+            // ---- a server in a thread
+            var probe = new Net.TcpListener("127.0.0.1", 0)
+            var port = probe.Port
+            probe.Close()
+            fire {
+                var server = new Http.Server("127.0.0.1", port)
+                server.Route("GET", "/hello", func (r) => Http.Response.FromText("hello " + r.Query("name", "world")))
+                server.Route("POST", "/echo", func (r) => Http.Response.FromText(r.Text().ToUpper() + " " + r.body.length, 201))
+                server.Route("GET", "/moved", func (r) => Http.Response.Redirect("/hello?name=redirect"))
+                server.Route("GET", "/loop", func (r) => Http.Response.Redirect("/loop"))
+                server.Route("*", "/any/*", func (r) => r.method + " " + r.path)
+                server.Route("GET", "/boom", func (r) => { throw new Boom("boom") })
+                server.Route("GET", "/big", func (r) => Http.Response.FromText("0123456789".Replace("0", "ab").Replace("1", "cd") + "x"))
+                server.Route("POST", "/size", func (r) => "" + r.body.length)
+                server.Route("GET", "/none", func (r) => undefined)
+                server.OnError(func (e) => print("server error: " + e.message))
+                var served = 0
+                while (served < 18) {
+                    if (server.ServeOne(10000)) { served = served + 1 }
+                }
+                server.Close()
+            }
+            Sleep(400)
+            var client = new Http.Client()
+            client.timeout = 10000
+            var site = "http://127.0.0.1:" + port
+            var r1 = client.Get(site + "/hello?name=Anna%20M")
+            print(r1.status + " " + r1.reason + " [" + r1.Text() + "] " + r1.headers.Get("content-type") + " ok=" + r1.Ok + " len=" + r1.Length)
+            var r2 = client.Post(site + "/echo", "grüß dich")
+            print(r2.status + " [" + r2.Text() + "]")
+            var r3 = client.Get(site + "/moved")
+            print(r3.status + " [" + r3.Text() + "] " + r3.url.EndsWith("/hello?name=redirect"))
+            try { client.Get(site + "/loop") } catch (Http.HttpException e) { print("loop " + e.code) }
+            var r4 = client.Get(site + "/nothing")
+            print(r4.status + " " + r4.Text() + " ok=" + r4.Ok)
+            var r5 = client.Get(site + "/boom")
+            print(r5.status)
+            var r6 = client.Request("PATCH", site + "/any/x/y", undefined, undefined)
+            print(r6.status + " [" + r6.Text() + "]")
+            var r7 = client.Head(site + "/hello")
+            print("head " + r7.status + " " + r7.headers.Get("Content-Length") + " body=" + r7.Length)
+            var data = new byte[200000]
+            for (var i = 0; i < data.length; i++) { data[i] = i % 253 }
+            var r8 = client.Post(site + "/size", data)
+            print("size " + r8.Text())
+            var r9 = client.Get(site + "/none")
+            print(r9.status + " " + r9.reason + " " + r9.Length)
+            client.followRedirects = false
+            var r10 = client.Get(site + "/moved")
+            print(r10.status + " " + r10.headers.Get("Location") + " " + r10.Length)
+            var custom = new Http.Headers()
+            custom.Set("X-Test", "1")
+            client.headers.Set("X-Default", "2")
+            var r11 = client.Get(site + "/hello", custom)
+            print(r11.status)
+            // ---- raw servers: chunked, until close
+            var chunkedPort = 0
+            var closePort = 0
+            var l1 = new Net.TcpListener("127.0.0.1", 0)
+            var l2 = new Net.TcpListener("127.0.0.1", 0)
+            chunkedPort = l1.Port
+            closePort = l2.Port
+            l1.Close()
+            l2.Close()
+            fire {
+                var l = new Net.TcpListener("127.0.0.1", chunkedPort)
+                var c = l.Accept(10000)
+                var rd = new Http.Reader(c)
+                var line = rd.ReadLine()
+                while (line != undefined && line.Length > 0) { line = rd.ReadLine() }
+                c.WriteString("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nX-T: t\r\n\r\n5\r\nhello\r\nB;ext=1\r\n, chunked w\r\n3\r\norl\r\n1\r\nd\r\n0\r\nTrailer: v\r\n\r\n")
+                c.Close()
+                l.Close()
+            }
+            fire {
+                var l = new Net.TcpListener("127.0.0.1", closePort)
+                var c = l.Accept(10000)
+                var rd = new Http.Reader(c)
+                var line = rd.ReadLine()
+                while (line != undefined && line.Length > 0) { line = rd.ReadLine() }
+                c.WriteString("HTTP/1.0 203 Odd Reason Phrase\r\n\r\nuntil close")
+                c.Close()
+                l.Close()
+            }
+            Sleep(400)
+            var c1 = client.Get("http://127.0.0.1:" + chunkedPort + "/")
+            print(c1.status + " [" + c1.Text() + "] " + c1.headers.Get("x-t"))
+            var c2 = client.Get("http://127.0.0.1:" + closePort + "/")
+            print(c2.status + " " + c2.reason + " [" + c2.Text() + "]")
+            // ---- errors
+            var silent = new Net.TcpListener("127.0.0.1", 0)
+            client.timeout = 300
+            try { client.Get("http://127.0.0.1:" + silent.Port + "/") } catch (Net.TimeoutException e) { print("silent " + e.code) }
+            silent.Close()
+            try { client.Get("https://127.0.0.1:1/") } catch (Net.RefusedException e) { print("https refused " + e.code) }
+            try { client.Get("ftp://127.0.0.1/") } catch (Http.HttpException e) { print("ftp " + e.code) }
+            """),
+    }).ToArray();
+
     // Time and Sleep (bridges/fire_bridge_time.hpp)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
@@ -15758,6 +17487,47 @@ else
             """),
     }).ToArray();
 
+    // Resources: `new Resource("path")` is read when the program is compiled and travels with it (VM, packed file, native binary)
+    {
+        string resDir = Path.Combine(Path.GetTempPath(), "fire-resource-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(resDir);
+        File.WriteAllText(Path.Combine(resDir, "hello.txt"), "Gr\u00fc\u00dfe, Welt!\n", new System.Text.UTF8Encoding(false));
+        File.WriteAllBytes(Path.Combine(resDir, "data.bin"), new byte[] { 0, 1, 2, 250, 255 });
+        string rd = resDir.Replace('\\', '/');
+        string resScript = $$"""
+            var text = new Resource("{{rd}}/hello.txt")
+            print(text.Name().EndsWith("hello.txt"))
+            print(text.Length())
+            print(text.Text().Length)
+            print(text.Text().Substring(0, 5))
+            var again = new Resource("{{rd}}/hello.txt")
+            print(again.id == text.id)
+            var bin = new Resource("{{rd}}/data.bin")
+            var bytes = bin.Bytes()
+            print(bytes.length)
+            print(bytes[3])
+            // new Resource("{{rd}}/missing.bin")   <- in a comment: not embedded
+            print("new Resource(\"{{rd}}/missing.bin\")".Length > 0)
+            """;
+        string[] resExpected = { "True", "15", "13", "Gr\u00fc\u00dfe", "True", "5", "250", "True" };
+        string resOutput = vmOutput(resScript);
+        CheckNat("Ressourcen: new Resource(\"pfad\") in der VM (Text UTF-8, Bytes, dieselbe Datei einmal, Kommentar und String bleiben)", resOutput == string.Concat(resExpected.Select(l => l + "\n")), "  erhalten:\n" + resOutput);
+        // the program carries the bytes: a packed file (serialized program) and a program without the file at run time
+        {
+            var linked = new Linker().CompileAndLink(new[] { resScript });
+            var back = MemoryPack.MemoryPackSerializer.Deserialize<LinkedProgram>(MemoryPack.MemoryPackSerializer.Serialize(linked))!;
+            CheckNat("Ressourcen: das serialisierte Programm traegt die Dateien (2 Ressourcen, Bytes gleich)",
+                back.Program.Resources.Count == 2 && back.Program.Resources[1].Data.SequenceEqual(new byte[] { 0, 1, 2, 250, 255 }) && back.Program.Resources[0].Name.EndsWith("hello.txt"), "");
+        }
+        // a missing file is a compile error with the line
+        {
+            string message = "";
+            try { new Linker().CompileAndLink(new[] { "var a = 1\nvar r = new Resource(\"" + rd + "/gibt-es-nicht.png\")\n" }); } catch (Exception ex) { message = ex.Message; }
+            CheckNat("Ressourcen: eine fehlende Datei ist ein Uebersetzungsfehler mit Zeile", message.Contains("not found") && message.Contains("line 2"), message);
+        }
+        natCases = natCases.Append(("Ressourcen: new Resource(\"pfad\") ist eingebettet", resScript)).ToArray();
+    }
+
 
     string? cxx = FindCxx();
     if (cxx == null)
@@ -15802,7 +17572,9 @@ else
                 return output + errTask.Result;
             }
 
-            string build = RunTool(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"", out int buildExit);
+            // the libraries that the program asks for (`// fire-link: ssl` from the `linkLibraries` of a package)
+            string linkFlags = string.Concat(cpp.Split('\n').Take(400).Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+            string build = RunTool(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"{linkFlags}", out int buildExit);
             if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C++-Compiler: " + build);
             if (c.Name.StartsWith("Abbruch:"))
             {
@@ -15823,6 +17595,52 @@ else
         {
             var (name, expected, actual) = task.Result;
             CheckNat($"Native == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
+        }
+
+        // SChannel, the TLS of the Windows platform: the TLS case built for Windows with MinGW and run under Wine (when both are on this machine) must print what the VM prints
+        {
+            string? FindTool(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
+            string? mingw = FindTool("x86_64-w64-mingw32-g++");
+            string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindTool("wine64") ?? FindTool("wine");
+            int tlsIndex = Array.FindIndex(natCases, c => c.Name.StartsWith("Tls: Handshake", StringComparison.Ordinal));
+            if (mingw == null || wine == null || tlsIndex < 0)
+            {
+                Console.WriteLine("(Tls mit SChannel: uebersprungen - MinGW (x86_64-w64-mingw32-g++) und Wine sind auf diesem Rechner nicht da)");
+            }
+            else
+            {
+                string name = "Tls (SChannel, fuer Windows gebaut, unter Wine)";
+                try
+                {
+                    string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natCases[tlsIndex].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.Windows), TargetProfile.Windows);
+                    string cppFile = Path.Combine(workDir, "schannel.cpp"), exeFile = Path.Combine(workDir, "schannel.exe");
+                    File.WriteAllText(cppFile, cpp);
+                    string linkFlags = string.Concat(cpp.Split('\n').Take(400).Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+                    string Run(string tool, string arguments, out int exit)
+                    {
+                        var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir };
+                        info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
+                        info.Environment["WINEDEBUG"] = "-all";
+                        using var p = System.Diagnostics.Process.Start(info)!;
+                        var errTask = p.StandardError.ReadToEndAsync();
+                        string output = p.StandardOutput.ReadToEnd();
+                        if (!p.WaitForExit(240000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
+                        exit = p.ExitCode;
+                        return output + errTask.Result;
+                    }
+                    string build = Run(mingw, $"-std=c++17 -O2 -Wall -Wextra -static \"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"{linkFlags}", out int buildExit);
+                    if (buildExit != 0 || build.Contains("warning:")) CheckNat(name, false, "MinGW: " + build);
+                    else
+                    {
+                        string actual = Run(wine, $"\"{exeFile}\"", out int runExit);
+                        // (the Wine output has no stray lines: WINEDEBUG is off; lines Wine itself prints about the prefix are dropped)
+                        actual = string.Join("\n", actual.Replace("\r", "").Split('\n').Where(l => !l.StartsWith("wine:", StringComparison.Ordinal)));
+                        string expected = vmResults[tlsIndex].Replace("\r", "");
+                        CheckNat(name, runExit == 0 && expected.TrimEnd() == actual.TrimEnd(), $"  erwartet (VM):\n{expected}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
+                    }
+                }
+                catch (Exception ex) { CheckNat(name, false, ex.Message); }
+            }
         }
 
         // The switch itself: VM output differs between the precisions, the directive is validated, the override wins
@@ -15995,7 +17813,7 @@ else
                     Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
                     string actual = RunProc(exe, "", workDir, out int runExit);
                     string expected = string.Concat(uiDrawExpected.Select(l => l + "\n"));
-                    CheckNat("UI nativ == VM: Label, Button, CheckBox, TextBox, Stack zeichnen", runExit == 0 && actual == expected && uiDrawExpected.Length == 3, $"  erwartet (VM):\n{expected}\n  erhalten:\n{actual}");
+                    CheckNat("UI nativ == VM: Label, Button, CheckBox, TextBox, Stack zeichnen", runExit == 0 && actual == expected && uiDrawExpected.Length == 4, $"  erwartet (VM):\n{expected}\n  erhalten:\n{actual}");
                 }
             }
         }

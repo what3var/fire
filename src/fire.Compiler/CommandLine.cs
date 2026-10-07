@@ -40,6 +40,8 @@ namespace fire.Compiler
         public string? ConfigFile { get; init; }
         /// <summary>`--keep`: keep the generated C++ next to the program.</summary>
         public bool KeepSources { get; init; }
+        /// <summary>`-p`: the project of a solution to run or build (default: the startup project).</summary>
+        public string? ProjectName { get; init; }
         /// <summary>Gesetzt, wenn die Befehlszeile ungültig ist (Meldung für den Nutzer).</summary>
         public string? Error { get; init; }
     }
@@ -69,6 +71,7 @@ namespace fire.Compiler
               fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>]
               fire.Compiler ui    <file.fxml> [-o <file>]
+              fire.Compiler run|build <project.fireproj | solution.firesln> [-p <project>] [...]
 
             run     compiles the files into one program and runs it.
             build   turns them into a program: a self-contained executable that carries the VM (default: out.exe), or - with --engine native, or "engine": "native" in
@@ -84,6 +87,10 @@ namespace fire.Compiler
             -D name Defines the symbol "name" for #if (repeatable, also --define name or -Dname).
             -o      Name of the file produced by build or native.
             ui      writes the script generated from the markup of a user interface (docs/UI_MARKUP.md) - not needed to build: `#include "x.fxml"` does it on the fly.
+
+            A project (`.fireproj`) or a solution (`.firesln`, docs/PROJECTS.md) instead of the files: run runs the project (of a solution: the startup project, or -p <name>), build builds it -
+            a program like above (the settings of the project decide: engine, target, mode, output), a library as a package (`name-version.fpk`, in the folder of -o, the project's `output` or `bin`).
+            The settings of the project go before the tags in the source; the options of the command line go before both.
 
             File names without spaces do not need quotation marks.
             """;
@@ -107,7 +114,7 @@ namespace fire.Compiler
             VmExecutionMode? mode = null;
             int? floatWidth = null;
             TargetProfile? target = null;
-            string? targetName = null, engine = null, toolchainName = null, configFile = null;
+            string? targetName = null, engine = null, toolchainName = null, configFile = null, projectName = null;
             bool keep = false;
             string? output = null;
             var defines = new List<string>();
@@ -153,6 +160,12 @@ namespace fire.Compiler
                     string? value = configInline ?? (i + 1 < args.Count ? args[++i] : null);
                     if (string.IsNullOrWhiteSpace(value)) return Fail(command, "--config must be followed by the file name.");
                     configFile = Unquote(value);
+                }
+                else if (TryOption(arg, "-p", "--project", out var projectInline))
+                {
+                    string? value = projectInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    if (string.IsNullOrWhiteSpace(value)) return Fail(command, "-p must be followed by the name of a project.");
+                    projectName = Unquote(value);
                 }
                 else if (string.Equals(arg, "--keep", StringComparison.OrdinalIgnoreCase))
                 {
@@ -208,6 +221,7 @@ namespace fire.Compiler
                 ToolchainName = toolchainName,
                 ConfigFile = configFile,
                 KeepSources = keep,
+                ProjectName = projectName,
                 OutputGiven = output != null,
                 OutputFile = output ?? (command == CommandKind.Native ? DefaultNativeOutputFile : DefaultOutputFile),
             };
@@ -281,6 +295,8 @@ namespace fire.Compiler
                 stdout.WriteLine(CommandLineParser.Usage);
                 return ExitOk;
             }
+
+            if (options.Files.Count == 1 && IsProjectFile(options.Files[0])) return RunProject(options, stdout, stderr);
 
             var sources = new List<string>();
             foreach (var file in options.Files)
@@ -381,6 +397,96 @@ namespace fire.Compiler
             return ExitOk;
         }
 
+        private static bool IsProjectFile(string path) =>
+            string.Equals(Path.GetExtension(path), fire.Projects.FireProject.Extension, StringComparison.OrdinalIgnoreCase) || string.Equals(Path.GetExtension(path), fire.Projects.FireSolution.Extension, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>`run` and `build` of a project or a solution (docs/PROJECTS.md).</summary>
+        private static int RunProject(CommandLineOptions options, TextWriter stdout, TextWriter stderr)
+        {
+            string file = options.Files[0];
+            if (!File.Exists(file)) { stderr.WriteLine($"File not found: {file}"); return ExitUsage; }
+            fire.Projects.BuildPlan plan;
+            try
+            {
+                var workspace = fire.Projects.Workspace.Open(file);
+                var project = ProjectBuilder.SelectProject(workspace, options.ProjectName);
+                plan = ProjectBuilder.PlanOrThrow(workspace, project);
+            }
+            catch (fire.Projects.ProjectException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
+
+            if (options.Command == CommandKind.Native) { stderr.WriteLine("`native` takes source files; build a project with `build` (set \"engine\": \"native\" in the project or use --engine native)."); return ExitUsage; }
+            if (options.Command == CommandKind.Run)
+            {
+                if (plan.Type == fire.Projects.OutputType.Library) { stderr.WriteLine($"'{plan.Name}' is a library: it has no entry point to run."); return ExitScriptError; }
+                return ExecutePlan(options, plan, stderr);
+            }
+            return BuildPlanned(options, plan, stdout, stderr);
+        }
+
+        private static int ExecutePlan(CommandLineOptions options, fire.Projects.BuildPlan plan, TextWriter stderr)
+        {
+            RuntimeSession session;
+            try
+            {
+                session = RuntimeSession.Build(plan.SourceTexts, options.Mode, args =>
+                {
+                    if (args.Length > 0) Console.WriteLine(args[0].ToString());
+                    return Value.MakeUndefined();
+                }, floatWidth: options.FloatWidth, defines: options.Defines, plan: plan);
+            }
+            catch (Exception ex) when (IsCompileError(ex))
+            {
+                stderr.WriteLine(CompileErrors.Describe(ex));
+                return ExitScriptError;
+            }
+            session.Run();
+            var vm = session.VirtualMachine!;
+            if (vm.UnhandledException != null)
+            {
+                stderr.WriteLine(new UncaughtScriptException(vm.UnhandledException).Message);
+                return ExitScriptError;
+            }
+            var exit = VM.ExitValue;
+            return exit.Kind == ValueKind.Int ? (int)exit.AsInt() : ExitOk;
+        }
+
+        private static int BuildPlanned(CommandLineOptions options, fire.Projects.BuildPlan plan, TextWriter stdout, TextWriter stderr)
+        {
+            try
+            {
+                if (plan.Type == fire.Projects.OutputType.Library)
+                {
+                    string package = ProjectBuilder.PackLibrary(plan, options.OutputGiven ? options.OutputFile : null);
+                    stdout.WriteLine($"{package} (package, import \"{plan.Project.Project.ImportName}\")");
+                    return ExitOk;
+                }
+                fire.Native.NativeConfig config = options.ConfigFile != null ? fire.Native.NativeConfig.Load(options.ConfigFile) : fire.Native.NativeConfig.FindFor(plan.Project.FilePath);
+                string engine = options.Engine ?? plan.Settings.Engine ?? config.Engine?.ToLowerInvariant() ?? "vm";
+                string? output = options.OutputGiven ? options.OutputFile : plan.Settings.Output;
+                if (engine == "native")
+                {
+                    var target = config.ResolveTarget(options.TargetName ?? plan.Settings.Target);
+                    var toolchain = config.ResolveToolchain(target, options.ToolchainName ?? plan.Settings.Toolchain);
+                    string out2 = output ?? NativeBuilder.DefaultOutput(target);
+                    var result = NativeBuilder.Build(plan.SourceTexts, config, target, toolchain, out2, options.Mode, options.FloatWidth, options.KeepSources, defines: options.Defines, plan: plan);
+                    stdout.Write(result.Log);
+                    if (!result.Ok) { stderr.WriteLine($"The native build for {target.Name} failed."); return ExitScriptError; }
+                    stdout.WriteLine($"{result.Output} (native, target {target.Name}, toolchain {toolchain.EffectiveKind})");
+                    return ExitOk;
+                }
+                output ??= Path.Combine(plan.Project.Directory, "bin", plan.Name + (OperatingSystem.IsWindows() ? ".exe" : ""));
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
+                new Linker { Defines = options.Defines, Plan = plan, SourcePaths = plan.SourcePaths.Cast<string?>().ToList() }.CompileAndLink(plan.SourceTexts, null, output, options.Mode, options.FloatWidth);
+                stdout.WriteLine($"{Path.GetFullPath(output)} ({new FileInfo(output).Length} bytes)");
+                return ExitOk;
+            }
+            catch (fire.Native.NativeConfigException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
+            catch (fire.Native.NativeNotSupportedException ex) { stderr.WriteLine("Not supported by the native backend yet: " + ex.Message); return ExitScriptError; }
+            catch (fire.Projects.ProjectException ex) { stderr.WriteLine(ex.Message); return ExitScriptError; }
+            catch (Package.Manager.PackageException ex) { stderr.WriteLine(ex.Message); return ExitScriptError; }
+            catch (Exception ex) when (IsCompileError(ex)) { stderr.WriteLine(CompileErrors.Describe(ex)); return ExitScriptError; }
+        }
+
         private static int Execute(CommandLineOptions options, List<string> sources, TextWriter stderr)
         {
             RuntimeSession session;
@@ -415,8 +521,10 @@ namespace fire.Compiler
 
         /// <summary>Fehler, die das Skript selbst verursacht (Parser, Resolver, Compiler, Präprozessor) - alles
         /// andere ist ein Fehler im Werkzeug und soll mit seinem Stacktrace sichtbar bleiben.</summary>
+        public static bool IsCompileErrorForEditor(Exception ex) => IsCompileError(ex);
+
         internal static bool IsCompileError(Exception ex) =>
             ex is ParseException or ResolverException or CompilerException
-                or NotSupportedException or PreprocessorException;
+                or NotSupportedException or PreprocessorException or LibraryEntryPointException or fire.Projects.ProjectException;
     }
 }

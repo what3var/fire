@@ -19,6 +19,7 @@
     <ProjectReference Include="..\fire.UI.Markup\fire.UI.Markup.csproj" />
     <ProjectReference Include="..\fire.Native\fire.Native.csproj" />
     <ProjectReference Include="..\fire.Package.Manager\fire.Package.Manager.csproj" />
+    <ProjectReference Include="..\fire.Project\fire.Project.csproj" />
   </ItemGroup>
 
   <Import Project="..\BridgePackages.targets" />

@@ -34,6 +34,9 @@ namespace fire.Compiler
 
         public int FirstUserSourceIndex { get; private set; }
 
+        /// <summary>The file of each source by source index (see LinkedProgram.SourceFiles): the debugger maps a file to its index and the index of a paused line to its file.</summary>
+        public IReadOnlyList<string?>? SourceFiles { get; private set; }
+
 
 
 
@@ -108,7 +111,7 @@ namespace fire.Compiler
         /// Direktive", ohne ihre eigentliche Wirkung auszulösen. Eine UNBEKANNTE Erweiterung (`#import
         /// "unfug"`) wirft weiterhin - das ist ein ECHTER Fehler, kein
         /// reines "kennt die Live-Diagnostik das nur (noch) nicht".</summary>
-        public static DirectiveRegistry CreateProjectDirectiveRegistry(Action<string>? onImport = null, IEnumerable<string>? defines = null)
+        public static DirectiveRegistry CreateProjectDirectiveRegistry(Action<string>? onImport = null, IEnumerable<string>? defines = null, Func<string, bool>? tryLibrary = null)
         {
             var registry = new DirectiveRegistry(); // komplett leer, NICHT CreateDefault()
             foreach (var symbol in ConditionalSymbols.For(null, ConditionalSymbols.DefaultEngine, null, defines)) registry.Symbols.Add(symbol); // `#if windows`: the machine the VM runs on
@@ -116,6 +119,7 @@ namespace fire.Compiler
             {
                 if (args[0].Kind == ValueKind.String)
                 {
+                    if (tryLibrary?.Invoke(args[0].AsString()) == true) return null;   // a library of the project (handled by the caller)
                     foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(args[0].AsString()))) onImport?.Invoke(key);
                     return null;
                 }
@@ -124,9 +128,10 @@ namespace fire.Compiler
             return registry;
         }
 
-        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null, string? basePath = null, fire.Device.Manager.DeviceManager.DeviceManager? deviceManager = null, int? floatWidth = null, IReadOnlyList<string>? defines = null)
+        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null, string? basePath = null, fire.Device.Manager.DeviceManager.DeviceManager? deviceManager = null, int? floatWidth = null, IReadOnlyList<string>? defines = null, Func<IFramebufferRenderer>? windowRenderer = null, fire.Runtime.NetPolicy? netPolicy = null, fire.Projects.BuildPlan? plan = null)
         {
-            var linker = new Linker { BasePath = basePath, Defines = defines };
+            // with a project: its files are the sources (`sources` is then the text of those files, see BuildPlan.SourceTexts) and its settings go before the tags
+            var linker = new Linker { BasePath = basePath, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() };
             var natives = new NativeRegistry();
 
             var linkedProgram = linker.CompileAndLink(sources, debugWriter, outname, executionMode, floatWidth);
@@ -139,7 +144,7 @@ namespace fire.Compiler
                 else
                     natives.Register("print", args => VM.StringifyForPrint(args) is { } shown ? debugWriter(shown) : Value.MakeUndefined());
             }
-            natives.RegisterBaseTypeNatives();
+            natives.RegisterBaseTypeNatives(linkedProgram.Program.Resources);
 
             // WICHTIG: native Funktionen werden über ihren INDEX angesprungen - die Reihenfolge der Registrierung muss
             // exakt der beim Übersetzen entsprechen (siehe ImportedPreludes.Insert): graphics, windows, reflection, time, devices, io.
@@ -168,7 +173,7 @@ namespace fire.Compiler
                 // `#import "windows"`: das SDL-Fenster zum Framebuffer (direkt hinter graphics registriert, wie beim Uebersetzen)
                 if (linkedProgram.NativeImports.Contains(NativeImports.Windows))
                 {
-                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v));
+                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v), windowRenderer);   // windowRenderer: null = a SDL window
                     fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, windowManager);
                 }
             }
@@ -180,7 +185,7 @@ namespace fire.Compiler
             // Vorgabe: alles erlaubt, echte Konsole. Die Natives von `io` sind C++ in einer Bibliothek und fragen den Host über PackageHost.
             IDisposable? ioResources = null;
             if (linkedProgram.PackageNatives is { Count: > 0 })
-                ioResources = PackageHost.Begin(ioPolicy, ioStdio, linkedProgram.NativeImports.Contains("pkg:devices"), deviceManager);   // `deviceManager`: the manager of the host (e.g. the shared one of the editor); without it the program gets one with the built-in drivers, freed after the run
+                ioResources = PackageHost.Begin(ioPolicy, ioStdio, linkedProgram.NativeImports.Contains("pkg:devices"), deviceManager, netPolicy);   // `deviceManager`: the manager of the host (e.g. the shared one of the editor); without it the program gets one with the built-in drivers, freed after the run
 
             PackageImports.RegisterForRun(natives, linkedProgram);   // the natives of imports of packages: names only (they are C++)
 
@@ -190,6 +195,7 @@ namespace fire.Compiler
                 externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: linkedProgram.ExecutionMode);
 
             session.SetVM(mainVm, windowManager, globalScope, natives, fbManager, rendererManager, linkedProgram.FirstUserSource);
+            session.SourceFiles = linkedProgram.SourceFiles;
             session.IoResources = ioResources;
 
             return session;

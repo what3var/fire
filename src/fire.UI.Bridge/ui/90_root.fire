@@ -1,0 +1,467 @@
+namespace UI {
+    // Das oberste Element: zeichnet in `framebuffer` und bekommt die Ereignisse von `window` (Warteschlange, siehe Tick).
+    class Root {
+        Framebuffer framebuffer
+        Window window
+        Renderer renderer
+        Theme theme
+        Panel content
+        // Ressourcen und implizite Styles fuer die ganze Oberflaeche (siehe ResourceDictionary)
+        ResourceDictionary resources
+        int width
+        int height
+        // Zellgröße der Schrift in Pixeln (Breite und Höhe eines Zeichens)
+        int cw
+        int ch
+        bool closed = false
+        int mouseX = 0
+        int mouseY = 0
+        Element hoverElement
+        Element pressedElement
+        Element focusElement
+        // Beschneidungsrechtecke (Rect), verschachtelt: das oberste gilt (siehe PushClip)
+        List clips
+        // Schwebende Elemente ueber der Oberflaeche (Menues, Vorschlagslisten): das letzte liegt oben (siehe ShowPopup)
+        List popups
+        // Weitere Roots (Fenster), die dieser mit abarbeitet (siehe Attach)
+        List attached
+        // Ein Lambda ohne Parameter, das jeder Zyklus dieses Roots am Ende aufruft (die Markup-Klassen nutzen es fuer OnTick)
+        var onTick
+        // Ungueltig machen: hat sich etwas geaendert, ordnet Update neu an und malt neu - nur den Bereich, der sich geaendert hat, solange kein Element woanders hingerutscht ist.
+        bool dirty = true
+        bool fullRedraw = true
+        bool hasDirtyRect = false
+        int dirtyX0 = 0
+        int dirtyY0 = 0
+        int dirtyX1 = 0
+        int dirtyY1 = 0
+        // beim Anordnen hat sich die Lage oder Groesse eines Elements geaendert
+        bool layoutMoved = false
+        // waehrend des Anordnens und Zeichnens: Schreibzugriffe auf die Felder der Elemente sind dann keine Aenderungen
+        bool painting = false
+        var watcher
+
+        construct(Framebuffer framebuffer, Window window) {
+            this.framebuffer = framebuffer
+            this.window = window
+            this.renderer = new Renderer(framebuffer)
+            this.theme = new Theme()
+            this.resources = new ResourceDictionary()
+            this.clips = new List()
+            this.popups = new List()
+            this.attached = new List()
+            this.cw = this.renderer.CellWidth()
+            this.ch = this.renderer.CellHeight()
+            this.width = framebuffer.Width()
+            this.height = framebuffer.Height()
+            this.content = new Panel(0, 0, this.width, this.height)
+            this.content.filled = false
+
+            // Ereignisse werden abgefragt, nicht per Callback geliefert: so laufen sie im Hauptprogramm, und ein
+            // onClick-Lambda sieht die echten globalen Variablen (ein Callback arbeitet dagegen auf einer Kopie, SPEC 8.1.4)
+            window.EnableEvents()
+
+            // Jede Aenderung eines Feldes eines Elements (und des Themes) meldet eine Probe (siehe SPEC 8.14): die Elemente rufen Touched, sobald sie zum ersten Mal angeordnet werden (Watch)
+            this.watcher = func (o, n, a, b) on this => { this.Touched(o) }
+            Reflect.ProbeAll(this.theme, "changed", this.watcher)
+        }
+
+        // Ein Element oder das Theme hat sich geaendert.
+        Touched(o) {
+            if (this.painting) { return }
+            this.dirty = true
+            if (o is of Element) { o.Invalidate() } else { this.fullRedraw = true }
+        }
+
+        // Beobachtet die Felder des Elements (einmal).
+        Watch(element) {
+            if (element.watched) { return }
+            element.watched = true
+            Reflect.ProbeAll(element, "changed", this.watcher)
+        }
+
+        // Der Bereich (x, y, w, h) muss neu gemalt werden.
+        InvalidateRect(int x, int y, int w, int h) {
+            this.dirty = true
+            var x1 = x + w + 1
+            var y1 = y + h + 1
+            var x0 = x - 1
+            var y0 = y - 1
+            if (!this.hasDirtyRect) {
+                this.dirtyX0 = x0
+                this.dirtyY0 = y0
+                this.dirtyX1 = x1
+                this.dirtyY1 = y1
+                this.hasDirtyRect = true
+                return
+            }
+            this.dirtyX0 = UI.M.Min(this.dirtyX0, x0)
+            this.dirtyY0 = UI.M.Min(this.dirtyY0, y0)
+            this.dirtyX1 = UI.M.Max(this.dirtyX1, x1)
+            this.dirtyY1 = UI.M.Max(this.dirtyY1, y1)
+        }
+
+        // Alles muss neu gemalt werden (zum Beispiel nach dem Aendern eines Brushes, den Elemente benutzen).
+        Invalidate() {
+            this.dirty = true
+            this.fullRedraw = true
+        }
+
+        // Liegt das Rechteck in dem Bereich, der gerade neu gemalt wird? (Elemente ausserhalb malen sich nicht.)
+        bool Needs(int x, int y, int w, int h) {
+            if (this.fullRedraw) { return true }
+            if (!this.hasDirtyRect) { return false }
+            return x < this.dirtyX1 && x + w > this.dirtyX0 && y < this.dirtyY1 && y + h > this.dirtyY0
+        }
+
+        // Fügt ein Element (oder Panel) der obersten Ebene hinzu; es gehört ab jetzt diesem Root.
+        Add(element) { this.content.Add(element) }
+
+        // Ordnet die gesamte Oberfläche an und zeichnet sie ganz neu.
+        Draw() {
+            this.fullRedraw = true
+            this.dirty = true
+            this.Update()
+        }
+
+        // Fragt die Elemente ab (Bindungen, Trigger, Stile, Listen); alles, was sich dabei aendert, meldet sich ueber Touched.
+        Poll() {
+            this.content.Poll(this)
+            for (var i = 0; i < this.popups.count; i = i + 1) { this.popups[i].Poll(this) }
+        }
+
+        // Bringt die Oberflaeche auf den Stand: fragt ab, ordnet neu an und malt - aber nur, wenn sich etwas geaendert hat, und nur den geaenderten Bereich, solange kein Element
+        // seine Lage oder Groesse geaendert hat. Liefert true, wenn gemalt wurde.
+        bool Update() {
+            this.Poll()
+            if (!this.dirty && !this.fullRedraw) { return false }
+            this.painting = true
+            this.layoutMoved = false
+            this.content.Measure(this, this.width, this.height)
+            this.content.Arrange(this, 0, 0, this.width, this.height)
+            this.LayoutPopups()
+            if (this.layoutMoved) { this.fullRedraw = true }
+            this.Paint()
+            this.painting = false
+            this.dirty = false
+            this.fullRedraw = false
+            this.hasDirtyRect = false
+            return true
+        }
+
+        // Ordnet die schwebenden Elemente an (ein neues oder verschobenes wird neu gemalt).
+        LayoutPopups() {
+            for (var i = 0; i < this.popups.count; i = i + 1) {
+                var popup = this.popups[i]
+                popup.Measure(this, -1, -1)
+                // nicht ueber den Rand hinaus
+                if (popup.x + popup.dw > this.width) { popup.x = UI.M.Max(0, this.width - popup.dw) }
+                if (popup.y + popup.dh > this.height) { popup.y = UI.M.Max(0, this.height - popup.dh) }
+                var moved = this.layoutMoved
+                this.layoutMoved = false
+                popup.Arrange(this, popup.x, popup.y, popup.dw, popup.dh)
+                if (this.layoutMoved && !this.fullRedraw) { this.InvalidateRect(popup.rx, popup.ry, popup.actualWidth, popup.actualHeight) }
+                this.layoutMoved = moved
+            }
+        }
+
+        Paint() {
+            this.renderer.ResetClip()
+            if (this.fullRedraw) {
+                this.renderer.FillRect(0, 0, this.width, this.height, this.theme.back)
+            } else if (this.hasDirtyRect) {
+                var x0 = UI.M.Max(0, this.dirtyX0)
+                var y0 = UI.M.Max(0, this.dirtyY0)
+                var x1 = UI.M.Min(this.width, this.dirtyX1)
+                var y1 = UI.M.Min(this.height, this.dirtyY1)
+                if (x1 <= x0 || y1 <= y0) { return }
+                this.dirtyX0 = x0
+                this.dirtyY0 = y0
+                this.dirtyX1 = x1
+                this.dirtyY1 = y1
+                this.PushClip(x0, y0, x1 - x0, y1 - y0)
+                this.renderer.FillRect(x0, y0, x1 - x0, y1 - y0, this.theme.back)
+            } else { return }
+            this.content.Draw(this, 0, 0)
+            for (var i = 0; i < this.popups.count; i = i + 1) {
+                var popup = this.popups[i]
+                popup.Draw(this, popup.rx, popup.ry)
+            }
+            if (!this.fullRedraw) { this.PopClip() }
+        }
+
+        // Beschraenkt das Zeichnen auf das Rechteck (geschnitten mit dem aktuellen); PopClip stellt das vorige wieder her. Die Elemente rufen beides
+        // paarweise auf (zum Beispiel ein ScrollViewer um seine Kinder).
+        PushClip(int x, int y, int w, int h) {
+            var r = new Rect(x, y, w, h)
+            if (this.clips.count > 0) { r.IntersectWith(this.clips[this.clips.count - 1]) }
+            r.TakeTo(this)
+            this.clips.Add(r)
+            this.renderer.SetClip(r.x, r.y, r.w, r.h)
+        }
+
+        PopClip() {
+            var last = this.clips.count - 1
+            if (last < 0) { return }
+            delete this.clips[last]
+            this.clips.RemoveAt(last)
+            if (last == 0) { this.renderer.ResetClip() }
+            else {
+                var r = this.clips[last - 1]
+                this.renderer.SetClip(r.x, r.y, r.w, r.h)
+            }
+        }
+
+        // Zeigt ein Element schwebend an der Bildschirmposition (x, y) ueber allem; es gehoert ab jetzt dem Root. `transient`: beim Schliessen
+        // zerstoeren (Menues). `owner`: das Element, das es geoeffnet hat (ein Klick darauf schliesst nur, oeffnet nicht gleich neu).
+        ShowPopup(popup, int x, int y, bool transient = true, owner = undefined) {
+            popup.TakeTo(this)
+            popup.x = x
+            popup.y = y
+            popup.transient = transient
+            popup.owner = owner
+            popup.parent = undefined
+            this.popups.Add(popup)
+            this.dirty = true
+        }
+
+        bool IsPopup(popup) {
+            for (var i = 0; i < this.popups.count; i = i + 1) {
+                if (this.popups[i] == popup) { return true }
+            }
+            return false
+        }
+
+        ClosePopup(popup) {
+            for (var i = 0; i < this.popups.count; i = i + 1) {
+                if (this.popups[i] == popup) {
+                    this.popups.RemoveAt(i)
+                    this.InvalidateRect(popup.ax, popup.ay, popup.actualWidth, popup.actualHeight)
+                    if (this.hoverElement == popup) { this.hoverElement = undefined }
+                    if (this.pressedElement == popup) { this.pressedElement = undefined }
+                    if (this.focusElement == popup) { this.focusElement = undefined }
+                    if (popup.transient) { delete popup }
+                    return
+                }
+            }
+        }
+
+        // Schliesst alle schwebenden Elemente (ein Klick daneben, Escape, eine gewaehlte Menuezeile).
+        CloseAllPopups() {
+            while (this.popups.count > 0) { this.ClosePopup(this.popups[this.popups.count - 1]) }
+        }
+
+        // Zeigt ein Menue (Liste von MenuItem) mit der linken oberen Ecke bei (x, y); eine gewaehlte Zeile oder ein Klick daneben schliesst es.
+        ShowMenu(items, int x, int y, owner = undefined) {
+            var menu = new MenuPopup(items)
+            this.ShowPopup(menu, x, y, true, owner)
+            return menu
+        }
+
+        // Das Element unter dem Mauszeiger: zuerst die schwebenden Elemente (das oberste zuerst), dann die Oberflaeche.
+        Hit(int px, int py) {
+            var i = this.popups.count - 1
+            while (i >= 0) {
+                var hit = this.popups[i].HitTest(px, py)
+                if (hit != undefined) { return hit }
+                i = i - 1
+            }
+            return this.content.HitTest(px, py)
+        }
+
+        // Ein Zyklus: die Oberfläche auf den neuesten Stand bringen (nur was sich geaendert hat wird gemalt), dann das Fenster einen Zyklus laufen lassen (anzeigen, Ereignisse abholen)
+        // und die Ereignisse verteilen. Die angehaengten Roots (siehe Attach) machen denselben Zyklus. Liefert false, sobald das Fenster dieses Roots geschlossen wurde.
+        bool Tick() {
+            var open = this.TickOne()
+            var i = 0
+            while (i < this.attached.count) {
+                var other = this.attached[i]
+                if (!other.TickOne()) {
+                    this.attached.RemoveAt(i)
+                    continue
+                }
+                i = i + 1
+            }
+            return open
+        }
+
+        // Der Zyklus nur dieses Roots (ohne die angehaengten).
+        bool TickOne() {
+            this.Update()
+            var open = this.window.Tick()
+            while (true) {
+                var e = this.window.NextEvent()   // (declared in the loop: the event array belongs to this iteration)
+                if (e == undefined) { break }
+                this.Dispatch(e)
+            }
+            if (!open) { this.closed = true }
+            var callback = this.onTick
+            if (callback != undefined) { callback() }
+            return open
+        }
+
+        // Haengt einen weiteren Root (ein weiteres Fenster) an: Tick und Run arbeiten ihn mit ab, bis sein Fenster geschlossen wird. Das Fenster, das hier laeuft, bestimmt das Ende
+        // von Run; das Schliessen eines angehaengten Fensters entfernt es nur. Der andere Root (und was ihn besitzt) muss so lange leben wie sein Fenster.
+        Attach(other) {
+            for (var i = 0; i < this.attached.count; i = i + 1) {
+                if (this.attached[i] == other) { return }
+            }
+            // nur ein Fenster wartet auf die Bildwiederholung, sonst dauert jeder Zyklus so viele Bildperioden wie es Fenster gibt
+            other.window.VSync = false
+            this.attached.Add(other)
+        }
+
+        // Nimmt den angehaengten Root wieder heraus (sein Fenster bleibt offen, aber niemand arbeitet es mehr ab).
+        Detach(other) {
+            for (var i = 0; i < this.attached.count; i = i + 1) {
+                if (this.attached[i] == other) {
+                    this.attached.RemoveAt(i)
+                    return
+                }
+            }
+        }
+
+        // Verteilt ein Ereignis des Fensters (Aufbau siehe Window.NextEvent) an das Element darunter bzw. das mit Fokus.
+        Dispatch(e) {
+            var type = e[0]
+            if (type == 8) { this.MouseDown(e[1], e[2], e[3]) }
+            else if (type == 11) { this.MouseUp(e[1], e[2], e[3]) }
+            else if (type == 9) { this.MouseMove(e[1], e[2]) }
+            else if (type == 12) { this.MouseWheel(e[1], e[2], e[3], e[4]) }
+            else if (type == 24) { this.KeyDown(e[1], e[3]) }
+            else if (type == 3) { this.TextInput(e[1]) }
+            else if (type == 1) { this.closed = true }
+        }
+
+        // Läuft, bis das Fenster geschlossen wird. Mit `other` (ein Root) wird dieser vorher angehaengt: `ui.Run(second)` arbeitet beide Fenster ab.
+        Run(other = undefined) {
+            if (other != undefined) { this.Attach(other) }
+            while (this.Tick()) { }
+        }
+
+        SetFocus(element) {
+            var old = this.focusElement
+            if (old != undefined) { old.focused = false }
+            this.focusElement = element
+            if (element != undefined) { element.focused = true }
+        }
+
+        // Tab: der Fokus wandert zum nächsten (mit Umschalt: zum vorigen) fokussierbaren Element.
+        FocusStep(bool backwards) {
+            var list = new List()
+            this.content.Collect(list)
+            if (list.count == 0) { return }
+            var index = -1
+            for (var i = 0; i < list.count; i = i + 1) {
+                if (list[i] == this.focusElement) { index = i }
+            }
+            if (backwards) {
+                index = index - 1
+                if (index < 0) { index = list.count - 1 }
+            } else {
+                index = index + 1
+                if (index >= list.count) { index = 0 }
+            }
+            this.SetFocus(list[index])
+        }
+
+        MouseWheel(int dx, int dy, int px, int py) {
+            this.mouseX = px
+            this.mouseY = py
+            var e = this.Hit(px, py)
+            while (e != undefined) {
+                if (e.enabled && e.MouseWheel(this, dx, dy)) { return }
+                e = e.parent
+            }
+        }
+
+        MouseDown(int button, int px, int py) {
+            this.mouseX = px
+            this.mouseY = py
+            // ein Klick neben die schwebenden Elemente: das oberste sagt, ob es schliesst und ob der Klick damit verbraucht ist
+            if (this.popups.count > 0 && !this.InsidePopup(px, py)) {
+                var consumed = false
+                var i = this.popups.count - 1
+                while (i >= 0 && i < this.popups.count) {
+                    var popup = this.popups[i]
+                    if (popup.PopupOutside(this, px, py)) { consumed = true }
+                    i = i - 1
+                }
+                if (consumed) { return }
+            }
+            var hit = this.Hit(px, py)
+            if (button == 3 && hit != undefined) {
+                // Kontextmenue: das naechste Element nach oben, das eins hat
+                var e = hit
+                while (e != undefined) {
+                    if (e.contextMenu != undefined) {
+                        this.ShowMenu(e.contextMenu, px, py, e)
+                        return
+                    }
+                    e = e.parent
+                }
+            }
+            if (hit != undefined && hit.enabled) {
+                if (hit.Focusable()) { this.SetFocus(hit) } else { this.SetFocus(undefined) }
+                this.pressedElement = hit
+                hit.MouseDown(this, button, px, py)
+            } else {
+                this.SetFocus(undefined)
+            }
+        }
+
+        // Liegt der Punkt in einem schwebenden Element?
+        bool InsidePopup(int px, int py) {
+            for (var i = 0; i < this.popups.count; i = i + 1) {
+                if (this.popups[i].HitTest(px, py) != undefined) { return true }
+            }
+            return false
+        }
+
+        MouseUp(int button, int px, int py) {
+            this.mouseX = px
+            this.mouseY = py
+            var target = this.pressedElement
+            this.pressedElement = undefined
+            if (target != undefined) { target.MouseUp(this, button, px, py) }
+        }
+
+        MouseMove(int px, int py) {
+            this.mouseX = px
+            this.mouseY = py
+            var hit = this.Hit(px, py)
+            var old = this.hoverElement
+            if (hit != old) {
+                if (old != undefined) { old.hover = false }
+                this.hoverElement = hit
+                if (hit != undefined) { hit.hover = true }
+            }
+            var target = this.pressedElement
+            if (target != undefined) { target.MouseMove(this, px, py) }
+            else if (hit != undefined) { hit.Hover(this, px, py) }
+        }
+
+        KeyDown(int key, int mod) {
+            if (key == UI.Keys.Tab()) {
+                // die Umschalttasten sind die Bits 1 und 2 von mod
+                this.FocusStep(mod % 4 != 0)
+                return
+            }
+            // ein Menue oder eine Liste, die Tasten haben will, bekommt sie zuerst
+            if (this.popups.count > 0) {
+                var top = this.popups[this.popups.count - 1]
+                if (top.grabsKeys) {
+                    top.KeyDown(this, key, mod)
+                    return
+                }
+            }
+            var target = this.focusElement
+            if (target != undefined && target.enabled) { target.KeyDown(this, key, mod) }
+        }
+
+        TextInput(string text) {
+            var target = this.focusElement
+            if (target != undefined && target.enabled) { target.TextInput(this, text) }
+        }
+    }
+}

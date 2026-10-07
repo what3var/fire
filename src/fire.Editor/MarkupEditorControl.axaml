@@ -26,7 +26,10 @@
                 <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
                     <local:MarkupPreviewControl x:Name="Preview" HorizontalAlignment="Left" VerticalAlignment="Top"/>
                 </ScrollViewer>
-                <ListBox x:Name="Problems" Grid.Row="1" MaxHeight="150" Background="#242028" IsVisible="False" SelectionChanged="Problems_SelectionChanged"/>
+                <StackPanel Grid.Row="1">
+                    <TextBlock x:Name="PreviewError" IsVisible="False" TextWrapping="Wrap" Margin="8,4" Foreground="#E8A0A0"/>
+                    <ListBox x:Name="Problems" MaxHeight="150" Background="#242028" IsVisible="False" SelectionChanged="Problems_SelectionChanged"/>
+                </StackPanel>
             </Grid>
         </Grid>
     </DockPanel>

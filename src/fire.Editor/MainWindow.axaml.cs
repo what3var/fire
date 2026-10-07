@@ -41,6 +41,7 @@ namespace fire.Editor
         private readonly ScopePanelControl _scopePanel = new();
         private readonly StackPanelControl _stackPanel = new();
         private readonly DevicesPanelControl _devicesPanel = new();
+        private readonly SolutionExplorerControl _solutionPanel = new();
 
         private AssemblyInfo _scriptAssemblyInfo = new();
 
@@ -52,7 +53,7 @@ namespace fire.Editor
 
         private static readonly Dictionary<string, string> PanelTitles = new()
         {
-            ["output"] = "Output", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices",
+            ["output"] = "Output", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices", ["solution"] = "Solution Explorer",
         };
 
         /// <summary>What kind of document a tab holds.</summary>
@@ -140,7 +141,7 @@ namespace fire.Editor
                     ("scope", PanelTitles["scope"], _scopePanel),
                     ("stack", PanelTitles["stack"], _stackPanel),
                 },
-                ("devices", PanelTitles["devices"], _devicesPanel));
+                new() { ("solution", PanelTitles["solution"], _solutionPanel), ("devices", PanelTitles["devices"], _devicesPanel) });
             var layout = _factory.CreateLayout();
             _factory.InitLayout(layout);
             DockHost.Factory = _factory;
@@ -168,6 +169,8 @@ namespace fire.Editor
             }, RoutingStrategies.Tunnel);
             AddHandler(DragDrop.DragOverEvent, Window_DragOver);
             AddHandler(DragDrop.DropEvent, Window_Drop);
+
+            InitProjects();
 
             _debugger = new DebuggerPanels(_threadsPanel, _scopePanel, _stackPanel);
             _debugger.AttachSession(_session);
@@ -222,12 +225,13 @@ namespace fire.Editor
 
         private void OnFirstShown()
         {
-            // The devices start collapsed (pinned to the right edge) - before the default layout is saved.
-            if (_tools.TryGetValue("devices", out var devices))
-            {
-                try { _factory.PinDockable(devices); }
-                catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex); }
-            }
+            // The solution explorer and the devices start collapsed (pinned to the right edge; the explorer opens when a project is opened) - before the default layout is saved.
+            foreach (var id in new[] { "solution", "devices" })
+                if (_tools.TryGetValue(id, out var collapsed))
+                {
+                    try { _factory.PinDockable(collapsed); }
+                    catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex); }
+                }
             _defaultLayout = SerializeLayout();
             LoadLayout();
             LoadToolStrips();
@@ -341,7 +345,7 @@ namespace fire.Editor
             // the panels get their content again by id (a layout stores only the ids), the documents go back into the document area
             var contents = new Dictionary<string, Control>
             {
-                ["output"] = _output, ["errors"] = _errorList, ["threads"] = _threadsPanel, ["scope"] = _scopePanel, ["stack"] = _stackPanel, ["devices"] = _devicesPanel,
+                ["output"] = _output, ["errors"] = _errorList, ["threads"] = _threadsPanel, ["scope"] = _scopePanel, ["stack"] = _stackPanel, ["devices"] = _devicesPanel, ["solution"] = _solutionPanel,
             };
             MakeObservable(layout, new HashSet<IDockable>());
             _factory.InitLayout(layout);
@@ -555,7 +559,7 @@ namespace fire.Editor
             // A step still pending of the PREVIOUSLY active thread would leave _isBusy set forever (its ThreadPaused event fires later with a ctx that is no longer the active one) -
             // so always reset it when the thread changes, otherwise the step buttons stay locked.
             _isBusy = false;
-            ShowDebugLine(chosen.IsFinished ? null : chosen.Vm.CurrentLine);
+            ShowDebugLocation(chosen.IsFinished ? null : chosen.Vm.CurrentLocation);
             _debugger.Refresh(BreakpointDescriptions());
             UpdateStatus(chosen.IsFinished
                 ? $"{chosen.Name}: finished."
@@ -617,6 +621,7 @@ namespace fire.Editor
 
             if (doc.Script is { } script)
             {
+                AttachProjectSupport(script);
                 // Ctrl+click on an #include or on a symbol of an included file: open the file in a tab.
                 script.OpenFileRequested += (target, line) =>
                 {
@@ -630,7 +635,7 @@ namespace fire.Editor
                 };
                 script.BreakpointsChanged += () =>
                 {
-                    if (ReferenceEquals(doc, _debugDocument)) _session.UpdateBreakpoints(BreakpointLocations(doc));
+                    if (TakesPartInRun(doc)) _session.UpdateBreakpoints(BreakpointLocations());
                     _debugger.Refresh(BreakpointDescriptions());
                 };
             }
@@ -660,6 +665,7 @@ namespace fire.Editor
 
         private void OnDocumentClosed(OpenDocument doc)
         {
+            if (ReferenceEquals(_highlightedDoc, doc)) _highlightedDoc = null;
             doc.Trace?.Detach();
             _documents.Remove(doc);
             _closeApproved.Remove(doc);
@@ -694,6 +700,7 @@ namespace fire.Editor
             CaretText.Text = doc == null ? "" : $"Line {doc.View.GetCaretLine()}";
             UpdateErrorPanel();
             UpdateSaveCommands();
+            RefreshProjectUi();
             _debugger.Refresh(BreakpointDescriptions());
         }
 
@@ -897,7 +904,7 @@ namespace fire.Editor
             var files = e.DataTransfer.GetItems(DataFormat.File);
             if (files == null) return;
             foreach (var path in files.Select(f => f.TryGetFile()?.TryGetLocalPath()).Where(p => p != null && File.Exists(p)))
-                OpenFile(path!);
+                OpenFile(path!);   // (a project or a solution file opens the workspace)
             e.Handled = true;
         }
 

@@ -1,0 +1,423 @@
+namespace UI {
+    // Wie ein Bild in seine Flaeche passt (Image.stretch).
+    enum Stretch { None = 0, Fill = 1, Uniform = 2, UniformToFill = 3 }
+
+    // Eine Gruppe von Optionen, von denen genau eine gewaehlt ist (hoechstens eine; -1: keine): `Add("text")` (oder beliebige Objekte mit `displayMember`),
+    // `selectedIndex`/`selectedItem`, `onChange`/`TakeChanged()`; Pfeiltasten wechseln die Wahl. `horizontal` stellt die Optionen nebeneinander, `header` ist eine Ueberschrift.
+    class RadioButtons : Element {
+        List items
+        string displayMember = ""
+        int selectedIndex = -1
+        bool horizontal = false
+        int spacing = 6
+        string header = ""
+        var onChange
+        bool changed = false
+        int hotIndex = -1
+
+        construct(int x = 0, int y = 0) : base(x, y, -1, -1) {
+            this.items = new List()
+        }
+
+        string StyleKey() { return "RadioButtons" }
+
+        bool Focusable() { return true }
+
+        Add(item) {
+            UI.M.Own(this, item)
+            this.items.Add(item)
+            this.Invalidate()
+            return item
+        }
+
+        string ItemText(item) { return UI.M.Text(UI.M.Member(item, this.displayMember)) }
+
+        selectedItem {
+            get {
+                if (this.selectedIndex < 0 || this.selectedIndex >= this.items.count) { return undefined }
+                return this.items[this.selectedIndex]
+            }
+            set { this.Select(this.items.IndexOf(value)) }
+        }
+
+        Select(int index) {
+            if (index >= this.items.count) { index = this.items.count - 1 }
+            if (index < -1) { index = -1 }
+            if (index == this.selectedIndex) { return }
+            this.selectedIndex = index
+            this.changed = true
+            var callback = this.onChange
+            if (callback != undefined) { callback() }
+        }
+
+        bool TakeChanged() {
+            var was = this.changed
+            this.changed = false
+            return was
+        }
+
+        int OptionHeight(root) { return UI.M.Max(root.ch, 14) }
+
+        int HeaderHeight(root) {
+            if (this.header == "") { return 0 }
+            return root.ch + this.spacing
+        }
+
+        // Die Breite einer Option: Kreis, Abstand, Text.
+        int OptionWidth(root, int index) { return 14 + 6 + root.cw * this.ItemText(this.items[index]).Length }
+
+        MeasureCore(root, int aw, int ah) {
+            var w = 0
+            var h = 0
+            var oh = this.OptionHeight(root)
+            for (var i = 0; i < this.items.count; i = i + 1) {
+                var ow = this.OptionWidth(root, i)
+                if (this.horizontal) {
+                    w = w + ow
+                    if (i > 0) { w = w + this.spacing * 3 }
+                    h = oh
+                } else {
+                    w = UI.M.Max(w, ow)
+                    h = h + oh
+                    if (i > 0) { h = h + this.spacing }
+                }
+            }
+            w = UI.M.Max(w, root.cw * this.header.Length)
+            this.cw = w
+            this.ch = h + this.HeaderHeight(root)
+        }
+
+        // Das Rechteck der Option `index` auf dem Bildschirm, als (x, y, w, h) in einem Rect.
+        OptionRect(root, int index) {
+            var x = this.ax
+            var y = this.ay + this.HeaderHeight(root)
+            var oh = this.OptionHeight(root)
+            for (var i = 0; i < index; i = i + 1) {
+                if (this.horizontal) { x = x + this.OptionWidth(root, i) + this.spacing * 3 }
+                else { y = y + oh + this.spacing }
+            }
+            var r = new Rect(x, y, this.OptionWidth(root, index), oh)
+            return r
+        }
+
+        int OptionAt(root, int px, int py) {
+            for (var i = 0; i < this.items.count; i = i + 1) {
+                var r = this.OptionRect(root, i)
+                var inside = r.Contains(px, py)
+                delete r
+                if (inside) { return i }
+            }
+            return -1
+        }
+
+        Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            var theme = root.theme
+            var r = root.renderer
+            var text = theme.text
+            if (this.foreground != undefined) { text = this.foreground }
+            if (!this.enabled) { text = theme.textDisabled }
+            if (this.header != "") { r.DrawText(ax, ay, this.header, text) }
+            for (var i = 0; i < this.items.count; i = i + 1) {
+                var box = this.OptionRect(root, i)
+                var cy = box.y + box.h / 2
+                var back = theme.inputBack
+                if (!this.enabled) { back = theme.faceDisabled }
+                else if (i == this.hotIndex) { back = theme.faceHover }
+                r.FillCircle(box.x + 7, cy, 6, back)
+                var border = theme.border
+                if (this.pen != undefined) { border = this.pen }
+                if (this.focused && i == this.selectedIndex) { border = theme.borderFocus }
+                r.DrawCircle(box.x + 7, cy, 6, border)
+                if (i == this.selectedIndex) {
+                    var mark = theme.accent
+                    if (!this.enabled) { mark = theme.textDisabled }
+                    r.FillCircle(box.x + 7, cy, 3, mark)
+                }
+                r.DrawText(box.x + 20, box.y + (box.h - root.ch) / 2, this.ItemText(this.items[i]), text)
+                delete box
+            }
+        }
+
+        MouseDown(root, int button, int px, int py) {
+            if (button != 1) { return }
+            var index = this.OptionAt(root, px, py)
+            if (index >= 0) { this.Select(index) }
+        }
+
+        Hover(root, int px, int py) { this.hotIndex = this.OptionAt(root, px, py) }
+
+        KeyDown(root, int key, int mod) {
+            var step = 0
+            if (key == UI.Keys.Down() || key == UI.Keys.Right()) { step = 1 }
+            else if (key == UI.Keys.Up() || key == UI.Keys.Left()) { step = -1 }
+            if (step == 0 || this.items.count == 0) { return }
+            var index = this.selectedIndex + step
+            if (this.selectedIndex < 0) { index = 0 }
+            this.Select(UI.M.Clamp(index, 0, this.items.count - 1))
+        }
+    }
+
+    // Die Vorschlagsliste eines AutoSuggestBox: ein Klick ins Textfeld schliesst sie nicht.
+    class SuggestList : ListBox {
+        construct(int x = 0, int y = 0, int width = 160, int height = 120) : base(x, y, width, height) { }
+
+        bool PopupOutside(root, int px, int py) {
+            root.ClosePopup(this)
+            return false
+        }
+    }
+
+    // Ein Textfeld, das beim Tippen eine Liste von Vorschlaegen zeigt: aus `suggestions` (beliebige Werte, `displayMember` wie bei ListBox; vorgeschlagen wird, was den Text
+    // enthaelt, ohne Beachtung der Gross-/Kleinschreibung) oder aus `provider` (ein Lambda mit dem Text als Parameter, das eine Liste liefert). Auf/Ab waehlt, Enter oder Klick uebernimmt
+    // (`onChosen`/`TakeChosen()`, `chosenItem`), Escape schliesst.
+    class AutoSuggestBox : TextBox {
+        List suggestions
+        string displayMember = ""
+        var provider
+        int maxSuggestions = 6
+        SuggestList popupList
+        var onChosen
+        bool chosen = false
+        var chosenItem
+        bool suppress = false
+
+        construct(string text = "", int x = 0, int y = 0, int width = 160, int height = 24) : base(text, x, y, width, height) {
+            this.suggestions = new List()
+            this.popupList = new SuggestList(0, 0, width, 24)
+        }
+
+        string StyleKey() { return "AutoSuggestBox" }
+
+        AddSuggestion(item) {
+            UI.M.Own(this, item)
+            this.suggestions.Add(item)
+            return item
+        }
+
+        bool TakeChosen() {
+            var was = this.chosen
+            this.chosen = false
+            return was
+        }
+
+        string TextOf(item) { return UI.M.Text(UI.M.Member(item, this.displayMember)) }
+
+        // Die passenden Vorschlaege zum Text.
+        List Matches() {
+            var found = new List()
+            var make = this.provider
+            if (make != undefined) {
+                var list = make(this.text)
+                for (var i = 0; i < list.count && i < this.maxSuggestions; i = i + 1) { found.Add(list[i]) }
+                return found
+            }
+            var needle = this.text.ToLower()
+            for (var i = 0; i < this.suggestions.count && found.count < this.maxSuggestions; i = i + 1) {
+                var item = this.suggestions[i]
+                if (this.TextOf(item).ToLower().Contains(needle)) { found.Add(item) }
+            }
+            return found
+        }
+
+        // Aktualisiert und zeigt (oder schliesst) die Liste.
+        Suggest() {
+            var root = this.host
+            if (root == undefined) { return }
+            if (this.text == "") {
+                this.CloseList()
+                return
+            }
+            var found = this.Matches()
+            if (found.count == 0) {
+                this.CloseList()
+                return
+            }
+            this.popupList.displayMember = this.displayMember
+            this.popupList.SetItems(found)
+            this.popupList.width = this.actualWidth
+            this.popupList.height = found.count * this.popupList.RowHeight(root) + 2
+            if (!root.IsPopup(this.popupList)) { root.ShowPopup(this.popupList, this.ax, this.ay + this.actualHeight, false, this) }
+            else {
+                this.popupList.x = this.ax
+                this.popupList.y = this.ay + this.actualHeight
+            }
+        }
+
+        CloseList() {
+            var root = this.host
+            if (root != undefined && root.IsPopup(this.popupList)) { root.ClosePopup(this.popupList) }
+        }
+
+        bool ListOpen() {
+            var root = this.host
+            return root != undefined && root.IsPopup(this.popupList)
+        }
+
+        Changed() {
+            base.Changed()
+            if (!this.suppress) { this.Suggest() }
+        }
+
+        // Uebernimmt einen Vorschlag.
+        Choose(item) {
+            this.suppress = true
+            this.SetText(this.TextOf(item))
+            this.CloseList()
+            this.chosenItem = item
+            this.chosen = true
+            var callback = this.onChosen
+            if (callback != undefined) { callback() }
+            this.Changed()
+            this.suppress = false
+        }
+
+        Poll(root) {
+            base.Poll(root)
+            // ein Klick in der Liste hat gewaehlt
+            if (this.popupList.TakeChanged() && this.popupList.selectedIndex >= 0 && this.ListOpen()) { this.Choose(this.popupList.selectedItem) }
+            if (!this.focused && this.ListOpen()) { this.CloseList() }
+        }
+
+        KeyDown(root, int key, int mod) {
+            if (this.ListOpen()) {
+                var list = this.popupList
+                if (key == UI.Keys.Down()) {
+                    list.Select(UI.M.Min(list.count - 1, list.selectedIndex + 1))
+                    list.TakeChanged()
+                    return
+                }
+                if (key == UI.Keys.Up()) {
+                    list.Select(UI.M.Max(0, list.selectedIndex - 1))
+                    list.TakeChanged()
+                    return
+                }
+                if (key == UI.Keys.Escape()) {
+                    this.CloseList()
+                    return
+                }
+                if (key == UI.Keys.Enter() && list.selectedIndex >= 0) {
+                    this.Choose(list.selectedItem)
+                    return
+                }
+            }
+            base.KeyDown(root, key, mod)
+        }
+    }
+
+    // Ein senkrechter (in einer waagerechten Leiste) oder waagerechter Strich zwischen Elementen.
+    class Separator : Element {
+        construct() : base(0, 0, -1, -1) { }
+
+        string StyleKey() { return "Separator" }
+
+        MeasureCore(root, int aw, int ah) {
+            this.cw = 5
+            this.ch = 5
+        }
+
+        Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            var pen = this.pen
+            if (pen == undefined) { pen = root.theme.border }
+            if (this.parent != undefined && this.parent is of StackPanel && this.parent.horizontal) {
+                root.renderer.DrawLine(ax + 2, ay + 2, ax + 2, ay + this.actualHeight - 3, pen)
+            } else {
+                root.renderer.DrawLine(ax + 2, ay + 2, ax + this.actualWidth - 3, ay + 2, pen)
+            }
+        }
+    }
+
+    // Eine Leiste mit Schaltflaechen und Trennern nebeneinander (oder untereinander mit `horizontal = false`): `AddButton("Text", func () => { ... })`, `AddSeparator()`.
+    class ToolBar : StackPanel {
+        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height, true, 2, 3) {
+            this.filled = true
+            this.showBorder = false
+        }
+
+        string StyleKey() { return "ToolBar" }
+
+        AddButton(string text, onClick = undefined) {
+            var button = new Button(text, 0, 0, -1, -1)
+            button.onClick = onClick
+            this.Add(button)
+            return button
+        }
+
+        AddSeparator() {
+            var s = new Separator()
+            this.Add(s)
+            return s
+        }
+
+        Draw(root, int ax, int ay) {
+            base.Draw(root, ax, ay)
+            // eine Linie unter der Leiste
+            if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
+                root.renderer.DrawLine(ax, ay + this.actualHeight - 1, ax + this.actualWidth - 1, ay + this.actualHeight - 1, root.theme.border)
+            }
+        }
+    }
+
+    // Zeigt einen Framebuffer (ein geladenes Bild: `Framebuffer.FromResource(new Resource("logo.png"))`) mit Alpha. `stretch` (UI.Stretch): None, Fill, Uniform (Standard), UniformToFill.
+    class Image : Element {
+        Framebuffer source
+        int stretch = UI.Stretch.Uniform
+
+        construct(source = undefined, int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+            this.source = source
+        }
+
+        string StyleKey() { return "Image" }
+
+        MeasureCore(root, int aw, int ah) {
+            if (this.source == undefined) {
+                this.cw = 0
+                this.ch = 0
+                return
+            }
+            this.cw = this.source.Width()
+            this.ch = this.source.Height()
+        }
+
+        Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.background) }
+            if (this.source == undefined) { return }
+            var sw = this.source.Width()
+            var sh = this.source.Height()
+            var w = this.actualWidth
+            var h = this.actualHeight
+            if (sw <= 0 || sh <= 0 || w <= 0 || h <= 0) { return }
+            root.PushClip(ax, ay, w, h)
+            if (this.stretch == UI.Stretch.None) {
+                root.renderer.BlitScaled(this.source, 0, 0, sw, sh, ax, ay, sw, sh, 2)
+            } else if (this.stretch == UI.Stretch.Fill) {
+                root.renderer.BlitScaled(this.source, 0, 0, sw, sh, ax, ay, w, h, 2)
+            } else if (this.stretch == UI.Stretch.Uniform) {
+                // so gross wie moeglich, Seitenverhaeltnis bleibt, mittig
+                var dw = w
+                var dh = sh * w / sw
+                if (dh > h) {
+                    dh = h
+                    dw = sw * h / sh
+                }
+                dw = UI.M.Max(1, dw)
+                dh = UI.M.Max(1, dh)
+                root.renderer.BlitScaled(this.source, 0, 0, sw, sh, ax + (w - dw) / 2, ay + (h - dh) / 2, dw, dh, 2)
+            } else {
+                // die Flaeche fuellen, ueberstehende Teile der Quelle weglassen (mittig)
+                var cropW = sw
+                var cropH = sw * h / w
+                if (cropH > sh) {
+                    cropH = sh
+                    cropW = sh * w / h
+                }
+                cropW = UI.M.Max(1, cropW)
+                cropH = UI.M.Max(1, cropH)
+                root.renderer.BlitScaled(this.source, (sw - cropW) / 2, (sh - cropH) / 2, cropW, cropH, ax, ay, w, h, 2)
+            }
+            root.PopClip()
+        }
+    }
+}

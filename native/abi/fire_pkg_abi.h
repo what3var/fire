@@ -63,6 +63,9 @@ typedef struct fire_host {
     int32_t (*dev_write)(int32_t handle, const uint8_t* data, int32_t count);     /* 1: sent */
     int32_t (*dev_send_command)(int32_t handle, const char* text_utf8);           /* a line: the text and a line ending in the encoding of the device; 1: sent */
     int32_t (*dev_poll)(int32_t handle, uint8_t* buffer, int32_t size);           /* the next received packet: its length (taken if it fits, else kept), -1: none */
+    /* The network (the net package): may the script talk to this host and port? access bits: 1 connect (also: send a datagram), 2 listen (also: bind a UDP socket), 4 resolve a name
+     * (port 0); 1 = allowed, 0 = refused (+ reason). A host that is older than this field has a smaller `size`: then everything is allowed. */
+    int32_t (*net_allow)(const char* host_utf8, int32_t port, int32_t access, char* reason, int32_t reason_size);
 } fire_host;
 
 /* The entry points of a package library. */

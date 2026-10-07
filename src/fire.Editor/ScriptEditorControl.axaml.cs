@@ -564,6 +564,9 @@ namespace fire.Editor
 
         private ISet<string>? _conditionalSymbols;
 
+        /// <summary>More symbols of `#if` (those that the settings of the project add), asked whenever the symbols are computed; null: none.</summary>
+        public Func<IReadOnlyList<string>?>? ExtraDefines { get; set; }
+
         /// <summary>The symbols of `#if` for the configuration this script is built with (the nearest fire.native.json: engine, target, defines; without one the VM on this machine) -
         /// the branches that are not taken are greyed out. Cached; <see cref="InvalidateConditionalSymbols"/> after the settings changed.</summary>
         private ISet<string> ConditionalSymbolsForView()
@@ -581,6 +584,12 @@ namespace fire.Editor
             catch (Exception)
             {
                 _conditionalSymbols = fire.Compiler.ConditionalSymbols.For(null);   // an unreadable configuration: the build reports it, the editor assumes the defaults
+            }
+            if (ExtraDefines?.Invoke() is { Count: > 0 } extra)
+            {
+                var all = new HashSet<string>(_conditionalSymbols);
+                foreach (var d in extra) all.Add(d);
+                _conditionalSymbols = all;
             }
             return _conditionalSymbols;
         }

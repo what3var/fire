@@ -1,0 +1,443 @@
+namespace UI {
+    // Ein Linienzug aus Punkten (ein Teil einer Geometry): `points` ist [x0, y0, x1, y1, ...] als Liste, `closed` verbindet Ende und Anfang.
+    class Figure {
+        List points
+        bool closed = false
+
+        construct() { this.points = new List() }
+
+        int Count() { return this.points.count / 2 }
+
+        // Die Punkte als Array fuer den Renderer.
+        ToArray() {
+            var a = new int[this.points.count]
+            for (var i = 0; i < this.points.count; i = i + 1) { a[i] = this.points[i] }
+            return a
+        }
+    }
+
+    // Eine Form aus Linienzuegen: MoveTo/LineTo/QuadTo/CubicTo/Close wie bei einem Pfad (Kurven werden in Strecken zerlegt), AddEllipse/AddArc/AddRect, oder
+    // `Geometry.Parse("M 10 10 L 50 10 L 50 40 Z")` mit der Schreibweise von SVG-Pfaden (M L H V C Q Z, klein = relativ; Zahlen ganzzahlig, Nachkommastellen entfallen).
+    class Geometry {
+        List figures
+        // der aktuelle Punkt (Anfang der naechsten Strecke) und der Anfang der aktuellen Figur
+        int cx = 0
+        int cy = 0
+        int startX = 0
+        int startY = 0
+        Figure current
+        // Anzahl der Strecken je Kurve
+        int segments = 16
+
+        construct() { this.figures = new List() }
+
+        Figure Begin(int x, int y) {
+            var f = new Figure()
+            f.TakeTo(this)
+            this.figures.Add(f)
+            this.current = f
+            f.points.Add(x)
+            f.points.Add(y)
+            this.cx = x
+            this.cy = y
+            this.startX = x
+            this.startY = y
+            return f
+        }
+
+        MoveTo(int x, int y) { this.Begin(x, y) }
+
+        LineTo(int x, int y) {
+            if (this.current == undefined) { this.Begin(this.cx, this.cy) }
+            this.current.points.Add(x)
+            this.current.points.Add(y)
+            this.cx = x
+            this.cy = y
+        }
+
+        // Quadratische Kurve zum Punkt (x, y) mit dem Steuerpunkt (qx, qy).
+        QuadTo(int qx, int qy, int x, int y) {
+            var x0 = this.cx
+            var y0 = this.cy
+            for (var i = 1; i <= this.segments; i = i + 1) {
+                var t = i * 1000 / this.segments
+                var u = 1000 - t
+                var px = (u * u * x0 + 2 * u * t * qx + t * t * x) / 1000000
+                var py = (u * u * y0 + 2 * u * t * qy + t * t * y) / 1000000
+                this.LineTo(px, py)
+            }
+        }
+
+        // Kubische Kurve zum Punkt (x, y) mit den Steuerpunkten (c1x, c1y) und (c2x, c2y).
+        CubicTo(int c1x, int c1y, int c2x, int c2y, int x, int y) {
+            var x0 = this.cx
+            var y0 = this.cy
+            for (var i = 1; i <= this.segments; i = i + 1) {
+                var t = i * 1000 / this.segments
+                var u = 1000 - t
+                var a = u * u / 1000 * u / 1000
+                var b = 3 * (u * u / 1000) * t / 1000
+                var c = 3 * u * (t * t / 1000) / 1000
+                var d = t * t / 1000 * t / 1000
+                var px = (a * x0 + b * c1x + c * c2x + d * x) / 1000
+                var py = (a * y0 + b * c1y + c * c2y + d * y) / 1000
+                this.LineTo(px, py)
+            }
+        }
+
+        // Schliesst die aktuelle Figur (das Ende wird mit dem Anfang verbunden).
+        Close() {
+            if (this.current == undefined) { return }
+            this.current.closed = true
+            this.cx = this.startX
+            this.cy = this.startY
+            this.current = undefined
+        }
+
+        // Ein Bogen einer Ellipse um (mx, my) mit den Halbachsen rx und ry, von `start` Grad (0 = rechts, nach unten wachsend) um `sweep` Grad.
+        AddArc(int mx, int my, int rx, int ry, int start, int sweep) {
+            var steps = UI.M.Max(2, this.segments * UI.M.Max(1, sweep / 90))
+            if (sweep < 0) { steps = UI.M.Max(2, this.segments * UI.M.Max(1, -sweep / 90)) }
+            for (var i = 0; i <= steps; i = i + 1) {
+                var a = start + sweep * i / steps
+                var px = mx + rx * UI.M.Cos(a) / 1000
+                var py = my + ry * UI.M.Sin(a) / 1000
+                if (i == 0) { this.Begin(px, py) } else { this.LineTo(px, py) }
+            }
+        }
+
+        AddEllipse(int mx, int my, int rx, int ry) {
+            this.AddArc(mx, my, rx, ry, 0, 360)
+            this.current.points.RemoveAt(this.current.points.count - 1)
+            this.current.points.RemoveAt(this.current.points.count - 1)
+            this.Close()
+        }
+
+        AddRect(int x, int y, int w, int h) {
+            this.Begin(x, y)
+            this.LineTo(x + w, y)
+            this.LineTo(x + w, y + h)
+            this.LineTo(x, y + h)
+            this.Close()
+        }
+
+        // Die Groesse des Rechtecks um alle Punkte (rechts unten = groesste Koordinaten).
+        int Width() {
+            var w = 0
+            for (var i = 0; i < this.figures.count; i = i + 1) {
+                var p = this.figures[i].points
+                for (var k = 0; k < p.count; k = k + 2) { w = UI.M.Max(w, p[k]) }
+            }
+            return w
+        }
+
+        int Height() {
+            var h = 0
+            for (var i = 0; i < this.figures.count; i = i + 1) {
+                var p = this.figures[i].points
+                for (var k = 1; k < p.count; k = k + 2) { h = UI.M.Max(h, p[k]) }
+            }
+            return h
+        }
+
+        // Liest Pfaddaten (Befehle M L H V C Q Z, Kleinbuchstaben relativ zum aktuellen Punkt).
+        static Parse(string data) {
+            var g = new Geometry()
+            var pos = 0
+            var command = 32
+            var n = data.Length
+            var args = new List()
+            while (pos < n) {
+                var c = data.CharAt(pos).ToInt()
+                if (c == 32 || c == 44 || c == 9 || c == 10 || c == 13) {
+                    pos = pos + 1
+                    continue
+                }
+                var isLetter = (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+                if (isLetter) {
+                    command = c
+                    pos = pos + 1
+                    if (c == 90 || c == 122) { g.Close() }
+                    continue
+                }
+                // eine Zahl
+                var sign = 1
+                if (c == 45) {
+                    sign = -1
+                    pos = pos + 1
+                }
+                var value = 0
+                while (pos < n) {
+                    var d = data.CharAt(pos).ToInt() - 48
+                    if (d < 0 || d > 9) { break }
+                    value = value * 10 + d
+                    pos = pos + 1
+                }
+                if (pos < n && data.CharAt(pos).ToInt() == 46) {
+                    pos = pos + 1
+                    while (pos < n) {
+                        var d2 = data.CharAt(pos).ToInt() - 48
+                        if (d2 < 0 || d2 > 9) { break }
+                        pos = pos + 1
+                    }
+                }
+                args.Add(sign * value)
+                var need = UI.Geometry.ArgCount(command)
+                if (need > 0 && args.count == need) {
+                    g.Apply(command, args)
+                    args.Clear()
+                }
+            }
+            return g
+        }
+
+        static int ArgCount(int command) {
+            var c = command
+            if (c >= 97) { c = c - 32 }
+            if (c == 77 || c == 76) { return 2 }
+            if (c == 72 || c == 86) { return 1 }
+            if (c == 81) { return 4 }
+            if (c == 67) { return 6 }
+            return 0
+        }
+
+        Apply(int command, args) {
+            var relative = command >= 97
+            var c = command
+            if (relative) { c = c - 32 }
+            var ox = 0
+            var oy = 0
+            if (relative) {
+                ox = this.cx
+                oy = this.cy
+            }
+            if (c == 77) { this.MoveTo(ox + args[0], oy + args[1]) }
+            else if (c == 76) { this.LineTo(ox + args[0], oy + args[1]) }
+            else if (c == 72) { this.LineTo(ox + args[0], this.cy) }
+            else if (c == 86) { this.LineTo(this.cx, oy + args[0]) }
+            else if (c == 81) { this.QuadTo(ox + args[0], oy + args[1], ox + args[2], oy + args[3]) }
+            else if (c == 67) { this.CubicTo(ox + args[0], oy + args[1], ox + args[2], oy + args[3], ox + args[4], oy + args[5]) }
+        }
+    }
+
+    // Die gemeinsamen Eigenschaften der Formen: Fuellung (`fill`, ein Brush; undefined: nicht fuellen) und Umriss (`stroke`, ein Pen; undefined: kein Umriss).
+    class Shape : Element {
+        Brush fill
+        Pen stroke
+
+        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) { }
+
+        string StyleKey() { return "Shape" }
+    }
+
+    // Ein Rechteck der Groesse des Elements.
+    class Rectangle : Shape {
+        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) { }
+
+        string StyleKey() { return "Rectangle" }
+
+        Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.fill != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.fill) }
+            if (this.stroke != undefined) { root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, this.stroke) }
+        }
+    }
+
+    // Eine Ellipse, die das Rechteck des Elements ausfuellt.
+    class Ellipse : Shape {
+        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) { }
+
+        string StyleKey() { return "Ellipse" }
+
+        Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            var rx = this.actualWidth / 2
+            var ry = this.actualHeight / 2
+            var mx = ax + rx
+            var my = ay + ry
+            // bei ungerader Groesse bleibt die Ellipse im Rechteck
+            if (this.fill != undefined) { root.renderer.FillEllipse(mx, my, UI.M.Max(0, rx - 1), UI.M.Max(0, ry - 1), this.fill) }
+            if (this.stroke != undefined) { root.renderer.DrawEllipse(mx, my, UI.M.Max(0, rx - 1), UI.M.Max(0, ry - 1), this.stroke) }
+        }
+    }
+
+    // Eine Strecke von (x1, y1) nach (x2, y2) im Element (Koordinaten relativ zu seiner linken oberen Ecke).
+    class Line : Shape {
+        int x1 = 0
+        int y1 = 0
+        int x2 = 0
+        int y2 = 0
+
+        construct(int x1 = 0, int y1 = 0, int x2 = 0, int y2 = 0) : base(0, 0, -1, -1) {
+            this.x1 = x1
+            this.y1 = y1
+            this.x2 = x2
+            this.y2 = y2
+        }
+
+        string StyleKey() { return "Line" }
+
+        MeasureCore(root, int aw, int ah) {
+            this.cw = UI.M.Max(this.x1, this.x2) + 1
+            this.ch = UI.M.Max(this.y1, this.y2) + 1
+        }
+
+        Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.stroke != undefined) { root.renderer.DrawLine(ax + this.x1, ay + this.y1, ax + this.x2, ay + this.y2, this.stroke) }
+        }
+    }
+
+    // Eine Form aus einer Geometry (siehe oben): geschlossene Figuren werden gefuellt (Even-Odd) und umrissen, offene nur gezeichnet. Die Punkte liegen
+    // relativ zur linken oberen Ecke des Elements; es ist so gross wie die Geometry.
+    class Path : Shape {
+        Geometry data
+
+        construct(data = undefined, int x = 0, int y = 0) : base(x, y, -1, -1) {
+            this.data = data
+        }
+
+        string StyleKey() { return "Path" }
+
+        // Setzt die Geometry aus Pfaddaten (siehe Geometry.Parse).
+        SetData(string text) {
+            this.data = UI.Geometry.Parse(text)
+        }
+
+        MeasureCore(root, int aw, int ah) {
+            if (this.data == undefined) {
+                this.cw = 0
+                this.ch = 0
+                return
+            }
+            this.cw = this.data.Width() + 1
+            this.ch = this.data.Height() + 1
+        }
+
+        Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.data == undefined) { return }
+            for (var i = 0; i < this.data.figures.count; i = i + 1) {
+                var f = this.data.figures[i]
+                if (f.Count() < 2) { continue }
+                var pts = f.ToArray()
+                for (var k = 0; k < pts.length; k = k + 2) {
+                    pts[k] = pts[k] + ax
+                    pts[k + 1] = pts[k + 1] + ay
+                }
+                if (f.closed && this.fill != undefined && f.Count() >= 3) { root.renderer.FillPolygon(pts, this.fill) }
+                if (this.stroke != undefined) { root.renderer.DrawPath(pts, this.stroke, f.closed) }
+            }
+        }
+    }
+
+    // Eine Zeichenflaeche: hat einen eigenen Framebuffer (so gross wie das Element), in den der Code mit `renderer` zeichnet, und zeigt ihn an. `onPaint` ist ein Lambda mit
+    // der Zeichenflaeche als Parameter; es laeuft, wenn der Puffer neu angelegt wurde (Groessenaenderung), nach `Invalidate()` und - mit `continuous` - in jedem Bild. Mit `SetSource`
+    // zeigt sie stattdessen einen fremden Framebuffer (ein Bild, die Ausgabe eines anderen Programmteils). Mausereignisse melden `onMouseDown/onMouseMove/onMouseUp` (Lambda mit x, y
+    // relativ zur Flaeche und - bei Klicks - der Taste).
+    class DrawingCanvas : Element {
+        Framebuffer framebuffer
+        Renderer renderer
+        var onPaint
+        var onMouseDown
+        var onMouseMove
+        var onMouseUp
+        bool continuous = false
+        bool dirty = true
+        bool external = false
+        // wie das Bild auf die Flaeche kommt: UI.BlitMode (Copy, Transparent, Blend)
+        int blendMode = 0
+
+        construct(int x = 0, int y = 0, int width = 200, int height = 150) : base(x, y, width, height) { }
+
+        string StyleKey() { return "DrawingCanvas" }
+
+        // Beim naechsten Zyklus laeuft onPaint wieder und die Flaeche wird neu gezeigt (auch nach einem Zeichnen mit `renderer` von aussen).
+        Invalidate() {
+            this.dirty = true
+            base.Invalidate()
+        }
+
+        // onPaint laeuft hier (nicht beim Malen): was es an den Elementen aendert, meldet sich dann wie jede andere Aenderung.
+        Poll(root) {
+            base.Poll(root)
+            if (this.continuous) { this.dirty = true }
+            // das Element hat eine andere Groesse als die Flaeche: sie wird neu angelegt und neu gemalt
+            if (!this.external && this.framebuffer != undefined && (this.framebuffer.Width() != this.actualWidth || this.framebuffer.Height() != this.actualHeight)) { this.dirty = true }
+            if (this.external || !this.dirty || this.actualWidth <= 0 || this.actualHeight <= 0) { return }
+            // die eigenen Felder aendern sich hier, das ist keine Aenderung der Oberflaeche
+            root.painting = true
+            this.Ensure(this.actualWidth, this.actualHeight)
+            this.dirty = false
+            root.painting = false
+            var paint = this.onPaint
+            if (paint != undefined) { paint(this) }
+            base.Invalidate()
+        }
+
+        // Zeigt `source` (einen Framebuffer, den man selbst besitzt) statt der eigenen Flaeche.
+        SetSource(source) {
+            this.DropOwn()
+            this.framebuffer = source
+            this.external = true
+        }
+
+        DropOwn() {
+            if (!this.external) {
+                if (this.renderer != undefined) { delete this.renderer }
+                if (this.framebuffer != undefined) { delete this.framebuffer }
+            }
+            this.renderer = undefined
+            this.framebuffer = undefined
+            this.external = false
+        }
+
+        // Stellt sicher, dass der eigene Puffer so gross wie das Element ist.
+        Ensure(int w, int h) {
+            if (this.external || w <= 0 || h <= 0) { return }
+            if (this.framebuffer != undefined && this.framebuffer.Width() == w && this.framebuffer.Height() == h) { return }
+            this.DropOwn()
+            this.framebuffer = new Framebuffer(w, h)
+            this.renderer = new Renderer(this.framebuffer)
+            this.dirty = true
+        }
+
+        MeasureCore(root, int aw, int ah) {
+            if (this.external && this.framebuffer != undefined) {
+                this.cw = this.framebuffer.Width()
+                this.ch = this.framebuffer.Height()
+                return
+            }
+            this.cw = 0
+            this.ch = 0
+        }
+
+        Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.framebuffer == undefined) { return }
+            root.PushClip(ax, ay, this.actualWidth, this.actualHeight)
+            root.renderer.Blit(this.framebuffer, ax, ay, this.blendMode)
+            root.PopClip()
+        }
+
+        MouseDown(root, int button, int px, int py) {
+            var callback = this.onMouseDown
+            if (callback != undefined) { callback(px - this.ax, py - this.ay, button) }
+        }
+
+        MouseMove(root, int px, int py) {
+            var callback = this.onMouseMove
+            if (callback != undefined) { callback(px - this.ax, py - this.ay) }
+        }
+
+        Hover(root, int px, int py) {
+            var callback = this.onMouseMove
+            if (callback != undefined) { callback(px - this.ax, py - this.ay) }
+        }
+
+        MouseUp(root, int button, int px, int py) {
+            var callback = this.onMouseUp
+            if (callback != undefined) { callback(px - this.ax, py - this.ay, button) }
+        }
+    }
+}

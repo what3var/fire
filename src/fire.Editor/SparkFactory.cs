@@ -8,7 +8,7 @@ using Dock.Model.Core;
 
 namespace fire.Editor
 {
-    /// <summary>Builds the default layout of the editor: the documents in the middle, the output and the debugger panels below, the devices on the right (pinned to the edge).
+    /// <summary>Builds the default layout of the editor: the documents in the middle, the output and the debugger panels below, the solution explorer and the devices on the right.
     /// The ids are the keys under which a saved layout finds its panels again (see MainWindow.LoadLayout).</summary>
     internal sealed class SparkFactory : Factory
     {
@@ -18,9 +18,9 @@ namespace fire.Editor
 
         /// <summary>The areas in the order of the bottom tool dock: id, title, content (the right dock gets "devices").</summary>
         private readonly List<(string Id, string Title, Control Content)> _bottom;
-        private readonly (string Id, string Title, Control Content) _right;
+        private readonly List<(string Id, string Title, Control Content)> _right;
 
-        public SparkFactory(List<(string Id, string Title, Control Content)> bottom, (string Id, string Title, Control Content) right)
+        public SparkFactory(List<(string Id, string Title, Control Content)> bottom, List<(string Id, string Title, Control Content)> right)
         {
             _bottom = bottom;
             _right = right;
@@ -57,14 +57,15 @@ namespace fire.Editor
                 ActiveDockable = documents,
             };
 
-            var devices = NewTool(_right.Id, _right.Title, _right.Content);
+            var rightTools = new List<IDockable>();
+            foreach (var (id, title, content) in _right) rightTools.Add(NewTool(id, title, content));
             var right = new ToolDock
             {
                 Id = RightToolsId,
                 Proportion = 0.2,
                 Alignment = Alignment.Right,
-                VisibleDockables = CreateList<IDockable>(devices),
-                ActiveDockable = devices,
+                VisibleDockables = CreateList(rightTools.ToArray()),
+                ActiveDockable = rightTools[0],
             };
 
             var main = new ProportionalDock

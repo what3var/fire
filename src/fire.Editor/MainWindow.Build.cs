@@ -9,6 +9,7 @@ using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using fire.Compiler;
+using fire.Projects;
 using fire.Utilities;
 
 namespace fire.Editor
@@ -18,6 +19,12 @@ namespace fire.Editor
     {
         private async void BuildSettings_Click(object? sender, RoutedEventArgs e)
         {
+            // a file of a project: the settings are those of the project (they go before the tags in the source), not tags in this file
+            if (ContextProject() is { } project)
+            {
+                await ShowProjectProperties(project, tab: 1);
+                return;
+            }
             if (ActiveScript is not { } script)
             {
                 UpdateStatus("Build settings are only available for script tabs.");
@@ -125,7 +132,7 @@ namespace fire.Editor
         /// <summary>The native build configuration that applies to the active script (the nearest fire.native.json, else the defaults) and where it is saved.</summary>
         private fire.Native.NativeConfig LoadNativeConfig(out string savePath)
         {
-            string? file = ActiveScript?.FilePath;
+            string? file = ContextProject()?.FilePath ?? ActiveScript?.FilePath;
             if (file == null)
             {
                 savePath = Path.Combine(Directory.GetCurrentDirectory(), fire.Native.NativeConfig.FileName);
@@ -212,19 +219,29 @@ namespace fire.Editor
         /// <summary>Translates the active script to C++ for the configured target and builds it with the configured toolchain (or writes the files of a project).</summary>
         private async void BuildNative_Click(object? sender, RoutedEventArgs e)
         {
-            if (ActiveScript is not { } script)
+            var project = ContextProject();
+            BuildPlan? plan = null;
+            ScriptEditorControl? script = null;
+            if (project != null)
+            {
+                if (project.Project.Type == OutputType.Library) { await PackLibrary(project); return; }
+                plan = CreatePlan(project);
+                if (!plan.IsValid) { await Dialogs.Message(this, string.Join(Environment.NewLine, plan.Errors), "Project problems"); return; }
+            }
+            else if (ActiveScript is not { } active)
             {
                 UpdateStatus("A native build needs a script tab.");
                 return;
             }
+            else script = active;
             fire.Native.NativeConfig config;
             fire.Runtime.TargetProfile target;
             fire.Native.ToolchainDef toolchain;
             try
             {
                 config = LoadNativeConfig(out _);
-                target = config.ResolveTarget();
-                toolchain = config.ResolveToolchain(target);
+                target = config.ResolveTarget(plan?.Settings.Target);   // the settings of the project go before the configuration file
+                toolchain = config.ResolveToolchain(target, plan?.Settings.Toolchain);
             }
             catch (fire.Native.NativeConfigException ex)
             {
@@ -233,7 +250,8 @@ namespace fire.Editor
             }
 
             string output;
-            if (toolchain.EffectiveKind == "files")
+            if (plan?.Settings.Output is { } fixedOutput && toolchain.EffectiveKind != "files") output = fixedOutput;
+            else if (toolchain.EffectiveKind == "files")
             {
                 var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = $"Folder for the project files ({target.Name})" });
                 if (folders.Count == 0 || folders[0].TryGetLocalPath() is not { } folder) return;
@@ -247,12 +265,12 @@ namespace fire.Editor
                 output = path;
             }
 
-            string source = script.GetText();
-            string? baseDirectory = script.BaseDirectory;
+            IReadOnlyList<string> sources = plan != null ? plan.SourceTexts : new[] { script!.GetText() };
+            string? baseDirectory = script?.BaseDirectory;
             var mode = _session.ExecutionMode;
-            UpdateStatus($"Building for {target.Name} ({toolchain.EffectiveKind})...");
+            UpdateStatus($"Building {(plan != null ? plan.Name + " " : "")}for {target.Name} ({toolchain.EffectiveKind})...");
             var result = await Task.Run(() =>
-                fire.Compiler.NativeBuilder.BuildSafe(new[] { source }, config, target, toolchain, output, mode, null, false, baseDirectory));
+                fire.Compiler.NativeBuilder.BuildSafe(sources, config, target, toolchain, output, mode, null, false, baseDirectory, null, plan));
             if (result.Ok)
             {
                 UpdateStatus($"Built {result.Output} (native, {target.Name}).");
@@ -264,17 +282,27 @@ namespace fire.Editor
 
         private async void Build_Click(object? sender, RoutedEventArgs e)
         {
-            // "Build" follows the configuration: with the native engine it builds natively
+            var project = ContextProject();
+            // a library is not a program: building it means packing it as a package
+            if (project?.Project.Type == OutputType.Library) { await PackLibrary(project); return; }
+
+            // "Build" follows the settings of the project, else the configuration: with the native engine it builds natively
             try
             {
-                if (string.Equals(LoadNativeConfig(out _).Engine, "native", StringComparison.OrdinalIgnoreCase)) { BuildNative_Click(sender, e); return; }
+                string? engine = project != null ? ProjectSettings.Merge(project.Project.Settings, _workspace.Solution?.Settings).Engine : null;
+                engine ??= LoadNativeConfig(out _).Engine;
+                if (string.Equals(engine, "native", StringComparison.OrdinalIgnoreCase)) { BuildNative_Click(sender, e); return; }
             }
             catch (fire.Native.NativeConfigException) { }
 
             bool windows = OperatingSystem.IsWindows();
-            var path = await PickSavePath("Build standalone", windows ? "program.exe" : "program", windows ? "exe" : "");
-            if (path == null) return;
-            CompileAndPrepare(path);
+            string? output = null;
+            if (project != null && ProjectSettings.Merge(project.Project.Settings, _workspace.Solution?.Settings).Output is { } configured)
+                output = Path.GetFullPath(configured, _workspace.Solution?.Directory ?? project.Directory);
+            output ??= await PickSavePath("Build standalone", (project?.Name ?? "program") + (windows ? ".exe" : ""), windows ? "exe" : "");
+            if (output == null) return;
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
+            CompileAndPrepare(output);
         }
     }
 }

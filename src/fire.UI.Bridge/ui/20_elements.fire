@@ -1,0 +1,1155 @@
+namespace UI {
+    // Basis aller Elemente.
+    //
+    // Layout (wie WPF/Avalonia, in ganzen Pixeln): Root ruft Measure und Arrange auf, danach Draw.
+    //   Measure(root, aw, ah)   fragt, wie gross das Element sein will, wenn hoechstens aw x ah da sind (-1: unbegrenzt); das Ergebnis steht in dw/dh (mit Rand).
+    //   Arrange(root, px, py, pw, ph)   gibt ihm den Platz (px, py, pw, ph) im Container (mit Rand); danach stehen rx/ry (Lage im Container) und
+    //                           actualWidth/actualHeight (Groesse) fest.
+    // width/height sind die ANGEFORDERTE Groesse (-1: nach dem Inhalt bzw. dem Platz), minWidth/maxWidth/minHeight/maxHeight begrenzen sie, margin ist der Abstand
+    // nach aussen, halign/valign sagen, wo das Element in seinem Platz sitzt (Stretch: es fuellt ihn aus, ausser es hat eine feste Groesse - dann steht es links/oben).
+    // x/y gelten nur in einem Canvas (und im Panel, das wie ein Canvas anordnet). ax/ay ist die Position auf dem Bildschirm beim letzten Zeichnen
+    // (damit Treffertest und Zeichnen immer dasselbe meinen).
+    class Element {
+        int x
+        int y
+        int width = -1
+        int height = -1
+        int minWidth = 0
+        int minHeight = 0
+        int maxWidth = -1
+        int maxHeight = -1
+        Thickness margin
+        int halign = UI.HAlign.Stretch
+        int valign = UI.VAlign.Stretch
+        // Angehaengte Eigenschaften der Container: DockPanel (dock), Grid (gridRow, gridColumn, gridRowSpan, gridColumnSpan)
+        int dock = UI.Dock.Left
+        int gridRow = 0
+        int gridColumn = 0
+        int gridRowSpan = 1
+        int gridColumnSpan = 1
+        bool visible = true
+        bool enabled = true
+        bool hover = false
+        bool pressed = false
+        bool focused = false
+        Element parent
+        // Aussehen: undefined = das Steuerelement nimmt die Farben des Themes (Zustaende wie hover aendern sie dann selbst)
+        Brush background
+        Brush foreground
+        Pen pen
+        // Name (fuer die Teile einer Vorlage, siehe FindPart)
+        string name = ""
+        // Eigene Ressourcen (undefined, bis man ein ResourceDictionary zuweist) und Style (undefined: der implizite Style, siehe StyleKey)
+        ResourceDictionary resources
+        Style style
+        // Vorlage fuer das Aussehen von Steuerelementen (ControlTemplate); templateRoot ist der daraus gebaute Teilbaum
+        ControlTemplate template
+        Element templateRoot
+        Root host
+        // Zustand von Style, Vorlage, Bindungen
+        bool styled = false
+        // der Root beobachtet die Felder dieses Elements (Probe), und es wurde schon einmal angeordnet
+        bool watched = false
+        bool laid = false
+        Style appliedStyle
+        List styleStates
+        List templateStates
+        List templateParts
+        List bindings
+
+        // Kontextmenue (Liste von MenuItem), das ein Rechtsklick auf das Element oder einen Nachfahren zeigt (siehe Root.ShowMenu)
+        List contextMenu
+        // Schwebendes Element (siehe Root.ShowPopup): wird beim Schliessen zerstoert / hat es geoeffnet / will die Tasten, solange es oben liegt
+        bool transient = false
+        Element owner
+        bool grabsKeys = false
+
+        // Ergebnis des Layouts
+        // cw/ch: Inhaltsgroesse (ohne Rand), dw/dh: gewuenschte Groesse (mit Rand)
+        int cw = 0
+        int ch = 0
+        int dw = 0
+        int dh = 0
+        // Lage im Container und Groesse nach Arrange
+        int rx = 0
+        int ry = 0
+        int actualWidth = 0
+        int actualHeight = 0
+        // Position auf dem Bildschirm beim letzten Zeichnen
+        int ax = 0
+        int ay = 0
+
+        construct(int x = 0, int y = 0, int width = -1, int height = -1) {
+            this.x = x
+            this.y = y
+            this.width = width
+            this.height = height
+            this.margin = new Thickness(0)
+        }
+
+        // Der Schluessel, unter dem implizite Styles fuer diese Art Element stehen (ResourceDictionary.AddStyle); abgeleitete Klassen erben ihn.
+        string StyleKey() { return "Element" }
+
+        // Das Element (oder ein Nachfahre) mit diesem Namen, sonst undefined.
+        FindName(string name) {
+            if (this.name == name) { return this }
+            return undefined
+        }
+
+        // Ein Teil der Vorlage dieses Elements (oder das Element selbst bei "").
+        FindPart(string part) {
+            if (part == "") { return this }
+            if (this.templateRoot != undefined) { return this.templateRoot.FindName(part) }
+            return this.FindName(part)
+        }
+
+        // Der erste Style fuer `key` ab diesem Element nach oben (zuletzt die Ressourcen des Roots), sonst undefined.
+        FindStyle(string key) {
+            var e = this
+            while (e != undefined) {
+                if (e.resources != undefined) {
+                    var found = e.resources.FindStyle(key)
+                    if (found != undefined) { return found }
+                }
+                e = e.parent
+            }
+            if (this.host != undefined) { return this.host.resources.FindStyle(key) }
+            return undefined
+        }
+
+        // Die Ressource zu `key` ab diesem Element nach oben (zuletzt die des Roots), sonst undefined. Vor dem ersten Layout gibt es nur die der Vorfahren.
+        FindResource(string key) {
+            var e = this
+            while (e != undefined) {
+                if (e.resources != undefined && e.resources.Has(key)) { return e.resources.Get(key) }
+                e = e.parent
+            }
+            if (this.host != undefined) { return this.host.resources.Get(key) }
+            return undefined
+        }
+
+        // Legt die Ressourcen dieses Elements an, falls es noch keine hat, und liefert sie.
+        Resources() {
+            if (this.resources == undefined) { this.resources = new ResourceDictionary() }
+            return this.resources
+        }
+
+        // Einen Trigger des Styles bei diesem Element anmelden.
+        AddTrigger(trigger) {
+            if (this.styleStates == undefined) { this.styleStates = new List() }
+            var state = new TriggerState(trigger)
+            state.TakeTo(this)
+            this.styleStates.Add(state)
+        }
+
+        // Verbindet eine Eigenschaft dieses Elements mit der eines anderen Objekts (siehe Binding).
+        Bind(string property, source, string sourceProperty, bool twoWay = false, converter = undefined, bool once = false) {
+            if (this.bindings == undefined) { this.bindings = new List() }
+            var binding = new Binding(this, property, source, sourceProperty, twoWay, converter, once)
+            binding.TakeTo(this)
+            this.bindings.Add(binding)
+            return binding
+        }
+
+        ClearStyle() {
+            if (this.styleStates == undefined) { return }
+            for (var i = 0; i < this.styleStates.count; i = i + 1) {
+                var state = this.styleStates[i]
+                if (state.active) { state.Deactivate() }
+                delete state
+            }
+            this.styleStates = new List()
+        }
+
+        // Baut die Teile aus der Vorlage.
+        BuildTemplate() {
+            var make = this.template.factory
+            var tree = make(this)
+            tree.TakeTo(this)
+            tree.parent = this
+            this.templateRoot = tree
+            this.templateParts = new List()
+            for (var i = 0; i < this.template.bindings.count; i = i + 1) {
+                this.templateParts.Add(tree.FindName(this.template.bindings[i].part))
+            }
+            this.templateStates = new List()
+            for (var j = 0; j < this.template.triggers.count; j = j + 1) {
+                var state = new TriggerState(this.template.triggers[j])
+                state.TakeTo(this)
+                this.templateStates.Add(state)
+            }
+        }
+
+        // Das Element hat sich geaendert: sein Bereich wird beim naechsten Update neu gemalt (Aenderungen an den Feldern des Elements melden sich selbst; fuer Aenderungen
+        // IN einem Objekt, das es benutzt - ein Brush, eine Liste, eine Geometrie -, ruft man das selbst auf).
+        Invalidate() {
+            var r = this.host
+            if (r != undefined) { r.InvalidateRect(this.ax, this.ay, this.actualWidth, this.actualHeight) }
+        }
+
+        // Vor jedem Anordnen und Malen (Root.Update): Style anwenden (beim ersten Mal), Vorlage bauen, Bindungen abgleichen, Trigger pruefen, und die Nachfahren abfragen.
+        // Aenderungen, die dabei entstehen, melden sich bei der Oberflaeche wie jede andere.
+        Poll(root) {
+            this.Prepare(root)
+            if (this.templateRoot != undefined) { this.templateRoot.Poll(root) }
+        }
+
+        // Muss das Element (an der Bildschirmposition ax, ay) gemalt werden - liegt es im Bereich, der gerade neu gemalt wird? Setzt dabei ax und ay.
+        bool NeedsDraw(root, int ax, int ay) {
+            this.ax = ax
+            this.ay = ay
+            return root.Needs(ax, ay, this.actualWidth, this.actualHeight)
+        }
+
+        Prepare(root) {
+            this.host = root
+            root.Watch(this)
+            if (!this.styled) {
+                this.styled = true
+                if (this.style == undefined) {
+                    var found = this.FindStyle(this.StyleKey())
+                    if (found != undefined) {
+                        this.appliedStyle = found
+                        found.Apply(this)
+                    }
+                }
+            }
+            if (this.style != undefined && this.style != this.appliedStyle) {
+                this.ClearStyle()
+                this.appliedStyle = this.style
+                this.style.Apply(this)
+            }
+            if (this.template != undefined && this.templateRoot == undefined) { this.BuildTemplate() }
+            if (this.bindings != undefined) {
+                for (var b = 0; b < this.bindings.count; b = b + 1) { this.bindings[b].Sync() }
+            }
+            if (this.templateRoot != undefined) {
+                for (var i = 0; i < this.template.bindings.count; i = i + 1) {
+                    var part = this.templateParts[i]
+                    if (part == undefined) { continue }
+                    var binding = this.template.bindings[i]
+                    if (!Reflect.Has(this, binding.ownerProperty) || !Reflect.Has(part, binding.partProperty)) { continue }
+                    var value = Reflect.Get(this, binding.ownerProperty)
+                    if (Reflect.Get(part, binding.partProperty) != value) { Reflect.Set(part, binding.partProperty, value) }
+                }
+                for (var k = 0; k < this.templateStates.count; k = k + 1) { this.templateStates[k].Update(this) }
+            }
+            if (this.styleStates != undefined) {
+                for (var j = 0; j < this.styleStates.count; j = j + 1) { this.styleStates[j].Update(this) }
+            }
+        }
+
+        // Kann das Element den Tastaturfokus bekommen (Tab, Klick)?
+        bool Focusable() { return false }
+
+        // Der Inhalt (ohne Rand): setzt cw/ch. aw/ah: hoechstens so viel Platz (-1: unbegrenzt). Ein Element ohne Inhalt will nichts.
+        MeasureCore(root, int aw, int ah) {
+            this.cw = 0
+            this.ch = 0
+        }
+
+        Measure(root, int aw, int ah) {
+            if (!this.visible) {
+                this.dw = 0
+                this.dh = 0
+                return
+            }
+            var mw = this.margin.left + this.margin.right
+            var mh = this.margin.top + this.margin.bottom
+            var iw = aw
+            var ih = ah
+            if (iw >= 0) { iw = UI.M.Max(0, iw - mw) }
+            if (ih >= 0) { ih = UI.M.Max(0, ih - mh) }
+            // eine feste Groesse gilt, egal wie viel Platz da ist
+            if (this.width >= 0) { iw = this.width }
+            if (this.height >= 0) { ih = this.height }
+            if (this.maxWidth >= 0 && (iw < 0 || iw > this.maxWidth)) { iw = this.maxWidth }
+            if (this.maxHeight >= 0 && (ih < 0 || ih > this.maxHeight)) { ih = this.maxHeight }
+            this.cw = 0
+            this.ch = 0
+            this.MeasureContent(root, iw, ih)
+            var w = this.cw
+            var h = this.ch
+            if (this.width >= 0) { w = this.width }
+            if (this.height >= 0) { h = this.height }
+            w = UI.M.Clamp(w, this.minWidth, this.maxWidth)
+            h = UI.M.Clamp(h, this.minHeight, this.maxHeight)
+            this.dw = w + mw
+            this.dh = h + mh
+        }
+
+        // Ordnet die Kinder an (ihr Platz ist w x h gross). Ein Element ohne Kinder tut nichts.
+        ArrangeCore(root, int w, int h) { }
+
+        // Der Platz im Container ist (px, py, pw, ph), der Rand eingeschlossen.
+        Arrange(root, int px, int py, int pw, int ph) {
+            if (!this.visible) {
+                if (this.actualWidth != 0 || this.actualHeight != 0) { root.layoutMoved = true }
+                this.actualWidth = 0
+                this.actualHeight = 0
+                return
+            }
+            var ml = this.margin.left
+            var mt = this.margin.top
+            var ew = UI.M.Max(0, pw - this.margin.left - this.margin.right)
+            var eh = UI.M.Max(0, ph - this.margin.top - this.margin.bottom)
+            var w = this.dw - this.margin.left - this.margin.right
+            var h = this.dh - this.margin.top - this.margin.bottom
+            if (this.halign == UI.HAlign.Stretch && this.width < 0) { w = ew }
+            if (this.valign == UI.VAlign.Stretch && this.height < 0) { h = eh }
+            w = UI.M.Clamp(w, this.minWidth, this.maxWidth)
+            h = UI.M.Clamp(h, this.minHeight, this.maxHeight)
+            var ox = 0
+            var oy = 0
+            if (this.halign == UI.HAlign.Center) { ox = (ew - w) / 2 }
+            else if (this.halign == UI.HAlign.Right) { ox = ew - w }
+            if (this.valign == UI.VAlign.Center) { oy = (eh - h) / 2 }
+            else if (this.valign == UI.VAlign.Bottom) { oy = eh - h }
+            var nx = px + ml + ox
+            var ny = py + mt + oy
+            // hat sich die Lage oder Groesse geaendert (oder ist es das erste Mal), muss alles neu gemalt werden: was daneben liegt, kann mitgerutscht sein
+            if (!this.laid || this.rx != nx || this.ry != ny || this.actualWidth != w || this.actualHeight != h) {
+                root.layoutMoved = true
+                this.laid = true
+            }
+            this.rx = nx
+            this.ry = ny
+            this.actualWidth = w
+            this.actualHeight = h
+            this.ArrangeContent(root, w, h)
+        }
+
+        // Mit Vorlage bestimmt ihr Baum die Groesse, sonst der Inhalt des Elements selbst.
+        MeasureContent(root, int iw, int ih) {
+            var t = this.templateRoot
+            if (t == undefined) {
+                this.MeasureCore(root, iw, ih)
+                return
+            }
+            t.Measure(root, iw, ih)
+            this.cw = t.dw
+            this.ch = t.dh
+        }
+
+        ArrangeContent(root, int w, int h) {
+            var t = this.templateRoot
+            if (t == undefined) {
+                this.ArrangeCore(root, w, h)
+                return
+            }
+            t.Arrange(root, 0, 0, w, h)
+        }
+
+        // Zeichnet die Vorlage; false, wenn es keine gibt (dann zeichnet sich das Steuerelement selbst).
+        bool DrawTemplate(root, int ax, int ay) {
+            var t = this.templateRoot
+            this.ax = ax
+            this.ay = ay
+            if (t == undefined) { return false }
+            if (t.visible) { t.Draw(root, ax + t.rx, ay + t.ry) }
+            return true
+        }
+
+        Draw(root, int ax, int ay) {
+            this.ax = ax
+            this.ay = ay
+        }
+
+        // Das Element (oder ein Nachfahre) unter der Bildschirmposition (px, py), sonst undefined.
+        HitTest(int px, int py) {
+            if (!this.visible) { return undefined }
+            if (px >= this.ax && px < this.ax + this.actualWidth && py >= this.ay && py < this.ay + this.actualHeight) { return this }
+            return undefined
+        }
+
+        // Sammelt alle fokussierbaren Elemente in Zeichenreihenfolge (fuer Tab).
+        Collect(list) {
+            if (this.visible && this.enabled && this.Focusable()) { list.Add(this) }
+        }
+
+        bool Contains(int px, int py) {
+            return px >= this.ax && px < this.ax + this.actualWidth && py >= this.ay && py < this.ay + this.actualHeight
+        }
+
+        // Das Mausrad: dy > 0 heisst nach oben. Liefert true, wenn das Element es verbraucht hat (sonst fragt der Root den Container).
+        bool MouseWheel(root, int dx, int dy) { return false }
+
+        // Fuer ein schwebendes Element: ein Klick ausserhalb. Es schliesst sich (und verbraucht den Klick, wenn er sein Besitzer `owner` traf).
+        bool PopupOutside(root, int px, int py) {
+            var consumed = this.owner != undefined && this.owner.Contains(px, py)
+            root.ClosePopup(this)
+            return consumed
+        }
+
+        // Der Zeiger bewegt sich ueber dem Element (ohne gedrueckte Maustaste auf ihm).
+        Hover(root, int px, int py) { }
+
+        MouseDown(root, int button, int px, int py) { }
+        MouseUp(root, int button, int px, int py) { }
+        MouseMove(root, int px, int py) { }
+        KeyDown(root, int key, int mod) { }
+        TextInput(root, string text) { }
+    }
+
+    // Container mit Kindern. Dieses Panel ordnet sie an ihrem x/y an (wie ein Canvas) und kann Hintergrund und Rahmen zeichnen; die anderen Container
+    // (StackPanel, DockPanel, WrapPanel, Grid) leiten davon ab und ordnen anders an.
+    class Panel : Element {
+        List children
+        bool showBorder = false
+        // Hintergrund (`background`, siehe Element): undefined = der Brush `panel` des Themes; mit filled = false gibt es keinen (durchsichtig)
+        // Rahmen (showBorder, `pen`): undefined = der Pen `border` des Themes
+        bool filled = true
+
+        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+            this.children = new List()
+        }
+
+        // Das Kind gehoert ab jetzt diesem Panel (es lebt so lange wie dieses).
+        Add(child) {
+            child.TakeTo(this)
+            child.parent = this
+            this.children.Add(child)
+            this.Invalidate()
+        }
+
+        // Nimmt das Kind aus dem Panel (es wird nicht zerstoert, gehoert aber weiter dem Panel).
+        Remove(child) {
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                if (this.children[i] == child) {
+                    this.children.RemoveAt(i)
+                    child.parent = undefined
+                    this.Invalidate()
+                    return
+                }
+            }
+        }
+
+        // Alle Kinder zerstoeren.
+        Clear() {
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var child = this.children[i]
+                child.parent = undefined
+                delete child
+            }
+            this.children = new List()
+            this.Invalidate()
+        }
+
+        Poll(root) {
+            base.Poll(root)
+            for (var i = 0; i < this.children.count; i = i + 1) { this.children[i].Poll(root) }
+        }
+
+        // Canvas-Anordnung: jedes Kind will so gross sein, wie es ist; die Groesse des Panels ist die der Kinder, soweit es keine feste hat.
+        MeasureCore(root, int aw, int ah) {
+            var w = 0
+            var h = 0
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var child = this.children[i]
+                child.Measure(root, -1, -1)
+                if (!child.visible) { continue }
+                w = UI.M.Max(w, child.x + child.dw)
+                h = UI.M.Max(h, child.y + child.dh)
+            }
+            this.cw = w
+            this.ch = h
+        }
+
+        ArrangeCore(root, int w, int h) {
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var child = this.children[i]
+                child.Arrange(root, child.x, child.y, child.dw, child.dh)
+            }
+        }
+
+        Draw(root, int ax, int ay) {
+            base.Draw(root, ax, ay)
+            if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
+                if (this.filled) {
+                    var brush = this.background
+                    if (brush == undefined) { brush = root.theme.panel }
+                    root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, brush)
+                }
+                if (this.showBorder) {
+                    var pen = this.pen
+                    if (pen == undefined) { pen = root.theme.border }
+                    root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, pen)
+                }
+            }
+            this.DrawChildren(root, ax, ay)
+        }
+
+        DrawChildren(root, int ax, int ay) {
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var child = this.children[i]
+                if (child.visible) { child.Draw(root, ax + child.rx, ay + child.ry) }
+            }
+        }
+
+        HitTest(int px, int py) {
+            if (!this.visible) { return undefined }
+            if (!this.Contains(px, py)) { return undefined }
+            var i = this.children.count - 1
+            while (i >= 0) {
+                var hit = this.children[i].HitTest(px, py)
+                if (hit != undefined) { return hit }
+                i = i - 1
+            }
+            return this
+        }
+
+        Collect(list) {
+            if (!this.visible || !this.enabled) { return }
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                this.children[i].Collect(list)
+            }
+        }
+
+        string StyleKey() { return "Panel" }
+
+        FindName(string name) {
+            if (this.name == name) { return this }
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var found = this.children[i].FindName(name)
+                if (found != undefined) { return found }
+            }
+            return undefined
+        }
+    }
+
+    // Wie Panel, aber durchsichtig und ohne Rahmen: Kinder an festen Positionen (x/y).
+    class Canvas : Panel {
+        string StyleKey() { return "Canvas" }
+
+        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+            this.filled = false
+        }
+    }
+
+    // Ordnet die Kinder nacheinander an (untereinander oder, mit horizontal, nebeneinander): jedes bekommt in der Laufrichtung seine
+    // gewuenschte Groesse, quer dazu den ganzen Platz (halign/valign wirken dort). `spacing` ist der Abstand zwischen den Kindern, `padding` der
+    // Rand innen.
+    class StackPanel : Panel {
+        string StyleKey() { return "StackPanel" }
+
+        bool horizontal
+        int spacing
+        int padding
+
+        construct(int x = 0, int y = 0, int width = -1, int height = -1, bool horizontal = false, int spacing = 0, int padding = 0) : base(x, y, width, height) {
+            this.horizontal = horizontal
+            this.spacing = spacing
+            this.padding = padding
+            this.filled = false
+        }
+
+        MeasureCore(root, int aw, int ah) {
+            var pad2 = this.padding * 2
+            var iw = aw
+            var ih = ah
+            if (iw >= 0) { iw = UI.M.Max(0, iw - pad2) }
+            if (ih >= 0) { ih = UI.M.Max(0, ih - pad2) }
+            var along = 0
+            var across = 0
+            var count = 0
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var child = this.children[i]
+                if (this.horizontal) { child.Measure(root, -1, ih) } else { child.Measure(root, iw, -1) }
+                if (!child.visible) { continue }
+                if (this.horizontal) {
+                    along = along + child.dw
+                    across = UI.M.Max(across, child.dh)
+                } else {
+                    along = along + child.dh
+                    across = UI.M.Max(across, child.dw)
+                }
+                count = count + 1
+            }
+            if (count > 1) { along = along + this.spacing * (count - 1) }
+            if (this.horizontal) {
+                this.cw = along + pad2
+                this.ch = across + pad2
+            } else {
+                this.cw = across + pad2
+                this.ch = along + pad2
+            }
+        }
+
+        ArrangeCore(root, int w, int h) {
+            var pos = this.padding
+            var iw = w - this.padding * 2
+            var ih = h - this.padding * 2
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var child = this.children[i]
+                if (!child.visible) { continue }
+                if (this.horizontal) {
+                    child.Arrange(root, pos, this.padding, child.dw, ih)
+                    pos = pos + child.dw + this.spacing
+                } else {
+                    child.Arrange(root, this.padding, pos, iw, child.dh)
+                    pos = pos + child.dh + this.spacing
+                }
+            }
+        }
+    }
+
+    // Wie StackPanel, aber wie die Elemente bisher: mit Hintergrund und den alten Vorgaben (spacing und padding 4).
+    class Stack : StackPanel {
+        construct(int x = 0, int y = 0, int width = -1, int height = -1, bool horizontal = false, int spacing = 4, int padding = 4) : base(x, y, width, height, horizontal, spacing, padding) {
+            this.filled = true
+        }
+    }
+
+    // Die Kinder liegen an den Raendern (`dock`: Left, Top, Right, Bottom) in der Reihenfolge, in der sie hinzugefuegt wurden; was uebrig bleibt, fuellt das
+    // letzte Kind (lastChildFill).
+    class DockPanel : Panel {
+        string StyleKey() { return "DockPanel" }
+
+        bool lastChildFill = true
+
+        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+            this.filled = false
+        }
+
+        // Ein Kind mit der Seite, an der es liegt: `dock.AddDocked(element, UI.Dock.Top)`.
+        AddDocked(child, int side) {
+            child.dock = side
+            this.Add(child)
+        }
+
+        MeasureCore(root, int aw, int ah) {
+            // Von innen nach aussen: was links/rechts liegt, nimmt Breite, was oben/unten liegt, nimmt Hoehe; der Rest bleibt fuer die uebrigen Kinder.
+            var usedW = 0
+            var usedH = 0
+            var maxW = 0
+            var maxH = 0
+            var last = this.LastVisible()
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var child = this.children[i]
+                if (!child.visible) { continue }
+                var availW = -1
+                var availH = -1
+                if (aw >= 0) { availW = UI.M.Max(0, aw - usedW) }
+                if (ah >= 0) { availH = UI.M.Max(0, ah - usedH) }
+                child.Measure(root, availW, availH)
+                var fills = this.lastChildFill && i == last
+                if (fills) {
+                    maxW = UI.M.Max(maxW, usedW + child.dw)
+                    maxH = UI.M.Max(maxH, usedH + child.dh)
+                } else if (child.dock == UI.Dock.Left || child.dock == UI.Dock.Right) {
+                    maxH = UI.M.Max(maxH, usedH + child.dh)
+                    usedW = usedW + child.dw
+                } else {
+                    maxW = UI.M.Max(maxW, usedW + child.dw)
+                    usedH = usedH + child.dh
+                }
+            }
+            this.cw = UI.M.Max(maxW, usedW)
+            this.ch = UI.M.Max(maxH, usedH)
+        }
+
+        int LastVisible() {
+            var last = -1
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                if (this.children[i].visible) { last = i }
+            }
+            return last
+        }
+
+        ArrangeCore(root, int w, int h) {
+            var left = 0
+            var top = 0
+            var right = w
+            var bottom = h
+            var last = this.LastVisible()
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var child = this.children[i]
+                if (!child.visible) { continue }
+                var fills = this.lastChildFill && i == last
+                if (fills) {
+                    child.Arrange(root, left, top, UI.M.Max(0, right - left), UI.M.Max(0, bottom - top))
+                } else if (child.dock == UI.Dock.Left) {
+                    child.Arrange(root, left, top, child.dw, UI.M.Max(0, bottom - top))
+                    left = left + child.dw
+                } else if (child.dock == UI.Dock.Right) {
+                    child.Arrange(root, UI.M.Max(left, right - child.dw), top, child.dw, UI.M.Max(0, bottom - top))
+                    right = UI.M.Max(left, right - child.dw)
+                } else if (child.dock == UI.Dock.Top) {
+                    child.Arrange(root, left, top, UI.M.Max(0, right - left), child.dh)
+                    top = top + child.dh
+                } else {
+                    child.Arrange(root, left, UI.M.Max(top, bottom - child.dh), UI.M.Max(0, right - left), child.dh)
+                    bottom = UI.M.Max(top, bottom - child.dh)
+                }
+            }
+        }
+    }
+
+    // Reiht die Kinder auf und beginnt eine neue Zeile (Spalte, wenn vertikal), wenn der Platz nicht reicht. itemWidth/itemHeight (>= 0) geben jedem Kind
+    // diese Groesse.
+    class WrapPanel : Panel {
+        string StyleKey() { return "WrapPanel" }
+
+        bool vertical = false
+        int itemWidth = -1
+        int itemHeight = -1
+
+        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+            this.filled = false
+        }
+
+        MeasureCore(root, int aw, int ah) {
+            var lineLen = 0
+            var lineThick = 0
+            var total = 0
+            var longest = 0
+            var limit = aw
+            if (this.vertical) { limit = ah }
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var child = this.children[i]
+                child.Measure(root, this.itemWidth, this.itemHeight)
+                if (!child.visible) { continue }
+                var w = child.dw
+                var h = child.dh
+                if (this.itemWidth >= 0) { w = this.itemWidth }
+                if (this.itemHeight >= 0) { h = this.itemHeight }
+                var along = w
+                var thick = h
+                if (this.vertical) {
+                    along = h
+                    thick = w
+                }
+                if (limit >= 0 && lineLen > 0 && lineLen + along > limit) {
+                    total = total + lineThick
+                    longest = UI.M.Max(longest, lineLen)
+                    lineLen = 0
+                    lineThick = 0
+                }
+                lineLen = lineLen + along
+                lineThick = UI.M.Max(lineThick, thick)
+            }
+            total = total + lineThick
+            longest = UI.M.Max(longest, lineLen)
+            if (this.vertical) {
+                this.cw = total
+                this.ch = longest
+            } else {
+                this.cw = longest
+                this.ch = total
+            }
+        }
+
+        ArrangeCore(root, int w, int h) {
+            var limit = w
+            if (this.vertical) { limit = h }
+            var lineLen = 0
+            var lineThick = 0
+            var offset = 0
+            // eine Zeile wird erst angeordnet, wenn sie voll ist (ihre Dicke ist vorher nicht bekannt)
+            var start = 0
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var child = this.children[i]
+                if (!child.visible) { continue }
+                var along = child.dw
+                var thick = child.dh
+                if (this.itemWidth >= 0) { along = this.itemWidth }
+                if (this.itemHeight >= 0) { thick = this.itemHeight }
+                if (this.vertical) {
+                    along = child.dh
+                    thick = child.dw
+                    if (this.itemHeight >= 0) { along = this.itemHeight }
+                    if (this.itemWidth >= 0) { thick = this.itemWidth }
+                }
+                if (lineLen > 0 && lineLen + along > limit) {
+                    this.ArrangeLine(root, start, i, offset, lineThick)
+                    offset = offset + lineThick
+                    lineLen = 0
+                    lineThick = 0
+                    start = i
+                }
+                lineLen = lineLen + along
+                lineThick = UI.M.Max(lineThick, thick)
+            }
+            this.ArrangeLine(root, start, this.children.count, offset, lineThick)
+        }
+
+        // Die Kinder first..last-1 liegen in einer Zeile (Spalte), die bei `offset` beginnt und `thick` dick ist.
+        ArrangeLine(root, int first, int last, int offset, int thick) {
+            var pos = 0
+            for (var i = first; i < last; i = i + 1) {
+                var child = this.children[i]
+                if (!child.visible) { continue }
+                var cwid = child.dw
+                var chei = child.dh
+                if (this.itemWidth >= 0) { cwid = this.itemWidth }
+                if (this.itemHeight >= 0) { chei = this.itemHeight }
+                if (this.vertical) {
+                    child.Arrange(root, offset, pos, thick, chei)
+                    pos = pos + chei
+                } else {
+                    child.Arrange(root, pos, offset, cwid, thick)
+                    pos = pos + cwid
+                }
+            }
+        }
+    }
+
+    // Eine Zeile oder Spalte eines Grids: mode 0 = Auto (so gross wie der Inhalt), 1 = feste Pixel, 2 = Stern (ein Anteil vom Rest, `value` ist das Gewicht).
+    class Track {
+        int mode
+        int value
+        int min = 0
+        int max = -1
+        // aufgeloeste Groesse
+        int size
+
+        construct(int mode, int value) {
+            this.mode = mode
+            this.value = value
+            // eine feste Spur hat ihre Groesse schon, bevor das Layout die Spuren der anderen Achse braucht
+            this.size = 0
+            if (mode == 1) { this.size = value }
+        }
+
+        // "auto", "*", "2*" oder eine Zahl (Pixel)
+        static Track Parse(string text) {
+            var t = text.Trim().ToLower()
+            if (t == "auto" || t == "") { return new Track(0, 0) }
+            if (t.EndsWith("*")) {
+                var w = 1
+                if (t.Length > 1) { w = UI.M.ToInt(t.Substring(0, t.Length - 1)) }
+                return new Track(2, w)
+            }
+            return new Track(1, UI.M.ToInt(t))
+        }
+    }
+
+    // Zeilen und Spalten: `grid.SetColumns("100, auto, *, 2*")`, `grid.SetRows("auto, *")`; ein Kind sitzt in der Zelle (gridRow, gridColumn) und kann ueber
+    // gridRowSpan/gridColumnSpan mehrere belegen. Ohne Angabe gibt es eine Zeile und eine Spalte mit `*`.
+    class Grid : Panel {
+        string StyleKey() { return "Grid" }
+
+        List rows
+        List columns
+
+        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+            this.filled = false
+            this.rows = new List()
+            this.columns = new List()
+        }
+
+        SetRows(string spec) { this.Fill(this.rows, spec) }
+        SetColumns(string spec) { this.Fill(this.columns, spec) }
+
+        Fill(list, string spec) {
+            list.Clear()
+            var parts = spec.Split(",")
+            for (var i = 0; i < parts.length; i = i + 1) {
+                var track = UI.Track.Parse(parts[i])
+                track.TakeTo(this)
+                list.Add(track)
+            }
+        }
+
+        AddRow(track) {
+            track.TakeTo(this)
+            this.rows.Add(track)
+        }
+
+        AddColumn(track) {
+            track.TakeTo(this)
+            this.columns.Add(track)
+        }
+
+        // Ein Kind in eine Zelle setzen.
+        AddAt(child, int row, int column, int rowSpan = 1, int columnSpan = 1) {
+            child.gridRow = row
+            child.gridColumn = column
+            child.gridRowSpan = rowSpan
+            child.gridColumnSpan = columnSpan
+            this.Add(child)
+        }
+
+        // Die Spuren (ohne Angabe: eine Stern-Spur), deren Groessen noch nicht feststehen.
+        List Tracks(list) {
+            if (list.count == 0) { list.Add(new Track(2, 1)) }
+            return list
+        }
+
+        // Die Summe der Groessen der Spuren start..start+span-1
+        int SpanSize(list, int start, int span) {
+            var total = 0
+            for (var i = start; i < start + span && i < list.count; i = i + 1) { total = total + list[i].size }
+            return total
+        }
+
+        // Die Spur `index` (an die Grenzen des Grids geklemmt)
+        int Fit(list, int index) {
+            if (index < 0) { return 0 }
+            if (index >= list.count) { return list.count - 1 }
+            return index
+        }
+
+        // Verteilt `avail` (oder, bei -1, so viel wie der Inhalt will) auf die Stern-Spuren.
+        ResolveStars(list, int avail, int used) {
+            var weights = 0
+            for (var i = 0; i < list.count; i = i + 1) {
+                if (list[i].mode == 2) { weights = weights + list[i].value }
+            }
+            if (weights == 0 || avail < 0) { return }
+            var rest = UI.M.Max(0, avail - used)
+            var given = 0
+            var seen = 0
+            for (var i = 0; i < list.count; i = i + 1) {
+                var t = list[i]
+                if (t.mode != 2) { continue }
+                seen = seen + t.value
+                // der Rest geht auf: die Summe der bisherigen Anteile, gerundet, minus dem schon Vergebenen
+                var upto = rest * seen / weights
+                t.size = UI.M.Clamp(upto - given, t.min, t.max)
+                given = given + t.size
+            }
+        }
+
+        MeasureCore(root, int aw, int ah) {
+            var rows = this.Tracks(this.rows)
+            var cols = this.Tracks(this.columns)
+            this.ResolveAxis(root, rows, cols, ah, false)
+            this.ResolveAxis(root, cols, rows, aw, true)
+            // jedes Kind mit der endgueltigen Groesse seiner Zelle messen (auch die, die eine Spur nicht bestimmt haben)
+            for (var c = 0; c < this.children.count; c = c + 1) {
+                var child = this.children[c]
+                if (!child.visible) {
+                    child.Measure(root, 0, 0)
+                    continue
+                }
+                var r = this.Fit(rows, child.gridRow)
+                var k = this.Fit(cols, child.gridColumn)
+                var rs = UI.M.Max(1, child.gridRowSpan)
+                var cs = UI.M.Max(1, child.gridColumnSpan)
+                child.Measure(root, this.SpanSize(cols, k, cs), this.SpanSize(rows, r, rs))
+            }
+            var w = 0
+            var h = 0
+            for (var i = 0; i < rows.count; i = i + 1) { h = h + rows[i].size }
+            for (var i = 0; i < cols.count; i = i + 1) { w = w + cols[i].size }
+            this.cw = w
+            this.ch = h
+        }
+
+        // Legt die Groessen der Spuren einer Achse fest: erst feste, dann die vom Inhalt (Auto), dann die Sterne.
+        // along: die Spuren dieser Achse, other: die der anderen; avail: der Platz in dieser Achse; isColumn: along sind die Spalten.
+        ResolveAxis(root, along, other, int avail, bool isColumn) {
+            var used = 0
+            for (var i = 0; i < along.count; i = i + 1) {
+                var t = along[i]
+                t.size = 0
+                if (t.mode == 1) { t.size = UI.M.Clamp(t.value, t.min, t.max) }
+            }
+            // Auto-Spuren (und, wenn der Platz unbegrenzt ist, Sterne) richten sich nach dem Inhalt der Kinder, die genau eine Spur belegen
+            var starsByContent = avail < 0
+            for (var pass = 0; pass < 2; pass = pass + 1) {
+                for (var c = 0; c < this.children.count; c = c + 1) {
+                    var child = this.children[c]
+                    if (!child.visible) { continue }
+                    var begin = 0
+                    var span = 1
+                    if (isColumn) {
+                        begin = this.Fit(along, child.gridColumn)
+                        span = child.gridColumnSpan
+                    } else {
+                        begin = this.Fit(along, child.gridRow)
+                        span = child.gridRowSpan
+                    }
+                    if (span < 1) { span = 1 }
+                    var contentTracks = 0
+                    var hasStar = false
+                    for (var k = begin; k < begin + span && k < along.count; k = k + 1) {
+                        if (along[k].mode == 0 || (along[k].mode == 2 && starsByContent)) { contentTracks = contentTracks + 1 }
+                        if (along[k].mode == 2 && !starsByContent) { hasStar = true }
+                    }
+                    // eine Zelle, die eine Stern-Spur einschliesst, bekommt ihren Platz von dort und macht keine Auto-Spur breiter
+                    if (contentTracks == 0 || (span > 1 && hasStar)) { continue }
+                    // erste Runde: Kinder mit einer Spur, zweite: die ueber mehrere
+                    if (pass == 0 && span > 1) { continue }
+                    if (pass == 1 && span == 1) { continue }
+                    var cellW = -1
+                    var cellH = -1
+                    if (isColumn) {
+                        cellH = this.CellSizeOther(other, child, false)
+                    } else {
+                        cellW = this.CellSizeOther(other, child, true)
+                    }
+                    child.Measure(root, cellW, cellH)
+                    var want = child.dh
+                    if (isColumn) { want = child.dw }
+                    // was schon feststeht (feste Spuren im Bereich), muss der Inhalt nicht mehr tragen
+                    var have = 0
+                    for (var k = begin; k < begin + span && k < along.count; k = k + 1) { have = have + along[k].size }
+                    var missing = want - have
+                    if (missing > 0) {
+                        var each = missing / contentTracks
+                        var extra = missing - each * contentTracks
+                        for (var k = begin; k < begin + span && k < along.count; k = k + 1) {
+                            if (along[k].mode == 0 || (along[k].mode == 2 && starsByContent)) {
+                                along[k].size = along[k].size + each
+                                if (extra > 0) {
+                                    along[k].size = along[k].size + 1
+                                    extra = extra - 1
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for (var i = 0; i < along.count; i = i + 1) {
+                var t = along[i]
+                if (t.mode == 0) { t.size = UI.M.Clamp(t.size, t.min, t.max) }
+                if (t.mode == 2 && starsByContent) { t.size = UI.M.Clamp(t.size, t.min, t.max) }
+                if (t.mode != 2 || starsByContent) { used = used + t.size }
+            }
+            if (!starsByContent) { this.ResolveStars(along, avail, used) }
+        }
+
+        // Die Groesse der Zelle des Kindes in der anderen Achse, soweit schon bekannt (feste Spuren), sonst -1.
+        int CellSizeOther(other, child, bool isColumnAxis) {
+            var begin = 0
+            var span = 1
+            if (isColumnAxis) {
+                begin = this.Fit(other, child.gridColumn)
+                span = child.gridColumnSpan
+            } else {
+                begin = this.Fit(other, child.gridRow)
+                span = child.gridRowSpan
+            }
+            if (span < 1) { span = 1 }
+            var total = 0
+            for (var k = begin; k < begin + span && k < other.count; k = k + 1) {
+                if (other[k].mode == 1) { total = total + other[k].size } else { return -1 }
+            }
+            return total
+        }
+
+        ArrangeCore(root, int w, int h) {
+            var rows = this.Tracks(this.rows)
+            var cols = this.Tracks(this.columns)
+            // mit der endgueltigen Groesse: die Sterne neu verteilen
+            this.Restar(rows, h)
+            this.Restar(cols, w)
+            for (var c = 0; c < this.children.count; c = c + 1) {
+                var child = this.children[c]
+                if (!child.visible) { continue }
+                var r = this.Fit(rows, child.gridRow)
+                var k = this.Fit(cols, child.gridColumn)
+                var rs = child.gridRowSpan
+                var cs = child.gridColumnSpan
+                if (rs < 1) { rs = 1 }
+                if (cs < 1) { cs = 1 }
+                var px = 0
+                for (var i = 0; i < k; i = i + 1) { px = px + cols[i].size }
+                var py = 0
+                for (var i = 0; i < r; i = i + 1) { py = py + rows[i].size }
+                child.Arrange(root, px, py, this.SpanSize(cols, k, cs), this.SpanSize(rows, r, rs))
+            }
+        }
+
+        // Verteilt den Platz auf die Sterne der Achse neu (die anderen Spuren behalten ihre Groesse).
+        Restar(list, int avail) {
+            var used = 0
+            var stars = 0
+            for (var i = 0; i < list.count; i = i + 1) {
+                if (list[i].mode == 2) { stars = stars + 1 } else { used = used + list[i].size }
+            }
+            if (stars > 0) { this.ResolveStars(list, avail, used) }
+        }
+    }
+
+    // Ein Kind mit Rahmen, Hintergrund und Innenabstand (padding). thickness ist die Breite des Rahmens in Pixeln (0: keiner).
+    class Border : Element {
+        Element child
+        int thickness = 1
+        Thickness padding
+
+        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+            this.padding = new Thickness(0)
+        }
+
+        // Das Kind gehoert ab jetzt dem Border.
+        SetChild(element) {
+            if (this.child != undefined) { this.child.parent = undefined }
+            this.child = element
+            element.TakeTo(this)
+            element.parent = this
+            this.Invalidate()
+        }
+
+        Poll(root) {
+            base.Poll(root)
+            if (this.child != undefined) { this.child.Poll(root) }
+        }
+
+        MeasureCore(root, int aw, int ah) {
+            var inset = this.thickness * 2
+            var padW = this.padding.left + this.padding.right + inset
+            var padH = this.padding.top + this.padding.bottom + inset
+            var iw = aw
+            var ih = ah
+            if (iw >= 0) { iw = UI.M.Max(0, iw - padW) }
+            if (ih >= 0) { ih = UI.M.Max(0, ih - padH) }
+            var w = 0
+            var h = 0
+            if (this.child != undefined) {
+                this.child.Measure(root, iw, ih)
+                w = this.child.dw
+                h = this.child.dh
+            }
+            this.cw = w + padW
+            this.ch = h + padH
+        }
+
+        ArrangeCore(root, int w, int h) {
+            if (this.child == undefined) { return }
+            var l = this.padding.left + this.thickness
+            var t = this.padding.top + this.thickness
+            var iw = UI.M.Max(0, w - l - this.padding.right - this.thickness)
+            var ih = UI.M.Max(0, h - t - this.padding.bottom - this.thickness)
+            this.child.Arrange(root, l, t, iw, ih)
+        }
+
+        Draw(root, int ax, int ay) {
+            base.Draw(root, ax, ay)
+            if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
+                if (this.background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.background) }
+                if (this.thickness > 0) {
+                    var pen = this.pen
+                    if (pen == undefined) { pen = root.theme.border }
+                    root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, pen)
+                }
+            }
+            if (this.child != undefined && this.child.visible) { this.child.Draw(root, ax + this.child.rx, ay + this.child.ry) }
+        }
+
+        HitTest(int px, int py) {
+            if (!this.visible) { return undefined }
+            if (!this.Contains(px, py)) { return undefined }
+            if (this.child != undefined) {
+                var hit = this.child.HitTest(px, py)
+                if (hit != undefined) { return hit }
+            }
+            return this
+        }
+
+        Collect(list) {
+            if (!this.visible || !this.enabled) { return }
+            if (this.child != undefined) { this.child.Collect(list) }
+        }
+
+        string StyleKey() { return "Border" }
+
+        FindName(string name) {
+            if (this.name == name) { return this }
+            if (this.child != undefined) { return this.child.FindName(name) }
+            return undefined
+        }
+    }
+}

@@ -80,7 +80,7 @@ namespace fire.Runtime
                 else
                     natives.Register("print", args => VM.StringifyForPrint(args) is { } shown ? debugWriter(shown) : Value.MakeUndefined());
             }
-            natives.RegisterBaseTypeNatives();
+            natives.RegisterBaseTypeNatives(linkedProgram.Program.Resources);
 
             var session = new Session(linkedProgram.Program);
 

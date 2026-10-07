@@ -133,10 +133,12 @@ namespace fire.Bytecode
         /// Registry stehen, mit der ein Programm samt Prelude kompiliert/ausgeführt wird, und zwar
         /// an derselben Stelle der Reihenfolge wie beim Kompilieren (native Funktionen werden über ihren
         /// Index angesprungen) - deshalb überall direkt hinter `print`.</summary>
-        public void RegisterBaseTypeNatives()
+        /// <param name="resources">The files embedded in the program that runs (<c>CompiledProgram.Resources</c>); null while compiling.</param>
+        public void RegisterBaseTypeNatives(System.Collections.Generic.IReadOnlyList<fire.Runtime.ResourceEntry>? resources = null)
         {
             Register(fire.Standard.StringMethods.NativeName, fire.Standard.StringMethods.Call);
             Register(fire.Standard.CharMethods.NativeName, fire.Standard.CharMethods.Call);
+            Register(fire.Standard.ResourceMethods.NativeName, args => fire.Standard.ResourceMethods.Call(args, resources));
         }
     }
 }

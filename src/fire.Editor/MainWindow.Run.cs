@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using fire.Projects;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
@@ -20,8 +22,15 @@ namespace fire.Editor
         // running could overwrite its result) - set when requesting, reset as soon as ThreadPaused fires for the thread concerned.
         private bool _isBusy;
 
-        // The script that is compiled/paused in the debugger right now (stays so even when the tab is changed).
+        // The script that is compiled/paused in the debugger right now (stays so even when the tab is changed): a single file's document. null for a run of a project
+        // (its files are the sources of the run, see _session.SourceFiles).
         private OpenDocument? _debugDocument;
+
+        // true while the run is a project (the files of the project are its sources, the documents of them take part in the debugging)
+        private bool _debugIsProject;
+
+        // The document that shows the highlighted (paused) line.
+        private OpenDocument? _highlightedDoc;
 
         private void UpdateExecutionModeSelection(DebugSession session)
         {
@@ -50,18 +59,45 @@ namespace fire.Editor
             UpdateExecutionModeSelection(_session);
         }
 
-        /// <summary>The breakpoints of the script `doc` are mere line numbers, linked here with the currently valid source index (see DebugSession.FirstUserSourceIndex) before they go
-        /// to the file-aware DebugSession API. Before the first successful Compile() FirstUserSourceIndex is still 0 - 1 is assumed then (the prelude is always at 0, the first
-        /// own source normally at 1). There is always only ONE script as the source, so this one index is enough.</summary>
-        private HashSet<(int SourceIndex, int Line)> BreakpointLocations(OpenDocument? doc) =>
-            (doc?.Script?.Breakpoints ?? (IReadOnlySet<int>)new HashSet<int>())
-                .Select(l => (_session.FirstUserSourceIndex == 0 ? 1 : _session.FirstUserSourceIndex, l))
-                .ToHashSet();
+        /// <summary>The source index of the program of the run for a document: its file in the sources (a project, its libraries), or - for the single file that was compiled - the one source
+        /// of the program (the prelude is always at 0, the first own source normally at 1 before the first compile). -1: the document is not part of the run.</summary>
+        private int SourceIndexOf(OpenDocument doc)
+        {
+            string? path = FullPathOf(doc);
+            var files = _session.SourceFiles;
+            if (path != null)
+                for (int i = 0; i < files.Count; i++)
+                    if (files[i] != null && ProjectFiles.PathComparer.Equals(files[i]!, path)) return i;
+            if (!_debugIsProject && ReferenceEquals(doc, _debugDocument)) return _session.FirstUserSourceIndex == 0 ? 1 : _session.FirstUserSourceIndex;
+            return -1;
+        }
 
-        /// <summary>For the debugger panels: the (numerically sorted) breakpoint lines of the script in the debugger, else of the active script.</summary>
-        private List<string> BreakpointDescriptions() =>
-            (_debugDocument ?? ActiveDocument)?.Script?.Breakpoints.OrderBy(l => l).Select(l => l.ToString()).ToList()
-            ?? new List<string>();
+        /// <summary>Does the document take part in the run (a breakpoint in it counts, its lines can be shown as the paused line)?</summary>
+        private bool TakesPartInRun(OpenDocument doc) => SourceIndexOf(doc) >= 0;
+
+        /// <summary>The breakpoints of all open scripts that take part in the run: (source index, line), linked with the source index of the current program (see DebugSession.SourceFiles).</summary>
+        private HashSet<(int SourceIndex, int Line)> BreakpointLocations()
+        {
+            var result = new HashSet<(int, int)>();
+            foreach (var doc in _documents)
+            {
+                if (doc.Script is not { } script || script.Breakpoints.Count == 0) continue;
+                int index = SourceIndexOf(doc);
+                if (index < 0) continue;
+                foreach (int line in script.Breakpoints) result.Add((index, line));
+            }
+            return result;
+        }
+
+        /// <summary>For the debugger panels: the (numerically sorted) breakpoint lines of the script in the debugger, else of the active script; in a project each with its file.</summary>
+        private List<string> BreakpointDescriptions()
+        {
+            if (_debugIsProject)
+                return _documents.Where(d => d.Script is { Breakpoints.Count: > 0 } && TakesPartInRun(d))
+                    .SelectMany(d => d.Script!.Breakpoints.OrderBy(l => l).Select(l => $"{d.DisplayName}:{l}")).ToList();
+            return (_debugDocument ?? ActiveDocument)?.Script?.Breakpoints.OrderBy(l => l).Select(l => l.ToString()).ToList()
+                ?? new List<string>();
+        }
 
         private void OnScriptOutput(string text)
         {
@@ -81,17 +117,32 @@ namespace fire.Editor
             _output.Append(batch.ToString());
         }
 
-        /// <summary>Shows the paused line in the tab of the script that is in the debugger (and brings the tab to the front); null = remove the highlight.</summary>
-        private void ShowDebugLine(int? line)
+        /// <summary>Shows the paused line in the tab of the file it is in (opened and brought to the front when needed; a line in the prelude or in a library without a file shows nothing); null =
+        /// remove the highlight.</summary>
+        private void ShowDebugLocation((int SourceIndex, int Line)? location)
         {
-            var script = _debugDocument?.Script;
-            if (script == null) return;
-            script.HighlightedLine = line;
-            if (line != null)
+            if (_highlightedDoc?.Script is { } old) old.HighlightedLine = null;
+            _highlightedDoc = null;
+            if (location == null) return;
+            var doc = DocumentOfSource(location.Value.SourceIndex);
+            if (doc?.Script is not { } script) return;
+            script.HighlightedLine = location.Value.Line;
+            _highlightedDoc = doc;
+            Activate(doc);
+            script.ScrollToLine(location.Value.Line);
+        }
+
+        private OpenDocument? DocumentOfSource(int sourceIndex)
+        {
+            var files = _session.SourceFiles;
+            if (sourceIndex >= 0 && sourceIndex < files.Count && files[sourceIndex] is { } path)
             {
-                Activate(_debugDocument!);
-                script.ScrollToLine(line.Value);
+                var open = _documents.FirstOrDefault(d => FullPathOf(d) is { } p && ProjectFiles.PathComparer.Equals(p, path));
+                return open ?? OpenFile(path);
             }
+            // the single file that was compiled: its source is the first of the program that is not a prelude
+            if (!_debugIsProject && _debugDocument != null && sourceIndex == (_session.FirstUserSourceIndex == 0 ? 1 : _session.FirstUserSourceIndex)) return _debugDocument;
+            return null;
         }
 
         /// <summary>F5 like in Visual Studio: compiles if necessary (nothing compiled yet, stopped or the program has ended) and then runs to the next breakpoint. Every further F5
@@ -102,7 +153,7 @@ namespace fire.Editor
             if ((_session.Vm == null || _session.IsFinished) && !CompileAndPrepare(null)) return;
             if (_session.Vm == null) return;
             BeginStep();
-            _session.Continue(BreakpointLocations(_debugDocument));
+            _session.Continue(BreakpointLocations());
         }
 
         /// <summary>Ctrl+F5: ALWAYS compiles again (also in the middle of a session - a running program is ended) and then starts like F5 up to the first breakpoint.</summary>
@@ -110,36 +161,70 @@ namespace fire.Editor
         {
             if (!CompileAndPrepare(null) || _session.Vm == null) return;
             BeginStep();
-            _session.Continue(BreakpointLocations(_debugDocument));
+            _session.Continue(BreakpointLocations());
         }
 
-        /// <summary>Compiles the active script (discards the previous session). false on an error or when no script is active.</summary>
+        /// <summary>Compiles what the active document belongs to (discards the previous session): the project (all its files and libraries, with the text of the open documents and the settings
+        /// of the project) when the document is part of one, else the single script. false on an error or when there is nothing to build.</summary>
         private bool CompileAndPrepare(string? filename)
         {
-            // Only the ACTIVE document is compiled (several files: include them with #include).
             var doc = ActiveDocument;
-            if (doc?.Script is not { } script)
+            var project = ContextProject();
+            // a library cannot run itself: Start (F5) on one of its files runs the startup project of the solution (Build packs the library)
+            if (project?.Project.Type == OutputType.Library && filename == null && _workspace.Startup is { } startup && startup.Project.Type == OutputType.Exe)
             {
-                UpdateStatus(doc == null ? "No document is open." : "The active document is not a script - select a script tab to run.");
-                return false;
+                project = startup;
+                UpdateStatus($"{ContextProject()!.Name} is a library: running the startup project {startup.Name}.");
+            }
+            BuildPlan? plan = null;
+            string[] sources;
+            string? baseDirectory = null;
+
+            if (project != null)
+            {
+                plan = CreatePlan(project);
+                if (!plan.IsValid)
+                {
+                    string errors = string.Join(Environment.NewLine, plan.Errors);
+                    UpdateStatus($"The project {project.Name} has problems: {plan.Errors[0]}");
+                    _ = Dialogs.Message(this, errors, "Project problems");
+                    return false;
+                }
+                if (plan.Type == OutputType.Library && filename == null)
+                {
+                    UpdateStatus($"{project.Name} is a library: it has no entry point to run (Project > Pack Library, or run a program that references it).");
+                    return false;
+                }
+                sources = plan.SourceTexts.ToArray();
+            }
+            else
+            {
+                if (doc?.Script is not { } script)
+                {
+                    UpdateStatus(doc == null ? "No document is open." : "The active document is not a script - select a script tab to run.");
+                    return false;
+                }
+                sources = new[] { script.GetText() };
+                baseDirectory = script.BaseDirectory;
             }
 
             _output.Clear();
             while (_pendingOutput.TryDequeue(out _)) { } // discard what is left of a previous run that has not flowed off yet
-            ShowDebugLine(null);
-            _debugDocument = doc;
+            ShowDebugLocation(null);
+            _debugIsProject = project != null;
+            _debugDocument = project != null ? null : doc;
             _isBusy = false;
-            string source = script.GetText();
-            _session.UpdateBreakpoints(BreakpointLocations(doc));
+            _session.UpdateBreakpoints(BreakpointLocations());
 
-            if (!_session.Compile(new[] { source }, filename, script.BaseDirectory))
+            if (!_session.Compile(sources, filename, baseDirectory, plan))
             {
                 UpdateStatus($"Compile error: {_session.CompileError}");
                 _ = Dialogs.Message(this, _session.CompileError, "Compile error");
                 return false;
             }
 
-            UpdateStatus("Compiled - ready to step, continue or run to the end.");
+            _session.UpdateBreakpoints(BreakpointLocations());   // now with the source indexes of this program
+            UpdateStatus(project != null ? $"Compiled {project.Name} ({plan!.Sources.Count} file{(plan.Sources.Count == 1 ? "" : "s")}) - ready to step, continue or run to the end." : "Compiled - ready to step, continue or run to the end.");
             _debugger.Refresh(BreakpointDescriptions());
             return true;
         }
@@ -190,7 +275,7 @@ namespace fire.Editor
         {
             _session.Reset();
             _isBusy = false;
-            ShowDebugLine(null);
+            ShowDebugLocation(null);
             _debugger.Refresh(BreakpointDescriptions());
             UpdateStatus("Stopped.");
         }
@@ -200,18 +285,26 @@ namespace fire.Editor
             FlushPendingOutput(); // visible at once, not only at the next timer tick
             if (!more)
             {
-                ShowDebugLine(null);
+                ShowDebugLocation(null);
                 UpdateStatus(_session.RuntimeError != null
                     ? $"Runtime error: {_session.RuntimeError}"
                     : "Program finished.");
             }
             else
             {
-                int line = _session.Vm!.CurrentLine;
-                ShowDebugLine(line);
-                UpdateStatus($"Paused at line {line}.");
+                var location = _session.Vm!.CurrentLocation;
+                ShowDebugLocation(location);
+                string where = DocumentOfSourceName(location.SourceIndex);
+                UpdateStatus($"Paused at {where}line {location.Line}.");
             }
             _debugger.Refresh(BreakpointDescriptions());
+        }
+
+        /// <summary>"file.script, " for the status bar when the run has several files, else "".</summary>
+        private string DocumentOfSourceName(int sourceIndex)
+        {
+            var files = _session.SourceFiles;
+            return sourceIndex >= 0 && sourceIndex < files.Count && files[sourceIndex] is { } path && (_debugIsProject || files.Count(f => f != null) > 1) ? Path.GetFileName(path) + ", " : "";
         }
 
         private void ToggleBreakpoint_Click(object? sender, RoutedEventArgs e)

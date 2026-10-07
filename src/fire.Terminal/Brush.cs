@@ -56,7 +56,7 @@ namespace fire.Terminal
         {
             if (w <= 0 || h <= 0) return;
             var s = Sink(surface);
-            int y0 = Math.Max(0, y), y1 = (int)Math.Min((long)surface.Height, (long)y + h);
+            int y0 = Math.Max(surface.ClipTop, y), y1 = (int)Math.Min((long)surface.ClipBottom, (long)y + h);
             int xr = (int)Math.Min((long)x + w - 1, int.MaxValue);
             for (int yy = y0; yy < y1; yy++) s.Span(yy, x, xr);
         }

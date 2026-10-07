@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using fire.Projects;
 
 namespace fire.Editor
 {
@@ -15,7 +16,7 @@ namespace fire.Editor
         private static readonly FilePickerFileType MarkdownFiles = new("Markdown") { Patterns = new[] { "*.md", "*.markdown" } };
         private static readonly FilePickerFileType PacketLogFiles = new("Packet logs") { Patterns = new[] { "*.fplog" } };
         private static readonly FilePickerFileType UiMarkupFiles = new("UI markup") { Patterns = new[] { "*.fxml" } };
-        private static readonly FilePickerFileType AllDocuments = new("All documents") { Patterns = new[] { "*.script", "*.fi", "*.fic", "*.md", "*.markdown", "*.fplog", "*.fxml" } };
+        private static readonly FilePickerFileType AllDocuments = new("All documents") { Patterns = new[] { "*.script", "*.fi", "*.fic", "*.md", "*.markdown", "*.fplog", "*.fxml", "*" + FireProject.Extension, "*" + FireSolution.Extension } };
 
         private static string SafeFileName(string name) =>
             string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ' ' ? '-' : c));
@@ -178,6 +179,12 @@ namespace fire.Editor
         private OpenDocument? OpenFile(string path, MarkdownViewMode mode = MarkdownViewMode.Edit)
         {
             string full = Path.GetFullPath(path);
+            // a project or a solution opens the workspace, not a tab
+            if (string.Equals(Path.GetExtension(full), FireProject.Extension, StringComparison.OrdinalIgnoreCase) || string.Equals(Path.GetExtension(full), FireSolution.Extension, StringComparison.OrdinalIgnoreCase))
+            {
+                OpenWorkspace(full);
+                return null;
+            }
             var existing = _documents.FirstOrDefault(d => d.View.FilePath != null &&
                 string.Equals(Path.GetFullPath(d.View.FilePath), full, StringComparison.OrdinalIgnoreCase));
             if (existing != null)

@@ -16,4 +16,9 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
+  <!-- the source of the library: ui/*.fire, in the order of their names (embedded, UiBridge.PreludeSource joins them) -->
+  <ItemGroup>
+    <EmbeddedResource Include="ui\*.fire" LogicalName="ui/%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>

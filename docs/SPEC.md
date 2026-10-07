@@ -2143,6 +2143,61 @@ Besides the libraries of the compiler, `#import "name"` also finds the imports o
 and/or natives as C++ source for the native backend, and is installed for the machine with the package manager `ember` (also in the editor). An unknown import is an error
 that points to `ember`. The natives of a package are C++ (docs/PACKAGE_NATIVES.md): a native build puts the source into the generated file, the virtual machine calls a shared library that the compiler builds from it for the machine. See docs/PACKAGES.md.
 
+### 8.19 Random numbers (`#import "random"`)
+
+`PseudoRandom` is a pseudo random number generator written in fire (the package `fire-random`, no natives): xoshiro128** with four 32-bit words computed in the 64-bit `int`, so the same seed gives the
+same numbers in the virtual machine, in a native build and on every platform. It brings `time` along: `new PseudoRandom()` starts from the clock (`DateTime.UtcNow().Ticks`; two generators made within the same
+100 ns tick get the same sequence - give them seeds then), `new PseudoRandom(seed)` from a number.
+
+- `Next()`: 0 .. 2147483646 (like .NET); `Next(max)`: 0 .. max - 1 (any `max` above 0, also above 2^32); `Next(min, max)`: min .. max - 1. The values are unbiased (no modulo skew). A `max` that is not above 0 (or `max <= min`) throws `RandomException`.
+- `NextUInt32()`: 32 random bits (0 .. 4294967295); `NextInt()`: any `int` (63 bits and the sign); `NextFloat()`: 0.0 up to (not including) 1.0 with 53 random bits; `NextBool()`.
+- `Pick(list)`: a random element (`undefined` for an empty list); `Shuffle(list)`: mixes the list in place (Fisher-Yates) and returns it; `Seed(seed)` starts the sequence again.
+
+Not for secrets: the sequence can be predicted from a few outputs.
+
+### 8.20 Network (`#import "net"`)
+
+The package `fire-net` (docs/NETWORK.md is the reference): `Net.TcpClient` (an `IO.Stream`), `Net.TcpListener`, `Net.UdpSocket` and `Net.Dns`, written in fire over C++ natives on the sockets of the platform (BSD sockets, Winsock, lwIP). It needs
+`io` and `time`. Every call that waits takes a time limit; waiting polls the natives and sleeps 1 to 10 ms between the attempts, so `terminate` and the other threads work while a program waits for the network. Errors are `Net.NetException` (with a `code`) and subclasses;
+the host can restrict the network with a `NetPolicy` (a refused access is a `Net.PermissionException`). A platform without a network throws `NetException` (code 9).
+
+### 8.21 HTTP (`#import "http"`)
+
+The package `fire-http` (docs/NETWORK.md is the reference): `Http.Client` (GET/POST/..., redirects, chunked bodies), `Http.Server` (routes, one connection after the other) and the classes around them, written in fire on the `net` package.
+Errors are `Http.HttpException` (with a `code`) and the exceptions of `net`.
+
+### 8.22 TLS (`#import "tls"`)
+
+The package `fire-tls` (docs/NETWORK.md is the reference): `Tls.Stream` (an `IO.Stream` over a `Net.TcpClient`), `Tls.Server`, `Tls.Options`; SChannel (Windows), OpenSSL or mbedTLS underneath. `#import "http"` brings it along for `https://`. Errors are
+`Tls.TlsException` and `Tls.CertificateException` (both `Net.NetException`s).
+
+### 8.23 GPIO (`#import "gpio"`)
+
+The package `fire-gpio` (docs/NETWORK.md is the reference): `Gpio.Pin` (input with pull and edge events, output, read/write/toggle), `Gpio.Board` (the chips of the machine) and `Gpio.Sim` (the simulated chip `"sim"` that every platform has); the character device of Linux or
+ESP-IDF underneath. It needs `time`. Nothing blocks: edges are collected and handed out by `TakeEdge`/`WaitEdge`/`Poll`. Errors are `Gpio.GpioException` (with a `code`) and subclasses.
+
+### 8.24 I2C (`#import "i2c"`)
+
+The package `fire-i2c` (docs/NETWORK.md is the reference): `I2c.Bus` (write, read, write-then-read with a repeated start, register helpers, probe, scan), `I2c.Board` (the buses of the machine) and `I2c.Sim` (devices on the simulated bus `"sim"` that every platform has);
+`/dev/i2c-N` of Linux or the master driver of ESP-IDF underneath. Transfers are done in the call; errors are `I2c.I2cException` (with a `code`) and subclasses, `I2c.NoAckException` when no device answers.
+
+### 8.25 SPI (`#import "spi"`)
+
+The package `fire-spi` (docs/NETWORK.md is the reference): `Spi.Device` (a bus with one chip select: full-duplex `Transfer`, `Write`, `Read`, `WriteRead`, mode/speed/bit order), `Spi.Board` (the devices of the machine) and `Spi.Sim` (the simulated device `"sim"`: loopback or
+queued answers, a log of what was sent); `/dev/spidevB.C` of Linux or the SPI master driver of ESP-IDF underneath. Transfers are done in the call; errors are `Spi.SpiException` (with a `code`) and subclasses.
+
+### 8.26 WiFi (`#import "wifi"`)
+
+The package `fire-wifi` (docs/NETWORK.md is the reference): `WiFi.Station` (scan, join, state, address), `WiFi.AccessPoint`, `WiFi.Board` (the radios of the machine) and `WiFi.Sim` (the simulated radio `"sim"` that every platform has); the WiFi driver of ESP-IDF underneath, "not
+supported" where the operating system owns the network. It needs `time`; scanning and joining poll the natives and sleep between the questions. Errors are `WiFi.WiFiException` (with a `code`) and subclasses (`AuthException`, `NotFoundException`, `TimeoutException`, ...).
+
+### 8.27 Projects and solutions
+
+A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files (docs/PROJECTS.md is the reference). A project names its files (default: all `*.script` of its
+folder), its type (`exe`, or `library` without an entry point - a statement at the top level is an error), its build settings, and its references (projects of the solution, installed packages). A reference makes a library available;
+`#import "Name"` in the source turns it on, exactly as for a package, and the library's files are processed before the files of the project. A library is packed with `fire build Core.fireproj` into an ordinary `.fpk`.
+Build settings are taken from the project first, then from the solution, then from the tags in the source (`#debug`, `#name "..."`, `#floatwidth 32`, `#noconsole`, ...), then the defaults; `#if` symbols of all levels are added up; options on the command line go before the project.
+
 ## 9. Open points
 
 The only earlier point here – the method declaration syntax

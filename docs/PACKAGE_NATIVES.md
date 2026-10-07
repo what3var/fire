@@ -91,6 +91,7 @@ class SensorKit {
 * `name` is what fire code calls, `cpp` the C++ function, `arguments` how many `Value`s it takes.
 * `needsList: true`: the function gets `OwnList* list` as an extra **last** parameter. Everything you allocate for the result (`allocStr`, `allocArr`, `allocBuf`)
   is allocated in that list: it belongs to the scope of the caller, like any value a fire function creates. `returnsReference: true`: the result is such a value.
+* `linkLibraries` (in `native`, optional): system libraries the C++ needs on one platform or target, by the same keys as `platformSources`, e.g. `"linkLibraries": { "windows": [ "ws2_32" ] }` - the build links them (`-lws2_32`, `ws2_32.lib`).
 * `exceptions` (in `native`): the exception classes of your prelude that your natives throw, e.g. `"exceptions": [ "SensorException" ]`. The class needs a constructor with one text
   argument; the native throws it with `return fireError("SensorException", "no answer");` (a native build constructs the class by name, the VM gets the class and the text from the library).
 * `host: true` (per function): in the virtual machine the host runs the function itself instead of the library. It is for what the C ABI cannot carry or what must not run inside a library:
@@ -147,6 +148,8 @@ In the VM your functions run in a shared library, so values are **copied** at th
   console goes (`std_read`/`std_write`/`std_flush`, the `IoStdio` of the host, e.g. the output window of the editor). In C++ they are `libraryHost()->io_allow(...)` etc.; the io package is the example
   (`console::`, `allowed()` in `native/bridges/fire_bridge_io.hpp`). When a program ends the VM calls `fire_pkg_reset` - the function named by `native.reset` in the manifest (`"reset": "io::reset"`): forget what the program
   left behind (open streams), the library stays loaded for the next program;
+* **the network**: `net_allow(host, port, access, ...)` asks whether a script may connect to, listen on or resolve a host (`NetPolicy` of the host); the net package is the example (`allowed()` in `native/bridges/fire_bridge_net.hpp`, its sockets come from
+  `FIRE_PLATFORM_NET_HEADER`: `plat::net`, `native/platform/std/fire_net_sockets.hpp`);
 * **devices**: the `dev_*` callbacks of `fire_host` give a library the device manager of the host (its drivers, handles, the shared devices of the editor, the packet trace). The devices package
   uses them through a driver "host" (`HostDevice` in `native/bridges/fire_bridge_devices.hpp`); a native build uses the serial and loopback drivers in C++ instead. Waiting that must be abortable
   and know the program's `#timeout` is a `host` function (`WaitFor`): the VM waits and asks the library once per step (`__DEVWaitStep`);
