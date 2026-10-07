@@ -79,7 +79,7 @@ A `.fpk` is a zip file with a `package.json` in its root and the files that it n
 }
 ```
 
-* `imports`: the names for `#import "name"` (letters, digits, `_`; not case sensitive; not one of the compiler: `print graphics windows devices io ui linq reflection time random`).
+* `imports`: the names for `#import "name"` (letters, digits, `_`; not case sensitive; not one of the compiler: `print graphics windows devices io ui linq reflection time random net`).
   A package can bring several. An import can have a **prelude**, **natives**, or both. A package that is only a prelude is allowed.
 * `requires`: other imports (of the compiler or of packages) that this one switches on, like `ui` switches on `graphics`.
 * `dependencies`: other *packages* that `ember install` installs too.
@@ -100,7 +100,7 @@ How to write a native, what crosses to the VM, prebuilt libraries and packed pro
 
 ## The standard packages (the bridges)
 
-The standard bridges of fire - `graphics`, `windows`, `devices`, `io`, `ui`, `linq`, `reflection`, `time`, `random` - are also available as packages (`fire-graphics`, `fire-io`, ...), each with its prelude
+The standard bridges of fire - `graphics`, `windows`, `devices`, `io`, `ui`, `linq`, `reflection`, `time`, `random`, `net` - are also available as packages (`fire-graphics`, `fire-io`, ...), each with its prelude
 and its C++ sources (`native/bridges/`). They are marked `"standard": true`, which is the only way for an import to have the name of an import of the compiler. They are built with the solution:
 after the build, `fire.Compiler bridge-packages <folder>` (an MSBuild target in `src/BridgePackages.targets`, imported by the compiler and the editor) writes them into the folder `PackageSource` of the
 output. When **spark**, **forge** (the compiler) or **ember** start, they check that the standard packages are installed and install the missing or older ones from `PackageSource` (a time stamp in

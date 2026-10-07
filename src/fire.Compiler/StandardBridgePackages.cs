@@ -34,7 +34,8 @@ namespace fire.Compiler
             "windows" => new[] { "graphics" },
             "ui" => new[] { "graphics", "windows", "reflection" },
             "linq" => new[] { "reflection" },
-            "random" => new[] { "time" },   // the seed of a generator without a seed comes from the clock
+            "random" => new[] { "time" },
+            "net" => new[] { "io", "time" },   // a connection is an IO.Stream; the time limits need the clock
             _ => Array.Empty<string>(),
         };
 
@@ -43,6 +44,7 @@ namespace fire.Compiler
         {
             "time" => fire.Standard.TimePrelude.Source,
             "random" => fire.Standard.RandomPrelude.Source,
+            "net" => fire.Standard.NetPrelude.Source,
             "io" => fire.Standard.IoPrelude.Source,
             "devices" => fire.Standard.DevicesPrelude.Source,
             _ => ImportedPreludes.TrySourceFor(bridge),
@@ -92,6 +94,20 @@ namespace fire.Compiler
                     F("__IOStdReadAll", 0, "io::StdReadAll", list: true), F("__IOBufferIndexOf", 4, "io::BufferIndexOf"),
                     F("__IOUtf8Encode", 1, "io::Utf8Encode", list: true), F("__IOUtf8Decode", 3, "io::Utf8Decode", list: true),
                     F("__IOSplitLines", 1, "io::SplitLines", list: true),
+                })
+                    yield return f;
+            }
+            if (bridge == "net")
+            {
+                foreach (var f in new[]
+                {
+                    F("__NetLastError", 0, "net::LastError"), F("__NetLastErrorMessage", 0, "net::LastErrorMessage", list: true), F("__NetOpenCount", 0, "net::OpenCount"),
+                    F("__NetSupported", 0, "net::Supported"), F("__NetTcpConnect", 3, "net::TcpConnect"), F("__NetTcpListen", 3, "net::TcpListen"), F("__NetAccept", 2, "net::Accept"),
+                    F("__NetSend", 5, "net::Send"), F("__NetRecv", 5, "net::Recv"), F("__NetUdpOpen", 2, "net::UdpOpen"), F("__NetSendTo", 6, "net::SendTo"),
+                    F("__NetRecvFrom", 5, "net::RecvFrom"), F("__NetPeerHost", 1, "net::PeerHost", list: true), F("__NetPeerPort", 1, "net::PeerPort"),
+                    F("__NetLocalHost", 1, "net::LocalHost", list: true), F("__NetLocalPort", 1, "net::LocalPort"), F("__NetAvailable", 1, "net::Available"),
+                    F("__NetPoll", 4, "net::Poll"), F("__NetSetOption", 3, "net::SetOption"), F("__NetShutdown", 2, "net::Shutdown"), F("__NetClose", 1, "net::Close"),
+                    F("__NetResolve", 1, "net::Resolve", list: true),
                 })
                     yield return f;
             }
@@ -174,6 +190,11 @@ namespace fire.Compiler
                     native.Functions.AddRange(FunctionsOf(bridge));
                     native.Exceptions.AddRange(ExceptionsOf(bridge));
                     if (bridge == "io") native.Reset = "io::reset";
+                    if (bridge == "net")
+                    {
+                        native.Reset = "net::reset";
+                        native.LinkLibraries["windows"] = new List<string> { "ws2_32" };
+                    }
                     if (native.Sources.Count > 0) import.Native = native;
                     var manifest = new PackageManifest
                     {

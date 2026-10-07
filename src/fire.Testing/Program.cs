@@ -8683,6 +8683,57 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 }
 
 // ---------------------------------------------------------------------------
+// Netzwerk (#import "net"): die Richtlinie des Hosts (NetPolicy) fuer Verbindungen, Listener, Datagramme und Namen
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Netzwerk: Host-Richtlinie ===");
+    int netFailures = 0;
+    List<string> NetSession(string script, fire.Runtime.NetPolicy? policy)
+    {
+        var lines = new List<string>();
+        var session = fire.Compiler.RuntimeSession.Build(new[] { "#import \"net\"\n" + script }, VmExecutionMode.Release,
+            args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); }, netPolicy: policy);
+        session.Run();
+        return lines;
+    }
+    void CheckNet(string title, string script, fire.Runtime.NetPolicy? policy, string[] expected)
+    {
+        string[] actual;
+        try { actual = NetSession(script, policy).ToArray(); }
+        catch (Exception ex) { actual = new[] { "AUSNAHME: " + ex.Message }; }
+        bool ok = actual.SequenceEqual(expected);
+        if (!ok) netFailures++;
+        Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
+    }
+
+    const string everything = """
+        try { var l = new Net.TcpListener("127.0.0.1", 0); print("listen ok " + (l.Port > 0)); l.Close() } catch (Net.PermissionException e) { print("listen denied " + e.code) }
+        try { var u = new Net.UdpSocket("127.0.0.1", 0); print("udp ok"); u.Close() } catch (Net.PermissionException e) { print("udp denied " + e.code) }
+        try { print("resolve " + Net.Dns.Resolve("127.0.0.1").count) } catch (Net.PermissionException e) { print("resolve denied " + e.code) }
+        try { var c = new Net.TcpClient("127.0.0.1", 9, 500); print("connected?") } catch (Net.PermissionException e) { print("connect denied " + e.code) } catch (Net.NetException e) { print("connect failed " + e.code) }
+        try { var c = new Net.TcpClient("example.invalid", 80, 500); print("connected?") } catch (Net.PermissionException e) { print("outside denied " + e.code) } catch (Net.NetException e) { print("outside failed " + e.code) }
+        """;
+    CheckNet("Host-Richtlinie: alles erlaubt (Vorgabe)", everything, null,
+        new[] { "listen ok True", "udp ok", "resolve 1", "connect failed 3", "outside failed 10" });
+    CheckNet("Host-Richtlinie: DenyAll - jede Art von Zugriff wird zur PermissionException (Code 8)", everything, fire.Runtime.NetPolicy.DenyAll,
+        new[] { "listen denied 8", "udp denied 8", "resolve denied 8", "connect denied 8", "outside denied 8" });
+    CheckNet("Host-Richtlinie: LoopbackOnly - dieser Rechner geht, andere Namen nicht", everything, fire.Runtime.NetPolicy.LoopbackOnly,
+        new[] { "listen ok True", "udp ok", "resolve 1", "connect failed 3", "outside denied 8" });
+    CheckNet("Host-Richtlinie: Hosts - nur die genannten (hier: host:port; Namen davon aufloesen darf man), Lauschen nur wenn erlaubt", everything, fire.Runtime.NetPolicy.Hosts(new[] { "127.0.0.1:9", "example.invalid:443" }),
+        new[] { "listen denied 8", "udp denied 8", "resolve 1", "connect failed 3", "outside denied 8" });
+    CheckNet("Host-Richtlinie: Hosts mit allowListen erlaubt Lauschen auf localhost", everything, fire.Runtime.NetPolicy.Hosts(new[] { "*" }, allowListen: true),
+        new[] { "listen ok True", "udp ok", "resolve 1", "connect failed 3", "outside failed 10" });
+    CheckNet("Offene Sockets am Programmende: das naechste Programm startet sauber (fire_pkg_reset)", """
+        var l = new Net.TcpListener("127.0.0.1", 0)
+        var c = new Net.TcpClient("127.0.0.1", l.Port)
+        print("offen")
+        """, null, new[] { "offen" });
+
+    Console.WriteLine(netFailures == 0 ? "Alle Netzwerk-Pruefungen bestanden." : $"FEHLER: {netFailures} Netzwerk-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
 // Slicer: Maske aus einem Framebuffer (ToMask) in Werkzeugbahnen zerlegen
 // ---------------------------------------------------------------------------
 {
@@ -16744,6 +16795,68 @@ else
             var same = true
             for (var i = 0; i < 100; i = i + 1) { if (s1.Next(1000) != s2.Next(1000)) { same = false } }
             print("gleicher Seed " + same)
+            """),
+    }).ToArray();
+
+    // Network (bridges/fire_bridge_net.hpp): TCP, UDP and name resolution on the loopback interface - the same in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Net: TCP, UDP, DNS ueber Loopback, Zeitlimits, Fehler", """
+            #import "net"
+            var l = new Net.TcpListener("127.0.0.1", 0)
+            print("port " + (l.Port > 0) + " " + l.Host)
+            var c = new Net.TcpClient("127.0.0.1", l.Port)
+            var s = l.Accept(2000)
+            print("pending " + l.Pending(0))
+            c.WriteString("hello")
+            var buf = new byte[16]
+            var n = s.Read(buf, 0, 16)
+            print("got " + n + " " + IO.Utf8.GetString(buf, 0, n))
+            print("remote " + s.RemoteHost + " " + (s.RemotePort == c.LocalPort) + " " + (c.RemotePort == l.Port))
+            s.WriteString("pong!")
+            c.ReadTimeout = 500
+            var m = c.Read(buf, 0, 16)
+            print("reply " + IO.Utf8.GetString(buf, 0, m))
+            try { c.Read(buf, 0, 16) } catch (Net.TimeoutException e) { print("timeout " + e.code) }
+            var big = new byte[40000]
+            for (var i = 0; i < big.length; i++) { big[i] = i % 251 }
+            s.Write(big, 0, big.length)
+            var total = 0
+            var ok = true
+            var chunk = new byte[4096]
+            c.ReadTimeout = 5000
+            while (total < big.length) {
+                var got = c.Read(chunk, 0, 4096)
+                if (got <= 0) { break }
+                for (var i = 0; i < got; i++) { if (chunk[i] != (total + i) % 251) { ok = false } }
+                total = total + got
+            }
+            print("big " + total + " " + ok)
+            s.Shutdown(1)
+            print("eof " + c.Read(buf, 0, 16))
+            print("waitReadable " + c.WaitReadable(0))
+            c.Close()
+            s.Close()
+            print("closed " + c.IsClosed)
+            try { c.Read(buf, 0, 1) } catch (Net.ClosedException e) { print("closed " + e.code) }
+            print("accept timeout " + (l.TryAccept(50) == undefined))
+            l.Close()
+            try { var x = new Net.TcpClient("127.0.0.1", 1, 1000) } catch (Net.RefusedException e) { print("refused " + e.code) }
+            var u1 = new Net.UdpSocket("127.0.0.1", 0)
+            var u2 = new Net.UdpSocket()
+            print("udp avail " + u1.Available)
+            u2.SendString("datagram", "127.0.0.1", u1.Port)
+            var got2 = u1.ReceiveFrom(buf, 0, 16, 2000)
+            print("udp " + got2 + " " + IO.Utf8.GetString(buf, 0, got2) + " from " + u1.FromHost + " " + (u1.FromPort == u2.Port))
+            u1.SendTo(buf, 0, 3, "127.0.0.1", u2.Port)
+            print("udp back " + u2.ReceiveFrom(buf, 0, 16, 2000))
+            try { u1.ReceiveFrom(buf, 0, 16, 100) } catch (Net.TimeoutException e) { print("udp timeout") }
+            var addresses = Net.Dns.Resolve("127.0.0.1")
+            print("dns " + addresses.count + " " + addresses[0] + " " + (Net.Dns.Resolve("localhost").count > 0))
+            try { Net.Dns.Resolve("no-such-host.invalid") } catch (Net.ResolveException e) { print("resolve " + e.code) }
+            try { var bad = new Net.TcpListener("127.0.0.1", 70000) } catch (Net.NetException e) { print("port " + e.code) }
+            var l2 = new Net.TcpListener("127.0.0.1", 0)
+            try { var l3 = new Net.TcpListener("127.0.0.1", l2.Port) } catch (Net.NetException e) { print("in use " + e.code) }
             """),
     }).ToArray();
 

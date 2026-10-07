@@ -2155,6 +2155,12 @@ same numbers in the virtual machine, in a native build and on every platform. It
 
 Not for secrets: the sequence can be predicted from a few outputs.
 
+### 8.20 Network (`#import "net"`)
+
+The package `fire-net` (docs/NETWORK.md is the reference): `Net.TcpClient` (an `IO.Stream`), `Net.TcpListener`, `Net.UdpSocket` and `Net.Dns`, written in fire over C++ natives on the sockets of the platform (BSD sockets, Winsock, lwIP). It needs
+`io` and `time`. Every call that waits takes a time limit and is done in slices of 100 ms, so `terminate` and the other threads work while a program waits for the network. Errors are `Net.NetException` (with a `code`) and subclasses;
+the host can restrict the network with a `NetPolicy` (a refused access is a `Net.PermissionException`). A platform without a network throws `NetException` (code 9).
+
 ## 9. Open points
 
 The only earlier point here – the method declaration syntax

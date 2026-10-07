@@ -59,7 +59,7 @@ namespace fire.Package.Manager
         /// <summary>The imports of the compiler itself: a package must not take one of these names.</summary>
         public static readonly IReadOnlySet<string> ReservedImportNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "print", "graphics", "windows", "devices", "io", "ui", "linq", "reflection", "time", "random",
+            "print", "graphics", "windows", "devices", "io", "ui", "linq", "reflection", "time", "random", "net",
         };
 
         /// <summary>All problems of the description (empty: it is fine). <paramref name="fileExists"/> decides whether a referenced file exists (relative to the root of the
@@ -127,6 +127,8 @@ namespace fire.Package.Manager
         /// <summary>Prebuilt shared libraries for the virtual machine, by runtime identifier (`win-x64`, `linux-x64`, `linux-arm64`, `osx-arm64`, ...): they export the C ABI of
         /// native/abi/fire_pkg_abi.h. Without one for the machine, the compiler builds the library from the C++ sources with a C++ compiler.</summary>
         public Dictionary<string, string> Libraries { get; set; } = new();
+        /// <summary>System libraries the C++ needs for one platform or target (the key as in <see cref="PlatformSources"/>), e.g. <c>{ "windows": [ "ws2_32" ] }</c>: the build links them (`-lws2_32`, `ws2_32.lib`).</summary>
+        public Dictionary<string, List<string>> LinkLibraries { get; set; } = new();
         public List<PackageNativeFunction> Functions { get; set; } = new();
         /// <summary>Exception classes of the prelude that natives throw with `fireError("ClassName", "message")` (the class has a constructor with one text argument). In the virtual
         /// machine the library reports the error to the VM, which throws the class; a native build needs to know the classes to construct them.</summary>
@@ -147,6 +149,16 @@ namespace fire.Package.Manager
                 foreach (var (k, files) in native.PlatformSources)
                     if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) foreach (var f in files) if (!result.Contains(f)) result.Add(f);
             foreach (var f in native.Sources) if (!result.Contains(f)) result.Add(f);
+            return result;
+        }
+
+        /// <summary>The system libraries to link in a build for a target (see <see cref="PackageNative.LinkLibraries"/>).</summary>
+        public static IReadOnlyList<string> LinkLibrariesFor(this PackageNative native, IEnumerable<string> platformKeys)
+        {
+            var result = new List<string>();
+            foreach (var key in platformKeys)
+                foreach (var (k, libs) in native.LinkLibraries)
+                    if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) foreach (var l in libs) if (!result.Contains(l)) result.Add(l);
             return result;
         }
 

@@ -1,6 +1,6 @@
 # Networking and hardware buses - design and steps
 
-Status: **plan** (nothing of this is built yet). The steps are also kept as tasks (Net 1-3, GPIO, I2C, SPI, WiFi). Everything is a **package** (`ember`, docs/PACKAGES.md): the compiler and the
+Status: **networking (Net 1 and 2) is built** - the package `fire-net`, see "Reference" below; HTTP/TLS, the hardware buses and WiFi are still plans. The steps are also kept as tasks (Net 1-3, GPIO, I2C, SPI, WiFi). Everything is a **package** (`ember`, docs/PACKAGES.md): the compiler and the
 runtime do not change, a program that does not `#import` it does not carry it. Like `time`, `io` and `devices`, each one is a prelude in fire plus C++ in `native/bridges/` over a thin
 platform layer in `native/platform/<name>/` (`plat::`), so the same code runs in the VM (through the package ABI, docs/PACKAGE_NATIVES.md) and in a native build, and a platform without the
 feature fails with a clear "not supported" error instead of not compiling.
@@ -28,12 +28,31 @@ platform       plat::net            connect/listen/accept/send/recv/poll/resolve
 
 ### Steps
 
+(1 and 2 are done; the text is what was planned.)
+
 1. **Net 1 - design and HAL.** This document made concrete: `plat::net` for posix (BSD sockets) and windows (Winsock), the stub for platforms without a network, the bridge with the handle table, the
    error codes and the timeouts, the policy hook, the package skeleton `fire-net` (prelude + natives list), `ember` entry. Test: handle table, errors, policy.
 2. **Net 2 - TCP, UDP, DNS.** `TcpClient`, `TcpListener`, `UdpSocket`, `Dns`; stream integration; loopback tests in the VM and the native build (the `natCases` comparison); `docs/NETWORK.md` becomes the
    reference. FreeRTOS/ESP32 build of `plat::net` over lwIP (`sockets.h` is BSD compatible: most of the posix file is shared).
 3. **Net 3 - HTTP and TLS.** `fire-http`: a small HTTP/1.1 client (`Get`, `Post`, headers, chunked, redirects) and server (route lambdas) as a separate package on top of `net`. TLS (mbedTLS, which ESP-IDF and
    most Linux systems have) as its own step and package `fire-tls` that wraps a `TcpClient`; certificate handling decided there.
+
+## Reference (`#import "net"`, the package `fire-net`)
+
+Everything is in `namespace Net`. The package needs `io` and `time` (they come with it). Time limits are a `TimeSpan`, a time value (`500ms`, `5s`) or a number (milliseconds); `undefined` means "no limit".
+
+| class | |
+|---|---|
+| `Net.TcpClient(host, port, timeout = 10000)` | connects; an `IO.Stream` (`Read`, `Write`, `ReadByte`, `ReadBytes`, `CopyTo`, ...), plus `WriteString(text)` (UTF-8), `ReadTimeout`/`WriteTimeout` (settable), `RemoteHost`, `RemotePort`, `LocalHost`, `LocalPort`, `Available`, `WaitReadable(timeout = 0)`, `NoDelay`, `KeepAlive`, `Shutdown(0 receive \| 1 send \| 2 both)`, `Close()`. `Read` returns 0 when the other side has closed its end. |
+| `Net.TcpListener(host, port, backlog = 16)` | host `""` listens on every interface, port 0 takes a free port: `Port`, `Host`; `Accept(timeout = undefined)` returns a `TcpClient` (`Net.TimeoutException` when the limit runs out), `TryAccept(timeout)` returns undefined instead, `Pending(timeout = 0)`, `Close()` |
+| `Net.UdpSocket(host = "", port = 0)` | `SendTo(buffer, offset, count, host, port)`, `SendTo(buffer, host, port)`, `SendString(text, host, port)`, `ReceiveFrom(buffer, offset, count, timeout = undefined)` returns the size of the datagram (a longer one is cut), the sender is `FromHost`/`FromPort`; `Port`, `Available` (size of the next datagram), `WaitReadable(timeout = 0)`, `Broadcast`, `Close()` |
+| `Net.Dns` | `Resolve(name)` returns a list of the addresses as text (IPv4 and IPv6; a literal address gives itself), `First(name)` |
+
+Errors: `Net.NetException` (`message`, `code`) and its subclasses `RefusedException` (3), `TimeoutException` (4), `ClosedException` (2 handle closed, 7 reset or ended, 12 not connected), `PermissionException` (8 the host's policy, 13 the operating system), `ResolveException` (10);
+the other codes (1 invalid argument, 5 unreachable, 6 address in use, 9 not supported, 11 other) come as a plain `NetException`. `Net.NetCodes` names the numbers. A destructor closes what is left open, and so does the end of the program.
+
+The host decides with `NetPolicy` (`fire.Runtime`): `AllowAll` (default), `DenyAll`, `LoopbackOnly`, `Hosts(rules, allowListen)`; `RuntimeSession.Build(..., netPolicy: ...)` passes it, the library asks through `fire_host.net_allow` (native/abi/fire_pkg_abi.h). A native build is
+unrestricted unless the target defines `FIRE_NET_POLICY`. A platform without a network (`freertos` until a board package provides one) throws `NetException` with code 9 on the first call.
 
 ## Hardware buses (the device platform)
 
