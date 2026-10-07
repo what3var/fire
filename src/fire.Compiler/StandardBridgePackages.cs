@@ -35,6 +35,7 @@ namespace fire.Compiler
             "ui" => new[] { "graphics", "windows", "reflection" },
             "linq" => new[] { "reflection" },
             "random" => new[] { "time" },
+            "gpio" => new[] { "time" },
             "http" => new[] { "net", "tls", "io", "time" },
             "tls" => new[] { "net", "io", "time" },
             "net" => new[] { "io", "time" },   // a connection is an IO.Stream; the time limits need the clock
@@ -49,6 +50,7 @@ namespace fire.Compiler
             "net" => fire.Standard.NetPrelude.Source,
             "http" => fire.Standard.HttpPrelude.Source,
             "tls" => fire.Standard.TlsPrelude.Source,
+            "gpio" => fire.Standard.GpioPrelude.Source,
             "io" => fire.Standard.IoPrelude.Source,
             "devices" => fire.Standard.DevicesPrelude.Source,
             _ => ImportedPreludes.TrySourceFor(bridge),
@@ -112,6 +114,17 @@ namespace fire.Compiler
                     F("__NetLocalHost", 1, "net::LocalHost", list: true), F("__NetLocalPort", 1, "net::LocalPort"), F("__NetAvailable", 1, "net::Available"),
                     F("__NetPoll", 4, "net::Poll"), F("__NetSetOption", 3, "net::SetOption"), F("__NetShutdown", 2, "net::Shutdown"), F("__NetClose", 1, "net::Close"),
                     F("__NetResolve", 1, "net::Resolve", list: true),
+                })
+                    yield return f;
+            }
+            if (bridge == "gpio")
+            {
+                foreach (var f in new[]
+                {
+                    F("__GpioLastError", 0, "gpio::LastError"), F("__GpioLastErrorMessage", 0, "gpio::LastErrorMessage", list: true), F("__GpioOpenCount", 0, "gpio::OpenCount"),
+                    F("__GpioSupported", 0, "gpio::Supported"), F("__GpioChips", 0, "gpio::Chips", list: true), F("__GpioOpen", 2, "gpio::Open"), F("__GpioConfigure", 5, "gpio::Configure"),
+                    F("__GpioRead", 1, "gpio::Read"), F("__GpioWrite", 2, "gpio::Write"), F("__GpioPollEdge", 1, "gpio::PollEdge"), F("__GpioEdgeTime", 1, "gpio::EdgeTime"), F("__GpioClose", 1, "gpio::Close"),
+                    F("__GpioSimWire", 2, "gpio::SimWire"), F("__GpioSimUnwire", 2, "gpio::SimUnwire"), F("__GpioSimDrive", 2, "gpio::SimDrive"), F("__GpioSimLevel", 1, "gpio::SimLevel"), F("__GpioSimReset", 0, "gpio::SimReset"),
                 })
                     yield return f;
             }
@@ -211,6 +224,7 @@ namespace fire.Compiler
                         native.LinkLibraries["posix"] = new List<string> { "ssl", "crypto" };   // OpenSSL (an ESP32 gets mbedTLS from ESP-IDF; define FIRE_TLS_MBEDTLS / FIRE_NO_TLS to choose otherwise)
                         native.LinkLibraries["windows"] = new List<string> { "ssl", "crypto", "ws2_32", "crypt32" };
                     }
+                    if (bridge == "gpio") native.Reset = "gpio::reset";
                     if (bridge == "net")
                     {
                         native.Reset = "net::reset";

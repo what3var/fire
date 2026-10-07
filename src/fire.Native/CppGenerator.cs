@@ -466,6 +466,7 @@ namespace fire.Native
             if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{_target.Native.Platform}/fire_dev.hpp\"");   // (the devices package)
             if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_NET_HEADER \"platform/{_target.Native.Platform}/fire_net.hpp\"");   // (the net package)
             if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_TLS_HEADER \"platform/{_target.Native.Platform}/fire_tls.hpp\"");   // (the tls package)
+            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_GPIO_HEADER \"platform/{_target.Native.Platform}/fire_gpio.hpp\"");   // (the gpio package)
             if (_usesGraphics) sb.AppendLine("#include \"bridges/fire_bridge_graphics.hpp\"");
             if (_usesWindows)
             {

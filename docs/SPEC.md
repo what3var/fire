@@ -2171,6 +2171,11 @@ Errors are `Http.HttpException` (with a `code`) and the exceptions of `net`.
 The package `fire-tls` (docs/NETWORK.md is the reference): `Tls.Stream` (an `IO.Stream` over a `Net.TcpClient`), `Tls.Server`, `Tls.Options`; OpenSSL or mbedTLS underneath. `#import "http"` brings it along for `https://`. Errors are
 `Tls.TlsException` and `Tls.CertificateException` (both `Net.NetException`s).
 
+### 8.23 GPIO (`#import "gpio"`)
+
+The package `fire-gpio` (docs/NETWORK.md is the reference): `Gpio.Pin` (input with pull and edge events, output, read/write/toggle), `Gpio.Board` (the chips of the machine) and `Gpio.Sim` (the simulated chip `"sim"` that every platform has); the character device of Linux or
+ESP-IDF underneath. It needs `time`. Nothing blocks: edges are collected and handed out by `TakeEdge`/`WaitEdge`/`Poll`. Errors are `Gpio.GpioException` (with a `code`) and subclasses.
+
 ## 9. Open points
 
 The only earlier point here – the method declaration syntax

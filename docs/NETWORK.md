@@ -1,6 +1,6 @@
 # Networking and hardware buses - design and steps
 
-Status: **networking (Net 1 and 2) is built** - the package `fire-net`, see "Reference" below; HTTP/TLS, the hardware buses and WiFi are still plans. The steps are also kept as tasks (Net 1-3, GPIO, I2C, SPI, WiFi). Everything is a **package** (`ember`, docs/PACKAGES.md): the compiler and the
+Status: **networking (`fire-net`, `fire-http`, `fire-tls`) and GPIO (`fire-gpio`) are built**, see the references below; I2C, SPI and WiFi are still plans. The steps are also kept as tasks (Net 1-3, GPIO, I2C, SPI, WiFi). Everything is a **package** (`ember`, docs/PACKAGES.md): the compiler and the
 runtime do not change, a program that does not `#import` it does not carry it. Like `time`, `io` and `devices`, each one is a prelude in fire plus C++ in `native/bridges/` over a thin
 platform layer in `native/platform/<name>/` (`plat::`), so the same code runs in the VM (through the package ABI, docs/PACKAGE_NATIVES.md) and in a native build, and a platform without the
 feature fails with a clear "not supported" error instead of not compiling.
@@ -123,15 +123,45 @@ The versions are TLS 1.2 and 1.3; SNI is sent; a server that closes without `clo
   store on a microcontroller. (Not tried on a board yet.)
 * mbedTLS checks host *names* only, not IP addresses in the certificate: connecting to `127.0.0.1` against a certificate with an IP entry works with OpenSSL, not with mbedTLS.
 
+## GPIO (`#import "gpio"`, the package `fire-gpio`)
+
+Digital pins. It needs `time` (the clock of the time limits). The natives are `native/bridges/fire_bridge_gpio.hpp` over `plat::gpio` (`native/platform/std/fire_gpio_*.hpp`): the **GPIO character device** of Linux
+(`/dev/gpiochipN`, the v2 ioctl interface of kernel 5.10+ - Raspberry Pi and other boards; used only when the kernel headers are there, `FIRE_NO_GPIO` switches it off), **ESP-IDF `driver/gpio`** on an ESP32
+(add the components `driver` and `esp_timer`), and a stub elsewhere (Windows, macOS: no chips). Every platform has the **simulated chip** `"sim"`, so a program can be written and tested on the PC.
+
+```
+#import "gpio"
+
+var led = new Gpio.Pin(17).Output()                        // line 17 of the default chip, an output that starts low
+led.Write(true)
+led.Toggle()                                               // returns the new level
+
+var button = new Gpio.Pin(27).Input(Gpio.Pull.Up, Gpio.Edge.Falling)
+if (button.WaitEdge(5s) != Gpio.Edge.None) { print("pressed at " + button.EdgeTime + " us") }
+button.onEdge = (edge, micros) => { print("edge " + edge) }
+button.Poll()                                              // hands every waiting edge to onEdge; call it from the program's loop
+```
+
+* `Gpio.Board.Chips()` lists the chips (`"sim"` first, then `"gpiochip0"`, ... on Linux, `"gpio"` on an ESP32); `Gpio.Board.DefaultChip()` is the first real one, or `"sim"` if the machine has none (`new Gpio.Pin(line)`); `Gpio.Board.Available()` tells whether there is
+  hardware. `new Gpio.Pin("gpiochip1", 4)` names the chip.
+* A pin is configured by `Input(pull, edge)` (`Gpio.Pull.None/Up/Down`, `Gpio.Edge.None/Rising/Falling/Both`) or `Output(initial)`; both return the pin. Opening claims nothing, configuring does: a second pin on the same line throws `Gpio.BusyException`. `Close()` gives it back.
+  `Read()` (bool) / `ReadInt()`, `Write(bool)`, `Toggle()`; an output can be read back.
+* Edges are collected (by the sim, by the kernel's event queue, by an interrupt on the ESP32) and handed out one by one: `TakeEdge()` (no waiting; `Gpio.Edge.None` if there is none, else `Rising`/`Falling`), `WaitEdge(timeout)` (polls and sleeps 1 to 5 ms, so `terminate` and other threads
+  work; `None` when the time ran out) and `Poll()`. `EdgeTime` is when the edge that was taken last happened (microseconds on a clock that only goes forward). At most 16 edges are kept per pin; when nobody takes them the oldest are lost (Linux: the kernel's queue).
+  Nothing is debounced: a mechanical button needs a pause in the program.
+* **The simulated chip** has the lines 0..31. `Gpio.Sim.Wire(a, b)` / `Unwire(a, b)` connect two lines (what one drives, the other sees; two outputs that disagree: low wins), `Gpio.Sim.Drive(line, level)` / `Release(line)` drive a line from outside like a button or sensor
+  (`Gpio.Sim.Level(line)` looks at the level), pull resistors work on inputs, `Gpio.Sim.Reset()` removes wires and drives. Edges and busy-ness behave as on the real thing.
+* Errors are `Gpio.GpioException` (with a `code`): `NotFoundException` (3: no such chip or line), `BusyException` (4), `PermissionException` (5: on Linux the user must be in the group `gpio`) and `UnsupportedException` (6).
+  Bad use (reading a pin that is not set up, writing an input, taking edges of an output) is code 1.
+* Not tried on hardware yet: the Linux and ESP32 backends are written against the documented interfaces; the ESP32 file compiles against a stand-in of `driver/gpio.h`, the Linux one against the kernel headers.
+
 ## Hardware buses (the device platform)
 
 The device platform of `devices` today knows serial ports and loopback devices. GPIO, I2C and SPI are added the same way: a driver per platform under `native/platform/std/fire_<bus>_*.hpp`
 (`posix` uses what Linux offers **when it is there**, `esp32` the ESP-IDF drivers, the others the "not supported" stub) and **one package each**, so a program that only needs I2C does not carry SPI.
 On Linux an unavailable bus is not an error of the program: the list of buses is just empty, `Open` of a missing one throws `DeviceException` (`code = NotFound`).
 
-* **GPIO (`fire-gpio`):** `Gpio.Pin(n)` / `Gpio.Pin("chip0", n)`; `Mode(Input | Output, Pull)`, `Read()`, `Write(value)`, `Toggle()`; edges: `OnChange(Rising | Falling | Both, lambda)` or polled
-  `TakeEdge()` (the usual fire pair of lambda and `Take...`). Linux: the character device `/dev/gpiochipN` (libgpiod v2 ioctl interface, fallback sysfs for old kernels); ESP32: `driver/gpio`
-  with an ISR that only sets a flag (the lambda runs on the main queue).
+* **GPIO (`fire-gpio`):** built, see "GPIO" below.
 * **I2C (`fire-i2c`):** `I2c.Open(bus)`; `Write(address, buffer)`, `Read(address, count)`, `WriteRead(address, out, count)`, `Scan()`; speed and pins configurable (`FIRE_I2C<n>_SDA` ... like the UART
   pins). Linux: `/dev/i2c-N` with the `I2C_RDWR` ioctl; ESP32: the new `i2c_master` driver.
 * **SPI (`fire-spi`):** `Spi.Open(bus, chipSelect)`, `Mode(0..3)`, `Speed(hz)`, `Transfer(out)` (full duplex, returns the received bytes), `Write`, `Read`, `BitOrder`. Linux: `/dev/spidevB.C`
@@ -141,7 +171,7 @@ On Linux an unavailable bus is not an error of the program: the list of buses is
 
 ### Steps
 
-4. **GPIO** - package, Linux + ESP32 + stub, loopback pair driver, tests, docs.
+4. **GPIO** - done: package `fire-gpio`, Linux + ESP32 + stub, simulated chip, tests, docs.
 5. **I2C** - package, Linux + ESP32 + stub, fake slave, tests, docs.
 6. **SPI** - package, Linux + ESP32 + stub, MISO/MOSI loopback, tests, docs.
 7. **WiFi (ESP32)** - a second step after `net`, through the device platform: `fire-wifi` brings a `WiFi` device (`Scan()`, `Connect(ssid, password)`, `StartAccessPoint(...)`, state changes as device

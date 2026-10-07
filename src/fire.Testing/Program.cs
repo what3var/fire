@@ -16910,6 +16910,75 @@ else
         }
     }
 
+    // GPIO (bridges/fire_bridge_gpio.hpp): the simulated chip "sim" - outputs, inputs, wires, pulls, edges, errors - the same in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Gpio: simulierter Chip - Ausgang, Eingang, Draht, Pull, Flanken, Fehler", """
+            #import "gpio"
+            print("chips " + Gpio.Board.Chips()[0] + " " + (Gpio.Board.Chips().count >= 1))
+            var led = new Gpio.Pin("sim", 1).Output()
+            var btn = new Gpio.Pin("sim", 2).Input(Gpio.Pull.Down, Gpio.Edge.Both)
+            print("props " + led.Chip + " " + led.Line + " " + led.IsOutput + " " + btn.IsInput + " " + led.IsClosed)
+            Gpio.Sim.Wire(1, 2)
+            print("low " + btn.Read() + " " + btn.ReadInt() + " " + led.Read())
+            led.Write(true)
+            print("high " + btn.Read() + " edge " + btn.TakeEdge())
+            var first = btn.EdgeTime
+            print("none " + btn.TakeEdge())
+            print("toggle " + led.Toggle() + " " + btn.Read() + " edge " + btn.TakeEdge() + " " + (btn.EdgeTime >= first))
+            Gpio.Sim.Unwire(1, 2)
+            var up = new Gpio.Pin("sim", 3).Input(Gpio.Pull.Up, Gpio.Edge.Falling)
+            print("pull up " + up.Read())
+            Gpio.Sim.Drive(3, false)
+            print("driven " + up.Read() + " " + Gpio.Sim.Level(3) + " edge " + up.WaitEdge(200ms))
+            Gpio.Sim.Drive(3, true)
+            print("rising is not watched: " + up.WaitEdge(30ms) + " " + up.Read())
+            Gpio.Sim.Release(3)
+            print("released " + up.Read())
+            print("timeout " + up.WaitEdge(20))
+
+            class Counter {
+                int rising
+                int falling
+                construct() { this.rising = 0; this.falling = 0 }
+                Count(e, t) {
+                    if (e == Gpio.Edge.Rising) { this.rising = this.rising + 1 }
+                    if (e == Gpio.Edge.Falling) { this.falling = this.falling + 1 }
+                }
+            }
+            var counter = new Counter()
+            var watch = new Gpio.Pin("sim", 4).Input(Gpio.Pull.None, Gpio.Edge.Both)
+            watch.onEdge = (e, t) => { counter.Count(e, t) }
+            for (var i = 0; i < 3; i++) {
+                Gpio.Sim.Drive(4, true)
+                Gpio.Sim.Drive(4, false)
+            }
+            print("poll " + watch.Poll() + " " + counter.rising + " " + counter.falling)
+            for (var i = 0; i < 40; i++) { Gpio.Sim.Drive(4, i % 2 == 0) }
+            print("queue " + watch.Poll())
+
+            var out1 = new Gpio.Pin("sim", 5).Output(true)
+            var out2 = new Gpio.Pin("sim", 6).Output(false)
+            Gpio.Sim.Wire(5, 6)
+            print("fight " + Gpio.Sim.Level(5) + " " + out1.Read() + " " + out2.Read())
+            out2.Write(true)
+            print("agree " + Gpio.Sim.Level(6))
+            Gpio.Sim.Reset()
+
+            try { var x = new Gpio.Pin("sim", 1).Input() } catch (Gpio.BusyException e) { print("busy " + e.code) }
+            led.Close()
+            var again = new Gpio.Pin("sim", 1).Output()
+            print("reclaimed " + again.IsOutput)
+            try { var x = new Gpio.Pin("sim", 99) } catch (Gpio.NotFoundException e) { print("no line " + e.code) }
+            try { var x = new Gpio.Pin("nochip", 1) } catch (Gpio.NotFoundException e) { print("no chip " + e.code) }
+            try { again.TakeEdge() } catch (Gpio.GpioException e) { print("output edge " + e.code) }
+            try { btn.Write(true) } catch (Gpio.GpioException e) { print("input write " + e.code) }
+            try { new Gpio.Pin("sim", 7).Read() } catch (Gpio.GpioException e) { print("unset " + e.code) }
+            try { Gpio.Sim.Wire(1, 40) } catch (Gpio.NotFoundException e) { print("wire " + e.code) }
+            try { led.Read() } catch (Gpio.GpioException e) { print("closed " + e.code) }
+            """),
+    }).ToArray();
+
     // Network (bridges/fire_bridge_net.hpp): TCP, UDP and name resolution on the loopback interface - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {

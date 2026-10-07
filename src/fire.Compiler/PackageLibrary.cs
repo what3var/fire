@@ -175,6 +175,7 @@ namespace fire.Compiler
             sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{target.Native.Platform}/fire_dev.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_NET_HEADER \"platform/{target.Native.Platform}/fire_net.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_TLS_HEADER \"platform/{target.Native.Platform}/fire_tls.hpp\"");
+            sb.AppendLine($"#define FIRE_PLATFORM_GPIO_HEADER \"platform/{target.Native.Platform}/fire_gpio.hpp\"");
             sb.AppendLine("#include \"fire_rt.hpp\"");
             foreach (var (name, text) in import.ReadNativeSources(HostPlatformKeys))
             {
