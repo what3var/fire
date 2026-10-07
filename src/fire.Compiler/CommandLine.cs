@@ -521,6 +521,8 @@ namespace fire.Compiler
 
         /// <summary>Fehler, die das Skript selbst verursacht (Parser, Resolver, Compiler, Präprozessor) - alles
         /// andere ist ein Fehler im Werkzeug und soll mit seinem Stacktrace sichtbar bleiben.</summary>
+        public static bool IsCompileErrorForEditor(Exception ex) => IsCompileError(ex);
+
         internal static bool IsCompileError(Exception ex) =>
             ex is ParseException or ResolverException or CompilerException
                 or NotSupportedException or PreprocessorException or LibraryEntryPointException or fire.Projects.ProjectException;

@@ -100,12 +100,17 @@ fire.Compiler build Core/Core.fireproj          # a library: bin/Core-1.2.0.fpk 
 ## The editor
 
 * **Solution Explorer** (a tool window): the solution, its projects (programs and libraries), their files and references. Double-click opens a file; the context menus add a new file,
-  an existing file, a reference, set the startup project, remove, and open the project's properties.
-* **File menu**: New/Open/Close Project and Solution; **Project properties**: the settings above (those that a solution fixes are marked), the references, program or library.
-* The documents stay documents: files of the project open in tabs like any other file, files outside open next to them, and every command that builds looks at the active tab.
-* Breakpoints belong to a file of the project (not to "the" script); the debugger shows the file it is in.
+  an existing file, a reference, set the startup project, build/run/pack, reveal in the file manager, remove, and open the project's properties.
+* **File menu**: New Project / New Solution / Open Project or Solution / Close. **Project menu**: add a new or existing project to the solution, set the startup project, reload the project (read its folder
+  again), **Project properties** (tabs *Project*, *Build settings*, *References*, *Solution*; the settings of the solution are the ones that every project without its own value gets).
+* The documents stay documents: files of the project open in tabs like any other file, files outside open next to them, and every command that builds looks at the active tab. The status bar
+  and the Build/Run commands say what they act on (`Build: App (project)`, `Build: single.script (single file)`). Unsaved buffers of the project's files go into the build.
+* **F5 on a library file** runs the *startup project* (a library has no entry point); **Build** on a library packs it (`Core-1.2.0.fpk`).
+* Breakpoints belong to a file of the project (not to "the" script), also in library files; the debugger shows the file it is in. Live diagnostics of a file are made in the context of its project
+  (the libraries, the project's symbols for `#if`).
+* Old window layouts without the Solution Explorer fall back to the default layout once.
 
 ## Open points
 
-* Solution configurations (Debug/Release sets of settings), project templates in `ember create`, a "Pack" button for the library in the editor (the command exists), file watching so that
-  files added outside of the editor show up at once (`Workspace.Refresh` does it on demand).
+* Solution configurations (Debug/Release sets of settings), project templates in `ember create`, file watching so that files added outside of the editor show up at once
+  (Reload Project / `Workspace.Refresh` does it on demand).

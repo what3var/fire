@@ -34,6 +34,9 @@ namespace fire.Compiler
 
         public int FirstUserSourceIndex { get; private set; }
 
+        /// <summary>The file of each source by source index (see LinkedProgram.SourceFiles): the debugger maps a file to its index and the index of a paused line to its file.</summary>
+        public IReadOnlyList<string?>? SourceFiles { get; private set; }
+
 
 
 
@@ -108,7 +111,7 @@ namespace fire.Compiler
         /// Direktive", ohne ihre eigentliche Wirkung auszulösen. Eine UNBEKANNTE Erweiterung (`#import
         /// "unfug"`) wirft weiterhin - das ist ein ECHTER Fehler, kein
         /// reines "kennt die Live-Diagnostik das nur (noch) nicht".</summary>
-        public static DirectiveRegistry CreateProjectDirectiveRegistry(Action<string>? onImport = null, IEnumerable<string>? defines = null)
+        public static DirectiveRegistry CreateProjectDirectiveRegistry(Action<string>? onImport = null, IEnumerable<string>? defines = null, Func<string, bool>? tryLibrary = null)
         {
             var registry = new DirectiveRegistry(); // komplett leer, NICHT CreateDefault()
             foreach (var symbol in ConditionalSymbols.For(null, ConditionalSymbols.DefaultEngine, null, defines)) registry.Symbols.Add(symbol); // `#if windows`: the machine the VM runs on
@@ -116,6 +119,7 @@ namespace fire.Compiler
             {
                 if (args[0].Kind == ValueKind.String)
                 {
+                    if (tryLibrary?.Invoke(args[0].AsString()) == true) return null;   // a library of the project (handled by the caller)
                     foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(args[0].AsString()))) onImport?.Invoke(key);
                     return null;
                 }
@@ -191,6 +195,7 @@ namespace fire.Compiler
                 externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: linkedProgram.ExecutionMode);
 
             session.SetVM(mainVm, windowManager, globalScope, natives, fbManager, rendererManager, linkedProgram.FirstUserSource);
+            session.SourceFiles = linkedProgram.SourceFiles;
             session.IoResources = ioResources;
 
             return session;

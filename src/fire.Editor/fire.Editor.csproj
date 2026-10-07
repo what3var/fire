@@ -33,6 +33,7 @@
   <ItemGroup>
     <!-- Greift per Projektreferenz direkt auf Lexer/Parser/Resolver/Compiler/VM zu. -->
     <ProjectReference Include="..\fire.Compiler\fire.Compiler.csproj" />
+    <ProjectReference Include="..\fire.Project\fire.Project.csproj" />
     <ProjectReference Include="..\fire.Runtime\fire.Runtime.csproj" />
     <ProjectReference Include="..\fire.UI.Markup\fire.UI.Markup.csproj" />
   </ItemGroup>

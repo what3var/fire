@@ -55,13 +55,13 @@ namespace fire.Editor
     /// </summary>
     public static class LiveDiagnostics
     {
-        public static List<Diagnostic> Analyze(string source, string? basePath = null) => Analyze(source, Array.Empty<string>(), basePath);
+        public static List<Diagnostic> Analyze(string source, string? basePath = null) => Analyze(source, Array.Empty<string>(), basePath, null);
 
         /// <summary>`extraImports`: Namen von Erweiterungen (wie in `#import
         /// "name"`), die zusätzlich zu den in `source` selbst
         /// vorkommenden als zugeschaltet gelten - siehe AnalyzeInProject.
         /// Unbekannte Namen werden ignoriert.</summary>
-        private static List<Diagnostic> Analyze(string source, IEnumerable<string> extraImports, string? basePath = null)
+        private static List<Diagnostic> Analyze(string source, IEnumerable<string> extraImports, string? basePath, fire.Projects.BuildPlan? plan)
         {
             var diagnostics = new List<Diagnostic>();
             if (string.IsNullOrWhiteSpace(source)) return diagnostics;
@@ -72,8 +72,10 @@ namespace fire.Editor
                 var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var cwd = basePath ?? System.IO.Directory.GetCurrentDirectory();
                 var nativeImports = new HashSet<string>();
+                var projectImports = new List<string>();   // libraries of the project that are imported
                 foreach (var name in extraImports)
                 {
+                    if (ProjectLibraries.TryImport(plan, name, projectImports)) continue;
                     try { foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name))) nativeImports.Add(key); }
                     catch (Exception) { /* unbekannte Erweiterung - meldet deren eigene Datei */ }
                 }
@@ -85,16 +87,21 @@ namespace fire.Editor
                 // sie beim tatsächlichen Ausführen längst akzeptiert wird.
                 // Der Callback merkt sich die zugeschalteten Erweiterungen,
                 // deren Preludes unten eingesetzt werden.
-                var registry = RuntimeSession.CreateProjectDirectiveRegistry(name => nativeImports.Add(name));
+                var registry = RuntimeSession.CreateProjectDirectiveRegistry(name => nativeImports.Add(name), tryLibrary: name => ProjectLibraries.TryImport(plan, name, projectImports));
                 var processed = new List<ProcessedSource>();
                 foreach (var s in new[] { fire.Standard.Prelude.Source, source })
                     processed.Add(Preprocessor.Process(s, cwd, alreadyIncluded, registry));
+                // the libraries of the project that this document (or another file of the project) imports: their files are known to the analysis like in a real build
+                var libraryFiles = plan != null && projectImports.Count > 0
+                    ? ProjectLibraries.Process(plan, projectImports, file => Preprocessor.Process(file.Text, file.Directory, alreadyIncluded, registry))
+                    : new List<(ProcessedSource Source, string Path)>();
 
                 // Erst NACH dem Vorverarbeiten ALLER Quellen ist bekannt, welche
                 // Erweiterungen zugeschaltet sind - wie im Linker.
                 ImportedPreludes.Insert(
                     nativeImports, natives, processed,
                     preludeSource => Preprocessor.Process(preludeSource, cwd, alreadyIncluded, registry));
+                processed.InsertRange(1, libraryFiles.Select(l => l.Source));
 
                 var program = Parser.ParseMultiple(processed);
                 var resolveResult = Resolver.Resolve(program, natives.Names);
@@ -183,7 +190,7 @@ namespace fire.Editor
         /// wird dagegen ECHT mitgezählt - die Erweiterungen (und damit ihre
         /// Preludes, siehe ImportedPreludes) gelten im echten Compiler für
         /// das ganze Projekt, nicht pro Datei.</summary>
-        public static List<Diagnostic> AnalyzeInProject(string source, IReadOnlyList<string> otherProjectFiles, string? basePath = null)
+        public static List<Diagnostic> AnalyzeInProject(string source, IReadOnlyList<string> otherProjectFiles, string? basePath = null, fire.Projects.BuildPlan? plan = null)
         {
             var importsElsewhere = otherProjectFiles
                 .Where(other => !string.IsNullOrWhiteSpace(other))
@@ -191,7 +198,7 @@ namespace fire.Editor
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var diagnostics = Analyze(source, importsElsewhere, basePath);
+            var diagnostics = Analyze(source, importsElsewhere, basePath, plan);
             if (diagnostics.Count == 0 || otherProjectFiles.Count == 0) return diagnostics;
 
             var knownElsewhere = new HashSet<string>();

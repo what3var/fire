@@ -41,6 +41,11 @@ namespace fire.Runtime
         /// the ESP32). The VM and the native backend compute with the same precision (SPEC 8.2.1).</summary>
         public int FloatWidth { get; init; } = 64;
 
+        /// <summary>The file each source of the program comes from, by source index (the index of `Chunk.MarkLine`, of a breakpoint): null for the prelude and the preludes of imports and for
+        /// a source that is no file. Only known while linking (not serialized): the debugger maps a file to its source index with it.</summary>
+        [MemoryPackIgnore]
+        public IReadOnlyList<string?>? SourceFiles { get; init; }
+
         public LinkedProgram(CompiledProgram program, HashSet<string> nativeImports, int firstUserSource, VmExecutionMode executionMode = VmExecutionMode.Release)
         {
             Program = program;

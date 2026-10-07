@@ -195,6 +195,19 @@ namespace fire.Compiler
             throw new Exception("The 'floatwidth' directive expects 32 or 64.");
         }
 
+        /// <summary>The file of each source of the program (see LinkedProgram.SourceFiles): the prelude and the preludes of imports have none, then the files of the libraries, then the files of the program.</summary>
+        private IReadOnlyList<string?> SourceFilesOf(int total, List<string> libraryPaths, int userCount)
+        {
+            var files = new string?[total];
+            for (int i = 0; i < libraryPaths.Count && 1 + i < total; i++) files[1 + i] = libraryPaths[i];
+            for (int i = 0; i < userCount; i++)
+            {
+                string? path = SourcePaths != null && i < SourcePaths.Count ? SourcePaths[i] : null;
+                files[total - userCount + i] = path != null ? Path.GetFullPath(path) : null;
+            }
+            return files;
+        }
+
         /// <summary>A package that the project references has to be installed (`ember install`); the version is a minimum.</summary>
         private void CheckPackageReferences()
         {
@@ -257,11 +270,7 @@ namespace fire.Compiler
                 if (args[0].Kind == ValueKind.String)
                 {
                     string importName = args[0].AsString();
-                    if (Plan != null && Plan.Libraries.TryGetValue(importName, out var library))
-                    {
-                        if (!projectImports.Contains(library.ImportName, StringComparer.OrdinalIgnoreCase)) projectImports.Add(library.ImportName);   // a library of the project: its files come with it
-                        return null;
-                    }
+                    if (ProjectLibraries.TryImport(Plan, importName, projectImports)) return null;   // a library of the project: its files come with it
                     foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(importName))) nativeImports.Add(key);
                     return null;
                 }
@@ -376,24 +385,9 @@ namespace fire.Compiler
             }
 
             // The libraries that the sources import (and those they need): their files are processed like the others - they may import more libraries and standard imports themselves.
-            var libraryFiles = new List<(fire.Projects.LibraryPlan Library, List<ProcessedSource> Sources)>();
-            if (Plan != null && projectImports.Count > 0)
-            {
-                var done = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                for (bool more = true; more;)
-                {
-                    more = false;
-                    foreach (var library in Plan.LibraryOrder(projectImports.ToList()))
-                    {
-                        if (!done.Add(library.ImportName)) continue;
-                        more = true;
-                        var processedFiles = new List<ProcessedSource>();
-                        foreach (var file in library.Sources)
-                            processedFiles.Add(Preprocessor.Process(file.Text, file.Directory, alreadyIncluded, registry) with { Name = library.Name + "/" + Path.GetFileName(file.Path) });
-                        libraryFiles.Add((library, processedFiles));
-                    }
-                }
-            }
+            var libraryFiles = Plan != null && projectImports.Count > 0
+                ? ProjectLibraries.Process(Plan, projectImports, file => Preprocessor.Process(file.Text, file.Directory, alreadyIncluded, registry))
+                : new List<(ProcessedSource Source, string Path)>();
 
             // Preludes (und native Platzhalter) der per `#import` zugeschalteten
             // Erweiterungen - dieselbe Logik nutzt die Live-Diagnostik des
@@ -406,9 +400,8 @@ namespace fire.Compiler
             // the libraries of the project come before the code of the project, the ones that others need first
             if (libraryFiles.Count > 0)
             {
-                var ordered = Plan!.LibraryOrder(projectImports.ToList()).SelectMany(lib => libraryFiles.Where(l => l.Library == lib).SelectMany(l => l.Sources)).ToList();
-                processedSources.InsertRange(1, ordered);
-                firstUserSource += ordered.Count;
+                processedSources.InsertRange(1, libraryFiles.Select(l => l.Source));
+                firstUserSource += libraryFiles.Count;
             }
             CheckPackageReferences();
 
@@ -434,7 +427,7 @@ namespace fire.Compiler
             var packageNatives = PackageImports.NativesOf(nativeImports);
             // a program that is packed carries the libraries of its packages: they are built now (a native build does not need them: it takes the C++ source)
             List<string>? packageLibraryFiles = !string.IsNullOrEmpty(outname) && Engine != "native" ? PackageImports.EnsureLibraries(nativeImports) : null;
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles };
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, SourceFiles = SourceFilesOf(processedSources.Count, libraryFiles.Select(l => l.Path).ToList(), sources.Count) };
 
             if (!string.IsNullOrEmpty(outname))
             {

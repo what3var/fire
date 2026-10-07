@@ -66,6 +66,9 @@ namespace fire.Editor
         /// nach einem erfolgreichen Compile()-Aufruf gültig (vorher 0).</summary>
         public int FirstUserSourceIndex { get; private set; }
 
+        /// <summary>The file of each source by source index (see RuntimeSession.SourceFiles); empty before the first successful Compile().</summary>
+        public IReadOnlyList<string?> SourceFiles { get; private set; } = Array.Empty<string?>();
+
         /// <summary>Der geteilte DeviceManager des Hosts, den Skripte mit `#import "devices"` benutzen (null: jedes Skript
         /// bekommt einen eigenen). Der Host setzt ihn einmal, siehe EditorDeviceService.</summary>
         public fire.Device.Manager.DeviceManager.DeviceManager? DeviceManager { get; set; }
@@ -112,7 +115,7 @@ namespace fire.Editor
         /// DebugThreadContext.ForMain - startet wartend, noch nichts läuft).
         /// Bei einem Parse-/Resolve-Fehler bleibt Vm null, CompileError
         /// enthält die Meldung.</summary>
-        public bool Compile(string[] sources, string? outname = null, string? basePath = null)
+        public bool Compile(string[] sources, string? outname = null, string? basePath = null, fire.Projects.BuildPlan? plan = null)
         {
             Reset();
 
@@ -132,12 +135,13 @@ namespace fire.Editor
                     string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
                     OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {line}" : line);
                 }),
-                basePath: basePath, deviceManager: DeviceManager);
+                basePath: basePath, deviceManager: DeviceManager, plan: plan);
 
                 ActiveExecutionMode = ExecutionMode;
                 _session = session;
 
                 FirstUserSourceIndex = session.FirstUserSourceIndex;
+                SourceFiles = session.SourceFiles ?? Array.Empty<string?>();
 
                 var mainCtx = DebugThreadContext.ForMain(session.VirtualMachine);
                 mainCtx.Paused += ctx =>
@@ -164,7 +168,7 @@ namespace fire.Editor
                 return true;
             }
             catch (Exception ex) when (ex is ParseException or ResolverException
-                or NotSupportedException or PreprocessorException)
+                or NotSupportedException or PreprocessorException or LibraryEntryPointException or fire.Projects.ProjectException)
             {
                 // Alle gesammelten Fehler (Resolver/Compiler brechen nicht beim
                 // ersten ab, siehe CompileErrors), nicht nur den ersten.

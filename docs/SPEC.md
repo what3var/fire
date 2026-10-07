@@ -2191,6 +2191,13 @@ queued answers, a log of what was sent); `/dev/spidevB.C` of Linux or the SPI ma
 The package `fire-wifi` (docs/NETWORK.md is the reference): `WiFi.Station` (scan, join, state, address), `WiFi.AccessPoint`, `WiFi.Board` (the radios of the machine) and `WiFi.Sim` (the simulated radio `"sim"` that every platform has); the WiFi driver of ESP-IDF underneath, "not
 supported" where the operating system owns the network. It needs `time`; scanning and joining poll the natives and sleep between the questions. Errors are `WiFi.WiFiException` (with a `code`) and subclasses (`AuthException`, `NotFoundException`, `TimeoutException`, ...).
 
+### 8.27 Projects and solutions
+
+A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files (docs/PROJECTS.md is the reference). A project names its files (default: all `*.script` of its
+folder), its type (`exe`, or `library` without an entry point - a statement at the top level is an error), its build settings, and its references (projects of the solution, installed packages). A reference makes a library available;
+`#import "Name"` in the source turns it on, exactly as for a package, and the library's files are processed before the files of the project. A library is packed with `fire build Core.fireproj` into an ordinary `.fpk`.
+Build settings are taken from the project first, then from the solution, then from the tags in the source (`#debug`, `#name "..."`, `#floatwidth 32`, `#noconsole`, ...), then the defaults; `#if` symbols of all levels are added up; options on the command line go before the project.
+
 ## 9. Open points
 
 The only earlier point here – the method declaration syntax

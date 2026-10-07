@@ -61,6 +61,12 @@
 					</MenuItem>
 					<MenuItem Header="New _UI Markup" Click="NewUiMarkup_Click"/>
 					<MenuItem Header="_Open..." Click="Open_Click" InputGesture="Ctrl+O"/>
+					<Separator/>
+					<MenuItem Header="New _Project..." Click="NewProject_Click"/>
+					<MenuItem Header="New Solution..." Click="NewSolution_Click"/>
+					<MenuItem Header="Open Project or Solution..." Click="OpenWorkspace_Click" InputGesture="Ctrl+Shift+O"/>
+					<MenuItem Header="Close Solution / Project" x:Name="mnuCloseWorkspace" Click="CloseWorkspace_Click"/>
+					<Separator/>
 					<MenuItem Header="Open Markdown _Read-Only..." Click="OpenReadOnly_Click"/>
 					<MenuItem Header="Open Markdown in _Viewer..." Click="OpenViewer_Click"/>
 					<MenuItem Header="_Save" x:Name="mnuSave" Click="Save_Click" InputGesture="Ctrl+S"/>
@@ -68,7 +74,7 @@
 					<MenuItem Header="Save A_ll" x:Name="mnuSaveAll" Click="SaveAll_Click" InputGesture="Ctrl+Shift+S"/>
 					<MenuItem Header="_Close Document" Click="CloseDocument_Click" InputGesture="Ctrl+W"/>
 					<Separator/>
-					<MenuItem Header="Build Settings" Click="BuildSettings_Click"/>
+					<MenuItem Header="Build Settings (of the project or the file)" Click="BuildSettings_Click"/>
 					<MenuItem Header="Native Build Settings..." Click="NativeBuildSettings_Click"/>
 					<MenuItem Header="Package Manager (ember)..." Click="PackageManager_Click"/>
 					<Separator/>
@@ -93,6 +99,20 @@
 					<Separator/>
 					<MenuItem Header="Go to _Definition (Ctrl+Click)" x:Name="mnuGoToDefinition" Click="GoToDefinition_Click" InputGesture="F12"/>
 					<MenuItem Header="Toggle _Comment" x:Name="mnuToggleComment" Click="ToggleComment_Click" InputGesture="Ctrl+Shift+C"/>
+				</MenuItem>
+				<!-- acts on the project of the active document, else on the one selected in the solution explorer; switched on/off when it opens (ProjectMenu_SubmenuOpened) -->
+				<MenuItem Header="_Project" x:Name="mnuProject" SubmenuOpened="ProjectMenu_SubmenuOpened">
+					<MenuItem Header="Add _New File..." x:Name="mnuAddNewFile" Click="AddNewFile_Click"/>
+					<MenuItem Header="Add _Existing File..." x:Name="mnuAddExistingFile" Click="AddExistingFile_Click"/>
+					<MenuItem Header="Add _Reference..." x:Name="mnuAddReference" Click="AddReference_Click"/>
+					<Separator/>
+					<MenuItem Header="Add New Pro_ject to Solution..." x:Name="mnuAddNewProject" Click="AddNewProject_Click"/>
+					<MenuItem Header="Add Existing Project to Solution..." x:Name="mnuAddExistingProject" Click="AddExistingProject_Click"/>
+					<Separator/>
+					<MenuItem Header="Set as _Startup Project" x:Name="mnuSetStartup" Click="SetStartup_Click"/>
+					<MenuItem Header="_Pack Library as Package (.fpk)..." x:Name="mnuPackLibrary" Click="PackLibrary_Click"/>
+					<MenuItem Header="_Reload Project (read the folder again)" x:Name="mnuReloadProject" Click="ReloadProject_Click"/>
+					<MenuItem Header="Project Pr_operties..." x:Name="mnuProjectProperties" Click="ProjectProperties_Click"/>
 				</MenuItem>
 				<MenuItem Header="_Run">
 					<MenuItem Header="_Start / Continue (to next breakpoint)" Click="Run_Click" InputGesture="F5"/>
@@ -134,6 +154,7 @@
 					<MenuItem Header="_Scope" Tag="scope" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="S_tack" Tag="stack" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="_Devices" Tag="devices" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<MenuItem Header="Sol_ution Explorer" Tag="solution" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<Separator/>
 					<!-- the tool strips: filled in MainWindow (BuildToolbarsMenu) -->
 					<MenuItem Header="Tool_bars" x:Name="mnuToolbars" SubmenuOpened="ToolbarsMenu_SubmenuOpened"/>
@@ -200,6 +221,7 @@
         <Border DockPanel.Dock="Bottom" BorderBrush="#3C3544" BorderThickness="0,1,0,0" Padding="10,3">
             <DockPanel>
                 <TextBlock x:Name="CaretText" DockPanel.Dock="Right" Text="Line 1" Margin="16,0,0,0"/>
+                <TextBlock x:Name="ContextText" DockPanel.Dock="Right" Text="" Margin="16,0,0,0" Foreground="#A094A8" ToolTip.Tip="What Start and Build act on: the project of the active document, or the single file"/>
                 <TextBlock x:Name="StatusText" Text="Ready." TextTrimming="CharacterEllipsis"/>
             </DockPanel>
         </Border>
