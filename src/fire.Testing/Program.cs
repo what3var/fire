@@ -13227,6 +13227,8 @@ static int CountOccurrences(string haystack, string needle)
     Console.WriteLine(embFailures == 0 ? "Alle Embedding-Pruefungen bestanden." : $"FEHLER: {embFailures} Embedding-Pruefung(en) fehlgeschlagen.");
 }
 
+ProjectTests.Run();
+
 // ---------------------------------------------------------------------------------------------------------------------------
 // Native-Backend (fire.Native): derselbe Quelltext laeuft in der VM und als erzeugtes C++ - die Ausgabe muss identisch sein
 // ---------------------------------------------------------------------------------------------------------------------------

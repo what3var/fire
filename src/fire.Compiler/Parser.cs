@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -13,12 +13,18 @@ namespace fire.Compiler
     {
         public int Line { get; }
         public int Column { get; }
+        /// <summary>The message without position and file.</summary>
+        public string RawMessage { get; }
+        /// <summary>The file the error is in (set for a program of several files, see ProcessedSource.Name).</summary>
+        public string? FileName { get; }
 
-        public ParseException(string message, int line, int column)
-            : base($"{message} ({line}:{column})")
+        public ParseException(string message, int line, int column, string? fileName = null)
+            : base($"{(fileName != null ? fileName + ": " : "")}{message} ({line}:{column})")
         {
             Line = line;
             Column = column;
+            RawMessage = message;
+            FileName = fileName;
         }
     }
 
@@ -163,11 +169,19 @@ namespace fire.Compiler
             for (int i = 0; i < sources.Count; i++)
             {
                 var src = sources[i];
-                var tokens = new Lexer(src.Source).Tokenize();
-                var parser = new Parser(tokens);
-                parser._usingNamespaces = src.Usings;
-                parser._sourceIndex = i;
-                var stmts = parser.ParseProgram();
+                List<Stmt> stmts;
+                try
+                {
+                    var tokens = new Lexer(src.Source).Tokenize();
+                    var parser = new Parser(tokens);
+                    parser._usingNamespaces = src.Usings;
+                    parser._sourceIndex = i;
+                    stmts = parser.ParseProgram();
+                }
+                catch (ParseException ex) when (src.Name != null && ex.FileName == null)
+                {
+                    throw new ParseException(ex.RawMessage, ex.Line, ex.Column, src.Name);   // a program of several files: say which one
+                }
                 //foreach (var stmt in stmts)
                 //    byStmt[stmt] = i;
                 combined.AddRange(stmts);

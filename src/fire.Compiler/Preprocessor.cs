@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -25,7 +25,7 @@ namespace fire.Compiler
     /// "reines Text-Splicing"-Semantik von `#include` (SPEC 8.1.5): nach
     /// dem Einsetzen ist nicht mehr unterscheidbar, ob eine Zeile ursprünglich
     /// aus der Wurzel-Datei oder einer eingefügten Datei stammt.</summary>
-    public sealed record ProcessedSource(string Source, IReadOnlyList<string> Usings);
+    public sealed record ProcessedSource(string Source, IReadOnlyList<string> Usings, string? Name = null);
 
     /// <summary>The files embedded in a program while it is preprocessed: the same file is stored once (the id of a resource is its index).</summary>
     public sealed class ResourceTable

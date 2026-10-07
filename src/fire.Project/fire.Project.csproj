@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Projects and solutions of fire (docs/PROJECTS.md): `.fireproj` (the files, the settings and the references of one program or library) and `.firesln` (several projects together).
+    No user interface and no compiler in here: the editor, the compiler and the command line use this model (which files belong to which project, which settings apply, which libraries a
+    project references) and turn a project into a BuildPlan that the linker compiles.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>fire.Projects</RootNamespace>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\fire.Package.Manager\fire.Package.Manager.csproj" />
+  </ItemGroup>
+
+</Project>
