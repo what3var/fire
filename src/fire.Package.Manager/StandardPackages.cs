@@ -10,7 +10,7 @@ namespace fire.Package.Manager
         public const string Prefix = "fire-";
 
         /// <summary>The bridges that are packaged: the names of their imports.</summary>
-        public static readonly IReadOnlyList<string> Bridges = new[] { "graphics", "windows", "devices", "io", "ui", "linq", "reflection", "time", "random", "net", "tls", "http", "gpio" };
+        public static readonly IReadOnlyList<string> Bridges = new[] { "graphics", "windows", "devices", "io", "ui", "linq", "reflection", "time", "random", "net", "tls", "http", "gpio", "i2c", "spi" };
 
         public static string PackageNameOf(string bridge) => Prefix + bridge;
 

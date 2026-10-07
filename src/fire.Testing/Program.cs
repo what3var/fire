@@ -16979,6 +16979,122 @@ else
             """),
     }).ToArray();
 
+    // I2C (bridges/fire_bridge_i2c.hpp): the simulated bus "sim" with register-file devices - the same in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("I2c: simulierter Bus - Geraete, Register, Scan, Fehler", """
+            #import "i2c"
+
+            print("buses " + I2c.Board.Buses()[0] + " " + I2c.Board.Buses().count)
+            var bus = new I2c.Bus("sim")
+            print("name " + bus.Name)
+            print("scan empty " + bus.Scan().count)
+            I2c.Sim.Add(0x50)
+            I2c.Sim.Add(0x76)
+            I2c.Sim.SetRegister(0x76, 0xD0, 0x58)
+            print("probe " + bus.Probe(0x50) + " " + bus.Probe(0x51))
+            var found = bus.Scan()
+            print("scan " + found.count + " " + found[0] + " " + found[1])
+            print("id " + bus.ReadRegister(0x76, 0xD0))
+            bus.WriteRegister(0x76, 0xF4, 0x27)
+            print("wrote " + I2c.Sim.GetRegister(0x76, 0xF4) + " " + bus.ReadRegister(0x76, 0xF4))
+            var data = new byte[4]
+            data[0] = 1
+            data[1] = 2
+            data[2] = 3
+            data[3] = 4
+            bus.WriteRegisters(0x50, 0x10, data)
+            var back = bus.ReadRegisters(0x50, 0x10, 4)
+            print("block " + back[0] + back[1] + back[2] + back[3])
+            var raw = new byte[3]
+            raw[0] = 0x12
+            raw[1] = 99
+            raw[2] = 100
+            bus.Write(0x50, raw)
+            bus.Write(0x50, raw, 0, 1)
+            var two = bus.Read(0x50, 2)
+            print("seq " + two[0] + " " + two[1])
+            var viaWr = bus.WriteRead(0x50, raw, 2, 1)
+            print("wr " + viaWr[0] + " " + viaWr[1])
+            bus.Speed = 400000
+            print("speed " + bus.Speed)
+            bus.WriteByte(0x50, 0x20)
+            try { bus.Write(0x60, raw) } catch (I2c.NoAckException e) { print("noack " + e.code + " " + e.message) }
+            try { bus.Read(0x60, 1) } catch (I2c.I2cException e) { print("noack2 " + e.code) }
+            try { bus.Probe(200) } catch (I2c.I2cException e) { print("addr " + e.code) }
+            try { bus.Write(0x50, raw, 2, 5) } catch (I2c.I2cException e) { print("range " + e.code) }
+            try { new I2c.Bus(7) } catch (I2c.NotFoundException e) { print("nobus " + e.code) }
+            try { I2c.Sim.SetRegister(0x33, 1, 1) } catch (I2c.NoAckException e) { print("simdev " + e.code) }
+            I2c.Sim.Remove(0x50)
+            print("removed " + bus.Probe(0x50))
+            bus.Close()
+            try { bus.Probe(1) } catch (I2c.I2cException e) { print("closed " + e.code) }
+            print("avail " + I2c.Board.Available())
+            """),
+    }).ToArray();
+
+    // SPI (bridges/fire_bridge_spi.hpp): the simulated device "sim" (loopback, queued answers, log of what was sent) - the same in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Spi: simuliertes Geraet - Loopback, Antworten, Protokoll, Einstellungen, Fehler", """
+            #import "spi"
+
+            print("devices " + Spi.Board.Devices()[0] + " " + Spi.Board.Devices().count + " " + Spi.Board.Available())
+            var chip = new Spi.Device("sim", 0, 2000000)
+            print("name " + chip.Name + " " + chip.Mode + " " + chip.Speed + " " + chip.LsbFirst)
+            print("sim setup " + Spi.Sim.Mode() + " " + Spi.Sim.Speed() + " " + Spi.Sim.LsbFirst())
+            var cmd = new byte[4]
+            cmd[0] = 0x9F
+            cmd[1] = 1
+            cmd[2] = 2
+            cmd[3] = 255
+            var echo = chip.Transfer(cmd)
+            print("loopback " + echo.length + " " + echo[0] + " " + echo[1] + " " + echo[2] + " " + echo[3])
+            chip.Write(cmd, 1, 2)
+            print("sent " + Spi.Sim.SentCount() + " " + Spi.Sim.Transfers())
+            var sent = Spi.Sim.Sent()
+            print("log " + sent[0] + " " + sent[3] + " " + sent[4] + " " + sent[5])
+            var zeros = chip.Read(3)
+            print("read echoes zeros " + zeros[0] + zeros[1] + zeros[2])
+            var reply = new byte[4]
+            reply[0] = 0
+            reply[1] = 0xEF
+            reply[2] = 0x40
+            reply[3] = 0x18
+            Spi.Sim.Reply(reply)
+            var one = new byte[1]
+            one[0] = 0x9F
+            var id = chip.WriteRead(one, 3)
+            print("id " + id[0] + " " + id[1] + " " + id[2])
+            var after = chip.Read(2)
+            print("empty queue " + after[0] + after[1])
+            Spi.Sim.Loopback()
+            var back = chip.Transfer(one)
+            print("loop again " + back[0])
+            var src = new byte[3]
+            src[0] = 7
+            src[1] = 8
+            src[2] = 9
+            var dst = new byte[5]
+            chip.TransferInto(src, 0, dst, 2, 3)
+            print("into " + dst[0] + dst[1] + dst[2] + dst[3] + dst[4])
+            chip.Mode = 3
+            chip.Speed = 500000
+            chip.LsbFirst = true
+            print("changed " + Spi.Sim.Mode() + " " + Spi.Sim.Speed() + " " + Spi.Sim.LsbFirst() + " " + chip.Mode)
+            chip.Configure(1, 1000)
+            print("configure " + Spi.Sim.Mode() + " " + chip.LsbFirst)
+            Spi.Sim.Clear()
+            print("cleared " + Spi.Sim.SentCount() + " " + Spi.Sim.Transfers())
+            try { chip.Mode = 5 } catch (Spi.SpiException e) { print("mode " + e.code) }
+            try { chip.Write(cmd, 3, 5) } catch (Spi.SpiException e) { print("range " + e.code) }
+            try { new Spi.Device("sim", 0, 0) } catch (Spi.SpiException e) { print("speed " + e.code) }
+            try { new Spi.Device("9.9") } catch (Spi.NotFoundException e) { print("nodev " + e.code) }
+            chip.Close()
+            try { chip.Transfer(cmd) } catch (Spi.SpiException e) { print("closed " + e.code) }
+            """),
+    }).ToArray();
+
     // Network (bridges/fire_bridge_net.hpp): TCP, UDP and name resolution on the loopback interface - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {

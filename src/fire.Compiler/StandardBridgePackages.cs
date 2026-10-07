@@ -51,6 +51,8 @@ namespace fire.Compiler
             "http" => fire.Standard.HttpPrelude.Source,
             "tls" => fire.Standard.TlsPrelude.Source,
             "gpio" => fire.Standard.GpioPrelude.Source,
+            "i2c" => fire.Standard.I2cPrelude.Source,
+            "spi" => fire.Standard.SpiPrelude.Source,
             "io" => fire.Standard.IoPrelude.Source,
             "devices" => fire.Standard.DevicesPrelude.Source,
             _ => ImportedPreludes.TrySourceFor(bridge),
@@ -125,6 +127,30 @@ namespace fire.Compiler
                     F("__GpioSupported", 0, "gpio::Supported"), F("__GpioChips", 0, "gpio::Chips", list: true), F("__GpioOpen", 2, "gpio::Open"), F("__GpioConfigure", 5, "gpio::Configure"),
                     F("__GpioRead", 1, "gpio::Read"), F("__GpioWrite", 2, "gpio::Write"), F("__GpioPollEdge", 1, "gpio::PollEdge"), F("__GpioEdgeTime", 1, "gpio::EdgeTime"), F("__GpioClose", 1, "gpio::Close"),
                     F("__GpioSimWire", 2, "gpio::SimWire"), F("__GpioSimUnwire", 2, "gpio::SimUnwire"), F("__GpioSimDrive", 2, "gpio::SimDrive"), F("__GpioSimLevel", 1, "gpio::SimLevel"), F("__GpioSimReset", 0, "gpio::SimReset"),
+                })
+                    yield return f;
+            }
+            if (bridge == "i2c")
+            {
+                foreach (var f in new[]
+                {
+                    F("__I2cLastError", 0, "i2c::LastError"), F("__I2cLastErrorMessage", 0, "i2c::LastErrorMessage", list: true), F("__I2cOpenCount", 0, "i2c::OpenCount"),
+                    F("__I2cSupported", 0, "i2c::Supported"), F("__I2cBuses", 0, "i2c::Buses", list: true), F("__I2cOpen", 2, "i2c::Open"), F("__I2cSetSpeed", 2, "i2c::SetSpeed"),
+                    F("__I2cWrite", 5, "i2c::Write"), F("__I2cRead", 5, "i2c::Read"), F("__I2cWriteRead", 8, "i2c::WriteRead"), F("__I2cProbe", 2, "i2c::Probe"), F("__I2cClose", 1, "i2c::Close"),
+                    F("__I2cSimAdd", 1, "i2c::SimAdd"), F("__I2cSimRemove", 1, "i2c::SimRemove"), F("__I2cSimSetRegister", 3, "i2c::SimSetRegister"), F("__I2cSimGetRegister", 2, "i2c::SimGetRegister"),
+                    F("__I2cSimReset", 0, "i2c::SimReset"),
+                })
+                    yield return f;
+            }
+            if (bridge == "spi")
+            {
+                foreach (var f in new[]
+                {
+                    F("__SpiLastError", 0, "spi::LastError"), F("__SpiLastErrorMessage", 0, "spi::LastErrorMessage", list: true), F("__SpiOpenCount", 0, "spi::OpenCount"),
+                    F("__SpiSupported", 0, "spi::Supported"), F("__SpiDevices", 0, "spi::Devices", list: true), F("__SpiOpen", 4, "spi::Open"), F("__SpiConfigure", 4, "spi::Configure"),
+                    F("__SpiTransfer", 6, "spi::Transfer"), F("__SpiWrite", 4, "spi::Write"), F("__SpiRead", 4, "spi::Read"), F("__SpiClose", 1, "spi::Close"),
+                    F("__SpiSimReply", 3, "spi::SimReply"), F("__SpiSimLoopback", 0, "spi::SimLoopback"), F("__SpiSimSentCount", 0, "spi::SimSentCount"), F("__SpiSimSentByte", 1, "spi::SimSentByte"),
+                    F("__SpiSimInfo", 1, "spi::SimInfo"), F("__SpiSimClear", 0, "spi::SimClear"),
                 })
                     yield return f;
             }
@@ -225,6 +251,8 @@ namespace fire.Compiler
                         native.LinkLibraries["windows"] = new List<string> { "ssl", "crypto", "ws2_32", "crypt32" };
                     }
                     if (bridge == "gpio") native.Reset = "gpio::reset";
+                    if (bridge == "i2c") native.Reset = "i2c::reset";
+                    if (bridge == "spi") native.Reset = "spi::reset";
                     if (bridge == "net")
                     {
                         native.Reset = "net::reset";

@@ -2176,6 +2176,16 @@ The package `fire-tls` (docs/NETWORK.md is the reference): `Tls.Stream` (an `IO.
 The package `fire-gpio` (docs/NETWORK.md is the reference): `Gpio.Pin` (input with pull and edge events, output, read/write/toggle), `Gpio.Board` (the chips of the machine) and `Gpio.Sim` (the simulated chip `"sim"` that every platform has); the character device of Linux or
 ESP-IDF underneath. It needs `time`. Nothing blocks: edges are collected and handed out by `TakeEdge`/`WaitEdge`/`Poll`. Errors are `Gpio.GpioException` (with a `code`) and subclasses.
 
+### 8.24 I2C (`#import "i2c"`)
+
+The package `fire-i2c` (docs/NETWORK.md is the reference): `I2c.Bus` (write, read, write-then-read with a repeated start, register helpers, probe, scan), `I2c.Board` (the buses of the machine) and `I2c.Sim` (devices on the simulated bus `"sim"` that every platform has);
+`/dev/i2c-N` of Linux or the master driver of ESP-IDF underneath. Transfers are done in the call; errors are `I2c.I2cException` (with a `code`) and subclasses, `I2c.NoAckException` when no device answers.
+
+### 8.25 SPI (`#import "spi"`)
+
+The package `fire-spi` (docs/NETWORK.md is the reference): `Spi.Device` (a bus with one chip select: full-duplex `Transfer`, `Write`, `Read`, `WriteRead`, mode/speed/bit order), `Spi.Board` (the devices of the machine) and `Spi.Sim` (the simulated device `"sim"`: loopback or
+queued answers, a log of what was sent); `/dev/spidevB.C` of Linux or the SPI master driver of ESP-IDF underneath. Transfers are done in the call; errors are `Spi.SpiException` (with a `code`) and subclasses.
+
 ## 9. Open points
 
 The only earlier point here – the method declaration syntax

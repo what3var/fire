@@ -1,6 +1,6 @@
 # Networking and hardware buses - design and steps
 
-Status: **networking (`fire-net`, `fire-http`, `fire-tls`) and GPIO (`fire-gpio`) are built**, see the references below; I2C, SPI and WiFi are still plans. The steps are also kept as tasks (Net 1-3, GPIO, I2C, SPI, WiFi). Everything is a **package** (`ember`, docs/PACKAGES.md): the compiler and the
+Status: **networking (`fire-net`, `fire-http`, `fire-tls`) GPIO (`fire-gpio`), I2C (`fire-i2c`) and SPI (`fire-spi`) are built**, see the references below; WiFi is still a plan. The steps are also kept as tasks (Net 1-3, GPIO, I2C, SPI, WiFi). Everything is a **package** (`ember`, docs/PACKAGES.md): the compiler and the
 runtime do not change, a program that does not `#import` it does not carry it. Like `time`, `io` and `devices`, each one is a prelude in fire plus C++ in `native/bridges/` over a thin
 platform layer in `native/platform/<name>/` (`plat::`), so the same code runs in the VM (through the package ABI, docs/PACKAGE_NATIVES.md) and in a native build, and a platform without the
 feature fails with a clear "not supported" error instead of not compiling.
@@ -155,6 +155,64 @@ button.Poll()                                              // hands every waitin
   Bad use (reading a pin that is not set up, writing an input, taking edges of an output) is code 1.
 * Not tried on hardware yet: the Linux and ESP32 backends are written against the documented interfaces; the ESP32 file compiles against a stand-in of `driver/gpio.h`, the Linux one against the kernel headers.
 
+## I2C (`#import "i2c"`, the package `fire-i2c`)
+
+The I2C bus as a controller. The natives are `native/bridges/fire_bridge_i2c.hpp` over `plat::i2c` (`native/platform/std/fire_i2c_*.hpp`): **`/dev/i2c-N`** of Linux (the i2c-dev interface with the `I2C_RDWR` ioctl; used only when the kernel headers are
+there, `FIRE_NO_I2C` switches it off), the **master driver of ESP-IDF** (`driver/i2c_master.h`, IDF 5.2+; add the component `esp_driver_i2c` or `driver`) on an ESP32, and a stub elsewhere (no buses). Every platform has the **simulated bus** `"sim"`.
+
+```
+#import "i2c"
+
+var bus = new I2c.Bus(1)                          // "i2c-1"; a name works too: new I2c.Bus("i2c-1"), new I2c.Bus("sim"); the second argument is the speed in Hz (default 100000)
+print(bus.Scan())                                 // a list of the addresses that answer (0x08..0x77)
+var id = bus.ReadRegister(0x76, 0xD0)             // write the register number, read a byte back with a repeated start
+bus.WriteRegister(0x76, 0xF4, 0x27)
+var six = bus.ReadRegisters(0x76, 0xF7, 6)        // a byte[] from the register on
+bus.Write(0x3C, buffer)                           // Write(address, buffer, offset = 0, count = all), WriteByte(address, value)
+var reply = bus.Read(0x3C, 2)                     // ReadInto(address, buffer, offset, count) reads into a buffer
+var r2 = bus.WriteRead(0x3C, command, 4)          // the general form: write, repeated start, read 4 bytes
+```
+
+* Addresses are the 7 bit ones (0..127); a transfer is at most 65535 bytes. It is done in the call (a transfer takes about a millisecond per few bytes at 100 kHz; the ESP32 gives up after 200 ms, `FIRE_I2C_TIMEOUT_MS`).
+* `I2c.Board.Buses()` lists the buses (`"sim"` first, then `"i2c-1"`, ... on Linux, `"i2c-0"`, `"i2c-1"` on an ESP32); `I2c.Board.Available()` tells whether there is hardware. `Probe(address)` asks one address (a quick write on Linux, like `i2cdetect`; an address
+  that a kernel driver owns counts as there).
+* **Speed:** the ESP32 takes it from the constructor or the `Speed` property; on Linux the adapter's speed comes from the device tree (`dtparam=i2c_arm_baudrate=400000` on a Raspberry Pi) - the value is accepted and ignored.
+* **Pins on the ESP32:** bus 0 uses GPIO 21 (SDA) and 22 (SCL), bus 1 uses 18 and 19; set `FIRE_I2C0_SDA`, `FIRE_I2C0_SCL`, `FIRE_I2C1_SDA`, `FIRE_I2C1_SCL` in the defines of the target to change them. The internal pull-ups are switched on (weak: use external ones for anything but short wires).
+* **The simulated bus:** `I2c.Sim.Add(address)` puts a device on it with 256 registers (all 0) that behaves like a typical sensor chip - the first byte of a write is the register, more bytes are stored from there on (the register counts up), a read returns bytes from the current register on
+  (counting up). `I2c.Sim.SetRegister(address, register, value)` changes what it "measures", `GetRegister` shows what the program wrote, `Remove(address)` / `Reset()` take devices off. An address without a device does not answer (`NoAckException`), as on a real bus.
+* Errors are `I2c.I2cException` (with a `code`): `NotFoundException` (3: no such bus), `BusyException` (4), `PermissionException` (5: on Linux the user must be in the group `i2c`), `UnsupportedException` (6), `NoAckException` (8: nobody answered - no device, no power, wrong wiring) and
+  `TimeoutException` (9). Bad arguments (address, buffer range) are code 1.
+* Not tried on hardware yet: the Linux backend is written against the i2c-dev interface and compiles against the kernel headers; the ESP32 file compiles against a stand-in of the driver header (the mapping of the driver's error codes to NoAck is a best guess until it runs on a board).
+
+## SPI (`#import "spi"`, the package `fire-spi`)
+
+The SPI bus as a controller. The natives are `native/bridges/fire_bridge_spi.hpp` over `plat::spi` (`native/platform/std/fire_spi_*.hpp`): **`/dev/spidevB.C`** of Linux (the spidev interface with `SPI_IOC_MESSAGE`; used only when the kernel headers are there,
+`FIRE_NO_SPI` switches it off), the **SPI master driver of ESP-IDF** (`driver/spi_master.h`; add the component `esp_driver_spi` or `driver`) on an ESP32, and a stub elsewhere (no devices). Every platform has the **simulated device** `"sim"`.
+A *device* is a bus with one chip select (that is how the kernel sees it and what a chip on the bus needs).
+
+```
+#import "spi"
+
+var chip = new Spi.Device("0.0", 0, 1000000)      // /dev/spidev0.0, mode 0, 1 MHz (Spi.Device(device, mode = 0, speed = 1000000, lsbFirst = false)); "spidev0.0", "spi-2", "sim" are names too
+var back = chip.Transfer(bytes)                    // sends the bytes and receives as many at the same time (a byte[])
+var id = chip.WriteRead(command, 3)                // sends the command, then clocks in 3 bytes - one transfer, the chip select stays low
+chip.Write(data, offset, count)                    // what comes in is dropped
+var data = chip.Read(16)                           // zeros are sent meanwhile
+chip.TransferInto(out, 0, into, 0, count)          // the general form, with buffers and offsets
+chip.Mode = 3                                      // clock polarity and phase; Speed (Hz) and LsbFirst can be changed too (or all at once with Configure)
+```
+
+* `Spi.Board.Devices()` lists the devices (`"sim"` first, then `"spidev0.0"`, ... on Linux, `"spi-2"`, `"spi-3"` on an ESP32); `Spi.Board.Available()` tells whether there is hardware. Mode is 0..3, the speed 1 Hz .. 80 MHz, the word is 8 bits.
+* **Linux:** a device node per chip select; the kernel drives the chip select line and keeps it low during a transfer (longer transfers are cut into pieces of 4096 bytes). Enable the interface (`dtparam=spi=on` on a Raspberry Pi) and let the user into the group `spi`.
+* **ESP32:** `"spi-2"` and `"spi-3"` are the general purpose controllers (SPI2_HOST/SPI3_HOST). The pins are the defaults of the classic ESP32 (host 2: MOSI 13, MISO 12, SCLK 14, CS 15; host 3: 23, 19, 18, 5); set `FIRE_SPI2_MOSI`, `_MISO`, `_SCLK`, `_CS` (and
+  `FIRE_SPI3_...`) in the defines of the target to change them. Several devices on one bus differ in the chip select: `"spi-2.5"` is host 2 with GPIO 5 as chip select. The bus is set up when its first device opens and freed with the last. Transfers are polled and go
+  through a DMA buffer in pieces of 2048 bytes.
+* **The simulated device** is a loopback by default (MISO tied to MOSI: what is sent comes back - the usual wiring test). `Spi.Sim.Reply(bytes)` makes it a device that answers: one queued byte comes back per byte sent, starting with the first - so the answer to a command
+  byte is in the bytes *after* it (queue a leading 0 for the command byte, as the data sheets draw it); when the queue is empty it answers 0. `Spi.Sim.Loopback()` turns the loopback on again. `Spi.Sim.Sent()` is everything the program sent (the first 65536 bytes),
+  `Mode()`, `Speed()`, `LsbFirst()` and `Transfers()` say what a chip would have seen, `Clear()` forgets it.
+* Errors are `Spi.SpiException` (with a `code`): `NotFoundException` (3), `BusyException` (4), `PermissionException` (5: on Linux the user must be in the group `spi`), `UnsupportedException` (6) and `TimeoutException` (8). Bad arguments (mode, speed, buffer range) are code 1.
+* Not tried on hardware yet: the Linux backend compiles against the kernel headers; the ESP32 file compiles against a stand-in of the driver headers.
+
 ## Hardware buses (the device platform)
 
 The device platform of `devices` today knows serial ports and loopback devices. GPIO, I2C and SPI are added the same way: a driver per platform under `native/platform/std/fire_<bus>_*.hpp`
@@ -162,18 +220,16 @@ The device platform of `devices` today knows serial ports and loopback devices. 
 On Linux an unavailable bus is not an error of the program: the list of buses is just empty, `Open` of a missing one throws `DeviceException` (`code = NotFound`).
 
 * **GPIO (`fire-gpio`):** built, see "GPIO" below.
-* **I2C (`fire-i2c`):** `I2c.Open(bus)`; `Write(address, buffer)`, `Read(address, count)`, `WriteRead(address, out, count)`, `Scan()`; speed and pins configurable (`FIRE_I2C<n>_SDA` ... like the UART
-  pins). Linux: `/dev/i2c-N` with the `I2C_RDWR` ioctl; ESP32: the new `i2c_master` driver.
-* **SPI (`fire-spi`):** `Spi.Open(bus, chipSelect)`, `Mode(0..3)`, `Speed(hz)`, `Transfer(out)` (full duplex, returns the received bytes), `Write`, `Read`, `BitOrder`. Linux: `/dev/spidevB.C`
-  (`SPI_IOC_MESSAGE`); ESP32: `spi_master` with a device handle per chip select.
+* **I2C (`fire-i2c`):** built, see "I2C" below.
+* **SPI (`fire-spi`):** built, see "SPI" below.
 * **Common:** all three register their buses as **devices** in the device manager (`Device.Find("i2c:1")`, visible in the editor's Devices panel), take buffers from `byte[]` / `IO` memory streams, and are
   testable without hardware through a **loopback driver** (a fake I2C slave with a register file, SPI loopback with MISO tied to MOSI, GPIO pins that are wired in pairs) in the suite.
 
 ### Steps
 
 4. **GPIO** - done: package `fire-gpio`, Linux + ESP32 + stub, simulated chip, tests, docs.
-5. **I2C** - package, Linux + ESP32 + stub, fake slave, tests, docs.
-6. **SPI** - package, Linux + ESP32 + stub, MISO/MOSI loopback, tests, docs.
+5. **I2C** - done: package `fire-i2c`, Linux + ESP32 + stub, simulated bus with register-file devices, tests, docs.
+6. **SPI** - done: package `fire-spi`, Linux + ESP32 + stub, simulated loopback device, tests, docs.
 7. **WiFi (ESP32)** - a second step after `net`, through the device platform: `fire-wifi` brings a `WiFi` device (`Scan()`, `Connect(ssid, password)`, `StartAccessPoint(...)`, state changes as device
    events); once it is connected, `plat::net` (lwIP) already works - the network package never knows about WiFi. On Linux/Windows the package reports "not supported" (the OS owns the network); an
    Ethernet interface on the ESP32 later follows the same pattern. Credentials are never part of the generated source files (a runtime call or a settings file of the target).
