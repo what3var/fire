@@ -11,7 +11,7 @@ namespace fire.Standard
     ///   var l = new Net.TcpListener("127.0.0.1", 0)              // port 0: a free port, l.Port tells which
     ///   var peer = l.Accept(5s)                                  // a Net.TcpClient, Net.TimeoutException after 5 seconds
     ///
-    /// Time limits are a `TimeSpan`, a time value (`500ms`, `5s`) or a number (milliseconds); undefined means "no limit". Waiting is done in slices of 100 ms in fire code, so the program stays
+    /// Time limits are a `TimeSpan`, a time value (`500ms`, `5s`) or a number (milliseconds); undefined means "no limit". Waiting asks the natives and sleeps a moment between the attempts (1 to 10 ms), so the program stays
     /// abortable (`terminate`) and the other threads keep running. Errors are exceptions: `Net.NetException` (with a `code`) and its subclasses.
     /// </summary>
     public static class NetPrelude
@@ -33,6 +33,8 @@ namespace fire.Standard
                     static int Other() { return 11 }
                     static int NotConnected() { return 12 }
                     static int Permission() { return 13 }
+                    static int Tls() { return 14 }
+                    static int Certificate() { return 15 }
                 }
 
                 class NetException : Exception {
@@ -108,13 +110,18 @@ namespace fire.Standard
                         return Net.Clock.Now() + ms * 10000
                     }
 
-                    // How long the next native call may wait: at most 100 ms, and not past the deadline.
-                    static int Slice(int deadline) {
-                        if (deadline < 0) { return 100 }
-                        var left = (deadline - Net.Clock.Now()) / 10000
-                        if (left < 0) { return 0 }
-                        if (left > 100) { return 100 }
-                        return left
+                    // Waits a moment before the next attempt: 1 ms at first, up to 10 ms when it takes long (and not past the deadline). The natives are only asked, never made to wait: a program
+                    // that waits for the network does not hold the library, so the other fire threads, `terminate` and the main queue keep working.
+                    static Pause(int deadline, int tries) {
+                        var ms = 1
+                        if (tries >= 3) { ms = 2 }
+                        if (tries >= 8) { ms = 5 }
+                        if (tries >= 20) { ms = 10 }
+                        if (deadline >= 0) {
+                            var left = (deadline - Net.Clock.Now()) / 10000
+                            if (left < ms) { ms = left }
+                        }
+                        if (ms > 0) { Sleep(ms) }
                     }
 
                     static bool Expired(int deadline) {
@@ -151,7 +158,17 @@ namespace fire.Standard
                         this.closed = false
                         this.readLimit = -1
                         this.writeLimit = -1
-                        this.handle = Net.NetErrors.Handle(__NetTcpConnect(host, port, Net.Clock.Millis(timeout)))
+                        this.handle = Net.NetErrors.Handle(__NetConnectBegin(host, port))
+                        var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
+                        var tries = 0
+                        while (true) {
+                            var state = __NetConnectStep(this.handle)
+                            if (state == 1) { break }
+                            if (state < 0) { Net.NetErrors.Throw() }
+                            if (Net.Clock.Expired(deadline)) { throw new TimeoutException("Connecting to " + host + ":" + port + " timed out.") }
+                            Net.Clock.Pause(deadline, tries)
+                            tries = tries + 1
+                        }
                     }
 
                     // A connection that a listener accepted (do not call this yourself).
@@ -216,6 +233,14 @@ namespace fire.Standard
                         }
                     }
 
+                    // The number the operating system gave the socket (for the tls package, which works on it): do not close or use it yourself.
+                    int NativeHandle {
+                        get {
+                            this.Check()
+                            return Net.NetErrors.Handle(__NetNativeHandle(this.handle))
+                        }
+                    }
+
                     // Bytes that Read would return without waiting.
                     int Available {
                         get {
@@ -229,11 +254,14 @@ namespace fire.Standard
                         this.Check()
                         var ms = Net.Clock.Millis(timeout)
                         var deadline = Net.Clock.Deadline(ms)
+                        var tries = 0
                         while (true) {
-                            var bits = __NetPoll(this.handle, 1, 0, Net.Clock.Slice(deadline))
+                            var bits = __NetPoll(this.handle, 1, 0, 0)
                             if (bits < 0) { Net.NetErrors.Throw() }
                             if ((bits & 1) != 0) { return true }
                             if (Net.Clock.Expired(deadline)) { return false }
+                            Net.Clock.Pause(deadline, tries)
+                            tries = tries + 1
                         }
                     }
 
@@ -259,11 +287,14 @@ namespace fire.Standard
                     int Read(buffer, offset, count) {
                         this.Check()
                         var deadline = Net.Clock.Deadline(this.readLimit)
+                        var tries = 0
                         while (true) {
-                            var n = __NetRecv(this.handle, buffer, offset, count, Net.Clock.Slice(deadline))
+                            var n = __NetRecv(this.handle, buffer, offset, count, 0)
                             if (n >= 0) { return n }
                             if (__NetLastError() != 4) { Net.NetErrors.Throw() }
                             if (Net.Clock.Expired(deadline)) { throw new TimeoutException("Nothing was received in time.") }
+                            Net.Clock.Pause(deadline, tries)
+                            tries = tries + 1
                         }
                     }
 
@@ -274,11 +305,14 @@ namespace fire.Standard
                         while (done < count) {
                             var deadline = Net.Clock.Deadline(this.writeLimit)
                             var n = -1
+                            var tries = 0
                             while (true) {
-                                n = __NetSend(this.handle, buffer, offset + done, count - done, Net.Clock.Slice(deadline))
+                                n = __NetSend(this.handle, buffer, offset + done, count - done, 0)
                                 if (n >= 0) { break }
                                 if (__NetLastError() != 4) { Net.NetErrors.Throw() }
                                 if (Net.Clock.Expired(deadline)) { throw new TimeoutException("Sending timed out.") }
+                                Net.Clock.Pause(deadline, tries)
+                                tries = tries + 1
                             }
                             done = done + n
                         }
@@ -347,11 +381,14 @@ namespace fire.Standard
                     bool Pending(timeout = 0) {
                         this.Check()
                         var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
+                        var tries = 0
                         while (true) {
-                            var bits = __NetPoll(this.handle, 1, 0, Net.Clock.Slice(deadline))
+                            var bits = __NetPoll(this.handle, 1, 0, 0)
                             if (bits < 0) { Net.NetErrors.Throw() }
                             if ((bits & 1) != 0) { return true }
                             if (Net.Clock.Expired(deadline)) { return false }
+                            Net.Clock.Pause(deadline, tries)
+                            tries = tries + 1
                         }
                     }
 
@@ -366,11 +403,14 @@ namespace fire.Standard
                     TryAccept(timeout = undefined) {
                         this.Check()
                         var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
+                        var tries = 0
                         while (true) {
-                            var h = __NetAccept(this.handle, Net.Clock.Slice(deadline))
+                            var h = __NetAccept(this.handle, 0)
                             if (h >= 0) { return new TcpClient(h) }
                             if (__NetLastError() != 4) { Net.NetErrors.Throw() }
                             if (Net.Clock.Expired(deadline)) { return undefined }
+                            Net.Clock.Pause(deadline, tries)
+                            tries = tries + 1
                         }
                     }
 
@@ -451,11 +491,14 @@ namespace fire.Standard
                     bool WaitReadable(timeout = 0) {
                         this.Check()
                         var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
+                        var tries = 0
                         while (true) {
-                            var bits = __NetPoll(this.handle, 1, 0, Net.Clock.Slice(deadline))
+                            var bits = __NetPoll(this.handle, 1, 0, 0)
                             if (bits < 0) { Net.NetErrors.Throw() }
                             if ((bits & 1) != 0) { return true }
                             if (Net.Clock.Expired(deadline)) { return false }
+                            Net.Clock.Pause(deadline, tries)
+                            tries = tries + 1
                         }
                     }
 
@@ -463,8 +506,9 @@ namespace fire.Standard
                     int ReceiveFrom(buffer, int offset, int count, timeout = undefined) {
                         this.Check()
                         var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
+                        var tries = 0
                         while (true) {
-                            var n = __NetRecvFrom(this.handle, buffer, offset, count, Net.Clock.Slice(deadline))
+                            var n = __NetRecvFrom(this.handle, buffer, offset, count, 0)
                             if (n >= 0) {
                                 this.fromHost = __NetPeerHost(this.handle)
                                 this.fromPort = __NetPeerPort(this.handle)
@@ -472,6 +516,8 @@ namespace fire.Standard
                             }
                             if (__NetLastError() != 4) { Net.NetErrors.Throw() }
                             if (Net.Clock.Expired(deadline)) { throw new TimeoutException("No datagram arrived in time.") }
+                            Net.Clock.Pause(deadline, tries)
+                            tries = tries + 1
                         }
                     }
 

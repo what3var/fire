@@ -2158,8 +2158,18 @@ Not for secrets: the sequence can be predicted from a few outputs.
 ### 8.20 Network (`#import "net"`)
 
 The package `fire-net` (docs/NETWORK.md is the reference): `Net.TcpClient` (an `IO.Stream`), `Net.TcpListener`, `Net.UdpSocket` and `Net.Dns`, written in fire over C++ natives on the sockets of the platform (BSD sockets, Winsock, lwIP). It needs
-`io` and `time`. Every call that waits takes a time limit and is done in slices of 100 ms, so `terminate` and the other threads work while a program waits for the network. Errors are `Net.NetException` (with a `code`) and subclasses;
+`io` and `time`. Every call that waits takes a time limit; waiting polls the natives and sleeps 1 to 10 ms between the attempts, so `terminate` and the other threads work while a program waits for the network. Errors are `Net.NetException` (with a `code`) and subclasses;
 the host can restrict the network with a `NetPolicy` (a refused access is a `Net.PermissionException`). A platform without a network throws `NetException` (code 9).
+
+### 8.21 HTTP (`#import "http"`)
+
+The package `fire-http` (docs/NETWORK.md is the reference): `Http.Client` (GET/POST/..., redirects, chunked bodies), `Http.Server` (routes, one connection after the other) and the classes around them, written in fire on the `net` package.
+Errors are `Http.HttpException` (with a `code`) and the exceptions of `net`.
+
+### 8.22 TLS (`#import "tls"`)
+
+The package `fire-tls` (docs/NETWORK.md is the reference): `Tls.Stream` (an `IO.Stream` over a `Net.TcpClient`), `Tls.Server`, `Tls.Options`; OpenSSL or mbedTLS underneath. `#import "http"` brings it along for `https://`. Errors are
+`Tls.TlsException` and `Tls.CertificateException` (both `Net.NetException`s).
 
 ## 9. Open points
 

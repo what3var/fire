@@ -100,7 +100,7 @@ How to write a native, what crosses to the VM, prebuilt libraries and packed pro
 
 ## The standard packages (the bridges)
 
-The standard bridges of fire - `graphics`, `windows`, `devices`, `io`, `ui`, `linq`, `reflection`, `time`, `random`, `net` - are also available as packages (`fire-graphics`, `fire-io`, ...), each with its prelude
+The standard bridges of fire - `graphics`, `windows`, `devices`, `io`, `ui`, `linq`, `reflection`, `time`, `random`, `net`, `tls`, `http` - are also available as packages (`fire-graphics`, `fire-io`, ...), each with its prelude
 and its C++ sources (`native/bridges/`). They are marked `"standard": true`, which is the only way for an import to have the name of an import of the compiler. They are built with the solution:
 after the build, `fire.Compiler bridge-packages <folder>` (an MSBuild target in `src/BridgePackages.targets`, imported by the compiler and the editor) writes them into the folder `PackageSource` of the
 output. When **spark**, **forge** (the compiler) or **ember** start, they check that the standard packages are installed and install the missing or older ones from `PackageSource` (a time stamp in

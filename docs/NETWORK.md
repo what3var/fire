@@ -19,7 +19,7 @@ platform       plat::net            connect/listen/accept/send/recv/poll/resolve
 * **Streams:** a connected TCP socket is an `IO.Stream` (`Read`, `Write`, `ReadByte`, ..., not seekable) so everything that works with streams works with the network
   (`IO.Stdio`, text readers, a future HTTP package). `UdpSocket` is message based: `SendTo(address, buffer)`, `ReceiveFrom(buffer)` returns the sender.
 * **Blocking with a timeout, and polling:** every call that waits takes an optional `TimeSpan` (`Read`, `Accept`, `Connect`, `ReceiveFrom`); `Available()` / `Poll(read, write, timeout)` ask without
-  waiting. Waiting is **not deaf** like `Sleep`: in short slices, so `terminate`, threads and the main queue keep working (THREADING_DESIGN.md section 7). No hidden background threads on small targets.
+  waiting. Waiting is **not deaf** like `Sleep`: the fire code polls the natives (a timeout of 0) and sleeps 1 to 10 ms between the attempts - it never sits inside the library - so `terminate`, threads and the main queue keep working (THREADING_DESIGN.md section 7). No hidden background threads on small targets.
 * **Errors:** `NetException` with a `code` (`Refused`, `TimedOut`, `Unreachable`, `AddressInUse`, `Closed`, `Unsupported`, ...), never a crash; an error text from the OS goes into `message`.
 * **Addresses:** `NetAddress` (IPv4 and IPv6, `Parse("10.0.0.5:80")`, `Dns.Resolve("example.org")` returns a list), and `"host:port"` strings accepted where an address is expected.
 * **Policy:** like `IoPolicy` for files, the host can restrict the network (allow nothing, allow loopback only, an allow list of hosts/ports); the editor and `forge` pass it. Default for a
@@ -53,6 +53,75 @@ the other codes (1 invalid argument, 5 unreachable, 6 address in use, 9 not supp
 
 The host decides with `NetPolicy` (`fire.Runtime`): `AllowAll` (default), `DenyAll`, `LoopbackOnly`, `Hosts(rules, allowListen)`; `RuntimeSession.Build(..., netPolicy: ...)` passes it, the library asks through `fire_host.net_allow` (native/abi/fire_pkg_abi.h). A native build is
 unrestricted unless the target defines `FIRE_NET_POLICY`. A platform without a network (`freertos` until a board package provides one) throws `NetException` with code 9 on the first call.
+
+## HTTP (`#import "http"`, the package `fire-http`)
+
+Written in fire on top of `net` (any `IO.Stream` works as the connection, so TLS plugs in later). Everything is in `namespace Http`; the package needs `net` (and with it `io`, `time`).
+
+```
+var client = new Http.Client()
+var r = client.Get("http://example.org/")
+print(r.status + " " + r.reason + " " + r.Text())
+
+var server = new Http.Server("127.0.0.1", 8080)
+server.Route("GET", "/hello", func (req) => Http.Response.FromText("hello " + req.Query("name", "world")))
+server.Route("POST", "/echo", func (req) => req.Text())            // a text becomes a 200 text response, undefined a 204
+server.Run()                                                       // or ServeOne(timeout) in a loop of your own
+```
+
+| class | |
+|---|---|
+| `Http.Client` | `Get(url)`, `Head`, `Delete`, `Post(url, body, contentType = undefined)`, `Put`, `Request(method, url, body, headers)`; a body is a text (UTF-8) or a byte buffer; `headers` an `Http.Headers` or undefined. Settings: `timeout` (ms, connect and every read; 30000), `followRedirects` (true), `maxRedirects` (5), `maxBodyBytes` (16 MiB), `userAgent`, `headers` (sent with every request). Redirects 301/302/303 become a GET without body, 307/308 keep method and body. Sends `Connection: close`. Understands `Content-Length`, chunked bodies and bodies that end with the connection. |
+| `Http.Response` | `status`, `reason`, `headers`, `body` (bytes), `url` (the final URL), `Ok` (2xx), `Length`, `Text()` (UTF-8), `Header(name)`; for routes: `FromText(text, status = 200, contentType)`, `FromHtml`, `FromJson`, `Error(status, message)`, `Redirect(location, status = 302)` and `new Http.Response(status, body)` |
+| `Http.Request` (server side) | `method`, `target`, `path` (percent decoded), `version`, `headers`, `body`, `remoteHost`, `Query(name, fallback)` (percent decoded, `+` is a space), `Text()`, `Header(name)` |
+| `Http.Server(host, port)` | `Route(method, path, lambda)` (method `"*"` = any; a path ending in `*` matches the prefix; HEAD uses the route of GET and sends no body), `Fallback(lambda)` (default 404), `OnError(lambda)` (a route's lambda threw: the client gets a 500), `ServeOne(timeout = undefined)` (true if a connection was served), `Run()` (until `Stop()`), `Port`, `Close()`; `readTimeout` (10 s) and `maxBodyBytes` (1 MiB) |
+| `Http.Headers` | `Get(name)` (not case sensitive), `Set`, `Add`, `Has`, `Remove`, `Count`; `Set`/`Add` return the headers |
+| `Http.Url` | `Parse(text)` (http and https, IPv6 in brackets), `scheme`, `host`, `port`, `path`, `Resolve(location)` |
+| `Http.Uri` | `Encode(text)`, `Decode(text, plus = false)` (UTF-8 percent encoding) |
+
+The server answers one connection after the other with `Connection: close`: simple and light enough for a microcontroller. For parallel requests run several servers (on different ports) in fire threads; a route's lambda
+runs in the thread of its server. A route's lambda must not fail with a *runtime error* (`x.y` on undefined ends the thread, like anywhere): throw an exception of your own class; `OnError` sees it. Errors of the library are `Http.HttpException`
+(`code`: 1 bad URL, 2 malformed message, 3 too many redirects, 4 too large, 5 not supported); network errors are the `Net.NetException`s of the net package. `https://` URLs work through the `tls` package (below): `client.tls = options` (a `Tls.Options`) says whom to trust; `server.UseTls(certPem, keyPem)` serves HTTPS.
+
+## TLS (`#import "tls"`, the package `fire-tls`)
+
+TLS over a TCP connection of the net package. The natives are C++ (`native/bridges/fire_bridge_tls.hpp` over `plat::tls`, one backend per platform); the classes are in `namespace Tls`. The package needs `net` (`io`, `time`).
+`http` uses it for `https://` URLs and for `Http.Server.UseTls`.
+
+```
+var s = Tls.Stream.Connect("example.org", 443)            // TCP connect and handshake; certificate chain and host name are checked against the system's certificates
+s.WriteString("GET / HTTP/1.0\r\nHost: example.org\r\n\r\n")
+print(s.Info)                                              // "TLSv1.3 TLS_AES_256_GCM_SHA384"
+
+var o = new Tls.Options()
+o.caPem = IO.File.ReadAllText("my-ca.pem")                 // trust exactly these (or o.caFile = "path")
+// o.verify = false                                        // no checking at all: for tests only
+var t = Tls.Stream.Connect("intranet", 8443, o)
+
+var server = new Tls.Server(certPem, keyPem)               // PEM text: the certificate (then its chain) and the private key
+var secure = server.Accept(listener.Accept())              // handshake as the server; the stream owns the connection
+```
+
+| class | |
+|---|---|
+| `Tls.Stream` | an `IO.Stream` like `Net.TcpClient`: `Read` (0 when the other side has ended the connection), `Write`, `WriteString`, `ReadTimeout`/`WriteTimeout`, `WaitReadable`, `Info`, `RemoteHost`, `RemotePort`, `Connection` (the TCP connection - do not use it), `Close()` (close_notify, then the connection is closed). `Tls.Stream.Connect(host, port, options = undefined, timeout = 10000)`; `new Tls.Stream(tcp, serverName, options, timeout)` wraps a connection you made (it belongs to the stream from then on) |
+| `Tls.Options` | `verify` (true), `caFile`, `caPem` (PEM text; both empty: the system's certificates), `certPem` + `keyPem` (a client certificate) |
+| `Tls.Server(certPem, keyPem)` | `Accept(tcp, timeout = 10000)` returns the `Tls.Stream`, `Close()` (close the streams first) |
+| `Tls.Support.Available()` | false on a build or platform without TLS |
+
+Errors: `Tls.TlsException` (code 14: handshake or protocol failure), `Tls.CertificateException` (15: expired, not signed by a trusted authority, wrong host name) - both are `Net.NetException`s - and the exceptions of net (a time limit is `Net.TimeoutException`).
+The versions are TLS 1.2 and 1.3; SNI is sent; a server that closes without `close_notify` (HTTP/1.0 style) ends the data like a normal close. Everything runs without waiting inside the library (the handshake is done step by step from fire), so other threads and `terminate` keep working.
+
+**Backends** (`native/platform/std/`): *OpenSSL* (`fire_tls_openssl.hpp`, 1.1.1 and 3.x) on Linux, macOS and Windows; *mbedTLS* (`fire_tls_mbedtls.hpp`, 2.28 and 3.x) on the ESP32 (it comes with ESP-IDF) and on a desktop with `FIRE_TLS_MBEDTLS`; *none*
+(`FIRE_NO_TLS`, and `freertos` without a board package of your own).
+
+* **Linux**: `libssl-dev` (Debian/Ubuntu) or `openssl-devel` must be installed where the library or the native program is built - the package's library for the VM is built at first use (or comes prebuilt in the package). Without the headers the build says so; a program
+  that only uses `http://` is not affected (the error only shows when a TLS function is called, and a failed build is remembered for five minutes so that it is not retried at every start).
+* **macOS**: OpenSSL from Homebrew/MacPorts; add its `include` and `lib` folders to the toolchain (`includeDirs`, `libs`).
+* **Windows**: an OpenSSL for the MinGW toolchain (MSYS2: `mingw-w64-x86_64-openssl`); the system's certificate store is not used by OpenSSL there, so give `caFile`/`caPem`. A backend on SChannel (no extra installation, the Windows store) is planned.
+* **ESP32**: the mbedTLS of ESP-IDF; add the component `mbedtls` to the project. To check servers without giving CA certificates define `FIRE_TLS_CA_ATTACH(conf)` as `esp_crt_bundle_attach(conf)` in the target (`includes`: `esp_crt_bundle.h`); there is no system
+  store on a microcontroller. (Not tried on a board yet.)
+* mbedTLS checks host *names* only, not IP addresses in the certificate: connecting to `127.0.0.1` against a certificate with an IP entry works with OpenSSL, not with mbedTLS.
 
 ## Hardware buses (the device platform)
 

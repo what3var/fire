@@ -465,6 +465,7 @@ namespace fire.Native
             if (_packageImports.Count > 0 || _usesGraphics) sb.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{_target.Native.Platform}/fire_fs.hpp\"");   // (the io package, graphics)
             if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{_target.Native.Platform}/fire_dev.hpp\"");   // (the devices package)
             if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_NET_HEADER \"platform/{_target.Native.Platform}/fire_net.hpp\"");   // (the net package)
+            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_TLS_HEADER \"platform/{_target.Native.Platform}/fire_tls.hpp\"");   // (the tls package)
             if (_usesGraphics) sb.AppendLine("#include \"bridges/fire_bridge_graphics.hpp\"");
             if (_usesWindows)
             {
@@ -841,6 +842,7 @@ namespace fire.Native
             var sb = new StringBuilder();
             sb.AppendLine(DispatcherSignature(name, argc, WrapDispatchers ? "direct_" : "call_"));
             sb.AppendLine("{");
+            if (DispatchNeedsList(name, argc)) sb.AppendLine("    (void)list;   // (a method that only works on numbers or text allocates nothing)");
             sb.AppendLine("    switch (self.kind) {");
             foreach (var (cpp, proto, extensionRc) in extensions)
                 sb.AppendLine($"        case {cpp}: {CallImpl(_funcByProto[proto].Name, proto, extensionRc, true)}");

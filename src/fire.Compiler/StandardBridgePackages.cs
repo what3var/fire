@@ -35,6 +35,8 @@ namespace fire.Compiler
             "ui" => new[] { "graphics", "windows", "reflection" },
             "linq" => new[] { "reflection" },
             "random" => new[] { "time" },
+            "http" => new[] { "net", "tls", "io", "time" },
+            "tls" => new[] { "net", "io", "time" },
             "net" => new[] { "io", "time" },   // a connection is an IO.Stream; the time limits need the clock
             _ => Array.Empty<string>(),
         };
@@ -45,6 +47,8 @@ namespace fire.Compiler
             "time" => fire.Standard.TimePrelude.Source,
             "random" => fire.Standard.RandomPrelude.Source,
             "net" => fire.Standard.NetPrelude.Source,
+            "http" => fire.Standard.HttpPrelude.Source,
+            "tls" => fire.Standard.TlsPrelude.Source,
             "io" => fire.Standard.IoPrelude.Source,
             "devices" => fire.Standard.DevicesPrelude.Source,
             _ => ImportedPreludes.TrySourceFor(bridge),
@@ -102,12 +106,23 @@ namespace fire.Compiler
                 foreach (var f in new[]
                 {
                     F("__NetLastError", 0, "net::LastError"), F("__NetLastErrorMessage", 0, "net::LastErrorMessage", list: true), F("__NetOpenCount", 0, "net::OpenCount"),
-                    F("__NetSupported", 0, "net::Supported"), F("__NetTcpConnect", 3, "net::TcpConnect"), F("__NetTcpListen", 3, "net::TcpListen"), F("__NetAccept", 2, "net::Accept"),
+                    F("__NetSupported", 0, "net::Supported"), F("__NetNativeHandle", 1, "net::NativeHandle"), F("__NetConnectBegin", 2, "net::ConnectBegin"), F("__NetConnectStep", 1, "net::ConnectStep"), F("__NetTcpListen", 3, "net::TcpListen"), F("__NetAccept", 2, "net::Accept"),
                     F("__NetSend", 5, "net::Send"), F("__NetRecv", 5, "net::Recv"), F("__NetUdpOpen", 2, "net::UdpOpen"), F("__NetSendTo", 6, "net::SendTo"),
                     F("__NetRecvFrom", 5, "net::RecvFrom"), F("__NetPeerHost", 1, "net::PeerHost", list: true), F("__NetPeerPort", 1, "net::PeerPort"),
                     F("__NetLocalHost", 1, "net::LocalHost", list: true), F("__NetLocalPort", 1, "net::LocalPort"), F("__NetAvailable", 1, "net::Available"),
                     F("__NetPoll", 4, "net::Poll"), F("__NetSetOption", 3, "net::SetOption"), F("__NetShutdown", 2, "net::Shutdown"), F("__NetClose", 1, "net::Close"),
                     F("__NetResolve", 1, "net::Resolve", list: true),
+                })
+                    yield return f;
+            }
+            if (bridge == "tls")
+            {
+                foreach (var f in new[]
+                {
+                    F("__TlsLastError", 0, "tls::LastError"), F("__TlsLastErrorMessage", 0, "tls::LastErrorMessage", list: true), F("__TlsSupported", 0, "tls::Supported"),
+                    F("__TlsOpen", 7, "tls::Open"), F("__TlsHandshake", 1, "tls::Handshake"), F("__TlsServerContext", 2, "tls::ServerContext"), F("__TlsFreeContext", 1, "tls::FreeContext"), F("__TlsAccept", 2, "tls::Accept"),
+                    F("__TlsRead", 5, "tls::Read"), F("__TlsWrite", 5, "tls::Write"), F("__TlsPending", 1, "tls::Pending"), F("__TlsInfo", 1, "tls::Info", list: true),
+                    F("__TlsClose", 1, "tls::Close"),
                 })
                     yield return f;
             }
@@ -190,6 +205,12 @@ namespace fire.Compiler
                     native.Functions.AddRange(FunctionsOf(bridge));
                     native.Exceptions.AddRange(ExceptionsOf(bridge));
                     if (bridge == "io") native.Reset = "io::reset";
+                    if (bridge == "tls")
+                    {
+                        native.Reset = "tls::reset";
+                        native.LinkLibraries["posix"] = new List<string> { "ssl", "crypto" };   // OpenSSL (an ESP32 gets mbedTLS from ESP-IDF; define FIRE_TLS_MBEDTLS / FIRE_NO_TLS to choose otherwise)
+                        native.LinkLibraries["windows"] = new List<string> { "ssl", "crypto", "ws2_32", "crypt32" };
+                    }
                     if (bridge == "net")
                     {
                         native.Reset = "net::reset";

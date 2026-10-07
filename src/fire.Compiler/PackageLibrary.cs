@@ -72,6 +72,7 @@ namespace fire.Compiler
         {
             if (import.Import.Native == null) throw new PackageException($"The import '{import.Name}' has no natives.");
             if (Locate(import) is { } done) return done;
+            if (RecentFailure(import) is { } earlier) throw new PackageException(earlier);
             if (!import.Import.Native.SupportsAny(HostPlatformKeys))
                 throw new PackageException($"The package '{import.Package.Name}' (import '{import.Name}') has native code for {string.Join(", ", import.Import.Native.Platforms)}, not for this machine ({string.Join(", ", HostPlatformKeys)}).");
             log?.Invoke($"Building the native part of the package '{import.Package.Name}' (import '{import.Name}') for {Rid}...");
@@ -95,7 +96,11 @@ namespace fire.Compiler
                 var (exe, args) = NativeBuilder.CompilerCommand(toolchain, target, cpp, work, outFile, sharedLibrary: true, extraIncludeDirs: new[] { Path.Combine(work, "abi") });
                 var (ok, text) = NativeBuilder.Run(exe, args, work);
                 if (!ok || !File.Exists(outFile))
-                    throw new PackageException($"Building the native part of the package '{import.Package.Name}' failed:\n{exe} {args}\n{text}");
+                {
+                    string message = $"Building the native part of the package '{import.Package.Name}' failed:\n{exe} {args}\n{text}";
+                    RememberFailure(import, message);
+                    throw new PackageException(message);
+                }
                 foreach (string dir in BuiltDirectories(import))
                 {
                     try
@@ -103,6 +108,7 @@ namespace fire.Compiler
                         Directory.CreateDirectory(dir);
                         string dest = Path.Combine(dir, FileNameFor(import));
                         File.Copy(outFile, dest, overwrite: true);
+                        try { File.Delete(FailureFile(import, dir)); } catch (IOException) { }
                         return dest;
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* not writable: the next place */ }
@@ -112,6 +118,42 @@ namespace fire.Compiler
             finally
             {
                 try { Directory.Delete(work, true); } catch (IOException) { }
+            }
+        }
+
+        // A package whose library cannot be built on this machine (a missing development library, say) would be tried again by every program that imports it - a compiler run of some seconds
+        // that fails again. The failure is remembered for a few minutes (next to where the library would be); after installing what was missing wait that long or delete the `.failed` file.
+        private static readonly TimeSpan FailureMemory = TimeSpan.FromMinutes(5);
+
+        private static string FailureFile(InstalledImport import, string dir) => Path.Combine(dir, FileNameFor(import) + ".failed");
+
+        private static string? RecentFailure(InstalledImport import)
+        {
+            foreach (string dir in BuiltDirectories(import))
+            {
+                try
+                {
+                    string file = FailureFile(import, dir);
+                    if (!File.Exists(file)) continue;
+                    if (DateTime.UtcNow - File.GetLastWriteTimeUtc(file) > FailureMemory || File.GetLastWriteTimeUtc(file) < NewestSource(import)) continue;
+                    return File.ReadAllText(file) + $"\n(This was the result of an earlier attempt, less than {FailureMemory.TotalMinutes:0} minutes ago; delete '{file}' to try again.)";
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+            return null;
+        }
+
+        private static void RememberFailure(InstalledImport import, string message)
+        {
+            foreach (string dir in BuiltDirectories(import))
+            {
+                try
+                {
+                    Directory.CreateDirectory(dir);
+                    File.WriteAllText(FailureFile(import, dir), message);
+                    return;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             }
         }
 
@@ -132,6 +174,7 @@ namespace fire.Compiler
             sb.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{target.Native.Platform}/fire_fs.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{target.Native.Platform}/fire_dev.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_NET_HEADER \"platform/{target.Native.Platform}/fire_net.hpp\"");
+            sb.AppendLine($"#define FIRE_PLATFORM_TLS_HEADER \"platform/{target.Native.Platform}/fire_tls.hpp\"");
             sb.AppendLine("#include \"fire_rt.hpp\"");
             foreach (var (name, text) in import.ReadNativeSources(HostPlatformKeys))
             {

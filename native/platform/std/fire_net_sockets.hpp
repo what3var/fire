@@ -6,7 +6,7 @@
 //   typedef intptr_t Sock; constexpr Sock kInvalid
 //   bool supported()              false: every call fails with Err::Unsupported (a board without a network)
 //   Status resolve(host, std::vector<std::string>& addresses)
-//   Status tcpConnect(host, port, timeoutMs, Sock&)        timeoutMs < 0: no limit
+//   Status connectBegin(host, port, ConnectState*&) / connectStep(state, bool& done) / takeConnected(state) / freeConnect(state)   a connection that is made without waiting
 //   Status tcpListen(host, port, backlog, Sock&)           host "" = every interface; port 0 = a free port (ask localAddress)
 //   Status acceptOne(listener, timeoutMs, Sock&)
 //   Status sendBytes(sock, data, count, timeoutMs, int& sent)       waits (up to the timeout) until at least one byte can be sent
@@ -270,35 +270,85 @@ inline Sock makeSocket(int family, int type) {
 
 inline void closeSock(Sock s) { if (s != kInvalid) closeFd(s); }
 
-inline Status tcpConnect(const std::string& host, int port, int64_t timeoutMs, Sock& out) {
-    out = kInvalid;
+/// A connection that is being made: the addresses of the host are tried one after the other, each with a non-blocking connect that `connectStep` finishes. Nothing here waits (only the name
+/// lookup of `connectBegin` can take a while), so a program that connects stays abortable and other threads keep running.
+struct ConnectState {
+    std::vector<sockaddr_storage> addresses;
+    std::vector<socklen_t> lengths;
+    size_t next = 0;
+    Sock fd = kInvalid;
+    std::string host;
+    int port = 0;
+    Status last;
+    ~ConnectState() { if (fd != kInvalid) closeFd(fd); }
+};
+
+/// Starts the next attempt; false when no address is left (`state.last` says why).
+inline bool connectNextAttempt(ConnectState& state) {
+    while (state.next < state.addresses.size()) {
+        const sockaddr* sa = reinterpret_cast<const sockaddr*>(&state.addresses[state.next]);
+        socklen_t len = state.lengths[state.next];
+        state.next++;
+        Sock s = makeSocket(sa->sa_family, SOCK_STREAM);
+        if (s == kInvalid) { state.last = failErrno(lastError(), "socket"); continue; }
+        int rc = ::connect(fdOf(s), sa, (int)len);
+        if (rc != 0 && !inProgress(lastError())) { state.last = failErrno(lastError(), "connect to " + state.host + ":" + portText(state.port)); closeSock(s); continue; }
+        state.fd = s;
+        return true;
+    }
+    return false;
+}
+
+inline Status connectBegin(const std::string& host, int port, ConnectState*& out) {
+    out = nullptr;
     AddrList list;
     Status st = lookup(host, port, SOCK_STREAM, false, list);
     if (!st.ok()) return st;
-    int64_t deadline = timeoutMs >= 0 ? nowMillis() + timeoutMs : -1;
-    Status last = fail(E_Unreachable, "No address of '" + host + "' could be reached.");
+    ConnectState* state = new ConnectState();
+    state->host = host;
+    state->port = port;
+    state->last = fail(E_Unreachable, "No address of '" + host + "' could be reached.");
     for (struct addrinfo* ai = list.head; ai; ai = ai->ai_next) {
-        Sock s = makeSocket(ai->ai_family, ai->ai_socktype);
-        if (s == kInvalid) { last = failErrno(lastError(), "socket"); continue; }
-        int rc = ::connect(fdOf(s), ai->ai_addr, (int)ai->ai_addrlen);
-        if (rc != 0 && !inProgress(lastError())) { last = failErrno(lastError(), "connect to " + host + ":" + portText(port)); closeSock(s); continue; }
-        if (rc != 0) {
-            int64_t left = deadline < 0 ? -1 : deadline - nowMillis();
-            if (deadline >= 0 && left < 0) left = 0;
-            bool r, w;
-            Status ws;
-            if (!selectWait(s, false, true, left, r, w, ws)) { last = ws; closeSock(s); continue; }
-            if (!w) { last = fail(E_TimedOut, "Connecting to " + host + ":" + portText(port) + " timed out."); closeSock(s); if (deadline >= 0 && nowMillis() >= deadline) break; continue; }
-            int err = 0;
-            socklen_t len = sizeof err;
-            ::getsockopt(fdOf(s), SOL_SOCKET, SO_ERROR, (char*)&err, &len);
-            if (err != 0) { last = failErrno(err, "connect to " + host + ":" + portText(port)); closeSock(s); continue; }
-        }
-        out = s;
-        return success();
+        sockaddr_storage ss;
+        std::memset(&ss, 0, sizeof ss);
+        std::memcpy(&ss, ai->ai_addr, ai->ai_addrlen);
+        state->addresses.push_back(ss);
+        state->lengths.push_back((socklen_t)ai->ai_addrlen);
     }
-    return last;
+    if (!connectNextAttempt(*state) && state->fd == kInvalid) { Status last = state->last; delete state; return last; }
+    out = state;
+    return success();
 }
+
+/// Asks (without waiting) whether the connection is made: `done` is true when it is (then `state.fd` is the connected socket, `takeConnected` hands it over), false when the attempt is
+/// still going on; an error when no address could be connected.
+inline Status connectStep(ConnectState& state, bool& done) {
+    done = false;
+    for (;;) {
+        if (state.fd == kInvalid) {
+            if (!connectNextAttempt(state)) return state.last;
+        }
+        bool r, w;
+        Status st;
+        if (!selectWait(state.fd, false, true, 0, r, w, st)) return st;
+        if (!w) return success();
+        int err = 0;
+        socklen_t len = sizeof err;
+        ::getsockopt(fdOf(state.fd), SOL_SOCKET, SO_ERROR, (char*)&err, &len);
+        if (err == 0) { done = true; return success(); }
+        state.last = failErrno(err, "connect to " + state.host + ":" + portText(state.port));
+        closeSock(state.fd);
+        state.fd = kInvalid;
+    }
+}
+
+inline Sock takeConnected(ConnectState& state) {
+    Sock s = state.fd;
+    state.fd = kInvalid;
+    return s;
+}
+
+inline void freeConnect(ConnectState* state) { delete state; }
 
 inline Status tcpListen(const std::string& host, int port, int backlog, Sock& out) {
     out = kInvalid;

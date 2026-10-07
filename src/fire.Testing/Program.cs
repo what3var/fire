@@ -16798,6 +16798,118 @@ else
             """),
     }).ToArray();
 
+    // TLS (bridges/fire_bridge_tls.hpp) and HTTPS: a certificate for localhost is made here (the tests trust exactly it); needs the development files of OpenSSL on this machine
+    {
+        bool hasOpenSsl = new[] { "/usr/include/openssl/ssl.h", "/usr/local/include/openssl/ssl.h", "/opt/homebrew/include/openssl/ssl.h", "/usr/include/x86_64-linux-gnu/openssl/ssl.h" }.Any(File.Exists);
+        if (!hasOpenSsl)
+        {
+            Console.WriteLine("(Tls/Https: uebersprungen - die Entwicklerdateien von OpenSSL (openssl/ssl.h) sind auf diesem Rechner nicht da)");
+        }
+        else
+        {
+            using var rsa = System.Security.Cryptography.RSA.Create(2048);
+            var request = new System.Security.Cryptography.X509Certificates.CertificateRequest("CN=localhost", rsa, System.Security.Cryptography.HashAlgorithmName.SHA256, System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+            var san = new System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder();
+            san.AddDnsName("localhost");
+            san.AddIpAddress(System.Net.IPAddress.Loopback);
+            request.CertificateExtensions.Add(san.Build());
+            request.CertificateExtensions.Add(new System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension(false, false, 0, true));
+            using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(5));
+            string FireText(string pem) => "\"" + pem.Replace("\r", "").Replace("\n", "\\n") + "\"";
+            string certText = FireText(certificate.ExportCertificatePem()), keyText = FireText(rsa.ExportPkcs8PrivateKeyPem());
+            string tlsHead = "#import \"tls\"\n#import \"http\"\n#import \"time\"\nvar certPem = " + certText + "\nvar keyPem = " + keyText + "\n";
+            natCases = natCases.Concat(new (string Name, string Source)[]
+            {
+                ("Tls: Handshake, verschluesselte Daten, Zertifikatspruefung (unbekannt, falscher Name, ausgeschaltet) ueber Loopback", tlsHead + """
+                    print("available " + Tls.Support.Available())
+                    var probe = new Net.TcpListener("127.0.0.1", 0)
+                    var port = probe.Port
+                    probe.Close()
+                    fire {
+                        var l = new Net.TcpListener("127.0.0.1", port)
+                        var server = new Tls.Server(certPem, keyPem)
+                        var served = 0
+                        while (served < 5) {
+                            var tcp = l.TryAccept(10000)
+                            if (tcp == undefined) { break }
+                            served = served + 1
+                            try {
+                                var s = server.Accept(tcp, 5000)
+                                var buf = new byte[64]
+                                var n = s.Read(buf, 0, 64)
+                                s.WriteString("echo:" + IO.Utf8.GetString(buf, 0, n))
+                                s.Close()
+                            } catch (Net.NetException e) { }
+                        }
+                        server.Close()
+                        l.Close()
+                    }
+                    Sleep(400)
+                    var o = new Tls.Options()
+                    o.caPem = certPem
+                    var s = Tls.Stream.Connect("localhost", port, o)
+                    print("connected " + s.Info.StartsWith("TLSv1"))
+                    s.WriteString("hello tls")
+                    var buf = new byte[64]
+                    var n = s.Read(buf, 0, 64)
+                    print("got " + IO.Utf8.GetString(buf, 0, n))
+                    print("eof " + s.Read(buf, 0, 64))
+                    s.Close()
+                    try { var t = Tls.Stream.Connect("localhost", port) } catch (Tls.CertificateException e) { print("untrusted " + e.code) }
+                    var tcp2 = new Net.TcpClient("127.0.0.1", port)
+                    try { var w = new Tls.Stream(tcp2, "wrong.example", o, 5000) } catch (Tls.CertificateException e) { print("wrong name " + e.code) }
+                    var o2 = new Tls.Options()
+                    o2.verify = false
+                    var u = Tls.Stream.Connect("localhost", port, o2)
+                    u.WriteString("unchecked")
+                    var m = u.Read(buf, 0, 64)
+                    print("unchecked " + IO.Utf8.GetString(buf, 0, m))
+                    u.Close()
+                    var tcp3 = new Net.TcpClient("127.0.0.1", port)
+                    var v = new Tls.Stream(tcp3, "127.0.0.1", o, 5000)
+                    v.WriteString("by ip")
+                    var k = v.Read(buf, 0, 64)
+                    print("by ip " + IO.Utf8.GetString(buf, 0, k))
+                    v.Close()
+                    """),
+                ("Https: Client und Server ueber TLS (https://-URL, Zertifikat des Tests, Zertifikatsfehler)", tlsHead + """
+                    var probe = new Net.TcpListener("127.0.0.1", 0)
+                    var port = probe.Port
+                    probe.Close()
+                    fire {
+                        var server = new Http.Server("127.0.0.1", port)
+                        server.UseTls(certPem, keyPem)
+                        server.Route("GET", "/hello", func (r) => Http.Response.FromText("secure " + r.Query("name", "world")))
+                        server.Route("POST", "/echo", func (r) => r.Text().ToUpper())
+                        var served = 0
+                        while (served < 4) {
+                            if (server.ServeOne(10000)) { served = served + 1 }
+                        }
+                        server.Close()
+                    }
+                    Sleep(400)
+                    var client = new Http.Client()
+                    client.timeout = 10000
+                    var o = new Tls.Options()
+                    o.caPem = certPem
+                    client.tls = o
+                    var site = "https://localhost:" + port
+                    var r1 = client.Get(site + "/hello?name=Anna")
+                    print(r1.status + " [" + r1.Text() + "] " + r1.url.StartsWith("https://"))
+                    var r2 = client.Post(site + "/echo", "grüß dich")
+                    print(r2.status + " [" + r2.Text() + "]")
+                    var strict = new Http.Client()
+                    strict.timeout = 5000
+                    try { strict.Get(site + "/hello") } catch (Tls.CertificateException e) { print("untrusted " + e.code) }
+                    var loose = new Tls.Options()
+                    loose.verify = false
+                    strict.tls = loose
+                    print(strict.Get(site + "/hello?name=loose").Text())
+                    """),
+            }).ToArray();
+        }
+    }
+
     // Network (bridges/fire_bridge_net.hpp): TCP, UDP and name resolution on the loopback interface - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
@@ -16857,6 +16969,126 @@ else
             try { var bad = new Net.TcpListener("127.0.0.1", 70000) } catch (Net.NetException e) { print("port " + e.code) }
             var l2 = new Net.TcpListener("127.0.0.1", 0)
             try { var l3 = new Net.TcpListener("127.0.0.1", l2.Port) } catch (Net.NetException e) { print("in use " + e.code) }
+            """),
+        ("Http: Client und Server (Routen, Redirects, chunked, Body bis Verbindungsende, Fehler) ueber Loopback", """
+            #import "http"
+            #import "time"
+            class Boom : Exception {
+                string message
+                construct(string message) { this.message = message }
+            }
+            // ---- pure helpers
+            var u = Http.Url.Parse("HTTP://User@Example.org:8080/a/b?x=1#frag")
+            print(u.scheme + " " + u.host + " " + u.port + " " + u.path)
+            print(Http.Url.Parse("https://example.org").path + " " + Http.Url.Parse("https://example.org").port + " " + Http.Url.Parse("http://[::1]:81/x").host)
+            print(u.Resolve("/c") + " | " + u.Resolve("d") + " | " + u.Resolve("http://other/z"))
+            try { Http.Url.Parse("ftp://x/") } catch (Http.HttpException e) { print("bad scheme " + e.code) }
+            try { Http.Url.Parse("no-scheme") } catch (Http.HttpException e) { print("bad url " + e.code) }
+            print(Http.Uri.Encode("a b/ü?&=") + " " + Http.Uri.Decode("a%20b%2Fx%C3%BC+%zz%4") + " " + Http.Uri.Decode("a+b", true))
+            var h = new Http.Headers()
+            h.Set("Content-Type", "text/x").Add("X-A", "1").Add("x-a", "2")
+            print(h.Get("content-type") + " " + h.Get("X-A") + " " + h.Count + " " + h.Has("nothing"))
+            h.Set("X-A", "3")
+            print(h.Count + " " + h.Get("x-a"))
+            var req = new Http.Request("GET", "/p%20q?name=Anna+M&a=b%26c&flag")
+            print(req.path + " " + req.Query("name") + " " + req.Query("a") + " [" + req.Query("flag") + "] " + req.Query("none", "dflt"))
+
+            // ---- a server in a thread
+            var probe = new Net.TcpListener("127.0.0.1", 0)
+            var port = probe.Port
+            probe.Close()
+            fire {
+                var server = new Http.Server("127.0.0.1", port)
+                server.Route("GET", "/hello", func (r) => Http.Response.FromText("hello " + r.Query("name", "world")))
+                server.Route("POST", "/echo", func (r) => Http.Response.FromText(r.Text().ToUpper() + " " + r.body.length, 201))
+                server.Route("GET", "/moved", func (r) => Http.Response.Redirect("/hello?name=redirect"))
+                server.Route("GET", "/loop", func (r) => Http.Response.Redirect("/loop"))
+                server.Route("*", "/any/*", func (r) => r.method + " " + r.path)
+                server.Route("GET", "/boom", func (r) => { throw new Boom("boom") })
+                server.Route("GET", "/big", func (r) => Http.Response.FromText("0123456789".Replace("0", "ab").Replace("1", "cd") + "x"))
+                server.Route("POST", "/size", func (r) => "" + r.body.length)
+                server.Route("GET", "/none", func (r) => undefined)
+                server.OnError(func (e) => print("server error: " + e.message))
+                var served = 0
+                while (served < 18) {
+                    if (server.ServeOne(10000)) { served = served + 1 }
+                }
+                server.Close()
+            }
+            Sleep(400)
+            var client = new Http.Client()
+            client.timeout = 10000
+            var site = "http://127.0.0.1:" + port
+            var r1 = client.Get(site + "/hello?name=Anna%20M")
+            print(r1.status + " " + r1.reason + " [" + r1.Text() + "] " + r1.headers.Get("content-type") + " ok=" + r1.Ok + " len=" + r1.Length)
+            var r2 = client.Post(site + "/echo", "grüß dich")
+            print(r2.status + " [" + r2.Text() + "]")
+            var r3 = client.Get(site + "/moved")
+            print(r3.status + " [" + r3.Text() + "] " + r3.url.EndsWith("/hello?name=redirect"))
+            try { client.Get(site + "/loop") } catch (Http.HttpException e) { print("loop " + e.code) }
+            var r4 = client.Get(site + "/nothing")
+            print(r4.status + " " + r4.Text() + " ok=" + r4.Ok)
+            var r5 = client.Get(site + "/boom")
+            print(r5.status)
+            var r6 = client.Request("PATCH", site + "/any/x/y", undefined, undefined)
+            print(r6.status + " [" + r6.Text() + "]")
+            var r7 = client.Head(site + "/hello")
+            print("head " + r7.status + " " + r7.headers.Get("Content-Length") + " body=" + r7.Length)
+            var data = new byte[200000]
+            for (var i = 0; i < data.length; i++) { data[i] = i % 253 }
+            var r8 = client.Post(site + "/size", data)
+            print("size " + r8.Text())
+            var r9 = client.Get(site + "/none")
+            print(r9.status + " " + r9.reason + " " + r9.Length)
+            client.followRedirects = false
+            var r10 = client.Get(site + "/moved")
+            print(r10.status + " " + r10.headers.Get("Location") + " " + r10.Length)
+            var custom = new Http.Headers()
+            custom.Set("X-Test", "1")
+            client.headers.Set("X-Default", "2")
+            var r11 = client.Get(site + "/hello", custom)
+            print(r11.status)
+            // ---- raw servers: chunked, until close
+            var chunkedPort = 0
+            var closePort = 0
+            var l1 = new Net.TcpListener("127.0.0.1", 0)
+            var l2 = new Net.TcpListener("127.0.0.1", 0)
+            chunkedPort = l1.Port
+            closePort = l2.Port
+            l1.Close()
+            l2.Close()
+            fire {
+                var l = new Net.TcpListener("127.0.0.1", chunkedPort)
+                var c = l.Accept(10000)
+                var rd = new Http.Reader(c)
+                var line = rd.ReadLine()
+                while (line != undefined && line.Length > 0) { line = rd.ReadLine() }
+                c.WriteString("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nX-T: t\r\n\r\n5\r\nhello\r\nB;ext=1\r\n, chunked w\r\n3\r\norl\r\n1\r\nd\r\n0\r\nTrailer: v\r\n\r\n")
+                c.Close()
+                l.Close()
+            }
+            fire {
+                var l = new Net.TcpListener("127.0.0.1", closePort)
+                var c = l.Accept(10000)
+                var rd = new Http.Reader(c)
+                var line = rd.ReadLine()
+                while (line != undefined && line.Length > 0) { line = rd.ReadLine() }
+                c.WriteString("HTTP/1.0 203 Odd Reason Phrase\r\n\r\nuntil close")
+                c.Close()
+                l.Close()
+            }
+            Sleep(400)
+            var c1 = client.Get("http://127.0.0.1:" + chunkedPort + "/")
+            print(c1.status + " [" + c1.Text() + "] " + c1.headers.Get("x-t"))
+            var c2 = client.Get("http://127.0.0.1:" + closePort + "/")
+            print(c2.status + " " + c2.reason + " [" + c2.Text() + "]")
+            // ---- errors
+            var silent = new Net.TcpListener("127.0.0.1", 0)
+            client.timeout = 300
+            try { client.Get("http://127.0.0.1:" + silent.Port + "/") } catch (Net.TimeoutException e) { print("silent " + e.code) }
+            silent.Close()
+            try { client.Get("https://127.0.0.1:1/") } catch (Net.RefusedException e) { print("https refused " + e.code) }
+            try { client.Get("ftp://127.0.0.1/") } catch (Http.HttpException e) { print("ftp " + e.code) }
             """),
     }).ToArray();
 
@@ -17096,7 +17328,9 @@ else
                 return output + errTask.Result;
             }
 
-            string build = RunTool(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"", out int buildExit);
+            // the libraries that the program asks for (`// fire-link: ssl` from the `linkLibraries` of a package)
+            string linkFlags = string.Concat(cpp.Split('\n').Take(400).Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+            string build = RunTool(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"{linkFlags}", out int buildExit);
             if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C++-Compiler: " + build);
             if (c.Name.StartsWith("Abbruch:"))
             {

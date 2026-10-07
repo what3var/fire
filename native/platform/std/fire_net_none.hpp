@@ -28,7 +28,11 @@ inline bool supported() { return false; }
 inline Status none() { Status s; s.code = E_Unsupported; s.message = "This platform has no network."; return s; }
 
 inline Status resolve(const std::string&, std::vector<std::string>&) { return none(); }
-inline Status tcpConnect(const std::string&, int, int64_t, Sock&) { return none(); }
+struct ConnectState {};
+inline Status connectBegin(const std::string&, int, ConnectState*& out) { out = nullptr; return none(); }
+inline Status connectStep(ConnectState&, bool& done) { done = false; return none(); }
+inline Sock takeConnected(ConnectState&) { return kInvalid; }
+inline void freeConnect(ConnectState*) {}
 inline Status tcpListen(const std::string&, int, int, Sock&) { return none(); }
 inline Status acceptOne(Sock, int64_t, Sock&) { return none(); }
 inline Status sendBytes(Sock, const uint8_t*, int, int64_t, int&) { return none(); }

@@ -6,7 +6,7 @@
 // A socket is an integer handle in a table of this bridge (like the streams of io); handles are not used again. Every function reports an error the same way: a result of -1/false/
 // undefined and the code and message of this thread (`__NetLastError`, `__NetLastErrorMessage`, the same slot as the io bridge), from which the fire code throws a typed exception.
 //
-// Time limits: every call that waits takes a timeout in milliseconds (< 0: no limit) and never blocks longer. The fire code asks again in short slices, so a program stays abortable
+// Time limits: every call that waits takes a timeout in milliseconds (< 0: no limit) and never blocks longer. The fire code asks with a timeout of 0 and sleeps a moment between the attempts (it does not hold the library while it waits), so a program stays abortable
 // (`terminate`, threads, the main queue) while it waits for the network.
 //
 // What the host decides (which hosts and ports a script may talk to) differs by build:
@@ -29,16 +29,27 @@ enum Err {
     Denied = 8, Unsupported = 9, ResolveFailed = 10, Other = 11, NotConnected = 12, Permission = 13
 };
 enum Access { A_Connect = 1, A_Listen = 2, A_Resolve = 4 };
-enum Kind { K_Tcp = 1, K_Listener = 2, K_Udp = 3 };
+enum Kind { K_Tcp = 1, K_Listener = 2, K_Udp = 3, K_Connecting = 4 };
+
+// The last error of this thread. The library for the VM is not built with FIRE_THREADS, but the fire threads of the VM call into it from real threads of their own: a slot of the
+// runtime would be shared by all of them (one thread's success would wipe another's error), so the slot is a `thread_local` of its own. A board without `thread_local` (FIRE_TLS_STRUCT)
+// keeps the slot in the structure of the task.
+#if defined(FIRE_TLS_STRUCT)
+#define FIRE_NET_ERROR g_ioError
+#else
+struct ErrorSlot { int32_t code; char message[176]; };
+inline thread_local ErrorSlot t_netError = {0, {0}};
+#define FIRE_NET_ERROR ::fire::net::t_netError
+#endif
 
 inline int64_t fail(int code, const std::string& message) {
-    g_ioError.code = code;
-    size_t n = message.size() < sizeof g_ioError.message - 1 ? message.size() : sizeof g_ioError.message - 1;
-    std::memcpy(g_ioError.message, message.data(), n);
-    g_ioError.message[n] = 0;
+    FIRE_NET_ERROR.code = code;
+    size_t n = message.size() < sizeof FIRE_NET_ERROR.message - 1 ? message.size() : sizeof FIRE_NET_ERROR.message - 1;
+    std::memcpy(FIRE_NET_ERROR.message, message.data(), n);
+    FIRE_NET_ERROR.message[n] = 0;
     return -1;
 }
-inline void ok() { g_ioError.code = 0; g_ioError.message[0] = 0; }
+inline void ok() { FIRE_NET_ERROR.code = 0; FIRE_NET_ERROR.message[0] = 0; }
 inline int64_t fail(const plat::net::Status& s) { return fail(s.code, s.message); }
 
 // ---- text -------------------------------------------------------------------------------------------------------------------------------
@@ -70,11 +81,18 @@ struct Socket {
     int kind = K_Tcp;
     std::string peerHost;
     int peerPort = 0;
+    plat::net::ConnectState* connecting = nullptr;   // K_Connecting: the attempts that are going on
 };
+inline void release(Socket* s) {
+    if (!s) return;
+    plat::net::closeSock(s->fd);
+    if (s->connecting) plat::net::freeConnect(s->connecting);
+    delete s;
+}
 /// The open sockets; the handle is the index. What the script left open is closed when the program ends (the safety net of the VM's host).
 struct SocketTable {
     std::vector<Socket*> items{1, nullptr};
-    ~SocketTable() { for (Socket* s : items) if (s) { plat::net::closeSock(s->fd); delete s; } }
+    ~SocketTable() { for (Socket* s : items) release(s); }
 };
 inline std::vector<Socket*>& sockets() { static SocketTable table; return table.items; }
 
@@ -82,9 +100,7 @@ inline std::vector<Socket*>& sockets() { static SocketTable table; return table.
 inline void reset() {
     std::vector<Socket*>& all = sockets();
     for (size_t i = 1; i < all.size(); i++) {
-        if (!all[i]) continue;
-        plat::net::closeSock(all[i]->fd);
-        delete all[i];
+        release(all[i]);
         all[i] = nullptr;
     }
 }
@@ -141,30 +157,55 @@ inline bool authorize(const std::string& host, int port, int access) {
 }
 
 // ---- natives ----------------------------------------------------------------------------------------------------------------------------
-inline Value LastError() { return Int(g_ioError.code); }
-inline Value LastErrorMessage(OwnList* list) { return str8(g_ioError.message, list); }
+inline Value LastError() { return Int(FIRE_NET_ERROR.code); }
+inline Value LastErrorMessage(OwnList* list) { return str8(FIRE_NET_ERROR.message, list); }
 inline Value OpenCount() {
     int64_t n = 0;
     for (Socket* s : sockets()) if (s) n++;
     return Int(n);
 }
+/// The number the operating system gives the socket (for the tls package, which works on the socket itself); -1 on an error. Whoever uses it must not close it: the socket belongs to this bridge.
+inline Value NativeHandle(Value h) {
+    Socket* s = find(h);
+    if (!s) return Int(-1);
+    ok();
+    return Int((int64_t)s->fd);
+}
 /// 1 if the platform has a network, else 0.
 inline Value Supported() { return Int(plat::net::supported() ? 1 : 0); }
 
-inline Value TcpConnect(Value host, Value port, Value timeoutMs) {
+/// Starts a connection to host:port (the name is resolved now, which can take a moment; the connecting itself does not wait): the result is a handle that `ConnectStep` makes a
+/// connection; -1 on an error.
+inline Value ConnectBegin(Value host, Value port) {
     if (!checkPort(port.i, false)) return Int(-1);
     std::string h = toUtf8(host);
     if (h.empty()) return Int(fail(InvalidArgument, "The host is empty."));
     if (!authorize(h, (int)port.i, A_Connect)) return Int(-1);
-    plat::net::Sock fd = plat::net::kInvalid;
-    plat::net::Status st = plat::net::tcpConnect(h, (int)port.i, timeoutMs.i, fd);
+    plat::net::ConnectState* state = nullptr;
+    plat::net::Status st = plat::net::connectBegin(h, (int)port.i, state);
     if (!st.ok()) return Int(fail(st));
     Socket* s = new Socket();
-    s->fd = fd;
-    s->kind = K_Tcp;
-    plat::net::peerAddress(fd, s->peerHost, s->peerPort);
+    s->kind = K_Connecting;
+    s->connecting = state;
     ok();
     return Int(add(s));
+}
+
+/// Asks without waiting: 1 the connection is made (the handle is a connection now), 0 not yet, -1 no address could be connected (the handle stays until it is closed).
+inline Value ConnectStep(Value h) {
+    Socket* s = findKind(h, K_Connecting, "being connected");
+    if (!s) return Int(-1);
+    bool done = false;
+    plat::net::Status st = plat::net::connectStep(*s->connecting, done);
+    if (!st.ok()) return Int(fail(st));
+    ok();
+    if (!done) return Int(0);
+    s->fd = plat::net::takeConnected(*s->connecting);
+    plat::net::freeConnect(s->connecting);
+    s->connecting = nullptr;
+    s->kind = K_Tcp;
+    plat::net::peerAddress(s->fd, s->peerHost, s->peerPort);
+    return Int(1);
 }
 
 inline Value TcpListen(Value host, Value port, Value backlog) {
@@ -345,8 +386,7 @@ inline Value Shutdown(Value h, Value how) {
 inline Value Close(Value h) {
     int64_t i = h.i;
     if (i <= 0 || (size_t)i >= sockets().size() || !sockets()[(size_t)i]) { fail(InvalidHandle, "Invalid or already closed socket handle."); return Bool(false); }
-    plat::net::closeSock(sockets()[(size_t)i]->fd);
-    delete sockets()[(size_t)i];
+    release(sockets()[(size_t)i]);
     sockets()[(size_t)i] = nullptr;
     ok();
     return Bool(true);
