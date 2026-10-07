@@ -266,7 +266,7 @@ namespace fire.Compiler
                     {
                         native.Reset = "tls::reset";
                         native.LinkLibraries["posix"] = new List<string> { "ssl", "crypto" };   // OpenSSL (an ESP32 gets mbedTLS from ESP-IDF; define FIRE_TLS_MBEDTLS / FIRE_NO_TLS to choose otherwise)
-                        native.LinkLibraries["windows"] = new List<string> { "ssl", "crypto", "ws2_32", "crypt32" };
+                        native.LinkLibraries["windows"] = new List<string> { "ws2_32", "secur32", "crypt32", "ncrypt" };   // SChannel (with FIRE_TLS_OPENSSL: add ssl and crypto to the libs of the target)
                     }
                     if (bridge == "gpio") native.Reset = "gpio::reset";
                     if (bridge == "i2c") native.Reset = "i2c::reset";

@@ -2168,7 +2168,7 @@ Errors are `Http.HttpException` (with a `code`) and the exceptions of `net`.
 
 ### 8.22 TLS (`#import "tls"`)
 
-The package `fire-tls` (docs/NETWORK.md is the reference): `Tls.Stream` (an `IO.Stream` over a `Net.TcpClient`), `Tls.Server`, `Tls.Options`; OpenSSL or mbedTLS underneath. `#import "http"` brings it along for `https://`. Errors are
+The package `fire-tls` (docs/NETWORK.md is the reference): `Tls.Stream` (an `IO.Stream` over a `Net.TcpClient`), `Tls.Server`, `Tls.Options`; SChannel (Windows), OpenSSL or mbedTLS underneath. `#import "http"` brings it along for `https://`. Errors are
 `Tls.TlsException` and `Tls.CertificateException` (both `Net.NetException`s).
 
 ### 8.23 GPIO (`#import "gpio"`)

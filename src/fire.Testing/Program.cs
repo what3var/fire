@@ -17595,6 +17595,52 @@ else
             CheckNat($"Native == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (C++):\n{actual}");
         }
 
+        // SChannel, the TLS of the Windows platform: the TLS case built for Windows with MinGW and run under Wine (when both are on this machine) must print what the VM prints
+        {
+            string? FindTool(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
+            string? mingw = FindTool("x86_64-w64-mingw32-g++");
+            string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindTool("wine64") ?? FindTool("wine");
+            int tlsIndex = Array.FindIndex(natCases, c => c.Name.StartsWith("Tls: Handshake", StringComparison.Ordinal));
+            if (mingw == null || wine == null || tlsIndex < 0)
+            {
+                Console.WriteLine("(Tls mit SChannel: uebersprungen - MinGW (x86_64-w64-mingw32-g++) und Wine sind auf diesem Rechner nicht da)");
+            }
+            else
+            {
+                string name = "Tls (SChannel, fuer Windows gebaut, unter Wine)";
+                try
+                {
+                    string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natCases[tlsIndex].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.Windows), TargetProfile.Windows);
+                    string cppFile = Path.Combine(workDir, "schannel.cpp"), exeFile = Path.Combine(workDir, "schannel.exe");
+                    File.WriteAllText(cppFile, cpp);
+                    string linkFlags = string.Concat(cpp.Split('\n').Take(400).Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+                    string Run(string tool, string arguments, out int exit)
+                    {
+                        var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir };
+                        info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
+                        info.Environment["WINEDEBUG"] = "-all";
+                        using var p = System.Diagnostics.Process.Start(info)!;
+                        var errTask = p.StandardError.ReadToEndAsync();
+                        string output = p.StandardOutput.ReadToEnd();
+                        if (!p.WaitForExit(240000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
+                        exit = p.ExitCode;
+                        return output + errTask.Result;
+                    }
+                    string build = Run(mingw, $"-std=c++17 -O2 -Wall -Wextra -static \"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"{linkFlags}", out int buildExit);
+                    if (buildExit != 0 || build.Contains("warning:")) CheckNat(name, false, "MinGW: " + build);
+                    else
+                    {
+                        string actual = Run(wine, $"\"{exeFile}\"", out int runExit);
+                        // (the Wine output has no stray lines: WINEDEBUG is off; lines Wine itself prints about the prefix are dropped)
+                        actual = string.Join("\n", actual.Replace("\r", "").Split('\n').Where(l => !l.StartsWith("wine:", StringComparison.Ordinal)));
+                        string expected = vmResults[tlsIndex].Replace("\r", "");
+                        CheckNat(name, runExit == 0 && expected.TrimEnd() == actual.TrimEnd(), $"  erwartet (VM):\n{expected}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
+                    }
+                }
+                catch (Exception ex) { CheckNat(name, false, ex.Message); }
+            }
+        }
+
         // The switch itself: VM output differs between the precisions, the directive is validated, the override wins
         string out64 = vmOutput("print(0.1 + 0.2)\nprint(1.0 / 3)"), out32 = vmOutput("#floatwidth 32\nprint(0.1 + 0.2)\nprint(1.0 / 3)");
         Value.SingleFloats = false;
