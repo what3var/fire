@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -12,6 +12,8 @@ namespace fire.Terminal.Event
         Close = 1,
         CloseRequest = 2,
         TextInput = 3,
+        /// <summary>Die Größe des Fensters hat sich geändert (der Nutzer zieht am Rand, Maximieren).</summary>
+        Resize = 4,
         MouseDown = 8,
         MouseMove = 9,
         MouseMoveRelative = 10,

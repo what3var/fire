@@ -8996,6 +8996,76 @@ string[] uiDrawExpected = Array.Empty<string>();
 
         """;
 
+    CheckUi("Fenster-Resize: AutoResize bringt den Framebuffer auf die gueltige Groesse, sonst bleibt er", """
+        var fb = new Framebuffer(100, 80)
+        var win = new Window(fb, "Resize")
+        print(win.AutoResize)
+        win.EnableEvents()
+        __TestEvent(4, 150, 120)
+        win.Tick()
+        print("ohne " + fb.Width() + "x" + fb.Height())
+        win.AutoResize = true
+        print(win.AutoResize)
+        win.NextEvent()
+        __TestEvent(4, 150, 120)
+        win.Tick()
+        print("mit " + fb.Width() + "x" + fb.Height())
+        var e = win.NextEvent()
+        print(e[0] + " " + e[1] + " " + e[2])
+        __TestEvent(4, 0, 50)
+        win.Tick()
+        print("minimiert " + fb.Width() + "x" + fb.Height())
+        __TestEvent(4, 20000, 50)
+        win.Tick()
+        print("zu gross " + fb.Width() + "x" + fb.Height())
+        __TestEvent(4, 16384, 16384)
+        win.Tick()
+        print("zu viele Pixel " + fb.Width() + "x" + fb.Height())
+        __TestEvent(4, 60, 40)
+        win.Tick()
+        print("klein " + fb.Width() + "x" + fb.Height())
+        print(fb.Resize(0, 5) + " " + fb.Resize(5, -1) + " " + fb.Width() + "x" + fb.Height())
+        print(fb.Resize(30, 20) + " " + fb.Width() + "x" + fb.Height())
+        print(win.RegisterResize(func (int w, int h) => { }))
+        """, new[] { "False", "ohne 100x80", "True", "mit 150x120", "4 150 120", "minimiert 150x120", "zu gross 150x120", "zu viele Pixel 150x120", "klein 60x40", "False False 60x40", "True 30x20", "True" });
+
+    CheckUi("Fenster-Resize: der Inhalt bleibt oben links, Renderer und Cursor passen sich an", """
+        class Px { static int Get(console, int x, int y) { var v = console.GetPixel(x, y); if (v < 0) { v = v + 4294967296 } return v } }
+        var fb = new Framebuffer(40, 28)
+        var r = new Renderer(fb)
+        r.FillRect(0, 0, 40, 28, new SolidBrush(0xFFFF0000))
+        r.Locate(1, 4)
+        print(fb.Resize(80, 14))
+        print(Px.Get(r, 5, 5) == 4294901760)
+        print(Px.Get(r, 60, 5) != 4294901760 && Px.Get(r, 60, 5) == Px.Get(r, 79, 13))
+        r.Print("x")
+        print(Px.Get(r, 33, 2) == 4278190080)
+        print(Px.Get(r, 5, 5) == 4294901760)
+        print(fb.Resize(24, 56))
+        print(Px.Get(r, 5, 5) == 4294901760)
+        """, new[] { "True", "True", "True", "True", "True", "True", "True" });
+
+    CheckUi("Fenster-Resize: UI.Root ordnet neu an und malt in der neuen Groesse", uiHead + """
+        class Px2 { static int Get(console, int x, int y) { var v = console.GetPixel(x, y); if (v < 0) { v = v + 4294967296 } return v } }
+        var b = new UI.Button("OK", 10, 10, 80, 26)
+        ui.Add(b)
+        var seen = ""
+        ui.onResize = func (int w, int h) => { seen = seen + w + "x" + h + " " }
+        ui.Tick()
+        print(win.AutoResize)
+        print(ui.width + "x" + ui.height)
+        __TestEvent(4, 400, 260)
+        ui.Tick()
+        ui.Tick()
+        print(ui.width + "x" + ui.height + " " + fb.Width() + "x" + fb.Height())
+        print(seen)
+        print(Px2.Get(ui.renderer, 390, 250) == Px2.Get(ui.renderer, 300, 190))
+        print(Px2.Get(ui.renderer, 390, 250) != 0)
+        __TestEvent(4, 0, 0)
+        ui.Tick()
+        print(ui.width + "x" + ui.height)
+        """, new[] { "True", "320x200", "400x260 400x260", "400x260 ", "True", "True", "400x260" });
+
     CheckUi("Button: Hover, Druecken, Klick (Abfrage per TakeClicked)", uiHead + """
         var b = new UI.Button("OK", 10, 10, 80, 26)
         ui.Add(b)
@@ -17752,6 +17822,25 @@ else
             for (var i = 0; i < 3; i++) { con.FillRect(i * 5, 20, 4, 4, new SolidBrush(9)); win.Tick() }
             print(win.Tick())
             """, new[] { "True", "False", "True", "True", "undefined", "True", "True", "True", "True" }, ""),
+                ("Fenster: AutoResize bringt den Framebuffer auf die Groesse des Fensters", """
+            #import "windows"
+            var fb = new Framebuffer(64, 48)
+            var win = new Window(fb, "resize")
+            print(win.AutoResize)
+            win.AutoResize = true
+            print(win.AutoResize)
+            win.EnableEvents()
+            win.RegisterResize(func(int w, int h) => { print("cb " + w + " " + h) })
+            print(win.Tick())
+            print(fb.Width() + "x" + fb.Height())
+            var e = win.NextEvent()
+            print(e[0] + " " + e[1] + " " + e[2])
+            print(fb.Resize(0, 5))
+            print(fb.Resize(20000, 5))
+            print(fb.Width() + "x" + fb.Height())
+            print(fb.Resize(100, 80))
+            print(fb.Width() + "x" + fb.Height())
+            """, new[] { "False", "True", "cb 90 70", "True", "90x70", "4 90 70", "False", "False", "90x70", "True", "100x80" }, "-DFIRE_DISPLAY_SELFTEST_RESIZE "),
                 ("Fenster: Ereignisse als Callbacks und aus der Warteschlange, Schliessen beendet Tick", """
             #import "windows"
             var fb = new Framebuffer(64, 48)
@@ -18322,6 +18411,9 @@ sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
                 break;
             case fire.Terminal.Event.EventType.TextInput:
                 _pending.Add(new fire.Terminal.Event.TextEvent { Type = kind, Text = args[1].AsString() });
+                break;
+            case fire.Terminal.Event.EventType.Resize:
+                _pending.Add(new fire.Terminal.Event.ResizeEvent { Type = kind, Width = (int)args[1].AsInt(), Height = (int)args[2].AsInt() });
                 break;
         }
     }

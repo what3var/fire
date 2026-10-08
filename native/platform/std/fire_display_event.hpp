@@ -5,7 +5,7 @@
 
 namespace fire { namespace plat { namespace disp {
 
-enum EventKind { EV_UNKNOWN = 0, EV_CLOSE = 1, EV_CLOSE_REQUEST = 2, EV_TEXT_INPUT = 3, EV_MOUSE_DOWN = 8, EV_MOUSE_MOVE = 9, EV_MOUSE_MOVE_REL = 10, EV_MOUSE_UP = 11, EV_MOUSE_SCROLL = 12, EV_KEY_DOWN = 24, EV_KEY_UP = 25 };
+enum EventKind { EV_UNKNOWN = 0, EV_CLOSE = 1, EV_CLOSE_REQUEST = 2, EV_TEXT_INPUT = 3, EV_RESIZE = 4, EV_MOUSE_DOWN = 8, EV_MOUSE_MOVE = 9, EV_MOUSE_MOVE_REL = 10, EV_MOUSE_UP = 11, EV_MOUSE_SCROLL = 12, EV_KEY_DOWN = 24, EV_KEY_UP = 25 };
 
 /// One event; which fields count depends on `type` (positions are in framebuffer pixels: the window may be scaled).
 struct Event {
@@ -17,6 +17,7 @@ struct Event {
     float x = 0, y = 0, xrel = 0, yrel = 0;        // mouse position / movement
     float scrollX = 0, scrollY = 0;
     std::string text;                              // text input (UTF-8)
+    int width = 0, height = 0;                     // resize: the new size of the window
 };
 
 }}}

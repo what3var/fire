@@ -1,4 +1,4 @@
-﻿using fire.Runtime;
+using fire.Runtime;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -30,6 +30,8 @@ namespace fire.Terminal.Event
                     return callback.Proto.ParamCount == 3;
                 case EventType.TextInput:
                     return callback.Proto.ParamCount == 1;
+                case EventType.Resize:
+                    return callback.Proto.ParamCount == 2;
                 default:
                     return callback.Proto.ParamCount == 0;
             }

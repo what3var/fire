@@ -27,6 +27,8 @@ namespace UI {
         List attached
         // Ein Lambda ohne Parameter, das jeder Zyklus dieses Roots am Ende aufruft (die Markup-Klassen nutzen es fuer OnTick)
         var onTick
+        // Ein Lambda (breite, hoehe), das aufgerufen wird, nachdem die Oberflaeche auf eine neue Fenstergroesse gebracht wurde (siehe autoResize)
+        var onResize
         // Ungueltig machen: hat sich etwas geaendert, ordnet Update neu an und malt neu - nur den Bereich, der sich geaendert hat, solange kein Element woanders hingerutscht ist.
         bool dirty = true
         bool fullRedraw = true
@@ -60,6 +62,9 @@ namespace UI {
             // Ereignisse werden abgefragt, nicht per Callback geliefert: so laufen sie im Hauptprogramm, und ein
             // onClick-Lambda sieht die echten globalen Variablen (ein Callback arbeitet dagegen auf einer Kopie, SPEC 8.1.4)
             window.EnableEvents()
+            // Zieht der Nutzer das Fenster auf eine andere Groesse, bekommt der Framebuffer sie (sofern sie gueltig ist) und die Oberflaeche ordnet sich neu an - statt dass ihr Bild gestreckt wird.
+            // `window.AutoResize = false` laesst es beim Strecken.
+            window.AutoResize = true
 
             // Jede Aenderung eines Feldes eines Elements (und des Themes) meldet eine Probe (siehe SPEC 8.14): die Elemente rufen Touched, sobald sie zum ersten Mal angeordnet werden (Watch)
             this.watcher = func (o, n, a, b) on this => { this.Touched(o) }
@@ -133,6 +138,7 @@ namespace UI {
         // Bringt die Oberflaeche auf den Stand: fragt ab, ordnet neu an und malt - aber nur, wenn sich etwas geaendert hat, und nur den geaenderten Bereich, solange kein Element
         // seine Lage oder Groesse geaendert hat. Liefert true, wenn gemalt wurde.
         bool Update() {
+            this.CheckSize()
             this.Poll()
             if (!this.dirty && !this.fullRedraw) { return false }
             this.painting = true
@@ -146,6 +152,22 @@ namespace UI {
             this.dirty = false
             this.fullRedraw = false
             this.hasDirtyRect = false
+            return true
+        }
+
+        // Hat der Framebuffer eine andere Groesse als die Oberflaeche (das Fenster wurde gezogen, siehe Window.AutoResize)? Dann bekommt die oberste Ebene die neue Groesse, alles wird neu
+        // angeordnet und gemalt, und onResize(breite, hoehe) wird gerufen. Liefert true, wenn sich die Groesse geaendert hat.
+        bool CheckSize() {
+            var w = this.framebuffer.Width()
+            var h = this.framebuffer.Height()
+            if (w == this.width && h == this.height) { return false }
+            this.width = w
+            this.height = h
+            this.content.width = w
+            this.content.height = h
+            this.Invalidate()
+            var callback = this.onResize
+            if (callback != undefined) { callback(w, h) }
             return true
         }
 

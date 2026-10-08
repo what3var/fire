@@ -103,6 +103,29 @@ struct Framebuffer {
         return pixels != nullptr;
     }
 
+    static constexpr int64_t MaxSide = 16384, MaxPixels = 64LL * 1024 * 1024;
+    static bool validSize(int64_t w, int64_t h) { return w >= 1 && h >= 1 && w <= MaxSide && h <= MaxSide && w * h <= MaxPixels; }
+
+    /// A new size (see validSize; an invalid size leaves it as it is, false): the content stays at the upper left, the new area is transparent (RGBA) or index 0. The pixel arrays are new ones.
+    bool resize(int64_t w, int64_t h) {
+        if (!validSize(w, h)) return false;
+        if (w == width && h == height) return true;
+        size_t n = (size_t)(w * h);
+        int copyW = (int)std::min<int64_t>(w, width), copyH = (int)std::min<int64_t>(h, height);
+        uint8_t* newIndices = nullptr;
+        uint32_t* newPixels = nullptr;
+        if (indices) { newIndices = static_cast<uint8_t*>(std::calloc(n, 1)); if (!newIndices) return false; }
+        else { newPixels = static_cast<uint32_t*>(std::calloc(n, 4)); if (!newPixels) return false; }
+        for (int y = 0; y < copyH; y++) {
+            if (indices) std::memcpy(newIndices + (size_t)y * (size_t)w, indices + (size_t)y * (size_t)width, (size_t)copyW);
+            else std::memcpy(newPixels + (size_t)y * (size_t)w, pixels + (size_t)y * (size_t)width, (size_t)copyW * 4);
+        }
+        std::free(pixels); std::free(indices);
+        pixels = newPixels; indices = newIndices;
+        width = (int)w; height = (int)h;
+        return true;
+    }
+
     bool isIndexed() const { return indices != nullptr; }
     size_t pixelCount() const { return (size_t)width * (size_t)height; }
     size_t byteCount() const { return indices ? pixelCount() : pixelCount() * 4; }
@@ -617,13 +640,13 @@ struct Renderer {
     Framebuffer* target = nullptr;
     bool smallFont = false;      // the built-in font is 8x14 (the default) or 8x8
     bool alphaBlending = true;
-    int cellWidth = 8, cellHeight = 14, columns = 0, rows = 0, cursorRow = 0, cursorColumn = 0;
+    int cellWidth = 8, cellHeight = 14, cursorRow = 0, cursorColumn = 0;
     Paint foreground = Paint::fromRgba(rgb(255, 255, 255));
     Paint background = Paint::fromRgba(rgb(0, 0, 0));
     bool hasBackground = true;
     int clipLeft = 0, clipTop = 0, clipRight = 0x7FFFFFFF, clipBottom = 0x7FFFFFFF;
 
-    explicit Renderer(Framebuffer* fb, bool small = false) : target(fb), smallFont(small), cellHeight(small ? 8 : 14) { fbRetain(fb); updateGrid(); }
+    explicit Renderer(Framebuffer* fb, bool small = false) : target(fb), smallFont(small), cellHeight(small ? 8 : 14) { fbRetain(fb); }
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
     ~Renderer() { fbRelease(target); }
@@ -635,12 +658,18 @@ struct Renderer {
         clipBottom = (int)std::min<int64_t>((int64_t)y + std::max(0, h), 0x7FFFFFFF);
     }
     void resetClip() { clipLeft = 0; clipTop = 0; clipRight = 0x7FFFFFFF; clipBottom = 0x7FFFFFFF; }
-    void updateGrid() { columns = target->width / cellWidth; rows = target->height / cellHeight; }
+    // the grid follows the size of the target (a framebuffer may change its size, see Framebuffer::resize); the cursor is kept inside it
+    int columns() const { return target->width / cellWidth; }
+    int rows() const { return target->height / cellHeight; }
+    void clampCursor() {
+        cursorRow = std::max(0, std::min(cursorRow, std::max(0, rows() - 1)));
+        cursorColumn = std::max(0, std::min(cursorColumn, std::max(0, columns() - 1)));
+    }
     const uint8_t* glyph(char16_t c) const { uint32_t i = c < 256 ? c : '?'; return smallFont ? kGlyphs8x8[i] : kGlyphs8x14[i]; }
 
     void locate(int row, int column) {
-        cursorRow = std::max(0, std::min(row, std::max(0, rows - 1)));
-        cursorColumn = std::max(0, std::min(column, std::max(0, columns - 1)));
+        cursorRow = std::max(0, std::min(row, std::max(0, rows() - 1)));
+        cursorColumn = std::max(0, std::min(column, std::max(0, columns() - 1)));
     }
 
     // Clear and scrolling set pixels as they are (no blending)
@@ -683,11 +712,12 @@ struct Renderer {
     void newLine() {
         cursorColumn = 0;
         cursorRow++;
-        if (cursorRow >= rows) { scrollUp(cellHeight, clearPixel()); cursorRow = rows - 1; }
+        if (cursorRow >= rows()) { scrollUp(cellHeight, clearPixel()); cursorRow = rows() - 1; }
     }
-    void advance() { cursorColumn++; if (cursorColumn >= columns) newLine(); }
+    void advance() { cursorColumn++; if (cursorColumn >= columns()) newLine(); }
 
     void print(const char16_t* text, uint32_t n) {
+        clampCursor();
         Surface s = surface();
         Pixel fg = s.resolve(foreground);
         Pixel bg = hasBackground ? s.resolve(background) : Pixel();

@@ -1,4 +1,4 @@
-﻿using fire.Bytecode;
+using fire.Bytecode;
 using fire.Runtime;
 using fire.Terminal;
 using fire.Values;
@@ -92,6 +92,7 @@ namespace fire.Terminal.Bridge
                 ["GetTransparentIndex"] = args => Value.MakeUndefined() /*STUB*/,
                 ["SetTransparentIndex"] = args => Value.MakeUndefined() /*STUB*/,
                 ["ToMask"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Resize"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 
@@ -184,6 +185,8 @@ namespace fire.Terminal.Bridge
                     return Value.MakeUndefined();
                 },
                 ["ToMask"] = args => LoadGuarded(() => mgr.CreateMask(I(args[0]), I(args[1]), args[2].AsBool(), I(args[3]))),
+                // false bei einer ungültigen Größe (der Framebuffer bleibt, wie er war)
+                ["Resize"] = args => Value.MakeBool(mgr.Resize(I(args[0]), I(args[1]), I(args[2]))),
             };
         }
 
@@ -464,6 +467,11 @@ namespace fire.Terminal.Bridge
 
                 int Width() { return __GRPHFbWidth(this.id) }
                 int Height() { return __GRPHFbHeight(this.id) }
+
+                // Bringt den Framebuffer auf eine neue Größe: der Inhalt bleibt oben links erhalten, was dazukommt ist durchsichtig (Palette: Index 0). Gültig sind beide Seiten von 1 bis 16384
+                // und höchstens 64 Millionen Pixel; bei einer anderen Größe (zum Beispiel 0 bei einem minimierten Fenster) bleibt er, wie er ist, und die Antwort ist false.
+                // Eine Konsole (Renderer) auf diesem Framebuffer folgt der neuen Größe; Zeiger auf die Pixel (Natives) gelten danach nicht mehr.
+                bool Resize(int width, int height) { return __GRPHFbResize(this.id, width, height) }
                 int Mode() { return __GRPHFbMode(this.id) }
 
                 // Rohdaten: RGBA 4 Byte je Pixel (R, G, B, A), Palette 1 Byte je Pixel (der Index); ByteCount() ist die Größe.

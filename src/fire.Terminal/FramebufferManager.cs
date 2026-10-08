@@ -24,6 +24,9 @@ namespace fire.Terminal
 
         public ColorMode GetMode(int id) => _framebuffers.Get(id).Mode;
 
+        /// <summary>Bringt den Framebuffer auf eine neue Größe (siehe Framebuffer.Resize); false bei einer ungültigen Größe (er bleibt dann, wie er war).</summary>
+        public bool Resize(int id, int width, int height) => _framebuffers.Get(id).Resize(width, height);
+
         // -----------------------------------------------------------
         // Bilder laden (siehe ImageDecoder): als Dateiinhalt oder als rohe Pixel
         // -----------------------------------------------------------

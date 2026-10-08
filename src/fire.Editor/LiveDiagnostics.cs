@@ -157,8 +157,9 @@ namespace fire.Editor
             return diagnostics.OrderBy(d => d.Line).ToList();
         }
 
+        // what the resolver says about a name that it does not know: a class or type, an exception type in `catch`, a base class or interface after the `:` of a class
         private static readonly Regex UnknownClassOrType =
-            new(@"^(?:Unknown class|Unknown type) '([^']+)'", RegexOptions.Compiled);
+            new(@"^(?:Unknown (?:class|type|exception type) '(?<name>[^']+)'|'(?<name>[^']+)' of class '[^']+' is neither a known class nor a known interface)", RegexOptions.Compiled);
 
         /// <summary>Wie Analyze(source), unterdrückt aber Diagnosen, die NUR
         /// daher kommen, dass diese Analyse ausschließlich `source` (+
@@ -218,13 +219,18 @@ namespace fire.Editor
                     knownElsewhere.Add(cls.Name);
                     knownElsewhere.Add(cls.SimpleName);
                 }
+                foreach (var enumName in index.EnumMembers.Keys)
+                {
+                    knownElsewhere.Add(enumName);
+                    knownElsewhere.Add(enumName.Substring(enumName.LastIndexOf('.') + 1));
+                }
             }
             if (knownElsewhere.Count == 0) return diagnostics;
 
             return diagnostics.Where(d =>
             {
                 var match = UnknownClassOrType.Match(d.Message);
-                return !(match.Success && knownElsewhere.Contains(match.Groups[1].Value));
+                return !(match.Success && knownElsewhere.Contains(match.Groups["name"].Value));
             }).ToList();
         }
     }

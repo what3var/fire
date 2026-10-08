@@ -348,6 +348,21 @@ gezeichnet wurde. Das ist gewollt für Animationen (ein Durchlauf = ein Bild) un
 Durchlauf braucht bei 256 Durchläufen 256 x 16,7 ms = 4,3 s, obwohl das Zeichnen selbst nur wenige Millisekunden dauert (gemessen: 256 x `Print` + `Tick` ohne VSync in ~10 ms). Abhilfe: seltener `Tick` rufen (zum Beispiel
 einmal nach der Schleife) oder `win.VSync = false` setzen, dann kehrt `Tick` sofort zurück - bei einer Schleife, die dann ungebremst läuft; wer animiert, bremst sie selbst (`Sleep`) oder lässt VSync an.
 
+## Fenstergröße ändern (`AutoResize`)
+
+Ein Fenster darf vom Nutzer in der Größe geändert werden. Ohne weiteres (Vorgabe) wird der Framebuffer dann auf das Fenster **gestreckt**. Mit `window.AutoResize = true` bekommt der Framebuffer stattdessen genau die neue
+Größe des Fensters - das Bild wird nicht gestreckt, die Mauspositionen sind Pixel des Framebuffers 1:1, und das Programm zeichnet in der neuen Größe neu. Dazu:
+
+- `framebuffer.Resize(breite, höhe)` (auch von Hand zu rufen) liefert `true`, wenn die Größe **gültig** ist: beide Seiten von 1 bis 16384 und höchstens 64 Millionen Pixel. Eine ungültige Größe lässt den Framebuffer
+  unverändert und liefert `false` - ein minimiertes Fenster meldet zum Beispiel die Größe 0 und wird einfach übergangen. Der Inhalt bleibt oben links erhalten, was dazukommt ist durchsichtig (RGBA) bzw. Index 0 (Palette);
+  Modus, Palette und durchsichtiger Index bleiben. Ein `Renderer` auf dem Framebuffer folgt der neuen Größe (Zeilen/Spalten für `Print`, der Cursor wird ins Raster zurückgeholt). Wer sich Zeiger auf die Pixel
+  gemerkt hat (`unsafe`), holt sie nach einem Resize neu.
+- Das Ereignis `EventType.Resize` (4) meldet die neue Größe des Fensters: in der Warteschlange `[4, breite, höhe]`, als Callback `window.RegisterResize(func (int w, int h) => { ... })`. Bei `AutoResize` hat der
+  Framebuffer die Größe schon, wenn das Ereignis ankommt (und ist sie ungültig, behält er die alte).
+- VM und natives Backend verhalten sich gleich (`__GRPHFbResize`, `__GRPHWinSetAutoResize`/`GetAutoResize`; die Plattform liefert `EV_RESIZE` mit `width`/`height`).
+
+Die UI-Bibliothek schaltet `AutoResize` selbst ein (siehe docs/UI.md, "Fenstergröße").
+
 ## Bewusst noch NICHT Teil dieser Ausbaustufe
 
 - **Keine Anbindung an ScriptLang selbst** (keine neuen `NativeRegistry`-

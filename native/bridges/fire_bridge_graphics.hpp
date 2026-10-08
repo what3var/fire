@@ -101,6 +101,7 @@ inline Value FbDestroy(Value id) {
 }
 inline Value FbWidth(Value id) { return Int(fbOf(id)->width); }
 inline Value FbHeight(Value id) { return Int(fbOf(id)->height); }
+inline Value FbResize(Value id, Value w, Value h) { return Bool(fbOf(id)->resize(I(w), I(h))); }
 inline Value FbMode(Value id) { return Int(fbOf(id)->mode); }
 inline Value FbByteCount(Value id) { return Int((int64_t)fbOf(id)->byteCount()); }
 

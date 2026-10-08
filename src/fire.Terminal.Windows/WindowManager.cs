@@ -63,7 +63,7 @@ namespace fire.Terminal.Windows
         /// ganze Pixel (nach unten gerundet, in Framebuffer-Koordinaten):
         /// MouseDown/MouseUp [typ, taste, x, y]; MouseMove [typ, x, y, tastenzustand]; MouseMoveRelative [typ, dx, dy, tastenzustand];
         /// MouseScroll [typ, scrollX, scrollY, x, y] (Scrollwerte als Fließkommazahl); KeyDown/KeyUp [typ, keycode, scancode, modifier,
-        /// wiederholt]; TextInput [typ, text]; Close/CloseRequest [typ].</summary>
+        /// wiederholt]; TextInput [typ, text]; Resize [typ, breite, höhe] (die Größe des Fensters); Close/CloseRequest [typ].</summary>
         public static Value EncodeEvent(IEvent evnt)
         {
             static long Px(float v) => (long)Math.Floor(v);
@@ -87,6 +87,9 @@ namespace fire.Terminal.Windows
                     break;
                 case TextEvent text:
                     items = new[] { Value.MakeInt((int)text.Type), text.Text == null ? Value.MakeUndefined() : Value.MakeString(text.Text) };
+                    break;
+                case ResizeEvent resize:
+                    items = new[] { Value.MakeInt((int)resize.Type), Value.MakeInt(resize.Width), Value.MakeInt(resize.Height) };
                     break;
                 default:
                     items = new[] { Value.MakeInt((int)evnt.Type) };
@@ -143,6 +146,10 @@ namespace fire.Terminal.Windows
         /// <summary>Für C#-seitige Weiterverwendung - kein Teil des rein-
         /// ID-basierten Oberflächen-APIs.</summary>
         public ConsoleWindow GetWindow(int id) => _windows.Get(id);
+
+        public bool GetAutoResize(int id) => _windows.Get(id).AutoResize;
+
+        public void SetAutoResize(int id, bool enabled) => _windows.Get(id).AutoResize = enabled;
 
         public bool GetVSync(int id) => _windows.Get(id).VSync;
 
@@ -250,6 +257,10 @@ namespace fire.Terminal.Windows
                                         Value.MakeFloat(scrollevent.X),
                                         Value.MakeFloat(scrollevent.Y)
                                     });
+                                break;
+                            case Event.EventType.Resize:
+                                var resizeevent = (ResizeEvent)evnt;
+                                Callback(hndlr.Callback, new[] { Value.MakeInt(resizeevent.Width), Value.MakeInt(resizeevent.Height) });
                                 break;
                             case Event.EventType.TextInput:
                                 var textevent = (TextEvent)evnt;

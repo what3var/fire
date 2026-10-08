@@ -24,6 +24,7 @@ public:
 
     bool open(const std::string& title, int width, int height, bool vsync) {
         vsync_ = vsync;
+        winW_ = width; winH_ = height;
         if (SDL_WasInit(SDL_INIT_VIDEO) == 0 && SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) return false;
         ownsVideo_ = true;
         window_ = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height, SDL_WINDOW_RESIZABLE);
@@ -33,7 +34,7 @@ public:
         if (!renderer_) { close(); return false; }
         SDL_StartTextInput();
         windowId_ = SDL_GetWindowID(window_);
-#ifdef FIRE_DISPLAY_SELFTEST
+#if defined(FIRE_DISPLAY_SELFTEST) || defined(FIRE_DISPLAY_SELFTEST_RESIZE)
         selftest();
 #endif
         return true;
@@ -52,6 +53,9 @@ public:
                 case SDL_QUIT: e.type = EV_CLOSE; out.push_back(e); quit_ = true; break;
                 case SDL_WINDOWEVENT:
                     if (ev.window.event == SDL_WINDOWEVENT_CLOSE) { e.type = EV_CLOSE_REQUEST; out.push_back(e); }
+                    else if (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED && ev.window.windowID == windowId_ && (ev.window.data1 != winW_ || ev.window.data2 != winH_)) {
+                        winW_ = ev.window.data1; winH_ = ev.window.data2;
+                        e.type = EV_RESIZE; e.width = winW_; e.height = winH_; out.push_back(e); }
                     break;
                 case SDL_KEYDOWN: case SDL_KEYUP:
                     e.type = ev.type == SDL_KEYDOWN ? EV_KEY_DOWN : EV_KEY_UP;
@@ -114,10 +118,15 @@ public:
     }
 
 private:
-#ifdef FIRE_DISPLAY_SELFTEST
+#if defined(FIRE_DISPLAY_SELFTEST) || defined(FIRE_DISPLAY_SELFTEST_RESIZE)
     /// The tests (and nobody else) push a fixed series of events when a window opens: keys, a click, motion, the wheel, text and the close.
     void selftest() {
         SDL_Event e;
+#ifdef FIRE_DISPLAY_SELFTEST_RESIZE
+        // (only for the test of Window.AutoResize: the window is pulled to 90x70)
+        SDL_zero(e); e.type = SDL_WINDOWEVENT; e.window.event = SDL_WINDOWEVENT_SIZE_CHANGED; e.window.windowID = windowId_; e.window.data1 = 90; e.window.data2 = 70; SDL_PushEvent(&e);
+        return;
+#endif
         SDL_zero(e); e.type = SDL_KEYDOWN; e.key.keysym.sym = 'a'; e.key.keysym.scancode = SDL_SCANCODE_A; e.key.keysym.mod = KMOD_LSHIFT; e.key.repeat = 0; SDL_PushEvent(&e);
         SDL_zero(e); e.type = SDL_KEYUP; e.key.keysym.sym = 'a'; e.key.keysym.scancode = SDL_SCANCODE_A; e.key.keysym.mod = 0; SDL_PushEvent(&e);
         SDL_zero(e); e.type = SDL_MOUSEBUTTONDOWN; e.button.button = SDL_BUTTON_LEFT; e.button.x = 32; e.button.y = 24; SDL_PushEvent(&e);
@@ -139,7 +148,7 @@ private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
     SDL_Texture* texture_ = nullptr;
-    int texW_ = 0, texH_ = 0, fbWidth_ = 0, fbHeight_ = 0;
+    int winW_ = 0, winH_ = 0, texW_ = 0, texH_ = 0, fbWidth_ = 0, fbHeight_ = 0;
     Uint32 windowId_ = 0;
     bool vsync_ = true, quit_ = false, ownsVideo_ = false;
 };

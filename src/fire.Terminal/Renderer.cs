@@ -72,13 +72,11 @@ namespace fire.Terminal
 
         private readonly int _cellWidth;
         private readonly int _cellHeight;
-        private int _columns;
-        private int _rows;
-
+        // das Raster folgt der Größe des Ziels (ein Framebuffer darf seine Größe ändern, siehe Framebuffer.Resize); der Cursor wird vor dem Schreiben ins Raster zurückgeholt (Print)
         public int CellWidth => _cellWidth;
         public int CellHeight => _cellHeight;
-        public int Columns => _columns;
-        public int Rows => _rows;
+        public int Columns => _target.Width / _cellWidth;
+        public int Rows => _target.Height / _cellHeight;
 
         public int CursorRow { get; private set; }
         public int CursorColumn { get; private set; }
@@ -118,11 +116,7 @@ namespace fire.Terminal
             UpdateGrid();
         }
 
-        private void UpdateGrid()
-        {
-            _columns = _target.Width / _cellWidth;
-            _rows = _target.Height / _cellHeight;
-        }
+        private void UpdateGrid() { }   // (das Raster wird aus der Größe des Ziels berechnet)
 
         public void Locate(int row, int column)
         {
@@ -159,6 +153,8 @@ namespace fire.Terminal
         /// Zeile; am Ende des Bildschirms scrollt der GESAMTE Inhalt eine Zellenhöhe nach oben (was oben herausfällt, ist verloren - es gibt keinen Scrollback).</summary>
         public void Print(string text)
         {
+            CursorRow = Math.Clamp(CursorRow, 0, Math.Max(0, Rows - 1));
+            CursorColumn = Math.Clamp(CursorColumn, 0, Math.Max(0, Columns - 1));
             var surface = Surface;
             var fg = surface.Resolve(_foreground);
             bool hasBg = _background is Paint;

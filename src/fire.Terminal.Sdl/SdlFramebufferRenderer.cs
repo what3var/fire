@@ -128,6 +128,10 @@ namespace fire.Terminal.Sdl
                         resultEvents.Add(new Terminal.Event.Event() { SourceHandle = _internalHandle, Type = eventType });
                         _quit = true;
                         break;
+                    case SDL.EventType.WindowResized:
+                        // die neue Größe des Fensters (in den Einheiten, in denen es angelegt wurde: so wie die Mauspositionen)
+                        resultEvents.Add(new ResizeEvent() { SourceHandle = _internalHandle, Type = Event.EventType.Resize, Width = ev.Window.Data1, Height = ev.Window.Data2 });
+                        break;
                     case SDL.EventType.WindowCloseRequested:
                         eventType = Event.EventType.CloseRequest;
                         resultEvents.Add(new Terminal.Event.Event() { SourceHandle = _internalHandle, Type = eventType });

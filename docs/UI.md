@@ -139,6 +139,13 @@ wirklich ändert, meldet sich), dazu fragt `Update()` bei jedem Durchlauf ab, wa
 - Eigene Elemente: `Draw` beginnt mit `if (!this.NeedsDraw(root, ax, ay)) { return }` und malt nur, was in den Bereich fällt; Änderungen, die keine Felder sind, meldet das Element mit `Invalidate()`
   oder in `Poll(root)`.
 
+## Fenstergröße
+
+Ein `UI.Root` schaltet `window.AutoResize` ein: zieht der Nutzer das Fenster auf eine andere Größe, bekommt der Framebuffer sie (sofern sie gültig ist, siehe docs/CONSOLE.md "Fenstergröße ändern") und die Oberfläche
+ordnet sich in der neuen Größe neu an und malt neu - Elemente mit `halign`/`valign` = `Stretch` (und Panels, die ihre Kinder dehnen) füllen den neuen Platz, `Dock`-, `Grid`- und `Stack`-Layouts rechnen neu, schwebende
+Elemente (Menüs) bleiben im Fenster. `ui.width` und `ui.height` sind immer die aktuelle Größe; `ui.onResize = func (int w, int h) => { ... }` wird danach gerufen (zum Beispiel für ein eigenes Bild in einem `Canvas`).
+Wer das Strecken des festen Bildes vorzieht, setzt `window.AutoResize = false`.
+
 ## Mehrere Fenster
 
 Ein Programm kann mehrere Fenster haben - jedes ist ein `UI.Root` mit eigenem Framebuffer und `Window`. `ui.Attach(anderes)` hängt den Root eines weiteren Fensters an: `ui.Tick()` (und `ui.Run()`) macht dann
