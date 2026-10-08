@@ -256,6 +256,17 @@ namespace UI {
             return false
         }
 
+        bool CanPan() { return this.showV || this.showH }
+
+        bool Dragging() { return this.vbar.dragging || this.hbar.dragging }
+
+        bool PanBy(root, int dx, int dy) {
+            if (!this.showV && !this.showH) { return false }
+            if (this.showH) { this.hbar.By(-dx) }
+            if (this.showV) { this.vbar.By(-dy) }
+            return true
+        }
+
         MouseDown(root, int button, int px, int py) {
             if (button != 1) { return }
             if (this.showV && px >= this.ax + this.viewW && py < this.ay + this.viewH) { this.vbar.Press(py - this.ay, this.viewH) }

@@ -39,5 +39,10 @@ namespace fire.Terminal
         /// auch wenn das Zeichnen selbst nur Millisekunden dauert. Ohne VSync kehrt Present sofort zurück.
         /// Darf vor dem Öffnen des Fensters gesetzt werden.</summary>
         bool VSync { get; set; }
+
+        /// <summary>true (Vorgabe): ein Finger auf dem Touchscreen löst AUCH Mausereignisse aus (so, wie es SDL von sich aus tut) - ein Programm, das nur auf die Maus hört, ist dann auch mit
+        /// dem Finger bedienbar. false: nur die Touch-Ereignisse (die UI-Bibliothek schaltet das aus und wertet die Finger selbst aus). Darf vor dem Öffnen des Fensters gesetzt werden;
+        /// ein Renderer ohne Touchscreen ignoriert es.</summary>
+        bool TouchMouse { get => true; set { } }
     }
 }

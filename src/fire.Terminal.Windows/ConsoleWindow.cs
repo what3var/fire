@@ -49,6 +49,13 @@ namespace fire.Terminal.Windows
         /// das Fenster gestreckt wird. Das Programm bekommt das Ereignis <see cref="Event.EventType.Resize"/> und zeichnet neu.</summary>
         public bool AutoResize { get; set; }
 
+        /// <summary>Löst ein Finger auf dem Touchscreen auch Mausereignisse aus? (siehe IFramebufferRenderer.TouchMouse)</summary>
+        public bool TouchMouse
+        {
+            get => _renderer.TouchMouse;
+            set => _renderer.TouchMouse = value;
+        }
+
         /// <summary>Wartet jedes Tick auf die Bildwiederholung des Monitors? (siehe IFramebufferRenderer.VSync)</summary>
         public bool VSync
         {

@@ -363,6 +363,26 @@ Größe des Fensters - das Bild wird nicht gestreckt, die Mauspositionen sind Pi
 
 Die UI-Bibliothek schaltet `AutoResize` selbst ein (siehe docs/UI.md, "Fenstergröße").
 
+## Touchscreen und Joystick
+
+Das Fenster meldet neben Maus und Tastatur auch Finger und Joysticks (SDL; VM und natives Backend gleich). Die Ereignisse kommen wie die anderen über die Warteschlange (`window.EnableEvents()`, `NextEvent()`) oder als Callback
+(`RegisterTouchDown(...)` usw.):
+
+| Ereignis | `EventType` | Warteschlange | Callback |
+|---|---|---|---|
+| Finger setzt auf / bewegt sich / hebt ab | `TouchDown` 16, `TouchMove` 17, `TouchUp` 18 | `[typ, finger, x, y, druck]` | `(int finger, float x, float y, float druck)` |
+| Achse | `JoystickAxis` 32 | `[typ, joystick, achse, stellung]` | `(int joystick, int achse, float stellung)` |
+| Knopf gedrückt / losgelassen | `JoystickButtonDown` 33, `JoystickButtonUp` 34 | `[typ, joystick, knopf]` | `(int joystick, int knopf)` |
+| Kreuz (Hat) | `JoystickHat` 35 | `[typ, joystick, hat, richtungen]` | `(int joystick, int hat, int richtungen)` |
+| angesteckt / abgezogen | `JoystickAdded` 36, `JoystickRemoved` 37 | `[typ, joystick]` | `(int joystick)` |
+
+- Fingerpositionen sind Pixel des Framebuffers (wie die Maus); `finger` unterscheidet mehrere gleichzeitige Finger, `druck` geht von 0 bis 1 (Geräte ohne Druckmessung melden 1).
+- Eine Achse steht von -1 bis 1 (0 ist die Mitte; die Ruhelage kann um ein paar Prozent daneben liegen - eine Totzone ist Sache des Programms). `richtungen` beim Kreuz ist eine Bitmaske: 1 oben, 2 rechts, 4 unten, 8 links, 0 Mitte.
+- `joystick` ist die Nummer des Geräts, solange es angesteckt ist. Alle Geräte, die schon beim Start da sind (und später angesteckte), werden geöffnet und melden `JoystickAdded`. Ohne Joystick-Treiber öffnet sich das Fenster trotzdem.
+- `window.TouchMouse` (Vorgabe `true`): SDL macht aus einem Finger zusätzlich Mausereignisse, ein Programm, das nur auf die Maus hört, ist so auch mit dem Finger bedienbar. Mit `false` kommen nur die Touch-Ereignisse
+  (die UI-Bibliothek schaltet es aus und wertet die Finger selbst aus, siehe docs/UI.md "Bedienung").
+- Im nativen Backend liefert die Anzeige `EV_TOUCH_*` und `EV_JOY_*` (Felder `finger`, `pressure`, `joystick`, `index`, `value`, `x`, `y`); ein Board-Paket ohne Touchscreen oder Joystick meldet sie einfach nicht.
+
 ## Bewusst noch NICHT Teil dieser Ausbaustufe
 
 - **Keine Anbindung an ScriptLang selbst** (keine neuen `NativeRegistry`-

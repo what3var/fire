@@ -389,6 +389,16 @@ namespace UI {
         MouseMove(root, int px, int py) { }
         KeyDown(root, int key, int mod) { }
         TextInput(root, string text) { }
+
+        // Will das Element diese Pfeil-/Navigationstaste selbst (zum Beispiel ein Textfeld Links/Rechts, eine Liste Auf/Ab)? Sonst bewegt der Root damit den Fokus zum naechsten Element in der Richtung
+        // (Tastatur-, Joystick-Bedienung). Eine Liste gibt die Taste am Rand frei, damit man aus ihr herauskommt.
+        bool WantsKey(int key) { return false }
+
+        // Berührung (Finger): Kann das Element durch Wischen verschoben werden (eine Liste, ein ScrollViewer), und wird gerade an einem seiner Griffe gezogen? PanBy verschiebt den Inhalt um (dx, dy) Pixel
+        // in Richtung des Fingers und liefert true, wenn das Element das Wischen übernommen hat.
+        bool CanPan() { return false }
+        bool Dragging() { return false }
+        bool PanBy(root, int dx, int dy) { return false }
     }
 
     // Container mit Kindern. Dieses Panel ordnet sie an ihrem x/y an (wie ein Canvas) und kann Hintergrund und Rahmen zeichnen; die anderen Container

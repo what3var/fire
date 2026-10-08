@@ -147,6 +147,14 @@ namespace UI {
 
         Hover(root, int px, int py) { this.hotIndex = this.OptionAt(root, px, py) }
 
+        // Die Pfeiltasten wechseln die Option - an der ersten und letzten gibt die Gruppe sie frei (der Fokus wandert weiter)
+        bool WantsKey(int key) {
+            var last = this.items.count - 1
+            if (key == UI.Keys.Down() || key == UI.Keys.Right()) { return this.selectedIndex < last }
+            if (key == UI.Keys.Up() || key == UI.Keys.Left()) { return this.selectedIndex > 0 }
+            return false
+        }
+
         KeyDown(root, int key, int mod) {
             var step = 0
             if (key == UI.Keys.Down() || key == UI.Keys.Right()) { step = 1 }
@@ -277,6 +285,12 @@ namespace UI {
             // ein Klick in der Liste hat gewaehlt
             if (this.popupList.TakeChanged() && this.popupList.selectedIndex >= 0 && this.ListOpen()) { this.Choose(this.popupList.selectedItem) }
             if (!this.focused && this.ListOpen()) { this.CloseList() }
+        }
+
+        // Bei offener Liste wählen Auf/Ab einen Vorschlag
+        bool WantsKey(int key) {
+            if (this.ListOpen() && (key == UI.Keys.Down() || key == UI.Keys.Up())) { return true }
+            return base.WantsKey(key)
         }
 
         KeyDown(root, int key, int mod) {

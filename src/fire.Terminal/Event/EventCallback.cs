@@ -31,7 +31,19 @@ namespace fire.Terminal.Event
                 case EventType.TextInput:
                     return callback.Proto.ParamCount == 1;
                 case EventType.Resize:
+                case EventType.JoystickButtonDown:
+                case EventType.JoystickButtonUp:
                     return callback.Proto.ParamCount == 2;
+                case EventType.TouchDown:
+                case EventType.TouchMove:
+                case EventType.TouchUp:
+                    return callback.Proto.ParamCount == 4;
+                case EventType.JoystickAxis:
+                case EventType.JoystickHat:
+                    return callback.Proto.ParamCount == 3;
+                case EventType.JoystickAdded:
+                case EventType.JoystickRemoved:
+                    return callback.Proto.ParamCount == 1;
                 default:
                     return callback.Proto.ParamCount == 0;
             }

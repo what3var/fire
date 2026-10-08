@@ -51,6 +51,20 @@ namespace fire.Terminal.Sdl
         private bool _quit;
         private bool _disposed;
         private bool _vsync = true;
+        private bool _touchMouse = true;
+        // die geöffneten Joysticks (Instanz-ID -> Handle); ein Joystick sendet erst Ereignisse, wenn er geöffnet ist
+        private readonly Dictionary<uint, IntPtr> _joysticks = new();
+
+        /// <inheritdoc/>
+        public bool TouchMouse
+        {
+            get => _touchMouse;
+            set
+            {
+                _touchMouse = value;
+                SDL.SetHint(SDL.Hints.TouchMouseEvents, value ? "1" : "0");
+            }
+        }
 
         /// <inheritdoc/>
         public bool VSync
@@ -92,6 +106,9 @@ namespace fire.Terminal.Sdl
 
             if (!SDL.Init(SDL.InitFlags.Video))
                 throw new InvalidOperationException($"SDL.Init failed: {SDL.GetError()}");
+            // Joysticks sind ein Zugabe: ohne Treiber geht das Fenster trotzdem auf. Die schon angesteckten Geräte melden sich danach als JoystickAdded.
+            SDL.InitSubSystem(SDL.InitFlags.Joystick);
+            SDL.SetHint(SDL.Hints.TouchMouseEvents, _touchMouse ? "1" : "0");
 
             // SDL3-CS bietet CreateWindowAndRenderer als EINEN Aufruf (statt
             // getrennt CreateWindow + CreateRenderer wie in SDL2) - laut
@@ -221,6 +238,53 @@ namespace fire.Terminal.Sdl
 
                         resultEvents.Add(scrollevent);
                         break;
+                    case SDL.EventType.FingerDown:
+                    case SDL.EventType.FingerMotion:
+                    case SDL.EventType.FingerUp:
+                        // die Position kommt von SDL normiert (0 bis 1 über das Fenster): in Framebuffer-Pixeln ist sie einfach x * Breite
+                        resultEvents.Add(new TouchEvent()
+                        {
+                            Type = ((SDL.EventType)ev.Type) switch { SDL.EventType.FingerDown => Event.EventType.TouchDown, SDL.EventType.FingerUp => Event.EventType.TouchUp, _ => Event.EventType.TouchMove },
+                            Finger = (long)ev.TFinger.FingerID,
+                            X = ev.TFinger.X * _fbWidth,
+                            Y = ev.TFinger.Y * _fbHeight,
+                            Pressure = ev.TFinger.Pressure,
+                            SourceHandle = _internalHandle,
+                        });
+                        break;
+                    case SDL.EventType.JoystickAdded:
+                        {
+                            uint id = ev.JDevice.Which;
+                            if (!_joysticks.ContainsKey(id))
+                            {
+                                var joystick = SDL.OpenJoystick(id);
+                                if (joystick != IntPtr.Zero) _joysticks[id] = joystick;
+                            }
+                            resultEvents.Add(new JoystickEvent() { Type = Event.EventType.JoystickAdded, Joystick = (int)id, SourceHandle = _internalHandle });
+                        }
+                        break;
+                    case SDL.EventType.JoystickRemoved:
+                        {
+                            uint id = ev.JDevice.Which;
+                            if (_joysticks.Remove(id, out var joystick)) SDL.CloseJoystick(joystick);
+                            resultEvents.Add(new JoystickEvent() { Type = Event.EventType.JoystickRemoved, Joystick = (int)id, SourceHandle = _internalHandle });
+                        }
+                        break;
+                    case SDL.EventType.JoystickAxisMotion:
+                        // 16-Bit-Wert von -32768 bis 32767 -> -1 bis 1
+                        resultEvents.Add(new JoystickEvent() { Type = Event.EventType.JoystickAxis, Joystick = (int)ev.JAxis.Which, Index = ev.JAxis.Axis, Value = Math.Max(-1f, ev.JAxis.Value / 32767f), SourceHandle = _internalHandle });
+                        break;
+                    case SDL.EventType.JoystickButtonDown:
+                    case SDL.EventType.JoystickButtonUp:
+                        resultEvents.Add(new JoystickEvent()
+                        {
+                            Type = ((SDL.EventType)ev.Type) == SDL.EventType.JoystickButtonDown ? Event.EventType.JoystickButtonDown : Event.EventType.JoystickButtonUp,
+                            Joystick = (int)ev.JButton.Which, Index = ev.JButton.Button, SourceHandle = _internalHandle,
+                        });
+                        break;
+                    case SDL.EventType.JoystickHatMotion:
+                        resultEvents.Add(new JoystickEvent() { Type = Event.EventType.JoystickHat, Joystick = (int)ev.JHat.Which, Index = ev.JHat.Hat, Value = ev.JHat.Value, SourceHandle = _internalHandle });
+                        break;
                     case SDL.EventType.TextInput:
                         eventType = Event.EventType.TextInput;
 
@@ -288,6 +352,8 @@ namespace fire.Terminal.Sdl
         {
             if (_disposed) return;
             _disposed = true;
+            foreach (var joystick in _joysticks.Values) SDL.CloseJoystick(joystick);
+            _joysticks.Clear();
             if (_texture != IntPtr.Zero) SDL.DestroyTexture(_texture);
             if (_renderer != IntPtr.Zero) SDL.DestroyRenderer(_renderer);
             if (_window != IntPtr.Zero) SDL.DestroyWindow(_window);

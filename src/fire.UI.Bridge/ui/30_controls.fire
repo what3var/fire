@@ -265,6 +265,11 @@ namespace UI {
             if (this.caret > this.text.Length) { this.caret = this.text.Length }
         }
 
+        // Links/Rechts bewegen die Einfügemarke, Pos1/Ende springen; Auf/Ab gehören dem Fokus (zum Element darüber/darunter)
+        bool WantsKey(int key) {
+            return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Home() || key == UI.Keys.End()
+        }
+
         KeyDown(root, int key, int mod) {
             var length = this.text.Length
             if (key == UI.Keys.Left()) {

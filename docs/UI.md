@@ -139,6 +139,23 @@ wirklich ändert, meldet sich), dazu fragt `Update()` bei jedem Durchlauf ab, wa
 - Eigene Elemente: `Draw` beginnt mit `if (!this.NeedsDraw(root, ax, ay)) { return }` und malt nur, was in den Bereich fällt; Änderungen, die keine Felder sind, meldet das Element mit `Invalidate()`
   oder in `Poll(root)`.
 
+## Bedienung: Maus, Tastatur, Touchscreen, Joystick
+
+Die Oberfläche lässt sich mit allen vier Eingaben bedienen; sie laufen in dieselben Elemente (`MouseDown`, `KeyDown`, ...), ein Element muss nichts davon wissen.
+
+- **Maus**: Klicken, Ziehen, Mausrad, rechte Taste für das Kontextmenü.
+- **Tastatur**: Tab / Umschalt-Tab wandert durch die fokussierbaren Elemente, die **Pfeiltasten** bewegen den Fokus zum nächsten Element in dieser Richtung (nach Lage auf dem Bildschirm; in einem `ScrollViewer` wird das Element
+  sichtbar gerollt, und gibt es in der Richtung keins mehr, rollt der Pfeil den ScrollViewer wie das Mausrad). Enter/Leertaste löst aus. Ein Element behält die Pfeile, die es selbst braucht: das Textfeld Links/Rechts/Pos1/Ende,
+  die Liste und der Baum Auf/Ab (am ersten und letzten Eintrag gibt sie die Taste frei, damit man aus ihr herauskommt), `RadioButtons` die Pfeile zwischen den Optionen. Eigene Elemente überschreiben `bool WantsKey(int key)`.
+- **Touchscreen**: Ein Finger setzt auf wie eine gedrückte linke Maustaste und löst beim Abheben auf dem Element einen Klick aus; hebt er daneben ab, passiert nichts. Zieht er über 10 Pixel (`ui.touchSlop`) über einen
+  `ScrollViewer`, eine Liste oder einen Baum, wird daraus **Wischen**: der Inhalt folgt dem Finger, ohne dass das Element unter dem Finger auslöst; ein Griff einer Bildlaufleiste wird dagegen gezogen. Nur ein Finger zählt,
+  weitere werden ignoriert. Nach dem Abheben bleibt keine Hover-Hervorhebung. (Eigene Elemente, die sich wischen lassen, überschreiben `CanPan()`, `Dragging()` und `PanBy(root, dx, dy)`.)
+- **Joystick**: das Kreuz (Hat) und der linke Stick (Achsen 0 und 1, mit Totzone: ab 0,6 ausgeschlagen, zurück unter 0,3) werden zu den Pfeiltasten; Halten wiederholt sie (`ui.joyRepeatDelay` = 24 Zyklen, dann alle
+  `ui.joyRepeatInterval` = 6 Zyklen - ein Zyklus ist ein `Tick`, mit VSync etwa 1/60 s). Knopf 0 = Enter (auslösen), Knopf 1 = Escape (Menü schließen), Knopf 4 / 5 = Umschalt-Tab / Tab. Die Knopfnummern sind die des
+  Geräts (Xbox-Pad: 0 = A, 1 = B, 4 = LB, 5 = RB); mit `ui.joyButtonActivate`, `joyButtonCancel`, `joyButtonPrevious`, `joyButtonNext` und `joyAxisX`/`joyAxisY` lassen sie sich anpassen (-1 schaltet einen Knopf aus).
+
+Das `UI.Root` schaltet dafür `window.TouchMouse` aus (siehe docs/CONSOLE.md "Touchscreen und Joystick"), damit ein Finger nicht zweimal ankommt.
+
 ## Fenstergröße
 
 Ein `UI.Root` schaltet `window.AutoResize` ein: zieht der Nutzer das Fenster auf eine andere Größe, bekommt der Framebuffer sie (sofern sie gültig ist, siehe docs/CONSOLE.md "Fenstergröße ändern") und die Oberfläche
@@ -168,6 +185,7 @@ Die Oberfläche lässt sich auch in einer Markup-Datei (`.fxml`, XML wie XAML) e
 
 - Keine Mehrzeilen-Textfelder, kein Drag & Drop, keine Animationen; Listenzeilen mit `itemTemplate` sind nur zum Anzeigen (sie nehmen keine Eingaben an).
 - Text ist dicktengleich (eine Schrift, eine Größe).
+- Touch kennt nur einen Finger (kein Zoomen, kein Zwei-Finger-Rollen, kein langes Drücken für das Kontextmenü, kein Schwung nach dem Wischen); die Menüleiste ist nur mit Maus und Finger zu öffnen. Der Joystick-Wiederholtakt zählt Zyklen, nicht Zeit.
 - Die Elemente zeichnen sich in den Framebuffer des Roots; mehrere Roots auf demselben Framebuffer übermalen einander.
-- Das Verhalten der Fenster-Ereignisse mit echtem SDL (Mausposition bei skaliertem Fenster, Texteingabe) ist nur aus dem Code begründet, nicht unter SDL getestet; die Bibliothek selbst ist headless
+- Das Verhalten der Fenster-Ereignisse mit echtem SDL (Mausposition bei skaliertem Fenster, Texteingabe, echte Finger und Joysticks) ist nur aus dem Code begründet, nicht unter SDL getestet; die Bibliothek selbst ist headless
   getestet (Suite-Block "UI-Bibliothek": echter `WindowManager` mit Renderer-Attrappe).

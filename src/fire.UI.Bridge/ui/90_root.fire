@@ -43,6 +43,34 @@ namespace UI {
         bool painting = false
         var watcher
 
+        // Touchscreen: der Finger, der den Zeiger fuehrt (-1: keiner; ein zweiter Finger daneben wird ignoriert), wo er aufsetzte, wo er zuletzt war, ob er gerade wischt (und welches Element dann verschoben wird)
+        int touchFinger = -1
+        int touchX0 = 0
+        int touchY0 = 0
+        int touchX = 0
+        int touchY = 0
+        bool touchPanning = false
+        Element touchPanner
+        // ab so vielen Pixeln Bewegung wird aus dem Antippen ein Wischen
+        int touchSlop = 10
+
+        // Joystick: Kreuz (Hat) und linker Stick werden zu den Pfeiltasten, Knoepfe zu Enter/Escape/Tab. Die Knopfnummern sind die des Geraets (bei einem Xbox-Pad: 0 = A, 1 = B, 4 = LB, 5 = RB); -1 schaltet einen Knopf aus.
+        int joyAxisX = 0
+        int joyAxisY = 1
+        int joyButtonActivate = 0
+        int joyButtonCancel = 1
+        int joyButtonPrevious = 4
+        int joyButtonNext = 5
+        // Halten wiederholt die Taste: nach `joyRepeatDelay` Zyklen, dann alle `joyRepeatInterval` (ein Zyklus ist ein Tick - mit VSync etwa 1/60 s)
+        int joyRepeatDelay = 24
+        int joyRepeatInterval = 6
+        int joyStickX = 0
+        int joyStickY = 0
+        int joyHatX = 0
+        int joyHatY = 0
+        int joyKey = 0
+        int joyHold = 0
+
         construct(Framebuffer framebuffer, Window window) {
             this.framebuffer = framebuffer
             this.window = window
@@ -65,6 +93,8 @@ namespace UI {
             // Zieht der Nutzer das Fenster auf eine andere Groesse, bekommt der Framebuffer sie (sofern sie gueltig ist) und die Oberflaeche ordnet sich neu an - statt dass ihr Bild gestreckt wird.
             // `window.AutoResize = false` laesst es beim Strecken.
             window.AutoResize = true
+            // Der Finger fuehrt die Oberflaeche selbst (Antippen, Ziehen, Wischen, siehe TouchDown): SDL soll nicht zusaetzlich Mausereignisse daraus machen.
+            window.TouchMouse = false
 
             // Jede Aenderung eines Feldes eines Elements (und des Themes) meldet eine Probe (siehe SPEC 8.14): die Elemente rufen Touched, sobald sie zum ersten Mal angeordnet werden (Watch)
             this.watcher = func (o, n, a, b) on this => { this.Touched(o) }
@@ -309,6 +339,7 @@ namespace UI {
 
         // Der Zyklus nur dieses Roots (ohne die angehaengten).
         bool TickOne() {
+            this.JoyRepeat()
             this.Update()
             var open = this.window.Tick()
             while (true) {
@@ -352,6 +383,13 @@ namespace UI {
             else if (type == 12) { this.MouseWheel(e[1], e[2], e[3], e[4]) }
             else if (type == 24) { this.KeyDown(e[1], e[3]) }
             else if (type == 3) { this.TextInput(e[1]) }
+            else if (type == 16) { this.TouchDown(e[1], e[2], e[3]) }
+            else if (type == 17) { this.TouchMove(e[1], e[2], e[3]) }
+            else if (type == 18) { this.TouchUp(e[1], e[2], e[3]) }
+            else if (type == 32) { this.JoyAxis(e[2], e[3]) }
+            else if (type == 33) { this.JoyButton(e[2]) }
+            else if (type == 35) { this.JoyHat(e[3]) }
+            else if (type == 37) { this.JoyReset() }
             else if (type == 1) { this.closed = true }
         }
 
@@ -365,7 +403,260 @@ namespace UI {
             var old = this.focusElement
             if (old != undefined) { old.focused = false }
             this.focusElement = element
-            if (element != undefined) { element.focused = true }
+            if (element != undefined) {
+                element.focused = true
+                this.Reveal(element)
+            }
+        }
+
+        // Sorgt dafuer, dass das Element in jedem ScrollViewer, in dem es liegt, zu sehen ist (der Fokus wandert per Tab, Pfeiltasten oder Joystick).
+        Reveal(element) {
+            // (x, y) ist die Lage des Elements im Koordinatensystem von `e`, das von innen nach aussen wechselt (ohne die Bildschirmposition: die ist erst nach dem naechsten Zeichnen aktuell)
+            var x = 0
+            var y = 0
+            var e = element
+            while (e != undefined) {
+                var p = e.parent
+                if (p == undefined) { return }
+                if (p is of ScrollViewer) {
+                    p.ScrollIntoView(x, y, element.actualWidth, element.actualHeight)
+                    x = x - p.hbar.offset
+                    y = y - p.vbar.offset
+                } else {
+                    x = x + e.rx
+                    y = y + e.ry
+                }
+                e = p
+            }
+        }
+
+        // Ist das eine der vier Pfeiltasten?
+        bool IsArrow(int key) {
+            return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Up() || key == UI.Keys.Down()
+        }
+
+        // Pfeiltaste: der Fokus wandert zum naechsten fokussierbaren Element in dieser Richtung. Ist keins da, wird stattdessen der ScrollViewer um das Element (oder unter dem Zeiger) gerollt.
+        FocusMove(int key) {
+            var list = new List()
+            this.content.Collect(list)
+            var current = this.focusElement
+            var found = false
+            for (var i = 0; i < list.count; i = i + 1) {
+                if (list[i] == current) { found = true }
+            }
+            if (list.count == 0) {
+                this.ScrollFrom(current, key)
+                return
+            }
+            if (!found) {
+                // noch nichts fokussiert: das erste Element (nach unten/rechts) bzw. das letzte (nach oben/links)
+                if (key == UI.Keys.Up() || key == UI.Keys.Left()) { this.SetFocus(list[list.count - 1]) } else { this.SetFocus(list[0]) }
+                return
+            }
+            var cx = current.ax + current.actualWidth / 2
+            var cy = current.ay + current.actualHeight / 2
+            var best = undefined
+            var bestScore = -1
+            for (var k = 0; k < list.count; k = k + 1) {
+                var c = list[k]
+                if (c == current) { continue }
+                var dx = c.ax + c.actualWidth / 2 - cx
+                var dy = c.ay + c.actualHeight / 2 - cy
+                var gap = 0
+                var side = 0
+                if (key == UI.Keys.Right()) {
+                    if (dx <= 0) { continue }
+                    gap = UI.M.Max(0, c.ax - (current.ax + current.actualWidth))
+                    side = this.Gap(current.ay, current.ay + current.actualHeight, c.ay, c.ay + c.actualHeight)
+                } else if (key == UI.Keys.Left()) {
+                    if (dx >= 0) { continue }
+                    gap = UI.M.Max(0, current.ax - (c.ax + c.actualWidth))
+                    side = this.Gap(current.ay, current.ay + current.actualHeight, c.ay, c.ay + c.actualHeight)
+                } else if (key == UI.Keys.Down()) {
+                    if (dy <= 0) { continue }
+                    gap = UI.M.Max(0, c.ay - (current.ay + current.actualHeight))
+                    side = this.Gap(current.ax, current.ax + current.actualWidth, c.ax, c.ax + c.actualWidth)
+                } else {
+                    if (dy >= 0) { continue }
+                    gap = UI.M.Max(0, current.ay - (c.ay + c.actualHeight))
+                    side = this.Gap(current.ax, current.ax + current.actualWidth, c.ax, c.ax + c.actualWidth)
+                }
+                // lieber nah in der Richtung und auf gleicher Hoehe/Breite (ueberlappend), bei Gleichstand der naeher liegende Mittelpunkt
+                var score = (gap + 3 * side) * 1000 + UI.M.Abs(dx) + UI.M.Abs(dy)
+                if (bestScore < 0 || score < bestScore) {
+                    best = c
+                    bestScore = score
+                }
+            }
+            if (best != undefined) { this.SetFocus(best) } else { this.ScrollFrom(current, key) }
+        }
+
+        // Der Abstand zweier Strecken [a0, a1) und [b0, b1) (0, wenn sie sich ueberlappen).
+        int Gap(int a0, int a1, int b0, int b1) {
+            if (b0 >= a1) { return b0 - a1 }
+            if (a0 >= b1) { return a0 - b1 }
+            return 0
+        }
+
+        // Rollt (wie das Mausrad) den naechsten ScrollViewer oder die Liste ueber/um `element` in Richtung der Pfeiltaste.
+        ScrollFrom(element, int key) {
+            var dx = 0
+            var dy = 0
+            if (key == UI.Keys.Up()) { dy = 1 }
+            else if (key == UI.Keys.Down()) { dy = -1 }
+            else if (key == UI.Keys.Left()) { dx = 1 }
+            else if (key == UI.Keys.Right()) { dx = -1 }
+            var e = element
+            if (e == undefined) { e = this.Hit(this.mouseX, this.mouseY) }
+            while (e != undefined) {
+                if (e.enabled && e.MouseWheel(this, dx, dy)) { return }
+                e = e.parent
+            }
+        }
+
+        // ---- Touchscreen ----
+
+        // Ein Finger setzt auf: wie eine gedrueckte linke Maustaste an dieser Stelle. Bewegt er sich nicht weiter als `touchSlop`, ist das Abheben ein Klick; zieht er ueber eine Liste oder einen ScrollViewer, wird daraus Wischen.
+        TouchDown(int finger, int px, int py) {
+            if (this.touchFinger >= 0) { return }
+            this.touchFinger = finger
+            this.touchX0 = px
+            this.touchY0 = py
+            this.touchX = px
+            this.touchY = py
+            this.touchPanning = false
+            this.touchPanner = undefined
+            this.MouseMove(px, py)
+            this.MouseDown(1, px, py)
+        }
+
+        TouchMove(int finger, int px, int py) {
+            if (finger != this.touchFinger) { return }
+            if (!this.touchPanning) {
+                var dx = px - this.touchX0
+                var dy = py - this.touchY0
+                var moved = UI.M.Abs(dx) > this.touchSlop || UI.M.Abs(dy) > this.touchSlop
+                if (moved) {
+                    var panner = this.FindPanner()
+                    if (panner != undefined) {
+                        // aus dem Antippen wird Wischen: der gedrueckte Knopf (usw.) wird losgelassen, ohne zu klicken
+                        var pressed = this.pressedElement
+                        this.pressedElement = undefined
+                        if (pressed != undefined) { pressed.MouseUp(this, 1, -100000, -100000) }
+                        this.touchPanner = panner
+                        this.touchPanning = true
+                        this.touchX = this.touchX0
+                        this.touchY = this.touchY0
+                    }
+                }
+            }
+            if (this.touchPanning) {
+                this.touchPanner.PanBy(this, px - this.touchX, py - this.touchY)
+                this.touchX = px
+                this.touchY = py
+            } else {
+                this.MouseMove(px, py)
+            }
+        }
+
+        // Das Element, das ein Wischen uebernimmt: vom gedrueckten Element nach oben das erste, das sich verschieben laesst - ausser es wird gerade ein Griff gezogen (Bildlaufleiste).
+        FindPanner() {
+            var e = this.pressedElement
+            if (e == undefined) { e = this.Hit(this.touchX0, this.touchY0) }
+            while (e != undefined) {
+                if (e.Dragging()) { return undefined }
+                if (e.enabled && e.CanPan()) { return e }
+                e = e.parent
+            }
+            return undefined
+        }
+
+        TouchUp(int finger, int px, int py) {
+            if (finger != this.touchFinger) { return }
+            this.touchFinger = -1
+            if (this.touchPanning) {
+                this.touchPanning = false
+                this.touchPanner = undefined
+            } else {
+                this.MouseUp(1, px, py)
+            }
+            // ein Finger hinterlaesst keine Hover-Hervorhebung
+            var old = this.hoverElement
+            if (old != undefined) {
+                old.hover = false
+                this.hoverElement = undefined
+            }
+        }
+
+        // ---- Joystick ----
+
+        // Eine Achse bewegt sich (-1 bis 1): der linke Stick wird zu einer Richtung, mit Totzone in der Mitte.
+        JoyAxis(int axis, v) {
+            if (axis == this.joyAxisX) { this.joyStickX = this.StickDirection(v, this.joyStickX) }
+            else if (axis == this.joyAxisY) { this.joyStickY = this.StickDirection(v, this.joyStickY) }
+            else { return }
+            this.JoyDirectionChanged()
+        }
+
+        // -1, 0 oder 1: ab 0.6 ausgeschlagen, zurueck in die Mitte erst unter 0.3 (dazwischen bleibt es, wie es war).
+        int StickDirection(v, int old) {
+            if (v > 0.6) { return 1 }
+            if (v < -0.6) { return -1 }
+            if (v > -0.3 && v < 0.3) { return 0 }
+            return old
+        }
+
+        // Das Kreuz (Hat) hat eine Bitmaske: 1 oben, 2 rechts, 4 unten, 8 links.
+        JoyHat(int mask) {
+            this.joyHatY = 0
+            this.joyHatX = 0
+            if (mask % 2 == 1) { this.joyHatY = -1 }
+            if ((mask / 4) % 2 == 1) { this.joyHatY = 1 }
+            if ((mask / 2) % 2 == 1) { this.joyHatX = 1 }
+            if ((mask / 8) % 2 == 1) { this.joyHatX = -1 }
+            this.JoyDirectionChanged()
+        }
+
+        // Aus Kreuz und Stick die Pfeiltaste, die gerade gehalten wird (das Kreuz zuerst, senkrecht vor waagerecht): beim Wechsel wird sie gedrueckt.
+        JoyDirectionChanged() {
+            var x = this.joyHatX
+            if (x == 0) { x = this.joyStickX }
+            var y = this.joyHatY
+            if (y == 0) { y = this.joyStickY }
+            var key = 0
+            if (y < 0) { key = UI.Keys.Up() }
+            else if (y > 0) { key = UI.Keys.Down() }
+            else if (x < 0) { key = UI.Keys.Left() }
+            else if (x > 0) { key = UI.Keys.Right() }
+            if (key == this.joyKey) { return }
+            this.joyKey = key
+            this.joyHold = 0
+            if (key != 0) { this.KeyDown(key, 0) }
+        }
+
+        // Jeder Zyklus: eine gehaltene Richtung wiederholt sich.
+        JoyRepeat() {
+            if (this.joyKey == 0) { return }
+            this.joyHold = this.joyHold + 1
+            if (this.joyHold >= this.joyRepeatDelay && (this.joyHold - this.joyRepeatDelay) % this.joyRepeatInterval == 0) { this.KeyDown(this.joyKey, 0) }
+        }
+
+        // Ein Joystick-Knopf wurde gedrueckt.
+        JoyButton(int button) {
+            if (button == this.joyButtonActivate) { this.KeyDown(UI.Keys.Enter(), 0) }
+            else if (button == this.joyButtonCancel) { this.KeyDown(UI.Keys.Escape(), 0) }
+            else if (button == this.joyButtonPrevious) { this.FocusStep(true) }
+            else if (button == this.joyButtonNext) { this.FocusStep(false) }
+        }
+
+        // Ein Joystick wurde abgezogen: gehaltene Richtungen loslassen.
+        JoyReset() {
+            this.joyStickX = 0
+            this.joyStickY = 0
+            this.joyHatX = 0
+            this.joyHatY = 0
+            this.joyKey = 0
+            this.joyHold = 0
         }
 
         // Tab: der Fokus wandert zum nächsten (mit Umschalt: zum vorigen) fokussierbaren Element.
@@ -478,6 +769,11 @@ namespace UI {
                 }
             }
             var target = this.focusElement
+            // eine Pfeiltaste, die das fokussierte Element nicht selbst braucht, bewegt den Fokus
+            if (this.IsArrow(key) && (target == undefined || !target.enabled || !target.WantsKey(key))) {
+                this.FocusMove(key)
+                return
+            }
             if (target != undefined && target.enabled) { target.KeyDown(this, key, mod) }
         }
 

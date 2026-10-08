@@ -8996,6 +8996,232 @@ string[] uiDrawExpected = Array.Empty<string>();
 
         """;
 
+    CheckUi("Touch und Joystick: Ereignisse als Warteschlange, TouchMouse, Callbacks mit passender Parameterzahl", """
+        var fb = new Framebuffer(100, 80)
+        var win = new Window(fb, "Input")
+        win.EnableEvents()
+        print(win.TouchMouse)
+        win.TouchMouse = false
+        print(win.TouchMouse)
+        __TestEvent(16, 3, 10.5, 20.5)
+        __TestEvent(17, 3, 12.0, 22.0)
+        __TestEvent(18, 3, 12.0, 22.0)
+        __TestEvent(32, 7, 1, -0.5)
+        __TestEvent(33, 7, 2)
+        __TestEvent(34, 7, 2)
+        __TestEvent(35, 7, 0, 5)
+        __TestEvent(36, 7)
+        __TestEvent(37, 7)
+        win.Tick()
+        var e = win.NextEvent()
+        while (e != undefined) {
+            var line = ""
+            for (var i = 0; i < e.length; i++) { line = line + e[i] + " " }
+            print(line)
+            e = win.NextEvent()
+        }
+        print(win.RegisterTouchDown(func (int f, float x, float y, float p) => { }))
+        print(win.RegisterTouchMove(func (int f, float x, float y, float p) => { }))
+        print(win.RegisterTouchUp(func (int f, float x, float y, float p) => { }))
+        print(win.RegisterJoystickAxis(func (int j, int a, float v) => { }))
+        print(win.RegisterJoystickHat(func (int j, int h, int m) => { }))
+        print(win.RegisterJoystickButtonDown(func (int j, int b) => { }))
+        print(win.RegisterJoystickButtonUp(func (int j, int b) => { }))
+        print(win.RegisterJoystickAdded(func (int j) => { }))
+        print(win.RegisterJoystickRemoved(func (int j) => { }))
+        """, new[] { "True", "False", "16 3 10 20 1 ", "17 3 12 22 1 ", "18 3 12 22 1 ", "32 7 1 -0.5 ", "33 7 2 ", "34 7 2 ", "35 7 0 5 ", "36 7 ", "37 7 ", "True", "True", "True", "True", "True", "True", "True", "True", "True" });
+
+    CheckUi("Touch: UI.Root fuehrt die Oberflaeche mit dem Finger (Antippen, Abheben daneben, zweiter Finger, kein Hover danach)", uiHead + """
+        print(win.TouchMouse)
+        var clicks = 0
+        var b = new UI.Button("OK", 10, 10, 80, 26)
+        b.onClick = func () => { clicks = clicks + 1 }
+        ui.Add(b)
+        ui.Draw()
+        __TestEvent(16, 1, 20.0, 20.0)
+        __TestEvent(18, 1, 20.0, 20.0)
+        ui.Tick()
+        print("tippen " + clicks)
+        __TestEvent(16, 1, 20.0, 20.0)
+        __TestEvent(17, 1, 40.0, 22.0)
+        __TestEvent(18, 1, 200.0, 150.0)
+        ui.Tick()
+        print("daneben " + clicks + " hover " + b.hover + " pressed " + b.pressed)
+        __TestEvent(16, 1, 20.0, 20.0)
+        __TestEvent(16, 2, 200.0, 150.0)
+        __TestEvent(18, 2, 200.0, 150.0)
+        __TestEvent(18, 1, 20.0, 20.0)
+        ui.Tick()
+        print("zweiter Finger " + clicks)
+        """, new[] { "False", "tippen 1", "daneben 1 hover False pressed False", "zweiter Finger 2" });
+
+    CheckUi("Touch: Wischen verschiebt einen ScrollViewer, ohne zu klicken; ein Griff der Leiste wird gezogen statt gewischt", uiHead + """
+        var hits = 0
+        var inc = func () => { hits = hits + 1 }
+        var sv = new UI.ScrollViewer(0, 0, 100, 80)
+        var col = new UI.StackPanel()
+        for (var i = 0; i < 8; i = i + 1) {
+            var bt = new UI.Button("b" + i, 0, 0, 60, 30)
+            bt.onClick = inc
+            col.Add(bt)
+        }
+        sv.SetContent(col)
+        ui.Add(sv)
+        ui.Draw()
+        print("Inhalt " + sv.vbar.extent + " Ausschnitt " + sv.viewH)
+        __TestEvent(16, 1, 30.0, 40.0)
+        __TestEvent(17, 1, 30.0, 35.0)
+        __TestEvent(17, 1, 30.0, 10.0)
+        __TestEvent(17, 1, 30.0, 0.0)
+        __TestEvent(18, 1, 30.0, 0.0)
+        ui.Tick()
+        print("gewischt " + sv.vbar.offset + " Klicks " + hits)
+        __TestEvent(16, 1, 30.0, 10.0)
+        __TestEvent(17, 1, 30.0, 70.0)
+        __TestEvent(18, 1, 30.0, 70.0)
+        ui.Tick()
+        print("zurueck " + sv.vbar.offset + " Klicks " + hits)
+        sv.vbar.Set(0)
+        ui.Draw()
+        __TestEvent(16, 1, 94.0, 4.0)
+        __TestEvent(17, 1, 94.0, 80.0)
+        __TestEvent(18, 1, 94.0, 80.0)
+        ui.Tick()
+        print("Griff gezogen " + (sv.vbar.offset > 0))
+        """, new[] { "Inhalt 240 Ausschnitt 80", "gewischt 40 Klicks 0", "zurueck 0 Klicks 0", "Griff gezogen True" });
+
+    CheckUi("Joystick und Pfeiltasten: der Fokus wandert in Richtung, Knopf 0 klickt, der Stick wiederholt, Textfeld und Liste behalten ihre Tasten", uiHead + """
+        var log = ""
+        var a = new UI.Button("A", 10, 10, 60, 24)
+        var b = new UI.Button("B", 90, 10, 60, 24)
+        var c = new UI.Button("C", 10, 50, 60, 24)
+        var d = new UI.Button("D", 90, 50, 60, 24)
+        a.onClick = func () => { log = log + "A" }
+        d.onClick = func () => { log = log + "D" }
+        ui.Add(a)
+        ui.Add(b)
+        ui.Add(c)
+        ui.Add(d)
+        ui.Draw()
+        __TestEvent(35, 1, 0, 2)
+        ui.Tick()
+        print("erstes " + a.focused)
+        __TestEvent(35, 1, 0, 0)
+        __TestEvent(35, 1, 0, 2)
+        ui.Tick()
+        print("rechts " + b.focused)
+        __TestEvent(35, 1, 0, 0)
+        __TestEvent(35, 1, 0, 4)
+        ui.Tick()
+        print("runter " + d.focused)
+        __TestEvent(33, 1, 0)
+        ui.Tick()
+        print("Knopf 0 " + log)
+        __TestEvent(35, 1, 0, 0)
+        __TestEvent(35, 1, 0, 8)
+        ui.Tick()
+        print("links " + c.focused)
+        __TestEvent(35, 1, 0, 0)
+        __TestEvent(35, 1, 0, 1)
+        ui.Tick()
+        print("hoch " + a.focused)
+        __TestEvent(35, 1, 0, 0)
+        __TestEvent(24, 1073741905, 0)
+        ui.Tick()
+        print("Taste runter " + c.focused)
+        __TestEvent(24, 1073741903, 0)
+        ui.Tick()
+        print("Taste rechts " + d.focused)
+        __TestEvent(33, 1, 5)
+        ui.Tick()
+        print("Knopf 5 (Tab) " + a.focused)
+        __TestEvent(33, 1, 4)
+        ui.Tick()
+        print("Knopf 4 (Umschalt-Tab) " + d.focused)
+        """, new[] { "erstes True", "rechts True", "runter True", "Knopf 0 D", "links True", "hoch True", "Taste runter True", "Taste rechts True", "Knopf 5 (Tab) True", "Knopf 4 (Umschalt-Tab) True" });
+
+    CheckUi("Joystick: der Stick wiederholt eine gehaltene Richtung; Totzone und Loslassen", uiHead + """
+        var col = new UI.StackPanel(10, 10, 100, 160)
+        var e1 = new UI.Button("1", 0, 0, 60, 24)
+        var e2 = new UI.Button("2", 0, 0, 60, 24)
+        var e3 = new UI.Button("3", 0, 0, 60, 24)
+        var e4 = new UI.Button("4", 0, 0, 60, 24)
+        col.Add(e1)
+        col.Add(e2)
+        col.Add(e3)
+        col.Add(e4)
+        ui.Add(col)
+        ui.Draw()
+        ui.joyRepeatDelay = 1
+        ui.joyRepeatInterval = 1
+        __TestEvent(32, 1, 1, 0.4)
+        ui.Tick()
+        print("Totzone " + e1.focused + " " + e2.focused)
+        __TestEvent(32, 1, 1, 0.9)
+        ui.Tick()
+        print("ausgeschlagen " + e1.focused)
+        ui.Tick()
+        print("wiederholt " + e2.focused)
+        ui.Tick()
+        ui.Tick()
+        print("am Ende " + e4.focused)
+        __TestEvent(32, 1, 1, 0.0)
+        ui.Tick()
+        __TestEvent(32, 1, 0, -0.9)
+        ui.Tick()
+        ui.Tick()
+        print("Achse 0 links, kein Kandidat: " + e4.focused)
+        """, new[] { "Totzone False False", "ausgeschlagen True", "wiederholt True", "am Ende True", "Achse 0 links, kein Kandidat: True" });
+
+    CheckUi("Pfeiltasten: Textfeld behaelt Links/Rechts, eine Liste gibt die Taste am Rand frei, ein Element im ScrollViewer wird sichtbar", uiHead + """
+        var tb = new UI.TextBox("abc", 10, 10, 100, 24)
+        var btn = new UI.Button("go", 10, 50, 60, 24)
+        var lb = new UI.ListBox(10, 90, 100, 60)
+        lb.Add("x")
+        lb.Add("y")
+        lb.Add("z")
+        ui.Add(tb)
+        ui.Add(btn)
+        ui.Add(lb)
+        ui.Draw()
+        ui.SetFocus(tb)
+        __TestEvent(24, 1073741904, 0)
+        ui.Tick()
+        print("Links " + tb.caret + " " + tb.focused)
+        __TestEvent(24, 1073741905, 0)
+        ui.Tick()
+        print("Runter " + btn.focused)
+        __TestEvent(24, 1073741905, 0)
+        ui.Tick()
+        print("Liste " + lb.focused)
+        __TestEvent(24, 1073741905, 0)
+        __TestEvent(24, 1073741905, 0)
+        __TestEvent(24, 1073741905, 0)
+        ui.Tick()
+        print("gewaehlt " + lb.selectedIndex)
+        __TestEvent(24, 1073741905, 0)
+        ui.Tick()
+        print("am Ende bleibt " + lb.focused + " " + lb.selectedIndex)
+        __TestEvent(24, 1073741906, 0)
+        __TestEvent(24, 1073741906, 0)
+        __TestEvent(24, 1073741906, 0)
+        ui.Tick()
+        print("oben raus " + btn.focused + " " + lb.selectedIndex)
+        var sv = new UI.ScrollViewer(200, 0, 100, 60)
+        var col = new UI.StackPanel()
+        var last = undefined
+        for (var i = 0; i < 6; i = i + 1) {
+            last = new UI.Button("s" + i, 0, 0, 60, 30)
+            col.Add(last)
+        }
+        sv.SetContent(col)
+        ui.Add(sv)
+        ui.Draw()
+        ui.SetFocus(last)
+        ui.Draw()
+        print("sichtbar " + sv.vbar.offset + " von " + sv.vbar.Max())
+        """, new[] { "Links 2 True", "Runter True", "Liste True", "gewaehlt 2", "am Ende bleibt True 2", "oben raus True 0", "sichtbar 120 von 120" });
+
     CheckUi("Fenster-Resize: AutoResize bringt den Framebuffer auf die gueltige Groesse, sonst bleibt er", """
         var fb = new Framebuffer(100, 80)
         var win = new Window(fb, "Resize")
@@ -9732,7 +9958,6 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseUp(1, 20, 30)
         ui.Draw()
         print("gewaehlt " + rb.selectedIndex + " " + rb.selectedItem + " " + rb.TakeChanged())
-        ui.KeyDown(1073741905, 0)
         ui.KeyDown(1073741905, 0)
         ui.KeyDown(1073741905, 0)
         print("Pfeile " + rb.selectedIndex)
@@ -17841,6 +18066,28 @@ else
             print(fb.Resize(100, 80))
             print(fb.Width() + "x" + fb.Height())
             """, new[] { "False", "True", "cb 90 70", "True", "90x70", "4 90 70", "False", "False", "90x70", "True", "100x80" }, "-DFIRE_DISPLAY_SELFTEST_RESIZE "),
+                ("Fenster: Touch- und Joystick-Ereignisse, TouchMouse", """
+            #import "windows"
+            var fb = new Framebuffer(64, 48)
+            var win = new Window(fb, "input")
+            print(win.TouchMouse)
+            win.TouchMouse = false
+            print(win.TouchMouse)
+            win.RegisterTouchDown(func(int f, float x, float y, float p) => { print("down " + f + " " + x + " " + y + " " + p) })
+            win.RegisterJoystickAxis(func(int j, int a, float v) => { print("axis " + j + " " + a + " " + v) })
+            win.RegisterJoystickHat(func(int j, int h, int m) => { print("hat " + j + " " + h + " " + m) })
+            win.RegisterJoystickButtonDown(func(int j, int b) => { print("button " + j + " " + b) })
+            win.RegisterJoystickRemoved(func(int j) => { print("removed " + j) })
+            win.EnableEvents()
+            print(win.Tick())
+            var e = win.NextEvent()
+            while (e != undefined) {
+                var line = ""
+                for (var i = 0; i < e.length; i++) { line = line + e[i] + " " }
+                print("queued " + line)
+                e = win.NextEvent()
+            }
+            """, new[] { "True", "False", "down 5 32 12 1", "axis 7 1 -1", "button 7 3", "hat 7 0 3", "removed 7", "True", "queued 16 5 32 12 1 ", "queued 17 5 48 24 0.5 ", "queued 18 5 48 24 0 ", "queued 32 7 1 -1 ", "queued 33 7 3 ", "queued 34 7 3 ", "queued 35 7 0 3 ", "queued 37 7 " }, "-DFIRE_DISPLAY_SELFTEST_INPUT "),
                 ("Fenster: Ereignisse als Callbacks und aus der Warteschlange, Schliessen beendet Tick", """
             #import "windows"
             var fb = new Framebuffer(64, 48)
@@ -18381,6 +18628,7 @@ sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
     public bool Closed { get; set; }
 
     public bool VSync { get; set; } = true;
+    public bool TouchMouse { get; set; } = true;
     public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle) { }
     public void Present(fire.Terminal.Framebuffer framebuffer) { }
     public void Dispose() { }
@@ -18414,6 +18662,25 @@ sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
                 break;
             case fire.Terminal.Event.EventType.Resize:
                 _pending.Add(new fire.Terminal.Event.ResizeEvent { Type = kind, Width = (int)args[1].AsInt(), Height = (int)args[2].AsInt() });
+                break;
+            case fire.Terminal.Event.EventType.TouchDown:
+            case fire.Terminal.Event.EventType.TouchMove:
+            case fire.Terminal.Event.EventType.TouchUp:
+                _pending.Add(new fire.Terminal.Event.TouchEvent { Type = kind, Finger = args[1].AsInt(), X = (float)args[2].AsFloat(), Y = (float)args[3].AsFloat(), Pressure = 1f });
+                break;
+            case fire.Terminal.Event.EventType.JoystickAxis:
+                _pending.Add(new fire.Terminal.Event.JoystickEvent { Type = kind, Joystick = (int)args[1].AsInt(), Index = (int)args[2].AsInt(), Value = (float)args[3].AsFloat() });
+                break;
+            case fire.Terminal.Event.EventType.JoystickHat:
+                _pending.Add(new fire.Terminal.Event.JoystickEvent { Type = kind, Joystick = (int)args[1].AsInt(), Index = (int)args[2].AsInt(), Value = (float)args[3].AsInt() });
+                break;
+            case fire.Terminal.Event.EventType.JoystickButtonDown:
+            case fire.Terminal.Event.EventType.JoystickButtonUp:
+                _pending.Add(new fire.Terminal.Event.JoystickEvent { Type = kind, Joystick = (int)args[1].AsInt(), Index = (int)args[2].AsInt() });
+                break;
+            case fire.Terminal.Event.EventType.JoystickAdded:
+            case fire.Terminal.Event.EventType.JoystickRemoved:
+                _pending.Add(new fire.Terminal.Event.JoystickEvent { Type = kind, Joystick = (int)args[1].AsInt() });
                 break;
         }
     }

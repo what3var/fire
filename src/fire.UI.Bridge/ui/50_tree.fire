@@ -258,6 +258,25 @@ namespace UI {
             return true
         }
 
+        bool CanPan() { return this.scroller.Needed() }
+
+        bool Dragging() { return this.scroller.dragging }
+
+        bool PanBy(root, int dx, int dy) {
+            if (!this.scroller.Needed()) { return false }
+            this.scroller.By(-dy)
+            return true
+        }
+
+        // Auf und Ab wählt einen anderen Knoten (am Rand gibt der Baum die Taste frei), Links und Rechts klappen zu/auf
+        bool WantsKey(int key) {
+            var last = this.visibleNodes.count - 1
+            var index = this.IndexOfSelected()
+            if (key == UI.Keys.Down()) { return index < last }
+            if (key == UI.Keys.Up()) { return index > 0 }
+            return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Home() || key == UI.Keys.End()
+        }
+
         KeyDown(root, int key, int mod) {
             var index = this.IndexOfSelected()
             var count = this.visibleNodes.count
