@@ -237,34 +237,38 @@
 				</local:ToolStripTray>
 			</StackPanel>
 		</Panel>
-        <Border DockPanel.Dock="Bottom" BorderBrush="#3C3544" BorderThickness="0,1,0,0" Padding="10,3">
-            <DockPanel>
-                <TextBlock x:Name="CaretText" DockPanel.Dock="Right" Text="Line 1" Margin="16,0,0,0"/>
-                <TextBlock x:Name="GitText" DockPanel.Dock="Right" Text="" Margin="16,0,0,0" Foreground="#A094A8" ToolTip.Tip="The git branch (↑ commits to push, ↓ commits to pull) and the number of changed files"/>
-                <TextBlock x:Name="ContextText" DockPanel.Dock="Right" Text="" Margin="16,0,0,0" Foreground="#A094A8" ToolTip.Tip="What Start and Build act on: the project of the active document, or the single file"/>
-                <TextBlock x:Name="StatusText" Text="Ready." TextTrimming="CharacterEllipsis"/>
-            </DockPanel>
-        </Border>
 
-        <!-- the other trays: they are as small as the strips in them (an empty one is not there at all) and have the acrylic behind them -->
-        <Panel DockPanel.Dock="Bottom" IsVisible="{Binding #trayBottom.HasStrips}">
-            <ExperimentalAcrylicBorder IsHitTestVisible="False" Material="{StaticResource BarAcrylic}"/>
-            <local:ToolStripTray x:Name="trayBottom" Side="Bottom" Margin="2"/>
-        </Panel>
-        <Panel DockPanel.Dock="Left" IsVisible="{Binding #trayLeft.HasStrips}">
-            <ExperimentalAcrylicBorder IsHitTestVisible="False" Material="{StaticResource BarAcrylic}"/>
-            <local:ToolStripTray x:Name="trayLeft" Side="Left" Margin="2"/>
-        </Panel>
-        <Panel DockPanel.Dock="Right" IsVisible="{Binding #trayRight.HasStrips}">
-            <ExperimentalAcrylicBorder IsHitTestVisible="False" Material="{StaticResource BarAcrylic}"/>
-            <local:ToolStripTray x:Name="trayRight" Side="Right" Margin="2"/>
-        </Panel>
+		<Border DockPanel.Dock="Bottom" BorderBrush="#3C3544" BorderThickness="0,1,0,0">
+			<Panel>
+				<ExperimentalAcrylicBorder IsHitTestVisible="False" Material="{StaticResource BarAcrylic}" MinHeight="24"/>
+				<DockPanel Margin="10,3">
+					<TextBlock x:Name="CaretText" DockPanel.Dock="Right" Text="Line 1" Margin="16,0,0,0"/>
+					<TextBlock x:Name="GitText" DockPanel.Dock="Right" Text="" Margin="16,0,0,0" Foreground="#A094A8" ToolTip.Tip="The git branch (↑ commits to push, ↓ commits to pull) and the number of changed files"/>
+					<TextBlock x:Name="ContextText" DockPanel.Dock="Right" Text="" Margin="16,0,0,0" Foreground="#A094A8" ToolTip.Tip="What Start and Build act on: the project of the active document, or the single file"/>
+					<TextBlock x:Name="StatusText" Text="Ready." TextTrimming="CharacterEllipsis"/>
+				</DockPanel>
+			</Panel>
+		</Border>
+
+			<!-- the other trays: they are as small as the strips in them (an empty one is not there at all) and have the acrylic behind them -->
+			<Panel DockPanel.Dock="Bottom" IsVisible="{Binding #trayBottom.HasStrips}">
+				<ExperimentalAcrylicBorder IsHitTestVisible="False" Material="{StaticResource BarAcrylic}"/>
+				<local:ToolStripTray x:Name="trayBottom" Side="Bottom" Margin="2"/>
+			</Panel>
+			<Panel DockPanel.Dock="Left" IsVisible="{Binding #trayLeft.HasStrips}">
+				<ExperimentalAcrylicBorder IsHitTestVisible="False" Material="{StaticResource BarAcrylic}"/>
+				<local:ToolStripTray x:Name="trayLeft" Side="Left" Margin="2"/>
+			</Panel>
+			<Panel DockPanel.Dock="Right" IsVisible="{Binding #trayRight.HasStrips}">
+				<ExperimentalAcrylicBorder IsHitTestVisible="False" Material="{StaticResource BarAcrylic}"/>
+				<local:ToolStripTray x:Name="trayRight" Side="Right" Margin="2"/>
+			</Panel>
 
 
-        <!-- all areas can be docked (Dock.Avalonia): drag the titles to any side, as a tab of another group, as a floating window or pin them to the edge;
-             the layout is built in SparkFactory and saved when the window closes -->
-        <dock:DockControl x:Name="DockHost" InitializeLayout="False" InitializeFactory="False"/>
-    </DockPanel>
+			<!-- all areas can be docked (Dock.Avalonia): drag the titles to any side, as a tab of another group, as a floating window or pin them to the edge;
+				 the layout is built in SparkFactory and saved when the window closes -->
+			<dock:DockControl x:Name="DockHost" InitializeLayout="False" InitializeFactory="False"/>
+		</DockPanel>
 		<!-- lights up at a window edge whose tray is empty while a strip is dragged there -->
 		<Border x:Name="DockHint" Grid.Row="1" IsVisible="False" IsHitTestVisible="False" Background="#99E8447F" CornerRadius="3"/>
 	</Grid>
