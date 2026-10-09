@@ -121,3 +121,15 @@ mathkit/
 * A library **project** that has a folder `templates/` packs it: *Pack as Package* takes it along. The folder is not code of the project (the default file patterns leave it out), but it shows up in the
   solution explorer as content.
 * `ember install` unpacks the package, and its templates are in the lists of the editor from then on, marked `From mathkit 1.0.0`. They are removed with the package.
+
+## Editing templates
+
+*File > Templates* in the editor:
+
+* **Open Template...** - the flat list of all templates (code and project, the program's, yours and those of packages); the files of the chosen one (and its `template.json`) open in the **plain text
+  editor**. It is tied to no project and does no checks, so `$name$` is no error; the colours follow the extension (fire for `.script`, markup for `.fxml`, C++ for headers and sources; a placeholder
+  counts as a name). A template of the program folder or of a package is not yours to change in place (the folder may be read-only, and an update would overwrite it), so the editor offers a copy first.
+* **Copy Template to My Templates...** - copies the folder of any template to `~/spark/templates/Code/{title}` or `.../Project/{title}`, with ` (copy)` added to the title so that both can be told
+  apart in the list, and opens the copy. Change the title in the `template.json` when you are done.
+* **Open My Templates Folder** - the folder `~/spark/templates` in the file manager (made, with `Code` and `Project`, when it is not there yet). A template that you make there by hand shows up the
+  next time a list is opened - there is nothing to register.

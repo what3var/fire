@@ -69,6 +69,12 @@
 					<MenuItem Header="_Open..." Click="Open_Click" InputGesture="Ctrl+O"/>
 					<Separator/>
 					<MenuItem Header="Open Project or Solution..." Click="OpenWorkspace_Click" InputGesture="Ctrl+Shift+O"/>
+					<MenuItem Header="Open _Recent" x:Name="mnuOpenRecent" SubmenuOpened="OpenRecentMenu_SubmenuOpened"/>
+					<MenuItem Header="_Templates">
+						<MenuItem Header="_Open Template..." Click="OpenTemplate_Click"/>
+						<MenuItem Header="_Copy Template to My Templates..." Click="CopyTemplate_Click"/>
+						<MenuItem Header="Open My Templates _Folder" Click="OpenTemplatesFolder_Click"/>
+					</MenuItem>
 					<MenuItem Header="Close Solution / Project" x:Name="mnuCloseWorkspace" Click="CloseWorkspace_Click"/>
 					<Separator/>
 					<MenuItem Header="Open Markdown _Read-Only..." Click="OpenReadOnly_Click"/>
@@ -195,6 +201,7 @@
 					<MenuItem Header="_Reset Layout" Click="ResetLayout_Click"/>
 				</MenuItem>
 				<MenuItem Header="?">
+					<MenuItem Header="_Welcome..." Click="Welcome_Click"/>
 					<MenuItem Header="_First Steps" Click="HelpFirstSteps_Click"/>
 					<MenuItem Header="_Embedding fire in your Application" Click="HelpEmbedding_Click"/>
 				</MenuItem>

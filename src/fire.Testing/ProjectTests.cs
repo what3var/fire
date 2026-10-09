@@ -413,6 +413,31 @@ static class ProjectTests
         string tlibPack = ProjectBuilder.PackLibrary(tlibPlan, Path.Combine(tlibDir, "out"));
         Check("Vorlagen: das gepackte Projekt bringt seine Templates mit", fire.Package.Manager.Fpk.ReadManifest(tlibPack).Templates == "templates" && System.IO.Compression.ZipFile.OpenRead(tlibPack).Entries.Select(e => e.FullName).Contains("templates/Code/Tl Class/$name$.script"));
 
+        // ---- the list of the last projects and the settings of the editor ---------------------------------------------------------------------------------
+        string recentFile = Path.Combine(root, "recent", "recent.json");
+        var recent = new RecentWorkspaces(recentFile);
+        Check("Zuletzt: eine neue Liste ist leer", recent.Entries.Count == 0);
+        string recA = Path.Combine(t, "T", "T.firesln"), recB = Path.Combine(t, "bare", "Bare1", "Bare1.fireproj");
+        recent.Add(recA, new DateTime(2026, 1, 1));
+        recent.Add(recB, new DateTime(2026, 2, 1));
+        recent.Add(Path.Combine(root, "gone", "Gone.fireproj"), new DateTime(2026, 3, 1));
+        Check("Zuletzt: das Neueste steht oben, Name und Art kommen aus der Datei, Fehlendes bleibt in der Liste", recent.Entries.Select(e => e.Name).SequenceEqual(new[] { "Gone", "Bare1", "T" }) && recent.Entries[2].IsSolution && !recent.Entries[1].IsSolution && recent.Entries[1].Exists && !recent.Entries[0].Exists && recent.Entries[2].Folder == Path.GetDirectoryName(recA));
+        recent.Add(recA, new DateTime(2026, 4, 1));
+        Check("Zuletzt: wieder geoeffnet ruecken nach oben, ohne doppelt zu stehen", recent.Entries.Select(e => e.Name).SequenceEqual(new[] { "T", "Gone", "Bare1" }));
+        var reloaded = new RecentWorkspaces(recentFile);
+        Check("Zuletzt: die Liste ueberlebt das Neuladen", reloaded.Entries.Select(e => e.Path).SequenceEqual(recent.Entries.Select(e => e.Path)) && reloaded.Entries[0].LastOpened == new DateTime(2026, 4, 1));
+        Check("Zuletzt: Entfernen", reloaded.Remove(Path.Combine(root, "gone", "Gone.fireproj")) && !reloaded.Remove(Path.Combine(root, "gone", "Gone.fireproj")) && new RecentWorkspaces(recentFile).Entries.Count == 2);
+        for (int i = 0; i < 30; i++) reloaded.Add(Path.Combine(root, "many", $"P{i}.fireproj"), new DateTime(2026, 5, 1).AddMinutes(i));
+        Check("Zuletzt: hoechstens 20, die aeltesten fallen heraus", reloaded.Entries.Count == RecentWorkspaces.Max && reloaded.Entries[0].Name == "P29" && new RecentWorkspaces(recentFile).Entries.Count == RecentWorkspaces.Max);
+        File.WriteAllText(recentFile, "{ this is not json");
+        Check("Zuletzt: eine kaputte Datei ist eine leere Liste", new RecentWorkspaces(recentFile).Entries.Count == 0);
+        string settingsFile = Path.Combine(root, "recent", "spark-settings.json");
+        Check("Einstellungen: ohne Datei wird das Willkommensfenster gezeigt", EditorSettings.Load(settingsFile).ShowWelcome);
+        new EditorSettings { ShowWelcome = false }.Save(settingsFile);
+        Check("Einstellungen: das Abschalten bleibt", !EditorSettings.Load(settingsFile).ShowWelcome);
+        File.WriteAllText(settingsFile, "nonsense");
+        Check("Einstellungen: eine kaputte Datei gibt die Vorgaben", EditorSettings.Load(settingsFile).ShowWelcome);
+
         // content of a project: resources are copied into a folder of it, natives get the folder native/
         string pic = Write(root, "outside/logo.png", "not really a picture");
         var content = terminal.Projects[0];

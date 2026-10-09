@@ -25,6 +25,8 @@ namespace fire.Editor
         Code,
         /// <summary>A new file after one given code template (Fire Class, FXML Window, ...): only the name.</summary>
         Named,
+        /// <summary>Choose a template (code and project templates together) without making anything: to open or copy it. No name, no place.</summary>
+        Pick,
     }
 
     /// <summary>
@@ -45,6 +47,7 @@ namespace fire.Editor
         private readonly TextBlock _error = new() { Foreground = EditorTheme.ErrorMark, TextWrapping = TextWrapping.Wrap, IsVisible = false };
         private bool _solution => _mode == TemplateDialogMode.Solution;
         private bool _file => _mode is TemplateDialogMode.Code or TemplateDialogMode.Named;
+        private bool _pick => _mode == TemplateDialogMode.Pick;
         private bool _nameEdited;
         private bool _settingName;
         private string _lastName;
@@ -60,7 +63,8 @@ namespace fire.Editor
         /// <param name="location">for a project: the folder that is proposed (the solution folder, or null for `$HOME/spark`); for a solution: the folder that holds the folders of solutions.</param>
         /// <param name="preselect">the title of the template that is selected at first.</param>
         /// <param name="template">for <see cref="TemplateDialogMode.Named"/>: the template.</param>
-        public TemplateDialog(TemplateDialogMode mode, TemplateCatalog catalog, string? location = null, string? preselect = null, FireTemplate? template = null)
+        /// <param name="title">for <see cref="TemplateDialogMode.Pick"/>: the title of the window and the text of the button (`Open`).</param>
+        public TemplateDialog(TemplateDialogMode mode, TemplateCatalog catalog, string? location = null, string? preselect = null, FireTemplate? template = null, string? title = null, string? button = null)
         {
             _mode = mode;
             _fixed = template;
@@ -69,17 +73,18 @@ namespace fire.Editor
                 TemplateDialogMode.Solution => catalog.Projects(includeEmpty: true).ToList(),
                 TemplateDialogMode.Project => catalog.Projects(includeEmpty: false).ToList(),
                 TemplateDialogMode.Code => catalog.Code.ToList(),
+                TemplateDialogMode.Pick => catalog.All.ToList(),
                 _ => new[] { template ?? throw new ArgumentNullException(nameof(template)) },
             };
-            Title = mode switch { TemplateDialogMode.Solution => "New Solution", TemplateDialogMode.Project => "New Project", TemplateDialogMode.Code => "New File", _ => "New " + template!.Title };
+            Title = mode switch { TemplateDialogMode.Solution => "New Solution", TemplateDialogMode.Project => "New Project", TemplateDialogMode.Code => "New File", TemplateDialogMode.Pick => title ?? "Choose a Template", _ => "New " + template!.Title };
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ShowInTaskbar = false;
             if (mode == TemplateDialogMode.Named) { SizeToContent = SizeToContent.WidthAndHeight; CanResize = false; MinWidth = 420; }
-            else { Width = 620; Height = _file ? 560 : 660; MinWidth = 460; MinHeight = 460; }
+            else { Width = 620; Height = _pick ? 520 : _file ? 560 : 660; MinWidth = 460; MinHeight = 400; }
 
             string parent = location ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "spark");
             _lastName = _solution ? "MySolution" : mode == TemplateDialogMode.Project ? "MyProject" : "";
-            if (!_file)
+            if (!_file && !_pick)
             {
                 _name.Text = _lastName;
                 _location.Text = _solution ? Path.Combine(parent, _lastName) : parent;
@@ -103,7 +108,7 @@ namespace fire.Editor
             _name.KeyDown += (_, e) => { if (e.Key == Key.Enter) { Accept(); e.Handled = true; } };
             _location.TextChanged += (_, _) => UpdateText();
 
-            var ok = new Button { Content = "Create", MinWidth = 80, HorizontalContentAlignment = HorizontalAlignment.Center };
+            var ok = new Button { Content = _pick ? (button ?? "Open") : "Create", MinWidth = 80, HorizontalContentAlignment = HorizontalAlignment.Center };
             ok.Classes.Add("accent");
             ok.Click += (_, _) => Accept();
             var cancel = new Button { Content = "Cancel", MinWidth = 80, HorizontalContentAlignment = HorizontalAlignment.Center };
@@ -120,8 +125,8 @@ namespace fire.Editor
             else top.Children.Add(_search);
 
             var bottom = new StackPanel { Spacing = 6, Margin = new Thickness(0, 8, 0, 0) };
-            bottom.Children.Add(Labeled(_file ? "Name" : "Name", nameRow));
-            if (!_file)
+            if (!_pick) bottom.Children.Add(Labeled("Name", nameRow));
+            if (!_file && !_pick)
             {
                 var browse = new Button { Content = "Browse...", Margin = new Thickness(6, 0, 0, 0) };
                 browse.Click += async (_, _) => await Browse();
@@ -143,6 +148,7 @@ namespace fire.Editor
             if (mode != TemplateDialogMode.Named) { _list.Margin = new Thickness(0, 8, 0, 0); root.Children.Add(_list); }
             Content = root;
             Opened += (_, _) => { if (mode == TemplateDialogMode.Named || _file) { _name.Focus(); _name.SelectAll(); } else _search.Focus(); };
+            if (_pick) bottom.Children.Remove(_preview);
             UpdateText();
         }
 
@@ -243,6 +249,13 @@ namespace fire.Editor
         private void Accept()
         {
             var template = Selected;
+            if (_pick)
+            {
+                if (template == null) { _error.Text = "Choose a template."; _error.IsVisible = true; return; }
+                Template = template;
+                Close(true);
+                return;
+            }
             string name = NameOnly(template);
             string location = (_location.Text ?? "").Trim();
             string? problem = template == null ? "Choose a template." : ProjectTemplates.CheckName(name);

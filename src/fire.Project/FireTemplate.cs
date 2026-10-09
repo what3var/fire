@@ -45,6 +45,13 @@ namespace fire.Projects
             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         };
 
+        /// <summary>Writes the description as the `template.json` of a folder.</summary>
+        public void Save(string folder)
+        {
+            System.IO.Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, FileName), JsonSerializer.Serialize(this, Options) + Environment.NewLine);
+        }
+
         /// <summary>Reads the description of a template folder: none, or a file that cannot be read, is an empty description.</summary>
         public static TemplateDescription Load(string folder)
         {

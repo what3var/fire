@@ -270,8 +270,17 @@ namespace fire.Editor
             foreach (var arg in (Environment.GetCommandLineArgs()).Skip(1))
                 if (File.Exists(arg)) OpenFile(arg);
             _ = _devices.RefreshAsync(fastScan: true); // list the devices (fast); the availability check is done by "Search"
+            bool fromCommandLine = _documents.Count > 0;
             if (_documents.Count == 0)
                 NewScript("// Welcome to the fire editor\nprint(\"Hello, world!\")\n");
+            // the welcome window, once the splash is gone (not when files were given on the command line)
+            if (!fromCommandLine && _settings.ShowWelcome) _ = ShowWelcomeAfterSplash();
+        }
+
+        private async Task ShowWelcomeAfterSplash()
+        {
+            await App.SplashClosed;
+            await ShowWelcome();
         }
 
         private void UpdateStatus(string text) => StatusText.Text = text;

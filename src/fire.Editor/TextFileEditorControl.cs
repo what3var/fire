@@ -11,8 +11,9 @@ using AvaloniaEdit.Search;
 namespace fire.Editor
 {
     /// <summary>
-    /// A plain text editor for the files of a project that are not fire code: the C++ of the natives (with colours), notes, data. No completion, no diagnostics - `Highlighted` only says whether
-    /// the file gets the colours of C and C++. Used for every text file that no other editor takes.
+    /// A plain text editor that is tied to nothing: no project, no completion, no diagnostics - so it takes what is not valid code on its own: the C++ of the natives, notes, data, and the files of
+    /// a template (docs/TEMPLATES.md; `$name$` is no fire). The file gets colours by its extension: C and C++, fire (.script) or markup (.fxml). Used for every text file that no other editor takes,
+    /// and for "Open as Text".
     /// </summary>
     public sealed class TextFileEditorControl : UserControl, IDocumentView
     {
@@ -26,7 +27,9 @@ namespace fire.Editor
         private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(250) };
         private readonly SearchPanel _searchPanel;
         private bool _loading;
-        private bool _highlighted;
+        private enum Colours { None, Cpp, Fire, Markup }
+        private Colours _colours;
+        private bool _highlighted => _colours != Colours.None;
 
         public string? FilePath { get; set; }
         public bool IsModified { get; private set; }
@@ -58,7 +61,20 @@ namespace fire.Editor
 
         private void Recolor()
         {
-            _colorizer.Spans = _highlighted ? CppHighlighter.Highlight(_editor.Text) : Array.Empty<HighlightSpan>();
+            string text = _editor.Text;
+            System.Collections.Generic.IReadOnlyList<HighlightSpan> spans;
+            try
+            {
+                spans = _colours switch
+                {
+                    Colours.Cpp => CppHighlighter.Highlight(text),
+                    Colours.Fire => SyntaxHighlighter.Highlight(System.Text.RegularExpressions.Regex.Replace(text, @"\$(\w+)\$", "_$1_")),   // a placeholder as a name of the same length
+                    Colours.Markup => MarkupEditorControl.Highlight(text),
+                    _ => Array.Empty<HighlightSpan>(),
+                };
+            }
+            catch (Exception) { spans = Array.Empty<HighlightSpan>(); }   // text that is no code of its kind (a template with placeholders) just has fewer colours
+            _colorizer.Spans = spans;
             _editor.TextArea.TextView.Redraw();
         }
 
@@ -92,7 +108,8 @@ namespace fire.Editor
         public void ResetTo(string text, string? filePath)
         {
             FilePath = filePath;
-            _highlighted = filePath != null && CppHighlighter.IsCppFile(filePath);
+            string ext = filePath == null ? "" : System.IO.Path.GetExtension(filePath).ToLowerInvariant();
+            _colours = filePath == null ? Colours.None : CppHighlighter.IsCppFile(filePath) ? Colours.Cpp : ext is ".script" or ".fi" or ".fic" ? Colours.Fire : ext == ".fxml" ? Colours.Markup : Colours.None;
             _loading = true;
             try { _editor.Text = text; }
             finally { _loading = false; }

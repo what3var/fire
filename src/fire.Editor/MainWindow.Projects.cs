@@ -207,6 +207,7 @@ namespace fire.Editor
                 _ = Dialogs.Message(this, ex.Message, "Open Project");
                 return false;
             }
+            RememberWorkspace(Path.GetFullPath(path));
             UpdateStatus($"Opened {_workspace.Name}: {_workspace.Projects.Count} project{(_workspace.Projects.Count == 1 ? "" : "s")}.");
             ShowSolutionExplorer();
             return true;
@@ -229,6 +230,7 @@ namespace fire.Editor
                 string path = TemplateInstaller.CreateSolution(dialog.Template, dialog.Location, dialog.Name);
                 _workspace.Close();
                 _workspace.Load(path);
+                RememberWorkspace(path);
             }
             catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "New Solution"); return; }
             ShowSolutionExplorer();
@@ -258,7 +260,9 @@ namespace fire.Editor
                 if (addToSolution && _workspace.Solution != null) created = _workspace.CreateProject(dialog.Template, dialog.Location, dialog.Name);
                 else
                 {
-                    _workspace.Load(TemplateInstaller.CreateProject(dialog.Template, dialog.Location, dialog.Name));
+                    string projectPath = TemplateInstaller.CreateProject(dialog.Template, dialog.Location, dialog.Name);
+                    _workspace.Load(projectPath);
+                    RememberWorkspace(projectPath);
                     created = _workspace.Projects[0];
                 }
                 ShowSolutionExplorer();

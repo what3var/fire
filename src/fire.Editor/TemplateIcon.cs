@@ -27,6 +27,10 @@ namespace fire.Editor
             ["empty"] = "M4,4 H20 V20 H4 Z",
             ["markdown"] = "M3,6 H21 V18 H3 Z M6,15 V9 L9,12 L12,9 V15 M16,9 V15 M14,13 L16,15 L18,13",
             ["image"] = "M3,4 H21 V20 H3 Z M3,16 L9,10 L14,15 L17,12 L21,16",
+            ["open"] = "M3,7 H10 L12,9 H19 V11 M3,7 V19 H19 L21,11 H6 L3,19",
+            ["plus"] = "M12,5 V19 M5,12 H19",
+            ["solution"] = "M4,8 H16 V20 H4 Z M8,4 H20 V16",
+            ["help"] = "M4,4 H20 V20 H4 Z M9,9 C9,6.5 15,6.5 15,9.5 C15,12 12,11.5 12,14.5 M12,17 V17.5",
             ["package"] = "M12,3 L20,7 V17 L12,21 L4,17 V7 Z M4,7 L12,11 L20,7 M12,11 V21",
         };
 
