@@ -7,6 +7,8 @@
 	<Nullable>enable</Nullable>
 	<RootNamespace>fire.Compiler</RootNamespace>
 	<LangVersion>latest</LangVersion>
+	<AssemblyName>forge</AssemblyName>
+	<AssemblyTitle>forge</AssemblyTitle>
 </PropertyGroup>
 	
 <ItemGroup>
