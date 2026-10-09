@@ -27,7 +27,7 @@ namespace fire.Editor
             Title = "spark";
 
             Control logo;
-            try { logo = new Image { Source = new Bitmap(AssetLoader.Open(new Uri("avares://spark/Logo-64.png"))), Width = 96, Height = 96 }; }
+            try { logo = new Image { Source = new Bitmap(AssetLoader.Open(new Uri("avares://spark/Assets/Logo-64.png"))), Width = 96, Height = 96 }; }
             catch (Exception) { logo = TemplateIcon.Create("script", 96); }
 
             var version = typeof(SplashWindow).Assembly.GetName().Version;
