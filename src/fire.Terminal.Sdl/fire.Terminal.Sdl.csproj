@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    SDL3-basierte IFramebufferRenderer-Implementierung - eigenes Projekt,
-    referenziert NUR fire.Terminal (den plattformunabhängigen Kern),
-    keine GDI-/WPF-Abhängigkeit. "net8.0" statt "net8.0-windows", da das
-    SDL3-CS-Paket selbst plattformübergreifend ist (Windows/Linux/macOS/...) -
-    nur das zusätzliche native Laufzeit-Paket (SDL3-CS.Windows) ist hier
-    Windows-spezifisch gewählt, passend zum Rest dieser Lösung.
+    SDL3-based IFramebufferRenderer implementation - a project of its own,
+    references ONLY fire.Terminal (the platform-independent core),
+    no GDI/WPF dependency. "net8.0" instead of "net8.0-windows", since the
+    SDL3-CS package itself is cross-platform (Windows/Linux/macOS/...) -
+    only the additional native runtime package (SDL3-CS.Windows) is chosen
+    Windows-specific here, matching the rest of this solution.
   -->
   <PropertyGroup>
     <OutputType>Library</OutputType>
@@ -24,9 +24,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Verwaltete Bindings (siehe SdlFramebufferRenderer.cs) + natives
-         Windows-Laufzeitpaket - Versionen zum Zeitpunkt dieser Änderung
-         aktuell, bei Bedarf im Package Manager aktualisieren. -->
+    <!-- Managed bindings (see SdlFramebufferRenderer.cs) + native
+         Windows runtime package - versions current at the time of this change,
+         update in the Package Manager if needed. -->
     <PackageReference Include="SDL3-CS" Version="3.4.18" />
     <PackageReference Include="SDL3-CS.Windows" Version="3.4.18" />
   </ItemGroup>

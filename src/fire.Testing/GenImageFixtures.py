@@ -1,11 +1,11 @@
-# Erzeugt src/fire.Testing/ImageFixtures.cs: die Testbilder (PNG/BMP/GIF) als Base64.
+# Generates src/fire.Testing/ImageFixtures.cs: the test images (PNG/BMP/GIF) as Base64.
 #
 #   pip install pillow
-#   python3 GenImageFixtures.py [ausgabedatei]      (Vorgabe: ImageFixtures.cs neben diesem Skript)
+#   python3 GenImageFixtures.py [output file]      (default: ImageFixtures.cs next to this script)
 #
-# Alle Bilder sind 13x7 Pixel gross und folgen denselben Formeln (rgb/alpha/pal_entry/pal_index unten), die auch die Pruefungen in
-# Program.cs ("Bilder: PNG, BMP, GIF") verwenden. "pil_*" schreibt Pillow (ein echter Encoder), die uebrigen ein eigener Schreiber:
-# PNG in allen Farbarten/Tiefen, Verschraenkung und mit allen fuenf Zeilenfiltern, BMP mit 1/4/16/32 Bit, Bitmasken, RLE und OS/2-Kopfzeile.
+# All images are 13x7 pixels in size and follow the same formulas (rgb/alpha/pal_entry/pal_index below) that the checks in
+# Program.cs ("Bilder: PNG, BMP, GIF") use. "pil_*" is written by Pillow (a real encoder), the others by a writer of our own:
+# PNG in all colour types/depths, interlacing and with all five row filters, BMP with 1/4/16/32 bits, bit masks, RLE and OS/2 header.
 import sys, struct, zlib, io, base64
 from PIL import Image
 
@@ -22,7 +22,7 @@ def pal_index(x, y, n):
 
 out = {}
 
-# ---------------- PNG: eigener Encoder (alle Farbarten/Tiefen, Verschraenkung, alle Filter) ----------------
+# ---------------- PNG: own encoder (all colour types/depths, interlacing, all filters) ----------------
 def chunk(t, data):
     c = struct.pack('>I', len(data)) + t + data
     return c + struct.pack('>I', zlib.crc32(t + data) & 0xffffffff)
@@ -76,14 +76,14 @@ def png(ct, depth, sample, w=W, h=H, plte=None, trns=None, interlace=False, filt
     data += chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, depth, ct, 0, 0, 1 if interlace else 0))
     if plte: data += chunk(b'PLTE', bytes(plte))
     if trns is not None: data += chunk(b'tRNS', bytes(trns))
-    # IDAT in zwei Teile, damit das Zusammensetzen mehrerer Chunks getestet wird
+    # IDAT in two parts, so that the assembly of several chunks is tested
     z = zlib.compress(bytes(raw), 9)
     half = len(z)//2
     data += chunk(b'IDAT', z[:half]) + chunk(b'IDAT', z[half:])
     data += chunk(b'IEND', b'')
     return data
 
-def scale(v, depth):  # 8-Bit-Wert auf die Tiefe
+def scale(v, depth):  # 8-bit value to the depth
     return v >> (8 - depth) if depth < 8 else (v if depth == 8 else v * 257)
 
 out['png_rgba8'] = png(6, 8, lambda x, y: (*rgb(x, y), alpha(x, y)))
@@ -100,22 +100,22 @@ for d in (1, 2, 4):
 for d, n in ((1, 2), (2, 4), (4, 16), (8, 11)):
     plte = [c for i in range(n) for c in pal_entry(i)]
     out['png_pal%d' % d] = png(3, d, lambda x, y, n=n: (pal_index(x, y, n),), plte=plte)
-# Palette mit Transparenz (Eintrag 1 durchsichtig, Eintrag 2 halb)
+# Palette with transparency (entry 1 transparent, entry 2 half)
 plte = [c for i in range(6) for c in pal_entry(i)]
 out['png_pal8_trns'] = png(3, 8, lambda x, y: (pal_index(x, y, 6),), plte=plte, trns=[255, 0, 128])
-# Schluesselfarben
+# Key colours
 out['png_gray8_key'] = png(0, 8, lambda x, y: (rgb(x, y)[0],), trns=struct.pack('>H', rgb(0, 0)[0]))
 out['png_rgb8_key'] = png(2, 8, lambda x, y: rgb(x, y), trns=struct.pack('>HHH', *rgb(0, 0)))
-# Verschraenkt
+# Interlaced
 out['png_rgba8_adam7'] = png(6, 8, lambda x, y: (*rgb(x, y), alpha(x, y)), interlace=True)
 out['png_gray4_adam7'] = png(0, 4, lambda x, y: ((x*3 + y) % 16,), interlace=True)
 out['png_pal2_adam7'] = png(3, 2, lambda x, y: (pal_index(x, y, 4),), plte=[c for i in range(4) for c in pal_entry(i)], interlace=True)
 out['png_rgb16_adam7'] = png(2, 16, lambda x, y: tuple(c*257 for c in rgb(x, y)), interlace=True)
-# sehr kleine Bilder (leere Adam7-Durchgaenge)
+# very small images (empty Adam7 passes)
 out['png_rgb8_1x1_adam7'] = png(2, 8, lambda x, y: rgb(x + 5, y + 5), w=1, h=1, interlace=True)
 out['png_rgb8_3x2_adam7'] = png(2, 8, lambda x, y: rgb(x, y), w=3, h=2, interlace=True)
 
-# ---------------- PNG: Pillow (echter Encoder) ----------------
+# ---------------- PNG: Pillow (real encoder) ----------------
 def pil_png(im, **kw):
     b = io.BytesIO(); im.save(b, 'PNG', **kw); return b.getvalue()
 im = Image.new('RGBA', (W, H))
@@ -153,9 +153,9 @@ out['pil_bmp_rgba32'] = pil_bmp(ima)
 out['pil_bmp_bilevel'] = pil_bmp(im1)
 out['pil_bmp_gray8'] = pil_bmp(iml)
 
-# ---------------- BMP: eigener Schreiber ----------------
+# ---------------- BMP: own writer ----------------
 def bmp(w, h, bpp, rows, palette=None, compression=0, topdown=False, core=False, masks=None, pixel_data=None, colors_used=None):
-    # rows: Liste von Zeilen (von oben nach unten) als bytes, bereits auf 4 Byte aufgefuellt; oder pixel_data
+    # rows: list of rows (top to bottom) as bytes, already padded to 4 bytes; or pixel_data
     pal = b''
     if palette:
         pal = b''.join((struct.pack('BBBB', b, g, r, 0) if not core else struct.pack('BBB', b, g, r)) for (r, g, b) in palette)
@@ -194,7 +194,7 @@ rows32 = [b''.join(bytes([rgb(x, y)[2], rgb(x, y)[1], rgb(x, y)[0], alpha(x, y)]
 out['bmp_rgb32_alpha'] = bmp(W, H, 32, rows32)
 rows32z = [b''.join(bytes([rgb(x, y)[2], rgb(x, y)[1], rgb(x, y)[0], 0]) for x in range(W)) for y in range(H)]
 out['bmp_rgb32_noalpha'] = bmp(W, H, 32, rows32z)
-# 16 Bit: 5-5-5 (BI_RGB) und 5-6-5 (BITFIELDS)
+# 16 bit: 5-5-5 (BI_RGB) and 5-6-5 (BITFIELDS)
 def c555(x, y):
     r, g, b = rgb(x, y); return ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3)
 def c565(x, y):
@@ -202,18 +202,18 @@ def c565(x, y):
 out['bmp_rgb555'] = bmp(W, H, 16, [pad4(b''.join(struct.pack('<H', c555(x, y)) for x in range(W))) for y in range(H)])
 out['bmp_rgb565'] = bmp(W, H, 16, [pad4(b''.join(struct.pack('<H', c565(x, y)) for x in range(W))) for y in range(H)],
                         compression=3, masks=[0xF800, 0x07E0, 0x001F])
-# 32 Bit mit Bitmasken und Alpha (BI_ALPHABITFIELDS = 6)
+# 32 bit with bit masks and alpha (BI_ALPHABITFIELDS = 6)
 out['bmp_rgba32_masks'] = bmp(W, H, 32, rows32, compression=6, masks=[0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000])
-# OS/2 (12-Byte-Kopfzeile): 24 Bit und 8 Bit
+# OS/2 (12-byte header): 24 bit and 8 bit
 out['bmp_os2_rgb24'] = bmp(W, H, 24, rows24, core=True)
 out['bmp_os2_pal8'] = bmp(W, H, 8, idx_rows(8, 7), palette=[pal_entry(i) for i in range(256)], core=True)
 
-# RLE8: jede Zeile als Folge aus Wiederholung und absolutem Lauf, Delta und Zeilenende
+# RLE8: each row as a sequence of repeat and absolute run, delta and end of line
 def rle8_encode(indices_rows_top_to_bottom):
     data = bytearray()
-    for row in reversed(indices_rows_top_to_bottom):   # RLE beginnt unten
+    for row in reversed(indices_rows_top_to_bottom):   # RLE starts at the bottom
         x = 0
-        # absoluter Lauf (>=3) fuer die ersten 5 Pixel, dann Wiederholungen
+        # absolute run (>=3) for the first 5 pixels, then repeats
         head = row[:5]
         data += bytes([0, len(head)]) + bytes(head)
         if len(head) % 2: data += b'\x00'
@@ -233,7 +233,7 @@ out['bmp_rle8'] = bmp(W, H, 8, None, palette=[pal_entry(i) for i in range(9)], c
 def rle4_encode(rows):
     data = bytearray()
     for row in reversed(rows):
-        # absoluter Lauf der ersten 6 Pixel (3 Bytes, aufgefuellt auf gerade Anzahl -> 4 Bytes), dann Wiederholung je Pixelpaar-Wert
+        # absolute run of the first 6 pixels (3 bytes, padded to an even count -> 4 bytes), then a repeat per pixel-pair value
         head = row[:6]
         nibbles = head
         packed = bytes((nibbles[i] << 4) | (nibbles[i+1] if i+1 < len(nibbles) else 0) for i in range(0, len(nibbles), 2))
@@ -242,7 +242,7 @@ def rle4_encode(rows):
         rest = row[6:]
         i = 0
         while i < len(rest):
-            # Wiederholung zweier abwechselnder Nibbles (a,b) so lange wie moeglich
+            # repeat of two alternating nibbles (a,b) for as long as possible
             a = rest[i]; b = rest[i+1] if i+1 < len(rest) else 0
             n = 2 if i+1 < len(rest) else 1
             data += bytes([n, (a << 4) | b])
@@ -273,7 +273,7 @@ for y in range(30):
     for x in range(40): big.putpixel((x, y), (x*7 + y*11 + (x*y)) % 64)
 out['pil_gif_big'] = pil_gif([big], interlace=True)
 
-# C#-Quelltext
+# C# source text
 lines = ['// Generated by GenImageFixtures.py (Pillow and own writers) - do not edit by hand.',
          'static class ImageFixtures', '{', '    public static byte[] Get(string name) => System.Convert.FromBase64String(Data[name]);', '',
          '    public static readonly System.Collections.Generic.Dictionary<string, string> Data = new()', '    {']

@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Windows-spezifische Komposition: GdiGlyphFont (GDI+-Schriftrasterung)
-    und ConsoleWindow (setzt Framebuffer + Renderer + den SDL-
-    Renderer zu einem fertigen Fenster zusammen, mit konkreten Windows-
-    Defaults). Referenziert sowohl den plattformunabhängigen Kern als auch
-    das SDL-Rendering-Projekt - genau hier, nicht in fire.Terminal
-    selbst, laufen beide zusammen.
+    Windows-specific composition: GdiGlyphFont (GDI+ glyph rasterisation)
+    and ConsoleWindow (puts framebuffer + renderer + the SDL
+    renderer together into a finished window, with concrete Windows
+    defaults). References both the platform-independent core and
+    the SDL rendering project - exactly here, not in fire.Terminal
+    itself, the two come together.
   -->
   <PropertyGroup>
     <OutputType>Library</OutputType>

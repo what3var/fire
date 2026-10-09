@@ -79,8 +79,8 @@ namespace fire.Standard
         {
             var sb = new StringBuilder();
             sb.AppendLine();
-            sb.AppendLine("// string als Basistyp erweitert (SPEC 5.5.1, 8.12): jede Methode ruft die EINE native Funktion");
-            sb.AppendLine("// " + NativeName + "(id, text, argumente...) - die Methode wird über ihre ID gewählt, nicht über den Namen.");
+            sb.AppendLine("// string extended as a base type (SPEC 5.5.1, 8.12): each method calls the ONE native function");
+            sb.AppendLine("// " + NativeName + "(id, text, arguments...) - the method is selected by its ID, not by its name.");
             sb.AppendLine("class extends string {");
             foreach (var (id, returns, name, parms) in Signatures)
             {

@@ -11,9 +11,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- SerialPort ist Teil des Shared Frameworks unter Windows, braucht
-         aber unter Linux/macOS ein eigenes Paket - schadet unter Windows
-         nicht, macht das Projekt dafür überall baubar. -->
+    <!-- SerialPort is part of the shared framework on Windows, but needs
+         a package of its own on Linux/macOS - does no harm on Windows
+         and makes the project buildable everywhere. -->
     <PackageReference Include="System.IO.Ports" Version="10.0.12" />
   </ItemGroup>
 

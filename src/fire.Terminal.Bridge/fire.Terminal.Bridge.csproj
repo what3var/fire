@@ -1,14 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Die Brücke zwischen der Skriptsprache (fire) und der Grafik-API
-    (fire.Terminal/.Windows) - siehe docs/CONSOLE.md. Registriert
-    FramebufferManager/RendererManager/WindowManager als native Funktionen
-    (NativeRegistry.RegisterGroup) und liefert den passenden fire-
-    Quelltext (GraphicsBridge.PreludeSource), der diese nativen Funktionen
-    hinter drei gewöhnlichen Klassen (Framebuffer/Console/Window) versteckt.
-
-    voraussetzt.
+    The bridge between the scripting language (fire) and the graphics API
+    (fire.Terminal/.Windows) - see docs/CONSOLE.md. Registers
+    FramebufferManager/RendererManager/WindowManager as native functions
+    (NativeRegistry.RegisterGroup) and supplies the matching fire
+    source (GraphicsBridge.PreludeSource) that hides these native functions
+    behind three ordinary classes (Framebuffer/Console/Window).
   -->
   <PropertyGroup>
     <OutputType>Library</OutputType>
