@@ -103,7 +103,13 @@
 				</MenuItem>
 				<!-- acts on the project of the active document, else on the one selected in the solution explorer; switched on/off when it opens (ProjectMenu_SubmenuOpened) -->
 				<MenuItem Header="_Project" x:Name="mnuProject" SubmenuOpened="ProjectMenu_SubmenuOpened">
-					<MenuItem Header="Add _New File..." x:Name="mnuAddNewFile" Click="AddNewFile_Click"/>
+					<MenuItem Header="Add _New" x:Name="mnuAddNewFile">
+						<MenuItem Header="_Script (.script)..." Tag="script" Click="AddNewFile_Click"/>
+						<MenuItem Header="_User Interface (.fxml)..." Tag="fxml" Click="AddNewFile_Click"/>
+						<MenuItem Header="_Markdown Document (.md)..." Tag="markdown" Click="AddNewFile_Click"/>
+						<MenuItem Header="_Raster Image (.png, .bmp)..." Tag="image" Click="AddNewFile_Click"/>
+						<MenuItem Header="_Other File..." Tag="file" Click="AddNewFile_Click"/>
+					</MenuItem>
 					<MenuItem Header="Add _Existing File..." x:Name="mnuAddExistingFile" Click="AddExistingFile_Click"/>
 					<MenuItem Header="Add _Reference..." x:Name="mnuAddReference" Click="AddReference_Click"/>
 					<Separator/>

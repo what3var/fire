@@ -298,7 +298,8 @@ namespace fire.Editor
             mnuPackLibrary.IsEnabled = has && project!.Project.Type == OutputType.Library;
         }
 
-        private async void AddNewFile_Click(object? sender, RoutedEventArgs e) => await AddNewFile(CommandProject(), null);
+        // the entries of the menu Project > Add New carry the kind in their Tag
+        private async void AddNewFile_Click(object? sender, RoutedEventArgs e) => await AddNewFile(CommandProject(), null, (sender as MenuItem)?.Tag as string ?? "file");
         private async void AddExistingFile_Click(object? sender, RoutedEventArgs e) => await AddExistingFile(CommandProject());
         private async void AddReference_Click(object? sender, RoutedEventArgs e) => await AddReference(CommandProject());
         private void SetStartup_Click(object? sender, RoutedEventArgs e) { if (CommandProject() is { } p) _workspace.SetStartup(p); }
@@ -306,26 +307,57 @@ namespace fire.Editor
         private void ReloadProject_Click(object? sender, RoutedEventArgs e) { CommandProject()?.Refresh(); _workspace.Refresh(); }
         private async void ProjectProperties_Click(object? sender, RoutedEventArgs e) => await ShowProjectProperties(CommandProject());
 
-        private async Task AddNewFile(LoadedProject? project, string? folder)
+        /// <summary>Makes a new file in the project (in `folder`, else the project folder) and opens it. `kind`: script, fxml, markdown, image (asks for the size) or file (any name).</summary>
+        private async Task AddNewFile(LoadedProject? project, string? folder, string kind = "file")
         {
             if (project == null) return;
-            string? name = await Dialogs.Input(this, "Name of the new file:", "Add New File", "newfile.script");
-            if (string.IsNullOrWhiteSpace(name)) return;
-            name = name.Trim();
-            if (Path.GetExtension(name).Length == 0) name += ".script";
+            const string title = "Add New File";
+            string name;
+            byte[]? bytes = null;   // an image is written as bytes, everything else as text
+            switch (kind)
+            {
+                case "image":
+                    var dialog = new NewImageDialog();
+                    if (!await dialog.ShowDialog<bool>(this)) return;
+                    name = dialog.FileName;
+                    var pixels = new uint[dialog.ImageWidth * dialog.ImageHeight];
+                    if (dialog.Background != 0) Array.Fill(pixels, dialog.Background);
+                    bytes = fire.Terminal.ImageEncoder.Encode(fire.Terminal.ImageData.CreateTruecolor(dialog.ImageWidth, dialog.ImageHeight, pixels, "PNG"), Path.GetExtension(name).TrimStart('.'));
+                    break;
+                default:
+                    (string prompt, string initial, string extension) = kind switch
+                    {
+                        "script" => ("Name of the new script:", "newfile.script", ".script"),
+                        "fxml" => ("Name of the new user interface:", "newwindow.fxml", ".fxml"),
+                        "markdown" => ("Name of the new Markdown document:", "notes.md", ".md"),
+                        _ => ("Name of the new file:", "newfile.script", ".script"),
+                    };
+                    string? input = await Dialogs.Input(this, prompt, title, initial);
+                    if (string.IsNullOrWhiteSpace(input)) return;
+                    name = input.Trim();
+                    // a kind fixes the extension (a typed one of another kind is kept as typed: "Other File" is the way to name anything)
+                    if (Path.GetExtension(name).Length == 0) name += extension;
+                    break;
+            }
             string full = Path.GetFullPath(name, folder ?? project.Directory);
             try
             {
-                if (File.Exists(full)) { await Dialogs.Message(this, $"'{name}' exists already; use Add Existing File.", "Add New File"); return; }
+                if (File.Exists(full)) { await Dialogs.Message(this, $"'{name}' exists already; use Add Existing File.", title); return; }
                 Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-                File.WriteAllText(full, FireProject.IsMarkupFile(full) ? NewMarkupText(Path.GetFileNameWithoutExtension(full)) : "");
+                if (bytes != null) File.WriteAllBytes(full, bytes);
+                else
+                {
+                    string stem = Path.GetFileNameWithoutExtension(full);
+                    string ext = Path.GetExtension(full).ToLowerInvariant();
+                    File.WriteAllText(full, FireProject.IsMarkupFile(full) ? NewMarkupText(stem) : ext is ".md" or ".markdown" ? $"# {stem}\n\n" : "");
+                }
                 _workspace.AddFile(project, full);
-                OpenFile(full);
+                // a new picture opens in the pixel editor, the rest in its editor
+                OpenFile(full, forceKind: bytes != null ? DocumentKind.Pixel : null);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { await Dialogs.Message(this, ex.Message, "Add New File"); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException or fire.Terminal.ImageFormatException) { await Dialogs.Message(this, ex.Message, title); }
         }
 
-        /// <summary>The starting text of a new markup file in a project: the class of its window is named like the file (the classes of a program have to differ).</summary>
         private static string NewMarkupText(string fileName)
         {
             var chars = fileName.Select(c => char.IsLetterOrDigit(c) && c < 128 || c == '_' ? c : '_').ToArray();
@@ -446,7 +478,7 @@ namespace fire.Editor
                 case "open-pixel": if (node?.Path != null) OpenFile(node.Path, forceKind: DocumentKind.Pixel); break;
                 case "open-text": if (node?.Path != null) OpenFile(node.Path, forceKind: DocumentKind.Text); break;
                 case "open-hex": if (node?.Path != null) OpenFile(node.Path, forceKind: DocumentKind.Hex); break;
-                case "add-new-file": await AddNewFile(project, node?.Kind == ExplorerKind.Folder ? node.Path : null); break;
+                case var c when c.StartsWith("new:"): await AddNewFile(project, node?.Kind == ExplorerKind.Folder ? node.Path : null, c.Substring(4)); break;
                 case "add-existing-file": await AddExistingFile(project); break;
                 case "add-reference": await AddReference(project); break;
                 case "set-startup": if (project != null) _workspace.SetStartup(project); break;

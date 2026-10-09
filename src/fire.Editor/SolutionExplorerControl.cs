@@ -315,6 +315,24 @@ namespace fire.Editor
             return item;
         }
 
+        /// <summary>The submenu "Add New" with one entry per kind of file (the commands are "new:" + kind, see MainWindow.AddNew).</summary>
+        private MenuItem AddNewMenu(ExplorerNode node, string header = "Add New")
+        {
+            var menu = new MenuItem { Header = header };
+            foreach (var (title, kind) in NewFileKinds) menu.Items.Add(Item(title, "new:" + kind, node));
+            return menu;
+        }
+
+        /// <summary>What can be added as a new file: the title in the menu and the kind.</summary>
+        public static readonly (string Title, string Kind)[] NewFileKinds =
+        {
+            ("Script (.script)...", "script"),
+            ("User Interface (.fxml)...", "fxml"),
+            ("Markdown Document (.md)...", "markdown"),
+            ("Raster Image (.png, .bmp)...", "image"),
+            ("Other File...", "file"),
+        };
+
         private void AddGitFileItems(ExplorerNode node)
         {
             if (node.GitState != null)
@@ -356,7 +374,7 @@ namespace fire.Editor
                     Add("Remove Folder from Solution", "remove-folder");
                     break;
                 case ExplorerKind.Project:
-                    Add("Add New File...", "add-new-file");
+                    _menu.Items.Add(AddNewMenu(node));
                     Add("Add Existing File...", "add-existing-file");
                     Add("Add Resource (copy a file in)...", "add-resource");
                     Add("New Folder...", "new-project-folder");
@@ -379,7 +397,7 @@ namespace fire.Editor
                     Add("Remove Reference", "remove");
                     break;
                 case ExplorerKind.Folder:
-                    Add("Add New File Here...", "add-new-file");
+                    _menu.Items.Add(AddNewMenu(node, "Add New Here"));
                     Add("Add Resource Here (copy a file in)...", "add-resource");
                     Add("New Folder...", "new-project-folder");
                     Add("Open Folder", "reveal");
