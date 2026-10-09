@@ -5,8 +5,8 @@ using System.Threading;
 
 namespace fire.Device.Manager.Drivers.Loopback
 {
-    /// <summary>Siehe <see cref="LoopbackDriver"/>. Die Antwort kommt - wie bei echter Hardware - nicht im Aufruf von
-    /// SendCommand, sondern kurz danach auf einem anderen Thread.</summary>
+    /// <summary>See <see cref="LoopbackDriver"/>. The reply does not come - as with real hardware - in the call of
+    /// SendCommand, but shortly afterwards on another thread.</summary>
     public class LoopbackDevice : IDevice
     {
         private readonly string _name;

@@ -6,8 +6,8 @@ using System.Threading.Tasks;
 
 namespace fire.Terminal
 {
-    /// <summary>Die eingebaute 8x14-/8x8-Bitmap-Schrift (CP437). Die Tabellen sind statisch (einmal je Prozess statt je Instanz)
-    /// und über <see cref="GetGlyphRows"/> zeilenweise lesbar - Renderer zeichnet damit ohne eine Abfrage pro Pixel.</summary>
+    /// <summary>The built-in 8x14/8x8 bitmap font (CP437). The tables are static (once per process instead of per instance)
+    /// and readable row by row via <see cref="GetGlyphRows"/> - the renderer draws with them without a query per pixel.</summary>
     public class IntegratedGlyphFont : IBitmapGlyphFont
     {
         private bool _smallFont;
@@ -26,7 +26,7 @@ namespace fire.Terminal
             _glyph = _smallFont ? Glyphs8x8 : Glyphs8x14;
         }
 
-        /// <summary>Zeichen außerhalb der 256 Zeichen der Tabelle (CP437) werden als '?' gezeichnet statt eine Ausnahme zu werfen.</summary>
+        /// <summary>Characters outside the 256 characters of the table (CP437) are drawn as '?' instead of throwing an exception.</summary>
         private static char Clamp(char c) => c < 256 ? c : '?';
 
         public bool IsPixelSet(char c, int px, int py)

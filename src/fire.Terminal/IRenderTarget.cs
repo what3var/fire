@@ -1,31 +1,31 @@
 namespace fire.Terminal
 {
     /// <summary>
-    /// Etwas, in das ein <see cref="Renderer"/> zeichnet: eine Fläche aus Pixeln im Speicher. Der <see cref="Framebuffer"/> ist das Standardziel; ein anderes Ziel (ein Ausschnitt,
-    /// ein Fenster, das seine Fläche selbst hält) braucht nur diese Größen, den Farbmodus und die beiden Pixelfelder. Der Software-Renderer schreibt direkt in die Felder
-    /// (zeilenweise, `y * Width + x`) - ein beschleunigter Renderer könnte dagegen ein eigener `Renderer` für ein anderes Ziel sein.
+    /// Something a <see cref="Renderer"/> draws into: an area of pixels in memory. The <see cref="Framebuffer"/> is the default target; another target (a section,
+    /// a window that holds its own area) needs only these sizes, the colour mode and the two pixel fields. The software renderer writes directly into the fields
+    /// (row by row, `y * Width + x`) - an accelerated renderer could instead be a `Renderer` of its own for another target.
     /// </summary>
     public interface IRenderTarget
     {
         int Width { get; }
         int Height { get; }
 
-        /// <summary>Wie die Pixel gespeichert werden: 32 Bit (R, G, B, A) oder 8 Bit (Index in die <see cref="Palette"/>). Nur ein 32-Bit-Ziel mischt (Alpha-Blending);
-        /// in einem 8-Bit-Ziel wird eine Farbe ab Alpha 128 kopiert, darunter nicht gezeichnet.</summary>
+        /// <summary>How the pixels are stored: 32 bit (R, G, B, A) or 8 bit (index into the <see cref="Palette"/>). Only a 32-bit target blends (alpha blending);
+        /// in an 8-bit target a colour from alpha 128 up is copied, below that it is not drawn.</summary>
         ColorMode Mode { get; }
 
         Palette Palette { get; }
 
-        /// <summary>Ein uint je Pixel (R, G, B, A, siehe <see cref="PixelColor"/>). In einem 8-Bit-Ziel nur das berechnete Abbild der Indizes (siehe <see cref="Framebuffer.Resolve"/>).</summary>
+        /// <summary>One uint per pixel (R, G, B, A, see <see cref="PixelColor"/>). In an 8-bit target only the computed image of the indices (see <see cref="Framebuffer.Resolve"/>).</summary>
         uint[] Pixels { get; }
 
-        /// <summary>Nur in einem 8-Bit-Ziel: der Palette-Index je Pixel; sonst null. Wer es beschreibt, ruft danach <see cref="MarkDirty"/> auf.</summary>
+        /// <summary>8-bit target only: the palette index per pixel; otherwise null. Whoever writes it calls <see cref="MarkDirty"/> afterwards.</summary>
         byte[]? Indices { get; }
 
-        /// <summary>Der durchsichtige Index eines Palette-Bildes (siehe <see cref="Framebuffer.TransparentIndex"/>), oder -1.</summary>
+        /// <summary>The transparent index of a palette image (see <see cref="Framebuffer.TransparentIndex"/>), or -1.</summary>
         int TransparentIndex { get; }
 
-        /// <summary>Vermerkt, dass sich <see cref="Indices"/> von außen geändert haben.</summary>
+        /// <summary>Notes that <see cref="Indices"/> were changed from outside.</summary>
         void MarkDirty();
     }
 }

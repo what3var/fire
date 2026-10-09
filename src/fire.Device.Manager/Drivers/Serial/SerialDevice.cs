@@ -28,15 +28,15 @@ namespace fire.Device.Manager.Drivers.Serial
 
         public string? PortName => _portName;
 
-        // War vorher eine explizite Interface-Implementierung, die IMMER
-        // geworfen hat ('DeviceAvailability IDevice.Availability =>
-        // throw new NotImplementedException()'), UNABHÄNGIG vom Feld
-        // gleichen Namens direkt darunter - jeder Zugriff über die
-        // IDevice-Schnittstelle (genau das, was die fire-Brücke tut, da sie
-        // nur IDevice kennt) wäre also immer gescheitert, selbst wenn man
-        // über eine konkrete SerialDevice-Referenz vorher erfolgreich
-        // TestAvailability() aufgerufen hätte. Jetzt EIN gewöhnliches,
-        // öffentliches Property, das die Schnittstelle korrekt erfüllt.
+        // Used to be an explicit interface implementation that ALWAYS
+        // threw ('DeviceAvailability IDevice.Availability =>
+        // throw new NotImplementedException()'), INDEPENDENT of the field
+        // of the same name directly below - every access through the
+        // IDevice interface (exactly what the fire bridge does, since it
+        // only knows IDevice) would thus always have failed, even if one had
+        // successfully called TestAvailability() beforehand through a concrete
+        // SerialDevice reference. Now ONE ordinary,
+        // public property that fulfils the interface correctly.
         public DeviceAvailability Availability { get; private set; }
 
         public SerialDevice(string portName)
@@ -48,13 +48,13 @@ namespace fire.Device.Manager.Drivers.Serial
         private void RaiseStateChanged()
         {
             try { StateChanged?.Invoke(); }
-            catch (Exception ex) { Debug.WriteLine(ex); } // ein fehlerhafter Beobachter darf das Gerät nicht stören
+            catch (Exception ex) { Debug.WriteLine(ex); } // a faulty observer must not disturb the device
         }
 
         public DeviceAvailability TestAvailability()
         {
-            // Ein verbundenes Gerät hält seinen Port offen - ein zweites Öffnen würde fehlschlagen und es
-            // fälschlich als "nicht verfügbar" melden.
+            // A connected device keeps its port open - opening it a second time would fail and wrongly
+            // report it as "unavailable".
             if (IsConnected)
             {
                 Availability = DeviceAvailability.Available;
@@ -104,7 +104,7 @@ namespace fire.Device.Manager.Drivers.Serial
             _isDisconnecting = false;
             _serialPort = new SerialPort(_portName,115200);
             _serialPort.Open();
-            // Erst "verbunden", DANN der Lese-Thread: seine Schleife läuft nur solange IsConnected gilt.
+            // First "connected", THEN the read thread: its loop only runs as long as IsConnected holds.
             IsConnected = true;
             Availability = DeviceAvailability.Available;
             StartPolling();
@@ -146,8 +146,8 @@ namespace fire.Device.Manager.Drivers.Serial
             var port = _serialPort;
             if (port?.IsOpen != true) return false;
 
-            // Wie SerialPort.WriteLine (Text + NewLine in der Kodierung des Ports), aber als Bytes, damit die
-            // Paketverfolgung genau sieht, was auf die Leitung geht.
+            // Like SerialPort.WriteLine (text + NewLine in the port's encoding), but as bytes, so that
+            // packet tracking sees exactly what goes onto the wire.
             var bytes = port.Encoding.GetBytes(command + port.NewLine);
             port.Write(bytes, 0, bytes.Length);
             OnRawDataSent?.Invoke(bytes);
@@ -189,7 +189,7 @@ namespace fire.Device.Manager.Drivers.Serial
             }
             catch(Exception ex)
             {
-                // Port weg (Gerät abgezogen o.ä.): als Verbindungsverlust melden - außer wir trennen selbst gerade.
+                // Port gone (device unplugged or similar): report it as a connection loss - unless we are disconnecting ourselves right now.
                 if (!_isDisconnecting)
                 {
                     Debug.WriteLine($"Error in PollyPocket: {ex.Message}");

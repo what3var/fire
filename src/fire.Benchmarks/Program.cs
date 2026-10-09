@@ -8,19 +8,19 @@ using fire.Resolving;
 using fire.Runtime;
 using fire.Values;
 
-// Mikro-Benchmarks für die VM.
+// Micro-benchmarks for the VM.
 //
 //   dotnet run -c Release --project src/fire.Benchmarks -- [Optionen]
 //
-//   --mode debug|release|performance|all   Ausführungsmodus (Vorgabe: performance)
-//   --runs N                                Messläufe pro Benchmark (Vorgabe: 5), dazu 1 Aufwärmlauf
-//   --filter TEXT                           nur Benchmarks, deren Name TEXT enthält
-//   --file DATEI                            statt der eingebauten Benchmarks ein eigenes fire-Skript messen
-//   --list                                  Benchmarks auflisten
-//   --save DATEI                            Ergebnisse (Name=Ausgabe) als Referenz speichern
-//   --check DATEI                           Ergebnisse gegen eine Referenz prüfen (Exit-Code 1 bei Abweichung)
+//   --mode debug|release|performance|all   execution mode (default: performance)
+//   --runs N                                measured runs per benchmark (default: 5), plus 1 warm-up run
+//   --filter TEXT                           only benchmarks whose name contains TEXT
+//   --file FILE                             measure a script of your own instead of the built-in benchmarks
+//   --list                                  list the benchmarks
+//   --save FILE                             save the results (name=output) as a reference
+//   --check FILE                            check the results against a reference (exit code 1 on a difference)
 //
-// Gemessen wird nur `VM.Run()` (Kompilieren zählt nicht); angezeigt: kleinste und mittlere Zeit.
+// Only `VM.Run()` is measured (compiling does not count); shown: the shortest and the mean time.
 
 var options = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 for (int i = 0; i < args.Length; i++)
@@ -65,7 +65,7 @@ foreach (var mode in modes)
 
         var times = new List<double>();
         string output = string.Empty;
-        for (int run = 0; run <= runs; run++) // Lauf 0 = Aufwärmen (JIT), zählt nicht
+        for (int run = 0; run <= runs; run++) // Run 0 = warm-up (JIT), does not count
         {
             var (ms, text) = RunOnce(script.Source, mode);
             output = text;

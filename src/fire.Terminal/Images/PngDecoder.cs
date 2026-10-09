@@ -5,8 +5,8 @@ using System.Text;
 
 namespace fire.Terminal
 {
-    /// <summary>PNG: alle Farbarten (Grau, RGB, Palette, Grau+Alpha, RGBA) in allen Bittiefen (1, 2, 4, 8, 16), mit und ohne Adam7-Verschränkung,
-    /// `tRNS` (Transparenz für Palette, Grau, RGB). 16-Bit-Kanäle werden auf 8 Bit gekürzt. Palette-Bilder bleiben indiziert, alles andere wird Truecolor.</summary>
+    /// <summary>PNG: all colour types (grey, RGB, palette, grey+alpha, RGBA) in all bit depths (1, 2, 4, 8, 16), with and without Adam7 interlacing,
+    /// `tRNS` (transparency for palette, grey, RGB). 16-bit channels are reduced to 8 bit. Palette images stay indexed, everything else becomes truecolor.</summary>
     internal static class PngDecoder
     {
         private static readonly uint[] CrcTable = BuildCrcTable();
@@ -33,7 +33,7 @@ namespace fire.Terminal
 
         private static uint Be32(byte[] d, int p) => ((uint)d[p] << 24) | ((uint)d[p + 1] << 16) | ((uint)d[p + 2] << 8) | d[p + 3];
 
-        // Adam7: Startspalte/-zeile und Schrittweite je Durchgang
+        // Adam7: start column/row and step size per pass
         private static readonly int[] PassX = { 0, 4, 0, 2, 0, 1, 0 };
         private static readonly int[] PassY = { 0, 0, 4, 0, 2, 0, 1 };
         private static readonly int[] PassDx = { 8, 8, 4, 4, 2, 2, 1 };
@@ -41,7 +41,7 @@ namespace fire.Terminal
 
         public static ImageData Decode(byte[] d)
         {
-            int pos = 8; // hinter der Signatur
+            int pos = 8; // behind the signature
             int width = 0, height = 0, bitDepth = 0, colorType = 0, interlace = 0;
             bool haveHeader = false, sawEnd = false;
             byte[]? plte = null, trns = null;
@@ -104,9 +104,9 @@ namespace fire.Terminal
 
             int channels = colorType switch { 0 => 1, 2 => 3, 3 => 1, 4 => 2, _ => 4 };
             int bitsPerPixel = channels * bitDepth;
-            int bpp = Math.Max(1, bitsPerPixel / 8); // Byte-Abstand für die Filter
+            int bpp = Math.Max(1, bitsPerPixel / 8); // byte distance for the filters
 
-            // erwartete Größe der entpackten Daten
+            // expected size of the unpacked data
             long expected = 0;
             if (interlace == 0) expected = (long)((width * (long)bitsPerPixel + 7) / 8 + 1) * height;
             else
@@ -139,7 +139,7 @@ namespace fire.Terminal
             var indices = indexed ? new byte[width * height] : null;
             var pixels = indexed ? null : new uint[width * height];
 
-            // Transparenz-Schlüssel (Grau/RGB) bzw. Alphawerte der Palette
+            // transparency key (grey/RGB) or alpha values of the palette
             uint keyGray = 0, keyR = 0, keyG = 0, keyB = 0;
             bool hasKey = false;
             if (!indexed && colorType != 4 && colorType != 6 && trns != null)
@@ -175,7 +175,7 @@ namespace fire.Terminal
                     palette[i] = plte[i * 3] | ((uint)plte[i * 3 + 1] << 8) | ((uint)plte[i * 3 + 2] << 16) | (a << 24);
                     if (a == 0 && transparent < 0) transparent = i;
                 }
-                // ein Index über die Palettengröße hinaus ist beschädigt
+                // an index beyond the palette size is damaged
                 foreach (byte b in indices!)
                     if (b >= entries) throw new ImageFormatException("PNG: a pixel refers to a palette entry that does not exist.");
                 return ImageData.CreateIndexed(width, height, indices, palette, transparent, "PNG");
@@ -186,7 +186,7 @@ namespace fire.Terminal
         private static int PassWidth(int width, int pass) => width > PassX[pass] ? (width - PassX[pass] + PassDx[pass] - 1) / PassDx[pass] : 0;
         private static int PassHeight(int height, int pass) => height > PassY[pass] ? (height - PassY[pass] + PassDy[pass] - 1) / PassDy[pass] : 0;
 
-        /// <summary>Entfiltert und überträgt EIN Teilbild (bei verschränkten Bildern ein Durchgang) an seine Stellen im Ergebnis.</summary>
+        /// <summary>Unfilters and transfers ONE sub-image (for interlaced images a pass) to its places in the result.</summary>
         private static void DecodePass(byte[] raw, ref int offset, int pw, int ph, int x0, int y0, int dx, int dy, int fullWidth,
             int bitDepth, int colorType, int channels, int bitsPerPixel, int bpp, byte[]? indices, uint[]? pixels,
             bool hasKey, uint keyGray, uint keyR, uint keyG, uint keyB)
@@ -254,7 +254,7 @@ namespace fire.Terminal
             }
         }
 
-        /// <summary>Der `index`-te Wert (Kanal bzw. Pixel) einer Zeile in der gegebenen Bittiefe; bei 16 Bit der volle Wert.</summary>
+        /// <summary>The `index`-th value (channel or pixel) of a row at the given bit depth; at 16 bit the full value.</summary>
         private static uint Sample(byte[] row, int index, int bitDepth)
         {
             switch (bitDepth)
@@ -270,7 +270,7 @@ namespace fire.Terminal
             }
         }
 
-        /// <summary>Wert der Bittiefe auf 0-255 skalieren (16 Bit: das obere Byte).</summary>
+        /// <summary>Scale a bit-depth value to 0-255 (16 bit: the upper byte).</summary>
         private static uint Scale(uint v, int bitDepth) => bitDepth switch
         {
             8 => v,

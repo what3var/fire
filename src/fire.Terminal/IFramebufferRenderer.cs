@@ -2,47 +2,47 @@ using System;
 
 namespace fire.Terminal
 {
-    /// <summary>Abstraktion über das tatsächliche Zeichnen eines
-    /// Framebuffers in einem Fenster - SDL (siehe Sdl.SdlFramebufferRenderer)
-    /// ist nur EINE mögliche Implementierung. ConsoleWindow kennt nur diese
-    /// Schnittstelle, nie SDL direkt - das Rendering-Backend lässt sich
-    /// dadurch später austauschen, ohne Framebuffer/Renderer/
-    /// ConsoleWindow selbst anzufassen (siehe SPEC/CONSOLE.md-Notiz "damit
-    /// ich das Rendering austauschen kann").</summary>
+    /// <summary>Abstraction over the actual drawing of a
+    /// framebuffer in a window - SDL (see Sdl.SdlFramebufferRenderer)
+    /// is only ONE possible implementation. ConsoleWindow only knows this
+    /// interface, never SDL directly - the rendering backend can thus
+    /// be exchanged later without touching Framebuffer/Renderer/
+    /// ConsoleWindow themselves (see the SPEC/CONSOLE.md note "so that
+    /// I can exchange the rendering").</summary>
     public interface IFramebufferRenderer : IDisposable
     {
-        /// <summary>Öffnet das eigentliche Fenster. `initialWidth`/Height
-        /// sind Pixelgrößen (typischerweise die Größe des initialen
-        /// Framebuffers) - das Fenster darf vom Nutzer danach frei in der
-        /// Größe verändert werden, der dargestellte Framebuffer-Inhalt wird
-        /// dabei einfach gestreckt/gestaucht (siehe Present-Doku), nicht neu
-        /// gerastert.</summary>
+        /// <summary>Opens the actual window. `initialWidth`/Height
+        /// are pixel sizes (typically the size of the initial
+        /// framebuffer) - the window may afterwards be freely resized
+        /// by the user, the displayed framebuffer content is
+        /// then simply stretched/squeezed (see the Present documentation), not
+        /// rasterised again.</summary>
         void Initialize(string title, int initialWidth, int initialHeight, int internalHandle);
 
-        /// <summary>Verarbeitet alle anstehenden Fenster-Events (Resize,
-        /// Schließen, ...). Liefert false, sobald das Fenster geschlossen
-        /// werden soll (der Aufrufer beendet dann üblicherweise seine
-        /// Schleife) - macht selbst KEIN Present, das ist ein eigener aufruf.</summary>
+        /// <summary>Processes all pending window events (resize,
+        /// close, ...). Returns false as soon as the window is to
+        /// be closed (the caller then usually ends its
+        /// loop) - does NOT present itself, that is a separate call.</summary>
         WindowPumpResult PumpEvents();
 
-        /// <summary>Zeichnet den kompletten aktuellen Inhalt von
-        /// `framebuffer` - IMMER auf die volle aktuelle Fenstergröße
-        /// gestreckt (siehe Initialize-Doku), unabhängig davon, ob diese der
-        /// Framebuffer-Größe entspricht. Ein Framebuffer anderer Größe als
-        /// beim letzten Aufruf wird automatisch unterstützt (kein erneutes
-        /// Initialize nötig).</summary>
+        /// <summary>Draws the complete current content of
+        /// `framebuffer` - ALWAYS stretched to the full current window
+        /// size (see the Initialize documentation), regardless of whether it matches the
+        /// framebuffer size. A framebuffer of a different size than at
+        /// the last call is supported automatically (no new
+        /// Initialize needed).</summary>
         void Present(Framebuffer framebuffer);
 
-        /// <summary>Wartet <see cref="Present"/> auf die Bildwiederholung des Monitors (vertikale Synchronisation)? Vorgabe: ja.
-        /// Dann dauert jeder Zyklus (ConsoleWindow.Tick) bis zu einer Bildperiode (60 Hz: 16,7 ms) - gleichmäßig und ohne
-        /// Rechenlast für Animationen und Warteschleifen, aber 256 Ticks in einer Zeichenschleife brauchen über vier Sekunden,
-        /// auch wenn das Zeichnen selbst nur Millisekunden dauert. Ohne VSync kehrt Present sofort zurück.
-        /// Darf vor dem Öffnen des Fensters gesetzt werden.</summary>
+        /// <summary>Does <see cref="Present"/> wait for the monitor's refresh (vertical synchronisation)? Default: yes.
+        /// Every cycle (ConsoleWindow.Tick) then takes up to one frame period (60 Hz: 16.7 ms) - evenly and without
+        /// CPU load, for animations and wait loops, but 256 ticks in a drawing loop take over four seconds,
+        /// even if the drawing itself takes only milliseconds. Without VSync, Present returns immediately.
+        /// May be set before the window is opened.</summary>
         bool VSync { get; set; }
 
-        /// <summary>true (Vorgabe): ein Finger auf dem Touchscreen löst AUCH Mausereignisse aus (so, wie es SDL von sich aus tut) - ein Programm, das nur auf die Maus hört, ist dann auch mit
-        /// dem Finger bedienbar. false: nur die Touch-Ereignisse (die UI-Bibliothek schaltet das aus und wertet die Finger selbst aus). Darf vor dem Öffnen des Fensters gesetzt werden;
-        /// ein Renderer ohne Touchscreen ignoriert es.</summary>
+        /// <summary>true (default): a finger on the touchscreen ALSO triggers mouse events (as SDL does by itself) - a program that only listens to the mouse can then also be operated with
+        /// a finger. false: only the touch events (the UI library switches this off and evaluates the fingers itself). May be set before the window is opened;
+        /// a renderer without a touchscreen ignores it.</summary>
         bool TouchMouse { get => true; set { } }
     }
 }

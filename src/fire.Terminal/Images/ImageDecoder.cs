@@ -3,12 +3,12 @@ using System;
 namespace fire.Terminal
 {
     /// <summary>
-    /// Liest Bilddateien (PNG, BMP, GIF) aus Bytes. Eigene Decoder ohne jede Abhängigkeit (die Bibliothek ist bewusst plattformunabhängig,
-    /// ohne System.Drawing/WPF): das Format wird an den ersten Bytes erkannt, nicht an einer Dateiendung.
+    /// Reads image files (PNG, BMP, GIF) from bytes. Own decoders without any dependency (the library is deliberately platform-independent,
+    /// without System.Drawing/WPF): the format is recognised by the first bytes, not by a file extension.
     /// </summary>
     public static class ImageDecoder
     {
-        /// <summary>Das Format der Daten ("PNG", "BMP", "GIF") oder null.</summary>
+        /// <summary>The format of the data ("PNG", "BMP", "GIF") or null.</summary>
         public static string? DetectFormat(ReadOnlySpan<byte> data)
         {
             if (data.Length >= 8 && data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G' && data[4] == 0x0D && data[5] == 0x0A && data[6] == 0x1A && data[7] == 0x0A) return "PNG";
@@ -17,7 +17,7 @@ namespace fire.Terminal
             return null;
         }
 
-        /// <summary>Dekodiert eine Bilddatei. Wirft <see cref="ImageFormatException"/> bei unbekanntem, beschädigtem oder nicht unterstütztem Inhalt.</summary>
+        /// <summary>Decodes an image file. Throws <see cref="ImageFormatException"/> for unknown, damaged or unsupported content.</summary>
         public static ImageData Decode(byte[] data)
         {
             if (data == null) throw new ArgumentNullException(nameof(data));
@@ -35,7 +35,7 @@ namespace fire.Terminal
             catch (ImageFormatException) { throw; }
             catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException or InvalidDataException or OverflowException or InvalidOperationException)
             {
-                // ein Decoder, der über das Ende der Daten hinausgelesen hat: abgeschnittene/beschädigte Datei
+                // a decoder that has read beyond the end of the data: truncated/damaged file
                 throw new ImageFormatException($"Corrupt image file ({ex.GetType().Name}).");
             }
         }

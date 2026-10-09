@@ -207,7 +207,7 @@ namespace fire.Native
         // -------------------------------------------------------------------------------------------------------------
         // Registries
         // -------------------------------------------------------------------------------------------------------------
-        // `Klasse.Methode` zu einer Funktion (fuer Fehlermeldungen), sonst "a lambda or a function of the script"
+        // `Class.Method` to a function (for error messages), otherwise "a lambda or a function of the script"
         private string Describe(FunctionProto proto)
         {
             foreach (var rc in _program.Program.Classes.Values)

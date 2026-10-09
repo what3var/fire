@@ -9,11 +9,11 @@ using static SDL3.SDL;
 namespace fire.Terminal.Windows
 {
     /// <summary>
-    /// Verwaltet Konsolenfenster (ConsoleWindow-Instanzen) über aufsteigende,
-    /// eindeutige IDs (siehe IdManager) - jedes Fenster zeigt EINEN
-    /// Framebuffer (per ID, siehe FramebufferManager) an. Lebt bewusst in
-    /// diesem Windows-Projekt (nicht im plattformunabhängigen Kern), da
-    /// ConsoleWindow selbst SDL/Fenster-Handling voraussetzt.
+    /// Manages console windows (ConsoleWindow instances) via ascending,
+    /// unique IDs (see IdManager) - each window shows ONE
+    /// framebuffer (by ID, see FramebufferManager). Deliberately lives in
+    /// this Windows project (not in the platform-independent core), since
+    /// ConsoleWindow itself requires SDL/window handling.
     /// </summary>
     public sealed class WindowManager
     {
@@ -26,12 +26,12 @@ namespace fire.Terminal.Windows
 
         private readonly Func<IFramebufferRenderer>? _rendererFactory;
 
-        // Ereignis-Warteschlangen der Fenster, die sie per EnableEventQueue angefordert haben (Abfrage-Stil statt Callback, siehe
-        // NextEvent). Nur gefüllt, solange eine Warteschlange angefordert ist, damit ein reines Callback-Fenster nichts ansammelt.
+        // Event queues of the windows that requested them via EnableEventQueue (polling style instead of a callback, see
+        // NextEvent). Only filled as long as a queue is requested, so that a pure callback window accumulates nothing.
         private readonly Dictionary<int, Queue<IEvent>> _eventQueues = new();
         private const int MaxQueuedEvents = 4096;
 
-        /// <param name="rendererFactory">Erzeugt den Renderer je Fenster (Vorgabe: SDL). Für Tests und andere Backends austauschbar.</param>
+        /// <param name="rendererFactory">Creates the renderer per window (default: SDL). Replaceable for tests and other backends.</param>
         public WindowManager(FramebufferManager framebuffers, Action<LambdaValue, Value[]> callbackRunner,
             Func<IFramebufferRenderer>? rendererFactory = null)
         {
@@ -42,31 +42,31 @@ namespace fire.Terminal.Windows
             Callback = callbackRunner;
         }
 
-        /// <summary>Fordert für das Fenster eine Ereignis-Warteschlange an: ab jetzt landet jedes Ereignis, das Tick holt, auch dort
-        /// und lässt sich mit <see cref="NextEvent"/> abfragen - ohne Callback, also auch ohne dessen isolierte Kopie der globalen
-        /// Variablen (siehe SPEC 8.1.4). Callbacks laufen daneben unverändert weiter.</summary>
+        /// <summary>Requests an event queue for the window: from now on every event that Tick fetches also lands there
+        /// and can be polled with <see cref="NextEvent"/> - without a callback, so also without its isolated copy of the global
+        /// variables (see SPEC 8.1.4). Callbacks keep running alongside, unchanged.</summary>
         public void EnableEventQueue(int id)
         {
             _windows.Get(id);
             if (!_eventQueues.ContainsKey(id)) _eventQueues[id] = new Queue<IEvent>();
         }
 
-        /// <summary>Das nächste Ereignis des Fensters als Werte-Array (siehe <see cref="EncodeEvent"/>), oder undefined, wenn keins
-        /// ansteht (oder keine Warteschlange angefordert wurde).</summary>
+        /// <summary>The window's next event as a value array (see <see cref="EncodeEvent"/>), or undefined if none
+        /// is pending (or no queue was requested).</summary>
         public Value NextEvent(int id)
         {
             if (!_eventQueues.TryGetValue(id, out var queue) || queue.Count == 0) return Value.MakeUndefined();
             return EncodeEvent(queue.Dequeue());
         }
 
-        /// <summary>Kodiert ein Ereignis als Array: [0] ist der Typ (siehe EventType), der Rest hängt vom Typ ab - Positionen sind
-        /// ganze Pixel (nach unten gerundet, in Framebuffer-Koordinaten):
-        /// MouseDown/MouseUp [typ, taste, x, y]; MouseMove [typ, x, y, tastenzustand]; MouseMoveRelative [typ, dx, dy, tastenzustand];
-        /// MouseScroll [typ, scrollX, scrollY, x, y] (Scrollwerte als Fließkommazahl); KeyDown/KeyUp [typ, keycode, scancode, modifier,
-        /// wiederholt]; TextInput [typ, text]; Resize [typ, breite, höhe] (die Größe des Fensters); Close/CloseRequest [typ];
-        /// TouchDown/TouchMove/TouchUp [typ, finger, x, y, druck] (Pixel des Framebuffers, Druck 0 bis 1 als Fließkommazahl);
-        /// JoystickAxis [typ, joystick, achse, stellung] (Stellung -1 bis 1 als Fließkommazahl); JoystickButtonDown/Up [typ, joystick, knopf];
-        /// JoystickHat [typ, joystick, hat, richtungen] (Bitmaske: 1 oben, 2 rechts, 4 unten, 8 links; 0 Mitte); JoystickAdded/Removed [typ, joystick].</summary>
+        /// <summary>Encodes an event as an array: [0] is the type (see EventType), the rest depends on the type - positions are
+        /// whole pixels (rounded down, in framebuffer coordinates):
+        /// MouseDown/MouseUp [type, button, x, y]; MouseMove [type, x, y, button state]; MouseMoveRelative [type, dx, dy, button state];
+        /// MouseScroll [type, scrollX, scrollY, x, y] (scroll values as floating point); KeyDown/KeyUp [type, keycode, scancode, modifier,
+        /// repeated]; TextInput [type, text]; Resize [type, width, height] (the size of the window); Close/CloseRequest [type];
+        /// TouchDown/TouchMove/TouchUp [type, finger, x, y, pressure] (pixels of the framebuffer, pressure 0 to 1 as floating point);
+        /// JoystickAxis [type, joystick, axis, position] (position -1 to 1 as floating point); JoystickButtonDown/Up [type, joystick, button];
+        /// JoystickHat [type, joystick, hat, directions] (bit mask: 1 up, 2 right, 4 down, 8 left; 0 centre); JoystickAdded/Removed [type, joystick].</summary>
         public static Value EncodeEvent(IEvent evnt)
         {
             static long Px(float v) => (long)Math.Floor(v);
@@ -118,12 +118,12 @@ namespace fire.Terminal.Windows
             return Value.MakeArray(array);
         }
 
-        /// <summary>Erzeugt UND öffnet sofort ein neues Fenster für den
-        /// Framebuffer mit der ID `framebufferId` - anders als
+        /// <summary>Creates AND immediately opens a new window for the
+        /// framebuffer with the ID `framebufferId` - unlike
         /// FramebufferManager.CreateFramebuffer/RendererManager.CreateRenderer
-        /// (die nur das C#-Objekt anlegen) macht das hier auch gleich das
-        /// eigentliche OS-Fenster sichtbar, da ein unsichtbar erzeugtes
-        /// Fenster für den Aufrufer keinen Sinn ergäbe.</summary>
+        /// (which only create the C# object), this also makes
+        /// the actual OS window visible, since a window created
+        /// invisibly would make no sense to the caller.</summary>
         public int CreateWindow(int framebufferId, string title = "fire Konsole")
         {
             var fb = _framebuffers.GetFramebuffer(framebufferId);
@@ -151,8 +151,8 @@ namespace fire.Terminal.Windows
             _callbacks.RemoveAll(c => c.WindowHandle == id && c.EventType == eventType);
         }
 
-        /// <summary>Schließt und zerstört das Fenster - bereits zerstörte/
-        /// unbekannte IDs sind KEIN Fehler (siehe IdManager.Destroy-Doku).</summary>
+        /// <summary>Closes and destroys the window - already destroyed/
+        /// unknown IDs are NOT an error (see the IdManager.Destroy documentation).</summary>
         public bool DestroyWindow(int id)
         {
             if (!_windows.TryGet(id, out var window) || window == null) return false;
@@ -161,8 +161,8 @@ namespace fire.Terminal.Windows
             return _windows.Destroy(id);
         }
 
-        /// <summary>Für C#-seitige Weiterverwendung - kein Teil des rein-
-        /// ID-basierten Oberflächen-APIs.</summary>
+        /// <summary>For continued use on the C# side - not part of the purely
+        /// ID-based surface API.</summary>
         public ConsoleWindow GetWindow(int id) => _windows.Get(id);
 
         public bool GetAutoResize(int id) => _windows.Get(id).AutoResize;
@@ -177,10 +177,10 @@ namespace fire.Terminal.Windows
 
         public void SetVSync(int id, bool enabled) => _windows.Get(id).VSync = enabled;
 
-        /// <summary>Ein einzelner Zyklus für EIN Fenster (siehe
-        /// ConsoleWindow.Tick) - liefert false, wenn das Fenster vom Nutzer
-        /// geschlossen wurde (der Aufrufer sollte dann üblicherweise
-        /// DestroyWindow(id) nachziehen).</summary>
+        /// <summary>A single cycle for ONE window (see
+        /// ConsoleWindow.Tick) - returns false if the window was closed
+        /// by the user (the caller should then usually
+        /// follow up with DestroyWindow(id)).</summary>
         public bool Tick(int id)
         {
             var result = _windows.Get(id).Tick();
@@ -193,7 +193,7 @@ namespace fire.Terminal.Windows
 
                 foreach (var evnt in result.Events)
                 {
-                    // ToList: ein Callback darf selbst Ereignisse an- oder abmelden, ohne die Schleife zu stören
+                    // ToList: a callback may itself register or unregister events without disturbing the loop
                     foreach (var hndlr in _callbacks.Where(c => c.WindowHandle == id && c.EventType == evnt.Type).ToList())
                     {
                         switch(evnt.Type)
@@ -326,12 +326,12 @@ namespace fire.Terminal.Windows
             return result?.StillOpen == true;
         }
 
-        /// <summary>Bequemlichkeitsmethode: tickt ALLE aktuell verwalteten
-        /// Fenster einmal durch und räumt dabei automatisch jedes Fenster
-        /// auf, das der Nutzer währenddessen geschlossen hat (kein
-        /// manuelles Nachziehen von DestroyWindow nötig). Für einen Host
-        /// mit EINER zentralen Schleife, die neben der Skript-VM beliebig
-        /// viele Konsolenfenster gleichzeitig offen hält.</summary>
+        /// <summary>Convenience method: ticks ALL currently managed
+        /// windows once and automatically cleans up every window
+        /// that the user closed in the meantime (no
+        /// manual follow-up with DestroyWindow needed). For a host
+        /// with ONE central loop that, alongside the script VM, keeps any
+        /// number of console windows open at the same time.</summary>
         public void TickAll()
         {
             List<int>? closed = null;

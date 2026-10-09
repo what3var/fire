@@ -3,8 +3,8 @@ using System.Numerics;
 
 namespace fire.Terminal
 {
-    /// <summary>BMP (Windows-Bitmap und OS/2-Kopfzeile): 1, 4 und 8 Bit mit Palette (auch RLE4/RLE8) bleiben indiziert; 16, 24 und 32 Bit (auch mit Bitmasken)
-    /// werden Truecolor. Zeilen von unten nach oben oder (negative Höhe) von oben nach unten.</summary>
+    /// <summary>BMP (Windows bitmap and OS/2 header): 1, 4 and 8 bit with palette (also RLE4/RLE8) stay indexed; 16, 24 and 32 bit (also with bit masks)
+    /// become true colour. Rows from bottom to top or (negative height) from top to bottom.</summary>
     internal static class BmpDecoder
     {
         private static int Le16(byte[] d, int p) => d[p] | (d[p + 1] << 8);
@@ -50,7 +50,7 @@ namespace fire.Terminal
             bool hasMasks = compression == 3 || compression == 6;
             if (hasMasks)
             {
-                int maskPos = 14 + 40; // bei einer 40-Byte-Kopfzeile folgen die Masken unmittelbar dahinter, bei größeren stehen sie darin
+                int maskPos = 14 + 40; // with a 40-byte header the masks follow directly behind it, with larger ones they are inside it
                 if (d.Length < maskPos + 12) throw new ImageFormatException("BMP: file too short for the bit masks.");
                 maskR = (uint)Le32(d, maskPos); maskG = (uint)Le32(d, maskPos + 4); maskB = (uint)Le32(d, maskPos + 8);
                 if ((compression == 6 || headerSize >= 56) && d.Length >= maskPos + 16) maskA = (uint)Le32(d, maskPos + 12);
@@ -120,14 +120,14 @@ namespace fire.Terminal
                 }
             }
 
-            // 32 Bit ohne Alpha-Maske: das vierte Byte ist meist unbenutzt (0) - dann ist das Bild deckend
+            // 32 bit without alpha mask: the fourth byte is usually unused (0) - then the image is opaque
             if (bpp == 32 && !hasMasks && !anyAlpha)
                 for (int i = 0; i < pixels.Length; i++) pixels[i] |= 0xFF000000u;
 
             return ImageData.CreateTruecolor(width, height, pixels, "BMP");
         }
 
-        /// <summary>Ein Kanalwert aus `v` nach der Maske, auf 0-255 skaliert.</summary>
+        /// <summary>A channel value from `v` according to the mask, scaled to 0-255.</summary>
         private static uint Extract(uint v, uint mask)
         {
             if (mask == 0) return 0;
@@ -155,7 +155,7 @@ namespace fire.Terminal
             return indices;
         }
 
-        /// <summary>RLE8/RLE4: Wiederholungen, Escape-Codes (Zeilenende, Bildende, Verschiebung) und absolute Läufe. Nicht erreichte Pixel bleiben Index 0.</summary>
+        /// <summary>RLE8/RLE4: repetitions, escape codes (end of line, end of image, offset) and absolute runs. Pixels not reached stay index 0.</summary>
         private static byte[] ReadRle(byte[] d, int p, int width, int height, bool rle8)
         {
             var indices = new byte[width * height];
@@ -187,7 +187,7 @@ namespace fire.Terminal
                     p += 2;
                     continue;
                 }
-                // absoluter Lauf von `value` Pixeln, auf eine gerade Byte-Zahl aufgefüllt
+                // absolute run of `value` pixels, padded to an even number of bytes
                 int n = value;
                 int bytes = rle8 ? n : (n + 1) / 2;
                 if (p + bytes > d.Length) throw new ImageFormatException("BMP: RLE-Daten abgeschnitten.");

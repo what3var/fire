@@ -3,11 +3,11 @@ using System;
 namespace fire.Terminal
 {
     /// <summary>
-    /// Verwaltet <see cref="Renderer"/> über aufsteigende, eindeutige IDs (siehe IdManager) - jeder Renderer zeichnet in EINEN Framebuffer (per ID, siehe FramebufferManager). Ebenso
-    /// verwaltet er die Pinsel (<see cref="Brush"/>) und Stifte (<see cref="Pen"/>), die die Zeichenfunktionen als Argument nehmen (je eine eigene ID-Folge). Bündelt das rein funktionale
-    /// API für Terminal-Emulation und Grafik: jede Methode nimmt nur IDs plus Primitive entgegen, nie eine Objektreferenz (siehe FramebufferManager).
+    /// Manages <see cref="Renderer"/>s via ascending, unique IDs (see IdManager) - every renderer draws into ONE framebuffer (by ID, see FramebufferManager). It likewise
+    /// manages the brushes (<see cref="Brush"/>) and pens (<see cref="Pen"/>) that the drawing functions take as arguments (each with its own ID sequence). Bundles the purely functional
+    /// API for terminal emulation and graphics: every method takes only IDs plus primitives, never an object reference (see FramebufferManager).
     ///
-    /// Bekommt die Schrift per Konstruktor injiziert (`defaultFont`) statt sie selbst zu kennen.
+    /// Gets the font injected via the constructor (`defaultFont`) instead of knowing it itself.
     /// </summary>
     public sealed class RendererManager
     {
@@ -29,7 +29,7 @@ namespace fire.Terminal
 
         public bool DestroyRenderer(int id) => _renderers.Destroy(id);
 
-        /// <summary>Für C#-seitige Weiterverwendung - kein Teil des rein-ID-basierten Oberflächen-APIs.</summary>
+        /// <summary>For continued use on the C# side - not part of the purely ID-based surface API.</summary>
         public Renderer GetRenderer(int id) => _renderers.Get(id);
 
         public int GetColumns(int id) => _renderers.Get(id).Columns;
@@ -37,7 +37,7 @@ namespace fire.Terminal
         public int GetCursorRow(int id) => _renderers.Get(id).CursorRow;
         public int GetCursorColumn(int id) => _renderers.Get(id).CursorColumn;
 
-        /// <summary>Lässt einen Renderer in einen ANDEREN Framebuffer zeichnen (z.B. kurz in einen unsichtbaren zweiten Puffer).</summary>
+        /// <summary>Lets a renderer draw into a DIFFERENT framebuffer (e.g. briefly into an invisible second buffer).</summary>
         public void SetTargetFramebuffer(int rendererId, int framebufferId) =>
             _renderers.Get(rendererId).Target = _framebuffers.GetFramebuffer(framebufferId);
 
@@ -55,21 +55,21 @@ namespace fire.Terminal
         public int GetCellWidth(int id) => _renderers.Get(id).CellWidth;
         public int GetCellHeight(int id) => _renderers.Get(id).CellHeight;
 
-        /// <summary>Vorder- und Hintergrundfarbe für Print (Zahlenwerte nach <see cref="Paint.FromArgument"/>: 0-255 = Palette-Index, sonst direkter Wert).</summary>
+        /// <summary>Foreground and background colour for Print (numeric values per <see cref="Paint.FromArgument"/>: 0-255 = palette index, otherwise direct value).</summary>
         public void SetColor(int id, int foreground, int background) =>
             _renderers.Get(id).SetColor(Paint.FromArgument(foreground), Paint.FromArgument(background));
 
         public void SetPixel(int id, int x, int y, int color) => _renderers.Get(id).SetPixel(x, y, Paint.FromArgument(color));
         public int GetPixel(int id, int x, int y) => Paint.ToArgument(_renderers.Get(id).GetPixel(x, y).Packed);
 
-        /// <summary>Der Palette-Index des Pixels (im Palette-Framebuffer der gespeicherte, sonst der nächstliegende Eintrag).</summary>
+        /// <summary>The palette index of the pixel (in the palette framebuffer the stored one, otherwise the nearest entry).</summary>
         public int GetPixelIndex(int id, int x, int y) => _renderers.Get(id).GetPixelIndex(x, y);
 
-        /// <summary>Text an einer PIXEL-Position; `background` ist die ID eines Pinsels oder 0 (kein Hintergrund).</summary>
+        /// <summary>Text at a PIXEL position; `background` is the ID of a brush or 0 (no background).</summary>
         public void DrawText(int id, int x, int y, string text, int foregroundBrush, int backgroundBrush) =>
             _renderers.Get(id).DrawText(x, y, text, _brushes.Get(foregroundBrush), backgroundBrush == 0 ? null : _brushes.Get(backgroundBrush));
 
-        // ---- Füllungen (Pinsel-ID) ----
+        // ---- Fills (brush ID) ----
 
         public void FillRect(int id, int x, int y, int w, int h, int brush) => _renderers.Get(id).FillRect(x, y, w, h, _brushes.Get(brush));
         public void Fill(int id, int brush) => _renderers.Get(id).Fill(_brushes.Get(brush));
@@ -94,17 +94,17 @@ namespace fire.Terminal
             _renderers.Get(id).DrawTriangle(x0, y0, x1, y1, x2, y2, _pens.Get(pen));
         public void DrawPolygon(int id, int[] points, int pen, bool closed) => _renderers.Get(id).DrawPolygon(points, _pens.Get(pen), closed);
 
-        /// <summary>Kopiert einen Ausschnitt des Framebuffers `sourceFramebufferId` in den des Renderers (siehe <see cref="Blitter.Blit"/>).</summary>
+        /// <summary>Copies a section of the framebuffer `sourceFramebufferId` into that of the renderer (see <see cref="Blitter.Blit"/>).</summary>
         public void Blit(int id, int sourceFramebufferId, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode, int colorKey) =>
             _renderers.Get(id).Blit(_framebuffers.GetFramebuffer(sourceFramebufferId), sx, sy, sw, sh, dx, dy, dw, dh, (BlitMode)mode, colorKey);
 
-        /// <summary>Setzt Palette-Index `index` des Framebuffers dieses Renderers auf einen neuen 32-Bit-Farbwert.</summary>
+        /// <summary>Sets palette index `index` of this renderer's framebuffer to a new 32-bit colour value.</summary>
         public void SetPaletteColor(int id, byte index, int color) => _renderers.Get(id).Palette.SetColor(index, color);
         public int GetPaletteColor(int id, byte index) => _renderers.Get(id).Palette.GetColor(index);
 
         // ---- Pinsel ----
 
-        /// <summary>Ein einfarbiger Pinsel (Farbe: Zahlenwert nach <see cref="Paint.FromArgument"/>).</summary>
+        /// <summary>A single-colour brush (colour: numeric value per <see cref="Paint.FromArgument"/>).</summary>
         public int CreateSolidBrush(int color) => _brushes.Create(new SolidBrush(Paint.FromArgument(color)));
         public bool DestroyBrush(int id) => _brushes.Destroy(id);
         public Brush GetBrush(int id) => _brushes.Get(id);
@@ -126,7 +126,7 @@ namespace fire.Terminal
         public int GetPenShape(int id) => (int)_pens.Get(id).Shape;
         public void SetPenShape(int id, int shape) => _pens.Get(id).Shape = (PenShape)shape;
 
-        /// <summary>Die Farbangabe als Zahl, wie sie ein Skript angibt (Palette-Index 0-255 oder direkter Wert).</summary>
+        /// <summary>The colour specification as a number, as a script gives it (palette index 0-255 or direct value).</summary>
         private static int ColorNumber(Paint paint) => paint.IsIndex ? paint.Index : unchecked((int)paint.Rgba);
     }
 }

@@ -1,23 +1,23 @@
 namespace fire.Terminal
 {
     /// <summary>
-    /// Eine Farbangabe des Aufrufers: entweder ein Index der Palette des Ziel-Framebuffers (0-255) oder ein direkter RGBA-Wert. Erst
-    /// <see cref="Surface.Resolve"/> macht daraus die Farbe für GENAU diesen Framebuffer - dieselbe Angabe zeichnet also in jedem
-    /// Farbmodus: im RGBA-Framebuffer wird ein Index über die Palette in eine Farbe übersetzt, im Palette-Framebuffer ein RGBA-Wert auf den
-    /// nächsten Palette-Eintrag abgebildet.
+    /// A colour specification from the caller: either an index into the palette of the target framebuffer (0-255) or a direct RGBA value. Only
+    /// <see cref="Surface.Resolve"/> turns it into the colour for EXACTLY this framebuffer - the same specification thus draws in every
+    /// colour mode: in the RGBA framebuffer an index is translated into a colour via the palette, in the palette framebuffer an RGBA value is mapped to the
+    /// nearest palette entry.
     ///
-    /// Aus einem Zahlenwert (Skript-Argument) entsteht sie nach der Regel von `Renderer.SetColor`: ein Wert, in dem nur das niedrigste Byte
-    /// belegt ist (0-255), ist ein Palette-Index; jeder andere ein direkter Wert (R im niedrigsten Byte, Alpha im höchsten). Ein Palette-Index
-    /// belegt also nur das R-Byte, Alpha bleibt 0 - er kollidiert nur mit durchsichtigen Farben, deren G und B 0 sind (vor allem 0 = durchsichtiges
-    /// Schwarz, das QBasic-Schwarz des Index 0). Deshalb ist die kanonische durchsichtige Farbe (0, 1, 0, 0) = 256 (<see cref="Transparent"/>),
-    /// und <see cref="ToArgument"/> bildet solche Werte darauf ab, wo ein Pixel als Zahl an ein Skript geht.
+    /// From a numeric value (script argument) it arises by the rule of `Renderer.SetColor`: a value in which only the lowest byte
+    /// is occupied (0-255) is a palette index; any other is a direct value (R in the lowest byte, alpha in the highest). A palette index
+    /// thus occupies only the R byte, alpha stays 0 - it only collides with transparent colours whose G and B are 0 (above all 0 = transparent
+    /// black, the QBasic black of index 0). That is why the canonical transparent colour is (0, 1, 0, 0) = 256 (<see cref="Transparent"/>),
+    /// and <see cref="ToArgument"/> maps such values to it wherever a pixel goes to a script as a number.
     /// </summary>
     public readonly struct Paint
     {
-        /// <summary>Der direkte Wert (gepackt, siehe PixelColor) - nur gültig, wenn <see cref="IsIndex"/> falsch ist.</summary>
+        /// <summary>The direct value (packed, see PixelColor) - only valid if <see cref="IsIndex"/> is false.</summary>
         public readonly uint Rgba;
 
-        /// <summary>Palette-Index 0-255, oder -1: ein direkter RGBA-Wert.</summary>
+        /// <summary>Palette index 0-255, or -1: a direct RGBA value.</summary>
         public readonly short Index;
 
         private Paint(uint rgba, short index)
@@ -32,26 +32,26 @@ namespace fire.Terminal
         public static Paint FromRgba(PixelColor color) => new(color.Packed, -1);
         public static Paint FromRgba(uint packed) => new(packed, -1);
 
-        /// <summary>Die Regel für Zahlenwerte aus Skripten (siehe Klassen-Doku). Nur die unteren 32 Bit zählen (ein vorzeichenbehafteter Wert
-        /// wie der von `GetPixel` ist derselbe Wert).</summary>
+        /// <summary>The rule for numeric values from scripts (see the class documentation). Only the lower 32 bits count (a signed value
+        /// like the one from `GetPixel` is the same value).</summary>
         public static Paint FromArgument(long value)
         {
             uint raw = unchecked((uint)value);
             return (raw & 0xFFFFFF00u) == 0 ? FromIndex((byte)raw) : FromRgba(raw);
         }
 
-        /// <summary>Die kanonische durchsichtige Farbe als Zahlenwert: (0, 1, 0, 0) - sie ist komplett durchsichtig, wird aber nicht als Palette-Index gelesen.</summary>
+        /// <summary>The canonical transparent colour as a numeric value: (0, 1, 0, 0) - it is completely transparent, but is not read as a palette index.</summary>
         public const int Transparent = 0x100;
 
-        /// <summary>Ein Pixelwert als Zahl für ein Skript: ein Wert, der als Palette-Index gelesen würde (nur das R-Byte belegt, also immer durchsichtig), wird
-        /// zu <see cref="Transparent"/> - so bleibt ein gelesenes Pixel beim Zurückschreiben durchsichtig statt zu Palette-Schwarz zu werden.</summary>
+        /// <summary>A pixel value as a number for a script: a value that would be read as a palette index (only the R byte occupied, so always transparent) becomes
+        /// <see cref="Transparent"/> - so a pixel that was read stays transparent when written back instead of becoming palette black.</summary>
         public static int ToArgument(uint packed) => (packed & 0xFFFFFF00u) == 0 ? Transparent : unchecked((int)packed);
 
         public static implicit operator Paint(PixelColor color) => FromRgba(color);
     }
 
-    /// <summary>Eine Farbe, aufgelöst für ein bestimmtes Ziel (siehe <see cref="Surface.Resolve"/>): `Rgba` ist der Farbwert (für einen RGBA-Framebuffer das, was ins Pixel
-    /// geschrieben wird, auch sein Alpha gilt beim Mischen), `Index` der Palette-Eintrag für einen Palette-Framebuffer. Die Zeichenfunktionen arbeiten nur noch damit.</summary>
+    /// <summary>A colour, resolved for a particular target (see <see cref="Surface.Resolve"/>): `Rgba` is the colour value (for an RGBA framebuffer what is written into the pixel,
+    /// its alpha also applies when blending), `Index` the palette entry for a palette framebuffer. The drawing functions work only with this.</summary>
     public readonly struct Pixel
     {
         public readonly uint Rgba;
@@ -63,7 +63,7 @@ namespace fire.Terminal
             Index = index;
         }
 
-        /// <summary>Das Alpha des Farbwerts (255 = deckend).</summary>
+        /// <summary>The alpha of the colour value (255 = opaque).</summary>
         public byte Alpha => (byte)(Rgba >> 24);
     }
 }

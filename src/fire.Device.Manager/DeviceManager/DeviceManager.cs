@@ -8,30 +8,30 @@ using System.Text;
 namespace fire.Device.Manager.DeviceManager
 {
     /// <summary>
-    /// Verwaltet Treiber und die von ihnen gefundenen Geräte. Alle öffentlichen Mitglieder sind thread-sicher (ein
-    /// Skript, der Editor und die Treiber-Threads greifen gleichzeitig zu).
+    /// Manages drivers and the devices they find. All public members are thread-safe (a
+    /// script, the editor and the driver threads access it at the same time).
     ///
-    /// GETEILTER Manager (<see cref="IsShared"/>): gehört dem Host (dem Editor), nicht dem laufenden Skript.
-    /// Mehrere Skripte hintereinander arbeiten mit denselben Geräten (offene Verbindungen bleiben bestehen), und
-    /// ein Skript darf ihn nicht abbauen: <see cref="Dispose"/> ist dann wirkungslos, nur der Besitzer räumt über
-    /// <see cref="Shutdown"/> auf.
+    /// SHARED manager (<see cref="IsShared"/>): belongs to the host (the editor), not to the running script.
+    /// Several scripts in a row work with the same devices (open connections stay open), and
+    /// a script must not tear it down: <see cref="Dispose"/> then has no effect, only the owner cleans up via
+    /// <see cref="Shutdown"/>.
     ///
-    /// Die Paketverfolgung (<see cref="PacketCaptured"/>) sieht jeden Verkehr, egal ob Skript oder Host sendet,
-    /// weil sie sich direkt an die Geräte hängt.
+    /// Packet tracking (<see cref="PacketCaptured"/>) sees all traffic, whether the script or the host sends,
+    /// because it attaches directly to the devices.
     /// </summary>
     public class DeviceManager : IDisposable
     {
         private readonly object _lock = new();
         private int _handleCounter;
-        //Devices und Drivers bekommen handles
+        // Devices and Drivers get handles
         private readonly List<DeviceSlot> _deviceSlots = new();
         private readonly List<DriverSlot> _driverSlots = new();
         private string? _defaultIdentifier;
 
-        /// <summary>Wahr, wenn der Manager dem Host gehört und von Skripten nur benutzt wird (siehe Klassendoku).</summary>
+        /// <summary>True if the manager belongs to the host and is only used by scripts (see the class documentation).</summary>
         public bool IsShared { get; init; }
 
-        /// <summary>Die Standardgeräte-Kennung (z.B. `serial:COM3`), die Skripte als `Device.Default` bekommen; null = keins gewählt.</summary>
+        /// <summary>The default device identifier (e.g. `serial:COM3`) that scripts receive as `Device.Default`; null = none chosen.</summary>
         public string? DefaultIdentifier
         {
             get { lock (_lock) return _defaultIdentifier; }
@@ -46,7 +46,7 @@ namespace fire.Device.Manager.DeviceManager
             }
         }
 
-        /// <summary>Das Handle des Standardgeräts, null wenn keins gewählt ist oder es (noch) nicht gefunden wurde.</summary>
+        /// <summary>The handle of the default device, null if none is chosen or it has not (yet) been found.</summary>
         public int? DefaultHandle
         {
             get
@@ -56,23 +56,23 @@ namespace fire.Device.Manager.DeviceManager
             }
         }
 
-        /// <summary>Die Geräteliste hat sich geändert (neues Gerät gefunden, Suche beendet).</summary>
+        /// <summary>The device list has changed (new device found, search finished).</summary>
         public event Action? DevicesChanged;
 
-        /// <summary>Verbindungs- oder Verfügbarkeitsstatus eines Geräts hat sich geändert. Kann auf einem Hintergrund-Thread feuern.</summary>
+        /// <summary>The connection or availability status of a device has changed. May fire on a background thread.</summary>
         public event Action<DeviceSlot>? DeviceStateChanged;
 
-        /// <summary>Das Standardgerät wurde gewechselt.</summary>
+        /// <summary>The default device was changed.</summary>
         public event Action? DefaultChanged;
 
-        /// <summary>Ein Paket wurde gesendet oder empfangen. Feuert auf dem Thread, der sendet bzw. des Geräts.</summary>
+        /// <summary>A packet was sent or received. Fires on the thread that sends, or on the device's thread.</summary>
         public event Action<PacketRecord>? PacketCaptured;
 
         public DeviceManager()
         {
         }
 
-        /// <summary>Ein Manager mit den eingebauten Treibern (seriell).</summary>
+        /// <summary>A manager with the built-in drivers (serial).</summary>
         public static DeviceManager CreateDefault(bool isShared = false)
         {
             var manager = new DeviceManager { IsShared = isShared };
@@ -119,14 +119,14 @@ namespace fire.Device.Manager.DeviceManager
             }
         }
 
-        /// <summary>Die Kennungen der registrierten Treiber.</summary>
+        /// <summary>The identifiers of the registered drivers.</summary>
         public IReadOnlyList<string> GetDriverIdentifiers()
         {
             lock (_lock) return _driverSlots.Select(d => d.Driver.Identifier).ToList();
         }
 
-        /// <summary>Entfernt den Treiber mit dieser Kennung samt seiner Geräte (trennt sie vorher). false, wenn es ihn nicht gibt.
-        /// Für den Besitzer des Managers - Skripte haben darauf keinen Zugriff.</summary>
+        /// <summary>Removes the driver with this identifier together with its devices (disconnecting them first). false if there is none.
+        /// For the owner of the manager - scripts have no access to it.</summary>
         public bool RemoveDriver(string driverIdentifier)
         {
             List<DeviceSlot> removed;
@@ -161,7 +161,7 @@ namespace fire.Device.Manager.DeviceManager
                     lock (_lock) existing = _deviceSlots.FirstOrDefault(d => d.Identifier == identifier);
                     if (existing != null)
                     {
-                        // Der Treiber liefert bei jedem Lauf neue Objekte - das schon bekannte Gerät bleibt, das neue ist überflüssig.
+                        // The driver delivers new objects on every run - the already known device stays, the new one is redundant.
                         if (!ReferenceEquals(existing.Device, device)) device.Dispose();
                         toTest.Add(existing.Device);
                         continue;
@@ -184,7 +184,7 @@ namespace fire.Device.Manager.DeviceManager
 
                 if (!fastscan)
                 {
-                    // Auch Geräte, die der Treiber diesmal nicht mehr meldet (abgezogen), neu prüfen - sie werden dann "nicht verfügbar".
+                    // Also re-check devices that the driver no longer reports this time (unplugged) - they then become "unavailable".
                     List<IDevice> vanished;
                     lock (_lock)
                         vanished = _deviceSlots.Where(s => s.DriverIdentifier == driver.Driver.Identifier && !toTest.Contains(s.Device)).Select(s => s.Device).ToList();
@@ -211,47 +211,47 @@ namespace fire.Device.Manager.DeviceManager
         }
 
         // ------------------------------------------------------------
-        // Abfrage per Handle/Identifier (SPEC-Anforderung der fire-Brücke,
-        // siehe fire.Device.Bridge) - vorher gab es KEINE Möglichkeit, an
-        // ein bereits registriertes Gerät wieder heranzukommen, nur an
-        // RefreshDevices/RegisterDriver. Rein lesende Ergänzungen, ändern
-        // nichts am bisherigen Verhalten.
+        // Query by handle/identifier (SPEC requirement of the fire bridge,
+        // see fire.Device.Bridge) - before this there was NO way to get back to
+        // an already registered device, only to
+        // RefreshDevices/RegisterDriver. Purely reading additions, they change
+        // nothing about the previous behaviour.
         // ------------------------------------------------------------
 
-        /// <summary>Das Gerät mit diesem Handle, `null` wenn kein Gerät (mehr)
-        /// unter diesem Handle registriert ist (z.B. nie vergeben oder ein
-        /// Handle, der eigentlich zu einem DRIVER statt einem Gerät gehört -
-        /// Handles werden aus DEMSELBEN Zähler für Geräte UND Treiber
-        /// vergeben, siehe GetNewHandle, sind also nicht automatisch je jede
-        /// Nummer ein Gerät).</summary>
+        /// <summary>The device with this handle, `null` if no device is (any longer)
+        /// registered under this handle (e.g. never assigned or a
+        /// handle that actually belongs to a DRIVER rather than a device -
+        /// handles are assigned from the SAME counter for devices AND drivers,
+        /// see GetNewHandle, so not every
+        /// number is a device).</summary>
         public IDevice? GetDeviceByHandle(int handle)
         {
             lock (_lock) return _deviceSlots.FirstOrDefault(d => d.Handle == handle)?.Device;
         }
 
-        /// <summary>Der Identifier (z.B. "serial:COM3") des Geräts mit diesem
-        /// Handle, `null` wenn kein Gerät unter diesem Handle bekannt ist.</summary>
+        /// <summary>The identifier (e.g. "serial:COM3") of the device with this
+        /// handle, `null` if no device is known under this handle.</summary>
         public string? GetIdentifierByHandle(int handle)
         {
             lock (_lock) return _deviceSlots.FirstOrDefault(d => d.Handle == handle)?.Identifier;
         }
 
-        /// <summary>Das Handle des Geräts mit diesem Identifier, `null` wenn
-        /// kein Gerät mit diesem Identifier (mehr) bekannt ist (z.B. noch
-        /// kein RefreshDevices() gelaufen, oder das Gerät wurde seither
-        /// physisch entfernt und ist beim letzten Scan nicht mehr
-        /// aufgetaucht - ein einmal vergebenes Handle wird NIE erneut
-        /// entfernt/invalidiert, siehe DeviceSlot, ein "verschwundenes"
-        /// Gerät bleibt also unter seinem alten Handle weiter abfragbar,
-        /// meldet dann aber über TestAvailability() Unavailable).</summary>
+        /// <summary>The handle of the device with this identifier, `null` if
+        /// no device with this identifier is (any longer) known (e.g. no
+        /// RefreshDevices() has run yet, or the device has since been
+        /// physically removed and did not show up in the last
+        /// scan - a handle, once assigned, is NEVER
+        /// removed/invalidated, see DeviceSlot, a "vanished"
+        /// device can thus still be queried under its old handle,
+        /// but then reports Unavailable via TestAvailability()).</summary>
         public int? GetHandleByIdentifier(string identifier)
         {
             lock (_lock) return _deviceSlots.FirstOrDefault(d => d.Identifier == identifier)?.Handle;
         }
 
-        /// <summary>Alle aktuell bekannten Geräte-Handles, in der Reihenfolge
-        /// ihrer Registrierung (nicht notwendigerweise numerisch sortiert,
-        /// falls dazwischen auch Treiber-Handles vergeben wurden).</summary>
+        /// <summary>All currently known device handles, in the order
+        /// of their registration (not necessarily numerically sorted,
+        /// if driver handles were also assigned in between).</summary>
         public IReadOnlyList<int> GetAllDeviceHandles()
         {
             lock (_lock) return _deviceSlots.Select(d => d.Handle).ToList();
@@ -262,7 +262,7 @@ namespace fire.Device.Manager.DeviceManager
             get { lock (_lock) return _deviceSlots.Count; }
         }
 
-        /// <summary>Eine Momentaufnahme aller bekannten Geräte.</summary>
+        /// <summary>A snapshot of all known devices.</summary>
         public IReadOnlyList<DeviceSlot> GetSlots()
         {
             lock (_lock) return _deviceSlots.ToList();
@@ -274,18 +274,18 @@ namespace fire.Device.Manager.DeviceManager
         }
 
         // ------------------------------------------------------------
-        // Aufräumen
+        // Clean-up
         // ------------------------------------------------------------
 
-        /// <summary>Beendet den Manager: trennt und gibt alle Geräte frei. Bei einem GETEILTEN Manager wirkungslos
-        /// (siehe Klassendoku) - nur <see cref="Shutdown"/> baut ihn ab.</summary>
+        /// <summary>Shuts the manager down: disconnects and releases all devices. With a SHARED manager it has no effect
+        /// (see the class documentation) - only <see cref="Shutdown"/> tears it down.</summary>
         public void Dispose()
         {
             if (IsShared) return;
             Shutdown();
         }
 
-        /// <summary>Baut den Manager unbedingt ab (Besitzer, z.B. beim Beenden des Editors).</summary>
+        /// <summary>Tears the manager down unconditionally (owner, e.g. when the editor exits).</summary>
         public void Shutdown()
         {
             List<DeviceSlot> slots;

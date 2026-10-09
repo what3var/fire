@@ -12,13 +12,13 @@ namespace fire.Device.Manager.DeviceManager
         /// <summary>`treiber:anschluss`, z.B. `serial:COM3`.</summary>
         public string Identifier { get; private set; }
 
-        /// <summary>Kennung des Treibers, der das Gerät gefunden hat (`serial`).</summary>
+        /// <summary>Identifier of the driver that found the device (`serial`).</summary>
         public string DriverIdentifier { get; private set; }
 
         public IDevice Device { get; private set; }
 
-        /// <summary>Das Gerät gehört einem geteilten DeviceManager (siehe <see cref="DeviceManager.IsShared"/>):
-        /// Skripte dürfen es benutzen (verbinden, senden, empfangen), aber nicht zerstören.</summary>
+        /// <summary>The device belongs to a shared DeviceManager (see <see cref="DeviceManager.IsShared"/>):
+        /// scripts may use it (connect, send, receive), but not destroy it.</summary>
         public bool IsShared { get; private set; }
 
         public DeviceSlot(int handle, string identifier, IDevice device, string driverIdentifier = "", bool isShared = false)
