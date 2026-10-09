@@ -7,8 +7,8 @@ using System.Text.RegularExpressions;
 namespace fire.Editor
 {
     // -----------------------------------------------------------
-    // Dokument-Modell (rein, ohne WPF - dadurch ohne Oberfläche testbar).
-    // Die Darstellung als FlowDocument liegt in MarkdownRenderer.
+    // Document model (pure, without WPF - therefore testable without a UI).
+    // The rendering as a FlowDocument lives in MarkdownRenderer.
     // -----------------------------------------------------------
 
     public abstract record MdInline;
@@ -27,19 +27,19 @@ namespace fire.Editor
     public sealed record MdCodeBlock(string? Language, string Code) : MdBlock;
     public sealed record MdQuote(IReadOnlyList<MdBlock> Blocks) : MdBlock;
     public sealed record MdRule : MdBlock;
-    /// <summary>`Checked`: null = kein Aufgaben-Eintrag, sonst `- [ ]`/`- [x]`.</summary>
+    /// <summary>`Checked`: null = no task entry, otherwise `- [ ]`/`- [x]`.</summary>
     public sealed record MdListItem(IReadOnlyList<MdBlock> Blocks, bool? Checked);
     public sealed record MdList(bool Ordered, int Start, IReadOnlyList<MdListItem> Items) : MdBlock;
     public enum MdAlign { Left, Center, Right }
     public sealed record MdTable(IReadOnlyList<IReadOnlyList<MdInline>> Header, IReadOnlyList<MdAlign> Aligns,
         IReadOnlyList<IReadOnlyList<IReadOnlyList<MdInline>>> Rows) : MdBlock;
 
-    /// <summary>Ein bewusst kompakter Markdown-Parser (CommonMark/GitHub-
-    /// Teilmenge): Überschriften (# und Setext), Absätze, Hervorhebungen
-    /// (**fett**, *kursiv*, ~~durchgestrichen~~, `Code`), Links/Bilder/
-    /// automatische Links, Zitate, (verschachtelte) Listen mit Aufgaben-
-    /// Kästchen, Code-Blöcke (``` und ~~~), Trennlinien und Pipe-Tabellen.
-    /// Rohes HTML wird nicht interpretiert, sondern als Text angezeigt.</summary>
+    /// <summary>A deliberately compact Markdown parser (CommonMark/GitHub
+    /// subset): headings (# and Setext), paragraphs, emphasis
+    /// (**bold**, *italic*, ~~strikethrough~~, `code`), links/images/
+    /// automatic links, quotes, (nested) lists with task
+    /// checkboxes, code blocks (``` and ~~~), horizontal rules and pipe tables.
+    /// Raw HTML is not interpreted, but shown as text.</summary>
     public static class MarkdownParser
     {
         public static IReadOnlyList<MdBlock> Parse(string text)
@@ -61,7 +61,7 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Blöcke
+        // Blocks
         // -----------------------------------------------------------
 
         private static readonly Regex FenceStart = new(@"^ {0,3}(```+|~~~+)\s*([^`\s]*)[^`]*$", RegexOptions.Compiled);
@@ -107,12 +107,12 @@ namespace fire.Editor
                         code.Add(l.Substring(strip));
                         i++;
                     }
-                    if (i < lines.Count) i++; // schließender Zaun
+                    if (i < lines.Count) i++; // closing fence
                     blocks.Add(new MdCodeBlock(lang, string.Join("\n", code)));
                     continue;
                 }
 
-                // Überschrift (#)
+                // Heading (#)
                 var atx = Atx.Match(line);
                 if (atx.Success)
                 {
@@ -121,7 +121,7 @@ namespace fire.Editor
                     continue;
                 }
 
-                // Trennlinie (vor Listen prüfen: `---`/`* * *`)
+                // Horizontal rule (check before lists: `---`/`* * *`)
                 if (Rule.IsMatch(line)) { blocks.Add(new MdRule()); i++; continue; }
 
                 // Zitat
@@ -176,7 +176,7 @@ namespace fire.Editor
                     }
                 }
 
-                // Absatz (ggf. Setext-Überschrift)
+                // Paragraph (possibly Setext heading)
                 var para = new List<string>();
                 while (i < lines.Count)
                 {
@@ -214,21 +214,21 @@ namespace fire.Editor
             return n <= 3 && n < line.Length && line[n] == '>';
         }
 
-        /// <summary>Ein Listenanfang: `-`/`*`/`+`/`1.` gefolgt von Leerzeichen und Inhalt.</summary>
+        /// <summary>A list start: `-`/`*`/`+`/`1.` followed by a space and content.</summary>
         private static bool StartsList(string line)
         {
             var m = ListMarker.Match(line);
             return m.Success && (m.Groups["gap"].Length > 0 && m.Groups["rest"].Length > 0 || m.Groups["rest"].Length == 0 && m.Groups["gap"].Length == 0);
         }
 
-        /// <summary>Beginnt diese Zeile einen neuen Block, der einen Absatz beendet?</summary>
+        /// <summary>Does this line begin a new block that ends a paragraph?</summary>
         private static bool StartsBlock(string line)
         {
             if (FenceStart.IsMatch(line) || Atx.IsMatch(line) || Rule.IsMatch(line) || IsQuoteLine(line)) return true;
             var m = ListMarker.Match(line);
             if (m.Success && m.Groups["rest"].Length > 0 && m.Groups["gap"].Length > 0)
             {
-                // Eine nummerierte Liste unterbricht einen Absatz nur mit `1.`
+                // A numbered list interrupts a paragraph only with `1.`
                 string marker = m.Groups["marker"].Value;
                 return !char.IsDigit(marker[0]) || marker.StartsWith("1");
             }
@@ -287,7 +287,7 @@ namespace fire.Editor
                 if (char.IsDigit(marker[0]) != ordered) break;
                 if ((ordered ? marker[^1] : marker[0]) != bullet) break;
 
-                // Einrückung des Inhalts: nach Marker + Leerzeichen (max. 4 Leerzeichen, sonst 1)
+                // Indentation of the content: after marker + space (max. 4 spaces, otherwise 1)
                 int gap = m.Groups["gap"].Length;
                 if (gap > 4 || m.Groups["rest"].Length == 0) gap = 1;
                 int contentIndent = baseIndent + marker.Length + gap;
@@ -307,8 +307,8 @@ namespace fire.Editor
                         i++;
                         continue;
                     }
-                    // Weniger eingerückt: neues Listenelement oder Ende - außer träge Fortsetzung
-                    // einer Absatzzeile direkt (ohne Leerzeile) darunter.
+                    // Less indented: new list item or end - except lazy continuation
+                    // of a paragraph line directly (without a blank line) below it.
                     if (!pendingBlank && !StartsBlock(l) && !ListMarker.IsMatch(l) && !IsBlank(itemLines[^1]))
                     {
                         itemLines.Add(l.TrimStart());
@@ -331,7 +331,7 @@ namespace fire.Editor
                 }
                 items.Add(new MdListItem(ParseBlocks(itemLines), check));
 
-                // Leerzeilen zwischen Elementen überspringen, falls dahinter weitere Elemente folgen
+                // Skip blank lines between items if further items follow behind them
                 int peek = i;
                 while (peek < lines.Count && IsBlank(lines[peek])) peek++;
                 if (peek < lines.Count && peek != i)
@@ -548,7 +548,7 @@ namespace fire.Editor
                 }
                 if (c == '[')
                 {
-                    // Linkziel überspringen, damit `*` in URLs nicht schließt
+                    // Skip the link target so that `*` in URLs does not close
                     if (TryParseLinkTail(text, j, out int labelEnd, out _, out int end)) { j = end; continue; }
                 }
                 if (c == d)
@@ -561,7 +561,7 @@ namespace fire.Editor
                     {
                         if (run == len) return j;
                         if (run > len && run - len <= 2 && len < 3 && d != '~')
-                            return j + (run - len); // `**fett *kursiv***`: schließt mit den LETZTEN Zeichen des Laufs
+                            return j + (run - len); // `**bold *italic***`: closes with the LAST characters of the run
                     }
                     j += run;
                     continue;
@@ -571,7 +571,7 @@ namespace fire.Editor
             return -1;
         }
 
-        /// <summary>`[Text](ziel "titel")` ab `i` (das `[`).</summary>
+        /// <summary>`[text](target "title")` from `i` (the `[`).</summary>
         private static bool TryParseLinkTail(string text, int i, out int labelEnd, out string url, out int end)
         {
             labelEnd = -1; url = ""; end = i;
@@ -616,7 +616,7 @@ namespace fire.Editor
             return true;
         }
 
-        /// <summary>Der reine Text eines Inline-Abschnitts (für Bild-Alternativtexte).</summary>
+        /// <summary>The pure text of an inline section (for image alt texts).</summary>
         private static string PlainText(string markup) => PlainText(ParseInlines(markup));
 
         public static string PlainText(IEnumerable<MdInline> inlines)

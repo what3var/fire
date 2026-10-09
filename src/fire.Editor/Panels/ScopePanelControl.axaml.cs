@@ -7,9 +7,9 @@ using fire.Values;
 
 namespace fire.Editor
 {
-    /// <summary>Der Scope des aktiven Threads als Baum: `this`, die Scope-Kette der aktuellen Funktion (innerster Block
-    /// zuerst) und die Globals. Objekte und Arrays klappen lazy auf. Arbeitet auf EINER DebugSession (siehe
-    /// AttachSession), kennt sonst nichts vom Editor.</summary>
+    /// <summary>The scope of the active thread as a tree: `this`, the scope chain of the current function (innermost block
+    /// first) and the globals. Objects and arrays expand lazily. Works on ONE DebugSession (see
+    /// AttachSession), otherwise knows nothing about the editor.</summary>
     public partial class ScopePanelControl : UserControl
     {
         private DebugSession? _session;
@@ -21,22 +21,22 @@ namespace fire.Editor
 
         public void AttachSession(DebugSession session) => _session = session;
 
-        /// <summary>Baut den Baum neu auf - nach jeder Zustandsänderung (Kompilieren, Schritt, Stopp, Thread-Wechsel).</summary>
+        /// <summary>Rebuilds the tree - after every state change (compile, step, stop, thread switch).</summary>
         public void Refresh()
         {
             ScopeTree.Items.Clear();
             var vm = _session?.Vm;
             if (vm == null) return;
 
-            // "this" ganz oben, falls an dieser Stelle gebunden - als echter
-            // (aufklappbarer) Wert statt nur als Textzeile, siehe
+            // "this" at the very top, if bound at this point - as a real
+            // (expandable) value instead of just a text line, see
             // BuildVariableTreeItem.
             if (vm.DebugThisValue is Value thisValue)
                 ScopeTree.Items.Add(BuildVariableTreeItem("this", thisValue, expanded: true));
 
-            // Scope-Kette der aktuellen Funktion - der ERSTE Eintrag (Depth 0)
-            // ist der GERADE AKTIVE (innerste) Block, danach umschließende
-            // Ebenen bis zur Funktions-/Methoden-/Lambda-Grenze.
+            // Scope chain of the current function - the FIRST entry (depth 0)
+            // is the CURRENTLY ACTIVE (innermost) block, after it enclosing
+            // levels up to the function/method/lambda boundary.
             foreach (var level in vm.DebugScopeChain())
             {
                 string label = level.Depth == 0
@@ -51,8 +51,8 @@ namespace fire.Editor
                 ScopeTree.Items.Add(node);
             }
 
-            // Global ganz unten, eingeklappt (meist nicht der primäre Fokus
-            // beim Debuggen einer bestimmten Funktion).
+            // Global at the very bottom, collapsed (usually not the primary focus
+            // when debugging a particular function).
             var globals = vm.DebugGlobals().ToList();
             var globalNode = new TreeViewItem { Header = "Global", IsExpanded = false };
             foreach (var (name, value) in globals)
@@ -63,16 +63,16 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Feld-/Element-Anzeige für Objekte und Arrays im Scope-Baum (siehe
-        // Refresh) - baut Kind-Knoten LAZY erst beim tatsächlichen
-        // Aufklappen auf (TreeViewItem.Expanded), statt den kompletten
-        // (potenziell riesigen oder zyklischen) Objektgraphen sofort
-        // komplett zu durchlaufen. Zyklenschutz über die Menge der bereits
-        // auf dem Pfad von der Wurzel besuchten Objekte/Arrays
-        // (Referenzidentität, nicht Wert-Gleichheit) - eine ganz normale
-        // MEHRFACHE Referenz auf dasselbe Objekt an verschiedenen Stellen
-        // ist dagegen kein Zyklus und bleibt aufklappbar (nur der Pfad
-        // WURZEL->...->SELBES OBJEKT NOCHMAL wird abgeschnitten).
+        // Field/element display for objects and arrays in the scope tree (see
+        // Refresh) - builds child nodes LAZILY only on actual
+        // expanding (TreeViewItem.Expanded), instead of immediately walking the entire
+        // (potentially huge or cyclic) object graph
+        // completely. Cycle protection via the set of objects/arrays already
+        // visited on the path from the root
+        // (reference identity, not value equality) - a perfectly normal
+        // MULTIPLE reference to the same object at different places
+        // is not a cycle, on the other hand, and stays expandable (only the path
+        // ROOT->...->SAME OBJECT AGAIN is cut off).
         // -----------------------------------------------------------
 
         private TreeViewItem BuildVariableTreeItem(string name, Value value, HashSet<object>? ancestors = null, bool expanded = false)
@@ -82,13 +82,13 @@ namespace fire.Editor
             return item;
         }
 
-        /// <summary>Wie Value.ToString(), aber für Objekte/Arrays mit einer
-        /// für den Debugger nützlicheren Kurzbeschreibung (Klassenname +
-        /// Erzeugungs-ID statt des rohen .NET-Typnamens, Elementanzahl statt
-        /// nur "&lt;array&gt;") - reine Anzeige-Bequemlichkeit, ändert nichts an
-        /// Value.ToString() selbst (das wird u.a. für Skript-seitige
-        /// String-Konkatenation gebraucht und soll dafür unverändert
-        /// bleiben).</summary>
+        /// <summary>Like Value.ToString(), but for objects/arrays with a
+        /// short description more useful for the debugger (class name +
+        /// creation ID instead of the raw .NET type name, element count instead of
+        /// just "&lt;array&gt;") - pure display convenience, changes nothing about
+        /// Value.ToString() itself (which is needed among other things for script-side
+        /// string concatenation and is to stay unchanged
+        /// for that).</summary>
         private static string DescribeForTree(Value value) => value.Kind switch
         {
             ValueKind.Class => $"{((ObjectInstance)value.AsObjectRef()).ClassName} (#{((ObjectInstance)value.AsObjectRef()).Id})",
@@ -106,9 +106,9 @@ namespace fire.Editor
                     item.Items.Add(new TreeViewItem { Header = "(cycle - object is further up in the tree)" });
                     return;
                 }
-                if (!obj.Fields.Any()) return; // keine Felder - kein Aufklapp-Pfeil nötig
+                if (!obj.Fields.Any()) return; // no fields - no expand arrow needed
 
-                item.Items.Add(new TreeViewItem { Header = "…" }); // Platzhalter, bis tatsächlich aufgeklappt
+                item.Items.Add(new TreeViewItem { Header = "…" }); // placeholder until actually expanded
                 bool loaded = false;
                 item.Expanded += (_, _) =>
                 {

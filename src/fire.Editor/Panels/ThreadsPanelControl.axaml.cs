@@ -6,19 +6,19 @@ using Avalonia.Interactivity;
 
 namespace fire.Editor
 {
-    /// <summary>Eine Zeile der Thread-Liste.</summary>
+    /// <summary>A row of the thread list.</summary>
     public sealed record ThreadRow(string Marker, string Name, string Status, string Line, string Depth, DebugThreadContext Context);
 
-    /// <summary>Alle Threads der Debug-Sitzung als Liste (aktiver Thread markiert, mit Zustand, aktueller Zeile und
-    /// Aufruftiefe). Ein anderer Eintrag macht diesen Thread zum aktiven. Arbeitet auf EINER DebugSession (siehe
-    /// AttachSession), kennt sonst nichts vom Editor.</summary>
+    /// <summary>All threads of the debug session as a list (active thread marked, with state, current line and
+    /// call depth). Another entry makes that thread the active one. Works on ONE DebugSession (see
+    /// AttachSession), otherwise knows nothing about the editor.</summary>
     public partial class ThreadsPanelControl : UserControl
     {
         private DebugSession? _session;
 
-        /// <summary>Feuert, wenn der Nutzer einen ANDEREN als den bisher aktiven Thread auswählt - das Control hat dabei
-        /// bereits DebugSession.SelectThread aufgerufen, der Host reagiert i.d.R. mit Editor-Hervorhebung und
-        /// Statusmeldung.</summary>
+        /// <summary>Fires when the user selects a thread OTHER than the previously active one - the control has already
+        /// called DebugSession.SelectThread, the host usually reacts with editor highlighting and
+        /// a status message.</summary>
         public event Action<DebugThreadContext>? ThreadSelected;
 
         private List<ThreadRow> _rows = new();
@@ -30,7 +30,7 @@ namespace fire.Editor
 
         public void AttachSession(DebugSession session) => _session = session;
 
-        /// <summary>Baut die Liste neu auf; `breakpointDescriptions` sind fertig formatierte Einträge für die Anzeige.</summary>
+        /// <summary>Rebuilds the list; `breakpointDescriptions` are ready-formatted entries for display.</summary>
         public void Refresh(IEnumerable<string> breakpointDescriptions)
         {
             var descriptions = breakpointDescriptions.ToList();

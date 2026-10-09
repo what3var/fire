@@ -5,26 +5,26 @@ using AvaloniaEdit.Search;
 
 namespace fire.Editor
 {
-    /// <summary>Das dunkle Farbschema aller Editor-Fenster (Skript-Editor, Markdown-Editor, Datei-Ansicht) an EINER Stelle. Hintergrund und Text sind neutral dunkel bzw. fast weiß;
-    /// die besonderen Elemente tragen die Farbtöne eines Feuers (wie im Programmlogo): Magenta, Lila (Richtung Magenta), Weinrot, Orange und Gelb.</summary>
+    /// <summary>The dark colour scheme of all editor windows (script editor, Markdown editor, file view) in ONE place. Background and text are neutral dark or almost white;
+    /// the special elements carry the hues of a fire (as in the program logo): magenta, purple (towards magenta), wine red, orange and yellow.</summary>
     internal static class EditorTheme
     {
         private static IBrush Solid(byte r, byte g, byte b, byte a = 255) => Solid(Color.FromArgb(a, r, g, b));
 
         internal static IBrush Solid(Color color) => new ImmutableSolidColorBrush(color);
 
-        // ---- Fläche und Text ----
+        // ---- Surface and text ----
         public static readonly Color PanelColor = Color.FromRgb(0x24, 0x20, 0x28);
         public static readonly Color ShellColor = Color.FromRgb(0x1B, 0x18, 0x1E);
         public static readonly Color BorderColor = Color.FromRgb(0x3C, 0x35, 0x44);
-        /// <summary>Akzentfarbe der Oberfläche (Docking-Tabs, aktive Knöpfe, Fokusrand der Textfelder) - in App.axaml dieselbe.</summary>
+        /// <summary>Accent colour of the interface (docking tabs, active buttons, focus border of the text fields) - the same in App.axaml.</summary>
         public static readonly Color AccentColor = Color.FromRgb(0xB7, 0x00, 0x52);
-        /// <summary>Aufgehellte Akzentfarbe (gleicher Farbton) für Schrift auf dunklem Grund, wo #B70052 selbst zu dunkel wäre.</summary>
+        /// <summary>Lightened accent colour (same hue) for text on a dark background, where #B70052 itself would be too dark.</summary>
         public static readonly Color AccentTextColor = Color.FromRgb(0xFF, 0x47, 0x9A);
 
-        /// <summary>Hintergrund des Editors und aller Inhalte der Bereiche (Textfelder, Listen, Tabellen, Bäume).</summary>
+        /// <summary>Background of the editor and of all contents of the areas (text fields, lists, tables, trees).</summary>
         public static readonly IBrush Background = Solid(PanelColor);
-        /// <summary>Etwas dunkler als der Editor: der Rahmen um die Bereiche (Hauptfenster, Docking), Kopfzeilen, Popups.</summary>
+        /// <summary>Somewhat darker than the editor: the border around the areas (main window, docking), header rows, popups.</summary>
         public static readonly IBrush DarkSurface = Solid(ShellColor);
         public static readonly IBrush Border = Solid(BorderColor);
         public static readonly Color TextColor = Color.FromRgb(0xF4, 0xF0, 0xF2);
@@ -40,8 +40,8 @@ namespace fire.Editor
         public static readonly IBrush Yellow = Solid(0xF9, 0xCB, 0x5C);
         public static readonly IBrush Comment = Solid(0x8B, 0x7F, 0x93);
 
-        // ---- Zustände im Editor ----
-        /// <summary>Weinrote Punkte im Haltepunkt-Rand.</summary>
+        // ---- States in the editor ----
+        /// <summary>Wine-red dots in the breakpoint margin.</summary>
         public static readonly IBrush BreakpointDot = Solid(0xD6, 0x2F, 0x4B);
         public static readonly IBrush Selection = Solid(0xD6, 0x3C, 0x8C, 0x70);
         public static readonly IBrush SearchMarker = Solid(0xFF, 0x91, 0x42, 0x70);
@@ -52,7 +52,7 @@ namespace fire.Editor
         // ---- Markdown ----
         public static readonly IBrush CodeBlockBackground = Solid(0x2E, 0x29, 0x34);
 
-        /// <summary>Wendet das Schema auf einen Editor an (und auf dessen Suchleiste, falls vorhanden).</summary>
+        /// <summary>Applies the scheme to an editor (and to its search bar, if present).</summary>
         public static void Apply(TextEditor editor, SearchPanel? searchPanel = null)
         {
             editor.Background = Background;
@@ -61,7 +61,7 @@ namespace fire.Editor
 
             var area = editor.TextArea;
             area.SelectionBrush = Selection;
-            area.SelectionForeground = null; // die Syntaxfarben bleiben auch in der Markierung sichtbar
+            area.SelectionForeground = null; // the syntax colours stay visible even in the selection
             area.SelectionBorder = new Pen(Magenta, 1);
             area.SelectionCornerRadius = 2;
 

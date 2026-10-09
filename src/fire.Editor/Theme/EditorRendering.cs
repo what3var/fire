@@ -9,14 +9,14 @@ using AvaloniaEdit.Rendering;
 
 namespace fire.Editor
 {
-    /// <summary>Färbt Syntax-Hervorhebung (aus SyntaxHighlighter.Highlight) beim Zeichnen ein - OHNE das Dokument selbst anzufassen: der Colorizer wird pro SICHTBARER Zeile beim Zeichnen
-    /// aufgerufen und ändert nur die Darstellung (Vordergrundfarbe) einzelner Zeichenbereiche; Cursor, Auswahl und Scroll-Position sind davon gar nicht erst betroffen.
+    /// <summary>Colours syntax highlighting (from SyntaxHighlighter.Highlight) when drawing - WITHOUT touching the document itself: the colorizer is called per VISIBLE line when drawing
+    /// and changes only the presentation (foreground colour) of individual character ranges; cursor, selection and scroll position are not affected at all.
     ///
-    /// `Spans` werden von ScriptEditorControl nach jedem (debounced) Neu-Lexen ausgetauscht, gefolgt von einem TextView.Redraw() - DAS löst den nächsten Zeichen-Durchlauf aus,
-    /// der wiederum ColorizeLine für die dann sichtbaren Zeilen aufruft. Die Fehler-Unterkringelung zeichnet <see cref="ErrorSquiggleRenderer"/>.</summary>
+    /// `Spans` are swapped by ScriptEditorControl after every (debounced) re-lexing, followed by a TextView.Redraw() - THAT triggers the next drawing pass,
+    /// which in turn calls ColorizeLine for the lines then visible. The error squiggles are drawn by <see cref="ErrorSquiggleRenderer"/>.</summary>
     internal sealed class HighlightingColorizer : DocumentColorizingTransformer
     {
-        /// <summary>Aktuelle Hervorhebungs-Spans, nach Start aufsteigend sortiert (so liefert sie SyntaxHighlighter.Highlight bereits) - das erlaubt den frühen Abbruch unten.</summary>
+        /// <summary>Current highlighting spans, sorted ascending by start (as SyntaxHighlighter.Highlight already delivers them) - this allows the early exit below.</summary>
         public IReadOnlyList<HighlightSpan> Spans { get; set; } = Array.Empty<HighlightSpan>();
 
         protected override void ColorizeLine(DocumentLine line)
@@ -26,7 +26,7 @@ namespace fire.Editor
 
             foreach (var span in Spans)
             {
-                if (span.Start >= lineEnd) break; // sortiert - alles Weitere liegt noch später
+                if (span.Start >= lineEnd) break; // sorted - everything further lies even later
                 int spanEnd = span.Start + span.Length;
                 if (spanEnd <= lineStart) continue;
 
@@ -53,12 +53,12 @@ namespace fire.Editor
         };
     }
 
-    /// <summary>Unterkringelt die Zeilen, für die die Live-Diagnostik einen Fehler meldet (komplett: Diagnostic kennt keine Spalte): eine rote Wellenlinie unter dem Text der Zeile.</summary>
+    /// <summary>Squiggles the lines for which live diagnostics reports an error (whole line: Diagnostic knows no column): a red wavy line under the text of the line.</summary>
     internal sealed class ErrorSquiggleRenderer : IBackgroundRenderer
     {
         private static readonly IPen Pen = new Pen(EditorTheme.ErrorMark, 1);
 
-        /// <summary>1-basierte Zeilennummern mit mindestens einem gemeldeten Diagnostik-Fehler.</summary>
+        /// <summary>1-based line numbers with at least one reported diagnostics error.</summary>
         public IReadOnlySet<int> ErrorLines { get; set; } = new HashSet<int>();
 
         public KnownLayer Layer => KnownLayer.Selection;
@@ -103,8 +103,8 @@ namespace fire.Editor
         }
     }
 
-    /// <summary>Zeichnet den vollflächigen Zeilen-Hintergrund für die aktuell vom Debugger angehaltene Zeile (gelb) und für Haltepunkt-Zeilen (rot, blasser) als eigene Zeichen-Ebene
-    /// UNTER dem Text (KnownLayer.Background).</summary>
+    /// <summary>Draws the full-width line background for the line currently halted by the debugger (yellow) and for breakpoint lines (red, paler) as a drawing layer of its own
+    /// BELOW the text (KnownLayer.Background).</summary>
     internal sealed class LineBackgroundRenderer : IBackgroundRenderer
     {
         private static readonly IBrush CurrentLineBrush = EditorTheme.CurrentDebugLine;
@@ -136,14 +136,14 @@ namespace fire.Editor
         }
     }
 
-    /// <summary>Klickbarer Haltepunkt-Rand links vom Text: ein Klick auf eine Zeile schaltet ihren Haltepunkt um.</summary>
+    /// <summary>Clickable breakpoint margin to the left of the text: a click on a line toggles its breakpoint.</summary>
     internal sealed class BreakpointMargin : AbstractMargin
     {
         private const double MarginWidth = 18;
 
         public IReadOnlySet<int> Breakpoints { get; set; } = new HashSet<int>();
 
-        /// <summary>Feuert mit der 1-basierten Zeilennummer, auf die geklickt wurde - der Host (ScriptEditorControl) entscheidet, was das bedeutet (Haltepunkt umschalten).</summary>
+        /// <summary>Fires with the 1-based line number that was clicked - the host (ScriptEditorControl) decides what that means (toggle breakpoint).</summary>
         public event Action<int>? LineClicked;
 
         protected override Size MeasureOverride(Size availableSize) => new(MarginWidth, 0);
@@ -181,7 +181,7 @@ namespace fire.Editor
             base.OnPointerPressed(e);
         }
 
-        /// <summary>Vom Host nach jeder Haltepunkt-/Layout-Änderung aufzurufen.</summary>
+        /// <summary>To be called by the host after every breakpoint/layout change.</summary>
         public void RedrawMargin() => InvalidateVisual();
     }
 }
