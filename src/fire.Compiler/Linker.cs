@@ -22,9 +22,9 @@ namespace fire.Compiler
 
     public class Linker
     {
-        /// <summary>Basisverzeichnis für relative `#include`/`#extern`-Pfade.
-        /// null = aktuelles Arbeitsverzeichnis. Der Editor setzt hier das
-        /// Verzeichnis der aktiven Datei.</summary>
+        /// <summary>Base directory for relative `#include`/`#extern` paths.
+        /// null = current working directory. The editor sets here the
+        /// directory of the active file.</summary>
         public string? BasePath { get; set; }
 
         /// <summary>The engine the program is built for, a symbol of `#if` (`vm` or `native`).</summary>
@@ -76,7 +76,7 @@ namespace fire.Compiler
 
             inputSources.AddRange(sources);
 
-            var registry = DirectiveRegistry.CreateDefault(); // komplett leer, NICHT CreateDefault()
+            var registry = DirectiveRegistry.CreateDefault(); // completely empty, NOT CreateDefault()
             foreach (var symbol in ConditionalSymbols.For(null, ConditionalSymbols.DefaultEngine, null, defines)) registry.Symbols.Add(symbol);
             registry.Register("import", 1, (ctx, args, line) =>
             {
@@ -260,7 +260,7 @@ namespace fire.Compiler
 
             inputSources.AddRange(sources);
 
-            var registry = DirectiveRegistry.CreateDefault(); // komplett leer, NICHT CreateDefault()
+            var registry = DirectiveRegistry.CreateDefault(); // completely empty, NOT CreateDefault()
             var resources = new ResourceTable();
             registry.Resources = resources;
             foreach (var symbol in ConditionalSymbols.For(target, Engine, floatWidthOverride, EffectiveDefines())) registry.Symbols.Add(symbol);
@@ -395,10 +395,10 @@ namespace fire.Compiler
                 ? ProjectLibraries.Process(Plan, projectImports, file => Preprocessor.Process(file.Text, file.Directory, alreadyIncluded, registry))
                 : new List<(ProcessedSource Source, string Path)>();
 
-            // Preludes (und native Platzhalter) der per `#import` zugeschalteten
-            // Erweiterungen - dieselbe Logik nutzt die Live-Diagnostik des
-            // Editors (siehe ImportedPreludes). Jede eingefügte Prelude
-            // verschiebt den Start des Nutzer-Codes um eine Quelle.
+            // Preludes (and native placeholders) of the extensions switched on via `#import` -
+            // the same logic is used by the live diagnostics of the
+            // editor (see ImportedPreludes). Every inserted prelude
+            // shifts the start of the user code by one source.
             firstUserSource += ImportedPreludes.Insert(
                 nativeImports, natives, processedSources,
                 preludeSource => Preprocessor.Process(preludeSource, (BasePath ?? Directory.GetCurrentDirectory()), alreadyIncluded, registry));
@@ -411,10 +411,10 @@ namespace fire.Compiler
             }
             CheckPackageReferences();
 
-            // Kein activeUsings/usingsByStmt mehr nötig (SPEC "Namespaces") -
-            // jede Typ-Referenz im AST trägt ihren eigenen Namespace-Kontext
-            // direkt an sich selbst (siehe Ast.TypeRef.Namespaces), vom
-            // Parser beim Parsen jeder einzelnen ProcessedSource gesetzt.
+            // No activeUsings/usingsByStmt needed any more (SPEC "Namespaces") -
+            // every type reference in the AST carries its own namespace context
+            // directly on itself (see Ast.TypeRef.Namespaces), set by the
+            // parser when parsing each individual ProcessedSource.
             var program = Parser.ParseMultiple(processedSources);
             if (Plan != null && Plan.Type == fire.Projects.OutputType.Library) CheckLibraryHasNoEntryPoint(program, firstUserSource);
             var resolveResult = Resolver.Resolve(program, natives.Names);
@@ -437,7 +437,7 @@ namespace fire.Compiler
 
             if (!string.IsNullOrEmpty(outname))
             {
-                // Icon und Versionsinfo gehören in den apphost, BEVOR er zum Bundle wird (siehe Packer.PackProgram).
+                // Icon and version info belong into the apphost BEFORE it becomes the bundle (see Packer.PackProgram).
                 var verInfo = assemblyInfo.ToVersionInfo();
                 var tempfile = outname + ".tmp";
                 try

@@ -4,14 +4,14 @@ using System.Linq;
 
 namespace fire.Compiler
 {
-    /// <summary>Hilfen für Aufrufer, die einen Übersetzungsfehler anzeigen
-    /// wollen: Resolver und Compiler sammeln mehrere Fehler (siehe
-    /// ResolverException/CompilerException), `Exception.Message` nennt aber
-    /// nur den ERSTEN davon - hier stehen alle.</summary>
+    /// <summary>Helpers for callers who want to show a
+    /// compilation error: the resolver and compiler collect several errors (see
+    /// ResolverException/CompilerException), but `Exception.Message` names
+    /// only the FIRST of them - here all of them are.</summary>
     public static class CompileErrors
     {
-        /// <summary>Die Meldungen ALLER in `ex` gesammelten Fehler (bei einem
-        /// Parser-/Präprozessor-/sonstigen Fehler nur dessen eine Meldung).</summary>
+        /// <summary>The messages of ALL errors collected in `ex` (for a
+        /// parser/preprocessor/other error only its one message).</summary>
         public static IReadOnlyList<string> Messages(Exception ex) => ex switch
         {
             ResolverException r => r.Errors.Select(e => e.Message).ToList(),
@@ -19,7 +19,7 @@ namespace fire.Compiler
             _ => new[] { ex.Message },
         };
 
-        /// <summary>Alle Meldungen, eine pro Zeile.</summary>
+        /// <summary>All messages, one per line.</summary>
         public static string Describe(Exception ex) => string.Join(Environment.NewLine, Messages(ex));
     }
 }

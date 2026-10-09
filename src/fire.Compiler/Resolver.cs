@@ -7,15 +7,15 @@ using fire.Values;
 
 namespace fire.Compiler
 {
-    /// <summary>Ein Resolver-Fehler. Der Resolver bricht beim ersten Fehler
-    /// NICHT ab, sondern sammelt alle weiteren mit (das Ergebnis ist ab dem
-    /// ersten Fehler ohnehin verworfen, der Nutzer soll aber nicht einen
-    /// Fehler nach dem anderen beheben müssen): `Resolver.Resolve` wirft am
-    /// Ende EINE ResolverException, deren `Message`/`Line` die des ersten
-    /// Fehlers sind (wie bisher) und deren <see cref="Errors"/> ALLE
-    /// gefundenen Fehler in Quelltext-Reihenfolge der Auflösung enthält
-    /// (der erste eingeschlossen). Eine einzeln geworfene Exception (intern,
-    /// vor dem Sammeln) hat nur sich selbst als `Errors`.</summary>
+    /// <summary>A resolver error. The resolver does
+    /// NOT stop at the first error, but collects all further ones (from the
+    /// first error on the result is discarded anyway, but the user should not
+    /// have to fix one error after the other): `Resolver.Resolve` throws at the
+    /// end ONE ResolverException whose `Message`/`Line` are those of the first
+    /// error (as before) and whose <see cref="Errors"/> contains ALL
+    /// errors found in source order of the resolution
+    /// (the first included). An exception thrown individually (internally,
+    /// before collecting) has only itself as `Errors`.</summary>
     public sealed class ResolverException : Exception
     {
         public int Line { get; }
@@ -29,7 +29,7 @@ namespace fire.Compiler
             Errors = new[] { this };
         }
 
-        /// <summary>Fasst mehrere gesammelte Fehler zusammen (mindestens einer).</summary>
+        /// <summary>Combines several collected errors (at least one).</summary>
         public ResolverException(IReadOnlyList<ResolverException> errors)
             : base(errors[0].Message)
         {
@@ -38,8 +38,8 @@ namespace fire.Compiler
         }
     }
 
-    /// <summary>Ergebnis eines Resolver-Laufs: alles, was der Evaluator (und später
-    /// der Bytecode-Compiler) braucht, um nicht mehr per Namen suchen zu müssen.</summary>
+    /// <summary>Result of a resolver run: everything the evaluator (and later
+    /// the bytecode compiler) needs in order not to have to search by name any more.</summary>
     public sealed class ResolveResult
     {
         public required IReadOnlyDictionary<Expr, ResolvedRef> References { get; init; }
@@ -47,67 +47,67 @@ namespace fire.Compiler
         public required int GlobalSlotCount { get; init; }
         public required IReadOnlyDictionary<string, ExternDecl> Externs { get; init; }
 
-        /// <summary>`#noshadow` war IRGENDWO im Programm vorhanden (siehe
-        /// Ast.NoShadowDirective/Resolver.ResolveFireStmt) - deaktiviert den
-        /// Read-only-Globals-Snapshot in JEDEM `fire`-Block. Vom Compiler
-        /// gelesen, um seinen `_globalSlotCount` effektiv auf 0 zu setzen
-        /// (siehe dortige Doku) - das genügt allein schon, damit
-        /// CompileFireStmt exakt wie vor Einführung des Snapshots
-        /// kompiliert, ohne eigene bedingte Zweige dafür zu brauchen.</summary>
+        /// <summary>`#noshadow` was present SOMEWHERE in the program (see
+        /// Ast.NoShadowDirective/Resolver.ResolveFireStmt) - deactivates the
+        /// read-only globals snapshot in EVERY `fire` block. Read by the compiler
+        /// to set its `_globalSlotCount` effectively to 0
+        /// (see the documentation there) - that alone is enough for
+        /// CompileFireStmt to compile exactly as before the introduction of the snapshot,
+        /// without needing conditional branches of its own for it.</summary>
         public required bool NoShadowGlobals { get; init; }
     }
 
     /// <summary>
-    /// Ein-Pass-Resolver über den AST. Zwei Aufgaben:
+    /// One-pass resolver over the AST. Two tasks:
     ///
-    /// 1) Variablen-Referenzen (IdentifierExpr, Zuweisungsziele) auf statische
-    ///    Slots auflösen (Scope-Tiefe + Index), statt später zur Laufzeit per Name
-    ///    durch die Scope-Kette zu suchen. Lambdas bekommen dabei absichtlich einen
-    ///    Scope, dessen Parent direkt der globale Scope ist (nicht der lexikalisch
-    ///    umschließende Scope) - das modelliert die eingeschränkte Lambda-
-    ///    Sichtbarkeit (nur eigener Scope + global, SPEC 4.2) ganz von selbst, ohne
-    ///    dass die Tiefen-Zählung beim Auflösen einen Sonderfall bräuchte.
+    /// 1) Resolve variable references (IdentifierExpr, assignment targets) to static
+    ///    slots (scope depth + index), instead of searching through the scope chain
+    ///    by name at runtime later. Lambdas deliberately get a
+    ///    scope whose parent is directly the global scope (not the lexically
+    ///    enclosing scope) - this models the restricted lambda
+    ///    visibility (only own scope + global, SPEC 4.2) all by itself, without
+    ///    the depth counting during resolution needing a special case.
     ///
-    /// 2) Ein paar statische Prüfungen, die sich in diesem Pass anbieten:
-    ///    - 'return' nur innerhalb einer Funktion/Methode/Lambda/Konstruktor/Destruktor.
-    ///    - 'base' (als Ausdruck oder als Konstruktor-Initialisierer) nur innerhalb
-    ///      einer Klasse, die tatsächlich eine Basisklasse hat.
-    ///    - Referenzierte Klassennamen (Basisklasse, 'new X()', 'is of X', Typ-
-    ///      Annotationen) müssen bekannt sein (deklariert oder die eingebaute
-    ///      Basisklasse 'Exception').
+    /// 2) A few static checks that suggest themselves in this pass:
+    ///    - 'return' only inside a function/method/lambda/constructor/destructor.
+    ///    - 'base' (as an expression or as a constructor initialiser) only inside
+    ///      a class that actually has a base class.
+    ///    - Referenced class names (base class, 'new X()', 'is of X', type
+    ///      annotations) must be known (declared or the built-in
+    ///      base class 'Exception').
     ///
-    /// Bewusst NICHT geprüft: strikte Gültigkeit von 'this' (Lambdas können 'this'
-    /// über 'on' auch außerhalb jeder Klasse sinnvoll nutzen, eine rein lexikalische
-    /// Prüfung wäre hier eher einschränkend als hilfreich) - das überlassen wir der
-    /// Laufzeit.
+    /// Deliberately NOT checked: strict validity of 'this' (lambdas can use 'this'
+    /// via 'on' sensibly even outside any class, a purely lexical
+    /// check would be more restrictive than helpful here) - we leave that to the
+    /// runtime.
     /// </summary>
     public sealed class Resolver
     {
-        /// <summary>Primitive/eingebaute Typnamen, die ValidateTypeName ohne
-        /// Nachschlagen in `_classes` akzeptiert. 'lambda' steht für einen
-        /// Lambda-Wert (Runtime.LambdaValue/ValueKind.Lambda), optional mit
-        /// Signatur (`[RückgabeTyp] lambda[&lt;Param1,...,ParamN&gt;]`, siehe
-        /// Ast.TypeRef.LambdaSignature/SPEC "Lambda-Typen mit Signatur") -
-        /// Lambdas waren schon immer als WERTE übergebbar (dynamisch
-        /// typisiert), aber bis jetzt gab es keinen Namen, um das (und ihre
-        /// erwartete Parameterzahl) in einer Typ-Annotation auszudrücken.
-        /// Bewusst NICHT 'func' (das Schlüsselwort, das einen Lambda-
-        /// AUSDRUCK einleitet, `func (x) => ...`) - das würde mit der
-        /// Ausdrucks-Syntax kollidieren: NextLooksLikeTypeThenName() prüft
-        /// nur das AKTUELLE Token, ein alleinstehendes 'func(x) => ...' als
-        /// Anweisung würde dann fälschlich als Beginn einer typisierten
-        /// Deklaration gelesen (Typname 'func', erwarteter Name als
-        /// nächstes) statt als Lambda-Ausdruck. 'lambda' selbst ist nur ein
-        /// PLAIN Bezeichner (kein Keyword-Token, siehe Parser.
-        /// NextLooksLikeTypeThenName), kollidiert also nur, wenn jemand
-        /// tatsächlich etwas 'lambda' nennt - anders als 'func' kein
-        /// bestehendes Sprachkonstrukt. Wie 'class' ist 'lambda' syntaktisch
-        /// akzeptiert; ANDERS als sonstige Typ-Annotationen wird die
-        /// Parameter-ANZAHL einer Signatur aber tatsächlich zur Laufzeit
-        /// geprüft (VM.CheckLambdaSignature) - eine bewusste Ausnahme von
-        /// SPEC 8.1 ("Typ-Annotationen nicht durchgängig geprüft"), weil
-        /// sich das hier (anders als bei Klassen-Typen) mit vertretbarem
-        /// Aufwand robust umsetzen ließ.</summary>
+        /// <summary>Primitive/built-in type names that ValidateTypeName accepts without
+        /// lookup in `_classes`. 'lambda' stands for a
+        /// lambda value (Runtime.LambdaValue/ValueKind.Lambda), optionally with a
+        /// signature (`[ReturnType] lambda[&lt;Param1,...,ParamN&gt;]`, see
+        /// Ast.TypeRef.LambdaSignature/SPEC "Lambda types with signature") -
+        /// lambdas could always be passed as VALUES (dynamically
+        /// typed), but until now there was no name to express that (and their
+        /// expected parameter count) in a type annotation.
+        /// Deliberately NOT 'func' (the keyword that introduces a lambda
+        /// EXPRESSION, `func (x) => ...`) - that would collide with the
+        /// expression syntax: NextLooksLikeTypeThenName() checks
+        /// only the CURRENT token, a standalone 'func(x) => ...' as a
+        /// statement would then wrongly be read as the beginning of a typed
+        /// declaration (type name 'func', expected name next)
+        /// instead of as a lambda expression. 'lambda' itself is only a
+        /// PLAIN identifier (no keyword token, see Parser.
+        /// NextLooksLikeTypeThenName), so it only collides if someone
+        /// actually names something 'lambda' - unlike 'func' no
+        /// existing language construct. Like 'class', 'lambda' is syntactically
+        /// accepted; UNLIKE other type annotations, the
+        /// parameter COUNT of a signature is however actually checked at runtime
+        /// (VM.CheckLambdaSignature) - a deliberate exception from
+        /// SPEC 8.1 ("type annotations not checked throughout"), because
+        /// that could be implemented robustly here (unlike with class types) with reasonable
+        /// effort.</summary>
         private static readonly HashSet<string> PrimitiveTypeNames = new()
         {
             "bool", "int", "float", "char", "string", "class", "undefined", "lambda",
@@ -116,13 +116,13 @@ namespace fire.Compiler
         private readonly Dictionary<Expr, ResolvedRef> _refs = new(ReferenceEqualityComparer.Instance);
         private readonly Dictionary<string, ClassDecl> _classes = new();
 
-        /// <summary>Löst `tr` auf seinen vollqualifizierten Namen auf, WENN
-        /// nötig (SPEC "Namespaces") - siehe TypeRef.ResolveBaseName für die
-        /// genaue Regel. `tr.Namespaces` trägt den Kontext (aktueller
-        /// Namespace + `#using`) schon direkt an sich selbst, gesetzt vom
-        /// Parser GENAU an der Stelle, an der `tr` geparst wurde - der
-        /// Resolver braucht dafür keinen eigenen "aktuelle Klasse"/"aktive
-        /// Usings"-Zustand mehr.</summary>
+        /// <summary>Resolves `tr` to its fully qualified name IF
+        /// necessary (SPEC "Namespaces") - see TypeRef.ResolveBaseName for the
+        /// exact rule. `tr.Namespaces` carries the context (current
+        /// namespace + `#using`) already directly on itself, set by the
+        /// parser EXACTLY at the place where `tr` was parsed - the
+        /// resolver needs no "current class"/"active
+        /// usings" state of its own for that any more.</summary>
         private string ResolveTypeRef(TypeRef tr) => tr.ResolveBaseName(IsKnownClassName);
 
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
@@ -135,63 +135,63 @@ namespace fire.Compiler
         private ResolverScope _current;
         private int _functionDepth;
 
-        /// <summary>Alle bisher gefundenen Fehler (siehe ResolverException,
-        /// RecoverFrom) - wird von Resolve() am Ende ausgewertet.</summary>
+        /// <summary>All errors found so far (see ResolverException,
+        /// RecoverFrom) - evaluated by Resolve() at the end.</summary>
         private readonly List<ResolverException> _errors = new();
         private readonly HashSet<string> _errorMessages = new();
 
-        /// <summary>Merkt sich einen Fehler (siehe ResolverException). Derselbe
-        /// Fehler - gleiche Meldung, und die enthält die Zeile - kommt oft
-        /// von mehreren Stellen (z.B. validieren Getter UND Setter einer
-        /// Property beide deren Typ) und wird nur EINMAL gemerkt.</summary>
+        /// <summary>Remembers an error (see ResolverException). The same
+        /// error - same message, and that contains the line - often comes
+        /// from several places (e.g. getter AND setter of a
+        /// property both validate its type) and is remembered only ONCE.</summary>
         private void AddError(ResolverException error)
         {
             if (_errorMessages.Add(error.Message))
                 _errors.Add(error);
         }
 
-        /// <summary>Siehe Ast.NoShadowDirective/ResolveResult.NoShadowGlobals
-        /// - von Resolve() VOR jeder Statement-Auflösung in einem
-        /// Vorab-Durchlauf gesetzt (wie bei Klassen/Enums/Externs), damit es
-        /// unabhängig von der Position der `#noshadow`-Direktive im
-        /// Quelltext gilt (auch für einen `fire`-Block, der VOR der
-        /// Direktive im Quelltext steht).</summary>
+        /// <summary>See Ast.NoShadowDirective/ResolveResult.NoShadowGlobals
+        /// - set by Resolve() BEFORE any statement resolution in a
+        /// pre-pass (as with classes/enums/externs), so that it
+        /// applies independently of the position of the `#noshadow` directive in the
+        /// source (also for a `fire` block that stands BEFORE the
+        /// directive in the source).</summary>
         private bool _noShadowGlobals;
 
-        /// <summary>Die endgültige Anzahl der globalen Slots des Hauptprogramms (aus einem ersten Durchlauf), oder null im ersten Durchlauf. Die Slots eines
-        /// `fire`-Blocks (Erfassungen und eigene Variablen) liegen HINTER allen Globals des Hauptprogramms - auch hinter denen, die erst nach dem `fire`
-        /// deklariert werden; sonst würden sie mit diesen zusammenfallen (der Thread liest dann die geteilte Variable statt seiner eigenen).</summary>
+        /// <summary>The final number of global slots of the main program (from a first pass), or null in the first pass. The slots of a
+        /// `fire` block (captures and own variables) lie BEHIND all globals of the main program - also behind those that are only
+        /// declared after the `fire`; otherwise they would coincide with these (the thread would then read the shared variable instead of its own).</summary>
         private int? _finalGlobalCount;
         private bool _sawFire;
 
-        /// <summary>Wie `_functionDepth`, aber für `break`/`continue`: Anzahl
-        /// umschließender Schleifen (0 = kein `break`/`continue` gültig) bzw.
-        /// `try`/`catch`/`finally`-Blöcke seit der letzten Schleife (>0 = ein
-        /// `break`/`continue` hier müsste über eine try-Grenze hinweg
-        /// springen - bewusst als Fehler abgelehnt, siehe ResolveTry-Doku).
-        /// Beide werden beim Betreten einer neuen Funktion/Methode/Lambda
-        /// GESICHERT UND AUF 0 ZURÜCKGESETZT (nicht einfach erhöht, wie
-        /// `_functionDepth`) - eine Schleife der UMSCHLIESSENDEN Funktion
-        /// darf aus einer verschachtelten Lambda heraus nicht per `break`
-        /// erreichbar sein (andere Aufruf-/Scope-Ebene zur Laufzeit).</summary>
+        /// <summary>Like `_functionDepth`, but for `break`/`continue`: number of
+        /// enclosing loops (0 = no `break`/`continue` valid) or
+        /// `try`/`catch`/`finally` blocks since the last loop (>0 = a
+        /// `break`/`continue` here would have to jump across a try boundary
+        /// - deliberately rejected as an error, see ResolveTry documentation).
+        /// Both are on entering a new function/method/lambda
+        /// SAVED AND RESET TO 0 (not simply increased, like
+        /// `_functionDepth`) - a loop of the ENCLOSING function
+        /// must not be reachable via `break` from a nested lambda
+        /// (different call/scope level at runtime).</summary>
         private int _loopDepth;
         private int _tryDepth;
         private int _unsafeDepth;
         private ClassDecl? _currentClass;
         private bool _currentClassHasBase;
 
-        /// <summary>Namen der generischen Typ-Parameter, die an der aktuellen
-        /// Stelle sichtbar sind (Klassen-Typ-Parameter der umschließenden
-        /// Klasse UNION Typ-Parameter der aktuell resolvten Methode, falls
-        /// diese selbst generisch ist) - als Referenzzähler statt reinem
-        /// HashSet, damit ein Methoden-Typ-Parameter mit ZUFÄLLIG demselben
-        /// Namen wie ein Klassen-Typ-Parameter beim Verlassen der Methode
-        /// nicht versehentlich auch den äußeren Namen entfernt (siehe
+        /// <summary>Names of the generic type parameters that are visible at the current
+        /// place (class type parameters of the enclosing
+        /// class UNION type parameters of the method currently being resolved, if
+        /// that one is itself generic) - as a reference count instead of a plain
+        /// HashSet, so that a method type parameter that COINCIDENTALLY has the same
+        /// name as a class type parameter does not, when leaving the method,
+        /// accidentally also remove the outer name (see
         /// AddTypeParamNames/RemoveTypeParamNames). ValidateTypeName
-        /// akzeptiert diese Namen wie einen bekannten Typ (siehe dort),
-        /// obwohl sie keine echte Klasse sind - eine echte Typ-Substitution
-        /// findet NICHT statt (siehe SPEC "Generische Klassen"), `T` bleibt
-        /// zur Laufzeit einfach unspezifisch.</summary>
+        /// accepts these names like a known type (see there),
+        /// although they are no real class - a real type substitution
+        /// does NOT take place (see SPEC "Generic classes"), `T` simply stays
+        /// unspecific at runtime.</summary>
         private readonly Dictionary<string, int> _currentTypeParamNames = new();
 
         private void AddTypeParamNames(IEnumerable<string> names)
@@ -210,11 +210,11 @@ namespace fire.Compiler
             }
         }
         private bool _inConstructor;
-        /// <summary>SPEC "Statische Mitglieder" - `true` während der Body
-        /// einer statischen Methode/eines statischen Feld-Initialisierers
-        /// aufgelöst wird (siehe ResolveFunctionLike/ResolveFieldInitializer)
-        /// - dort gibt es kein gebundenes 'this' (siehe ThisExpr/BaseExpr-
-        /// Prüfung in ResolveExpr), anders als bei Instanzmethoden/-feldern.</summary>
+        /// <summary>SPEC "Static members" - `true` while the body
+        /// of a static method/a static field initialiser
+        /// is being resolved (see ResolveFunctionLike/ResolveFieldInitializer)
+        /// - there is no bound 'this' there (see ThisExpr/BaseExpr
+        /// check in ResolveExpr), unlike with instance methods/fields.</summary>
         private bool _inStaticMethod;
 
         private Resolver(IEnumerable<string>? nativeNames, IEnumerable<string>? tryableNativeNames)
@@ -224,13 +224,13 @@ namespace fire.Compiler
             _tryableNativeNames = tryableNativeNames != null ? new HashSet<string>(tryableNativeNames) : new HashSet<string>();
         }
 
-        /// <summary>`nativeNames`/`tryableNativeNames`: bekannte native
-        /// Funktionsnamen (SPEC "Natives"). Anders als früher (siehe
-        /// Bytecode.Compiler.Compile-Historie) KEIN `activeUsings`/
-        /// `usingsByStmt`-Parameter mehr nötig - jede Typ-Referenz im
-        /// AST trägt ihren eigenen Namespace-Kontext direkt an sich selbst
-        /// (siehe Ast.TypeRef.Namespaces, gesetzt vom Parser beim Parsen),
-        /// der Resolver braucht dafür keinen eigenen Usings-Zustand mehr.</summary>
+        /// <summary>`nativeNames`/`tryableNativeNames`: known native
+        /// function names (SPEC "Natives"). Unlike earlier (see
+        /// Bytecode.Compiler.Compile history) NO `activeUsings`/
+        /// `usingsByStmt` parameter needed any more - every type reference in the
+        /// AST carries its own namespace context directly on itself
+        /// (see Ast.TypeRef.Namespaces, set by the parser when parsing),
+        /// the resolver needs no usings state of its own for that any more.</summary>
         public static ResolveResult Resolve(
             IReadOnlyList<Stmt> program, IEnumerable<string>? nativeNames = null, IEnumerable<string>? tryableNativeNames = null)
         {
@@ -238,9 +238,9 @@ namespace fire.Compiler
             // A program with `fire` resolves a second time, now that the number of its globals is known (see _finalGlobalCount).
             if (resolver._sawFire && resolver._errors.Count == 0) resolver = Run(program, nativeNames, tryableNativeNames, resolver._globalScope.Slots.Count);
 
-            // Ab dem ersten Fehler steht fest, dass es kein Ergebnis gibt -
-            // aber erst HIER, nachdem alles aufgelöst wurde, damit der
-            // Aufrufer ALLE Fehler auf einmal bekommt (siehe ResolverException).
+            // From the first error on it is certain that there is no result -
+            // but only HERE, after everything has been resolved, so that the
+            // caller gets ALL errors at once (see ResolverException).
             if (resolver._errors.Count > 0)
                 throw new ResolverException(resolver._errors);
 
@@ -267,17 +267,17 @@ namespace fire.Compiler
         }
 
         // -----------------------------------------------------------
-        // extern-Deklarationen vorab einsammeln (erlaubt Aufrufe vor der
-        // Deklaration im Quelltext, wie bei Klassen).
+        // Collect extern declarations beforehand (allows calls before the
+        // declaration in the source, as with classes).
         // -----------------------------------------------------------
         private void CollectExterns(IReadOnlyList<Stmt> statements)
         {
             foreach (var stmt in statements)
             {
                 if (stmt is not ExternDecl ed) continue;
-                // Eine gleichnamige registrierte native Funktion ist kein Konflikt,
-                // sondern der Normalfall: 'extern' deklariert die Signatur im
-                // Skript, die native Registry liefert die Implementierung dazu.
+                // A registered native function of the same name is no conflict,
+                // but the normal case: 'extern' declares the signature in the
+                // script, the native registry supplies the implementation for it.
                 if (_externs.ContainsKey(ed.Name))
                 {
                     AddError(new ResolverException($"'{ed.Name}' is already declared as extern", ed.Line));
@@ -287,12 +287,12 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Sammelt alle `enum`-Deklarationen vorab (erlaubt Vorwärts-
-        /// referenzen wie bei Klassen/externs) und berechnet dabei direkt die
-        /// tatsächlichen Int-Werte jedes Mitglieds: ein explizit angegebener
-        /// Wert MUSS ein Int-Literal sein (echte Compile-Zeit-Konstanten-
-        /// auswertung beliebiger Ausdrücke gibt es in dieser Sprache nicht),
-        /// sonst Auto-Increment vom Vorgänger + 1 (0 beim ersten Mitglied).</summary>
+        /// <summary>Collects all `enum` declarations beforehand (allows forward
+        /// references as with classes/externs) and in the process directly computes
+        /// the actual int values of each member: an explicitly given
+        /// value MUST be an int literal (real compile-time constant
+        /// evaluation of arbitrary expressions does not exist in this language),
+        /// otherwise auto-increment from the predecessor + 1 (0 for the first member).</summary>
         private void CollectEnums(IReadOnlyList<Stmt> statements)
         {
             foreach (var stmt in statements)
@@ -309,10 +309,10 @@ namespace fire.Compiler
                     continue;
                 }
 
-                // Der Name wird auch bei einem fehlerhaften MITGLIED registriert
-                // (mit den bis dahin gültigen Mitgliedern) - sonst würde jede
-                // Verwendung des Enums später als "Unbekannter Bezeichner"
-                // gemeldet, ein reiner Folgefehler des einen echten Fehlers.
+                // The name is also registered for a faulty MEMBER
+                // (with the members valid up to then) - otherwise every
+                // later use of the enum would be reported as "unknown identifier",
+                // a pure follow-up error of the one real error.
                 var members = new Dictionary<string, long>();
                 _enums[ed.Name] = members;
                 long next = 0;
@@ -350,26 +350,26 @@ namespace fire.Compiler
         }
 
         // -----------------------------------------------------------
-        // Klassen & Interfaces vorab einsammeln (erlaubt Vorwärtsreferenzen und
-        // dass 'new Foo()' funktioniert, auch wenn 'Foo' erst später im
-        // Quelltext deklariert wird). Da der Parser nicht wissen kann, welcher
-        // Name nach ':' die Basisklasse und welche Interfaces sind (das ist
-        // erst hier, mit Kenntnis aller Klassen-/Interface-Namen, entscheidbar),
-        // wird das hier aufgelöst: höchstens einer der Namen darf eine echte
-        // Klasse (oder 'Exception') sein, alle anderen müssen bekannte
-        // Interfaces sein.
+        // Collect classes & interfaces beforehand (allows forward references and
+        // that 'new Foo()' works even if 'Foo' is only declared later in the
+        // source). Since the parser cannot know which
+        // name after ':' is the base class and which are interfaces (that is
+        // decidable only here, with knowledge of all class/interface names),
+        // it is resolved here: at most one of the names may be a real
+        // class (or 'Exception'), all others must be known
+        // interfaces.
         // -----------------------------------------------------------
-        /// <summary>Löst einen Basisklassen-/Interface-Namen (Eintrag aus
-        /// ClassDecl.BaseRefs) auf seinen vollqualifizierten Namen auf, WENN
-        /// nötig (SPEC "Namespaces") - `tr.Namespaces` trägt dafür den beim
-        /// Parsen aktuellen Kontext (siehe TypeRef.ResolveBaseName).
-        /// "Bekannt" heißt hier: 'Exception' ODER eine bekannte Klasse ODER
-        /// ein bekanntes Interface (anders als ResolveTypeRef, das nur
-        /// Klassen kennt - eine Basis KANN ja auch ein Interface sein).</summary>
+        /// <summary>Resolves a base class/interface name (entry from
+        /// ClassDecl.BaseRefs) to its fully qualified name IF
+        /// necessary (SPEC "Namespaces") - `tr.Namespaces` carries for that the context current at
+        /// parsing (see TypeRef.ResolveBaseName).
+        /// "Known" here means: 'Exception' OR a known class OR
+        /// a known interface (unlike ResolveTypeRef, which only knows
+        /// classes - a base CAN also be an interface).</summary>
         private string ResolveBaseRef(TypeRef tr)
         {
             bool Known(string n) => n == "Exception" || _classes.ContainsKey(n) || _interfaces.ContainsKey(n);
-            // `class Home : Command<IDevice>`: die ANZAHL der Typ-Argumente wählt die generische Klasse/das generische Interface (siehe GenericClassNames)
+            // `class Home : Command<IDevice>`: the COUNT of the type arguments selects the generic class/the generic interface (see GenericClassNames)
             return tr.TypeArgCount == 0 ? tr.ResolveBaseName(Known) : GenericClassNames.ResolveNewTarget(tr, tr.TypeArgCount, Known);
         }
 
@@ -426,29 +426,29 @@ namespace fire.Compiler
                 }
         }
 
-        /// <summary>Der Klassenname für Fehlermeldungen: bei einer generischen
-        /// Klasse mit umbenanntem Schlüssel (siehe GenericClassNames) der
-        /// Name samt Typ-Parametern (`Box&lt;T&gt;`), damit sie von der
-        /// gleichnamigen nicht-generischen zu unterscheiden ist.</summary>
+        /// <summary>The class name for error messages: for a generic
+        /// class with a renamed key (see GenericClassNames) the
+        /// name including type parameters (`Box&lt;T&gt;`), so that it can be told apart from the
+        /// non-generic one of the same name.</summary>
         private static string DisplayName(ClassDecl cd) =>
             cd.TypeParams is { Count: > 0 }
                 ? GenericClassNames.PlainName(cd.Name) + "<" + string.Join(", ", cd.TypeParams.Select(tp => tp.Name)) + ">"
                 : cd.Name;
 
-        /// <summary>Führt `check` aus und sammelt einen dabei geworfenen
-        /// Resolver-Fehler, statt ihn weiterzureichen (siehe
-        /// ResolverException) - für Prüfungen, nach denen sinnvoll
-        /// weitergemacht werden kann.</summary>
+        /// <summary>Runs `check` and collects a resolver error thrown in the process,
+        /// instead of passing it on (see
+        /// ResolverException) - for checks after which it makes sense
+        /// to carry on.</summary>
         private void Guard(Action check)
         {
             try { check(); }
             catch (ResolverException ex) { AddError(ex); }
         }
 
-        /// <summary>Wie <see cref="Guard"/>, setzt zusätzlich den Resolver-
-        /// Zustand auf den Stand vor `action` zurück, falls ein Fehler
-        /// auftrat (siehe ResolveStmt) - für Aktionen, die Scopes/Tiefen
-        /// verändern.</summary>
+        /// <summary>Like <see cref="Guard"/>, additionally resets the resolver
+        /// state to the state before `action` if an error
+        /// occurred (see ResolveStmt) - for actions that change
+        /// scopes/depths.</summary>
         private void GuardWithState(Action action)
         {
             var state = SaveState();
@@ -477,16 +477,16 @@ namespace fire.Compiler
             return baseName != null && _classes.TryGetValue(baseName, out var baseCd) ? baseCd : null;
         }
 
-        /// <summary>Sucht über die Basisklassen-Kette (AST-Ebene, ClassDecl.
-        /// Members - zum Resolve-Zeitpunkt existiert noch keine RuntimeClass),
-        /// ob `name` ein Feld/eine Methode/eine Property ist - `startClass`
-        /// zuerst, dann aufwärts. Liefert (Name der deklarierenden Klasse,
-        /// IsStatic) der ERSTEN (nächstgelegenen) Klasse mit einem Mitglied
-        /// dieses Namens, `null` sonst (kein Mitglied in der ganzen Kette).
-        /// Für SPEC "Implizite Mitglieder-Referenzen" (bloßer Name statt
-        /// 'this.'/'ClassName.') UND für 'this.Name', wenn Name eine
-        /// statische Einheit ist (siehe ResolveExpr/ResolveAssignTarget,
-        /// MemberExpr-Fall).</summary>
+        /// <summary>Searches over the base-class chain (AST level, ClassDecl.
+        /// Members - at resolve time no RuntimeClass exists yet),
+        /// whether `name` is a field/a method/a property - `startClass`
+        /// first, then upwards. Returns (name of the declaring class,
+        /// IsStatic) of the FIRST (nearest) class with a member
+        /// of this name, `null` otherwise (no member in the whole chain).
+        /// For SPEC "Implicit member references" (bare name instead of
+        /// 'this.'/'ClassName.') AND for 'this.Name' if name is a
+        /// static unit (see ResolveExpr/ResolveAssignTarget,
+        /// MemberExpr case).</summary>
         private (string ClassName, bool IsStatic)? FindMemberInClassChain(ClassDecl? startClass, string name)
         {
             for (var cd = startClass; cd != null; cd = GetBaseClassDecl(cd))
@@ -504,10 +504,10 @@ namespace fire.Compiler
             return null;
         }
 
-        /// <summary>Prüft, ob `cd` (inkl. geerbter Methoden über die
-        /// Basisklassen-Kette) alle Methoden von `iface` per Name+Arität
-        /// bereitstellt. Reine strukturelle Prüfung, keine Rückgabetyp-
-        /// Kontrolle - die Sprache ist dynamisch typisiert.</summary>
+        /// <summary>Checks whether `cd` (incl. inherited methods via the
+        /// base-class chain) provides all methods of `iface` by name+arity.
+        /// A purely structural check, no return type
+        /// check - the language is dynamically typed.</summary>
         private void ValidateImplementsInterface(ClassDecl cd, InterfaceDecl iface)
         {
             foreach (var m in iface.Methods)
@@ -533,39 +533,39 @@ namespace fire.Compiler
 
         private bool IsKnownClassName(string name) => name == "Exception" || _classes.ContainsKey(name);
 
-        /// <summary>Versucht, `me.Target` als geschlossenen, exakt
-        /// geschriebenen Klassennamen zu lesen (SPEC "Statische Mitglieder") -
-        /// baut dafür die Bezeichner-Kette von `me.Target` (IdentifierExpr
-        /// oder verschachtelte MemberExpr, z.B. bei 'Geometry.Circle.Foo')
-        /// zu einem punktierten String zusammen und prüft, ob DAS GANZE ein
-        /// bekannter Klassenname ist. `null`, wenn `me.Target` keine reine
-        /// Bezeichner-Kette ist oder die Kette keinen bekannten Klassennamen
-        /// ergibt (dann ist `me` ein normaler, dynamischer Ausdruck).
+        /// <summary>Tries to read `me.Target` as a closed, exactly
+        /// written class name (SPEC "Static members") -
+        /// for that builds the identifier chain of `me.Target` (IdentifierExpr
+        /// or nested MemberExpr, e.g. with 'Geometry.Circle.Foo')
+        /// into a dotted string and checks whether THE WHOLE is a
+        /// known class name. `null` if `me.Target` is not a pure
+        /// identifier chain or the chain yields no known class name
+        /// (then `me` is an ordinary, dynamic expression).
         ///
-        /// BEWUSSTE EINSCHRÄNKUNG: prüft NUR den exakt geschriebenen (ggf.
-        /// schon vollqualifizierten) Namen, KEINE Auflösung über #using/den
-        /// aktuellen Namespace - anders als ein TypeRef trägt ein
-        /// IdentifierExpr/MemberExpr keinen eigenen Namespace-Kontext (der
-        /// wird nur beim PARSEN einer TypeRef gesetzt, siehe
-        /// Parser.CurrentNamespaces) - 'Circle.Foo()' würde bei
-        /// '#using Geometry' also NICHT als 'Geometry.Circle' erkannt, nur
-        /// 'Geometry.Circle.Foo()' voll ausgeschrieben funktioniert. Eine
-        /// spätere Erweiterung dafür bräuchte Namespace-Info an JEDEM
-        /// Bezeichner, nicht nur an TypeRef - eine größere, eigene Änderung.</summary>
+        /// DELIBERATE RESTRICTION: checks ONLY the exactly written (possibly
+        /// already fully qualified) name, NO resolution via #using/the
+        /// current namespace - unlike a TypeRef, an
+        /// IdentifierExpr/MemberExpr carries no namespace context of its own (that
+        /// is only set when PARSING a TypeRef, see
+        /// Parser.CurrentNamespaces) - 'Circle.Foo()' would with
+        /// '#using Geometry' therefore NOT be recognised as 'Geometry.Circle', only
+        /// 'Geometry.Circle.Foo()' written out in full works. A
+        /// later extension for that would need namespace info on EVERY
+        /// identifier, not only on TypeRef - a larger change of its own.</summary>
         private string? TryResolveStaticMemberAccess(MemberExpr me)
         {
-            // Die Klasse, in der wir gerade sind (siehe Ast.SelfClassExpr) -
-            // steht nur für das Backing-Field statischer Auto-Properties in
-            // generischen Klassen.
+            // The class we are currently in (see Ast.SelfClassExpr) -
+            // stands only for the backing field of static auto-properties in
+            // generic classes.
             if (me.Target is SelfClassExpr) return _currentClass?.Name;
 
             string? className = DottedName(me.Target);
             return className != null && IsKnownClassName(className) ? className : null;
         }
 
-        /// <summary>Der punktierte Name, den `target` als reine Bezeichner-Kette
-        /// schreibt (`A`, `Geometry.Circle`), oder `null`, wenn es keine
-        /// solche Kette ist (Aufruf, Index, `this`, ...).</summary>
+        /// <summary>The dotted name that `target` writes as a pure identifier chain
+        /// (`A`, `Geometry.Circle`), or `null` if it is not
+        /// such a chain (call, index, `this`, ...).</summary>
         private static string? DottedName(Expr target)
         {
             var pathSegments = new List<string>();
@@ -581,14 +581,14 @@ namespace fire.Compiler
             return string.Join(".", pathSegments);
         }
 
-        /// <summary>Prüft bei `new Name&lt;Arg1,...&gt;(...)` (siehe Ast.NewExpr.
-        /// TypeArgs), ob die gegebenen Typ-Argumente zu den Typ-Parametern der
-        /// Zielklasse passen (Anzahl) und deren 'where'-Constraints erfüllen
-        /// (siehe Ast.TypeParam-Doku: ',' zwischen Gruppen = ODER, ':'
-        /// innerhalb einer Gruppe = UND). Rein statische Prüfung, da
-        /// Typ-Argumente NAMEN sind (Klassen/Interfaces/primitive Typen ODER,
-        /// für eine 'is in'-Bedingung, Einheiten-Namen), keine Laufzeit-Werte
-        /// - deshalb komplett hier im Resolver, ohne jede VM-Unterstützung.</summary>
+        /// <summary>For `new Name&lt;Arg1,...&gt;(...)` (see Ast.NewExpr.
+        /// TypeArgs) checks whether the given type arguments fit the type parameters of the
+        /// target class (count) and satisfy its 'where' constraints
+        /// (see Ast.TypeParam documentation: ',' between groups = OR, ':'
+        /// within a group = AND). A purely static check, since
+        /// type arguments are NAMES (classes/interfaces/primitive types OR,
+        /// for an 'is in' condition, unit names), no runtime values
+        /// - therefore completely here in the resolver, without any VM support.</summary>
         private void CheckTypeArgs(ClassDecl targetClass, NewExpr ne)
         {
             var typeParams = targetClass.TypeParams ?? Array.Empty<TypeParam>();
@@ -614,7 +614,7 @@ namespace fire.Compiler
             {
                 var tp = typeParams[i];
                 string arg = typeArgs[i];
-                if (tp.ConstraintGroups.Count == 0) continue; // uneingeschränkt ('<T>' ohne 'where')
+                if (tp.ConstraintGroups.Count == 0) continue; // unrestricted ('<T>' without 'where')
 
                 bool satisfied = tp.ConstraintGroups.Any(
                     group => group.Constraints.All(c => SatisfiesConstraint(arg, c)));
@@ -628,19 +628,19 @@ namespace fire.Compiler
         private bool SatisfiesConstraint(string argName, TypeConstraint c) => c.Kind switch
         {
             TypeConstraintKind.IsOf => TypeNameSatisfiesIsOf(argName, c.Name),
-            // 'is in': argName als Einheitenname interpretiert, dimensional
-            // kompatibel mit c.Name (Unit.Parse wirft nie - ein unbekanntes
-            // Symbol wird zu einer atomaren, nur zu sich selbst kompatiblen
-            // Einheit, siehe Unit.Parse-Doku - das Ergebnis ist also einfach
-            // "nicht erfüllt", kein Fehler).
+            // 'is in': argName interpreted as a unit name, dimensionally
+            // compatible with c.Name (Unit.Parse never throws - an unknown
+            // symbol becomes an atomic unit compatible only with itself,
+            // see Unit.Parse documentation - the result is thus simply
+            // "not satisfied", no error).
             _ => Unit.Parse(argName).IsCompatibleWith(Unit.Parse(c.Name)),
         };
 
-        /// <summary>Erfüllt der Typname `argName` ein 'is of `targetName`' -
-        /// exakter Namens-Treffer, ODER (falls argName eine bekannte Klasse
-        /// ist) `targetName` kommt irgendwo in dessen Basisklassen-/
-        /// Interface-Kette vor. Rein NAMENS-basiert (keine Instanzen, keine
-        /// Werte), analog zu ClassHasMethod.</summary>
+        /// <summary>Does the type name `argName` satisfy an 'is of `targetName`' -
+        /// exact name hit, OR (if argName is a known class)
+        /// `targetName` occurs somewhere in its base-class/
+        /// interface chain. Purely NAME-based (no instances, no
+        /// values), analogous to ClassHasMethod.</summary>
         private bool TypeNameSatisfiesIsOf(string argName, string targetName)
         {
             if (argName == targetName) return true;
@@ -653,9 +653,9 @@ namespace fire.Compiler
 
         private void ValidateTypeName(TypeRef tr, int line)
         {
-            // 'var' + nur Einheit (SPEC "Einheiten-Deklarationen") - kein
-            // echter Typname zu validieren, der Typ wird ja aus dem
-            // Initialisierer/Kontext hergeleitet (siehe TypeRef.IsInferred-Doku).
+            // 'var' + only a unit (SPEC "Unit declarations") - no
+            // real type name to validate, the type is derived from the
+            // initialiser/context (see TypeRef.IsInferred documentation).
             if (tr.IsInferred) return;
             if (tr.LambdaSignature is { IsSelector: true } selector)
             {
@@ -672,10 +672,10 @@ namespace fire.Compiler
                 throw new ResolverException($"Unknown type '{tr.BaseName}'", line);
         }
 
-        /// <summary>Validiert einen vollständigen TypeRef: Basisname wie
-        /// ValidateTypeName, plus - falls vorhanden - dass eine Bitbreite nur bei
-        /// int/float steht und einer der erlaubten Werte (8/16/32/64) ist.
-        /// Pointer-Tiefe ist immer gültig.</summary>
+        /// <summary>Validates a complete TypeRef: base name like
+        /// ValidateTypeName, plus - if present - that a bit width only stands with
+        /// int/float and is one of the permitted values (8/16/32/64).
+        /// Pointer depth is always valid.</summary>
         private void ValidateTypeRef(TypeRef type, int line)
         {
             ValidateTypeName(type, line);
@@ -705,16 +705,16 @@ namespace fire.Compiler
             public readonly Dictionary<string, int> Slots = new();
             public readonly HashSet<string> ReadonlySlots = new();
 
-            /// <summary>Geforderte Einheit (SPEC "Einheiten-Deklarationen") je
-            /// Name in DIESEM Scope, wenn die Deklaration ein explizites
-            /// `: einheit` hatte - siehe Define/ResolveIdentifierRef.</summary>
+            /// <summary>Required unit (SPEC "Unit declarations") per
+            /// name in THIS scope if the declaration had an explicit
+            /// `: unit` - see Define/ResolveIdentifierRef.</summary>
             public readonly Dictionary<string, string> RequiredUnits = new();
 
-            /// <summary>Namen der `ref`-Parameter dieses Scopes (der Slot haelt einen Zeiger auf die Variable des Aufrufers).</summary>
+            /// <summary>Names of the `ref` parameters of this scope (the slot holds a pointer to the caller's variable).</summary>
             public readonly HashSet<string> RefNames = new();
 
-            /// <summary>Namen, die in DIESEM (Lambda-)Scope als Capture (Kopie einer äußeren Variablen) liegen - Zuweisung ist ein Fehler,
-            /// eine eigene Deklaration mit demselben Namen verdeckt sie (siehe Define).</summary>
+            /// <summary>Names that lie in THIS (lambda) scope as a capture (copy of an outer variable) - assignment is an error,
+            /// a declaration of its own with the same name hides it (see Define).</summary>
             public readonly HashSet<string> CaptureNames = new();
 
             public ResolverScope(ResolverScope? parent, bool isGlobal = false)
@@ -733,8 +733,8 @@ namespace fire.Compiler
             {
                 if (!_current.CaptureNames.Remove(name))
                     throw new ResolverException($"'{name}' is already declared in this scope", line);
-                // Der Lambda-Körper deklariert selbst einen Namen, den der Resolver vorsorglich als Capture angelegt hat: die Deklaration verdeckt
-                // ihn (der Capture-Slot bleibt ungenutzt unter einem unzugänglichen Schlüssel, die Slot-Zählung bleibt lückenlos).
+                // The lambda body itself declares a name that the resolver has provisionally created as a capture: the declaration hides
+                // it (the capture slot stays unused under an inaccessible key, the slot counting stays gapless).
                 int captureSlot = _current.Slots[name];
                 _current.Slots.Remove(name);
                 _current.Slots["\u0001capture:" + name] = captureSlot;
@@ -774,14 +774,14 @@ namespace fire.Compiler
                     $"'{name}' is registered as 'tryable' - it can only be called with 'try {name}(...)', " +
                     "not as a direct call.", line);
 
-            // SPEC "Implizite Mitglieder-Referenzen" - innerhalb einer Klasse
-            // darf ein Feld/eine Methode/eine Property auch OHNE
-            // 'this.'/'ClassName.'-Präfix angesprochen werden, genau wie eine
-            // lokale Variable (zusätzlich zu, nicht statt, den expliziten
-            // Formen - siehe MemberExpr-Fall für 'this.X'/'ClassName.X').
-            // Bewusst NACH natives/externs geprüft - ein gleichnamiges
-            // Klassenmitglied soll eine bestehende native/extern-Funktion
-            // nicht überraschend verschatten.
+            // SPEC "Implicit member references" - inside a class
+            // a field/a method/a property may also be addressed WITHOUT
+            // 'this.'/'ClassName.' prefix, just like a
+            // local variable (in addition to, not instead of, the explicit
+            // forms - see the MemberExpr case for 'this.X'/'ClassName.X').
+            // Deliberately checked AFTER natives/externs - a class member
+            // of the same name should not surprisingly shadow an existing native/extern
+            // function.
             if (_currentClass != null)
             {
                 var found = FindMemberInClassChain(_currentClass, name);
@@ -797,19 +797,19 @@ namespace fire.Compiler
                 }
             }
 
-            // Eine Lambda mit `on ziel` (SPEC 4.2): die Mitglieder des gebundenen Objekts sind unqualifiziert sichtbar. Wessen Klasse das ist, steht
-            // erst zur Laufzeit fest - der Name wird dort wie `this.name` gelesen/geschrieben/aufgerufen (ein unbekannter Name ist dann ein Laufzeitfehler).
+            // A lambda with `on target` (SPEC 4.2): the members of the bound object are visible unqualified. Whose class that is is only
+            // known at runtime - the name is read/written/called there like `this.name` (an unknown name is then a runtime error).
             if (_inBoundLambda)
                 return new ResolvedRef.ImplicitThisMember();
 
             throw new ResolverException($"Unknown identifier '{name}'", line);
         }
 
-        /// <summary>Läuft dieselbe Scope-Kette wie ResolveIdentifierRef ab, nur um
-        /// zu prüfen, ob eine Variable per `readonly` deklariert wurde - für
-        /// den Zuweisungs-Check in ResolveAssignTarget (der die Variable ja
-        /// bereits per ResolveIdentifierRef erfolgreich aufgelöst hat, hier
-        /// also immer fündig wird).</summary>
+        /// <summary>Walks the same scope chain as ResolveIdentifierRef, only to
+        /// check whether a variable was declared `readonly` - for
+        /// the assignment check in ResolveAssignTarget (which has
+        /// already resolved the variable successfully via ResolveIdentifierRef, so
+        /// it always succeeds here).</summary>
         private bool IsCapturedVariable(string name)
         {
             var scope = _current;
@@ -837,16 +837,16 @@ namespace fire.Compiler
         // -----------------------------------------------------------
         // Statements
         // -----------------------------------------------------------
-        /// <summary>Löst ein Statement auf; ein dabei auftretender Fehler wird
-        /// GESAMMELT (siehe ResolverException), und die Auflösung macht mit
-        /// dem NÄCHSTEN Statement weiter. Jedes Statement - auch jedes in
-        /// einem verschachtelten Block/Methodenkörper/einer Lambda - ist ein
-        /// eigener Wiederaufsetzpunkt, ein Fehler verdirbt also höchstens den
-        /// Rest SEINES Statements. Der Zustand des Resolvers (Scope-Kette,
-        /// Tiefenzähler, aktuelle Klasse...) wird dafür auf den Stand VOR dem
-        /// Statement zurückgesetzt: die Auflösung selbst stellt ihn nur bei
-        /// normalem Ende wieder her, ein Fehler mittendrin würde ihn sonst
-        /// verstellt zurücklassen und Folgefehler auslösen.</summary>
+        /// <summary>Resolves a statement; an error occurring in the process is
+        /// COLLECTED (see ResolverException), and resolution carries on with
+        /// the NEXT statement. Every statement - also every one in
+        /// a nested block/method body/a lambda - is a
+        /// restart point of its own, so an error spoils at most the
+        /// rest of ITS statement. The state of the resolver (scope chain,
+        /// depth counters, current class...) is reset for that to the state BEFORE the
+        /// statement: the resolution itself restores it only at a
+        /// normal end, an error in the middle would otherwise leave it
+        /// misadjusted and trigger follow-up errors.</summary>
         private void ResolveStmt(Stmt stmt)
         {
             var state = SaveState();
@@ -858,17 +858,17 @@ namespace fire.Compiler
             {
                 AddError(ex);
                 RestoreState(state);
-                // Ein fehlgeschlagenes `var x = <Fehler>` deklariert x trotzdem,
-                // sonst würde jede spätere Verwendung von x als "Unbekannter
-                // Bezeichner" gemeldet - ein reiner Folgefehler des einen
-                // echten Fehlers.
+                // A failed `var x = <error>` declares x anyway,
+                // otherwise every later use of x would be reported as "unknown
+                // identifier" - a pure follow-up error of the one
+                // real error.
                 if (stmt is VarDeclStmt vd && !_current.Slots.ContainsKey(vd.Name))
                     Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.Unit);
             }
         }
 
-        /// <summary>Der Teil des Resolver-Zustands, den die Auflösung eines
-        /// Statements/Klassenmitglieds temporär verändert (siehe
+        /// <summary>The part of the resolver state that the resolution of a
+        /// statement/class member temporarily changes (see
         /// ResolveStmt).</summary>
         private readonly record struct ResolverState(
             ResolverScope Current, int FunctionDepth, int LoopDepth, int TryDepth, int UnsafeDepth,
@@ -913,16 +913,16 @@ namespace fire.Compiler
                     break;
 
                 case NoShadowDirective:
-                    // Bereits im Vorab-Pass (CollectNoShadowDirective)
-                    // eingesammelt - hier nichts mehr zu tun.
+                    // Already collected in the pre-pass (CollectNoShadowDirective)
+                    // - nothing more to do here.
                     break;
 
                 case NoSyncDirective:
-                    break; // wirkt erst zur Laufzeit (siehe Compiler.Compile: SetAutoSync)
+                    break; // takes effect only at runtime (see Compiler.Compile: SetAutoSync)
 
                 case TimeoutDirective td:
                     ResolveExpr(td.Value);
-                    break; // wirkt erst zur Laufzeit (siehe Compiler.Compile: SetTimeout)
+                    break; // takes effect only at runtime (see Compiler.Compile: SetTimeout)
 
                 case VarDeclStmt vd:
                     if (vd.Initializer != null) ResolveExprAllowTake(vd.Initializer);
@@ -932,17 +932,17 @@ namespace fire.Compiler
                         !(vd.ArrayRanks.Count > 0 && vd.ArrayRanks[0] != null))
                         throw new ResolverException(
                             $"'readonly {vd.Name}' needs an initializer (or an array size)", vd.Line);
-                    // 'var arr[4] = [1,2,3,4]' (explizite Größe UND ein
-                    // Array-Literal als Initializer) - nur eine BESTE-EFFORT-
-                    // Prüfung, wenn die Größe selbst ein Ganzzahl-LITERAL ist
-                    // (der häufige Fall): stimmt sie nicht mit der Anzahl der
-                    // Literal-Elemente überein, ist das ein Compile-Fehler
-                    // statt eines stillschweigend anders großen Arrays (die
-                    // deklarierte Größe würde sonst OHNE jede Meldung vom
-                    // Initializer überschrieben, siehe Compiler.CompileStmt).
-                    // Eine DYNAMISCHE Größe (Variable/Ausdruck) wird hier
-                    // NICHT geprüft - dafür bräuchte es eine Laufzeit-Prüfung,
-                    // die diese Ausbaustufe bewusst nicht baut.
+                    // 'var arr[4] = [1,2,3,4]' (explicit size AND an
+                    // array literal as initialiser) - only a BEST-EFFORT
+                    // check if the size itself is an integer LITERAL
+                    // (the common case): if it does not match the number of
+                    // literal elements, that is a compile error
+                    // instead of a silently differently sized array (the
+                    // declared size would otherwise be overwritten WITHOUT any message by the
+                    // initialiser, see Compiler.CompileStmt).
+                    // A DYNAMIC size (variable/expression) is
+                    // NOT checked here - that would need a runtime check,
+                    // which this development stage deliberately does not build.
                     if (vd.Initializer is ArrayLiteralExpr arrLit
                         && vd.ArrayRanks.Count > 0 && vd.ArrayRanks[0] is LiteralExpr sizeLit
                         && sizeLit.Value.Kind == ValueKind.Int
@@ -1026,9 +1026,9 @@ namespace fire.Compiler
                     break;
 
                 case LeaveStmt:
-                    // Bewusst keine Einschränkung auf "nur innerhalb eines
-                    // fire-Blocks" (siehe Ast.LeaveStmt-Doku) - nichts zu
-                    // prüfen.
+                    // Deliberately no restriction to "only inside a
+                    // fire block" (see Ast.LeaveStmt documentation) - nothing to
+                    // check.
                     break;
 
                 case TerminateStmt terminateStmt:
@@ -1054,20 +1054,20 @@ namespace fire.Compiler
                     break;
 
                 case InterfaceDecl:
-                    // Bereits im Vorab-Pass (CollectClasses) validiert - hier nichts zu tun.
+                    // Already validated in the pre-pass (CollectClasses) - nothing to do here.
                     break;
 
                 case EnumDecl:
-                    // Bereits im Vorab-Pass (CollectEnums) validiert und mit
-                    // Werten befüllt - hier nichts zu tun.
+                    // Already validated in the pre-pass (CollectEnums) and filled with
+                    // values - nothing to do here.
                     break;
 
                 case ClassExtensionDecl cx:
-                    // Sollte NIE hier ankommen - Parser.MergeClassExtensions
-                    // löst das schon vor dem Resolven vollständig auf (siehe
-                    // Ast.ClassExtensionDecl-Doku). Nur als Sicherheitsnetz,
-                    // falls das Programm auf einem anderen Weg als über
-                    // Parser.Parse()/ParseMultiple() erzeugt wurde.
+                    // Should NEVER arrive here - Parser.MergeClassExtensions
+                    // already resolves that completely before resolving (see
+                    // Ast.ClassExtensionDecl documentation). Only as a safety net,
+                    // in case the program was created by a way other than
+                    // Parser.Parse()/ParseMultiple().
                     throw new ResolverException(
                         $"Internal error: 'class extends {cx.TargetRef.BaseName}' was not merged " +
                         "(the program must be produced by Parser.Parse()/ParseMultiple()).", cx.Line);
@@ -1093,9 +1093,9 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Löst ein Statement so auf, dass es einen eigenen Scope bekommt -
-        /// entweder direkt (wenn es schon ein Block ist) oder über einen
-        /// Wegwerf-Scope (für einzeilige if/while/for-Bodies ohne '{}').</summary>
+        /// <summary>Resolves a statement so that it gets a scope of its own -
+        /// either directly (if it is already a block) or via a
+        /// throw-away scope (for single-line if/while/for bodies without '{}').</summary>
         private void ResolveStmtAsScope(Stmt body)
         {
             if (body is Stmt.BlockStmt block)
@@ -1119,7 +1119,7 @@ namespace fire.Compiler
 
         private void ResolveFor(ForStmt fs)
         {
-            PushScope(); // umschließt Init/Condition/Increment/Body gemeinsam
+            PushScope(); // encloses init/condition/increment/body together
             if (fs.Init != null) ResolveStmt(fs.Init);
             if (fs.Condition != null) ResolveExpr(fs.Condition);
             if (fs.Increment != null) ResolveExpr(fs.Increment);
@@ -1133,7 +1133,7 @@ namespace fire.Compiler
 
         private void ResolveForeach(ForeachStmt fe)
         {
-            ResolveExpr(fe.Iterable); // im umschließenden Scope, nicht im Loop-Scope
+            ResolveExpr(fe.Iterable); // in the enclosing scope, not in the loop scope
             PushScope();
             Define(fe.VarName, fe.Line);
             _loopDepth++;
@@ -1144,17 +1144,17 @@ namespace fire.Compiler
             PopScope();
         }
 
-        /// <summary>`break`/`continue` dürfen aus dem `try`- und den `catch`-Blöcken heraus verwendet werden (der Compiler räumt Handler und
-        /// Scopes ab und führt ein vorhandenes `finally` vorher aus, siehe Compiler.CompileBreakOrContinue) - aber nicht aus dem `finally`-Block
-        /// selbst: `_tryDepth` zählt deshalb nur noch die umgebenden `finally`-Blöcke (je Schleife neu).</summary>
+        /// <summary>`break`/`continue` may be used out of the `try` and `catch` blocks (the compiler clears away handlers and
+        /// scopes and executes an existing `finally` beforehand, see Compiler.CompileBreakOrContinue) - but not out of the `finally` block
+        /// itself: `_tryDepth` therefore now only counts the surrounding `finally` blocks (anew per loop).</summary>
         private void ResolveTry(TryStmt t)
         {
             ResolveBlockNewScope(t.TryBlock);
 
             foreach (var c in t.Catches)
             {
-                // Ein unbekannter Exception-Typ hindert nicht die Auflösung
-                // des catch-Körpers (und der übrigen Blöcke).
+                // An unknown exception type does not prevent the resolution
+                // of the catch body (and the other blocks).
                 if (c.TypeRef != null && !IsKnownClassName(ResolveTypeRef(c.TypeRef)))
                     AddError(new ResolverException($"Unknown exception type '{c.TypeRef.BaseName}'", c.Line));
 
@@ -1185,20 +1185,20 @@ namespace fire.Compiler
             var classTypeParamNames = cd.TypeParams?.Select(tp => tp.Name).ToList() ?? new List<string>();
             AddTypeParamNames(classTypeParamNames);
 
-            // Pro Klasse: erlaubt mehrere Methoden desselben Namens
-            // (Überladung), aber nur mit UNTERSCHIEDLICHER Parameteranzahl -
-            // das ist die einzige zur Aufrufzeit generell unterscheidbare
-            // Signatur in einer dynamisch typisierten Sprache (siehe
-            // RuntimeClass.FindMethod-Doku). Konstruktoren ebenso, aber in
-            // einer EIGENEN Zählung (der Name spielt dort ja keine Rolle -
-            // es gibt nur "den" Konstruktor einer Klasse, mehrere
-            // Überladungen unterscheiden sich rein über die Arity).
+            // Per class: allows several methods of the same name
+            // (overloading), but only with a DIFFERENT parameter count -
+            // that is the only signature generally distinguishable at call time
+            // in a dynamically typed language (see
+            // RuntimeClass.FindMethod documentation). Constructors likewise, but in
+            // a SEPARATE count (the name plays no role there -
+            // there is only "the" constructor of a class, several
+            // overloads differ purely by arity).
             var seenMethodSignatures = new HashSet<(string Name, int Arity)>();
             var seenConstructorArities = new HashSet<int>();
 
-            // Jedes Mitglied ist ein eigener Wiederaufsetzpunkt (siehe
-            // ResolveStmt) - ein Fehler in einem Feld/einer Methode hindert
-            // nicht die Auflösung der übrigen Mitglieder.
+            // Every member is a restart point of its own (see
+            // ResolveStmt) - an error in one field/method does
+            // not prevent the resolution of the other members.
             foreach (var member in cd.Members)
             {
                 GuardWithState(() =>
@@ -1206,9 +1206,9 @@ namespace fire.Compiler
                     switch (member)
                     {
                         case FieldDecl fd:
-                            // Ein ungültiger Typ hindert nicht die Auflösung des
-                            // Initialisierers (und umgekehrt) - beides einzeln
-                            // abgesichert, damit ALLE Fehler gemeldet werden.
+                            // An invalid type does not prevent the resolution of the
+                            // initialiser (and vice versa) - both individually
+                            // guarded, so that ALL errors are reported.
                             if (fd.Type != null) Guard(() => ValidateTypeRef(fd.Type, fd.Line));
                             ResolveArrayRanks(fd.ArrayRanks);
                             ResolveFieldInitializer(fd);
@@ -1247,11 +1247,11 @@ namespace fire.Compiler
 
                         case PropertyDecl pd:
                             if (pd.Type != null) Guard(() => ValidateTypeRef(pd.Type, pd.Line));
-                            // Getter: wie eine parameterlose Methode. Setter: wie
-                            // eine Methode mit genau einem Parameter 'value' vom
-                            // Property-Typ (implizit, wie C#s Setter-Parameter) -
-                            // ganz normale Parameter-Auflösung, keine
-                            // Sonderbehandlung nötig.
+                            // Getter: like a parameterless method. Setter: like
+                            // a method with exactly one parameter 'value' of the
+                            // property type (implicit, like C#'s setter parameter) -
+                            // quite normal parameter resolution, no
+                            // special treatment needed.
                             if (pd.Getter != null)
                                 GuardWithState(() => ResolveFunctionLike(
                                     Array.Empty<LambdaParam>(), pd.Getter, baseArgs: null, isConstructor: false, isStatic: pd.IsStatic));
@@ -1271,27 +1271,27 @@ namespace fire.Compiler
             _currentClassHasBase = savedHasBase;
         }
 
-        /// <summary>Feld-Initialisierer sehen (wie Lambdas) nur ihren eigenen Scope
-        /// + global - plus implizit 'this', da sie pro Instanz im Konstruktor-
-        /// Kontext ausgewertet werden, aber nicht die Parameter irgendeines
-        /// bestimmten Konstruktors kennen.</summary>
+        /// <summary>Field initialisers see (like lambdas) only their own scope
+        /// + global - plus implicitly 'this', since they are evaluated per instance in the constructor
+        /// context, but do not know the parameters of any
+        /// particular constructor.</summary>
         private void ResolveFieldInitializer(FieldDecl fd)
         {
             if (fd.Initializer == null) return;
             var saved = _current;
             _current = new ResolverScope(_globalScope);
             bool savedInStaticMethod = _inStaticMethod;
-            _inStaticMethod = fd.IsStatic; // SPEC "Statische Mitglieder" - kein 'this' in einem statischen Feld-Initialisierer
+            _inStaticMethod = fd.IsStatic; // SPEC "Static members" - no 'this' in a static field initialiser
             ResolveExpr(fd.Initializer);
             _inStaticMethod = savedInStaticMethod;
             _current = saved;
         }
 
-        /// <summary>Optionale Parameter (mit Standardwert) müssen am Ende der
-        /// Parameterliste ZUSAMMENHÄNGEN - kein Pflichtparameter nach einem
-        /// optionalen (sonst wäre bei einem Aufruf mit weniger Argumenten
-        /// nicht eindeutig, welcher Parameter "fehlt"). Dieselbe Regel wie in
-        /// den meisten Sprachen mit optionalen Parametern.</summary>
+        /// <summary>Optional parameters (with a default value) must be CONTIGUOUS at the end of the
+        /// parameter list - no mandatory parameter after an
+        /// optional one (otherwise with a call with fewer arguments
+        /// it would not be clear which parameter is "missing"). The same rule as in
+        /// most languages with optional parameters.</summary>
         private static void ValidateOptionalParamsAreTrailing(IReadOnlyList<LambdaParam> parms, int line)
         {
             bool seenOptional = false;
@@ -1305,12 +1305,12 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Standardwert-Ausdrücke sehen wie Feld-Initialisierer (siehe
-        /// ResolveFieldInitializer) nur ihren eigenen Scope + global + `this`
-        /// - NICHT die anderen Parameter derselben Funktion, da sie
-        /// unabhängig von diesen ausgewertet werden (siehe VM.
-        /// FillDefaultArgs - eine eigene, isolierte Auswertung pro fehlendem
-        /// Parameter, nicht Teil des normalen Funktions-Scopes).</summary>
+        /// <summary>Default-value expressions, like field initialisers (see
+        /// ResolveFieldInitializer), see only their own scope + global + `this`
+        /// - NOT the other parameters of the same function, since they are
+        /// evaluated independently of these (see VM.
+        /// FillDefaultArgs - a separate, isolated evaluation per missing
+        /// parameter, not part of the normal function scope).</summary>
         private void ResolveParamDefaults(IReadOnlyList<LambdaParam> parms)
         {
             var saved = _current;
@@ -1324,9 +1324,9 @@ namespace fire.Compiler
         private void ResolveFunctionLike(
             IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, IReadOnlyList<Expr>? baseArgs, bool isConstructor, bool isStatic = false)
         {
-            // Fehler im Kopf (Parameterliste, base(...)) hindern nicht die
-            // Auflösung des Körpers - alles einzeln abgesichert, damit ALLE
-            // Fehler gemeldet werden (siehe ResolveStmt).
+            // Errors in the head (parameter list, base(...)) do not prevent the
+            // resolution of the body - everything individually guarded, so that ALL
+            // errors are reported (see ResolveStmt).
             Guard(() => ValidateOptionalParamsAreTrailing(parms, body.Line));
             GuardWithState(() => ResolveParamDefaults(parms));
 
@@ -1346,10 +1346,10 @@ namespace fire.Compiler
                 foreach (var a in baseArgs) ResolveExprAllowTake(a);
             }
 
-            // WICHTIG: NICHT von 'baseArgs != null' ableiten - das heißt nur
-            // "hat ein EXPLIZITES 'base(...)'", nicht "ist ein Konstruktor".
-            // Eine Klasse ohne Basisklasse hat nie baseArgs, ihr Konstruktor
-            // braucht das Flag aber trotzdem.
+            // IMPORTANT: do NOT derive from 'baseArgs != null' - that only means
+            // "has an EXPLICIT 'base(...)'", not "is a constructor".
+            // A class without a base class never has baseArgs, its constructor
+            // needs the flag anyway.
             bool savedInConstructor = _inConstructor;
             _inConstructor = isConstructor;
 
@@ -1375,12 +1375,12 @@ namespace fire.Compiler
         }
 
         // -----------------------------------------------------------
-        // Ausdrücke
+        // Expressions
         // -----------------------------------------------------------
-        /// <summary>Löst einen Ausdruck auf; ein Fehler darin wird gesammelt
-        /// (siehe ResolveStmt), die Auflösung macht mit den Geschwister-
-        /// Ausdrücken weiter - z.B. werden bei `f(a, b)` beide unbekannten
-        /// Bezeichner gemeldet, nicht nur `a`.</summary>
+        /// <summary>Resolves an expression; an error in it is collected
+        /// (see ResolveStmt), resolution carries on with the sibling
+        /// expressions - e.g. with `f(a, b)` both unknown
+        /// identifiers are reported, not only `a`.</summary>
         /// <summary>`take x` is valid directly as an argument and as the value of an assignment/declaration (SPEC 2.2): the places register it here before resolving.</summary>
         private readonly HashSet<Expr> _takeAllowed = new();
         private void ResolveExprAllowTake(Expr expr)
@@ -1459,7 +1459,7 @@ namespace fire.Compiler
 
                 case IsOfExpr iof:
                     ResolveExpr(iof.Operand);
-                    // `wert is of IFoo`: auch ein Interface ist als Typ erlaubt (die Klasse nennt es in `class X : IFoo`)
+                    // `value is of IFoo`: an interface is also allowed as a type (the class names it in `class X : IFoo`)
                     if (!_interfaces.ContainsKey(iof.TypeRef.BaseName)) ValidateTypeName(iof.TypeRef, iof.Line);
                     break;
 
@@ -1474,18 +1474,18 @@ namespace fire.Compiler
                     break;
 
                 case MemberExpr me:
-                    // 'EnumName.Mitglied' - erkannt rein daran, dass der
-                    // Zielname (als bloßer Bezeichner) ein bekannter enum-Name
-                    // ist. Bewusste Design-Entscheidung: ein enum-Name "gewinnt"
-                    // dabei immer gegen eine gleichnamige Variable im Scope
-                    // (wie ein Klassenname auch nicht durch eine Variable
-                    // verschattet werden kann) - dieselbe Namenskollision wäre
-                    // ohnehin verwirrend und in der Praxis leicht vermeidbar.
-                    // Auch ein Enum in einem Namespace ist so erreichbar, dann aber
-                    // vollqualifiziert ('Geometry.Kind.Round') - wie beim
-                    // statischen Klassenzugriff (siehe TryResolveStaticMemberAccess)
-                    // zählt NUR der exakt geschriebene Name, keine `#using`-/
-                    // Namespace-Auflösung.
+                    // 'EnumName.Member' - recognised purely by the
+                    // target name (as a bare identifier) being a known enum name.
+                    // Deliberate design decision: an enum name always "wins"
+                    // there against a variable of the same name in the scope
+                    // (just as a class name cannot be
+                    // shadowed by a variable either) - the same name collision would be
+                    // confusing anyway and easy to avoid in practice.
+                    // An enum in a namespace is reachable this way too, but then
+                    // fully qualified ('Geometry.Kind.Round') - as with
+                    // static class access (see TryResolveStaticMemberAccess)
+                    // only the exactly written name counts, no `#using`/
+                    // namespace resolution.
                     string? enumName = DottedName(me.Target);
                     if (enumName != null && _enums.TryGetValue(enumName, out var enumMembers))
                     {
@@ -1494,32 +1494,32 @@ namespace fire.Compiler
                         _refs[me] = new ResolvedRef.EnumMember(enumValue);
                         break;
                     }
-                    // 'ClassName.Member' (SPEC "Statische Mitglieder") - wie
-                    // beim enum-Fall: ein bekannter Klassenname "gewinnt"
-                    // immer gegen eine gleichnamige Variable. Der eigentliche
-                    // Zugriff (existiert das Mitglied, ist es WIRKLICH
-                    // statisch, Zugriffsmodifikator) wird bewusst NICHT hier,
-                    // sondern erst in der VM geprüft (GetStaticField/
-                    // CallStaticMethod) - dieselbe Grenze wie bei normalen
-                    // Instanzfeldern/-methoden (siehe VM.CheckFieldAccess),
-                    // der Resolver kennt Feld-/Methodennamen einer Klasse
-                    // nicht vollständig genug, um das schon hier sicher zu
-                    // validieren (Vererbung, dynamisch gesetzte Felder).
+                    // 'ClassName.Member' (SPEC "Static members") - as
+                    // in the enum case: a known class name always "wins"
+                    // against a variable of the same name. The actual
+                    // access (does the member exist, is it REALLY
+                    // static, access modifier) is deliberately NOT checked here,
+                    // but only in the VM (GetStaticField/
+                    // CallStaticMethod) - the same boundary as with normal
+                    // instance fields/methods (see VM.CheckFieldAccess),
+                    // the resolver does not know the field/method names of a class
+                    // completely enough to validate that reliably here already
+                    // (inheritance, dynamically set fields).
                     string? staticClassName = TryResolveStaticMemberAccess(me);
                     if (staticClassName != null)
                     {
                         _refs[me] = new ResolvedRef.StaticMember(staticClassName);
                         break;
                     }
-                    // 'this.StaticMember' (SPEC "Implizite Mitglieder-
-                    // Referenzen") - ein statisches Mitglied ist auch über
-                    // 'this.' erreichbar (zusätzlich zu bloßem Namen und
-                    // 'ClassName.'), obwohl 'this' selbst nichts mit der
-                    // statischen Speicherstelle zu tun hat - der Compiler
-                    // wandelt das dann in denselben GetStaticField/
-                    // SetStaticField/CallStaticMethod-Pfad um wie 'ClassName.X',
-                    // NICHT in GetField/SetField (die würden ein statisches
-                    // Feld nicht finden, siehe RuntimeClass.StaticFieldValues).
+                    // 'this.StaticMember' (SPEC "Implicit member
+                    // references") - a static member is also reachable via
+                    // 'this.' (in addition to a bare name and
+                    // 'ClassName.'), although 'this' itself has nothing to do with the
+                    // static storage location - the compiler
+                    // then converts that into the same GetStaticField/
+                    // SetStaticField/CallStaticMethod path as 'ClassName.X',
+                    // NOT into GetField/SetField (which would not find a static
+                    // field, see RuntimeClass.StaticFieldValues).
                     if (me.Target is ThisExpr && _currentClass != null)
                     {
                         var thisMember = FindMemberInClassChain(_currentClass, me.Name);
@@ -1545,23 +1545,23 @@ namespace fire.Compiler
                     break;
 
                 case IncDecExpr incDec:
-                    // Braucht sowohl Lese- als auch Schreibzugriff auf
-                    // dasselbe Ziel - ResolveAssignTarget deckt beides ab
-                    // (füllt für IdentifierExpr z.B. _refs genauso wie ein
-                    // normales Lesen es täte, siehe dort), zusätzlich noch
-                    // die readonly-/unsafe-Prüfungen, die für Zuweisungen
-                    // ohnehin gelten und für '++'/'--' genauso gelten müssen.
+                    // Needs both read and write access to
+                    // the same target - ResolveAssignTarget covers both
+                    // (fills e.g. _refs for IdentifierExpr just as a
+                    // normal read would, see there), additionally also
+                    // the readonly/unsafe checks that apply to assignments
+                    // anyway and must apply just the same to '++'/'--'.
                     ResolveAssignTarget(incDec.Target);
                     break;
 
                 case NewExpr ne:
-                    // Ein Fehler beim Ziel (unbekannte Klasse, falsche
-                    // Typ-Argumente) hindert nicht die Auflösung der Argumente.
+                    // An error in the target (unknown class, wrong
+                    // type arguments) does not prevent the resolution of the arguments.
                     Guard(() =>
                     {
-                        // Die Anzahl der Typ-Argumente wählt zwischen einer
-                        // nicht-generischen und einer gleichnamigen generischen
-                        // Klasse (siehe GenericClassNames).
+                        // The number of type arguments chooses between a
+                        // non-generic and a generic class of the same name
+                        // (see GenericClassNames).
                         string resolvedNewClassName = GenericClassNames.ResolveNewTarget(
                             ne.ClassRef, ne.TypeArgs?.Count ?? 0, IsKnownClassName);
                         if (!IsKnownClassName(resolvedNewClassName))
@@ -1631,20 +1631,20 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>`try Name(args)` (siehe Ast.TryCallExpr) - der innere
-        /// Aufruf MUSS ein direkter Aufruf eines BEKANNTEN, als "tryable"
-        /// registrierten Namens sein (siehe Bytecode.NativeRegistry.
-        /// RegisterTryable) - kein Methodenaufruf, kein Lambda-Aufruf, kein
-        /// gewöhnlicher/als 'extern' deklarierter nativer Name (die dürfen
-        /// NICHT mit 'try' aufgerufen werden - nur registrierte "tryable"
-        /// APIs). Der Callee selbst wird bewusst NICHT über ResolveExpr
-        /// aufgelöst (das würde als normaler Bezeichner scheitern oder
-        /// fälschlich einen ResolvedRef.Native/Extern setzen) - stattdessen
-        /// hängt hier direkt eine eigene ResolvedRef.TryableNative am
-        /// TryCallExpr-Knoten selbst, die der Compiler abfragt.</summary>
+        /// <summary>`try Name(args)` (see Ast.TryCallExpr) - the inner
+        /// call MUST be a direct call of a KNOWN name registered as "tryable"
+        /// (see Bytecode.NativeRegistry.
+        /// RegisterTryable) - no method call, no lambda call, no
+        /// ordinary native name or one declared as 'extern' (those may
+        /// NOT be called with 'try' - only registered "tryable"
+        /// APIs). The callee itself is deliberately NOT resolved via ResolveExpr
+        /// (that would fail as an ordinary identifier or
+        /// wrongly set a ResolvedRef.Native/Extern) - instead
+        /// its own ResolvedRef.TryableNative is attached directly to the
+        /// TryCallExpr node itself here, which the compiler queries.</summary>
         private void ResolveTryCallExpr(TryCallExpr tc)
         {
-            // `try obj.Take...(...)` (SPEC 2.2): die Ownership-Methode verschiebt nur, wenn der Aufrufer der Besitzer ist
+            // `try obj.Take...(...)` (SPEC 2.2): the ownership method only moves if the caller is the owner
             if (tc.Call is CallExpr takeCall && takeCall.Callee is MemberExpr takeMember && takeMember.Name is "TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo")
             {
                 int baseArgs = takeMember.Name == "TakeTo" ? 1 : 0;
@@ -1688,32 +1688,32 @@ namespace fire.Compiler
                     _refs[id] = ResolveIdentifierRef(id.Name, id.Line);
                     break;
                 case MemberExpr me:
-                    // readonly-Felder dürfen NUR als 'this.feld = ...' innerhalb
-                    // eines Konstruktors DER DEKLARIERENDEN Klasse zugewiesen
-                    // werden - das ist rein statisch prüfbar (Ziel ist lexikalisch
-                    // 'this', aktuelle Klasse ist bekannt). Für ein dynamisches
-                    // Ziel ('obj.feld = ...', 'obj' beliebiger Ausdruck) kann der
-                    // Resolver mangels statischem Typsystem NICHT wissen, welche
-                    // Klasse gemeint ist - bewusste Grenze dieser Ausbaustufe,
-                    // siehe FieldDecl-Doku.
+                    // readonly fields may ONLY be assigned as 'this.field = ...' inside
+                    // a constructor OF THE DECLARING class
+                    // - that is purely statically checkable (target is lexically
+                    // 'this', current class is known). For a dynamic
+                    // target ('obj.field = ...', 'obj' any expression) the
+                    // resolver, lacking a static type system, can NOT know which
+                    // class is meant - a deliberate limit of this development stage,
+                    // see FieldDecl documentation.
                     if (me.Target is ThisExpr && _currentClass != null && IsReadonlyField(_currentClass, me.Name) && !_inConstructor)
                         throw new ResolverException(
                             $"'{_currentClass.Name}.{me.Name}' is 'readonly' and can only be assigned inside a " +
                             "constructor of the declaring class", me.Line);
-                    // 'ClassName.Member = ...' (SPEC "Statische Mitglieder") -
-                    // dieselbe Erkennung wie beim Lesen (siehe ResolveExpr/
-                    // TryResolveStaticMemberAccess), hier separat nötig, weil
-                    // ein Zuweisungsziel NICHT über den normalen ResolveExpr-
-                    // Fall läuft (sonst würde 'ClassName' als unbekannter
-                    // Bezeichner statt als Klassenname behandelt).
+                    // 'ClassName.Member = ...' (SPEC "Static members") -
+                    // the same detection as when reading (see ResolveExpr/
+                    // TryResolveStaticMemberAccess), needed separately here because
+                    // an assignment target does NOT go through the normal ResolveExpr
+                    // case (otherwise 'ClassName' would be treated as an unknown
+                    // identifier instead of as a class name).
                     string? staticAssignClassName = TryResolveStaticMemberAccess(me);
                     if (staticAssignClassName != null)
                     {
                         _refs[me] = new ResolvedRef.StaticMember(staticAssignClassName);
                         break;
                     }
-                    // 'this.StaticMember = ...' - siehe dieselbe Begründung im
-                    // Lesefall oben (ResolveExpr, case MemberExpr).
+                    // 'this.StaticMember = ...' - see the same reasoning in the
+                    // read case above (ResolveExpr, case MemberExpr).
                     if (me.Target is ThisExpr && _currentClass != null)
                     {
                         var thisAssignMember = FindMemberInClassChain(_currentClass, me.Name);
@@ -1740,47 +1740,47 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Ist `fieldName` als `readonly` in `cd` (NUR diese Klasse
-        /// selbst, keine Basisklassen-Kette - bewusste Grenze) deklariert?</summary>
+        /// <summary>Is `fieldName` declared as `readonly` in `cd` (ONLY this class
+        /// itself, no base-class chain - deliberate limit)?</summary>
         private static bool IsReadonlyField(ClassDecl cd, string fieldName) =>
             cd.Members.Any(m => m is FieldDecl { IsReadonly: true } fd && fd.Name == fieldName);
 
-        /// <summary>Lambdas sehen nur ihren eigenen Scope + global (SPEC 4.2): der
-        /// neue Scope wird bewusst direkt an den globalen Scope gehängt, nicht an
-        /// den aktuell umschließenden - dadurch "funktioniert" die eingeschränkte
-        /// Sichtbarkeit einfach durch die normale Tiefen-Zählung beim Auflösen,
-        /// ganz ohne Sonderfall dort. 'on obj' wird dagegen VOR dem Scope-Wechsel
-        /// aufgelöst, weil es im umschließenden Kontext ausgewertet wird (dort, wo
-        /// die Lambda selbst definiert wird), nicht innerhalb ihres Bodys.</summary>
+        /// <summary>Lambdas see only their own scope + global (SPEC 4.2): the
+        /// new scope is deliberately attached directly to the global scope, not to
+        /// the currently enclosing one - this way the restricted
+        /// visibility "works" simply through the normal depth counting during resolution,
+        /// without any special case there. 'on obj', by contrast, is resolved BEFORE the scope switch,
+        /// because it is evaluated in the enclosing context (where
+        /// the lambda itself is defined), not inside its body.</summary>
         /// <summary>`fire { ... }`/`fire taking X { ... }`/`fire with actorA { ... }`
-        /// (siehe Ast.FireStmt-Doku): jede `TakingCaptures`-Quelle sowie
-        /// `WithSource` (falls vorhanden) werden ganz normal im AUFRUFENDEN
-        /// Scope aufgelöst (die jeweilige Variable muss dort bereits
-        /// deklariert sein - oder, bei der `fire MethodA(...)`-Aufrufform,
-        /// ein synthetisches `this`/ein Argumentausdruck sein). Der Body
-        /// dagegen bekommt einen KOMPLETT ISOLIERTEN Scope (`ResolverScope(null,
-        /// isGlobal: true)` - bewusst NICHT `_globalScope` wie bei Lambdas, siehe
-        /// FireStmt-Doku: der
-        /// Fire-Block läuft auf einer eigenen VM-Instanz mit eigenem,
-        /// frischen globalen Scope). `return` ist
-        /// innerhalb eines Fire-Blocks nicht sinnvoll (keine Rückgabewerte,
-        /// SPEC) - `_functionDepth` wird deshalb für die Dauer der
-        /// Body-Auflösung auf 0 zurückgesetzt, damit ein `return` darin wie
-        /// "außerhalb einer Funktion" abgelehnt wird.
+        /// (see Ast.FireStmt documentation): every `TakingCaptures` source as well as
+        /// `WithSource` (if present) are resolved quite normally in the CALLING
+        /// scope (the respective variable must already be
+        /// declared there - or, with the `fire MethodA(...)` call form,
+        /// be a synthetic `this`/an argument expression). The body,
+        /// by contrast, gets a COMPLETELY ISOLATED scope (`ResolverScope(null,
+        /// isGlobal: true)` - deliberately NOT `_globalScope` as with lambdas, see
+        /// FireStmt documentation: the
+        /// fire block runs on a VM instance of its own with its own,
+        /// fresh global scope). `return` makes
+        /// no sense inside a fire block (no return values,
+        /// SPEC) - `_functionDepth` is therefore reset to 0 for the duration of the
+        /// body resolution, so that a `return` in it is rejected like
+        /// "outside of a function".
         ///
-        /// WICHTIG: Reihenfolge der Slot-Vergabe hier ist die "Wahrheit", mit
-        /// der Compiler.CompileFireStmt und Runtime.FireRuntime.FireVmTaking
-        /// übereinstimmen MÜSSEN - ZUERST alle Hauptprogramm-Globals (als
-        /// READONLY-Schatten, an DENSELBEN Slots wie im Hauptprogramm - siehe
-        /// unten), DANN alle TakingCaptures (in Listenreihenfolge), dann
-        /// with. Das ermöglicht den in docs/THREADING_DESIGN.md Abschnitt 8
-        /// vorgesehenen Read-only-Snapshot: der Fire-Thread bekommt bei
-        /// seinem Start eine EIGENE, isolierte Kopie ALLER Hauptprogramm-
-        /// Globals (siehe VM.OpCode.Fire) - lesend sichtbar unter demselben
-        /// Namen wie im Hauptprogramm, aber NICHT beschreibbar (eine
-        /// Zuweisung würde ja nur die lokale Kopie ändern, nie das Original
-        /// - das wäre stillschweigend falsch, deshalb hier hart abgelehnt
-        /// statt zugelassen).</summary>
+        /// IMPORTANT: the order of slot assignment here is the "truth" with which
+        /// Compiler.CompileFireStmt and Runtime.FireRuntime.FireVmTaking
+        /// MUST agree - FIRST all main-program globals (as
+        /// READONLY shadows, at THE SAME slots as in the main program - see
+        /// below), THEN all TakingCaptures (in list order), then
+        /// with. This enables the read-only snapshot provided for in
+        /// docs/THREADING_DESIGN.md section 8: the fire thread gets at
+        /// its start an OWN, isolated copy of ALL main-program
+        /// globals (see VM.OpCode.Fire) - visible for reading under the same
+        /// name as in the main program, but NOT writable (an
+        /// assignment would only change the local copy, never the original
+        /// - that would be silently wrong, therefore rejected hard here
+        /// instead of allowed).</summary>
         private void ResolveFireStmt(FireStmt fs)
         {
             _sawFire = true;
@@ -1792,31 +1792,31 @@ namespace fire.Compiler
             var saved = _current;
             _current = new ResolverScope(null, isGlobal: true);
 
-            // Schatten-Einträge für ALLE Hauptprogramm-Globals, an deren
-            // ORIGINAL-Slots (0..GlobalSlotCount-1) - der Laufzeit-Snapshot
-            // (siehe VM.OpCode.Fire) kopiert exakt diese Slots 1:1 in den
-            // frischen globalen Scope des Fire-Threads, deshalb müssen die
-            // Slot-NUMMERN hier unverändert übernommen werden, nicht neu
-            // vergeben werden. Per '#noshadow' abschaltbar (siehe
-            // Ast.NoShadowDirective-Doku) - dann verhält sich alles wie vor
-            // Einführung des Snapshots: taking/with bekommen ihre Slots
-            // wieder ab 0.
+            // Shadow entries for ALL main-program globals, at their
+            // ORIGINAL slots (0..GlobalSlotCount-1) - the runtime snapshot
+            // (see VM.OpCode.Fire) copies exactly these slots 1:1 into the
+            // fresh global scope of the fire thread, therefore the
+            // slot NUMBERS must be taken over unchanged here, not be
+            // assigned anew. Can be switched off via '#noshadow' (see
+            // Ast.NoShadowDirective documentation) - then everything behaves as before the
+            // introduction of the snapshot: taking/with get their slots
+            // from 0 again.
             if (!_noShadowGlobals)
                 foreach (var (name, slot) in _globalScope.Slots)
                 {
-                    // Ein Fire-Thread darf Globals ändern (docs/THREADING_DESIGN.md Abschnitt 7): einzelne Zuweisungen laufen als Sektion, die
-                    // das Hauptprogramm bei `sync globals` erteilt - deshalb hier kein Schreibschutz mehr.
+                    // A fire thread may change globals (docs/THREADING_DESIGN.md section 7): single assignments run as a section that
+                    // the main program grants at `sync globals` - therefore no write protection any more here.
                     _current.Slots[name] = slot;
                 }
 
-            // taking/with - bekommen NEUE, EIGENE Slots ab hier (direkt
-            // nach den Hauptprogramm-Globals, oder ab 0 bei aktivem
-            // '#noshadow'). Kollidiert eine Erfassung NAMENTLICH mit einem
-            // Hauptprogramm-Global, VERDRÄNGT sie dessen Schatten-Eintrag
-            // (normale lexikalische Schattierung - die explizite, eigene
-            // Erfassung ist im Fire-Block-Body dann gemeint, nicht das
-            // gleichnamige Hauptprogramm-Global) und ist selbst ganz normal
-            // beschreibbar wie bisher, NICHT readonly.
+            // taking/with - get NEW, OWN slots from here on (directly
+            // after the main-program globals, or from 0 with active
+            // '#noshadow'). If a capture collides BY NAME with a
+            // main-program global, it SUPPRESSES its shadow entry
+            // (normal lexical shadowing - the explicit, own
+            // capture is then meant in the fire block body, not the
+            // main-program global of the same name) and is itself quite normally
+            // writable as before, NOT readonly.
             int nextCaptureSlot = _noShadowGlobals ? 0 : _globalScope.Slots.Count;
             if (!_noShadowGlobals && _finalGlobalCount is int finalCount)
             {
@@ -1861,32 +1861,32 @@ namespace fire.Compiler
             _current = saved;
         }
 
-        /// <summary>Gemeinsame Body-Auflösung für `catch threads(...)`/`catch
-        /// terminate(v)` (siehe Ast.CatchThreadsDecl/CatchTerminateDecl-Doku)
-        /// - exakt dieselbe Isolation wie ResolveFireStmt (eigener, leerer
-        /// globaler Scope, `return` verboten), aus demselben Grund: der
-        /// Handler-Body läuft später als eigener, unabhängiger Proto,
-        /// genestet in eine BELIEBIGE VM-Instanz (siehe VM.
-        /// HandleDeliveredThreadException/RunTerminateHandlerIfAny), nicht im
-        /// lexikalischen Kontext seiner Deklaration.</summary>
-        /// <summary>Gemeinsame Body-Auflösung für `catch threads(...)`/`catch
-        /// terminate(v)` (siehe Ast.CatchThreadsDecl/CatchTerminateDecl-Doku).
+        /// <summary>Common body resolution for `catch threads(...)`/`catch
+        /// terminate(v)` (see Ast.CatchThreadsDecl/CatchTerminateDecl documentation)
+        /// - exactly the same isolation as ResolveFireStmt (own, empty
+        /// global scope, `return` forbidden), for the same reason: the
+        /// handler body later runs as an independent proto of its own,
+        /// nested into ANY VM instance (see VM.
+        /// HandleDeliveredThreadException/RunTerminateHandlerIfAny), not in the
+        /// lexical context of its declaration.</summary>
+        /// <summary>Common body resolution for `catch threads(...)`/`catch
+        /// terminate(v)` (see Ast.CatchThreadsDecl/CatchTerminateDecl documentation).
         ///
-        /// WICHTIG, anders als bei ResolveFireStmt: der gebundene Parameter
-        /// (`e`/`v`) muss LOKAL aufgelöst werden (`ResolvedRef.Local`), NICHT
-        /// global (`ResolvedRef.Global`) - der Handler läuft NICHT auf einer
-        /// eigenen, frischen VM-Instanz mit eigenem globalen Scope (wie ein
-        /// fire-Block), sondern GENESTET INNERHALB der jeweils zustellenden
-        /// VM-Instanz (siehe VM.HandleDeliveredThreadException/
-        /// RunTerminateHandlerIfAny), die IHR EIGENES `_globalScope`-Feld
-        /// weiterhin für das Hauptprogramm benutzt. Eine globale Auflösung
-        /// des Parameters würde deshalb mit dessen SLOT 0 kollidieren (z.B.
-        /// mit der ersten `var`-Deklaration des Hauptprogramms) - der
-        /// Parameter braucht daher denselben Scope-Aufbau wie eine Lambda
-        /// (`new ResolverScope(_globalScope)`, NICHT `isGlobal: true`): sieht
-        /// die echten Globals zum NAMEN-Nachschlagen, wird selbst aber als
-        /// LOKALE Variable von Tiefe 0 registriert - exakt das, was
-        /// `handlerScope.DefineSlot(...)` in der VM zur Laufzeit befüllt.</summary>
+        /// IMPORTANT, unlike with ResolveFireStmt: the bound parameter
+        /// (`e`/`v`) must be resolved LOCALLY (`ResolvedRef.Local`), NOT
+        /// globally (`ResolvedRef.Global`) - the handler does NOT run on an
+        /// own, fresh VM instance with its own global scope (like a
+        /// fire block), but NESTED INSIDE the respective delivering
+        /// VM instance (see VM.HandleDeliveredThreadException/
+        /// RunTerminateHandlerIfAny), which uses ITS OWN `_globalScope` field
+        /// continues for the main program. A global resolution
+        /// of the parameter would therefore collide with its SLOT 0 (e.g.
+        /// with the first `var` declaration of the main program) - the
+        /// parameter therefore needs the same scope structure as a lambda
+        /// (`new ResolverScope(_globalScope)`, NOT `isGlobal: true`): sees
+        /// the real globals for NAME lookup, but is itself registered as a
+        /// LOCAL variable of depth 0 - exactly what
+        /// `handlerScope.DefineSlot(...)` in the VM fills at runtime.</summary>
         private void ResolveGlobalHandlerBody(string? varName, Stmt.BlockStmt body)
         {
             var saved = _current;
@@ -1912,11 +1912,11 @@ namespace fire.Compiler
             _current = saved;
         }
 
-        /// <summary>Lambda-Captures (SPEC 4.2): Jeder Name, den der Körper benutzt und der im UMSCHLIESSENDEN Code eine lokale Variable (oder ein
-        /// Parameter) ist - nicht global, nicht Parameter der Lambda -, wird beim Erzeugen der Lambda als WERT kopiert und liegt im Lambda-Scope
-        /// als Slot direkt hinter den Parametern. Die Namen werden vorab über den ganzen Körper gesammelt (auch in verschachtelten Lambdas),
-        /// weil die Slot-Nummern feststehen müssen, bevor der Körper aufgelöst wird; ein zu viel erfasster Name (im Körper neu deklariert)
-        /// kostet nur eine Kopie, siehe Define.</summary>
+        /// <summary>Lambda captures (SPEC 4.2): every name that the body uses and that is a local variable (or a
+        /// parameter) in the ENCLOSING code - not global, not a parameter of the lambda - is copied as a VALUE when the lambda is created and lies in the lambda scope
+        /// as a slot directly behind the parameters. The names are collected beforehand over the whole body (also in nested lambdas),
+        /// because the slot numbers must be fixed before the body is resolved; a name captured too many times (newly declared in the body)
+        /// costs only a copy, see Define.</summary>
         private void DefineCaptures(LambdaExpr lambda, ResolverScope enclosing)
         {
             var names = new List<string>();
@@ -1946,7 +1946,7 @@ namespace fire.Compiler
             if (captures != null) _refs[lambda] = new ResolvedRef.LambdaCaptures(captures);
         }
 
-        /// <summary>Steckt der gerade aufgelöste Code in einer Lambda mit `on ziel`? Dann sind unbekannte Namen Mitglieder des gebundenen Objekts.</summary>
+        /// <summary>Is the code currently being resolved inside a lambda with `on target`? Then unknown names are members of the bound object.</summary>
         private bool _inBoundLambda;
 
         private void ResolveLambda(LambdaExpr lambda)
@@ -1966,19 +1966,19 @@ namespace fire.Compiler
             var enclosing = _current;
             _current = new ResolverScope(_globalScope);
 
-            // Ein Lambda, das INNERHALB eines Konstruktors definiert wird, läuft
-            // typischerweise erst SPÄTER (nach Abschluss der Konstruktion) -
-            // 'this.readonlyFeld = ...' darin wäre daher nicht sicher als
-            // "noch während der Konstruktion" einzustufen. Für die Dauer des
-            // Lambda-Bodies also bewusst so behandeln, als wäre man NICHT im
-            // Konstruktor, unabhängig vom umgebenden Kontext.
+            // A lambda defined INSIDE a constructor typically runs
+            // only LATER (after construction is complete) -
+            // 'this.readonlyField = ...' in it could therefore not be classified safely as
+            // "still during construction". For the duration of the
+            // lambda body deliberately treat it as if one were NOT in the
+            // constructor, regardless of the surrounding context.
             bool savedInConstructor = _inConstructor;
             _inConstructor = false;
 
-            // Standardwerte VOR dem Definieren der Parameter auflösen (siehe
-            // ResolveParamDefaults-Kommentar) - der Scope hier ist noch leer
-            // (nur global als Parent), also automatisch isoliert von den
-            // eigenen Parametern.
+            // Resolve default values BEFORE defining the parameters (see
+            // ResolveParamDefaults comment) - the scope here is still empty
+            // (only global as parent), so automatically isolated from the
+            // own parameters.
             ValidateOptionalParamsAreTrailing(lambda.Params, lambda.Line);
             foreach (var p in lambda.Params)
                 if (p.DefaultValue != null)
@@ -2010,9 +2010,9 @@ namespace fire.Compiler
         }
     }
 
-    /// <summary>Sammelt per Reflection alle Bezeichner (<see cref="IdentifierExpr"/>) unterhalb eines AST-Knotens, in der Reihenfolge des
-    /// ersten Auftretens - unabhängig davon, welche Knotentypen es gibt (neue Syntax braucht hier keine Pflege). Nur für den Resolver,
-    /// einmal je Lambda.</summary>
+    /// <summary>Collects via reflection all identifiers (<see cref="IdentifierExpr"/>) below an AST node, in the order of
+    /// first occurrence - independent of which node types exist (new syntax needs no maintenance here). Only for the resolver,
+    /// once per lambda.</summary>
     internal static class AstNames
     {
         private static readonly Dictionary<Type, System.Reflection.MemberInfo[]> Members = new();

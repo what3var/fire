@@ -42,12 +42,12 @@ namespace fire.Compiler
 
         protected NativeRegistry? nativeRegistry { get; set; }
 
-        /// <summary>Policy und Konsole des Hosts für die Natives von Paketen (siehe PackageHost): schließt am Ende alle Streams, die ein Skript offen
-        /// gelassen hat. Wer die VM selbst treibt (z.B. der Step-Debugger), ruft das nach dem Lauf auf.</summary>
+        /// <summary>Policy and console of the host for the natives of packages (see PackageHost): at the end closes all streams that a script left open
+        /// open. Whoever drives the VM itself (e.g. the step debugger) calls this after the run.</summary>
         protected IDisposable? IoResources { get; set; }
 
-        /// <summary>Räumt die Geräte-Brücke nach dem Lauf auf: löst die Empfangs-Haken und gibt einen NICHT geteilten
-        /// Manager frei (siehe DeviceBridge.RegisterAll).</summary>
+        /// <summary>Cleans up the device bridge after the run: releases the receive hooks and releases a NON-shared
+        /// manager (see DeviceBridge.RegisterAll).</summary>
         protected IDisposable? DeviceResources { get; set; }
 
         public void CloseHostResources()
@@ -56,9 +56,9 @@ namespace fire.Compiler
             DeviceResources?.Dispose();
         }
 
-        /// <summary>Führt das Programm auf dem aufrufenden Thread bis zum Ende aus (normales Ende, `leave`,
-        /// `terminate` oder unbehandelte Exception, siehe <see cref="VM.UnhandledException"/>) und schließt danach die
-        /// vom Skript offen gelassenen Handles.</summary>
+        /// <summary>Runs the program on the calling thread to the end (normal end, `leave`,
+        /// `terminate` or unhandled exception, see <see cref="VM.UnhandledException"/>) and afterwards closes the
+        /// handles left open by the script.</summary>
         public void Run()
         {
             if (VirtualMachine == null) return;
@@ -90,30 +90,30 @@ namespace fire.Compiler
                 message => Console.WriteLine($"(unhandled exception in the callback: {message})"), owner: VirtualMachine);
         }
 
-        /// <summary>Baut die DirectiveRegistry, die reale Programme (siehe
-        /// Build) UND die Live-Diagnostik (siehe Editor.LiveDiagnostics)
+        /// <summary>Builds the DirectiveRegistry that real programs (see
+        /// Build) AND the live diagnostics (see Editor.LiveDiagnostics)
         /// gleichermaßen nutzen - genau EINE Stelle, die weiß, welche
-        /// benutzerdefinierten Präprozessor-Direktiven es gibt (aktuell:
-        /// `#import "extension"`, siehe ImportedPreludes), damit beide IMMER
-        /// im Gleichschritt bleiben. Ohne das würde eine hier erkannte Direktive in der
-        /// Live-Diagnostik weiterhin fälschlich als "unbekannte Direktive"
-        /// unterkringelt, obwohl sie beim echten Kompilieren längst
-        /// akzeptiert wird (der Preprocessor lässt jede NICHT hier
-        /// registrierte Direktive unverändert im Text stehen, der Parser
-        /// kennt sie dann seinerseits nicht und wirft, siehe Parsing.
-        /// Preprocessor-Klassendoku/Parser.ParseDirective).
+        /// user-defined preprocessor directives exist (currently:
+        /// `#import "extension"`, see ImportedPreludes), so that both ALWAYS
+        /// stay in step. Without that, a directive recognised here would
+        /// continue to be wrongly squiggled in the live diagnostics as "unknown directive",
+        /// although it is long
+        /// accepted in real compiling (the preprocessor leaves every directive NOT
+        /// registered here unchanged in the text, the parser
+        /// then does not know it either and throws, see Parsing.
+        /// Preprocessor class documentation/Parser.ParseDirective).
         ///
-        /// `onImport`: Callback für eine ERKANNTE `#import "name"`-
-        /// Direktive, mit dem Schlüssel der Erweiterung aus NativeImports
-        /// (z.B. um die Grafik-Bridge tatsächlich zu laden, oder - in der
-        /// Live-Diagnostik - um deren Prelude einzusetzen) - `null`, wenn
-        /// der Aufrufer nur wissen will "ist das syntaktisch eine gültige
-        /// Direktive", ohne ihre eigentliche Wirkung auszulösen. Eine UNBEKANNTE Erweiterung (`#import
-        /// "unfug"`) wirft weiterhin - das ist ein ECHTER Fehler, kein
-        /// reines "kennt die Live-Diagnostik das nur (noch) nicht".</summary>
+        /// `onImport`: callback for a RECOGNISED `#import "name"`
+        /// directive, with the key of the extension from NativeImports
+        /// (e.g. to actually load the graphics bridge, or - in the
+        /// live diagnostics - to insert its prelude) - `null` if
+        /// the caller only wants to know "is this syntactically a valid
+        /// directive", without triggering its actual effect. An UNKNOWN extension (`#import
+        /// "nonsense"`) still throws - that is a REAL error, not
+        /// merely "the live diagnostics just do not know it (yet)".</summary>
         public static DirectiveRegistry CreateProjectDirectiveRegistry(Action<string>? onImport = null, IEnumerable<string>? defines = null, Func<string, bool>? tryLibrary = null)
         {
-            var registry = new DirectiveRegistry(); // komplett leer, NICHT CreateDefault()
+            var registry = new DirectiveRegistry(); // completely empty, NOT CreateDefault()
             foreach (var symbol in ConditionalSymbols.For(null, ConditionalSymbols.DefaultEngine, null, defines)) registry.Symbols.Add(symbol); // `#if windows`: the machine the VM runs on
             registry.Register("import", 1, (ctx, args, line) =>
             {
@@ -146,8 +146,8 @@ namespace fire.Compiler
             }
             natives.RegisterBaseTypeNatives(linkedProgram.Program.Resources);
 
-            // WICHTIG: native Funktionen werden über ihren INDEX angesprungen - die Reihenfolge der Registrierung muss
-            // exakt der beim Übersetzen entsprechen (siehe ImportedPreludes.Insert): graphics, windows, reflection, time, devices, io.
+            // IMPORTANT: native functions are jumped to via their INDEX - the order of registration must
+            // exactly match that when translating (see ImportedPreludes.Insert): graphics, windows, reflection, time, devices, io.
             FramebufferManager? fbManager = null;
             RendererManager? rendererManager = null;
             WindowManager? windowManager = null;
@@ -160,7 +160,7 @@ namespace fire.Compiler
                 fbManager = new FramebufferManager();
                 rendererManager = new RendererManager(fbManager, font);
 
-                // Bilddateien (Framebuffer.FromFile) liest das Programm nur, wo die IoPolicy des Hosts das Lesen erlaubt (wie IO.File)
+                // The program reads image files (Framebuffer.FromFile) only where the host's IoPolicy allows reading (like IO.File)
                 var imagePolicy = ioPolicy ?? fire.IO.Bridge.IoPolicy.AllowAll;
                 GraphicsBridge.RegisterAll(natives, fbManager, rendererManager, path =>
                 {
@@ -170,7 +170,7 @@ namespace fire.Compiler
                     return File.ReadAllBytes(fullPath);
                 });
 
-                // `#import "windows"`: das SDL-Fenster zum Framebuffer (direkt hinter graphics registriert, wie beim Uebersetzen)
+                // `#import "windows"`: the SDL window for the framebuffer (registered directly behind graphics, as when translating)
                 if (linkedProgram.NativeImports.Contains(NativeImports.Windows))
                 {
                     windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v), windowRenderer);   // windowRenderer: null = a SDL window
@@ -181,8 +181,8 @@ namespace fire.Compiler
             if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
                 ReflectionNatives.Register(natives);
 
-            // `ioPolicy`: was Skripte im Dateisystem anfassen dürfen, `ioStdio`: wohin IO.Stdio führt - beides entscheidet der HOST (siehe IoPolicy/IoStdio),
-            // Vorgabe: alles erlaubt, echte Konsole. Die Natives von `io` sind C++ in einer Bibliothek und fragen den Host über PackageHost.
+            // `ioPolicy`: what scripts may touch in the file system, `ioStdio`: where IO.Stdio leads - both decided by the HOST (see IoPolicy/IoStdio),
+            // default: everything allowed, real console. The natives of `io` are C++ in a library and ask the host via PackageHost.
             IDisposable? ioResources = null;
             if (linkedProgram.PackageNatives is { Count: > 0 })
                 ioResources = PackageHost.Begin(ioPolicy, ioStdio, linkedProgram.NativeImports.Contains("pkg:devices"), deviceManager, netPolicy);   // `deviceManager`: the manager of the host (e.g. the shared one of the editor); without it the program gets one with the built-in drivers, freed after the run
