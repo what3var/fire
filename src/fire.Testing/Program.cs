@@ -29,8 +29,8 @@ IDisposable UseIoPackage(NativeRegistry natives, fire.IO.Bridge.IoPolicy? policy
     return fire.Runtime.PackageHost.Begin(policy, stdio);
 }
 
-// Kleiner manueller Smoke-Test für Lexer + Parser + Unit-System, bis der
-// Evaluator existiert. Bei dir lokal: `dotnet run` im src/fire-Ordner.
+// Small manual smoke test for lexer + parser + unit system, until the
+// evaluator exists. Locally for you: `dotnet run` in the src/fire folder.
 
 string sample = """
 int a = 5mm
@@ -76,7 +76,7 @@ if (a is of int) {
 }
 
 if (!(a is of float)) {
-    // Präfix-'!' negiert einen geklammerten Ausdruck
+    // prefix '!' negates a parenthesised expression
 }
 
 if (foo is from objList) {
@@ -127,7 +127,7 @@ foreach (var token in tokens)
     Console.WriteLine(token);
 }
 
-// Token.Length = Laenge im Quelltext (Editor-Hervorhebung): Anfuehrungszeichen, Escapes, `$"..."` und Char-Literale zaehlen mit.
+// Token.Length = length in the source text (editor highlighting): quotation marks, escapes, `$"..."` and char literals count as well.
 {
     string src = "var a = \"x\\ny\" + $\"v{1}\" + 'c' + 42mm";
     var lengths = new Lexer(src).Tokenize().Where(t => t.Type is TokenType.StringLiteral or TokenType.InterpolatedStringLiteral or TokenType.CharLiteral or TokenType.IntLiteral)
@@ -300,7 +300,7 @@ Console.WriteLine($"b is under globalScope? {objB.IsTransitivelyOwnedBy(globalSc
 
 try
 {
-    objA.TakeTo(objB, log); // a gehört global, b gehört a -> a->b wäre ein Zyklus
+    objA.TakeTo(objB, log); // a belongs globally, b belongs to a -> a->b would be a cycle
     Console.WriteLine("FEHLER: Zyklus wurde nicht erkannt!");
 }
 catch (OwnershipException ex)
@@ -797,8 +797,8 @@ try
     var vmGlobalScope = new Scope(null, isGlobal: true);
     var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes);
     vm.Run();
-    // Kein throw mehr - Run() kehrt normal zurück, VM.UnhandledException
-    // trägt die nicht abgefangene Exception (siehe VM.UnhandledException-Doku).
+    // No throw any more - Run() returns normally, VM.UnhandledException
+    // carries the uncaught exception (see the VM.UnhandledException documentation).
     if (vm.UnhandledException == null)
         Console.WriteLine("FEHLER: vm.UnhandledException hätte gesetzt sein müssen");
     else
@@ -1064,7 +1064,7 @@ try
 
     Console.WriteLine("Ausgabe (erwartet: Text, dann eine klare Fehlermeldung, kein Absturz mit Stacktrace):");
     var vmGlobalScope = new Scope(null, isGlobal: true);
-    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes); // bewusst OHNE ExternRegistry
+    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes); // deliberately WITHOUT ExternRegistry
     vm.Run();
 }
 catch (Exception ex) when (ex is ParseException or ResolverException or NotSupportedException or InvalidOperationException)
@@ -1161,9 +1161,9 @@ print("weiter nach try/catch")
 var list = new List()
 list.Add(1)
 try {
-    // List legt intern physisch 8 Slots an (siehe Prelude, verdoppelt sich
-    // erst bei Bedarf) - erst ein Index jenseits DIESER physischen Kapazität
-    // (nicht nur jenseits von .Add()-Count) triggert den Bounds-Check.
+    // List physically allocates 8 slots internally (see Prelude, doubles
+    // only when needed) - only an index beyond THIS physical capacity
+    // (not just beyond the .Add() count) triggers the bounds check.
     list[20] = 99
 } catch (IndexOutOfBoundsException e) {
     print("auch ueber List[] gefangen: " + e.index)
@@ -1237,8 +1237,8 @@ try
 
     Console.WriteLine("Ausgabe (erwartet: eine Zahl != 0 (Tickcount), dann eine MessageBox - nur unter Windows lauffähig, da kernel32/user32 nur dort existieren):");
     var vmGlobalScope = new Scope(null, isGlobal: true);
-    // Bewusst OHNE ExternRegistry - beide Funktionen sollen rein über die
-    // '#extern'-Direktiven dynamisch verlinkt werden (VM.ResolveDynamicExtern).
+    // Deliberately WITHOUT ExternRegistry - both functions are to be linked dynamically purely via the
+    // '#extern' directives (VM.ResolveDynamicExtern).
     var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes, externSignatures: compiled.ExternSignatures);
     vm.Run();
 }
@@ -1251,18 +1251,18 @@ catch (Exception ex)
     Console.WriteLine($"Laufzeitfehler beim dynamischen Linking (erwartbar außerhalb von Windows): {ex.Message}");
 }
 
-// Liefert das TestData-Verzeichnis relativ zu DIESER Quelldatei, unabhängig
-// vom aktuellen Arbeitsverzeichnis beim Ausführen (dotnet run kann von
-// verschiedenen Orten aus gestartet werden).
+// Returns the TestData directory relative to THIS source file, independent
+// of the current working directory at execution (dotnet run can be started from
+// different places).
 static string GetTestDataDir([System.Runtime.CompilerServices.CallerFilePath] string here = "") =>
     Path.Combine(Path.GetDirectoryName(here)!, "TestData");
 
-// Test-Hilfsfunktion: jagt jede der `sources` durch den echten Preprocessor
-// (erkennt/entfernt dabei #include/#using wie ein normaler Aufrufer das
-// tun würde, siehe RuntimeSession.Build für dasselbe Muster in "echt") und
-// liefert die daraus entstehenden ProcessedSource-Objekte, die Parser.
-// ParseMultiple jetzt direkt erwartet. `basePath` nur für #include-
-// Pfadauflösung relevant, für die meisten Tests ohne Bedeutung.
+// Test helper function: runs each of the `sources` through the real preprocessor
+// (which recognises/removes #include/#using as a normal caller would
+// do, see RuntimeSession.Build for the same pattern "for real") and
+// returns the resulting ProcessedSource objects, which Parser.
+// ParseMultiple now expects directly. `basePath` is only relevant for #include
+// path resolution, of no significance for most tests.
 static IReadOnlyList<ProcessedSource> Preprocessed(string basePath, params string[] sources)
 {
     var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -2587,8 +2587,8 @@ catch (Exception ex) when (ex is ParseException or ResolverException or NotSuppo
 
 // =====================================================================
 // Multithreading-Architektur (docs/THREADING_DESIGN.md): Threads + Locking
-// + taking-Kopie + sync - alles über die C#-API direkt getestet, noch ohne
-// Parser-/Sprachsyntax für fire/taking/sync/process/leave/terminate.
+// + taking copy + sync - everything tested directly via the C# API, still without
+// parser/language syntax for fire/taking/sync/process/leave/terminate.
 // =====================================================================
 
 Console.WriteLine();
@@ -2621,7 +2621,7 @@ try
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
     var vmGlobalScope = new Scope(null, isGlobal: true);
-    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes) { DestroyGlobalsAtEnd = false }; // die Objekte werden danach noch von Hand an Threads gegeben
+    var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes) { DestroyGlobalsAtEnd = false }; // the objects are afterwards still handed to threads by hand
     vm.Run();
 
     var player = (ObjectInstance)vmGlobalScope.GetSlot(0).AsObjectRef();
@@ -2769,9 +2769,9 @@ try
     var independent = new ObjectInstance(dummyClass3, scopeA);
 
     var root = new ObjectInstance(dummyClass3, scopeA);
-    // Absichtlich OHNE Reparenting gesetzt - simuliert eine baumfremde
-    // Referenz, wie sie normale Feldzuweisung (die per Ownership-Politik
-    // reparentet) so eigentlich nicht erzeugen würde.
+    // Deliberately set WITHOUT reparenting - simulates a reference foreign to the
+    // tree, as normal field assignment (which reparents per the ownership
+    // policy) would not actually produce.
     root.Fields["escapesTree"] = Value.MakeClassRef(independent);
 
     var childScope3 = new Scope(null, isGlobal: true);
@@ -2805,12 +2805,12 @@ class Player {
 var player = new Player()
 """;
 
-// Das Fire-Thread-Skript kennt 'Player' nicht (eigenes, separat kompiliertes
-// Programm) - das ist unproblematisch, da Feldzugriff ('player.health')
-// immer ein reiner Laufzeit-Namens-Lookup ist, keine Compile-Zeit-Prüfung
-// gegen eine Klassendefinition braucht. '__fireArg'/'__sync' sind gewöhnliche
-// native Funktionen (siehe FireRuntime.FireVm-Doku) - die Brücke zur
-// 'taking'-Kopie bzw. zu SyncEngine, ganz ohne Parser-Änderung.
+// The fire thread script does not know 'Player' (its own, separately compiled
+// program) - that is unproblematic, since field access ('player.health')
+// is always a pure runtime name lookup, and needs no compile-time check
+// against a class definition. '__fireArg'/'__sync' are ordinary
+// native functions (see the FireRuntime.FireVm documentation) - the bridge to
+// the 'taking' copy and to SyncEngine, without any parser change.
 string mtFireScript = """
 var player = __fireArg()
 player.health = player.health - 10
@@ -2841,8 +2841,8 @@ try
     {
         var obj = (ObjectInstance)args[0].AsObjectRef();
         var result = SyncEngine.Sync(obj, blocking: true);
-        // Dieselbe Abbildung, die später auch die echte Sprachsyntax nutzen
-        // wird (siehe docs/THREADING_DESIGN.md 4.1): true/false/undefined.
+        // The same mapping that the real language syntax will use later
+        // (see docs/THREADING_DESIGN.md 4.1): true/false/undefined.
         return result switch
         {
             SyncResult.Success => Value.MakeBool(true),
@@ -3044,9 +3044,9 @@ try
     handlerVm.Run();
 
     var handlerLambda = (LambdaValue)handlerScope.GetSlot(0).AsLambda();
-    // typeName: null -> entspricht 'catch threads()' (fängt alles, wie ein
-    // bloßes catch(e)) - vermeidet, dass der Main-Thread 'MyError' als
-    // Klasse kennen müsste (die beiden Programme sind separat kompiliert).
+    // typeName: null -> corresponds to 'catch threads()' (catches everything, like a
+    // bare catch(e)) - avoids the main thread having to know 'MyError' as a
+    // class (the two programs are compiled separately).
     GlobalHandlers.RegisterThreadsCatch(null, handlerLambda.Proto);
 
     var mainNatives = NativeRegistry.CreateDefault();
@@ -3162,7 +3162,7 @@ try
     var vmGlobalScope = new Scope(null, isGlobal: true);
     var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes);
     vm.Run();
-    System.Threading.Thread.Sleep(200); // nur für saubere Test-Ausgabe-Reihenfolge, keine Sprachanforderung
+    System.Threading.Thread.Sleep(200); // only for a clean test output order, no language requirement
 }
 catch (Exception ex)
 {
@@ -3936,15 +3936,15 @@ catch (Exception ex)
 Console.WriteLine();
 Console.WriteLine("=== Operatoren: '<<'/'>>' kollidieren nicht mit generischen Typargumenten ===");
 
-// Hinweis: VERSCHACHTELTE generische Typ-ARGUMENTE an der Verwendungsstelle
-// (z.B. 'new Box<Box<int>>(...)') werden von diesem Parser unabhängig von
-// dieser Änderung noch NICHT unterstützt (ParseOptionalTypeParamNames liest
-// jedes Typ-Argument nur als einfachen Namen, ohne selbst wieder rekursiv
-// eigene '<...>' zuzulassen) - das ist eine bereits vorher bestehende,
-// von den neuen Operatoren unabhängige Einschränkung. Dieser Test prüft
-// deshalb bewusst nur EINSTUFIGE Generics (die einzige unterstützte Form)
-// direkt NEBEN einem '>>'-Shift, um zu belegen, dass beide sich nicht in
-// die Quere kommen.
+// Note: NESTED generic type ARGUMENTS at the point of use
+// (e.g. 'new Box<Box<int>>(...)') are, independently of
+// this change, still NOT supported by this parser (ParseOptionalTypeParamNames reads
+// each type argument only as a simple name, without itself allowing
+// its own '<...>' recursively) - that is a restriction that already existed,
+// independent of the new operators. This test checks
+// therefore deliberately only SINGLE-level generics (the only supported form)
+// directly NEXT TO a '>>' shift, to prove that the two do not
+// get in each other's way.
 string genericsNoCollisionSample = """
 class Wrapper<T> {
     T value
@@ -4313,10 +4313,10 @@ try
     int attemptCount = 0;
     natives.RegisterTryable("TryReadSensor", (Value[] args, out Value result) =>
     {
-        // Demonstriert, dass die Host-Implementierung die Einheit eines
-        // Timeout-Arguments direkt auslesen kann (Value.Unit ist bereits
-        // oeffentlich) - unabhaengig davon, ob der Aufruf letztlich
-        // erfolgreich ist oder nicht.
+        // Demonstrates that the host implementation can read the unit of a
+        // timeout argument directly (Value.Unit is already
+        // public) - regardless of whether the call is
+        // ultimately successful or not.
         var timeoutVal = args[0];
         Console.WriteLine($"  (native Seite: Timeout-Argument hat Einheit '{timeoutVal.Unit}', Rohwert {timeoutVal.AsInt()})");
 
@@ -4324,7 +4324,7 @@ try
         if (attemptCount == 1)
         {
             result = default;
-            return false; // simulierter Timeout beim ersten Versuch
+            return false; // simulated timeout on the first attempt
         }
         result = Value.MakeInt(42);
         return true;
@@ -4378,10 +4378,10 @@ try
     var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes);
     vm.Run();
 
-    // Simuliert den nativen Host, der spaeter (z.B. von einem anderen
-    // Thread, hier der Einfachheit halber synchron) ein Event feuert -
-    // der Snapshot wird HIER genommen, waehrend das Hauptprogramm gerade
-    // NICHT laeuft (siehe VM.SnapshotGlobals-Doku).
+    // Simulates the native host that later (e.g. from another
+    // thread, here synchronously for simplicity) fires an event -
+    // the snapshot is taken HERE, while the main program is currently
+    // NOT running (see the VM.SnapshotGlobals documentation).
     var snapshot = vm.SnapshotGlobals();
     Console.WriteLine("Simuliertes natives Event feuert 'OnTick' mit n=5 auf einer isolierten Kopie:");
     if (registeredCallbacks.TryGetValue("OnTick", out var cb))
@@ -4405,12 +4405,12 @@ Console.WriteLine("=== Freie Praeprozessor-Direktiven: #name wert1, wert2, ... =
 
 try
 {
-    var registry = new DirectiveRegistry(); // komplett leer, NICHT CreateDefault()
+    var registry = new DirectiveRegistry(); // completely empty, NOT CreateDefault()
     var receivedArgs = new List<Value>();
     registry.Register("mydirective", 4, (ctx, args, line) =>
     {
         receivedArgs.AddRange(args);
-        return null; // erzeugt keinen Ersatz-Text
+        return null; // produces no replacement text
     });
 
     string source = """
@@ -4451,7 +4451,7 @@ Console.WriteLine("=== Unbekannte Direktive (z.B. '#extern'/'#noshadow') wird un
 
 try
 {
-    var registry = new DirectiveRegistry(); // 'extern' ist hier NICHT registriert
+    var registry = new DirectiveRegistry(); // 'extern' is NOT registered here
     string source = "#extern \"kernel32.dll\"\nprint(\"x\")\n";
     string result = Preprocessor.Process(source, "/home/claude", registry).Source;
     Console.WriteLine("Zeile blieb erhalten (erwartet true): " + result.Contains("#extern \"kernel32.dll\""));
@@ -4474,16 +4474,16 @@ try
     string rootA = "#include \"shared.txt\"\nprint(\"A\")\n";
     string rootB = "#include \"shared.txt\"\nprint(\"B\")\n";
 
-    // Altes Verhalten (zwei UNABHAENGIGE Process()-Aufrufe, je eigene Menge) -
-    // die Markierung landet zweimal in der Summe.
+    // Old behaviour (two INDEPENDENT Process() calls, each with its own set) -
+    // the mark ends up twice in the sum.
     string outA = Preprocessor.Process(rootA, tmpDir).Source;
     string outB = Preprocessor.Process(rootB, tmpDir).Source;
     int countIndependent = CountOccurrences(outA + outB, "GEMEINSAM_INKLUDIERTE_MARKIERUNG");
     Console.WriteLine($"Getrennte Process()-Aufrufe: Markierung {countIndependent}x (erwartet 2x, je einmal pro Aufruf).");
 
-    // Neues Verhalten: EINE geteilte 'alreadyIncluded'-Menge ueber BEIDE
-    // Aufrufe hinweg (wie RuntimeSession.Build es jetzt fuer Prelude +
-    // Nutzer-Code macht) - die Markierung landet nur noch EINMAL insgesamt.
+    // New behaviour: ONE shared 'alreadyIncluded' set across BOTH
+    // calls (as RuntimeSession.Build now does it for prelude +
+    // user code) - the mark ends up only ONCE in total.
     var shared = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
     string outA2 = Preprocessor.Process(rootA, tmpDir, shared).Source;
     string outB2 = Preprocessor.Process(rootB, tmpDir, shared).Source;
@@ -4531,10 +4531,10 @@ foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmE
     }
     catch (System.Exception ex)
     {
-        // Nur im Performance-Modus erwartet - der ungültige arr[10]-Zugriff
-        // schlägt dort als rohe, ungefangene .NET-Exception durch, statt
-        // (wie in Debug/Release) sauber per catch(e : IndexOutOfBoundsException)
-        // im Skript selbst behandelt zu werden.
+        // Only expected in performance mode - the invalid arr[10] access
+        // breaks through there as a raw, uncaught .NET exception, instead of
+        // being handled cleanly in the script itself via catch(e : IndexOutOfBoundsException)
+        // (as in debug/release).
         Console.WriteLine($"Roh durchgeschlagene Exception ({ex.GetType().Name}): {ex.Message}");
     }
 }
@@ -4559,7 +4559,7 @@ string accessTestScript = """
 
     class Derived : Base {
         public int TryReadShared() {
-            // protected - von einer abgeleiteten Klasse aus erlaubt
+            // protected - allowed from a derived class
             return this.shared
         }
     }
@@ -4672,13 +4672,13 @@ catch (System.Exception ex)
 Console.WriteLine();
 Console.WriteLine("=== ParseMultiple: Top-Level-Code in ZWEI verschiedenen (nicht-letzten) Dateien mit eigenem #using ===");
 
-// Genau das Szenario, das mit einer einzigen programmweiten Usings-Liste
-// nicht funktionieren wuerde: HIER hat sowohl fileA (nicht die letzte
-// Quelle!) als auch mainFile eigenen Top-Level-Code, der jeweils eine
-// ANDERE, gleichnamige Klasse unqualifiziert referenziert. Jede TypeRef
-// traegt ihren eigenen Namespace-Kontext direkt an sich selbst (siehe
-// Ast.TypeRef.Namespaces), deshalb funktioniert das jetzt unabhaengig
-// davon, in welcher Datei/an welcher Position eine Referenz steht.
+// Exactly the scenario that would not work with a single program-wide usings list:
+// HERE both fileA (not the last
+// source!) and mainFile have top-level code of their own, each referencing a
+// DIFFERENT class of the same name unqualified. Each TypeRef
+// carries its own namespace context directly on itself (see
+// Ast.TypeRef.Namespaces), which is why this now works independently
+// of which file/at which position a reference stands.
 string twoTopLevelFileA = """
     namespace LibA {
         class Helper {
@@ -4727,11 +4727,11 @@ catch (System.Exception ex)
 Console.WriteLine();
 Console.WriteLine("=== ParseMultiple: lokale #using-Sichtbarkeit pro Datei ===");
 
-// Absichtlich derselbe einfache Klassenname 'Helper' in ZWEI verschiedenen
-// Namespaces - mit programmweiten (statt lokalen) Usings wäre das
-// zweideutig: 'new Helper()' in fileB müsste eigentlich LibB.Helper
-// treffen, würde bei global geteilten Usings aber leicht (je nach
-// Reihenfolge) fälschlich LibA.Helper treffen.
+// Deliberately the same simple class name 'Helper' in TWO different
+// namespaces - with program-wide (instead of local) usings that would be
+// ambiguous: 'new Helper()' in fileB should actually hit LibB.Helper,
+// but with globally shared usings it would easily (depending on the
+// order) wrongly hit LibA.Helper.
 string fileA = """
     namespace LibA {
         class Helper {
@@ -5132,8 +5132,8 @@ Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden übe
         """;
 
     int completionFailures = 0;
-    // '|' im Quelltext = Cursor-Position. `expected`: diese Namen MÜSSEN vorgeschlagen
-    // werden, `forbidden`: diese DÜRFEN NICHT (Komma-getrennt).
+    // '|' in the source = cursor position. `expected`: these names MUST be suggested,
+    // `forbidden`: these MUST NOT be (comma-separated).
     void CheckCompletion(string title, string source, string expected, string forbidden = "", bool exact = false)
     {
         int cursor = source.IndexOf('|');
@@ -5149,7 +5149,7 @@ Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden übe
 
     CheckCompletion("typisierte Variable", classes + "Dog d = new Dog(\"a\")\nd.|", "Bark,Wag,tail,name,Speak", "Curl,Count,age,secret,Dog");
     CheckCompletion("typisierte Variable ohne Initialisierer", classes + "Dog d\nd.|", "Bark,Wag,tail,name,Speak", "Curl,Count,age,secret,Dog");
-    // 'var x : einheit' legt nur eine Einheit fest, der Typ kommt aus dem Initialisierer.
+    // 'var x : unit' only fixes a unit, the type comes from the initialiser.
     CheckCompletion("var mit Einheit", classes + "var d : mm = new Dog(\"a\")\nd.|", "Bark,Wag", "Curl");
     CheckCompletion("var = new X()", classes + "var d = new Dog(\"a\")\nd.|", "Bark,name,Speak", "Curl,length");
     CheckCompletion("Praefix filtert", classes + "var d = new Dog(\"a\")\nd.Ba|", "Bark", "Speak", exact: true);
@@ -5184,7 +5184,7 @@ Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden übe
     CheckCompletion("Variable aus fremder Methode nicht sichtbar -> Fallback", "class A { M() { var q = new B() }\n N() { q.| } }\nclass B { Z() {} }", "Z");
     CheckCompletion("unbestimmbar -> Fallback auf alle Klassen", classes + "var d = something()\nd.|", "Bark,Curl");
     CheckCompletion("Zyklus haengt nicht", "var a = b\nvar b = a\na.|", "");
-    // ---- Namespaces und ihre Mitglieder ----
+    // ---- Namespaces and their members ----
     const string geo = """
         namespace Geometry {
             class Shape { string label
@@ -5241,7 +5241,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
     string ioDirFwd = ioDir.Replace("\\", "/");
     int ioFailures = 0;
 
-    // Führt `script` mit Prelude + IO-Prelude aus und liefert alle `print`-Zeilen.
+    // Runs `script` with prelude + IO prelude and returns all `print` lines.
     List<string> RunIo(string script, fire.IO.Bridge.IoPolicy? policy = null, fire.IO.Bridge.IoStdio? stdio = null)
     {
         var lines = new List<string>();
@@ -5383,7 +5383,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         try { var x = new IO.FileStream("{{ioDirFwd}}/../outside.txt") } catch (IO.PermissionException e) { print("ausserhalb " + e.code) }
         """, new[] { "lesen ok", "schreiben 6", "ausserhalb 6" }, fire.IO.Bridge.IoPolicy.Rooted(ioDir, readOnly: true));
 
-    // ---- Schritt 2: Datei- und Verzeichnis-API ----
+    // ---- Step 2: file and directory API ----
     string apiDir = Path.Combine(ioDir, "api").Replace("\\", "/");
     Directory.CreateDirectory(apiDir);
 
@@ -5824,7 +5824,7 @@ Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...
         Console.WriteLine(ok ? $"OK: {title}" : $"FEHLER: {title}\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", actual)}");
     }
 
-    // Der Fehlertext muss `fragment` enthalten (Parser-/Resolver-/Laufzeitfehler).
+    // The error text must contain `fragment` (parser/resolver/runtime error).
     void CheckExtError(string title, string script, string fragment)
     {
         string actual;
@@ -5906,7 +5906,7 @@ Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...
         try { print("".First()) } catch (IndexOutOfBoundsException e) { print("leer " + e.index) }
         """, "a", "leer 1");
 
-    // Eine Erweiterung von string gilt nur für string - ein int kennt `Foo` nicht (kein Skript-, sondern ein VM-Fehler).
+    // An extension of string only applies to string - an int does not know `Foo` (not a script error, but a VM error).
     CheckExt("Erweiterung gilt nur fuer ihren Typ", """
         class extends string { int Foo() { return 1 } }
         print("s".Foo())
@@ -5931,7 +5931,7 @@ Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...
         print(c.ToByte())
         """, "True", "False", "True", "True", "True", "False", "A", "q", "True", "True", "97", "ab", "97");
 
-    // Die Methode wird über ihre ID gewählt, nicht über den Namen: die native Funktion ist direkt aufrufbar.
+    // The method is chosen via its ID, not via the name: the native function can be called directly.
     CheckExt("native Funktionen nehmen die Methoden-ID", $$"""
         print({{fire.Standard.StringMethods.NativeName}}({{(int)fire.Standard.StringMethod.Substring}}, "hello", 1, 3))
         print({{fire.Standard.StringMethods.NativeName}}({{(int)fire.Standard.StringMethod.ToUpper}}, "hello"))
@@ -6114,8 +6114,8 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         return lines;
     }
 
-    // Jedes Skript läuft in ALLEN drei Modi mit demselben erwarteten Ergebnis (Performance lässt die
-    // Zugriffs-/Grenzprüfungen weg - die Beispiele hier lösen sie deshalb nicht aus, außer wo `modes` es sagt).
+    // Every script runs in ALL three modes with the same expected result (performance omits the
+    // access/bounds checks - the examples here therefore do not trigger them, except where `modes` says so).
     void CheckPerf(string title, string script, string[] expected, VmExecutionMode[]? modes = null)
     {
         foreach (var mode in modes ?? new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
@@ -6220,7 +6220,7 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         print(T.WithLoops(0))
         """, new[] { "4", "4", "undefined", "14", "12", "99", "77" });
 
-    // --- Value: Gleichheit und Arithmetik (kompaktes Layout, Schnellpfade)
+    // --- Value: equality and arithmetic (compact layout, fast paths)
     CheckPerf("Gleichheit: Art, Einheit und Breite", """
         print(1 == 1)
         print(1 == 1.0)
@@ -6263,7 +6263,7 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         print(1mm + 2)
         """, new[] { "AUSNAHME: Incompatible units: 'mm' cannot be converted to 'unitless'." });
 
-    // --- Stack und Scope-Slots wachsen
+    // --- Stack and scope slots grow
     CheckPerf("tiefe Rekursion (Stack und Frames wachsen)", """
         class R { static int Sum(int n) { if (n == 0) { return 0 } return n + R.Sum(n - 1) } }
         print(R.Sum(1500))
@@ -6278,7 +6278,7 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         print(s)
         """, new[] { "28", "210" });
 
-    // --- Inline-Caches: eine Aufrufstelle, mehrere Klassen
+    // --- Inline caches: one call site, several classes
     CheckPerf("polymorphe Aufrufstelle: Klasse wechselt, Override, Feldzugriff", """
         class A { int v; construct() { this.v = 1 } Who() { return "A" + this.v } }
         class B : A { construct() : base() { this.v = 2 } Who() { return "B" + this.v } }
@@ -6821,7 +6821,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
 
         """;
 
-    // ---- Kopien als Parameter: Scope der aufgerufenen Funktion
+    // ---- Copies as parameters: scope of the called function
     CheckLife("Parameter: die Kopie gehoert der aufgerufenen Funktion (auch static/Methode/Lambda)", lifeClasses + """
         class F {
             static Use(b) { b.name = "s"; print("in") }
@@ -6877,7 +6877,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         print(Two(copy new N(1), Id(copy new N(2))))
         """, new[] { "True", "3" });
 
-    // ---- Kopie einem Objekt zugewiesen: das Objekt wird der Owner (wie TakeTo)
+    // ---- Copy assigned to an object: the object becomes the owner (like TakeTo)
     CheckLife("Zuweisung an ein Objekt: Feld, Feld-Initialisierer, bloßer Feldname", lifeClasses + """
         var template = new Item(9)
         class H {
@@ -6908,7 +6908,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         print("ende")
         """, new[] { "~I9", "ende", "~I9" });
 
-    // ---- leave: sofort, und alles wird zerstoert
+    // ---- leave: immediately, and everything is destroyed
     CheckLife("leave wirkt sofort und zerstoert auch die Objekte des globalen Scopes (finally laeuft)", lifeClasses + """
         var g = new Item(1)
         var f = func () => {
@@ -6936,8 +6936,8 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         print("nie")
         """, new[] { "~Ba", "~I1", "~Bc", "~I1" });
 
-    // ---- leave/terminate: der aufrufende Thread haelt sofort an; beide enden wie das normale Programmende
-    //      (Hauptprogramm wartet auf alle Fire-Threads, erst danach werden die globalen Destruktoren ausgefuehrt)
+    // ---- leave/terminate: the calling thread stops immediately; both end like the normal program end
+    //      (the main program waits for all fire threads, only then are the global destructors run)
     void CheckShutdown(string title, string script, string[] expected)
     {
         foreach (var mode in allModes)
@@ -7039,7 +7039,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         """, new[] { "~I1" });
 
     {
-        // Ein offener FileStream: sein Destruktor schliesst ihn beim leave (der Inhalt ist danach vollstaendig auf der Platte).
+        // An open FileStream: its destructor closes it on leave (the content is then completely on the disk).
         string leaveFile = Path.Combine(Path.GetTempPath(), "fire-leave-" + Guid.NewGuid().ToString("N") + ".bin").Replace("\\", "/");
         foreach (var mode in allModes)
         {
@@ -7074,8 +7074,8 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     }
 
     {
-        // Das Sicherheitsnetz des Hosts (IoBridge.RegisterAll(...).Dispose()) schliesst, was am Ende noch offen ist -
-        // hier ein Stream im globalen Scope, der beim normalen Programmende nicht zerstoert wird.
+        // The host's safety net (IoBridge.RegisterAll(...).Dispose()) closes what is still open at the end -
+        // here a stream in the global scope that is not destroyed at the normal program end.
         string netFile = Path.Combine(Path.GetTempPath(), "fire-net-" + Guid.NewGuid().ToString("N") + ".bin").Replace("\\", "/");
         string result;
         try
@@ -7093,7 +7093,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         Console.WriteLine(ok ? "OK: Host-Sicherheitsnetz schliesst offene Streams" : $"FEHLER: Host-Sicherheitsnetz\n  erwartet: 4\n  erhalten: {result}");
     }
 
-    // ---- normales Programmende raeumt den globalen Scope ab
+    // ---- normal program end cleans up the global scope
     CheckLife("Programmende: globale Objekte werden zerstoert (destruct laeuft)", lifeClasses + """
         var a = new Box("a")
         a.item = new Item(1)
@@ -7112,7 +7112,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         """, new[] { "main fertig", "thread fertig", "~I1" });
 
     {
-        // Ein offener FileStream im globalen Scope wird beim normalen Ende vom Destruktor geschlossen (ohne Host-Sicherheitsnetz).
+        // An open FileStream in the global scope is closed by the destructor at the normal end (without the host safety net).
         string endFile = Path.Combine(Path.GetTempPath(), "fire-end-" + Guid.NewGuid().ToString("N") + ".bin").Replace("\\", "/");
         string result;
         try
@@ -7130,7 +7130,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         Console.WriteLine(ok ? "OK: Programmende schliesst offene Streams (Destruktor)" : $"FEHLER: Programmende schliesst offene Streams\n  erwartet: 4\n  erhalten: {result}");
     }
 
-    // ---- Signale von anderen Threads werden an den sicheren Punkten (Schleifen, Aufrufe) bemerkt
+    // ---- signals from other threads are noticed at the safe points (loops, calls)
     foreach (var mode in allModes)
     {
         foreach (var kind in new[] { "terminate", "leave" })
@@ -7140,7 +7140,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
             var natives = new NativeRegistry();
             natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
             natives.RegisterBaseTypeNatives();
-            // Eine Schleife mit Aufruf und eine ohne - beide muessen unterbrechbar sein.
+            // A loop with a call and one without - both must be interruptible.
             string script = lifeClasses + """
                 class L { static Tick(n) { return n + 1 } }
                 var g = new Item(1)
@@ -7160,7 +7160,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
             if (kind == "terminate") VM.RequestTerminate(Value.MakeInt(7)); else vm.RequestLeave();
             bool finished = runner.Wait(TimeSpan.FromSeconds(10));
             VM.ResetTerminateForTests();
-            // `leave` und `terminate` enden beide wie das normale Programmende: der globale Scope wird zerstoert (destruct laeuft).
+            // `leave` and `terminate` both end like the normal program end: the global scope is destroyed (destruct runs).
             string[] expected = new[] { "~I1" };
             bool ok = finished && lines.SequenceEqual(expected);
             if (!ok) lifeFailures++;
@@ -7173,7 +7173,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
 }
 
 // ---------------------------------------------------------------------------
-// Packer: eigenstaendige Datei (Bundle + Payload), Bridges nur bei Bedarf, Lader statt Costura
+// Packer: self-contained file (bundle + payload), bridges only when needed, loader instead of Costura
 // ---------------------------------------------------------------------------
 {
     Console.WriteLine();
@@ -7187,7 +7187,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
 
     var baseDir = AppContext.BaseDirectory;
 
-    // 1) Pack-Plan: je Import nur die noetigen DLLs, nichts Unaufgeloestes.
+    // 1) Pack plan: per import only the necessary DLLs, nothing unresolved.
     PackagePlan Plan(params string[] imports) => PackagePlan.Create(imports, baseDir);
     var planPrint = Plan(NativeImports.Print);
     PackCheck(planPrint.Assemblies.ContainsKey("fire") && planPrint.Assemblies.ContainsKey("MemoryPack.Core"), "Plan: Kern (fire, MemoryPack) ist immer dabei");
@@ -7212,7 +7212,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         "Plan: alle Verweise aufloesbar (Datei neben dem Compiler oder Teil des Frameworks)");
     PackCheck(planWin.Natives.Count == 0 || planWin.Natives.ContainsKey("SDL3.dll") || planWin.Natives.ContainsKey("libSDL3.so.0") || planWin.Natives.ContainsKey("libSDL3.dylib"),
         "Plan: windows bringt SDL3 mit, wo es die Plattform gibt");
-    // `windows` ist von `graphics` getrennt: das Fenster gibt es nur mit dem eigenen Import, der `graphics` mitbringt; `graphics` allein kennt kein Window
+    // `windows` is separate from `graphics`: the window exists only with its own import, which brings `graphics` along; `graphics` alone does not know a Window
     {
         string LinkResult(string src)
         {
@@ -7232,7 +7232,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     try { Plan("gibtsnicht"); } catch (InvalidOperationException) { unknownImportRejected = true; }
     PackCheck(unknownImportRejected, "Plan: unbekannter Import wird abgelehnt statt still ignoriert");
 
-    // 2) Payload-Format: Rundlauf, Kompression, Integritaet, keine Marker-Suche.
+    // 2) Payload format: round trip, compression, integrity, no marker search.
     var tmpDir = Path.Combine(Path.GetTempPath(), "fire-packtest-" + Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(tmpDir);
     try
@@ -7241,7 +7241,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         var rnd = new Random(42);
         var incompressible = new byte[5000]; rnd.NextBytes(incompressible);
         var compressible = Enumerable.Repeat((byte)7, 20000).ToArray();
-        // Die alten Marker-Bytes (DA 1D) mitten im Inhalt duerfen nichts stoeren.
+        // The old marker bytes (DA 1D) in the middle of the content must not disturb anything.
         var withMarker = new byte[] { 1, 2, 0xDA, 0x1D, 3, 4, 0xDA, 0x1D };
         using (var fs = new FileStream(plFile, FileMode.Create))
         {
@@ -7263,7 +7263,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
             var eN = reader.Find(PayloadKind.Native, "n.dll")!;
             PackCheck(!eN.Compressed && reader.Read(eN)!.SequenceEqual(incompressible), "Payload: Unkomprimierbares wird roh gespeichert");
 
-            // Ein geflipptes Byte im gespeicherten Eintrag muss auffallen.
+            // A flipped byte in the stored entry must be noticed.
             var bytes = File.ReadAllBytes(plFile);
             bytes[(int)eN.Offset + 10] ^= 0xFF;
             var badFile = Path.Combine(tmpDir, "bad.bin");
@@ -7275,8 +7275,8 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         File.WriteAllBytes(plain, new byte[1000]);
         PackCheck(PayloadFile.Open(plain) == null, "Payload: Datei ohne Payload liefert null");
 
-        // 3) Lader: native Bibliothek wird aus dem Payload entpackt und geladen (Linux: die .so der Ports-Bibliothek
-        //    unter fremdem Namen, damit sie nicht ueber die normale Suche gefunden wird).
+        // 3) Loader: native library is unpacked from the payload and loaded (Linux: the .so of the ports library
+        //    under a foreign name, so that it is not found via the normal search).
         if (OperatingSystem.IsLinux())
         {
             var so = Directory.GetFiles(Path.Combine(baseDir, "runtimes", "linux-x64", "native"), "libSystem.IO.Ports.Native.so").FirstOrDefault();
@@ -7319,7 +7319,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
             PackCheck(sizeIo > sizePrint, $"Groesse: mit io ({sizeIo} B) groesser als ohne Bridge ({sizePrint} B)");
             var gfxSize = PackProgramSize("#import \"graphics\"\nprint(\"x\")");
             PackCheck(gfxSize > sizeIo, $"Groesse: graphics ({gfxSize} B) ist die groesste Variante, print ({sizePrint} B) die kleinste");
-            // Ohne Payload (nackte Runtime) gibt es eine klare Meldung statt eines Absturzes.
+            // Without a payload (bare runtime) there is a clear message instead of a crash.
             var bare = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(baseDir, stubName)) { RedirectStandardError = true, RedirectStandardOutput = true })!;
             var bareErr = bare.StandardError.ReadToEnd(); bare.WaitForExit(20000);
             PackCheck(bare.ExitCode == 1 && bareErr.Contains("payload"), "Ende-zu-Ende: nackte Runtime ohne Payload meldet das verstaendlich");
@@ -7373,7 +7373,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     CliCheck(CommandLineParser.Parse(new[] { "run", "a", "-o", "x.exe" }).Error != null, "-o gibt es nur bei build");
     CliCheck(CommandLineParser.Parse(new[] { "run", "a", "-x" }).Error != null, "unbekannte Option ist ein Fehler");
 
-    // Ende-zu-Ende ueber den Runner (ohne Prozess): build erzeugt die Datei, run liefert Exitcodes.
+    // End to end via the runner (without a process): build produces the file, run returns exit codes.
     var cliDir = Path.Combine(Path.GetTempPath(), "fire-cli-" + Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(cliDir);
     try
@@ -7422,7 +7422,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
     }
 
-    // Dieselbe Schrift, aber OHNE Bitmap-Zeilen: Renderer muss dann den allgemeinen Weg (IsPixelSet je Pixel) nehmen.
+    // The same font, but WITHOUT bitmap rows: the renderer must then take the general path (IsPixelSet per pixel).
     var slowFont = new PixelOnlyFont(new fire.Terminal.IntegratedGlyphFont());
     var rng = new Random(7);
     foreach (bool small in new[] { false, true })
@@ -7431,7 +7431,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var slow = new PixelOnlyFont(fastFont);
         foreach (bool opaque in new[] { true, false })
         {
-            var fbFast = new fire.Terminal.Framebuffer(203, 97); // krumme Groesse: Raster endet nicht am Rand, Texte ragen hinaus
+            var fbFast = new fire.Terminal.Framebuffer(203, 97); // odd size: the grid does not end at the edge, texts protrude
             var fbSlow = new fire.Terminal.Framebuffer(203, 97);
             var fast = new fire.Terminal.Renderer(fbFast, fastFont);
             var slowCanvas = new fire.Terminal.Renderer(fbSlow, slow);
@@ -7449,7 +7449,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
                 foreach (var cv in new[] { fast, slowCanvas })
                     cv.DrawGlyph(x, y, ch, new fire.Terminal.SolidBrush(cv.Foreground), cv.Background is fire.Terminal.PixelColor bg ? new fire.Terminal.SolidBrush(bg) : null);
             }
-            // Print mit Umbruch und Scrollen
+            // Print with wrapping and scrolling
             string text = string.Join("\n", Enumerable.Range(0, 40).Select(n => new string((char)('A' + n % 26), 10 + n % 40)));
             fast.Locate(0, 0); fast.Print(text);
             slowCanvas.Locate(0, 0); slowCanvas.Print(text);
@@ -7467,7 +7467,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var cv2 = new fire.Terminal.Renderer(fb2, new fire.Terminal.IntegratedGlyphFont());
         for (int i = 0; i < 5; i++) cv2.DrawGlyph(3 + i * cv2.CellWidth, 5, "Hallo"[i], new fire.Terminal.SolidBrush(fire.Terminal.PixelColor.White));
         FontCheck(fb.Pixels.SequenceEqual(fb2.Pixels), "DrawText == DrawGlyph je Zeichen");
-        cv.Locate(0, 0); cv.Print("\u20AC\u4E2D"); // Zeichen ausserhalb der Tabelle: kein Absturz
+        cv.Locate(0, 0); cv.Print("\u20AC\u4E2D"); // Characters outside the table: no crash
         FontCheck(true, "Zeichen > 255 werfen nicht");
     }
 
@@ -7475,7 +7475,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 }
 
 // ---------------------------------------------------------------------------
-// Grafik: Farbmodi (RGBA / Palette), Farbangaben (Index oder direkter Wert), Zeichenfunktionen, Kopieren
+// Graphics: colour modes (RGBA / palette), colour specifications (index or direct value), drawing functions, copying
 // ---------------------------------------------------------------------------
 {
     Console.WriteLine();
@@ -7494,7 +7494,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     fire.Terminal.Brush Bsh(int i) => new fire.Terminal.SolidBrush(fire.Terminal.Paint.FromIndex((byte)i));
     fire.Terminal.Pen Pn(int i) => new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex((byte)i));
 
-    // Menge der gesetzten Pixel (Palette: Index != 0, RGBA: Wert != 0) als "x,y"-Menge
+    // Set of the set pixels (palette: index != 0, RGBA: value != 0) as an "x,y" set
     HashSet<(int, int)> Lit(fire.Terminal.Framebuffer fb)
     {
         var set = new HashSet<(int, int)>();
@@ -7527,7 +7527,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         catch (ArgumentOutOfRangeException) { GfxCheck(true, "unbekannter Farbmodus wird abgelehnt"); }
     }
 
-    // ---- Farbangaben: Index ODER direkter Wert, aufgeloest je Framebuffer ----
+    // ---- Colour specifications: index OR direct value, resolved per framebuffer ----
     {
         var p = fire.Terminal.Paint.FromArgument(7);
         GfxCheck(p.IsIndex && p.Index == 7 && fire.Terminal.Paint.FromArgument(255).IsIndex && !fire.Terminal.Paint.FromArgument(256).IsIndex, "Paint.FromArgument: 0-255 = Index, sonst direkter Wert");
@@ -7546,7 +7546,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         GfxCheck(idx.Palette.FindNearest(fire.Terminal.PixelColor.FromRgb(0, 0, 0)) == 0 && idx.Palette.FindNearest(idx.Palette.GetColor(200)) <= 200 && idx.Palette.GetPacked(idx.Palette.FindNearest(idx.Palette.GetColor(200))) == idx.Palette.GetPacked(200), "FindNearest findet eine exakt vorhandene Farbe");
     }
 
-    // ---- Text und Rechtecke: Palette-Framebuffer == RGBA-Framebuffer mit denselben Palettenfarben ----
+    // ---- Text and rectangles: palette framebuffer == RGBA framebuffer with the same palette colours ----
     {
         var font = new fire.Terminal.IntegratedGlyphFont();
         var fbRgba = new fire.Terminal.Framebuffer(203, 97);
@@ -7570,15 +7570,15 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         fbIdx.Resolve();
         GfxCheck(fbRgba.Pixels.SequenceEqual(fbIdx.Pixels), "Clear/FillRect/DrawRect/DrawLine/DrawText/Print/Scrollen: Palette-Framebuffer zeigt dieselben Pixel wie der RGBA-Framebuffer");
 
-        // Bei einem Palette-Wechsel aendert sich der Palette-Framebuffer, der RGBA-Framebuffer nicht
+        // On a palette change the palette framebuffer changes, the RGBA framebuffer does not
         fbIdx.Palette.SetColor(12, unchecked((int)fire.Terminal.PixelColor.FromRgb(1, 2, 3).Packed));
         fbIdx.Resolve();
         GfxCheck(fbIdx.GetPixel(175, 5).Packed == fire.Terminal.PixelColor.FromRgb(1, 2, 3).Packed && fbRgba.GetPixel(175, 5).Packed == fbRgba.Palette.GetPacked(12), "Palette-Animation wirkt nur im Palette-Framebuffer");
 
-        // die Palette gehoert dem Framebuffer, nicht der Konsole
+        // the palette belongs to the framebuffer, not to the console
         GfxCheck(ReferenceEquals(cIdx.Palette, fbIdx.Palette), "Renderer.Palette ist die des Ziel-Framebuffers");
 
-        // Index-Farbe bleibt Index: eine spaetere Palette-Aenderung faerbt NEU gezeichneten Text um
+        // Index colour stays an index: a later palette change recolours NEWLY drawn text
         cRgba.SetColor(fire.Terminal.Paint.FromIndex(3), null);
         fbRgba.Palette.SetColor(3, unchecked((int)fire.Terminal.PixelColor.FromRgb(9, 8, 7).Packed));
         cRgba.DrawText(0, 90, "x", Bsh(3));
@@ -7587,7 +7587,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         GfxCheck(found, "ein Palette-Index wird erst beim Zeichnen aufgeloest");
     }
 
-    // ---- Kreis und Ellipse ----
+    // ---- Circle and ellipse ----
     {
         foreach (var mode in new[] { RGBA, IDX })
         {
@@ -7609,7 +7609,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         Shp.Circle(fbO, 30, 30, 10, 5);
         var ring = Lit(fbO);
         GfxCheck(ring.IsSubsetOf(area) && ring.Count > 30 && ring.Count < area.Count, "Circle: die Linie liegt in der Flaeche und ist ein Ring");
-        // der Ring ist 4-symmetrisch und schliesst die Flaeche ein: kein innerer Flaechenpunkt hat einen Nachbarn ausserhalb der Flaeche ohne selbst auf dem Ring zu liegen
+        // the ring is 4-symmetric and encloses the area: no inner area point has a neighbour outside the area without itself lying on the ring
         bool symmetric = ring.All(p => ring.Contains((60 - p.Item1, p.Item2)) && ring.Contains((p.Item1, 60 - p.Item2)) && ring.Contains((p.Item2, p.Item1)));
         GfxCheck(symmetric, "Circle: symmetrisch (Spiegelungen und Diagonale)");
         bool closed = area.All(p => ring.Contains(p) || new[] { (1, 0), (-1, 0), (0, 1), (0, -1) }.All(d => area.Contains((p.Item1 + d.Item1, p.Item2 + d.Item2))));
@@ -7637,7 +7637,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         GfxCheck(true, "negativer Radius, Kreis ausserhalb und riesiger Radius werfen nicht");
     }
 
-    // ---- Dreieck und Polygon ----
+    // ---- Triangle and polygon ----
     {
         var fb = new fire.Terminal.Framebuffer(40, 40);
         Shp.FillTriangle(fb, 5, 5, 25, 5, 5, 25, 5);
@@ -7657,7 +7657,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         fbR2.FillRect(4, 6, 17, 10, Idx(fbR2, 5));
         GfxCheck(Lit(fbR).SetEquals(Lit(fbR2)), "FillPolygon eines Rechtecks == FillRect (Randpixel gehoeren dazu)");
 
-        // Even-Odd: ein Stern aus einem Fuenfeck (Pentagramm) hat ein leeres Zentrum
+        // Even-odd: a star made of a pentagon (pentagram) has an empty centre
         var fbS = new fire.Terminal.Framebuffer(60, 60);
         int[] star = { 30, 3, 47, 55, 3, 22, 57, 22, 13, 55 };
         Shp.FillPolygon(fbS, star, 5);
@@ -7698,15 +7698,15 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             GfxCheck(inside == 13 * 8 && outside == 0 && wall == 2 * 15 + 2 * 8, $"FloodFill fuellt genau das Innere des Rahmens [{mode}]");
             Shp.FloodFill(fb, 0, 0, 3);
             GfxCheck(fb.GetIndex(0, 0) == 3 && fb.GetIndex(29, 19) == 3 && fb.GetIndex(5, 5) == 7, $"FloodFill aussen: fuellt den Rest, der Rahmen bleibt [{mode}]");
-            Shp.FloodFill(fb, 0, 0, 3); // schon gefuellt: nichts
+            Shp.FloodFill(fb, 0, 0, 3); // already filled: nothing
             Shp.FloodFill(fb, -5, 100, 3);
         }
         var fbB = new fire.Terminal.Framebuffer(20, 20, IDX);
         Shp.Rect(fbB, 2, 2, 10, 10, 7);
-        Shp.Line(fbB, 4, 4, 9, 4, 2); // eine andere Farbe im Innern
+        Shp.Line(fbB, 4, 4, 9, 4, 2); // a different colour in the interior
         Shp.FloodFillBorder(fbB, 5, 6, 3, 7);
         GfxCheck(fbB.GetIndex(5, 4) == 3 && fbB.GetIndex(5, 6) == 3 && fbB.GetIndex(2, 2) == 7 && fbB.GetIndex(15, 15) == 0, "FloodFillBorder: fuellt bis zur Randfarbe, auch ueber andere Farben hinweg");
-        // grosse Flaeche: kein Stapelueberlauf
+        // large area: no stack overflow
         var fbHuge = new fire.Terminal.Framebuffer(600, 600, IDX);
         Shp.FloodFill(fbHuge, 0, 0, 4);
         GfxCheck(fbHuge.GetIndex(599, 599) == 4 && fbHuge.GetIndex(300, 300) == 4, "FloodFill einer ganzen 600x600-Flaeche");
@@ -7719,7 +7719,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
     // ---- Blit ----
     {
-        // Quelle 4x4 (RGBA), jedes Pixel eindeutig
+        // source 4x4 (RGBA), every pixel unique
         var src = new fire.Terminal.Framebuffer(4, 4);
         for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++) src.SetPixel(x, y, new fire.Terminal.PixelColor((byte)(x * 10 + 10), (byte)(y * 10 + 10), 5, 255));
         var dst = new fire.Terminal.Framebuffer(10, 10);
@@ -7754,7 +7754,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         fire.Terminal.Blitter.Blit(d7, src, -50, -50, 4, 4, 0, 0, 4, 4);
         GfxCheck(d7.GetPixel(0, 0).Packed == src.GetPixel(2, 2).Packed && d7.GetPixel(9, 9).Packed == src.GetPixel(1, 1).Packed, "Blit: Beschneiden an Quelle und Ziel, leere Groessen werfen nicht");
 
-        // Transparent / Blend (RGBA-Quelle mit Alpha)
+        // Transparent / Blend (RGBA source with alpha)
         var sprite = new fire.Terminal.Framebuffer(2, 1);
         sprite.SetPixel(0, 0, new fire.Terminal.PixelColor(200, 0, 0, 255));
         sprite.SetPixel(1, 0, new fire.Terminal.PixelColor(0, 0, 0, 0));
@@ -7772,7 +7772,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var mixed = base1.GetPixel(0, 0);
         GfxCheck(Math.Abs(mixed.R - 100) <= 2 && Math.Abs(mixed.G - 50) <= 2 && Math.Abs(mixed.B - 50) <= 2 && mixed.A == 255, "Blit Blend: halbdurchsichtig wird nach Alpha gemischt");
 
-        // Palette-Quelle: Farbschluessel / TransparentIndex, ueber die Palette in einen RGBA-Framebuffer
+        // palette source: colour key / TransparentIndex, via the palette into an RGBA framebuffer
         var pal = new fire.Terminal.Framebuffer(3, 1, IDX);
         pal.Indices![0] = 5; pal.Indices[1] = 0; pal.Indices[2] = 7; pal.MarkDirty();
         var target = new fire.Terminal.Framebuffer(3, 1);
@@ -7792,11 +7792,11 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var palDst2 = new fire.Terminal.Framebuffer(3, 1, IDX);
         var shifted = new uint[256];
         pal.Palette.CopyPacked(shifted);
-        palDst2.Palette.SetAll(shifted.Reverse().ToArray()); // Eintrag i hat dort die Farbe von 255-i
+        palDst2.Palette.SetAll(shifted.Reverse().ToArray()); // entry i has the colour of 255-i there
         fire.Terminal.Blitter.Blit(palDst2, pal, 0, 0);
         GfxCheck(palDst2.Palette.GetPacked(palDst2.Indices![0]) == pal.Palette.GetPacked(5) && palDst2.Palette.GetPacked(palDst2.Indices[2]) == pal.Palette.GetPacked(7), "Blit Palette->Palette (andere Palette): gleiche FARBE, anderer Index");
 
-        // RGBA -> Palette: naechster Eintrag der Ziel-Palette
+        // RGBA -> palette: nearest entry of the destination palette
         var truecolor = new fire.Terminal.Framebuffer(2, 1);
         truecolor.SetPixel(0, 0, fire.Terminal.PixelColor.FromRgb(255, 255, 255));
         truecolor.SetPixel(1, 0, new fire.Terminal.PixelColor(0, 0, 0, 0));
@@ -7805,7 +7805,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         fire.Terminal.Blitter.Blit(palTarget, truecolor, 0, 0, fire.Terminal.BlitMode.Transparent);
         GfxCheck(palTarget.Palette.GetColor(palTarget.Indices[0]).Packed == fire.Terminal.PixelColor.FromRgb(255, 255, 255).Packed && palTarget.Indices[1] == 3, "Blit RGBA->Palette: naechster Palette-Eintrag, Alpha 0 uebersprungen");
 
-        // gleicher Puffer, sich ueberlappend: wie eine Kopie
+        // same buffer, overlapping: like a copy
         var self = new fire.Terminal.Framebuffer(8, 1);
         for (int x = 0; x < 8; x++) self.SetPixel(x, 0, new fire.Terminal.PixelColor((byte)(x + 1), 0, 0, 255));
         fire.Terminal.Blitter.Blit(self, self, 0, 0, 6, 1, 2, 0, 6, 1);
@@ -7845,7 +7845,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         try { mgr.SetPaletteColor(a, 256, 0); GfxCheck(false, "Palette-Index 256 wird abgelehnt"); }
         catch (ArgumentOutOfRangeException) { GfxCheck(true, "Palette-Index 256 wird abgelehnt"); }
 
-        // RendererManager: Farbangaben als Zahlen (Pinsel und Stifte werden als ID uebergeben)
+        // RendererManager: colour specifications as numbers (brushes and pens are passed as an ID)
         var cm = new fire.Terminal.RendererManager(mgr, new fire.Terminal.IntegratedGlyphFont());
         int fbId = mgr.CreateFramebuffer(40, 20, IDX);
         int con = cm.CreateRenderer(fbId);
@@ -7878,7 +7878,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         GfxCheck(cm.GetPenWidth(ps[3]) == 3 && cm.GetPenColor(ps[3]) == 5 && cm.GetBrushColor(bI9) == 7 && cm.DestroyBrush(bI9) && !cm.DestroyBrush(bI9), "Pinsel und Stifte: Eigenschaften aendern, zerstoeren");
     }
 
-    // ---- Fenster: Tick rechnet das sichtbare Abbild eines Palette-Framebuffers aus (Resolve), bevor der Renderer es bekommt ----
+    // ---- Window: Tick computes the visible image of a palette framebuffer (Resolve) before the renderer gets it ----
     {
         var mgr = new fire.Terminal.FramebufferManager();
         int fbId = mgr.CreateFramebuffer(8, 4, IDX);
@@ -7900,7 +7900,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var P = (byte r, byte g, byte b, byte a) => fire.Terminal.Paint.FromRgba(new fire.Terminal.PixelColor(r, g, b, a));
         fire.Terminal.Paint Rgb(byte r, byte g, byte b) => P(r, g, b, 255);
 
-        // Blending: Alpha 255 = Kopie, 0 = nichts, dazwischen gemischt (nur im 32-Bit-Ziel), abschaltbar
+        // Blending: alpha 255 = copy, 0 = nothing, in between blended (only in the 32-bit target), can be switched off
         {
             var fb = new fire.Terminal.Framebuffer(8, 4);
             var rd = new fire.Terminal.Renderer(fb, font);
@@ -7930,7 +7930,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             GfxCheck(pal.Indices[0] != 7, "Palette-Ziel ohne Blending: immer kopiert");
         }
 
-        // Beschneidungsrechteck: Fuellungen, Linien, Text und Blit bleiben darin; ResetClip hebt es auf; Clear gilt nicht
+        // Clipping rectangle: fills, lines, text and blit stay within it; ResetClip lifts it; Clear does not apply
         {
             var fb = new fire.Terminal.Framebuffer(40, 20);
             var rd = new fire.Terminal.Renderer(fb, font);
@@ -7976,7 +7976,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             GfxCheck(fb.GetPixel(0, 0).R == 9, "Clip: Clear gilt fuer den ganzen Framebuffer");
         }
 
-        // Pen: Breite 1 == die einfache Linie, breitere Stifte stempeln ihre Spitze
+        // Pen: width 1 == the simple line, wider pens stamp their tip
         {
             foreach (var mode in new[] { RGBA, IDX })
             {
@@ -7996,7 +7996,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             new fire.Terminal.Renderer(fr, font).DrawPoint(10, 10, new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5), 7, fire.Terminal.PenShape.Round));
             var disc = Lit(fr);
             GfxCheck(disc.Contains((10, 7)) && disc.Contains((7, 10)) && disc.Contains((13, 10)) && !disc.Contains((7, 7)) && !disc.Contains((13, 13)) && disc.Count > 30 && disc.Count < 49, "Pen rund Breite 7: Kreisscheibe (Ecken fehlen)");
-            // eine breite Linie ist die Vereinigung der Stempel entlang der Linie
+            // a wide line is the union of the stamps along the line
             var fl = new fire.Terminal.Framebuffer(40, 20);
             var pen3 = new fire.Terminal.Pen(fire.Terminal.Paint.FromIndex(5), 3, fire.Terminal.PenShape.Square);
             new fire.Terminal.Renderer(fl, font).DrawLine(5, 10, 30, 10, pen3);
@@ -8020,7 +8020,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             GfxCheck(changing.Width == fire.Terminal.Pen.MaxWidth, "Pen: die Breite wird begrenzt");
         }
 
-        // halbdurchsichtiger Stift: die ueberlappenden Stempel mischen NICHT mehrfach (die Vereinigung wird einmal gemischt)
+        // semi-transparent pen: the overlapping stamps do NOT blend several times (the union is blended once)
         {
             var fb = new fire.Terminal.Framebuffer(30, 10);
             var rd = new fire.Terminal.Renderer(fb, font);
@@ -8035,7 +8035,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             GfxCheck(fr.GetPixel(3, 1).R == fr.GetPixel(10, 1).R && fr.GetPixel(3, 4).R == fr.GetPixel(3, 1).R, "halbdurchsichtiger Umriss: auch die Ecken nur einmal gemischt");
         }
 
-        // Brush: Fills samt FloodFill, gemischt; FloodFill einer halbdurchsichtigen Farbe bleibt in der Flaeche
+        // Brush: fills including FloodFill, blended; FloodFill of a semi-transparent colour stays within the area
         {
             var fb = new fire.Terminal.Framebuffer(30, 20);
             var rd = new fire.Terminal.Renderer(fb, font);
@@ -8049,7 +8049,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             GfxCheck(fb.GetPixel(0, 0).Packed == new fire.Terminal.PixelColor(1, 2, 3).Packed && fb.GetPixel(29, 19).Packed == new fire.Terminal.PixelColor(1, 2, 3).Packed, "Renderer.Fill fuellt alles");
         }
 
-        // Text: Vordergrund und Hintergrund als Pinsel, auch halbdurchsichtig
+        // Text: foreground and background as brushes, also semi-transparent
         {
             var fb = new fire.Terminal.Framebuffer(40, 20);
             var rd = new fire.Terminal.Renderer(fb, font);
@@ -8063,7 +8063,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             GfxCheck(Enumerable.Range(0, 8).SelectMany(x => Enumerable.Range(0, 14).Select(y => f2.GetPixel(x, y))).All(c => c.Packed == 0 || c.Packed == new fire.Terminal.PixelColor(255, 255, 255, 255).Packed), "DrawText: ein Hintergrund mit Alpha 0 ist keiner");
         }
 
-        // Palette-Index und durchsichtige Farbe: der Index belegt nur das R-Byte (Alpha bleibt 0); die kanonische durchsichtige Farbe (0,1,0,0) = 256 ist kein Index
+        // Palette index and transparent colour: the index occupies only the R byte (alpha stays 0); the canonical transparent colour (0,1,0,0) = 256 is not an index
         {
             GfxCheck(fire.Terminal.Paint.FromArgument(14).IsIndex && fire.Terminal.Paint.FromArgument(0).IsIndex, "Zahl 0-255 ist ein Palette-Index (nur das R-Byte, Alpha 0)");
             GfxCheck(!fire.Terminal.Paint.FromArgument(fire.Terminal.Paint.Transparent).IsIndex && fire.Terminal.PixelColor.Transparent.Packed == 256 && fire.Terminal.PixelColor.Transparent.A == 0, "Transparent = (0,1,0,0) = 256: durchsichtig, aber kein Palette-Index");
@@ -8071,14 +8071,14 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             var fb = new fire.Terminal.Framebuffer(4, 2);
             var cv = new fire.Terminal.Renderer(fb, font);
             cv.FillRect(0, 0, 4, 2, new fire.Terminal.SolidBrush(Rgb(30, 40, 50)));
-            // ein leeres Pixel zurueckschreiben (GetPixel -> SetPixel) laesst es durchsichtig statt Palette-Schwarz
+            // writing an empty pixel back (GetPixel -> SetPixel) leaves it transparent instead of palette black
             fb.SetPixel(1, 0, fire.Terminal.PixelColor.Transparent);
             int read = fire.Terminal.Paint.ToArgument(fb.GetPixel(1, 0).Packed);
             cv.SetPixel(2, 0, fire.Terminal.Paint.FromArgument(read));
             GfxCheck(read == 256 && fb.GetPixel(2, 0).Packed == new fire.Terminal.PixelColor(30, 40, 50, 255).Packed, "ein durchsichtiges Pixel als Zahl zurueckgeschrieben zeichnet nichts (kein Palette-Schwarz)");
         }
 
-        // ein anderes Ziel: ein eigenes IRenderTarget (hier ein Ausschnitt-freier Wrapper um zwei Arrays)
+        // another target: an own IRenderTarget (here a section-free wrapper around two arrays)
         {
             var t = new ArrayTarget(6, 3);
             var rd = new fire.Terminal.Renderer(t, font);
@@ -8091,7 +8091,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 }
 
 // ---------------------------------------------------------------------------
-// Bilder: PNG, BMP, GIF dekodieren (Testdateien von Pillow und eigenen Schreibern, siehe ImageFixtures)
+// Images: decode PNG, BMP, GIF (test files from Pillow and own writers, see ImageFixtures)
 // ---------------------------------------------------------------------------
 {
     Console.WriteLine();
@@ -8125,7 +8125,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         }
         catch (Exception) { return false; }
     }
-    // indiziert: die FARBE jedes Pixels stimmt (Indizes duerfen ein Encoder umnummerieren), optional die Indizes selbst
+    // indexed: the COLOUR of each pixel is right (an encoder may renumber the indices), optionally the indices themselves
     bool Indexed(string name, Func<int, int, uint> expectedColor, bool exactIndices = false, int n = 0, string? format = null)
     {
         try
@@ -8143,7 +8143,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         catch (Exception) { return false; }
     }
 
-    // ---- PNG: eigener Encoder (alle Farbarten und Tiefen, alle Zeilenfilter) ----
+    // ---- PNG: own encoder (all colour types and depths, all row filters) ----
     ImgCheck(Truecolor("png_rgba8", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24), "PNG"), "PNG RGBA 8 Bit (alle fuenf Zeilenfilter, IDAT in zwei Chunks)");
     ImgCheck(Truecolor("png_rgb8", (x, y) => Opaque(Rgb(x, y))), "PNG RGB 8 Bit");
     ImgCheck(Truecolor("png_rgba16", (x, y) => Rgb(x, y) | (Alpha(x, y) << 24)), "PNG RGBA 16 Bit (auf 8 Bit gekuerzt)");
@@ -8231,7 +8231,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         ImgCheck(ok, "Pillow-GIF 40x30 mit 64 Farben, verschraenkt (LZW mit Wachstum der Codebreite)");
     }
 
-    // ---- Fehler: unbekannt, leer, abgeschnitten, beschaedigt ----
+    // ---- Errors: unknown, empty, truncated, damaged ----
     void MustFail(string what, byte[] data)
     {
         try { fire.Terminal.ImageDecoder.Decode(data); ImgCheck(false, what + ": haette scheitern muessen"); }
@@ -8246,7 +8246,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         bool allFailed = true;
         for (int cut = 1; cut < full.Length; cut += Math.Max(1, full.Length / 40))
         {
-            try { fire.Terminal.ImageDecoder.Decode(full[..cut]); allFailed = false; }   // ein abgeschnittenes Bild darf (GIF) lenient fehlen, aber nie eine fremde Ausnahme werfen
+            try { fire.Terminal.ImageDecoder.Decode(full[..cut]); allFailed = false; }   // a truncated image may (GIF) be missing leniently, but never throw a foreign exception
             catch (fire.Terminal.ImageFormatException) { }
             catch (Exception) { allFailed = false; ImgCheck(false, $"abgeschnittene {name} wirft eine fremde Ausnahme (bei {cut} Byte)"); }
         }
@@ -8260,7 +8260,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var noEnd = ImageFixtures.Get("png_rgb8")[..^12];
         MustFail("PNG ohne IEND", noEnd);
         var big = (byte[])ImageFixtures.Get("png_rgb8").Clone();
-        big[16] = 0x7F; // Breite ~2 Milliarden: CRC-Fehler UND zu gross - in jedem Fall ImageFormatException
+        big[16] = 0x7F; // width ~2 billion: CRC error AND too large - in any case ImageFormatException
         MustFail("PNG mit absurder Breite", big);
         var zero = (byte[])ImageFixtures.Get("pil_bmp_rgb24").Clone();
         zero[18] = zero[19] = zero[20] = zero[21] = 0;
@@ -8275,7 +8275,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         MustFail("GIF ohne Bild", gifNoImage);
     }
 
-    // ---- Zufaellig beschaedigte Dateien: nie eine fremde Ausnahme, nie ein Haenger ----
+    // ---- Randomly damaged files: never a foreign exception, never a hang ----
     {
         var rng2 = new Random(11);
         bool clean = true; int tried = 0;
@@ -8296,7 +8296,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         ImgCheck(clean, $"{tried} zufaellig beschaedigte Dateien: nur Erfolg oder ImageFormatException");
     }
 
-    // ---- Framebuffer aus einem Bild ----
+    // ---- Framebuffer from an image ----
     {
         var gif = Load("pil_gif_trans");
         var fb = gif.ToFramebuffer();
@@ -8322,7 +8322,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 }
 
 // ---------------------------------------------------------------------------
-// Grafik aus fire: Farbmodi, Bilder laden, Zeichenfunktionen (Console/Framebuffer der Grafik-Prelude)
+// Graphics from fire: colour modes, loading images, drawing functions (Console/Framebuffer of the graphics prelude)
 // ---------------------------------------------------------------------------
 {
     Console.WriteLine();
@@ -8344,7 +8344,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         var winManager = new fire.Terminal.Windows.WindowManager(fbManager, (l, v) => { }, () => new FakeRenderer());
         fire.Terminal.Bridge.GraphicsBridge.RegisterAll(natives, fbManager, conManager, reader ?? (path => ImageFixtures.Get(path)));
         fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, winManager);
-        // die Bytes einer Testdatei als Puffer, und ein Puffer mit Unsinn
+        // the bytes of a test file as a buffer, and a buffer with nonsense
         natives.Register("__TestImage", args => Value.MakeBuffer(new ByteBuffer(ImageFixtures.Get(args[0].AsString()), ByteConversions.HostByteOrder)));
         natives.Register("__TestGarbage", args => Value.MakeBuffer(new ByteBuffer(System.Text.Encoding.ASCII.GetBytes("kein Bild"), ByteConversions.HostByteOrder)));
         var resolveResult = Resolver.Resolve(program, natives.Names);
@@ -8369,8 +8369,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         }
     }
 
-    // Die erwarteten Pixelzahlen der Zeichenfunktionen aus dem Kern selbst (dessen Form pruefen die Grafik-Tests oben): hier geht es um die
-    // Anbindung aus fire, in beiden Farbmodi
+    // The expected pixel counts of the drawing functions from the core itself (the graphics tests above check its shape): here it is about the
+    // binding from fire, in both colour modes
     string GfDrawExpected()
     {
         var fb = new fire.Terminal.Framebuffer(40, 40);
@@ -8391,7 +8391,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         return string.Join(" ", counts);
     }
 
-    // GetPixel liefert den Farbwert mit Vorzeichen (32 Bit)
+    // GetPixel returns the colour value signed (32 bit)
     const string gfHead = """
         #import "graphics"
         class Px { static int Get(console, int x, int y) { var v = console.GetPixel(x, y); if (v < 0) { v = v + 4294967296 } return v } }
@@ -8637,7 +8637,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         foreach (p in new Slicer(1, 0.1).Slice(mask)) { print(p.kind) }
         """, new[] { "1 120x70 0 1", "0.5", "4", "True True True True", "1", "0", "True Line thickness and pixel size must be greater than 0.", "True The overlap must be between 0 and 0.95.", "0", "0", "0", "1" });
 
-    // ---- Echte Dateien ueber die Sitzung des Hosts: die IoPolicy entscheidet, was Framebuffer.FromFile lesen darf ----
+    // ---- Real files via the host's session: the IoPolicy decides what Framebuffer.FromFile may read ----
     {
         string imgDir = Path.Combine(Path.GetTempPath(), "fire-img-" + Guid.NewGuid().ToString("N"));
         string otherDir = Path.Combine(Path.GetTempPath(), "fire-img-other-" + Guid.NewGuid().ToString("N"));
@@ -8686,7 +8686,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 }
 
 // ---------------------------------------------------------------------------
-// Netzwerk (#import "net"): die Richtlinie des Hosts (NetPolicy) fuer Verbindungen, Listener, Datagramme und Namen
+// Network (#import "net"): the host's policy (NetPolicy) for connections, listeners, datagrams and names
 // ---------------------------------------------------------------------------
 {
     Console.WriteLine();
@@ -8737,7 +8737,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 }
 
 // ---------------------------------------------------------------------------
-// Slicer: Maske aus einem Framebuffer (ToMask) in Werkzeugbahnen zerlegen
+// Slicer: split a mask from a framebuffer (ToMask) into tool paths
 // ---------------------------------------------------------------------------
 {
     Console.WriteLine();
@@ -8752,10 +8752,10 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     // ---- ToMask ----
     {
         var rgba = new fire.Terminal.Framebuffer(4, 1);
-        rgba.SetPixel(0, 0, fire.Terminal.PixelColor.FromRgb(10, 10, 10));      // dunkel
-        rgba.SetPixel(1, 0, fire.Terminal.PixelColor.FromRgb(240, 240, 240));   // hell
-        rgba.SetPixel(2, 0, new fire.Terminal.PixelColor(0, 0, 0, 10));         // dunkel, aber fast durchsichtig
-        rgba.SetPixel(3, 0, fire.Terminal.PixelColor.FromRgb(0, 255, 0));       // Gruen: Helligkeit 150
+        rgba.SetPixel(0, 0, fire.Terminal.PixelColor.FromRgb(10, 10, 10));      // dark
+        rgba.SetPixel(1, 0, fire.Terminal.PixelColor.FromRgb(240, 240, 240));   // bright
+        rgba.SetPixel(2, 0, new fire.Terminal.PixelColor(0, 0, 0, 10));         // dark, but almost transparent
+        rgba.SetPixel(3, 0, fire.Terminal.PixelColor.FromRgb(0, 255, 0));       // Green: brightness 150
         var dark = rgba.ToMask();
         SlCheck(dark.IsIndexed && dark.Width == 4 && dark.Height == 1 && dark.Indices!.SequenceEqual(new byte[] { 1, 0, 0, 0 }), "ToMask: dunkle Pixel werden ausgefraest, helle und fast durchsichtige nicht");
         SlCheck(dark.Palette.GetPacked(0) == fire.Terminal.PixelColor.Black.Packed && dark.Palette.GetPacked(1) == fire.Terminal.PixelColor.White.Packed && dark.TransparentIndex == 0, "ToMask: Palette schwarz/weiss, Index 0 durchsichtig");
@@ -8778,7 +8778,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         return fb;
     }
     {
-        // 100 x 50 Pixel zu 0,1 mm = 10 x 5 mm, Fraeser 1 mm: die Werkzeugmitte darf 0,5 mm vom Rand weg sein
+        // 100 x 50 pixels at 0.1 mm = 10 x 5 mm, cutter 1 mm: the tool centre may be 0.5 mm away from the edge
         var mask = Rect(120, 70, 10, 10, 110, 60);
         var slicer = new fire.Terminal.ImageSlicer(1.0, 0.1) { FlipY = false };
         var paths = slicer.Slice(mask);
@@ -8792,7 +8792,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         double innerMin = paths[0].Points.Min(p => p.X);
         SlCheck(innerMin > minX + 1.4, $"die Ringe liegen nach innen versetzt (innerster Ring {innerMin:0.00} mm, Randkontur {minX:0.00} mm)");
 
-        var flipped = new fire.Terminal.ImageSlicer(1.0, 0.1).Slice(mask);   // FlipY ist die Vorgabe
+        var flipped = new fire.Terminal.ImageSlicer(1.0, 0.1).Slice(mask);   // FlipY is the default
         var fo = flipped[3].Points;
         SlCheck(Math.Abs(fo.Min(p => p.Y) - (7.0 - 5.5)) < 0.06 && Math.Abs(fo.Max(p => p.Y) - (7.0 - 1.5)) < 0.06, "FlipY (Vorgabe): Y nach oben, von der Bildhoehe 7 mm gezaehlt");
 
@@ -8809,7 +8809,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     SlCheck(new fire.Terminal.ImageSlicer(1.0, 0.1).Slice(Rect(60, 40, 10, 10, 15, 30)).Count == 0, "zu schmale Flaeche (0,5 mm bei 1 mm Fraeser): keine Bahnen");
     SlCheck(new fire.Terminal.ImageSlicer(1.0, 0.1).Slice(new fire.Terminal.Framebuffer(20, 20, fire.Terminal.ColorMode.Indexed)).Count == 0, "leere Maske: keine Bahnen");
     {
-        // zwei getrennte Flaechen und ein Loch: ein Ring um das Loch
+        // two separate areas and a hole: a ring around the hole
         var fb = new fire.Terminal.Framebuffer(200, 80, fire.Terminal.ColorMode.Indexed);
         var one = fb.ResolvePixel(fire.Terminal.Paint.FromIndex(1)); var zero = fb.ResolvePixel(fire.Terminal.Paint.FromIndex(0));
         fb.FillRect(10, 10, 60, 60, one); fb.FillRect(110, 10, 80, 60, one); fb.FillRect(130, 30, 20, 20, zero);
@@ -8928,7 +8928,7 @@ string uiDrawScript = """
 string[] uiDrawExpected = Array.Empty<string>();
 
 // ---------------------------------------------------------------------------
-// UI-Bibliothek (#import "ui"): headless - echte Framebuffer/Konsole/WindowManager, nur der Renderer ist eine Attrappe
+// UI library (#import "ui"): headless - real framebuffer/console/WindowManager, only the renderer is a dummy
 // ---------------------------------------------------------------------------
 {
     Console.WriteLine();
@@ -8937,9 +8937,9 @@ string[] uiDrawExpected = Array.Empty<string>();
 
     IReadOnlyDictionary<string, RuntimeClass>? uiClasses = null;
 
-    // Fuehrt `script` mit Grafik-Prelude + UI-Prelude aus. Das Fenster laeuft ueber den echten WindowManager (Ereignis-Warteschlange
-    // inklusive), nur der Renderer ist `FakeRenderer`: `__TestEvent(typ, ...)` legt ein Ereignis ab, das das naechste Tick abholt,
-    // `__TestClose()` schliesst das Fenster.
+    // Runs `script` with graphics prelude + UI prelude. The window runs via the real WindowManager (event queue
+    // included), only the renderer is `FakeRenderer`: `__TestEvent(type, ...)` stores an event that the next Tick fetches,
+    // `__TestClose()` closes the window.
     List<string> RunUi(string script, VmExecutionMode mode)
     {
         var lines = new List<string>();
@@ -8991,7 +8991,7 @@ string[] uiDrawExpected = Array.Empty<string>();
     }
 
     const string uiHead = """
-        // GetPixel liefert den Farbwert mit Vorzeichen (32 Bit); die Farben der UI-Bibliothek sind vorzeichenlose Werte
+        // GetPixel returns the colour value signed (32 bit); the colours of the UI library are unsigned values
         class Px { static int Get(console, int x, int y) { var v = console.GetPixel(x, y); if (v < 0) { v = v + 4294967296 } return v } }
         var fb = new Framebuffer(320, 200)
         var win = new Window(fb, "Test")
@@ -9595,7 +9595,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         b1.hover = false
         ui.Draw()
         print("zurueck " + b1.actualWidth)
-        // ein Style im Panel gilt nur darunter und vor dem des Roots
+        // a style in the panel only applies below it and before that of the root
         var inner = new UI.StackPanel(0, 100, 300, 100)
         var local = new UI.Style("Button")
         local.Set("margin", new UI.Thickness(7))
@@ -9702,7 +9702,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseWheel(-2, 0, 20, 20)
         ui.Draw()
         print("Rad seitlich " + sv.hbar.offset)
-        // am Griff der senkrechten Leiste ziehen: oben anfassen und ganz nach unten ziehen
+        // drag at the thumb of the vertical bar: grab at the top and drag all the way down
         sv.vbar.Set(0)
         ui.Draw()
         ui.MouseDown(1, 94, 4)
@@ -9864,7 +9864,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseUp(1, 10, 5)
         ui.Draw()
         print("offen " + ui.popups.count + " " + mb.openIndex)
-        // der Zeiger ueber dem zweiten Titel wechselt das Menue
+        // the pointer over the second title switches the menu
         ui.MouseMove(60, 5)
         ui.Draw()
         print("gewechselt " + ui.popups.count + " " + mb.openIndex)
@@ -9883,14 +9883,14 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseUp(1, sx, sy)
         ui.Draw()
         print("gewaehlt " + cnt + " offen " + ui.popups.count)
-        // Tastatur: Enter auf New
+        // keyboard: Enter on New
         ui.MouseDown(1, 10, 5)
         ui.MouseUp(1, 10, 5)
         ui.Draw()
         ui.KeyDown(1073741905, 0)
         ui.KeyDown(13, 0)
         print("Tastatur " + cnt + " offen " + ui.popups.count)
-        // Haken und gesperrte Zeile
+        // check mark and disabled row
         ui.MouseDown(1, 10, 5)
         ui.MouseUp(1, 10, 5)
         ui.Draw()
@@ -10152,7 +10152,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("danach " + (w2.NextEvent() == undefined))
         """, new[] { "leer True", "8 2 20 30", "3 a", "danach True" });
 
-    // VSync: Vorgabe an (Tick wartet auf die Bildwiederholung), per Property abschaltbar - auch in einer abgeleiteten Fensterklasse
+    // VSync: default on (Tick waits for the screen refresh), can be switched off via a property - also in a derived window class
     CheckUi("Window.VSync: Vorgabe an, per Property ein-/ausschaltbar (auch in einer abgeleiteten Klasse)", """
         var fb2 = new Framebuffer(8, 8)
         var w2 = new Window(fb2, "VSync")
@@ -10462,7 +10462,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 print("Menue " + app.ui.popups.count + " " + app.bar.menus.count)
                 """, new[] { "paint 80x40 True", "namen 3 baum 3 vorschlaege 2 tabelle 2", "picked Bob", "down 5,6 1", "one", "Stil True 2 True", "Vorlage True Templated", "implizit True 1 2", "open", "Menue 0 2" });
 
-            // die Entwurfsansicht: dieselbe Bibliothek zeichnet, ohne Handler und ohne den Code des Programms
+            // the design view: the same library draws, without handlers and without the code of the program
             {
                 var richDoc = fire.UI.Markup.MarkupParser.Parse(File.ReadAllText(P("Rich.fxml")));
                 var shot = fire.Compiler.UiPreview.Render(richDoc, P("Rich.fxml"));
@@ -10553,7 +10553,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 print("neue Liste " + app.direct.count + " " + app.ui.Update())
                 """, new[] { "zeilen 3 2 1 erste undefined", "zeile CAROL 31 two", "mehr 4 3 jung 2 Dave", "Auswahl 1 Carol", "zurueck 3", "neue Liste 1 False" });
 
-            // die Entwurfsansicht zeigt die Zeilen, ohne die Daten zu kennen
+            // the design view shows the rows without knowing the data
             {
                 var dataDoc = fire.UI.Markup.MarkupParser.Parse(File.ReadAllText(P("Data.fxml")));
                 var dataShot = fire.Compiler.UiPreview.Render(dataDoc, P("Data.fxml"));
@@ -10561,7 +10561,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 CheckMarkup("Markup: Entwurfsansicht - Listen mit itemTemplate/view/itemsSource werden gezeichnet (ohne die Daten)", dataShot.Ok && dataPreview.Contains("\u2039name\u203A") && !dataPreview.Contains("SetView") && dataPreview.Contains("Add(\"\")"), dataShot.Error ?? dataPreview);
             }
 
-            // Invalidierung: nur neu zeichnen, was sich geaendert hat
+            // Invalidation: only redraw what has changed
             CheckUi("Invalidierung: Update zeichnet nur bei Aenderungen, Hover und Text zeichnen nur den betroffenen Bereich", uiHead + """
                 var a = new UI.Label("alpha", 10, 10)
                 var b = new UI.Button("btn", 10, 40, 80, 24)
@@ -10590,7 +10590,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 print("Draw " + (Px.Get(ui.renderer, 250, 20) != sentinel))
                 """, new[] { "first True", "idle False", "hover True rest bleibt True", "idle False", "Layout True alles neu True", "Theme True alles neu True", "Invalidate True rest bleibt True", "Draw True" });
 
-            // mehrere Fenster ohne Markup: Attach/Detach/Tick
+            // several windows without markup: Attach/Detach/Tick
             CheckUi("Mehrere Fenster: Root.Attach haengt ein Fenster an, Tick arbeitet beide ab, Detach loest es", """
                 class Px { static int Get(console, int x, int y) { var v = console.GetPixel(x, y); if (v < 0) { v = v + 4294967296 } return v } }
                 var fb1 = new Framebuffer(100, 60)
@@ -10614,7 +10614,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 print("nach Detach " + ticks)
                 """, new[] { "angehaengt 1", "True", "True", "ticks 2 gezeichnet True", "nach Detach 2" });
 
-            // mehrere Fenster: ein Fenster oeffnet ein anderes, Tick arbeitet beide ab
+            // several windows: one window opens another, Tick processes both
             File.WriteAllText(P("Main.fxml"), "<Window class=\"Main\" width=\"120\" height=\"80\"><Button name=\"b\" text=\"main\"/></Window>");
             File.WriteAllText(P("Tool.fxml"), "<Window class=\"Tool\" title=\"Tool\" width=\"100\" height=\"60\"><Label name=\"l\" text=\"tool\"/></Window>");
             CheckUi("Markup: Open/Run(other) - das erzeugte Fenster haengt ein anderes an, ein Tick arbeitet beide ab", $$"""
@@ -10641,14 +10641,14 @@ string[] uiDrawExpected = Array.Empty<string>();
 }
 
 // ---------------------------------------------------------------------------
-// Native Callbacks (Fenster-Ereignisse) laufen verschachtelt auf der VM des Threads: echte Globals, kein Kopieren
+// Native callbacks (window events) run nested on the VM of the thread: real globals, no copying
 // ---------------------------------------------------------------------------
 {
     Console.WriteLine();
     Console.WriteLine("=== Callbacks auf dem VM-Thread ===");
     int cbFailures = 0;
 
-    // Wie RuntimeSession.CallLambda: der Host-Runner ruft FireRuntime.RunCallback; unbehandelte Callback-Fehler landen als "CB: ..." in der Ausgabe.
+    // Like RuntimeSession.CallLambda: the host runner calls FireRuntime.RunCallback; unhandled callback errors end up as "CB: ..." in the output.
     List<string> RunCb(string script, VmExecutionMode mode)
     {
         var lines = new List<string>();
@@ -10673,7 +10673,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         var kept = new List<LambdaValue>();
         natives.Register("__TestEvent", args => { renderer.Push((int)args[0].AsInt(), args); return Value.MakeUndefined(); });
         natives.Register("__Keep", args => { kept.Add((LambdaValue)args[0].AsLambda()); return Value.MakeUndefined(); });
-        // fuehrt das gemerkte Lambda auf einem ANDEREN Thread ohne laufende VM aus (wie ein Host-Ereignis)
+        // runs the remembered lambda on ANOTHER thread without a running VM (like a host event)
         natives.Register("__RunKeptOnOtherThread", args =>
         {
             var t = new Thread(() => FireRuntime.RunCallback(kept[0], Array.Empty<Value>(), natives, classes, () => vm!.SnapshotGlobals(), message => { lock (lines) lines.Add("CB: " + message); }, mode, vm));
@@ -10771,7 +10771,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         T.Step(win)
         """, new[] { "CB: Unbehandelte Exception vom Typ 'Exception': boom", "nach Tick", "finally" });
 
-    // Der Performance-Modus prueft nichts: ein Zugriff ausserhalb des Arrays ist eine rohe C#-Ausnahme. Der Zustand der VM muss danach stimmen.
+    // Performance mode checks nothing: an access outside the array is a raw C# exception. The state of the VM must be right afterwards.
     CheckCb("Rohe C#-Ausnahme im Callback (Performance): Zustand wiederhergestellt, Programm laeuft weiter", cbHead + """
         win.RegisterMouseDown(func (int b, float x, float y) => { var z = new int[2]; z[5] = 1 })
         __TestEvent(8, 1, 1.0, 1.0)
@@ -10867,7 +10867,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         }
     }
 
-    // Mit #nosync: sonst koennte das automatische Abarbeiten die Anmeldung des Threads vor dem ersten `sync globals` erledigen, dessen Rueckgabe bliebe 0
+    // With #nosync: otherwise the automatic processing could take care of the thread's registration before the first `sync globals`, whose return value would stay 0
     CheckGl("Ein Thread schreibt ein Global: es wird erst bei `sync globals` des Hauptprogramms wirksam", """
         #nosync
         var counter = 0
@@ -11061,7 +11061,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("n " + (sync globals))
         """, new[] { "n 0" });
 
-    // ---- break/continue aus try/catch heraus (der Compiler meldet Handler ab und fuehrt das finally inline aus)
+    // ---- break/continue out of try/catch (the compiler unregisters handlers and executes the finally inline)
     CheckGl("break aus try: das finally laeuft, die Schleife endet", """
         var log = ""
         for (var i = 0; i < 5; i = i + 1) {
@@ -11427,7 +11427,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(d.DoCommand("weg"))
         """, new[] { "True", "True", "True", "True", "True", "True", "True", "True", "True", "True", "False", "False", "True", "False", "False" }, defaultId: "loopback:echo");
 
-    // Paketverfolgung direkt am Manager (ohne Skript)
+    // Packet tracking directly on the manager (without a script)
     {
         var manager = NewLoopbackManager(true);
         var captured = new List<fire.Device.Manager.DeviceManager.PacketRecord>();
@@ -11470,8 +11470,8 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         manager.Shutdown();
     }
 
-    // Alle Erweiterungen zusammen: native Funktionen werden über ihren Index angesprungen, die Reihenfolge der Registrierung
-    // beim Übersetzen und beim Ausführen muss übereinstimmen (früher: graphics + time -> falsche Funktion)
+    // All extensions together: native functions are jumped to via their index, the order of registration
+    // when translating and when executing must match (formerly: graphics + time -> wrong function)
     CheckDev("Alle Erweiterungen in einem Programm (graphics, time, reflection, linq, devices, io)", """
         #import "graphics"
         #import "time"
@@ -11486,12 +11486,12 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(new DeviceManagerFacade().Count())
         print(IO.File.Exists("/gibt/es/nicht"))
         var con = new Renderer(fb)
-        con.AlphaBlending = false      // ohne Mischen wird der Wert samt Alpha 0 einfach kopiert
+        con.AlphaBlending = false      // without blending the value including alpha 0 is simply copied
         con.FillRect(0, 0, 2, 2, new SolidBrush(256))
         print(con.GetPixel(1, 1))
         """, new[] { "8x4", "True", "Framebuffer", "1", "False", "256" });
 
-    // Paketprotokoll: Speichern und Laden verlustfrei
+    // Packet log: saving and loading lossless
     {
         var t0 = new DateTime(2026, 10, 3, 12, 0, 0, 123, DateTimeKind.Utc).AddTicks(4567);
         var packets = new List<fire.Device.Manager.DeviceManager.PacketRecord>
@@ -11542,9 +11542,9 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
     {
-        // Schleifen (for/while/foreach): ein Haltepunkt in der letzten Zeile des Bodys trifft genau einmal je Durchlauf - nicht noch einmal
-        // beim Verlassen der Schleife. Dazu als Referenz die fruehere Schleife (StepInstruction + CurrentLocation je Instruktion):
-        // RunUntilBreakpoint muss an denselben Stellen anhalten.
+        // Loops (for/while/foreach): a breakpoint in the last line of the body hits exactly once per pass - not once more
+        // when leaving the loop. In addition the earlier loop as a reference (StepInstruction + CurrentLocation per instruction):
+        // RunUntilBreakpoint must stop at the same places.
         foreach (var (kind, loopScript) in new[]
         {
             ("for", "var total = 0\nfor (var i = 0; i < 3; i = i + 1) {\n    total = total + i\n}\nprint(\"fertig \" + total)\n"),
@@ -11588,7 +11588,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
     }
 
     {
-        // Ohne Haltepunkt laeuft ein Programm in einem Zug zu Ende; ein Haltepunkt in der ERSTEN Zeile zaehlt beim Start nicht
+        // Without a breakpoint a program runs to the end in one go; a breakpoint in the FIRST line does not count at the start
         VM.ResetTerminateForTests();
         var (session, lines) = BuildDbg("print(\"a\")\nprint(\"b\")\n", VmExecutionMode.Debug);
         var vm = session.VirtualMachine!;
@@ -11598,7 +11598,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
     }
 
     {
-        // Pause-Anforderung unterbricht eine Endlosschleife (RunUntilEnd und RunUntilBreakpoint)
+        // A pause request interrupts an infinite loop (RunUntilEnd and RunUntilBreakpoint)
         foreach (var useBreakpointRun in new[] { false, true })
         {
             VM.ResetTerminateForTests();
@@ -11614,7 +11614,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
     }
 
     {
-        // Zeilentabelle: binaere Suche liefert dieselben Stellen wie die Zeile jeder Instruktion erwarten laesst
+        // Line table: binary search yields the same places as the line of each instruction suggests
         VM.ResetTerminateForTests();
         var (session, _) = BuildDbg("var a = 1\nvar b = 2\n\nvar c = a + b\nprint(c)\n", VmExecutionMode.Debug);
         var chunk = session.CompiledProgram.TopLevel;
@@ -11631,7 +11631,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
     }
 
     {
-        // Weiterleitung an native Funktionen (Methoden der Brücken-Preludes): gleiches Ergebnis wie der direkte Aufruf, auch mit Rueckgabewert
+        // Forwarding to native functions (methods of the bridge preludes): same result as the direct call, also with a return value
         foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release, VmExecutionMode.Performance })
         {
             VM.ResetTerminateForTests();
@@ -11660,7 +11660,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 }
 
 // ---------------------------------------------------------------------------
-// Lambda-Captures, Kurzsyntax `x => ...` und die Abfrage-Bibliothek (#import "linq")
+// Lambda captures, short syntax `x => ...` and the query library (#import "linq")
 // ---------------------------------------------------------------------------
 {
     Console.WriteLine();
@@ -11681,7 +11681,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         var sources = new List<string> { fire.Standard.Prelude.Source };
         if (script.Contains("#import \"linq\""))
         {
-            // linq bringt reflection mit (SelectProperty/SelectField)
+            // linq brings reflection along (SelectProperty/SelectField)
             fire.Runtime.ReflectionNatives.Register(natives);
             sources.Add(fire.Standard.ReflectionPrelude.Source);
             sources.Add(fire.Standard.LinqPrelude.Source);
@@ -11986,7 +11986,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(arr.length + " " + s)
         """, new[] { "3 2 4 6 " });
 
-    // ---- Operanden-Stack und Exceptions: was die Wurfstelle auf dem Stack hinterlaesst, darf den Aufrufer nicht verschieben
+    // ---- Operand stack and exceptions: what the throw site leaves on the stack must not shift the caller
     const string excHead = "class Exception { string message; construct(string message) { this.message = message } }\n";
 
     CheckLq("Exception aus einem foreach, im selben try gefangen: keine Operanden-Leichen (catch mit return, Aufrufer mitten im Ausdruck)", excHead + """
@@ -12191,7 +12191,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         return lines;
     }
 
-    // Wie ein gepacktes Programm: kompilieren, serialisieren, wieder laden, mit der gepackten Runtime ausfuehren
+    // Like a packed program: compile, serialise, load again, execute with the packed runtime
     List<string> RunRfPacked(string script, VmExecutionMode mode)
     {
         var lines = new List<string>();
@@ -12360,7 +12360,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
             "2 A selector ('lambda member<...>' etc.) expects a lambda like `c => c.radius`, got: Int.",
         });
 
-    // gepackt: Metadaten und try/catch muessen die Serialisierung ueberleben (catch-Klauseln gingen frueher verloren)
+    // packed: metadata and try/catch must survive the serialisation (catch clauses used to be lost)
     CheckRf("Gepacktes Programm: Typ-Metadaten, Zugriffsregeln und try/catch ueberleben die Serialisierung", """
         #import "reflection"
         class Exception { string message; construct(string message) { this.message = message } }
@@ -12537,7 +12537,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
-// Scope-Verwaltung: return aus verschachtelten Bloecken, Wiederverwendung von Scopes (Pooling)
+// Scope management: return from nested blocks, reuse of scopes (pooling)
 // ---------------------------------------------------------------------------------------------------------------------------
 {
     Console.WriteLine("=== Scope-Verwaltung (return aus verschachtelten Bloecken, Wiederverwendung) ===");
@@ -13008,7 +13008,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(T.G())
         """, new[] { "~c", "~b", "fin", "~a", "1", "~gb", "~gc", "~ga", "2" });
 
-    // ---- Wiederverwendung von Scopes: nichts darf auf eine Scope zeigen, die gleich einem anderen Block gehoert ----
+    // ---- Reuse of scopes: nothing may point to a scope that is about to belong to another block ----
 
     CheckSc("Pointer auf eine Lokale ueberlebt das Verlassen der Funktion/des Blocks, auch wenn danach viele Scopes wiederverwendet werden", """
         class T {
@@ -13082,7 +13082,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         T.Run()
         """, new[] { "~o0", "~o2", "12" });
 
-    // ---- Objekterzeugung: Feld-Vorbelegung ohne Aufruf, Besitz ohne Listen, Zerstoerung ----
+    // ---- Object creation: field pre-assignment without a call, ownership without lists, destruction ----
 
     CheckSc("Feld-Vorbelegung: Konstanten, fehlende Initialisierer (undefined), Ausdruecke und Initialisierer mit this", """
         class A {
@@ -13197,7 +13197,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         T.Run()
         """, new[] { "~m0", "~e1", "~m1", "~m2", "31" });
 
-    // ---- Command/ICommand der Standard-Prelude, generische Basisklassen und Interfaces, Interfaces als Parametertyp ----
+    // ---- Command/ICommand of the standard prelude, generic base classes and interfaces, interfaces as parameter type ----
 
     CheckSc("Command, Command<T>: Lambda als Rumpf, Konstruktor mit Lambda, ohne Lambda geschieht nichts", """
         var a = new Command(() => 5)
@@ -13285,7 +13285,7 @@ static int CountOccurrences(string haystack, string needle)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
-// Editor-Hilfe: Anker fuer Ueberschriften (Links wie "Datei.md#abschnitt") und die mitgelieferte "First Steps.md"
+// Editor help: anchors for headings (links like "File.md#section") and the bundled "First Steps.md"
 // ---------------------------------------------------------------------------------------------------------------------------
 {
     Console.WriteLine("=== Markdown-Anker und First Steps ===");
@@ -13304,7 +13304,7 @@ static int CountOccurrences(string haystack, string needle)
     CheckMd("Anker: zweite gleichnamige Ueberschrift bekommt -1", fire.Editor.MdAnchors.Unique("Setup", usedAnchors), "setup-1");
     CheckMd("Anker: dritte gleichnamige Ueberschrift bekommt -2", fire.Editor.MdAnchors.Unique("Setup", usedAnchors), "setup-2");
 
-    // Jeder Link "(#anker)" der mitgelieferten Hilfeseiten muss auf eine Ueberschrift zeigen, jeder Link auf eine andere Seite auf eine vorhandene Datei.
+    // Every link "(#anchor)" of the bundled help pages must point to a heading, every link to another page to an existing file.
     string helpDir = Path.Combine(Path.GetDirectoryName(GetTestDataDir())!, "..", "fire.Editor", "Help");
     foreach (var helpFile in new[] { "First Steps.md", "Embedding.md" })
     {
@@ -13334,7 +13334,7 @@ static int CountOccurrences(string haystack, string needle)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
-// Editor: Dokumentationskommentare (///) fuer Klassen, Felder, Properties und Methoden
+// Editor: documentation comments (///) for classes, fields, properties and methods
 // ---------------------------------------------------------------------------------------------------------------------------
 {
     Console.WriteLine("=== Dokumentationskommentare (///) ===");
@@ -13413,7 +13413,7 @@ static int CountOccurrences(string haystack, string needle)
     var classItems = fire.Editor.CompletionEngine.GetSuggestions(docSource + "\nvar d = new Ca", docSource.Length + 15, fire.Editor.ScriptSymbolIndex.Build(docSource + "\nvar d = new Ca"));
     CheckDoc("Vervollstaendigung: Klassen tragen ihre Dokumentation", classItems.FirstOrDefault(i => i.Text == "Calc")?.Documentation?.Summary == "A calculator. Works on ints.");
 
-    // Aufrufkontext: Tooltip bleibt waehrend der Argumente, new Foo( springt auf den Konstruktor
+    // Call context: tooltip stays during the arguments, new Foo( jumps to the constructor
     string callSource = """
         /// A point.
         class Point {
@@ -13445,7 +13445,7 @@ static int CountOccurrences(string haystack, string needle)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
-// Hilfeseite "Embedding.md": die dort gezeigten Host-Beispiele muessen mit der echten API laufen
+// Help page "Embedding.md": the host examples shown there must run with the real API
 // ---------------------------------------------------------------------------------------------------------------------------
 {
     Console.WriteLine("=== Embedding.md: Host-Beispiele ===");
@@ -13463,7 +13463,7 @@ static int CountOccurrences(string haystack, string needle)
     hello.Run();
     CheckEmb("Skript ausfuehren: print geht an den debugWriter", string.Join("|", printed) == "Hello from fire!", string.Join("|", printed));
 
-    // Mehrere Quellen werden zu einem Programm verbunden
+    // Several sources are joined into one program
     printed.Clear();
     RuntimeSession.Build(new[] { "var a = 20", "print(a + 22)" }, VmExecutionMode.Release, writer).Run();
     CheckEmb("Mehrere Quellen, ausdrueckliche Betriebsart", string.Join("|", printed) == "42", string.Join("|", printed));
@@ -13477,14 +13477,14 @@ static int CountOccurrences(string haystack, string needle)
     }
     CheckEmb("Uebersetzungsfehler: Build wirft, CompileErrors liefert Meldungen", compileMessages is { Count: > 0 }, compileMessages == null ? "keine Exception" : null);
 
-    // Nicht behandelte Exception: Run kehrt normal zurueck
+    // Unhandled exception: Run returns normally
     var failing = RuntimeSession.Build(new[] { "class Oops {\n    string message\n    construct(string message) { this.message = message }\n}\nthrow new Oops(\"boom\")" }, null, writer);
     failing.Run();
     var failingVm = failing.VirtualMachine!;
     CheckEmb("Nicht behandelte Exception steht in vm.UnhandledException",
         failingVm.UnhandledException != null && new UncaughtScriptException(failingVm.UnhandledException).Message.Contains("boom"));
 
-    // IoStdio.Custom und IoPolicy werden von Build angenommen
+    // IoStdio.Custom and IoPolicy are accepted by Build
     var stdioOut = new System.Text.StringBuilder();
     var stdio = fire.IO.Bridge.IoStdio.Custom(text => stdioOut.Append(text), text => stdioOut.Append("[error] ").Append(text), new MemoryStream(System.Text.Encoding.UTF8.GetBytes("in\n")));
     var policy = fire.IO.Bridge.IoPolicy.Rooted(Path.GetTempPath(), readOnly: false);
@@ -13492,7 +13492,7 @@ static int CountOccurrences(string haystack, string needle)
     RuntimeSession.Build(new[] { "print(1)" }, null, writer, ioPolicy: policy, ioStdio: stdio).Run();
     CheckEmb("ioPolicy und ioStdio sind Parameter von Build", string.Join("|", printed) == "1");
 
-    // terminate(wert): Exitcode ueber VM.ExitValue; das naechste Programm startet wieder normal
+    // terminate(value): exit code via VM.ExitValue; the next program starts normally again
     RuntimeSession.Build(new[] { "terminate(7)" }, null, writer).Run();
     var exit = VM.ExitValue;
     CheckEmb("terminate(7): VM.ExitValue ist 7", exit.Kind == ValueKind.Int && exit.AsInt() == 7);
@@ -13501,7 +13501,7 @@ static int CountOccurrences(string haystack, string needle)
     CheckEmb("Nach terminate laeuft das naechste Programm im selben Prozess normal", string.Join("|", printed) == "again", string.Join("|", printed));
     CheckEmb("Ein normal beendetes Programm hat keinen Exitwert", VM.ExitValue.Kind == ValueKind.Undefined);
 
-    // Skript auf einem Hintergrundthread
+    // Script on a background thread
     printed.Clear();
     var bgSession = RuntimeSession.Build(new[] { "print(\"background\")" }, null, writer);
     var bgThread = new Thread(() => bgSession.Run()) { IsBackground = true };
@@ -13530,7 +13530,7 @@ ImageTests.Run();
 GitTests.Run();
 
 // ---------------------------------------------------------------------------------------------------------------------------
-// Native-Backend (fire.Native): derselbe Quelltext laeuft in der VM und als erzeugtes C++ - die Ausgabe muss identisch sein
+// Native backend (fire.Native): the same source runs in the VM and as generated C++ - the output must be identical
 // ---------------------------------------------------------------------------------------------------------------------------
 if (Environment.GetEnvironmentVariable("FIRE_TEST_NO_NATIVE") == "1") Console.WriteLine("(FIRE_TEST_NO_NATIVE: the native checks are skipped)");
 else
@@ -17998,7 +17998,7 @@ else
             exit = p.ExitCode;
             return output + errTask.Result;
         }
-        // ---- Geraete: dieselben Skripte wie in den Geraete-Pruefungen der VM, nativ mit dem Loopback-Geraet (FIRE_DEVICES), gegen die erwarteten Ausgaben
+        // ---- Devices: the same scripts as in the device checks of the VM, natively with the loopback device (FIRE_DEVICES), against the expected outputs
         {
             var devTasks = devNativeCases.Select((c, index) => Task.Run(() =>
             {
@@ -18024,7 +18024,7 @@ else
             CheckNat("Geraete nativ: es gibt Faelle", devNativeCases.Count >= 10, devNativeCases.Count.ToString());
         }
 
-        // ---- Fenster (bridges/fire_bridge_windows.hpp): SDL2 mit dem Dummy-Treiber; die Ereignisse stellt FIRE_DISPLAY_SELFTEST bereit (die VM nutzt SDL3, hier gibt es keinen Vergleich)
+        // ---- Window (bridges/fire_bridge_windows.hpp): SDL2 with the dummy driver; the events are provided by FIRE_DISPLAY_SELFTEST (the VM uses SDL3, there is no comparison here)
         {
             string sdlProbe = Path.Combine(workDir, "sdlprobe.cpp");
             File.WriteAllText(sdlProbe, "#if __has_include(<SDL2/SDL.h>)\n#include <SDL2/SDL.h>\n#else\n#include <SDL.h>\n#endif\nint main() { return SDL_Init(0); }\n");
@@ -18138,7 +18138,7 @@ else
             }
         }
 
-        // ---- UI-Bibliothek: dieselben Elemente nativ (Fenster mit dem Dummy-Treiber) gegen die VM mit der Attrappe
+        // ---- UI library: the same elements natively (window with the dummy driver) against the VM with the dummy
         {
             string sdlProbe2 = Path.Combine(workDir, "sdlprobe.cpp.bin");
             if (!File.Exists(sdlProbe2)) Console.WriteLine("(SDL2 nicht verfuegbar: die UI wird nicht nativ ausgefuehrt)");
@@ -18159,7 +18159,7 @@ else
             }
         }
 
-        // ---- Plattformschicht: dieselben Thread-Programme auf FreeRTOS (Tasks, Semaphoren) - hier auf dem Simulator (native/sim, pthreads)
+        // ---- Platform layer: the same thread programs on FreeRTOS (tasks, semaphores) - here on the simulator (native/sim, pthreads)
         {
             string[] rtosCases = { "Actor: fire with", "Actor: mehrere", "sync: die Kopie", "sync: Arrays", "taking: der Thread", "terminate im Hauptprogramm", "catch threads()",
                 "Globals: sync global ist atomar", "Globals: fire global mit taking", "Thread startet Thread", "Globals: #nosync haelt", "leave aus einer Funktion" };
@@ -18185,7 +18185,7 @@ else
             CheckNat("FreeRTOS: es gibt Faelle", rtosIndexes.Length >= 10, rtosIndexes.Length.ToString());
         }
 
-        // ---- Zielkonfiguration (fire.native.json) und `build` mit dem nativen Motor
+        // ---- Target configuration (fire.native.json) and `build` with the native engine
         {
             var config = fire.Native.NativeConfig.Parse("""
                 {
@@ -18301,7 +18301,7 @@ else
             CheckNat("build: --engine vm gewinnt gegen die Konfiguration", code4 == 0 && File.Exists(Path.Combine(dir, "vm.exe")));
         }
 
-        // Was noch nicht uebersetzt wird, muss klar abgelehnt werden - nie falsch uebersetzt
+        // What is not yet translated must be rejected clearly - never translated wrongly
         try
         {
             fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#import \"windows\"\nvar x = __GRPHWinCreate(1)" }, null, null, VmExecutionMode.Release));
@@ -18614,7 +18614,7 @@ static class PackerNativeProbe
     public static int Call() => Nonexistent();
 }
 
-/// <summary>Schrift ohne Bitmap-Zeilen (nur IsPixelSet) - erzwingt den allgemeinen Zeichenweg von Renderer.</summary>
+/// <summary>Font without bitmap rows (only IsPixelSet) - forces the general drawing path of Renderer.</summary>
 sealed class PixelOnlyFont : fire.Terminal.IGlyphFont
 {
     private readonly fire.Terminal.IntegratedGlyphFont _inner;
@@ -18624,7 +18624,7 @@ sealed class PixelOnlyFont : fire.Terminal.IGlyphFont
     public bool IsPixelSet(char c, int px, int py) => _inner.IsPixelSet(c, px, py);
 }
 
-/// <summary>Renderer-Attrappe fuer die UI-Tests: liefert die abgelegten Ereignisse beim naechsten PumpEvents, zeichnet nichts.</summary>
+/// <summary>Renderer dummy for the UI tests: delivers the stored events at the next PumpEvents, draws nothing.</summary>
 sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
 {
     private readonly List<fire.Terminal.Event.IEvent> _pending = new();
@@ -18643,7 +18643,7 @@ sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
         return new fire.Terminal.WindowPumpResult { StillOpen = !Closed, Events = events };
     }
 
-    /// <summary>Legt ein Ereignis ab: args[0] Typ, danach je nach Typ: Maus (taste, x, y) bzw. Bewegung (x, y), Taste (keycode, modifier), Text (text).</summary>
+    /// <summary>Stores an event: args[0] type, then depending on the type: mouse (button, x, y) or motion (x, y), key (keycode, modifier), text (text).</summary>
     public void Push(int type, IReadOnlyList<Value> args)
     {
         var kind = (fire.Terminal.Event.EventType)type;
@@ -18695,7 +18695,7 @@ sealed class volatile_bool
     public bool Value { get => _value; set => _value = value; }
 }
 
-/// <summary>Die Zeichenfunktionen mit einem Palette-Index als Farbe (ein SolidBrush bzw. Pen auf dem Framebuffer) - kurze Form fuer die Pruefungen der Rastergeometrie.</summary>
+/// <summary>The drawing functions with a palette index as colour (a SolidBrush or Pen on the framebuffer) - short form for the checks of the raster geometry.</summary>
 static class Shp
 {
     private static fire.Terminal.Surface S(fire.Terminal.Framebuffer fb) => new(fb, true);
@@ -18716,7 +18716,7 @@ static class Shp
     public static void FloodFillBorder(fire.Terminal.Framebuffer fb, int x, int y, int i, int border) => B(i).FloodFillBorder(S(fb), x, y, fire.Terminal.Paint.FromIndex((byte)border));
 }
 
-/// <summary>Ein minimales eigenes Renderziel (zwei Arrays, kein Framebuffer) - zeigt, dass der Renderer nur das IRenderTarget braucht.</summary>
+/// <summary>A minimal own render target (two arrays, no framebuffer) - shows that the renderer only needs the IRenderTarget.</summary>
 sealed class ArrayTarget : fire.Terminal.IRenderTarget
 {
     public ArrayTarget(int width, int height) { Width = width; Height = height; Pixels = new uint[width * height]; }
