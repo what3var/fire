@@ -7,19 +7,19 @@ using System.Text;
 
 namespace fire.Runtime
 {
-    /// <summary>Was ein Eintrag im Payload der gepackten Datei ist.</summary>
+    /// <summary>What an entry in the payload of the packed file is.</summary>
     public enum PayloadKind : byte
     {
-        /// <summary>Das serialisierte LinkedProgram (genau ein Eintrag, Name "program").</summary>
+        /// <summary>The serialised LinkedProgram (exactly one entry, name "program").</summary>
         Program = 0,
-        /// <summary>Verwaltete DLL, wird bei Bedarf per AssemblyLoadContext.Resolving geladen. Name = Assembly-Name.</summary>
+        /// <summary>Managed DLL, loaded on demand via AssemblyLoadContext.Resolving. Name = assembly name.</summary>
         Assembly = 1,
-        /// <summary>Native Bibliothek (z.B. SDL3.dll), wird beim ersten Zugriff auf die Platte entpackt und geladen.
-        /// Name = Dateiname.</summary>
+        /// <summary>Native library (e.g. SDL3.dll), unpacked to disk and loaded on first access.
+        /// Name = file name.</summary>
         Native = 2,
     }
 
-    /// <summary>Ein Eintrag der Inhaltsübersicht am Ende der Datei.</summary>
+    /// <summary>An entry of the table of contents at the end of the file.</summary>
     public sealed class PayloadEntry
     {
         public PayloadKind Kind { get; init; }
@@ -28,25 +28,25 @@ namespace fire.Runtime
         public int StoredLength { get; init; }
         public int RawLength { get; init; }
         public bool Compressed { get; init; }
-        /// <summary>SHA-256 der ENTPACKTEN Daten (Integritätsprüfung beim Lesen).</summary>
+        /// <summary>SHA-256 of the UNPACKED data (integrity check when reading).</summary>
         public byte[] Sha256 { get; init; } = Array.Empty<byte>();
     }
 
     /// <summary>
-    /// Format der Nutzdaten, die der Packer HINTER die ausführbare Datei hängt (Programm, benötigte Bridge-DLLs, native
-    /// Bibliotheken). Ersetzt die frühere Marker-Suche (`DA 1D`): Lesen geschieht über einen festen Fuß am Dateiende, es
-    /// gibt also nichts zu durchsuchen, und die Nutzdaten dürfen beliebige Bytes enthalten.
+    /// Format of the payload that the packer appends BEHIND the executable file (program, required bridge DLLs, native
+    /// libraries). Replaces the former marker search (`DA 1D`): reading happens via a fixed footer at the end of the file, so there
+    /// is nothing to search, and the payload may contain arbitrary bytes.
     ///
-    ///   [ausführbare Datei: apphost + .NET-Bundle] [Eintrag 0][Eintrag 1]... [Index] [Fuß]
-    ///   Fuß (20 Bytes): int64 Index-Offset, int32 Index-Länge, 8 Byte Kennung "FIREPAK1"
-    ///   Index: int32 Anzahl, je Eintrag: byte Kind, string Name, int64 Offset, int32 StoredLength, int32 RawLength,
-    ///          byte Compressed, 32 Byte SHA-256
+    ///   [executable file: apphost + .NET bundle] [entry 0][entry 1]... [index] [footer]
+    ///   Footer (20 bytes): int64 index offset, int32 index length, 8-byte identifier "FIREPAK1"
+    ///   Index: int32 count, per entry: byte kind, string name, int64 offset, int32 StoredLength, int32 RawLength,
+    ///          byte compressed, 32-byte SHA-256
     ///
-    /// Die Einträge sind einzeln mit Brotli gepackt (nur wenn es etwas bringt), damit die Datei so klein wird wie möglich
-    /// und trotzdem jede DLL einzeln und erst bei Bedarf entpackt wird.
+    /// The entries are individually Brotli-packed (only if it helps), so that the file becomes as small as possible
+    /// and yet every DLL is unpacked individually and only when needed.
     ///
-    /// Diese Klasse (und alles, was die Runtime vor dem Installieren des Laders berührt) darf NICHT auf fire.dll oder
-    /// MemoryPack zugreifen - die kommen ja selbst erst aus diesem Payload.
+    /// This class (and everything the runtime touches before installing the loader) must NOT access fire.dll or
+    /// MemoryPack - after all, those themselves only come from this payload.
     /// </summary>
     public static class PayloadFile
     {
@@ -57,8 +57,8 @@ namespace fire.Runtime
         // Schreiben (Packer)
         // ------------------------------------------------------------
 
-        /// <summary>Hängt die Einträge an das Ende von `stream` an (Position = Ende der ausführbaren Datei) und
-        /// schreibt Index und Fuß.</summary>
+        /// <summary>Appends the entries to the end of `stream` (position = end of the executable file) and
+        /// writes index and footer.</summary>
         public static void Append(Stream stream, IEnumerable<(PayloadKind Kind, string Name, byte[] Data)> items,
             Func<PayloadKind, byte[], byte[]>? compress = null)
         {
@@ -104,9 +104,9 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Brotli-Packen. `Optimal` braucht für eine DLL wenige Millisekunden, `SmallestSize` (Qualität 11) dagegen
-        /// Sekunden (SDL3-CS.dll: ~3 s statt ~40 ms) für nur etwa 15-20 % weniger Größe - deshalb Vorgabe `Optimal`; der
-        /// Packer nutzt `SmallestSize` nur zusammen mit einem Cache (siehe Packer.CompressCached).</summary>
+        /// <summary>Brotli packing. `Optimal` needs a few milliseconds for a DLL, `SmallestSize` (quality 11), by contrast,
+        /// seconds (SDL3-CS.dll: ~3 s instead of ~40 ms) for only about 15-20 % less size - hence the default `Optimal`; the
+        /// packer uses `SmallestSize` only together with a cache (see Packer.CompressCached).</summary>
         public static byte[] Compress(byte[] data, CompressionLevel level)
         {
             using var ms = new MemoryStream();
@@ -119,7 +119,7 @@ namespace fire.Runtime
         // Lesen (Runtime)
         // ------------------------------------------------------------
 
-        /// <summary>Liest die Inhaltsübersicht der Datei; null, wenn die Datei keinen Payload trägt.</summary>
+        /// <summary>Reads the table of contents of the file; null if the file carries no payload.</summary>
         public static PayloadReader? Open(string path)
         {
             using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
@@ -162,8 +162,8 @@ namespace fire.Runtime
         }
     }
 
-    /// <summary>Lesezugriff auf die Einträge einer gepackten Datei. Jeder Zugriff öffnet die Datei kurz selbst (teilbar,
-    /// threadsicher, und die laufende .exe bleibt nicht länger als nötig geöffnet).</summary>
+    /// <summary>Read access to the entries of a packed file. Every access briefly opens the file itself (shareable,
+    /// thread-safe, and the running .exe is not kept open longer than necessary).</summary>
     public sealed class PayloadReader
     {
         private readonly string _path;
@@ -183,7 +183,7 @@ namespace fire.Runtime
             return null;
         }
 
-        /// <summary>Liest und entpackt einen Eintrag; null, wenn die Prüfsumme nicht stimmt (beschädigte Datei).</summary>
+        /// <summary>Reads and unpacks an entry; null if the checksum does not match (damaged file).</summary>
         public byte[]? Read(PayloadEntry entry)
         {
             var stored = new byte[entry.StoredLength];

@@ -8,19 +8,19 @@ using System.Runtime.InteropServices;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Bestimmt, welche DLLs ein gepacktes Programm mitbekommt: immer der Kern (fire.dll samt Abhängigkeiten wie
-    /// MemoryPack), dazu je `#import` nur die zugehörige Bridge samt allem, was sie braucht - Bridges, die das Programm
-    /// nicht einbindet, kosten also keinen Platz in der fertigen Datei.
+    /// Determines which DLLs a packed program gets: always the core (fire.dll together with dependencies like
+    /// MemoryPack), plus per `#import` only the associated bridge with everything it needs - bridges that the program
+    /// does not include thus cost no space in the finished file.
     ///
-    /// Abhängigkeiten werden nicht von Hand gepflegt, sondern aus den Assembly-Verweisen der DLLs (Metadaten) ermittelt:
-    /// jede Assembly, die als Datei neben dem Compiler liegt und nicht zum .NET-Framework gehört, kommt mit. Von Hand
-    /// stehen hier nur die Einstiegspunkte je Import sowie die nativen Bibliotheken (die aus den Metadaten nicht
-    /// hervorgehen).
+    /// Dependencies are not maintained by hand, but determined from the assembly references of the DLLs (metadata):
+    /// every assembly that lies as a file next to the compiler and does not belong to the .NET framework comes along. By hand
+    /// only the entry points per import are stated here, as well as the native libraries (which do not
+    /// emerge from the metadata).
     /// </summary>
     public sealed class PackagePlan
     {
-        /// <summary>Was ein Import mitbringt: verwaltete Einstiegs-Assemblies (der Rest folgt aus den Verweisen) und native
-        /// Bibliotheken (Dateinamen je Betriebssystem; was es auf dieser Plattform nicht gibt, entfällt).</summary>
+        /// <summary>What an import brings along: managed entry assemblies (the rest follows from the references) and native
+        /// libraries (file names per operating system; what does not exist on this platform is dropped).</summary>
         private sealed record ImportPackage(string[] Assemblies, string[] Natives);
 
         private static readonly string[] CoreAssemblies = { "fire" };
@@ -30,7 +30,7 @@ namespace fire.Runtime
             [NativeImports.Print] = new(Array.Empty<string>(), Array.Empty<string>()),
             [NativeImports.Graphics] = new(
                 new[] { "fire.Terminal.Bridge" }, Array.Empty<string>()),
-            // das SDL-Fenster: eigene Assembly samt SDL (`graphics` allein kommt ohne aus)
+            // the SDL window: own assembly together with SDL (`graphics` alone gets by without)
             [NativeImports.Windows] = new(
                 new[] { "fire.Windows.Bridge", "fire.Terminal.Windows", "fire.Terminal.Sdl" },
                 new[] { "SDL3.dll", "libSDL3.so.0", "libSDL3.dylib" }),
@@ -38,9 +38,9 @@ namespace fire.Runtime
             [NativeImports.Devices] = new(
                 new[] { "fire.Device.Manager" },
                 new[] { "libSystem.IO.Ports.Native.so", "libSystem.IO.Ports.Native.dylib" }),
-            // reiner fire-Quelltext (im Programm selbst), braucht keine DLL - `graphics` kommt über den Import selbst dazu
+            // pure fire source (in the program itself), needs no DLL - `graphics` comes in via the import itself
             [NativeImports.Ui] = new(Array.Empty<string>(), Array.Empty<string>()),
-            // reiner fire-Quelltext, braucht keine DLL
+            // pure fire source, needs no DLL
             [NativeImports.Linq] = new(Array.Empty<string>(), Array.Empty<string>()),
             [NativeImports.Reflection] = new(Array.Empty<string>(), Array.Empty<string>()),
         };
@@ -51,8 +51,8 @@ namespace fire.Runtime
         /// <summary>Native Bibliotheken: Dateiname -> Pfad.</summary>
         public SortedDictionary<string, string> Natives { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>Verweise, die weder als Datei neben dem Compiler liegen noch zum Framework gehören (sollte leer sein;
-        /// sonst fehlt der fertigen Datei zur Laufzeit etwas).</summary>
+        /// <summary>References that neither lie as a file next to the compiler nor belong to the framework (should be empty;
+        /// otherwise something is missing from the finished file at runtime).</summary>
         public SortedSet<string> Unresolved { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         public static PackagePlan Create(IEnumerable<string> nativeImports, string baseDir, IEnumerable<string>? extraNativeFiles = null)
@@ -91,7 +91,7 @@ namespace fire.Runtime
                 var path = FindAssembly(name, searchDirs);
                 if (path == null)
                 {
-                    // Gehört es zum .NET-Framework, kommt es zur Laufzeit von dort - alles andere fehlt wirklich.
+                    // If it belongs to the .NET framework, it comes from there at runtime - everything else is really missing.
                     if (!File.Exists(Path.Combine(frameworkDir, name + ".dll")))
                         plan.Unresolved.Add(name);
                     continue;
@@ -106,9 +106,9 @@ namespace fire.Runtime
             return plan;
         }
 
-        /// <summary>Plattformspezifische Unterordner (runtimes/win/lib/..., runtimes/unix/lib/...) vor dem Hauptordner -
-        /// dasselbe, was die deps.json dem Host vorgibt (z.B. liefert System.IO.Ports im Hauptordner nur eine Attrappe,
-        /// die echte Assembly liegt unter runtimes/win bzw. runtimes/unix).</summary>
+        /// <summary>Platform-specific subfolders (runtimes/win/lib/..., runtimes/unix/lib/...) before the main folder -
+        /// the same as the deps.json tells the host (e.g. System.IO.Ports in the main folder supplies only a dummy,
+        /// the real assembly lies under runtimes/win or runtimes/unix).</summary>
         private static List<string> SearchDirectories(string baseDir)
         {
             var dirs = new List<string>();

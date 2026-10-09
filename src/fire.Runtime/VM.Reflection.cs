@@ -7,18 +7,18 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Die Seite der VM für die Reflection-Bibliothek (`#import "reflection"`, siehe <see cref="ReflectionNatives"/> und
-    /// docs/DESIGN_LAMBDA_REFLECTION_PROBE.md): Zugriffe auf Mitglieder nach Namen laufen über dieselben Pfade wie normaler Code
-    /// (Zugriffsprüfung, Einheiten, Property-Accessoren, Sektionen der Globals) - nur dass der "Aufrufer" für private/protected-Zugriffe der
-    /// Code ist, der die Bibliothek aufgerufen hat (<see cref="ReflectionCallerClass"/>).
+    /// The VM's side of the reflection library (`#import "reflection"`, see <see cref="ReflectionNatives"/> and
+    /// docs/DESIGN_LAMBDA_REFLECTION_PROBE.md): accesses to members by name go via the same paths as normal code
+    /// (access check, units, property accessors, sections of the globals) - except that the "caller" for private/protected accesses is the
+    /// code that called the library (<see cref="ReflectionCallerClass"/>).
     /// </summary>
     public sealed partial class VM
     {
-        /// <summary>Eine native Funktion hat eine Exception ausgelöst, die schon in einen Handler umgeleitet wurde: der Aufruf liefert kein
-        /// Ergebnis (siehe CallNativeGuarded).</summary>
+        /// <summary>A native function raised an exception that was already redirected to a handler: the call returns no
+        /// result (see CallNativeGuarded).</summary>
         private bool _nativeRedirected;
 
-        /// <summary>Die Klasse des Codes, der die Reflection-Bibliothek aufgerufen hat (null: Code außerhalb jeder Klasse).</summary>
+        /// <summary>The class of the code that called the reflection library (null: code outside any class).</summary>
         private RuntimeClass? ReflectionCallerClass()
         {
             foreach (var frame in _frames)
@@ -29,11 +29,11 @@ namespace fire.Runtime
             return null;
         }
 
-        /// <summary>Wirft eine `ReflectionException` (fangbar) und merkt die Umleitung für den nativen Aufruf.</summary>
+        /// <summary>Throws a `ReflectionException` (catchable) and remembers the redirection for the native call.</summary>
         internal Value ReflectFail(string message) => NativeFail("ReflectionException", message);
 
-        /// <summary>Löst aus einer NATIVEN Funktion heraus eine fangbare Skript-Exception der Klasse `className` (mit dem Konstruktor `(message)`) aus und
-        /// merkt die Umleitung: der native Aufruf liefert dann kein Ergebnis (siehe CallNativeGuarded).</summary>
+        /// <summary>Raises, from within a NATIVE function, a catchable script exception of the class `className` (with the constructor `(message)`) and
+        /// remembers the redirection: the native call then returns no result (see CallNativeGuarded).</summary>
         internal Value NativeFail(string className, string message)
         {
             var instance = ConstructNested(ResolveClass(className), new[] { Value.MakeString(message) });
@@ -58,7 +58,7 @@ namespace fire.Runtime
 
         public IEnumerable<string> ReflectClassNames() => _classes.Keys;
 
-        /// <summary>Hat das Objekt ein Mitglied dieses Namens (Feld, Property-Accessor oder Methode)?</summary>
+        /// <summary>Does the object have a member of this name (field, property accessor or method)?</summary>
         public bool ReflectHas(ObjectInstance obj, string name)
         {
             if (obj.HasFieldLocked(name)) return true;

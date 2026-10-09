@@ -8,29 +8,29 @@ using System.Linq;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Erzeugt die ausführbare Datei eines Fire-Programms - eine einzelne, eigenständige Datei:
+    /// Creates the executable file of a fire program - a single, self-contained file:
     ///
-    ///   1. Start-Stück: der apphost (fire.Runtime.exe) samt fire.Runtime.dll und runtimeconfig.json als .NET-Bundle
-    ///      (siehe BundleWriter). Das ist alles, was der .NET-Host zum Starten braucht, und bewusst winzig.
-    ///   2. Payload dahinter (siehe PayloadFile, einzeln Brotli-gepackt): das Programm selbst, der Kern (fire.dll,
-    ///      MemoryPack) und - nur wenn das Programm sie per `#import` braucht - die jeweiligen Bridge-DLLs samt
-    ///      Abhängigkeiten und nativen Bibliotheken (siehe PackagePlan).
+    ///   1. Start piece: the apphost (fire.Runtime.exe) together with fire.Runtime.dll and runtimeconfig.json as a .NET bundle
+    ///      (see BundleWriter). That is all the .NET host needs to start, and deliberately tiny.
+    ///   2. Payload behind it (see PayloadFile, individually Brotli-packed): the program itself, the core (fire.dll,
+    ///      MemoryPack) and - only if the program needs them via `#import` - the respective bridge DLLs together with
+    ///      dependencies and native libraries (see PackagePlan).
     ///
-    /// Beim Start liest die Runtime ihre NativeImports und lädt die DLLs bei Bedarf aus der eigenen Datei nach (siehe
-    /// PayloadLoader); früher erledigte das Costura/Fody, eingebettet wurde dabei aber immer alles.
+    /// At start the runtime reads its NativeImports and loads the DLLs as needed from its own file (see
+    /// PayloadLoader); formerly Costura/Fody did that, but everything was always embedded then.
     ///
-    /// Der Packer selbst läuft im Compiler/Editor, dessen Ordner die fertigen DLLs und den apphost enthält.
+    /// The packer itself runs in the compiler/editor, whose folder contains the finished DLLs and the apphost.
     /// </summary>
     public class Packer
     {
-        /// <summary>Dateiname des apphost neben dem Compiler (Windows: fire.Runtime.exe, sonst ohne Endung).</summary>
+        /// <summary>File name of the apphost next to the compiler (Windows: fire.Runtime.exe, otherwise without extension).</summary>
         private static string StubFileName => OperatingSystem.IsWindows() ? "fire.Runtime.exe" : "fire.Runtime";
 
-        /// <summary>Packt `program` zu einer eigenständigen Datei `outName`.
-        /// `customizeApphost`: wird vor dem Bündeln mit dem Pfad einer Kopie des apphost aufgerufen, um z.B. Icon und
-        /// Versionsinfo zu setzen. Das muss VOR dem Bündeln geschehen, weil das Ändern der PE-Ressourcen die Datei
-        /// verschiebt und damit den Header-Offset des Bundles ungültig machen würde.
-        /// Gibt die Pack-Planung zurück (welche DLLs eingebunden wurden).</summary>
+        /// <summary>Packs `program` into a self-contained file `outName`.
+        /// `customizeApphost`: called before bundling with the path of a copy of the apphost, in order to e.g. set icon and
+        /// version info. That must happen BEFORE bundling, because changing the PE resources
+        /// shifts the file and would thereby invalidate the header offset of the bundle.
+        /// Returns the pack planning (which DLLs were included).</summary>
         public static PackagePlan PackProgram(LinkedProgram program, string outName, Action<string>? customizeApphost = null, string? baseDir = null)
         {
             baseDir ??= AppContext.BaseDirectory;
@@ -46,7 +46,7 @@ namespace fire.Runtime
             if (plan.Unresolved.Count > 0)
                 throw new InvalidOperationException("Dependencies required for packing are missing in the compiler folder: " + string.Join(", ", plan.Unresolved));
 
-            // apphost kopieren und ggf. anpassen (Icon/Version).
+            // copy the apphost and adapt it if necessary (icon/version).
             var tempStub = outName + "." + Guid.NewGuid().ToString("N") + ".stub";
             try
             {
@@ -78,8 +78,8 @@ namespace fire.Runtime
             foreach (var (name, path) in plan.Natives)
                 items.Add((PayloadKind.Native, name, File.ReadAllBytes(path)));
 
-            // Das Programm ist klein und ändert sich bei jedem Build: schnell packen. Die DLLs sind bei jedem Build dieselben:
-            // einmal mit höchster Stufe packen und danach aus dem Cache nehmen.
+            // The program is small and changes with every build: pack it quickly. The DLLs are the same on every build:
+            // pack them once with the highest level and afterwards take them from the cache.
             using (var fs = new FileStream(outName, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
                 PayloadFile.Append(fs, items, (kind, data) =>
                     kind == PayloadKind.Program
@@ -89,10 +89,10 @@ namespace fire.Runtime
             return plan;
         }
 
-        /// <summary>Packt `data` mit der höchsten Brotli-Stufe (mehrere Sekunden für eine große DLL) und merkt sich das
-        /// Ergebnis unter seiner SHA-256-Prüfsumme in einem Cache-Ordner: jeder weitere Build mit derselben DLL liest nur
-        /// noch die fertige Datei. Geht der Cache nicht (kein Schreibrecht), wird schnell (`Optimal`) gepackt, statt jeden
-        /// Build Sekunden zu verlieren.</summary>
+        /// <summary>Packs `data` with the highest Brotli level (several seconds for a large DLL) and remembers the
+        /// result under its SHA-256 checksum in a cache folder: every further build with the same DLL only reads
+        /// the finished file. If the cache does not work (no write permission), it is packed quickly (`Optimal`) instead of losing seconds on every
+        /// build.</summary>
         private static byte[] CompressCached(byte[] data)
         {
             string file;
@@ -120,8 +120,8 @@ namespace fire.Runtime
             return packed;
         }
 
-        /// <summary>Liest das Programm aus einer gepackten Datei (für Tests/Werkzeuge; die Runtime selbst nutzt den
-        /// PayloadLoader). Setzt voraus, dass fire.dll und MemoryPack geladen werden können.</summary>
+        /// <summary>Reads the program from a packed file (for tests/tools; the runtime itself uses the
+        /// PayloadLoader). Requires that fire.dll and MemoryPack can be loaded.</summary>
         public static LinkedProgram? UnpackProgram(string fileName)
         {
             var reader = PayloadFile.Open(fileName);
@@ -130,8 +130,8 @@ namespace fire.Runtime
             return bin == null ? null : Deserialize(bin);
         }
 
-        /// <summary>Wandelt die Programm-Bytes aus dem Payload zurück (eigene Methode, damit fire.dll/MemoryPack erst
-        /// beim Aufruf geladen werden, nicht schon beim Laden des Packers).</summary>
+        /// <summary>Converts the program bytes from the payload back (a separate method, so that fire.dll/MemoryPack are only
+        /// loaded on the call, not already when the packer is loaded).</summary>
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         public static LinkedProgram? Deserialize(byte[] bin)
         {

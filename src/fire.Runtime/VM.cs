@@ -9,11 +9,11 @@ using fire.Values;
 
 namespace fire.Runtime
 {
-    /// <summary>Ein Eintrag im Aufruf-Stack: alles, was beim RETURN
-    /// wiederhergestellt werden muss, um beim Aufrufer genau dort weiterzumachen,
-    /// wo der Aufruf stattfand. ConstructedInstance ist nur bei NewObject/
-    /// NewObjectOwned gesetzt: dort soll RETURN nicht den (verworfenen)
-    /// Rückgabewert des Konstruktors pushen, sondern die neu erzeugte Instanz.</summary>
+    /// <summary>An entry in the call stack: everything that has to be
+    /// restored on RETURN in order to continue at the caller exactly there
+    /// where the call took place. ConstructedInstance is only set for NewObject/
+    /// NewObjectOwned: there RETURN should not push the (discarded)
+    /// return value of the constructor, but the newly created instance.</summary>
     internal readonly struct CallFrame
     {
         public readonly Chunk ReturnChunk;
@@ -33,30 +33,30 @@ namespace fire.Runtime
     }
 
     /// <summary>
-    /// Führt einen Chunk aus. Bewusst simpel gehalten: eine Stack-Maschine mit
-    /// einer flachen switch-Anweisung über die Opcodes (in <see cref="Execute"/>)
-    /// - jede Instruktion ist ein kleiner, abgeschlossener Schritt, der sich 1:1
-    /// in eine kurze Sequenz nativer Instruktionen übersetzen lassen soll (das
-    /// war die Vorgabe für den späteren "Bytecode -> nativer Code"-Schritt).
+    /// Executes a chunk. Deliberately kept simple: a stack machine with
+    /// a flat switch statement over the opcodes (in <see cref="Execute"/>)
+    /// - each instruction is a small, self-contained step that is meant to be
+    /// translatable 1:1 into a short sequence of native instructions (that
+    /// was the requirement for the later "bytecode -> native code" step).
     ///
-    /// Implementiert selbst IDestructRunner: wenn die Ownership-Kaskade
-    /// (Scope.Release/ObjectInstance.Destroy, siehe Runtime-Schicht) mitten in
-    /// einem ExitScope/Return-Opcode einen destruct()-Body ausführen muss,
-    /// geschieht das über <see cref="RunNestedUntil"/> - eine VERSCHACHTELTE,
-    /// aber mit derselben Instruktionsschleife und demselben Frame-Stack
-    /// arbeitende Ausführung, die erst zurückkehrt, sobald der Destruktor-Frame
-    /// (und alles, was er selbst noch aufgerufen hat) wieder abgebaut ist. Das
-    /// vermeidet das Reentrancy-Problem: der äußere Opcode-Handler (ExitScope)
-    /// sieht danach wieder konsistenten Zustand (_currentScope etc.), weil die
-    /// verschachtelte Ausführung erst zurückkehrt, wenn genau das der Fall ist.
+    /// Itself implements IDestructRunner: if the ownership cascade
+    /// (Scope.Release/ObjectInstance.Destroy, see runtime layer) has to execute a destruct() body in the middle of
+    /// an ExitScope/Return opcode,
+    /// that happens via <see cref="RunNestedUntil"/> - a NESTED execution,
+    /// but one working with the same instruction loop and the same frame stack,
+    /// which returns only once the destructor frame
+    /// (and everything it itself still called) has been torn down again. This
+    /// avoids the reentrancy problem: the outer opcode handler (ExitScope)
+    /// afterwards sees a consistent state again (_currentScope etc.), because the
+    /// nested execution returns only when exactly that is the case.
     ///
-    /// 'this' (_currentThis) ist entweder eine ObjectInstance (Methoden-/
-    /// Konstruktor-/Feld-Init-/Destruktor-Ausführung) oder ein geboxter Value
-    /// (Lambda mit 'on'-Bindung auf einen Nicht-Objekt-Wert) oder null.
+    /// 'this' (_currentThis) is either an ObjectInstance (method/
+    /// constructor/field-init/destructor execution) or a boxed Value
+    /// (lambda with an 'on' binding to a non-object value) or null.
     /// </summary>
-    /// <summary>Ein aktiv registrierter try-Handler (VM-Laufzeit-Gegenstück zu
-    /// HandlerTemplate): Frame-Tiefe + Ziel-Scope zum Zeitpunkt der
-    /// Registrierung, plus Referenz auf die kompilierten Catch-/Finally-Daten.</summary>
+    /// <summary>An actively registered try handler (VM runtime counterpart to
+    /// HandlerTemplate): frame depth + target scope at the time of
+    /// registration, plus a reference to the compiled catch/finally data.</summary>
     internal readonly struct ActiveHandler
     {
         public readonly Chunk Chunk;
@@ -64,11 +64,11 @@ namespace fire.Runtime
         public readonly Scope TargetScope;
         public readonly HandlerTemplate Template;
 
-        /// <summary>Höhe des Operanden-Stacks beim Registrieren: ein `catch` beginnt wieder auf dieser Höhe - was die Wurfstelle darüber hinterlassen
-        /// hat (angefangene Ausdrücke, die Enumeratoren eines `foreach`, Operanden tieferer Aufrufe), wird für ein mögliches `resume()` beiseitegelegt.</summary>
+        /// <summary>Height of the operand stack at registration: a `catch` starts again at this height - what the throw site left above it
+        /// (started expressions, the enumerators of a `foreach`, operands of deeper calls) is set aside for a possible `resume()`.</summary>
         public readonly int StackPointer;
 
-        /// <summary>Während eines `catch`-Blocks bleibt nur das `finally` des `try` aktiv (der `catch` selbst fängt keine weitere Exception desselben `try`).</summary>
+        /// <summary>During a `catch` block only the `finally` of the `try` stays active (the `catch` itself does not catch a further exception of the same `try`).</summary>
         public readonly bool FinallyOnly;
 
         public ActiveHandler(Chunk chunk, int frameDepthAtEntry, Scope targetScope, HandlerTemplate template, int stackPointer, bool finallyOnly = false)
@@ -82,11 +82,11 @@ namespace fire.Runtime
         }
     }
 
-    /// <summary>Der beim Werfen "eingefrorene" Ausführungszustand an der
-    /// Wurfstelle selbst (nicht am Handler!) - für ein mögliches späteres
-    /// `resume()`. Entspricht genau dem, was `CallFrame` für einen normalen
-    /// Aufruf festhält, nur zusätzlich mit den POPPED (aber NICHT per
-    /// Release() zerstörten) Frames zwischen Wurfstelle und Handler.</summary>
+    /// <summary>The execution state "frozen" at throw time at the
+    /// throw site itself (not at the handler!) - for a possible later
+    /// `resume()`. Corresponds exactly to what `CallFrame` records for a normal
+    /// call, only additionally with the POPPED (but NOT destroyed via
+    /// Release()) frames between throw site and handler.</summary>
     internal sealed class SavedContinuation
     {
         public readonly Chunk Chunk;
@@ -95,7 +95,7 @@ namespace fire.Runtime
         public readonly object? This;
         public readonly List<CallFrame> Frames;
 
-        /// <summary>Die Operanden der Wurfstelle oberhalb von <see cref="ActiveHandler.StackPointer"/> (siehe dort), beim Fortsetzen zurückgespielt.</summary>
+        /// <summary>The operands of the throw site above <see cref="ActiveHandler.StackPointer"/> (see there), played back on resuming.</summary>
         public Value[] Stack = Array.Empty<Value>();
 
         public SavedContinuation(Chunk chunk, int ip, Scope scope, object? thisObj, List<CallFrame> frames)
@@ -108,29 +108,29 @@ namespace fire.Runtime
         }
     }
 
-    /// <summary>Eine Exception, die gerade in einem `catch` behandelt wird und
-    /// noch per `resume()` fortgesetzt werden könnte - solange dieser Eintrag
-    /// existiert, ist SavedContinuation "am Leben" (nichts davon wurde
-    /// freigegeben). HandlerFrameDepthAtEntry/TargetScope werden gebraucht, um
-    /// beim tatsächlichen `resume()`-Aufruf den GERADE LAUFENDEN catch-Kontext
-    /// sauber abzuwickeln (per UnwindTo, genau wie beim Handler-Einstieg
-    /// selbst) - auch wenn `resume()` aus einem verschachtelten Funktionsaufruf
-    /// INNERHALB des catch-Blocks heraus aufgerufen wird. Handler wird
-    /// zusätzlich mitgeführt, um ihn beim resume() wieder scharf zu schalten -
-    /// die fortgesetzte Wurfstelle ist ja konzeptionell "immer noch im
-    /// try-Block", ein erneuter throw darin muss wieder denselben catch
-    /// erreichen können, und `UnregisterHandler` am Ende des try-Blocks
-    /// erwartet, dass sein Eintrag beim normalen Durchlauf noch da ist.</summary>
+    /// <summary>An exception that is currently being handled in a `catch` and
+    /// could still be continued via `resume()` - as long as this entry
+    /// exists, SavedContinuation is "alive" (nothing of it has been
+    /// released). HandlerFrameDepthAtEntry/TargetScope are needed to
+    /// cleanly unwind the CURRENTLY RUNNING catch context on the actual `resume()` call
+    /// (via UnwindTo, exactly as on the handler entry
+    /// itself) - even if `resume()` is called from a nested function call
+    /// INSIDE the catch block. Handler is
+    /// additionally carried along to re-arm it on resume() -
+    /// the continued throw site is conceptually "still inside the
+    /// try block", a renewed throw in it must again be able to reach the same catch,
+    /// and `UnregisterHandler` at the end of the try block
+    /// expects its entry to still be there on a normal pass.</summary>
     internal sealed class PendingResume
     {
         public readonly SavedContinuation Continuation;
         public readonly ActiveHandler Handler;
 
-        /// <summary>Anzahl der aktiven Handler, als der `catch` begann (ohne das finally-only des `try`): `resume()` verwirft alles darüber.</summary>
+        /// <summary>Number of active handlers when the `catch` began (without the finally-only one of the `try`): `resume()` discards everything above it.</summary>
         public readonly int HandlerCount;
 
-        /// <summary>Ausnahmen, deren `catch` diese Ausnahme verlassen hat (sie wurde in einem `catch` geworfen und von einem äußeren `try` behandelt): ihre eingefrorenen Wurfstellen
-        /// werden mit dieser zusammen aufgegeben - zuerst die inneren, dann diese. `resume()` dieser Ausnahme setzt sie wieder ein.</summary>
+        /// <summary>Exceptions whose `catch` this exception has left (it was thrown in a `catch` and handled by an outer `try`): their frozen throw sites
+        /// are given up together with this one - the inner ones first, then this one. `resume()` of this exception reinstates them.</summary>
         public List<(ObjectInstance Exception, PendingResume Pending)>? Inner;
 
         public PendingResume(SavedContinuation continuation, ActiveHandler handler, int handlerCount)
@@ -143,8 +143,8 @@ namespace fire.Runtime
 
     public sealed partial class VM : IDestructRunner
     {
-        // Der gerade laufende Chunk samt Array-Kopien von Code/Konstanten (siehe Chunk.CodeArray) - jede
-        // Zuweisung an _currentChunk (Aufruf, Return, Exception-Sprung, ...) aktualisiert sie mit.
+        // The chunk currently running together with array copies of code/constants (see Chunk.CodeArray) - every
+        // assignment to _currentChunk (call, return, exception jump, ...) updates them along.
         private Chunk _chunk;
         private byte[] _code;
         private Value[] _constants;
@@ -164,25 +164,25 @@ namespace fire.Runtime
         private readonly IReadOnlyDictionary<string, RuntimeClass> _classes;
         private readonly IReadOnlyDictionary<string, ExternSignature> _externSignatures;
 
-        /// <summary>Die Sammelklassen der Basistyp-Erweiterungen (`class extends string { ... }`, SPEC
-        /// 5.5.1), indiziert über `(int)ValueKind` - ein Array statt eines Namens-Lookups, weil CallMethod
-        /// für JEDEN Methodenaufruf auf einem Nicht-Objekt hier nachsieht. `null` = für diese Werteart gibt
-        /// es keine Erweiterung.</summary>
+        /// <summary>The collective classes of the base-type extensions (`class extends string { ... }`, SPEC
+        /// 5.5.1), indexed via `(int)ValueKind` - an array instead of a name lookup, because CallMethod
+        /// looks here for EVERY method call on a non-object. `null` = for this kind of value there is
+        /// no extension.</summary>
         private readonly RuntimeClass?[] _baseTypeClasses;
 
-        // Der Werte-Stack: ein Array mit Stackzeiger statt einer List<Value> (kein Versionszähler, keine
-        // doppelte Bereichsprüfung, kein Nullen beim Entfernen) - Push/Pop sind der heißeste Pfad der VM.
-        private long _copyArgMask; // gesetzt vom Präfix CopyArgs, abgeholt vom nächsten Aufruf-Opcode (TakeCopyMask)
+        // The value stack: an array with a stack pointer instead of a List<Value> (no version counter, no
+        // double range check, no zeroing on removal) - push/pop are the hottest path of the VM.
+        private long _copyArgMask; // set by the prefix CopyArgs, picked up by the next call opcode (TakeCopyMask)
         private Value[] _stack = new Value[256];
         private int _sp;
         private readonly Stack<CallFrame> _frames = new();
         private readonly List<ActiveHandler> _handlers = new();
         private readonly Dictionary<ObjectInstance, PendingResume> _pendingResumes = new();
 
-        // Caches fürs dynamische extern-Linking (siehe CallExtern/
-        // ResolveDynamicExtern) - eine Bibliothek wird nur EINMAL geladen
-        // (NativeLibrary.Load ist nicht ganz billig), ein Delegate nur einmal
-        // pro extern-Namen gebaut (Reflection/MakeGenericType ebenfalls).
+        // Caches for dynamic extern linking (see CallExtern/
+        // ResolveDynamicExtern) - a library is loaded only ONCE
+        // (NativeLibrary.Load is not exactly cheap), a delegate built only once
+        // per extern name (reflection/MakeGenericType likewise).
         private readonly Dictionary<string, IntPtr> _loadedNativeLibraries = new();
         private readonly Dictionary<string, Delegate> _dynamicExternDelegates = new();
 
@@ -191,54 +191,54 @@ namespace fire.Runtime
         private int _ip;
 
         // -----------------------------------------------------------
-        // leave/terminate (docs/THREADING_DESIGN.md Abschnitt 6) - kooperative
-        // Prüfpunkte statt echter Unterbrechung: jede laufende VM-Instanz
-        // bemerkt ein Signal spätestens am nächsten sicheren Punkt (siehe
-        // PollSignals) und wickelt sich dann selbst sauber ab (UnwindForShutdown),
-        // OHNE dabei irgendeinen normalen `catch`/`catch(e)` zu durchlaufen -
-        // beide Signale werden absichtlich NIE gegen HandlerTemplate.Catches
-        // geprüft, sie laufen nur durch etwaige `finally`-Blöcke hindurch.
+        // leave/terminate (docs/THREADING_DESIGN.md section 6) - cooperative
+        // check points instead of real interruption: every running VM instance
+        // notices a signal at the latest at the next safe point (see
+        // PollSignals) and then cleanly unwinds itself (UnwindForShutdown),
+        // WITHOUT passing through any normal `catch`/`catch(e)` -
+        // both signals are deliberately NEVER checked against HandlerTemplate.Catches,
+        // they run only through any `finally` blocks.
         // -----------------------------------------------------------
 
-        /// <summary>Nur für DIESE eine VM-Instanz (== diesen einen Thread) -
-        /// `leave` betrifft ausschließlich den Thread, der es aufruft.</summary>
+        /// <summary>Only for THIS one VM instance (== this one thread) -
+        /// `leave` affects only the thread that calls it.</summary>
         private bool _leaveRequested;
 
-        /// <summary>Über ALLE VM-Instanzen/Threads hinweg geteilt (`terminate`
-        /// ist ein globaler Not-Aus) - `volatile`, da von JEDEM Thread aus
-        /// gesetzt und von JEDEM Thread an seinem eigenen Prüfpunkt gelesen
-        /// wird. "Erster Aufruf gewinnt" (THREADING_DESIGN.md 6.3) wird über
-        /// Interlocked.CompareExchange in RequestTerminate sichergestellt -
-        /// dieses Feld selbst wird deshalb nur EINMAL, vom Gewinner, auf
-        /// einen Wert ungleich 0 gesetzt.</summary>
+        /// <summary>Shared across ALL VM instances/threads (`terminate`
+        /// is a global emergency stop) - `volatile`, since it is
+        /// set from ANY thread and read by ANY thread at its own
+        /// check point. "First call wins" (THREADING_DESIGN.md 6.3) is ensured via
+        /// Interlocked.CompareExchange in RequestTerminate -
+        /// this field itself is therefore set only ONCE, by the winner, to
+        /// a value other than 0.</summary>
         private static volatile bool _terminateRequested;
         private static Value _terminateValue = Value.MakeUndefined();
         private static readonly object _terminateGate = new();
 
-        /// <summary>Der an `terminate(wert)` übergebene Wert, nach vollständig
-        /// synchronisiertem Herunterfahren ALLER Threads auslesbar (siehe
-        /// THREADING_DESIGN.md 6.3) - `undefined`, falls das Programm ohne
-        /// `terminate` reguär durchgelaufen ist. Das "Warten, bis alle Threads
-        /// fertig sind" ist Aufgabe des Hosts (siehe FireThreadHandle.Join in
-        /// den Program.cs-Tests) - die VM selbst kann das nicht erzwingen, sie
-        /// stellt nur sicher, dass IHRE EIGENE Abwicklung (inkl. finally)
-        /// abgeschlossen ist, bevor Run() zurückkehrt.</summary>
+        /// <summary>The value passed to `terminate(value)`, readable after completely
+        /// synchronised shutdown of ALL threads (see
+        /// THREADING_DESIGN.md 6.3) - `undefined` if the program ran through
+        /// regularly without `terminate`. "Waiting until all threads
+        /// are finished" is the host's job (see FireThreadHandle.Join in
+        /// the Program.cs tests) - the VM itself cannot enforce that, it
+        /// only ensures that ITS OWN unwinding (incl. finally)
+        /// is complete before Run() returns.</summary>
         public static Value ExitValue => _terminateValue;
 
-        /// <summary>Merkt sich für DIESEN Thread, dass beim nächsten Prüfpunkt
-        /// `leave` ausgelöst werden soll (siehe VM.CurrentThreadVm für die
-        /// Zuordnung "welche VM-Instanz gehört zum aufrufenden Thread" -
-        /// Grundlage einer nativen Brücken-Funktion wie `__leave()`, siehe
-        /// Program.cs-Test, solange es noch keine echte `leave`-Sprachsyntax
-        /// gibt).</summary>
+        /// <summary>Remembers for THIS thread that at the next check point
+        /// `leave` is to be triggered (see VM.CurrentThreadVm for the
+        /// assignment "which VM instance belongs to the calling thread" -
+        /// basis of a native bridge function like `__leave()`, see
+        /// Program.cs test, as long as there is no real `leave` language syntax
+        /// yet).</summary>
         public void RequestLeave()
         {
             _leaveRequested = true;
             RaiseSignal();
         }
 
-        /// <summary>Globaler Not-Aus (siehe THREADING_DESIGN.md 6.3) - "erster
-        /// Aufruf gewinnt", alle weiteren werden zu No-Ops.</summary>
+        /// <summary>Global emergency stop (see THREADING_DESIGN.md 6.3) - "first
+        /// call wins", all further ones become no-ops.</summary>
         public static void RequestTerminate(Value value)
         {
             lock (_terminateGate)
@@ -250,13 +250,13 @@ namespace fire.Runtime
             RaiseSignal();
         }
 
-        /// <summary>Nur für Tests/eine frische Programmausführung gedacht -
-        /// setzt das GLOBALE terminate-Signal zurück. Multithreading-
-        /// Not-Aus ist bewusst "erster Aufruf gewinnt, endgültig" (siehe
-        /// RequestTerminate) - dieser Reset existiert NICHT für die normale
-        /// Sprachsemantik, sondern rein damit mehrere, voneinander
-        /// unabhängige Programmläufe (wie unsere Program.cs-Tests) einander
-        /// nicht über das statische Feld hinweg beeinflussen.</summary>
+        /// <summary>Intended only for tests/a fresh program execution -
+        /// resets the GLOBAL terminate signal. The multithreading
+        /// emergency stop is deliberately "first call wins, final" (see
+        /// RequestTerminate) - this reset does NOT exist for normal
+        /// language semantics, but purely so that several independent
+        /// program runs (like our Program.cs tests) do not
+        /// influence each other via the static field.</summary>
         public static void ResetTerminateForTests()
         {
             lock (_terminateGate)
@@ -266,109 +266,107 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Die VM-Instanz, die AKTUELL auf dem aufrufenden Thread
-        /// läuft (von Run() beim Start gesetzt) - Grundlage dafür, dass eine
-        /// native Brücken-Funktion (die selbst keinen VM-Zugriff hat, siehe
-        /// NativeFunction-Delegate) trotzdem `RequestLeave()` auf der
-        /// RICHTIGEN (der eigenen) VM-Instanz aufrufen kann, ohne dass die
-        /// Sprache selbst schon eine `leave`-Syntax bräuchte.</summary>
+        /// <summary>The VM instance that is CURRENTLY running on the calling
+        /// thread (set by Run() at the start) - basis for a
+        /// native bridge function (which itself has no VM access, see the
+        /// NativeFunction delegate) to still be able to call `RequestLeave()` on the
+        /// RIGHT (its own) VM instance, without the
+        /// language itself needing a `leave` syntax yet.</summary>
         [ThreadStatic]
         private static VM? _currentThreadVm;
 
         public static VM? CurrentThreadVm => _currentThreadVm;
 
-        /// <summary>Markiert GENAU eine VM-Instanz im ganzen Programm als "die"
-        /// Main-Thread-Instanz - Grundlage für `catch threads(...)`/`catch
-        /// terminate(v)` (docs/THREADING_DESIGN.md 6.2/6.3), die laut Design
-        /// AUSSCHLIESSLICH dort laufen, nicht auf irgendeinem Fire-Thread.
-        /// Muss vom Aufrufer explizit gesetzt werden (kein automatisches
-        /// "erste erzeugte VM ist die Haupt-VM" - das wäre bei Tests, die
-        /// mehrere VMs unabhängig voneinander laufen lassen, fragil).</summary>
+        /// <summary>Marks EXACTLY one VM instance in the whole program as "the"
+        /// main-thread instance - basis for `catch threads(...)`/`catch
+        /// terminate(v)` (docs/THREADING_DESIGN.md 6.2/6.3), which according to the design
+        /// run EXCLUSIVELY there, not on any fire thread.
+        /// Must be set explicitly by the caller (no automatic
+        /// "first created VM is the main VM" - that would be fragile in tests that
+        /// run several VMs independently of one another).</summary>
         public bool IsMainThreadVm { get; }
 
-        /// <summary>Explizit gesetzt NUR von FireRuntime.FireVm (siehe dort) -
-        /// bewusst NICHT einfach "!IsMainThreadVm": die meisten VM-Instanzen
-        /// im gesamten restlichen Code (jeder einfache Einzel-VM-Testlauf,
-        /// jede VM ohne jeden Multithreading-Bezug) setzen `isMainThreadVm`
-        /// nie und sind trotzdem KEIN Fire-Thread - eine unbehandelte
-        /// Exception dort muss weiterhin ganz normal über UnhandledException
-        /// signalisiert werden (das ursprüngliche, überall vorausgesetzte
-        /// Verhalten), nicht still in die globale Fire-Thread-Warteschlange
-        /// umgeleitet werden. Nur eine VM-Instanz, die WIRKLICH über `fire`
-        /// entstanden ist, soll dieses besondere Verhalten bekommen.</summary>
+        /// <summary>Set explicitly ONLY by FireRuntime.FireVm (see there) -
+        /// deliberately NOT simply "!IsMainThreadVm": most VM instances
+        /// in all the remaining code (every simple single-VM test run,
+        /// every VM without any multithreading relation) never set `isMainThreadVm`
+        /// and are still NOT a fire thread - an unhandled
+        /// exception there must continue to be signalled quite normally via UnhandledException
+        /// (the original behaviour assumed everywhere), not silently redirected
+        /// into the global fire-thread queue. Only a VM instance that REALLY arose via `fire`
+        /// is to get this special behaviour.</summary>
         public bool IsFireThreadVm { get; }
 
-        /// <summary>Eine Skript-`throw`, für die in DIESER VM-Instanz kein
-        /// passender `catch` gefunden wurde - gesetzt statt geworfen (siehe
-        /// ThrowException, letzter Zweig): bewusst KEINE C#-Exception mehr
-        /// über die Run()-Aufrufstelle hinaus (siehe docs/PORTING.md,
-        /// Abschnitt "VM-interner Kontrollfluss") - in einer C++-Fassung
-        /// ohne Exceptions (üblich auf Embedded-Targets) gäbe es dafür
-        /// ohnehin keine Entsprechung. Run() kehrt in diesem Fall ganz
-        /// normal zurück (siehe CheckShutdownSignals/_stopExecutionRequested);
-        /// der Aufrufer prüft nach Run() dieses Feld, statt einen `try`/
-        /// `catch` um den Aufruf zu legen. `null` bedeutet "kein unbehandelter
-        /// Fehler" (der Normalfall). Eine reine C#-Bequemlichkeit für
-        /// Host-Code, der lieber mit einer echten Exception arbeitet, bleibt
-        /// über Bytecode.UncaughtScriptException möglich - die KONSTRUIERT
-        /// (aber nicht mehr intern geworfen) werden kann, z.B.
+        /// <summary>A script `throw` for which no matching `catch` was found in THIS VM instance -
+        /// set instead of thrown (see ThrowException, last branch): deliberately NO C# exception any more
+        /// beyond the Run() call site (see docs/PORTING.md,
+        /// section "VM-internal control flow") - in a C++ version
+        /// without exceptions (usual on embedded targets) there would be no
+        /// equivalent for it anyway. Run() returns quite normally in this case
+        /// (see CheckShutdownSignals/_stopExecutionRequested);
+        /// after Run() the caller checks this field, instead of putting a `try`/
+        /// `catch` around the call. `null` means "no unhandled
+        /// error" (the normal case). A pure C# convenience for
+        /// host code that prefers to work with a real exception remains
+        /// possible via Bytecode.UncaughtScriptException - which can be CONSTRUCTED
+        /// (but is no longer thrown internally), e.g.
         /// `throw new UncaughtScriptException(vm.UnhandledException)`.</summary>
         public ObjectInstance? UnhandledException { get; private set; }
 
-        /// <summary>Über ALLE VM-Instanzen/Threads hinweg geteilte Warteschlange
-        /// für unbehandelte Fire-Thread-Exceptions (siehe ThrowException),
-        /// vom Main-Thread an seinem nächsten Prüfpunkt abgearbeitet (siehe
-        /// CheckShutdownSignals/HandleDeliveredThreadException) - thread-sicher
-        /// per ConcurrentQueue, da mehrere Fire-Threads gleichzeitig werfen
-        /// können.</summary>
+        /// <summary>Queue shared across ALL VM instances/threads
+        /// for unhandled fire-thread exceptions (see ThrowException),
+        /// processed by the main thread at its next check point (see
+        /// CheckShutdownSignals/HandleDeliveredThreadException) - thread-safe
+        /// via ConcurrentQueue, since several fire threads may throw at the same time
+        /// .</summary>
         private static readonly System.Collections.Concurrent.ConcurrentQueue<ObjectInstance> _pendingThreadExceptions = new();
 
-        /// <summary>Gesetzt, wenn DIESE VM-Instanz ihre Abwicklung (Unwind
-        /// inkl. finally) bereits SELBST durchgeführt hat (siehe
-        /// ThrowException's Fire-Thread-Zweig) und beim nächsten Prüfpunkt in
-        /// Run() nur noch sauber STOPPEN muss, ohne den (möglicherweise
-        /// inzwischen bedeutungslosen) `_ip`/`_currentChunk`-Zustand
-        /// weiterzuverwenden - anders als bei `_leaveRequested`/
-        /// `_terminateRequested`, wo CheckShutdownSignals selbst den Unwind
-        /// noch durchführt.</summary>
+        /// <summary>Set when THIS VM instance has already performed its unwinding (unwind
+        /// incl. finally) ITSELF (see
+        /// ThrowException's fire-thread branch) and at the next check point in
+        /// Run() only has to STOP cleanly, without continuing to use the (possibly
+        /// meanwhile meaningless) `_ip`/`_currentChunk` state -
+        /// unlike `_leaveRequested`/
+        /// `_terminateRequested`, where CheckShutdownSignals itself still performs the unwind
+        /// .</summary>
         private bool _stopExecutionRequested;
 
-        /// <summary>`leave`/`terminate` hat diese VM beendet: am Halt wird wie beim normalen Programmende der globale Scope
-        /// freigegeben (das Hauptprogramm wartet vorher auf alle Fire-Threads) - anders als nach einer unbehandelten Exception.</summary>
+        /// <summary>`leave`/`terminate` has ended this VM: at the halt the global scope is released, as at the normal program end
+        /// (the main program waits for all fire threads beforehand) - unlike after an unhandled exception.</summary>
         private bool _shutdownReleasePending;
 
-        /// <summary>`leave`/`terminate` wurde in einer VERSCHACHTELTEN Ausführung (Destruktor, Property, Operator, Callback)
-        /// aufgerufen: die VM hält dort sofort an (Halt), das geordnete Abwickeln (finally, Destruktoren) holt
-        /// <see cref="FinishDeferredShutdown"/> nach, sobald die Verschachtelung zurück ist.</summary>
+        /// <summary>`leave`/`terminate` was called in a NESTED execution (destructor, property, operator, callback):
+        /// the VM stops there immediately (halt), the orderly unwinding (finally, destructors) is made up for by
+        /// <see cref="FinishDeferredShutdown"/> as soon as the nesting is back.</summary>
         private bool _shutdownDeferred;
 
-        /// <summary>Ein Lambda, das ein nativer Aufruf auf DIESER VM verschachtelt ausführt (siehe <see cref="CallLambdaInline"/>): wo es
-        /// begonnen hat - Frame-Tiefe, Scope und Stackhöhe des Aufrufers und wie viele Handler der Aufrufer schon registriert hat
-        /// (ein `throw` im Callback darf die try/catch des Aufrufers nicht sehen).</summary>
+        /// <summary>A lambda that a native call runs nested on THIS VM (see <see cref="CallLambdaInline"/>): where it
+        /// began - frame depth, scope and stack height of the caller and how many handlers the caller had already registered
+        /// (a `throw` in the callback must not see the caller's try/catch).</summary>
         private readonly record struct CallbackBoundary(int FrameDepth, Scope Scope, int HandlerFloor, int StackPointer);
         private readonly Stack<CallbackBoundary> _callbackBoundaries = new();
         private ObjectInstance? _callbackError;
 
         // -----------------------------------------------------------
-        // Globale Variablen und Fire-Threads (docs/THREADING_DESIGN.md Abschnitt 7, Runtime.GlobalsBroker)
+        // Global variables and fire threads (docs/THREADING_DESIGN.md section 7, Runtime.GlobalsBroker)
         // -----------------------------------------------------------
 
-        /// <summary>Im Hauptprogramm: gesetzt, sobald zum ersten Mal ein `fire` (oder `fire global`) läuft. Ab dann schreibt diese VM Globals
-        /// unter dem Baum-Lock (Fire-Threads lesen sie gleichzeitig).</summary>
+        /// <summary>In the main program: set as soon as a `fire` (or `fire global`) runs for the first time. From then on this VM writes globals
+        /// under the tree lock (fire threads read them at the same time).</summary>
         private GlobalsBroker? _ownerBroker;
 
-        /// <summary>In einem Fire-Thread: die Vermittlung zum Hauptprogramm. Die Globals-Slots 0 bis `_sharedCount` - 1 sind die echten
-        /// Globals des Hauptprogramms (Lesen direkt, Schreiben in einer Sektion); darüber liegen die eigenen (taking/with, Top-Level-Variablen
-        /// des Blocks) im privaten `_globalScope`.</summary>
+        /// <summary>In a fire thread: the mediation to the main program. The globals slots 0 to `_sharedCount` - 1 are the real
+        /// globals of the main program (read directly, write in a section); above them lie its own (taking/with, top-level variables
+        /// of the block) in the private `_globalScope`.</summary>
         private GlobalsBroker? _threadBroker;
         private int _sharedCount;
 
-        /// <summary>Tiefe der Sektion, die dieser Thread gerade hält (0 = keine). Verschachtelte Zugriffe (eine Methode, die `this.x = ...`
-        /// schreibt, in einer schon erteilten Sektion) laufen direkt.</summary>
+        /// <summary>Depth of the section that this thread currently holds (0 = none). Nested accesses (a method that writes `this.x = ...`
+        /// in an already granted section) run directly.</summary>
         private int _sectionDepth;
         private object? _sectionHandle;
 
-        /// <summary>Hängt diese (Fire-Thread-)VM an die Globals des Hauptprogramms an (siehe FireRuntime.FireVmTaking).</summary>
+        /// <summary>Attaches this (fire-thread) VM to the globals of the main program (see FireRuntime.FireVmTaking).</summary>
         internal void AttachToGlobals(GlobalsBroker broker, int sharedGlobalCount)
         {
             _threadBroker = broker;
@@ -384,7 +382,7 @@ namespace fire.Runtime
             return broker;
         }
 
-        /// <summary>Nimmt alles, was die Globals erreichen (Objekte samt Besitz, Felder, Arrays, statische Felder), in den geteilten Bereich auf.</summary>
+        /// <summary>Takes everything the globals reach (objects including ownership, fields, arrays, static fields) into the shared area.</summary>
         private void ShareGlobals(GlobalsBroker broker)
         {
             var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
@@ -416,7 +414,7 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Ein Array, das ein Fire-Thread über die Globals erreicht: ab jetzt geteilt (Elementzugriffe unter dem Lock).</summary>
+        /// <summary>An array that a fire thread reaches via the globals: shared from now on (element accesses under the lock).</summary>
         private static void MarkShared(Value value)
         {
             if (value.Kind != ValueKind.Array) return;
@@ -426,8 +424,8 @@ namespace fire.Runtime
             foreach (var item in array.Items) MarkShared(item);
         }
 
-        /// <summary>Meldet den Thread für eine Sektion an (oder zählt nur hoch, wenn er schon eine hält). Erst wenn das Hauptprogramm bei
-        /// `sync globals` die Sektion erteilt, kehrt der Aufruf zurück.</summary>
+        /// <summary>Registers the thread for a section (or only counts up if it already holds one). Only when the main program grants the section at
+        /// `sync globals` does the call return.</summary>
         private void EnterGlobalsSection()
         {
             if (_sectionDepth++ == 0) _sectionHandle = _threadBroker!.EnterSection();
@@ -443,7 +441,7 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Sicherheitsnetz am Ende eines Fire-Threads: eine noch gehaltene Sektion wird freigegeben, sonst wartet das Hauptprogramm ewig.</summary>
+        /// <summary>Safety net at the end of a fire thread: a section still held is released, otherwise the main program waits forever.</summary>
         internal void ReleaseGlobalsSections()
         {
             if (_threadBroker == null || _sectionDepth == 0) return;
@@ -484,7 +482,7 @@ namespace fire.Runtime
             finally { ExitGlobalsSection(); }
         }
 
-        /// <summary>Hauptprogramm, nach dem ersten `fire`: Schreiben der Globals unter dem Lock (Fire-Threads lesen gleichzeitig).</summary>
+        /// <summary>Main program, after the first `fire`: writing the globals under the lock (fire threads read at the same time).</summary>
         private void StoreOwnerGlobal(int slot, Value value)
         {
             var broker = _ownerBroker!;
@@ -501,7 +499,7 @@ namespace fire.Runtime
             finally { broker.Lock.Exit(); }
         }
 
-        /// <summary>Ein Element eines geteilten Arrays lesen: im Fire-Thread unter dem Lock, im Hauptprogramm (einziger Schreiber) direkt.</summary>
+        /// <summary>Read an element of a shared array: in the fire thread under the lock, in the main program (only writer) directly.</summary>
         private bool TryGetSharedElement(ScriptArray array, long index, out Value value)
         {
             var broker = _threadBroker;
@@ -511,7 +509,7 @@ namespace fire.Runtime
             finally { broker.Lock.Exit(); }
         }
 
-        /// <summary>Ein Element eines geteilten Arrays schreiben: im Fire-Thread in einer Sektion, überall unter dem Lock.</summary>
+        /// <summary>Write an element of a shared array: in the fire thread in a section, everywhere under the lock.</summary>
         private bool TrySetSharedElement(ScriptArray array, long index, Value value)
         {
             var broker = _threadBroker ?? _ownerBroker;
@@ -527,8 +525,8 @@ namespace fire.Runtime
             finally { if (inThread) ExitGlobalsSection(); }
         }
 
-        /// <summary>Methodenaufruf eines Fire-Threads auf ein Objekt des geteilten Bereichs: die Methode läuft, solange der Thread die Sektion
-        /// hält, als Ganzes - auch ihr Lesen-Ändern-Schreiben ist damit atomar.</summary>
+        /// <summary>Method call of a fire thread on an object of the shared area: the method runs as a whole while the thread
+        /// holds the section - so even its read-modify-write is atomic.</summary>
         private Value? CallGlobalsMethodInSection(ObjectInstance obj, string methodName, Value[] args)
         {
             EnterGlobalsSection();
@@ -542,23 +540,23 @@ namespace fire.Runtime
             finally { ExitGlobalsSection(); }
         }
 
-        /// <summary>`sync globals` im Hauptprogramm: arbeitet ab, was Fire-Threads angemeldet haben (Sektionen erteilen, Aufträge ausführen) und
-        /// was Host-Threads als Callback eingereiht haben. Liefert die Anzahl der Einträge.</summary>
+        /// <summary>`sync globals` in the main program: processes what fire threads have registered (grant sections, execute jobs) and
+        /// what host threads have queued as a callback. Returns the number of entries.</summary>
         private int SyncGlobalsNow() => DrainInbound() + (_ownerBroker?.Drain() ?? 0);
 
-        // ---- Callbacks von Host-Threads (z.B. ein Seriell-Ereignis): sie laufen NICHT auf dem fremden Thread, sondern werden hier eingereiht
-        // und vom Hauptprogramm ausgeführt - bei `sync globals` oder (ohne `#nosync`) automatisch an einem sicheren Punkt. So sehen sie die echten
-        // Globals, und es gibt keinen nebenläufigen Zugriff darauf.
+        // ---- Callbacks from host threads (e.g. a serial event): they do NOT run on the foreign thread, but are queued here
+        // and executed by the main program - at `sync globals` or (without `#nosync`) automatically at a safe point. This way they see the real
+        // globals, and there is no concurrent access to them.
 
         private readonly record struct InboundCallback(LambdaValue Lambda, Value[] Args, Action<string>? OnUnhandled);
         private readonly System.Collections.Concurrent.ConcurrentQueue<InboundCallback> _inbound = new();
         private volatile bool _acceptingCallbacks;
 
-        /// <summary>Soll das Hauptprogramm die Warteschlange an sicheren Punkten selbst abarbeiten? Vorgabe ja; `#nosync` schaltet es ab.</summary>
+        /// <summary>Should the main program process the queue itself at safe points? Default yes; `#nosync` switches it off.</summary>
         private bool _autoSync = true;
 
-        /// <summary>Nimmt ein Callback eines BELIEBIGEN Threads entgegen (threadsicher) und reiht es für diese VM ein. false, wenn die VM nicht (mehr)
-        /// läuft - dann hat der Aufrufer einen anderen Weg zu wählen.</summary>
+        /// <summary>Accepts a callback from ANY thread (thread-safe) and queues it for this VM. false if the VM is not (any longer)
+        /// running - then the caller has to choose another way.</summary>
         public bool PostCallback(LambdaValue lambda, Value[] args, Action<string>? onUnhandled)
         {
             if (!_acceptingCallbacks) return false;
@@ -588,8 +586,8 @@ namespace fire.Runtime
             return handled;
         }
 
-        /// <summary>Automatisches Abarbeiten an einem sicheren Punkt (nicht in verschachtelter Ausführung, nicht mit `#nosync`): erst Host-Callbacks, dann
-        /// die Sektionen und Aufträge der Fire-Threads. true, wenn das Programm dabei beendet wurde (`leave`/`terminate` in einem Auftrag).</summary>
+        /// <summary>Automatic processing at a safe point (not in nested execution, not with `#nosync`): first host callbacks, then
+        /// the sections and jobs of the fire threads. true if the program was ended in the process (`leave`/`terminate` in a job).</summary>
         private bool AutoSyncNow()
         {
             if (!_autoSync || _nestedDepth > 0) return false;
@@ -598,8 +596,8 @@ namespace fire.Runtime
             return _stopExecutionRequested;
         }
 
-        /// <summary>Führt einen `fire global`-Auftrag auf dieser (der Besitzer-)VM aus. Eine unbehandelte Exception darin wird wie die eines
-        /// Fire-Threads behandelt: sie geht an das Hauptprogramm (`catch threads`), sonst bricht es ab.</summary>
+        /// <summary>Executes a `fire global` job on this (the owner) VM. An unhandled exception in it is treated like that of a
+        /// fire thread: it goes to the main program (`catch threads`), otherwise it aborts.</summary>
         internal void RunGlobalsJob(LambdaValue lambda, Value[] args)
         {
             var error = CallLambdaInline(lambda, args);
@@ -609,7 +607,7 @@ namespace fire.Runtime
                 RaiseSignal();
             }
         }
-        // (Nur noch in den VERSCHACHTELTEN Schleifen und im Einzelschritt geprüft - Run() liest nach StopExecution() das Halt.)
+        // (Now checked only in the NESTED loops and in single step - Run() reads the halt after StopExecution().)
 
         public VM(
             Chunk chunk,
@@ -635,39 +633,39 @@ namespace fire.Runtime
                     && _classes.TryGetValue(extensionClassName, out var extensionClass))
                     _baseTypeClasses[(int)kind] = extensionClass;
             IsMainThreadVm = isMainThreadVm;
-            if (isMainThreadVm) ResetDefaultTimeout(); // ein neues Programm beginnt wieder mit der Standard-Wartezeit (`#timeout` setzt sie neu)
+            if (isMainThreadVm) ResetDefaultTimeout(); // a new program starts again with the default waiting time (`#timeout` sets it anew)
             IsFireThreadVm = isFireThreadVm;
             ExecutionMode = executionMode;
         }
 
-        /// <summary>Siehe VmExecutionMode-Doku - steuert u.a., ob
-        /// ArrayGet/ArraySet/Puffer-Zugriffe ihre Bounds-Prüfung überspringen
-        /// (siehe die jeweiligen Opcode-Handler).</summary>
+        /// <summary>See VmExecutionMode documentation - controls among other things whether
+        /// ArrayGet/ArraySet/buffer accesses skip their bounds check
+        /// (see the respective opcode handlers).</summary>
         public VmExecutionMode ExecutionMode { get; }
 
         // -----------------------------------------------------------
-        // Shutdown-Signale: Prüfung nur an sicheren Punkten, Beenden über den Halt-Chunk
+        // Shutdown signals: checked only at safe points, ending via the halt chunk
         // -----------------------------------------------------------
         //
-        // Signale kommen meist von ANDEREN Threads (`terminate`, eine unbehandelte Fire-Thread-Exception für den
-        // Main-Thread) - in einen laufenden Thread lässt sich keine Ausnahme "hineinwerfen", er muss sie selbst
-        // bemerken. Das passiert nicht mehr vor jeder Instruktion, sondern nur an den sicheren Punkten (Schleifen-
-        // Rücksprung, Aufruf, `leave`/`terminate`), und dort mit EINEM Vergleich: jedes Signal erhöht den globalen
-        // Zähler `s_signalEpoch`, jede VM merkt sich den zuletzt gesehenen Stand (`_seenEpoch`) - nur bei einer
-        // Abweichung läuft die eigentliche Prüfung (CheckShutdownSignals).
+        // Signals mostly come from OTHER threads (`terminate`, an unhandled fire-thread exception for the
+        // main thread) - no exception can be "thrown into" a running thread, it has to
+        // notice them itself. That no longer happens before every instruction, but only at the safe points (loop
+        // back jump, call, `leave`/`terminate`), and there with ONE comparison: every signal increases the global
+        // counter `s_signalEpoch`, every VM remembers the last seen state (`_seenEpoch`) - only on a
+        // deviation does the actual check run (CheckShutdownSignals).
         //
-        // Das BEENDEN ist bewusst keine C#-Ausnahme (docs/PORTING.md, "VM-interner Kontrollfluss": in einer C++-Fassung
-        // ohne Exceptions gäbe es dafür keine Entsprechung), sondern reine Zustandsumschaltung wie beim Sprung in einen
-        // `catch`: StopExecution() stellt Chunk/ip auf einen Chunk, der nur aus `Halt` besteht - Run() liest als Nächstes
-        // dieses `Halt` und kehrt zurück, ohne dass irgendeine Instruktion ein Stop-Flag abfragen müsste.
+        // ENDING is deliberately not a C# exception (docs/PORTING.md, "VM-internal control flow": in a C++ version
+        // without exceptions there would be no equivalent for it), but a pure state switch like the jump into a
+        // `catch`: StopExecution() sets chunk/ip to a chunk consisting only of `Halt` - Run() reads
+        // this `Halt` next and returns, without any instruction having to query a stop flag.
 
         private static int s_signalEpoch;
         private int _seenEpoch = int.MinValue;
 
-        /// <summary>Tiefe der verschachtelten Ausführungen (RunNestedUntil) - darin wird nicht auf Signale geprüft (wie bisher).</summary>
+        /// <summary>Depth of the nested executions (RunNestedUntil) - signals are not checked in them (as before).</summary>
         private int _nestedDepth;
 
-        /// <summary>Der Chunk, auf den StopExecution() umschaltet: nur ein `Halt`.</summary>
+        /// <summary>The chunk that StopExecution() switches to: only a `Halt`.</summary>
         private static readonly Chunk StopChunk = BuildStopChunk();
 
         private static Chunk BuildStopChunk()
@@ -679,10 +677,10 @@ namespace fire.Runtime
 
         internal static void RaiseSignal() => System.Threading.Interlocked.Increment(ref s_signalEpoch);
 
-        /// <summary>Beendet die Ausführung dieser VM: merkt den Stopp vor und springt auf den Halt-Chunk. Aufrufer müssen danach
-        /// sofort aus ihrer Instruktion zurückkehren (wie nach ThrowException).</summary>
-        /// <summary>Verwirft den (bedeutungslosen) Rückgabewert einer verschachtelten Ausführung - außer die VM wurde dabei
-        /// beendet (unbehandelte Exception): dann hat der Aufruf nichts zurückgegeben.</summary>
+        /// <summary>Ends the execution of this VM: notes the stop and jumps to the halt chunk. Callers must afterwards
+        /// return from their instruction immediately (as after ThrowException).</summary>
+        /// <summary>Discards the (meaningless) return value of a nested execution - unless the VM was ended in the process
+        /// (unhandled exception): then the call returned nothing.</summary>
         private void PopNestedResult()
         {
             if (!_stopExecutionRequested) Pop();
@@ -695,32 +693,32 @@ namespace fire.Runtime
             _ip = 0;
         }
 
-        /// <summary>Sicherer Punkt: hat sich seit dem letzten Mal ein Signal gemeldet (ein Vergleich, sonst nichts)? Liefert true,
-        /// wenn die VM dadurch beendet wurde - die aufrufende Instruktion muss dann sofort zurückkehren.</summary>
+        /// <summary>Safe point: has a signal been reported since the last time (one comparison, nothing else)? Returns true
+        /// if the VM was ended as a result - the calling instruction must then return immediately.</summary>
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
         private bool PollSignals() =>
             _seenEpoch != System.Threading.Volatile.Read(ref s_signalEpoch) && PollSignalsSlow();
 
-        /// <summary>Wie <see cref="PollSignals"/>, aber NACH einer vollständig ausgeführten Instruktion (`_ip` steht schon an der nächsten
-        /// Instruktionsgrenze) - für native Aufrufe: eine native Funktion darf `leave`/`terminate` auslösen (z.B. `VM.RequestLeave`), das muss
-        /// sofort danach wirken.</summary>
+        /// <summary>Like <see cref="PollSignals"/>, but AFTER a completely executed instruction (`_ip` is already at the next
+        /// instruction boundary) - for native calls: a native function may trigger `leave`/`terminate` (e.g. `VM.RequestLeave`), that must
+        /// take effect immediately afterwards.</summary>
         private void PollSignalsAfterOp()
         {
             if (_seenEpoch == System.Threading.Volatile.Read(ref s_signalEpoch) || _nestedDepth > 0) return;
             _seenEpoch = System.Threading.Volatile.Read(ref s_signalEpoch);
             if (CheckShutdownSignals()) StopExecution();
-            else AutoSyncNow(); // Host-Callbacks und Fire-Threads, die auf das Hauptprogramm warten (siehe `#nosync`)
+            else AutoSyncNow(); // Host callbacks and fire threads that wait for the main program (see `#nosync`)
         }
 
         private bool PollSignalsSlow()
         {
-            // In einer verschachtelten Ausführung (Destruktor, Operator-Überladung, Property, ...) wird nicht geprüft - wie
-            // bisher; das Signal bleibt stehen und gilt am nächsten sicheren Punkt außerhalb.
+            // In a nested execution (destructor, operator overload, property, ...) nothing is checked - as
+            // before; the signal stays pending and applies at the next safe point outside.
             if (_nestedDepth > 0) return false;
             _seenEpoch = System.Threading.Volatile.Read(ref s_signalEpoch);
 
-            // Der Aufruf kommt aus dem Innern einer Instruktion, deren Opcode schon gelesen ist: für einen evtl. genesteten
-            // Handler muss `_ip` auf die Instruktionsgrenze zeigen, damit dessen Rücksprung an der richtigen Stelle landet.
+            // The call comes from inside an instruction whose opcode has already been read: for a possibly nested
+            // handler `_ip` must point to the instruction boundary, so that its return lands at the right place.
             _ip--;
             if (CheckShutdownSignals())
             {
@@ -728,21 +726,21 @@ namespace fire.Runtime
                 return true;
             }
             _ip++;
-            // Host-Callbacks und Fire-Threads, die auf das Hauptprogramm warten (siehe `#nosync`): an der Stelle, die der Aufrufer gleich
-            // fortsetzt, läuft die Abarbeitung verschachtelt und kehrt unverändert hierher zurück.
+            // Host callbacks and fire threads that wait for the main program (see `#nosync`): at the place the caller is about to
+            // continue, the processing runs nested and returns unchanged to here.
             return AutoSyncNow();
         }
 
-        /// <summary>Der `leave`-/`terminate`-Aufruf der eigenen VM: sie geht SOFORT in den Halt, unabhängig davon, ob das Signal
-        /// schon länger anliegt (z.B. `terminate` ist bereits von einem anderen Thread ausgelöst worden - der Aufrufer darf trotzdem
-        /// keine weitere Anweisung ausführen). Der Opcode hat keine Operanden, `_ip - 1` ist also die Instruktionsgrenze.</summary>
+        /// <summary>The `leave`/`terminate` call of the VM itself: it goes into the halt IMMEDIATELY, regardless of whether the signal
+        /// has been pending for a while (e.g. `terminate` has already been triggered by another thread - the caller must still not
+        /// execute another statement). The opcode has no operands, so `_ip - 1` is the instruction boundary.</summary>
         private void ShutdownSelfNow()
         {
             _seenEpoch = System.Threading.Volatile.Read(ref s_signalEpoch);
             if (_nestedDepth > 0)
             {
-                // Mitten in einem Destruktor/einer Property/einem Operator/Callback: hier nur anhalten (die Aufrufer kennen das
-                // vom Stopp durch eine unbehandelte Exception), das Abwickeln folgt in FinishDeferredShutdown.
+                // In the middle of a destructor/property/operator/callback: only stop here (the callers know this
+                // from the stop through an unhandled exception), the unwinding follows in FinishDeferredShutdown.
                 _shutdownDeferred = true;
                 StopExecution();
                 return;
@@ -752,13 +750,13 @@ namespace fire.Runtime
             StopExecution();
         }
 
-        /// <summary>Holt das Abwickeln eines in verschachtelter Ausführung ausgelösten `leave`/`terminate` nach (siehe
-        /// <see cref="_shutdownDeferred"/>). true = es wurde etwas getan, die VM steht danach wieder auf dem Halt-Chunk.</summary>
+        /// <summary>Makes up for the unwinding of a `leave`/`terminate` triggered in nested execution (see
+        /// <see cref="_shutdownDeferred"/>). true = something was done, the VM is back on the halt chunk afterwards.</summary>
         private bool FinishDeferredShutdown()
         {
             if (!_shutdownDeferred || _nestedDepth > 0) return false;
             _shutdownDeferred = false;
-            _stopExecutionRequested = false; // die verschachtelten Läufe beim Abwickeln (finally, Destruktoren) müssen wieder laufen dürfen
+            _stopExecutionRequested = false; // the nested runs during unwinding (finally, destructors) must be allowed to run again
             _currentChunk = StopChunk;
             _ip = 0;
             CheckShutdownSignals();
@@ -776,9 +774,9 @@ namespace fire.Runtime
             try { RunLoop(); }
             finally
             {
-                _acceptingCallbacks = false; // Host-Callbacks nehmen danach den anderen Weg
-                _currentThreadVm = null; // ein später auf diesem Thread feuernder Callback sucht keine beendete VM
-                _ownerBroker?.Close();   // kein Besitzer mehr: wartende Fire-Threads werden freigegeben
+                _acceptingCallbacks = false; // host callbacks take the other way afterwards
+                _currentThreadVm = null; // a callback firing later on this thread does not look for a finished VM
+                _ownerBroker?.Close();   // no owner any more: waiting fire threads are released
             }
         }
 
@@ -791,10 +789,10 @@ namespace fire.Runtime
                 var op = (OpCode)ReadByte();
                 if (op == OpCode.Halt)
                 {
-                    // Ein in verschachtelter Ausführung aufgerufenes leave/terminate wird erst jetzt geordnet abgewickelt;
-                    // danach steht wieder der Halt-Chunk da und das nächste Lesen landet erneut hier.
+                    // A leave/terminate called in nested execution is only now unwound in an orderly way;
+                    // afterwards the halt chunk is there again and the next read lands here again.
                     if (FinishDeferredShutdown()) continue;
-                    // Normales Ende oder geordnetes leave/terminate (nicht der Halt-Chunk einer unbehandelten Exception).
+                    // Normal end or orderly leave/terminate (not the halt chunk of an unhandled exception).
                     if (!_stopExecutionRequested || _shutdownReleasePending) ReleaseGlobalScopeAtEnd();
                     return;
                 }
@@ -802,22 +800,22 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Normales Programmende (oder Ende eines Threads): der globale Scope wird wie jeder andere Scope beim
-        /// Verlassen freigegeben - `destruct()` läuft für alles, was ihm gehört, offene Streams werden geschlossen.
-        /// Das Hauptprogramm wartet vorher auf alle noch laufenden Fire-Threads (sie können per `sync` in seine Objekte
-        /// zurückschreiben). Ein Host, der den Zustand NACH dem Lauf noch braucht (Tests, Inspektion), schaltet das mit
-        /// <see cref="DestroyGlobalsAtEnd"/> ab.</summary>
+        /// <summary>Normal program end (or end of a thread): the global scope is released like any other scope on
+        /// leaving - `destruct()` runs for everything that belongs to it, open streams are closed.
+        /// The main program waits beforehand for all fire threads still running (they can write back into its objects via `sync`
+        /// ). A host that still needs the state AFTER the run (tests, inspection) switches that off with
+        /// <see cref="DestroyGlobalsAtEnd"/>.</summary>
         private void ReleaseGlobalScopeAtEnd()
         {
             bool afterShutdown = _shutdownReleasePending;
             _shutdownReleasePending = false;
             if (!DestroyGlobalsAtEnd) return;
-            if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(_ownerBroker); // das Hauptprogramm (jede VM, die kein Fire-Thread ist); währenddessen bedient es die Warteschlange der Threads
+            if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(_ownerBroker); // the main program (every VM that is not a fire thread); meanwhile it serves the threads' queue
             ReleaseGlobalScopeAfterStop(afterShutdown);
         }
 
-        /// <summary>Gibt den globalen Scope frei; nach einem leave/terminate steht die VM schon im Stopp-Zustand, in dem
-        /// Destruktoren nicht mehr laufen (siehe RunDestructor) - er wird dafür kurz aufgehoben.</summary>
+        /// <summary>Releases the global scope; after a leave/terminate the VM is already in the stop state in which
+        /// destructors no longer run (see RunDestructor) - it is briefly lifted for that.</summary>
         private void ReleaseGlobalScopeAfterStop(bool afterShutdown)
         {
             if (!afterShutdown) { ReleaseGlobalScope(); return; }
@@ -826,40 +824,40 @@ namespace fire.Runtime
             finally { _stopExecutionRequested = true; }
         }
 
-        /// <summary>Gibt den globalen Scope frei. Bei einem Fire-Thread sind die Objekte mit `SyncOrigin` Kopien von Objekten des
-        /// Hauptprogramms (Globals-Schnappschuss, `taking`) - sie bleiben unberührt, nur was der Thread selbst angelegt hat wird
-        /// zerstört.</summary>
+        /// <summary>Releases the global scope. For a fire thread the objects with `SyncOrigin` are copies of objects of the
+        /// main program (globals snapshot, `taking`) - they stay untouched, only what the thread created itself is
+        /// destroyed.</summary>
         private void ReleaseGlobalScope()
         {
             if (IsFireThreadVm) _globalScope.ReleaseWhere(this, o => !o.IsTakingCopy);
             else _globalScope.Release(this);
         }
 
-        /// <summary>Soll das normale Programmende den globalen Scope freigeben (Vorgabe: ja)? `false` für Hosts, die die
-        /// Objekte nach dem Lauf noch lesen oder weiterverwenden (z.B. Tests, die danach Threads auf ihnen arbeiten lassen).</summary>
+        /// <summary>Should the normal program end release the global scope (default: yes)? `false` for hosts that still
+        /// read or keep using the objects after the run (e.g. tests that afterwards let threads work on them).</summary>
         public bool DestroyGlobalsAtEnd { get; set; } = true;
 
-        /// <summary>Der kooperative Prüfpunkt für `leave`/`terminate` (siehe
-        /// Feld-Doku oben) - bewusst vor JEDER einzelnen Instruktion geprüft
-        /// (nicht nur bei Funktionsaufrufen/Schleifen-Rücksprüngen), das ist
-        /// die einfachste, garantiert korrekte Variante ("verpasst" nie ein
-        /// Signal) - eine spätere Optimierung könnte das auf seltenere,
-        /// dafür strukturell sinnvollere Punkte einschränken, falls der
-        /// Overhead je relevant werden sollte.</summary>
+        /// <summary>The cooperative check point for `leave`/`terminate` (see
+        /// field documentation above) - deliberately checked before EVERY single instruction
+        /// (not only at function calls/loop back jumps), that is
+        /// the simplest, guaranteed correct variant (never "misses" a
+        /// signal) - a later optimisation could restrict that to rarer,
+        /// but structurally more sensible points, should the
+        /// overhead ever become relevant.</summary>
         private bool CheckShutdownSignals()
         {
-            // Nur der Main-Thread verarbeitet zugestellte Fire-Thread-
-            // Exceptions (siehe HandleDeliveredThreadException) - läuft dabei
-            // GENESTET (wie RunFinallyNested), der Main-Thread macht danach
-            // ganz normal weiter, wird also NICHT gestoppt.
+            // Only the main thread processes delivered fire-thread
+            // exceptions (see HandleDeliveredThreadException) - runs
+            // NESTED (like RunFinallyNested), the main thread afterwards continues
+            // quite normally, so it is NOT stopped.
             if (IsMainThreadVm)
                 while (_pendingThreadExceptions.TryDequeue(out var excInstance))
                 {
                     if (HandleDeliveredThreadException(excInstance)) return true;
                 }
 
-            // `terminate` und `leave` enden beide wie das normale Programmende: Scopes abwickeln (finally, Destruktoren),
-            // danach - am Halt, nach dem Ende aller Fire-Threads - den globalen Scope freigeben (siehe _shutdownReleasePending).
+            // `terminate` and `leave` both end like the normal program end: unwind scopes (finally, destructors),
+            // afterwards - at the halt, after the end of all fire threads - release the global scope (see _shutdownReleasePending).
             if (_terminateRequested)
             {
                 UnwindForShutdown();
@@ -877,20 +875,20 @@ namespace fire.Runtime
             return false;
         }
 
-        /// <summary>Wickelt den GESAMTEN aktuellen Zustand DIESER VM-Instanz
-        /// sauber ab: erst alle noch aktiven try-Handler (in der üblichen
-        /// Reihenfolge, siehe ThrowException), dabei aber - anders als bei
-        /// einer echten Exception - NIE einen `catch` matchen (jeder Handler
-        /// wird also wie "kein passender catch" behandelt), sein `finally`
-        /// läuft aber ganz normal. Danach können noch Frames/Scopes OHNE
-        /// eigenes try/finally aktiv sein (ein einfacher Methodenaufruf ohne
-        /// try-Block) - die werden abschließend bis zur Basis (globaler
-        /// Scope, Frame-Tiefe 0) reguär abgewickelt (Release() pro Scope,
-        /// inkl. Destruktor-Kaskade), nur ohne weiteres finally (da keins
-        /// mehr registriert ist). Gemeinsame Grundlage für `leave` (nur
-        /// diese eine VM-Instanz) und `terminate` (jede VM-Instanz bemerkt
-        /// das globale Signal an ihrem eigenen nächsten Prüfpunkt und wickelt
-        /// sich GENAUSO ab - nur die Auslösung unterscheidet sich).</summary>
+        /// <summary>Cleanly unwinds the ENTIRE current state of THIS VM instance:
+        /// first all still active try handlers (in the usual
+        /// order, see ThrowException), but - unlike with
+        /// a real exception - NEVER matching a `catch` (every handler
+        /// is treated like "no matching catch"), its `finally`
+        /// however runs quite normally. Afterwards frames/scopes WITHOUT
+        /// their own try/finally may still be active (a simple method call without a
+        /// try block) - these are finally regularly unwound down to the base (global
+        /// scope, frame depth 0) (Release() per scope,
+        /// incl. destructor cascade), only without any further finally (since none
+        /// is registered any more). Common basis for `leave` (only
+        /// this one VM instance) and `terminate` (every VM instance notices
+        /// the global signal at its own next check point and unwinds
+        /// itself EXACTLY the same way - only the triggering differs).</summary>
         private void UnwindForShutdown(bool destroyGlobalScope = false)
         {
             while (_handlers.Count > 0)
@@ -907,22 +905,22 @@ namespace fire.Runtime
             if (destroyGlobalScope) ReleaseGlobalScope();
         }
 
-        /// <summary>Führt einen zugestellten, unbehandelten Fire-Thread-
-        /// Exception-Handler (`catch threads(...)`) genestet aus - wie
-        /// RunFinallyNested: läuft, DANACH macht der Main-Thread an exakt der
-        /// unterbrochenen Stelle normal weiter (kein Stoppen, anders als bei
-        /// leave/terminate). Kein passender Handler registriert -> kompletter
-        /// Programmabbruch, wie eine unbehandelte Exception im Main-Thread
-        /// selbst (docs/THREADING_DESIGN.md 6.2).</summary>
+        /// <summary>Executes a delivered, unhandled fire-thread
+        /// exception handler (`catch threads(...)`) nested - like
+        /// RunFinallyNested: it runs, AFTERWARDS the main thread continues normally at exactly the
+        /// interrupted place (no stopping, unlike with
+        /// leave/terminate). No matching handler registered -> complete
+        /// program abort, like an unhandled exception in the main thread
+        /// itself (docs/THREADING_DESIGN.md 6.2).</summary>
         private bool HandleDeliveredThreadException(ObjectInstance excInstance)
         {
             var handlerProto = FindGlobalThreadsCatch(excInstance);
             if (handlerProto == null)
             {
-                // Kompletter Programmabbruch - gesetzt statt geworfen, siehe
-                // UnhandledException-Doku. Der Aufrufer (CheckShutdownSignals)
-                // MUSS danach sofort stoppen, statt evtl. weitere in der
-                // Warteschlange stehende Exceptions noch zu verarbeiten.
+                // Complete program abort - set instead of thrown, see
+                // UnhandledException documentation. The caller (CheckShutdownSignals)
+                // MUST stop immediately afterwards, instead of possibly processing further exceptions
+                // standing in the queue.
                 UnhandledException = excInstance;
                 return true;
             }
@@ -940,15 +938,15 @@ namespace fire.Runtime
             _ip = 0;
 
             RunNestedUntil(targetDepth);
-            PopNestedResult(); // Rückgabewert des Handler-Protos unbenutzt, wie RunFinallyNested/RunDestructor.
+            PopNestedResult(); // Return value of the handler proto unused, like RunFinallyNested/RunDestructor.
             return false;
         }
 
-        /// <summary>`catch threads(...)`-Auflösung - exakt wie FindMatchingCatch
-        /// bei einem normalen try/catch (erster Treffer gewinnt, `typeName ==
-        /// null` matcht alles, siehe InstanceMatchesClassName für 'Exception'
-        /// als Sonderfall), nur gegen die GLOBALE Registrierung statt gegen
-        /// ein einzelnes HandlerTemplate.</summary>
+        /// <summary>`catch threads(...)` resolution - exactly like FindMatchingCatch
+        /// for a normal try/catch (first hit wins, `typeName ==
+        /// null` matches everything, see InstanceMatchesClassName for 'Exception'
+        /// as a special case), only against the GLOBAL registration instead of
+        /// a single HandlerTemplate.</summary>
         private FunctionProto? FindGlobalThreadsCatch(ObjectInstance exc)
         {
             foreach (var (typeName, proto) in GlobalHandlers.ThreadsCatches)
@@ -959,13 +957,13 @@ namespace fire.Runtime
             return null;
         }
 
-        /// <summary>Führt `catch terminate(v)` genestet aus, falls registriert
-        /// - anders als HandleDeliveredThreadException MUSS hier NICHTS
-        /// "danach normal weitermachen", da der Aufrufer (CheckShutdownSignals)
-        /// direkt im Anschluss ohnehin `true` (= Run() soll stoppen)
-        /// zurückgibt - der hier gepushte Rücksprung-Frame wird also nie
-        /// wirklich gebraucht, ist aber nötig, damit RunNestedUntil überhaupt
-        /// weiß, wann der Handler-Aufruf per Return beendet ist.</summary>
+        /// <summary>Executes `catch terminate(v)` nested, if registered
+        /// - unlike HandleDeliveredThreadException NOTHING has to
+        /// "continue normally afterwards" here, since the caller (CheckShutdownSignals)
+        /// returns `true` (= Run() is to stop) directly afterwards anyway
+        /// - the return frame pushed here is therefore never
+        /// really needed, but is necessary so that RunNestedUntil knows at all
+        /// when the handler call has ended via Return.</summary>
         private void RunTerminateHandlerIfAny()
         {
             var proto = GlobalHandlers.TerminateHandler;
@@ -987,15 +985,15 @@ namespace fire.Runtime
             PopNestedResult();
         }
 
-        /// <summary>`process X`/`try process X` (siehe Ast.ProcessStmt/
-        /// TryProcessExpr-Doku) - holt GENAU EINE Nachricht aus der Mailbox
-        /// des Actors (siehe Runtime.ActorMailbox.TryProcessOne) und führt
-        /// die passende Methode GENESTET aus (wie CallMethodNested-Muster:
-        /// `this` = der Actor, Rückgabewert unbenutzt - eine Nachricht hat
-        /// kein Ergebnis, das irgendwer abholen könnte). Liefert `false` nur
-        /// im nicht-blockierenden Fall, wenn die Mailbox gerade leer ist -
-        /// blockierend liefert diese Methode immer `true` (wartet ja, bis
-        /// etwas da ist).</summary>
+        /// <summary>`process X`/`try process X` (see Ast.ProcessStmt/
+        /// TryProcessExpr documentation) - fetches EXACTLY ONE message from the mailbox
+        /// of the actor (see Runtime.ActorMailbox.TryProcessOne) and executes
+        /// the matching method NESTED (like the CallMethodNested pattern:
+        /// `this` = the actor, return value unused - a message has
+        /// no result that anybody could pick up). Returns `false` only
+        /// in the non-blocking case when the mailbox is currently empty -
+        /// when blocking this method always returns `true` (it waits until
+        /// something is there).</summary>
         private bool ProcessOneMessage(ObjectInstance actor, bool blocking)
         {
             var mailbox = actor.Mailbox
@@ -1024,44 +1022,44 @@ namespace fire.Runtime
             _ip = 0;
 
             RunNestedUntil(targetDepth);
-            PopNestedResult(); // Rückgabewert unbenutzt, siehe Doku oben.
+            PopNestedResult(); // Return value unused, see documentation above.
             return true;
         }
 
         // -----------------------------------------------------------
-        // Stepping-/Inspektions-API für externe Werkzeuge (Step-Debugger im
-        // Editor-Unterprojekt) - Run() bleibt für den normalen "einfach
-        // durchlaufen"-Fall unverändert, das hier ist ein ALTERNATIVER,
-        // Schritt-für-Schritt-fähiger Einstieg in dieselbe Execute()-Schleife.
+        // Stepping/inspection API for external tools (step debugger in the
+        // editor sub-project) - Run() stays unchanged for the normal "just
+        // run through" case, this here is an ALTERNATIVE
+        // step-by-step capable entry into the same Execute() loop.
         // -----------------------------------------------------------
 
         private bool _steppingStarted;
 
         public bool IsHalted { get; private set; }
         
-        /// <summary>Aktuelle Quell-Position (Quell-Index + Quelltextzeile) an der
-                                                  /// Ausführungsposition (per Chunk-Zeilentabelle, siehe Chunk.MarkLine) -
-                                                  /// (0, 0), wenn keine Information vorhanden ist (z.B. programmatisch
-                                                  /// gebaute Chunks ohne Compiler-Lauf). Grundlage für die Zeilen-
-                                                  /// Hervorhebung im Editor UND für die Step-/Haltepunkt-Logik unten -
-                                                  /// WICHTIG: seit ein Programm aus mehreren Dateien bestehen kann (SPEC
-                                                  /// "Mehrere Quelldateien") reicht der bloße Zeilenvergleich allein
-                                                  /// nicht mehr aus (Zeile 5 in Datei A und Zeile 5 in Datei B sind
-                                                  /// unterschiedliche Stellen) - IMMER beide Werte zusammen vergleichen.</summary>
+        /// <summary>Current source position (source index + source line) at the
+                                                  /// execution position (via the chunk line table, see Chunk.MarkLine) -
+                                                  /// (0, 0) if no information is available (e.g. programmatically
+                                                  /// built chunks without a compiler run). Basis for the line
+                                                  /// highlighting in the editor AND for the step/breakpoint logic below -
+                                                  /// IMPORTANT: since a program can consist of several files (SPEC
+                                                  /// "Multiple source files") the mere line comparison alone
+                                                  /// is no longer enough (line 5 in file A and line 5 in file B are
+                                                  /// different places) - ALWAYS compare both values together.</summary>
         public (int SourceIndex, int Line) CurrentLocation => _currentChunk.GetLocation(_ip);
 
-        /// <summary>Kurzform für `CurrentLocation.Line` - für Aufrufer, denen
-        /// (noch) nur EINE Datei bekannt ist (z.B. das alte Einzeldatei-
-        /// Editorfenster) und die deshalb den Quell-Index ignorieren können.</summary>
+        /// <summary>Short form for `CurrentLocation.Line` - for callers to whom
+        /// (still) only ONE file is known (e.g. the old single-file
+        /// editor window) and who can therefore ignore the source index.</summary>
         public int CurrentLine => CurrentLocation.Line;
 
 
 
-        /// <summary>Führt GENAU eine Instruktion aus - Gegenstück zu Run()s
-        /// Schleifenkörper, nur einzeln aufrufbar mit explizitem Halt-Status
-        /// statt einer Endlosschleife. Der erste Aufruf initialisiert `_ip`
-        /// wie Run() das auch tut. Liefert false, sobald das Programm beendet
-        /// ist (danach bleibt jeder weitere Aufruf ein No-op mit false).</summary>
+        /// <summary>Executes EXACTLY one instruction - counterpart to the loop body of Run(),
+        /// only callable individually with an explicit halt status
+        /// instead of an endless loop. The first call initialises `_ip`
+        /// as Run() does too. Returns false as soon as the program has ended
+        /// (afterwards every further call stays a no-op returning false).</summary>
         public bool StepInstruction()
         {
             if (IsHalted) return false;
@@ -1073,9 +1071,9 @@ namespace fire.Runtime
             return AfterStep();
         }
 
-        /// <summary>Der erste Schritt: wie Run() (siehe dort) - _currentThreadVm muss auch beim schrittweisen Debuggen korrekt auf DIESE
-        /// Instanz zeigen, sonst würde jede native Brücke, die sich darauf verlässt (siehe CurrentThreadVm-Doku), beim Einzelschritt-Debuggen
-        /// fälschlich null sehen, obwohl eindeutig EINE VM-Instanz gerade aktiv ist.</summary>
+        /// <summary>The first step: like Run() (see there) - _currentThreadVm must also point correctly to THIS
+        /// instance during step-by-step debugging, otherwise every native bridge that relies on it (see CurrentThreadVm documentation) would
+        /// wrongly see null during single-step debugging, although clearly ONE VM instance is currently active.</summary>
         private void BeginStepping()
         {
             _currentThreadVm = this;
@@ -1084,8 +1082,8 @@ namespace fire.Runtime
             _acceptingCallbacks = true;
         }
 
-        /// <summary>`Halt` gelesen: wie Run() räumt das normale Ende den globalen Scope ab - im Einzelschritt ohne auf Threads zu warten (der
-        /// Debugger hält sie evtl. an). Liefert false (beendet).</summary>
+        /// <summary>`Halt` read: like Run(), the normal end cleans up the global scope - in single step without waiting for threads (the
+        /// debugger may have stopped them). Returns false (ended).</summary>
         private bool FinishAtHalt()
         {
             if ((!_stopExecutionRequested || _shutdownReleasePending) && DestroyGlobalsAtEnd) ReleaseGlobalScopeAfterStop(_shutdownReleasePending);
@@ -1095,24 +1093,24 @@ namespace fire.Runtime
             return false;
         }
 
-        /// <summary>Nach jeder Instruktion im Einzelschritt: Warteschlangen abarbeiten (Fire-Threads, Host-Callbacks) und ein Programmende
-        /// durch `leave`/`terminate`/unbehandelte Exception bemerken. false = beendet.</summary>
+        /// <summary>After every instruction in single step: process queues (fire threads, host callbacks) and notice a program end
+        /// through `leave`/`terminate`/unhandled exception. false = ended.</summary>
         private bool AfterStep()
         {
-            // Nur wenn seit dem letzten sicheren Punkt ein Signal eingegangen ist (jedes Einreihen löst eines aus, siehe RaiseSignal):
-            // die Abfrage der Warteschlangen bei JEDER Instruktion war der größte Posten der Einzelschritt-Schleife.
+            // Only if a signal has arrived since the last safe point (every queueing triggers one, see RaiseSignal):
+            // querying the queues on EVERY instruction was the biggest item of the single-step loop.
             if (_autoSync && _seenEpoch != System.Threading.Volatile.Read(ref s_signalEpoch) && _nestedDepth == 0 && !_stopExecutionRequested
                 && (!_inbound.IsEmpty || (_ownerBroker != null && _ownerBroker.HasPending)))
                 AutoSyncNow();
 
-            // Eine unbehandelte Skript-Exception wird seit UnhandledException (siehe dort) nicht mehr geworfen, sondern nur noch GESETZT -
-            // Run() bemerkt das über CheckShutdownSignals (hier bewusst NICHT aufgerufen, siehe Feld-Doku), beim schrittweisen Debuggen
-            // muss das deshalb HIER explizit geprüft werden, sonst würde StepLine/StepInto/StepOut/Continue (alle bauen auf dieser
-            // Methode auf) einfach immer weiterlaufen, als wäre nichts passiert, statt sauber zu stoppen.
+            // Since UnhandledException (see there) an unhandled script exception is no longer thrown, but only SET -
+            // Run() notices that via CheckShutdownSignals (deliberately NOT called here, see field documentation), so during step-by-step debugging
+            // it has to be checked explicitly HERE, otherwise StepLine/StepInto/StepOut/Continue (all build on this
+            // method) would simply keep running as if nothing had happened, instead of stopping cleanly.
             if (_stopExecutionRequested)
             {
                 FinishDeferredShutdown();
-                // leave/terminate enden wie das normale Programmende (ohne auf Threads zu warten, der Debugger hält sie evtl. an).
+                // leave/terminate end like the normal program end (without waiting for threads, the debugger may have stopped them).
                 if (_shutdownReleasePending && DestroyGlobalsAtEnd) ReleaseGlobalScopeAfterStop(true);
                 _shutdownReleasePending = false;
                 IsHalted = true;
@@ -1123,13 +1121,13 @@ namespace fire.Runtime
             return true;
         }
 
-        /// <summary>Läuft bis zu einem Haltepunkt, einer Pause-Anforderung oder dem Programmende (der "Weiter"-Lauf des
-        /// Debuggers). true = angehalten (am Haltepunkt oder auf Anforderung, es gibt noch etwas auszuführen), false = beendet.
+        /// <summary>Runs until a breakpoint, a pause request or the program end (the "Continue" run of the
+        /// debugger). true = stopped (at a breakpoint or on request, there is still something to execute), false = ended.
         ///
-        /// Schnell, weil nur an einem Zeilenwechsel nachgeschlagen wird: die Stelle gilt für den ganzen Byte-Bereich ihrer
-        /// Zeile (siehe Chunk.GetLocationRange), und die Pause-Abfrage kommt nur alle 256 Instruktionen. Ein Haltepunkt
-        /// zählt nur beim EINTRITT in seine Zeile, nicht bei jeder Instruktion darin - und nicht für die Zeile, auf der der Lauf beginnt.</summary>
-        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)] // eine lange Schleife: gleich voll optimiert übersetzen
+        /// Fast, because lookup only happens at a line change: the position applies to the whole byte range of its
+        /// line (see Chunk.GetLocationRange), and the pause query comes only every 256 instructions. A breakpoint
+        /// counts only on ENTERING its line, not on every instruction in it - and not for the line on which the run begins.</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)] // a long loop: compile fully optimised straight away
         public bool RunUntilBreakpoint(ISet<(int SourceIndex, int Line)> breakpoints, Func<bool> isPauseRequested)
         {
             if (IsHalted) return false;
@@ -1161,7 +1159,7 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Läuft bis zum Programmende oder einer Pause-Anforderung ("Bis Ende durchlaufen"). true = angehalten, false = beendet.</summary>
+        /// <summary>Runs until the program end or a pause request ("Run to end"). true = stopped, false = ended.</summary>
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
         public bool RunUntilEnd(Func<bool> isPauseRequested)
         {
@@ -1179,11 +1177,11 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Führt Instruktionen aus, bis entweder die aktuelle
-        /// Quelltextzeile wechselt (Ziel wieder auf derselben oder einer
-        /// FLACHEREN Aufruf-Tiefe - "Step Over", läuft also nicht in tiefer
-        /// verschachtelte Aufrufe hinein) oder das Programm beendet ist. Für
-        /// den "Step"-Knopf im Editor.</summary>
+        /// <summary>Executes instructions until either the current
+        /// source line changes (target again at the same or a
+        /// SHALLOWER call depth - "Step Over", so it does not run into deeper
+        /// nested calls) or the program has ended. For
+        /// the "Step" button in the editor.</summary>
         public bool StepLine()
         {
             int startLine = CurrentLine;
@@ -1196,12 +1194,12 @@ namespace fire.Runtime
             return false;
         }
 
-        /// <summary>Wie StepLine ("Step Over"), springt bei einem Aufruf aber
-        /// HINEIN statt ihn zu überspringen ("Step Into") - stoppt bei JEDEM
-        /// Wechsel der aktuellen Zeile ODER Aufruf-Tiefe. Ein Aufruf einer
-        /// nativen Funktion (z.B. `print(...)`) hat dabei nichts zum
-        /// "Hineinspringen" (keine eigene Chunk/Zeile) - verhält sich für den
-        /// Debugger dann automatisch wie ein normaler Schritt.</summary>
+        /// <summary>Like StepLine ("Step Over"), but jumps INTO a call instead of
+        /// skipping it ("Step Into") - stops at EVERY
+        /// change of the current line OR call depth. A call of a
+        /// native function (e.g. `print(...)`) has nothing to
+        /// "jump into" there (no chunk/line of its own) - it then automatically behaves for the
+        /// debugger like a normal step.</summary>
         public bool StepInto()
         {
             int startLine = CurrentLine;
@@ -1214,13 +1212,13 @@ namespace fire.Runtime
             return false;
         }
 
-        /// <summary>Läuft, bis die aktuelle Funktion/Methode/das aktuelle
-        /// Lambda verlassen wurde (Aufruf-Tiefe fällt unter die
-        /// Ausgangstiefe) - "Step Out", ergänzt Step Into/Over sinnvoll.</summary>
+        /// <summary>Runs until the current function/method/the current
+        /// lambda has been left (call depth falls below the
+        /// initial depth) - "Step Out", sensibly complements Step Into/Over.</summary>
         public bool StepOut()
         {
             int startDepth = _frames.Count;
-            if (startDepth == 0) return false; // schon auf Top-Level, nichts zu verlassen
+            if (startDepth == 0) return false; // already at top level, nothing to leave
             while (StepInstruction())
             {
                 if (_frames.Count < startDepth)
@@ -1229,11 +1227,11 @@ namespace fire.Runtime
             return false;
         }
 
-        /// <summary>Führt Instruktionen aus, bis entweder eine Zeile aus
-        /// `breakpointLines` erreicht ist (nur beim WECHSEL der Zeile geprüft,
-        /// damit ein Breakpoint auf der gerade verlassenen Zeile nicht sofort
-        /// erneut triggert) oder das Programm beendet ist. Für den
-        /// "Weiter"-Knopf im Editor.</summary>
+        /// <summary>Executes instructions until either a line from
+        /// `breakpointLines` is reached (checked only on the CHANGE of line,
+        /// so that a breakpoint on the line just left does not immediately
+        /// trigger again) or the program has ended. For the
+        /// "Continue" button in the editor.</summary>
         public bool Continue(ISet<int> breakpointLines)
         {
             int lastLine = CurrentLine;
@@ -1249,18 +1247,18 @@ namespace fire.Runtime
             return false;
         }
 
-        /// <summary>Unveränderlicher Blick auf den aktuellen Wert-Stack - rein
-        /// zur Inspektion, keine Kopie (Werte selbst sind ohnehin unveränderliche
-        /// Structs).</summary>
+        /// <summary>Immutable view of the current value stack - purely
+        /// for inspection, no copy (values themselves are immutable
+        /// structs anyway).</summary>
         public IReadOnlyList<Value> DebugStackSnapshot => new ArraySegment<Value>(_stack, 0, _sp);
 
-        /// <summary>Aktuelle Aufruf-Tiefe (Anzahl aktiver CallFrames) - für eine
-        /// einfache Anzeige "wie tief verschachtelt bin ich gerade".</summary>
+        /// <summary>Current call depth (number of active CallFrames) - for a
+        /// simple display "how deeply nested am I right now".</summary>
         public int DebugCallDepth => _frames.Count;
 
-        /// <summary>Kurzbeschreibung des aktuell gebundenen `this` - null
-        /// (kein Text), wenn an dieser Stelle kein `this` gebunden ist (z.B.
-        /// Top-Level-Code oder ein Lambda ohne `on`-Bindung).</summary>
+        /// <summary>Short description of the currently bound `this` - null
+        /// (no text) if no `this` is bound at this point (e.g.
+        /// top-level code or a lambda without an `on` binding).</summary>
         public string? DebugThisDescription => _currentThis switch
         {
             null => null,
@@ -1269,10 +1267,10 @@ namespace fire.Runtime
             _ => _currentThis.ToString(),
         };
 
-        /// <summary>Wie DebugThisDescription, aber als echter Value statt nur
-        /// einer Textbeschreibung - Grundlage für die aufklappbare Feld-
-        /// Anzeige im Editor (siehe MainWindow.RefreshDebugPanels/
-        /// BuildVariableTreeItem). Null unter denselben Bedingungen wie
+        /// <summary>Like DebugThisDescription, but as a real Value instead of only
+        /// a text description - basis for the expandable field
+        /// display in the editor (see MainWindow.RefreshDebugPanels/
+        /// BuildVariableTreeItem). Null under the same conditions as
         /// DebugThisDescription.</summary>
         public Value? DebugThisValue => _currentThis switch
         {
@@ -1282,21 +1280,21 @@ namespace fire.Runtime
             _ => null,
         };
 
-        /// <summary>Eine Ebene der Scope-Kette an der aktuellen Ausführungs-
-        /// position, für eine strukturierte Scope-Ansicht im Editor (jede
-        /// Ebene separat statt einer einzigen flachen Liste - macht sichtbar,
-        /// welche Variablen zum GERADE AKTIVEN (innersten) Block gehören und
-        /// welche aus einer umschließenden Ebene "durchgereicht" werden).
-        /// Depth 0 = der aktuell innerste Scope (`_currentScope` selbst).</summary>
+        /// <summary>One level of the scope chain at the current execution
+        /// position, for a structured scope view in the editor (each
+        /// level separately instead of a single flat list - makes visible
+        /// which variables belong to the CURRENTLY ACTIVE (innermost) block and
+        /// which are "passed through" from an enclosing level).
+        /// Depth 0 = the currently innermost scope (`_currentScope` itself).</summary>
         public sealed record ScopeLevel(int Depth, bool IsFunctionTopLevel, IReadOnlyList<(string Name, Value Value)> Variables);
 
-        /// <summary>Die komplette Scope-Kette der aktuellen Funktion/Methode/
-        /// des aktuellen Lambdas, vom aktuell aktiven (innersten) Block bis zu
-        /// deren Top-Level-Scope (danach kommt global, siehe DebugGlobals) -
-        /// jede Ebene als eigener Eintrag, damit der Editor sie getrennt
-        /// darstellen kann. Namen zuverlässig nur für Parameter der Top-
-        /// Level-Ebene (siehe Chunk.DebugLocalNames-Kommentar), alles andere
-        /// als "(local N)".</summary>
+        /// <summary>The complete scope chain of the current function/method/
+        /// lambda, from the currently active (innermost) block up to
+        /// its top-level scope (after that comes global, see DebugGlobals) -
+        /// each level as an entry of its own, so that the editor can show them
+        /// separately. Names reliable only for parameters of the top-
+        /// level (see Chunk.DebugLocalNames comment), everything else
+        /// as "(local N)".</summary>
         public IReadOnlyList<ScopeLevel> DebugScopeChain()
         {
             var result = new List<ScopeLevel>();
@@ -1320,33 +1318,33 @@ namespace fire.Runtime
             return result;
         }
 
-        /// <summary>Globale Variablen - anders als bei Funktions-Parametern
-        /// gibt es dafür (noch) kein Namens-Register (siehe Chunk.
-        /// DebugLocalNames-Kommentar: dort wird bewusst nur die TOP-LEVEL-
-        /// Scope einer FUNKTION erfasst, nicht der globale Top-Level-Code) -
-        /// erscheinen deshalb komplett als "(global N)".</summary>
+        /// <summary>Global variables - unlike function parameters
+        /// there is (still) no name register for them (see Chunk.
+        /// DebugLocalNames comment: there deliberately only the TOP-LEVEL
+        /// scope of a FUNCTION is recorded, not the global top-level code) -
+        /// they therefore appear completely as "(global N)".</summary>
         public IEnumerable<(string Name, Value Value)> DebugGlobals()
         {
             for (int slot = 0; slot < _globalScope.SlotCount; slot++)
                 yield return ($"(global {slot})", _globalScope.GetSlot(slot));
         }
 
-        /// <summary>Führt Instruktionen aus, bis der Aufruf-Stack wieder unter
-        /// <paramref name="targetFrameDepth"/> gefallen ist - also bis genau der
-        /// Frame, der unmittelbar vor diesem Aufruf gepusht wurde (plus alles,
-        /// was der ausgeführte Code selbst weiter aufgerufen hat), per RETURN
-        /// wieder abgebaut ist. So lässt sich "ruf diesen einen Proto auf und
-        /// warte synchron auf sein Return" mitten aus einem C#-Methodenaufruf
-        /// heraus realisieren (für Destruktoren, siehe RunDestructor), ohne die
-        /// Hauptschleife selbst rekursiv verschachteln zu müssen - Rekursion
-        /// entsteht stattdessen ganz natürlich über verschachtelte C#-Aufrufe
-        /// von RunDestructor selbst, falls ein Destruktor seinerseits weitere
-        /// Destruktoren auslöst.</summary>
+        /// <summary>Executes instructions until the call stack has fallen below
+        /// <paramref name="targetFrameDepth"/> again - that is, until exactly the
+        /// frame that was pushed immediately before this call (plus everything
+        /// the executed code itself called further), has been torn down again via RETURN.
+        /// This way "call this one proto and
+        /// wait synchronously for its return" can be realised in the middle of a C# method call
+        /// (for destructors, see RunDestructor), without having to nest
+        /// the main loop itself recursively - recursion
+        /// arises instead quite naturally via nested C# calls
+        /// of RunDestructor itself, if a destructor in turn triggers further
+        /// destructors.</summary>
         private void RunNestedUntil(int targetFrameDepth)
         {
             _nestedDepth++;
             try { RunNestedLoop(targetFrameDepth); }
-            finally { _nestedDepth--; } // auch bei einer C#-Ausnahme (z.B. im Performance-Modus ohne Prüfungen) wieder freigeben
+            finally { _nestedDepth--; } // release again also on a C# exception (e.g. in performance mode without checks)
         }
 
         private void RunNestedLoop(int targetFrameDepth)
@@ -1359,31 +1357,31 @@ namespace fire.Runtime
                         "Unexpected halt in nested execution (e.g. during a destructor call).");
                 Step(op);
 
-                // Wie Run() (siehe dort für die ausführliche Begründung) -
-                // eine unbehandelte Exception setzt _stopExecutionRequested
-                // sofort, OHNE die Frames/den Stack selbst schon
-                // vollständig abzuwickeln (das macht erst der nächste
-                // CheckShutdownSignals-Aufruf) - normalerweise würde die
-                // Schleifenbedingung oben (_frames.Count >= targetFrameDepth)
-                // das nach dem Abwickeln von selbst auffangen, aber falls
-                // der Frame-Stand GENAU auf targetFrameDepth steht, wenn das
-                // passiert, würde die Schleife sonst fälschlich weiterlaufen
-                // und mit demselben "Pop() auf leerem Stack"-Symptom enden
-                // wie beim Bugreport, der zu diesem Fix geführt hat.
+                // Like Run() (see there for the detailed reasoning) -
+                // an unhandled exception sets _stopExecutionRequested
+                // immediately, WITHOUT yet unwinding the frames/the stack itself
+                // completely (that is only done by the next
+                // CheckShutdownSignals call) - normally the
+                // loop condition above (_frames.Count >= targetFrameDepth)
+                // would catch that by itself after unwinding, but if
+                // the frame state stands EXACTLY at targetFrameDepth when that
+                // happens, the loop would otherwise wrongly keep running
+                // and end with the same "Pop() on an empty stack" symptom
+                // as in the bug report that led to this fix.
                 if (_stopExecutionRequested) return;
             }
         }
 
-        /// <summary>IDestructRunner: wird von Scope.Release/ObjectInstance.Destroy
-        /// aufgerufen, wenn ein Objekt durch die Ownership-Kaskade zerstört wird.
-        /// Führt den kompilierten destruct()-Body aus (falls die Klasse einen
-        /// deklariert), mit 'this' = dem zu zerstörenden Objekt.</summary>
+        /// <summary>IDestructRunner: called by Scope.Release/ObjectInstance.Destroy
+        /// when an object is destroyed by the ownership cascade.
+        /// Executes the compiled destruct() body (if the class
+        /// declares one), with 'this' = the object to be destroyed.</summary>
         public void RunDestructor(ObjectInstance instance)
         {
-            // Die Destruktoren der GANZEN Klassenkette, abgeleitete Klasse
-            // zuerst, dann jede Basisklasse (wie in C#) - eine Basisklasse, die
-            // Ressourcen hält (z.B. einen Datei-Handle) räumt sie so auch für
-            // abgeleitete Klassen auf, die selbst keinen destruct() haben.
+            // The destructors of the WHOLE class chain, derived class
+            // first, then every base class (as in C#) - a base class that
+            // holds resources (e.g. a file handle) thus cleans them up also for
+            // derived classes that have no destruct() of their own.
             if (_stopExecutionRequested) return;
             for (var rc = instance.RtClass ?? ResolveClass(instance.ClassName); rc != null; rc = rc.Base)
             {
@@ -1400,23 +1398,23 @@ namespace fire.Runtime
 
                 RunNestedUntil(targetDepth);
 
-                // Das abschließende RETURN des Destruktor-Bodys pusht seinen (hier
-                // bedeutungslosen) Rückgabewert auf den Werte-Stack - anders als bei
-                // einem normalen Call/CallMethod/etc. gibt es hier aber keinen
-                // Ausdruckskontext, der ihn abholt. Ohne dieses Pop würde der Stack
-                // bei jeder Destruktor-Ausführung um einen Wert "verwachsen".
+                // The final RETURN of the destructor body pushes its (here
+                // meaningless) return value onto the value stack - unlike with
+                // a normal Call/CallMethod/etc., there is however no
+                // expression context here that picks it up. Without this pop the stack
+                // would "grow" by one value on every destructor execution.
                 PopNestedResult();
-                if (_stopExecutionRequested) return; // ein Destruktor hat die VM beendet (unbehandelte Exception) - nichts mehr aufrufen
+                if (_stopExecutionRequested) return; // a destructor has ended the VM (unhandled exception) - call nothing any more
             }
         }
 
-        /// <summary>Führt EINE Instruktion aus. Die häufigsten (Laden/Speichern, Grundrechenarten, Vergleiche,
-        /// Sprünge, Scopes) sind hier direkt ausgeschrieben, alles andere geht an <see cref="Execute"/>.
-        /// Der Grund für die Trennung: Execute ist eine riesige Methode mit sehr vielen lokalen Variablen, und
-        /// deren Stackframe wird bei JEDEM Aufruf neu genullt - das kostete pro Instruktion ein Vielfaches
-        /// der eigentlichen Arbeit. Diese Methode hat fast keine Locals und bleibt billig. Jeder Fall hier
-        /// verhält sich exakt wie sein Gegenstück in Execute; wo ein Fall nicht zutrifft (z.B. ein Objekt als
-        /// linker Operand mit Operator-Überladung, eine Scope mit Besitz), fällt er nach Execute durch.</summary>
+        /// <summary>Executes ONE instruction. The most frequent ones (load/store, basic arithmetic, comparisons,
+        /// jumps, scopes) are written out directly here, everything else goes to <see cref="Execute"/>.
+        /// The reason for the separation: Execute is a huge method with very many local variables, and
+        /// its stack frame is zeroed anew on EVERY call - that cost a multiple per instruction
+        /// of the actual work. This method has almost no locals and stays cheap. Every case here
+        /// behaves exactly like its counterpart in Execute; where a case does not apply (e.g. an object as the
+        /// left operand with operator overloading, a scope with ownership), it falls through to Execute.</summary>
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
         private void Step(OpCode op)
         {
@@ -1454,7 +1452,7 @@ namespace fire.Runtime
                 {
                     int slot = ReadU16();
                     if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
-                    if (slot < _sharedCount) { _stack[_sp] = LoadSharedGlobal(slot); _sp++; return; } // Fire-Thread: die echten Globals
+                    if (slot < _sharedCount) { _stack[_sp] = LoadSharedGlobal(slot); _sp++; return; } // Fire thread: the real globals
                     _stack[_sp] = _globalScope.SlotRef(slot);
                     _sp++;
                     return;
@@ -1474,8 +1472,8 @@ namespace fire.Runtime
                     _currentScope.DefineSlot(Pop());
                     return;
 
-                // Binäre Operatoren: der linke Operand liegt bei _sp-2, der rechte bei _sp-1; das Ergebnis
-                // ersetzt beide. Ein Objekt links (Operator-Überladung) geht durch nach Execute.
+                // Binary operators: the left operand lies at _sp-2, the right at _sp-1; the result
+                // replaces both. An object on the left (operator overloading) falls through to Execute.
                 case OpCode.Add:
                     if (Value.TryAddInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
                     if (_stack[_sp - 2].Kind != ValueKind.Class && _stack[_sp - 1].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Add(_stack[_sp - 2], _stack[_sp - 1])); return; }
@@ -1631,8 +1629,8 @@ namespace fire.Runtime
 
                 case OpCode.Jump:
                 {
-                    // Ein Rücksprung (Schleife) ist ein sicherer Punkt für Shutdown-Signale (siehe PollSignals); `_ip` zeigt hier
-                    // noch auf den Operanden, PollSignalsSlow rechnet mit der Instruktionsgrenze davor.
+                    // A back jump (loop) is a safe point for shutdown signals (see PollSignals); `_ip` here still
+                    // points to the operand, PollSignalsSlow calculates with the instruction boundary before it.
                     int target = _code[_ip] | (_code[_ip + 1] << 8);
                     if (target <= _ip && PollSignals()) return;
                     _ip = target;
@@ -1667,7 +1665,7 @@ namespace fire.Runtime
                 case OpCode.ExitScope:
                 {
                     var scope = _currentScope;
-                    if (scope.HasOwned) { ExitScopeOwning(); return; } // Release kann Destruktoren ausführen - der ausführliche Weg
+                    if (scope.HasOwned) { ExitScopeOwning(); return; } // Release can execute destructors - the detailed way
                     _currentScope = scope.Parent
                         ?? throw new InvalidOperationException("ExitScope called on the global scope.");
                     if (scope.CanRecycle) ReturnScopeToPool(scope);
@@ -1704,7 +1702,7 @@ namespace fire.Runtime
                     bool result;
                     if (!Value.TryCompareFast(in _stack[_sp - 2], in _stack[_sp - 1], kind, out result))
                     {
-                        // Schnellpfad trifft nicht zu (andere Einheit/Art, Objekt mit Operator-Überladung ...): der gewöhnliche Vergleich
+                        // Fast path does not apply (different unit/kind, object with operator overloading ...): the ordinary comparison
                         ExecuteCompareSlow(kind switch { 0 => OpCode.Lt, 1 => OpCode.LtEq, 2 => OpCode.Gt, _ => OpCode.GtEq });
                         result = _stack[--_sp].AsBool();
                     }
@@ -1727,9 +1725,9 @@ namespace fire.Runtime
                     {
                         ExecuteCompareSlow(op == OpCode.JumpIfNotEq ? OpCode.Eq : OpCode.NotEq);
                         equal = _stack[--_sp].AsBool();
-                        if (op == OpCode.JumpIfNotNotEq) equal = !equal; // das Ergebnis war `a != b`; unten wird `a == b` erwartet
+                        if (op == OpCode.JumpIfNotNotEq) equal = !equal; // the result was `a != b`; below `a == b` is expected
                     }
-                    // JumpIfNotEq springt, wenn a == b NICHT gilt; JumpIfNotNotEq, wenn a != b NICHT gilt (also a == b)
+                    // JumpIfNotEq jumps if a == b does NOT hold; JumpIfNotNotEq if a != b does NOT hold (i.e. a == b)
                     if (op == OpCode.JumpIfNotEq ? !equal : equal) _ip = addr;
                     return;
                 }
@@ -1747,7 +1745,7 @@ namespace fire.Runtime
                 case OpCode.ArithGlobalConstPop:
                 {
                     int slot = ReadU16(); int constIdx = ReadU16(); bool subtract = ReadByte() != 0;
-                    // Fire-Threads und ein Hauptprogramm mit laufenden Threads lesen/schreiben Globals über den Broker: gewöhnlicher Weg
+                    // Fire threads and a main program with running threads read/write globals via the broker: ordinary way
                     if (slot < _sharedCount || _ownerBroker != null) { ArithGlobalSlow(slot, constIdx, subtract); return; }
                     ref Value variable = ref _globalScope.SlotRef(slot);
                     if (subtract ? Value.TrySubtractInPlace(ref variable, in _constants[constIdx]) : Value.TryAddInPlace(ref variable, in _constants[constIdx]))
@@ -1760,11 +1758,11 @@ namespace fire.Runtime
             Execute(op);
         }
 
-        /// <summary>Langsamer Weg der verschmolzenen Vergleichssprünge: der Vergleich `op` über die zwei obersten Stack-Werte, genau wie
-        /// die gewöhnliche Instruktion (auch mit Operator-Überladung); das Ergebnis liegt danach oben auf dem Stack.</summary>
+        /// <summary>Slow path of the fused comparison jumps: the comparison `op` over the two topmost stack values, exactly like
+        /// the ordinary instruction (also with operator overloading); the result then lies on top of the stack.</summary>
         private void ExecuteCompareSlow(OpCode op) => Step(op);
 
-        /// <summary>Langsamer Weg von `x = x + c`/`x++` auf einer Lokalen: gewöhnliches Laden, Rechnen (Strings, Einheiten, Fehler) und Speichern.</summary>
+        /// <summary>Slow path of `x = x + c`/`x++` on a local: ordinary loading, calculating (strings, units, errors) and storing.</summary>
         private void ArithSlow(int depth, int slot, int constIdx, bool subtract)
         {
             Push(_currentScope.GetAncestor(depth).SlotRef(slot));
@@ -1773,7 +1771,7 @@ namespace fire.Runtime
             _currentScope.GetAncestor(depth).SlotRef(slot) = _stack[--_sp];
         }
 
-        /// <summary>Wie <see cref="ArithSlow"/> für eine globale Variable (auch über den Broker der Fire-Threads).</summary>
+        /// <summary>Like <see cref="ArithSlow"/> for a global variable (also via the broker of the fire threads).</summary>
         private void ArithGlobalSlow(int slot, int constIdx, bool subtract)
         {
             if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
@@ -1788,7 +1786,7 @@ namespace fire.Runtime
             _sp--;
         }
 
-        /// <summary>Verlässt die aktuelle Scope und zerstört dabei die Objekte, die ihr gehören (Destruktoren laufen verschachtelt).</summary>
+        /// <summary>Leaves the current scope and destroys the objects that belong to it (destructors run nested).</summary>
         private void ExitScopeOwning()
         {
             var scope = _currentScope;
@@ -1798,7 +1796,7 @@ namespace fire.Runtime
             if (scope.CanRecycle) ReturnScopeToPool(scope);
         }
 
-        /// <summary>Ersetzt die obersten ZWEI Stack-Werte durch `result` (Ergebnis einer binären Operation).</summary>
+        /// <summary>Replaces the topmost TWO stack values by `result` (result of a binary operation).</summary>
         private void ReplaceTwoWith(Value result)
         {
             _sp--;
@@ -1891,16 +1889,16 @@ namespace fire.Runtime
         }
 
         // -----------------------------------------------------------
-        // Inline-Caches der Aufrufstellen (siehe Bytecode.SiteCache)
+        // Inline caches of the call sites (see Bytecode.SiteCache)
         // -----------------------------------------------------------
 
-        /// <summary>Platz für lokale Variablen, den eine Aufruf-Scope über die Parameter hinaus gleich
-        /// mitbekommt (spart das Vergrößern des Slot-Arrays bei den ersten `var`s im Body).</summary>
+        /// <summary>Space for local variables that a call scope gets
+        /// right away beyond the parameters (saves growing the slot array on the first `var`s in the body).</summary>
         private const int SlotSlack = 4;
 
-        /// <summary>Wechselt in den Aufruf von `proto`: die obersten `argCount` Stack-Werte werden direkt als
-        /// Parameter-Slots der neuen Scope übernommen und (zusammen mit dem darunterliegenden Empfänger/Callee, falls
-        /// `dropBelow`) vom Stack genommen. Nur für Aufrufe mit EXAKT passender Argumentanzahl (kein Standardwert nötig).</summary>
+        /// <summary>Switches into the call of `proto`: the topmost `argCount` stack values are taken directly as
+        /// parameter slots of the new scope and (together with the receiver/callee below them, if
+        /// `dropBelow`) removed from the stack. Only for calls with EXACTLY the matching argument count (no default value needed).</summary>
         private void EnterCall(FunctionProto proto, int argCount, bool dropBelow, object? newThis, ObjectInstance? constructed = null, long copyMask = 0, Value[]? captures = null)
         {
             int captureCount = captures?.Length ?? 0;
@@ -1908,7 +1906,7 @@ namespace fire.Runtime
             var scope = RentCallScope(paramCount + SlotSlack, paramCount);
             var slots = scope.SlotArray;
             Array.Copy(_stack, _sp - argCount, slots, 0, argCount);
-            if (captureCount != 0) Array.Copy(captures!, 0, slots, argCount, captureCount); // Lambda-Captures direkt hinter den Parametern
+            if (captureCount != 0) Array.Copy(captures!, 0, slots, argCount, captureCount); // Lambda captures directly behind the parameters
             _sp -= argCount + (dropBelow ? 1 : 0);
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, constructed));
@@ -1923,8 +1921,8 @@ namespace fire.Runtime
         // `flat x` / `copy x` als Argument (SPEC 2.4, Opcode CopyArgs)
         // -----------------------------------------------------------
 
-        /// <summary>Die Kopier-Maske, die das Präfix `CopyArgs` für den Aufruf-Opcode hinterlegt hat - hier gelesen UND
-        /// gelöscht (jeder Aufruf-Opcode holt sie gleich zu Beginn ab, damit sie nie an einen späteren Aufruf gerät).</summary>
+        /// <summary>The copy mask that the prefix `CopyArgs` has stored for the call opcode - read here AND
+        /// cleared (every call opcode fetches it right at the start, so that it never lands at a later call).</summary>
         private long TakeCopyMask()
         {
             long mask = _copyArgMask;
@@ -1932,8 +1930,8 @@ namespace fire.Runtime
             return mask;
         }
 
-        /// <summary>Kopiert die markierten Parameter einer frisch aufgebauten Aufruf-Scope: die Kopie gehört dieser Scope
-        /// (wird also mit dem Verlassen der Funktion zerstört, außer die Funktion gibt sie zurück oder übergibt sie per TakeTo).</summary>
+        /// <summary>Copies the marked parameters of a freshly built call scope: the copy belongs to this scope
+        /// (is thus destroyed on leaving the function, unless the function returns it or passes it on via TakeTo).</summary>
         private void ApplyCopyMask(Scope scope, long mask, uint calleeRefMask)
         {
             if (mask == 0) return;
@@ -1943,21 +1941,21 @@ namespace fire.Runtime
                 if (bits == 0) continue;
                 if (bits == 4)
                 {
-                    // Das Argument ist direkt der Rueckgabewert eines Aufrufs (`f(g())`): sein Besitz geht in die aufgerufene Funktion, nicht an den Aufrufer
-                    // (SPEC 2.1) - nur wenn der Wert frisch beim Aufrufer lag, nicht, wenn g etwas zurueckgab, das anderen gehoert.
+                    // The argument is directly the return value of a call (`f(g())`): its ownership goes into the called function, not to the caller
+                    // (SPEC 2.1) - only if the value lay freshly with the caller, not if g returned something that belongs to others.
                     if (_frames.Count > 0) AdoptReturnedArgument(scope.SlotRef(i), _frames.Peek().ReturnScope, scope);
                     continue;
                 }
                 if (bits == 5)
                 {
-                    // `f(take x)` (SPEC 2.2): der Wert gehoert ab jetzt dem Aufruf - unbedingt, auch wenn er vorher jemand anderem gehoerte
+                    // `f(take x)` (SPEC 2.2): the value belongs to the call from now on - unconditionally, even if it belonged to someone else before
                     TakeArgument(scope.SlotRef(i), scope);
                     continue;
                 }
                 if (bits == 3)
                 {
-                    // Der Aufrufer hat die Adresse uebergeben (Name + Argumentanzahl kennen einen `ref`-Parameter, SPEC 5.4.2): ein `ref`-Parameter behaelt sie,
-                    // ein gewoehnlicher bekommt den Wert (Basistypen und Strings als Kopie, Objekte und Arrays als Referenz).
+                    // The caller has passed the address (name + argument count know a `ref` parameter, SPEC 5.4.2): a `ref` parameter keeps it,
+                    // an ordinary one gets the value (base types and strings as a copy, objects and arrays as a reference).
                     if ((calleeRefMask >> i & 1) == 0) scope.SlotRef(i) = ReadRefArgument(scope.SlotRef(i));
                     continue;
                 }
@@ -1965,7 +1963,7 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>`f(take x)`: das Objekt/Array/der Puffer gehoert dem Aufruf von <paramref name="calleeScope"/> (stirbt nach dessen Locals, wie ein weitergereichtes Aufrufergebnis).</summary>
+        /// <summary>`f(take x)`: the object/array/buffer belongs to the call of <paramref name="calleeScope"/> (dies after its locals, like a passed-on call result).</summary>
         private void TakeArgument(Value arg, Scope calleeScope)
         {
             switch (arg.Kind)
@@ -1976,7 +1974,7 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>`take x` auf etwas Zerstoertem: DestroyedException (true: es wurde geworfen).</summary>
+        /// <summary>`take x` on something destroyed: DestroyedException (true: it was thrown).</summary>
         private bool ThrowIfDeadForTake(Value v)
         {
             if (v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance obj && IsDeadObject(obj)) { ThrowDestroyedObject(obj); return true; }
@@ -1984,7 +1982,7 @@ namespace fire.Runtime
             return false;
         }
 
-        /// <summary>Ein Objekt/Array/Puffer, das dem Scope des Aufrufers gehoert (frisch zurueckgegeben), gehoert ab jetzt der aufgerufenen Funktion.</summary>
+        /// <summary>An object/array/buffer that belongs to the caller's scope (freshly returned) belongs to the called function from now on.</summary>
         private static void AdoptReturnedArgument(Value arg, Scope callerScope, Scope calleeScope)
         {
             switch (arg.Kind)
@@ -2005,15 +2003,15 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Für Aufrufe OHNE Funktions-Scope (eingebaute Methoden, Actor-Nachrichten): die Kopie gehört dem
-        /// aktuellen Scope, wie bei einer gewöhnlichen Kopie.</summary>
+        /// <summary>For calls WITHOUT a function scope (built-in methods, actor messages): the copy belongs to the
+        /// current scope, as with an ordinary copy.</summary>
         private void ApplyCopyMaskToArgs(Value[] args, long mask)
         {
             for (int i = 0; i < args.Length && i < 16; i++)
             {
                 int bits = (int)(mask >> (4 * i)) & 15;
-                if (bits == 5) OwnershipWalk.TakeValue(args[i], _currentScope, this);   // eingebaute Funktionen kennen keinen Aufruf-Scope: der Wert gehoert dem aktuellen Scope
-                else if (bits == 3) args[i] = ReadRefArgument(args[i]);   // eingebaute Funktionen und Nachrichten kennen kein `ref`: der Wert
+                if (bits == 5) OwnershipWalk.TakeValue(args[i], _currentScope, this);   // built-in functions know no call scope: the value belongs to the current scope
+                else if (bits == 3) args[i] = ReadRefArgument(args[i]);   // built-in functions and messages know no `ref`: the value
                 else if (bits != 0) args[i] = ObjectCloner.Clone(args[i], _currentScope, deep: bits == 2);
             }
         }
@@ -2029,7 +2027,7 @@ namespace fire.Runtime
             int argCount = ReadByte();
             long copyMask = TakeCopyMask();
 
-            // Schnellpfad: ein Lambda mit genau dieser Parameterzahl (kein Standardwert nötig).
+            // Fast path: a lambda with exactly this parameter count (no default value needed).
             if (_stack[_sp - 1 - argCount] is { Kind: ValueKind.Lambda } fastCallee
                 && fastCallee.AsLambda() is LambdaValue fastLambda
                 && fastLambda.Proto.ParamCount == argCount)
@@ -2073,25 +2071,25 @@ namespace fire.Runtime
         }
         }
 
-        // Abschluss-Arten, die ein `finally`-Block oben auf dem Operanden-Stack vorfindet (Nutzlast, Art) - siehe OpCode.EndFinally
+        // Completion kinds that a `finally` block finds on top of the operand stack (payload, kind) - see OpCode.EndFinally
         private const int FinallyNormal = 0, FinallyThrow = 1, FinallyReturn = 2, FinallyJump = 3, FinallyNestedReturn = 4;
 
         private void OpReturn() => DoReturn(Pop());
 
-        /// <summary>Gehört `candidate` zu den Scopes des laufenden Aufrufs (von der aktuellen Scope aufwärts bis einschließlich der
-        /// Funktions-Scope, deren Parent der globale Scope ist)?</summary>
+        /// <summary>Does `candidate` belong to the scopes of the running call (from the current scope upwards up to and including the
+        /// function scope whose parent is the global scope)?</summary>
         private bool OwnsWithinCall(Scope candidate)
         {
             for (var scope = _currentScope; scope != null; scope = scope.Parent)
             {
                 if (ReferenceEquals(scope, candidate)) return true;
-                if (scope.Parent == null || scope.Parent.IsGlobal) return false; // die Funktions-Scope war die letzte
+                if (scope.Parent == null || scope.Parent.IsGlobal) return false; // the function scope was the last
             }
             return false;
         }
 
-        /// <summary>Verlässt beim `return` ALLE Scopes des Aufrufs (innerster zuerst bis zur Funktions-Scope): die Objekte, die ihnen
-        /// gehören, werden zerstört. Ohne das blieben die Objekte der umgebenden Blöcke (`if`/`for`/`try` um das `return`) ewig liegen.</summary>
+        /// <summary>On `return`, leaves ALL scopes of the call (innermost first up to the function scope): the objects that belong to them
+        /// are destroyed. Without that, the objects of the surrounding blocks (`if`/`for`/`try` around the `return`) would lie around forever.</summary>
         private void ReleaseCallScopes()
         {
             var scope = _currentScope;
@@ -2106,9 +2104,9 @@ namespace fire.Runtime
         }
 
         // -----------------------------------------------------------
-        // Pool der Scopes (siehe Scope.CanRecycle): Blöcke, Schleifendurchläufe und Aufrufe legen sonst bei jedem Eintritt eine Scope
-        // samt Slot-Array neu an. Der Pool gehört der VM (jede VM läuft auf genau einem Thread) und ist klein - tiefe Rekursion
-        // erzeugt darüber hinaus einfach neue Scopes, die der GC wieder einsammelt.
+        // Pool of scopes (see Scope.CanRecycle): blocks, loop passes and calls would otherwise create a scope
+        // including a slot array anew on every entry. The pool belongs to the VM (every VM runs on exactly one thread) and is small - deep recursion
+        // creates beyond it simply new scopes, which the GC collects again.
         // -----------------------------------------------------------
         private const int ScopePoolMax = 256;
         private readonly Scope[] _scopePool = new Scope[ScopePoolMax];
@@ -2123,7 +2121,7 @@ namespace fire.Runtime
             return scope;
         }
 
-        /// <summary>Eine Scope für einen Aufruf mit Platz für `capacity` Slots, die ersten `paramCount` belegt (die Parameter kopiert der Aufrufer in <see cref="Scope.SlotArray"/>).</summary>
+        /// <summary>A scope for a call with space for `capacity` slots, the first `paramCount` occupied (the caller copies the parameters into <see cref="Scope.SlotArray"/>).</summary>
         private Scope RentCallScope(int capacity, int paramCount)
         {
             Scope scope;
@@ -2140,9 +2138,9 @@ namespace fire.Runtime
             if (_scopePoolCount < ScopePoolMax) _scopePool[_scopePoolCount++] = scope;
         }
 
-        /// <summary>`return` (SPEC 2.3): gehört der zurückgegebene Wert (Objekt, Array, Puffer) einem der Scopes, die gleich verlassen werden, geht er an den aufrufenden Scope - und
-        /// mit ihm alles, was an ihm hängt und ebenfalls diesen Scopes gehört (rekursiv, jeder Knoten einmal): es wandert zu dem Objekt, das darauf zeigt. Ohne das stürben
-        /// die Elemente einer zurückgegebenen Liste mit dem Scope, der sie angelegt hat.</summary>
+        /// <summary>`return` (SPEC 2.3): if the returned value (object, array, buffer) belongs to one of the scopes that are about to be left, it goes to the calling scope - and
+        /// with it everything that hangs on it and likewise belongs to these scopes (recursively, each node once): it moves to the object that points to it. Without that
+        /// the elements of a returned list would die with the scope that created them.</summary>
         private void MoveReturned(Value retVal, Func<Scope, bool> isLocalScope)
         {
             var target = _frames.Peek().ReturnScope;
@@ -2169,9 +2167,9 @@ namespace fire.Runtime
             OwnershipWalk.MoveReachable(retVal, Takes.Locals, isLocalScope, target);
         }
 
-        /// <summary>Beendet die aktuelle Funktion mit `retVal`. Liegt dabei noch ein `try` mit `finally` dieses Frames offen (auch ein `catch`-Block, der
-        /// noch zu einem solchen `try` gehört), wird nicht zurückgekehrt, sondern erst sein `finally` ausgeführt (Abschluss "return"): dessen `EndFinally`
-        /// ruft diese Methode erneut auf, bis kein `finally` mehr offen ist. Handler ohne `finally` werden einfach abgemeldet.</summary>
+        /// <summary>Ends the current function with `retVal`. If a `try` with `finally` of this frame is still open (also a `catch` block that
+        /// still belongs to such a `try`), it does not return, but first executes its `finally` (completion "return"): its `EndFinally`
+        /// calls this method again, until no `finally` is open any more. Handlers without `finally` are simply unregistered.</summary>
         private void DoReturn(Value retVal)
         {
         {
@@ -2184,7 +2182,7 @@ namespace fire.Runtime
                     _handlers.RemoveAt(_handlers.Count - 1);
                     if (handler.Template.FinallyAddr is not int finallyAddr) continue;
 
-                    // Ein zurückgegebener Wert, der einem der Scopes gehört, die gleich verlassen werden, geht mit allem, was an ihm hängt, an den Aufrufer (wie unten bei `Return`)
+                    // A returned value that belongs to one of the scopes that are about to be left goes, with everything that hangs on it, to the caller (as below at `Return`)
                     if (_frames.Count > 0)
                     {
                         var leavingTo = handler.TargetScope;
@@ -2205,15 +2203,15 @@ namespace fire.Runtime
                 }
             }
 
-            // SPEC 2.3: Wird eine Objektinstanz zurückgegeben, deren
-            // Owner der gerade verlassene Scope ist, geht das Ownership
-            // an den AUFRUFENDEN Scope über (nicht einfach '.Parent' -
-            // Funktions-/Methoden-Scopes haben als Parent immer global,
-            // das wäre hier nicht die gewünschte "eine Ebene höher").
-            // Ohne das würde das zurückgegebene Objekt durch das gleich
-            // folgende Release() des eigenen Scopes sofort mit zerstört.
-            // Das gilt für JEDEN Scope dieses Aufrufs (innerster Block bis Funktions-Scope): ein `return` mitten in verschachtelten
-            // Blöcken verlässt sie alle auf einmal.
+            // SPEC 2.3: If an object instance is returned whose
+            // owner is the scope just left, the ownership
+            // passes to the CALLING scope (not simply '.Parent' -
+            // function/method scopes always have global as their parent,
+            // that would not be the desired "one level up" here).
+            // Without that, the returned object would be destroyed along with it
+            // by the immediately following Release() of its own scope.
+            // This applies to EVERY scope of this call (innermost block up to function scope): a `return` in the middle of nested
+            // blocks leaves them all at once.
             if (_frames.Count > 0) MoveReturned(retVal, OwnsWithinCall);
 
             ReleaseCallScopes();
@@ -2239,8 +2237,8 @@ namespace fire.Runtime
             int argCount = ReadByte();
             long copyMask = TakeCopyMask();
 
-            // Schnellpfad (Inline-Cache): Klasse und Konstruktor dieser Stelle sind bekannt, Zugriffs- und
-            // Argumentprüfung schon bestanden.
+            // Fast path (inline cache): class and constructor of this site are known, access and
+            // argument check already passed.
             if (LookupSite(site) is { Class: { } cachedClass, Proto: { } cachedCtor })
             {
                 var created = new ObjectInstance(cachedClass.Name, _currentScope, cachedClass);
@@ -2321,9 +2319,9 @@ namespace fire.Runtime
                 ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
             args = FillDefaultArgs(ctorProto, args, _currentThis);
 
-            // Dieselbe Instanz wird weiter konstruiert - 'this' bleibt
-            // unverändert (wird trotzdem in den Frame geschrieben, damit
-            // RETURN einheitlich wiederherstellen kann).
+            // The same instance continues to be constructed - 'this' stays
+            // unchanged (is nevertheless written into the frame, so that
+            // RETURN can restore uniformly).
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
 
             var baseScope = new Scope(_globalScope);
@@ -2361,16 +2359,16 @@ namespace fire.Runtime
 
         private void OpGetFieldSlow(int site, int fieldNameIdx) => GetFieldSlowCore(_constants[fieldNameIdx].AsString(), site);
 
-        /// <summary>Feldzugriff `target.fieldName` (Wert OBEN auf dem Stack) samt Zugriffsprüfung und Property-Getter - der Langsam-Pfad von
-        /// GetField, auch für die Reflection (site &lt; 0: kein Inline-Cache). true, wenn das Ergebnis auf dem Stack liegt; false, wenn
-        /// stattdessen eine Exception in einen Handler umgeleitet wurde.</summary>
+        /// <summary>Field access `target.fieldName` (value ON TOP of the stack) including access check and property getter - the slow path of
+        /// GetField, also for reflection (site &lt; 0: no inline cache). true if the result lies on the stack; false if
+        /// instead an exception was redirected to a handler.</summary>
         private bool GetFieldSlowCore(string fieldName, int site)
         {
         {
             var target = Pop();
 
-            // `Length` ist die Schreibweise der Eigenschaften (wie bei `string`),
-            // `length` die ältere - beide bei Array/Puffer/String gleichwertig.
+            // `Length` is the spelling of the properties (as with `string`),
+            // `length` the older one - both equivalent for array/buffer/string.
             if (target.Kind == ValueKind.String)
             {
                 if (fieldName is "Length" or "length")
@@ -2414,7 +2412,7 @@ namespace fire.Runtime
             if (IsDeadObject(obj)) { ThrowDestroyedObject(obj); return false; }
             if (obj.TryGetFieldLocked(fieldName, out var val))
             {
-                if (_threadBroker != null && obj.InGlobalsDomain) MarkShared(val); // ein Array des geteilten Bereichs
+                if (_threadBroker != null && obj.InGlobalsDomain) MarkShared(val); // an array of the shared area
                 if (ExecutionMode != VmExecutionMode.Performance && obj.RtClass != null)
                 {
                     var fieldAccess = obj.RtClass.FindFieldAccess(fieldName);
@@ -2432,10 +2430,10 @@ namespace fire.Runtime
                 return true;
             }
 
-            // Kein Feld dieses Namens - Property-Getter versuchen
-            // (Namenskonvention 'get_'+Name, siehe Ast.PropertyDecl).
-            // Properties haben absichtlich NIE einen eigenen Fields-
-            // Eintrag, landen also immer hier.
+            // No field of this name - try property getters
+            // (naming convention 'get_'+name, see Ast.PropertyDecl).
+            // Properties deliberately NEVER have a Fields
+            // entry of their own, so they always end up here.
             var rcGet = ResolveClass(obj.ClassName);
             if (rcGet.FindMethod("get_" + fieldName, 0) != null)
             {
@@ -2477,11 +2475,11 @@ namespace fire.Runtime
 
         private void OpSetFieldSlow(int site, int fieldNameIdx) => SetFieldSlow(_constants[fieldNameIdx].AsString(), site);
 
-        /// <summary>`obj.fieldName = value` (Stack: obj, value) - Langsam-Pfad von SetField, auch für die Reflection (site &lt; 0: kein
-        /// Inline-Cache). true, wenn der zugewiesene Wert auf dem Stack liegt; false bei einer in einen Handler umgeleiteten Exception.</summary>
+        /// <summary>`obj.fieldName = value` (stack: obj, value) - slow path of SetField, also for reflection (site &lt; 0: no
+        /// inline cache). true if the assigned value lies on the stack; false for an exception redirected to a handler.</summary>
         private bool SetFieldSlow(string fieldName, int site)
         {
-            // Hat das Objekt Proben auf dieses Mitglied: `changing`-Handler, Schreiben, `changed`-Handler (siehe SetFieldProbed)
+            // Does the object have probes on this member: `changing` handlers, write, `changed` handlers (see SetFieldProbed)
             if (_stack[_sp - 2] is { Kind: ValueKind.Class } probeTarget
                 && ((ObjectInstance)probeTarget.AsObjectRef()).Probes is { } probes && probes.Affects(fieldName))
                 return SetFieldProbed(fieldName, probes);
@@ -2490,7 +2488,7 @@ namespace fire.Runtime
 
         private bool SetFieldSlowSections(string fieldName, int site)
         {
-            // Ein Fire-Thread ändert ein Objekt des geteilten Bereichs nur in einer Sektion (siehe GlobalsBroker).
+            // A fire thread changes an object of the shared area only in a section (see GlobalsBroker).
             if (_threadBroker != null && _sectionDepth == 0
                 && _stack[_sp - 2] is { Kind: ValueKind.Class } sectionTarget
                 && ((ObjectInstance)sectionTarget.AsObjectRef()).InGlobalsDomain)
@@ -2523,17 +2521,17 @@ namespace fire.Runtime
                         return false;
                     }
 
-                    // SPEC "Einheiten-Deklarationen" - Feldzugriff ist
-                    // grundsätzlich dynamisch (die tatsächliche Klasse
-                    // steht erst hier, zur Laufzeit, fest), deshalb
-                    // anders als bei lokalen/globalen Variablen KEINE
-                    // Compile-Zeit-Prüfung möglich (siehe Compiler.
-                    // CompileClassBody-Kommentar) - die Prüfung selbst
-                    // ist aber inhaltlich identisch zu OpCode.CheckUnit.
+                    // SPEC "Unit declarations" - field access is
+                    // fundamentally dynamic (the actual class
+                    // is only known here, at runtime), therefore
+                    // unlike with local/global variables NO
+                    // compile-time check is possible (see Compiler.
+                    // CompileClassBody comment) - the check itself
+                    // is however identical in content to OpCode.CheckUnit.
                     string? requiredUnitName = obj.RtClass.FindFieldRequiredUnit(fieldName);
                     if (requiredUnitName != null)
                     {
-                        hasUnitRule = true; // jede Zuweisung muss die Einheit prüfen - nicht cachen
+                        hasUnitRule = true; // every assignment must check the unit - do not cache
                         var requiredUnit = Values.Unit.Parse(requiredUnitName);
                         var actualUnit = value.Unit ?? Values.Unit.Unitless;
                         if (!actualUnit.Equals(requiredUnit))
@@ -2551,34 +2549,34 @@ namespace fire.Runtime
                 return true;
             }
 
-            // Kein existierendes Feld dieses Namens - Property-Setter
-            // versuchen (Namenskonvention 'set_'+Name).
+            // No existing field of this name - try property setter
+            // (naming convention 'set_'+name).
             var rcSet = ResolveClass(obj.ClassName);
             if (rcSet.FindMethod("set_" + fieldName, 1) != null)
             {
                 var result = CallMethodNested(obj, "set_" + fieldName, new[] { value });
-                // Rückgabewert des Setters selbst unbenutzt - eine
-                // Zuweisung wertet immer zum ZUGEWIESENEN Wert aus,
-                // nicht zu dem, was der Setter zurückgibt. null ==
-                // per Exception umgeleitet (siehe CallMethodNested-
-                // Doku) - dann NICHT pushen.
+                // Return value of the setter itself unused - an
+                // assignment always evaluates to the ASSIGNED value,
+                // not to what the setter returns. null ==
+                // redirected via exception (see CallMethodNested
+                // documentation) - then do NOT push.
                 if (result != null) Push(value);
                 return result != null;
             }
 
-            // Eine gleichnamige Property MIT Getter, aber OHNE Setter,
-            // existiert - das ist ein Fehler, KEIN "neues Feld anlegen"
-            // (sonst würde die Property ab hier unbemerkt durch ein
-            // gleichnamiges Feld überschattet, auch für künftige
-            // Lesezugriffe über GetField, das Felder vor Properties
-            // prüft).
+            // A property of the same name WITH a getter, but WITHOUT a setter,
+            // exists - that is an error, NOT "create a new field"
+            // (otherwise the property would from here on be unnoticedly shadowed by a
+            // field of the same name, also for future
+            // read accesses via GetField, which checks fields before properties
+            // ).
             if (rcSet.FindMethod("get_" + fieldName, 0) != null)
                 throw new InvalidOperationException(
                     $"Property '{fieldName}' on '{obj.ClassName}' has no setter (only 'get').");
 
-            // Weder existierendes Feld noch Property - wie bisher:
-            // neues Feld einfach anlegen (dynamische Sprache, keine
-            // Vorab-Deklarationspflicht für Felder).
+            // Neither existing field nor property - as before:
+            // simply create a new field (dynamic language, no
+            // up-front declaration obligation for fields).
             obj.SetFieldLocked(fieldName, value);
             Push(value);
             return true;
@@ -2623,20 +2621,20 @@ namespace fire.Runtime
                 throw new InvalidOperationException("SetFieldOnThis without a bound ObjectInstance as 'this'.");
             if (IsDeadObject(oi)) { ThrowDestroyedObject(oi); return; }
 
-            // SPEC "Einheiten-Deklarationen" - dieselbe Prüfung wie in
-            // SetField (siehe dort für die Begründung, warum das zur
-            // Laufzeit statt zur Compile-Zeit passiert). Dieser Opcode
-            // wird für die Feld-INITIALISIERER selbst benutzt (siehe
+            // SPEC "Unit declarations" - the same check as in
+            // SetField (see there for the reason why this happens at
+            // runtime instead of compile time). This opcode
+            // is used for the field INITIALISERS themselves (see
             // Compiler.CompileConstructorProto) - `int x : mm = 5`
-            // würde ohne diese Prüfung hier den ersten, deklarierten
-            // Wert komplett ungeprüft durchlassen.
+            // would let the first, declared
+            // value pass completely unchecked without this check here.
             bool hasUnitRule = false;
             if (ExecutionMode != VmExecutionMode.Performance && oi.RtClass != null)
             {
                 string? requiredUnitName = oi.RtClass.FindFieldRequiredUnit(fieldName);
                 if (requiredUnitName != null)
                 {
-                    hasUnitRule = true; // jede Zuweisung muss die Einheit prüfen - nicht cachen
+                    hasUnitRule = true; // every assignment must check the unit - do not cache
                     var requiredUnit = Values.Unit.Parse(requiredUnitName);
                     var actualUnit = value.Unit ?? Values.Unit.Unitless;
                     if (!actualUnit.Equals(requiredUnit))
@@ -2664,8 +2662,8 @@ namespace fire.Runtime
             int argCount = ReadByte();
             long copyMask = TakeCopyMask();
 
-            // Schnellpfad (Inline-Cache, siehe SiteCache): ein Objekt derselben Klasse wie beim letzten Aufruf
-            // dieser Stelle - Methode, Zugriffs- und Argumentprüfung sind schon erledigt.
+            // Fast path (inline cache, see SiteCache): an object of the same class as at the last call
+            // of this site - method, access and argument checks are already done.
             if (_stack[_sp - 1 - argCount] is { Kind: ValueKind.Class } cachedTarget
                 && LookupSite(site) is { Proto: { } cachedMethod } siteEntry
                 && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
@@ -2673,14 +2671,14 @@ namespace fire.Runtime
                 && cachedObj.Mailbox == null
                 && (_threadBroker == null || _sectionDepth > 0 || !cachedObj.InGlobalsDomain))
             {
-                // Methode, die nur eine native Funktion mit `this.feld` und ihren Parametern aufruft (alle Methoden der
-                // Brücken-Preludes): direkt die native Funktion aufrufen, ohne Scope/Frame (siehe NativeForwarder).
+                // A method that only calls a native function with `this.field` and its parameters (all methods of the
+                // bridge preludes): call the native function directly, without scope/frame (see NativeForwarder).
                 if (siteEntry.Forwarder is { } forwarder && copyMask == 0 && cachedObj.ThreadLock == null)
                 {
                     var nativeArgs = new Value[argCount + 1];
                     nativeArgs[0] = cachedObj.Fields.GetAt(siteEntry.ForwarderFieldIndex);
                     Array.Copy(_stack, _sp - argCount, nativeArgs, 1, argCount);
-                    _sp -= argCount + 1; // Argumente und Empfänger
+                    _sp -= argCount + 1; // Arguments and receiver
                     if (CallNativeGuarded(forwarder.NativeIndex, nativeArgs, out Value forwarded))
                         Push(forwarder.ReturnsResult ? forwarded : Value.MakeUndefined());
                     PollSignalsAfterOp();
@@ -2704,19 +2702,19 @@ namespace fire.Runtime
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
             var target = Pop();
 
-            // Eingebaute Methoden auf primitiven Werten (String/Char/
-            // Int(als byte)/Buffer, siehe TryCallBuiltinMethod, SPEC
-            // 8.10) - GETRENNT vom normalen Klassen-Methodenaufruf
-            // unten, da ein primitiver Wert keine ObjectInstance ist
-            // und nie eine war (RequireObjectInstance würde hier
-            // sonst fälschlich ablehnen).
+            // Built-in methods on primitive values (string/char/
+            // int (as byte)/buffer, see TryCallBuiltinMethod, SPEC
+            // 8.10) - SEPARATE from the normal class method call
+            // below, since a primitive value is not an ObjectInstance
+            // and never was one (RequireObjectInstance would
+            // otherwise wrongly reject here).
             if (target.Kind != ValueKind.Class)
             {
-                // `foreach (x in array)` / `foreach (b in buffer)`: ein Array/Puffer ist
-                // keine Objektinstanz mit eigenem GetEnumerator() - hier ein
-                // ListEnumerator der Prelude darüber (dieselbe Klasse, die `List`
-                // benutzt; sie liest nur `items[index]`/`count`). Ohne Prelude (reine
-                // Kernprogramme) bleibt es beim Fehler unten.
+                // `foreach (x in array)` / `foreach (b in buffer)`: an array/buffer is
+                // no object instance with a GetEnumerator() of its own - here a
+                // ListEnumerator of the prelude over it (the same class that `List`
+                // uses; it only reads `items[index]`/`count`). Without a prelude (pure
+                // core programs) it stays with the error below.
                 if (methodName == "GetEnumerator" && args.Length == 0
                     && target.Kind is ValueKind.Array or ValueKind.Buffer
                     && _classes.TryGetValue("ListEnumerator", out var enumeratorClass))
@@ -2727,9 +2725,9 @@ namespace fire.Runtime
                     return;
                 }
 
-                // Methoden aus einer Basistyp-Erweiterung (`class extends string { ... }`,
-                // SPEC 5.5.1 - z.B. IndexOf/Substring im Prelude): wie ein Objekt-Aufruf, nur
-                // ist `this` der Wert selbst. Vor den fest eingebauten Konvertierungen unten.
+                // Methods from a base-type extension (`class extends string { ... }`,
+                // SPEC 5.5.1 - e.g. IndexOf/Substring in the prelude): like an object call, only
+                // `this` is the value itself. Before the fixed built-in conversions below.
                 if (_baseTypeClasses[(int)target.Kind] is { } extensionRc)
                 {
                     var (extProto, extDeclaringRc, extAccess) = extensionRc.FindMethodWithAccess(methodName, args.Length);
@@ -2778,11 +2776,11 @@ namespace fire.Runtime
             var obj = (ObjectInstance)target.AsObjectRef();
             if (IsDeadObject(obj) && !(methodName is "TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo" or "tryTakeLocal" or "tryTakeUpwards" or "tryTakeGlobal" or "tryTakeTo")) { ThrowDestroyedObject(obj); return; }
 
-            // Actor-Ziel (siehe Runtime.ObjectInstance.Mailbox-Doku):
-            // JEDER Methodenaufruf wird zu einer asynchronen Nachricht
-            // statt eines direkten Aufrufs, unabhängig vom rufenden
-            // Thread - dieser Aufruf selbst liefert 'undefined' und
-            // läuft normal weiter (kein Sprung in irgendeinen Chunk).
+            // Actor target (see Runtime.ObjectInstance.Mailbox documentation):
+            // EVERY method call becomes an asynchronous message
+            // instead of a direct call, regardless of the calling
+            // thread - this call itself returns 'undefined' and
+            // continues normally (no jump into any chunk).
             if (obj.Mailbox != null)
             {
                 if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
@@ -2791,12 +2789,12 @@ namespace fire.Runtime
                 return;
             }
 
-            // Fire-Thread ruft eine Methode eines Objekts des geteilten Bereichs: sie läuft als Ganzes in einer Sektion (atomar).
+            // Fire thread calls a method of an object of the shared area: it runs as a whole in a section (atomic).
             if (NeedsSection(obj))
             {
                 if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
                 var sectionResult = CallGlobalsMethodInSection(obj, methodName, args);
-                if (sectionResult != null) Push(sectionResult.Value); // null: eine Exception hat den Ablauf umgeleitet
+                if (sectionResult != null) Push(sectionResult.Value); // null: an exception has redirected the flow
                 return;
             }
 
@@ -2804,7 +2802,7 @@ namespace fire.Runtime
             var (proto, declaringRcCall, accessCall) = rc.FindMethodWithAccess(methodName, args.Length);
             if (proto == null)
             {
-                // Die Ownership-Übergabe (SPEC 2.2) ist für jedes Objekt da, ohne dass die Klasse sie deklariert.
+                // The ownership transfer (SPEC 2.2) is there for every object, without the class declaring it.
                 if (TryCallOwnershipMethod(obj, methodName, args, out var ownershipValue))
                 {
                     Push(ownershipValue);
@@ -2843,10 +2841,10 @@ namespace fire.Runtime
         }
         }
 
-        /// <summary>`obj.TakeLocal(...)`, `obj.TakeUpwards(...)`, `obj.TakeGlobal(...)`, `obj.TakeTo(other, ...)` (SPEC 2.2): eingebaute Methoden jedes Objekts, die
-        /// nur greifen, wenn die Klasse nichts Gleichnamiges deklariert. Das letzte Argument darf ein `Takes`-Wert sein (was außer dem Objekt mitwandert).
-        /// Mit `try` davor (`tryTake...`, vom Compiler) verschiebt die Methode nur, wenn der Aufrufer der Besitzer ist (der Scope des Aufrufs oder `this`), und
-        /// liefert, ob sie es getan hat. Liefert false, wenn `name`/Argumentzahl keine davon ist.</summary>
+        /// <summary>`obj.TakeLocal(...)`, `obj.TakeUpwards(...)`, `obj.TakeGlobal(...)`, `obj.TakeTo(other, ...)` (SPEC 2.2): built-in methods of every object that
+        /// only apply if the class declares nothing of the same name. The last argument may be a `Takes` value (what moves along besides the object).
+        /// With `try` in front (`tryTake...`, from the compiler) the method only moves if the caller is the owner (the scope of the call or `this`), and
+        /// returns whether it did so. Returns false if `name`/argument count is none of these.</summary>
         private bool TryCallOwnershipMethod(ObjectInstance obj, string name, Value[] args, out Value result)
         {
             result = Value.MakeUndefined();
@@ -2858,7 +2856,7 @@ namespace fire.Runtime
             int mode = args.Length > baseArgs ? TakesMode(args[baseArgs]) : Takes.This;
             if (conditional)
             {
-                // nur der Besitzer verschiebt: das Objekt gehört dem Scope dieses Aufrufs oder dem aktuellen Objekt
+                // only the owner moves: the object belongs to the scope of this call or to the current object
                 bool owned = !obj.IsDestroyed && (IsCurrentCallOwner(obj.Owner) || ReferenceEquals(obj.Owner, _currentThis));
                 result = Value.MakeBool(owned);
                 if (!owned) return true;
@@ -2882,7 +2880,7 @@ namespace fire.Runtime
                     return true;
                 }
                 default:   // TakeLocal
-                    // in den aktuellen Scope ziehen (der Scope, in dem der Aufruf steht)
+                    // pull into the current scope (the scope in which the call stands)
                     if (obj.IsDestroyed) throw new OwnershipException("A destroyed object cannot change its owner.");
                     obj.ReparentTo(_currentScope);
                     target = _currentScope;
@@ -2899,8 +2897,8 @@ namespace fire.Runtime
             return (int)v.AsInt();
         }
 
-        /// <summary>Die Items eines Objekts, das `IEnumerable` implementiert (`Takes.Children`, SPEC 2.2): über seinen Enumerator (GetEnumerator, MoveNext, GetCurrent). null, wenn es keins
-        /// implementiert oder eine Ausnahme die Aufzählung abgebrochen hat.</summary>
+        /// <summary>The items of an object that implements `IEnumerable` (`Takes.Children`, SPEC 2.2): via its enumerator (GetEnumerator, MoveNext, GetCurrent). null if it implements none
+        /// or an exception aborted the enumeration.</summary>
         private IReadOnlyList<Value>? EnumerateItems(ObjectInstance obj)
         {
             bool enumerable = false;
@@ -2923,8 +2921,8 @@ namespace fire.Runtime
             return items;
         }
 
-        /// <summary>Die Ownership-Methoden eines Arrays oder Puffers (SPEC 2.2): TakeUpwards, TakeGlobal, TakeTo(objekt), TakeLocal(), jeweils mit einem `Takes`-Wert als letztem Argument
-        /// und mit `try` davor (`tryTake...`).</summary>
+        /// <summary>The ownership methods of an array or buffer (SPEC 2.2): TakeUpwards, TakeGlobal, TakeTo(object), TakeLocal(), each with a `Takes` value as the last argument
+        /// and with `try` in front (`tryTake...`).</summary>
         private bool TryCallLeafOwnershipMethod(IOwnedLeaf leaf, string name, Value[] args, out Value result)
         {
             result = Value.MakeUndefined();
@@ -2959,7 +2957,7 @@ namespace fire.Runtime
             return true;
         }
 
-        /// <summary>`delete x`: zerstoert ein Objekt (Destruktor, Kaskade), ein Array oder einen Puffer sofort und loest es von seinem Owner.</summary>
+        /// <summary>`delete x`: destroys an object (destructor, cascade), an array or a buffer immediately and detaches it from its owner.</summary>
         private void DeleteValue(Value v)
         {
             switch (v.Kind)
@@ -3021,12 +3019,12 @@ namespace fire.Runtime
         private void OpGetStaticField()
         {
         {
-            // SPEC "Statische Mitglieder" - kein Objekt auf dem Stack
-            // (der Klassenname steht schon als Konstante im Bytecode,
-            // siehe Resolver.TryResolveStaticMemberAccess/Compiler),
-            // die eigentliche Speicherstelle liegt direkt auf der
-            // RuntimeClass (siehe FindStaticFieldOwner - teilt sich
-            // ggf. mit einer Basisklasse dieselbe Speicherstelle).
+            // SPEC "Static members" - no object on the stack
+            // (the class name is already a constant in the bytecode,
+            // see Resolver.TryResolveStaticMemberAccess/Compiler),
+            // the actual storage location lies directly on the
+            // RuntimeClass (see FindStaticFieldOwner - possibly shares
+            // the same storage location with a base class).
             string className = _constants[ReadU16()].AsString();
             string fieldName = _constants[ReadU16()].AsString();
             var staticRc = ResolveClass(className);
@@ -3034,10 +3032,10 @@ namespace fire.Runtime
 
             if (owner == null)
             {
-                // Kein statisches Feld dieses Namens - Property-
-                // Getter versuchen (Namenskonvention 'get_'+Name,
-                // genau wie bei GetField), diesmal als STATISCHER
-                // Aufruf (keine Instanz).
+                // No static field of this name - try the property
+                // getter (naming convention 'get_'+name,
+                // exactly as with GetField), this time as a STATIC
+                // call (no instance).
                 if (staticRc.FindMethod("get_" + fieldName, 0) is { IsStatic: true })
                 {
                     var result = CallStaticMethodNested(staticRc, "get_" + fieldName, Array.Empty<Value>());
@@ -3069,7 +3067,7 @@ namespace fire.Runtime
             }
             else
             {
-                // Fire-Thread: statische Felder sind Teil des geteilten Bereichs - Lesen unter dem Lock
+                // Fire thread: static fields are part of the shared area - reading under the lock
                 staticBroker.Lock.Enter();
                 try { staticVal = owner.StaticFieldValues.TryGetValue(fieldName, out var shared) ? shared : Value.MakeUndefined(); }
                 finally { staticBroker.Lock.Exit(); }
@@ -3091,16 +3089,16 @@ namespace fire.Runtime
 
             if (setOwner == null)
             {
-                // Kein statisches Feld dieses Namens - statischen
-                // Property-Setter versuchen (Namenskonvention
-                // 'set_'+Name, Gegenstück zum Getter-Fallback in
-                // GetStaticField, siehe auch SetField).
+                // No static field of this name - try the static
+                // property setter (naming convention
+                // 'set_'+name, counterpart to the getter fallback in
+                // GetStaticField, see also SetField).
                 if (setRc.FindMethod("set_" + setFieldName, 1) is { IsStatic: true })
                 {
                     var setterResult = CallStaticMethodNested(setRc, "set_" + setFieldName, new[] { setValue });
-                    // Eine Zuweisung wertet zum ZUGEWIESENEN Wert aus,
-                    // nicht zum Rückgabewert des Setters. null == per
-                    // Exception umgeleitet - dann NICHT pushen.
+                    // An assignment evaluates to the ASSIGNED value,
+                    // not to the return value of the setter. null == redirected
+                    // via exception - then do NOT push.
                     if (setterResult != null) Push(setValue);
                     return;
                 }
@@ -3120,8 +3118,8 @@ namespace fire.Runtime
                     return;
                 }
 
-                // SPEC "Einheiten-Deklarationen" - inhaltlich identisch
-                // zu SetField, siehe dort.
+                // SPEC "Unit declarations" - identical in content
+                // to SetField, see there.
                 string? requiredUnitName = setOwner.FindFieldRequiredUnit(setFieldName);
                 if (requiredUnitName != null)
                 {
@@ -3142,7 +3140,7 @@ namespace fire.Runtime
             }
             else
             {
-                // Statische Felder gehören zum geteilten Bereich: ein Fire-Thread schreibt in einer Sektion, überall unter dem Lock
+                // Static fields belong to the shared area: a fire thread writes in a section, everywhere under the lock
                 bool staticInThread = _threadBroker != null;
                 if (staticInThread) EnterGlobalsSection();
                 try
@@ -3168,8 +3166,8 @@ namespace fire.Runtime
             int callArgCount = ReadByte();
             long copyMask = TakeCopyMask();
 
-            // Schnellpfad: dieselbe Stelle hat sich schon einmal aufgelöst (Klasse/Methode stehen als Konstanten
-            // im Bytecode fest, siehe SiteCache) - kein Lookup nach Klassen- und Methodenname mehr.
+            // Fast path: the same site has already resolved once (class/method are fixed as constants
+            // in the bytecode, see SiteCache) - no more lookup by class and method name.
             if (LookupSite(site) is { Proto: { } cachedStatic })
             {
                 EnterCall(cachedStatic, callArgCount, dropBelow: false, newThis: null, copyMask: copyMask);
@@ -3215,11 +3213,11 @@ namespace fire.Runtime
             foreach (var a in callArgs) callScope.DefineSlot(a);
             ApplyCopyMask(callScope, copyMask, callProto.RefMask);
 
-            // Explizit KEIN 'this' (anders als oben bei CallBaseMethod,
-            // das die aufrufende Instanz beibehält) - der Resolver
-            // verbietet 'this'/'super' im Körper einer statischen
-            // Methode bereits (siehe Resolver.ResolveExpr/ThisExpr),
-            // das hier ist die zusätzliche Laufzeit-Absicherung dafür.
+            // Explicitly NO 'this' (unlike above at CallBaseMethod,
+            // which keeps the calling instance) - the resolver
+            // already forbids 'this'/'super' in the body of a static
+            // method (see Resolver.ResolveExpr/ThisExpr),
+            // this here is the additional runtime safeguard for it.
             _currentThis = null;
             _currentScope = callScope;
             _currentChunk = callProto.Chunk;
@@ -3238,7 +3236,7 @@ namespace fire.Runtime
             Value thisVal;
             if (argCount == 0)
             {
-                // Feld-Initialisierer (keine Parameter): kein Argument-Array, Scope aus dem Pool
+                // Field initialisers (no parameters): no argument array, scope from the pool
                 thisVal = Pop();
                 CheckArity(proto, 0);
                 _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
@@ -3292,7 +3290,7 @@ namespace fire.Runtime
 
         private void OpArrayGet()
         {
-            // Schnellpfad: Array mit int-Index im gültigen Bereich (alles andere - auch der Fehlerfall - unten).
+            // Fast path: array with int index in the valid range (everything else - also the error case - below).
             ref Value fastTarget = ref _stack[_sp - 2];
             ref Value fastIndex = ref _stack[_sp - 1];
             if (fastTarget.Kind == ValueKind.Array && fastIndex.Kind == ValueKind.Int)
@@ -3319,7 +3317,7 @@ namespace fire.Runtime
 
             if (target.Kind == ValueKind.Array && target.AsArray().IsShared)
             {
-                // Array des geteilten Bereichs (siehe GlobalsBroker): ein Fire-Thread liest es unter dem Lock
+                // Array of the shared area (see GlobalsBroker): a fire thread reads it under the lock
                 long sharedIdx = indexVal.AsInt();
                 if (TryGetSharedElement(target.AsArray(), sharedIdx, out var sharedValue))
                 {
@@ -3332,10 +3330,10 @@ namespace fire.Runtime
             {
                 if (ExecutionMode == VmExecutionMode.Performance)
                 {
-                    // Siehe VmExecutionMode.Performance-Doku - KEINE
-                    // Bounds-Prüfung, ein ungültiger Index führt zu
-                    // einer rohen .NET-IndexOutOfRangeException statt
-                    // einer fangbaren Skript-Exception.
+                    // See VmExecutionMode.Performance documentation - NO
+                    // bounds check, an invalid index leads to
+                    // a raw .NET IndexOutOfRangeException instead of
+                    // a catchable script exception.
                     Push(target.AsArray().GetUnchecked(indexVal.AsInt()));
                 }
                 else
@@ -3344,19 +3342,19 @@ namespace fire.Runtime
                     if (target.AsArray().TryGet(idx, out var v))
                         Push(v);
                     else
-                        // Macht einen ungültigen Index zu einer echten,
-                        // fangbaren Skript-Exception statt eines rohen
-                        // C#-Fehlers - KEIN Push hier, ThrowIndexOutOfBounds
-                        // hat _currentChunk/_ip bereits umgeleitet.
+                        // Turns an invalid index into a real,
+                        // catchable script exception instead of a raw
+                        // C# error - NO push here, ThrowIndexOutOfBounds
+                        // has already redirected _currentChunk/_ip.
                         ThrowIndexOutOfBounds(idx, target.AsArray().Length);
                 }
             }
             else if (target.Kind == ValueKind.Buffer)
             {
-                // Liefert IMMER int[8] (Width W8, siehe Values.NumericWidth) -
-                // 'byte' ist reines Typ-Sugar für int[8] (SPEC 8.10),
-                // kein eigener ValueKind, ein einzelnes Byte ist deshalb
-                // einfach ein normaler int-Wert mit dieser Breite.
+                // ALWAYS returns int[8] (width W8, see Values.NumericWidth) -
+                // 'byte' is pure type sugar for int[8] (SPEC 8.10),
+                // no ValueKind of its own, a single byte is therefore
+                // simply an ordinary int value with this width.
                 if (ExecutionMode == VmExecutionMode.Performance)
                 {
                     byte bFast = target.AsBuffer().GetUnchecked(indexVal.AsInt());
@@ -3373,8 +3371,8 @@ namespace fire.Runtime
             }
             else if (target.Kind == ValueKind.String)
             {
-                // `s[i]` liest das Zeichen an Index i (nur lesend - Zeichenketten sind
-                // unveränderlich, siehe ArraySet).
+                // `s[i]` reads the character at index i (read-only - strings are
+                // immutable, see ArraySet).
                 long idx = indexVal.AsInt();
                 string text = target.AsString();
                 if (idx >= 0 && idx < text.Length)
@@ -3384,16 +3382,16 @@ namespace fire.Runtime
             }
             else if (target.Kind == ValueKind.Class)
             {
-                // '[]'-Operator-Überladung per Namenskonvention (wie
-                // GetEnumerator/MoveNext/GetCurrent bei foreach): eine
-                // Klasse mit einer GetIndex(i)-Methode wird für Lesezugriffe
-                // benutzt - rein dynamisch, funktioniert auf jeder Klasse
-                // mit passender Methode, nicht nur auf 'List'.
+                // '[]' operator overloading by naming convention (like
+                // GetEnumerator/MoveNext/GetCurrent with foreach): a
+                // class with a GetIndex(i) method is used for read accesses
+                // - purely dynamic, works on every class
+                // with a matching method, not only on 'List'.
                 var obj = (ObjectInstance)target.AsObjectRef();
                 var result = CallMethodNested(obj, "GetIndex", new[] { indexVal });
-                // null == GetIndex() wurde durch eine geworfene Exception
-                // verlassen (siehe CallMethodNested-Doku) - dann NICHT
-                // pushen, die Ausführung läuft bereits anderswo weiter.
+                // null == GetIndex() was left through a thrown exception
+                // (see CallMethodNested documentation) - then do NOT
+                // push, execution already continues elsewhere.
                 if (result != null) Push(result.Value);
             }
             else
@@ -3438,7 +3436,7 @@ namespace fire.Runtime
 
             if (target.Kind == ValueKind.Array && target.AsArray().IsShared)
             {
-                // Array des geteilten Bereichs: ein Fire-Thread ändert es nur in einer Sektion, überall unter dem Lock
+                // Array of the shared area: a fire thread changes it only in a section, everywhere under the lock
                 long sharedIdx = indexVal.AsInt();
                 if (TrySetSharedElement(target.AsArray(), sharedIdx, value)) Push(value);
                 else ThrowIndexOutOfBounds(sharedIdx, target.AsArray().Length);
@@ -3456,9 +3454,9 @@ namespace fire.Runtime
                     if (target.AsArray().TrySet(idx, value))
                         Push(value);
                     else
-                        // Kein Push hier - ThrowIndexOutOfBounds hat
-                        // _currentChunk/_ip bereits umgeleitet, ein
-                        // zusätzlicher Push würde den Stack dort verschieben.
+                        // No push here - ThrowIndexOutOfBounds has already
+                        // redirected _currentChunk/_ip, an
+                        // additional push would shift the stack there.
                         ThrowIndexOutOfBounds(idx, target.AsArray().Length);
                 }
             }
@@ -3484,10 +3482,10 @@ namespace fire.Runtime
             else if (target.Kind == ValueKind.Class)
             {
                 var obj = (ObjectInstance)target.AsObjectRef();
-                var result = CallMethodNested(obj, "SetIndex", new[] { indexVal, value }); // Rückgabewert unbenutzt
-                // null == SetIndex() wurde durch eine geworfene Exception
-                // verlassen (siehe CallMethodNested-Doku) - dann NICHT
-                // pushen, die Ausführung läuft bereits anderswo weiter.
+                var result = CallMethodNested(obj, "SetIndex", new[] { indexVal, value }); // Return value unused
+                // null == SetIndex() was left through a thrown exception
+                // (see CallMethodNested documentation) - then do NOT
+                // push, execution already continues elsewhere.
                 if (result != null) Push(value);
             }
             else if (target.Kind == ValueKind.String)
@@ -3599,7 +3597,7 @@ namespace fire.Runtime
                     var v = Pop();
                     if (v.Kind == ValueKind.Class && string.IsNullOrEmpty(format))
                     {
-                        // `$"{objekt}"`: das Ergebnis von ToString() des Objekts
+                        // `$"{object}"`: the result of ToString() of the object
                         var text = StringifyForText(v);
                         if (text == null) break;
                         Push(Value.MakeString(text));
@@ -3702,10 +3700,10 @@ namespace fire.Runtime
                     int argCount = ReadByte();
                     var args = new Value[argCount];
                     for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
-                    // KEINE Exception bei Fehlschlag/Timeout (siehe
-                    // TryableNativeFunction-Doku) - die Host-Implementierung
-                    // meldet das über den Rückgabewert 'false', nicht über
-                    // einen Wurf; das Skript sieht dafür einfach 'undefined'.
+                    // NO exception on failure/timeout (see
+                    // TryableNativeFunction documentation) - the host implementation
+                    // reports that via the return value 'false', not via
+                    // a throw; the script then simply sees 'undefined'.
                     bool success = _natives.TryableAt(tryableIdx)(args, out Value tryResult);
                     if (success) AdoptFresh(tryResult);
                     Push(success ? tryResult : Value.MakeUndefined());
@@ -3728,13 +3726,13 @@ namespace fire.Runtime
                     {
                         if (_externs.TryGet(externName, out var fn))
                         {
-                            // Manuell vom Host registriert (ExternRegistry) - wie bisher.
+                            // Registered manually by the host (ExternRegistry) - as before.
                             nativeResult = fn(nativeArgs);
                         }
                         else if (_externSignatures.TryGetValue(externName, out var sig) && sig.LibName != null)
                         {
-                            // Dynamisch gegen eine per '#extern "libName"' benannte
-                            // native Bibliothek verlinkt - kein Host-Code nötig.
+                            // Linked dynamically against a native library named via '#extern "libName"'
+                            // - no host code needed.
                             var del = ResolveDynamicExtern(externName, sig);
                             nativeResult = del.DynamicInvoke(nativeArgs);
                         }
@@ -3748,10 +3746,10 @@ namespace fire.Runtime
                     }
                     finally
                     {
-                        // Copy-Out für Pointer-Argumente (siehe MarshalArgsOut)
-                        // UND Freigabe des dafür allozierten nativen Speichers -
-                        // muss auch bei einer C#-Exception aus der nativen
-                        // Funktion passieren, sonst native Speicherlecks.
+                        // Copy-out for pointer arguments (see MarshalArgsOut)
+                        // AND release of the native memory allocated for it -
+                        // must also happen on a C# exception from the native
+                        // function, otherwise native memory leaks.
                         foreach (var cleanup in cleanups) cleanup();
                     }
 
@@ -3798,7 +3796,7 @@ namespace fire.Runtime
 
                 case OpCode.CopyValue:
                 {
-                    // `flat x` / `copy x` (SPEC 2.4) - die Kopie gehört dem aktuellen Scope (SPEC 2.1).
+                    // `flat x` / `copy x` (SPEC 2.4) - the copy belongs to the current scope (SPEC 2.1).
                     bool deep = (ReadByte() & 1) != 0;
                     var source = Pop();
                     Push(ObjectCloner.Clone(source, _currentScope, deep));
@@ -3817,7 +3815,7 @@ namespace fire.Runtime
 
                 case OpCode.CopyValueOwned:
                 {
-                    // Direkt einem Feld zugewiesen: die Kopie gehört dem Zielobjekt (wie NewObjectOwned).
+                    // Assigned directly to a field: the copy belongs to the target object (like NewObjectOwned).
                     bool deep = (ReadByte() & 1) != 0;
                     var source = Pop();
                     var owner = RequireObjectInstance(Pop(), "Copy with owner");
@@ -3863,13 +3861,13 @@ namespace fire.Runtime
 
                 case OpCode.SetStaticFieldOnInit:
                 {
-                    // Wie SetStaticField, aber OHNE Zugriffsmodifikator-Prüfung
-                    // (siehe OpCode.SetStaticFieldOnInit-Doku) - NUR für die
-                    // einmalige Initialisierung eines statischen Feldes beim
-                    // Programmstart (siehe Compiler.Compile), analog zu
-                    // SetFieldOnThis bei Instanzfeldern. Einheiten-Prüfung
-                    // bleibt (wie bei SetFieldOnThis) trotzdem bestehen - die
-                    // gilt unabhängig davon, WER schreibt.
+                    // Like SetStaticField, but WITHOUT access modifier check
+                    // (see OpCode.SetStaticFieldOnInit documentation) - ONLY for the
+                    // one-time initialisation of a static field at
+                    // program start (see Compiler.Compile), analogous to
+                    // SetFieldOnThis for instance fields. The unit check
+                    // stays (as with SetFieldOnThis) nevertheless - it
+                    // applies independently of WHO writes.
                     string initClassName = _constants[ReadU16()].AsString();
                     string initFieldName = _constants[ReadU16()].AsString();
                     var initValue = Pop();
@@ -3939,7 +3937,7 @@ namespace fire.Runtime
                     for (int i = count - 1; i >= 0; i--) arr.Items[i] = Pop();
                     for (int i = 0; i < count; i++)
                         if ((mask >> i & 1) != 0 && LeafOf(arr.Items[i]) is { } part)
-                            LeafOwnership.AttachPart(arr, part);   // der innere gehoert jetzt dem aeusseren, nicht mehr dem Scope, der ihn eben erzeugt hat
+                            LeafOwnership.AttachPart(arr, part);   // the inner one now belongs to the outer one, no longer to the scope that has just created it
                     LeafOwnership.Adopt(arr, _currentScope);
                     Push(Value.MakeArray(arr));
                     break;
@@ -4128,7 +4126,7 @@ namespace fire.Runtime
                             break;
                         case FinallyNestedReturn:
                         {
-                            // Ende eines verschachtelt gestarteten finally (leave/terminate, siehe RunFinallyInlineNested): zurück zum Aufrufer
+                            // End of a nested started finally (leave/terminate, see RunFinallyInlineNested): back to the caller
                             var frame = _frames.Pop();
                             _currentChunk = frame.ReturnChunk;
                             _ip = frame.ReturnIp;
@@ -4190,17 +4188,17 @@ namespace fire.Runtime
                             "(either it was already resumed, or there is no active catch for it).");
 
                     _pendingResumes.Remove(excInstance);
-                    // die `catch`-Blöcke, die diese Ausnahme verlassen hat, laufen nach dem `resume` wieder
+                    // the `catch` blocks that this exception has left run again after the `resume`
                     if (pending.Inner != null) foreach (var (innerExc, innerPending) in pending.Inner) _pendingResumes[innerExc] = innerPending;
 
-                    // Den GERADE laufenden catch-Kontext abwickeln, den resume()
-                    // verlässt - exakt wie beim Betreten des Handlers selbst,
-                    // funktioniert daher auch, wenn resume() aus einem
-                    // verschachtelten Funktionsaufruf INNERHALB des catch heraus
-                    // aufgerufen wird.
+                    // Unwind the CURRENTLY running catch context that resume()
+                    // leaves - exactly as when entering the handler itself,
+                    // therefore also works if resume() is called from a
+                    // nested function call INSIDE the catch
+                    // .
                     UnwindTo(pending.Handler.FrameDepthAtEntry, pending.Handler.TargetScope);
 
-                    // Eingefrorenen Wurfstellen-Zustand exakt zurückspielen.
+                    // Play back the frozen throw-site state exactly.
                     for (int i = pending.Continuation.Frames.Count - 1; i >= 0; i--)
                         _frames.Push(pending.Continuation.Frames[i]);
 
@@ -4209,20 +4207,20 @@ namespace fire.Runtime
                     _currentScope = pending.Continuation.Scope;
                     _currentThis = pending.Continuation.This;
 
-                    // Operanden der Wurfstelle zurück auf den Stack (der catch-Kontext, den resume() verlässt, wird verworfen)
+                    // Operands of the throw site back onto the stack (the catch context that resume() leaves is discarded)
                     _sp = pending.Handler.StackPointer;
                     foreach (var operand in pending.Continuation.Stack) Push(operand);
 
-                    // Die fortgesetzte Stelle ist konzeptionell "immer noch im
-                    // try-Block" - Handler wieder scharf schalten (siehe
-                    // PendingResume-Kommentar), sonst reißt ein erneuter throw
-                    // dort keinen passenden catch mehr und UnregisterHandler am
-                    // Ende des try-Blocks entfernt versehentlich einen fremden
-                    // Eintrag.
+                    // The continued place is conceptually "still inside the
+                    // try block" - re-arm the handler (see
+                    // PendingResume comment), otherwise a renewed throw
+                    // there no longer finds a matching catch and UnregisterHandler at the
+                    // end of the try block accidentally removes someone else's
+                    // entry.
                     while (_handlers.Count > pending.HandlerCount) _handlers.RemoveAt(_handlers.Count - 1);
                     _handlers.Add(pending.Handler);
 
-                    Push(resumeValue); // das ist der Wert, zu dem 'throw' jetzt auswertet
+                    Push(resumeValue); // that is the value that 'throw' now evaluates to
                     break;
                 }
 
@@ -4240,11 +4238,11 @@ namespace fire.Runtime
 
                 case OpCode.CheckLambdaSignature:
                 {
-                    // Prüft Peek() (NICHT Pop() - der Wert wird direkt danach
-                    // noch normal weiterverwendet, z.B. per DeclareLocal/
-                    // StoreLocal, das hier nur eine zusätzliche Validierung
-                    // VOR dieser Weiterverwendung ist) gegen die erwartete
-                    // Parameterzahl aus der Typ-Annotation (siehe Ast.
+                    // Checks Peek() (NOT Pop() - the value is
+                    // still used normally right afterwards, e.g. via DeclareLocal/
+                    // StoreLocal, which is only an additional validation
+                    // BEFORE this further use) against the expected
+                    // parameter count from the type annotation (see Ast.
                     // TypeRef.LambdaSignature, Compiler.EmitCheckLambdaSignature).
                     int expectedParamCount = ReadByte();
                     var v = Peek();
@@ -4261,16 +4259,16 @@ namespace fire.Runtime
 
                 case OpCode.CheckUnit:
                 {
-                    // Wie CheckLambdaSignature: prüft nur Peek() (NICHT Pop()),
-                    // der Wert wird direkt danach noch normal weiterverwendet
-                    // (siehe OpCode.CheckUnit-Doku/Compiler.EmitCheckUnitIfNeeded).
-                    // Anders als bei CheckLambdaSignature (roher C#-Fehler) wirft
-                    // ein Mismatch hier aber eine ECHTE, per try/catch fangbare
-                    // Skript-Exception (siehe ThrowUnitMismatch) - explizit vom
-                    // Nutzer per SPEC "Einheiten-Deklarationen" so gewünscht.
-                    // Im Performance-Modus übersprungen - wie jede andere
-                    // "zusätzliche Sicherheit statt Geschwindigkeit"-Prüfung in
-                    // dieser VM (Zugriffsmodifikatoren, Array-/Puffer-Bounds).
+                    // Like CheckLambdaSignature: checks only Peek() (NOT Pop()),
+                    // the value is still used normally right afterwards
+                    // (see OpCode.CheckUnit documentation/Compiler.EmitCheckUnitIfNeeded).
+                    // Unlike with CheckLambdaSignature (raw C# error), a
+                    // mismatch here throws a REAL script exception, catchable via try/catch
+                    // (see ThrowUnitMismatch) - explicitly wanted by the
+                    // user per SPEC "Unit declarations".
+                    // Skipped in performance mode - like every other
+                    // "extra safety instead of speed" check in
+                    // this VM (access modifiers, array/buffer bounds).
                     string requiredUnitName = _constants[ReadU16()].AsString();
                     if (ExecutionMode != VmExecutionMode.Performance)
                     {
@@ -4288,39 +4286,39 @@ namespace fire.Runtime
 
                 case OpCode.Fire:
                 {
-                    // Startet einen ECHTEN Thread (siehe Runtime.FireRuntime) -
+                    // Starts a REAL thread (see Runtime.FireRuntime) -
                     // `_natives`/`_classes`/`_externs`/`_externSignatures`
-                    // werden mit der NEUEN VM-Instanz geteilt (unveränderlich
-                    // nach dem Kompilieren, sicher über Threads hinweg, siehe
-                    // FireRuntime-Klassenkommentar) - fire selbst blockiert
-                    // NICHT (keine Rückgabewerte, kein Join, siehe
-                    // docs/THREADING_DESIGN.md Abschnitt 1).
+                    // are shared with the NEW VM instance (immutable
+                    // after compiling, safe across threads, see
+                    // FireRuntime class comment) - fire itself does
+                    // NOT block (no return values, no join, see
+                    // docs/THREADING_DESIGN.md section 1).
                     int protoIdx = ReadU16();
                     int globalSlotCount = ReadU16();
                     int takingCount = ReadByte();
                     bool hasWith = ReadByte() != 0;
-                    // Reihenfolge umgekehrt zum Kompilieren (Stack!): with
-                    // wurde ALS LETZTES gepusht, liegt also oben, wird ZUERST
-                    // gepoppt; danach die taking-Werte in UMGEKEHRTER
-                    // Listenreihenfolge (letzter zuerst) - beides zusammen
-                    // wieder in die richtige Reihenfolge gebracht (siehe
+                    // Order reversed to compiling (stack!): with
+                    // was pushed LAST, so lies on top, is popped FIRST;
+                    // afterwards the taking values in REVERSED
+                    // list order (last first) - both together
+                    // brought into the right order again (see
                     // Compiler.CompileFireStmt).
                     Value? withValue = hasWith ? Pop() : null;
                     var takingValues = new Value[takingCount];
                     for (int i = takingCount - 1; i >= 0; i--) takingValues[i] = Pop();
 
-                    // Die Globals des Hauptprogramms werden NICHT kopiert: der Thread liest sie direkt (unter dem Lock) und ändert sie nur in
-                    // einer Sektion, die das Hauptprogramm bei `sync globals` erteilt (siehe Runtime.GlobalsBroker). Beim ersten `fire`
-                    // wird dafür alles, was die Globals erreichen, in den geteilten Bereich aufgenommen (Locking aktiv). Ein Thread, der selbst
-                    // `fire` ausführt, reicht seine Verbindung weiter.
+                    // The globals of the main program are NOT copied: the thread reads them directly (under the lock) and changes them only in
+                    // a section that the main program grants at `sync globals` (see Runtime.GlobalsBroker). At the first `fire`
+                    // everything that the globals reach is for that purpose taken into the shared area (locking active). A thread that itself
+                    // executes `fire` passes its connection on.
                     var broker = IsFireThreadVm ? _threadBroker : EnsureOwnerBroker();
 
                     var fireProto = _currentChunk.Functions[protoIdx];
-                    // Der neue Fire-Thread erbt den ExecutionMode DIESER VM -
-                    // sonst würde jeder `fire`-Thread stillschweigend wieder
-                    // im (langsamsten) Debug-Modus laufen, unabhängig davon,
-                    // in welchem Modus das Hauptprogramm selbst läuft (siehe
-                    // VmExecutionMode-Doku).
+                    // The new fire thread inherits the ExecutionMode of THIS VM -
+                    // otherwise every `fire` thread would silently run again
+                    // in the (slowest) debug mode, regardless of
+                    // which mode the main program itself runs in (see
+                    // VmExecutionMode documentation).
                     FireRuntime.FireVmTaking(
                         fireProto.Chunk, _natives, _classes, broker, globalSlotCount, takingValues, withValue,
                         executionMode: ExecutionMode);
@@ -4345,7 +4343,7 @@ namespace fire.Runtime
                 }
 
                 case OpCode.SectionEnter:
-                    if (_threadBroker != null) EnterGlobalsSection(); // im Hauptprogramm: wirkungslos (es ist selbst der Besitzer)
+                    if (_threadBroker != null) EnterGlobalsSection(); // in the main program: no effect (it is the owner itself)
                     break;
 
                 case OpCode.SectionExit:
@@ -4359,8 +4357,8 @@ namespace fire.Runtime
                     var jobArgs = new Value[jobArgCount];
                     for (int i = jobArgCount - 1; i >= 0; i--) jobArgs[i] = Pop();
 
-                    // Die Argumente gehören dem Auftrag, nicht diesem Thread: Objekte werden tief kopiert, ihr Besitzer ist ein Halter-Scope, den
-                    // das Hauptprogramm nach dem Lauf freigibt.
+                    // The arguments belong to the job, not to this thread: objects are deeply copied, their owner is a holder scope that
+                    // the main program releases after the run.
                     var holder = new Scope(null);
                     for (int i = 0; i < jobArgs.Length; i++)
                         if (jobArgs[i].Kind == ValueKind.Class) jobArgs[i] = ObjectCloner.Clone(jobArgs[i], holder, deep: true);
@@ -4372,13 +4370,13 @@ namespace fire.Runtime
 
                 case OpCode.Sync:
                 {
-                    // Siehe Ast.SyncExpr-Doku / Runtime.SyncEngine - `this`
-                    // (die VM implementiert IDestructRunner, siehe
-                    // Klassensignatur) wird als Destruktor-Runner
-                    // durchgereicht, damit ein Fall-B-Objektverlust (siehe
-                    // SyncEngine.SyncSingleValue) über DIESELBE
-                    // Destruktor-Ausführung läuft wie der Rest dieser
-                    // VM-Instanz.
+                    // See Ast.SyncExpr documentation / Runtime.SyncEngine - `this`
+                    // (the VM implements IDestructRunner, see
+                    // class signature) is passed on
+                    // as the destructor runner, so that a case-B object loss (see
+                    // SyncEngine.SyncSingleValue) runs via the SAME
+                    // destructor execution as the rest of this
+                    // VM instance.
                     byte flags = ReadByte();
                     bool isTry = (flags & 1) != 0;
                     bool isFlat = (flags & 2) != 0;
@@ -4398,14 +4396,14 @@ namespace fire.Runtime
                 }
 
                 case OpCode.Leave:
-                    // Der aufrufende Thread geht sofort in den Halt (ShutdownSelfNow) - nach `leave` läuft keine Anweisung mehr.
+                    // The calling thread goes into the halt immediately (ShutdownSelfNow) - after `leave` no statement runs any more.
                     RequestLeave();
                     ShutdownSelfNow();
                     break;
 
                 case OpCode.Terminate:
                 {
-                    // Auch wenn ein anderer Thread schneller war (erster Aufruf gewinnt): dieser Thread hält hier an.
+                    // Even if another thread was faster (first call wins): this thread stops here.
                     var terminateValue = Pop();
                     RequestTerminate(terminateValue);
                     ShutdownSelfNow();
@@ -4448,25 +4446,25 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Gemeinsamer Sprung in den Konstruktor-Proto für NewObject und
-        /// NewObjectOwned - unterscheiden sich nur darin, welchen Owner die neue
-        /// Instanz bekommt (schon vor diesem Aufruf entschieden).</summary>
+        /// <summary>Common jump into the constructor proto for NewObject and
+        /// NewObjectOwned - they differ only in which owner the new
+        /// instance gets (already decided before this call).</summary>
         // -----------------------------------------------------------
-        // extern-Linking: Marshalling Skript-Wert <-> echter nativer Typ
+        // extern linking: marshalling script value <-> real native type
         // -----------------------------------------------------------
 
-        /// <summary>Wandelt Skript-Argumente in echte native CLR-Typen für einen
-        /// extern-Aufruf um. Werttypen (bool/int/float/char/string) werden
-        /// direkt in ihr natives Gegenstück kopiert. Ein Pointer-Argument
-        /// bekommt dagegen ECHTEN unmanaged Speicher (Marshal.AllocHGlobal) -
-        /// der aktuelle Wert wird hineingeschrieben, die native Funktion
-        /// bekommt die rohe Adresse (IntPtr), und über den zurückgegebenen
-        /// Cleanup-Delegate wird nach dem Aufruf der (möglicherweise von der
-        /// nativen Seite veränderte) Wert zurück in das PointerTarget
-        /// geschrieben (Copy-Out) und der native Speicher wieder freigegeben -
-        /// echtes Pointer-Marshalling statt nur eine Adresse durchzureichen,
-        /// da unsere Pointer auf verwaltete Scope-Slots/Felder zeigen, nicht
-        /// auf schon-native Adressen (siehe PointerTarget-Doku).</summary>
+        /// <summary>Converts script arguments into real native CLR types for an
+        /// extern call. Value types (bool/int/float/char/string) are
+        /// copied directly into their native counterpart. A pointer argument
+        /// by contrast gets REAL unmanaged memory (Marshal.AllocHGlobal) -
+        /// the current value is written into it, the native function
+        /// gets the raw address (IntPtr), and via the returned
+        /// cleanup delegate, after the call the (possibly changed by the
+        /// native side) value is written back into the PointerTarget
+        /// (copy-out) and the native memory is released again -
+        /// real pointer marshalling instead of just passing an address through,
+        /// since our pointers point to managed scope slots/fields, not
+        /// to already-native addresses (see PointerTarget documentation).</summary>
         private (object?[] nativeArgs, List<Action> cleanups) MarshalArgsOut(Value[] args)
         {
             var nativeArgs = new object?[args.Length];
@@ -4521,10 +4519,10 @@ namespace fire.Runtime
             return (nativeArgs, cleanups);
         }
 
-        /// <summary>Wandelt den nativen Rückgabewert einer extern-Funktion in
-        /// einen Skript-Value um - anhand des tatsächlichen CLR-Laufzeittyps,
-        /// da extern-Deklarationen keinen strikt durchgesetzten Rückgabetyp
-        /// haben (dynamisch, wie der Rest der Sprache).</summary>
+        /// <summary>Converts the native return value of an extern function into
+        /// a script Value - based on the actual CLR runtime type,
+        /// since extern declarations have no strictly enforced return type
+        /// (dynamic, like the rest of the language).</summary>
         private static Value MarshalResultIn(object? nativeResult) => nativeResult switch
         {
             null => Value.MakeUndefined(),
@@ -4544,22 +4542,21 @@ namespace fire.Runtime
         // extern-Linking: dynamisches Laden gegen '#extern "libName"'
         // -----------------------------------------------------------
 
-        // WICHTIGE FALLE (erst zur Laufzeit entdeckt): Marshal.
-        // GetDelegateForFunctionPointer lehnt JEDEN generischen Delegate-Typ ab
-        // - auch einen bereits vollständig GESCHLOSSENEN wie Func<long> (die
-        // Fehlermeldung "The specified Type must not be a generic type" prüft
-        // offenbar Type.IsGenericType, nicht ContainsGenericParameters). Die
-        // BCL-Delegates Action<...>/Func<...> sind also für diesen Zweck
-        // NICHT nutzbar, obwohl geschlossen-generische Typen sonst überall
-        // sonst wie normale Typen behandelt werden. Statt dessen wird hier
-        // per System.Reflection.Emit ein ECHTER, NICHT-generischer Delegate-
-        // Typ zur Laufzeit erzeugt (Standard-Pattern: TypeBuilder von
-        // MulticastDelegate ableiten, Konstruktor + virtuelle Invoke-Methode
-        // mit der gewünschten Signatur definieren, beide als 'runtime-
-        // implementiert' markieren) - dieselbe Technik, die auch .NETs
-        // eigener C#-Compiler für ein `delegate`-Schlüsselwort verwendet,
-        // nur eben zur LAUFZEIT statt zur Compile-Zeit, da die Signatur erst
-        // durch die geparste `extern`-Deklaration feststeht.
+        // IMPORTANT PITFALL (only discovered at runtime): Marshal.
+        // GetDelegateForFunctionPointer rejects EVERY generic delegate type
+        // - even an already fully CLOSED one like Func<long> (the
+        // error message "The specified Type must not be a generic type" evidently checks
+        // Type.IsGenericType, not ContainsGenericParameters). The
+        // BCL delegates Action<...>/Func<...> are therefore
+        // NOT usable for this purpose, although closed generic types are otherwise
+        // treated like normal types everywhere. Instead a REAL, NON-generic delegate
+        // type is generated here at runtime via System.Reflection.Emit (standard pattern: derive a TypeBuilder from
+        // MulticastDelegate, define constructor + virtual Invoke method
+        // with the desired signature, mark both as 'runtime-
+        // implemented') - the same technique that .NET's
+        // own C# compiler uses for a `delegate` keyword,
+        // only at RUNTIME instead of compile time, since the signature is only
+        // fixed by the parsed `extern` declaration.
         private static readonly System.Reflection.Emit.ModuleBuilder DynamicDelegateModule =
             System.Reflection.Emit.AssemblyBuilder
                 .DefineDynamicAssembly(
@@ -4567,32 +4564,32 @@ namespace fire.Runtime
                     System.Reflection.Emit.AssemblyBuilderAccess.Run)
                 .DefineDynamicModule("DynamicExterns");
 
-        /// <summary>ModuleBuilder.DefineType/TypeBuilder.CreateType sind laut
-        /// .NET-Dokumentation NICHT sicher für gleichzeitige Aufrufe von
-        /// mehreren Threads - da DynamicDelegateModule statisch (über ALLE
-        /// VM-Instanzen/Threads hinweg geteilt) ist, muss der GESAMTE
-        /// Typ-Bau-Vorgang (DefineType bis CreateType) für die Dauer eines
-        /// einzelnen ResolveDynamicExtern-Aufrufs exklusiv laufen - dieser
-        /// Lock schützt genau das. Betrifft nur den (seltenen) Erstaufbau
-        /// eines dynamisch verlinkten Delegate-Typs, nicht den eigentlichen
-        /// nativen Aufruf selbst (der danach über den bereits fertigen,
-        /// gecachten Delegate läuft).</summary>
+        /// <summary>ModuleBuilder.DefineType/TypeBuilder.CreateType are, according to the
+        /// .NET documentation, NOT safe for simultaneous calls from
+        /// several threads - since DynamicDelegateModule is static (shared across ALL
+        /// VM instances/threads), the ENTIRE
+        /// type-building process (DefineType up to CreateType) must run exclusively for the duration of a
+        /// single ResolveDynamicExtern call - this
+        /// lock protects exactly that. Concerns only the (rare) initial construction
+        /// of a dynamically linked delegate type, not the actual
+        /// native call itself (which afterwards runs via the already finished,
+        /// cached delegate).</summary>
         private static readonly object DynamicDelegateModuleLock = new();
 
         private static int _dynamicDelegateCounter;
 
-        /// <summary>Löst (und cached) den Delegate für einen dynamisch
-        /// verlinkten `extern`-Aufruf: lädt die Bibliothek (per Namen
-        /// gecached, `NativeLibrary.Load` ist nicht ganz billig), sucht den
-        /// Export, baut per Reflection.Emit einen echten, nicht-generischen
-        /// Delegate-Typ passend zur Skript-Signatur (`ExternSignature`,
-        /// siehe BuildNonGenericDelegateType) und macht daraus per `Marshal.
-        /// GetDelegateForFunctionPointer` einen aufrufbaren Delegate. Die
-        /// eigentliche native Aufruf-Mechanik (Calling Convention, Argument-
-        /// Marshalling pro Parametertyp) übernimmt damit komplett die
-        /// eingebaute .NET-Interop-Schicht - hier wird nur zur Laufzeit die
-        /// PASSENDE Delegate-Form zusammengebaut, was zur Compile-Zeit nicht
-        /// möglich wäre.</summary>
+        /// <summary>Resolves (and caches) the delegate for a dynamically
+        /// linked `extern` call: loads the library (cached by
+        /// name, `NativeLibrary.Load` is not exactly cheap), looks up the
+        /// export, builds via Reflection.Emit a real, non-generic
+        /// delegate type matching the script signature (`ExternSignature`,
+        /// see BuildNonGenericDelegateType) and makes a callable delegate of it via `Marshal.
+        /// GetDelegateForFunctionPointer`. The
+        /// actual native call mechanics (calling convention, argument
+        /// marshalling per parameter type) are thus completely taken over by the
+        /// built-in .NET interop layer - here only the
+        /// MATCHING delegate form is assembled at runtime, which would not be
+        /// possible at compile time.</summary>
         private Delegate ResolveDynamicExtern(string externName, ExternSignature sig)
         {
             if (_dynamicExternDelegates.TryGetValue(externName, out var cached))
@@ -4644,18 +4641,18 @@ namespace fire.Runtime
             return del;
         }
 
-        /// <summary>Baut einen echten, nicht-generischen Delegate-Typ (siehe
-        /// Klassen-Kommentar oben für WARUM das nötig ist statt einfach
-        /// Action&lt;...&gt;/Func&lt;...&gt; zu nutzen) mit exakt der
-        /// gewünschten Parameter-/Rückgabe-Signatur.</summary>
+        /// <summary>Builds a real, non-generic delegate type (see
+        /// class comment above for WHY that is necessary instead of simply using
+        /// Action&lt;...&gt;/Func&lt;...&gt;) with exactly the
+        /// desired parameter/return signature.</summary>
         private static Type BuildNonGenericDelegateType(Type[] paramTypes, Type returnType, string externName)
         {
-            // Siehe DynamicDelegateModuleLock-Doku: der GESAMTE Aufbau (nicht nur
-            // DefineType) muss exklusiv laufen, da ModuleBuilder/TypeBuilder
-            // laut .NET-Doku nicht für gleichzeitige Nutzung von mehreren
-            // Threads ausgelegt sind - relevant, sobald mehrere VM-Instanzen
-            // (ein Fire-Thread bringt seine eigene mit) gleichzeitig zum
-            // ersten Mal denselben oder verschiedene externs dynamisch linken.
+            // See DynamicDelegateModuleLock documentation: the ENTIRE construction (not only
+            // DefineType) must run exclusively, since ModuleBuilder/TypeBuilder
+            // according to the .NET documentation are not designed for simultaneous use by several
+            // threads - relevant as soon as several VM instances
+            // (a fire thread brings its own) link the same or different externs dynamically
+            // for the first time at the same time.
             lock (DynamicDelegateModuleLock)
             {
                 string typeName = $"fireExtern_{externName}_{System.Threading.Interlocked.Increment(ref _dynamicDelegateCounter)}";
@@ -4685,12 +4682,12 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Bildet einen Skript-Typ (Parameter- oder Rückgabetyp einer
-        /// `extern`-Deklaration) auf den passenden CLR-Typ für dynamisches
-        /// Linking ab - dieselbe Menge unterstützter Typen wie beim
-        /// Pointer-Marshalling (MarshalArgsOut/WriteNativeValue): bool/int/
-        /// float/char/string direkt, jeder Pointer-Typ als IntPtr (die echte,
-        /// per MarshalArgsOut bereitgestellte native Adresse).</summary>
+        /// <summary>Maps a script type (parameter or return type of an
+        /// `extern` declaration) to the matching CLR type for dynamic
+        /// linking - the same set of supported types as with
+        /// pointer marshalling (MarshalArgsOut/WriteNativeValue): bool/int/
+        /// float/char/string directly, every pointer type as IntPtr (the real native
+        /// address provided via MarshalArgsOut).</summary>
         private static Type MapExternClrType(TypeRef? t, string externName)
         {
             if (t == null)
@@ -4711,8 +4708,8 @@ namespace fire.Runtime
             };
         }
 
-        /// <summary>Schreibt einen primitiven Skript-Wert in 8 Byte natives
-        /// Speicher (reicht für alle unterstützten Primitivtypen).</summary>
+        /// <summary>Writes a primitive script value into 8 bytes of native
+        /// memory (enough for all supported primitive types).</summary>
         private static void WriteNativeValue(IntPtr ptr, Value v)
         {
             switch (v.Kind)
@@ -4772,21 +4769,21 @@ namespace fire.Runtime
         // Exceptions
         // -----------------------------------------------------------
 
-        /// <summary>Sucht - von innen nach außen - einen registrierten Handler mit
-        /// passender Catch-Klausel. Handler, an denen dabei vorbeipropagiert wird,
-        /// werden verworfen (samt ihres finally, falls vorhanden). Wird kein
-        /// Handler gefunden, bricht die Ausführung mit UncaughtScriptException ab.</summary>
+        /// <summary>Searches - from the inside out - a registered handler with a
+        /// matching catch clause. Handlers that are propagated past in the process
+        /// are discarded (together with their finally, if present). If no
+        /// handler is found, execution aborts with UncaughtScriptException.</summary>
         private void ThrowException(Value exceptionValue)
         {
             var excInstance = RequireObjectInstance(exceptionValue, "throw");
 
-            // Das Exception-Objekt gehört noch dem werfenden Scope - der wird
-            // beim (späteren, evtl. verzögerten) Unwinding aufgelöst. Ohne
-            // diesen Ownership-Transfer würde die Exception dabei selbst
-            // mit-zerstört, bevor der catch-Block sie lesen kann.
+            // The exception object still belongs to the throwing scope - it is
+            // resolved at the (later, possibly delayed) unwinding. Without
+            // this ownership transfer the exception itself would be
+            // destroyed along with it before the catch block can read it.
             excInstance.TakeGlobal(_globalScope);
 
-            // In einem verschachtelten Callback (CallLambdaInline) gehören die Handler bis zur Untergrenze dem Aufrufer.
+            // In a nested callback (CallLambdaInline) the handlers up to the lower bound belong to the caller.
             int handlerFloor = _callbackBoundaries.Count > 0 ? _callbackBoundaries.Peek().HandlerFloor : 0;
             while (_handlers.Count > handlerFloor)
             {
@@ -4797,20 +4794,20 @@ namespace fire.Runtime
 
                 if (matchedAddr != null)
                 {
-                    // WICHTIG: hier NICHT destruktiv abwickeln (UnwindTo) -
-                    // stattdessen den Wurfstellen-Zustand einfrieren
-                    // (CaptureContinuation), damit ein mögliches `resume()`
-                    // später exakt hierher zurückspringen kann. Nichts wird
-                    // zerstört, solange nicht klar ist, ob resume() aufgerufen
-                    // wird oder nicht (siehe ClearPendingResume).
+                    // IMPORTANT: do NOT unwind destructively here (UnwindTo) -
+                    // instead freeze the throw-site state
+                    // (CaptureContinuation), so that a possible `resume()`
+                    // can later jump back exactly here. Nothing is
+                    // destroyed as long as it is not clear whether resume() is called
+                    // or not (see ClearPendingResume).
                     var continuation = CaptureContinuation(handler.FrameDepthAtEntry);
                     var newPending = new PendingResume(continuation, handler, _handlers.Count);
                     newPending.Inner = TakePendingBelow(handler.FrameDepthAtEntry, excInstance);
                     _pendingResumes[excInstance] = newPending;
 
-                    // Der `catch` beginnt auf der Stack-Höhe des `try`: die Operanden der Wurfstelle (z.B. der Enumerator eines `foreach`, aus dem
-                    // geworfen wurde, oder halb ausgewertete Ausdrücke des Aufrufers tieferer Frames) bleiben nicht als Leichen liegen und
-                    // verschieben später keine Operanden. `resume()` spielt sie zurück.
+                    // The `catch` begins at the stack height of the `try`: the operands of the throw site (e.g. the enumerator of a `foreach` that
+                    // was thrown from, or half-evaluated expressions of the caller of deeper frames) do not stay lying around as corpses and
+                    // do not shift operands later. `resume()` plays them back.
                     if (_sp > handler.StackPointer)
                     {
                         continuation.Stack = new Value[_sp - handler.StackPointer];
@@ -4818,7 +4815,7 @@ namespace fire.Runtime
                         _sp = handler.StackPointer;
                     }
 
-                    // Hat der `try` ein `finally`, bleibt es für die Dauer des `catch`-Blocks aktiv (eine Exception AUS dem catch muss es auslösen)
+                    // If the `try` has a `finally`, it stays active for the duration of the `catch` block (an exception OUT of the catch must trigger it)
                     if (handler.Template.FinallyAddr != null)
                         _handlers.Add(new ActiveHandler(handler.Chunk, handler.FrameDepthAtEntry, handler.TargetScope, handler.Template, handler.StackPointer, finallyOnly: true));
 
@@ -4830,15 +4827,15 @@ namespace fire.Runtime
                     return;
                 }
 
-                // Kein Match an diesem Handler - der ist damit endgültig
-                // verworfen (kein resume() für nicht-passende Handler
-                // möglich), also ganz normal destruktiv abwickeln. Die Wurfstellen der Ausnahmen, deren `catch` dabei verlassen wird, vorher (SPEC 2.3: erst der Wurfort).
+                // No match at this handler - it is thus finally
+                // discarded (no resume() possible for non-matching
+                // handlers), so unwind quite normally destructively. The throw sites of the exceptions whose `catch` is left in the process, beforehand (SPEC 2.3: the throw site first).
                 if (TakePendingBelow(handler.FrameDepthAtEntry, excInstance) is { } leftCatches)
                     foreach (var left in leftCatches) DiscardPending(left.Pending);
                 UnwindTo(handler.FrameDepthAtEntry, handler.TargetScope);
 
-                // Die Exception geht an diesem `try` vorbei - sein `finally` läuft (im selben Chunk, mit den lokalen Variablen), und `EndFinally`
-                // wirft sie danach weiter (Abschluss "Exception"). Die Operanden der Wurfstelle verfallen (kein resume() über ein finally hinweg).
+                // The exception passes this `try` by - its `finally` runs (in the same chunk, with the local variables), and `EndFinally`
+                // rethrows it afterwards (completion "exception"). The operands of the throw site lapse (no resume() across a finally).
                 if (handler.Template.FinallyAddr is int finallyAddr)
                 {
                     if (_sp > handler.StackPointer) _sp = handler.StackPointer;
@@ -4850,8 +4847,8 @@ namespace fire.Runtime
                 }
             }
 
-            // Unbehandelt in einem Callback: nur der Callback bricht ab (Abwickeln bis zu seinem Aufrufer, dort hört CallLambdaInline
-            // den Fehler ab) - das Programm läuft weiter, und der Aufrufer des Callbacks sieht keine Ausnahme (SPEC 8.1.4).
+            // Unhandled in a callback: only the callback aborts (unwinding up to its caller, where CallLambdaInline
+            // catches the error) - the program keeps running, and the caller of the callback sees no exception (SPEC 8.1.4).
             if (_callbackBoundaries.Count > 0)
             {
                 var boundary = _callbackBoundaries.Peek();
@@ -4861,37 +4858,37 @@ namespace fire.Runtime
                 return;
             }
 
-            // Kein Handler in DIESER VM-Instanz hat gematcht. Auf einem
-            // Fire-Thread (nicht dem Main-Thread) heißt das laut Design NICHT
-            // "Programm abbrechen", sondern "diesen Thread sauber beenden und
-            // die Exception (ohne Resumability - die ist ohnehin nie mehr als
-            // rein LOKALER VM-Zustand entstanden, siehe _pendingResumes-Doku)
-            // an den Main-Thread zustellen" (docs/THREADING_DESIGN.md 6.2).
+            // No handler in THIS VM instance matched. On a
+            // fire thread (not the main thread) that means by design NOT
+            // "abort the program", but "end this thread cleanly and
+            // deliver the exception (without resumability - that has in any case never arisen as more than
+            // purely LOCAL VM state, see _pendingResumes documentation)
+            // to the main thread" (docs/THREADING_DESIGN.md 6.2).
             if (IsFireThreadVm)
             {
                 _pendingThreadExceptions.Enqueue(excInstance);
                 RaiseSignal();
-                // Der globale Scope bleibt stehen: die Exception gehört ihm (TakeGlobal oben) und wird noch an den Main-Thread zugestellt.
-                UnwindForShutdown(); // _handlers ist an dieser Stelle ohnehin schon leer, siehe Schleife oben - äquivalent zu UnwindTo(0, _globalScope), aber ein Aufruf statt Code-Duplikat.
+                // The global scope stays: the exception belongs to it (TakeGlobal above) and is still delivered to the main thread.
+                UnwindForShutdown(); // _handlers is already empty at this point anyway, see loop above - equivalent to UnwindTo(0, _globalScope), but one call instead of code duplication.
                 StopExecution();
                 return;
             }
 
-            // Kein Handler in DIESER VM-Instanz hat gematcht - das Programm
-            // hält hier an (siehe UnhandledException-Doku: gesetzt statt
-            // geworfen, Run() kehrt gleich danach über den nächsten
-            // CheckShutdownSignals-Prüfpunkt ganz normal zurück).
+            // No handler in THIS VM instance matched - the program
+            // stops here (see UnhandledException documentation: set instead of
+            // thrown, Run() returns quite normally right afterwards via the next
+            // CheckShutdownSignals check point).
             UnhandledException = excInstance;
             StopExecution();
         }
 
-        /// <summary>Friert den aktuellen Ausführungszustand ein, indem die
-        /// Frames bis zur Ziel-Tiefe von `_frames` abgehoben werden - OHNE sie
-        /// (oder die durchlaufenen Scopes) per Release() freizugeben. `this`
-        /// wird dabei für die LIVE-VM genauso nachgezogen wie bei UnwindTo,
-        /// damit der Handler-Kontext danach korrekt dasteht; die
-        /// zurückgegebene SavedContinuation trägt dagegen den ORIGINALEN
-        /// Wurfstellen-Zustand (vor dem Nachziehen).</summary>
+        /// <summary>Freezes the current execution state by lifting the
+        /// frames down to the target depth off `_frames` - WITHOUT releasing them
+        /// (or the scopes passed through) via Release(). `this`
+        /// is adjusted for the LIVE VM just as with UnwindTo,
+        /// so that the handler context stands correctly afterwards; the
+        /// returned SavedContinuation, by contrast, carries the ORIGINAL
+        /// throw-site state (before the adjusting).</summary>
         private SavedContinuation CaptureContinuation(int targetFrameDepth)
         {
             var savedChunk = _currentChunk;
@@ -4910,11 +4907,11 @@ namespace fire.Runtime
             return new SavedContinuation(savedChunk, savedIp, savedScope, savedThis, frames);
         }
 
-        /// <summary>Löst eine eingefrorene, nie fortgesetzte Wurfstellen-
-        /// Continuation nachträglich sauber auf (Ownership-Kaskade inkl.
-        /// Destruktoren) - spiegelt exakt UnwindTo's Logik, nur auf den
-        /// GESICHERTEN (kopierten) Daten statt auf dem LIVE-VM-Zustand.</summary>
-        /// <summary>Nimmt die Ausnahmen aus `_pendingResumes`, deren `catch` (Handler auf <paramref name="frameDepth"/> oder tiefer) von einer neuen Ausnahme verlassen wird, die weiter außen behandelt wird.</summary>
+        /// <summary>Resolves a frozen, never continued throw-site
+        /// continuation cleanly after the fact (ownership cascade incl.
+        /// destructors) - mirrors exactly UnwindTo's logic, only on the
+        /// SECURED (copied) data instead of on the LIVE VM state.</summary>
+        /// <summary>Takes the exceptions out of `_pendingResumes` whose `catch` (handler at <paramref name="frameDepth"/> or deeper) is left by a new exception that is handled further out.</summary>
         private List<(ObjectInstance Exception, PendingResume Pending)>? TakePendingBelow(int frameDepth, ObjectInstance except)
         {
             List<(ObjectInstance, PendingResume)>? taken = null;
@@ -4927,7 +4924,7 @@ namespace fire.Runtime
             return taken;
         }
 
-        /// <summary>Gibt eine eingefrorene Wurfstelle auf: erst die der inneren Ausnahmen, dann diese (SPEC 2.3).</summary>
+        /// <summary>Gives up a frozen throw site: first those of the inner exceptions, then this one (SPEC 2.3).</summary>
         private void DiscardPending(PendingResume pending)
         {
             if (pending.Inner != null) foreach (var (_, inner) in pending.Inner) DiscardPending(inner);
@@ -4966,14 +4963,14 @@ namespace fire.Runtime
             return null;
         }
 
-        /// <summary>Läuft die Basisklassen-Kette einer Instanz hoch und prüft auf
-        /// Namensgleichheit mit `typeName` - Grundlage von typisiertem `catch`
-        /// UND von `is of` (siehe IsOfType). 'Exception' matcht immer
-        /// (eingebaute Basisklasse ohne eigene RuntimeClass, siehe
-        /// Compiler.CompileClasses-Kommentar) - das gilt bewusst pauschal für
-        /// jede Instanz, nicht nur für tatsächlich von 'Exception' abgeleitete
-        /// Klassen, da diese Information (die rohe BaseNames-Liste) auf
-        /// RuntimeClass-Ebene nicht mehr vorliegt.</summary>
+        /// <summary>Walks up the base-class chain of an instance and checks for
+        /// name equality with `typeName` - basis of typed `catch`
+        /// AND of `is of` (see IsOfType). 'Exception' always matches
+        /// (built-in base class without its own RuntimeClass, see
+        /// Compiler.CompileClasses comment) - this deliberately applies across the board to
+        /// every instance, not only to classes actually derived from 'Exception',
+        /// since this information (the raw BaseNames list) is no longer available at
+        /// RuntimeClass level.</summary>
         private bool InstanceMatchesClassName(ObjectInstance instance, string typeName)
         {
             if (typeName == "Exception") return true;
@@ -4983,8 +4980,8 @@ namespace fire.Runtime
             return false;
         }
 
-        /// <summary>`wert is of Typ` (SPEC 6): bei Basistyp-Namen einfacher
-        /// Kind-Vergleich, bei Klassennamen rekursiv über die Basisklassen-Kette
+        /// <summary>`value is of Type` (SPEC 6): for base-type names a simple
+        /// kind comparison, for class names recursively over the base-class chain
         /// (InstanceMatchesClassName).</summary>
         private bool IsOfType(Value v, string typeName)
         {
@@ -4998,19 +4995,19 @@ namespace fire.Runtime
                 case "undefined": return v.Kind == ValueKind.Undefined;
                 case "class": return v.Kind == ValueKind.Class;
             }
-            // Arrays und Puffer sind durchlaufbar (GetEnumerator, foreach): sie erfüllen das Interface IEnumerable der Prelude
+            // Arrays and buffers are enumerable (GetEnumerator, foreach): they fulfil the interface IEnumerable of the prelude
             if (v.Kind is ValueKind.Array or ValueKind.Buffer && typeName == "IEnumerable") return true;
             if (v.Kind != ValueKind.Class) return false;
             return InstanceMatchesClassName((ObjectInstance)v.AsObjectRef(), typeName);
         }
 
-        /// <summary>Wickelt Scopes/Frames ab, bis genau `targetFrameDepth`/
-        /// `targetScope` erreicht ist - dabei wird für jede verlassene Scope ganz
-        /// normal Release() aufgerufen (Ownership-Kaskade inkl. Destruktoren
-        /// laufen also auch beim Abbruch durch eine Exception korrekt). Nutzt
-        /// aus, dass JEDE Frame-Basis-Scope als Parent immer direkt den globalen
-        /// Scope hat (so legen Call/CallMethod/NewObject/etc. ihre Scopes an) -
-        /// das erkennt eine Frame-Grenze, ohne sie separat mitführen zu müssen.</summary>
+        /// <summary>Unwinds scopes/frames until exactly `targetFrameDepth`/
+        /// `targetScope` is reached - in the process Release() is called quite normally
+        /// for every scope left (ownership cascade incl. destructors
+        /// therefore also run correctly when aborting through an exception). Makes use of
+        /// the fact that EVERY frame base scope always has the global
+        /// scope directly as its parent (this is how Call/CallMethod/NewObject/etc. create their scopes) -
+        /// that recognises a frame boundary without having to carry it along separately.</summary>
         private void UnwindTo(int targetFrameDepth, Scope targetScope)
         {
             while (_frames.Count > targetFrameDepth || !ReferenceEquals(_currentScope, targetScope))
@@ -5035,8 +5032,8 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Führt einen `finally`-Block im Chunk `chunk` an `addr` verschachtelt aus (für `leave`/`terminate`, die jedes offene `finally` ablaufen lassen,
-        /// ohne zurückzukehren): wie ein Aufruf, der Block selbst läuft im Scope des `try`; sein `EndFinally` (Abschluss 4) kehrt hierher zurück.</summary>
+        /// <summary>Executes a `finally` block in the chunk `chunk` at `addr` nested (for `leave`/`terminate`, which let every open `finally` run,
+        /// without returning): like a call, the block itself runs in the scope of the `try`; its `EndFinally` (completion 4) returns here.</summary>
         private void RunFinallyInlineNested(Chunk chunk, int addr)
         {
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
@@ -5050,35 +5047,35 @@ namespace fire.Runtime
             RunNestedUntil(targetDepth);
         }
 
-        /// <summary>Ruft eine Methode auf `obj` verschachtelt auf (siehe
-        /// RunDestructor/RunFinallyNested) und liefert deren Rückgabewert -
-        /// oder `null`, falls der Aufruf NICHT normal per `Return` beendet
-        /// wurde, sondern eine Exception per Continuation-Sprung (ThrowException/
-        /// ResumeException) die Ausführung komplett woanders hin umgeleitet hat
-        /// (z.B. in einen `catch` außerhalb dieses Aufrufs). In dem Fall wurde
-        /// NIE ein Rückgabewert gepusht, und der Aufrufer darf selbst nichts
-        /// mehr tun (kein eigenes Push, keine weitere Verarbeitung) - die
-        /// Ausführung läuft ja bereits an anderer Stelle weiter. Erkannt wird
-        /// das NICHT über die Frame-Tiefe (die könnte durch eine Verschachtelung
-        /// zufällig wieder exakt passen, siehe z.B. ein try/catch auf genau
-        /// dieser Ebene), sondern robust darüber, ob Chunk/Ip/Scope nach der
-        /// verschachtelten Ausführung exakt wieder beim Ausgangszustand
-        /// gelandet sind - das gilt garantiert nur bei einem echten, normalen
-        /// Return (der genau diese drei Werte aus dem gepushten Frame
-        /// wiederherstellt).</summary>
-        /// <summary>Nimmt einen Snapshot ALLER aktuellen Werte des globalen
-        /// Scopes DIESER VM auf - für native Callback-Registrierung gedacht
-        /// (siehe Runtime.FireRuntime.CallCallback), dieselbe Grund-Idee wie
-        /// der interne Snapshot vor einem 'fire'-Block (OpCode.Fire), nur
-        /// von AUSSEN (Host-C#-Code) statt von einem Skript-Opcode
-        /// ausgelöst. Der Aufrufer MUSS sicherstellen, dass dieser Aufruf
-        /// NICHT gleichzeitig mit einer laufenden Bytecode-Ausführung DIESER
-        /// VM auf einem ANDEREN Thread passiert (kein eingebautes Locking
-        /// hier, aus demselben Race-Grund wie beim 'fire'-Snapshot) - für
-        /// die übliche Verwendung (der Host registriert einen Callback,
-        /// direkt im Anschluss an den nativen Registrierungsaufruf, während
-        /// das Skript also gerade in genau diesem Aufruf steht, nicht
-        /// nebenläufig woanders läuft) ist das automatisch gegeben.</summary>
+        /// <summary>Calls a method on `obj` nested (see
+        /// RunDestructor/RunFinallyNested) and returns its return value -
+        /// or `null` if the call did NOT end normally via `Return`,
+        /// but an exception redirected the execution completely elsewhere via a continuation jump (ThrowException/
+        /// ResumeException)
+        /// (e.g. into a `catch` outside this call). In that case
+        /// NO return value was ever pushed, and the caller itself must not do anything
+        /// any more (no push of its own, no further processing) - the
+        /// execution already continues elsewhere. This is recognised
+        /// NOT via the frame depth (which could by coincidence
+        /// fit exactly again through a nesting, see e.g. a try/catch on exactly
+        /// this level), but robustly via whether chunk/ip/scope after the
+        /// nested execution have landed exactly at the initial state again
+        /// - this is guaranteed only with a real, normal
+        /// return (which restores exactly these three values from the pushed frame
+        /// ).</summary>
+        /// <summary>Takes a snapshot of ALL current values of the global
+        /// scope of THIS VM - intended for native callback registration
+        /// (see Runtime.FireRuntime.CallCallback), the same basic idea as
+        /// the internal snapshot before a 'fire' block (OpCode.Fire), only
+        /// triggered from OUTSIDE (host C# code) instead of by a script opcode.
+        /// The caller MUST ensure that this call does
+        /// NOT happen simultaneously with a running bytecode execution of THIS
+        /// VM on ANOTHER thread (no built-in locking
+        /// here, for the same race reason as with the 'fire' snapshot) - for
+        /// the usual use (the host registers a callback,
+        /// directly following the native registration call, while
+        /// the script is thus standing in exactly this call, not
+        /// running concurrently elsewhere) this is automatically given.</summary>
         public IReadOnlyList<Value> SnapshotGlobals()
         {
             var snapshot = new Value[_globalScope.SlotCount];
@@ -5087,12 +5084,12 @@ namespace fire.Runtime
             return snapshot;
         }
 
-        /// <summary>Führt ein Lambda, das ein NATIVER Aufruf dieser VM auslöst (z.B. ein Fenster-Ereignis, das `Window.Tick` liefert),
-        /// verschachtelt auf dieser VM aus: es sieht die echten globalen Variablen (lesend UND schreibend, wie jedes Lambda, SPEC 4.2),
-        /// ohne Kopie und ohne Thread-Sperren, und `leave`/`terminate` darin wirken auf dieses Programm. Nur aufrufen, wenn der Aufruf
-        /// auf dem Thread dieser VM geschieht (`VM.CurrentThreadVm`). Liefert null, wenn das Lambda normal endete (oder das Programm
-        /// beendet wurde), sonst die unbehandelte Exception des Lambdas - die den Aufrufer NICHT unterbricht: wie bei jedem Callback
-        /// meldet sie der Host, das Programm läuft weiter.</summary>
+        /// <summary>Executes a lambda that a NATIVE call of this VM triggers (e.g. a window event that `Window.Tick` delivers),
+        /// nested on this VM: it sees the real global variables (reading AND writing, like any lambda, SPEC 4.2),
+        /// without a copy and without thread locks, and `leave`/`terminate` in it act on this program. Call only if the call
+        /// happens on the thread of this VM (`VM.CurrentThreadVm`). Returns null if the lambda ended normally (or the program
+        /// was ended), otherwise the unhandled exception of the lambda - which does NOT interrupt the caller: like for any callback
+        /// the host reports it, the program keeps running.</summary>
         public ObjectInstance? CallLambdaInline(LambdaValue lambda, Value[] args)
         {
             CheckArity(lambda.Proto, args.Length);
@@ -5122,8 +5119,8 @@ namespace fire.Runtime
             }
             catch
             {
-                // Eine C#-Ausnahme mitten im Callback (z.B. ein Zugriff außerhalb des Arrays im Performance-Modus, der nichts prüft):
-                // den Zustand des Aufrufers wiederherstellen, damit das Programm weiterlaufen kann, und die Ausnahme dem Host melden.
+                // A C# exception in the middle of the callback (e.g. an access outside the array in performance mode, which checks nothing):
+                // restore the caller's state so that the program can keep running, and report the exception to the host.
                 while (_frames.Count > frameDepth + 1) _frames.Pop();
                 var callerFrame = _frames.Pop();
                 _currentChunk = callerFrame.ReturnChunk;
@@ -5137,29 +5134,29 @@ namespace fire.Runtime
             }
             _callbackBoundaries.Pop();
 
-            // `leave`/`terminate` im Callback: das Programm ordentlich abwickeln (beim Zurückkehren in die Hauptschleife steht der Halt).
+            // `leave`/`terminate` in the callback: unwind the program in an orderly way (on returning into the main loop the halt stands there).
             if (_shutdownDeferred) FinishDeferredShutdown();
 
             var error = _callbackError;
             _callbackError = null;
             if (error != null) return error;
 
-            PopNestedResult(); // der (unbenutzte) Rückgabewert des Lambdas
+            PopNestedResult(); // the (unused) return value of the lambda
             return null;
         }
 
-        /// <summary>Ruft eine Lambda als die EINZIGE Ausführung DIESER VM-
-        /// Instanz auf - anders als CallMethodNested (verschachtelt in ein
-        /// bereits laufendes Hauptprogramm) für eine FRISCH dafür angelegte
-        /// VM ohne eigenes "Hauptprogramm" (siehe Runtime.FireRuntime.
-        /// CallCallback, für native Callbacks). `this` im Lambda-Körper ist
-        /// `lambda.OnTarget`, wie bei jedem anderen Lambda-Aufruf (SPEC
-        /// 4.2/Runtime.LambdaValue) - die Lambda sieht dabei laut
-        /// Sprachdefinition ohnehin nur ihren eigenen Scope plus DIESER
-        /// VM-Instanz globalen Scope (`_globalScope`, hier beim Konstruieren
-        /// übergeben), nie die Locals eines wie auch immer gearteten
-        /// "aufrufenden" Kontexts - der Aufrufer dieser Methode ist reiner
-        /// C#-Code, kein Skript-Scope.</summary>
+        /// <summary>Calls a lambda as the ONLY execution of THIS VM
+        /// instance - unlike CallMethodNested (nested into an
+        /// already running main program) for a FRESHLY created
+        /// VM without a "main program" of its own (see Runtime.FireRuntime.
+        /// CallCallback, for native callbacks). `this` in the lambda body is
+        /// `lambda.OnTarget`, as with any other lambda call (SPEC
+        /// 4.2/Runtime.LambdaValue) - according to the
+        /// language definition the lambda anyway sees only its own scope plus the global scope of THIS
+        /// VM instance (`_globalScope`, passed here on construction), never the locals of any
+        /// kind of
+        /// "calling" context - the caller of this method is pure
+        /// C# code, not a script scope.</summary>
         public Value CallLambdaEntry(LambdaValue lambda, Value[] args)
         {
             CheckArity(lambda.Proto, args.Length);
@@ -5183,15 +5180,15 @@ namespace fire.Runtime
 
             RunNestedUntil(targetDepth);
 
-            // `leave`/`terminate` im Callback: sauber abwickeln (kein Fehler, der Callback liefert nichts).
+            // `leave`/`terminate` in the callback: unwind cleanly (no error, the callback returns nothing).
             if (_shutdownDeferred)
             {
                 FinishDeferredShutdown();
                 return Value.MakeUndefined();
             }
 
-            // Ein unbehandelter Fehler im Callback beendet die VM (StopExecution): der Host bekommt ihn als Ausnahme, die er
-            // bewusst fangen kann (siehe FireRuntime.CallCallback) - statt dass hier ein Rückgabewert fehlt.
+            // An unhandled error in the callback ends the VM (StopExecution): the host receives it as an exception that it
+            // can deliberately catch (see FireRuntime.CallCallback) - instead of a return value missing here.
             if (_stopExecutionRequested)
                 throw UnhandledException != null
                     ? new UncaughtScriptException(UnhandledException)
@@ -5207,11 +5204,11 @@ namespace fire.Runtime
             if (proto == null)
                 throw new InvalidOperationException(
                     $"Method '{methodName}' not found on '{rc.Name}' (needed for a property or operator overload).");
-            // Deckt sowohl Property-Zugriffe (get_X/set_X, siehe VM.GetField/
-            // SetField) als auch Operator-Überladungen ab (siehe
-            // Parser.ParseOperatorMember) - Operatoren bekommen nie einen
-            // expliziten Modifikator (immer Public), die Prüfung greift hier
-            // also praktisch nur für Properties.
+            // Covers both property accesses (get_X/set_X, see VM.GetField/
+            // SetField) and operator overloads (see
+            // Parser.ParseOperatorMember) - operators never get an
+            // explicit modifier (always Public), the check therefore
+            // practically only applies here to properties.
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcNested!, accessNested))
             {
                 ThrowAccessDenied(
@@ -5244,12 +5241,12 @@ namespace fire.Runtime
             return completedNormally ? Pop() : (Value?)null;
         }
 
-        /// <summary>Wie CallMethodNested, aber für eine STATISCHE Methode
-        /// (SPEC "Statische Mitglieder") - kein ObjectInstance, kein
-        /// gebundenes 'this' (siehe OpCode.CallStaticMethod für dieselbe
-        /// Begründung). Für den Property-Getter-Fallback in GetStaticField
-        /// (statisches 'get_X', analog zu CallMethodNested dort für
-        /// Instanz-Properties).</summary>
+        /// <summary>Like CallMethodNested, but for a STATIC method
+        /// (SPEC "Static members") - no ObjectInstance, no
+        /// bound 'this' (see OpCode.CallStaticMethod for the same
+        /// reasoning). For the property getter fallback in GetStaticField
+        /// (static 'get_X', analogous to CallMethodNested there for
+        /// instance properties).</summary>
         private Value? CallStaticMethodNested(RuntimeClass rc, string methodName, Value[] args)
         {
             var (proto, declaringRcNested, accessNested) = rc.FindMethodWithAccess(methodName, args.Length);
@@ -5289,15 +5286,15 @@ namespace fire.Runtime
             return completedNormally ? Pop() : (Value?)null;
         }
 
-        /// <summary>Konstruiert eine neue Instanz von `rc` verschachtelt (wie
-        /// CallMethodNested) und liefert sie fertig konstruiert zurück - für
-        /// von der VM SELBST erzeugte Exceptions (siehe ThrowIndexOutOfBounds),
-        /// wo kein Skript-`new` im Bytecode steht, das die Instanz erzeugen
-        /// könnte. Wie CallMethodNested robust gegen eine Exception, die WÄHREND
-        /// der Konstruktion auftritt (Continuation-Sprung statt normalem
-        /// Return) - in dem (sehr seltenen) Fall gibt es keine fertige Instanz,
-        /// das wird als harter interner Fehler behandelt statt versucht,
-        /// rekursiv noch eine WEITERE Exception dafür zu bauen.</summary>
+        /// <summary>Constructs a new instance of `rc` nested (like
+        /// CallMethodNested) and returns it fully constructed - for
+        /// exceptions created by the VM ITSELF (see ThrowIndexOutOfBounds),
+        /// where there is no script `new` in the bytecode that could create the instance.
+        /// Like CallMethodNested robust against an exception that occurs DURING
+        /// construction (continuation jump instead of normal
+        /// return) - in that (very rare) case there is no finished instance,
+        /// this is treated as a hard internal error instead of trying
+        /// to recursively build yet ANOTHER exception for it.</summary>
         private ObjectInstance ConstructNested(RuntimeClass rc, Value[] args)
         {
             var ctorProto = rc.FindConstructor(args.Length)
@@ -5330,15 +5327,15 @@ namespace fire.Runtime
                     $"Internal error: construction of '{rc.Name}' was interrupted by an exception " +
                     "(exception while building a VM-internal exception instance).");
 
-            Pop(); // Return am Ende des Konstruktors pusht 'instance' selbst (siehe BeginConstruction/frame.ConstructedInstance) - haben wir schon direkt, hier verwerfen
+            Pop(); // Return at the end of the constructor pushes 'instance' itself (see BeginConstruction/frame.ConstructedInstance) - we already have it directly, discard here
             return instance;
         }
 
-        /// <summary>Ruft eine native Funktion auf. Meldet sie einen ungültigen Index
-        /// (<see cref="NativeIndexOutOfRangeException"/>, z.B. `"abc".Substring(9)`), wird daraus eine
-        /// fangbare `IndexOutOfBoundsException` des Skripts und `false` geliefert (KEIN Ergebnis pushen -
-        /// die Ausführung läuft schon im Handler weiter). Eigene Methode statt try/catch mitten in
-        /// Execute, damit dessen Register-Zuteilung unberührt bleibt.</summary>
+        /// <summary>Calls a native function. If it reports an invalid index
+        /// (<see cref="NativeIndexOutOfRangeException"/>, e.g. `"abc".Substring(9)`), it is turned into a
+        /// catchable `IndexOutOfBoundsException` of the script and `false` is returned (push NO result -
+        /// execution already continues in the handler). A separate method instead of try/catch in the middle of
+        /// Execute, so that its register allocation stays untouched.</summary>
         private bool CallNativeGuarded(int nativeIdx, Value[] args, out Value result)
         {
             try
@@ -5346,7 +5343,7 @@ namespace fire.Runtime
                 result = _natives[nativeIdx](args);
                 if (_nativeRedirected)
                 {
-                    // Die native Funktion (Reflection) hat eine Exception ausgelöst, die schon in einen Handler umgeleitet ist
+                    // The native function (reflection) raised an exception that has already been redirected to a handler
                     _nativeRedirected = false;
                     return false;
                 }
@@ -5361,14 +5358,14 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Baut eine `IndexOutOfBoundsException`-Instanz (Prelude) und
-        /// wirft sie ganz normal über ThrowException - macht einen ungültigen
-        /// Array-Index zu einer echten, per `try`/`catch` fangbaren Skript-
-        /// Exception statt eines rohen C#-Fehlers, der das ganze Programm
-        /// abbrechen würde. Aufgerufen aus ArrayGet/ArraySet, wenn
-        /// ScriptArray/ByteBuffer.TryGet/TrySet `false` liefert (bewusst kein
-        /// throw/catch dort selbst - siehe ScriptArray-Doku, C++-Portier-
-        /// barkeit).</summary>
+        /// <summary>Builds an `IndexOutOfBoundsException` instance (prelude) and
+        /// throws it quite normally via ThrowException - turns an invalid
+        /// array index into a real script exception catchable via `try`/`catch`
+        /// instead of a raw C# error that would abort the
+        /// whole program. Called from ArrayGet/ArraySet when
+        /// ScriptArray/ByteBuffer.TryGet/TrySet returns `false` (deliberately no
+        /// throw/catch there itself - see ScriptArray documentation, C++
+        /// portability).</summary>
         private void ThrowIndexOutOfBounds(long index, int length, string what = "Array index")
         {
             var rc = ResolveClass("IndexOutOfBoundsException");
@@ -5378,13 +5375,13 @@ namespace fire.Runtime
             ThrowException(Value.MakeClassRef(instance));
         }
 
-        /// <summary>Ein Array/Puffer, den eine eingebaute oder native Funktion frisch erzeugt hat (noch ohne Owner), gehoert dem aktuellen Scope.</summary>
+        /// <summary>An array/buffer that a built-in or native function has freshly created (still without owner) belongs to the current scope.</summary>
         private void AdoptFresh(Value v)
         {
             if (LeafOf(v) is { LeafOwner: null, IsDestroyed: false } leaf) LeafOwnership.Adopt(leaf, _currentScope);
         }
 
-        /// <summary>Legt ein mehrdimensionales Array an; die inneren Arrays kommen in <paramref name="parts"/> (sie gehoeren dem aeusseren).</summary>
+        /// <summary>Creates a multi-dimensional array; the inner arrays come in <paramref name="parts"/> (they belong to the outer one).</summary>
         private static ScriptArray BuildJagged(long[] sizes, int level, List<IOwnedLeaf> parts)
         {
             var array = new ScriptArray((int)sizes[level]);
@@ -5398,7 +5395,7 @@ namespace fire.Runtime
             return array;
         }
 
-        /// <summary>Gehoert etwas dem Scope des aktuellen Aufrufs (dem aktuellen Scope oder einem umgebenden der laufenden Funktion; im Hauptprogramm auch dem globalen)?</summary>
+        /// <summary>Does something belong to the scope of the current call (the current scope or a surrounding one of the running function; in the main program also the global one)?</summary>
         private bool IsCurrentCallOwner(IOwner? owner)
         {
             if (owner is not Scope scope) return false;
@@ -5406,8 +5403,8 @@ namespace fire.Runtime
             return _frames.Count == 0 && scope.IsGlobal;
         }
 
-        /// <summary>`x = wert` mit einer Variable in einem aeusseren Scope: gehoert der Wert einem inneren Block (Schleife, `if`) der laufenden Funktion, wandert er
-        /// in deren Funktions-Scope - nie aus der Funktion heraus (im Hauptprogramm: in den globalen Scope).</summary>
+        /// <summary>`x = value` with a variable in an outer scope: if the value belongs to an inner block (loop, `if`) of the running function, it moves
+        /// into its function scope - never out of the function (in the main program: into the global scope).</summary>
         private void HoistValue(Value v)
         {
             IOwner? owner = v.Kind switch
@@ -5433,7 +5430,7 @@ namespace fire.Runtime
             else if (LeafOf(v) is { IsDestroyed: false } leaf) LeafOwnership.Reparent(leaf, target);
         }
 
-        /// <summary>Der Wert als besitzbares Blatt (Array oder Puffer), sonst null.</summary>
+        /// <summary>The value as an ownable leaf (array or buffer), otherwise null.</summary>
         private static IOwnedLeaf? LeafOf(Value v) => v.Kind switch
         {
             ValueKind.Array => v.AsArray(),
@@ -5441,12 +5438,12 @@ namespace fire.Runtime
             _ => null,
         };
 
-        /// <summary>Ist der Wert ein zerstoerter Array/Puffer, dessen Benutzung geprueft wird (nicht im Performance-Modus)?</summary>
+        /// <summary>Is the value a destroyed array/buffer whose use is checked (not in performance mode)?</summary>
         private bool IsDestroyedLeaf(Value v) =>
             v.Kind is ValueKind.Array or ValueKind.Buffer && ExecutionMode != VmExecutionMode.Performance
             && (v.Kind == ValueKind.Array ? v.AsArray().IsDestroyed : v.AsBuffer().IsDestroyed);
 
-        /// <summary>Benutzung eines zerstoerten Arrays/Puffers: eine fangbare `DestroyedException` (Prelude).</summary>
+        /// <summary>Use of a destroyed array/buffer: a catchable `DestroyedException` (prelude).</summary>
         private void ThrowDestroyed(Value leaf)
         {
             var rc = ResolveClass("DestroyedException");
@@ -5455,8 +5452,8 @@ namespace fire.Runtime
             ThrowException(Value.MakeClassRef(instance));
         }
 
-        /// <summary>Benutzung eines zerstoerten Objekts (SPEC 2.5): eine fangbare `DestroyedException`. Nicht im Performance-Modus.</summary>
-        /// <summary>`*p` (SPEC 8.3): ausserhalb des Bereichs (Element jenseits der Grenzen, Versatz bei einer Variable, zerstoertes Array) wird die fangbare Ausnahme geworfen - false.</summary>
+        /// <summary>Use of a destroyed object (SPEC 2.5): a catchable `DestroyedException`. Not in performance mode.</summary>
+        /// <summary>`*p` (SPEC 8.3): outside the range (element beyond the bounds, offset on a variable, destroyed array) the catchable exception is thrown - false.</summary>
         private bool TryReadPointer(Value ptr, out Value value)
         {
             try { value = ptr.AsPointer().Read(); return true; }
@@ -5480,7 +5477,7 @@ namespace fire.Runtime
             ThrowIndexOutOfBounds(ex.Index, (int)ex.Length, ex.What);
         }
 
-        /// <summary>Der Wert hinter dem Zeiger, den der Aufrufer fuer einen `ref`-Parameter uebergeben hat, wenn der Aufgerufene keinen kennt; ausserhalb des Bereichs: undefined (die Ausnahme ist geworfen).</summary>
+        /// <summary>The value behind the pointer that the caller passed for a `ref` parameter if the callee knows none; outside the range: undefined (the exception is thrown).</summary>
         private Value ReadRefArgument(Value ptr) => TryReadPointer(ptr, out var v) ? v : Value.MakeUndefined();
 
         private bool IsDeadObject(ObjectInstance obj) => obj.IsDead && ExecutionMode != VmExecutionMode.Performance;
@@ -5500,14 +5497,14 @@ namespace fire.Runtime
             ThrowException(Value.MakeClassRef(instance));
         }
 
-        /// <summary>Baut eine `UnitMismatchException`-Instanz (Prelude) und
-        /// wirft sie ganz normal über ThrowException (SPEC "Einheiten-
-        /// Deklarationen") - macht eine Einheiten-Verletzung bei einer
-        /// Deklaration mit explizitem `: einheit` zu einer echten, per
-        /// `try`/`catch` fangbaren Skript-Exception. Aufgerufen aus
-        /// OpCode.CheckUnit (lokale/globale Variablen, Parameter) sowie
-        /// SetField/SetFieldOnThis (Felder, siehe dort für die Begründung,
-        /// warum das dort statt zur Compile-Zeit geprüft wird).</summary>
+        /// <summary>Builds a `UnitMismatchException` instance (prelude) and
+        /// throws it quite normally via ThrowException (SPEC "Unit
+        /// declarations") - turns a unit violation in a
+        /// declaration with an explicit `: unit` into a real script exception catchable via
+        /// `try`/`catch`. Called from
+        /// OpCode.CheckUnit (local/global variables, parameters) and
+        /// SetField/SetFieldOnThis (fields, see there for the reason
+        /// why this is checked there instead of at compile time).</summary>
         private void ThrowUnitMismatch(string requiredUnitName, Values.Unit actualUnit)
         {
             var rc = ResolveClass("UnitMismatchException");
@@ -5518,37 +5515,37 @@ namespace fire.Runtime
             ThrowException(Value.MakeClassRef(instance));
         }
 
-        /// <summary>Prüft, ob der GERADE ausführende Code laut
-        /// Zugriffsmodifikator auf ein Mitglied zugreifen darf, das
-        /// `declaringRc` selbst deklariert hat. `Public` (oder gar kein
-        /// Eintrag vorhanden - Rückwärtskompatibilität) ist immer erlaubt.
+        /// <summary>Checks whether the CURRENTLY executing code is allowed, according to the
+        /// access modifier, to access a member that
+        /// `declaringRc` itself declared. `Public` (or no
+        /// entry at all - backward compatibility) is always allowed.
         ///
-        /// "Wer greift gerade zu" ist `_currentChunk.OwnerClass` - die
-        /// Klasse, deren Methode/Konstruktor/Property-Accessor GERADE
-        /// ausführt (siehe Chunk.OwnerClass-Doku). BEWUSST NICHT
-        /// `_currentThis`s konkrete Klasse: eine `Derived`-Instanz, die eine
-        /// geerbte, nicht überschriebene `Base`-Methode aufruft (oder deren
-        /// Konstruktion gerade `Base`s eigenen Konstruktor-Code über
-        /// ConstructBase durchläuft), hat `this` konkret als `Derived`
-        /// gebunden, obwohl `Base`s eigener Code läuft - für "darf DIESER
-        /// Code auf Base's privates Mitglied zugreifen" zählt, WESSEN CODE
-        /// läuft, nicht welcher konkreten Klasse die Instanz angehört (sonst
-        /// würde z.B. jede Konstruktion einer abgeleiteten Klasse an einem
-        /// privaten Feld-Initialisierer der Basisklasse scheitern - genau
-        /// dieser Fehler wurde hier gefunden und korrigiert).</summary>
+        /// "Who is accessing right now" is `_currentChunk.OwnerClass` - the
+        /// class whose method/constructor/property accessor is CURRENTLY
+        /// executing (see Chunk.OwnerClass documentation). DELIBERATELY NOT
+        /// the concrete class of `_currentThis`: a `Derived` instance that calls an
+        /// inherited, not overridden `Base` method (or whose
+        /// construction is currently running through `Base`'s own constructor code via
+        /// ConstructBase), has `this` bound concretely as `Derived`
+        /// although `Base`'s own code is running - for "may THIS
+        /// code access Base's private member" what counts is WHOSE CODE
+        /// is running, not which concrete class the instance belongs to (otherwise
+        /// e.g. every construction of a derived class would fail on a
+        /// private field initialiser of the base class - exactly
+        /// this error was found and corrected here).</summary>
         private bool IsMemberAccessAllowed(RuntimeClass declaringRc, AccessModifier access)
         {
             if (access == AccessModifier.Public) return true;
 
             var callerRc = _currentChunk.OwnerClass;
-            // Läuft der Zugriff über die Reflection-Bibliothek (`Reflect.Get` &amp; Co.), zählt der Code, der sie aufgerufen hat
+            // If the access goes via the reflection library (`Reflect.Get` &amp; co.), the code that called it counts
             if (callerRc is { IsReflectionHelper: true }) callerRc = ReflectionCallerClass();
             if (callerRc == null) return false;
 
             if (access == AccessModifier.Private)
                 return ReferenceEquals(callerRc, declaringRc);
 
-            // Protected: callerRc selbst oder irgendeine davon abgeleitete Klasse.
+            // Protected: callerRc itself or any class derived from it.
             for (var rc = callerRc; rc != null; rc = rc.Base)
                 if (ReferenceEquals(rc, declaringRc)) return true;
             return false;
@@ -5561,26 +5558,26 @@ namespace fire.Runtime
             _ => "public",
         };
 
-        /// <summary>Grundlage für JEDE arithmetische/bitweise/Vergleichs-
-        /// Operation (siehe die entsprechenden OpCode-Handler): ist der LINKE
-        /// Operand ein Objekt MIT einer passenden Operator-Überladungs-
-        /// Methode (siehe Ast.MethodDecl-Namenskonvention "operator+" etc.,
-        /// erzeugt von Parser.ParseOperatorMember), wird DIESE genestet
-        /// aufgerufen (`this` = der linke Operand, ein Parameter = der
-        /// rechte) - GENAU dasselbe Muster, das ArrayGet/ArraySet schon immer
-        /// für 'GetIndex'/'SetIndex' verwenden, hier verallgemeinert für ALLE
-        /// binären Operatoren. Sonst (kein Objekt, oder ein Objekt ohne
-        /// passende Methode) die eingebaute Operation `op`. Bewusst NUR der
-        /// LINKE Operand wird auf eine Überladung geprüft (kein Pythons
-        /// `__radd__`-Äquivalent für den rechten Operanden) - siehe
-        /// ParseOperatorMember-Doku für die Begründung.</summary>
-        /// <summary>Eingebaute Methoden auf primitiven Werten (String/Char/
-        /// Int/Buffer, siehe SPEC 8.10 für die vollständige Tabelle) -
-        /// 'obj.Method()' geht normalerweise auf eine ObjectInstance (siehe
-        /// OpCode.CallMethod); für jeden anderen ValueKind prüft diese Liste
-        /// stattdessen die eingebauten Konvertierungen. Liefert false (statt
-        /// zu werfen), wenn kein Treffer vorliegt - der Aufrufer entscheidet
-        /// dann selbst, wie er das meldet.</summary>
+        /// <summary>Basis for EVERY arithmetic/bitwise/comparison
+        /// operation (see the corresponding OpCode handlers): if the LEFT
+        /// operand is an object WITH a matching operator overload
+        /// method (see Ast.MethodDecl naming convention "operator+" etc.,
+        /// generated by Parser.ParseOperatorMember), THAT one is called
+        /// nested (`this` = the left operand, one parameter = the
+        /// right one) - EXACTLY the same pattern that ArrayGet/ArraySet have always
+        /// used for 'GetIndex'/'SetIndex', generalised here for ALL
+        /// binary operators. Otherwise (no object, or an object without a
+        /// matching method) the built-in operation `op`. Deliberately ONLY the
+        /// LEFT operand is checked for an overload (no Python
+        /// `__radd__` equivalent for the right operand) - see the
+        /// ParseOperatorMember documentation for the reasoning.</summary>
+        /// <summary>Built-in methods on primitive values (string/char/
+        /// int/buffer, see SPEC 8.10 for the complete table) -
+        /// 'obj.Method()' normally goes to an ObjectInstance (see
+        /// OpCode.CallMethod); for every other ValueKind this list
+        /// instead checks the built-in conversions. Returns false (instead of
+        /// throwing) if there is no hit - the caller then decides
+        /// itself how to report that.</summary>
         private static bool TryCallBuiltinMethod(Value target, string methodName, Value[] args, out Value result)
         {
             result = default;
@@ -5648,12 +5645,12 @@ namespace fire.Runtime
                         result = Value.MakeChar(ByteConversions.UnicodeDecodeChar(buf, (int)args[0].AsInt()));
                         return true;
                     }
-                    // Endianness (siehe ByteBuffer-Doku): stimmt die
-                    // AKTUELLE Order schon, liefert eine reine Kopie (kein
-                    // Byte-Swap nötig); sonst eine gespiegelte Kopie mit der
-                    // neuen Order. Das Original bleibt in JEDEM Fall
-                    // unverändert - wie jede andere "gibt einen neuen Wert
-                    // zurück"-Konvertierung in dieser Sprache.
+                    // Endianness (see ByteBuffer documentation): if the
+                    // CURRENT order is already right, returns a pure copy (no
+                    // byte swap needed); otherwise a mirrored copy with the
+                    // new order. The original stays unchanged in EVERY
+                    // case - like every other "returns a new value"
+                    // conversion in this language.
                     if (methodName == "ToLittleEndian" && args.Length == 0)
                     {
                         result = Value.MakeBuffer(buf.Order == ByteOrder.Little ? buf.Clone() : buf.Reversed(ByteOrder.Little));
@@ -5677,7 +5674,7 @@ namespace fire.Runtime
             var b = Pop();
             var a = Pop();
 
-            // `"text" + objekt` / `objekt + "text"`: ein Objekt mit `ToString()` geht mit diesem Text in die Verkettung ein
+            // `"text" + object` / `object + "text"`: an object with `ToString()` enters the concatenation with this text
             if (operatorMethodName == "operator+"
                 && ((a.Kind == ValueKind.String && b.Kind == ValueKind.Class)
                     || (b.Kind == ValueKind.String && a.Kind == ValueKind.Class
@@ -5696,10 +5693,10 @@ namespace fire.Runtime
                 if (rc.FindMethod(operatorMethodName, 1) != null)
                 {
                     var result = CallMethodNested(obj, operatorMethodName, new[] { b });
-                    // null == die Überladung wurde durch eine geworfene
-                    // Exception verlassen (siehe CallMethodNested-Doku) -
-                    // dann NICHT pushen, die Ausführung läuft bereits
-                    // anderswo weiter.
+                    // null == the overload was left through a thrown
+                    // exception (see CallMethodNested documentation) -
+                    // then do NOT push, execution already continues
+                    // elsewhere.
                     if (result != null) Push(result.Value);
                     return;
                 }
@@ -5729,15 +5726,15 @@ namespace fire.Runtime
                 $", got {argCount}.");
         }
 
-        /// <summary>Baut bei Bedarf das vollständige Argument-Array für einen
-        /// Aufruf gegen `proto` auf - ergänzt fehlende TRAILING Parameter um
-        /// ihre ausgewerteten Standardwerte (siehe FunctionProto.ParamDefaults,
-        /// Ast.LambdaParam.DefaultValue-Doku). Der Aufrufer muss VORHER schon
-        /// per CheckArity/RuntimeClass.FindMethod/FindConstructor sichergestellt
-        /// haben, dass genug Standardwerte vorhanden sind. `thisForDefaults`
-        /// wird beim Auswerten gebunden (z.B. für einen Standardwert wie
-        /// `= this.irgendwas`) - null, wenn an dieser Stelle kein `this`
-        /// sinnvoll ist (z.B. freistehende Lambdas ohne `on`-Bindung).</summary>
+        /// <summary>Builds, if needed, the complete argument array for a
+        /// call against `proto` - supplements missing TRAILING parameters with
+        /// their evaluated default values (see FunctionProto.ParamDefaults,
+        /// Ast.LambdaParam.DefaultValue documentation). The caller must BEFOREHAND have
+        /// ensured via CheckArity/RuntimeClass.FindMethod/FindConstructor
+        /// that enough default values are present. `thisForDefaults`
+        /// is bound when evaluating (e.g. for a default value like
+        /// `= this.something`) - null if no `this` makes
+        /// sense at this point (e.g. free-standing lambdas without an `on` binding).</summary>
         private Value[] FillDefaultArgs(FunctionProto proto, Value[] suppliedArgs, object? thisForDefaults)
         {
             if (suppliedArgs.Length == proto.ParamCount) return suppliedArgs;
@@ -5756,13 +5753,13 @@ namespace fire.Runtime
             return result;
         }
 
-        /// <summary>Wertet einen Standardwert-Proto (0 Argumente) verschachtelt
-        /// aus - dieselbe Technik wie CallMethodNested/ConstructNested (siehe
-        /// dort für die Erklärung, warum robust gegen eine Exception geprüft
-        /// wird, die die Auswertung per Continuation-Sprung verlässt: bei
-        /// einem einfachen Standardwert-Ausdruck ist das zwar ein sehr seltener
-        /// Fall, aber kein grundsätzlich unmöglicher - z.B. ein Standardwert,
-        /// der selbst einen Methodenaufruf enthält, der wirft).</summary>
+        /// <summary>Evaluates a default-value proto (0 arguments) nested
+        /// - the same technique as CallMethodNested/ConstructNested (see
+        /// there for the explanation why it is checked robustly against an exception
+        /// that leaves the evaluation via a continuation jump: for
+        /// a simple default-value expression that is indeed a very rare
+        /// case, but not fundamentally impossible - e.g. a default value
+        /// that itself contains a method call that throws).</summary>
         private Value EvaluateDefaultNested(FunctionProto defaultProto, object? thisForDefaults)
         {
             var savedChunk = _currentChunk;
@@ -5790,12 +5787,12 @@ namespace fire.Runtime
             return Pop();
         }
 
-        /// <summary>Baut eine hilfreiche Fehlermeldung für einen gescheiterten
-        /// Methodenaufruf (RuntimeClass.FindMethod hat nichts gefunden) -
-        /// unterscheidet "Methode existiert unter diesem Namen gar nicht" von
-        /// "Methode existiert, aber keine Überladung mit dieser Argumentzahl"
-        /// (und listet im zweiten Fall die tatsächlich vorhandenen
-        /// Argumentzahlen mit auf, über die ganze Basisklassen-Kette).</summary>
+        /// <summary>Builds a helpful error message for a failed
+        /// method call (RuntimeClass.FindMethod found nothing) -
+        /// distinguishes "method does not exist under this name at all" from
+        /// "method exists, but no overload with this argument count"
+        /// (and in the second case also lists the argument counts
+        /// actually present, across the whole base-class chain).</summary>
         private static string DescribeMethodNotFound(RuntimeClass rc, string methodName, int argCount)
         {
             var arities = new List<int>();
@@ -5811,12 +5808,12 @@ namespace fire.Runtime
                    $"(available: {string.Join(", ", distinctArities)} argument(s)).";
         }
 
-        /// <summary>Analog zu DescribeMethodNotFound, für Konstruktoren (keine
-        /// Basisklassen-Kette, siehe RuntimeClass.Constructors-Doku).</summary>
+        /// <summary>Analogous to DescribeMethodNotFound, for constructors (no
+        /// base-class chain, see RuntimeClass.Constructors documentation).</summary>
         private static string DescribeConstructorNotFound(RuntimeClass rc, int argCount)
         {
             if (rc.Constructors.Count == 0)
-                return $"Class '{rc.Name}' has no constructor."; // sollte nie vorkommen, immer mind. 1 synthetisiert
+                return $"Class '{rc.Name}' has no constructor."; // should never occur, at least 1 is always synthesised
             var arities = rc.Constructors.Keys.OrderBy(x => x);
             return $"Class '{rc.Name}' has no constructor with {argCount} argument(s) " +
                    $"(available: {string.Join(", ", arities)} argument(s)).";
@@ -5832,9 +5829,9 @@ namespace fire.Runtime
             _ => throw new InvalidOperationException($"Unknown TypeTag {tag}"),
         };
 
-        /// <summary>Verpackt einen 'on'-Zielwert für LambdaValue.OnTarget. Bei
-        /// einer Objektreferenz die ObjectInstance direkt, sonst den Value als
-        /// object geboxt.</summary>
+        /// <summary>Wraps an 'on' target value for LambdaValue.OnTarget. For
+        /// an object reference the ObjectInstance directly, otherwise the Value
+        /// boxed as object.</summary>
         private static object BoxValueForOnTarget(Value v) =>
             v.Kind == ValueKind.Class ? v.AsObjectRef() : v;
 

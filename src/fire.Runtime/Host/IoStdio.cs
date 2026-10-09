@@ -3,11 +3,11 @@ using System.Text;
 namespace fire.IO.Bridge
 {
     /// <summary>
-    /// Wohin `IO.Stdio` (Standardein-/-ausgabe/-fehler eines Skripts) führt -
-    /// entscheidet der HOST: ein Konsolenprogramm die echte Konsole
-    /// (<see cref="SystemConsole"/>, Vorgabe), der Editor z.B. sein Ausgabefenster
-    /// (<see cref="Custom"/>). Jedes Öffnen liefert denselben Stream für die
-    /// ganze Sitzung (siehe IoBridge.IoHost).
+    /// Where `IO.Stdio` (standard input/output/error of a script) leads -
+    /// decided by the HOST: a console program the real console
+    /// (<see cref="SystemConsole"/>, default), the editor e.g. its output window
+    /// (<see cref="Custom"/>). Every open returns the same stream for the
+    /// whole session (see IoBridge.IoHost).
     /// </summary>
     public abstract class IoStdio
     {
@@ -15,14 +15,14 @@ namespace fire.IO.Bridge
         public abstract Stream OpenOutput();
         public abstract Stream OpenError();
 
-        /// <summary>Die echte Standardein-/-ausgabe/-fehler des Prozesses.</summary>
+        /// <summary>The real standard input/output/error of the process.</summary>
         public static IoStdio SystemConsole { get; } = new SystemConsoleStdio();
 
-        /// <summary>Ausgabe und Fehler zeilenweise an Rückruffunktionen (ohne
-        /// den Zeilenumbruch); eine unvollständige letzte Zeile bleibt bis zum
-        /// nächsten Umbruch oder `IO.Stdio.Flush()` liegen. `error` ohne Angabe
-        /// geht ebenfalls an `output`. `input`: ohne Angabe ein leerer Stream
-        /// (sofort Ende).</summary>
+        /// <summary>Output and error line by line to callback functions (without
+        /// the line break); an incomplete last line stays until the
+        /// next break or `IO.Stdio.Flush()`. `error` without a value
+        /// likewise goes to `output`. `input`: without a value an empty stream
+        /// (ends immediately).</summary>
         public static IoStdio Custom(Action<string> output, Action<string>? error = null, Stream? input = null) =>
             new CustomStdio(output, error ?? output, input ?? Stream.Null);
 
@@ -51,9 +51,9 @@ namespace fire.IO.Bridge
             public override Stream OpenError() => new LineCallbackStream(_error);
         }
 
-        /// <summary>Ein nur schreibbarer Stream, der UTF-8-Bytes zu Text
-        /// dekodiert (auch über Chunk-Grenzen hinweg mitten in einem
-        /// Mehrbyte-Zeichen) und ihn zeilenweise weitergibt.</summary>
+        /// <summary>A write-only stream that decodes UTF-8 bytes to text
+        /// (also across chunk boundaries in the middle of a
+        /// multi-byte character) and passes it on line by line.</summary>
         private sealed class LineCallbackStream : Stream
         {
             private readonly Action<string> _callback;

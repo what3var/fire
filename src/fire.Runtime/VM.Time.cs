@@ -5,8 +5,8 @@ namespace fire.Runtime
 {
     public sealed partial class VM
     {
-        /// <summary>Text eines Werts für Ausgabe und Textverkettung: ein Objekt mit einer parameterlosen `ToString()`-Methode liefert deren Ergebnis, alles andere
-        /// seine gewohnte Darstellung. null, wenn `ToString()` eine Exception ausgelöst hat, die schon in einen Handler umgeleitet wurde (kein Ergebnis).</summary>
+        /// <summary>Text of a value for output and text concatenation: an object with a parameterless `ToString()` method yields its result, everything else
+        /// its usual representation. null if `ToString()` raised an exception that was already redirected to a handler (no result).</summary>
         internal string? StringifyForText(fire.Values.Value v)
         {
             if (v.Kind != fire.Values.ValueKind.Class) return v.ToString();
@@ -17,8 +17,8 @@ namespace fire.Runtime
             return result.Value.Kind == fire.Values.ValueKind.String ? result.Value.AsString() : result.Value.ToString();
         }
 
-        /// <summary>Für den Host-`print`: das erste Argument, wenn es ein Objekt mit `ToString()` ist, als Text (siehe <see cref="StringifyForText"/>). null, wenn
-        /// die Umwandlung umgeleitet wurde - der native Aufruf liefert dann kein Ergebnis.</summary>
+        /// <summary>For the host `print`: the first argument, if it is an object with `ToString()`, as text (see <see cref="StringifyForText"/>). null if
+        /// the conversion was redirected - the native call then returns no result.</summary>
         public static fire.Values.Value[]? StringifyForPrint(fire.Values.Value[] args)
         {
             if (args.Length == 0 || args[0].Kind != fire.Values.ValueKind.Class || CurrentThreadVm is not { } vm) return args;
@@ -27,21 +27,21 @@ namespace fire.Runtime
             return new[] { fire.Values.Value.MakeString(text) };
         }
 
-        // Standard-Wartezeit der Warte-Funktionen (`#timeout`). Statisch, damit auch die Fire-Threads des Programms sie sehen; ein neues Hauptprogramm
-        // beginnt wieder mit 30 Sekunden (siehe den VM-Konstruktor).
+        // Default waiting time of the wait functions (`#timeout`). Static, so that the program's fire threads see it too; a new main program
+        // starts again with 30 seconds (see the VM constructor).
         private static long s_defaultTimeoutTicks = DefaultTimeoutTicks;
         private const long DefaultTimeoutTicks = 30L * 10_000_000;
 
-        /// <summary>Die Wartezeit, die eine Warte-Funktion ohne eigene Zeitangabe nimmt: das `#timeout` des Programms, sonst 30 Sekunden.</summary>
+        /// <summary>The waiting time that a wait function takes without a time specification of its own: the program's `#timeout`, otherwise 30 seconds.</summary>
         public static TimeSpan DefaultTimeout => TimeSpan.FromTicks(System.Threading.Volatile.Read(ref s_defaultTimeoutTicks));
 
         internal static void SetDefaultTimeout(TimeSpan timeout) => System.Threading.Volatile.Write(ref s_defaultTimeoutTicks, timeout.Ticks);
         internal static void ResetDefaultTimeout() => System.Threading.Volatile.Write(ref s_defaultTimeoutTicks, DefaultTimeoutTicks);
 
-        /// <summary>Wartet, bis `condition` wahr wird, höchstens `timeout` (ein `undefined` = <see cref="DefaultTimeout"/>; sonst eine TimeSpan, ein Zeitwert wie `500ms`
-        /// oder Millisekunden, wie bei `Sleep`). Kommt der Aufruf von einer VM (`CurrentThreadVm`), ist das Warten nicht taub (siehe <see cref="SleepTicks"/>):
-        /// `leave`/`terminate` beenden es sofort (Ergebnis false), die Warteschlange des Hauptprogramms läuft weiter. Liefert true, sobald `condition` wahr war.
-        /// `ArgumentException`, wenn `timeout` keine Zeitangabe ist.</summary>
+        /// <summary>Waits until `condition` becomes true, at most `timeout` (an `undefined` = <see cref="DefaultTimeout"/>; otherwise a TimeSpan, a time value like `500ms`
+        /// or milliseconds, as with `Sleep`). If the call comes from a VM (`CurrentThreadVm`), the waiting is not deaf (see <see cref="SleepTicks"/>):
+        /// `leave`/`terminate` end it immediately (result false), the main program's queue keeps running. Returns true as soon as `condition` was true.
+        /// `ArgumentException` if `timeout` is not a time specification.</summary>
         public static bool WaitUntil(Func<bool> condition, fire.Values.Value timeout)
         {
             long ticks;
@@ -75,10 +75,10 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>`Sleep`: legt diesen Thread für `ticks` (100 ns) schlafen - aber nicht taub. Zwischen den kurzen Schlafstücken läuft, was sonst an den sicheren
-        /// Punkten läuft (<see cref="PollSignalsAfterOp"/>): `leave`/`terminate` beenden das Schlafen sofort, zugestellte Fire-Thread-Exceptions werden behandelt, und
-        /// im Hauptprogramm arbeitet das automatische Abarbeiten der Warteschlange (Sektionen, `fire global`-Aufträge, Host-Callbacks; mit `#nosync` nicht).
-        /// Ein Eintrag in der Warteschlange weckt das Schlafen früher auf.</summary>
+        /// <summary>`Sleep`: puts this thread to sleep for `ticks` (100 ns) - but not deaf. Between the short sleep pieces, what otherwise runs at the safe
+        /// points runs (<see cref="PollSignalsAfterOp"/>): `leave`/`terminate` end the sleeping immediately, delivered fire-thread exceptions are handled, and
+        /// in the main program the automatic processing of the queue works (sections, `fire global` jobs, host callbacks; not with `#nosync`).
+        /// An entry in the queue wakes the sleeping earlier.</summary>
         public void SleepTicks(long ticks)
         {
             long deadline = Stopwatch.GetTimestamp() + (long)(ticks * (Stopwatch.Frequency / 10_000_000.0));

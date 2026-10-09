@@ -6,10 +6,10 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Die nativen Funktionen hinter der Reflection-Bibliothek (`#import "reflection"`, fire-Seite: <c>fire.Standard.ReflectionPrelude</c>).
-    /// Alles, was Werte liest/schreibt/aufruft, geht über die VM des aufrufenden Threads (<see cref="VM.ReflectGet"/> &amp; Co.) und damit
-    /// durch dieselben Prüfungen wie normaler Code; die Beschreibungen (Klassen, Mitglieder) entstehen hier aus den <see cref="RuntimeClass"/>-
-    /// Daten und den vom Compiler mitgeschriebenen <see cref="ClassMeta"/>.
+    /// The native functions behind the reflection library (`#import "reflection"`, fire side: <c>fire.Standard.ReflectionPrelude</c>).
+    /// Everything that reads/writes/calls values goes via the VM of the calling thread (<see cref="VM.ReflectGet"/> &amp; co.) and thus
+    /// through the same checks as normal code; the descriptions (classes, members) arise here from the <see cref="RuntimeClass"/>
+    /// data and the <see cref="ClassMeta"/> written along by the compiler.
     /// </summary>
     public static class ReflectionNatives
     {
@@ -89,8 +89,8 @@ namespace fire.Runtime
             return false;
         }
 
-        /// <summary>Alle Mitglieder der Klasse samt geerbter (die abgeleitete Klasse verdeckt gleichnamige der Basis; Konstruktoren nur die eigenen),
-        /// je als Array [Name, Art, Typ, Zugriff, static, readonly, lesbar, schreibbar, Einheit, deklariert in, Parameternamen, Parametertypen].</summary>
+        /// <summary>All members of the class including inherited ones (the derived class hides same-named ones of the base; constructors only its own),
+        /// each as an array [name, kind, type, access, static, readonly, readable, writable, unit, declared in, parameter names, parameter types].</summary>
         private static Value Members(string className)
         {
             var rc = Vm().ReflectFindClass(className);
@@ -132,7 +132,7 @@ namespace fire.Runtime
             return Value.MakeArray(arr);
         }
 
-        /// <summary>`Reflect.Probe`: dasselbe wie `probe obj.name changed|changing handler` (`name` undefined = alle Mitglieder); liefert das Handle.</summary>
+        /// <summary>`Reflect.Probe`: the same as `probe obj.name changed|changing handler` (`name` undefined = all members); returns the handle.</summary>
         private static Value Probe(Value obj, Value member, string kind, Value handler)
         {
             var vm = Vm();
@@ -157,7 +157,7 @@ namespace fire.Runtime
             return vm.TrySilenceValue(handle, out string error) ? Value.MakeUndefined() : vm.ReflectFail(error);
         }
 
-        /// <summary>"field" (ein Feld der Instanz), "property" (Accessor), "method" oder undefined - ohne einen Wert zu lesen.</summary>
+        /// <summary>"field" (a field of the instance), "property" (accessor), "method" or undefined - without reading a value.</summary>
         private static Value MemberKind(Value obj, string name)
         {
             if (obj.Kind != ValueKind.Class) return Value.MakeUndefined();
