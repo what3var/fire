@@ -8,6 +8,8 @@ namespace fire.Package.Manager
     {
         public const string ManifestEntry = "package.json";
         public const string Extension = ".fpk";
+        /// <summary>The folder of a package with its templates (docs/TEMPLATES.md).</summary>
+        public const string TemplatesEntry = "templates";
 
         /// <summary>The result of <see cref="Forge"/>.</summary>
         public sealed record ForgeResult(string PackagePath, string JsonCopyPath, PackageManifest Manifest);
@@ -38,6 +40,15 @@ namespace fire.Package.Manager
                 }
             }
 
+            // the templates: a folder next to the forge file (or the one the description names) goes into the package as `templates/`
+            string? templatesDir = null;
+            if (!string.IsNullOrWhiteSpace(manifest.Templates))
+            {
+                templatesDir = Absolute(manifest.Templates);
+                if (!Directory.Exists(templatesDir)) throw new PackageException($"The templates folder '{manifest.Templates}' does not exist.");
+            }
+            else if (Directory.Exists(Path.Combine(baseDir, TemplatesEntry))) templatesDir = Path.Combine(baseDir, TemplatesEntry);
+
             // the package: every file below a folder of its import; the package.json names them relative to the root
             var packaged = PackageManifest.Parse(manifest.ToJson());
             var entries = new List<(string Source, string Entry)>();
@@ -63,6 +74,14 @@ namespace fire.Package.Manager
                     import.Native.PlatformSources = import.Native.PlatformSources.ToDictionary(kv => kv.Key, kv => kv.Value.Select(s => Place(import.Name, s)).ToList());
                     import.Native.Libraries = import.Native.Libraries.ToDictionary(kv => kv.Key, kv => Place(import.Name, kv.Value));
                 }
+            }
+
+            if (templatesDir != null)
+            {
+                forgeCopy.Templates = templatesDir;
+                packaged.Templates = TemplatesEntry;
+                foreach (var file in Directory.EnumerateFiles(templatesDir, "*", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal))
+                    entries.Add((file, TemplatesEntry + "/" + Path.GetRelativePath(templatesDir, file).Replace('\\', '/')));
             }
 
             string outDir = Path.GetFullPath(outputDirectory ?? Path.Combine(baseDir, "build"));

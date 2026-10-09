@@ -315,21 +315,29 @@ namespace fire.Editor
             return item;
         }
 
-        /// <summary>The submenu "Add New" with one entry per kind of file (the commands are "new:" + kind, see MainWindow.AddNew).</summary>
-        private MenuItem AddNewMenu(ExplorerNode node, string header = "Add New")
+        /// <summary>The submenu "Add New": the commands are "new:" + kind (see MainWindow.AddNewFile): `dialog` (the list of code templates), `t:Title` (one template, only the name is asked), markdown, image, file.</summary>
+        private MenuItem AddNewMenu(ExplorerNode node, string header = "New")
         {
             var menu = new MenuItem { Header = header };
-            foreach (var (title, kind) in NewFileKinds) menu.Items.Add(Item(title, "new:" + kind, node));
+            foreach (var entry in NewFileKinds)
+            {
+                if (entry == null) menu.Items.Add(new Separator());
+                else menu.Items.Add(Item(entry.Value.Title, "new:" + entry.Value.Kind, node));
+            }
             return menu;
         }
 
-        /// <summary>What can be added as a new file: the title in the menu and the kind.</summary>
-        public static readonly (string Title, string Kind)[] NewFileKinds =
+        /// <summary>What can be added as a new file: the title in the menu and the kind; null is a separator.</summary>
+        public static readonly (string Title, string Kind)?[] NewFileKinds =
         {
-            ("Script (.script)...", "script"),
-            ("User Interface (.fxml)...", "fxml"),
-            ("Markdown Document (.md)...", "markdown"),
-            ("Raster Image (.png, .bmp)...", "image"),
+            ("Script...", "dialog"),
+            null,
+            ("Fire Class", "t:Fire Class"),
+            ("FXML Window", "t:FXML Window"),
+            ("FXML View", "t:FXML View"),
+            null,
+            ("Markdown Document...", "markdown"),
+            ("Raster Image...", "image"),
             ("Other File...", "file"),
         };
 
@@ -356,7 +364,7 @@ namespace fire.Editor
                 case ExplorerKind.Solution:
                     if (_git != null) { Add("Git: Commit...", "git-commit"); Add("Git: Pull", "git-pull"); Add("Git: Push", "git-push"); _menu.Items.Add(new Separator()); }
                     else Add("Git: Create Repository...", "git-init");
-                    Add("Add New Project...", "add-new-project");
+                    Add("New Project...", "add-new-project");
                     Add("Add Existing Project...", "add-existing-project");
                     Add("New Folder...", "new-folder");
                     _menu.Items.Add(new Separator());
@@ -366,7 +374,7 @@ namespace fire.Editor
                     Add("Close Solution", "close-workspace");
                     break;
                 case ExplorerKind.SolutionFolder:
-                    Add("Add New Project Here...", "add-new-project");
+                    Add("New Project Here...", "add-new-project");
                     Add("Add Existing Project...", "add-existing-project");
                     Add("New Folder...", "new-folder");
                     _menu.Items.Add(new Separator());
@@ -397,7 +405,7 @@ namespace fire.Editor
                     Add("Remove Reference", "remove");
                     break;
                 case ExplorerKind.Folder:
-                    _menu.Items.Add(AddNewMenu(node, "Add New Here"));
+                    _menu.Items.Add(AddNewMenu(node));
                     Add("Add Resource Here (copy a file in)...", "add-resource");
                     Add("New Folder...", "new-project-folder");
                     Add("Open Folder", "reveal");

@@ -1,0 +1,7 @@
+{
+  "title": "Terminal",
+  "description": "A program for the console: it prints Hello, World.",
+  "icon": "console",
+  "open": [ "main.script" ],
+  "order": 10
+}

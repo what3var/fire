@@ -1,0 +1,7 @@
+{
+  "title": "Desktop",
+  "description": "A program with a window (no console): a label and a button, built with #import \"ui\".",
+  "icon": "desktop",
+  "open": [ "main.script" ],
+  "order": 20
+}

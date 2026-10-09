@@ -21,6 +21,9 @@ namespace fire.Package.Manager
         public List<string> Dependencies { get; set; } = new();
         /// <summary>The imports (`#import "name"`) the package provides.</summary>
         public List<PackageImport> Imports { get; set; } = new();
+        /// <summary>A folder with the templates the package brings (`Code/` and `Project/` below it, see docs/TEMPLATES.md): in the forge file a path (relative to the file; none given: `templates/` next to
+        /// it, if there is one), in the package `templates`.</summary>
+        public string? Templates { get; set; }
 
         private static readonly JsonSerializerOptions Options = new()
         {

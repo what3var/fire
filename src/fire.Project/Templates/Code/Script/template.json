@@ -1,0 +1,7 @@
+{
+  "title": "Script",
+  "description": "An empty script file (.script).",
+  "icon": "script",
+  "defaultName": "newfile",
+  "order": 10
+}

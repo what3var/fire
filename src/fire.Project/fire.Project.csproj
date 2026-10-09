@@ -13,6 +13,13 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
+  <!-- The templates that ship with fire (docs/TEMPLATES.md): copied to Templates\ next to every program that uses this project, and found there by TemplateCatalog. -->
+  <ItemGroup>
+    <None Update="Templates\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- (the SDK leaves *.*proj files out of its default items) -->
+    <None Include="Templates\**\*.fireproj" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\fire.Package.Manager\fire.Package.Manager.csproj" />
     <ProjectReference Include="..\fire.UI.Markup\fire.UI.Markup.csproj" />
