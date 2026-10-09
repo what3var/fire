@@ -17,14 +17,14 @@ namespace fire.Editor
     /// or as a pure viewer (only the rendered page, the editor is hidden).</summary>
     public enum MarkdownViewMode { Edit, ReadOnly, Viewer }
 
-    /// <summary>Editor für Markdown-Dokumente: AvalonEdit-Quelltext mit
-    /// Markdown-Hervorhebung (siehe MarkdownColorizer; ```fire-Blöcke werden
-    /// wie im Skript-Editor eingefärbt), Format-Knöpfe/-Kürzel, automatische
-    /// Listenfortsetzung mit Enter und einer Live-Vorschau daneben (siehe
+    /// <summary>Editor for Markdown documents: AvalonEdit source text with
+    /// Markdown highlighting (see MarkdownColorizer; ```fire blocks are coloured
+    /// as in the script editor), format buttons/shortcuts, automatic
+    /// list continuation with Enter and a live preview next to it (see
     /// MarkdownParser/MarkdownRenderer).
     ///
-    /// Kennt wie ScriptEditorControl nichts vom Kompilieren/Ausführen - das
-    /// Hauptfenster behandelt beide über IDocumentView gleich.</summary>
+    /// Like ScriptEditorControl, it knows nothing about compiling/running - the
+    /// main window treats both the same via IDocumentView.</summary>
     public partial class MarkdownEditorControl : UserControl, IDocumentView
     {
         public string? FilePath { get; set; }
@@ -122,7 +122,7 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Bearbeiten (Menü des Hauptfensters, Kontextmenü)
+        // Edit (menu of the main window, context menu)
         // -----------------------------------------------------------
 
         private AvaloniaEdit.Search.SearchPanel? _searchPanel;
@@ -303,7 +303,7 @@ namespace fire.Editor
             if (!PreviewVisible) return;
             _renderer.BaseDirectory = BaseDirectory;
 
-            // Scroll-Position über das Neuaufbauen der Seite hinweg halten.
+            // Keep the scroll position across rebuilding the page.
             double offset = keepScroll ? Preview.Offset.Y : 0;
 
             Preview.Content = _renderer.Render(Editor.Text);
@@ -348,7 +348,7 @@ namespace fire.Editor
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex); // ein kaputter Link darf den Editor nicht stören
+                Debug.WriteLine(ex); // a broken link must not disturb the editor
             }
         }
 
@@ -377,7 +377,7 @@ namespace fire.Editor
 
         private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_';
 
-        /// <summary>Markiert Auswahl (oder das Wort am Cursor) mit `marker`; ist sie schon so markiert, wird es wieder entfernt.</summary>
+        /// <summary>Marks the selection (or the word at the cursor) with `marker`; if it is already marked like that, it is removed again.</summary>
         private void Wrap(string marker)
         {
             var doc = Editor.Document;
@@ -435,7 +435,7 @@ namespace fire.Editor
             doc.BeginUpdate();
             try
             {
-                // Von hinten nach vorn, damit die Offsets der noch folgenden Zeilen gültig bleiben.
+                // From back to front, so that the offsets of the lines still to follow stay valid.
                 for (int k = lines.Count - 1; k >= 0; k--)
                 {
                     var line = lines[k];
@@ -448,7 +448,7 @@ namespace fire.Editor
                     }
                     else
                     {
-                        // Eine andere Listen-/Zitat-Art zuerst ersetzen, nicht stapeln.
+                        // Replace another list/quote kind first, do not stack.
                         var other = new[] { BulletPrefix, NumberPrefix, QuotePrefix }.Select(r => r.Match(text)).FirstOrDefault(r => r.Success);
                         if (other != null && !m.Success)
                             doc.Replace(line.Offset + other.Groups[1].Length, other.Length - other.Groups[1].Length, prefixFor(k));
@@ -487,7 +487,7 @@ namespace fire.Editor
                 string body = length > 0 ? sel : "";
                 string block = pre + "```\n" + body + "\n```\n";
                 doc.Replace(start, length, block);
-                // Cursor in die erste Zeile des Blocks (hinter die öffnenden Zäune, um die Sprache anzugeben)
+                // Cursor into the first line of the block (behind the opening fences, to specify the language)
                 Editor.CaretOffset = start + pre.Length + 3;
             }
             finally { doc.EndUpdate(); }
@@ -517,7 +517,7 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Tastatur: Kürzel und Listenfortsetzung
+        // Keyboard: shortcuts and list continuation
         // -----------------------------------------------------------
 
         private static readonly Regex ListLine = new(@"^(?<indent>\s*)(?<marker>[-*+]|\d+[.)])\s+(?<task>\[[ xX]\]\s+)?(?<rest>.*)$", RegexOptions.Compiled);
@@ -551,7 +551,7 @@ namespace fire.Editor
                 e.Handled = true;
         }
 
-        /// <summary>Enter am Ende eines Listenpunkts: nächsten Punkt anlegen; ein leerer Punkt beendet die Liste.</summary>
+        /// <summary>Enter at the end of a list item: create the next item; an empty item ends the list.</summary>
         private bool ContinueList()
         {
             var doc = Editor.Document;
@@ -566,7 +566,7 @@ namespace fire.Editor
 
             if (m.Groups["rest"].Length == 0)
             {
-                // Leerer Punkt: Liste beenden (Zeile leeren, eingerückt lassen)
+                // Empty item: end the list (clear the line, leave it indented)
                 doc.Replace(line.Offset, line.Length, "");
                 return true;
             }

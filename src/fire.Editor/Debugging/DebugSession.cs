@@ -17,23 +17,23 @@ using static fire.Resolving.ResolvedRef;
 namespace fire.Editor
 {
     /// <summary>
-    /// Kapselt einen Kompilier+Ausführungs-Lauf eines Skripts für den
-    /// thread-fähigen Step-Debugger: kompiliert einmalig (inkl. Prelude),
-    /// hält danach den Main-Thread PLUS jeden zur Laufzeit per `fire`
-    /// entstehenden Thread als je eine DebugThreadContext-Instanz (siehe
-    /// dort - JEDE davon läuft auf ihrem EIGENEN Hintergrund-Thread, NIE auf
-    /// dem UI-Thread, siehe dortigen Klassenkommentar zur Begründung).
-    /// Steuerung (Step/Continue/...) wirkt immer auf den gerade AKTIVEN
-    /// Thread (siehe ActiveThread) - welcher das ist, wählt die UI über das
-    /// Threads-Panel. Alle Steuer-Methoden sind FIRE-AND-FORGET (kehren
-    /// sofort zurück) - das Ergebnis kommt asynchron über ThreadPaused.
+    /// Encapsulates one compile+execute run of a script for the
+    /// thread-capable step debugger: compiles once (incl. prelude),
+    /// afterwards holds the main thread PLUS every thread created at runtime via `fire`
+    /// as one DebugThreadContext instance each (see
+    /// there - EACH of them runs on its OWN background thread, NEVER on
+    /// the UI thread, see the class comment there for the reason).
+    /// Control (Step/Continue/...) always acts on the currently ACTIVE
+    /// thread (see ActiveThread) - which one that is, the UI chooses via the
+    /// threads panel. All control methods are FIRE-AND-FORGET (they return
+    /// immediately) - the result arrives asynchronously via ThreadPaused.
     ///
-    /// `print()` wird umgeleitet (OutputWritten-Event) statt auf die echte
-    /// Konsole zu gehen, mit dem Namen des jeweils AUSFÜHRENDEN Threads
-    /// vorangestellt (siehe VM.CurrentThreadVm - das [ThreadStatic]-Feld,
-    /// das jede VM-Instanz beim Start von Run()/StepInstruction() auf sich
-    /// selbst setzt), damit im Ausgabefenster nachvollziehbar bleibt, welche
-    /// Zeile von welchem Thread kam.
+    /// `print()` is redirected (OutputWritten event) instead of going to the real
+    /// console, prefixed with the name of the thread that is currently EXECUTING
+    /// (see VM.CurrentThreadVm - the [ThreadStatic] field
+    /// that every VM instance sets to itself at the start of Run()/StepInstruction()),
+    /// so that in the output window it stays traceable which
+    /// line came from which thread.
     /// </summary>
     public sealed class DebugSession
     {
@@ -59,33 +59,33 @@ namespace fire.Editor
 
         public VmExecutionMode? ActiveExecutionMode { get; private set; }
 
-        /// <summary>Quell-Index (siehe Bytecode.Chunk.MarkLine/VM.CurrentLocation),
-        /// ab dem der erste EIGENE Quelltext des Aufrufers (die `sources`, die
-        /// an Compile() gingen) im kompilierten Programm beginnt - Weiterleitung
-        /// von Runtime.RuntimeSession.FirstUserSourceIndex (siehe dort), erst
-        /// nach einem erfolgreichen Compile()-Aufruf gültig (vorher 0).</summary>
+        /// <summary>Source index (see Bytecode.Chunk.MarkLine/VM.CurrentLocation),
+        /// from which the first OWN source of the caller (the `sources` that
+        /// went to Compile()) begins in the compiled program - forwarding
+        /// of Runtime.RuntimeSession.FirstUserSourceIndex (see there), only valid
+        /// after a successful Compile() call (0 before).</summary>
         public int FirstUserSourceIndex { get; private set; }
 
         /// <summary>The file of each source by source index (see RuntimeSession.SourceFiles); empty before the first successful Compile().</summary>
         public IReadOnlyList<string?> SourceFiles { get; private set; } = Array.Empty<string?>();
 
-        /// <summary>Der geteilte DeviceManager des Hosts, den Skripte mit `#import "devices"` benutzen (null: jedes Skript
-        /// bekommt einen eigenen). Der Host setzt ihn einmal, siehe EditorDeviceService.</summary>
+        /// <summary>The host's shared DeviceManager that scripts with `#import "devices"` use (null: every script
+        /// gets its own). The host sets it once, see EditorDeviceService.</summary>
         public fire.Device.Manager.DeviceManager.DeviceManager? DeviceManager { get; set; }
 
         public event Action<string>? OutputWritten;
 
-        /// <summary>Ein neuer Fire-Thread ist entstanden - KANN auf dessen
-        /// eigenem Hintergrund-Thread feuern, Abonnent muss selbst für
-        /// Dispatcher.InvokeAsync sorgen (siehe DebugThreadContext.Paused-
-        /// Doku, NICHT das blockierende Invoke).</summary>
+        /// <summary>A new fire thread has arisen - MAY fire on its
+        /// own background thread, the subscriber must take care of
+        /// Dispatcher.InvokeAsync itself (see DebugThreadContext.Paused
+        /// documentation, NOT the blocking Invoke).</summary>
         public event Action<DebugThreadContext>? ThreadAdded;
 
-        /// <summary>Wie ThreadAdded, aber für JEDEN abgeschlossenen Schritt
-        /// eines beliebigen Threads (nicht nur bei dessen Entstehung) -
-        /// separates Event, weil die UI hierauf i.d.R. nur reagieren muss,
-        /// wenn der GERADE AKTIVE Thread betroffen ist (siehe MainWindow),
-        /// während ThreadAdded IMMER die Threads-Liste neu aufbauen muss.</summary>
+        /// <summary>Like ThreadAdded, but for EVERY completed step
+        /// of any thread (not only when it arises) -
+        /// a separate event, because the UI usually only has to react to it
+        /// when the CURRENTLY ACTIVE thread is affected (see MainWindow),
+        /// whereas ThreadAdded must ALWAYS rebuild the threads list.</summary>
         public event Action<DebugThreadContext>? ThreadPaused;
 
         public DebugSession()
@@ -98,23 +98,23 @@ namespace fire.Editor
             lock (_threadsLock) return _threads.FirstOrDefault(t => ReferenceEquals(t.Vm, vm));
         }
 
-        /// <summary>Aktuelle Haltepunkt-Zeilen, wie sie der Editor zuletzt
-        /// gemeldet hat - jeder NEU entstehende Fire-Thread startet seinen
-        /// automatischen "Weiter"-Lauf (siehe DebugThreadContext.
-        /// ForFireThread) mit einem Schnappschuss DIESER Menge. Nachträglich
-        /// im Editor gesetzte/entfernte Haltepunkte wirken sich auf einen
-        /// BEREITS automatisch laufenden Fire-Thread deshalb erst aus,
-        /// nachdem er das nächste Mal neu angestoßen wird - eine bewusste
-        /// Vereinfachung, um keine über mehrere Threads hinweg geteilte,
-        /// nebenläufig veränderliche Breakpoint-Menge synchronisieren zu
-        /// müssen.</summary>
+        /// <summary>Current breakpoint lines, as the editor last
+        /// reported them - every NEWLY arising fire thread starts its
+        /// automatic "continue" run (see DebugThreadContext.
+        /// ForFireThread) with a snapshot of THIS set. Breakpoints
+        /// set/removed in the editor afterwards therefore only affect an
+        /// ALREADY automatically running fire thread
+        /// after it is next started again - a deliberate
+        /// simplification, to avoid having to synchronise a breakpoint set
+        /// that is shared across several threads and modified
+        /// concurrently.</summary>
         public void UpdateBreakpoints(IEnumerable<(int SourceIndex, int Line)> locations) => _breakpointsSnapshot = new HashSet<(int, int)>(locations);
 
-        /// <summary>Kompiliert den Quelltext neu und setzt eine frische
-        /// Main-Thread-VM auf (auf ihrem eigenen Hintergrund-Thread, siehe
-        /// DebugThreadContext.ForMain - startet wartend, noch nichts läuft).
-        /// Bei einem Parse-/Resolve-Fehler bleibt Vm null, CompileError
-        /// enthält die Meldung.</summary>
+        /// <summary>Recompiles the source text and sets up a fresh
+        /// main-thread VM (on its own background thread, see
+        /// DebugThreadContext.ForMain - starts waiting, nothing runs yet).
+        /// On a parse/resolve error Vm stays null, CompileError
+        /// contains the message.</summary>
         public bool Compile(string[] sources, string? outname = null, string? basePath = null, fire.Projects.BuildPlan? plan = null)
         {
             Reset();
@@ -128,8 +128,8 @@ namespace fire.Editor
                     OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {text}" : text);
                     return Value.MakeUndefined();
                 }, outname,
-                // IO.Stdio (`#import "io"`) landet im selben Ausgabefenster wie print():
-                // Ausgabe und Fehler zeilenweise, Eingabe ist leer (sofort Ende).
+                // IO.Stdio (`#import "io"`) ends up in the same output window as print():
+                // output and errors line by line, input is empty (end immediately).
                 ioStdio: fire.IO.Bridge.IoStdio.Custom(line =>
                 {
                     string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
@@ -157,12 +157,12 @@ namespace fire.Editor
                 }
                 ActiveThread = mainCtx;
 
-                // Ab jetzt übernimmt DIESE Session jeden neu entstehenden
-                // Fire-Thread (siehe InterceptNewFireThread) - wichtig: in
-                // Reset() wieder abmelden, sonst würde ein späterer,
-                // komplett unabhängiger Lauf (oder sogar ein anderes
-                // Skript) im selben Prozess versehentlich noch immer über
-                // DIESE (dann veraltete) Session laufen.
+                // From now on THIS session takes over every newly arising
+                // fire thread (see InterceptNewFireThread) - important: unregister it again in
+                // Reset(), otherwise a later,
+                // completely independent run (or even another
+                // script) in the same process would still accidentally run via
+                // THIS (then outdated) session.
                 FireRuntime.ThreadBodyInterceptor = InterceptNewFireThread;
 
                 return true;
@@ -170,21 +170,21 @@ namespace fire.Editor
             catch (Exception ex) when (ex is ParseException or ResolverException
                 or NotSupportedException or PreprocessorException or LibraryEntryPointException or fire.Projects.ProjectException)
             {
-                // Alle gesammelten Fehler (Resolver/Compiler brechen nicht beim
-                // ersten ab, siehe CompileErrors), nicht nur den ersten.
+                // All collected errors (the resolver/compiler do not stop at the
+                // first, see CompileErrors), not only the first.
                 CompileError = CompileErrors.Describe(ex);
                 return false;
             }
         }
 
-        /// <summary>Läuft auf dem Thread, der GERADE `fire` ausführt (also
-        /// z.B. auf dem Hintergrund-Thread eines DebugThreadContext, siehe
-        /// Runtime.FireRuntime.ThreadBodyInterceptor-Doku) - registriert
-        /// den neuen Thread im Threads-Panel. Der eigentliche neue
-        /// Hintergrund-Thread für die Fire-Thread-VM selbst entsteht INNERHALB
-        /// von DebugThreadContext.ForFireThread (siehe dessen Konstruktor) -
-        /// diese Methode hier kehrt deshalb SOFORT zurück, der Aufrufer
-        /// (Runtime.FireRuntime.Fire) muss NICHT mehr blockieren.</summary>
+        /// <summary>Runs on the thread that is CURRENTLY executing `fire` (that is,
+        /// e.g. on the background thread of a DebugThreadContext, see
+        /// Runtime.FireRuntime.ThreadBodyInterceptor documentation) - registers
+        /// the new thread in the threads panel. The actual new
+        /// background thread for the fire-thread VM itself arises INSIDE
+        /// DebugThreadContext.ForFireThread (see its constructor) -
+        /// this method therefore returns IMMEDIATELY, the caller
+        /// (Runtime.FireRuntime.Fire) does NOT have to block any more.</summary>
         private void InterceptNewFireThread(VM vm, Action runNormally)
         {
             string name = $"Fire #{Interlocked.Increment(ref _fireThreadCounter)}";
@@ -201,12 +201,12 @@ namespace fire.Editor
 
         public void SelectThread(DebugThreadContext thread) => ActiveThread = thread;
 
-        /// <summary>Die Session des aktuellen Laufs - hält das Sicherheitsnetz für offene IO-Streams (siehe
+        /// <summary>The session of the current run - holds the safety net for open IO streams (see
         /// RuntimeSession.CloseHostResources).</summary>
         private RuntimeSession? _session;
 
-        /// <summary>Schließt die vom Skript noch offen gelassenen IO-Streams, sobald alle Threads des Laufs beendet sind
-        /// (vorher könnte ein Fire-Thread sie noch brauchen). Läuft höchstens einmal je Lauf.</summary>
+        /// <summary>Closes the IO streams the script left open, as soon as all threads of the run have ended
+        /// (before that a fire thread might still need them). Runs at most once per run.</summary>
         private void CloseHostResourcesIfAllFinished()
         {
             lock (_threadsLock)
@@ -221,16 +221,16 @@ namespace fire.Editor
             if (FireRuntime.ThreadBodyInterceptor != null)
                 FireRuntime.ThreadBodyInterceptor = null;
 
-            // Abgebrochener Lauf: offene Streams trotzdem schließen (die Threads sind gleich abgemeldet).
+            // Aborted run: close open streams anyway (the threads are unregistered shortly).
             Interlocked.Exchange(ref _session, null)?.CloseHostResources();
 
             lock (_threadsLock)
             {
-                // Jeden noch laufenden/pausierten Thread aus seiner
-                // Warteposition lösen (siehe DebugThreadContext.Abandon-Doku)
-                // - sonst bliebe ein gerade wartender Thread für immer auf
-                // sein Gate hängen, da ab hier niemand mehr RequestStep für
-                // ihn aufruft.
+                // Release every still running/paused thread from its
+                // waiting position (see DebugThreadContext.Abandon documentation)
+                // - otherwise a thread that is currently waiting would hang forever on
+                // its gate, since from here on nobody calls RequestStep for
+                // it any more.
                 foreach (var t in _threads)
                     t.Abandon();
                 _threads.Clear();
@@ -240,36 +240,36 @@ namespace fire.Editor
             CompileError = null;
         }
 
-        /// <summary>Ein Debugger-"Schritt" - eine Quelltextzeile weiter (Step
-        /// Over, siehe VM.StepLine) AUF DEM AKTIVEN THREAD. FIRE-AND-FORGET -
-        /// das Ergebnis kommt über ThreadPaused.</summary>
+        /// <summary>A debugger "step" - one source line further (step
+        /// over, see VM.StepLine) ON THE ACTIVE THREAD. FIRE-AND-FORGET -
+        /// the result arrives via ThreadPaused.</summary>
         public void StepLine() => RunGuarded(_ => vm => vm.StepLine());
 
-        /// <summary>Wie StepLine, springt bei einem Aufruf aber hinein statt
-        /// ihn zu überspringen (siehe VM.StepInto).</summary>
+        /// <summary>Like StepLine, but jumps into a call instead of
+        /// skipping it (see VM.StepInto).</summary>
         public void StepInto() => RunGuarded(_ => vm => vm.StepInto());
 
-        /// <summary>Läuft bis zum Verlassen der aktuellen Funktion/Methode/
-        /// des aktuellen Lambdas (siehe VM.StepOut).</summary>
+        /// <summary>Runs until the current function/method/
+        /// lambda is left (see VM.StepOut).</summary>
         public void StepOut() => RunGuarded(_ => vm => vm.StepOut());
 
-        /// <summary>Läuft bis zum nächsten Haltepunkt oder Programmende, auf
-        /// dem AKTIVEN Thread - unterbrechbar über PauseActiveThread.</summary>
+        /// <summary>Runs to the next breakpoint or program end, on
+        /// the ACTIVE thread - interruptible via PauseActiveThread.</summary>
         public void Continue(ISet<(int SourceIndex, int Line)> breakpoints) =>
             RunGuarded(ctx => DebugThreadContext.MakeContinueStep(breakpoints, ctx.ConsumePauseRequest));
 
-        /// <summary>Läuft ohne Unterbrechung bis zum Programmende (kein
-        /// Debugging, einfach nur ausführen) - AUF DEM AKTIVEN Thread,
-        /// unterbrechbar über PauseActiveThread; andere Threads laufen
-        /// unabhängig davon in ihrem eigenen, ggf. weiterhin automatischen
-        /// Modus weiter.</summary>
+        /// <summary>Runs without interruption to the program end (no
+        /// debugging, just execute) - ON THE ACTIVE thread,
+        /// interruptible via PauseActiveThread; other threads continue
+        /// independently of it in their own, possibly still automatic
+        /// mode.</summary>
         public void RunToCompletion() =>
             RunGuarded(ctx => DebugThreadContext.MakeRunToCompletionStep(ctx.ConsumePauseRequest));
 
-        /// <summary>Bittet den aktiven Thread, einen gerade laufenden
-        /// unterbrechbaren Schritt (Continue/RunToCompletion - siehe
-        /// DebugThreadContext.RequestPause-Doku für die Einschränkung bei
-        /// Step Line/Into/Out) an der nächsten Gelegenheit zu beenden.</summary>
+        /// <summary>Asks the active thread to end a currently running
+        /// interruptible step (Continue/RunToCompletion - see
+        /// DebugThreadContext.RequestPause documentation for the restriction on
+        /// Step Line/Into/Out) at the next opportunity.</summary>
         public void PauseActiveThread() => ActiveThread?.RequestPause();
 
         private void RunGuarded(Func<DebugThreadContext, Func<VM, bool>> makeStep)

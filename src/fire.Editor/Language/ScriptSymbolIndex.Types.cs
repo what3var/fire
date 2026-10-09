@@ -6,35 +6,35 @@ namespace fire.Editor
 {
     public enum TypeKind
     {
-        /// <summary>Nicht bestimmbar (dynamische Typisierung - der Normalfall
-        /// für nicht typisierte Variablen, deren Wert sich nicht aus einem
-        /// `new X(...)`/einer typisierten Methode ergibt).</summary>
+        /// <summary>Not determinable (dynamic typing - the normal case
+        /// for untyped variables whose value does not result from a
+        /// `new X(...)`/a typed method).</summary>
         Unknown,
 
-        /// <summary>Eine Instanz der Klasse `Name`.</summary>
+        /// <summary>An instance of the class `Name`.</summary>
         Instance,
 
-        /// <summary>Die Klasse `Name` SELBST (`Name.Mitglied`) - nur statische
-        /// Mitglieder.</summary>
+        /// <summary>The class `Name` ITSELF (`Name.Member`) - static
+        /// members only.</summary>
         Static,
 
-        /// <summary>Das Enum `Name` (`Name.Mitglied`).</summary>
+        /// <summary>The enum `Name` (`Name.Member`).</summary>
         Enum,
 
-        /// <summary>Ein einfacher Wert (`int`, `string`, ...) oder Enum-Wert.</summary>
+        /// <summary>A simple value (`int`, `string`, ...) or enum value.</summary>
         Primitive,
 
-        /// <summary>Ein Array mit Elementtyp `Name`.</summary>
+        /// <summary>An array with element type `Name`.</summary>
         Array,
 
-        /// <summary>Der Namespace `Name` (vollqualifiziert) - `Name.` zeigt
-        /// dessen Klassen/Enums/Unter-Namespaces.</summary>
+        /// <summary>The namespace `Name` (fully qualified) - `Name.` shows
+        /// its classes/enums/sub-namespaces.</summary>
         Namespace,
     }
 
-    /// <summary>Der (best-effort) hergeleitete Typ eines Ausdrucks im Editor.
-    /// `ViaThis`: der Ausdruck ist `this`/`base` selbst - dann sind auch
-    /// statische Mitglieder über den Punkt erreichbar (siehe Resolver, "this.
+    /// <summary>The (best-effort) derived type of an expression in the editor.
+    /// `ViaThis`: the expression is `this`/`base` itself - then static
+    /// members are also reachable via the dot (see resolver, "this.
     /// StaticMember").</summary>
     public sealed record ExprType(TypeKind Kind, string? Name = null, bool ViaThis = false)
     {
@@ -42,47 +42,47 @@ namespace fire.Editor
     }
 
     /// <summary>
-    /// Best-Effort-TYPHERLEITUNG für die Vervollständigung/Navigation - damit
-    /// nach `x.` die Mitglieder der Klasse von `x` erscheinen statt beliebiger
-    /// Mitglieder aller Klassen. Bewusst wie der Rest dieser Klasse
-    /// token-basiert (siehe Klassen-Kommentar): keine echte Auflösung, aber
-    /// deutlich mehr als "nur explizit typisierte Variablen":
+    /// Best-effort TYPE DERIVATION for completion/navigation - so that
+    /// after `x.` the members of the class of `x` appear instead of arbitrary
+    /// members of all classes. Deliberately token-based like the rest of this class
+    /// (see class comment): no real resolution, but
+    /// considerably more than "only explicitly typed variables":
     ///
-    /// - Ausdrücke: `new X(...)`/`new X&lt;..&gt;(...)`, `new X[n]` (Array),
-    ///   `this`/`base`, Variablen/Parameter/Felder (auch ohne `this.`),
-    ///   Klassen-/Enum-Namen, Aufrufe/Feldzugriffe/Indizes darauf - beliebig
-    ///   verkettet (`a.B().c[0].`).
-    /// - Variablentyp: aus `var x : T`, `T x`, typisierten Parametern, `foreach
-    ///   (T x in ...)` - oder, bei `var x = ausdruck`/`x = ausdruck`, aus dem
-    ///   Typ des Ausdrucks (rekursiv, mit Tiefenlimit).
-    /// - Mitgliedstypen: deklarierter Typ/Rückgabetyp; sonst bei Methoden aus
-    ///   den `return`-Ausdrücken im Body, bei Feldern aus `= new X()` bzw.
-    ///   einer Zuweisung `this.feld = ...` irgendwo in der Klasse.
+    /// - Expressions: `new X(...)`/`new X&lt;..&gt;(...)`, `new X[n]` (array),
+    ///   `this`/`base`, variables/parameters/fields (also without `this.`),
+    ///   class/enum names, calls/field accesses/indices on them - arbitrarily
+    ///   chained (`a.B().c[0].`).
+    /// - Variable type: from `var x : T`, `T x`, typed parameters, `foreach
+    ///   (T x in ...)` - or, for `var x = expression`/`x = expression`, from the
+    ///   type of the expression (recursively, with a depth limit).
+    /// - Member types: declared type/return type; otherwise for methods from
+    ///   the `return` expressions in the body, for fields from `= new X()` or
+    ///   an assignment `this.field = ...` somewhere in the class.
     ///
-    /// Alles, was sich so nicht bestimmen lässt, ist <see cref="TypeKind.Unknown"/>.
+    /// Everything that cannot be determined this way is <see cref="TypeKind.Unknown"/>.
     /// </summary>
     public sealed partial class ScriptSymbolIndex
     {
-        /// <summary>Maximale Rekursionstiefe der Herleitung (Variable aus
-        /// Variable aus Methodenaufruf ...) - bricht auch Zyklen ab.</summary>
+        /// <summary>Maximum recursion depth of the derivation (variable from
+        /// variable from method call ...) - also breaks cycles.</summary>
         private const int MaxDepth = 8;
 
         private static readonly HashSet<string> PrimitiveTypeNames = new() { "bool", "int", "float", "char", "string", "byte" };
 
         // -----------------------------------------------------------
-        // Umschließende Funktion
+        // Enclosing function
         // -----------------------------------------------------------
 
         private sealed record FunctionContext(
             int BodyStartTokenIdx, int BodyStartOffset, int BodyEndOffset, List<(string Name, string? TypeName)> Params);
 
-        /// <summary>Index der '{' des Bodys, der zur Signatur gehört, deren
-        /// Parameterliste bei `afterParen` endet - oder -1, wenn dort gar
-        /// keine Funktionsdefinition steht (sondern z.B. ein reiner Aufruf
-        /// `foo(x)`, dem später zufällig irgendein '{' folgt). Erlaubt sind
-        /// nur `: base(...)`, `=&gt;` und `on x` zwischen ')' und '{', und
-        /// jeder Zeilenumbruch davor außer bei der '{' selbst beendet die
-        /// Suche.</summary>
+        /// <summary>Index of the '{' of the body that belongs to the signature whose
+        /// parameter list ends at `afterParen` - or -1 if there is no
+        /// function definition there at all (but e.g. a pure call
+        /// `foo(x)`, which later happens to be followed by some '{'). Only
+        /// `: base(...)`, `=&gt;` and `on x` are allowed between ')' and '{', and
+        /// any line break before it, except at the '{' itself, ends the
+        /// search.</summary>
         private int FindBodyBrace(int afterParen)
         {
             int j = afterParen;
@@ -111,9 +111,9 @@ namespace fire.Editor
 
         private List<FunctionContext>? _functions;
 
-        /// <summary>Alle Funktionsdefinitionen (Methoden, Konstruktoren,
-        /// Lambdas mit Block-Body) des Dokuments, in Quelltext-Reihenfolge -
-        /// einmalig berechnet (die Typ-Herleitung fragt sehr oft danach).</summary>
+        /// <summary>All function definitions (methods, constructors,
+        /// lambdas with a block body) of the document, in source order -
+        /// computed once (the type derivation asks for them very often).</summary>
         private List<FunctionContext> AllFunctions()
         {
             if (_functions != null) return _functions;
@@ -126,7 +126,7 @@ namespace fire.Editor
                     && (i == 0 || _tokens[i - 1].Type is not (TokenType.Dot or TokenType.New));
                 if (!isKeyword && !isNamed) continue;
 
-                // '<T>' einer generischen Methode zwischen Name und '('.
+                // '<T>' of a generic method between name and '('.
                 int paren = i + 1;
                 if (isNamed && paren < _tokens.Count && _tokens[paren].Type == TokenType.Lt)
                     paren = SkipAngleBrackets(paren);
@@ -142,8 +142,8 @@ namespace fire.Editor
             return _functions = result;
         }
 
-        /// <summary>Die INNERSTE Funktion, deren Body `offset` enthält (bei
-        /// Verschachtelung startet die innere später - der letzte Treffer).</summary>
+        /// <summary>The INNERMOST function whose body contains `offset` (with
+        /// nesting the inner one starts later - the last hit).</summary>
         private FunctionContext? EnclosingFunction(int offset)
         {
             FunctionContext? best = null;
@@ -153,48 +153,48 @@ namespace fire.Editor
             return best;
         }
 
-        /// <summary>Parameter (Name, evtl. Typname) der unmittelbar
-        /// umschließenden Methode/des Konstruktors/Lambdas an `offset` - die
-        /// INNERSTE Funktionssignatur, deren Body `offset` enthält.</summary>
+        /// <summary>Parameters (name, possibly type name) of the immediately
+        /// enclosing method/constructor/lambda at `offset` - the
+        /// INNERMOST function signature whose body contains `offset`.</summary>
         public List<(string Name, string? TypeName)> EnclosingFunctionParams(int offset) =>
             EnclosingFunction(offset)?.Params ?? new List<(string, string?)>();
 
         // -----------------------------------------------------------
-        // Öffentliche Einstiege
+        // Public entry points
         // -----------------------------------------------------------
 
-        /// <summary>Der Typ des Ausdrucks unmittelbar VOR dem '.' an
-        /// `dotOffset` (Zeichen-Offset des Punkts) - `Unknown`, wenn der
-        /// Punkt nicht gefunden oder der Ausdruck nicht herleitbar ist.</summary>
+        /// <summary>The type of the expression immediately BEFORE the '.' at
+        /// `dotOffset` (character offset of the dot) - `Unknown` if the
+        /// dot is not found or the expression cannot be derived.</summary>
         public ExprType ResolveReceiver(int dotOffset)
         {
             int dotIdx = FindTokenIndex(dotOffset);
             if (dotIdx <= 0 || _tokens[dotIdx].Type != TokenType.Dot) return ExprType.Unknown;
-            // 'this.'/'base.' behalten ViaThis (dort sind auch statische Mitglieder
-            // erreichbar) - jede andere Herkunft nicht, siehe EvalExprRange.
+            // 'this.'/'base.' keep ViaThis (static members are reachable there too) -
+            // any other origin does not, see EvalExprRange.
             return EvalExprRange(FirstTokenOfChainEndingAt(dotIdx - 1), dotIdx - 1, 0, keepViaThis: true);
         }
 
-        /// <summary>Der Typ eines einzelnen Bezeichners `name` an `offset`
-        /// (lokale Variable/Parameter, Feld der umschließenden Klasse,
-        /// Klassen-/Enum-Name).</summary>
+        /// <summary>The type of a single identifier `name` at `offset`
+        /// (local variable/parameter, field of the enclosing class,
+        /// class/enum name).</summary>
         public ExprType ResolveIdentifier(int offset, string name) => ResolveName(name, offset, 0);
 
-        /// <summary>Wie ResolveIdentifier, aber nur der Klassenname, wenn
-        /// `name` eine INSTANZ einer bekannten Klasse ist - für
-        /// NavigationEngine ("zu Definition springen").</summary>
+        /// <summary>Like ResolveIdentifier, but only the class name if
+        /// `name` is an INSTANCE of a known class - for
+        /// NavigationEngine ("go to definition").</summary>
         public string? TryResolveDeclaredType(int offset, string name)
         {
             var type = ResolveName(name, offset, 0);
             return type.Kind == TypeKind.Instance ? type.Name : null;
         }
 
-        /// <summary>Namen der lokalen Variablen/Parameter, die an `offset`
-        /// sichtbar sind: Deklarationen zwischen dem Beginn der unmittelbar
-        /// umschließenden Funktion und `offset` (textuell, KEIN echtes
-        /// Block-Scope-Tracking - eine Variable aus einem bereits
-        /// verlassenen Geschwister-Block wird hier auch noch vorgeschlagen;
-        /// bewusste Vereinfachung für Autovervollständigung).</summary>
+        /// <summary>Names of the local variables/parameters that are
+        /// visible at `offset`: declarations between the start of the immediately
+        /// enclosing function and `offset` (textual, NO real
+        /// block-scope tracking - a variable from an already
+        /// left sibling block is still suggested here;
+        /// deliberate simplification for auto-completion).</summary>
         public List<string> LocalVarsBeforeCursor(int offset)
         {
             var result = new List<string>();
@@ -263,20 +263,20 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Ausdrücke als Ketten `a.b(...).c[...]`
+        // Expressions as chains `a.b(...).c[...]`
         // -----------------------------------------------------------
 
         private enum SegKind { Name, Call, Index, New }
 
         private readonly record struct Seg(SegKind Kind, string Text);
 
-        /// <summary>Liest die Kette, die mit dem Token `endIdx` ENDET, RÜCKWÄRTS
-        /// (wo sie beginnt, steht erst danach fest): Bezeichner, `this`,
-        /// `base`, Aufrufe `name(...)` (auch `new X&lt;..&gt;(...)`), Indizes
-        /// `[...]`, verbunden durch '.'. `segs` in Quelltext-Reihenfolge,
-        /// `startIdx` das erste Token der Kette. `false`, wenn das, was dort
-        /// endet, keine solche Kette ist (Literal, Klammerausdruck,
-        /// Operator ...).</summary>
+        /// <summary>Reads the chain that ENDS with the token `endIdx`, BACKWARDS
+        /// (where it begins is only known afterwards): identifiers, `this`,
+        /// `base`, calls `name(...)` (also `new X&lt;..&gt;(...)`), indices
+        /// `[...]`, joined by '.'. `segs` in source order,
+        /// `startIdx` the first token of the chain. `false` if what ends
+        /// there is not such a chain (literal, parenthesised expression,
+        /// operator ...).</summary>
         private bool TryParseChainBackward(int endIdx, out List<Seg> segs, out int startIdx)
         {
             var rev = new List<Seg>();
@@ -296,7 +296,7 @@ namespace fire.Editor
                     int open = MatchBackward(j, TokenType.LBracket, TokenType.RBracket);
                     if (open < 0) return false;
                     rev.Add(new Seg(SegKind.Index, string.Empty));
-                    j = open - 1; // das Indizierte davor weiterlesen
+                    j = open - 1; // keep reading the indexed thing before it
                     continue;
                 }
 
@@ -318,16 +318,16 @@ namespace fire.Editor
                         if (lt < 0) return false;
                         k = lt - 1;
                     }
-                    if (k < 0 || _tokens[k].Type != TokenType.Identifier) return false; // Klammerausdruck '(...)' - nicht unterstützt
+                    if (k < 0 || _tokens[k].Type != TokenType.Identifier) return false; // Parenthesised expression '(...)' - not supported
                     bool isNew = k > 0 && _tokens[k - 1].Type == TokenType.New;
                     seg = new Seg(isNew ? SegKind.New : SegKind.Call, _tokens[k].Lexeme);
                     segStart = isNew ? k - 1 : k;
                 }
                 else if (t.Type is TokenType.Identifier or TokenType.This or TokenType.Base)
                 {
-                    // 'new Name' (nur mit folgendem '[', siehe 'new X[n]') - steht
-                    // hinter dem Namen aber ein '.', ist er der ANFANG eines
-                    // qualifizierten Namens ('new Geometry.Circle(...)'), siehe
+                    // 'new Name' (only with a following '[', see 'new X[n]') - if
+                    // there is a '.' behind the name, however, it is the BEGINNING of a
+                    // qualified name ('new Geometry.Circle(...)'), see
                     // MergeQualifiedNew.
                     bool isNew = t.Type == TokenType.Identifier && j > 0 && _tokens[j - 1].Type == TokenType.New
                         && !(j + 1 < _tokens.Count && _tokens[j + 1].Type == TokenType.Dot);
@@ -355,10 +355,10 @@ namespace fire.Editor
             return true;
         }
 
-        /// <summary>`new Geometry.Circle(...)`/`new Geometry.Circle[n]`: der
-        /// Rückwärts-Lauf sieht hier die Kette `Geometry` `.` `Circle(...)` und
-        /// erst danach das `new` DAVOR - dann zu EINEM New-Segment mit dem
-        /// qualifizierten Namen zusammenfassen.</summary>
+        /// <summary>`new Geometry.Circle(...)`/`new Geometry.Circle[n]`: the
+        /// backward run sees here the chain `Geometry` `.` `Circle(...)` and
+        /// only afterwards the `new` BEFORE it - then combine into ONE new segment with the
+        /// qualified name.</summary>
         private void MergeQualifiedNew(List<Seg> segs, ref int startIdx)
         {
             if (startIdx <= 0 || _tokens[startIdx - 1].Type != TokenType.New) return;
@@ -382,15 +382,15 @@ namespace fire.Editor
         private int FirstTokenOfChainEndingAt(int endIdx) =>
             TryParseChainBackward(endIdx, out _, out int start) ? start : endIdx;
 
-        /// <summary>Der Typ des Ausdrucks, der GENAU die Tokens `startIdx`..
-        /// `endIdx` umfasst (steht dort mehr/etwas anderes als eine Kette
-        /// oder ein Literal, ist das Ergebnis Unknown).</summary>
+        /// <summary>The type of the expression that comprises EXACTLY the tokens `startIdx`..
+        /// `endIdx` (if there is more/something other than a chain
+        /// or a literal, the result is Unknown).</summary>
         private ExprType EvalExprRange(int startIdx, int endIdx, int depth, bool keepViaThis = false)
         {
             var type = EvalExprRangeCore(startIdx, endIdx, depth);
-            // `var x = this` (oder eine Methode, die `this` zurückgibt) macht x
-            // zu einer GEWÖHNLICHEN Instanz - `x.` erreicht keine statischen
-            // Mitglieder, nur `this.` selbst.
+            // `var x = this` (or a method that returns `this`) makes x
+            // an ORDINARY instance - `x.` reaches no static
+            // members, only `this.` itself.
             return type.ViaThis && !keepViaThis ? type with { ViaThis = false } : type;
         }
 
@@ -399,7 +399,7 @@ namespace fire.Editor
             if (depth > MaxDepth || startIdx < 0 || startIdx > endIdx || endIdx >= _tokens.Count)
                 return ExprType.Unknown;
 
-            // `flat x` / `copy x` (Kopier-Präfixe): das Ergebnis hat den Typ des kopierten Ausdrucks.
+            // `flat x` / `copy x` (copy prefixes): the result has the type of the copied expression.
             if (startIdx < endIdx && _tokens[startIdx].Type is TokenType.Flat or TokenType.Copy or TokenType.Take)
                 return EvalExprRangeCore(startIdx + 1, endIdx, depth + 1);
 
@@ -461,7 +461,7 @@ namespace fire.Editor
                     break;
                 case SegKind.Call:
                     {
-                        // Aufruf einer Methode der umschließenden Klasse ohne 'this.'
+                        // Call of a method of the enclosing class without 'this.'
                         var cls = EnclosingClassAt(scopeOffset);
                         var method = cls == null ? null
                             : MembersOf(cls).FirstOrDefault(m => m.Kind == MemberKind.Method && m.Name == root.Text);
@@ -503,10 +503,10 @@ namespace fire.Editor
                         : ExprType.Unknown;
                 case TypeKind.Namespace:
                     {
-                        // 'Geometry.Circle' (die Klasse selbst: statischer
-                        // Zugriff), 'Geometry.Color' (Enum), 'Geometry.Inner'
-                        // (Unter-Namespace) - Aufrufe gibt es auf einem
-                        // Namespace nicht.
+                        // 'Geometry.Circle' (the class itself: static
+                        // access), 'Geometry.Color' (enum), 'Geometry.Inner'
+                        // (sub-namespace) - there are no calls on a
+                        // namespace.
                         string full = receiver.Name + "." + name;
                         if (isCall) return ExprType.Unknown;
                         if (Classes.ContainsKey(full)) return new ExprType(TypeKind.Static, full);
@@ -522,7 +522,7 @@ namespace fire.Editor
                             if (member.Name == name && member.IsProperty == !isCall)
                                 return BuiltinMembers.ToExprType(member.ReturnType);
 
-                        // Methoden aus `class extends string { ... }` (Prelude und eigene Erweiterungen).
+                        // Methods from `class extends string { ... }` (prelude and own extensions).
                         if (isCall && BuiltinMembers.ExtensionClassOf(receiver) is { } extensionKey
                             && Classes.ContainsKey(extensionKey))
                         {
@@ -536,14 +536,14 @@ namespace fire.Editor
             }
         }
 
-        /// <summary>Der Typ von `x[...]`: bei einem Array der Elementtyp, bei
-        /// einer Instanz der Rückgabetyp ihres `operator[]`.</summary>
+        /// <summary>The type of `x[...]`: for an array the element type, for
+        /// an instance the return type of its `operator[]`.</summary>
         private ExprType ElementType(ExprType container, int depth)
         {
             switch (container.Kind)
             {
                 case TypeKind.Array:
-                    return FromTypeName(container.Name!, isArray: false, System.Array.Empty<string>()); // Name ist schon ein Schlüssel
+                    return FromTypeName(container.Name!, isArray: false, System.Array.Empty<string>()); // Name is already a key
                 case TypeKind.Primitive when container.Name == "string":
                     return new ExprType(TypeKind.Primitive, "char"); // s[i]
                 case TypeKind.Instance:
@@ -556,9 +556,9 @@ namespace fire.Editor
             }
         }
 
-        /// <summary>Der Typ, den der Typname `name` (so geschrieben, evtl.
-        /// qualifiziert) meint, aufgelöst gegen `context` (siehe
-        /// ClassInfo.Context) - Klasse, Enum, oder ein einfacher Typ wie `int`.</summary>
+        /// <summary>The type that the type name `name` (as written, possibly
+        /// qualified) means, resolved against `context` (see
+        /// ClassInfo.Context) - class, enum, or a simple type like `int`.</summary>
         private ExprType FromTypeName(string? name, bool isArray, IReadOnlyList<string> context)
         {
             if (name == null) return ExprType.Unknown;
@@ -583,18 +583,18 @@ namespace fire.Editor
         {
             if (depth > MaxDepth) return ExprType.Unknown;
 
-            // Typnamen in der Deklaration sind relativ zum Kontext der
-            // deklarierenden Klasse geschrieben (Namespace + #using ihrer Datei).
+            // Type names in the declaration are written relative to the context of the
+            // declaring class (namespace + #using of its file).
             var ownerContext = Classes.TryGetValue(member.Owner, out var ownerInfo)
                 ? ownerInfo.Context
                 : System.Array.Empty<string>();
             var declared = FromTypeName(member.TypeName, member.TypeIsArray, ownerContext);
             if (declared.Kind != TypeKind.Unknown) return declared;
 
-            // Kein (brauchbarer) deklarierter Typ - aus dem Body/den
-            // Zuweisungen schließen. Immer im Index, dessen Token-Strom die
-            // Indizes des Mitglieds meinen (bei Prelude-Klassen der der
-            // Prelude, nicht dieser).
+            // No (usable) declared type - infer from the body/the
+            // assignments. Always in the index whose token stream the
+            // member's indices refer to (for prelude classes that of the
+            // prelude, not this one).
             var source = member.Source ?? this;
             return member.Kind switch
             {
@@ -604,8 +604,8 @@ namespace fire.Editor
             };
         }
 
-        /// <summary>Der Rückgabetyp einer Methode ohne deklarierten Typ: der
-        /// Typ des ersten herleitbaren `return`-Ausdrucks im Body.</summary>
+        /// <summary>The return type of a method without a declared type: the
+        /// type of the first derivable `return` expression in the body.</summary>
         internal ExprType InferReturnType(MemberInfo method, int depth)
         {
             if (depth > MaxDepth || method.BodyStart < 0) return ExprType.Unknown;
@@ -613,7 +613,7 @@ namespace fire.Editor
             {
                 if (_tokens[k].Type != TokenType.Return) continue;
                 int start = k + 1;
-                if (start >= method.BodyEnd || _tokens[start].NewlineBefore) continue; // 'return' ohne Wert
+                if (start >= method.BodyEnd || _tokens[start].NewlineBefore) continue; // 'return' without a value
                 int end = ExpressionEnd(start, method.BodyEnd);
                 var type = EvalExprRange(start, end - 1, depth + 1);
                 if (type.Kind != TypeKind.Unknown) return type;
@@ -621,9 +621,9 @@ namespace fire.Editor
             return ExprType.Unknown;
         }
 
-        /// <summary>Der Typ eines Feldes ohne deklarierten Typ: der Typ der
-        /// ersten herleitbaren Zuweisung `this.feld = ausdruck` irgendwo in
-        /// der Klasse (typisch: im Konstruktor).</summary>
+        /// <summary>The type of a field without a declared type: the type of the
+        /// first derivable assignment `this.field = expression` somewhere in
+        /// the class (typically: in the constructor).</summary>
         internal ExprType InferFieldType(MemberInfo field, int depth)
         {
             if (depth > MaxDepth || !Classes.TryGetValue(field.Owner, out var owner)) return ExprType.Unknown;
@@ -653,8 +653,8 @@ namespace fire.Editor
             var local = FindLocal(name, offset, depth, out bool found);
             if (found) return local;
 
-            // Feld/Property der umschließenden Klasse (SPEC "Implizite
-            // Mitglieder-Referenzen": auch ohne 'this.' ansprechbar).
+            // Field/property of the enclosing class (SPEC "Implicit
+            // member references": addressable also without 'this.').
             var enclosing = EnclosingClassAt(offset);
             if (enclosing != null)
             {
@@ -663,10 +663,10 @@ namespace fire.Editor
                 if (member != null) return TypeOfMember(member, depth);
             }
 
-            // Klassen-/Enum-/Namespace-Namen als Ausdruck (`Name.Mitglied`):
-            // wie beim echten Compiler NUR der exakt geschriebene, ggf. schon
-            // vollqualifizierte Name (siehe Resolver.TryResolveStaticMemberAccess
-            // - keine Auflösung über `#using`/den aktuellen Namespace).
+            // Class/enum/namespace names as an expression (`Name.Member`):
+            // as in the real compiler ONLY the exactly written, possibly already
+            // fully qualified name (see Resolver.TryResolveStaticMemberAccess
+            // - no resolution via `#using`/the current namespace).
             if (Classes.ContainsKey(name)) return new ExprType(TypeKind.Static, name);
             if (EnumMembers.ContainsKey(name)) return new ExprType(TypeKind.Enum, name);
             if (Namespaces.Contains(name)) return new ExprType(TypeKind.Namespace, name);
@@ -678,12 +678,12 @@ namespace fire.Editor
             || _tokens[k - 1].Type is TokenType.Semicolon or TokenType.LBrace or TokenType.RBrace
                 or TokenType.RParen or TokenType.Else;
 
-        /// <summary>Der Typ der lokalen Variable/des Parameters `name` an
-        /// `offset`, aus der LETZTEN passenden Deklaration davor in der
-        /// umschließenden Funktion (Top-Level-Code: im ganzen Dokument);
-        /// `found` sagt, ob es überhaupt eine Deklaration gab (auch wenn der
-        /// Typ Unknown bleibt - dann soll KEIN gleichnamiges Feld/keine
-        /// gleichnamige Klasse einspringen).</summary>
+        /// <summary>The type of the local variable/parameter `name` at
+        /// `offset`, from the LAST matching declaration before it in the
+        /// enclosing function (top-level code: in the whole document);
+        /// `found` says whether there was a declaration at all (even if the
+        /// type stays Unknown - then NO field/class of the same
+        /// name should step in).</summary>
         private ExprType FindLocal(string name, int offset, int depth, out bool found)
         {
             found = false;
@@ -707,12 +707,12 @@ namespace fire.Editor
                 if (TokenOffset(k) >= offset) break;
                 var t = _tokens[k];
 
-                // 'var name [: einheit] [= ausdruck]' - hinter dem ':' steht nur
-                // eine EINHEIT (einen Typ gibt man als 'T name' an, nicht als
-                // 'var name : T'), der Typ kommt also allein aus dem
-                // Initialisierer. Außer als Schleifenvariable von 'foreach (var
-                // name in ...)', die der Fall darunter (beim 'foreach'-Token
-                // selbst) schon vollständig behandelt hat.
+                // 'var name [: unit] [= expression]' - behind the ':' there is only
+                // a UNIT (a type is given as 'T name', not as
+                // 'var name : T'), so the type comes solely from the
+                // initialiser. Except as the loop variable of 'foreach (var
+                // name in ...)', which the case below (at the 'foreach' token
+                // itself) has already handled completely.
                 if (t.Type == TokenType.Var && k + 1 < n && _tokens[k + 1].Type == TokenType.Identifier
                     && _tokens[k + 1].Lexeme == name
                     && !(k >= 2 && _tokens[k - 1].Type == TokenType.LParen && _tokens[k - 2].Type == TokenType.Foreach))
@@ -730,8 +730,8 @@ namespace fire.Editor
                     continue;
                 }
 
-                // foreach (name in ausdruck) - so schreibt es die Sprache (SPEC 8.5);
-                // ein zusätzliches 'var' davor wird ebenfalls erkannt.
+                // foreach (name in expression) - that is how the language writes it (SPEC 8.5);
+                // an additional 'var' in front is recognised as well.
                 int loopVar = t.Type == TokenType.Foreach && k + 3 < n && _tokens[k + 1].Type == TokenType.LParen
                     ? (_tokens[k + 2].Type == TokenType.Var ? k + 3 : k + 2)
                     : -1;
@@ -743,7 +743,7 @@ namespace fire.Editor
                     int close = MatchForward(k + 1, TokenType.LParen, TokenType.RParen);
                     var iterable = close > loopVar + 2 ? EvalExprRange(loopVar + 2, close - 1, depth + 1) : ExprType.Unknown;
                     result = iterable.Kind == TypeKind.Array
-                        ? FromTypeName(iterable.Name, isArray: false, System.Array.Empty<string>()) // Name ist schon ein Schlüssel
+                        ? FromTypeName(iterable.Name, isArray: false, System.Array.Empty<string>()) // Name is already a key
                         : ExprType.Unknown;
                     continue;
                 }
@@ -769,8 +769,8 @@ namespace fire.Editor
                     }
                 }
 
-                // name = ausdruck - nur als Anweisung, und nur, wenn der Typ
-                // nicht ausdrücklich deklariert ist (dann wäre er maßgeblich).
+                // name = expression - only as a statement, and only if the type
+                // is not explicitly declared (then that would be authoritative).
                 if (!explicitType && t.Type == TokenType.Identifier && t.Lexeme == name
                     && k + 1 < n && _tokens[k + 1].Type == TokenType.Assign && IsStatementStart(k))
                 {

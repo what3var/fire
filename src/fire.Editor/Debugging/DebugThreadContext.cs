@@ -8,30 +8,30 @@ using fire.Runtime;
 namespace fire.Editor
 {
     /// <summary>
-    /// Kapselt EINE VM-Instanz für den thread-fähigen Debugger - sowohl der
-    /// Main-Thread als auch jeder per `fire` entstandene Thread laufen auf
-    /// ihrem EIGENEN echten Hintergrund-Thread (siehe RunLoop), NIEMALS auf
-    /// dem UI-Thread selbst - sonst würde jeder länger laufende Schritt
-    /// ("Weiter", "Bis Ende durchlaufen", oder sogar nur "Step Over" über
-    /// eine lang laufende Zeile) die komplette Anwendung einfrieren, da die Oberfläche
-    /// währenddessen keine Maus-/Tastatur-/Zeichenereignisse mehr verarbeiten
-    /// kann.
+    /// Encapsulates ONE VM instance for the thread-capable debugger - both the
+    /// main thread and every thread created via `fire` run on
+    /// their OWN real background thread (see RunLoop), NEVER on
+    /// the UI thread itself - otherwise every longer running step
+    /// ("Continue", "Run to end", or even just "Step over" over
+    /// a long-running line) would freeze the whole application, since the UI
+    /// could no longer process mouse/keyboard/paint events
+    /// in the meantime.
     ///
-    /// Steuerung von der UI aus (RequestStep) ist deshalb bewusst FIRE-AND-
-    /// FORGET, NICHT blockierend: die UI stößt einen Schritt an und kehrt
-    /// sofort zurück, das Ergebnis kommt asynchron über das Paused-Event
-    /// zurück (das der Aufrufer selbst per Dispatcher auf den UI-Thread
-    /// holen muss). Innerhalb EINES Threads passiert dabei nie etwas
-    /// gleichzeitig (die Gates stellen sicher, dass der Hintergrund-Thread
-    /// jeweils GENAU EINEN Schritt nach dem anderen ausführt).
+    /// Control from the UI (RequestStep) is therefore deliberately FIRE-AND-
+    /// FORGET, NOT blocking: the UI kicks off a step and returns
+    /// immediately, the result comes back asynchronously via the Paused event
+    /// (which the caller itself has to bring to the UI thread via the dispatcher).
+    /// Within ONE thread nothing ever happens at the same time
+    /// (the gates ensure that the background thread
+    /// executes EXACTLY ONE step after the other).
     ///
-    /// Verhalten eines Fire-Threads standardmäßig ("niemand hat sich im
-    /// Threads-Panel dafür entschieden, ihn einzeln zu steuern"): läuft
-    /// automatisch weiter (wie ein "Weiter" im normalen Debugger), bis er
-    /// entweder einen Haltepunkt erreicht, fertig ist, abstürzt, oder die
-    /// UI ihn explizit pausiert (RequestPause). Der Main-Thread startet
-    /// dagegen immer im wartenden Zustand (erst der erste Knopfdruck stößt
-    /// überhaupt eine Ausführung an).
+    /// Behaviour of a fire thread by default ("nobody has decided in the
+    /// threads panel to control it individually"): continues
+    /// automatically (like a "Continue" in a normal debugger) until it
+    /// either reaches a breakpoint, is finished, crashes, or the
+    /// UI pauses it explicitly (RequestPause). The main thread, on the other hand,
+    /// always starts in the waiting state (only the first button press
+    /// starts any execution at all).
     /// </summary>
     public sealed class DebugThreadContext
     {
@@ -41,12 +41,12 @@ namespace fire.Editor
         public bool IsFinished { get; private set; }
         public string? RuntimeError { get; private set; }
 
-        /// <summary>Wird ausgelöst, sobald dieser Thread einen angeforderten
-        /// Schritt beendet hat - feuert auf DIESES Threads EIGENEM
-        /// Hintergrund-Thread, NIEMALS auf dem UI-Thread; der Abonnent muss
-        /// selbst für Dispatcher.InvokeAsync (NICHT das blockierende Invoke -
-        /// siehe MainWindow-Konstruktor für die Deadlock-Begründung)
-        /// sorgen.</summary>
+        /// <summary>Raised as soon as this thread has finished a requested
+        /// step - fires on THIS thread's OWN
+        /// background thread, NEVER on the UI thread; the subscriber must
+        /// take care of Dispatcher.InvokeAsync itself (NOT the blocking Invoke -
+        /// see the MainWindow constructor for the deadlock reasoning)
+        /// .</summary>
         public event Action<DebugThreadContext>? Paused;
 
         private readonly SemaphoreSlim _resumeGate = new(0);
@@ -63,27 +63,27 @@ namespace fire.Editor
             var thread = new Thread(RunLoop)
             {
                 Name = $"fire-Debug-{name}",
-                // Vordergrund-Thread (.NET-Standard) - eine laufende
-                // Debug-Sitzung soll den Prozess nicht stillschweigend am
-                // Leben halten oder umgekehrt abrupt sterben, während noch
-                // etwas läuft; DebugSession.Reset/Abandon sorgt dafür, dass
-                // jeder Thread sauber (statt für immer wartend) endet.
+                // Foreground thread (.NET default) - a running
+                // debug session should neither silently keep the process
+                // alive nor abruptly die while
+                // something is still running; DebugSession.Reset/Abandon ensures that
+                // every thread ends cleanly (instead of waiting forever).
                 IsBackground = false,
             };
             thread.Start();
         }
 
-        /// <summary>Für den Main-Thread - startet WARTEND (kein
-        /// automatischer Lauf, siehe Klassenkommentar).</summary>
+        /// <summary>For the main thread - starts WAITING (no
+        /// automatic run, see the class comment).</summary>
         public static DebugThreadContext ForMain(VM vm) => new(vm, "Main", isMain: true);
 
-        /// <summary>Für einen per `fire` entstandenen Thread - startet
-        /// SOFORT im automatischen "Weiter"-Modus (siehe Klassenkommentar).
-        /// Muss von Runtime.FireRuntime.ThreadBodyInterceptor aus
-        /// aufgerufen werden (beliebiger Thread - der Konstruktor startet
-        /// selbst einen NEUEN, eigenen Hintergrund-Thread für die
-        /// eigentliche Ausführung, läuft also nicht auf dem aufrufenden
-        /// Thread).</summary>
+        /// <summary>For a thread created via `fire` - starts
+        /// IMMEDIATELY in automatic "continue" mode (see the class comment).
+        /// Must be called from Runtime.FireRuntime.ThreadBodyInterceptor
+        /// (any thread - the constructor itself starts
+        /// a NEW, own background thread for the
+        /// actual execution, so it does not run on the calling
+        /// thread).</summary>
         public static DebugThreadContext ForFireThread(VM vm, string name, ISet<(int SourceIndex, int Line)> breakpointsSnapshot)
         {
             var ctx = new DebugThreadContext(vm, name, isMain: false);
@@ -91,12 +91,12 @@ namespace fire.Editor
             return ctx;
         }
 
-        /// <summary>Verbraucht eine evtl. ausstehende Pausier-Anfrage (siehe
-        /// RequestPause) - `true` genau einmal pro RequestPause-Aufruf,
-        /// danach wieder `false`, bis erneut angefragt wird. Öffentlich,
-        /// damit DebugSession eigene, unterbrechbare Schritt-Funktionen
-        /// (Continue/RunToCompletion) für einen BELIEBIGEN Thread bauen
-        /// kann, nicht nur für den automatischen Fire-Thread-Lauf.</summary>
+        /// <summary>Consumes a possibly pending pause request (see
+        /// RequestPause) - `true` exactly once per RequestPause call,
+        /// afterwards `false` again until requested anew. Public,
+        /// so that DebugSession can build its own interruptible step functions
+        /// (Continue/RunToCompletion) for ANY thread,
+        /// not only for the automatic fire-thread run.</summary>
         public bool ConsumePauseRequest()
         {
             if (!_pauseRequested) return false;
@@ -104,21 +104,21 @@ namespace fire.Editor
             return true;
         }
 
-        /// <summary>Bittet einen gerade laufenden Schritt (typischerweise
-        /// "Weiter" oder "Bis Ende durchlaufen" - siehe MakeContinueStep/
-        /// MakeRunToCompletionStep, beide prüfen das kooperativ), an der
-        /// NÄCHSTEN Instruktion anzuhalten. `Step Line/Into/Out` selbst
-        /// prüfen das NICHT (sie nutzen VM.StepLine/StepInto/StepOut direkt,
-        /// deren interne Schleife dem Debugger nicht zugänglich ist) - ein
-        /// einzelner Schritt sollte aber ohnehin fast immer schnell fertig
-        /// sein, außer bei einer Endlosschleife auf EINER einzigen
-        /// Quelltextzeile (bekannte, hingenommene Einschränkung).</summary>
+        /// <summary>Asks a currently running step (typically
+        /// "Continue" or "Run to end" - see MakeContinueStep/
+        /// MakeRunToCompletionStep, both check this cooperatively) to stop at the
+        /// NEXT instruction. `Step Line/Into/Out` themselves do
+        /// NOT check it (they use VM.StepLine/StepInto/StepOut directly,
+        /// whose internal loop is not accessible to the debugger) - a
+        /// single step should almost always finish quickly anyway,
+        /// except for an endless loop on a SINGLE
+        /// source line (known, accepted restriction).</summary>
         public void RequestPause() => _pauseRequested = true;
 
-        /// <summary>Läuft auf dem EIGENEN Hintergrund-Thread dieses Kontexts
-        /// (siehe Konstruktor) - wartet abwechselnd (per _resumeGate) und
-        /// führt den jeweils angeforderten Schritt aus, bis das Programm
-        /// beendet ist.</summary>
+        /// <summary>Runs on the OWN background thread of this context
+        /// (see constructor) - alternately waits (via _resumeGate) and
+        /// executes the respectively requested step until the program has
+        /// ended.</summary>
         private void RunLoop()
         {
             while (true)
@@ -126,9 +126,9 @@ namespace fire.Editor
                 _resumeGate.Wait();
                 if (_abandoned)
                 {
-                    // Kein noch ausstehender Schritt wird mehr ausgeführt -
-                    // egal, ob gerade einer anlag oder nicht, dieser Thread
-                    // endet jetzt (siehe Abandon-Doku).
+                    // No still pending step is executed any more -
+                    // regardless of whether one was due just now or not, this thread
+                    // ends now (see Abandon documentation).
                     IsFinished = true;
                     Paused?.Invoke(this);
                     return;
@@ -137,13 +137,13 @@ namespace fire.Editor
                 var step = _pendingStep;
                 if (step != null) RunStepNow(step);
 
-                // Abandon() kann WÄHREND RunStepNow lief gesetzt worden sein
-                // (der Thread war beschäftigt, nicht wartend) - der eigentliche
-                // step selbst weiß davon nichts und könnte "more work"
-                // zurückgegeben haben (z.B. weil RequestPause ihn nur
-                // UNTERBROCHEN, nicht beendet hat) - IsFinished hier notfalls
-                // erzwingen, sonst würde die Schleife gleich wieder auf das
-                // Gate warten, ohne dass je wieder jemand es öffnet.
+                // Abandon() may have been set WHILE RunStepNow was running
+                // (the thread was busy, not waiting) - the actual
+                // step itself knows nothing about it and might have returned "more work"
+                // (e.g. because RequestPause only
+                // INTERRUPTED it, did not end it) - force IsFinished here if necessary,
+                // otherwise the loop would immediately wait on the
+                // gate again without anyone ever opening it again.
                 if (_abandoned) IsFinished = true;
 
                 Paused?.Invoke(this);
@@ -158,40 +158,40 @@ namespace fire.Editor
                 bool more = step(Vm);
                 IsFinished = !more;
 
-                // Seit VM.UnhandledException (siehe dort) wirft eine
-                // unbehandelte Skript-Exception NICHT mehr - sie muss hier
-                // explizit geprüft werden, sonst würde der Debugger den
-                // Thread einfach als "fertig, kein Fehler" anzeigen, obwohl
-                // das Skript tatsächlich mit einer nicht gefangenen Exception
-                // abgebrochen ist. Reine Formatierungs-Bequemlichkeit über
-                // UncaughtScriptException (die selbst nicht mehr geworfen
-                // wird, siehe dort) für dieselbe Fehlermeldung wie vorher.
+                // Since VM.UnhandledException (see there) an
+                // unhandled script exception does NOT throw any more - it has to be
+                // checked explicitly here, otherwise the debugger would simply show the
+                // thread as "finished, no error", although
+                // the script was actually aborted with an uncaught exception.
+                // Pure formatting convenience via
+                // UncaughtScriptException (which itself is no longer thrown,
+                // see there) for the same error message as before.
                 if (Vm.UnhandledException != null)
                     RuntimeError = new UncaughtScriptException(Vm.UnhandledException).Message;
             }
             catch (Exception ex)
             {
-                // Absichtlich breit gefangen (wie DebugSession.RunGuarded
-                // schon immer für den Single-Thread-Fall) - jeder interne
-                // VM-Fehler (z.B. ein VmInvariantViolationException-Bug)
-                // soll hier als klare Fehlermeldung landen, statt den Thread
-                // (und damit potenziell die ganze Anwendung, falls
-                // unbeobachtet) mitzureißen. Eine unbehandelte SKRIPT-
-                // Exception läuft dagegen über UnhandledException oben, nicht
-                // mehr über diesen catch-Zweig.
+                // Deliberately caught broadly (as DebugSession.RunGuarded
+                // has always done for the single-thread case) - every internal
+                // VM error (e.g. a VmInvariantViolationException bug)
+                // should end up here as a clear error message, instead of dragging the thread
+                // (and thus potentially the whole application, if
+                // unobserved) down with it. An unhandled SCRIPT
+                // exception, on the other hand, goes via UnhandledException above, no
+                // longer via this catch branch.
                 Debug.WriteLine($"{ex.Message}\r\n{ex.StackTrace}");
                 RuntimeError = ex.Message;
                 IsFinished = true;
             }
-            _pendingStep = null; // nach diesem Lauf: NICHT automatisch weiter, sondern auf die nächste explizite Anweisung warten
+            _pendingStep = null; // after this run: NOT automatically continue, but wait for the next explicit instruction
         }
 
-        /// <summary>Fordert einen einzelnen Schritt an (Step Line/Into/Out,
-        /// Continue, RunToCompletion, ... - siehe DebugSession für die
-        /// konkreten step-Funktionen) - FIRE-AND-FORGET, kehrt SOFORT
-        /// zurück, ohne auf den Abschluss zu warten (siehe Klassenkommentar
-        /// für die Begründung). Das Ergebnis kommt über das Paused-Event.
-        /// Wirkungslos, wenn dieser Thread bereits fertig ist.</summary>
+        /// <summary>Requests a single step (Step Line/Into/Out,
+        /// Continue, RunToCompletion, ... - see DebugSession for the
+        /// concrete step functions) - FIRE-AND-FORGET, returns IMMEDIATELY
+        /// without waiting for completion (see the class comment
+        /// for the reasoning). The result comes via the Paused event.
+        /// Has no effect if this thread is already finished.</summary>
         public void RequestStep(Func<VM, bool> step)
         {
             if (IsFinished) return;
@@ -199,26 +199,26 @@ namespace fire.Editor
             _resumeGate.Release();
         }
 
-        /// <summary>Löst einen Thread aus seiner aktuellen Warte-/Lauf-
-        /// position, ohne auf dessen Abschluss zu warten (siehe
-        /// DebugSession.Reset) - setzt ein dauerhaftes "abgebrochen"-Flag,
-        /// das RunLoop bei der NÄCHSTEN Gelegenheit (egal ob der Thread
-        /// gerade wartet oder mitten in einem Schritt steckt) ERZWUNGEN zu
-        /// IsFinished macht - unabhängig davon, was ein gerade laufender
-        /// Schritt selbst zurückgeben würde. `RequestPause` zusätzlich, damit
-        /// ein GERADE laufendes Continue/RunToCompletion (siehe
-        /// MakeContinueStep/MakeRunToCompletionStep) möglichst zeitnah
-        /// überhaupt erst zu dieser Prüfung zurückkehrt, statt erst beim
-        /// natürlichen Ende der Schleife. Ohne das dauerhafte Flag (frühere,
-        /// fehlerhafte Fassung) konnte ein Thread, der GENAU WÄHREND des
-        /// Abandon-Aufrufs beschäftigt war, durch das Pausieren zwar
-        /// kurz anhalten, dabei aber `more=true` (nicht fertig)
-        /// zurückgeben und danach für immer auf das Gate warten - genau das
-        /// Leck, das Abandon eigentlich verhindern soll. Ein bereits mitten
-        /// in einem NICHT unterbrechbaren Schritt (Step Line/Into/Out)
-        /// steckender Thread endet trotzdem erst, sobald DIESER Schritt von
-        /// selbst fertig wird (bekannte, hingenommene Einschränkung, siehe
-        /// RequestPause-Doku) - danach greift das Flag aber zuverlässig.</summary>
+        /// <summary>Releases a thread from its current waiting/running
+        /// position, without waiting for its completion (see
+        /// DebugSession.Reset) - sets a permanent "abandoned" flag
+        /// that RunLoop FORCES to
+        /// IsFinished at the NEXT opportunity (regardless of whether the thread
+        /// is currently waiting or in the middle of a step) - independent of what a currently running
+        /// step itself would return. `RequestPause` additionally, so that
+        /// a CURRENTLY running Continue/RunToCompletion (see
+        /// MakeContinueStep/MakeRunToCompletionStep) returns as soon as possible
+        /// to this check at all, instead of only at the
+        /// natural end of the loop. Without the permanent flag (earlier,
+        /// faulty version) a thread that was busy EXACTLY DURING
+        /// the Abandon call could stop briefly through the pausing,
+        /// but then return `more=true` (not finished)
+        /// and afterwards wait forever on the gate - exactly the
+        /// leak that Abandon is actually supposed to prevent. A thread already in the middle
+        /// of a NON-interruptible step (Step Line/Into/Out)
+        /// still ends only as soon as THAT step finishes
+        /// by itself (known, accepted restriction, see
+        /// RequestPause documentation) - afterwards the flag takes effect reliably, though.</summary>
         public void Abandon()
         {
             if (IsFinished) return;
@@ -227,18 +227,18 @@ namespace fire.Editor
             _resumeGate.Release();
         }
 
-        /// <summary>Wie VM.Continue, aber zusätzlich kooperativ unterbrechbar
-        /// durch RequestPause/ConsumePauseRequest - Grundlage sowohl für den
-        /// automatischen "Weiter"-Lauf, mit dem jeder Fire-Thread
-        /// standardmäßig startet, als auch für einen expliziten "Weiter"-
-        /// Knopfdruck auf einem BELIEBIGEN Thread (siehe DebugSession.
+        /// <summary>Like VM.Continue, but additionally cooperatively interruptible
+        /// via RequestPause/ConsumePauseRequest - basis both for the
+        /// automatic "Continue" run with which every fire thread
+        /// starts by default, and for an explicit "Continue"
+        /// button press on ANY thread (see DebugSession.
         /// Continue).</summary>
         public static Func<VM, bool> MakeContinueStep(ISet<(int SourceIndex, int Line)> breakpoints, Func<bool> isPauseRequested) =>
             vm => vm.RunUntilBreakpoint(breakpoints, isPauseRequested);
 
-        /// <summary>Wie VM.StepInstruction in einer Schleife bis zum
-        /// Programmende, aber ebenfalls kooperativ unterbrechbar (siehe
-        /// MakeContinueStep-Doku) - Grundlage für "Bis Ende durchlaufen".</summary>
+        /// <summary>Like VM.StepInstruction in a loop until the
+        /// program end, but likewise cooperatively interruptible (see
+        /// MakeContinueStep documentation) - basis for "Run to end".</summary>
         public static Func<VM, bool> MakeRunToCompletionStep(Func<bool> isPauseRequested) =>
             vm => vm.RunUntilEnd(isPauseRequested);
     }

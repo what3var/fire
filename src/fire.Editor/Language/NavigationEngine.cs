@@ -4,20 +4,20 @@ using System.Linq;
 
 namespace fire.Editor
 {
-    /// <summary>Ergebnis einer Klick-Navigation (siehe NavigationEngine.
-    /// TryResolve). `FilePath`: `null` bedeutet "Ziel liegt im AKTUELLEN
-    /// Dokument selbst" (nur `Line` relevant); ein gesetzter Pfad ist der
-    /// RELATIVE Pfad aus einer `#include`-Zeile - MainWindow löst ihn
-    /// relativ zum Verzeichnis der jeweils anzeigenden Datei auf (siehe
-    /// dort, kennt als einzige Stelle den tatsächlichen Dateipfad).
-    /// `PreludeName`: gesetzt, wenn das Ziel in einer eingebauten Prelude
-    /// liegt (Standardbibliothek oder eine per `#import` zugeschaltete
-    /// Erweiterung, siehe ScriptSymbolIndex.PreludeSourceOf) - dann ist
-    /// `FilePath` IMMER null (kein echter Dateipfad vorhanden) und `Line`
-    /// bezieht sich auf den PRELUDE-Quelltext, NICHT auf das aktuelle
-    /// Dokument; der Aufrufer zeigt in diesem Fall die Prelude in einem
-    /// schreibgeschützten Fenster (FileViewerWindow.ShowPrelude) statt eines
-    /// normalen Sprungs im Editor.</summary>
+    /// <summary>Result of a click navigation (see NavigationEngine.
+    /// TryResolve). `FilePath`: `null` means "target lies in the CURRENT
+    /// document itself" (only `Line` relevant); a set path is the
+    /// RELATIVE path from an `#include` line - MainWindow resolves it
+    /// relative to the directory of the file currently being shown (see
+    /// there, the only place that knows the actual file path).
+    /// `PreludeName`: set if the target lies in a built-in prelude
+    /// (standard library or an extension switched on via `#import`,
+    /// see ScriptSymbolIndex.PreludeSourceOf) - then
+    /// `FilePath` is ALWAYS null (no real file path available) and `Line`
+    /// refers to the PRELUDE source, NOT to the current
+    /// document; in this case the caller shows the prelude in a
+    /// read-only window (FileViewerWindow.ShowPrelude) instead of a
+    /// normal jump in the editor.</summary>
     public sealed record NavigationTarget(string? FilePath, int Line, string? PreludeName = null)
     {
         public bool IsPrelude => PreludeName != null;
@@ -55,30 +55,30 @@ namespace fire.Editor
     }
 
     /// <summary>
-    /// Bestimmt, wohin ein Klick auf eine bestimmte Zeichen-Position im
-    /// Quelltext springen soll - Best-Effort wie der Rest der Editor-Werkzeuge
-    /// (ScriptSymbolIndex/CompletionEngine), TOKEN-/TEXT-basiert statt über
-    /// den echten Resolver (der bräuchte vollständigen, gültigen Quelltext
-    /// und würde bei jedem Tippfehler nichts mehr liefern).
+    /// Determines where a click on a certain character position in the
+    /// source should jump to - best-effort like the rest of the editor tools
+    /// (ScriptSymbolIndex/CompletionEngine), TOKEN-/TEXT-based instead of via
+    /// the real resolver (which would need complete, valid source
+    /// and would deliver nothing at every typo).
     ///
-    /// Erkennt drei Fälle, in dieser Reihenfolge:
-    /// 1. Klick auf eine `#include "pfad"`-Zeile -> Ziel ist diese Datei
-    ///    (Zeile 1, da die GANZE Datei gemeint ist, kein bestimmtes Symbol
-    ///    darin).
-    /// 2. Klick auf einen Bezeichner nach einem `.` (`empfänger.Name`) ->
-    ///    versucht, den TYP von `empfänger` zu bestimmen (wie bei der
-    ///    Autovervollständigung: `this`, typisierte Variable/Parameter -
-    ///    siehe ScriptSymbolIndex.TryResolveDeclaredType/EnclosingClassAt)
-    ///    und `Name` als deren Mitglied nachzuschlagen.
-    /// 3. Klick auf einen "nackten" Bezeichner -> zuerst als bekannter
-    ///    Klassen-/Enum-Name versucht, sonst als Mitglied der GERADE
-    ///    umschließenden Klasse (impliziter `this.Name`-Aufruf).
+    /// Recognises three cases, in this order:
+    /// 1. Click on an `#include "path"` line -> the target is this file
+    ///    (line 1, since the WHOLE file is meant, no particular symbol
+    ///    in it).
+    /// 2. Click on an identifier after a `.` (`receiver.Name`) ->
+    ///    tries to determine the TYPE of `receiver` (as with
+    ///    auto-completion: `this`, typed variable/parameter -
+    ///    see ScriptSymbolIndex.TryResolveDeclaredType/EnclosingClassAt)
+    ///    and to look up `Name` as its member.
+    /// 3. Click on a "bare" identifier -> first tried as a known
+    ///    class/enum name, otherwise as a member of the CURRENTLY
+    ///    enclosing class (implicit `this.Name` call).
     ///
-    /// Liefert `null`, wenn im AKTUELLEN Dokument nichts Passendes gefunden
-    /// wird - MainWindow versucht in diesem Fall zusätzlich jede
-    /// includierte Datei (siehe ExtractIdentifierAndReceiver/
-    /// TryResolveInOtherFile, dort ohne Offset-Kontext, da der Klick-Offset
-    /// aus DIESEM Dokument in einer ANDEREN Datei bedeutungslos wäre).
+    /// Returns `null` if nothing suitable is found in the CURRENT document
+    /// - in this case MainWindow additionally tries every
+    /// included file (see ExtractIdentifierAndReceiver/
+    /// TryResolveInOtherFile, there without offset context, since the click offset
+    /// from THIS document would be meaningless in ANOTHER file).
     /// </summary>
     public static class NavigationEngine
     {
@@ -97,15 +97,15 @@ namespace fire.Editor
             string? identifier = ReadIdentifierAt(source, offset, out int idStart);
             if (identifier == null) return null;
             string? receiver = ReadIdentifierBeforeDot(source, idStart);
-            // Hinter einem ')' / ']' (`a.B().c`) kennt ReadIdentifierBeforeDot keinen Namen - der Punkt zählt trotzdem.
+            // Behind a ')' / ']' (`a.B().c`) ReadIdentifierBeforeDot knows no name - the dot counts anyway.
             if (receiver == null && idStart > 0 && source[idStart - 1] == '.') receiver = "";
 
             if (receiver != null)
             {
-                // Erst über die volle Typherleitung der Vervollständigung (`a.B().c.`, `var x = new T()`,
-                // Namespaces, statische Aufrufe ...), dann über die einfache Auflösung des Empfängers.
-                // `Geo.Circle` / `A.B.Circle` als Typname (z.B. hinter `new` oder in einer Deklaration): der geschriebene
-                // Pfad, vollqualifiziert oder über #using.
+                // First via the full type derivation of completion (`a.B().c.`, `var x = new T()`,
+                // namespaces, static calls ...), then via the simple resolution of the receiver.
+                // `Geo.Circle` / `A.B.Circle` as a type name (e.g. behind `new` or in a declaration): the written
+                // path, fully qualified or via #using.
                 string? dotted = ReadDottedNameBefore(source, idStart - 1);
                 if (dotted != null)
                 {
@@ -126,8 +126,8 @@ namespace fire.Editor
                 string? className = receiver == "this"
                     ? index.EnclosingClassAt(offset)
                     : index.TryResolveDeclaredType(offset, receiver);
-                // 'ClassName.Member' (unüblich, aber abgedeckt) - der Klassenname
-                // wie geschrieben, auch aus einem anderen Namespace/per #using.
+                // 'ClassName.Member' (unusual, but covered) - the class name
+                // as written, also from another namespace/via #using.
                 className ??= index.TryFindClass(receiver, offset);
 
                 if (className != null)
@@ -280,19 +280,19 @@ namespace fire.Editor
         private static bool enumMembersContain(ScriptSymbolIndex index, string enumKey, string name) =>
             index.EnumMembers.TryGetValue(enumKey, out var members) && members.Contains(name);
 
-        /// <summary>Das Mitglied `name` der Klasse `className` (auch ein geerbtes), mit bekannter Deklarationszeile.</summary>
+        /// <summary>The member `name` of the class `className` (also an inherited one), with known declaration line.</summary>
         private static MemberInfo? FindMember(ScriptSymbolIndex index, string className, string name) =>
             index.MembersOf(className).FirstOrDefault(m => m.Name == name && m.DeclLine > 0);
 
-        /// <summary>Ziel eines Mitglieds: stammt es aus einer Prelude (auch ein geerbtes einer Prelude-Basisklasse), ist das
-        /// Ziel dort - nicht in der angeklickten Klasse.</summary>
+        /// <summary>Target of a member: if it comes from a prelude (also an inherited one of a prelude base class), the
+        /// target is there - not in the clicked class.</summary>
         private static NavigationTarget MemberTarget(ScriptSymbolIndex index, MemberInfo member) =>
             new(member.Source?.FilePath, member.DeclLine, member.Source?.PreludeName);
 
         private static ResolvedSymbol MemberSymbol(ScriptSymbolIndex index, MemberInfo member) =>
             new(MemberTarget(index, member), null, member);
 
-        /// <summary>Ziel eines Enums (einzelne Mitglieder haben keine eigene Zeile).</summary>
+        /// <summary>Target of an enum (individual members have no line of their own).</summary>
         private static NavigationTarget EnumTarget(ScriptSymbolIndex index, string enumKey)
         {
             index.EnumPreludes.TryGetValue(enumKey, out var prelude);
@@ -303,7 +303,7 @@ namespace fire.Editor
         /// <summary>Where a class is declared: in the document (no file), in a prelude, or in another file of the project.</summary>
         private static NavigationTarget ClassTarget(ClassInfo c) => new(c.Source?.FilePath, c.DeclLine, c.PreludeName);
 
-        /// <summary>Das Mitglied `identifier` zu einem hergeleiteten Empfänger-Typ (siehe ScriptSymbolIndex.ResolveReceiver).</summary>
+        /// <summary>The member `identifier` for a derived receiver type (see ScriptSymbolIndex.ResolveReceiver).</summary>
         private static ResolvedSymbol? ResolveMemberOfType(ScriptSymbolIndex index, ExprType type, string identifier)
         {
             switch (type.Kind)
@@ -319,7 +319,7 @@ namespace fire.Editor
                         ? new ResolvedSymbol(EnumTarget(index, type.Name!)) : null;
                 case TypeKind.Namespace:
                     {
-                        // `Geometry.Circle`: eine Klasse/ein Enum im Namespace.
+                        // `Geometry.Circle`: a class/an enum in the namespace.
                         string full = type.Name + "." + identifier;
                         if (index.Classes.TryGetValue(full, out var cls) && cls.DeclLine > 0)
                             return new ResolvedSymbol(ClassTarget(cls), cls);
@@ -329,7 +329,7 @@ namespace fire.Editor
                 case TypeKind.Primitive:
                 case TypeKind.Array:
                     {
-                        // Methoden aus `class extends string { ... }` (Prelude und eigene Erweiterungen).
+                        // Methods from `class extends string { ... }` (prelude and own extensions).
                         if (BuiltinMembers.ExtensionClassOf(type) is { } key && index.Classes.ContainsKey(key))
                         {
                             var member = FindMember(index, key, identifier);
@@ -342,12 +342,12 @@ namespace fire.Editor
             }
         }
 
-        /// <summary>Bezeichner + (falls vorhanden) der Empfänger vor einem
-        /// '.' an der Klick-Position - öffentlich, damit MainWindow beim
-        /// Fehlschlag von TryResolve dieselbe Auflösung gegen die
-        /// Symbol-Indizes ANDERER (includierter) Dateien versuchen kann,
-        /// OHNE die (dort bedeutungslose) Offset-/Scope-Information aus
-        /// DIESEM Dokument erneut zu verwenden (siehe TryResolveInOtherFile).</summary>
+        /// <summary>Identifier + (if present) the receiver in front of a
+        /// '.' at the click position - public, so that MainWindow, when
+        /// TryResolve fails, can try the same resolution against the
+        /// symbol indices of OTHER (included) files,
+        /// WITHOUT using the (there meaningless) offset/scope information from
+        /// THIS document again (see TryResolveInOtherFile).</summary>
         public static (string Identifier, string? Receiver)? ExtractIdentifierAndReceiver(string source, int offset)
         {
             string? identifier = ReadIdentifierAt(source, offset, out int idStart);
@@ -356,31 +356,31 @@ namespace fire.Editor
             return (identifier, receiver);
         }
 
-        /// <summary>Wie der Kern von TryResolve, aber für eine ANDERE Datei
-        /// als die, in der geklickt wurde - deshalb OHNE Offset-abhängige
-        /// Fälle ('this', umschließende Klasse, typisierte lokale Variable):
-        /// `receiver` wird hier ausschließlich als LITERALER Klassenname
-        /// interpretiert, ein `receiver == null` nur als direkter Klassen-/
-        /// Enum-Name, NICHT als impliziter `this.identifier`-Aufruf (dafür
-        /// fehlt der Scope-Kontext in einer fremden Datei).
+        /// <summary>Like the core of TryResolve, but for ANOTHER file
+        /// than the one that was clicked in - therefore WITHOUT offset-dependent
+        /// cases ('this', enclosing class, typed local variable):
+        /// `receiver` is interpreted here exclusively as a LITERAL class name,
+        /// a `receiver == null` only as a direct class/
+        /// enum name, NOT as an implicit `this.identifier` call (the scope
+        /// context is missing for that in a foreign file).
         ///
-        /// Schließt Treffer aus der eingebauten Standardbibliothek bewusst
-        /// AUS (siehe ClassInfo.IsFromPrelude) - JEDER ScriptSymbolIndex
-        /// (auch der einer includierten Datei) enthält sie jetzt automatisch
-        /// mit (siehe ScriptSymbolIndex.MergeInPrelude); der Rückgabetyp
-        /// hier ist aber nur eine reine Zeilennummer OHNE die Möglichkeit,
-        /// "das ist eigentlich die Prelude, nicht diese Datei" zu
-        /// signalisieren wie beim NavigationTarget.IsPrelude-Feld der
-        /// Haupt-Auflösung (TryResolve) - ein Prelude-Treffer würde deshalb
-        /// hier fälschlich als Zeile INNERHALB der fremden Datei
-        /// interpretiert. Bis das eine eigene Signalisierung bekommt, lieber
-        /// KEIN Sprung als ein FALSCHER.</summary>
+        /// Deliberately EXCLUDES hits from the built-in standard library
+        /// (see ClassInfo.IsFromPrelude) - EVERY ScriptSymbolIndex
+        /// (also that of an included file) now automatically contains it
+        /// (see ScriptSymbolIndex.MergeInPrelude); the return type
+        /// here, however, is only a pure line number WITHOUT the possibility
+        /// of signalling "this is actually the prelude, not this file"
+        /// as the NavigationTarget.IsPrelude field of the
+        /// main resolution (TryResolve) does - a prelude hit would therefore
+        /// here wrongly be interpreted as a line INSIDE the foreign file.
+        /// Until this gets a signalling of its own, rather
+        /// NO jump than a WRONG one.</summary>
         public static int? TryResolveInOtherFile(string identifier, string? receiver, ScriptSymbolIndex otherIndex)
         {
             if (receiver != null)
             {
-                // Ohne Offset-Kontext: der Name wie geschrieben (evtl. über die
-                // #using der anderen Datei, oder als einziger Treffer).
+                // Without offset context: the name as written (possibly via the
+                // #using of the other file, or as the only hit).
                 string? receiverKey = otherIndex.TryFindClass(receiver, -1);
                 if (receiverKey != null && otherIndex.Classes.TryGetValue(receiverKey, out var receiverClass) && !receiverClass.IsFromPrelude)
                 {
@@ -416,10 +416,10 @@ namespace fire.Editor
 
         private static bool IsIdentChar(char c) => char.IsLetterOrDigit(c) || c == '_';
 
-        /// <summary>Liest den Bezeichner AN oder UNMITTELBAR VOR `offset`
-        /// (deckt sowohl "Klick mitten im Wort" als auch "Klick direkt
-        /// hinter dem letzten Zeichen des Wortes" ab - beides sind bei
-        /// einem Mausklick gleichermaßen zu erwarten).</summary>
+        /// <summary>Reads the identifier AT or IMMEDIATELY BEFORE `offset`
+        /// (covers both "click in the middle of the word" and "click directly
+        /// behind the last character of the word" - both are equally to be
+        /// expected with a mouse click).</summary>
         private static string? ReadIdentifierAt(string source, int offset, out int idStart)
         {
             idStart = 0;
@@ -428,13 +428,13 @@ namespace fire.Editor
             int end = offset;
             while (end < source.Length && IsIdentChar(source[end])) end++;
             if (start >= end) return null;
-            if (char.IsDigit(source[start])) return null; // beginnt mit Ziffer - kein gültiger Bezeichner
+            if (char.IsDigit(source[start])) return null; // starts with a digit - not a valid identifier
             idStart = start;
             return source.Substring(start, end - start);
         }
 
-        /// <summary>Der durch Punkte verbundene Bezeichner-Pfad unmittelbar vor `dotIdx` (dem '.'): `A.B` für `A.B.Name`,
-        /// null wenn davor kein reiner Pfad steht (z.B. `f().Name`).</summary>
+        /// <summary>The identifier path joined by dots immediately before `dotIdx` (the '.'): `A.B` for `A.B.Name`,
+        /// null if there is no pure path before it (e.g. `f().Name`).</summary>
         private static string? ReadDottedNameBefore(string source, int dotIdx)
         {
             int end = dotIdx;

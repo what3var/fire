@@ -21,46 +21,46 @@ namespace fire.Editor
     }
 
     /// <summary>
-    /// Live-Fehleranalyse für den Editor: lässt Parser, Resolver UND Compiler
-    /// (in dieser Reihenfolge, wie beim echten Kompilieren) auf dem aktuellen
-    /// Editor-Inhalt laufen und wandelt die dabei auftretenden Fehler in
-    /// Diagnosen mit Zeilenangabe um.
+    /// Live error analysis for the editor: runs the parser, resolver AND compiler
+    /// (in this order, as in real compiling) on the current
+    /// editor content and converts the errors that occur
+    /// into diagnostics with line information.
     ///
-    /// Resolver und Compiler brechen beim ersten Fehler NICHT ab, sondern
-    /// sammeln alle weiteren (siehe ResolverException/CompilerException) -
-    /// jeder davon landet als eigene Diagnose im Ergebnis. Der Compiler läuft
-    /// nur, wenn der Resolver keinen Fehler fand (er braucht dessen
-    /// Ergebnis, ein Lauf über einen unaufgelösten AST würde nur
-    /// Folgefehler liefern). Der PARSER dagegen meldet weiterhin nur den
-    /// ersten Fehler: er setzt nach einem Syntaxfehler nicht wieder auf,
-    /// ein zweiter gemeldeter Fehler wäre also nur ein Folgefehler des
-    /// ersten.
+    /// The resolver and compiler do NOT stop at the first error, but
+    /// collect all further ones (see ResolverException/CompilerException) -
+    /// each of them ends up as a diagnostic of its own in the result. The compiler runs
+    /// only if the resolver found no error (it needs its
+    /// result, a run over an unresolved AST would only produce
+    /// follow-up errors). The PARSER, on the other hand, still reports only the
+    /// first error: it does not resume after a syntax error,
+    /// a second reported error would thus only be a follow-up error of the
+    /// first.
     ///
-    /// Verwendet - wie DebugSession/RuntimeSession.Build - ParseMultiple
-    /// (Prelude + Nutzer-Code als EIN kombiniertes Programm), damit
-    /// List/IEnumerable/IndexOutOfBoundsException bekannt sind, UND die
-    /// Preludes der per `#import` zugeschalteten Erweiterungen (siehe
-    /// ImportedPreludes): `#import "graphics"` macht Framebuffer/Console/
-    /// Window bekannt, `#import "devices"` die Geräte-Klassen - genau wie
-    /// beim echten Kompilieren, sonst würde jede Verwendung davon als
-    /// "Unbekannte Klasse"/"Unbekannter Bezeichner" unterkringelt.
-    /// WICHTIG: die von Parser/Resolver gemeldeten Zeilennummern bleiben
-    /// dabei trotzdem korrekt auf den NUTZER-Quelltext bezogen, nicht auf
-    /// die Preludes verschoben - jeder Programmteil wird intern über eine
-    /// EIGENE Lexer/Parser-Instanz mit bei 1 beginnender Zeilenzählung für
-    /// GENAU diesen Teil erzeugt (siehe Parser.ParseRaw), die Zeilennummer
-    /// an jedem AST-Knoten bleibt danach unverändert erhalten, unabhängig
-    /// davon, wie die Teile anschließend zu einer Liste zusammengefügt
-    /// werden.
+    /// Uses - like DebugSession/RuntimeSession.Build - ParseMultiple
+    /// (prelude + user code as ONE combined program), so that
+    /// List/IEnumerable/IndexOutOfBoundsException are known, AND the
+    /// preludes of the extensions switched on via `#import` (see
+    /// ImportedPreludes): `#import "graphics"` makes Framebuffer/Console/
+    /// Window known, `#import "devices"` the device classes - just as in
+    /// real compiling, otherwise every use of them would be squiggled as
+    /// "unknown class"/"unknown identifier".
+    /// IMPORTANT: the line numbers reported by the parser/resolver
+    /// nevertheless stay correctly related to the USER source text, not
+    /// shifted onto the preludes - every program part is created internally via an
+    /// OWN lexer/parser instance with line counting starting at 1 for
+    /// EXACTLY this part (see Parser.ParseRaw), the line number
+    /// on every AST node stays unchanged afterwards, regardless of
+    /// how the parts are subsequently joined into
+    /// a list.
     /// </summary>
     public static class LiveDiagnostics
     {
         public static List<Diagnostic> Analyze(string source, string? basePath = null) => Analyze(source, Array.Empty<string>(), basePath, null);
 
-        /// <summary>`extraImports`: Namen von Erweiterungen (wie in `#import
-        /// "name"`), die zusätzlich zu den in `source` selbst
-        /// vorkommenden als zugeschaltet gelten - siehe AnalyzeInProject.
-        /// Unbekannte Namen werden ignoriert.</summary>
+        /// <summary>`extraImports`: names of extensions (as in `#import
+        /// "name"`) that count as switched on in addition to those occurring in `source`
+        /// itself - see AnalyzeInProject.
+        /// Unknown names are ignored.</summary>
         private static List<Diagnostic> Analyze(string source, IEnumerable<string> extraImports, string? basePath, fire.Projects.BuildPlan? plan)
         {
             var diagnostics = new List<Diagnostic>();
@@ -79,16 +79,16 @@ namespace fire.Editor
                 {
                     if (ProjectLibraries.TryImport(plan, name, projectImports, nativeImports)) continue;
                     try { foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name))) nativeImports.Add(key); }
-                    catch (Exception) { /* unbekannte Erweiterung - meldet deren eigene Datei */ }
+                    catch (Exception) { /* unknown extension - reports its own file */ }
                 }
 
-                // Dieselbe Registry wie beim ECHTEN Kompilieren (siehe
-                // RuntimeSession.CreateProjectDirectiveRegistry) - sonst
-                // würde z.B. '#import "graphics"' hier fälschlich als
-                // unbekannte Präprozessor-Direktive unterkringelt, obwohl
-                // sie beim tatsächlichen Ausführen längst akzeptiert wird.
-                // Der Callback merkt sich die zugeschalteten Erweiterungen,
-                // deren Preludes unten eingesetzt werden.
+                // The same registry as in REAL compiling (see
+                // RuntimeSession.CreateProjectDirectiveRegistry) - otherwise
+                // e.g. '#import "graphics"' would be wrongly squiggled here as an
+                // unknown preprocessor directive, although
+                // it is long accepted when actually executing.
+                // The callback remembers the switched-on extensions,
+                // whose preludes are inserted below.
                 var registry = RuntimeSession.CreateProjectDirectiveRegistry(name => nativeImports.Add(name), tryLibrary: name => ProjectLibraries.TryImport(plan, name, projectImports, nativeImports));
                 var processed = new List<ProcessedSource>();
                 foreach (var s in new[] { fire.Standard.Prelude.Source, source })
@@ -98,8 +98,8 @@ namespace fire.Editor
                     ? ProjectLibraries.Process(plan, projectImports, file => Preprocessor.Process(file.Text, file.Directory, alreadyIncluded, registry))
                     : new List<(ProcessedSource Source, string Path)>();
 
-                // Erst NACH dem Vorverarbeiten ALLER Quellen ist bekannt, welche
-                // Erweiterungen zugeschaltet sind - wie im Linker.
+                // Only AFTER preprocessing ALL sources is it known which
+                // extensions are switched on - as in the linker.
                 ImportedPreludes.Insert(
                     nativeImports, natives, processed,
                     preludeSource => Preprocessor.Process(preludeSource, cwd, alreadyIncluded, registry));
@@ -125,35 +125,35 @@ namespace fire.Editor
             }
             catch (PreprocessorException ex)
             {
-                // Kein Line-Feld vorhanden (siehe Klassenkommentar dort,
-                // betrifft #include/#extern-Direktiven, die vor jeder
-                // Zeilen-Buchhaltung des eigentlichen Lexers verarbeitet
-                // werden) - Zeile 1 als bestmöglicher Platzhalter, damit die
-                // Fehleransicht trotzdem etwas Klickbares/Sichtbares zeigt.
+                // No Line field present (see the class comment there,
+                // concerns #include/#extern directives, which are processed before any
+                // line bookkeeping of the actual lexer happens) - line 1 as the best
+                // possible placeholder, so that the
+                // error view still shows something clickable/visible.
                 diagnostics.Add(new Diagnostic(1, ex.Message));
             }
             catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
             {
-                // Fehler ohne eigene Zeilen-Information, der nicht über den
-                // Compiler kam (der meldet über CompilerException MIT Zeile) -
-                // ebenfalls Zeile 1 als Platzhalter.
+                // Error without line information of its own that did not come via the
+                // compiler (which reports via CompilerException WITH a line) -
+                // likewise line 1 as a placeholder.
                 diagnostics.Add(new Diagnostic(1, ex.Message));
             }
             catch (Exception ex)
             {
-                // Absichtlich breit gefangen (wie DebugSession.RunGuarded):
-                // Live-Diagnostik läuft ZWANGSLÄUFIG immer wieder über kurz-
-                // lebige, noch kaputte Zwischenzustände während des Tippens -
-                // JEDE unerwartete Exception-Art landet hier als generische
-                // Diagnose, statt ungefangen im DispatcherTimer-Tick zu
-                // enden und die ganze Editor-Anwendung mitzureißen.
+                // Deliberately caught broadly (like DebugSession.RunGuarded):
+                // live diagnostics INEVITABLY run again and again over short-
+                // lived, still broken intermediate states while typing -
+                // EVERY kind of unexpected exception ends up here as a generic
+                // diagnostic, instead of ending uncaught in the DispatcherTimer tick
+                // and dragging the whole editor application down with it.
                 diagnostics.Add(new Diagnostic(1, ex.Message));
             }
 
-            // Resolver-/Compiler-Fehler kommen in Reihenfolge der Auflösung
-            // (z.B. erst alle Klassen, dann der Top-Level-Code), nicht in
-            // Zeilenreihenfolge - für die Fehleransicht nach Zeile sortieren
-            // (stabil, gleiche Zeile behält die Reihenfolge).
+            // Resolver/compiler errors come in the order of resolution
+            // (e.g. first all classes, then the top-level code), not in
+            // line order - sort by line for the error view
+            // (stable, the same line keeps the order).
             return diagnostics.OrderBy(d => d.Line).ToList();
         }
 
@@ -161,38 +161,38 @@ namespace fire.Editor
         private static readonly Regex UnknownClassOrType =
             new(@"^(?:Unknown (?:class|type|exception type) '(?<name>[^']+)'|'(?<name>[^']+)' of class '[^']+' is neither a known class nor a known interface)", RegexOptions.Compiled);
 
-        /// <summary>Wie Analyze(source), unterdrückt aber Diagnosen, die NUR
-        /// daher kommen, dass diese Analyse ausschließlich `source` (+
-        /// Prelude) kennt, nicht das GESAMTE Projekt (SPEC "Mehrere
-        /// Quelldateien") - eine gültige Referenz auf eine Klasse, die in
-        /// EINER DER `otherProjectFiles` definiert ist, würde sonst
-        /// fälschlich als "Unbekannte Klasse"/"Unbekannter Typ" gemeldet.
+        /// <summary>Like Analyze(source), but suppresses diagnostics that arise ONLY
+        /// because this analysis knows only `source` (+
+        /// prelude), not the ENTIRE project (SPEC "Multiple
+        /// source files") - a valid reference to a class that is defined in
+        /// ONE OF the `otherProjectFiles` would otherwise
+        /// wrongly be reported as "unknown class"/"unknown type".
         ///
-        /// Bewusst KEIN vollständiger, kombinierter Parser/Resolver/
-        /// Compiler-Lauf über das GANZE Projekt: ein Parse-/Resolve-Fehler
-        /// trägt keinen Quell-Index (anders als kompilierter Bytecode, siehe
-        /// Bytecode.Chunk.MarkLine) - ein Fehler in einer ANDEREN, gerade
-        /// kaputten Datei ließe sich dann nicht zuverlässig von einem
-        /// ECHTEN Fehler in `source` selbst unterscheiden, man würde also
-        /// riskieren, der falschen Datei einen roten Fehler unterzuschieben.
-        /// Stattdessen ein GEZIELTER, risikoarmer Nachtrag: Analyze(source)
-        /// läuft ganz normal (findet JEDEN echten Fehler in `source` selbst
-        /// zuverlässig), und nur für jede resultierende "Unbekannte Klasse/
-        /// Unbekannter Typ 'X'"-Diagnose wird geprüft, ob 'X' in EINER der
-        /// `otherProjectFiles` als Klasse definiert ist (per
-        /// ScriptSymbolIndex, demselben leichtgewichtigen Scanner wie für
-        /// Vervollständigung/Navigation) - falls ja, war die Diagnose falsch-
-        /// positiv (die Klasse ist projektweit ja tatsächlich bekannt) und
-        /// wird entfernt. Eine der `otherProjectFiles` mit einem gerade
-        /// eigenen Tippfehler bringt diese Prüfung nicht zum Absturz (wird
-        /// einfach übersprungen) - beeinflusst höchstens, ob EINE bestimmte
-        /// falsch-positive Diagnose noch übersehen bleibt, nie die
-        /// Zuverlässigkeit der echten Fehler in `source` selbst.
+        /// Deliberately NO complete, combined parser/resolver/
+        /// compiler run over the ENTIRE project: a parse/resolve error
+        /// carries no source index (unlike compiled bytecode, see
+        /// Bytecode.Chunk.MarkLine) - an error in ANOTHER, currently
+        /// broken file could then not be reliably told apart from a
+        /// REAL error in `source` itself, so one would
+        /// risk pinning a red error on the wrong file.
+        /// Instead a TARGETED, low-risk addendum: Analyze(source)
+        /// runs quite normally (finds EVERY real error in `source` itself
+        /// reliably), and only for each resulting "unknown class/
+        /// unknown type 'X'" diagnostic is it checked whether 'X' is defined as a class in ONE OF the
+        /// `otherProjectFiles` (via
+        /// ScriptSymbolIndex, the same lightweight scanner as for
+        /// completion/navigation) - if so, the diagnostic was a false
+        /// positive (the class is in fact known project-wide) and
+        /// is removed. One of the `otherProjectFiles` with a
+        /// typo of its own right now does not crash this check (it is
+        /// simply skipped) - at most it influences whether ONE particular
+        /// false-positive diagnostic remains overlooked, never the
+        /// reliability of the real errors in `source` itself.
         ///
-        /// Ausnahme: ein `#import "..."` in einer der `otherProjectFiles`
-        /// wird dagegen ECHT mitgezählt - die Erweiterungen (und damit ihre
-        /// Preludes, siehe ImportedPreludes) gelten im echten Compiler für
-        /// das ganze Projekt, nicht pro Datei.</summary>
+        /// Exception: an `#import "..."` in one of the `otherProjectFiles`
+        /// IS actually counted - the extensions (and thus their
+        /// preludes, see ImportedPreludes) apply in the real compiler to
+        /// the whole project, not per file.</summary>
         public static List<Diagnostic> AnalyzeInProject(string source, IReadOnlyList<string> otherProjectFiles, string? basePath = null, fire.Projects.BuildPlan? plan = null)
         {
             var importsElsewhere = otherProjectFiles
@@ -211,9 +211,9 @@ namespace fire.Editor
                 ScriptSymbolIndex index;
                 try { index = ScriptSymbolIndex.Build(other); }
                 catch { continue; }
-                // Der Name kann in `source` qualifiziert (`Geometry.Circle`) ODER -
-                // über den aktuellen Namespace/ein `#using` - einfach (`Circle`)
-                // geschrieben sein.
+                // The name can be qualified in `source` (`Geometry.Circle`) OR -
+                // via the current namespace/a `#using` - simple (`Circle`)
+                // written.
                 foreach (var cls in index.Classes.Values)
                 {
                     knownElsewhere.Add(cls.Name);

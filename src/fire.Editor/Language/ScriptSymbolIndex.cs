@@ -24,8 +24,8 @@ namespace fire.Editor
         Enum,
     }
 
-    /// <summary>Ein Eintrag IN einem Namespace: `Name` einfach, `FullName`
-    /// vollqualifiziert (Schlüssel in Classes/EnumMembers/Namespaces).</summary>
+    /// <summary>An entry IN a namespace: `Name` simple, `FullName`
+    /// fully qualified (key in Classes/EnumMembers/Namespaces).</summary>
     public sealed record NamespaceMember(string Name, NamespaceMemberKind Kind, string FullName);
 
     public enum MemberAccess
@@ -41,34 +41,34 @@ namespace fire.Editor
         public MemberKind Kind { get; }
         public int ParamCount { get; }
 
-        /// <summary>1-basierte Quelltextzeile des NAMENS-Tokens dieses
-        /// Mitglieds (für "zu Definition springen", siehe NavigationEngine)
-        /// - 0, falls unbekannt (sollte beim normalen Erfassen nicht
-        /// vorkommen).</summary>
+        /// <summary>1-based source line of the NAME token of this
+        /// member (for "go to definition", see NavigationEngine)
+        /// - 0 if unknown (should not occur
+        /// during normal collection).</summary>
         public int DeclLine { get; }
 
-        /// <summary>Der deklarierte Typ eines Feldes/einer Property bzw. der
-        /// Rückgabetyp einer Methode (Klassenname oder Typ-Keyword wie `int`),
-        /// `null`, wenn keiner angegeben ist (dynamische Typisierung - der
-        /// Normalfall, siehe ScriptSymbolIndex.InferReturnType für
-        /// Methoden). Bei `TypeIsArray` der ELEMENT-Typ (`Foo items[]`).</summary>
+        /// <summary>The declared type of a field/property or the
+        /// return type of a method (class name or type keyword like `int`),
+        /// `null` if none is given (dynamic typing - the
+        /// normal case, see ScriptSymbolIndex.InferReturnType for
+        /// methods). For `TypeIsArray` the ELEMENT type (`Foo items[]`).</summary>
         public string? TypeName { get; init; }
         public bool TypeIsArray { get; init; }
 
         public bool IsStatic { get; init; }
         public MemberAccess Access { get; init; } = MemberAccess.Public;
 
-        /// <summary>Die Parameterliste einer Methode als Text (`int a, Foo b`),
-        /// für die Anzeige in der Vervollständigung.</summary>
+        /// <summary>The parameter list of a method as text (`int a, Foo b`),
+        /// for display in completion.</summary>
         public string? Signature { get; init; }
 
-        /// <summary>Name der Klasse, die dieses Mitglied deklariert.</summary>
+        /// <summary>Name of the class that declares this member.</summary>
         public string Owner { get; internal set; } = string.Empty;
 
-        // Woher die Token-Indizes unten stammen (jeder Index - auch der der
-        // Prelude - hat seinen EIGENEN Token-Strom) und wo der Body einer
-        // Methode liegt (für die Rückgabetyp-Herleitung, siehe
-        // ScriptSymbolIndex.InferReturnType). BodyStart = -1: kein Body.
+        // Where the token indices below come from (every index - also that of the
+        // prelude - has its OWN token stream) and where the body of a
+        // method lies (for return type derivation, see
+        // ScriptSymbolIndex.InferReturnType). BodyStart = -1: no body.
         internal ScriptSymbolIndex? Source { get; set; }
         internal int BodyStart { get; init; } = -1;
         internal int BodyEnd { get; init; } = -1;
@@ -87,37 +87,37 @@ namespace fire.Editor
 
     public sealed class ClassInfo
     {
-        /// <summary>Der VOLLQUALIFIZIERTE Name (`Geometry.Circle`, ohne
-        /// Namespace nur `Circle`) - der Schlüssel in
-        /// <see cref="ScriptSymbolIndex.Classes"/>, wie beim echten Compiler
-        /// (siehe Parser.QualifyDeclName).</summary>
+        /// <summary>The FULLY QUALIFIED name (`Geometry.Circle`, without a
+        /// namespace just `Circle`) - the key in
+        /// <see cref="ScriptSymbolIndex.Classes"/>, as in the real compiler
+        /// (see Parser.QualifyDeclName).</summary>
         public string Name { get; }
 
-        /// <summary>Der Name ohne Namespace (`Circle`).</summary>
+        /// <summary>The name without namespace (`Circle`).</summary>
         public string SimpleName { get; }
 
-        /// <summary>Der Namespace, in dem die Klasse deklariert ist
-        /// (`Geometry`, `A.B`), leer ohne Namespace.</summary>
+        /// <summary>The namespace in which the class is declared
+        /// (`Geometry`, `A.B`), empty without a namespace.</summary>
         public string Namespace { get; }
 
-        /// <summary>Die Namespaces, gegen die Typnamen in der Deklaration dieser
-        /// Klasse (Basisklassen, Feld-/Rückgabetypen) aufgelöst werden: ihr
-        /// eigener Namespace zuerst, dann die `#using`-Namen ihrer Datei (siehe
+        /// <summary>The namespaces against which type names in the declaration of this
+        /// class (base classes, field/return types) are resolved: its
+        /// own namespace first, then the `#using` names of its file (see
         /// TypeRef.ResolveBaseName).</summary>
         public IReadOnlyList<string> Context { get; init; } = System.Array.Empty<string>();
 
-        /// <summary>Der Index, dessen Token-Strom diese Klasse beschreibt (bei
-        /// einer Prelude-Klasse der der Prelude).</summary>
+        /// <summary>The index whose token stream describes this class (for
+        /// a prelude class that of the prelude).</summary>
         internal ScriptSymbolIndex? Source { get; set; }
 
-        /// <summary>Alle Namen nach dem ':' im Klassenkopf (Basisklasse UND
-        /// Interfaces - welcher davon die echte Basisklasse ist, entscheidet
-        /// erst der Resolver; für Vervollständigung sind alle gleich
-        /// nützlich), in Quelltext-Reihenfolge.</summary>
+        /// <summary>All names after the ':' in the class head (base class AND
+        /// interfaces - which of them is the real base class is decided
+        /// only by the resolver; for completion all are equally
+        /// useful), in source order.</summary>
         public List<string> BaseNames { get; } = new();
 
-        /// <summary>Der ERSTE Name aus <see cref="BaseNames"/> (grobe
-        /// Näherung der Basisklasse), null ohne Basis.</summary>
+        /// <summary>The FIRST name from <see cref="BaseNames"/> (rough
+        /// approximation of the base class), null without a base.</summary>
         public string? BaseName
         {
             get => BaseNames.Count > 0 ? BaseNames[0] : null;
@@ -130,42 +130,42 @@ namespace fire.Editor
 
         public List<MemberInfo> Members { get; } = new();
 
-        /// <summary>Token-Bereiche (Index der öffnenden '{', der schließenden
-        /// '}') aller Bodys dieser Klasse im Token-Strom von
-        /// <see cref="MemberInfo.Source"/> - mehrere bei `class extends X`
-        /// (siehe ScriptSymbolIndex.InferFieldType).</summary>
+        /// <summary>Token ranges (index of the opening '{', of the closing
+        /// '}') of all bodies of this class in the token stream of
+        /// <see cref="MemberInfo.Source"/> - several for `class extends X`
+        /// (see ScriptSymbolIndex.InferFieldType).</summary>
         internal List<(int Start, int End)> BodyRanges { get; } = new();
 
-        /// <summary>1-basierte Quelltextzeile des Klassennamen-Tokens (für
-        /// "zu Definition springen", siehe NavigationEngine) - nachträglich
-        /// setzbar, falls eine Erweiterung (siehe ScriptSymbolIndex.
-        /// HarvestClassExtension) vor der echten Deklaration im Dokument
-        /// stand und zunächst nur einen Platzhalter ohne bekannte Zeile
-        /// angelegt hat. Bezieht sich bei <see cref="IsFromPrelude"/> auf
-        /// eine Zeile INNERHALB des Prelude-Quelltexts, NICHT auf das
-        /// aktuell bearbeitete Dokument.</summary>
+        /// <summary>1-based source line of the class name token (for
+        /// "go to definition", see NavigationEngine) - can be set
+        /// afterwards if an extension (see ScriptSymbolIndex.
+        /// HarvestClassExtension) stood before the real declaration in the document
+        /// and initially only created a placeholder without a known line.
+        /// For <see cref="IsFromPrelude"/> it refers to
+        /// a line INSIDE the prelude source, NOT to the
+        /// currently edited document.</summary>
         public int DeclLine { get; set; }
 
         /// <summary>The `///` documentation comment above the class declaration, null if there is none.</summary>
         public DocComment? Documentation => DeclLine > 0 ? Source?.DocumentationAt(DeclLine) : null;
 
-        /// <summary>true, wenn diese Klasse aus der eingebauten
-        /// Standardbibliothek stammt (siehe ScriptSymbolIndex.
-        /// MergeInPrelude/PreludeIndex), NICHT aus dem gerade bearbeiteten
-        /// Dokument selbst - "zu Definition springen" muss dafür die
-        /// Prelude in einem eigenen, schreibgeschützten Popup zeigen (siehe
-        /// NavigationEngine/MainWindow.ShowPreludeSource) statt im
-        /// Hauptdokument zu einer (dort gar nicht existierenden) Zeile zu
-        /// scrollen.</summary>
+        /// <summary>true if this class comes from the built-in
+        /// standard library (see ScriptSymbolIndex.
+        /// MergeInPrelude/PreludeIndex), NOT from the document
+        /// being edited itself - "go to definition" must then show the
+        /// prelude in a separate, read-only popup (see
+        /// NavigationEngine/MainWindow.ShowPreludeSource) instead of
+        /// scrolling in the main document to a line (that does not exist there at all).
+        /// </summary>
         public bool IsFromPrelude => PreludeName != null;
 
-        /// <summary>Aus welcher Prelude die Klasse stammt: <see cref="ScriptSymbolIndex.StandardPreludeName"/>
-        /// für die Standardbibliothek, sonst der Name der Erweiterung (`graphics`, `time`, ...);
-        /// null = steht im bearbeiteten Dokument selbst.</summary>
+        /// <summary>Which prelude the class comes from: <see cref="ScriptSymbolIndex.StandardPreludeName"/>
+        /// for the standard library, otherwise the name of the extension (`graphics`, `time`, ...);
+        /// null = is in the edited document itself.</summary>
         public string? PreludeName { get; set; }
 
-        /// <summary>true bei einem `interface` (nur Signaturen, nie mit `new`
-        /// instanziierbar).</summary>
+        /// <summary>true for an `interface` (signatures only, never
+        /// instantiable with `new`).</summary>
         public bool IsInterface { get; set; }
 
         public ClassInfo(string name, int declLine = 0)
@@ -178,80 +178,80 @@ namespace fire.Editor
         }
     }
 
-    /// <summary>Eine `#include "pfad"`-Zeile im Dokument (siehe
-    /// Parsing.Preprocessor - rein TEXTUELL erkannt, exakt derselbe reguläre
-    /// Ausdruck wie dort, damit "was der Editor beim Klicken erkennt" und
-    /// "was der echte Präprozessor tatsächlich einfügt" nie auseinanderlaufen
-    /// können).</summary>
+    /// <summary>An `#include "path"` line in the document (see
+    /// Parsing.Preprocessor - recognised purely TEXTUALLY, exactly the same regular
+    /// expression as there, so that "what the editor recognises on click" and
+    /// "what the real preprocessor actually inserts" can never drift
+    /// apart).</summary>
     public sealed record IncludeDirective(string RelativePath, int Line);
 
     /// <summary>
-    /// Best-Effort-Symboltabelle für Autovervollständigung im Editor - bewusst
-    /// TOKEN-basiert (über den echten Lexer), NICHT über den echten Parser:
-    /// der scheitert beim Live-Tippen sehr oft genau an der Stelle, an der
-    /// gerade getippt wird (unvollständige Ausdrücke), und liefert dann GAR
-    /// NICHTS zurück - Tokenisieren scheitert dagegen nur bei wirklich kaputten
-    /// Literalen (offener String etc.), ist also für diesen Zweck deutlich
-    /// robuster. Bildet dafür bewusst nur einen TEIL der echten Grammatik
-    /// nach (Unterscheidung Feld/Methode/Property/Konstruktor beim Sammeln
-    /// von Klassen-Mitgliedern) und macht bei der Scope-Zuordnung (welche
-    /// lokale Variable ist an einer Cursor-Position sichtbar) bewusst
-    /// vereinfachende Annahmen (siehe LocalsVisibleAt) - für
-    /// Vervollständigungs-VORSCHLÄGE ausreichend, ersetzt aber keine echte
-    /// Auflösung (dafür bräuchte es Resolver.Resolve auf vollständigem,
-    /// gültigem Quelltext).
+    /// Best-effort symbol table for auto-completion in the editor - deliberately
+    /// TOKEN-based (via the real lexer), NOT via the real parser:
+    /// that very often fails while typing live exactly at the point where
+    /// typing is currently happening (incomplete expressions), and then returns NOTHING
+    /// AT ALL - tokenising, on the other hand, fails only for really broken
+    /// literals (open string etc.), so it is considerably more
+    /// robust for this purpose. For that it deliberately models only a PART of the real grammar
+    /// (distinguishing field/method/property/constructor when collecting
+    /// class members) and for the scope assignment (which
+    /// local variable is visible at a cursor position) deliberately makes
+    /// simplifying assumptions (see LocalsVisibleAt) - sufficient for
+    /// completion SUGGESTIONS, but no replacement for a real
+    /// resolution (that would need Resolver.Resolve on complete,
+    /// valid source).
     /// </summary>
     public sealed partial class ScriptSymbolIndex
     {
         public Dictionary<string, ClassInfo> Classes { get; } = new();
         public Dictionary<string, List<string>> EnumMembers { get; } = new();
 
-        /// <summary>1-basierte Deklarationszeile pro Enum-Namen (für "zu
-        /// Definition springen", siehe NavigationEngine).</summary>
+        /// <summary>1-based declaration line per enum name (for "go to
+        /// definition", see NavigationEngine).</summary>
         public Dictionary<string, int> EnumDeclLines { get; } = new();
 
-        /// <summary>Aus welcher Prelude ein Enum stammt (Schlüssel wie <see cref="EnumDeclLines"/>); fehlt bei Enums des Dokuments.</summary>
+        /// <summary>Which prelude an enum comes from (keys like <see cref="EnumDeclLines"/>); missing for enums of the document.</summary>
         public Dictionary<string, string> EnumPreludes { get; } = new();
 
         /// <summary>Name der Standardbibliothek in <see cref="ClassInfo.PreludeName"/>.</summary>
         public const string StandardPreludeName = "standard";
 
-        /// <summary>Wie die Prelude heißt, die DIESER Index beschreibt (null = ein normales Dokument).</summary>
+        /// <summary>What the prelude described by THIS index is called (null = an ordinary document).</summary>
         public string? PreludeName { get; private set; }
 
-        /// <summary>Der Quelltext der Prelude `preludeName` (für die Anzeige beim Springen), null wenn unbekannt.</summary>
+        /// <summary>The source of the prelude `preludeName` (for display when jumping), null if unknown.</summary>
         public static string? PreludeSourceOf(string preludeName) =>
             preludeName == StandardPreludeName ? fire.Standard.Prelude.Source : ImportedPreludes.TrySourceFor(preludeName);
 
-        /// <summary>Anzeigename einer Prelude für Fenstertitel.</summary>
+        /// <summary>Display name of a prelude for window titles.</summary>
         public static string PreludeTitleOf(string preludeName) =>
             preludeName == StandardPreludeName ? "Standard library (prelude)" : $"Prelude '{(preludeName.StartsWith("pkg:", StringComparison.Ordinal) ? preludeName.Substring(4) : preludeName)}'";
 
-        /// <summary>Alle irgendwo im Dokument gesehenen Bezeichner-Namen
-        /// (Variablen, Parameter, Felder, ...) - unscharfer, aber robuster
-        /// Fallback für die allgemeine Bezeichner-Vervollständigung, wenn
-        /// keine genauere Information vorliegt.</summary>
+        /// <summary>All identifier names seen anywhere in the document
+        /// (variables, parameters, fields, ...) - a fuzzy but robust
+        /// fallback for general identifier completion when
+        /// no more precise information is available.</summary>
         public HashSet<string> AllDeclaredNames { get; } = new();
 
-        /// <summary>Alle `#include "pfad"`-Zeilen im Dokument (siehe
-        /// IncludeDirective-Doku) - für "zu Datei springen"
-        /// (NavigationEngine). Rein per Regex über den ROHEN Quelltext
-        /// erkannt (NICHT über die Tokens - `#include` ist reine
-        /// Präprozessor-Textersetzung, siehe Parsing.Preprocessor, der
-        /// Lexer sieht davon nach dem echten Kompilieren nichts mehr, aber
-        /// HIER arbeiten wir ja auf dem unverarbeiteten Editor-Text).</summary>
+        /// <summary>All `#include "path"` lines in the document (see
+        /// IncludeDirective documentation) - for "go to file"
+        /// (NavigationEngine). Recognised purely via regex on the RAW source
+        /// (NOT via the tokens - `#include` is a pure
+        /// preprocessor text replacement, see Parsing.Preprocessor, the
+        /// lexer sees nothing of it after real compiling, but
+        /// HERE we work on the unprocessed editor text).</summary>
         public List<IncludeDirective> IncludeDirectives { get; } = new();
 
         private readonly List<Token> _tokens = new();
         private readonly string _source = string.Empty;
         private readonly int[] _lineStarts;
 
-        /// <summary>Alle im Dokument deklarierten Namespaces (vollqualifiziert,
-        /// samt aller Vorstufen: `A.B` legt auch `A` an).</summary>
+        /// <summary>All namespaces declared in the document (fully qualified,
+        /// including all preliminary stages: `A.B` also creates `A`).</summary>
         public HashSet<string> Namespaces { get; } = new();
 
-        /// <summary>Die `#using`-Namen des Dokuments (siehe Preprocessor - gelten
-        /// für die ganze Datei).</summary>
+        /// <summary>The `#using` names of the document (see Preprocessor - apply
+        /// to the whole file).</summary>
         public List<string> UsingNamespaces { get; } = new();
 
         private readonly List<(string Name, int Start, int End)> _namespaceRanges = new();
@@ -277,12 +277,12 @@ namespace fire.Editor
             return starts.ToArray();
         }
 
-        // Exakt derselbe Ausdruck wie Parsing.Preprocessor.IncludeLine -
-        // bewusst dupliziert statt geteilt (Preprocessor ist Teil des
-        // KERN-Projekts, ScriptSymbolIndex arbeitet auf UNVERARBEITETEM,
-        // evtl. gerade erst getipptem Text und braucht deshalb ohnehin
-        // eigene Fehlertoleranz) - muss inhaltlich aber synchron bleiben,
-        // sonst erkennt der Editor Includes anders als der echte Compiler.
+        // Exactly the same expression as Parsing.Preprocessor.IncludeLine -
+        // deliberately duplicated instead of shared (Preprocessor is part of the
+        // CORE project, ScriptSymbolIndex works on UNPROCESSED,
+        // possibly just freshly typed text and therefore needs
+        // error tolerance of its own anyway) - but must stay in sync in content,
+        // otherwise the editor recognises includes differently from the real compiler.
         private static readonly System.Text.RegularExpressions.Regex IncludeLine =
             new(@"^\s*#include\s+""([^""]*)""\s*$");
 
@@ -290,15 +290,15 @@ namespace fire.Editor
             new(@"^[ \t]*#using[ \t]+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)[ \t]*\r?$",
                 System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
-        /// <summary>Die Namen aller `#using X`-Zeilen (dieselbe Namensgrammatik
-        /// wie Preprocessor.UsingName).</summary>
+        /// <summary>The names of all `#using X` lines (the same name grammar
+        /// as Preprocessor.UsingName).</summary>
         private static IEnumerable<string> FindUsings(string source) =>
             UsingLine.Matches(source).Select(m => m.Groups[1].Value).Distinct();
 
         public static ScriptSymbolIndex Build(string source) => Build(source, Array.Empty<string>());
 
-        /// <summary>Wie Build(source); `extraImports` gelten zusätzlich zu den `#import`-Zeilen in `source` als
-        /// zugeschaltet (z.B. wenn eine Prelude angezeigt wird, die selbst von einer anderen Erweiterung abhängt).</summary>
+        /// <summary>Like Build(source); `extraImports` count in addition to the `#import` lines in `source` as
+        /// switched on (e.g. when a prelude is shown that itself depends on another extension).</summary>
         public static ScriptSymbolIndex Build(string source, IEnumerable<string> extraImports) => Build(source, extraImports, Array.Empty<(string, string)>());
 
         /// <summary>The file this index describes when it was built as one of the other files of a project (null: the document itself, or a prelude).</summary>
@@ -346,16 +346,16 @@ namespace fire.Editor
                 catch (Exception) { /* a file that cannot be scanned adds nothing */ }
             }
             index.MergeInPrelude(PreludeIndex.Value);
-            // Preludes der per '#import' zugeschalteten Erweiterungen (siehe
-            // ImportedPreludes) - `Framebuffer`/`Device`/... sollen genauso
-            // vervollständigt werden wie die Standardbibliothek.
+            // Preludes of the extensions switched on via '#import' (see
+            // ImportedPreludes) - `Framebuffer`/`Device`/... should be completed
+            // just like the standard library.
             var merged = new HashSet<string>();
             foreach (var name in ImportedPreludes.FindImportNames(source).Concat(extraImports))
             {
-                // `#import "ui"` bringt `graphics` mit, `linq` bringt `reflection` mit (siehe ImportedPreludes.WithDependencies).
+                // `#import "ui"` brings `graphics` along, `linq` brings `reflection` along (see ImportedPreludes.WithDependencies).
                 IEnumerable<string> keys;
                 try { keys = ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name)).ToList(); }
-                catch (Exception) { continue; } // unbekannte Erweiterung - meldet die Diagnostik
+                catch (Exception) { continue; } // unknown extension - the diagnostics report it
                 foreach (var key in keys)
                 {
                     if (!merged.Add(key)) continue;
@@ -366,28 +366,28 @@ namespace fire.Editor
             return index;
         }
 
-        /// <summary>Mischt Klassen/Interfaces der eingebauten Standard-
-        /// bibliothek (fire.Standard.Prelude, siehe SPEC "Vorangestellte
-        /// Standardbibliothek") in DIESEN Index ein, markiert mit
-        /// <see cref="ClassInfo.IsFromPrelude"/> - jedes reale Skript wird ja
-        /// tatsächlich MIT dieser Bibliothek zusammen kompiliert (siehe
-        /// Runtime.RuntimeSession.Build/Parser.ParseMultiple), Vervollständigung/
-        /// Mitglieder-Suche sollen `List`/`IEnumerable`/etc. deshalb genauso
-        /// kennen wie selbst im Dokument definierte Klassen.
+        /// <summary>Mixes classes/interfaces of the built-in standard
+        /// library (fire.Standard.Prelude, see SPEC "Prepended
+        /// standard library") into THIS index, marked with
+        /// <see cref="ClassInfo.IsFromPrelude"/> - every real script is after all
+        /// actually compiled TOGETHER WITH this library (see
+        /// Runtime.RuntimeSession.Build/Parser.ParseMultiple), completion/
+        /// member search should therefore know `List`/`IEnumerable`/etc. just as well
+        /// as classes defined in the document itself.
         ///
-        /// Eine im Dokument SELBST vollständig (neu) definierte Klasse
-        /// gewinnt (kein Überschreiben) - deckt sich mit dem Verhalten des
-        /// echten Compilers, der eine solche Namenskollision ohnehin als
-        /// Fehler ablehnen würde; für den Editor ist "die eigene Definition
-        /// anzeigen" hier die hilfreichere Wahl. Ein `class extends List
-        /// { ... }` im Dokument legt beim Harvesten dagegen (siehe
-        /// HarvestClassExtension) nur einen PLATZHALTER ohne echte
-        /// Deklarationszeile (DeclLine bleibt 0) mit den neuen Erweiterungs-
-        /// Mitgliedern an - für DIESEN Fall werden die echten Prelude-
-        /// Mitglieder zusätzlich NACHGETRAGEN (statt die Erweiterung durch
-        /// die reine Prelude-Definition zu ersetzen), sonst würde eine
-        /// erweiterte `List` im Editor plötzlich ihre eigenen Add/Get/...-
-        /// Methoden "verlieren".</summary>
+        /// A class completely (newly) defined in the document ITSELF
+        /// wins (no overwriting) - coincides with the behaviour of the
+        /// real compiler, which would reject such a name collision as an
+        /// error anyway; for the editor "showing the own definition"
+        /// is the more helpful choice here. A `class extends List
+        /// { ... }` in the document, on the other hand, when harvesting (see
+        /// HarvestClassExtension) only creates a PLACEHOLDER without a real
+        /// declaration line (DeclLine stays 0) with the new extension
+        /// members - for THIS case the real prelude
+        /// members are ADDED afterwards (instead of replacing the extension by
+        /// the pure prelude definition), otherwise an
+        /// extended `List` in the editor would suddenly "lose" its own Add/Get/...
+        /// methods.</summary>
         private void MergeInPrelude(ScriptSymbolIndex prelude, bool ownDeclarationsOnly = false)
         {
             foreach (var (name, preludeClass) in prelude.Classes)
@@ -397,11 +397,11 @@ namespace fire.Editor
                 {
                     if (existing.DeclLine != 0) continue; // echte eigene (Neu-)Deklaration gewinnt
 
-                    // Platzhalter aus einer 'class extends X { ... }'-
-                    // Erweiterung (siehe HarvestClassExtension) - die echten
-                    // Prelude-Mitglieder fehlen ihm noch, hier nachtragen;
-                    // die eigenen Erweiterungs-Mitglieder bleiben zusätzlich
-                    // erhalten (nur EINGEFÜGT, nicht ersetzt).
+                    // Placeholder from a 'class extends X { ... }'
+                    // extension (see HarvestClassExtension) - the real
+                    // prelude members are still missing from it, add them here;
+                    // the own extension members remain
+                    // in addition (only INSERTED, not replaced).
                     existing.DeclLine = preludeClass.DeclLine;
                     existing.PreludeName = preludeClass.PreludeName;
                     existing.BaseName ??= preludeClass.BaseName;
@@ -412,8 +412,8 @@ namespace fire.Editor
                     Classes[name] = preludeClass;
                 }
             }
-            // Namespaces und Enums der Prelude (z.B. `IO` samt `IO.FileMode` bei
-            // `#import "io"`) - ohne sie gäbe es kein `IO.`-Vorschlagen.
+            // Namespaces and enums of the prelude (e.g. `IO` including `IO.FileMode` with
+            // `#import "io"`) - without them there would be no `IO.` suggestions.
             foreach (var ns in prelude.Namespaces)
                 Namespaces.Add(ns);
             foreach (var (name, members) in prelude.EnumMembers)
@@ -428,12 +428,12 @@ namespace fire.Editor
                 AllDeclaredNames.Add(name);
         }
 
-        /// <summary>Der Index der eingebauten Standardbibliothek selbst -
-        /// EINMALIG gebaut und wiederverwendet (der Quelltext ist eine
-        /// Konstante, siehe Standard.Prelude.Source), nicht bei jedem
-        /// MergeInPrelude()-Aufruf neu. Jede darin enthaltene ClassInfo wird
-        /// hier mit IsFromPrelude=true markiert, BEVOR sie an irgendein
-        /// Dokument gemischt wird.</summary>
+        /// <summary>The index of the built-in standard library itself -
+        /// built ONCE and reused (the source is a
+        /// constant, see Standard.Prelude.Source), not anew on every
+        /// MergeInPrelude() call. Every ClassInfo contained in it is
+        /// marked here with IsFromPrelude=true BEFORE it is mixed into any
+        /// document.</summary>
         private static readonly System.Lazy<ScriptSymbolIndex> PreludeIndex = new(() =>
         {
             var index = Build(fire.Standard.Prelude.Source, StandardPreludeName);
@@ -442,11 +442,11 @@ namespace fire.Editor
 
         private static readonly Dictionary<string, ScriptSymbolIndex?> ImportedPreludeIndexes = new();
 
-        /// <summary>Der Index der Prelude einer per `#import "name"`
-        /// zugeschalteten Erweiterung (einmalig gebaut und gemerkt), null
-        /// bei einem unbekannten Namen. Die Definitionszeilen beziehen sich auf
-        /// den Prelude-Quelltext (<see cref="PreludeSourceOf"/>), den der Editor
-        /// beim Springen in einem eigenen Fenster zeigt.</summary>
+        /// <summary>The index of the prelude of an extension switched on via `#import "name"`
+        /// (built once and remembered), null
+        /// for an unknown name. The definition lines refer to
+        /// the prelude source (<see cref="PreludeSourceOf"/>), which the editor
+        /// shows in a window of its own when jumping.</summary>
         private static ScriptSymbolIndex? ImportedPreludeIndex(string importName)
         {
             lock (ImportedPreludeIndexes)
@@ -459,10 +459,10 @@ namespace fire.Editor
             }
         }
 
-        /// <summary>Interne Build-Überladung für den Prelude-Quelltext selbst
-        /// (siehe PreludeIndex) - baut NUR den rohen Index (keine rekursive
-        /// MergeInPrelude(), die Prelude braucht sich ja nicht selbst
-        /// einzumischen) und markiert danach jede gefundene Klasse als
+        /// <summary>Internal Build overload for the prelude source itself
+        /// (see PreludeIndex) - builds ONLY the raw index (no recursive
+        /// MergeInPrelude(), the prelude does not need to mix
+        /// itself in) and afterwards marks every found class as
         /// IsFromPrelude.</summary>
         private static ScriptSymbolIndex Build(string source, string preludeName)
         {
@@ -495,28 +495,28 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Sammeln: Klassen + deren Mitglieder, Enums, alle Bezeichner
+        // Collecting: classes + their members, enums, all identifiers
         // -----------------------------------------------------------
 
-        /// <summary>Der Namespace, in dem der Harvest-Lauf gerade steht (leer =
-        /// keiner) - verschachtelte Blöcke hängen sich mit '.' an.</summary>
+        /// <summary>The namespace the harvest run is currently in (empty =
+        /// none) - nested blocks append themselves with '.'.</summary>
         private string CurrentNamespace => _namespaceStack.Count > 0 ? _namespaceStack.Peek().Name : string.Empty;
 
-        /// <summary>Vollqualifiziert einen im aktuellen Namespace deklarierten
-        /// Namen (siehe Parser.QualifyDeclName).</summary>
+        /// <summary>Fully qualifies a name declared in the current namespace
+        /// (see Parser.QualifyDeclName).</summary>
         private string Qualify(string simpleName) =>
             CurrentNamespace.Length == 0 ? simpleName : CurrentNamespace + "." + simpleName;
 
-        /// <summary>Die Namespaces für die Auflösung von Typnamen an der
-        /// aktuellen Harvest-Stelle: aktueller Namespace, dann `#using`.</summary>
+        /// <summary>The namespaces for resolving type names at the
+        /// current harvest position: current namespace, then `#using`.</summary>
         private IReadOnlyList<string> CurrentContext() =>
             CurrentNamespace.Length == 0
                 ? UsingNamespaces.ToList()
                 : new[] { CurrentNamespace }.Concat(UsingNamespaces).ToList();
 
-        /// <summary>`namespace A.B { ... }` bei `i` - merkt Namespace und
-        /// Bereich, liefert den Index NACH der öffnenden '{' (der Inhalt wird
-        /// vom Harvest-Lauf normal weitergelesen).</summary>
+        /// <summary>`namespace A.B { ... }` at `i` - remembers namespace and
+        /// range, returns the index AFTER the opening '{' (the content is
+        /// read on normally by the harvest run).</summary>
         private int HarvestNamespace(int i)
         {
             int j = i + 1;
@@ -576,9 +576,9 @@ namespace fire.Editor
                 }
             }
 
-            // `class extends X { ... }` erst NACH allen Deklarationen: X kann
-            // im Dokument auch NACH der Erweiterung stehen, und in welchem
-            // Namespace es liegt, lässt sich erst dann auflösen.
+            // `class extends X { ... }` only AFTER all declarations: X can
+            // also stand in the document AFTER the extension, and in which
+            // namespace it lies can only be resolved then.
             foreach (var (target, context, bodyStart) in _pendingExtensions)
             {
                 string key = ResolveClassKey(target, context) ?? target;
@@ -592,7 +592,7 @@ namespace fire.Editor
             _pendingExtensions.Clear();
         }
 
-        /// <summary>Die Zeile, die ein Symbol als Definitionsort bekommt.</summary>
+        /// <summary>The line that a symbol gets as its definition location.</summary>
         private static int DeclLineOf(Token token) => token.Line;
 
         private void AddMember(ClassInfo info, MemberInfo member)
@@ -602,9 +602,9 @@ namespace fire.Editor
             info.Members.Add(member);
         }
 
-        /// <summary>Index hinter das zu `_tokens[ltIdx]` (muss `&lt;` sein)
-        /// gehörende `&gt;` - für `class Box&lt;T&gt;` und generische
-        /// Methoden. Verschachtelte `&lt;...&gt;` werden mitgezählt.</summary>
+        /// <summary>Index behind the `&gt;` belonging to `_tokens[ltIdx]` (must be `&lt;`)
+        /// - for `class Box&lt;T&gt;` and generic
+        /// methods. Nested `&lt;...&gt;` are counted along.</summary>
         private int SkipAngleBrackets(int ltIdx)
         {
             int depth = 0;
@@ -617,18 +617,18 @@ namespace fire.Editor
                     if (depth == 0) return j + 1;
                 }
                 else if (_tokens[j].Type is TokenType.LBrace or TokenType.LParen or TokenType.Eof)
-                    return ltIdx + 1; // kein echtes Typ-Argument-Paar - nicht hängen bleiben
+                    return ltIdx + 1; // no real type-argument pair - do not get stuck
             }
             return ltIdx + 1;
         }
 
-        /// <summary>`class Name { ... }` / `actor Name { ... }` (beide
-        /// gleich behandelt - 'actor' ist für diese Best-Effort-Vorschau
-        /// keine eigene Kategorie, nur Klassen mit einer Mailbox zur
-        /// Laufzeit, siehe Bytecode.RuntimeClass.IsActor) / `class extends X { ... }`
-        /// / `actor extends X { ... }` (Erweiterung - siehe
-        /// HarvestClassExtension, mergt in eine BESTEHENDE oder vorab
-        /// angelegte ClassInfo statt eine neue anzulegen).</summary>
+        /// <summary>`class Name { ... }` / `actor Name { ... }` (both
+        /// treated the same - 'actor' is no category of its own for this best-effort preview,
+        /// just classes with a mailbox at
+        /// runtime, see Bytecode.RuntimeClass.IsActor) / `class extends X { ... }`
+        /// / `actor extends X { ... }` (extension - see
+        /// HarvestClassExtension, merges into an EXISTING or previously
+        /// created ClassInfo instead of creating a new one).</summary>
         private int HarvestClass(int i, bool isInterface = false)
         {
             i++; // 'class'/'actor'/'interface'
@@ -638,13 +638,13 @@ namespace fire.Editor
 
             if (i >= _tokens.Count || _tokens[i].Type != TokenType.Identifier) return i;
 
-            // 'class Name(' ist keine Klasse, sondern ein Rückgabetyp 'class'
-            // vor einer Methode (z.B. 'class GetCurrent()' in einem Interface).
+            // 'class Name(' is not a class, but a return type 'class'
+            // in front of a method (e.g. 'class GetCurrent()' in an interface).
             if (i + 1 < _tokens.Count && _tokens[i + 1].Type == TokenType.LParen) return i;
 
             string className = Qualify(_tokens[i].Lexeme);
-            // Bei einer doppelten Deklaration (ein Fehler, den der Resolver
-            // meldet) die erste weiterbenutzen - für die Vorschläge egal.
+            // For a duplicate declaration (an error that the resolver
+            // reports) keep using the first - irrelevant for the suggestions.
             var info = Classes.TryGetValue(className, out var existing)
                 ? existing
                 : new ClassInfo(className, DeclLineOf(_tokens[i])) { Context = CurrentContext(), Source = this };
@@ -652,14 +652,14 @@ namespace fire.Editor
             info.IsInterface = isInterface;
             i++;
 
-            // Generische Klasse ('class Name<T> ...') - die Typ-Parameter
-            // überspringen, sonst wäre der Rest des Kopfes nicht erkennbar
-            // und die Klasse hätte keinerlei Mitglieder.
+            // Generic class ('class Name<T> ...') - skip the type
+            // parameters, otherwise the rest of the head would not be recognisable
+            // and the class would have no members at all.
             if (i < _tokens.Count && _tokens[i].Type == TokenType.Lt)
                 i = SkipAngleBrackets(i);
 
-            // ': Basis, Interface, ...' - ALLE Namen merken (welcher davon
-            // die echte Basisklasse ist, entscheidet erst der Resolver).
+            // ': Base, Interface, ...' - remember ALL names (which of them is
+            // the real base class is decided only by the resolver).
             if (i < _tokens.Count && _tokens[i].Type == TokenType.Colon)
             {
                 i++;
@@ -668,7 +668,7 @@ namespace fire.Editor
                 {
                     if (_tokens[i].Type == TokenType.Identifier)
                     {
-                        // Auch ein qualifizierter Name ('Geometry.Shape').
+                        // Also a qualified name ('Geometry.Shape').
                         string baseName = _tokens[i].Lexeme;
                         while (i + 2 < _tokens.Count && _tokens[i + 1].Type == TokenType.Dot
                                && _tokens[i + 2].Type == TokenType.Identifier)
@@ -682,7 +682,7 @@ namespace fire.Editor
                 }
             }
 
-            // 'where'-Klauseln (Generics) bis zum Body überspringen.
+            // Skip 'where' clauses (generics) up to the body.
             while (i < _tokens.Count && _tokens[i].Type != TokenType.LBrace && _tokens[i].Type != TokenType.Eof) i++;
 
             Classes[className] = info;
@@ -692,20 +692,20 @@ namespace fire.Editor
         }
 
         /// <summary>`class extends X { ... }` / `actor extends X { ... }`
-        /// (siehe Parser.ParseClassExtensionDecl/MergeClassExtensions für die
-        /// echte Semantik: Mitglieder wandern zur Compile-Zeit 1:1 in die
-        /// ZIEL-Klasse) - hier entsprechend: Mitglieder direkt in die
-        /// (bereits bekannte, oder noch unbekannte und dann vorab angelegte -
-        /// die eigentliche Deklaration von X kann im Dokument vor ODER nach
-        /// dieser Erweiterung stehen) ClassInfo von X eintragen, statt eine
-        /// eigene neue Klasse zu erzeugen.</summary>
+        /// (see Parser.ParseClassExtensionDecl/MergeClassExtensions for the
+        /// real semantics: members move 1:1 into the
+        /// TARGET class at compile time) - here accordingly: enter members directly into the
+        /// ClassInfo of X (already known, or still unknown and then created beforehand -
+        /// the actual declaration of X can stand in the document BEFORE or AFTER
+        /// this extension) instead of creating a
+        /// new class of its own.</summary>
         private int HarvestClassExtension(int i)
         {
             if (i >= _tokens.Count) return i;
 
-            // `class extends string { ... }` (SPEC 5.5.1): ein Basistyp ist ein Schlüsselwort. Seine
-            // Methoden landen wie im Compiler in einer Sammelklasse (`$string`, siehe
-            // BaseTypeExtensions), die die Vervollständigung für Werte dieses Typs auswertet.
+            // `class extends string { ... }` (SPEC 5.5.1): a base type is a keyword. Its
+            // methods end up, as in the compiler, in a collective class (`$string`, see
+            // BaseTypeExtensions), which completion evaluates for values of this type.
             if (_tokens[i].Type is TokenType.KwString or TokenType.KwChar or TokenType.KwInt or TokenType.KwFloat or TokenType.KwBool)
             {
                 string baseTypeClass = BaseTypeExtensions.ClassName(_tokens[i].Lexeme);
@@ -726,27 +726,27 @@ namespace fire.Editor
 
             if (i >= _tokens.Count || _tokens[i].Type != TokenType.LBrace) return i;
 
-            // Die Mitglieder erst am Ende des Harvest-Laufs eintragen (siehe
-            // dort) - hier nur den Body überspringen.
+            // Enter the members only at the end of the harvest run (see
+            // there) - here only skip the body.
             _pendingExtensions.Add((targetName, CurrentContext(), i));
             return MatchBrace(i) + 1;
         }
 
-        /// <summary>Sammelt die Mitglieder eines Klassen-/Erweiterungs-Bodys
-        /// ab dessen öffnender '{' bei `bodyStart` in `info` ein - gemeinsam
-        /// genutzt von HarvestClass (echte Deklaration) und
-        /// HarvestClassExtension (Erweiterung), da beide dieselbe
-        /// Mitglieder-Grammatik haben.</summary>
+        /// <summary>Collects the members of a class/extension body
+        /// from its opening '{' at `bodyStart` into `info` - shared
+        /// by HarvestClass (real declaration) and
+        /// HarvestClassExtension (extension), since both have the same
+        /// member grammar.</summary>
         private int HarvestMembersBody(int bodyStart, ClassInfo info)
         {
             int bodyEnd = MatchBrace(bodyStart);
             info.BodyRanges.Add((bodyStart, bodyEnd));
             _classSpans.Add((info.Name, TokenOffset(bodyStart), TokenOffset(bodyEnd) + 1));
-            int i = bodyStart + 1; // hinter die öffnende '{'
+            int i = bodyStart + 1; // behind the opening '{'
             string className = info.SimpleName;
 
-            // Modifikatoren stehen VOR dem eigentlichen Mitglied und gelten
-            // für das nächste erkannte Mitglied.
+            // Modifiers stand BEFORE the actual member and apply
+            // to the next recognised member.
             bool isStatic = false;
             var access = MemberAccess.Public;
 
@@ -787,7 +787,7 @@ namespace fire.Editor
                 else
                 {
                     i++;
-                    continue; // kein Mitglied - Modifikatoren NICHT zurücksetzen
+                    continue; // no member - do NOT reset modifiers
                 }
 
                 isStatic = false;
@@ -800,8 +800,8 @@ namespace fire.Editor
         private static string FormatSignature(List<(string Name, string? TypeName)> parms) =>
             string.Join(", ", parms.Select(p => p.TypeName != null ? p.TypeName + " " + p.Name : p.Name));
 
-        /// <summary>Überspringt hinter einem Typ-Keyword eine Bitbreite
-        /// (`int[16]`) und Pointer-Sterne (`int*`), siehe TypeRef.</summary>
+        /// <summary>Skips a bit width (`int[16]`) and pointer stars (`int*`) behind a type keyword,
+        /// see TypeRef.</summary>
         private int SkipTypeSuffix(int i, int end)
         {
             if (i + 2 < end && _tokens[i].Type == TokenType.LBracket
@@ -811,8 +811,8 @@ namespace fire.Editor
             return i;
         }
 
-        /// <summary>Überspringt leere Klammerpaare `[]` ab `i` (Array-Typ, `int[] Name()`) und meldet über
-        /// `found`, ob es welche gab.</summary>
+        /// <summary>Skips empty bracket pairs `[]` from `i` (array type, `int[] Name()`) and reports via
+        /// `found` whether there were any.</summary>
         private int SkipEmptyBrackets(int i, int end, ref bool found)
         {
             while (i + 1 < end && _tokens[i].Type == TokenType.LBracket && _tokens[i + 1].Type == TokenType.RBracket)
@@ -823,11 +823,11 @@ namespace fire.Editor
             return i;
         }
 
-        /// <summary>Index des ersten Tokens NACH einem Ausdruck, der bei
-        /// `startIdx` beginnt: das Ende ist ein `;`, ein schließendes
-        /// '}'/')'/']' oder ein Zeilenumbruch - jeweils nur auf
-        /// Klammertiefe 0 (mehrzeilige Argumentlisten/Lambdas bleiben also
-        /// EIN Ausdruck), wie bei der Statement-Trennung des Parsers.</summary>
+        /// <summary>Index of the first token AFTER an expression that begins at
+        /// `startIdx`: the end is a `;`, a closing
+        /// '}'/')'/']' or a line break - in each case only at
+        /// bracket depth 0 (multi-line argument lists/lambdas thus remain
+        /// ONE expression), as with the statement separation of the parser.</summary>
         internal int ExpressionEnd(int startIdx, int limit)
         {
             int depth = 0;
@@ -844,20 +844,20 @@ namespace fire.Editor
             return limit;
         }
 
-        /// <summary>Ein einzelnes Klassen-Mitglied ab Token-Index `i` (nach
-        /// optionalem 'readonly' und optionalem Typ folgt der Name) - dieselbe
-        /// grobe Heuristik wie Parser.NextLooksLikeTypeThenName (Typ-Keyword
-        /// ODER zwei aufeinanderfolgende Bezeichner), nur ohne echte
-        /// Ast-Konstruktion.</summary>
+        /// <summary>A single class member from token index `i` (after
+        /// an optional 'readonly' and an optional type comes the name) - the same
+        /// rough heuristic as Parser.NextLooksLikeTypeThenName (type keyword
+        /// OR two consecutive identifiers), only without real
+        /// AST construction.</summary>
         private int HarvestMember(int i, int bodyEnd, ClassInfo info, bool isStatic, MemberAccess access)
         {
             int start = i;
             if (_tokens[i].Type == TokenType.Readonly) i++;
             if (i >= bodyEnd) return bodyEnd;
 
-            // Optionalen Typ merken/überspringen (Typ-Keyword, oder zwei
-            // Identifier hintereinander = "Klassenname Feldname").
-            // `int[] Name()` - leere Klammern hinter dem Typ = Array-RÜCKGABETYP (Methode/Property).
+            // Remember/skip the optional type (type keyword, or two
+            // identifiers in a row = "class name field name").
+            // `int[] Name()` - empty brackets behind the type = array RETURN TYPE (method/property).
             string? typeName = null;
             bool returnsArray = false;
             if (IsTypeKeyword(_tokens[i].Type))
@@ -868,8 +868,8 @@ namespace fire.Editor
             }
             else if (_tokens[i].Type == TokenType.Identifier)
             {
-                // Klassenname, auch qualifiziert ('Geometry.Circle'), gefolgt
-                // vom Namen auf derselben Zeile.
+                // Class name, also qualified ('Geometry.Circle'), followed
+                // by the name on the same line.
                 int typeEnd = i;
                 while (typeEnd + 2 < bodyEnd && _tokens[typeEnd + 1].Type == TokenType.Dot
                        && _tokens[typeEnd + 2].Type == TokenType.Identifier)
@@ -886,13 +886,13 @@ namespace fire.Editor
             }
 
             if (i >= bodyEnd || _tokens[i].Type != TokenType.Identifier)
-                return start + 1; // kein erkennbares Mitglied - nur ein Token weiter, nicht hängen bleiben
+                return start + 1; // no recognisable member - move on by only one token, do not get stuck
 
             string name = _tokens[i].Lexeme;
             int nameIdx = i;
             int afterName = i + 1;
 
-            // Generische Methode ('Name<T>(...)') - Typ-Parameter überspringen.
+            // Generic method ('Name<T>(...)') - skip the type parameters.
             if (afterName < bodyEnd && _tokens[afterName].Type == TokenType.Lt)
                 afterName = SkipAngleBrackets(afterName);
 
@@ -901,8 +901,8 @@ namespace fire.Editor
                 int paramCount = CountParams(afterName);
                 var parms = ReadParamList(afterName, out int afterParams);
 
-                // Body direkt hinter der Signatur - eine Interface-Methode hat
-                // keinen (dann endet das Mitglied hinter der ')').
+                // Body directly behind the signature - an interface method has
+                // none (then the member ends behind the ')').
                 int bodyOpen = FindBodyBrace(afterParams);
                 int bodyClose = bodyOpen >= 0 && bodyOpen < bodyEnd ? MatchBrace(bodyOpen) : -1;
 
@@ -931,9 +931,9 @@ namespace fire.Editor
                 return SkipBraceBlock(afterName) + 1;
             }
 
-            // Sonst: Feld. Array-Deklarator ('Typ name[]') und Initialisierer
-            // ('= ...') mit überspringen - sonst würden Bezeichner DARIN
-            // (z.B. 'new Foo()') als eigene Mitglieder missverstanden.
+            // Otherwise: field. Also skip the array declarator ('type name[]') and initialiser
+            // ('= ...') - otherwise identifiers IN them
+            // (e.g. 'new Foo()') would be misunderstood as members of their own.
             bool isArray = false;
             while (afterName < bodyEnd && _tokens[afterName].Type == TokenType.LBracket)
             {
@@ -950,8 +950,8 @@ namespace fire.Editor
 
             if (afterName < bodyEnd && _tokens[afterName].Type == TokenType.Assign)
             {
-                // Ohne deklarierten Typ aus einem 'new X(...)'-Initialisierer
-                // schließen (der häufigste Fall bei dynamisch typisierten Feldern).
+                // Infer from a 'new X(...)' initialiser without a declared type
+                // (the most common case for dynamically typed fields).
                 if (typeName == null && afterName + 2 < bodyEnd && _tokens[afterName + 1].Type == TokenType.New
                     && _tokens[afterName + 2].Type == TokenType.Identifier)
                 {
@@ -971,14 +971,14 @@ namespace fire.Editor
             return afterName;
         }
 
-        /// <summary>`operator SYMBOL(params) { body }` (siehe Parser.
-        /// ParseOperatorMember/ParseOperatorSymbol) - dieselbe grobe
-        /// Token-Heuristik wie beim Rest dieser Klasse, ohne echte
-        /// Ast-Konstruktion. Erfasst als MemberKind.Method mit einem
-        /// lesbaren Namen ("operator+", "operator[]", ...) - für Navigation/
-        /// Vervollständigung reicht das, die exakte interne Namenskonvention
-        /// (GetIndex/SetIndex/"operator+") muss hier nicht repliziert
-        /// werden.</summary>
+        /// <summary>`operator SYMBOL(params) { body }` (see Parser.
+        /// ParseOperatorMember/ParseOperatorSymbol) - the same rough
+        /// token heuristic as in the rest of this class, without real
+        /// AST construction. Captured as MemberKind.Method with a
+        /// readable name ("operator+", "operator[]", ...) - for navigation/
+        /// completion that is enough, the exact internal naming convention
+        /// (GetIndex/SetIndex/"operator+") does not have to be replicated
+        /// here.</summary>
         private int HarvestOperatorMember(int i, int bodyEnd, ClassInfo info)
         {
             int line = DeclLineOf(_tokens[i]);
@@ -1004,7 +1004,7 @@ namespace fire.Editor
             }
 
             if (i >= bodyEnd || _tokens[i].Type != TokenType.LParen)
-                return i; // unerwartete Fortsetzung - nicht hängen bleiben
+                return i; // unexpected continuation - do not get stuck
 
             int paramCount = CountParams(i);
             var parms = ReadParamList(i, out int afterParams);
@@ -1037,7 +1037,7 @@ namespace fire.Editor
                 {
                     members.Add(_tokens[i].Lexeme);
                     i++;
-                    // optionalen '= wert' bis zum nächsten Komma überspringen
+                    // skip the optional '= value' up to the next comma
                     while (i < bodyEnd && _tokens[i].Type != TokenType.Comma) i++;
                 }
                 else
@@ -1050,14 +1050,14 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Hilfsfunktionen über den Token-Strom
+        // Helper functions over the token stream
         // -----------------------------------------------------------
 
         private static bool IsTypeKeyword(TokenType t) =>
             t is TokenType.KwBool or TokenType.KwInt or TokenType.KwFloat or TokenType.KwChar or TokenType.KwString or TokenType.KwByte;
 
-        /// <summary>Index der zu `_tokens[openBraceIdx]` (muss '{' sein)
-        /// gehörenden schließenden '}'.</summary>
+        /// <summary>Index of the closing '}' belonging to `_tokens[openBraceIdx]`
+        /// (must be '{').</summary>
         private int MatchBrace(int openBraceIdx)
         {
             int depth = 0;
@@ -1075,9 +1075,9 @@ namespace fire.Editor
 
         private int SkipBraceBlock(int openBraceIdx) => MatchBrace(openBraceIdx);
 
-        /// <summary>Nach einer Methoden-/Konstruktor-Signatur (Parameter
-        /// gelesen, Index zeigt auf oder vor dem Body-'{') bis hinter den
-        /// zugehörigen Body springen.</summary>
+        /// <summary>After a method/constructor signature (parameters
+        /// read, index points at or before the body '{') jump to behind the
+        /// associated body.</summary>
         private int SkipToNextMemberAfterBody(int fromIdx, int bodyEnd)
         {
             int j = fromIdx;
@@ -1086,10 +1086,10 @@ namespace fire.Editor
             return MatchBrace(j) + 1;
         }
 
-        /// <summary>Grobe Parameteranzahl einer Klammerliste ab der öffnenden
-        /// '(' bei `parenIdx` - zählt Kommas auf Klammer-Tiefe 1, nicht exakt
-        /// (Default-Werte mit Kommas darin würden verfälschen), reicht aber
-        /// für eine Anzeige-Zahl in der Vervollständigung.</summary>
+        /// <summary>Rough parameter count of a bracket list from the opening
+        /// '(' at `parenIdx` - counts commas at bracket depth 1, not exact
+        /// (default values with commas in them would falsify it), but sufficient
+        /// for a display number in completion.</summary>
         private int CountParams(int parenIdx)
         {
             int depth = 0;
@@ -1113,19 +1113,19 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Alle Mitglieder einer Klasse inkl. Basisklassen-Kette (so weit im
-        // selben Dokument bekannt - stoppt an einer unbekannten/externen
-        // Basisklasse).
+        // All members of a class incl. base-class chain (as far as
+        // known in the same document - stops at an unknown/external
+        // base class).
         // -----------------------------------------------------------
 
         public IEnumerable<MemberInfo> MembersOf(string className) =>
             MembersOfWithDepth(className).Select(x => x.Member);
 
-        /// <summary>Wie <see cref="MembersOf"/>, mit dem Abstand der
-        /// deklarierenden Klasse zu `className` (0 = die Klasse selbst, 1 =
-        /// direkte Basis/Interface, ...) - breitensuchend über ALLE Basisnamen
-        /// (siehe ClassInfo.BaseNames); ein Mitglied, das eine nähere Klasse
-        /// schon deklariert (Überschreiben), erscheint nur dort.</summary>
+        /// <summary>Like <see cref="MembersOf"/>, with the distance of the
+        /// declaring class to `className` (0 = the class itself, 1 =
+        /// direct base/interface, ...) - breadth-first over ALL base names
+        /// (see ClassInfo.BaseNames); a member that a nearer class
+        /// already declares (overriding) appears only there.</summary>
         public IEnumerable<(MemberInfo Member, int Depth)> MembersOfWithDepth(string className)
         {
             var seen = new HashSet<string>();
@@ -1145,10 +1145,10 @@ namespace fire.Editor
             }
         }
 
-        /// <summary>Die Basisklassen/Interfaces von `info` als Schlüssel in
-        /// <see cref="Classes"/> (die Namen im Klassenkopf sind relativ zum
-        /// Kontext der Klasse geschrieben, siehe ClassInfo.Context) - nicht
-        /// auflösbare bleiben weg.</summary>
+        /// <summary>The base classes/interfaces of `info` as keys in
+        /// <see cref="Classes"/> (the names in the class head are written relative to the
+        /// context of the class, see ClassInfo.Context) - those that cannot be
+        /// resolved are left out.</summary>
         public IEnumerable<string> ResolvedBases(ClassInfo info)
         {
             foreach (var baseName in info.BaseNames)
@@ -1159,16 +1159,16 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Namen auflösen: Klassen, Enums, Namespaces
+        // Resolving names: classes, enums, namespaces
         // -----------------------------------------------------------
 
-        /// <summary>Löst `name` (so geschrieben, evtl. qualifiziert) gegen
-        /// `context` (siehe ClassInfo.Context) zu einem Schlüssel in
-        /// <see cref="Classes"/> auf - wie TypeRef.ResolveBaseName: erst der
-        /// exakte Name, dann jeder Namespace des Kontexts davor. Als letzter
-        /// Ausweg (z.B. wegen eines `#using` in einer anderen Datei) ein
-        /// EINDEUTIGER Treffer über den einfachen Namen. `null`, wenn nichts
-        /// passt.</summary>
+        /// <summary>Resolves `name` (as written, possibly qualified) against
+        /// `context` (see ClassInfo.Context) to a key in
+        /// <see cref="Classes"/> - like TypeRef.ResolveBaseName: first the
+        /// exact name, then every namespace of the context in front of it. As a last
+        /// resort (e.g. because of a `#using` in another file) a
+        /// UNIQUE hit via the simple name. `null` if nothing
+        /// fits.</summary>
         public string? ResolveClassKey(string name, IReadOnlyList<string> context, bool lenient = true)
         {
             if (Classes.ContainsKey(name)) return name;
@@ -1186,8 +1186,8 @@ namespace fire.Editor
             return only;
         }
 
-        /// <summary>Wie <see cref="ResolveClassKey"/>, für Enums (Schlüssel in
-        /// <see cref="EnumMembers"/>), ohne den Eindeutigkeits-Ausweg.</summary>
+        /// <summary>Like <see cref="ResolveClassKey"/>, for enums (keys in
+        /// <see cref="EnumMembers"/>), without the uniqueness resort.</summary>
         public string? ResolveEnumKey(string name, IReadOnlyList<string> context)
         {
             if (EnumMembers.ContainsKey(name)) return name;
@@ -1196,13 +1196,13 @@ namespace fire.Editor
             return null;
         }
 
-        /// <summary>Für Klick-Navigation: `name` (Klassenname wie geschrieben)
-        /// an Dokument-Position `offset` (-1: kein Kontext, z.B. eine ANDERE
-        /// Datei) zum Schlüssel in <see cref="Classes"/>.</summary>
+        /// <summary>For click navigation: `name` (class name as written)
+        /// at document position `offset` (-1: no context, e.g. ANOTHER
+        /// file) to the key in <see cref="Classes"/>.</summary>
         public string? TryFindClass(string name, int offset) =>
             ResolveClassKey(name, offset < 0 ? UsingNamespaces : ContextAt(offset));
 
-        /// <summary>Wie <see cref="TryFindClass"/>, für Enums.</summary>
+        /// <summary>Like <see cref="TryFindClass"/>, for enums.</summary>
         public string? TryFindEnum(string name, int offset)
         {
             var context = offset < 0 ? UsingNamespaces : ContextAt(offset);
@@ -1210,8 +1210,8 @@ namespace fire.Editor
                 ?? EnumMembers.Keys.FirstOrDefault(k => k.EndsWith("." + name, StringComparison.Ordinal));
         }
 
-        /// <summary>Der innerste Namespace-Block, der `offset` enthält (null
-        /// außerhalb jedes Blocks).</summary>
+        /// <summary>The innermost namespace block that contains `offset` (null
+        /// outside any block).</summary>
         public string? NamespaceAt(int offset)
         {
             string? best = null;
@@ -1225,19 +1225,19 @@ namespace fire.Editor
             return best;
         }
 
-        /// <summary>Die Namespaces, gegen die Typnamen an `offset` aufgelöst
-        /// werden: der umschließende Namespace zuerst, dann die `#using`-Namen
-        /// des Dokuments (siehe TypeRef.ResolveBaseName - die Namespaces
-        /// ÜBER dem aktuellen zählen NICHT mit).</summary>
+        /// <summary>The namespaces against which type names at `offset` are resolved:
+        /// the enclosing namespace first, then the `#using` names
+        /// of the document (see TypeRef.ResolveBaseName - the namespaces
+        /// ABOVE the current one do NOT count).</summary>
         public IReadOnlyList<string> ContextAt(int offset)
         {
             string? ns = NamespaceAt(offset);
             return ns == null ? UsingNamespaces : new[] { ns }.Concat(UsingNamespaces).ToList();
         }
 
-        /// <summary>Was direkt IN einem Namespace steht (`ns` leer = ganz oben):
-        /// untergeordnete Namespaces, Klassen, Interfaces und Enums, jeweils mit
-        /// dem einfachen Namen - Grundlage für `Namespace.`-Vorschläge.</summary>
+        /// <summary>What stands directly IN a namespace (`ns` empty = at the very top):
+        /// sub-namespaces, classes, interfaces and enums, each with
+        /// the simple name - basis for `Namespace.` suggestions.</summary>
         public List<NamespaceMember> MembersOfNamespace(string ns)
         {
             var result = new List<NamespaceMember>();
@@ -1263,8 +1263,8 @@ namespace fire.Editor
             return result;
         }
 
-        /// <summary>Ist `ancestor` (direkt oder über mehrere Stufen) eine Basis
-        /// von `className`?</summary>
+        /// <summary>Is `ancestor` (directly or via several levels) a base
+        /// of `className`?</summary>
         public bool DerivesFrom(string className, string ancestor)
         {
             var visited = new HashSet<string> { className };
@@ -1286,14 +1286,14 @@ namespace fire.Editor
         // Kontext an einer Cursor-Position (Zeichen-Offset im Quelltext)
         // -----------------------------------------------------------
 
-        /// <summary>Name der Klasse, deren Body die Cursor-Position `offset`
-        /// enthält (für 'this.'), oder null außerhalb jeder Klasse.</summary>
+        /// <summary>Name of the class whose body contains the cursor position `offset`
+        /// (for 'this.'), or null outside any class.</summary>
         public string? EnclosingClassAt(int offset)
         {
-            // Aus den beim Harvest gemerkten Klassen-Bodys: 'class Name {...}'
-            // liefert die Klasse selbst, 'class extends X {...}' ihre ZIEL-Klasse
-            // X (siehe Parser.ParseClassExtensionDecl) - jeweils als
-            // vollqualifizierter Schlüssel in Classes.
+            // From the class bodies remembered during harvest: 'class Name {...}'
+            // yields the class itself, 'class extends X {...}' its TARGET class
+            // X (see Parser.ParseClassExtensionDecl) - in each case as a
+            // fully qualified key in Classes.
             string? best = null;
             int bestStart = -1;
             foreach (var (key, start, end) in _classSpans)
@@ -1337,10 +1337,10 @@ namespace fire.Editor
 
             static void FlushParam(List<Token> toks, List<(string, string?)> outList)
             {
-                // Letzter Identifier in der Gruppe ist der Parametername, ein
-                // davor stehender Identifier/Typ-Keyword (falls vorhanden) der
-                // Typname - passt zu "[Typ] Name" wie im Rest der Sprache.
-                // Ein Standardwert ('= ...') gehört nicht mehr zu "[Typ] Name".
+                // The last identifier in the group is the parameter name, an
+                // identifier/type keyword in front of it (if present) the
+                // type name - matches "[type] name" as in the rest of the language.
+                // A default value ('= ...') no longer belongs to "[type] name".
                 int assign = toks.FindIndex(t => t.Type == TokenType.Assign);
                 if (assign >= 0) toks = toks.GetRange(0, assign);
 
@@ -1348,8 +1348,8 @@ namespace fire.Editor
                 if (nameIdx < 0) return;
                 string name = toks[nameIdx].Lexeme;
 
-                // Typ davor: Bitbreite/Sterne ('int[16]', 'int*') überspringen, dann
-                // Typ-Keyword oder (evtl. qualifizierter) Klassenname.
+                // Type before it: skip bit width/stars ('int[16]', 'int*'), then
+                // type keyword or (possibly qualified) class name.
                 int t2 = nameIdx - 1;
                 while (t2 >= 0 && toks[t2].Type == TokenType.Star) t2--;
                 if (t2 >= 0 && toks[t2].Type == TokenType.RBracket)
@@ -1378,9 +1378,9 @@ namespace fire.Editor
             return _lineStarts[idx] + (token.Column - 1);
         }
 
-        /// <summary>Zeichen-Offset jedes Tokens (parallel zu `_tokens`),
-        /// einmalig berechnet - die Typ-Herleitung (siehe ScriptSymbolIndex.
-        /// Types) vergleicht sehr oft Offsets.</summary>
+        /// <summary>Character offset of each token (parallel to `_tokens`),
+        /// computed once - the type derivation (see ScriptSymbolIndex.
+        /// Types) compares offsets very often.</summary>
         private int[]? _tokenOffsets;
         private int TokenOffset(int tokenIdx)
         {

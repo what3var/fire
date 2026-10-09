@@ -2,36 +2,36 @@ using System;
 
 namespace fire.Editor
 {
-    /// <summary>Das, was das Hauptfenster von JEDEM Dokument-Tab braucht,
-    /// unabhängig davon, ob es ein fire-Skript (ScriptEditorControl) oder ein
-    /// Markdown-Dokument (MarkdownEditorControl) ist.</summary>
+    /// <summary>What the main window needs from EVERY document tab,
+    /// regardless of whether it is a fire script (ScriptEditorControl) or a
+    /// Markdown document (MarkdownEditorControl).</summary>
     public interface IDocumentView
     {
-        /// <summary>Dateipfad, `null` solange das Dokument noch nie gespeichert/geöffnet wurde.</summary>
+        /// <summary>File path, `null` as long as the document has never been saved/opened.</summary>
         string? FilePath { get; set; }
 
         /// <summary>Read-only documents cannot be edited or saved (the Save commands are disabled).</summary>
         bool IsReadOnly { get; }
 
-        /// <summary>Seit dem Laden/letzten Speichern verändert?</summary>
+        /// <summary>Changed since loading/the last save?</summary>
         bool IsModified { get; }
         event Action? ModifiedChanged;
 
-        /// <summary>Feuert bei jeder Cursor-Bewegung mit der neuen 1-basierten Zeile.</summary>
+        /// <summary>Fires on every cursor movement with the new 1-based line.</summary>
         event Action<int>? CaretLineChanged;
 
         int GetCaretLine();
         string GetText();
 
-        /// <summary>Ersetzt den Inhalt (verwirft Haltepunkte, Diagnostik usw.) und setzt Pfad/„unverändert“.</summary>
+        /// <summary>Replaces the content (discards breakpoints, diagnostics etc.) and sets path/"unchanged".</summary>
         void ResetTo(string text, string? filePath);
 
-        /// <summary>Der Host hat den Text gespeichert.</summary>
+        /// <summary>The host has saved the text.</summary>
         void MarkSaved();
 
         void FocusEditor();
 
-        // Bearbeiten-Menü (siehe MainWindow) - wirkt immer auf das AKTIVE Dokument.
+        // Edit menu (see MainWindow) - always acts on the ACTIVE document.
         bool CanUndo { get; }
         bool CanRedo { get; }
         bool HasSelection { get; }
@@ -47,7 +47,7 @@ namespace fire.Editor
         void FindPrevious();
         int LineCount { get; }
 
-        /// <summary>Springt in Zeile `line` (1-basiert) und setzt den Fokus in den Editor.</summary>
+        /// <summary>Jumps to line `line` (1-based) and sets the focus into the editor.</summary>
         void GoToLine(int line);
     }
 }
