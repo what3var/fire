@@ -59,7 +59,7 @@ namespace fire.Runtime
             scope.SharingLock = Lock;
         }
 
-        /// <summary>Liegt etwas in der Warteschlange?</summary>
+        /// <summary>Is anything in the queue?</summary>
         public bool HasPending
         {
             get { lock (_gate) return _queue.Count > 0; }
@@ -85,7 +85,7 @@ namespace fire.Runtime
                 if (_closed) return null;
                 _queue.Enqueue(request);
             }
-            VM.RaiseSignal(); // das Hauptprogramm bemerkt es an seinem naechsten sicheren Punkt (siehe VM.AutoSyncNow)
+            VM.RaiseSignal(); // the main program notices it at its next safe point (see VM.AutoSyncNow)
             FireRuntime.WakeWaitingOwner();
             request.Granted.Wait();
             return request;
@@ -106,7 +106,7 @@ namespace fire.Runtime
                 if (_closed) { holder.Release(NullDestructRunner.Instance); return; }
                 _queue.Enqueue(new JobRequest { Lambda = lambda, Args = args, Holder = holder });
             }
-            VM.RaiseSignal(); // das Hauptprogramm bemerkt es an seinem naechsten sicheren Punkt (siehe VM.AutoSyncNow)
+            VM.RaiseSignal(); // the main program notices it at its next safe point (see VM.AutoSyncNow)
             FireRuntime.WakeWaitingOwner();
         }
 

@@ -409,7 +409,7 @@ namespace UI {
             } else if (this.stretch == UI.Stretch.Fill) {
                 root.renderer.BlitScaled(this.source, 0, 0, sw, sh, ax, ay, w, h, 2)
             } else if (this.stretch == UI.Stretch.Uniform) {
-                // so gross wie moeglich, Seitenverhaeltnis bleibt, mittig
+                // as large as possible, aspect ratio stays, centred
                 var dw = w
                 var dh = sh * w / sw
                 if (dh > h) {

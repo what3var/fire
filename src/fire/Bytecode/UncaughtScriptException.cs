@@ -3,13 +3,13 @@ using fire.Runtime;
 
 namespace fire.Bytecode
 {
-    /// <summary>Eine Skript-`throw`, für die kein passender `catch` gefunden
-    /// wurde. Die VM selbst wirft diesen Typ NICHT mehr intern (siehe VM.
-    /// UnhandledException/docs/PORTING.md, Abschnitt "VM-interner
-    /// Kontrollfluss") - `VM.Run()` kehrt in diesem Fall ganz normal zurück,
-    /// der Aufrufer prüft danach `vm.UnhandledException`. Dieser Typ bleibt
-    /// als reine C#-Bequemlichkeit für Host-Code, der lieber mit einer
-    /// echten, geworfenen Exception arbeitet - siehe
+    /// <summary>A script `throw` for which no matching `catch` was
+    /// found. The VM itself NO LONGER throws this type internally (see VM.
+    /// UnhandledException/docs/PORTING.md, section "VM-internal
+    /// control flow") - `VM.Run()` returns quite normally in this case,
+    /// the caller then checks `vm.UnhandledException`. This type remains
+    /// as a pure C# convenience for host code that prefers to work with a
+    /// real, thrown exception - see
     /// `throw new UncaughtScriptException(vm.UnhandledException)`.</summary>
     public sealed class UncaughtScriptException : Exception
     {

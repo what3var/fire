@@ -7,11 +7,11 @@ namespace fire.Values
         Float,
         Char,
         String,
-        Class,      // Referenz auf eine Objektinstanz
-        Lambda,     // Referenz auf einen Lambda-Wert (Runtime.LambdaValue)
-        Pointer,    // Referenz auf einen Scope-Slot oder ein Objekt-Feld (Values.PointerTarget)
-        Array,      // Referenz auf ein Array (Values.ScriptArray)
-        Buffer,     // Referenz auf einen rohen Byte-Puffer (Values.ByteBuffer)
+        Class,      // Reference to an object instance
+        Lambda,     // Reference to a lambda value (Runtime.LambdaValue)
+        Pointer,    // Reference to a scope slot or an object field (Values.PointerTarget)
+        Array,      // Reference to an array (Values.ScriptArray)
+        Buffer,     // Reference to a raw byte buffer (Values.ByteBuffer)
         Undefined,
     }
 }

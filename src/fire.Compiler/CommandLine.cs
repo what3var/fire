@@ -15,7 +15,7 @@ namespace fire.Compiler
     public sealed class CommandLineOptions
     {
         public CommandKind Command { get; init; }
-        /// <summary>Quelldateien in der angegebenen Reihenfolge (Pfade, wie eingegeben).</summary>
+        /// <summary>Source files in the given order (paths, as entered).</summary>
         public IReadOnlyList<string> Files { get; init; } = Array.Empty<string>();
         /// <summary>`-m`: execution mode; null = the one in the script (`#debug`/`#performance`) or release.</summary>
         public VmExecutionMode? Mode { get; init; }

@@ -213,7 +213,7 @@ namespace fire.Editor
         /// <summary>Which prelude an enum comes from (keys like <see cref="EnumDeclLines"/>); missing for enums of the document.</summary>
         public Dictionary<string, string> EnumPreludes { get; } = new();
 
-        /// <summary>Name der Standardbibliothek in <see cref="ClassInfo.PreludeName"/>.</summary>
+        /// <summary>Name of the standard library in <see cref="ClassInfo.PreludeName"/>.</summary>
         public const string StandardPreludeName = "standard";
 
         /// <summary>What the prelude described by THIS index is called (null = an ordinary document).</summary>
@@ -1283,7 +1283,7 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Kontext an einer Cursor-Position (Zeichen-Offset im Quelltext)
+        // Context at a cursor position (character offset in the source text)
         // -----------------------------------------------------------
 
         /// <summary>Name of the class whose body contains the cursor position `offset`

@@ -10,13 +10,13 @@ namespace fire.Runtime
 
         public static string Graphics => "graphics";
 
-        /// <summary>Das Fenster (`Window`, SDL) für einen Framebuffer - setzt `graphics` voraus. Getrennt von `graphics`, damit eine Plattform ohne Fenster statt dessen ein Display einbinden kann.</summary>
+        /// <summary>The window (`Window`, SDL) for a framebuffer - requires `graphics`. Separate from `graphics` so that a platform without a window can include a display instead.</summary>
         public static string Windows => "windows";
 
         public static string Devices => "devices";   // (a package; the name is kept for the packer, which knows its host parts)
 
 
-        /// <summary>Die Oberflächen-Bibliothek (siehe fire.UI.Bridge) - setzt `graphics` voraus.</summary>
+        /// <summary>The UI library (see fire.UI.Bridge) - requires `graphics`.</summary>
         public static string Ui => "ui";
 
         /// <summary>Die Abfrage-Bibliothek (`Linq.From(...).Where(...)`, reiner fire-Quelltext, siehe fire.Standard.LinqPrelude).</summary>

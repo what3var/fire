@@ -71,7 +71,7 @@ namespace fire.Terminal
                 for (int i = 0; i < entries; i++)
                 {
                     int p = palPos + i * entrySize;
-                    palette[i] = d[p + 2] | ((uint)d[p + 1] << 8) | ((uint)d[p] << 16) | 0xFF000000u; // Datei: B, G, R, (unbenutzt)
+                    palette[i] = d[p + 2] | ((uint)d[p + 1] << 8) | ((uint)d[p] << 16) | 0xFF000000u; // File: B, G, R, (unused)
                 }
             }
 
@@ -178,7 +178,7 @@ namespace fire.Terminal
                         Put(rle8 ? value : (i % 2 == 0 ? value >> 4 : value & 0xF));
                     continue;
                 }
-                if (value == 0) { x = 0; row++; continue; }   // Zeilenende
+                if (value == 0) { x = 0; row++; continue; }   // Line end
                 if (value == 1) break;                         // Bildende
                 if (value == 2)                                // Verschiebung
                 {

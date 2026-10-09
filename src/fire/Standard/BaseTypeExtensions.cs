@@ -4,24 +4,24 @@ using fire.Values;
 namespace fire.Standard
 {
     /// <summary>
-    /// Erweiterungen von Basistypen (`class extends string { ... }`, SPEC 5.5.1).
+    /// Extensions of base types (`class extends string { ... }`, SPEC 5.5.1).
     ///
-    /// Ein Basistyp (`string`, `char`, `int`, `float`, `bool`) hat keine Klassendeklaration, die
-    /// ein `class extends` erweitern könnte. Der Parser sammelt deshalb alle Erweiterungen eines
-    /// Basistyps in EINE synthetische Klasse mit dem internen Namen <see cref="ClassName"/>
-    /// (`$string`, ...) - kein gültiger Bezeichner, kollidiert also nie mit einer Nutzerklasse. Für
-    /// Resolver und Compiler ist das eine gewöhnliche Klasse; die VM ruft ihre Methoden auf, wenn ein
-    /// Methodenaufruf auf einem Wert dieses <see cref="ValueKind"/> keine Objektinstanz trifft, mit
-    /// dem Wert selbst als `this`.
+    /// A base type (`string`, `char`, `int`, `float`, `bool`) has no class declaration that
+    /// a `class extends` could extend. The parser therefore collects all extensions of a
+    /// base type into ONE synthetic class with the internal name <see cref="ClassName"/>
+    /// (`$string`, ...) - not a valid identifier, so it never collides with a user class. For
+    /// resolver and compiler this is an ordinary class; the VM calls its methods when a
+    /// method call on a value of this <see cref="ValueKind"/> does not hit an object instance, with
+    /// the value itself as `this`.
     ///
-    /// Erlaubt sind NUR Methoden: ein Basiswert hat keinen Speicher, in dem ein Feld oder eine
-    /// Property leben könnte (und `int`/`string` werden nicht per Referenz gehalten).
+    /// ONLY methods are allowed: a base value has no storage in which a field or a
+    /// property could live (and `int`/`string` are not held by reference).
     /// </summary>
     public static class BaseTypeExtensions
     {
-        /// <summary>Alle Basistypen, die sich erweitern lassen (Schlüsselwort → Werteart).
-        /// `byte` fehlt bewusst: ein `byte` ist zur Laufzeit ein `int` (nur mit anderer Breite) -
-        /// wer ihn erweitern will, erweitert `int`.</summary>
+        /// <summary>All base types that can be extended (keyword → kind of value).
+        /// `byte` is deliberately missing: at runtime a `byte` is an `int` (only with a different width) -
+        /// whoever wants to extend it extends `int`.</summary>
         public static bool TryGetKind(string typeName, out ValueKind kind)
         {
             switch (typeName)
@@ -31,18 +31,18 @@ namespace fire.Standard
                 case "int": kind = ValueKind.Int; return true;
                 case "float": kind = ValueKind.Float; return true;
                 case "bool": kind = ValueKind.Bool; return true;
-                case "array": kind = ValueKind.Array; return true; // `class extends array { ... }`: Methoden für JEDES Array (kein Schlüsselwort, ein Bezeichner)
+                case "array": kind = ValueKind.Array; return true; // `class extends array { ... }`: methods for EVERY array (no keyword, an identifier)
                 default: kind = default; return false;
             }
         }
 
         public static bool IsExtendable(string typeName) => TryGetKind(typeName, out _);
 
-        /// <summary>Interner Klassenname der Sammelklasse für `typeName` (z.B. `$string`).</summary>
+        /// <summary>Internal class name of the collecting class for `typeName` (e.g. `$string`).</summary>
         public static string ClassName(string typeName) => "$" + typeName;
 
-        /// <summary>Die Sammelklasse für einen Basiswert dieser Art - <c>null</c>, wenn die Art gar
-        /// nicht erweiterbar ist.</summary>
+        /// <summary>The collecting class for a base value of this kind - <c>null</c> if the kind
+        /// is not extendable at all.</summary>
         public static string? ClassNameFor(ValueKind kind) => kind switch
         {
             ValueKind.String => "$string",
@@ -54,7 +54,7 @@ namespace fire.Standard
             _ => null,
         };
 
-        /// <summary>Der Typname hinter einem Sammelklassennamen (`$string` → `string`), sonst
+        /// <summary>The type name behind a collecting class name (`$string` → `string`), otherwise
         /// <c>null</c>.</summary>
         public static bool TryGetTypeName(string className, [NotNullWhen(true)] out string? typeName)
         {

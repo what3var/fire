@@ -3,91 +3,91 @@ using MemoryPack;
 
 namespace fire.Ast
 {
-    /// <summary>Signatur-Angabe für einen `lambda`-Typ (siehe TypeRef.LambdaSignature-
-    /// Doku): `ReturnTypeName` ist der optionale, dem `lambda`-Schlüsselwort
-    /// VORANGESTELLTE Rückgabetyp (`int lambda&lt;...&gt;`, null wenn weggelassen,
-    /// `lambda&lt;...&gt;` allein); `ParamTypeNames` sind die Namen innerhalb der
-    /// spitzen Klammern, leer wenn keine `&lt;...&gt;` angegeben (parameterlos).
-    /// Beide sind reine NAMEN (kein rekursiver TypeRef) - ein Lambda-Parameter-
-    /// oder Rückgabetyp, der selbst wieder ein Lambda-Typ mit eigener Signatur
-    /// wäre, ist bewusst nicht unterstützt (SPEC-Grenze dieser Ausbaustufe).
-    /// `IsSelector`: `lambda member&lt;T&gt; name` - die übergebene Lambda wählt ein Mitglied aus (`c => c.radius`); der Parameter
-    /// enthält im Körper stattdessen die Reflection dieses Mitglieds (siehe docs/DESIGN_LAMBDA_REFLECTION_PROBE.md); `ParamTypeNames`
-    /// enthält dann genau den Namen `T`. `SelectorKind` legt fest, was die Lambda auswählen darf:
-    /// `field` (nur ein Feld), `property` (nur eine Property), `member` (Feld oder Property), `method` (nur eine Methode), `selector` (alles).
-    /// Nur die ANZAHL der Parameter wird zur Laufzeit geprüft (VM.
-    /// CheckLambdaSignature) - die einzelnen Typnamen sind rein informativ,
-    /// da eine dynamisch typisierte Lambda ihre Parameter-TYPEN nicht
-    /// verlässlich vorab offenlegt.</summary>
+    /// <summary>Signature information for a `lambda` type (see TypeRef.LambdaSignature
+    /// docs): `ReturnTypeName` is the optional return type placed
+    /// BEFORE the `lambda` keyword (`int lambda&lt;...&gt;`, null if omitted,
+    /// `lambda&lt;...&gt;` alone); `ParamTypeNames` are the names inside the
+    /// angle brackets, empty if no `&lt;...&gt;` given (parameterless).
+    /// Both are pure NAMES (no recursive TypeRef) - a lambda parameter
+    /// or return type that were itself a lambda type with its own signature
+    /// is deliberately not supported (SPEC limit of this stage).
+    /// `IsSelector`: `lambda member&lt;T&gt; name` - the passed lambda selects a member (`c => c.radius`); in its body the parameter
+    /// instead holds the reflection of this member (see docs/DESIGN_LAMBDA_REFLECTION_PROBE.md); `ParamTypeNames`
+    /// then contains exactly the name `T`. `SelectorKind` determines what the lambda may select:
+    /// `field` (a field only), `property` (a property only), `member` (field or property), `method` (a method only), `selector` (anything).
+    /// Only the NUMBER of parameters is checked at runtime (VM.
+    /// CheckLambdaSignature) - the individual type names are purely informational,
+    /// since a dynamically typed lambda cannot reliably disclose its parameter TYPES
+    /// up front.</summary>
     [MemoryPackable]
     public sealed partial record LambdaSignature(string? ReturnTypeName, IReadOnlyList<string> ParamTypeNames, bool IsSelector = false, string SelectorKind = "member");
 
     /// <summary>
-    /// Ein Typ-Verweis: Basisname (Basistyp-Keyword oder Klassenname), optionale
-    /// Bitbreite in Klammern direkt hinter dem Typ (nur für int/float sinnvoll,
-    /// z.B. `int[16]`) und Pointer-Tiefe (Anzahl '*', z.B. `int[16]*`).
+    /// A type reference: base name (base-type keyword or class name), optional
+    /// bit width in brackets directly after the type (only meaningful for int/float,
+    /// e.g. `int[16]`) and pointer depth (number of '*', e.g. `int[16]*`).
     ///
-    /// Array-Deklaratoren ("Type name[]") sind bewusst NICHT Teil von TypeRef,
-    /// sondern hängen als eigenes Feld an der jeweiligen Deklaration
-    /// (VarDeclStmt/FieldDecl/LambdaParam) - die Sprache platziert die eckigen
-    /// Klammern für Arrays hinter dem BEZEICHNER, nicht hinter dem Typ (anders als
-    /// die Bitbreiten-Klammern, die direkt hinter dem Typ stehen). Beide Syntaxen
-    /// sind dadurch rein positionell unterscheidbar, keine Mehrdeutigkeit.
+    /// Array declarators ("Type name[]") are deliberately NOT part of TypeRef,
+    /// but hang as a field of their own on the respective declaration
+    /// (VarDeclStmt/FieldDecl/LambdaParam) - the language places the square
+    /// brackets for arrays after the IDENTIFIER, not after the type (unlike
+    /// the bit-width brackets, which sit directly after the type). Both syntaxes
+    /// can thereby be told apart purely positionally, no ambiguity.
     ///
-    /// EINE Ausnahme: ein RÜCKGABETYP hat keinen Bezeichner, hinter dem die Klammern
-    /// stehen könnten - dort schreibt man `int[] Name()` bzw. `Dog[][] Name()`. Die
-    /// LEEREN Klammern unterscheiden das von der Bitbreite (`int[8]`, immer mit
-    /// Zahl). `ArrayRank` zählt diese Klammerpaare (0 = kein Array).
+    /// ONE exception: a RETURN TYPE has no identifier after which the brackets
+    /// could stand - there one writes `int[] Name()` or `Dog[][] Name()`. The
+    /// EMPTY brackets distinguish this from the bit width (`int[8]`, always with a
+    /// number). `ArrayRank` counts these bracket pairs (0 = no array).
     ///
-    /// LambdaSignature: gesetzt, wenn dieser TypeRef ein Lambda-Typ ist
-    /// (`BaseName == "lambda"`) - `[RückgabeTyp] lambda[&lt;Param1,...,ParamN&gt;]`,
-    /// siehe LambdaSignature-Doku und SPEC "Lambda-Typen mit Signatur".
+    /// LambdaSignature: set if this TypeRef is a lambda type
+    /// (`BaseName == "lambda"`) - `[ReturnType] lambda[&lt;Param1,...,ParamN&gt;]`,
+    /// see LambdaSignature docs and SPEC "Lambda types with signature".
     /// </summary>
     [MemoryPackable]
     public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null, int ArrayRank = 0, int TypeArgCount = 0)
     {
-        /// <summary>Sentinel für `BaseName`, wenn eine Deklaration `var`
-        /// zusammen mit einer EXPLIZITEN Einheit, aber OHNE expliziten Typ
-        /// nutzt (`var a : mm`) - der eigentliche Typ bleibt wie bei
-        /// gewöhnlichem `var` aus dem Initialisierer/Kontext hergeleitet,
-        /// NUR die Einheit ist hier schon fest vorgegeben (siehe SPEC
-        /// "Einheiten-Deklarationen"). Ein TypeRef mit diesem BaseName
-        /// trägt NIE eine eigene Bedeutung als Typname - jede Stelle, die
-        /// `TypeRef.BaseName` als echten Typnamen validieren/auflösen
-        /// würde (ValidateTypeName/ResolveTypeRef im Resolver, entsprechend
-        /// im Compiler), muss zuerst `IsInferred` prüfen und in dem Fall
-        /// NUR `Unit` validieren, nicht `BaseName`.</summary>
+        /// <summary>Sentinel for `BaseName` when a declaration uses `var`
+        /// together with an EXPLICIT unit, but WITHOUT an explicit type
+        /// (`var a : mm`) - the actual type remains, as with
+        /// ordinary `var`, inferred from the initialiser/context,
+        /// ONLY the unit is already fixed here (see SPEC
+        /// "Unit declarations"). A TypeRef with this BaseName
+        /// NEVER has a meaning of its own as a type name - every place that
+        /// would validate/resolve `TypeRef.BaseName` as a real type name
+        /// (ValidateTypeName/ResolveTypeRef in the resolver, likewise
+        /// in the compiler) must check `IsInferred` first and in that case
+        /// validate ONLY `Unit`, not `BaseName`.</summary>
         public const string InferredMarker = "var";
 
-        /// <summary>`true`, wenn dieser TypeRef NUR eine Einheit festlegt,
-        /// den eigentlichen Typ aber (wie normales `var`) aus dem Kontext
-        /// herleiten lässt (siehe InferredMarker-Doku).</summary>
+        /// <summary>`true` if this TypeRef fixes ONLY a unit,
+        /// but has the actual type (like normal `var`) inferred from the context
+        /// (see InferredMarker docs).</summary>
         [MemoryPackIgnore]
         public bool IsInferred => BaseName == InferredMarker;
 
         [MemoryPackIgnore]
         public bool IsPointer => PointerDepth > 0;
 
-        /// <summary>Löst BaseName auf seinen tatsächlichen, vollqualifizierten
-        /// Namen auf, WENN nötig (SPEC "Namespaces") - `isKnown` prüft, ob ein
-        /// Kandidatenname bekannt ist (Resolver: IsKnownClassName, Compiler:
-        /// gegen die Menge aller RuntimeClass-Namen, Parser.MergeClassExtensions:
-        /// gegen die Namen im gerade kombinierten Programm).
+        /// <summary>Resolves BaseName to its actual, fully qualified
+        /// name IF necessary (SPEC "Namespaces") - `isKnown` checks whether a
+        /// candidate name is known (resolver: IsKnownClassName, compiler:
+        /// against the set of all RuntimeClass names, Parser.MergeClassExtensions:
+        /// against the names in the currently combined program).
         ///
-        /// `Namespaces` steht an ERSTER Stelle der aktuelle Namespace (falls
-        /// beim Parsen einer war), danach die zum Zeitpunkt des Parsens
-        /// aktiven `#using`-Namen (siehe Parser._currentNamespace/
-        /// _usingNamespaces) - die Reihenfolge selbst kodiert bereits die
-        /// Priorität (aktueller Namespace vor `#using`), kein separater
-        /// "Geschwister gewinnt"-Sonderfall nötig: einfach den ERSTEN
-        /// passenden Kandidaten nehmen.
+        /// `Namespaces` has the current namespace in FIRST place (if
+        /// there was one when parsing), then the `#using` names that were
+        /// active at parse time (see Parser._currentNamespace/
+        /// _usingNamespaces) - the order itself already encodes the
+        /// priority (current namespace before `#using`), no separate
+        /// "sibling wins" special case needed: simply take the FIRST
+        /// matching candidate.
         ///
-        /// Schon ein exakt bekannter Name (inkl. vom Nutzer selbst
-        /// vollqualifiziert geschrieben, oder ein nicht-namespacierter
-        /// globaler Name wie 'Exception') hat Vorrang vor jeder
-        /// Namespace-Kombination. Kein Kandidat bekannt -> BaseName
-        /// unverändert zurück, schlägt beim Aufrufer dann wie gewohnt als
-        /// "unbekannte Klasse/unbekannter Typ" fehl.</summary>
+        /// Even an exactly known name (including one written fully
+        /// qualified by the user, or a non-namespaced
+        /// global name like 'Exception') takes precedence over any
+        /// namespace combination. No candidate known -> BaseName
+        /// returned unchanged, then fails at the caller as usual as an
+        /// "unknown class/unknown type".</summary>
         public string ResolveBaseName(Func<string, bool> isKnown)
         {
             if (isKnown(BaseName)) return BaseName;

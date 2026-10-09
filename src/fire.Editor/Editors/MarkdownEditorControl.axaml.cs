@@ -561,7 +561,7 @@ namespace fire.Editor
             var m = ListLine.Match(doc.GetText(line.Offset, line.Length));
             if (!m.Success) return false;
 
-            // In einem Code-Block nichts fortsetzen.
+            // Do not continue anything in a code block.
             if (_colorizer.FencedLines.Contains(line.LineNumber)) return false;
 
             if (m.Groups["rest"].Length == 0)

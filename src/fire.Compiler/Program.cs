@@ -1,6 +1,6 @@
 using fire.Compiler;
 
-// Befehlszeile des Compilers, siehe CommandLineParser (run / build).
+// Command line of the compiler, see CommandLineParser (run / build).
 // `bridge-packages <folder>`: for the build of the solution - writes the packages of the standard bridges (docs/PACKAGES.md).
 if (args.Length >= 2 && args[0] == "bridge-packages")
 {

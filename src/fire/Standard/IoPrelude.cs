@@ -3,29 +3,29 @@ namespace fire.Standard
     public static class IoPrelude
     {
         /// <summary>
-        /// Der fire-Quelltext zu `#import "io"` (die Natives sind C++, siehe native/bridges/fire_bridge_io.hpp) - VOR das eigentliche Nutzer-Skript zu
-        /// setzen, wenn es `#import "io"` gibt. Alles liegt in `namespace IO`
-        /// (`IO.FileStream`, `IO.File`, `IO.Path`, ...), damit kein Nutzer-
-        /// Klassenname wie `File` oder `Stream` damit kollidiert.
+        /// The fire source for `#import "io"` (the natives are C++, see native/bridges/fire_bridge_io.hpp) - to be placed BEFORE the actual user script
+        /// if there is an `#import "io"`. Everything lives in `namespace IO`
+        /// (`IO.FileStream`, `IO.File`, `IO.Path`, ...), so that no user
+        /// class name such as `File` or `Stream` collides with it.
         ///
-        /// Aufbau: `IStream` ist die kleinste Schnittstelle (Read/Write/Flush/
-        /// Close) - wer einen EIGENEN Stream schreibt, implementiert sie oder
-        /// (bequemer) leitet von `Stream` ab, der alles Übrige (ReadByte,
-        /// ReadBytes, ReadAll, CopyTo, ...) auf Read/Write aufbaut. `NativeStream`
-        /// ist die gemeinsame Basis von `FileStream`/`MemoryStream`, hinter der
-        /// ein natives Handle liegt (die Natives: native/bridges/fire_bridge_io.hpp); sein `destruct()` schließt
-        /// das Handle, wenn der Besitzer-Scope endet - ein vergessenes Close()
-        /// bleibt also nicht offen. Ein Destruktor wirft nie: schlägt das Schließen
-        /// fehl (z.B. weil der Stream, in den ein TextWriter noch leeren will,
-        /// schon von jemand anderem geschlossen wurde), wird der IO-Fehler dort
-        /// verschluckt.
+        /// Structure: `IStream` is the smallest interface (Read/Write/Flush/
+        /// Close) - whoever writes an OWN stream implements it or
+        /// (more conveniently) derives from `Stream`, which builds everything else (ReadByte,
+        /// ReadBytes, ReadAll, CopyTo, ...) on Read/Write. `NativeStream`
+        /// is the common base of `FileStream`/`MemoryStream`, behind which
+        /// lies a native handle (the natives: native/bridges/fire_bridge_io.hpp); its `destruct()` closes
+        /// the handle when the owner scope ends - a forgotten Close()
+        /// therefore does not stay open. A destructor never throws: if closing
+        /// fails (e.g. because the stream a TextWriter still wants to flush into
+        /// was already closed by someone else), the IO error is
+        /// swallowed there.
         ///
-        /// Konventionen: Lesefunktionen liefern die Anzahl gelesener Bytes
-        /// (0 = Ende des Streams), `ReadByte` liefert -1 am Ende. Fehler sind
-        /// fangbare Exceptions (`IO.IOException` und Ableitungen, siehe
-        /// IOErrors.Throw). Enum-Werte werden vollqualifiziert geschrieben
-        /// (`IO.FileMode.Create`) - ein Enum in einem Namespace ist nur so
-        /// erreichbar.
+        /// Conventions: read functions return the number of bytes read
+        /// (0 = end of stream), `ReadByte` returns -1 at the end. Errors are
+        /// catchable exceptions (`IO.IOException` and derivatives, see
+        /// IOErrors.Throw). Enum values are written fully qualified
+        /// (`IO.FileMode.Create`) - an enum in a namespace is reachable only
+        /// that way.
         /// </summary>
         public const string Source = """
             namespace IO {
@@ -51,7 +51,7 @@ namespace fire.Standard
                     construct(string message) : base(message, 4) { }
                 }
 
-                // Das Betriebssystem (5) ODER die Richtlinie des Hosts (6) verweigert den Zugriff.
+                // Either the operating system (5) OR the host's policy (6) denies access.
                 class PermissionException : IOException {
                     construct(string message, int code = 5) : base(message, code) { }
                 }
@@ -65,7 +65,7 @@ namespace fire.Standard
                 }
 
                 class IOErrors {
-                    // Wirft die zum letzten Fehler einer nativen IO-Funktion passende Exception.
+                    // Throws the exception matching the last error of a native IO function.
                     static Throw() {
                         var code = __IOLastError()
                         var message = __IOLastErrorMessage()
@@ -77,13 +77,13 @@ namespace fire.Standard
                         throw new IOException(message, code)
                     }
 
-                    // Gibt ein gültiges Handle zurück, wirft bei -1 den Fehler.
+                    // Returns a valid handle, throws the error on -1.
                     static int Handle(int handle) {
                         if (handle < 0) { Throw() }
                         return handle
                     }
 
-                    // Der Standard-FileAccess zu einem FileMode, wenn keiner angegeben ist (-1).
+                    // The default FileAccess for a FileMode when none is given (-1).
                     static int AccessFor(int mode, int access) {
                         if (access != -1) { return access }
                         if (mode == IO.FileMode.Open) { return IO.FileAccess.Read }
@@ -99,8 +99,8 @@ namespace fire.Standard
                     Close()
                 }
 
-                // Basisklasse für eigene Streams: Read/Write (und was sonst
-                // unterstützt wird) überschreiben, der Rest baut darauf auf.
+                // Base class for own streams: override Read/Write (and whatever else is
+                // supported), the rest builds on that.
                 class Stream : IStream {
                     bool CanRead { get { return false } }
                     bool CanWrite { get { return false } }
@@ -134,7 +134,7 @@ namespace fire.Standard
                     int Read(buffer) { return this.Read(buffer, 0, buffer.length) }
                     int Write(buffer) { return this.Write(buffer, 0, buffer.length) }
 
-                    // Ein Byte (0..255), oder -1 am Ende des Streams.
+                    // A byte (0..255), or -1 at the end of the stream.
                     int ReadByte() {
                         var one = new byte[1]
                         var n = this.Read(one, 0, 1)
@@ -148,7 +148,7 @@ namespace fire.Standard
                         this.Write(one, 0, 1)
                     }
 
-                    // Bis zu `count` Bytes als neuer Puffer (kürzer, wenn der Stream vorher endet).
+                    // Up to `count` bytes as a new buffer (shorter if the stream ends earlier).
                     ReadBytes(int count) {
                         var data = new byte[count]
                         var total = 0
@@ -163,7 +163,7 @@ namespace fire.Standard
                         return shorter
                     }
 
-                    // Alles bis zum Ende des Streams als neuer Puffer.
+                    // Everything up to the end of the stream as a new buffer.
                     ReadAll() {
                         var all = new MemoryStream()
                         this.CopyTo(all)
@@ -172,7 +172,7 @@ namespace fire.Standard
                         return result
                     }
 
-                    // Kopiert alles bis zum Ende dieses Streams in `target`.
+                    // Copies everything up to the end of this stream into `target`.
                     CopyTo(target, int bufferSize = 4096) {
                         var chunk = new byte[bufferSize]
                         while (true) {
@@ -183,8 +183,8 @@ namespace fire.Standard
                     }
                 }
 
-                // Gemeinsame Basis von FileStream und MemoryStream: hinter ihnen liegt
-                // ein natives Handle. destruct() schließt es, wenn der Besitzer endet.
+                // Common base of FileStream and MemoryStream: behind them lies
+                // a native handle. destruct() closes it when the owner ends.
                 class NativeStream : Stream {
                     int handle
                     bool closed
@@ -194,12 +194,12 @@ namespace fire.Standard
                         this.closed = false
                     }
 
-                    // Die Unterklassen übergeben erst -1 und öffnen danach im eigenen
-                    // Konstruktor-Body: scheitert das Öffnen (z.B. Datei nicht gefunden),
-                    // ist dieses Objekt trotzdem vollständig aufgebaut - sein destruct()
-                    // findet dann handle == -1 und schließt nichts. (Scheitert ein
-                    // Konstruktor schon BEVOR der der Basisklasse lief, haben die Felder
-                    // nur den Standardwert `false` - darauf ist kein Verlass.)
+                    // The subclasses first pass -1 and then open in their own
+                    // constructor body: if opening fails (e.g. file not found),
+                    // this object is nevertheless fully built - its destruct()
+                    // then finds handle == -1 and closes nothing. (If a
+                    // constructor fails already BEFORE the one of the base class ran, the fields
+                    // only have the default value `false` - that cannot be relied on.)
                     destruct() { try { this.Close() } catch (IO.IOException e) { } }
 
                     bool IsClosed { get { return this.closed } }
@@ -208,12 +208,12 @@ namespace fire.Standard
                     bool CanWrite { get { return !this.closed && __IOCanWrite(this.handle) } }
                     bool CanSeek { get { return !this.closed && __IOCanSeek(this.handle) } }
 
-                    // Wirft, wenn der Stream schon geschlossen ist.
+                    // Throws if the stream is already closed.
                     Check() {
                         if (this.closed) { throw new StreamClosedException("The stream is closed.") }
                     }
 
-                    // Schließt das Handle; ein weiteres Close() ist wirkungslos.
+                    // Closes the handle; a further Close() has no effect.
                     Close() {
                         if (this.closed) { return }
                         this.closed = true
@@ -246,7 +246,7 @@ namespace fire.Standard
                         }
                     }
 
-                    // Neue Position (vom Anfang), `origin`: IO.SeekOrigin.
+                    // New position (from the start), `origin`: IO.SeekOrigin.
                     int Seek(int offset, int origin = IO.SeekOrigin.Begin) {
                         this.Check()
                         var p = __IOSeek(this.handle, offset, origin)
@@ -294,8 +294,8 @@ namespace fire.Standard
                     }
                 }
 
-                // Eine Datei. `mode`: IO.FileMode, `access`: IO.FileAccess (ohne Angabe
-                // je nach mode: Open -> Read, Append -> Write, sonst ReadWrite).
+                // A file. `mode`: IO.FileMode, `access`: IO.FileAccess (if not given,
+                // depending on mode: Open -> Read, Append -> Write, otherwise ReadWrite).
                 class FileStream : NativeStream {
                     string name
 
@@ -304,12 +304,12 @@ namespace fire.Standard
                         this.handle = IO.IOErrors.Handle(__IOFileOpen(path, mode, IO.IOErrors.AccessFor(mode, access)))
                     }
 
-                    // Der Pfad, wie beim Öffnen angegeben.
+                    // The path, as given on opening.
                     string Name { get { return this.name } }
                 }
 
-                // Ein Stream im Arbeitsspeicher (wächst beim Schreiben). Mit einem
-                // Puffer: beginnt mit einer KOPIE seines Inhalts, Position 0.
+                // A stream in memory (grows on writing). With a
+                // buffer: starts with a COPY of its content, position 0.
                 class MemoryStream : NativeStream {
                     construct() : base(-1) {
                         this.handle = IO.IOErrors.Handle(__IOMemNew())
@@ -319,7 +319,7 @@ namespace fire.Standard
                         this.handle = IO.IOErrors.Handle(__IOMemFromBuffer(buffer))
                     }
 
-                    // Der gesamte Inhalt (unabhängig von der Position) als neuer Puffer.
+                    // The entire content (regardless of position) as a new buffer.
                     ToBuffer() {
                         this.Check()
                         var all = __IOMemToBuffer(this.handle)
@@ -328,13 +328,13 @@ namespace fire.Standard
                     }
                 }
 
-                // UTF-8 <-> Puffer. (`string.ToBytes()` ist nur ASCII.)
+                // UTF-8 <-> buffer. (`string.ToBytes()` is ASCII only.)
                 class Utf8 {
-                    // Der Text als UTF-8 (ohne Byte-Order-Mark) in einem neuen Puffer.
+                    // The text as UTF-8 (without byte-order mark) in a new buffer.
                     static GetBytes(string text) { return __IOUtf8Encode(text) }
 
-                    // Ein Byte-Order-Mark am Anfang wird entfernt, ungültige Folgen
-                    // werden zu U+FFFD. Ohne count: bis zum Ende des Puffers.
+                    // A byte-order mark at the start is removed, invalid sequences
+                    // become U+FFFD. Without count: up to the end of the buffer.
                     static string GetString(buffer, int offset = 0, int count = -1) {
                         if (count == -1) { count = buffer.length - offset }
                         var text = __IOUtf8Decode(buffer, offset, count)
@@ -343,14 +343,14 @@ namespace fire.Standard
                     }
                 }
 
-                // Reine Textverarbeitung auf Pfaden (kein Dateizugriff). Wie überall in
-                // dieser Sprache mit dem Namespace: IO.Path.Combine(...).
+                // Pure text processing on paths (no file access). As everywhere in
+                // this language with the namespace: IO.Path.Combine(...).
                 class Path {
-                    // Das Zeichen, das Verzeichnisse trennt ("/" oder "\").
+                    // The character that separates directories ("/" or "\").
                     static string Separator() { return __IOPathSeparator() }
 
-                    // Fügt Pfadteile zusammen; ein absoluter Teil verwirft alles davor
-                    // (wie Path.Combine in .NET).
+                    // Joins path parts; an absolute part discards everything before it
+                    // (like Path.Combine in .NET).
                     static string Combine(string a, string b) {
                         var r = __IOPathCombine(a, b)
                         if (r == undefined) { IO.IOErrors.Throw() }
@@ -367,16 +367,16 @@ namespace fire.Standard
                     // "dir/name.txt" -> "name"
                     static string Stem(string path) { return IO.Path.Text(__IOPathStem(path)) }
 
-                    // "dir/name.txt" -> ".txt" ("" ohne Endung)
+                    // "dir/name.txt" -> ".txt" ("" without extension)
                     static string Extension(string path) { return IO.Path.Text(__IOPathExtension(path)) }
 
-                    // "dir/sub/name.txt" -> "dir/sub" ("" bei einem reinen Namen)
+                    // "dir/sub/name.txt" -> "dir/sub" ("" for a bare name)
                     static string Parent(string path) { return IO.Path.Text(__IOPathParent(path)) }
 
-                    // Der absolute, normalisierte Pfad (ohne "..").
+                    // The absolute, normalised path (without "..").
                     static string FullPath(string path) { return IO.Path.Text(__IOPathFull(path)) }
 
-                    // Das Verzeichnis für temporäre Dateien.
+                    // The directory for temporary files.
                     static string Temp() { return IO.Path.Text(__IOPathTemp()) }
 
                     static bool IsRooted(string path) { return __IOPathIsRooted(path) }
@@ -387,9 +387,9 @@ namespace fire.Standard
                     }
                 }
 
-                // Dateien als Ganzes. Jeder Zugriff geht durch die Richtlinie des Hosts;
-                // Fehler sind IO.IOException und Ableitungen. Text ist UTF-8, Zeilen
-                // werden mit "\n" geschrieben und mit \n, \r\n oder \r gelesen.
+                // Files as a whole. Every access goes through the host's policy;
+                // errors are IO.IOException and derivatives. Text is UTF-8, lines
+                // are written with "\n" and read with \n, \r\n or \r.
                 class File {
                     static bool Exists(string path) {
                         var r = __IOFileExists(path)
@@ -397,21 +397,21 @@ namespace fire.Standard
                         return r == 1
                     }
 
-                    // Größe in Bytes.
+                    // Size in bytes.
                     static int Size(string path) {
                         var n = __IOFileSize(path)
                         if (n < 0) { IO.IOErrors.Throw() }
                         return n
                     }
 
-                    // Zeitpunkt der letzten Änderung: Sekunden seit 1970 (UTC), mit der Einheit s.
+                    // Time of the last modification: seconds since 1970 (UTC), with the unit s.
                     static ModifiedTime(string path) {
                         var t = __IOFileTime(path)
                         if (t == undefined) { IO.IOErrors.Throw() }
                         return t * 1s   // the native gives plain seconds (units do not cross the package ABI)
                     }
 
-                    // Eine fehlende Datei ist kein Fehler.
+                    // A missing file is not an error.
                     static Delete(string path) {
                         if (!__IOFileDelete(path)) { IO.IOErrors.Throw() }
                     }
@@ -424,7 +424,7 @@ namespace fire.Standard
                         if (!__IOFileMove(source, target, overwrite)) { IO.IOErrors.Throw() }
                     }
 
-                    // Ein TextReader/TextWriter auf der Datei (siehe dort); ohne append wird überschrieben.
+                    // A TextReader/TextWriter on the file (see there); without append it is overwritten.
                     static OpenText(string path) { return new IO.TextReader(path) }
                     static CreateText(string path) { return new IO.TextWriter(path) }
                     static AppendText(string path) { return new IO.TextWriter(path, true) }
@@ -436,7 +436,7 @@ namespace fire.Standard
                         return data
                     }
 
-                    // Legt die Datei an bzw. überschreibt sie.
+                    // Creates the file or overwrites it.
                     static WriteAllBytes(string path, buffer) {
                         var stream = new IO.FileStream(path, IO.FileMode.Create)
                         stream.Write(buffer)
@@ -461,12 +461,12 @@ namespace fire.Standard
                         IO.File.AppendAllBytes(path, IO.Utf8.GetBytes(text))
                     }
 
-                    // Alle Zeilen als List von Strings (`foreach (zeile in ...)`, `.count`, `[i]`).
+                    // All lines as a List of strings (`foreach (line in ...)`, `.count`, `[i]`).
                     static ReadAllLines(string path) {
                         return new List(__IOSplitLines(IO.File.ReadAllText(path)))
                     }
 
-                    // Jede Zeile einer List (oder eines Arrays), jeweils mit "\n" abgeschlossen.
+                    // Each line of a List (or an array), each terminated with "\n".
                     static WriteAllLines(string path, lines) {
                         var stream = new IO.FileStream(path, IO.FileMode.Create)
                         if (lines is of List) {
@@ -489,43 +489,43 @@ namespace fire.Standard
                         return r == 1
                     }
 
-                    // Legt auch fehlende Zwischenverzeichnisse an; ein vorhandenes ist kein Fehler.
+                    // Also creates missing intermediate directories; an existing one is not an error.
                     static Create(string path) {
                         if (!__IODirCreate(path)) { IO.IOErrors.Throw() }
                     }
 
-                    // Ein nicht leeres Verzeichnis nur mit recursive = true.
+                    // A non-empty directory only with recursive = true.
                     static Delete(string path, bool recursive = false) {
                         if (!__IODirDelete(path, recursive)) { IO.IOErrors.Throw() }
                     }
 
-                    // Vollständige Pfade der Dateien als sortierte List. pattern: z.B. "*.txt".
+                    // Full paths of the files as a sorted List. pattern: e.g. "*.txt".
                     static GetFiles(string path, string pattern = "*", bool recursive = false) {
                         var list = __IODirList(path, pattern, recursive, 0)
                         if (list == undefined) { IO.IOErrors.Throw() }
                         return new List(list)
                     }
 
-                    // Vollständige Pfade der Unterverzeichnisse als sortierte List.
+                    // Full paths of the subdirectories as a sorted List.
                     static GetDirectories(string path, string pattern = "*", bool recursive = false) {
                         var list = __IODirList(path, pattern, recursive, 1)
                         if (list == undefined) { IO.IOErrors.Throw() }
                         return new List(list)
                     }
 
-                    // Das aktuelle Arbeitsverzeichnis.
+                    // The current working directory.
                     static string Current() { return __IOCurrentDir() }
                 }
 
-                // Liest UTF-8-Text zeilenweise von einem Stream. `new IO.TextReader(pfad)`
-                // öffnet die Datei selbst; `new IO.TextReader(stream)` liest von einem
-                // vorhandenen Stream und SCHLIESST ihn mit, außer leaveOpen ist true.
-                // Zeilen enden mit "\n" oder "\r\n" (das "\r" gehört nicht zur Zeile).
+                // Reads UTF-8 text line by line from a stream. `new IO.TextReader(path)`
+                // opens the file itself; `new IO.TextReader(stream)` reads from an
+                // existing stream and CLOSES it too, unless leaveOpen is true.
+                // Lines end with "\n" or "\r\n" (the "\r" does not belong to the line).
                 //
-                //     var reader = new IO.TextReader("notizen.txt")
-                //     foreach (zeile in reader) { print(zeile) }
+                //     var reader = new IO.TextReader("notes.txt")
+                //     foreach (line in reader) { print(line) }
                 //
-                // ReadLine() liefert undefined am Ende des Streams.
+                // ReadLine() returns undefined at the end of the stream.
                 class TextReader {
                     var source
                     bool ownsSource
@@ -537,8 +537,8 @@ namespace fire.Standard
                     var pending
 
                     construct(source, bool leaveOpen = false) {
-                        // Alle Felder zuerst belegen: scheitert das Öffnen unten (Datei nicht
-                        // gefunden), räumt destruct() ein sonst halb aufgebautes Objekt auf.
+                        // Occupy all fields first: if opening below fails (file not
+                        // found), destruct() cleans up an otherwise half-built object.
                         this.source = undefined
                         this.ownsSource = false
                         this.closed = false
@@ -561,7 +561,7 @@ namespace fire.Standard
 
                     bool IsClosed { get { return this.closed } }
 
-                    // true, wenn kein weiteres Zeichen mehr kommt (liest dafür ggf. vor).
+                    // true if no further character comes (reads ahead for that if necessary).
                     bool EndOfStream {
                         get {
                             this.Check()
@@ -573,7 +573,7 @@ namespace fire.Standard
                         if (this.closed) { throw new StreamClosedException("The reader is closed.") }
                     }
 
-                    // Sorgt dafür, dass chunk[pos..len) Daten enthält; false am Ende des Streams.
+                    // Ensures that chunk[pos..len) contains data; false at the end of the stream.
                     Fill() {
                         if (this.pos < this.len) { return true }
                         if (this.eof) { return false }
@@ -589,7 +589,7 @@ namespace fire.Standard
                         return true
                     }
 
-                    // Die gesammelten Bytes als Zeile (ohne abschließendes "\r"), Sammler leeren.
+                    // The collected bytes as a line (without a trailing "\r"), empty the collector.
                     TakeLine() {
                         var bytes = this.pending.ToBuffer()
                         this.pending.Length = 0
@@ -598,14 +598,14 @@ namespace fire.Standard
                         return IO.Utf8.GetString(bytes, 0, count)
                     }
 
-                    // Die nächste Zeile, oder undefined am Ende.
+                    // The next line, or undefined at the end.
                     ReadLine() {
                         this.Check()
                         while (this.Fill()) {
                             var nl = __IOBufferIndexOf(this.chunk, this.pos, this.len - this.pos, 10)
                             if (nl >= 0) {
                                 if (this.pending.Length == 0) {
-                                    // Ganze Zeile im Puffer - direkt dekodieren.
+                                    // Whole line in the buffer - decode directly.
                                     var count = nl - this.pos
                                     if (count > 0 && this.chunk[nl - 1] == 13) { count = count - 1 }
                                     var text = IO.Utf8.GetString(this.chunk, this.pos, count)
@@ -623,7 +623,7 @@ namespace fire.Standard
                         return this.TakeLine()
                     }
 
-                    // Der gesamte Rest als ein String.
+                    // The entire rest as one string.
                     string ReadAll() {
                         this.Check()
                         while (this.Fill()) {
@@ -635,7 +635,7 @@ namespace fire.Standard
                         return IO.Utf8.GetString(bytes)
                     }
 
-                    // Alle übrigen Zeilen als List.
+                    // All remaining lines as a List.
                     ReadLines() {
                         var lines = new List()
                         var line = this.ReadLine()
@@ -646,7 +646,7 @@ namespace fire.Standard
                         return lines
                     }
 
-                    // `foreach (zeile in reader)` liest Zeile für Zeile.
+                    // `foreach (line in reader)` reads line by line.
                     GetEnumerator() { return new IO.LineEnumerator(this) }
 
                     Close() {
@@ -674,18 +674,18 @@ namespace fire.Standard
                     GetCurrent() { return this.line }
                 }
 
-                // Schreibt UTF-8-Text (ohne Byte-Order-Mark) in einen Stream. `new
-                // IO.TextWriter(pfad[, append])` öffnet die Datei selbst (überschreibt,
-                // mit append = true hängt an); `new IO.TextWriter(stream[, leaveOpen])`
-                // schreibt in einen vorhandenen Stream und SCHLIESST ihn mit, außer
-                // leaveOpen ist true. Zeilen enden mit "\n".
+                // Writes UTF-8 text (without byte-order mark) to a stream. `new
+                // IO.TextWriter(path[, append])` opens the file itself (overwrites,
+                // with append = true it appends); `new IO.TextWriter(stream[, leaveOpen])`
+                // writes to an existing stream and CLOSES it too, unless
+                // leaveOpen is true. Lines end with "\n".
                 class TextWriter {
                     var target
                     bool ownsTarget
                     bool closed
 
                     construct(dest, bool flag = false) {
-                        // Alle Felder zuerst belegen (siehe TextReader).
+                        // Occupy all fields first (see TextReader).
                         this.target = undefined
                         this.ownsTarget = false
                         this.closed = false
@@ -709,13 +709,13 @@ namespace fire.Standard
                         if (this.closed) { throw new StreamClosedException("The writer is closed.") }
                     }
 
-                    // Schreibt den Wert als Text (Zahlen usw. werden umgewandelt).
+                    // Writes the value as text (numbers etc. are converted).
                     Write(value) {
                         this.Check()
                         this.target.Write(IO.Utf8.GetBytes("" + value))
                     }
 
-                    // Wie Write, hängt zusätzlich einen Zeilenumbruch an.
+                    // Like Write, additionally appends a line break.
                     WriteLine(value = "") {
                         this.Check()
                         this.target.Write(IO.Utf8.GetBytes("" + value + "\n"))
@@ -735,10 +735,10 @@ namespace fire.Standard
                     }
                 }
 
-                // Standardeingabe/-ausgabe/-fehler als Stream (In() nur lesbar, Out()/Err()
-                // nur schreibbar). Wohin sie führen, entscheidet der Host (Konsole, im
-                // Editor das Ausgabefenster). Close() ändert nichts - die Streams gehören
-                // dem Host und bleiben offen.
+                // Standard input/output/error as a stream (In() readable only, Out()/Err()
+                // writable only). Where they lead is decided by the host (console, in the
+                // editor the output window). Close() changes nothing - the streams belong
+                // to the host and stay open.
                 class StdStream : NativeStream {
                     construct(int kind) : base(-1) {
                         this.handle = IO.IOErrors.Handle(__IOStdHandle(kind))
@@ -747,22 +747,22 @@ namespace fire.Standard
                     Close() { }
                 }
 
-                // Bequemer Zugriff auf Standardeingabe/-ausgabe/-fehler:
+                // Convenient access to standard input/output/error:
                 //
-                //     IO.Stdio.WriteLine("Hallo")
-                //     var name = IO.Stdio.ReadLine()          // undefined am Ende der Eingabe
+                //     IO.Stdio.WriteLine("Hello")
+                //     var name = IO.Stdio.ReadLine()          // undefined at the end of the input
                 //     var out = new IO.TextWriter(IO.Stdio.Out(), true)
                 //
-                // Ausgabe geht immer als UTF-8. ReadLine/ReadAll lesen gepuffert - nicht mit
-                // rohen Lesezugriffen auf In() mischen. Eine unvollständige Ausgabezeile
-                // erscheint, wenn im Editor der Zeilenumbruch kommt oder Flush() aufgerufen
-                // wird.
+                // Output always goes out as UTF-8. ReadLine/ReadAll read buffered - do not mix with
+                // raw reads on In(). An incomplete output line
+                // appears when the line break comes in the editor or Flush() is
+                // called.
                 class Stdio {
                     static In() { return new IO.StdStream(0) }
                     static Out() { return new IO.StdStream(1) }
                     static Err() { return new IO.StdStream(2) }
 
-                    // Schreibt den Wert als Text auf die Standardausgabe.
+                    // Writes the value as text to standard output.
                     static Write(value) {
                         if (!__IOStdWrite(1, "" + value)) { IO.IOErrors.Throw() }
                     }
@@ -771,7 +771,7 @@ namespace fire.Standard
                         if (!__IOStdWrite(1, "" + value + "\n")) { IO.IOErrors.Throw() }
                     }
 
-                    // Dasselbe auf den Standardfehler.
+                    // The same to standard error.
                     static ErrorWrite(value) {
                         if (!__IOStdWrite(2, "" + value)) { IO.IOErrors.Throw() }
                     }
@@ -780,20 +780,20 @@ namespace fire.Standard
                         if (!__IOStdWrite(2, "" + value + "\n")) { IO.IOErrors.Throw() }
                     }
 
-                    // Gibt gepufferte Ausgabe (auch eine unvollständige Zeile) aus.
+                    // Outputs buffered output (also an incomplete line).
                     static Flush() {
                         __IOStdFlush(1)
                         __IOStdFlush(2)
                     }
 
-                    // Die nächste Zeile der Standardeingabe, oder undefined am Ende.
+                    // The next line of standard input, or undefined at the end.
                     static ReadLine() {
                         var line = __IOStdReadLine()
                         if (line == undefined && __IOLastError() != 0) { IO.IOErrors.Throw() }
                         return line
                     }
 
-                    // Alles, was noch an Standardeingabe kommt, als ein String.
+                    // Everything still coming on standard input, as one string.
                     static string ReadAll() {
                         var text = __IOStdReadAll()
                         if (text == undefined) { IO.IOErrors.Throw() }

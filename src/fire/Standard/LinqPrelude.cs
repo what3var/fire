@@ -3,19 +3,19 @@ using System.Text;
 namespace fire.Standard
 {
     /// <summary>
-    /// Die Abfrage-Bibliothek (`#import "linq"`), komplett in fire geschrieben (wie die UI-Bibliothek): träge Operatoren über jede Sammlung, die
-    /// `foreach` durchläuft (Array, `List`, jede Klasse mit `GetEnumerator`/`MoveNext`/`GetCurrent`).
+    /// The query library (`#import "linq"`), written entirely in fire (like the UI library): lazy operators over any collection that
+    /// `foreach` iterates (array, `List`, any class with `GetEnumerator`/`MoveNext`/`GetCurrent`).
     ///
-    ///   var geradeQuadrate = Linq.From(zahlen).Where(x => x % 2 == 0).Select(x => x * x).ToList()
-    ///   var teuer = list.Where(p => p.price > limit).OrderBy(p => p.price).First()     // `limit` ist ein lokaler Wert: Lambda-Capture
+    ///   var evenSquares = Linq.From(numbers).Where(x => x % 2 == 0).Select(x => x * x).ToList()
+    ///   var expensive = list.Where(p => p.price > limit).OrderBy(p => p.price).First()     // `limit` is a local value: lambda capture
     ///
-    /// `Linq.From(quelle)` liefert eine <c>Query</c>; auf einer `List` stehen dieselben Operatoren direkt zur Verfügung (`class extends List`).
-    /// Die Operatoren sind träge (erst `foreach`/ein Abschluss-Operator wie `ToList`, `First`, `Count` treibt die Kette), jede Abfrage lässt
-    /// sich mehrfach durchlaufen. `OrderBy`/`Reverse`/`Distinct` arbeiten mit einer Kopie der Elemente (eifrig).
+    /// `Linq.From(source)` returns a <c>Query</c>; on a `List` the same operators are available directly (`class extends List`).
+    /// The operators are lazy (only `foreach`/a terminal operator such as `ToList`, `First`, `Count` drives the chain), every query can
+    /// be iterated several times. `OrderBy`/`Reverse`/`Distinct` work with a copy of the elements (eager).
     /// </summary>
     public static class LinqPrelude
     {
-        /// <summary>Operatoren, die `List` zusätzlich direkt bekommt: Name und Parameteranzahlen (Überladung nach Anzahl).</summary>
+        /// <summary>Operators that `List` additionally gets directly: name and parameter counts (overloading by count).</summary>
         private static readonly (string Name, int[] Arities)[] ListOperators =
         {
             ("Where", new[] { 1 }), ("Select", new[] { 1 }), ("SelectField", new[] { 1 }), ("SelectProperty", new[] { 1 }), ("SelectMember", new[] { 1 }), ("SelectMany", new[] { 1 }), ("Take", new[] { 1 }), ("Skip", new[] { 1 }),
@@ -29,8 +29,8 @@ namespace fire.Standard
 
         public static readonly string Source = CoreSource + Extension("List", "new List(this.ToArray())") + Extension("array", "new List(this)");
 
-        /// <summary>`class extends List` / `class extends array`: dieselben Operatoren direkt auf der Sammlung (Arrays nehmen die Erweiterung eines Basistyps,
-        /// SPEC 5.5.1; `this` ist dort das Array selbst).</summary>
+        /// <summary>`class extends List` / `class extends array`: the same operators directly on the collection (arrays take the extension of a base type,
+        /// SPEC 5.5.1; `this` there is the array itself).</summary>
         private static string Extension(string target, string toListExpression)
         {
             var sb = new StringBuilder($"\nclass extends {target} {{\n");
@@ -217,11 +217,11 @@ namespace fire.Standard
             }
 
             class Linq {
-                // Ein Enumerator für alles Durchlaufbare: Objekte mit GetEnumerator() und Arrays (die ebenfalls IEnumerable sind)
+                // An enumerator for everything iterable: objects with GetEnumerator() and arrays (which are also IEnumerable)
                 static Iter(class source) { return source.GetEnumerator() }
 
-                // Liest die Mitgliedskette `path` (Namen von außen nach innen) von `obj` - über die Reflection, also mit deren Zugriffsregeln;
-                // das letzte Mitglied muss zur `kind` ("field", "property" oder "member") passen
+                // Reads the member chain `path` (names from outside to inside) from `obj` - via reflection, i.e. with its access rules;
+                // the last member must match `kind` ("field", "property" or "member")
                 static GetPath(class obj, class path, string kind) {
                     var o = obj
                     for (var i = 0; i < path.length; i = i + 1) {
@@ -258,7 +258,7 @@ namespace fire.Standard
                     return Linq.FromOwned(items)
                 }
 
-                // Stabiles Sortieren (Mergesort): liefert die `items` in der Reihenfolge der `keys` (gleich lange Arrays)
+                // Stable sorting (merge sort): returns the `items` in the order of the `keys` (arrays of equal length)
                 static Sort(class items, class keys, bool desc) {
                     var n = items.length
                     var idx = new int[n]
@@ -297,7 +297,7 @@ namespace fire.Standard
             class Query : IEnumerable {
                 class factory
 
-                // `factory` ist eine Lambda ohne Parameter, die bei jedem Durchlauf einen frischen Enumerator liefert
+                // `factory` is a lambda without parameters that supplies a fresh enumerator on every pass
                 construct(class factory) { this.factory = factory }
 
                 GetEnumerator() {
@@ -305,7 +305,7 @@ namespace fire.Standard
                     return f()
                 }
 
-                // ---- träge Operatoren
+                // ---- lazy operators
                 Where(lambda<int> pred) {
                     var f = this.factory
                     return new Query(() => new LinqWhereEnumerator(f(), pred))
@@ -314,9 +314,9 @@ namespace fire.Standard
                     var f = this.factory
                     return new Query(() => new LinqSelectEnumerator(f(), fn))
                 }
-                // Projektion auf ein Mitglied, gewählt per Selektor: `list.SelectMember(p => p.name)` (Feld oder Property), `SelectField` (nur ein Feld),
-                // `SelectProperty` (nur eine Property) - die Lambda muss eine reine Mitgliedskette sein (siehe `lambda member<T>`). Anders als
-                // `Select(fn)` läuft der Zugriff über die Reflection (mit deren Zugriffsregeln) und ein Mitglied der falschen Art ist eine ReflectionException.
+                // Projection onto a member, chosen via selector: `list.SelectMember(p => p.name)` (field or property), `SelectField` (a field only),
+                // `SelectProperty` (a property only) - the lambda must be a pure member chain (see `lambda member<T>`). Unlike
+                // `Select(fn)` the access goes via reflection (with its access rules) and a member of the wrong kind is a ReflectionException.
                 SelectField(lambda field<class> sel) {
                     var f = this.factory
                     var path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
@@ -367,7 +367,7 @@ namespace fire.Standard
                     return new Query(() => new LinqZipEnumerator(f(), Linq.Iter(other), fn))
                 }
 
-                // ---- eifrige Operatoren (arbeiten auf einer Kopie, liefern wieder eine Query)
+                // ---- eager operators (work on a copy, return a Query again)
                 OrderBy(lambda<int> key) { return this.Ordered(key, false) }
                 OrderByDescending(lambda<int> key) { return this.Ordered(key, true) }
                 Ordered(class key, bool desc) {

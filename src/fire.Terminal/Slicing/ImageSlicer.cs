@@ -105,7 +105,7 @@ namespace fire.Terminal
         /// <summary>true: Y axis points up (machine coordinates), false: image coordinates.</summary>
         public bool FlipY { get; set; } = true;
 
-        /// <summary>Abstand zwischen benachbarten Bahnen in mm.</summary>
+        /// <summary>Distance between adjacent tracks in mm.</summary>
         public double StepOver => LineWidth * (1.0 - Overlap);
 
         /// <summary>
@@ -322,7 +322,7 @@ namespace fire.Terminal
                             if (centerIn) { Link(L, T); Link(B, R); }
                             else { Link(T, R); Link(L, B); }
                             break;
-                        case 10: // a und c innen (Sattelpunkt)
+                        case 10: // a and c inside (saddle point)
                             if (centerIn) { Link(L, B); Link(T, R); }
                             else { Link(L, T); Link(B, R); }
                             break;
@@ -442,7 +442,7 @@ namespace fire.Terminal
             return result;
         }
 
-        /// <summary>Gitterkoordinaten (mit 1-Pixel-Rand) in mm umrechnen.</summary>
+        /// <summary>Convert grid coordinates (with 1-pixel margin) to mm.</summary>
         private PointD ToMm(double gx, double gy, int h)
         {
             double x = (gx - 0.5) * PixelSize;

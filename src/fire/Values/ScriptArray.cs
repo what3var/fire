@@ -1,37 +1,37 @@
 namespace fire.Values
 {
     /// <summary>
-    /// Ein Array fester Größe (Elemente default-initialisiert mit 'undefined').
-    /// Bewusst simpel gehalten - Allokation ist eindimensional; mehrdimensionale
-    /// ("jagged") Arrays entstehen aus mehreren verschachtelten ScriptArray-
-    /// Instanzen (siehe Compiler.CompileArrayAlloc), nicht aus einer eigenen
-    /// mehrdimensionalen Laufzeit-Repräsentation.
+    /// An array of fixed size (elements default-initialised with 'undefined').
+    /// Deliberately kept simple - allocation is one-dimensional; multi-dimensional
+    /// ("jagged") arrays arise from several nested ScriptArray
+    /// instances (see Compiler.CompileArrayAlloc), not from a dedicated
+    /// multi-dimensional runtime representation.
     ///
-    /// Zugriff bewusst OHNE C#-Exceptions für den ungültigen-Index-Fall (siehe
-    /// TryGet/TrySet) - Rückgabewert/out-Parameter statt throw/catch, damit
-    /// sich dieselbe Logik 1:1 nach C++ (Ziel: FreeRTOS-Portierung, siehe
-    /// docs/PORTING.md) übertragen lässt, wo Exceptions in eingebetteten
-    /// Umgebungen oft ganz abgeschaltet sind. Die VM (siehe VM.ArrayGet/
-    /// ArraySet) wandelt ein `false` hier in eine ordentliche, fangbare
-    /// fire-`IndexOutOfBoundsException` um (VM.ThrowIndexOutOfBounds) -
-    /// diese Umwandlung bleibt bewusst VM-seitig, nicht hier, da "eine
-    /// Skript-Exception werfen" ein Konzept der VM/des Interpreters ist,
-    /// keins dieser reinen Datenstruktur.
+    /// Access deliberately WITHOUT C# exceptions for the invalid-index case (see
+    /// TryGet/TrySet) - return value/out parameter instead of throw/catch, so that
+    /// the same logic can be transferred 1:1 to C++ (goal: FreeRTOS port, see
+    /// docs/PORTING.md), where exceptions in embedded
+    /// environments are often switched off entirely. The VM (see VM.ArrayGet/
+    /// ArraySet) turns a `false` here into a proper, catchable
+    /// fire `IndexOutOfBoundsException` (VM.ThrowIndexOutOfBounds) -
+    /// this conversion deliberately stays on the VM side, not here, since "throwing a
+    /// script exception" is a concept of the VM/interpreter,
+    /// not of this pure data structure.
     /// </summary>
     public sealed class ScriptArray : fire.Runtime.IOwnedLeaf, fire.Runtime.IOwner
     {
         public Value[] Items { get; }
 
-        /// <summary>Der Owner (SPEC 2): ein Scope oder ein Objekt; null fuer ein Array, das ausserhalb der VM entstand und nie zerstoert wird.</summary>
+        /// <summary>The owner (SPEC 2): a scope or an object; null for an array created outside the VM that is never destroyed.</summary>
         public fire.Runtime.IOwner? LeafOwner { get; set; }
 
-        /// <summary>Zerstoert (der Owner wurde verlassen/zerstoert oder `delete`): der Zugriff ist ein Fehler (Debug/Release).</summary>
+        /// <summary>Destroyed (the owner was left/destroyed or `delete`): access is an error (Debug/Release).</summary>
         public bool IsDestroyed { get; private set; }
 
-        /// <summary>Innere Arrays einer mehrdimensionalen Allokation (`new int[3][4]`): sie gehoeren zum aeusseren Array und werden mit ihm zerstoert.</summary>
+        /// <summary>Inner arrays of a multi-dimensional allocation (`new int[3][4]`): they belong to the outer array and are destroyed with it.</summary>
         public System.Collections.Generic.List<fire.Runtime.IOwnedLeaf>? Parts { get; set; }
 
-        // Ein Array kann Objekte besitzen (SPEC 2.2): was `Takes` und `return` an einem Array mitnehmen, gehoert dem Array und stirbt mit ihm.
+        // An array can own objects (SPEC 2.2): what `Takes` and `return` take along on an array belongs to the array and dies with it.
         private fire.Runtime.OwnedSet _ownedObjects;
         public System.Collections.Generic.IReadOnlyList<fire.Runtime.ObjectInstance> OwnedObjects => _ownedObjects.AsList();
         public void AddOwned(fire.Runtime.ObjectInstance obj) => _ownedObjects.Add(obj);
@@ -42,7 +42,7 @@ namespace fire.Values
         public void MarkDestroyed(fire.Runtime.IDestructRunner runner)
         {
             if (IsDestroyed) return;
-            // was dem Array gehoert, stirbt vor ihm (die Destruktoren sehen es noch)
+            // what belongs to the array dies before it (the destructors still see it)
             if (!_ownedObjects.IsEmpty) _ownedObjects.DestroyAll(runner);
             IsDestroyed = true;
             Special = true;
@@ -51,12 +51,12 @@ namespace fire.Values
             Parts = null;
         }
 
-        /// <summary>Wurde dieses Array von einem Fire-Thread über die Globals erreicht (siehe GlobalsBroker)? Dann gehört es zum geteilten
-        /// Bereich: Elementzugriffe laufen unter dem Baum-Lock, und ein Fire-Thread ändert Elemente nur innerhalb einer Sektion.</summary>
+        /// <summary>Was this array reached by a fire thread via the globals (see GlobalsBroker)? Then it belongs to the shared
+        /// area: element accesses run under the tree lock, and a fire thread changes elements only inside a section.</summary>
         public bool IsShared { get => _shared; set { _shared = value; Special = value || IsDestroyed; } }
         private bool _shared;
 
-        /// <summary>Geteilt oder zerstoert: die Schnellpfade der VM (Elementzugriff) nehmen dann den langsamen Weg, der beides beachtet.</summary>
+        /// <summary>Shared or destroyed: the VM's fast paths (element access) then take the slow path, which respects both.</summary>
         public bool Special { get; private set; }
         public int Length => Items.Length;
 
@@ -67,9 +67,9 @@ namespace fire.Values
                 Items[i] = Value.MakeUndefined();
         }
 
-        /// <summary>Liefert `false` bei ungültigem Index (`value` dann
-        /// `default`), statt zu werfen - der Aufrufer entscheidet selbst, was
-        /// das bedeutet (siehe VM.ArrayGet: eine fangbare Skript-Exception).</summary>
+        /// <summary>Returns `false` for an invalid index (`value` then
+        /// `default`) instead of throwing - the caller decides itself what
+        /// that means (see VM.ArrayGet: a catchable script exception).</summary>
         public bool TryGet(long index, out Value value)
         {
             if (index < 0 || index >= Items.Length)
@@ -81,7 +81,7 @@ namespace fire.Values
             return true;
         }
 
-        /// <summary>Liefert `false` bei ungültigem Index, OHNE zu schreiben.</summary>
+        /// <summary>Returns `false` for an invalid index, WITHOUT writing.</summary>
         public bool TrySet(long index, Value value)
         {
             if (index < 0 || index >= Items.Length) return false;
@@ -89,12 +89,12 @@ namespace fire.Values
             return true;
         }
 
-        /// <summary>UNGEPRÜFTER Zugriff (siehe Bytecode.VmExecutionMode.
-        /// Performance) - ein ungültiger Index führt zu einer rohen .NET-
-        /// IndexOutOfRangeException (in C++: undefiniertes Verhalten) statt
-        /// eines kontrollierten `false`. Nur von VM-Opcode-Handlern im
-        /// Performance-Modus aufgerufen, nie direkt aus Skript-Code heraus
-        /// wählbar.</summary>
+        /// <summary>UNCHECKED access (see Bytecode.VmExecutionMode.
+        /// Performance) - an invalid index leads to a raw .NET
+        /// IndexOutOfRangeException (in C++: undefined behaviour) instead of
+        /// a controlled `false`. Called only by VM opcode handlers in
+        /// performance mode, never selectable directly from script
+        /// code.</summary>
         public Value GetUnchecked(long index) => Items[(int)index];
 
         public void SetUnchecked(long index, Value value) => Items[(int)index] = value;

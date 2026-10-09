@@ -3,33 +3,33 @@ using System.Collections.Generic;
 namespace fire.Bytecode
 {
     /// <summary>
-    /// Globale (prozessweite, über ALLE VM-Instanzen/Threads geteilte)
-    /// Registrierung für die beiden Handler aus docs/THREADING_DESIGN.md
-    /// Abschnitt 6.2/6.3: `catch threads(ExceptionType e)`/`catch threads()`
-    /// (unbehandelte Nutzer-Exceptions aus Fire-Threads) und
-    /// `catch terminate(v)` (globaler Not-Aus). Beide werden - anders als ein
-    /// normales `try`/`catch` - nur EINMAL, global registriert (nicht pro
-    /// Scope/Aufruf), und laufen laut Design ausschließlich auf dem
-    /// Main-Thread (siehe VM.HandleDeliveredThreadException/
+    /// Global (process-wide, shared across ALL VM instances/threads)
+    /// registration for the two handlers from docs/THREADING_DESIGN.md
+    /// section 6.2/6.3: `catch threads(ExceptionType e)`/`catch threads()`
+    /// (unhandled user exceptions from fire threads) and
+    /// `catch terminate(v)` (global emergency stop). Both are - unlike a
+    /// normal `try`/`catch` - registered only ONCE, globally (not per
+    /// scope/call), and by design run exclusively on the
+    /// main thread (see VM.HandleDeliveredThreadException/
     /// RunTerminateHandlerIfAny).
     ///
-    /// Bewusst reine Speicherung ohne Matching-Logik - die MATCHING-Logik
-    /// (Exception-Typname gegen die Basisklassen-Kette prüfen) lebt in
-    /// VM.InstanceMatchesClassName (braucht Zugriff auf die aufrufende
-    /// VM-Instanz eigene `_classes`), nicht hier.
+    /// Deliberately pure storage without matching logic - the MATCHING logic
+    /// (checking the exception type name against the base-class chain) lives in
+    /// VM.InstanceMatchesClassName (needs access to the calling
+    /// VM instance's own `_classes`), not here.
     /// </summary>
     public static class GlobalHandlers
     {
-        /// <summary>Wie HandlerTemplate.Catches bei einem normalen try/catch:
-        /// (TypeName, Proto) in Registrierungsreihenfolge - `TypeName == null`
-        /// steht für `catch threads()` (matcht alles). Der Proto hat entweder
-        /// 0 Parameter (`catch threads()`, Body ohne gebundene Variable) oder
-        /// 1 Parameter (`catch threads(ExceptionType e)`, `e` gebunden).</summary>
+        /// <summary>Like HandlerTemplate.Catches for a normal try/catch:
+        /// (TypeName, Proto) in registration order - `TypeName == null`
+        /// stands for `catch threads()` (matches everything). The proto has either
+        /// 0 parameters (`catch threads()`, body without a bound variable) or
+        /// 1 parameter (`catch threads(ExceptionType e)`, `e` bound).</summary>
         public static readonly List<(string? TypeName, FunctionProto Proto)> ThreadsCatches = new();
 
-        /// <summary>Höchstens einer - `catch terminate(v)` gibt es nur einmal
-        /// im ganzen Programm (kein Stack wie bei try/catch). 0 oder 1
-        /// Parameter, analog zu ThreadsCatches.</summary>
+        /// <summary>At most one - `catch terminate(v)` exists only once
+        /// in the whole program (no stack as with try/catch). 0 or 1
+        /// parameter, analogous to ThreadsCatches.</summary>
         public static FunctionProto? TerminateHandler;
 
         private static readonly object Gate = new();
@@ -44,9 +44,9 @@ namespace fire.Bytecode
             lock (Gate) TerminateHandler = proto;
         }
 
-        /// <summary>Nur für Tests gedacht (siehe VM.ResetTerminateForTests) -
-        /// setzt die globale Registrierung zwischen voneinander unabhängigen
-        /// Programmläufen im selben Prozess zurück.</summary>
+        /// <summary>Intended for tests only (see VM.ResetTerminateForTests) -
+        /// resets the global registration between mutually independent
+        /// program runs in the same process.</summary>
         public static void ResetForTests()
         {
             lock (Gate)

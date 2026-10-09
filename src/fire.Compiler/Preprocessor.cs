@@ -371,7 +371,7 @@ namespace fire.Compiler
 
                 if (def == null)
                 {
-                    sb.Append('\n'); // Zeile "verschwindet", Zeilenzahl bleibt trotzdem erhalten (siehe Klassendoku).
+                    sb.Append('\n'); // Line "disappears", line count is nevertheless preserved (see class docs).
                 }
                 else
                 {
@@ -388,7 +388,7 @@ namespace fire.Compiler
                     }
                     else
                     {
-                        sb.Append('\n'); // Zeile "verschwindet", Zeilenzahl bleibt trotzdem erhalten (siehe Klassendoku).
+                        sb.Append('\n'); // Line "disappears", line count is nevertheless preserved (see class docs).
                     }
                 }
             }

@@ -25,7 +25,7 @@ namespace UI {
             return m
         }
 
-        // Haengt eine Untermenue-Zeile an; sie gehoert dieser Zeile.
+        // Appends a submenu row; it belongs to this row.
         Add(item) {
             item.TakeTo(this)
             this.items.Add(item)

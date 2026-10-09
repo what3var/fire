@@ -3,20 +3,20 @@ using MemoryPack;
 
 namespace fire.Bytecode
 {
-    /// <summary>Ein deklariertes Mitglied einer Klasse für die Reflection (docs/DESIGN_LAMBDA_REFLECTION_PROBE.md): was zur Laufzeit sonst
-    /// verloren geht - die deklarierten Typnamen und Parameternamen. Namen und Zugriff kennt die Laufzeit auch ohne.</summary>
+    /// <summary>A declared member of a class for reflection (docs/DESIGN_LAMBDA_REFLECTION_PROBE.md): what is otherwise lost at runtime
+    /// - the declared type names and parameter names. Names and access are known to the runtime even without it.</summary>
     [MemoryPackable]
     public sealed partial class MemberMeta
     {
         public string Name { get; set; } = "";
 
-        /// <summary>"field", "property", "method" oder "constructor".</summary>
+        /// <summary>"field", "property", "method" or "constructor".</summary>
         public string Kind { get; set; } = "field";
 
-        /// <summary>Deklarierter Typ (Feld/Property) bzw. Rückgabetyp (Methode) wie im Quelltext, "" wenn keiner angegeben war.</summary>
+        /// <summary>Declared type (field/property) or return type (method) as in the source, "" if none was given.</summary>
         public string TypeName { get; set; } = "";
 
-        /// <summary>"public", "private" oder "protected".</summary>
+        /// <summary>"public", "private" or "protected".</summary>
         public string Access { get; set; } = "public";
 
         public bool IsStatic { get; set; }
@@ -24,20 +24,20 @@ namespace fire.Bytecode
         public bool CanRead { get; set; } = true;
         public bool CanWrite { get; set; } = true;
 
-        /// <summary>Geforderte Einheit (`: mm`), "" wenn keine.</summary>
+        /// <summary>Required unit (`: mm`), "" if none.</summary>
         public string Unit { get; set; } = "";
 
         public List<string> ParamNames { get; set; } = new();
         public List<string> ParamTypes { get; set; } = new();
     }
 
-    /// <summary>Die in einer Klasse SELBST deklarierten Mitglieder (Vererbung läuft über <see cref="RuntimeClass.Base"/>) und ihre Basisnamen.</summary>
+    /// <summary>The members declared in a class ITSELF (inheritance goes via <see cref="RuntimeClass.Base"/>) and their base names.</summary>
     [MemoryPackable]
     public sealed partial class ClassMeta
     {
         public List<MemberMeta> Members { get; set; } = new();
 
-        /// <summary>Alle Namen aus `class X : A, B` (Basisklasse und Interfaces) wie geschrieben.</summary>
+        /// <summary>All names from `class X : A, B` (base class and interfaces) as written.</summary>
         public List<string> BaseNames { get; set; } = new();
     }
 }

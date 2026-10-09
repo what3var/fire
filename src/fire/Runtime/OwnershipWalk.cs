@@ -4,26 +4,26 @@ using fire.Values;
 
 namespace fire.Runtime
 {
-    /// <summary>Was `Take(...)`, `TakeUpwards(...)`, `TakeGlobal(...)`, `TakeTo(obj, ...)` außer dem Objekt selbst mitnehmen (SPEC 2.2): der Wert von `Takes`.</summary>
+    /// <summary>What `Take(...)`, `TakeUpwards(...)`, `TakeGlobal(...)`, `TakeTo(obj, ...)` take along besides the object itself (SPEC 2.2): the value of `Takes`.</summary>
     public static class Takes
     {
-        /// <summary>Nur das Objekt, auf dem die Methode aufgerufen wird (was es besitzt, wandert ohnehin mit).</summary>
+        /// <summary>Only the object on which the method is called (what it owns moves along anyway).</summary>
         public const int This = 0;
-        /// <summary>Das Objekt und alles, worauf seine Felder unmittelbar zeigen; bei einem Array und bei allem, was `IEnumerable` implementiert, seine Items (ein Objekt über seinen Enumerator). Es besitzt sie danach.</summary>
+        /// <summary>The object and everything its fields point to directly; for an array and for everything that implements `IEnumerable`, its items (for an object via its enumerator). It owns them afterwards.</summary>
         public const int Children = 1;
-        /// <summary>Wie `return`: alles Erreichbare, was einem Scope des laufenden Aufrufs gehört (rekursiv); es wandert zu dem Objekt, das darauf zeigt.</summary>
+        /// <summary>Like `return`: everything reachable that belongs to a scope of the running call (recursively); it moves to the object that points to it.</summary>
         public const int Locals = 2;
-        /// <summary>Alles Erreichbare (rekursiv), ganz gleich, wem es gehört.</summary>
+        /// <summary>Everything reachable (recursively), no matter who owns it.</summary>
         public const int All = 3;
     }
 
-    /// <summary>Der Gang durch den Graphen der Verweise für `Takes` und für `return` (SPEC 2.2, 2.3): welche Objekte, Arrays und Puffer hinter einem Wert hängen und
-    /// wem sie danach gehören. Jeder Knoten wird nur einmal besucht (Verweiszyklen sind möglich, der Besitz ist ein Baum).</summary>
+    /// <summary>The walk through the reference graph for `Takes` and for `return` (SPEC 2.2, 2.3): which objects, arrays and buffers hang behind a value and
+    /// who owns them afterwards. Each node is visited only once (reference cycles are possible, ownership is a tree).</summary>
     public static class OwnershipWalk
     {
-        /// <summary>Nimmt, was hinter <paramref name="root"/> hängt, nach <paramref name="mode"/> mit (der Wurzel selbst hat der Aufrufer schon den neuen Owner gegeben).
-        /// Ein mitgenommener Knoten gehört danach dem Objekt, das auf ihn zeigt (bei einem Array: dem Owner des Arrays, wenn der ein Objekt ist), sonst
-        /// <paramref name="fallback"/>. <paramref name="isLocalScope"/> sagt, ob ein Scope zum laufenden Aufruf gehört (`Takes.Locals`): lokal ist, was einem solchen Scope gehört, auch über andere Objekte hinweg (die gleich mit ihm sterben).</summary>
+        /// <summary>Takes along what hangs behind <paramref name="root"/>, according to <paramref name="mode"/> (the caller has already given the root itself its new owner).
+        /// A taken-along node afterwards belongs to the object that points to it (for an array: the owner of the array, if that is an object), otherwise
+        /// <paramref name="fallback"/>. <paramref name="isLocalScope"/> says whether a scope belongs to the running call (`Takes.Locals`): local is what belongs to such a scope, even across other objects (which die along with it).</summary>
         public static void MoveReachable(Value root, int mode, Func<Scope, bool> isLocalScope, IOwner fallback, Func<ObjectInstance, IReadOnlyList<Value>?>? enumerate = null)
         {
             if (mode == Takes.This) return;
@@ -37,7 +37,7 @@ namespace fire.Runtime
             while (work.Count > 0)
             {
                 var node = work.Pop();
-                // wohin mitgenommene Dinge kommen: zum Objekt, das darauf zeigt; bei einem Array zu dem Objekt, dem das Array gehoert, sonst zum Array selbst (es kann besitzen)
+                // where taken-along things go: to the object that points to them; for an array to the object that owns the array, otherwise to the array itself (it can own)
                 IOwner carrier = node switch
                 {
                     ObjectInstance obj => obj,
@@ -45,7 +45,7 @@ namespace fire.Runtime
                     _ => fallback,
                 };
                 values.Clear();
-                // `Takes.Children` eines IEnumerable: seine Items, nicht seine Felder
+                // `Takes.Children` of an IEnumerable: its items, not its fields
                 if (mode == Takes.Children && node is ObjectInstance enumerableObj && enumerate?.Invoke(enumerableObj) is { } items) values.AddRange(items);
                 else CollectValues(node, values);
                 foreach (var v in values)
@@ -69,7 +69,7 @@ namespace fire.Runtime
                     if (move && !ReferenceEquals(owner, carrier))
                     {
                         var target = carrier;
-                        // der neue Owner darf nicht unter dem Knoten hängen (der Besitz bleibt ein Baum)
+                        // the new owner must not hang below the node (ownership stays a tree)
                         if (child is ObjectInstance childObj && IsAncestor(childObj, target)) target = fallback;
                         Reparent(child, target);
                     }
@@ -78,7 +78,7 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Gehört etwas (über die Kette der Owner) einem lokalen Scope?</summary>
+        /// <summary>Does something belong (via the chain of owners) to a local scope?</summary>
         public static bool IsLocal(IOwner? owner, Func<Scope, bool> isLocalScope)
         {
             while (owner is ObjectInstance or ScriptArray) owner = owner is ObjectInstance oi ? oi.Owner : ((ScriptArray)owner).LeafOwner;
@@ -109,8 +109,8 @@ namespace fire.Runtime
             else if (node is IOwnedLeaf leaf) LeafOwnership.Reparent(leaf, target);
         }
 
-        /// <summary>`take x` (SPEC 2.2): der Wert (Objekt, Array, Puffer) gehoert ab jetzt <paramref name="holder"/> (Scope, Objekt oder Array) - unbedingt, egal wem er vorher gehoerte.
-        /// Alles andere (Zahl, Text, ...) hat keinen Besitzer und bleibt unveraendert. Ein zerstoertes Ding bleibt, wo es ist (die VM meldet es vorher).</summary>
+        /// <summary>`take x` (SPEC 2.2): the value (object, array, buffer) now belongs to <paramref name="holder"/> (scope, object or array) - unconditionally, no matter who owned it before.
+        /// Everything else (number, text, ...) has no owner and stays unchanged. A destroyed thing stays where it is (the VM reports it beforehand).</summary>
         public static void TakeValue(Value v, IOwner holder, IDestructRunner runner)
         {
             switch (NodeOf(v))
@@ -133,7 +133,7 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary><paramref name="ancestor"/> steht in der Besitzkette von <paramref name="node"/> (oder ist es selbst).</summary>
+        /// <summary><paramref name="ancestor"/> is in the ownership chain of <paramref name="node"/> (or is it itself).</summary>
         private static bool IsAncestor(ObjectInstance ancestor, IOwner node)
         {
             for (IOwner? o = node; o != null; o = o is ObjectInstance oi ? oi.Owner : (o as ScriptArray)?.LeafOwner)

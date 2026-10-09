@@ -6,29 +6,29 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Feldspeicher einer ObjectInstance (siehe ObjectInstance.Fields) -
-    /// bewusst dieselbe API-Oberfläche wie vorher ein rohes
-    /// `Dictionary&lt;string, Value&gt;` (Indexer, TryGetValue, ContainsKey,
-    /// aufzählbar als (Name, Value)-Paare), damit SyncEngine/ObjectCopier/
-    /// UncaughtScriptException/PointerTargets/Testcode UNVERÄNDERT
-    /// weiterlaufen, ohne selbst etwas über die interne Aufteilung wissen zu
-    /// müssen.
+    /// Field storage of an ObjectInstance (see ObjectInstance.Fields) -
+    /// deliberately the same API surface as the raw
+    /// `Dictionary&lt;string, Value&gt;` it used to be (indexer, TryGetValue, ContainsKey,
+    /// enumerable as (name, Value) pairs), so that SyncEngine/ObjectCopier/
+    /// UncaughtScriptException/PointerTargets/test code keep working
+    /// UNCHANGED, without having to know anything about the internal
+    /// layout themselves.
     ///
-    /// Intern zweigeteilt:
-    /// - Ein Array für die zur Kompilierzeit BEKANNTEN, deklarierten Felder
-    ///   (fester Slot-Index über RuntimeClass.FieldIndex, EINMALIG pro
-    ///   Klasse berechnet, nicht pro Instanz - siehe dort) - O(1)-Zugriff
-    ///   ohne Hashing/Stringvergleich, kompakter als ein Dictionary-Eintrag
-    ///   pro Feld. Das ist der Pfad, den JEDER vom Compiler erzeugte
-    ///   Feldzugriff nimmt (GetField/SetField/SetFieldOnThis/AddressOfField
-    ///   emittieren IMMER nur Namen tatsächlich deklarierter Felder).
-    /// - Ein (lazy angelegtes) Dictionary-Fallback für alles andere - wird
-    ///   real nur erreicht, wenn gar keine RuntimeClass bekannt ist (siehe
-    ///   ObjectInstance-Konstruktor) oder ein Feldname verwendet wird, der
-    ///   nicht deklariert wurde (z.B. Testcode, der eine ObjectInstance
-    ///   direkt konstruiert und Felder "on the fly" per Name setzt, ohne
-    ///   über den Compiler zu gehen - reale, kompilierte Skripte tun das
-    ///   nie).
+    /// Internally split in two:
+    /// - An array for the fields declared and KNOWN at compile time
+    ///   (fixed slot index via RuntimeClass.FieldIndex, computed ONCE per
+    ///   class, not per instance - see there) - O(1) access
+    ///   without hashing/string comparison, more compact than a dictionary entry
+    ///   per field. This is the path that EVERY compiler-generated
+    ///   field access takes (GetField/SetField/SetFieldOnThis/AddressOfField
+    ///   ALWAYS emit only names of actually declared fields).
+    /// - A (lazily created) dictionary fallback for everything else - really
+    ///   reached only if no RuntimeClass is known at all (see
+    ///   ObjectInstance constructor) or a field name is used that
+    ///   was not declared (e.g. test code that constructs an ObjectInstance
+    ///   directly and sets fields "on the fly" by name, without
+    ///   going through the compiler - real, compiled scripts never do
+    ///   that).
     /// </summary>
     public sealed class FieldStore : IEnumerable<KeyValuePair<string, Value>>
     {
@@ -41,12 +41,12 @@ namespace fire.Runtime
             _rtClass = rtClass;
             _known = new Value[rtClass?.FieldIndex.Count ?? 0];
 
-            // `default(Value)` ist `false` (ValueKind.Bool = 0) - ein deklariertes Feld,
-            // das noch nichts zugewiesen bekam, ist aber `undefined`. Sichtbar wird das
-            // bei einem Objekt, dessen Konstruktor abbricht, bevor die Feld-
-            // Initialisierer liefen (z.B. Exception beim Auswerten der base(...)-
-            // Argumente): sein destruct() darf dann `undefined` sehen, nicht ein
-            // erfundenes `false`.
+            // `default(Value)` is `false` (ValueKind.Bool = 0) - a declared field
+            // that has not been assigned anything yet is, however, `undefined`. This becomes visible
+            // for an object whose constructor aborts before the field
+            // initialisers ran (e.g. an exception while evaluating the base(...)
+            // arguments): its destruct() may then see `undefined`, not an
+            // invented `false`.
             for (int i = 0; i < _known.Length; i++)
                 _known[i] = Value.MakeUndefined();
         }
@@ -72,8 +72,8 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Direkter Zugriff auf ein DEKLARIERTES Feld über seinen Index (siehe RuntimeClass.FieldIndex) -
-        /// für die Inline-Caches der VM, die den Index schon kennen.</summary>
+        /// <summary>Direct access to a DECLARED field via its index (see RuntimeClass.FieldIndex) -
+        /// for the VM's inline caches, which already know the index.</summary>
         public Value GetAt(int index) => _known[index];
         public void SetAt(int index, Value value) => _known[index] = value;
 
@@ -90,7 +90,7 @@ namespace fire.Runtime
             return false;
         }
 
-        /// <summary>Hängt die Werte aller Felder an (für den Gang durch den Graphen der Verweise, siehe OwnershipWalk).</summary>
+        /// <summary>Appends the values of all fields (for the walk through the reference graph, see OwnershipWalk).</summary>
         internal void AppendValues(List<Value> sink)
         {
             sink.AddRange(_known);

@@ -6,40 +6,40 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Laufzeit-Gegenstück zu einem vom Resolver erkannten Scope-Knoten (Block,
-    /// Funktion/Methode/Lambda-Body, globaler Scope). Variablen liegen slot-indiziert
-    /// vor (Index entspricht exakt dem, was der Resolver für die jeweilige
-    /// IdentifierExpr ermittelt hat - kein Namens-Lookup zur Laufzeit nötig).
+    /// Runtime counterpart to a scope node recognised by the resolver (block,
+    /// function/method/lambda body, global scope). Variables are slot-indexed
+    /// (index corresponds exactly to what the resolver determined for the respective
+    /// IdentifierExpr - no name lookup needed at runtime).
     ///
-    /// Scope ist gleichzeitig ein IOwner: Objektinstanzen, deren Owner dieser Scope
-    /// ist, werden in <see cref="Release"/> kaskadierend zerstört, wenn der Scope
-    /// verlassen wird (Block-/Funktionsende) - es sei denn, sie wurden vorher per
-    /// TakeUpwards/TakeGlobal/TakeTo transferiert oder per return an den Parent-
-    /// Scope weitergereicht (SPEC 2.3; das "return übergibt Ownership"-Verhalten
-    /// wird vom Evaluator umgesetzt, indem er vor dem Release des Funktions-Scopes
-    /// den Rückgabewert - falls es eine von diesem Scope besessene Objektinstanz
-    /// ist - per TakeUpwards an den aufrufenden Scope überträgt).
+    /// Scope is at the same time an IOwner: object instances whose owner this scope
+    /// is are destroyed in cascade in <see cref="Release"/> when the scope
+    /// is left (end of block/function) - unless they were transferred beforehand via
+    /// TakeUpwards/TakeGlobal/TakeTo or passed on to the parent
+    /// scope via return (SPEC 2.3; the "return hands over ownership" behaviour
+    /// is implemented by the evaluator by transferring, before the release of the function scope,
+    /// the return value - if it is an object instance owned by this scope -
+    /// via TakeUpwards to the calling scope).
     /// </summary>
     public sealed class Scope : IOwner
     {
-        // Veränderlich nur wegen der Wiederverwendung (siehe Reinit/Recycle): eine Scope wird nach dem Verlassen vom Pool der VM
-        // erneut ausgegeben und bekommt dann einen neuen Parent.
+        // Mutable only because of reuse (see Reinit/Recycle): after being left, a scope is handed out again from the VM's pool
+        // and then gets a new parent.
         private Scope? _parent;
         public Scope? Parent => _parent;
         public bool IsGlobal { get; }
 
-        // Bewusst NULL statt vorab angelegter leerer Arrays (siehe DefineSlot) - JEDE Blockausführung (z.B. jeder einzelne
-        // Schleifendurchlauf, siehe Compiler.CompileScopedBody: ein EnterScope/ExitScope-Paar PRO Iteration) bräuchte sonst
-        // ein Slot-Array, selbst wenn der Block gar keine lokale Variable deklariert (der häufigste Fall bei einfachen
-        // Schleifenkörpern). Besessene Objekte: siehe OwnedSet (das erste ohne Listenobjekt).
-        // Slots als Array mit Zähler statt List<Value>: eine Scope entsteht bei JEDEM Aufruf und jedem
-        // Schleifendurchlauf, und List<T> bringt pro Instanz ein Extra-Objekt sowie Versionszähler mit.
+        // Deliberately NULL instead of pre-created empty arrays (see DefineSlot) - EVERY block execution (e.g. every single
+        // loop iteration, see Compiler.CompileScopedBody: one EnterScope/ExitScope pair PER iteration) would otherwise need
+        // a slot array, even if the block declares no local variable at all (the most common case with simple
+        // loop bodies). Owned objects: see OwnedSet (the first one without a list object).
+        // Slots as an array with a counter instead of List<Value>: a scope is created on EVERY call and every
+        // loop iteration, and List<T> brings an extra object and version counter per instance.
         private Value[]? _slots;
         private int _slotCount;
         private OwnedSet _owned;
-        // Argumente, die ein Aufruf mit dem Ergebnis eines anderen Aufrufs bekam (`f(g())`, SPEC 2.1): sie gehoeren dem Aufruf und sterben als letztes, nach allem, was die aufgerufene Funktion selbst angelegt hat
+        // Arguments that a call received as the result of another call (`f(g())`, SPEC 2.1): they belong to the call and die last, after everything the called function created itself
         private OwnedSet _args;
-        private List<IOwnedLeaf>? _leaves; // besessene Arrays und Puffer (selten: meist null)
+        private List<IOwnedLeaf>? _leaves; // owned arrays and buffers (rare: mostly null)
 
         public Scope(Scope? parent, bool isGlobal = false)
         {
@@ -47,9 +47,9 @@ namespace fire.Runtime
             IsGlobal = isGlobal;
         }
 
-        /// <summary>Scope mit bereits belegten Slots: `slots` gehört ab jetzt dieser Scope, die ersten `count`
-        /// Einträge sind die Parameter (der Aufrufer hat sie direkt vom Stack hineinkopiert, statt sie über ein
-        /// Zwischenarray und einzelne DefineSlot-Aufrufe zu verteilen); der Rest ist Platz für lokale Variablen.</summary>
+        /// <summary>Scope with already occupied slots: `slots` now belongs to this scope, the first `count`
+        /// entries are the parameters (the caller copied them directly from the stack, instead of distributing them via an
+        /// intermediate array and individual DefineSlot calls); the rest is room for local variables.</summary>
         public Scope(Scope? parent, Value[] slots, int count)
         {
             _parent = parent;
@@ -58,41 +58,41 @@ namespace fire.Runtime
         }
 
         // -----------------------------------------------------------
-        // Wiederverwendung (Pool der VM)
+        // Reuse (VM pool)
         //
-        // Jeder Block, jede Schleifeniteration und jeder Aufruf legt eine Scope an - und die allermeisten besitzen weder Objekte noch
-        // werden sie jemals von außen referenziert. Die VM gibt solche Scopes beim Verlassen in einen Pool zurück und reicht sie beim
-        // nächsten Betreten wieder aus (samt ihrem Slot-Array), statt jedes Mal zwei Objekte neu anzulegen.
+        // Every block, every loop iteration and every call creates a scope - and the vast majority own neither objects nor
+        // are they ever referenced from outside. The VM returns such scopes to a pool on leaving and hands them out again on the
+        // next entry (including their slot array), instead of allocating two new objects every time.
         //
-        // Wiederverwendbar ist eine Scope nur, solange NICHTS sonst auf sie zeigen kann:
-        //  - sie stammt aus dem Pool (`IsPooled`: nur diese Scopes werden zurückgegeben, nie die globale oder von anderem Code angelegte),
-        //  - sie besitzt kein Objekt mehr (ein zerstörtes Objekt vergisst seinen Owner, siehe ObjectInstance.Destroy; ein weitergegebenes
-        //    hat längst einen neuen),
-        //  - kein Pointer zeigt auf einen ihrer Slots (`MarkEscaped`, gesetzt von ScopeSlotPointerTarget).
+        // A scope is reusable only as long as NOTHING else can point to it:
+        //  - it comes from the pool (`IsPooled`: only these scopes are returned, never the global one or ones created by other code),
+        //  - it no longer owns an object (a destroyed object forgets its owner, see ObjectInstance.Destroy; a handed-on one
+        //    long since has a new one),
+        //  - no pointer points to one of its slots (`MarkEscaped`, set by ScopeSlotPointerTarget).
         // -----------------------------------------------------------
         private bool _pooled;
         private bool _escaped;
 
-        /// <summary>Eine neue Scope für den Pool der VM: wird beim Verlassen (ExitScope/return) zurückgegeben, falls sie dann noch wiederverwendbar ist.</summary>
+        /// <summary>A new scope for the VM's pool: returned on leaving (ExitScope/return) if it is still reusable then.</summary>
         public static Scope CreatePooled(Scope? parent) => new Scope(parent) { _pooled = true };
 
-        /// <summary>Kann diese Scope jetzt in den Pool zurück (siehe oben)?</summary>
+        /// <summary>Can this scope go back into the pool now (see above)?</summary>
         public bool CanRecycle => _pooled && !_escaped && _owned.IsEmpty && _args.IsEmpty && (_leaves == null || _leaves.Count == 0);
 
-        /// <summary>Ein Pointer auf einen Slot dieser Scope existiert (ScopeSlotPointerTarget): die Scope darf nie wiederverwendet werden,
-        /// der Pointer bliebe sonst auf die Variablen eines ganz anderen Blocks gerichtet.</summary>
+        /// <summary>A pointer to a slot of this scope exists (ScopeSlotPointerTarget): the scope must never be reused,
+        /// otherwise the pointer would remain aimed at the variables of an entirely different block.</summary>
         public void MarkEscaped() => _escaped = true;
 
-        /// <summary>Gibt die Scope wieder aus (vom Pool genommen): neuer Parent, leer.</summary>
+        /// <summary>Hands the scope out again (taken from the pool): new parent, empty.</summary>
         public void Reinit(Scope? parent)
         {
             _parent = parent;
             _pooled = true;
         }
 
-        /// <summary>Wie <see cref="Reinit"/> für einen Aufruf: sorgt für ein Slot-Array mit mindestens `capacity` Plätzen (das vorhandene wird
-        /// weiterverwendet, wenn es reicht) und belegt die ersten `paramCount` Slots - der Aufrufer kopiert die Parameter direkt hinein
-        /// (siehe <see cref="SlotArray"/>).</summary>
+        /// <summary>Like <see cref="Reinit"/> for a call: ensures a slot array with at least `capacity` places (the existing one is
+        /// reused if it suffices) and occupies the first `paramCount` slots - the caller copies the parameters directly into it
+        /// (see <see cref="SlotArray"/>).</summary>
         public void ReinitForCall(Scope? parent, int paramCount, int capacity)
         {
             _parent = parent;
@@ -101,11 +101,11 @@ namespace fire.Runtime
             _slotCount = paramCount;
         }
 
-        /// <summary>Das rohe Slot-Array (nur für die VM direkt nach <see cref="ReinitForCall"/>: Parameter hineinkopieren).</summary>
+        /// <summary>The raw slot array (for the VM only, directly after <see cref="ReinitForCall"/>: copy parameters into it).</summary>
         public Value[] SlotArray => _slots!;
 
-        /// <summary>Räumt eine verlassene Scope für die Wiederverwendung auf: die Werte werden vergessen (sonst hielte der Pool Objekte am
-        /// Leben), Parent und Pool-Kennzeichen zurückgesetzt. Nur aufrufen, wenn <see cref="CanRecycle"/> gilt.</summary>
+        /// <summary>Cleans up a left scope for reuse: the values are forgotten (otherwise the pool would keep objects
+        /// alive), parent and pool flag reset. Call only if <see cref="CanRecycle"/> holds.</summary>
         public void Recycle()
         {
             if (_slotCount > 0)
@@ -121,9 +121,9 @@ namespace fire.Runtime
         // Slot-Zugriff
         // -----------------------------------------------------------
 
-        /// <summary>Legt einen neuen Slot an (Reihenfolge muss exakt der
-        /// Deklarationsreihenfolge entsprechen, die der Resolver zugrunde gelegt
-        /// hat) und gibt seinen Index zurück.</summary>
+        /// <summary>Creates a new slot (the order must correspond exactly to
+        /// the declaration order the resolver based itself on)
+        /// and returns its index.</summary>
         public int DefineSlot(Value initialValue)
         {
             var slots = _slots;
@@ -138,21 +138,21 @@ namespace fire.Runtime
             return _slotCount++;
         }
 
-        /// <summary>GetSlot/SetSlot werden nur mit einem Index aufgerufen, der
-        /// aus einer vorherigen DefineSlot-Reihenfolge stammt (siehe
-        /// Resolver/Compiler - der Index ist zur Kompilierzeit fest bekannt) -
-        /// `_slots` ist an dieser Stelle deshalb garantiert bereits belegt.
-        /// Ein Index jenseits der definierten Slots ist ein VM-/Compiler-Bug
-        /// (siehe Values.VmInvariantViolationException-Doku) und wirft wie
-        /// bisher.</summary>
+        /// <summary>GetSlot/SetSlot are called only with an index that
+        /// stems from a previous DefineSlot order (see
+        /// Resolver/Compiler - the index is known for certain at compile time) -
+        /// `_slots` is therefore guaranteed to be already occupied at this point.
+        /// An index beyond the defined slots is a VM/compiler bug
+        /// (see Values.VmInvariantViolationException docs) and throws as
+        /// before.</summary>
         public Value GetSlot(int index)
         {
             if ((uint)index >= (uint)_slotCount) ThrowBadSlot(index);
             return _slots![index];
         }
 
-        /// <summary>Referenz auf einen Slot (für die VM: ein Slot wird direkt auf den Stack kopiert bzw. vom Stack
-        /// überschrieben, ohne Zwischenkopien). Gleiche Bereichsprüfung wie GetSlot.</summary>
+        /// <summary>Reference to a slot (for the VM: a slot is copied directly onto the stack or overwritten from the
+        /// stack, without intermediate copies). Same range check as GetSlot.</summary>
         public ref Value SlotRef(int index)
         {
             if ((uint)index >= (uint)_slotCount) ThrowBadSlot(index);
@@ -168,12 +168,12 @@ namespace fire.Runtime
         private void ThrowBadSlot(int index) =>
             throw new System.ArgumentOutOfRangeException(nameof(index), $"Slot {index} is not defined (slots: {_slotCount}).");
 
-        /// <summary>Anzahl belegter Slots - für Debug-/Inspektionszwecke (siehe
-        /// VM.DebugLocals), von der normalen Ausführung selbst nicht gebraucht.</summary>
+        /// <summary>Number of occupied slots - for debug/inspection purposes (see
+        /// VM.DebugLocals), not needed by normal execution itself.</summary>
         public int SlotCount => _slotCount;
 
-        /// <summary>Läuft `depth` Elternschritte nach oben - depth entspricht exakt
-        /// dem, was der Resolver in ResolvedRef.Local(depth, slot) ermittelt hat.</summary>
+        /// <summary>Walks `depth` parent steps upward - depth corresponds exactly to
+        /// what the resolver determined in ResolvedRef.Local(depth, slot).</summary>
         public Scope GetAncestor(int depth)
         {
             var scope = this;
@@ -186,12 +186,12 @@ namespace fire.Runtime
         // IOwner
         // -----------------------------------------------------------
         public IReadOnlyList<ObjectInstance> OwnedObjects => _args.IsEmpty ? _owned.AsList() : new List<ObjectInstance>(_owned.AsList().Concat(_args.AsList())).AsReadOnly();
-        /// <summary>Besitzt diese Scope gerade Objekte? Verlassen ist sonst ein reines Umhängen des Parent-Zeigers
-        /// (siehe VM.Step, ExitScope).</summary>
+        /// <summary>Does this scope currently own objects? Otherwise leaving is a mere re-hooking of the parent pointer
+        /// (see VM.Step, ExitScope).</summary>
         public bool HasOwned => !_owned.IsEmpty || !_args.IsEmpty || _leaves is { Count: > 0 };
 
-        /// <summary>Gesetzt für den globalen Scope des Hauptprogramms, sobald ein `fire`-Thread läuft (siehe GlobalsBroker): jedes Objekt,
-        /// das ihm gehört - auch eines, das erst später entsteht - gehört dann zum geteilten Bereich (siehe
+        /// <summary>Set for the global scope of the main program as soon as a `fire` thread is running (see GlobalsBroker): every object
+        /// that belongs to it - even one that only arises later - then belongs to the shared area (see
         /// ObjectInstance.MarkGlobalsDomain).</summary>
         public ThreadShareLock? SharingLock { get; set; }
 
@@ -202,7 +202,7 @@ namespace fire.Runtime
         }
         public void RemoveOwned(ObjectInstance obj) { _owned.Remove(obj); if (!_args.IsEmpty) _args.Remove(obj); }
 
-        /// <summary>Ein Argument des Aufrufs, das dieser Scope besitzt (siehe <c>_args</c>).</summary>
+        /// <summary>An argument of the call that this scope owns (see <c>_args</c>).</summary>
         public void AddArgument(ObjectInstance obj)
         {
             _args.Add(obj);
@@ -211,12 +211,12 @@ namespace fire.Runtime
         public void AddLeaf(IOwnedLeaf leaf) => (_leaves ??= new List<IOwnedLeaf>()).Add(leaf);
         public void RemoveLeaf(IOwnedLeaf leaf) => _leaves?.Remove(leaf);
 
-        /// <summary>Wie <see cref="Release"/>, aber nur für Objekte, die `filter` bejaht - die übrigen bleiben im Besitz dieser Scope
-        /// (für das Ende eines Fire-Threads: seine Globals-Schnappschüsse und `taking`-Kopien sind Kopien von Objekten des
-        /// Hauptprogramms und dürfen dort keine Destruktoren auslösen, z.B. ein geteiltes Handle schließen).</summary>
+        /// <summary>Like <see cref="Release"/>, but only for objects for which `filter` says yes - the others remain owned by this scope
+        /// (for the end of a fire thread: its globals snapshots and `taking` copies are copies of objects of the
+        /// main program and must not trigger destructors there, e.g. close a shared handle).</summary>
         public void ReleaseWhere(IDestructRunner runner, Func<ObjectInstance, bool> filter)
         {
-            if (_owned.IsEmpty) return;   // (Arrays und Puffer bleiben: Fire-Thread-Schnappschuesse sind Kopien des Hauptprogramms)
+            if (_owned.IsEmpty) return;   // (arrays and buffers remain: fire-thread snapshots are copies of the main program)
             var all = _owned.ToArray();
             DestroyBatch.Enter();
             try
@@ -231,7 +231,7 @@ namespace fire.Runtime
             _owned.RemoveDestroyed();
         }
 
-        /// <summary>Wird beim Verlassen des Scopes aufgerufen: zerstört kaskadierend alle noch von diesem Scope besessenen Objekte.</summary>
+        /// <summary>Called on leaving the scope: destroys in cascade all objects still owned by this scope.</summary>
         public void Release(IDestructRunner runner)
         {
             if (_owned.IsEmpty && _args.IsEmpty && _leaves == null) return;
@@ -242,7 +242,7 @@ namespace fire.Runtime
                 if (_leaves != null) LeafOwnership.DestroyAll(_leaves, runner);
                 if (!_args.IsEmpty) _args.DestroyAll(runner);
             }
-            finally { DestroyBatch.Exit(); } // (sonst: nichts zu tun - der häufigste Fall bei einfachen Blöcken/Schleifenkörpern)
+            finally { DestroyBatch.Exit(); } // (otherwise: nothing to do - the most common case with simple blocks/loop bodies)
         }
     }
 }

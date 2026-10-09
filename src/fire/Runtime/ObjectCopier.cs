@@ -3,52 +3,52 @@ using fire.Values;
 
 namespace fire.Runtime
 {
-    /// <summary>Wird geworfen, wenn `taking` (ObjectCopier.Take) eine Referenz
-    /// findet, die nicht sicher isoliert kopiert werden kann - entweder weil
-    /// sie aus dem kopierten Ownership-Baum HINAUSZEIGT (siehe
-    /// docs/THREADING_DESIGN.md Abschnitt 3: "harte Regel"), oder weil es sich
-    /// um eine Werteart handelt, die diese Ausbaustufe noch gar nicht
-    /// unterstützt (Lambda, Pointer - siehe ObjectCopier-Klassenkommentar).</summary>
+    /// <summary>Thrown when `taking` (ObjectCopier.Take) finds a reference
+    /// that cannot be safely copied in isolation - either because
+    /// it POINTS OUT of the copied ownership tree (see
+    /// docs/THREADING_DESIGN.md section 3: "hard rule"), or because it is
+    /// a kind of value that this stage does not support at all yet
+    /// (lambda, pointer - see ObjectCopier class comment).</summary>
     public sealed class TakingViolationException : System.Exception
     {
         public TakingViolationException(string message) : base(message) { }
     }
 
     /// <summary>
-    /// `taking X` (docs/THREADING_DESIGN.md Abschnitt 3): erzeugt eine
-    /// vollständige, isolierte Tiefenkopie von X's gesamtem EIGENEM
-    /// Ownership-Baum für einen Fire-Thread. Aktiviert dabei Thread-Sharing
-    /// (ObjectInstance.ActivateThreadSharing) auf dem ORIGINAL-Baum - ab
-    /// diesem Zeitpunkt respektiert JEDER Feldzugriff auf JEDEN Knoten in
-    /// diesem Baum den gemeinsamen Baum-Lock, auch normale Zugriffe vom
-    /// besitzenden (Ursprungs-)Thread selbst (siehe ThreadShareLock-Doku).
+    /// `taking X` (docs/THREADING_DESIGN.md section 3): creates a
+    /// complete, isolated deep copy of X's entire OWN
+    /// ownership tree for a fire thread. In doing so activates thread sharing
+    /// (ObjectInstance.ActivateThreadSharing) on the ORIGINAL tree - from
+    /// this point on EVERY field access to EVERY node in
+    /// this tree respects the shared tree lock, including normal accesses from the
+    /// owning (originating) thread itself (see ThreadShareLock docs).
     ///
-    /// BEWUSST NICHT unterstützt in dieser ersten Ausbaustufe (wirft
-    /// TakingViolationException, statt eine unsichere/inkorrekte Kopie zu
+    /// DELIBERATELY NOT supported in this first stage (throws
+    /// TakingViolationException instead of producing an unsafe/incorrect copy):
     /// erzeugen):
-    /// - Referenzen (Objekt-Felder), die aus dem kopierten Baum HINAUSZEIGEN
-    ///   (auf ein unabhängig besessenes Objekt) - das wäre ein verstecktes
-    ///   Shared-Memory-Loch, genau das, was `taking` verhindern soll.
-    /// - Lambda-Werte irgendwo im erreichbaren Graphen - eine korrekte Kopie
-    ///   müsste bei gebundenem `this` (`on obj`) dessen Referenz auf die neu
-    ///   erzeugte KOPIE dieses Objekts ummappen (zweistufiges Verfahren:
-    ///   erst den ganzen Objektgraphen kopieren, dann in einem zweiten
-    ///   Durchlauf alle Lambda-Bindungen nachträglich umbiegen) - das ist
-    ///   eine sinnvolle Erweiterung für eine spätere Ausbaustufe, hier aus
-    ///   Zeit-/Risikogründen bewusst zurückgestellt.
-    /// - Rohe Pointer (`unsafe`/`&`) irgendwo im erreichbaren Graphen - ein
-    ///   Pointer zeigt auf einen konkreten, verwalteten Speicherort (Scope-
-    ///   Slot oder Objekt-Feld, siehe PointerTarget-Doku), für den es keine
-    ///   sinnvolle "Kopie" gibt, ohne die Ziel-Adresse selbst neu aufzulösen
-    ///   - unabhängig davon, ob er in den eigenen Baum oder hinaus zeigt.
+    /// - References (object fields) that POINT OUT of the copied tree
+    ///   (to an independently owned object) - that would be a hidden
+    ///   shared-memory hole, exactly what `taking` is meant to prevent.
+    /// - Lambda values anywhere in the reachable graph - a correct copy
+    ///   would, for a bound `this` (`on obj`), have to remap its reference to the newly
+    ///   created COPY of that object (two-step procedure:
+    ///   first copy the whole object graph, then in a second
+    ///   pass rewire all lambda bindings afterwards) - this is
+    ///   a sensible extension for a later stage, deliberately deferred here for
+    ///   time/risk reasons.
+    /// - Raw pointers (`unsafe`/`&`) anywhere in the reachable graph - a
+    ///   pointer points to a concrete, managed storage location (scope
+    ///   slot or object field, see PointerTarget docs), for which there is no
+    ///   sensible "copy" without re-resolving the target address itself
+    ///   - regardless of whether it points into the own tree or out of it.
     /// </summary>
     public static class ObjectCopier
     {
-        /// <summary>Erzeugt die isolierte Kopie von `root`s Ownership-Baum,
-        /// mit `newOwner` als Owner der Kopie (typischerweise ein Scope im
-        /// neuen Fire-Thread). Die Kopie trägt hinterher `SyncOrigin == root`
-        /// (siehe ObjectInstance.SyncOrigin-Doku), Grundlage für `sync`/
-        /// `sync flat` (siehe SyncEngine).</summary>
+        /// <summary>Creates the isolated copy of `root`'s ownership tree,
+        /// with `newOwner` as the owner of the copy (typically a scope in the
+        /// new fire thread). Afterwards the copy carries `SyncOrigin == root`
+        /// (see ObjectInstance.SyncOrigin docs), the basis for `sync`/
+        /// `sync flat` (see SyncEngine).</summary>
         public static ObjectInstance Take(ObjectInstance root, IOwner newOwner)
         {
             var treeLock = new ThreadShareLock();
@@ -69,11 +69,11 @@ namespace fire.Runtime
             var copy = new ObjectInstance(node.ClassName, copyOwner, node.RtClass) { IsTakingCopy = true };
             map[node] = copy;
 
-            // Unter dem Baum-Lock lesen (node kann seit ActivateThreadSharing
-            // theoretisch schon von einem parallel laufenden anderen Thread
-            // beobachtet werden, falls root selbst schon vorher Ziel von
-            // taking war - ein verschachteltes taking auf einen bereits
-            // ausgecheckten Teilbaum).
+            // Read under the tree lock (since ActivateThreadSharing, node can
+            // theoretically already be observed by another concurrently running thread
+            // if root itself was already the target of
+            // taking before - a nested taking on an already
+            // checked-out subtree).
             var fieldsSnapshot = new List<KeyValuePair<string, Value>>();
             if (node.ThreadLock != null)
             {
@@ -129,14 +129,14 @@ namespace fire.Runtime
                         "copied at this stage (see the ObjectCopier class comment).");
 
                 default:
-                    // bool/int/float/char/string/undefined - wertartig, direkt kopierbar.
+                    // bool/int/float/char/string/undefined - value-like, directly copyable.
                     return v;
             }
         }
 
-        /// <summary>`node` gehört zu `treeRoot`s eigenem Ownership-Baum, wenn es
-        /// entweder die Wurzel selbst ist oder transitiv über die Owner-Kette
-        /// von ihr besessen wird (ObjectInstance.IsTransitivelyOwnedBy).</summary>
+        /// <summary>`node` belongs to `treeRoot`'s own ownership tree if it
+        /// either is the root itself or is transitively owned by it via the owner chain
+        /// (ObjectInstance.IsTransitivelyOwnedBy).</summary>
         private static bool IsWithinTree(ObjectInstance node, ObjectInstance treeRoot) =>
             ReferenceEquals(node, treeRoot) || node.IsTransitivelyOwnedBy(treeRoot);
     }

@@ -4,25 +4,25 @@ using System.Runtime.InteropServices;
 
 namespace fire.Bytecode
 {
-    /// <summary>Eine tatsächlich verlinkte native Implementierung einer per
-    /// `extern` deklarierten Funktion. Nimmt die bereits MARSHALLTEN Argumente
-    /// entgegen (siehe VM.CallExtern: bool/long/double/char/string für
-    /// Werttypen, IntPtr für Pointer-Argumente - echter, gepinnter nativer
-    /// Speicher, kein Skript-internes PointerTarget mehr) und liefert den
-    /// (ebenfalls bereits nativen) Rückgabewert, oder null für "kein
-    /// Rückgabewert" (ReturnType in der `extern`-Deklaration fehlt).</summary>
+    /// <summary>An actually linked native implementation of a function declared via
+    /// `extern`. Takes the already MARSHALLED arguments
+    /// (see VM.CallExtern: bool/long/double/char/string for
+    /// value types, IntPtr for pointer arguments - real, pinned native
+    /// memory, no script-internal PointerTarget any more) and returns the
+    /// (likewise already native) return value, or null for "no
+    /// return value" (ReturnType missing in the `extern` declaration).</summary>
     public delegate object? ExternFunction(object?[] args);
 
     /// <summary>
-    /// Verzeichnis tatsächlich verlinkter `extern`-Implementierungen - getrennt
-    /// von NativeRegistry, weil `extern` bewusst ZWEI Phasen hat: die
-    /// Deklaration (Teil des Skripts, vom Resolver/Compiler schon vorher
-    /// verarbeitet, siehe ExternDecl/ResolvedRef.Extern) und die eigentliche
-    /// Verlinkung (host-seitig, NACH dem Kompilieren, sogar optional - ein
-    /// Skript kann `extern` deklarieren und kompilieren, ohne dass die
-    /// Implementierung je registriert wird; das schlägt erst beim
-    /// TATSÄCHLICHEN Aufruf fehl, nicht beim Kompilieren). Deshalb Lookup per
-    /// Name zur Laufzeit statt per Compile-Zeit-Index wie bei NativeRegistry.
+    /// Directory of actually linked `extern` implementations - separate
+    /// from NativeRegistry because `extern` deliberately has TWO phases: the
+    /// declaration (part of the script, already processed beforehand by the
+    /// resolver/compiler, see ExternDecl/ResolvedRef.Extern) and the actual
+    /// linking (host-side, AFTER compiling, even optional - a
+    /// script can declare and compile `extern` without the
+    /// implementation ever being registered; that fails only on the
+    /// ACTUAL call, not on compiling). Hence lookup by
+    /// name at runtime instead of by compile-time index as in NativeRegistry.
     /// </summary>
     public sealed class ExternRegistry
     {
@@ -32,13 +32,13 @@ namespace fire.Bytecode
 
         public bool TryGet(string name, out ExternFunction fn) => _fns.TryGetValue(name, out fn!);
 
-        /// <summary>Eine kleine Demo-Verlinkung gegen echte native Windows-APIs
-        /// per P/Invoke (user32/kernel32) - zeigt den vollen Marshalling-Pfad
-        /// (Skript-Wert -> echter nativer Typ/Adresse -> echter OS-Aufruf ->
-        /// zurück in einen Skript-Wert). Läuft nur unter Windows (die DLLs
-        /// existieren nur dort) - unter Linux/macOS stattdessen eine eigene
-        /// Registry mit passenden Plattform-APIs bauen, das Muster bleibt
-        /// exakt dasselbe.</summary>
+        /// <summary>A small demo linking against real native Windows APIs
+        /// via P/Invoke (user32/kernel32) - shows the full marshalling path
+        /// (script value -> real native type/address -> real OS call ->
+        /// back into a script value). Runs only on Windows (the DLLs
+        /// exist only there) - on Linux/macOS build a registry of its own
+        /// with matching platform APIs instead, the pattern stays
+        /// exactly the same.</summary>
         public static ExternRegistry CreateWinApiDemo()
         {
             var reg = new ExternRegistry();
@@ -50,11 +50,11 @@ namespace fire.Bytecode
             // extern int GetTickCount()
             reg.Register("GetTickCount", args => (long)WinApiNative.GetTickCount());
 
-            // extern int QueryPerformanceCounter(int* counter) - schreibt
-            // einen 64-Bit-Zähler über den Pointer, also 8 Byte - passt exakt
-            // zur generischen 8-Byte-Slot-Kopie in VM.WriteNativeValue/
-            // ReadNativeValue (anders als z.B. ein 4-Byte int* wie bei manch
-            // anderer WinAPI-Funktion, das würde NICHT sauber zusammenpassen).
+            // extern int QueryPerformanceCounter(int* counter) - writes
+            // a 64-bit counter through the pointer, i.e. 8 bytes - fits exactly
+            // the generic 8-byte slot copy in VM.WriteNativeValue/
+            // ReadNativeValue (unlike e.g. a 4-byte int* as with some
+            // other WinAPI function, which would NOT fit together cleanly).
             reg.Register("QueryPerformanceCounter", args =>
                 (long)WinApiNative.QueryPerformanceCounter((IntPtr)args[0]!));
 

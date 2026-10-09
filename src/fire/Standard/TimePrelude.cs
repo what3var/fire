@@ -1,9 +1,9 @@
 namespace fire.Standard
 {
     /// <summary>
-    /// `#import "time"`: <c>TimeSpan</c> (eine Dauer) und <c>DateTime</c> (ein Zeitpunkt), in fire geschrieben über ein paar native Funktionen
-    /// (the C++ of native/bridges/fire_bridge_time.hpp; the VM runs it in a shared library through the package ABI), dazu der Befehl <c>Sleep(zeit)</c>. Beide zählen in Ticks zu 100 ns wie in .NET (`DateTime` ab 0001-01-01).
-    /// Siehe SPEC 8.15.
+    /// `#import "time"`: <c>TimeSpan</c> (a duration) and <c>DateTime</c> (a point in time), written in fire over a few native functions
+    /// (the C++ of native/bridges/fire_bridge_time.hpp; the VM runs it in a shared library through the package ABI), plus the command <c>Sleep(time)</c>. Both count in ticks of 100 ns as in .NET (`DateTime` from 0001-01-01).
+    /// See SPEC 8.15.
     /// </summary>
     public static class TimePrelude
     {
@@ -13,7 +13,7 @@ namespace fire.Standard
                 construct(string message) { this.message = message }
             }
 
-            // Eine Dauer. Rechnen wie mit Zahlen: `a + b`, `a - b`, `a * 2`, `a / 2`, Vergleiche, `a == b`.
+            // A duration. Calculate as with numbers: `a + b`, `a - b`, `a * 2`, `a / 2`, comparisons, `a == b`.
             class TimeSpan {
                 int ticks
 
@@ -31,7 +31,7 @@ namespace fire.Standard
                 static FromHours(class x) { return new TimeSpan(__time_to_ticks(x, 36000000000)) }
                 static FromDays(class x) { return new TimeSpan(__time_to_ticks(x, 864000000000)) }
 
-                // Aus einem Wert mit Zeiteinheit (`TimeSpan.Of(1.5s)`, `Of(250ms)`), einer Zahl (Millisekunden) oder einer TimeSpan
+                // From a value with a time unit (`TimeSpan.Of(1.5s)`, `Of(250ms)`), a number (milliseconds) or a TimeSpan
                 static Of(class v) {
                     if (v is of TimeSpan) { return v }
                     var t = __time_unit_ticks(v)
@@ -64,7 +64,7 @@ namespace fire.Standard
                 }
                 Equals(class o) { return (o is of TimeSpan) && this.ticks == o.ticks }
 
-                // `ts + "text"` ist eine Textverkettung (mit ToString()), `ts + andere` eine Summe
+                // `ts + "text"` is a string concatenation (with ToString()), `ts + other` a sum
                 operator+(class o) {
                     if (o is of string) { return this.ToString() + o }
                     return new TimeSpan(this.ticks + o.ticks)
@@ -83,7 +83,7 @@ namespace fire.Standard
                 ToString() { return __time_span_text(this.ticks) }
             }
 
-            // Ein Zeitpunkt (Kalenderdatum und Uhrzeit). `kind` ist "local" oder "utc"; Vergleiche und Differenzen setzen gleiche Art voraus (ToUtc()/ToLocal() wandeln).
+            // A point in time (calendar date and time of day). `kind` is "local" or "utc"; comparisons and differences assume the same kind (ToUtc()/ToLocal() convert).
             class DateTime {
                 int ticks
                 string kind
@@ -108,7 +108,7 @@ namespace fire.Standard
                 static DaysInMonth(int year, int month) { return __time_days_in_month(year, month) }
                 static IsLeapYear(int year) { return __time_days_in_month(year, 2) == 29 }
 
-                // Text -> Zeitpunkt (ISO und gängige Formen, "2024-03-15 14:30:00"); Parse wirft eine TimeException, TryParse liefert undefined
+                // Text -> point in time (ISO and common forms, "2024-03-15 14:30:00"); Parse throws a TimeException, TryParse returns undefined
                 static TryParse(string text) {
                     var t = __time_parse(text)
                     if (t == undefined) { return undefined }
@@ -137,12 +137,12 @@ namespace fire.Standard
                 DayName() { return __time_format(this.ticks, "dddd") }
                 MonthName() { return __time_format(this.ticks, "MMMM") }
 
-                // Mitternacht dieses Tages und die Uhrzeit als Dauer
+                // Midnight of this day and the time of day as a duration
                 Date() { return DateTime.FromTicks(this.ticks - this.ticks % 864000000000, this.kind) }
                 TimeOfDay() { return new TimeSpan(this.ticks % 864000000000) }
 
                 Add(class ts) { return DateTime.FromTicks(this.ticks + ts.ticks, this.kind) }
-                // ein TimeSpan -> DateTime, ein DateTime -> TimeSpan
+                // a TimeSpan -> DateTime, a DateTime -> TimeSpan
                 Subtract(class o) {
                     if (o is of TimeSpan) { return DateTime.FromTicks(this.ticks - o.ticks, this.kind) }
                     return new TimeSpan(this.ticks - o.ticks)
@@ -158,7 +158,7 @@ namespace fire.Standard
 
                 ToUtc() {
                     if (this.kind == "utc") { return this }
-                    // der Versatz der Ortszeit gegenüber UTC zu diesem Zeitpunkt (aus der Ortszeit angenähert)
+                    // the offset of local time relative to UTC at this point in time (approximated from local time)
                     return DateTime.FromTicks(this.ticks - __time_local_offset(this.ticks), "utc")
                 }
                 ToLocal() {
@@ -174,7 +174,7 @@ namespace fire.Standard
                 }
                 Equals(class o) { return (o is of DateTime) && this.ticks == o.ticks }
 
-                // `dt + "text"` ist eine Textverkettung (mit ToString()), `dt + zeitspanne` ein späterer Zeitpunkt
+                // `dt + "text"` is a string concatenation (with ToString()), `dt + timespan` a later point in time
                 operator+(class ts) {
                     if (ts is of string) { return this.ToString() + ts }
                     return DateTime.FromTicks(this.ticks + ts.ticks, this.kind)
@@ -190,7 +190,7 @@ namespace fire.Standard
                 operator==(class o) { return (o is of DateTime) && this.ticks == o.ticks }
                 operator!=(class o) { return !((o is of DateTime) && this.ticks == o.ticks) }
 
-                // "yyyy-MM-dd HH:mm:ss"; ToString(format) mit den .NET-Zeitformaten (z.B. "dd.MM.yyyy", "HH:mm", "o")
+                // "yyyy-MM-dd HH:mm:ss"; ToString(format) with the .NET time formats (e.g. "dd.MM.yyyy", "HH:mm", "o")
                 ToString() { return __time_format(this.ticks, "yyyy-MM-dd HH:mm:ss") }
                 ToString(string format) { return __time_format(this.ticks, format) }
             }

@@ -362,7 +362,7 @@ namespace UI {
             return undefined
         }
 
-        // Sammelt alle fokussierbaren Elemente in Zeichenreihenfolge (fuer Tab).
+        // Collects all focusable elements in drawing order (for Tab).
         Collect(list) {
             if (this.visible && this.enabled && this.Focusable()) { list.Add(this) }
         }
@@ -810,7 +810,7 @@ namespace UI {
         int value
         int min = 0
         int max = -1
-        // aufgeloeste Groesse
+        // resolved size
         int size
 
         construct(int mode, int value) {

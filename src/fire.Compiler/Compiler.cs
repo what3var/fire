@@ -1576,7 +1576,7 @@ namespace fire.Compiler
             _chunk.EmitOp(OpCode.JumpIfFalse); // pop bool
             int endJumpAt = _chunk.Here;
             _chunk.EmitU16(0);
-            // Stack (bei true): [enumerator]
+            // Stack (on true): [enumerator]
 
             _chunk.EmitOp(OpCode.Dup);
             EmitCallMethodByName("GetCurrent", 0);
@@ -2391,10 +2391,10 @@ namespace fire.Compiler
                 _chunk.EmitU16(local.Slot);
                 return;
             }
-            _chunk.EmitOp(OpCode.LoadLocal);   // [wert, zeiger]
+            _chunk.EmitOp(OpCode.LoadLocal);   // [value, pointer]
             _chunk.EmitU16(local.Depth);
             _chunk.EmitU16(local.Slot);
-            _chunk.EmitOp(OpCode.Swap);        // [zeiger, wert]
+            _chunk.EmitOp(OpCode.Swap);        // [pointer, value]
             _chunk.EmitOp(OpCode.PtrWrite);    // writes and returns the value
         }
 
@@ -2478,7 +2478,7 @@ namespace fire.Compiler
                 }
                 else if (a.Value is UnaryExpr { Op: UnaryOp.Take } takeValue)
                 {
-                    CompileExpr(takeValue.Operand);          // [obj, wert]
+                    CompileExpr(takeValue.Operand);          // [obj, value]
                     _chunk.EmitOp(OpCode.TakeToObject);      // the object owns the value from now on (SPEC 2.2)
                 }
                 else
@@ -2494,7 +2494,7 @@ namespace fire.Compiler
             if (a.Target is UnaryExpr { Op: UnaryOp.Dereference } deref)
             {
                 CompileExpr(deref.Operand); // push Pointer
-                CompileExpr(a.Value);       // push Wert
+                CompileExpr(a.Value);       // push value
                 _chunk.EmitOp(OpCode.PtrWrite);
                 return;
             }
@@ -2529,9 +2529,9 @@ namespace fire.Compiler
             if (_refs[id] is ResolvedRef.ImplicitThisMember && IsOwnedCreation(a.Value))
             {
                 _chunk.EmitOp(OpCode.LoadThis);
-                TryCompileOwnedCreation(a.Value);       // [neues Objekt]
-                _chunk.EmitOp(OpCode.LoadThis);         // [wert, obj]
-                _chunk.EmitOp(OpCode.Swap);             // [obj, wert]
+                TryCompileOwnedCreation(a.Value);       // [new object]
+                _chunk.EmitOp(OpCode.LoadThis);         // [value, obj]
+                _chunk.EmitOp(OpCode.Swap);             // [obj, value]
                 _chunk.EmitOp(OpCode.SetField);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                 return;
@@ -2606,8 +2606,8 @@ namespace fire.Compiler
                     _chunk.EmitU16(global.Slot);
                     break;
                 case ResolvedRef.ImplicitThisMember:
-                    _chunk.EmitOp(OpCode.LoadThis);         // [wert, this]
-                    _chunk.EmitOp(OpCode.Swap);             // [this, wert]
+                    _chunk.EmitOp(OpCode.LoadThis);         // [value, this]
+                    _chunk.EmitOp(OpCode.Swap);             // [this, value]
                     _chunk.EmitOp(OpCode.TakeToObject);
                     _chunk.EmitOp(OpCode.SetField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));

@@ -9,7 +9,7 @@ namespace UI {
         int offset = 0
         int extent = 0
         int viewport = 0
-        // Breite der Leiste in Pixeln
+        // Width of the bar in pixels
         int size = 12
         bool dragging = false
         int grab = 0

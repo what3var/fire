@@ -4,33 +4,33 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Laufzeit-Wert einer Lambda-Funktion. Braucht - anders als klassische
-    /// Closures - KEINEN eingefangenen umgebenden Scope: Lambdas sehen laut SPEC
-    /// 4.2 ohnehin nur ihren eigenen (bei jedem Aufruf neu erzeugten) Scope plus
-    /// den globalen Scope. Ein LambdaValue muss sich daher nur den kompilierten
-    /// Funktionskörper (Proto) und das aktuell gebundene 'this' (OnTarget) merken.
+    /// Runtime value of a lambda function. Needs - unlike classic
+    /// closures - NO captured enclosing scope: per SPEC
+    /// 4.2 lambdas see only their own scope (created anew on every call) plus
+    /// the global scope anyway. A LambdaValue therefore only has to remember the compiled
+    /// function body (proto) and the currently bound 'this' (OnTarget).
     ///
-    /// Ownership (SPEC 4.2 / 2.1): Lambda-Werte werden wie Objektinstanzen
-    /// behandelt - Owner ist das Objekt bei direkter Feldzuweisung, sonst der
-    /// aktuelle Scope. Diese Politik (welcher Owner bei welcher Zuweisung) setzt
-    /// der Evaluator/Compiler an der jeweiligen Zuweisungsstelle um; das
-    /// Owner-Feld hier ist deshalb optional und wird in dieser Ausbaustufe
-    /// (Funktions-/Call-Frames) noch nicht befüllt - Lambda-Werte können bereits
-    /// erzeugt, gebunden und aufgerufen werden, ihre Ownership-Einbindung folgt
-    /// mit der Klassen-/Objekt-Ausbaustufe.
+    /// Ownership (SPEC 4.2 / 2.1): lambda values are treated like
+    /// object instances - the owner is the object on direct field assignment, otherwise the
+    /// current scope. This policy (which owner for which assignment) is put in place
+    /// by the evaluator/compiler at the respective assignment site; the
+    /// owner field here is therefore optional and is not yet filled at this stage
+    /// (function/call frames) - lambda values can already be
+    /// created, bound and called, their ownership integration follows
+    /// with the class/object stage.
     /// </summary>
     public sealed class LambdaValue
     {
         public FunctionProto Proto { get; }
 
-        /// <summary>Das über 'on' gebundene Objekt (this-Kontext), oder null,
-        /// wenn kein 'on' verwendet wurde.</summary>
+        /// <summary>The object bound via 'on' (this context), or null
+        /// if no 'on' was used.</summary>
         public object? OnTarget { get; }
 
         public IOwner? Owner { get; private set; }
 
-        /// <summary>Beim Erzeugen KOPIERTE Werte der äußeren lokalen Variablen, die der Körper benutzt (Lambda-Captures, SPEC 4.2),
-        /// oder null. Beim Aufruf landen sie als Slots direkt hinter den Parametern.</summary>
+        /// <summary>Values of the outer local variables used by the body, COPIED on creation (lambda captures, SPEC 4.2),
+        /// or null. On a call they land as slots directly after the parameters.</summary>
         public Value[]? Captures { get; }
 
         public LambdaValue(FunctionProto proto, object? onTarget, IOwner? owner = null, Value[]? captures = null)
@@ -41,9 +41,9 @@ namespace fire.Runtime
             Captures = captures;
         }
 
-        /// <summary>`a on obj2` - erzeugt einen NEUEN Lambda-Wert mit anderem
-        /// this-Kontext; `a` selbst bleibt unverändert (SPEC 4.2). Derselbe Proto
-        /// wird wiederverwendet (Ausführung, nicht Definition, ändert sich).</summary>
+        /// <summary>`a on obj2` - creates a NEW lambda value with a different
+        /// this context; `a` itself stays unchanged (SPEC 4.2). The same proto
+        /// is reused (execution, not definition, changes).</summary>
         public LambdaValue WithOnTarget(object? newTarget, IOwner? owner = null) =>
             new(Proto, newTarget, owner, Captures);
 

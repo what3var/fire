@@ -62,7 +62,7 @@ namespace fire.Windows.Bridge
 
                     return Value.MakeBool(true);
                 },
-                // WICHTIG: neue Funktionen immer ANS ENDE, in BuildWindowFunctionStubs in derselben Reihenfolge (Index = Position).
+                // IMPORTANT: always add new functions AT THE END, in BuildWindowFunctionStubs in the same order (index = position).
                 ["SetVSync"] = args =>
                 {
                     mgr.SetVSync((int)args[0].AsInt(), args[1].AsBool());

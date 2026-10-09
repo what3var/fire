@@ -3003,7 +3003,7 @@ namespace fire.Runtime
             CheckArity(proto, args.Length);
             args = FillDefaultArgs(proto, args, _currentThis);
 
-            // 'this' bleibt dasselbe Objekt (nicht-virtueller Aufruf).
+            // 'this' remains the same object (non-virtual call).
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
             var scope = new Scope(_globalScope);
             foreach (var a in args) scope.DefineSlot(a);
@@ -3406,7 +3406,7 @@ namespace fire.Runtime
 
         private void OpArraySet()
         {
-            // Schnellpfad wie bei OpArrayGet.
+            // Fast path as with OpArrayGet.
             ref Value fastTarget = ref _stack[_sp - 3];
             ref Value fastIndex = ref _stack[_sp - 2];
             if (fastTarget.Kind == ValueKind.Array && fastIndex.Kind == ValueKind.Int)
@@ -4539,7 +4539,7 @@ namespace fire.Runtime
         };
 
         // -----------------------------------------------------------
-        // extern-Linking: dynamisches Laden gegen '#extern "libName"'
+        // extern linking: dynamic loading against '#extern "libName"'
         // -----------------------------------------------------------
 
         // IMPORTANT PITFALL (only discovered at runtime): Marshal.

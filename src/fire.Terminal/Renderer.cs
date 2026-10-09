@@ -438,7 +438,7 @@ namespace fire.Terminal
                 for (int gy = 0; gy < ch; gy++)
                 {
                     int bits = Unsafe.Add(ref rowBits, gy);
-                    if (bits == 0) continue; // leere Zeile: nichts zu schreiben
+                    if (bits == 0) continue; // empty line: nothing to write
                     ref uint dst = ref Unsafe.Add(ref origin, gy * stride);
                     Vector256.ConditionalSelect(Unsafe.Add(ref masks, bits), fgv, Vector256.LoadUnsafe(ref dst)).StoreUnsafe(ref dst);
                 }

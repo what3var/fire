@@ -7294,7 +7294,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
             }
         }
 
-        // 4) Ende-zu-Ende: eigenstaendige Datei packen, AUSSERHALB des Compiler-Ordners starten.
+        // 4) End-to-end: pack a standalone file, start it OUTSIDE the compiler folder.
         var stubName = OperatingSystem.IsWindows() ? "fire.Runtime.exe" : "fire.Runtime";
         if (File.Exists(Path.Combine(baseDir, stubName)))
         {
@@ -7342,7 +7342,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
 }
 
 // ---------------------------------------------------------------------------
-// Befehlszeile des Compilers (run / build)
+// Command line of the compiler (run / build)
 // ---------------------------------------------------------------------------
 {
     Console.WriteLine();
@@ -7441,7 +7441,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
                 cv.Background = opaque ? new fire.Terminal.PixelColor(10, 20, 30) : null;
                 ((fire.Terminal.Framebuffer)cv.Target).Clear(new fire.Terminal.PixelColor(1, 2, 3));
             }
-            // Zeichen des ganzen Bereichs (auch > 255), an zufaelligen Positionen inkl. teilweise ausserhalb
+            // Characters of the whole range (also > 255), at random positions including partly outside
             for (int i = 0; i < 400; i++)
             {
                 char ch = (char)rng.Next(0, 400);
@@ -7744,7 +7744,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         fire.Terminal.Blitter.Blit(d6, src, 0, 0, 4, 4, 0, 0, 4, -4);
         GfxCheck(d6.GetPixel(0, 0).Packed == src.GetPixel(0, 3).Packed && d6.GetPixel(3, 3).Packed == src.GetPixel(3, 0).Packed, "Blit: negative Zielhoehe spiegelt senkrecht");
 
-        // Clipping: Ziel teilweise ausserhalb, Quelle ausserhalb, leere Groessen
+        // Clipping: target partly outside, source outside, empty sizes
         var d7 = new fire.Terminal.Framebuffer(10, 10);
         fire.Terminal.Blitter.Blit(d7, src, -2, -2);
         fire.Terminal.Blitter.Blit(d7, src, 8, 8);
@@ -7785,7 +7785,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         fire.Terminal.Blitter.Blit(target2, pal, 0, 0, fire.Terminal.BlitMode.Transparent);
         GfxCheck(target2.GetPixel(2, 0).R == 1 && target2.GetPixel(1, 0).Packed == pal.Palette.GetPacked(0), "Blit Transparent nimmt ohne Farbschluessel den TransparentIndex der Quelle");
 
-        // Palette -> Palette: gleiche Palette = Indizes direkt; andere Palette = naechster Eintrag
+        // Palette -> palette: same palette = indices directly; other palette = nearest entry
         var palDst = new fire.Terminal.Framebuffer(3, 1, IDX);
         fire.Terminal.Blitter.Blit(palDst, pal, 0, 0);
         GfxCheck(palDst.Indices!.SequenceEqual(pal.Indices), "Blit Palette->Palette (gleiche Palette): Indizes unveraendert");
@@ -7852,7 +7852,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         int bI9 = cm.CreateSolidBrush(9);
         cm.FillRect(con, 0, 0, 10, 10, bI9);
         cm.SetPixel(con, 12, 12, 33);
-        int bRed = cm.CreateSolidBrush(unchecked((int)0xFF0000FFu)); // direkter Wert (rot) -> naechster Palette-Eintrag
+        int bRed = cm.CreateSolidBrush(unchecked((int)0xFF0000FFu)); // direct value (red) -> nearest palette entry
         cm.FillRect(con, 20, 0, 5, 5, bRed);
         GfxCheck(mgr.GetFramebuffer(fbId).GetIndex(3, 3) == 9 && mgr.GetFramebuffer(fbId).GetIndex(12, 12) == 33 && cm.GetPixelIndex(con, 12, 12) == 33
             && mgr.GetFramebuffer(fbId).Palette.GetColor(mgr.GetFramebuffer(fbId).GetIndex(22, 2)).R >= 170, "RendererManager: 0-255 = Palette-Index, sonst direkter Wert");
@@ -7918,7 +7918,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
             rd.Clear(fire.Terminal.Paint.FromIndex(0));
             GfxCheck(fb.GetPixel(5, 3).Packed == fb.Palette.GetPacked(0), "Clear(Paint) setzt ohne Mischen");
 
-            // 8-Bit-Ziel: ab Alpha 128 Kopie (naechster Eintrag), darunter nichts
+            // 8-bit target: from alpha 128 a copy (nearest entry), below that nothing
             var pal = new fire.Terminal.Framebuffer(4, 1, IDX);
             var rp = new fire.Terminal.Renderer(pal, font);
             rp.FillRect(0, 0, 4, 1, new fire.Terminal.SolidBrush(fire.Terminal.Paint.FromIndex(7)));
@@ -9868,7 +9868,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseMove(60, 5)
         ui.Draw()
         print("gewechselt " + ui.popups.count + " " + mb.openIndex)
-        // zurueck zu File, Untermenue Recent per Zeiger oeffnen
+        // back to File, open submenu Recent via pointer
         ui.MouseMove(10, 5)
         ui.Draw()
         var menu = ui.popups[0]
@@ -10825,7 +10825,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 }
 
 // ---------------------------------------------------------------------------
-// Globals und Fire-Threads: direktes Lesen, Schreiben in Sektionen (sync globals / sync global { } / fire global { })
+// Globals and fire threads: direct reading, writing in sections (sync globals / sync global { } / fire global { })
 // ---------------------------------------------------------------------------
 {
     Console.WriteLine();
@@ -11258,7 +11258,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         {
             if (m.DeviceCount != 1) throw new Exception("Geraet verschwunden");
             if (!m.GetDeviceByHandle(m.GetHandleByIdentifier("loopback:echo")!.Value)!.IsConnected) throw new Exception("Verbindung wurde getrennt");
-            m.Dispose(); // wirkungslos bei geteiltem Manager
+            m.Dispose(); // no effect with a shared manager
             if (m.DeviceCount != 1) throw new Exception("Dispose hat den geteilten Manager abgebaut");
         });
 
@@ -11521,7 +11521,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 }
 
 // ---------------------------------------------------------------------------
-// Debugger-Lauf des Editors: VM.RunUntilBreakpoint/RunUntilEnd (F5), Zeilentabelle (binaere Suche), Native-Weiterleitung
+// Debugger run of the editor: VM.RunUntilBreakpoint/RunUntilEnd (F5), line table (binary search), native forwarding
 // ---------------------------------------------------------------------------
 {
     Console.WriteLine();
@@ -18314,7 +18314,7 @@ else
         try { Directory.Delete(workDir, true); } catch (IOException) { }
     }
 
-    // ---- Pakete (ember): fpk, Store, Quellen, #import "name" in VM und nativ ----
+    // ---- Packages (ember): fpk, store, sources, #import "name" in VM and native ----
     {
         Console.WriteLine("=== Pakete (ember) ===");
         string pkgDir = Path.Combine(Path.GetTempPath(), "fire-pkg-test-" + Guid.NewGuid().ToString("N"));

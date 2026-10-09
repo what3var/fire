@@ -218,7 +218,7 @@ namespace UI {
             if (callback != undefined) { callback() }
         }
 
-        // Wie viele Zeichen passen in das Feld?
+        // How many characters fit into the field?
         int Fit(root) { return (this.actualWidth - 8) / root.cw }
 
         Draw(root, int ax, int ay) {

@@ -7,36 +7,36 @@ using MemoryPack;
 namespace fire.Values
 {
     /// <summary>
-    /// Repräsentiert eine Einheit als Dimensionsvektor (Basissymbol -> Exponent)
-    /// plus einen Skalierungsfaktor relativ zur reinen Basisdimension.
+    /// Represents a unit as a dimension vector (base symbol -> exponent)
+    /// plus a scale factor relative to the pure base dimension.
     ///
-    /// Beispiel: "mm" hat Dimension {m:1} und Scale 0.001 (1mm = 0.001 * 1m).
-    /// "mm*mm" (m^2-Dimension) hat Dimension {m:2} und Scale 0.001*0.001 = 1e-6.
+    /// Example: "mm" has dimension {m:1} and scale 0.001 (1mm = 0.001 * 1m).
+    /// "mm*mm" (m^2 dimension) has dimension {m:2} and scale 0.001*0.001 = 1e-6.
     ///
-    /// Zwei Units sind dimensional kompatibel, wenn ihre Dimensionsvektoren
-    /// (nach Entfernen von Exponent-0-Einträgen) identisch sind. Die Umrechnung
-    /// zwischen kompatiblen Units erfolgt über das Verhältnis der Scale-Faktoren.
+    /// Two units are dimensionally compatible if their dimension vectors
+    /// (after removing exponent-0 entries) are identical. Conversion
+    /// between compatible units is done via the ratio of the scale factors.
     /// </summary>
     [MemoryPackable]
     public sealed partial class Unit : IEquatable<Unit>
     {
-        // Basissymbol -> Exponent. Basissymbole sind entweder eine der
-        // fest eingebauten Basisdimensionen ("m","g","s","b") oder ein
-        // atomarer, frei erfundener Einheitenname (z.B. "apples").
+        // Base symbol -> exponent. Base symbols are either one of the
+        // built-in base dimensions ("m","g","s","b") or an
+        // atomic, freely invented unit name (e.g. "apples").
         public IReadOnlyDictionary<string, int> Dimensions { get; }
 
-        // Faktor, um einen Zahlenwert in dieser Unit in die reine
-        // Basisdimension umzurechnen: wert_in_basis = wert * Scale
+        // Factor to convert a numeric value in this unit into the pure
+        // base dimension: value_in_base = value * Scale
         public double Scale { get; }
 
-        // Für hübsches ToString() bei nicht-zusammengesetzten Einheiten
-        // (z.B. "mm" statt nur der Dimension "m"). Null bei zusammengesetzten
-        // / abgeleiteten Einheiten (z.B. Ergebnis einer Multiplikation).
+        // For pretty ToString() on non-composite units
+        // (e.g. "mm" instead of just the dimension "m"). Null for composite
+        // / derived units (e.g. the result of a multiplication).
         //
-        // Privat, aber per [MemoryPackInclude] trotzdem serialisiert (siehe
-        // MemoryPack-Doku: private Member standardmäßig NICHT eingeschlossen,
-        // explizit nötig) - braucht dafür `partial` an der Klasse, sonst
-        // hätte der generierte Formatter-Code keinen Zugriff darauf.
+        // Private, but serialised nevertheless via [MemoryPackInclude] (see
+        // MemoryPack docs: private members NOT included by default,
+        // explicitly necessary) - needs `partial` on the class for that, otherwise
+        // the generated formatter code would have no access to it.
         [MemoryPackInclude]
         private readonly string? _displaySymbol;
 
@@ -52,12 +52,12 @@ namespace fire.Values
 
         public bool IsUnitless => Dimensions.Count == 0;
 
-        /// <summary>Das Symbol einer benannten Einheit (`mm`), null bei einer abgeleiteten (der native Backend schreibt es in seine Einheitentabelle).</summary>
+        /// <summary>The symbol of a named unit (`mm`), null for a derived one (the native backend writes it into its unit table).</summary>
         [MemoryPackIgnore]
         public string? DisplaySymbol => _displaySymbol;
 
         // ---------------------------------------------------------------
-        // Eingebaute Präfixe (dezimal)
+        // Built-in prefixes (decimal)
         // ---------------------------------------------------------------
         private static readonly Dictionary<char, double> Prefixes = new()
         {
@@ -71,13 +71,13 @@ namespace fire.Values
             ['G'] = 1e9,
         };
 
-        // Präfixfähige Basiseinheiten: Symbol -> kanonisches Basissymbol
-        // (bei diesen ist Basissymbol == Symbol, aber explizit gehalten für Klarheit)
+        // Prefixable base units: symbol -> canonical base symbol
+        // (for these, base symbol == symbol, but kept explicit for clarity)
         private static readonly HashSet<string> PrefixableBaseUnits = new() { "m", "g", "s", "b", "B" };
 
-        // "B" (Byte) ist selbst schon eine benannte, präfixfähige Einheit,
-        // deren kanonische Basisdimension "b" (Bit) ist, mit Skalierungsfaktor 8.
-        // Nicht-präfixfähige, aber zu "s" kompatible Zeiteinheiten mit festem Faktor.
+        // "B" (byte) is itself already a named, prefixable unit,
+        // whose canonical base dimension is "b" (bit), with scale factor 8.
+        // Non-prefixable but "s"-compatible time units with a fixed factor.
         private static readonly Dictionary<string, (string baseSymbol, double scale)> NamedUnits = new()
         {
             ["m"] = ("m", 1.0),
@@ -90,29 +90,29 @@ namespace fire.Values
             ["d"] = ("s", 86400.0),
         };
 
-        // Einheiten, die selbst keinen Präfix vor sich zulassen (auch wenn ihre
-        // Basisdimension prinzipiell präfixfähig ist, z.B. "s" via "ms").
+        // Units that themselves allow no prefix in front of them (even if their
+        // base dimension is in principle prefixable, e.g. "s" via "ms").
         private static readonly HashSet<string> NonPrefixable = new() { "min", "h", "d" };
 
         /// <summary>
-        /// Parst eine Einheiten-Suffix-Zeichenfolge, wie sie direkt an einem
-        /// Zahlenliteral steht (z.B. "mm", "km", "min", "apples").
-        /// Leere Zeichenfolge -> Unitless.
+        /// Parses a unit-suffix string as it stands directly on a
+        /// number literal (e.g. "mm", "km", "min", "apples").
+        /// Empty string -> Unitless.
         /// </summary>
         public static Unit Parse(string symbol)
         {
             if (string.IsNullOrEmpty(symbol))
                 return Unitless;
 
-            // 1) Exakter Treffer auf einen benannten (ggf. nicht-präfixfähigen) Unit-Namen zuerst,
-            //    damit z.B. "min" nicht fälschlich als Präfix 'm' + Basis "in" zerlegt wird.
+            // 1) Exact hit on a named (possibly non-prefixable) unit name first,
+            //    so that e.g. "min" is not wrongly split into prefix 'm' + base "in".
             if (NamedUnits.TryGetValue(symbol, out var named))
             {
                 var dims = new Dictionary<string, int> { [named.baseSymbol] = 1 };
                 return new Unit(dims, named.scale, symbol);
             }
 
-            // 2) Präfix + präfixfähige Basiseinheit, z.B. "mm" = 'm'(milli) + "m"(Meter)
+            // 2) Prefix + prefixable base unit, e.g. "mm" = 'm'(milli) + "m"(metre)
             if (symbol.Length >= 2)
             {
                 char prefixChar = symbol[0];
@@ -127,7 +127,7 @@ namespace fire.Values
                 }
             }
 
-            // 3) Unbekannt -> atomare Einheit, kompatibel nur zu sich selbst.
+            // 3) Unknown -> atomic unit, compatible only with itself.
             var atomicDims = new Dictionary<string, int> { [symbol] = 1 };
             return new Unit(atomicDims, 1.0, symbol);
         }
@@ -143,8 +143,8 @@ namespace fire.Values
             return true;
         }
 
-        /// <summary>Faktor, mit dem ein Zahlenwert in dieser Unit multipliziert werden muss,
-        /// um den äquivalenten Wert in <paramref name="target"/> zu erhalten.</summary>
+        /// <summary>Factor by which a numeric value in this unit must be multiplied
+        /// to obtain the equivalent value in <paramref name="target"/>.</summary>
         public double ConversionFactorTo(Unit target)
         {
             if (!IsCompatibleWith(target))
@@ -154,15 +154,15 @@ namespace fire.Values
 
         public static Unit Multiply(Unit a, Unit b)
         {
-            // Häufigster Fall: Skalierung mit einer reinen Zahl (z.B.
-            // `20mm / 2`, `3 * 5km`) - Ergebnis soll GENAU die Einheit des
-            // anderen Faktors sein (inkl. dessen Anzeige-Symbol), nicht eine
-            // neu konstruierte, unbenannte Einheit. Ohne das würde z.B.
-            // `20mm / 2` zwar korrekt intern als 10 * Scale(0.001) berechnet,
-            // aber ohne Anzeige-Symbol als "10m" statt "10mm" dargestellt
-            // (ToString() zeigt für unbenannte Einheiten nur die nackte
-            // Basisdimension, ignoriert dabei aber deren Scale-Faktor - siehe
-            // ToString()-Kommentar unten).
+            // Most common case: scaling with a pure number (e.g.
+            // `20mm / 2`, `3 * 5km`) - the result should be EXACTLY the unit of the
+            // other factor (including its display symbol), not a
+            // newly constructed, unnamed unit. Without this, e.g.
+            // `20mm / 2` would indeed be computed correctly internally as 10 * Scale(0.001),
+            // but displayed without a display symbol as "10m" instead of "10mm"
+            // (ToString() shows only the bare base dimension for unnamed units,
+            // while ignoring their scale factor - see
+            // ToString() comment below).
             if (b.IsUnitless) return a;
             if (a.IsUnitless) return b;
 
@@ -173,17 +173,17 @@ namespace fire.Values
                 if (dims[key] == 0) dims.Remove(key);
             }
 
-            // Zweithäufigster Fall: dieselbe benannte Einheit mit sich selbst
-            // multipliziert (z.B. `radius * radius` für eine Fläche) - dafür
-            // einen sinnvollen Anzeige-Namen synthetisieren ("mm^2" statt nur
-            // "m^2", das den Scale-Faktor sonst optisch verschluckt). Deckt
-            // bewusst nur das direkte Quadrat ab (a*a), nicht verkettete
-            // höhere Potenzen (a*a*a für Volumen) - danach ist das Zwischen-
-            // ergebnis schon "mm^2" benannt und matcht "mm" nicht mehr, fällt
-            // also auf die (dann wieder scale-blinde) Dimensions-Anzeige
-            // zurück. Für wirklich gemischte Einheiten (z.B. m*s) bleibt es
-            // ebenfalls bei der reinen Dimensions-Anzeige - dort ist Scale in
-            // der Praxis meist 1.0, das Problem tritt also seltener auf.
+            // Second most common case: the same named unit multiplied
+            // by itself (e.g. `radius * radius` for an area) - synthesise
+            // a sensible display name for it ("mm^2" instead of just
+            // "m^2", which otherwise visually swallows the scale factor). Deliberately
+            // covers only the direct square (a*a), not chained
+            // higher powers (a*a*a for volume) - after that the intermediate
+            // result is already named "mm^2" and no longer matches "mm", so it falls
+            // back to the (then again scale-blind) dimension display.
+            // For truly mixed units (e.g. m*s) it likewise stays
+            // with the pure dimension display - there scale is
+            // usually 1.0 in practice, so the problem occurs less often.
             string? display = a._displaySymbol != null && a._displaySymbol == b._displaySymbol
                 ? $"{a._displaySymbol}^2"
                 : null;
@@ -193,11 +193,11 @@ namespace fire.Values
 
         public static Unit Divide(Unit a, Unit b)
         {
-            // Siehe Multiply() - derselbe Skalierungs-Sonderfall, hier nur für
-            // den Nenner sinnvoll (b unitless): `a` bleibt unverändert. Ist
-            // dagegen `a` unitless (z.B. `2 / 20mm`), ist das Ergebnis
-            // dimensional etwas GENUIN NEUES (1/Länge) - dafür bewusst KEIN
-            // Sonderfall, das muss durch die normale Dimensions-Konstruktion.
+            // See Multiply() - the same scaling special case, here sensible only for
+            // the denominator (b unitless): `a` stays unchanged. If, on the other hand,
+            // `a` is unitless (e.g. `2 / 20mm`), the result is
+            // dimensionally something GENUINELY NEW (1/length) - deliberately NO
+            // special case for that, it must go through the normal dimension construction.
             if (b.IsUnitless) return a;
 
             var dims = new Dictionary<string, int>(a.Dimensions);
@@ -212,7 +212,7 @@ namespace fire.Values
         public bool Equals(Unit? other)
         {
             if (other is null) return false;
-            if (ReferenceEquals(this, other)) return true; // der häufigste Fall: dieselbe Einheit (meist `Unitless`)
+            if (ReferenceEquals(this, other)) return true; // the most common case: the same unit (usually `Unitless`)
             if (!IsCompatibleWith(other)) return false;
             return Math.Abs(Scale - other.Scale) < 1e-12;
         }
@@ -232,8 +232,8 @@ namespace fire.Values
             if (IsUnitless) return "unitless";
             if (_displaySymbol != null) return _displaySymbol;
 
-            // Positive Exponenten -> Zähler, negative -> Nenner, dargestellt als
-            // Bruch (z.B. "m/s" statt "m*s^-1", "m/s^2" statt "m*s^-2").
+            // Positive exponents -> numerator, negative -> denominator, displayed as a
+            // fraction (e.g. "m/s" instead of "m*s^-1", "m/s^2" instead of "m*s^-2").
             var numerator = new List<string>();
             var denominator = new List<string>();
             foreach (var (key, exp) in Dimensions.OrderBy(k => k.Key))
@@ -253,17 +253,17 @@ namespace fire.Values
                 dimPart = $"{num}/{den}";
             }
 
-            // Ohne eigenes Anzeige-Symbol (z.B. verkettete Multiplikation wie
-            // `a*a*a` für ein Volumen, oder wirklich gemischte Einheiten mit
-            // krummem Skalierungsfaktor) zeigt die reine Dimensions-Anzeige
-            // oben nur die BASIS-Dimension (z.B. "m^3"), ignoriert dabei aber
-            // einen von 1.0 abweichenden Scale-Faktor - der Zahlenwert selbst
-            // ist trotzdem korrekt (siehe Multiply/Divide), nur die Anzeige
-            // würde ihn sonst STILLSCHWEIGEND falsch interpretierbar machen
-            // (z.B. "10" bei tatsächlich 10 Kubik-Millimetern als "10 m^3"
-            // gelesen). Deshalb den Faktor explizit ausweisen, statt ihn zu
-            // verschlucken - kein hübscher Einheitenname, aber wenigstens
-            // nicht irreführend.
+            // Without a display symbol of its own (e.g. chained multiplication such as
+            // `a*a*a` for a volume, or truly mixed units with an
+            // odd scale factor) the pure dimension display
+            // above shows only the BASE dimension (e.g. "m^3"), while ignoring
+            // a scale factor differing from 1.0 - the numeric value itself
+            // is nevertheless correct (see Multiply/Divide), only the display
+            // would otherwise make it SILENTLY open to misinterpretation
+            // (e.g. "10" for actually 10 cubic millimetres read
+            // as "10 m^3"). Therefore state the factor explicitly instead of
+            // swallowing it - not a pretty unit name, but at least
+            // not misleading.
             if (Math.Abs(Scale - 1.0) > 1e-12)
                 return $"{dimPart}(×{Scale.ToString("G", System.Globalization.CultureInfo.InvariantCulture)})";
 

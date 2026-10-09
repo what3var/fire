@@ -166,8 +166,8 @@ namespace fire.Editor
             return starts.ToArray();
         }
 
-        /// <summary>1-basierte (Zeile, Spalte) -> absoluter Zeichen-Offset im
-        /// Quelltext.</summary>
+        /// <summary>1-based (line, column) -> absolute character offset in the
+        /// source text.</summary>
         private static int ToOffset(int[] lineStarts, int line, int column)
         {
             int idx = line - 1;

@@ -48,7 +48,7 @@ namespace fire.Runtime
         /// <summary>Verwaltete DLLs: Assembly-Name -> Pfad.</summary>
         public SortedDictionary<string, string> Assemblies { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>Native Bibliotheken: Dateiname -> Pfad.</summary>
+        /// <summary>Native libraries: file name -> path.</summary>
         public SortedDictionary<string, string> Natives { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>References that neither lie as a file next to the compiler nor belong to the framework (should be empty;
@@ -118,7 +118,7 @@ namespace fire.Runtime
                 if (!Directory.Exists(lib)) continue;
                 var tfms = Directory.GetDirectories(lib);
                 Array.Sort(tfms, StringComparer.OrdinalIgnoreCase);
-                Array.Reverse(tfms); // neuestes Framework zuerst
+                Array.Reverse(tfms); // newest framework first
                 dirs.AddRange(tfms);
             }
             dirs.Add(baseDir);
@@ -146,7 +146,7 @@ namespace fire.Runtime
             return File.Exists(direct) ? direct : null;
         }
 
-        /// <summary>Runtime-Identifier der Plattform, in Suchreihenfolge (spezifisch vor allgemein).</summary>
+        /// <summary>Runtime identifier of the platform, in search order (specific before general).</summary>
         private static IEnumerable<string> RuntimeIdentifiers()
         {
             string arch = RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();

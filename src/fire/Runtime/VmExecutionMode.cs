@@ -1,29 +1,29 @@
 namespace fire.Runtime
 {
     /// <summary>
-    /// Steuert, wie viel Laufzeit-Overhead die VM sich leistet - zwei Stufen
-    /// oberhalb des Standardverhaltens (<see cref="Debug"/>):
+    /// Controls how much runtime overhead the VM affords itself - two levels
+    /// above the default behaviour (<see cref="Debug"/>):
     ///
-    /// - <see cref="Debug"/> (Default): alle Sicherheitsprüfungen (Array-/Puffer-
-    ///   Bounds, Zugriffsmodifikatoren, Einheiten-Vorgaben von Feldern) aktiv.
+    /// - <see cref="Debug"/> (default): all safety checks (array/buffer
+    ///   bounds, access modifiers, unit requirements of fields) active.
     ///
-    /// - <see cref="Release"/>: wie Debug - früher senkte dieser Modus den
-    ///   Overhead der Shutdown-Prüfung pro Instruktion; die läuft inzwischen in
-    ///   JEDEM Modus nur noch an sicheren Punkten (Schleifen-Rücksprung, Aufruf,
-    ///   `leave`/`terminate`, siehe VM.PollSignals) und kostet dort einen
-    ///   Vergleich - der Modus unterscheidet sich von Debug nicht mehr.
+    /// - <see cref="Release"/>: like Debug - this mode used to lower the
+    ///   overhead of the shutdown check per instruction; that now runs in
+    ///   EVERY mode only at safe points (loop back-edge, call,
+    ///   `leave`/`terminate`, see VM.PollSignals) and costs one
+    ///   comparison there - the mode no longer differs from Debug.
     ///
-    /// - <see cref="Performance"/>: zusätzlich werden die
-    ///   Array-/Puffer-Bounds-Prüfungen übersprungen (siehe ScriptArray/
-    ///   Values.ByteBuffer, jeweils *Unchecked-Varianten) - ein ungültiger
-    ///   Index führt dann zu einer ROHEN, UNGEFANGENEN .NET-
-    ///   IndexOutOfRangeException (das Betriebssystem/.NET prüft Array-
-    ///   Zugriffe ohnehin immer selbst, das lässt sich in verwaltetem C#
-    ///   nicht vollständig umgehen - "Bounds-Checks abschalten" bedeutet
-    ///   hier konkret: die aufwendigere Umwandlung in eine fangbare,
-    ///   ordentliche Skript-Exception entfällt, nicht die Speichersicherheit
-    ///   selbst) statt einer fangbaren `IndexOutOfBoundsException`. Nur für
-    ///   bereits ausführlich getesteten, vertrauenswürdigen Code gedacht.
+    /// - <see cref="Performance"/>: additionally the
+    ///   array/buffer bounds checks are skipped (see ScriptArray/
+    ///   Values.ByteBuffer, each *Unchecked variants) - an invalid
+    ///   index then leads to a RAW, UNCAUGHT .NET
+    ///   IndexOutOfRangeException (the operating system/.NET always checks array
+    ///   accesses itself anyway, that cannot be
+    ///   bypassed completely in managed C# - "switching off bounds checks" means
+    ///   concretely here: the more expensive conversion into a catchable,
+    ///   proper script exception is dropped, not the memory safety
+    ///   itself) instead of a catchable `IndexOutOfBoundsException`. Intended only for
+    ///   code that has already been thoroughly tested and is trustworthy.
     /// </summary>
     public enum VmExecutionMode
     {

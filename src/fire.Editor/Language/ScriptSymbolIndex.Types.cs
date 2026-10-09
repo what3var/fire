@@ -576,7 +576,7 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Typ eines Mitglieds
+        // Type of a member
         // -----------------------------------------------------------
 
         private ExprType TypeOfMember(MemberInfo member, int depth)
@@ -748,8 +748,8 @@ namespace fire.Editor
                     continue;
                 }
 
-                // 'T name' (auch 'foreach (T name in ...)', 'catch (T name)'), T
-                // evtl. qualifiziert ('Geometry.Circle name').
+                // 'T name' (also 'foreach (T name in ...)', 'catch (T name)'), T
+                // possibly qualified ('Geometry.Circle name').
                 if ((t.Type == TokenType.Identifier || IsTypeKeyword(t.Type)) && k + 1 < n
                     && _tokens[k + 1].Type == TokenType.Identifier && _tokens[k + 1].Lexeme == name
                     && !_tokens[k + 1].NewlineBefore)

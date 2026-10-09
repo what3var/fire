@@ -13,7 +13,7 @@ namespace UI {
             this.children = new List()
         }
 
-        // Haengt einen Knoten als Kind an; er gehoert diesem Knoten.
+        // Appends a node as a child; it belongs to this node.
         Add(node) {
             node.TakeTo(this)
             node.parent = this

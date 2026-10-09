@@ -3,16 +3,16 @@ using fire.Values;
 
 namespace fire.Runtime
 {
-    /// <summary>Ein Zeiger wird ausserhalb seines Bereichs benutzt (SPEC 8.3): ein Element jenseits der Grenzen eines Arrays/Puffers, ein Versatz ungleich 0 bei einem Zeiger auf eine Variable oder ein
-    /// Feld (ein "Array" mit genau einem Element), oder das Array/der Puffer ist zerstoert. Die VM macht daraus die fangbare `IndexOutOfBoundsException` bzw. `DestroyedException`.</summary>
+    /// <summary>A pointer is used outside its range (SPEC 8.3): an element beyond the bounds of an array/buffer, an offset other than 0 for a pointer to a variable or a
+    /// field (an "array" with exactly one element), or the array/buffer is destroyed. The VM turns this into the catchable `IndexOutOfBoundsException` or `DestroyedException`.</summary>
     public sealed class PointerRangeException : Exception
     {
         public long Index { get; }
         public long Length { get; }
-        /// <summary>"array" oder "buffer", wenn das Ziel zerstoert ist (sonst null).</summary>
+        /// <summary>"array" or "buffer" if the target is destroyed (otherwise null).</summary>
         public string? DestroyedKind { get; }
         public bool Destroyed => DestroyedKind != null;
-        /// <summary>"Array index" fuer Array-/Puffer-Elemente, "Pointer offset" fuer Variablen und Felder.</summary>
+        /// <summary>"Array index" for array/buffer elements, "Pointer offset" for variables and fields.</summary>
         public string What { get; }
         public PointerRangeException(string what, long index, long length, string? destroyedKind = null)
             : base(destroyedKind != null ? $"Access to a destroyed {destroyedKind}." : $"{what} {index} out of range (length {length}).")
@@ -21,9 +21,9 @@ namespace fire.Runtime
         }
     }
 
-    /// <summary>Zeigt auf einen konkreten Slot in einem konkreten Scope (lokale oder globale Variable). Ein Zeiger auf eine Variable ist wie ein Zeiger auf ein Array mit genau
-    /// einem Element (C): `p + n` ist erlaubt (auch `p - 1 + 1`), benutzt werden darf nur der Versatz 0 - sonst `IndexOutOfBoundsException`. (Frueher rueckte der Zeiger zum Nachbar-Slot des Scopes;
-    /// den gibt es im nativ uebersetzten Code nicht - dort sind die Variablen C++-Variablen.)</summary>
+    /// <summary>Points to a concrete slot in a concrete scope (local or global variable). A pointer to a variable is like a pointer to an array with exactly
+    /// one element (C): `p + n` is allowed (also `p - 1 + 1`), only offset 0 may be used - otherwise `IndexOutOfBoundsException`. (Formerly the pointer moved to the neighbouring slot of the scope;
+    /// that does not exist in natively translated code - there the variables are C++ variables.)</summary>
     public sealed class ScopeSlotPointerTarget : PointerTarget
     {
         public Scope Scope { get; }
@@ -35,7 +35,7 @@ namespace fire.Runtime
             Scope = scope;
             Slot = slot;
             Offset = offset;
-            scope.MarkEscaped(); // die Scope ist ab jetzt von außen erreichbar und wird nicht wiederverwendet (siehe Scope.CanRecycle)
+            scope.MarkEscaped(); // the scope is now reachable from outside and is not reused (see Scope.CanRecycle)
         }
 
         public override Value Read() => Offset == 0 ? Scope.GetSlot(Slot) : throw new PointerRangeException("Pointer offset", Offset, 1);
@@ -57,7 +57,7 @@ namespace fire.Runtime
         public override int GetHashCode() => System.HashCode.Combine(Scope, Slot, Offset);
     }
 
-    /// <summary>Zeigt auf ein benanntes Feld einer konkreten Objektinstanz - wie ein Zeiger auf eine Variable ein "Array" mit einem Element (siehe <see cref="ScopeSlotPointerTarget"/>).</summary>
+    /// <summary>Points to a named field of a concrete object instance - like a pointer to a variable an "array" with one element (see <see cref="ScopeSlotPointerTarget"/>).</summary>
     public sealed class FieldPointerTarget : PointerTarget
     {
         public ObjectInstance Instance { get; }
@@ -90,7 +90,7 @@ namespace fire.Runtime
         public override int GetHashCode() => System.HashCode.Combine(Instance, FieldName, Offset);
     }
 
-    /// <summary>Zeigt auf ein Element eines Arrays oder Puffers (Argument fuer einen `ref`-Parameter, `p + n`). Der Index und das Array werden beim Lesen/Schreiben geprueft.</summary>
+    /// <summary>Points to an element of an array or buffer (argument for a `ref` parameter, `p + n`). The index and the array are checked on read/write.</summary>
     public sealed class ElementPointerTarget : PointerTarget
     {
         private readonly ScriptArray? _array;

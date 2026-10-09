@@ -4,9 +4,9 @@ using fire.Values;
 
 namespace fire.Runtime
 {
-    /// <summary>Eine einzelne Nachricht in einer Actor-Mailbox: Methodenname +
-    /// Argumente, genau wie bei einem normalen Methodenaufruf - nur eben nicht
-    /// sofort ausgeführt, sondern erst bei `process`/`try process` (siehe
+    /// <summary>A single message in an actor mailbox: method name +
+    /// arguments, just like a normal method call - only not
+    /// executed immediately, but only on `process`/`try process` (see
     /// Ast.ProcessStmt/TryProcessExpr, VM.ProcessOneMessage).</summary>
     public readonly struct ActorMessage
     {
@@ -20,23 +20,23 @@ namespace fire.Runtime
         }
     }
 
-    /// <summary>Die Mailbox EINER Actor-Instanz (docs/THREADING_DESIGN.md
-    /// Abschnitt 2) - jede Actor-Instanz (siehe Runtime.ObjectInstance.
-    /// Mailbox) bekommt bei `new` genau eine eigene. `Enqueue` wird von
-    /// JEDEM Thread aus aufgerufen (immer dann, wenn irgendwo im Programm
-    /// eine Methode auf einer Actor-Referenz aufgerufen wird, siehe
-    /// VM.CallMethod), `TryProcessOne` NUR vom "Heimat"-Thread des Actors
-    /// (durch `process`/`try process` - diese Beschränkung wird hier bewusst
-    /// NICHT technisch erzwungen, siehe Resolver.ResolveProcessTarget für
-    /// die eigentliche Prüfung).
+    /// <summary>The mailbox of ONE actor instance (docs/THREADING_DESIGN.md
+    /// section 2) - each actor instance (see Runtime.ObjectInstance.
+    /// Mailbox) gets exactly one of its own on `new`. `Enqueue` is called from
+    /// ANY thread (whenever anywhere in the program
+    /// a method is called on an actor reference, see
+    /// VM.CallMethod), `TryProcessOne` ONLY from the actor's "home" thread
+    /// (through `process`/`try process` - this restriction is deliberately
+    /// NOT technically enforced here, see Resolver.ResolveProcessTarget for
+    /// the actual check).
     ///
-    /// Das `SemaphoreSlim` hält den "wie viele Nachrichten warten"-Zähler
-    /// IMMER exakt synchron mit der Queue: jedes Enqueue erhöht ihn um
-    /// genau 1, jedes ERFOLGREICHE TryProcessOne (ob blockierend oder nicht)
-    /// verringert ihn um genau 1 - so kann `try process` einfach `Wait(0)`
-    /// probieren (nicht-blockierendes Anfragen "ist gerade was da?"), ohne
-    /// dass sich Zähler und tatsächlicher Queue-Inhalt je auseinander
-    /// entwickeln können.</summary>
+    /// The `SemaphoreSlim` keeps the "how many messages are waiting" counter
+    /// ALWAYS exactly in sync with the queue: each Enqueue raises it by
+    /// exactly 1, each SUCCESSFUL TryProcessOne (blocking or not)
+    /// lowers it by exactly 1 - so `try process` can simply try `Wait(0)`
+    /// (non-blocking asking "is anything there right now?"), without
+    /// counter and actual queue content ever being able to drift
+    /// apart.</summary>
     public sealed class ActorMailbox
     {
         private readonly ConcurrentQueue<ActorMessage> _queue = new();
@@ -48,10 +48,10 @@ namespace fire.Runtime
             _signal.Release();
         }
 
-        /// <summary>`blocking=true` (siehe Ast.ProcessStmt): wartet, bis
-        /// mindestens eine Nachricht da ist, und liefert dann IMMER `true`.
-        /// `blocking=false` (siehe Ast.TryProcessExpr): liefert sofort
-        /// `false`, wenn gerade nichts wartet.</summary>
+        /// <summary>`blocking=true` (see Ast.ProcessStmt): waits until
+        /// at least one message is there, and then ALWAYS returns `true`.
+        /// `blocking=false` (see Ast.TryProcessExpr): returns `false`
+        /// immediately if nothing is waiting right now.</summary>
         public bool TryProcessOne(bool blocking, out ActorMessage message)
         {
             if (blocking)
@@ -62,10 +62,10 @@ namespace fire.Runtime
                 return false;
             }
 
-            // Der Zähler wurde oben bereits verringert (Wait ist hier immer
-            // erfolgreich durchgelaufen) - die Queue MUSS an dieser Stelle
-            // mindestens ein Element haben (siehe Klassenkommentar zur
-            // Synchronität von Zähler und Queue-Inhalt).
+            // The counter was already lowered above (Wait has always run through
+            // successfully here) - the queue MUST have at least one element at this point
+            // (see the class comment on the
+            // synchronicity of counter and queue content).
             bool ok = _queue.TryDequeue(out message);
             System.Diagnostics.Debug.Assert(ok, "ActorMailbox: signal without a matching message - counter and queue have diverged.");
             return ok;

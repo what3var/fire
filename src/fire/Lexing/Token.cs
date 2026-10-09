@@ -6,11 +6,11 @@ namespace fire.Lexing
         IntLiteral,
         FloatLiteral,
         StringLiteral,
-        InterpolatedStringLiteral, // $"..." - LiteralValue trägt eine List<InterpolationSegment> (siehe dort)
+        InterpolatedStringLiteral, // $"..." - LiteralValue carries a List<InterpolationSegment> (see there)
         CharLiteral,
         Identifier,
 
-        // Schlüsselwörter – Deklaration/Kontrollfluss
+        // Keywords – declaration/control flow
         Var, Func, Class, Construct, Destruct, Return,
         If, Else, While, For, Foreach, In, On, New, Base, This,
         Try, Catch, Finally, Throw,
@@ -18,8 +18,8 @@ namespace fire.Lexing
         Extern, Unsafe,
         Interface,
         Readonly, Enum,
-        Static, // 'static' bei Feldern/Methoden/Properties (siehe Parser.ParseClassMember)
-        Public, Private, Protected, // Zugriffsmodifikatoren für Klassenmitglieder (siehe Parser.ParseAccessModifier)
+        Static, // 'static' on fields/methods/properties (see Parser.ParseClassMember)
+        Public, Private, Protected, // Access modifiers for class members (see Parser.ParseAccessModifier)
         Namespace, // 'namespace Name { ... }' (siehe Parser.ParseNamespaceDecl/FlattenNamespaces)
         With,
         Extends,
@@ -27,17 +27,17 @@ namespace fire.Lexing
         Continue,
         Where,
         Fire, Taking,
-        Operator, // 'operator' - Operator-Überladung (siehe Parser.ParseOperatorMember)
+        Operator, // 'operator' - operator overloading (see Parser.ParseOperatorMember)
         Sync, Flat,
-        Copy, // 'copy ausdruck' - tiefe Kopie (siehe Ast.UnaryOp.DeepCopy); 'flat ausdruck' ist die flache (UnaryOp.FlatCopy)
-        Take, // 'take ausdruck' - der Besitz geht an den Aufruf bzw. an den Besitzer des Zuweisungsziels (siehe Ast.UnaryOp.Take, SPEC 2.2)
+        Copy, // 'copy expression' - deep copy (see Ast.UnaryOp.DeepCopy); 'flat expression' is the flat one (UnaryOp.FlatCopy)
+        Take, // 'take expression' - ownership goes to the call or to the owner of the assignment target (see Ast.UnaryOp.Take, SPEC 2.2)
         Leave, Terminate,
         Actor, Process,
 
-        // Schlüsselwörter – Literale/Typen
+        // Keywords – literals/types
         True, False, Undefined,
         KwBool, KwInt, KwFloat, KwChar, KwString,
-        KwByte, // 'byte' - reines Sugar für 'int[8]' (siehe Parser.ParseTypeRef), UND Element-Typ für 'new byte[n]' -> ByteBuffer statt ScriptArray
+        KwByte, // 'byte' - pure sugar for 'int[8]' (see Parser.ParseTypeRef), AND element type for 'new byte[n]' -> ByteBuffer instead of ScriptArray
 
         // Logik
         And, Or,
@@ -45,17 +45,17 @@ namespace fire.Lexing
         // Operatoren
         Plus, Minus, Star, Slash, Percent,
         PlusPlus, MinusMinus, // ++ / -- (siehe Parser.ParseUnary/ParsePostfix)
-        Caret,       // '^'  -> Potenz (NICHT bitweises XOR - das ist Hash, siehe dort)
-        Pipe,        // '|'  -> bitweises Oder. '||' bleibt eigenes Token (Or).
+        Caret,       // '^'  -> power (NOT bitwise XOR - that is Hash, see there)
+        Pipe,        // '|'  -> bitwise or. '||' remains a token of its own (Or).
         Assign, Eq, NotEq, Lt, LtEq, Gt, GtEq,
-        Bang,        // '!'  -> als Präfix: logische Negation. Als Suffix: Typ-Coercion.
-        Tilde,       // '~'  -> Präfix: bitweise Inversion
-        Amp,         // '&'  -> Präfix: Address-of (unsafe). '&&' bleibt eigenes Token (And).
-        Colon,       // ':'  -> Einheiten-Coercion / Typ-Deklaration (kontextabhängig)
+        Bang,        // '!'  -> as a prefix: logical negation. As a suffix: type coercion.
+        Tilde,       // '~'  -> prefix: bitwise inversion
+        Amp,         // '&'  -> prefix: address-of (unsafe). '&&' remains a token of its own (And).
+        Colon,       // ':'  -> unit coercion / type declaration (context-dependent)
         Arrow,       // '=>'
         Dot, Comma, Semicolon,
         LParen, RParen, LBrace, RBrace, LBracket, RBracket,
-        Hash,        // '#'  -> Präprozessor-Direktiven (Statement-Anfang, siehe Parser.ParseDirective) ODER bitweises XOR (Ausdrucks-Mitte, siehe Parser.ParseBitwiseXor) - rein positionsabhängig unterschieden, kein Konflikt: eine Direktive steht immer am STATEMENT-Anfang, XOR immer NACH einem bereits geparsten linken Operanden.
+        Hash,        // '#'  -> preprocessor directives (statement start, see Parser.ParseDirective) OR bitwise XOR (mid-expression, see Parser.ParseBitwiseXor) - distinguished purely by position, no conflict: a directive always sits at the STATEMENT start, XOR always AFTER an already parsed left operand.
 
         Eof,
     }
@@ -67,24 +67,24 @@ namespace fire.Lexing
         public int Line { get; }
         public int Column { get; }
 
-        // Länge des Tokens im QUELLTEXT (in Zeichen). Bei Strings/Chars weicht sie von Lexeme.Length ab (Lexeme ist der Inhalt ohne
-        // Anführungszeichen und nach Escape-Verarbeitung; bei `$"..."` nur ein Platzhalter) - gebraucht für Editor-Hervorhebung.
-        // Vom Lexer in Tokenize gesetzt; 0 bei von Hand erzeugten Tokens.
+        // Length of the token in the SOURCE TEXT (in characters). For strings/chars it differs from Lexeme.Length (Lexeme is the content without
+        // quotation marks and after escape processing; for `$"..."` only a placeholder) - needed for editor highlighting.
+        // Set by the lexer in Tokenize; 0 for hand-made tokens.
         public int Length { get; init; }
 
-        // Nur für numerische Literale gesetzt: der direkt am Literal
-        // anhängende Einheiten-Suffix ("mm", "km", ...), oder null/"" wenn keiner.
+        // Set only for numeric literals: the unit suffix attached
+        // directly to the literal ("mm", "km", ...), or null/"" if there is none.
         public string? UnitSuffix { get; }
 
-        // true, wenn zwischen dem vorherigen Token und diesem mindestens ein
-        // Zeilenumbruch im Quelltext lag. Grundlage für die Statement-Trennungs-
-        // regel (";" ODER Zeilenumbruch zwischen Statements) und dafür, dass
-        // "optionale Weiterlese"-Entscheidungen (Postfix-Kette, Binär-Operatoren,
-        // Coercion-Lookahead) nicht versehentlich in die nächste Zeile greifen.
+        // true if there was at least one line break in the source text
+        // between the previous token and this one. Basis for the statement separation
+        // rule (";" OR line break between statements) and for ensuring that
+        // "optional continue reading" decisions (postfix chain, binary operators,
+        // coercion lookahead) do not accidentally reach into the next line.
         public bool NewlineBefore { get; }
 
-        // Ausgewerteter Literalwert (long für Int, double für Float,
-        // string für String/Char-Inhalt nach Escape-Verarbeitung).
+        // Evaluated literal value (long for int, double for float,
+        // string for string/char content after escape processing).
         public object? LiteralValue { get; }
 
         public Token(TokenType type, string lexeme, int line, int column,
@@ -105,15 +105,15 @@ namespace fire.Lexing
                 : $"{Type} '{Lexeme}' @ {Line}:{Column}";
     }
 
-    /// <summary>Ein Teilstück eines interpolierten Strings (`$"..."`), von
-    /// Lexer.ReadInterpolatedString erzeugt und im `LiteralValue` eines
-    /// InterpolatedStringLiteral-Tokens transportiert (als
-    /// `List&lt;InterpolationSegment&gt;`). `IsExpression == false`: `Text` ist
-    /// bereits fertig escape-verarbeiteter Literaltext. `IsExpression ==
-    /// true`: `Text` ist der ROHE, noch NICHT geparste Quelltext zwischen
-    /// `{` und `}`/`:` (der Parser lext/parst ihn eigenständig neu, siehe
-    /// Parser.ParsePrimary), `Format` der optionale Format-Spezifizierer
-    /// nach einem `:` auf oberster Klammerungsebene (z.B. "X", "F2") oder
-    /// null, falls keiner angegeben wurde.</summary>
+    /// <summary>A piece of an interpolated string (`$"..."`), produced by
+    /// Lexer.ReadInterpolatedString and carried in the `LiteralValue` of an
+    /// InterpolatedStringLiteral token (as
+    /// `List&lt;InterpolationSegment&gt;`). `IsExpression == false`: `Text` is
+    /// already finished, escape-processed literal text. `IsExpression ==
+    /// true`: `Text` is the RAW, not yet parsed source text between
+    /// `{` and `}`/`:` (the parser lexes/parses it again on its own, see
+    /// Parser.ParsePrimary), `Format` the optional format specifier
+    /// after a `:` at the top bracket level (e.g. "X", "F2") or
+    /// null if none was given.</summary>
     public sealed record InterpolationSegment(bool IsExpression, string Text, string? Format);
 }

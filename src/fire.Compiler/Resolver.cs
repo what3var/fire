@@ -1419,7 +1419,7 @@ namespace fire.Compiler
                         throw new ResolverException(
                             "'this' is not valid in a static method or static field initializer " +
                             "(no instance bound)", te.Line);
-                    break; // Laufzeit entscheidet, ob/was 'this' aktuell gebunden ist
+                    break; // Runtime decides whether/what 'this' is currently bound to
 
                 case BaseExpr be:
                     if (_inStaticMethod)

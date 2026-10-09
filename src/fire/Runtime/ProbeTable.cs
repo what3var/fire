@@ -4,29 +4,29 @@ using fire.Values;
 
 namespace fire.Runtime
 {
-    /// <summary>Eine Probe (`probe obj.member changed/changing handler`, docs/DESIGN_LAMBDA_REFLECTION_PROBE.md): ein Handler für
-    /// Schreibzugriffe auf ein Mitglied (oder alle, `Member == null`) eines Objekts.</summary>
+    /// <summary>A probe (`probe obj.member changed/changing handler`, docs/DESIGN_LAMBDA_REFLECTION_PROBE.md): a handler for
+    /// write accesses to a member (or all, `Member == null`) of an object.</summary>
     public sealed class ProbeEntry
     {
         public long Id { get; init; }
 
-        /// <summary>Name des Mitglieds, null = alle Mitglieder.</summary>
+        /// <summary>Name of the member, null = all members.</summary>
         public string? Member { get; init; }
 
-        /// <summary>`changing` (vor dem Schreiben, kann mit `false` abbrechen) oder `changed` (danach, nur bei geändertem Wert).</summary>
+        /// <summary>`changing` (before writing, can abort with `false`) or `changed` (afterwards, only if the value changed).</summary>
         public bool IsChanging { get; init; }
 
         public LambdaValue Handler { get; init; } = null!;
     }
 
-    /// <summary>Die Proben EINES Objekts (siehe <see cref="ObjectInstance.Probes"/>). Threadsicher: Proben können von jedem Thread gesetzt und
-    /// entfernt werden, gefeuert wird auf dem Thread des Schreibers.</summary>
+    /// <summary>The probes of ONE object (see <see cref="ObjectInstance.Probes"/>). Thread-safe: probes can be set and
+    /// removed from any thread, firing happens on the writer's thread.</summary>
     public sealed class ProbeTable
     {
         private readonly object _gate = new();
         private readonly List<ProbeEntry> _entries = new();
 
-        // Mitglieder, deren Handler gerade laufen: ein Schreiben darauf aus dem Handler heraus feuert nicht erneut (keine Rekursion)
+        // Members whose handlers are currently running: a write to them from inside the handler does not fire again (no recursion)
         private readonly HashSet<string> _running = new();
 
         public bool IsEmpty { get { lock (_gate) return _entries.Count == 0; } }
@@ -38,7 +38,7 @@ namespace fire.Runtime
             lock (_gate) return _entries.RemoveAll(e => e.Id == id) > 0;
         }
 
-        /// <summary>Entfernt alle Proben dieses Mitglieds (`member == null`: ausschließlich die für alle Mitglieder). Liefert die entfernten Ids.</summary>
+        /// <summary>Removes all probes of this member (`member == null`: only those for all members). Returns the removed ids.</summary>
         public List<long> RemoveMember(string? member)
         {
             var ids = new List<long>();
@@ -49,7 +49,7 @@ namespace fire.Runtime
             return ids;
         }
 
-        /// <summary>Entfernt alle Proben des Objekts. Liefert die entfernten Ids.</summary>
+        /// <summary>Removes all probes of the object. Returns the removed ids.</summary>
         public List<long> RemoveAll()
         {
             lock (_gate)
@@ -60,7 +60,7 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Gibt es Proben, die ein Schreiben auf `member` betreffen (für dieses Mitglied oder für alle)?</summary>
+        /// <summary>Are there probes affecting a write to `member` (for this member or for all)?</summary>
         public bool Affects(string member)
         {
             lock (_gate)
@@ -69,7 +69,7 @@ namespace fire.Runtime
             return false;
         }
 
-        /// <summary>Momentaufnahme der passenden Proben in der Reihenfolge ihrer Anmeldung.</summary>
+        /// <summary>Snapshot of the matching probes in the order of their registration.</summary>
         public List<ProbeEntry> Match(string member, bool changing)
         {
             var result = new List<ProbeEntry>();
@@ -83,8 +83,8 @@ namespace fire.Runtime
         public void EndRunning(string member) { lock (_gate) _running.Remove(member); }
     }
 
-    /// <summary>Welches Objekt gehört zu welchem Probe-Handle (`var h = probe ...; silence h`)? Schwach, damit ein vergessenes Handle ein
-    /// Objekt nicht am Leben hält.</summary>
+    /// <summary>Which object belongs to which probe handle (`var h = probe ...; silence h`)? Weak, so that a forgotten handle does not keep an
+    /// object alive.</summary>
     public static class ProbeRegistry
     {
         private static readonly Dictionary<long, WeakReference<ObjectInstance>> Owners = new();

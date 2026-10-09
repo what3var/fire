@@ -76,7 +76,7 @@ namespace fire.Terminal.Bridge
                 ["Height"] = args => Value.MakeUndefined() /*STUB*/,
                 ["ReadByte"] = args => Value.MakeUndefined() /*STUB*/,
                 ["WriteByte"] = args => Value.MakeUndefined() /*STUB*/,
-                // WICHTIG: neue Funktionen immer ANS ENDE, in BuildFramebufferFunctions in derselben Reihenfolge (Index = Position).
+                // IMPORTANT: always add new functions AT THE END, in BuildFramebufferFunctions in the same order (index = position).
                 ["Mode"] = args => Value.MakeUndefined() /*STUB*/,
                 ["ByteCount"] = args => Value.MakeUndefined() /*STUB*/,
                 ["ReadBytes"] = args => Value.MakeUndefined() /*STUB*/,
@@ -157,7 +157,7 @@ namespace fire.Terminal.Bridge
                     mgr.WriteByte(I(args[0]), I(args[1]), (byte)args[2].AsInt());
                     return Value.MakeUndefined();
                 },
-                // WICHTIG: neue Funktionen immer ANS ENDE, in BuildFramebufferFunctionStubs in derselben Reihenfolge (Index = Position).
+                // IMPORTANT: always add new functions AT THE END, in BuildFramebufferFunctionStubs in the same order (index = position).
                 ["Mode"] = args => Value.MakeInt((int)mgr.GetMode(I(args[0]))),
                 ["ByteCount"] = args => Value.MakeInt(mgr.GetByteCount(I(args[0]))),
                 ["ReadBytes"] = args => Value.MakeBuffer(new ByteBuffer(mgr.ReadBytes(I(args[0])), ByteConversions.HostByteOrder)),
@@ -577,7 +577,7 @@ namespace fire.Terminal.Bridge
                     this.pixelSize = pixelSize
                 }
 
-                // Abstand zwischen benachbarten Bahnen in mm
+                // Distance between adjacent tracks in mm
                 float StepOver { get { return this.lineWidth * (1.0 - this.overlap) } }
 
                 // Returns a List of ToolPath (empty if no place is wide enough for the line width). The mask: a framebuffer whose set pixels

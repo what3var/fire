@@ -16,7 +16,7 @@ namespace fire.Runtime
     /// bundle does not disturb it.
     ///
     /// Format (see dotnet/runtime, Microsoft.NET.HostModel.Bundle):
-    ///   [apphost][Datei 0][Datei 1]...[Header]
+    ///   [apphost][file 0][file 1]...[header]
     ///   In the apphost there is an 8-byte gap directly in front of a fixed 32-byte identifier (SHA-256 of ".net core bundle"),
     ///   where the header offset is entered.
     ///   Header: uint32 major(6), uint32 minor(0), int32 count, string BundleId, int64 DepsJsonOffset/-Size,

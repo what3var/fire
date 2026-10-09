@@ -9,7 +9,7 @@ namespace UI {
         string sortMember = ""
         bool descending = false
         var comparer
-        // Index des aktuellen Elements in `items`, -1: keins
+        // Index of the current element in `items`, -1: none
         int current = -1
         int sourceCount = -1
         // the source `items` was last built from (if `source` is replaced, Update rebuilds)
@@ -64,7 +64,7 @@ namespace UI {
             return result
         }
 
-        // Stabiles Sortieren durch Mischen (merge sort).
+        // Stable sorting by merging (merge sort).
         Sorted(list) {
             if (list.count < 2) { return list }
             var middle = list.count / 2
