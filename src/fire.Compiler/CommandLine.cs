@@ -8,25 +8,25 @@ using System.Linq;
 
 namespace fire.Compiler
 {
-    /// <summary>Die Art des Aufrufs auf der Befehlszeile.</summary>
+    /// <summary>The kind of invocation on the command line.</summary>
     public enum CommandKind { Run, Build, Native, Help }
 
-    /// <summary>Ergebnis des Auswertens der Befehlszeile (siehe <see cref="CommandLineParser.Parse"/>).</summary>
+    /// <summary>Result of evaluating the command line (see <see cref="CommandLineParser.Parse"/>).</summary>
     public sealed class CommandLineOptions
     {
         public CommandKind Command { get; init; }
-        /// <summary>Quelldateien in der angegebenen Reihenfolge (Pfade, wie eingegeben).</summary>
+        /// <summary>Source files in the given order (paths, as entered).</summary>
         public IReadOnlyList<string> Files { get; init; } = Array.Empty<string>();
-        /// <summary>`-m`: Ausführungsmodus; null = der im Skript (`#debug`/`#performance`) bzw. Release.</summary>
+        /// <summary>`-m`: execution mode; null = the one in the script (`#debug`/`#performance`) or release.</summary>
         public VmExecutionMode? Mode { get; init; }
-        /// <summary>`-f`: Genauigkeit von `float` (32 oder 64); null = der im Skript (`#floatwidth`) bzw. 64.</summary>
+        /// <summary>`-f`: precision of `float` (32 or 64); null = the one in the script (`#floatwidth`) or 64.</summary>
         public int? FloatWidth { get; init; }
 
         /// <summary>`-D name` (repeatable): extra symbols for `#if`.</summary>
         public IReadOnlyList<string> Defines { get; init; } = Array.Empty<string>();
-        /// <summary>`-t`: Zielprofil von `native` (siehe TargetProfile); null = der Rechner, auf dem der Compiler läuft.</summary>
+        /// <summary>`-t`: target profile of `native` (see TargetProfile); null = the machine the compiler runs on.</summary>
         public TargetProfile? Target { get; init; }
-        /// <summary>`-o`: Ausgabedatei von `build` (bzw. die C++-Datei von `native`).</summary>
+        /// <summary>`-o`: output file of `build` (or the C++ file of `native`).</summary>
         public string OutputFile { get; init; } = CommandLineParser.DefaultOutputFile;
         /// <summary>`-o` was given (otherwise the default depends on what is built).</summary>
         public bool OutputGiven { get; init; }
@@ -42,22 +42,22 @@ namespace fire.Compiler
         public bool KeepSources { get; init; }
         /// <summary>`-p`: the project of a solution to run or build (default: the startup project).</summary>
         public string? ProjectName { get; init; }
-        /// <summary>Gesetzt, wenn die Befehlszeile ungültig ist (Meldung für den Nutzer).</summary>
+        /// <summary>Set if the command line is invalid (message for the user).</summary>
         public string? Error { get; init; }
     }
 
     /// <summary>
-    /// Befehlszeile des Compilers:
+    /// Command line of the compiler:
     ///
-    ///   fire.Compiler run   datei1 [datei2 ...] [-m DEBUG|RELEASE|PERFORMANCE]
-    ///   fire.Compiler build datei1 [datei2 ...] [-o ziel.exe] [-m DEBUG|RELEASE|PERFORMANCE]
+    ///   fire.Compiler run   file1 [file2 ...] [-m DEBUG|RELEASE|PERFORMANCE]
+    ///   fire.Compiler build file1 [file2 ...] [-o target.exe] [-m DEBUG|RELEASE|PERFORMANCE]
     ///
-    /// `run` kompiliert und führt die Dateien (in dieser Reihenfolge zu EINEM Programm verbunden) sofort aus, `build`
-    /// erzeugt daraus eine eigenständige Datei (Vorgabe `out.exe`). Dateinamen ohne Leerzeichen brauchen keine
-    /// Anführungszeichen; mit Leerzeichen setzt die Shell sie wie üblich in Anführungszeichen - die Anführungszeichen
-    /// selbst kommen nie im Argument an. Falls doch (z.B. durch eine Shell, die sie durchreicht), werden umschließende
-    /// Anführungszeichen entfernt. Optionen dürfen an beliebiger Stelle stehen; `-m` ist ohne Beachtung der Groß-/
-    /// Kleinschreibung (auch `-m=DEBUG`, `--mode DEBUG`), ebenso `-o`/`--out`.
+    /// `run` compiles and executes the files (joined into ONE program in this order) immediately, `build`
+    /// produces a self-contained file from them (default `out.exe`). File names without spaces need no
+    /// quotation marks; with spaces the shell puts them in quotation marks as usual - the quotation marks
+    /// themselves never arrive in the argument. If they do (e.g. through a shell that passes them through), enclosing
+    /// quotation marks are removed. Options may stand at any position; `-m` is case-insensitive
+    /// (also `-m=DEBUG`, `--mode DEBUG`), likewise `-o`/`--out`.
     /// </summary>
     public static class CommandLineParser
     {
@@ -233,7 +233,7 @@ namespace fire.Compiler
         private static CommandLineOptions Fail(CommandKind command, string message) =>
             new() { Command = command, Error = message };
 
-        /// <summary>Erkennt `-m`/`--mode` (Wert im nächsten Argument) und `-m=X`/`--mode=X` (Wert inline).</summary>
+        /// <summary>Recognises `-m`/`--mode` (value in the next argument) and `-m=X`/`--mode=X` (value inline).</summary>
         private static bool TryOption(string arg, string shortName, string longName, out string? inlineValue)
         {
             inlineValue = null;
@@ -260,7 +260,7 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Entfernt umschließende Anführungszeichen (`"a b.script"` -> `a b.script`).</summary>
+        /// <summary>Removes enclosing quotation marks (`"a b.script"` -> `a b.script`).</summary>
         private static string Unquote(string text)
         {
             text = text.Trim();
@@ -270,13 +270,13 @@ namespace fire.Compiler
         }
     }
 
-    /// <summary>Führt die Befehle der Befehlszeile aus (siehe <see cref="CommandLineParser"/>).</summary>
+    /// <summary>Executes the commands of the command line (see <see cref="CommandLineParser"/>).</summary>
     public static class CommandLineRunner
     {
         public const int ExitOk = 0;
-        /// <summary>Kompilier- oder Laufzeitfehler des Skripts.</summary>
+        /// <summary>Compile or runtime error of the script.</summary>
         public const int ExitScriptError = 1;
-        /// <summary>Ungültige Befehlszeile oder fehlende Datei.</summary>
+        /// <summary>Invalid command line or missing file.</summary>
         public const int ExitUsage = 2;
 
         public static int Run(IReadOnlyList<string> args, TextWriter stdout, TextWriter stderr)
@@ -492,7 +492,7 @@ namespace fire.Compiler
             RuntimeSession session;
             try
             {
-                // print() geht direkt auf die Konsole, IO.Stdio ebenfalls (Vorgabe von RuntimeSession.Build).
+                // print() goes directly to the console, IO.Stdio likewise (default of RuntimeSession.Build).
                 session = RuntimeSession.Build(sources, options.Mode, args =>
                 {
                     if (args.Length > 0) Console.WriteLine(args[0].ToString());
@@ -514,13 +514,13 @@ namespace fire.Compiler
                 return ExitScriptError;
             }
 
-            // `terminate(wert)`: ein Ganzzahlwert ist der Exitcode des Prozesses.
+            // `terminate(value)`: an integer value is the exit code of the process.
             var exit = VM.ExitValue;
             return exit.Kind == ValueKind.Int ? (int)exit.AsInt() : ExitOk;
         }
 
-        /// <summary>Fehler, die das Skript selbst verursacht (Parser, Resolver, Compiler, Präprozessor) - alles
-        /// andere ist ein Fehler im Werkzeug und soll mit seinem Stacktrace sichtbar bleiben.</summary>
+        /// <summary>Errors that the script itself causes (parser, resolver, compiler, preprocessor) - everything
+        /// else is an error in the tool and is to stay visible with its stack trace.</summary>
         public static bool IsCompileErrorForEditor(Exception ex) => IsCompileError(ex);
 
         internal static bool IsCompileError(Exception ex) =>

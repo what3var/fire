@@ -1,16 +1,16 @@
 namespace UI {
-    // Das oberste Element: zeichnet in `framebuffer` und bekommt die Ereignisse von `window` (Warteschlange, siehe Tick).
+    // The topmost element: draws into `framebuffer` and receives the events from `window` (queue, see Tick).
     class Root {
         Framebuffer framebuffer
         Window window
         Renderer renderer
         Theme theme
         Panel content
-        // Ressourcen und implizite Styles fuer die ganze Oberflaeche (siehe ResourceDictionary)
+        // Resources and implicit styles for the whole interface (see ResourceDictionary)
         ResourceDictionary resources
         int width
         int height
-        // Zellgröße der Schrift in Pixeln (Breite und Höhe eines Zeichens)
+        // Cell size of the font in pixels (width and height of a character)
         int cw
         int ch
         bool closed = false
@@ -19,17 +19,17 @@ namespace UI {
         Element hoverElement
         Element pressedElement
         Element focusElement
-        // Beschneidungsrechtecke (Rect), verschachtelt: das oberste gilt (siehe PushClip)
+        // Clipping rectangles (Rect), nested: the topmost applies (see PushClip)
         List clips
-        // Schwebende Elemente ueber der Oberflaeche (Menues, Vorschlagslisten): das letzte liegt oben (siehe ShowPopup)
+        // Floating elements above the interface (menus, suggestion lists): the last one is on top (see ShowPopup)
         List popups
-        // Weitere Roots (Fenster), die dieser mit abarbeitet (siehe Attach)
+        // Further roots (windows) that this one processes along with it (see Attach)
         List attached
-        // Ein Lambda ohne Parameter, das jeder Zyklus dieses Roots am Ende aufruft (die Markup-Klassen nutzen es fuer OnTick)
+        // A lambda without parameters that every cycle of this root calls at the end (the markup classes use it for OnTick)
         var onTick
-        // Ein Lambda (breite, hoehe), das aufgerufen wird, nachdem die Oberflaeche auf eine neue Fenstergroesse gebracht wurde (siehe autoResize)
+        // A lambda (width, height) that is called after the interface has been brought to a new window size (see autoResize)
         var onResize
-        // Ungueltig machen: hat sich etwas geaendert, ordnet Update neu an und malt neu - nur den Bereich, der sich geaendert hat, solange kein Element woanders hingerutscht ist.
+        // Invalidate: if something has changed, Update arranges anew and repaints - only the area that has changed, as long as no element has moved elsewhere.
         bool dirty = true
         bool fullRedraw = true
         bool hasDirtyRect = false
@@ -37,13 +37,13 @@ namespace UI {
         int dirtyY0 = 0
         int dirtyX1 = 0
         int dirtyY1 = 0
-        // beim Anordnen hat sich die Lage oder Groesse eines Elements geaendert
+        // while arranging the position or size of an element has changed
         bool layoutMoved = false
-        // waehrend des Anordnens und Zeichnens: Schreibzugriffe auf die Felder der Elemente sind dann keine Aenderungen
+        // while arranging and drawing: write accesses to the fields of the elements are then no changes
         bool painting = false
         var watcher
 
-        // Touchscreen: der Finger, der den Zeiger fuehrt (-1: keiner; ein zweiter Finger daneben wird ignoriert), wo er aufsetzte, wo er zuletzt war, ob er gerade wischt (und welches Element dann verschoben wird)
+        // Touchscreen: the finger that guides the pointer (-1: none; a second finger next to it is ignored), where it touched down, where it was last, whether it is currently swiping (and which element is then moved)
         int touchFinger = -1
         int touchX0 = 0
         int touchY0 = 0
@@ -51,17 +51,17 @@ namespace UI {
         int touchY = 0
         bool touchPanning = false
         Element touchPanner
-        // ab so vielen Pixeln Bewegung wird aus dem Antippen ein Wischen
+        // from this many pixels of movement a tap becomes a swipe
         int touchSlop = 10
 
-        // Joystick: Kreuz (Hat) und linker Stick werden zu den Pfeiltasten, Knoepfe zu Enter/Escape/Tab. Die Knopfnummern sind die des Geraets (bei einem Xbox-Pad: 0 = A, 1 = B, 4 = LB, 5 = RB); -1 schaltet einen Knopf aus.
+        // Joystick: D-pad (hat) and left stick become the arrow keys, buttons become Enter/Escape/Tab. The button numbers are those of the device (for an Xbox pad: 0 = A, 1 = B, 4 = LB, 5 = RB); -1 switches a button off.
         int joyAxisX = 0
         int joyAxisY = 1
         int joyButtonActivate = 0
         int joyButtonCancel = 1
         int joyButtonPrevious = 4
         int joyButtonNext = 5
-        // Halten wiederholt die Taste: nach `joyRepeatDelay` Zyklen, dann alle `joyRepeatInterval` (ein Zyklus ist ein Tick - mit VSync etwa 1/60 s)
+        // Holding repeats the key: after `joyRepeatDelay` cycles, then every `joyRepeatInterval` (one cycle is a tick - with VSync about 1/60 s)
         int joyRepeatDelay = 24
         int joyRepeatInterval = 6
         int joyStickX = 0
@@ -87,35 +87,35 @@ namespace UI {
             this.content = new Panel(0, 0, this.width, this.height)
             this.content.filled = false
 
-            // Ereignisse werden abgefragt, nicht per Callback geliefert: so laufen sie im Hauptprogramm, und ein
-            // onClick-Lambda sieht die echten globalen Variablen (ein Callback arbeitet dagegen auf einer Kopie, SPEC 8.1.4)
+            // Events are polled, not delivered by callback: this way they run in the main program, and an
+            // onClick lambda sees the real global variables (a callback, by contrast, works on a copy, SPEC 8.1.4)
             window.EnableEvents()
-            // Zieht der Nutzer das Fenster auf eine andere Groesse, bekommt der Framebuffer sie (sofern sie gueltig ist) und die Oberflaeche ordnet sich neu an - statt dass ihr Bild gestreckt wird.
-            // `window.AutoResize = false` laesst es beim Strecken.
+            // If the user drags the window to another size, the framebuffer gets it (as long as it is valid) and the interface arranges itself anew - instead of its image being stretched.
+            // `window.AutoResize = false` leaves it at stretching.
             window.AutoResize = true
-            // Der Finger fuehrt die Oberflaeche selbst (Antippen, Ziehen, Wischen, siehe TouchDown): SDL soll nicht zusaetzlich Mausereignisse daraus machen.
+            // The finger guides the interface itself (tapping, dragging, swiping, see TouchDown): SDL should not additionally make mouse events out of it.
             window.TouchMouse = false
 
-            // Jede Aenderung eines Feldes eines Elements (und des Themes) meldet eine Probe (siehe SPEC 8.14): die Elemente rufen Touched, sobald sie zum ersten Mal angeordnet werden (Watch)
+            // Every change of a field of an element (and of the theme) is reported by a probe (see SPEC 8.14): the elements call Touched as soon as they are arranged for the first time (Watch)
             this.watcher = func (o, n, a, b) on this => { this.Touched(o) }
             Reflect.ProbeAll(this.theme, "changed", this.watcher)
         }
 
-        // Ein Element oder das Theme hat sich geaendert.
+        // An element or the theme has changed.
         Touched(o) {
             if (this.painting) { return }
             this.dirty = true
             if (o is of Element) { o.Invalidate() } else { this.fullRedraw = true }
         }
 
-        // Beobachtet die Felder des Elements (einmal).
+        // Observes the fields of the element (once).
         Watch(element) {
             if (element.watched) { return }
             element.watched = true
             Reflect.ProbeAll(element, "changed", this.watcher)
         }
 
-        // Der Bereich (x, y, w, h) muss neu gemalt werden.
+        // The area (x, y, w, h) must be repainted.
         InvalidateRect(int x, int y, int w, int h) {
             this.dirty = true
             var x1 = x + w + 1
@@ -136,37 +136,37 @@ namespace UI {
             this.dirtyY1 = UI.M.Max(this.dirtyY1, y1)
         }
 
-        // Alles muss neu gemalt werden (zum Beispiel nach dem Aendern eines Brushes, den Elemente benutzen).
+        // Everything must be repainted (for example after changing a brush that elements use).
         Invalidate() {
             this.dirty = true
             this.fullRedraw = true
         }
 
-        // Liegt das Rechteck in dem Bereich, der gerade neu gemalt wird? (Elemente ausserhalb malen sich nicht.)
+        // Does the rectangle lie in the area that is currently being repainted? (Elements outside do not paint.)
         bool Needs(int x, int y, int w, int h) {
             if (this.fullRedraw) { return true }
             if (!this.hasDirtyRect) { return false }
             return x < this.dirtyX1 && x + w > this.dirtyX0 && y < this.dirtyY1 && y + h > this.dirtyY0
         }
 
-        // Fügt ein Element (oder Panel) der obersten Ebene hinzu; es gehört ab jetzt diesem Root.
+        // Adds an element (or panel) to the top level; it belongs to this root from now on.
         Add(element) { this.content.Add(element) }
 
-        // Ordnet die gesamte Oberfläche an und zeichnet sie ganz neu.
+        // Arranges the entire interface and draws it anew completely.
         Draw() {
             this.fullRedraw = true
             this.dirty = true
             this.Update()
         }
 
-        // Fragt die Elemente ab (Bindungen, Trigger, Stile, Listen); alles, was sich dabei aendert, meldet sich ueber Touched.
+        // Polls the elements (bindings, triggers, styles, lists); everything that changes in the process reports itself via Touched.
         Poll() {
             this.content.Poll(this)
             for (var i = 0; i < this.popups.count; i = i + 1) { this.popups[i].Poll(this) }
         }
 
-        // Bringt die Oberflaeche auf den Stand: fragt ab, ordnet neu an und malt - aber nur, wenn sich etwas geaendert hat, und nur den geaenderten Bereich, solange kein Element
-        // seine Lage oder Groesse geaendert hat. Liefert true, wenn gemalt wurde.
+        // Brings the interface up to date: polls, arranges anew and paints - but only if something has changed, and only the changed area, as long as no element
+        // has changed its position or size. Returns true if painting took place.
         bool Update() {
             this.CheckSize()
             this.Poll()
@@ -185,8 +185,8 @@ namespace UI {
             return true
         }
 
-        // Hat der Framebuffer eine andere Groesse als die Oberflaeche (das Fenster wurde gezogen, siehe Window.AutoResize)? Dann bekommt die oberste Ebene die neue Groesse, alles wird neu
-        // angeordnet und gemalt, und onResize(breite, hoehe) wird gerufen. Liefert true, wenn sich die Groesse geaendert hat.
+        // Does the framebuffer have a different size than the interface (the window was dragged, see Window.AutoResize)? Then the top level gets the new size, everything is
+        // arranged and painted anew, and onResize(width, height) is called. Returns true if the size has changed.
         bool CheckSize() {
             var w = this.framebuffer.Width()
             var h = this.framebuffer.Height()
@@ -201,12 +201,12 @@ namespace UI {
             return true
         }
 
-        // Ordnet die schwebenden Elemente an (ein neues oder verschobenes wird neu gemalt).
+        // Arranges the floating elements (a new or moved one is repainted).
         LayoutPopups() {
             for (var i = 0; i < this.popups.count; i = i + 1) {
                 var popup = this.popups[i]
                 popup.Measure(this, -1, -1)
-                // nicht ueber den Rand hinaus
+                // not beyond the edge
                 if (popup.x + popup.dw > this.width) { popup.x = UI.M.Max(0, this.width - popup.dw) }
                 if (popup.y + popup.dh > this.height) { popup.y = UI.M.Max(0, this.height - popup.dh) }
                 var moved = this.layoutMoved
@@ -242,8 +242,8 @@ namespace UI {
             if (!this.fullRedraw) { this.PopClip() }
         }
 
-        // Beschraenkt das Zeichnen auf das Rechteck (geschnitten mit dem aktuellen); PopClip stellt das vorige wieder her. Die Elemente rufen beides
-        // paarweise auf (zum Beispiel ein ScrollViewer um seine Kinder).
+        // Restricts drawing to the rectangle (intersected with the current one); PopClip restores the previous one. The elements call both
+        // in pairs (for example a ScrollViewer around its children).
         PushClip(int x, int y, int w, int h) {
             var r = new Rect(x, y, w, h)
             if (this.clips.count > 0) { r.IntersectWith(this.clips[this.clips.count - 1]) }
@@ -264,8 +264,8 @@ namespace UI {
             }
         }
 
-        // Zeigt ein Element schwebend an der Bildschirmposition (x, y) ueber allem; es gehoert ab jetzt dem Root. `transient`: beim Schliessen
-        // zerstoeren (Menues). `owner`: das Element, das es geoeffnet hat (ein Klick darauf schliesst nur, oeffnet nicht gleich neu).
+        // Shows an element floating at the screen position (x, y) above everything; it belongs to the root from now on. `transient`: destroy
+        // on closing (menus). `owner`: the element that opened it (a click on it only closes, does not reopen right away).
         ShowPopup(popup, int x, int y, bool transient = true, owner = undefined) {
             popup.TakeTo(this)
             popup.x = x
@@ -298,19 +298,19 @@ namespace UI {
             }
         }
 
-        // Schliesst alle schwebenden Elemente (ein Klick daneben, Escape, eine gewaehlte Menuezeile).
+        // Closes all floating elements (a click next to them, Escape, a chosen menu row).
         CloseAllPopups() {
             while (this.popups.count > 0) { this.ClosePopup(this.popups[this.popups.count - 1]) }
         }
 
-        // Zeigt ein Menue (Liste von MenuItem) mit der linken oberen Ecke bei (x, y); eine gewaehlte Zeile oder ein Klick daneben schliesst es.
+        // Shows a menu (list of MenuItem) with its top left corner at (x, y); a chosen row or a click next to it closes it.
         ShowMenu(items, int x, int y, owner = undefined) {
             var menu = new MenuPopup(items)
             this.ShowPopup(menu, x, y, true, owner)
             return menu
         }
 
-        // Das Element unter dem Mauszeiger: zuerst die schwebenden Elemente (das oberste zuerst), dann die Oberflaeche.
+        // The element under the mouse pointer: first the floating elements (the topmost first), then the interface.
         Hit(int px, int py) {
             var i = this.popups.count - 1
             while (i >= 0) {
@@ -321,8 +321,8 @@ namespace UI {
             return this.content.HitTest(px, py)
         }
 
-        // Ein Zyklus: die Oberfläche auf den neuesten Stand bringen (nur was sich geaendert hat wird gemalt), dann das Fenster einen Zyklus laufen lassen (anzeigen, Ereignisse abholen)
-        // und die Ereignisse verteilen. Die angehaengten Roots (siehe Attach) machen denselben Zyklus. Liefert false, sobald das Fenster dieses Roots geschlossen wurde.
+        // One cycle: bring the interface up to date (only what has changed is painted), then let the window run one cycle (show, fetch events)
+        // and distribute the events. The attached roots (see Attach) do the same cycle. Returns false as soon as the window of this root has been closed.
         bool Tick() {
             var open = this.TickOne()
             var i = 0
@@ -337,7 +337,7 @@ namespace UI {
             return open
         }
 
-        // Der Zyklus nur dieses Roots (ohne die angehaengten).
+        // The cycle of this root only (without the attached ones).
         bool TickOne() {
             this.JoyRepeat()
             this.Update()
@@ -353,18 +353,18 @@ namespace UI {
             return open
         }
 
-        // Haengt einen weiteren Root (ein weiteres Fenster) an: Tick und Run arbeiten ihn mit ab, bis sein Fenster geschlossen wird. Das Fenster, das hier laeuft, bestimmt das Ende
-        // von Run; das Schliessen eines angehaengten Fensters entfernt es nur. Der andere Root (und was ihn besitzt) muss so lange leben wie sein Fenster.
+        // Attaches a further root (a further window): Tick and Run process it along with it until its window is closed. The window that runs here determines the end
+        // of Run; closing an attached window only removes it. The other root (and what owns it) must live as long as its window.
         Attach(other) {
             for (var i = 0; i < this.attached.count; i = i + 1) {
                 if (this.attached[i] == other) { return }
             }
-            // nur ein Fenster wartet auf die Bildwiederholung, sonst dauert jeder Zyklus so viele Bildperioden wie es Fenster gibt
+            // only one window waits for the screen refresh, otherwise every cycle takes as many frame periods as there are windows
             other.window.VSync = false
             this.attached.Add(other)
         }
 
-        // Nimmt den angehaengten Root wieder heraus (sein Fenster bleibt offen, aber niemand arbeitet es mehr ab).
+        // Takes the attached root out again (its window stays open, but nobody processes it any more).
         Detach(other) {
             for (var i = 0; i < this.attached.count; i = i + 1) {
                 if (this.attached[i] == other) {
@@ -374,7 +374,7 @@ namespace UI {
             }
         }
 
-        // Verteilt ein Ereignis des Fensters (Aufbau siehe Window.NextEvent) an das Element darunter bzw. das mit Fokus.
+        // Distributes an event of the window (structure see Window.NextEvent) to the element below it or the one with focus.
         Dispatch(e) {
             var type = e[0]
             if (type == 8) { this.MouseDown(e[1], e[2], e[3]) }
@@ -393,7 +393,7 @@ namespace UI {
             else if (type == 1) { this.closed = true }
         }
 
-        // Läuft, bis das Fenster geschlossen wird. Mit `other` (ein Root) wird dieser vorher angehaengt: `ui.Run(second)` arbeitet beide Fenster ab.
+        // Runs until the window is closed. With `other` (a root) it is attached beforehand: `ui.Run(second)` processes both windows.
         Run(other = undefined) {
             if (other != undefined) { this.Attach(other) }
             while (this.Tick()) { }
@@ -409,9 +409,9 @@ namespace UI {
             }
         }
 
-        // Sorgt dafuer, dass das Element in jedem ScrollViewer, in dem es liegt, zu sehen ist (der Fokus wandert per Tab, Pfeiltasten oder Joystick).
+        // Makes sure that the element can be seen in every ScrollViewer it lies in (the focus moves by Tab, arrow keys or joystick).
         Reveal(element) {
-            // (x, y) ist die Lage des Elements im Koordinatensystem von `e`, das von innen nach aussen wechselt (ohne die Bildschirmposition: die ist erst nach dem naechsten Zeichnen aktuell)
+            // (x, y) is the position of the element in the coordinate system of `e`, which changes from the inside out (without the screen position: that is only current after the next drawing)
             var x = 0
             var y = 0
             var e = element
@@ -430,12 +430,12 @@ namespace UI {
             }
         }
 
-        // Ist das eine der vier Pfeiltasten?
+        // Is this one of the four arrow keys?
         bool IsArrow(int key) {
             return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Up() || key == UI.Keys.Down()
         }
 
-        // Pfeiltaste: der Fokus wandert zum naechsten fokussierbaren Element in dieser Richtung. Ist keins da, wird stattdessen der ScrollViewer um das Element (oder unter dem Zeiger) gerollt.
+        // Arrow key: the focus moves to the next focusable element in this direction. If there is none, the ScrollViewer around the element (or under the pointer) is scrolled instead.
         FocusMove(int key) {
             var list = new List()
             this.content.Collect(list)
@@ -449,7 +449,7 @@ namespace UI {
                 return
             }
             if (!found) {
-                // noch nichts fokussiert: das erste Element (nach unten/rechts) bzw. das letzte (nach oben/links)
+                // nothing focused yet: the first element (downwards/right) or the last (upwards/left)
                 if (key == UI.Keys.Up() || key == UI.Keys.Left()) { this.SetFocus(list[list.count - 1]) } else { this.SetFocus(list[0]) }
                 return
             }
@@ -481,7 +481,7 @@ namespace UI {
                     gap = UI.M.Max(0, current.ay - (c.ay + c.actualHeight))
                     side = this.Gap(current.ax, current.ax + current.actualWidth, c.ax, c.ax + c.actualWidth)
                 }
-                // lieber nah in der Richtung und auf gleicher Hoehe/Breite (ueberlappend), bei Gleichstand der naeher liegende Mittelpunkt
+                // preferably close in the direction and at the same height/width (overlapping), when tied the nearer centre
                 var score = (gap + 3 * side) * 1000 + UI.M.Abs(dx) + UI.M.Abs(dy)
                 if (bestScore < 0 || score < bestScore) {
                     best = c
@@ -491,14 +491,14 @@ namespace UI {
             if (best != undefined) { this.SetFocus(best) } else { this.ScrollFrom(current, key) }
         }
 
-        // Der Abstand zweier Strecken [a0, a1) und [b0, b1) (0, wenn sie sich ueberlappen).
+        // The distance of two segments [a0, a1) and [b0, b1) (0 if they overlap).
         int Gap(int a0, int a1, int b0, int b1) {
             if (b0 >= a1) { return b0 - a1 }
             if (a0 >= b1) { return a0 - b1 }
             return 0
         }
 
-        // Rollt (wie das Mausrad) den naechsten ScrollViewer oder die Liste ueber/um `element` in Richtung der Pfeiltaste.
+        // Scrolls (like the mouse wheel) the next ScrollViewer or the list above/around `element` in the direction of the arrow key.
         ScrollFrom(element, int key) {
             var dx = 0
             var dy = 0
@@ -516,7 +516,7 @@ namespace UI {
 
         // ---- Touchscreen ----
 
-        // Ein Finger setzt auf: wie eine gedrueckte linke Maustaste an dieser Stelle. Bewegt er sich nicht weiter als `touchSlop`, ist das Abheben ein Klick; zieht er ueber eine Liste oder einen ScrollViewer, wird daraus Wischen.
+        // A finger touches down: like a pressed left mouse button at this place. If it moves no further than `touchSlop`, lifting is a click; if it drags over a list or a ScrollViewer, it becomes a swipe.
         TouchDown(int finger, int px, int py) {
             if (this.touchFinger >= 0) { return }
             this.touchFinger = finger
@@ -539,7 +539,7 @@ namespace UI {
                 if (moved) {
                     var panner = this.FindPanner()
                     if (panner != undefined) {
-                        // aus dem Antippen wird Wischen: der gedrueckte Knopf (usw.) wird losgelassen, ohne zu klicken
+                        // the tap becomes a swipe: the pressed button (etc.) is released without clicking
                         var pressed = this.pressedElement
                         this.pressedElement = undefined
                         if (pressed != undefined) { pressed.MouseUp(this, 1, -100000, -100000) }
@@ -559,7 +559,7 @@ namespace UI {
             }
         }
 
-        // Das Element, das ein Wischen uebernimmt: vom gedrueckten Element nach oben das erste, das sich verschieben laesst - ausser es wird gerade ein Griff gezogen (Bildlaufleiste).
+        // The element that takes over a swipe: from the pressed element upwards the first that can be moved - unless a handle is currently being dragged (scroll bar).
         FindPanner() {
             var e = this.pressedElement
             if (e == undefined) { e = this.Hit(this.touchX0, this.touchY0) }
@@ -580,7 +580,7 @@ namespace UI {
             } else {
                 this.MouseUp(1, px, py)
             }
-            // ein Finger hinterlaesst keine Hover-Hervorhebung
+            // a finger leaves no hover highlight
             var old = this.hoverElement
             if (old != undefined) {
                 old.hover = false
@@ -590,7 +590,7 @@ namespace UI {
 
         // ---- Joystick ----
 
-        // Eine Achse bewegt sich (-1 bis 1): der linke Stick wird zu einer Richtung, mit Totzone in der Mitte.
+        // An axis moves (-1 to 1): the left stick becomes a direction, with a dead zone in the middle.
         JoyAxis(int axis, v) {
             if (axis == this.joyAxisX) { this.joyStickX = this.StickDirection(v, this.joyStickX) }
             else if (axis == this.joyAxisY) { this.joyStickY = this.StickDirection(v, this.joyStickY) }
@@ -598,7 +598,7 @@ namespace UI {
             this.JoyDirectionChanged()
         }
 
-        // -1, 0 oder 1: ab 0.6 ausgeschlagen, zurueck in die Mitte erst unter 0.3 (dazwischen bleibt es, wie es war).
+        // -1, 0 or 1: deflected from 0.6 on, back to the middle only below 0.3 (in between it stays as it was).
         int StickDirection(v, int old) {
             if (v > 0.6) { return 1 }
             if (v < -0.6) { return -1 }
@@ -606,7 +606,7 @@ namespace UI {
             return old
         }
 
-        // Das Kreuz (Hat) hat eine Bitmaske: 1 oben, 2 rechts, 4 unten, 8 links.
+        // The D-pad (hat) has a bit mask: 1 up, 2 right, 4 down, 8 left.
         JoyHat(int mask) {
             this.joyHatY = 0
             this.joyHatX = 0
@@ -617,7 +617,7 @@ namespace UI {
             this.JoyDirectionChanged()
         }
 
-        // Aus Kreuz und Stick die Pfeiltaste, die gerade gehalten wird (das Kreuz zuerst, senkrecht vor waagerecht): beim Wechsel wird sie gedrueckt.
+        // From D-pad and stick the arrow key that is currently held (the D-pad first, vertical before horizontal): on a change it is pressed.
         JoyDirectionChanged() {
             var x = this.joyHatX
             if (x == 0) { x = this.joyStickX }
@@ -634,14 +634,14 @@ namespace UI {
             if (key != 0) { this.KeyDown(key, 0) }
         }
 
-        // Jeder Zyklus: eine gehaltene Richtung wiederholt sich.
+        // Every cycle: a held direction repeats.
         JoyRepeat() {
             if (this.joyKey == 0) { return }
             this.joyHold = this.joyHold + 1
             if (this.joyHold >= this.joyRepeatDelay && (this.joyHold - this.joyRepeatDelay) % this.joyRepeatInterval == 0) { this.KeyDown(this.joyKey, 0) }
         }
 
-        // Ein Joystick-Knopf wurde gedrueckt.
+        // A joystick button was pressed.
         JoyButton(int button) {
             if (button == this.joyButtonActivate) { this.KeyDown(UI.Keys.Enter(), 0) }
             else if (button == this.joyButtonCancel) { this.KeyDown(UI.Keys.Escape(), 0) }
@@ -649,7 +649,7 @@ namespace UI {
             else if (button == this.joyButtonNext) { this.FocusStep(false) }
         }
 
-        // Ein Joystick wurde abgezogen: gehaltene Richtungen loslassen.
+        // A joystick was unplugged: release held directions.
         JoyReset() {
             this.joyStickX = 0
             this.joyStickY = 0
@@ -659,7 +659,7 @@ namespace UI {
             this.joyHold = 0
         }
 
-        // Tab: der Fokus wandert zum nächsten (mit Umschalt: zum vorigen) fokussierbaren Element.
+        // Tab: the focus moves to the next (with Shift: to the previous) focusable element.
         FocusStep(bool backwards) {
             var list = new List()
             this.content.Collect(list)
@@ -691,7 +691,7 @@ namespace UI {
         MouseDown(int button, int px, int py) {
             this.mouseX = px
             this.mouseY = py
-            // ein Klick neben die schwebenden Elemente: das oberste sagt, ob es schliesst und ob der Klick damit verbraucht ist
+            // a click next to the floating elements: the topmost says whether it closes and whether the click is thereby consumed
             if (this.popups.count > 0 && !this.InsidePopup(px, py)) {
                 var consumed = false
                 var i = this.popups.count - 1
@@ -704,7 +704,7 @@ namespace UI {
             }
             var hit = this.Hit(px, py)
             if (button == 3 && hit != undefined) {
-                // Kontextmenue: das naechste Element nach oben, das eins hat
+                // Context menu: the next element upwards that has one
                 var e = hit
                 while (e != undefined) {
                     if (e.contextMenu != undefined) {
@@ -723,7 +723,7 @@ namespace UI {
             }
         }
 
-        // Liegt der Punkt in einem schwebenden Element?
+        // Does the point lie in a floating element?
         bool InsidePopup(int px, int py) {
             for (var i = 0; i < this.popups.count; i = i + 1) {
                 if (this.popups[i].HitTest(px, py) != undefined) { return true }
@@ -756,11 +756,11 @@ namespace UI {
 
         KeyDown(int key, int mod) {
             if (key == UI.Keys.Tab()) {
-                // die Umschalttasten sind die Bits 1 und 2 von mod
+                // the shift keys are bits 1 and 2 of mod
                 this.FocusStep(mod % 4 != 0)
                 return
             }
-            // ein Menue oder eine Liste, die Tasten haben will, bekommt sie zuerst
+            // a menu or a list that wants keys gets them first
             if (this.popups.count > 0) {
                 var top = this.popups[this.popups.count - 1]
                 if (top.grabsKeys) {
@@ -769,7 +769,7 @@ namespace UI {
                 }
             }
             var target = this.focusElement
-            // eine Pfeiltaste, die das fokussierte Element nicht selbst braucht, bewegt den Fokus
+            // an arrow key that the focused element does not need itself moves the focus
             if (this.IsArrow(key) && (target == undefined || !target.enabled || !target.WantsKey(key))) {
                 this.FocusMove(key)
                 return

@@ -8,14 +8,14 @@ using AvaloniaEdit.Rendering;
 
 namespace fire.Editor
 {
-    /// <summary>Hebt Markdown-Syntax im QUELLTEXT-Editor hervor (Überschriften
-    /// größer/fett, **fett**, *kursiv*, `Code`, Links, Zitate, Listen-Marken,
-    /// Code-Blöcke) - wie HighlightingColorizer rein beim Zeichnen, das
-    /// Dokument bleibt unberührt.
+    /// <summary>Highlights Markdown syntax in the SOURCE-text editor (headings
+    /// larger/bold, **bold**, *italic*, `code`, links, quotes, list markers,
+    /// code blocks) - like HighlightingColorizer purely when drawing, the
+    /// document stays untouched.
     ///
-    /// Zeilenübergreifender Zustand (innerhalb eines ```-Blocks) steckt in
-    /// `FencedLines`, das MarkdownEditorControl bei jeder Textänderung neu
-    /// berechnet (siehe ComputeFencedLines).</summary>
+    /// State across lines (inside a ``` block) lives in
+    /// `FencedLines`, which MarkdownEditorControl recomputes on every text change
+    /// (see ComputeFencedLines).</summary>
     internal sealed class MarkdownColorizer : DocumentColorizingTransformer
     {
         private static readonly IBrush HeadingBrush = new ImmutableSolidColorBrush(Color.FromRgb(0xF2, 0x47, 0x9E));
@@ -37,7 +37,7 @@ namespace fire.Editor
         private static readonly Regex Quote = new(@"^\s{0,3}>", RegexOptions.Compiled);
         private static readonly Regex Rule = new(@"^ {0,3}([-*_])(\s*\1){2,}\s*$", RegexOptions.Compiled);
 
-        /// <summary>1-basierte Zeilen, die zu einem Code-Block gehören (inkl. der Zaun-Zeilen).</summary>
+        /// <summary>1-based lines that belong to a code block (incl. the fence lines).</summary>
         public IReadOnlySet<int> FencedLines { get; set; } = new HashSet<int>();
 
         protected override void ColorizeLine(DocumentLine line)
@@ -86,7 +86,7 @@ namespace fire.Editor
                 ChangeLinePart(start + list.Groups[1].Index, start + list.Groups[1].Index + list.Groups[1].Length,
                     el => el.TextRunProperties.SetForegroundBrush(ListBrush));
 
-            // Code zuletzt prüfen, aber als "geschützte" Bereiche merken: darin ist sonst nichts Markdown
+            // Check code last, but remember it as "protected" ranges: nothing else is Markdown inside them
             var code = new List<(int S, int E)>();
             foreach (Match m in InlineCode.Matches(text)) code.Add((m.Index, m.Index + m.Length));
             bool InCode(int i) { foreach (var (s, e) in code) if (i >= s && i < e) return true; return false; }
@@ -128,9 +128,9 @@ namespace fire.Editor
         private void Mark(int offset, int length) =>
             ChangeLinePart(offset, offset + length, el => el.TextRunProperties.SetForegroundBrush(MarkBrush));
 
-        /// <summary>Welche Zeilen liegen in einem ```/~~~-Block? Zusätzlich
-        /// die Bereiche (Start-/Endoffset des INHALTS) der Blöcke mit
-        /// Sprache `fire`, für deren Einfärbung im Quelltext.</summary>
+        /// <summary>Which lines lie in a ```/~~~ block? In addition
+        /// the ranges (start/end offset of the CONTENT) of the blocks with
+        /// language `fire`, for their colouring in the source text.</summary>
         public static HashSet<int> ComputeFencedLines(TextDocument doc, List<(int Start, int End)> fireBlocks)
         {
             var lines = new HashSet<int>();
@@ -166,7 +166,7 @@ namespace fire.Editor
                     }
                 }
             }
-            // Nicht geschlossener Block: bis zum Dokumentende
+            // Unclosed block: up to the end of the document
             if (marker != null && fire && doc.TextLength > bodyStart) fireBlocks.Add((bodyStart, doc.TextLength));
             return lines;
         }

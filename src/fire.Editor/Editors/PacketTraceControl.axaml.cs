@@ -15,7 +15,7 @@ using fire.Device.Manager.DeviceManager;
 
 namespace fire.Editor
 {
-    /// <summary>Eine Zeile der Paketliste.</summary>
+    /// <summary>A row of the packet list.</summary>
     public sealed class PacketRow
     {
         private readonly Func<bool> _textMode;
@@ -37,10 +37,10 @@ namespace fire.Editor
         public string DeviceId => Record.DeviceIdentifier;
         public int Length => Record.Data.Length;
 
-        /// <summary>Der Inhalt in der gerade gewählten Darstellung (Hex oder Text).</summary>
+        /// <summary>The content in the currently chosen representation (hex or text).</summary>
         public string Content => _textMode() ? (_text ??= ToText(Record.Data)) : (_hex ??= PacketLog.ToHex(Record.Data));
 
-        /// <summary>Die Bytes als UTF-8-Text; Steuerzeichen sichtbar (\r, \n, \t, sonst \xNN), ungültige Folgen als U+FFFD.</summary>
+        /// <summary>The bytes as UTF-8 text; control characters visible (\r, \n, \t, otherwise \xNN), invalid sequences as U+FFFD.</summary>
         public static string ToText(byte[] data)
         {
             var sb = new StringBuilder();
@@ -62,12 +62,12 @@ namespace fire.Editor
         }
     }
 
-    /// <summary>Die Paketverfolgung eines Geräts (wie Wireshark): zeigt alle gesendeten und empfangenen Pakete mit
-    /// Richtung (Host→Gerät / Gerät→Host), Geräte-Kennung und Inhalt - wahlweise als Hexbytes oder als Unicode-Text.
+    /// <summary>The packet tracking of a device (like Wireshark): shows all sent and received packets with
+    /// direction (host→device / device→host), device identifier and content - optionally as hex bytes or as Unicode text.
     ///
-    /// Zwei Betriebsarten, beide als Dokument-Tab: LIVE (<see cref="Attach"/>: schneidet den Verkehr des Geräts mit, solange
-    /// der Tab offen ist und die Aufzeichnung läuft) oder eine GELADENE Datei (<see cref="ResetTo"/>, Format siehe
-    /// PacketLog). Als <see cref="IDocumentView"/> läuft Speichern/Öffnen über dieselben Wege wie bei Skripten.</summary>
+    /// Two operating modes, both as a document tab: LIVE (<see cref="Attach"/>: records the traffic of the device as long as
+    /// the tab is open and the recording runs) or a LOADED file (<see cref="ResetTo"/>, format see
+    /// PacketLog). As an <see cref="IDocumentView"/>, saving/opening goes through the same paths as for scripts.</summary>
     public partial class PacketTraceControl : UserControl, IDocumentView
     {
         private readonly ObservableCollection<PacketRow> _rows = new();
@@ -83,7 +83,7 @@ namespace fire.Editor
         public event Action? ModifiedChanged;
         public event Action<int>? CaretLineChanged;
 
-        /// <summary>Das verfolgte Gerät bei einer Live-Verfolgung, sonst null (geladene Datei).</summary>
+        /// <summary>The tracked device for a live tracking, otherwise null (loaded file).</summary>
         public string? DeviceIdentifier { get; private set; }
 
         public PacketTraceControl()
@@ -99,7 +99,7 @@ namespace fire.Editor
         // Live-Verfolgung
         // -----------------------------------------------------------
 
-        /// <summary>Beginnt, den Verkehr des Geräts `deviceIdentifier` über `manager` mitzuschneiden.</summary>
+        /// <summary>Starts recording the traffic of the device `deviceIdentifier` via `manager`.</summary>
         public void Attach(DeviceManager manager, string deviceIdentifier)
         {
             Detach();
@@ -110,7 +110,7 @@ namespace fire.Editor
             UpdateInfo();
         }
 
-        /// <summary>Beendet die Live-Verfolgung (beim Schließen des Tabs); die schon erfassten Pakete bleiben.</summary>
+        /// <summary>Ends the live tracking (when the tab is closed); the packets already captured stay.</summary>
         public void Detach()
         {
             if (_manager != null) _manager.PacketCaptured -= OnPacket;
@@ -120,7 +120,7 @@ namespace fire.Editor
 
         private void OnPacket(PacketRecord packet)
         {
-            // Läuft auf dem Thread, der sendet bzw. des Geräts - nur einreihen, die Anzeige holt sie gebündelt ab.
+            // Runs on the thread that sends or on the device's - only enqueue, the display fetches them in bundles.
             if (!_recording || packet.DeviceIdentifier != DeviceIdentifier) return;
             _incoming.Enqueue(packet);
             if (Interlocked.Exchange(ref _flushPending, 1) == 0)
@@ -151,13 +151,13 @@ namespace fire.Editor
             while (_incoming.TryDequeue(out _)) { }
             if (_rows.Count == 0) return;
             _rows.Clear();
-            SetModified(DeviceIdentifier == null || FilePath != null); // eine geleerte Live-Verfolgung hat nichts Ungespeichertes mehr
+            SetModified(DeviceIdentifier == null || FilePath != null); // a cleared live tracking has nothing unsaved any more
             UpdateInfo();
         }
 
         private void ViewMode_Changed(object? sender, RoutedEventArgs e)
         {
-            // Beim Laden der Vorlage feuert Checked schon, bevor die Liste existiert.
+            // When the template is loaded, Checked already fires before the list exists.
             if (PacketList == null) return;
             PacketList.ItemsSource = null;   // the rows ask for their content again
             PacketList.ItemsSource = _rows;
@@ -195,8 +195,8 @@ namespace fire.Editor
 
         public string GetText() => PacketLog.Serialize(_rows.Select(r => r.Record));
 
-        /// <summary>Lädt ein Protokoll (siehe PacketLog) und zeigt es an; bei einer fehlerhaften Datei erscheint die Meldung
-        /// über der (dann leeren) Liste. Beendet eine Live-Verfolgung dieses Tabs.</summary>
+        /// <summary>Loads a log (see PacketLog) and shows it; for a faulty file the message appears
+        /// above the (then empty) list. Ends a live tracking of this tab.</summary>
         public void ResetTo(string text, string? filePath)
         {
             Detach();
@@ -249,7 +249,7 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Bearbeiten-Menü: nur Kopieren und Alles auswählen ergeben bei einer Paketliste Sinn.
+        // Edit menu: only Copy and Select all make sense for a packet list.
         // -----------------------------------------------------------
 
         public bool CanUndo => false;
@@ -264,7 +264,7 @@ namespace fire.Editor
         public void FindNext() { }
         public void FindPrevious() { }
 
-        /// <summary>Kopiert die gewählten Pakete im Protokollformat (Zeit, Richtung, Gerät, Hexbytes) in die Zwischenablage.</summary>
+        /// <summary>Copies the chosen packets in the log format (time, direction, device, hex bytes) to the clipboard.</summary>
         public void Copy()
         {
             var selected = PacketList.SelectedItems.OfType<PacketRow>().OrderBy(r => r.Number).Select(r => r.Record).ToList();

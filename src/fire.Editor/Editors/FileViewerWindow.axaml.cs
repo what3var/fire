@@ -9,14 +9,14 @@ using Avalonia.Threading;
 namespace fire.Editor
 {
     /// <summary>
-    /// Schlankes, schreibgeschütztes Fenster zum Anzeigen EINER Datei oder
-    /// eingebauten Prelude - für "zu Definition/Include springen" (siehe
-    /// ScriptEditorControl.GoToDefinition), wenn das Ziel NICHT im bearbeiteten
-    /// Dokument liegt. Wie der Editor selbst ein AvalonEdit-TextEditor
-    /// (Hervorhebung, Zeilennummern, Suchen, Strg+Klick mit zuverlässigen
-    /// Textpositionen); springt der Nutzer von HIER aus weiter, öffnet das ein
-    /// weiteres Fenster bzw. bewegt das Ziel-Fenster - keine
-    /// Rückwärtsnavigation/Verlauf (bewusste Vereinfachung).
+    /// Slim, read-only window for showing ONE file or
+    /// built-in prelude - for "go to definition/include" (see
+    /// ScriptEditorControl.GoToDefinition) when the target is NOT in the edited
+    /// document. Like the editor itself an AvalonEdit TextEditor
+    /// (highlighting, line numbers, search, Ctrl+click with reliable
+    /// text positions); if the user jumps on from HERE, that opens a
+    /// further window or moves the target window - no
+    /// backward navigation/history (deliberate simplification).
     /// </summary>
     public partial class FileViewerWindow : Window
     {
@@ -27,7 +27,7 @@ namespace fire.Editor
         private readonly HighlightingColorizer _colorizer = new();
         private readonly LineBackgroundRenderer _lineBackground = new();
 
-        // Pro Prelude nur EIN Fenster: weitere Sprünge in dieselbe Prelude bewegen es nur.
+        // Only ONE window per prelude: further jumps into the same prelude only move it.
         private static readonly Dictionary<string, FileViewerWindow> OpenPreludes = new();
 
         public FileViewerWindow()
@@ -39,9 +39,9 @@ namespace fire.Editor
             Viewer.AddHandler(PointerPressedEvent, Viewer_PointerPressed, RoutingStrategies.Tunnel);
         }
 
-        /// <summary>Zeigt die eingebaute Prelude `preludeName` (siehe
-        /// ScriptSymbolIndex.PreludeSourceOf) zu `line` gescrollt - ein bereits
-        /// offenes Fenster derselben Prelude wird wiederverwendet.</summary>
+        /// <summary>Shows the built-in prelude `preludeName` (see
+        /// ScriptSymbolIndex.PreludeSourceOf) scrolled to `line` - an already
+        /// open window of the same prelude is reused.</summary>
         public static void ShowPrelude(string preludeName, int line, Window? owner = null)
         {
             if (OpenPreludes.TryGetValue(preludeName, out var existing))
@@ -62,12 +62,12 @@ namespace fire.Editor
             if (owner != null) viewer.Show(owner); else viewer.Show();
         }
 
-        /// <summary>Lädt `filePath` und zeigt es an, optional direkt zu
-        /// `jumpToLine` (1-basiert) gescrollt und dezent hervorgehoben.
-        /// Kann NICHT gelesen werden (Datei fehlt, kein Zugriff, ...) -
-        /// zeigt eine Fehlermeldung als Inhalt an, statt das Fenster gar
-        /// nicht erst zu öffnen (der Nutzer soll sehen, WAS schiefging, statt
-        /// sich zu fragen, warum der Klick nichts getan hat).</summary>
+        /// <summary>Loads `filePath` and shows it, optionally scrolled directly to
+        /// `jumpToLine` (1-based) and subtly highlighted.
+        /// If it can NOT be read (file missing, no access, ...) -
+        /// shows an error message as the content, instead of not opening
+        /// the window at all (the user should see WHAT went wrong, instead of
+        /// wondering why the click did nothing).</summary>
         public void LoadFile(string filePath, int? jumpToLine = null)
         {
             _filePath = filePath;
@@ -88,10 +88,10 @@ namespace fire.Editor
             DisplaySource(source, jumpToLine);
         }
 
-        /// <summary>Wie LoadFile, aber für Quelltext OHNE echten Dateipfad
-        /// (eine eingebaute Prelude) - `title` steht direkt im Fenstertitel/der
-        /// Pfad-Zeile statt eines Dateinamens. `preludeName`: welche Prelude es
-        /// ist (damit Strg+Klick auf Namen anderer Preludes funktioniert).</summary>
+        /// <summary>Like LoadFile, but for source text WITHOUT a real file path
+        /// (a built-in prelude) - `title` stands directly in the window title/the
+        /// path line instead of a file name. `preludeName`: which prelude it
+        /// is (so that Ctrl+click on names of other preludes works).</summary>
         public void LoadSource(string title, string source, int? jumpToLine = null, string? preludeName = null)
         {
             _filePath = "";
@@ -107,13 +107,13 @@ namespace fire.Editor
             Viewer.Text = source;
             _colorizer.Spans = SyntaxHighlighter.Highlight(source);
             if (jumpToLine.HasValue)
-                // Erst nach dem ersten Layout, sonst kennt der Editor die Zeilenhöhen noch nicht.
+                // Only after the first layout, otherwise the editor does not yet know the line heights.
                 Dispatcher.UIThread.Post(() => JumpTo(jumpToLine.Value), DispatcherPriority.Loaded);
             else
                 Viewer.TextArea.TextView.Redraw();
         }
 
-        /// <summary>Hebt Zeile `line` hervor und scrollt hin.</summary>
+        /// <summary>Highlights line `line` and scrolls to it.</summary>
         private void JumpTo(int line)
         {
             int target = Math.Max(1, Math.Min(line, Viewer.Document.LineCount));
@@ -126,15 +126,15 @@ namespace fire.Editor
 
         private void Viewer_PointerPressed(object? sender, PointerPressedEventArgs e)
         {
-            // Nur Strg+Klick navigiert (wie im Editor) - ein normaler Klick
-            // muss weiterhin ganz gewöhnlich den Cursor setzen/Text markieren können.
+            // Only Ctrl+click navigates (as in the editor) - a normal click
+            // must still be able to set the cursor/select text quite normally.
             if (!e.GetCurrentPoint(Viewer).Properties.IsLeftButtonPressed || (e.KeyModifiers & KeyModifiers.Control) == 0) return;
 
             var pos = Viewer.GetPositionFromPoint(e.GetPosition(Viewer));
             if (pos == null) return;
 
             int offset = Viewer.Document.GetOffset(pos.Value.Location);
-            // Eine Erweiterungs-Prelude kennt die Klassen ihrer Abhängigkeiten (`ui` -> `graphics`) nur über `#import`.
+            // An extension prelude knows the classes of its dependencies (`ui` -> `graphics`) only via `#import`.
             var index = _preludeName is null or ScriptSymbolIndex.StandardPreludeName
                 ? ScriptSymbolIndex.Build(_source)
                 : ScriptSymbolIndex.Build(_source, new[] { _preludeName });

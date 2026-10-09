@@ -28,8 +28,8 @@ namespace fire.Runtime
         [MemoryPackIgnore]
         public List<string>? PackageLibraryFiles { get; init; }
 
-        /// <summary>Ausführungsmodus, mit dem das Programm läuft (`#debug`/`#performance` im Skript oder `-m` der
-        /// Befehlszeile); die gepackte Runtime übernimmt ihn von hier.</summary>
+        /// <summary>Execution mode the program runs with (`#debug`/`#performance` in the script or `-m` on the
+        /// command line); the packed runtime takes it over from here.</summary>
         public VmExecutionMode ExecutionMode { get; init; }
 
         /// <summary>Names of the native functions in registration order (the index used by `CallNative`). Only known while linking

@@ -8,11 +8,11 @@ using System.Threading.Tasks;
 
 namespace fire.Runtime
 {
-    /// <summary>Ergebnis eines Compiler-Laufs: der Top-Level-Chunk plus die
-    /// kompilierten Klassen (Name -> RuntimeClass), die die VM für `new`/
-    /// Methodenaufrufe braucht, plus die Signaturen aller `extern`-
-    /// Deklarationen (für dynamisches Linking gegen eine per `#extern
-    /// "libName"` benannte native Bibliothek, siehe VM.CallExtern).</summary>
+    /// <summary>Result of a compiler run: the top-level chunk plus the
+    /// compiled classes (name -> RuntimeClass) that the VM needs for `new`/
+    /// method calls, plus the signatures of all `extern`
+    /// declarations (for dynamic linking against a native library named by an `#extern
+    /// "libName"`, see VM.CallExtern).</summary>
     [MemoryPackable]
     public sealed partial class CompiledProgram
     {
@@ -23,28 +23,28 @@ namespace fire.Runtime
         /// <summary>The files embedded by `new Resource("path")` (docs/RESOURCES.md); the id of a resource is its index. Set by the linker after compiling.</summary>
         public List<ResourceEntry> Resources { get; set; } = new();
 
-        /// <summary>MUSS nach jedem Deserialisieren EINMAL aufgerufen werden,
-        /// bevor das Programm ausgeführt wird (siehe SPEC "Programm-
-        /// Serialisierung") - MemoryPack verfolgt anders als z.B.
-        /// BinaryFormatter KEINE Objekt-Identität über mehrere Vorkommen
-        /// hinweg: `RuntimeClass.Base` einer abgeleiteten Klasse und der
-        /// entsprechende Eintrag in `Classes` würden nach dem Deserialisieren
-        /// sonst zu ZWEI SEPARATEN, unabhängigen Objektinstanzen (mit
-        /// identischem Inhalt, aber verschiedener Identität).
+        /// <summary>MUST be called ONCE after every deserialisation,
+        /// before the program is executed (see SPEC "Program
+        /// serialisation") - unlike e.g. BinaryFormatter, MemoryPack does NOT track
+        /// object identity across multiple occurrences:
+        /// `RuntimeClass.Base` of a derived class and the
+        /// corresponding entry in `Classes` would, after deserialisation,
+        /// otherwise become TWO SEPARATE, independent object instances (with
+        /// identical content, but different identity).
         ///
-        /// Das ist für die meiste Nutzung (Basisklassen-Kette für Methoden-/
-        /// Feldauflösung - FindMethod/FindFieldAccess laufen ja nur über
-        /// NAMEN+DATEN, nicht Objekt-Identität) unschädlich, bricht aber die
-        /// GETEILTE Speicherstelle statischer Felder (RuntimeClass.
-        /// StaticFieldValues, siehe FindStaticFieldOwner-Doku): `Derived.X`
-        /// und `Base.X` müssten dieselbe Dictionary-INSTANZ sein, wären nach
-        /// dem Deserialisieren ohne diesen Schritt aber zwei unabhängige
-        /// (beide leere) Kopien.
+        /// That is harmless for most uses (base-class chain for method/
+        /// field resolution - FindMethod/FindFieldAccess work only on
+        /// NAMES+DATA, not object identity), but breaks the
+        /// SHARED storage location of static fields (RuntimeClass.
+        /// StaticFieldValues, see FindStaticFieldOwner docs): `Derived.X`
+        /// and `Base.X` would have to be the same dictionary INSTANCE, but would be
+        /// two independent (both empty) copies after deserialisation
+        /// without this step.
         ///
-        /// Setzt für jede Klasse mit einer (jetzt möglicherweise
-        /// verwaisten) Base-Referenz stattdessen die KANONISCHE Instanz aus
-        /// `Classes` (nach Name) - exakt dieselbe Verknüpfung, die der
-        /// Compiler beim ERSTEN Kompilieren auch macht (siehe Compiler.
+        /// Instead sets, for every class with a (now possibly
+        /// orphaned) Base reference, the CANONICAL instance from
+        /// `Classes` (by name) - exactly the same linking the
+        /// compiler does on the FIRST compile (see Compiler.
         /// CompileClasses).</summary>
         public void RelinkAfterDeserialize()
         {
@@ -59,15 +59,15 @@ namespace fire.Runtime
                     rc.Base = canonicalBase;
                 }
 
-                // Chunk.OwnerClass wiederherstellen (siehe dortige Doku - beim
-                // Serialisieren ausgenommen, da ein echter Zyklus zurück auf
-                // `rc` selbst). JEDER Chunk, der zu DIESER Klasse gehört
-                // (Feld-Initialisierer, statische Feld-Initialisierer,
-                // Methoden inkl. aller Überladungen, Konstruktoren, Destruktor)
-                // bekommt seinen OwnerClass zurück - rekursiv auch für jede
-                // darin verschachtelte Lambda (übernimmt beim Kompilieren
-                // dieselbe umschließende Klasse, siehe Compiler.CompileLambda)
-                // und jeden Parameter-Standardwert-Proto.
+                // Restore Chunk.OwnerClass (see the docs there - excluded
+                // on serialisation, since it is a real cycle back to
+                // `rc` itself). EVERY chunk belonging to THIS class
+                // (field initialisers, static field initialisers,
+                // methods including all overloads, constructors, destructor)
+                // gets its OwnerClass back - recursively also for every
+                // lambda nested in it (takes over, when compiling,
+                // the same enclosing class, see Compiler.CompileLambda)
+                // and every parameter default-value proto.
                 foreach (var (_, proto) in rc.Fields) RelinkProtoOwner(proto, rc);
                 foreach (var (_, proto) in rc.StaticFields) RelinkProtoOwner(proto, rc);
                 foreach (var overloads in rc.Methods.Values)

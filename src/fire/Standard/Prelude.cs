@@ -1,31 +1,31 @@
 namespace fire.Standard
 {
     /// <summary>
-    /// Ein Stück fire-Quelltext, das vor jedes Programm gesetzt wird und
-    /// die "eingebauten" Typen IndexOutOfBoundsException/AccessDeniedException/
-    /// IEnumerable/IEnumerator/List definiert - bewusst in fire selbst
-    /// geschrieben statt als native C#-Implementierung, da die Sprache dafür
-    /// inzwischen genug Substanz hat (Klassen, Arrays, Interfaces) und das
-    /// konsistent mit allem anderen bleibt. `IndexOutOfBoundsException`/
-    /// `AccessDeniedException` werden von der VM bei einem ungültigen
-    /// Array-Index bzw. einer verletzten Zugriffsmodifikator-Regel selbst
-    /// konstruiert und geworfen (siehe VM.ThrowIndexOutOfBounds/
-    /// ThrowAccessDenied) - Skripte fangen sie ganz normal per `try`/`catch`,
-    /// wie jede andere Exception auch.
+    /// A piece of fire source that is placed before every program and
+    /// defines the "built-in" types IndexOutOfBoundsException/AccessDeniedException/
+    /// IEnumerable/IEnumerator/List - deliberately written in fire itself
+    /// instead of as a native C# implementation, since the language
+    /// now has enough substance for that (classes, arrays, interfaces) and this
+    /// stays consistent with everything else. `IndexOutOfBoundsException`/
+    /// `AccessDeniedException` are constructed and thrown by the VM itself on an invalid
+    /// array index or a violated access-modifier rule
+    /// (see VM.ThrowIndexOutOfBounds/
+    /// ThrowAccessDenied) - scripts catch them quite normally via `try`/`catch`,
+    /// like any other exception.
     ///
-    /// `List` nutzt intern ein Array fester Größe, das bei Bedarf verdoppelt
-    /// wird (klassisches dynamisches Array). `GetEnumerator` erzeugt einen
-    /// eigenen `ListEnumerator`, der nur MoveNext()/GetCurrent() kennt -
-    /// `foreach` ruft diese beiden (und GetEnumerator selbst) rein per
-    /// Namens-Dispatch auf, funktioniert also auch auf jeder ANDEREN Klasse,
-    /// die dieselben drei Methoden hat, nicht nur auf 'List' selbst.
+    /// `List` internally uses a fixed-size array that is doubled when needed
+    /// (classic dynamic array). `GetEnumerator` creates an
+    /// own `ListEnumerator` that knows only MoveNext()/GetCurrent() -
+    /// `foreach` calls these two (and GetEnumerator itself) purely via
+    /// name dispatch, so it also works on any OTHER class
+    /// that has the same three methods, not only on 'List' itself.
     /// </summary>
     public static class Prelude
     {
-        /// <summary>Der Prelude: die Kernklassen unten in fire, dazu die Erweiterungen der Basistypen
-        /// `string` und `char` (`class extends string { ... }`, SPEC 5.5.1/8.12), die aus den
-        /// Methoden-Tabellen in <see cref="StringMethods"/>/<see cref="CharMethods"/> erzeugt werden,
-        /// damit die Methoden-IDs im fire-Text nicht von Hand gepflegt werden müssen.</summary>
+        /// <summary>The prelude: the core classes below in fire, plus the extensions of the base types
+        /// `string` and `char` (`class extends string { ... }`, SPEC 5.5.1/8.12), which are generated from the
+        /// method tables in <see cref="StringMethods"/>/<see cref="CharMethods"/>,
+        /// so that the method IDs in the fire text do not have to be maintained by hand.</summary>
         public static readonly string Source = CoreSource + StringMethods.PreludeSource + CharMethods.PreludeSource + ResourceMethods.PreludeSource;
 
         private const string CoreSource = """
@@ -72,8 +72,8 @@ namespace fire.Standard
                 }
             }
 
-            // Ein Befehl als Objekt: `Command` ohne, `Command<T>` mit einem Kontext (z.B. `Command<IDevice>` - ein Befehl, den `Device.DoCommand` mit dem
-            // Gerät als Kontext ausführt). Das Lambda `Command` ist der Rumpf; wer mehr braucht, leitet ab und überschreibt Execute (`class Home : Command<IDevice>`).
+            // A command as an object: `Command` without, `Command<T>` with a context (e.g. `Command<IDevice>` - a command that `Device.DoCommand` executes with the
+            // device as context). The lambda `Command` is the body; whoever needs more derives and overrides Execute (`class Home : Command<IDevice>`).
             //   var home = new Command<IDevice>()
             //   home.Command = d => { d.WriteString("G28\n") }
             //   Device.Default.DoCommand(home)
@@ -191,15 +191,15 @@ namespace fire.Standard
                     this.count = 0
                 }
 
-                // 'new List([1, 2, 3, 4])' - Listen-Literal-artige
-                // Initialisierung über eine Konstruktor-Überladung mit einem
-                // Array-Parameter (unterschieden von construct() rein über
-                // die Parameteranzahl, wie jede andere Überladung in dieser
-                // Sprache) - kopiert jedes Element einzeln über Add() (statt
-                // 'initial' direkt als items zu übernehmen), damit spätere
-                // Add()-Aufrufe ganz normal weiter wachsen können, ohne an
-                // die genaue Größe des ursprünglich übergebenen Arrays
-                // gebunden zu sein.
+                // 'new List([1, 2, 3, 4])' - list-literal-like
+                // initialisation via a constructor overload with an
+                // array parameter (distinguished from construct() purely by
+                // the parameter count, like any other overload in this
+                // language) - copies each element individually via Add() (instead of
+                // taking 'initial' directly as items), so that later
+                // Add() calls can keep growing quite normally, without
+                // being bound to the exact size of the array originally
+                // passed in.
                 construct(class initial) {
                     this.items = new class[8]
                     this.count = 0

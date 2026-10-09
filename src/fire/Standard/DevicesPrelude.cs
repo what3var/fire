@@ -3,12 +3,12 @@ namespace fire.Standard
     public static class DevicesPrelude
     {
         /// <summary>
-        /// fire-Quelltext zu `#import "devices"`: versteckt die nativen Funktionen (C++, siehe native/bridges/fire_bridge_devices.hpp) hinter gewöhnlichen Klassen
-        /// - VOR das eigentliche Nutzer-Skript zu setzen.
+        /// fire source for `#import "devices"`: hides the native functions (C++, see native/bridges/fire_bridge_devices.hpp) behind ordinary classes
+        /// - to be placed BEFORE the actual user script.
         ///
-        /// 'Device' selbst hat nur EINEN Konstruktor (per Handle) - ein zweiter, gleich-1-argumentiger Konstruktor für den Identifier wäre nicht überladbar
-        /// (Konstruktor-Überladung löst hier nur über die ARGUMENTANZAHL auf, nicht über den Typ). Stattdessen zwei FABRIKMETHODEN auf 'DeviceManagerFacade'
-        /// (GetByHandle/GetByIdentifier) - beide liefern ganz normale Device-Instanzen zurück.</summary>
+        /// 'Device' itself has only ONE constructor (by handle) - a second, equally 1-argument constructor for the identifier would not be overloadable
+        /// (constructor overloading here resolves only by ARGUMENT COUNT, not by type). Instead two FACTORY METHODS on 'DeviceManagerFacade'
+        /// (GetByHandle/GetByIdentifier) - both return perfectly normal Device instances.</summary>
         public const string Source = """
             class DeviceNotFoundException : Exception {
                 string message
@@ -26,7 +26,7 @@ namespace fire.Standard
                 }
             }
 
-            // Eine ungültige Angabe an einer Geräte-Funktion (z.B. eine Wartezeit, die keine Zeitangabe ist).
+            // An invalid specification passed to a device function (e.g. a wait time that is not a duration).
             class DeviceArgumentException : Exception {
                 string message
 
@@ -35,8 +35,8 @@ namespace fire.Standard
                 }
             }
 
-            // Was ein Gerät auf Befehlsebene kann: Befehle (Text oder Command-Objekte) senden, Bytes und Text schreiben und lesen, auf Zeichen warten.
-            // `Command<IDevice>` ist ein Befehl, den DoCommand mit dem Gerät als Kontext ausführt.
+            // What a device can do at command level: send commands (text or Command objects), write and read bytes and text, wait for characters.
+            // `Command<IDevice>` is a command that DoCommand executes with the device as context.
             interface IDevice {
                 string Identifier()
                 bool Connect()
@@ -59,13 +59,13 @@ namespace fire.Standard
                     this.handle = handle
                 }
 
-                // Ob der Host (z.B. der Editor) ein Standardgerät gewählt hat.
+                // Whether the host (e.g. the editor) has chosen a default device.
                 static bool HasDefault {
                     get { return __DEVMgrDefaultHandle() != -1 }
                 }
 
-                // Das vom Host gewählte Standardgerät (im Editor: Geräte-Übersicht -> "Als Standard" oder die Auswahl in
-                // der Symbolleiste). Wirft DeviceNotFoundException, wenn keins gewählt ist (z.B. in einem eigenständigen Programm).
+                // The default device chosen by the host (in the editor: device overview -> "Set as Default Device" or the selection in
+                // the toolbar). Throws DeviceNotFoundException if none is chosen (e.g. in a standalone program).
                 static Device Default {
                     get {
                         var h = __DEVMgrDefaultHandle()
@@ -78,11 +78,11 @@ namespace fire.Standard
 
                 string Identifier() { return __DEVIdentifier(this.handle) }
 
-                // Verbunden? (Property; die gleichnamige Methode IsConnected() bleibt aus Kompatibilität bestehen.)
+                // Connected? (property; the method of the same name IsConnected() remains for compatibility.)
                 bool IsConnected { get { return __DEVIsConnected(this.handle) } }
                 bool IsConnected() { return __DEVIsConnected(this.handle) }
 
-                // Gehört das Gerät einem geteilten DeviceManager (des Editors)? Dann bleibt es über den Lauf hinaus bestehen.
+                // Does the device belong to a shared DeviceManager (of the editor)? Then it persists beyond the run.
                 bool IsShared { get { return __DEVIsShared(this.handle) } }
                 string PortName() { return __DEVPortName(this.handle) }
 
@@ -93,8 +93,8 @@ namespace fire.Standard
 
                 bool Connect() { return __DEVConnect(this.handle) }
 
-                // Verbindet nur, wenn noch nicht verbunden; wirft DeviceConnectionException, wenn das nicht klappt.
-                // Liefert das Gerät selbst zurück (Device.Default.EnsureConnected().DoCommand("...")).
+                // Connects only if not yet connected; throws DeviceConnectionException if that does not work.
+                // Returns the device itself (Device.Default.EnsureConnected().DoCommand("...")).
                 Device EnsureConnected() {
                     if (!__DEVIsConnected(this.handle)) {
                         if (!__DEVConnect(this.handle)) {
@@ -180,7 +180,7 @@ namespace fire.Standard
 
                 int Count() { return __DEVMgrCount() }
 
-                // Gehört der Manager dem Host (Editor) und wird von Skripten nur mitbenutzt?
+                // Does the manager belong to the host (editor) and is only co-used by scripts?
                 bool IsShared() { return __DEVMgrIsShared() }
 
                 Device GetAt(int index) {

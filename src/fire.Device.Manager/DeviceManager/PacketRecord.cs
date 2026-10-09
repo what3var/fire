@@ -8,19 +8,19 @@ namespace fire.Device.Manager.DeviceManager
 {
     public enum PacketDirection
     {
-        /// <summary>Vom Host (Skript/Editor) zum Gerät.</summary>
+        /// <summary>From the host (script/editor) to the device.</summary>
         HostToDevice = 0,
 
-        /// <summary>Vom Gerät zum Host.</summary>
+        /// <summary>From the device to the host.</summary>
         DeviceToHost = 1,
     }
 
-    /// <summary>Ein mitgeschnittenes Paket (eine gesendete Zeile bzw. ein empfangener Block Rohdaten).</summary>
+    /// <summary>A captured packet (a sent line or a received block of raw data).</summary>
     public sealed record PacketRecord(DateTime Time, string DeviceIdentifier, PacketDirection Direction, byte[] Data);
 
-    /// <summary>Das Dateiformat der Paketprotokolle (`.fplog`): Textdatei, eine Zeile je Paket, Spalten durch Tabulator
-    /// getrennt - UTC-Zeitstempel (ISO 8601), Richtung (`H2D`/`D2H`), Geräte-Kennung, Inhalt als Hexbytes.
-    /// Zeilen mit `#` und Leerzeilen werden überlesen. Verlustfrei (Binärdaten bleiben erhalten) und von Hand lesbar.</summary>
+    /// <summary>The file format of the packet logs (`.fplog`): a text file, one line per packet, columns separated by tabs
+    /// - UTC timestamp (ISO 8601), direction (`H2D`/`D2H`), device identifier, content as hex bytes.
+    /// Lines with `#` and empty lines are skipped. Lossless (binary data is preserved) and human-readable.</summary>
     public static class PacketLog
     {
         public const string Header = "# fire-packetlog 1";
@@ -42,7 +42,7 @@ namespace fire.Device.Manager.DeviceManager
             return sb.ToString();
         }
 
-        /// <summary>Liest ein Protokoll; bei einer fehlerhaften Zeile wird eine FormatException mit der Zeilennummer geworfen.</summary>
+        /// <summary>Reads a log; on a faulty line a FormatException with the line number is thrown.</summary>
         public static List<PacketRecord> Parse(string text)
         {
             var result = new List<PacketRecord>();

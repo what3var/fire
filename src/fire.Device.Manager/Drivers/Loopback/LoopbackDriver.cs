@@ -3,9 +3,9 @@ using System.Collections.Generic;
 
 namespace fire.Device.Manager.Drivers.Loopback
 {
-    /// <summary>Ein simuliertes Gerät ohne Hardware: alles, was man sendet, kommt als Antwort zurück.
-    /// Zum Ausprobieren von Skripten, Standardgerät und Paketverfolgung ohne angeschlossenes Gerät
-    /// (Kennung `loopback:echo`).</summary>
+    /// <summary>A simulated device without hardware: everything that is sent comes back as the reply.
+    /// For trying out scripts, the default device and packet tracking without a connected device
+    /// (identifier `loopback:echo`).</summary>
     public class LoopbackDriver : IDriver
     {
         public string Identifier => "loopback";

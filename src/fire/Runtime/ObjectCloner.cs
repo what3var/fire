@@ -5,24 +5,24 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Die Kopier-Präfixe `flat x` und `copy x` (SPEC 2.4). Anders als <see cref="ObjectCopier"/> (`taking`, isolierte
-    /// Kopie für einen Thread, die jede Referenz nach außen ablehnt) ist das ein gewöhnlicher Wertausdruck: das Ergebnis
-    /// ist ein neues Objekt, das wie jedes neue Objekt einen Owner bekommt (SPEC 2.1) und mit ihm zerstört wird.
+    /// The copy prefixes `flat x` and `copy x` (SPEC 2.4). Unlike <see cref="ObjectCopier"/> (`taking`, isolated
+    /// copy for a thread that rejects every reference pointing outward), this is an ordinary value expression: the result
+    /// is a new object that, like any new object, gets an owner (SPEC 2.1) and is destroyed with it.
     ///
-    /// <b>flat</b>: das Objekt selbst wird kopiert, samt seiner Felder - wertartige (bool/int/float/char/string/undefined)
-    /// als Wert, alles Referenzartige (Objekte, Arrays, Puffer, Lambdas, Pointer) bleibt dieselbe Referenz wie im
-    /// Original. Der Operand darf auch ein Array (neues Array, gleiche Elemente) oder ein Puffer (Byte-Kopie) sein.
+    /// <b>flat</b>: the object itself is copied, including its fields - value-like ones (bool/int/float/char/string/undefined)
+    /// as a value, everything reference-like (objects, arrays, buffers, lambdas, pointers) remains the same reference as in the
+    /// original. The operand may also be an array (new array, same elements) or a buffer (byte copy).
     ///
-    /// <b>copy</b>: Tiefenkopie. Jede vom Operanden aus über Felder/Array-Elemente erreichbare Instanz wird genau EINMAL
-    /// kopiert; taucht dieselbe Instanz (oder dasselbe Array) noch einmal auf - auch zyklisch -, zeigt die Kopie auf die
-    /// schon gemachte Kopie (Identitätstabelle). Die Besitzverhältnisse bleiben erhalten: gehörte eine kopierte Instanz im
-    /// Original einer ebenfalls kopierten Instanz, gehört ihre Kopie deren Kopie; alles andere (Wurzel, und Instanzen,
-    /// deren Owner nicht mitkopiert wird) gehört dem übergebenen Owner.
+    /// <b>copy</b>: deep copy. Every instance reachable from the operand via fields/array elements is copied exactly ONCE;
+    /// if the same instance (or the same array) shows up again - even cyclically - the copy points to the
+    /// copy already made (identity table). Ownership relations are preserved: if a copied instance belonged in the
+    /// original to an instance that is also copied, its copy belongs to that one's copy; everything else (root, and instances
+    /// whose owner is not copied along) belongs to the passed owner.
     ///
-    /// Für beide gilt: Konstruktoren laufen nicht (es werden nur Feldwerte übertragen), der Destruktor der Kopie läuft wie
-    /// bei jedem Objekt. Actors werden nie kopiert (ein Actor als Operand ist ein Fehler, ein Actor in der Tiefe bleibt
-    /// eine geteilte Referenz - Actor-Referenzen sind ohnehin für das Herumreichen gedacht, THREADING_DESIGN 2), ebenso
-    /// bleibt ein schon zerstörtes Objekt in der Tiefe eine geteilte Referenz. Lambdas und Pointer werden geteilt.
+    /// For both: constructors do not run (only field values are transferred), the destructor of the copy runs like
+    /// for any object. Actors are never copied (an actor as operand is an error, an actor at depth remains
+    /// a shared reference - actor references are meant for passing around anyway, THREADING_DESIGN 2), likewise
+    /// an already destroyed object at depth remains a shared reference. Lambdas and pointers are shared.
     /// </summary>
     public static class ObjectCloner
     {
@@ -55,16 +55,16 @@ namespace fire.Runtime
                 }
 
                 default:
-                    // Wertartig (bool/int/float/char/string/undefined) und Referenzen ohne eigenen Inhalt
-                    // (Lambda/Pointer): es gibt nichts zu kopieren.
+                    // Value-like (bool/int/float/char/string/undefined) and references without content of their own
+                    // (lambda/pointer): there is nothing to copy.
                     return source;
             }
         }
 
-        /// <summary>Wie <see cref="Clone"/>, aber für eine Kopie, die einem OBJEKT gehören soll (Zuweisung an ein Feld, SPEC 2.4) -
-        /// die Übergabe verhält sich wie `TakeTo` (SPEC 2.2): befindet sich das Zielobjekt schon in der Kaskadenlöschung, wird die
-        /// Kopie so behandelt, als wäre sie eine Sekunde VOR deren Beginn übergeben worden - sie wird sofort mit zerstört (samt
-        /// `destruct()`). (Einen Zyklus kann es nicht geben: die Kopie ist neu und besitzt nichts, was das Ziel schon besäße.)</summary>
+        /// <summary>Like <see cref="Clone"/>, but for a copy that is to belong to an OBJECT (assignment to a field, SPEC 2.4) -
+        /// the handover behaves like `TakeTo` (SPEC 2.2): if the target object is already in cascade deletion, the
+        /// copy is treated as if it had been handed over one second BEFORE its start - it is destroyed immediately along with it (including
+        /// `destruct()`). (There cannot be a cycle: the copy is new and owns nothing that the target already owned.)</summary>
         public static Value CloneOwnedBy(Value source, ObjectInstance owner, bool deep, IDestructRunner runner)
         {
             if (!owner.IsDestroyed)
@@ -96,8 +96,8 @@ namespace fire.Runtime
             return copy;
         }
 
-        /// <summary>Die Felder unter dem Baum-Lock gelesen (ein Objekt, das an einem `taking`-Thread hängt, kann
-        /// gleichzeitig von dort verändert werden).</summary>
+        /// <summary>The fields read under the tree lock (an object attached to a `taking` thread can
+        /// be modified from there at the same time).</summary>
         private static List<KeyValuePair<string, Value>> Snapshot(ObjectInstance node)
         {
             var fields = new List<KeyValuePair<string, Value>>();
@@ -119,12 +119,12 @@ namespace fire.Runtime
             private readonly IOwner _rootOwner;
             private readonly ObjectInstance? _root;
 
-            // Phase 1 (Entdecken): alle zu kopierenden Instanzen mit ihren Feld-Schnappschüssen, in Fundreihenfolge.
+            // Phase 1 (discover): all instances to copy with their field snapshots, in discovery order.
             private readonly List<ObjectInstance> _order = new();
             private readonly Dictionary<ObjectInstance, List<KeyValuePair<string, Value>>> _found = new(ReferenceEqualityComparer.Instance);
             private readonly HashSet<object> _containersSeen = new(ReferenceEqualityComparer.Instance);
 
-            // Phase 2/3 (Anlegen/Füllen): Original -> Kopie (Identitätstabellen).
+            // Phase 2/3 (create/fill): original -> copy (identity tables).
             private readonly Dictionary<ObjectInstance, ObjectInstance> _copies = new(ReferenceEqualityComparer.Instance);
             private readonly Dictionary<ScriptArray, ScriptArray> _arrayCopies = new(ReferenceEqualityComparer.Instance);
             private readonly Dictionary<ByteBuffer, ByteBuffer> _bufferCopies = new(ReferenceEqualityComparer.Instance);
@@ -143,8 +143,8 @@ namespace fire.Runtime
                 return _copies[_root!];
             }
 
-            /// <summary>Ein Array als Operand: es hat keine Wurzel-Instanz, alle darin gefundenen Objekte kommen nach den
-            /// gewohnten Regeln an den Owner.</summary>
+            /// <summary>An array as operand: it has no root instance, all objects found in it end up at the owner
+            /// under the usual rules.</summary>
             public Value RunOnContainer(Value container)
             {
                 Discover(container);
@@ -153,7 +153,7 @@ namespace fire.Runtime
                 return MapValue(container);
             }
 
-            /// <summary>Sammelt alles Erreichbare (Objekte, Arrays) ohne Rekursion über den C#-Stack.</summary>
+            /// <summary>Collects everything reachable (objects, arrays) without recursion on the C# stack.</summary>
             private void Discover(Value start)
             {
                 var pending = new Stack<Value>();
@@ -167,7 +167,7 @@ namespace fire.Runtime
                         {
                             var obj = (ObjectInstance)v.AsObjectRef();
                             if (_found.ContainsKey(obj)) break;
-                            // Actors und Zerstörtes bleiben geteilte Referenzen (nur die Wurzel wird vorab geprüft).
+                            // Actors and destroyed objects remain shared references (only the root is checked up front).
                             if (!ReferenceEquals(obj, _root) && (IsActor(obj) || obj.IsDestroyed)) break;
                             var snapshot = Snapshot(obj);
                             _found[obj] = snapshot;
@@ -186,8 +186,8 @@ namespace fire.Runtime
                 }
             }
 
-            /// <summary>Legt alle Kopien an (noch ohne Feldwerte) - die Wurzel zuerst, danach jede Instanz unter ihrem
-            /// kopierten Besitzer, falls der mitkopiert wird, sonst unter dem Wurzel-Owner.</summary>
+            /// <summary>Creates all copies (still without field values) - the root first, then each instance under its
+            /// copied owner, if that is copied along, otherwise under the root owner.</summary>
             private void Materialize()
             {
                 if (_root != null)
@@ -199,7 +199,7 @@ namespace fire.Runtime
             private ObjectInstance MaterializeOne(ObjectInstance obj)
             {
                 if (_copies.TryGetValue(obj, out var existing)) return existing;
-                // Der Besitz-Baum hat keine Zyklen (TakeTo verhindert sie), die Rekursion über die Besitzer endet also.
+                // The ownership tree has no cycles (TakeTo prevents them), so the recursion over the owners terminates.
                 IOwner owner = obj.Owner is ObjectInstance ownerObj && _found.ContainsKey(ownerObj)
                     ? MaterializeOne(ownerObj)
                     : _rootOwner;
@@ -233,8 +233,8 @@ namespace fire.Runtime
                         var array = v.AsArray();
                         if (_arrayCopies.TryGetValue(array, out var existing)) return Value.MakeArray(existing);
                         var copy = new ScriptArray(array.Length);
-                        LeafOwnership.Adopt(copy, _rootOwner);   // jedes kopierte Array gehoert dem Owner der Kopie (Elemente wechseln ihren Besitzer nie)
-                        _arrayCopies[array] = copy; // vor dem Füllen eintragen: ein Array darf sich selbst enthalten
+                        LeafOwnership.Adopt(copy, _rootOwner);   // every copied array belongs to the owner of the copy (elements never change their owner)
+                        _arrayCopies[array] = copy; // register before filling: an array may contain itself
                         for (int i = 0; i < array.Length; i++)
                             copy.Items[i] = MapValue(array.Items[i]);
                         return Value.MakeArray(copy);

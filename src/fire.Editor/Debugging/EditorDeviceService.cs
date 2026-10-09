@@ -7,13 +7,13 @@ using fire.Device.Manager.Drivers.Loopback;
 
 namespace fire.Editor
 {
-    /// <summary>Der GETEILTE DeviceManager des Editors (siehe DeviceManager.IsShared): alle im Editor laufenden Skripte
-    /// benutzen ihn gemeinsam, offene Verbindungen überleben einen Lauf, und ein Skript kann ihn nicht abbauen.
-    /// Dazu das Standardgerät (`Device.Default` im Skript) und die Einstellungen, die den Editor-Neustart überleben
-    /// (Standardgerät, Simulationsgerät) in `%AppData%/fire/editor-devices.txt`.
+    /// <summary>The SHARED DeviceManager of the editor (see DeviceManager.IsShared): all scripts running in the editor
+    /// use it together, open connections survive a run, and a script cannot tear it down.
+    /// In addition the default device (`Device.Default` in the script) and the settings that survive an editor restart
+    /// (default device, simulation device) in `%AppData%/fire/editor-devices.txt`.
     ///
-    /// Alles hier ist UI-frei; Ereignisse des Managers können auf Hintergrund-Threads feuern - die Ansichten
-    /// (DevicesPanelControl, PacketTraceControl) holen sie selbst auf den UI-Thread.</summary>
+    /// Everything here is UI-free; events of the manager may fire on background threads - the views
+    /// (DevicesPanelControl, PacketTraceControl) bring them to the UI thread themselves.</summary>
     public sealed class EditorDeviceService
     {
         private static string SettingsPath =>
@@ -30,7 +30,7 @@ namespace fire.Editor
             Manager.DefaultChanged += SaveSettings;
         }
 
-        /// <summary>Das simulierte Echo-Gerät `loopback:echo` (ohne Hardware zum Ausprobieren) anzeigen.</summary>
+        /// <summary>Show the simulated echo device `loopback:echo` (for trying things out without hardware).</summary>
         public bool LoopbackEnabled
         {
             get => _loopbackEnabled;
@@ -51,8 +51,8 @@ namespace fire.Editor
             }
         }
 
-        /// <summary>Sucht Geräte auf einem Hintergrund-Thread. `fastScan`: nur auflisten; sonst jedes Gerät auf Verfügbarkeit prüfen
-        /// (öffnet kurz seinen Anschluss - dauert).</summary>
+        /// <summary>Searches for devices on a background thread. `fastScan`: only list; otherwise check every device for availability
+        /// (briefly opens its port - takes a while).</summary>
         public Task RefreshAsync(bool fastScan) => Task.Run(() => Manager.RefreshDevices(fastScan));
 
         private void LoadSettings()
@@ -74,7 +74,7 @@ namespace fire.Editor
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine(ex); // eine unlesbare Einstellungsdatei darf den Editor nicht stören
+                System.Diagnostics.Debug.WriteLine(ex); // an unreadable settings file must not disturb the editor
             }
         }
 
@@ -95,7 +95,7 @@ namespace fire.Editor
             }
         }
 
-        /// <summary>Beim Beenden des Editors: Geräte trennen und freigeben (nur der Besitzer darf den geteilten Manager abbauen).</summary>
+        /// <summary>When the editor exits: disconnect and release devices (only the owner may tear down the shared manager).</summary>
         public void Shutdown() => Manager.Shutdown();
     }
 }

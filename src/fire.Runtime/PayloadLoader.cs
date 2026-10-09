@@ -9,18 +9,18 @@ using System.Security.Cryptography;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Lädt DLLs zur Laufzeit aus der eigenen Datei (Ersatz für Costura/Fody). Die ausführbare Datei enthält nur das,
-    /// was das Programm braucht (siehe Packer/PackagePlan); alles außer dem winzigen Start-Stück (fire.Runtime.dll)
-    /// liegt als Payload hinter dem .NET-Bundle (siehe PayloadFile).
+    /// Loads DLLs at runtime from its own file (replacement for Costura/Fody). The executable file contains only what
+    /// the program needs (see Packer/PackagePlan); everything except the tiny start piece (fire.Runtime.dll)
+    /// lies as a payload behind the .NET bundle (see PayloadFile).
     ///
-    /// - Verwaltete DLLs (fire.dll, MemoryPack, die benötigten Bridges): <see cref="AssemblyLoadContext.Resolving"/>
-    ///   wird erst ausgelöst, wenn der Standard-Kontext eine Assembly nicht findet - also genau dann, wenn Code sie
-    ///   zum ersten Mal wirklich braucht. Eine nicht eingebundene Bridge wird so nie angefasst.
-    /// - Native Bibliotheken (SDL3): Windows kann eine DLL nicht aus dem Speicher laden, deshalb wird sie beim ersten
-    ///   Zugriff einmalig in einen Cache-Ordner im Temp-Verzeichnis geschrieben (Unterordner = Prüfsumme, also je Version
-    ///   genau einmal, auch über mehrere Programmstarts hinweg) und von dort geladen.
+    /// - Managed DLLs (fire.dll, MemoryPack, the required bridges): <see cref="AssemblyLoadContext.Resolving"/>
+    ///   is only raised when the default context does not find an assembly - that is, exactly when code
+    ///   really needs it for the first time. A bridge that is not included is thus never touched.
+    /// - Native libraries (SDL3): Windows cannot load a DLL from memory, so on first
+    ///   access it is written once into a cache folder in the temp directory (subfolder = checksum, i.e. exactly once per version,
+    ///   also across several program starts) and loaded from there.
     ///
-    /// Muss installiert sein, BEVOR irgendein Typ aus fire.dll berührt wird (siehe Program.cs/Bootstrap).
+    /// Must be installed BEFORE any type from fire.dll is touched (see Program.cs/Bootstrap).
     /// </summary>
     public static class PayloadLoader
     {
@@ -29,8 +29,8 @@ namespace fire.Runtime
         private static readonly Dictionary<string, IntPtr> _nativeLoaded = new(StringComparer.OrdinalIgnoreCase);
         private static readonly object _lock = new();
 
-        /// <summary>Öffnet den Payload der eigenen Datei und hängt die Lader ein. false = diese Datei trägt keinen Payload
-        /// (z.B. die nackte Runtime aus dem Build-Ordner).</summary>
+        /// <summary>Opens the payload of its own file and hooks in the loaders. false = this file carries no payload
+        /// (e.g. the bare runtime from the build folder).</summary>
         public static bool Install(string? exePath = null)
         {
             exePath ??= Environment.ProcessPath;
@@ -44,7 +44,7 @@ namespace fire.Runtime
             return true;
         }
 
-        /// <summary>Das serialisierte Programm (MemoryPack) aus dem Payload; null, wenn keins da oder beschädigt.</summary>
+        /// <summary>The serialised program (MemoryPack) from the payload; null if there is none or it is damaged.</summary>
         public static byte[]? ReadProgram()
         {
             var entry = _reader?.Find(PayloadKind.Program, "program");
@@ -92,15 +92,15 @@ namespace fire.Runtime
         }
 
         /// <summary>"SDL3" trifft "SDL3.dll", "libSystem.IO.Ports.Native" trifft "libSystem.IO.Ports.Native.so" - DllImport-Namen
-        /// kommen mit oder ohne Endung.</summary>
+        /// come with or without an extension.</summary>
         private static bool NameMatches(string fileName, string requested)
         {
             if (string.Equals(fileName, requested, StringComparison.OrdinalIgnoreCase)) return true;
             return string.Equals(Path.GetFileNameWithoutExtension(fileName), requested, StringComparison.OrdinalIgnoreCase);
         }
 
-        /// <summary>Schreibt die native Bibliothek in den Cache-Ordner (falls dort noch nicht vorhanden) und gibt den
-        /// Pfad zurück.</summary>
+        /// <summary>Writes the native library into the cache folder (if not already there) and returns the
+        /// path.</summary>
         private static string? Extract(PayloadEntry entry)
         {
             var dir = Path.Combine(Path.GetTempPath(), "fire-native", Convert.ToHexString(entry.Sha256, 0, 8));
@@ -112,14 +112,14 @@ namespace fire.Runtime
             if (bytes == null) return null;
 
             Directory.CreateDirectory(dir);
-            // Erst in eine eindeutige Zwischendatei, dann umbenennen: zwei gleichzeitig startende Programme sehen nie eine
-            // halb geschriebene DLL.
+            // First into a unique intermediate file, then rename: two programs starting at the same time never see a
+            // half-written DLL.
             var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             File.WriteAllBytes(tmp, bytes);
             try { File.Move(tmp, path, overwrite: true); }
             catch (IOException)
             {
-                // Ein anderer Prozess hat sie gerade geladen/ersetzt - deren Kopie ist identisch.
+                // Another process has just loaded/replaced it - its copy is identical.
                 try { File.Delete(tmp); } catch (IOException) { }
             }
             return path;

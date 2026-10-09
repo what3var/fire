@@ -12,23 +12,23 @@ using System.Text.RegularExpressions;
 namespace fire.Compiler
 {
     /// <summary>
-    /// Die per `#import "name"` zuschaltbaren Erweiterungen und ihre Preludes
-    /// (zusätzlich zur immer vorhandenen Standard-Prelude, siehe
-    /// fire.Standard.Prelude): jede bringt fire-Quelltext (Klassen wie
-    /// `Framebuffer`/`Device`) UND native Funktionen mit. GENAU EINE Stelle,
-    /// die weiß, welche Erweiterungen es gibt und was sie zum Programm
-    /// beitragen - der echte Compiler (siehe Linker.CompileAndLink) und die
-    /// Live-Diagnostik des Editors (siehe Editor.LiveDiagnostics) benutzen
-    /// beide diese Klasse und bleiben so IMMER im Gleichschritt. Ohne das
-    /// würde die Live-Diagnostik jede Klasse/Funktion einer Erweiterung als
-    /// "unbekannt" unterkringeln, obwohl das Programm beim echten
-    /// Kompilieren völlig in Ordnung ist.
+    /// The extensions that can be switched on via `#import "name"` and their preludes
+    /// (in addition to the always present standard prelude, see
+    /// fire.Standard.Prelude): each brings fire source (classes like
+    /// `Framebuffer`/`Device`) AND native functions. EXACTLY ONE place
+    /// that knows which extensions exist and what they
+    /// contribute to the program - the real compiler (see Linker.CompileAndLink) and the
+    /// live diagnostics of the editor (see Editor.LiveDiagnostics) both use
+    /// this class and thus ALWAYS stay in step. Without that,
+    /// live diagnostics would squiggle every class/function of an extension as
+    /// "unknown", although the program is perfectly fine in
+    /// real compiling.
     /// </summary>
     public static class ImportedPreludes
     {
-        /// <summary>Übersetzt den Namen aus `#import "name"` (Groß-/Kleinschreibung
-        /// egal) in den Schlüssel aus <see cref="NativeImports"/>, oder wirft
-        /// - wie der echte Compiler - bei einer unbekannten Erweiterung.</summary>
+        /// <summary>Translates the name from `#import "name"` (case
+        /// does not matter) into the key from <see cref="NativeImports"/>, or throws
+        /// - like the real compiler - for an unknown extension.</summary>
         public static string ParseImportName(string name) => name.ToLowerInvariant() switch
         {
             "graphics" => NativeImports.Graphics,
@@ -42,11 +42,11 @@ namespace fire.Compiler
                      : $"'{name}' is not a known extension (installed packages: `ember list`, available ones: `ember find`; a library project of the solution needs a reference in the project file)."),
         };
 
-        /// <summary>Der fire-Quelltext der Prelude der Erweiterung `importName`
-        /// (Name aus `#import "name"`, Groß-/Kleinschreibung egal), null bei
-        /// einer unbekannten Erweiterung.</summary>
-        /// <summary>Die Erweiterungen, die `importKey` (Schlüssel aus <see cref="NativeImports"/>) selbst mitbringt: `ui` baut auf
-        /// `graphics` auf und schaltet es mit zu. Jede Stelle, die ein `#import` auswertet, trägt alle Schlüssel daraus ein.</summary>
+        /// <summary>The fire source of the prelude of the extension `importName`
+        /// (name from `#import "name"`, case does not matter), null for
+        /// an unknown extension.</summary>
+        /// <summary>The extensions that `importKey` (key from <see cref="NativeImports"/>) brings along itself: `ui` builds on
+        /// `graphics` and switches it on as well. Every place that evaluates an `#import` enters all keys from it.</summary>
         public static IEnumerable<string> WithDependencies(string importKey) => WithDependencies(importKey, new HashSet<string>());
 
         private static IEnumerable<string> WithDependencies(string importKey, HashSet<string> visited)
@@ -61,9 +61,9 @@ namespace fire.Compiler
                 yield return importKey;
                 yield break;
             }
-            if (importKey == NativeImports.Windows) yield return NativeImports.Graphics; // Window zeigt einen Framebuffer
-            if (importKey == NativeImports.Ui) { yield return NativeImports.Graphics; yield return NativeImports.Windows; yield return NativeImports.Reflection; } // Styles und Trigger setzen Eigenschaften per Name
-            if (importKey == NativeImports.Linq) yield return NativeImports.Reflection; // SelectProperty/SelectField arbeiten mit Selektoren
+            if (importKey == NativeImports.Windows) yield return NativeImports.Graphics; // Window shows a framebuffer
+            if (importKey == NativeImports.Ui) { yield return NativeImports.Graphics; yield return NativeImports.Windows; yield return NativeImports.Reflection; } // Styles and triggers set properties by name
+            if (importKey == NativeImports.Linq) yield return NativeImports.Reflection; // SelectProperty/SelectField work with selectors
             yield return importKey;
         }
 
@@ -82,22 +82,22 @@ namespace fire.Compiler
         private static readonly Regex ImportDirective =
             new("^[ \\t]*#import[ \\t]+\"([^\"\\r\\n]+)\"", RegexOptions.Compiled | RegexOptions.Multiline);
 
-        /// <summary>Die Namen aller `#import "name"`-Zeilen in `source` (rein
-        /// TEXTUELL erkannt, ohne den Präprozessor zu bemühen - für den
-        /// Editor, der auf unverarbeitetem, evtl. gerade erst getipptem Text
-        /// arbeitet). Unbekannte Namen sind enthalten - prüfen mit
+        /// <summary>The names of all `#import "name"` lines in `source` (recognised purely
+        /// TEXTUALLY, without bothering the preprocessor - for the
+        /// editor, which works on unprocessed, possibly just freshly typed text).
+        /// Unknown names are included - check with
         /// <see cref="TrySourceFor"/>.</summary>
         public static IEnumerable<string> FindImportNames(string source, ISet<string>? symbols = null) =>
             ImportDirective.Matches(ConditionalSymbols.Apply(source, symbols ?? ConditionalSymbols.For(null)))
                 .Select(m => m.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>Setzt die Preludes aller in `nativeImports` enthaltenen
-        /// Erweiterungen (jeweils durch `preprocess` vorverarbeitet) direkt
-        /// HINTER die Standard-Prelude (Index 0) in `processedSources` und
-        /// registriert deren native Funktionen (als Platzhalter ohne
-        /// Wirkung - nur die NAMEN zählen fürs Kompilieren, die echten
-        /// Implementierungen hängt erst RuntimeSession.Build an, siehe dort)
-        /// in `natives`. Liefert die Anzahl der eingefügten Preludes.</summary>
+        /// <summary>Sets the preludes of all extensions contained in `nativeImports`
+        /// (each preprocessed by `preprocess`) directly
+        /// BEHIND the standard prelude (index 0) in `processedSources` and
+        /// registers their native functions (as placeholders without
+        /// effect - only the NAMES count for compiling, the real
+        /// implementations are attached only by RuntimeSession.Build, see there)
+        /// in `natives`. Returns the number of inserted preludes.</summary>
         public static int Insert(
             IReadOnlySet<string> nativeImports, NativeRegistry natives,
             List<ProcessedSource> processedSources, Func<string, ProcessedSource> preprocess)
@@ -113,7 +113,7 @@ namespace fire.Compiler
 
             if (nativeImports.Contains(NativeImports.Windows))
             {
-                // hinter `graphics`: die Prelude-Reihenfolge (jede Einfuegung steht VOR den frueheren) und die der nativen Funktionen sind unabhaengig voneinander
+                // behind `graphics`: the prelude order (every insertion stands BEFORE the earlier ones) and that of the native functions are independent of each other
                 processedSources.Insert(1, preprocess(WindowsBridge.PreludeSource));
                 WindowsBridge.RegisterStubs(natives);
                 inserted++;
@@ -121,14 +121,14 @@ namespace fire.Compiler
 
             if (nativeImports.Contains(NativeImports.Ui))
             {
-                // reiner fire-Quelltext auf den Klassen der Grafik-Brücke: keine nativen Funktionen
+                // pure fire source on the classes of the graphics bridge: no native functions
                 processedSources.Insert(1, preprocess(UiBridge.PreludeSource));
                 inserted++;
             }
 
             if (nativeImports.Contains(NativeImports.Linq))
             {
-                // reiner fire-Quelltext, keine nativen Funktionen
+                // pure fire source, no native functions
                 processedSources.Insert(1, preprocess(fire.Standard.LinqPrelude.Source));
                 inserted++;
             }
@@ -136,7 +136,7 @@ namespace fire.Compiler
             if (nativeImports.Contains(NativeImports.Reflection))
             {
                 processedSources.Insert(1, preprocess(fire.Standard.ReflectionPrelude.Source));
-                ReflectionNatives.Register(natives); // beim Übersetzen zählen nur die Namen (der Compiler schreibt daraufhin Typ-Metadaten mit)
+                ReflectionNatives.Register(natives); // when translating only the names count (the compiler then writes type metadata along)
                 inserted++;
             }
 

@@ -12,8 +12,8 @@ using Avalonia.Media.Imaging;
 
 namespace fire.Editor
 {
-    /// <summary>Baut aus dem Markdown-Modell (siehe MarkdownParser) die Vorschau: einen Baum aus Avalonia-Controls (Überschriften, Absätze und Code als markierbare Textblöcke, Listen, Tabellen,
-    /// Bilder). Reines Darstellen: Links werden an `LinkClicked` gemeldet, der Host entscheidet, was damit passiert (Browser, andere Datei im Editor öffnen).</summary>
+    /// <summary>Builds the preview from the Markdown model (see MarkdownParser): a tree of Avalonia controls (headings, paragraphs and code as selectable text blocks, lists, tables,
+    /// images). Pure display: links are reported to `LinkClicked`, the host decides what happens with them (browser, open another file in the editor).</summary>
     internal sealed class MarkdownRenderer
     {
         private static readonly FontFamily CodeFont = new("Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace");
@@ -27,10 +27,10 @@ namespace fire.Editor
         private readonly HashSet<string> _usedAnchors = new();
         private static readonly double[] HeadingSizes = { 30, 24, 20, 17, 15, 14 };
 
-        /// <summary>Verzeichnis des Dokuments (für relative Bildpfade).</summary>
+        /// <summary>Directory of the document (for relative image paths).</summary>
         public string? BaseDirectory { get; set; }
 
-        /// <summary>Wird aufgerufen, wenn ein Link angeklickt wurde (Ziel wie im Dokument geschrieben).</summary>
+        /// <summary>Called when a link was clicked (target as written in the document).</summary>
         public Action<string, KeyModifiers>? LinkClicked { get; set; }
 
         /// <summary>Heading blocks of the last rendered document by anchor (see <see cref="MdAnchors"/>), for links like `file.md#section`.</summary>
@@ -145,7 +145,7 @@ namespace fire.Editor
         {
             var text = new SelectableTextBlock { FontFamily = CodeFont, FontSize = 13, Foreground = EditorTheme.Text, TextWrapping = TextWrapping.NoWrap };
 
-            // Fire-Quelltext mit demselben Lexer einfärben wie im Editor.
+            // Colour fire source with the same lexer as in the editor.
             bool isFire = code.Language != null &&
                 (code.Language.Equals("fire", StringComparison.OrdinalIgnoreCase) || code.Language.Equals("firescript", StringComparison.OrdinalIgnoreCase));
             var inlines = text.Inlines!;
@@ -272,7 +272,7 @@ namespace fire.Editor
 
         private Inline RenderImage(MdImage img)
         {
-            // Nur lokale Dateien (relativ zum Dokument): ein Markdown-Dokument soll beim bloßen Ansehen nicht selbständig Netzwerkzugriffe auslösen.
+            // Local files only (relative to the document): a Markdown document should not trigger network access on its own when merely viewed.
             try
             {
                 string path = img.Url;
@@ -288,7 +288,7 @@ namespace fire.Editor
             }
             catch (Exception)
             {
-                // beschädigtes Bild o.Ä.: unten als Text anzeigen
+                // damaged image or similar: show as text below
             }
             return new Run($"[Image: {(img.Alt.Length > 0 ? img.Alt : img.Url)}]") { Foreground = QuoteText, FontStyle = FontStyle.Italic };
         }

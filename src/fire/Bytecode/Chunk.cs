@@ -4,11 +4,11 @@ using MemoryPack;
 
 namespace fire.Bytecode
 {
-    /// <summary>Ein kompiliertes Programm: Instruktions-Bytes plus die Pools, auf
-    /// die per Index verwiesen wird (Konstanten, Einheiten), sowie optionale
-    /// Debug-Informationen (Zeilennummern-Tabelle, lokale Variablennamen) für
-    /// Werkzeuge wie den Step-Debugger im Editor-Unterprojekt - die eigentliche
-    /// VM braucht davon nichts, das ist rein für externe Inspektion.</summary>
+    /// <summary>A compiled program: instruction bytes plus the pools referenced
+    /// by index (constants, units), as well as optional
+    /// debug information (line-number table, local variable names) for
+    /// tools such as the step debugger in the editor sub-project - the actual
+    /// VM needs none of it, it is purely for external inspection.</summary>
     [MemoryPackable]
     public sealed partial class Chunk
     {
@@ -18,58 +18,58 @@ namespace fire.Bytecode
         public List<FunctionProto> Functions { get; }
         public List<HandlerTemplate> Handlers { get; }
 
-        /// <summary>Die Klasse, deren Methode/Konstruktor/Property-Accessor
-        /// dieser Chunk ist - `null` für Top-Level-Code, freie Lambdas und
-        /// alles andere außerhalb einer Klasse. Vom Compiler gesetzt (siehe
-        /// CompileMethodProto/CompileConstructorProto), von der VM für die
-        /// Zugriffsmodifikator-Prüfung gelesen (siehe VM.
-        /// IsMemberAccessAllowed): das ist die Klasse, deren CODE gerade
-        /// tatsächlich ausführt - bewusst NICHT dasselbe wie die konkrete
-        /// Klasse von `this` (VM._currentThis)! Ruft z.B. eine `Derived`-
-        /// Instanz eine geerbte, nicht überschriebene `Base`-Methode auf,
-        /// oder läuft `Base`s eigener Konstruktor als Teil einer `Derived`-
-        /// Konstruktion (siehe ConstructBase), ist `this` konkret eine
-        /// `Derived`-Instanz, obwohl gerade `Base`s eigener Code läuft -
-        /// für "darf dieser Code auf Base's privates Mitglied zugreifen"
-        /// zählt die Klasse des AUSFÜHRENDEN CODES (Base), nicht die
-        /// konkrete Instanzklasse (Derived).
+        /// <summary>The class whose method/constructor/property accessor
+        /// this chunk is - `null` for top-level code, free lambdas and
+        /// everything else outside a class. Set by the compiler (see
+        /// CompileMethodProto/CompileConstructorProto), read by the VM for
+        /// the access-modifier check (see VM.
+        /// IsMemberAccessAllowed): this is the class whose CODE is currently
+        /// actually executing - deliberately NOT the same as the concrete
+        /// class of `this` (VM._currentThis)! If, e.g., a `Derived`
+        /// instance calls an inherited, non-overridden `Base` method,
+        /// or `Base`'s own constructor runs as part of a `Derived`
+        /// construction (see ConstructBase), `this` is concretely a
+        /// `Derived` instance although `Base`'s own code is running -
+        /// for "may this code access Base's private member"
+        /// the class of the EXECUTING CODE (Base) counts, not the
+        /// concrete instance class (Derived).
         ///
-        /// SERIALISIERUNG: erzeugt einen echten Zyklus (RuntimeClass ->
-        /// Methode/Feld-Initialisierer/Konstruktor -> dieser Chunk ->
-        /// OwnerClass -> dieselbe RuntimeClass) - MemoryPack verfolgt keine
-        /// Objekt-Identität/Zyklen (siehe CompiledProgram.
-        /// RelinkAfterDeserialize-Doku für dieselbe Begründung bei
-        /// RuntimeClass.Base), würde also endlos rekursieren ("reached depth
-        /// limit"). Deshalb ausgenommen und nach dem Deserialisieren über
-        /// RelinkAfterDeserialize wiederhergestellt.</summary>
+        /// SERIALIZATION: creates a real cycle (RuntimeClass ->
+        /// method/field initialiser/constructor -> this chunk ->
+        /// OwnerClass -> the same RuntimeClass) - MemoryPack does not track
+        /// object identity/cycles (see the CompiledProgram.
+        /// RelinkAfterDeserialize docs for the same reasoning for
+        /// RuntimeClass.Base), so it would recurse endlessly ("reached depth
+        /// limit"). Therefore excluded and restored after deserialisation via
+        /// RelinkAfterDeserialize.</summary>
         [MemoryPackIgnore]
         public RuntimeClass? OwnerClass { get; set; }
 
-        // Zeilennummern-Tabelle: statt PRO Instruktion eine Zeile zu speichern
-        // (viel Redundanz, aufeinanderfolgende Instruktionen gehören fast immer
-        // zur selben Quelltextzeile), nur die STELLEN, an denen sich die Zeile
-        // ändert (Run-Length-artig) - (Byte-Offset im Code, Quell-Index, Zeile).
-        // GetLocation sucht die letzte Stelle mit Offset <= gefragtem Offset.
+        // Line-number table: instead of storing one line PER instruction
+        // (lots of redundancy, consecutive instructions almost always belong
+        // to the same source line), only the POINTS at which the line
+        // changes (run-length style) - (byte offset in code, source index, line).
+        // GetLocation searches for the last entry with offset <= the requested offset.
         //
-        // Quell-Index (SourceIndex): Position der jeweiligen Quelle in der
-        // `sources`-Liste, die an Parser.ParseMultiple ging (0 = üblicherweise
-        // die Prelude) - siehe Ast.ClassDecl.SourceIndex/Compiler.
-        // CurrentSourceIndex. Nötig, seit ein Programm aus MEHREREN Dateien
-        // bestehen kann (SPEC "Mehrere Quelldateien"): eine nackte Zeilenzahl
-        // allein ist dann mehrdeutig (Zeile 5 in Datei A und Zeile 5 in
-        // Datei B sind unterschiedliche Stellen) - Werkzeuge wie der
-        // Step-Debugger im Editor-Unterprojekt brauchen BEIDES, um die
-        // richtige Datei/Zeile anzuzeigen und Haltepunkte korrekt zu treffen.
+        // Source index (SourceIndex): position of the respective source in the
+        // `sources` list that went to Parser.ParseMultiple (0 = usually
+        // the prelude) - see Ast.ClassDecl.SourceIndex/Compiler.
+        // CurrentSourceIndex. Needed since a program can consist of MULTIPLE
+        // files (SPEC "Multiple source files"): a bare line number
+        // alone is then ambiguous (line 5 in file A and line 5 in
+        // file B are different places) - tools such as the
+        // step debugger in the editor sub-project need BOTH to show the
+        // right file/line and to hit breakpoints correctly.
         private readonly List<(int Offset, int SourceIndex, int Line)> _lineTable = new();
         private int _lastMarkedSourceIndex = -1;
         private int _lastMarkedLine = -1;
 
-        /// <summary>Vom Compiler aufgerufen, bevor die Instruktionen für ein
-        /// neues Statement emittiert werden (siehe Compiler.CompileStmt) -
-        /// legt einen neuen Zeilentabellen-Eintrag an, aber NUR wenn sich
-        /// Quelle+Zeile gegenüber der zuletzt markierten Stelle tatsächlich
-        /// geändert haben (mehrere Instruktionen derselben Stelle teilen sich
-        /// einen Eintrag).</summary>
+        /// <summary>Called by the compiler before the instructions for a
+        /// new statement are emitted (see Compiler.CompileStmt) -
+        /// creates a new line-table entry, but ONLY if source+line have
+        /// actually changed compared to the last marked location (several
+        /// instructions of the same location share
+        /// one entry).</summary>
         public void MarkLine(int sourceIndex, int line)
         {
             if (sourceIndex == _lastMarkedSourceIndex && line == _lastMarkedLine) return;
@@ -78,16 +78,16 @@ namespace fire.Bytecode
             _lastMarkedLine = line;
         }
 
-        /// <summary>Liefert Quell-Index und Quelltextzeile, zu denen der
-        /// Byte-Offset `ip` gehört ((0, 0), wenn keine Zeileninformation
-        /// vorhanden ist, z.B. für programmatisch/ohne Compiler gebaute
-        /// Chunks).</summary>
+        /// <summary>Returns the source index and source line to which the
+        /// byte offset `ip` belongs ((0, 0) if no line information is
+        /// present, e.g. for chunks built programmatically/without a
+        /// compiler).</summary>
         public (int SourceIndex, int Line) GetLocation(int ip) => GetLocationRange(ip, out _, out _);
 
-        /// <summary>Wie <see cref="GetLocation"/>, liefert aber zusätzlich den Byte-Bereich [start, endExclusive), in dem
-        /// dieselbe Stelle gilt - wer viele aufeinanderfolgende Offsets abfragt (der Debugger beim Weiterlaufen), muss
-        /// nur beim Verlassen dieses Bereichs neu nachschlagen. Die Tabelle ist nach Offset sortiert (MarkLine hängt
-        /// immer am aktuellen Code-Ende an): binäre Suche statt eines Durchlaufs vom Anfang bei jeder Abfrage.</summary>
+        /// <summary>Like <see cref="GetLocation"/>, but additionally returns the byte range [start, endExclusive) in which
+        /// the same location applies - whoever queries many consecutive offsets (the debugger when running on) needs
+        /// to look up again only on leaving this range. The table is sorted by offset (MarkLine always appends
+        /// at the current end of the code): binary search instead of a pass from the start for every query.</summary>
         public (int SourceIndex, int Line) GetLocationRange(int ip, out int start, out int endExclusive)
         {
             var table = _lineTable;
@@ -104,20 +104,20 @@ namespace fire.Bytecode
             return found < 0 ? (0, 0) : (table[found].SourceIndex, table[found].Line);
         }
 
-        // Debug-Namen für lokale Variablen: (Tiefe relativ zur jeweiligen
-        // Deklarationsstelle zur KOMPILIERZEIT, Slot) -> Name. "Tiefe" hier
-        // bedeutet dieselbe Zählweise wie beim LoadLocal-Opcode (0 = die Scope,
-        // in der die Variable deklariert wurde) - ein Debugger, der zur
-        // Laufzeit an einer bestimmten Stelle pausiert, muss diese Tiefe daher
-        // relativ zur AKTUELLEN Scope-Tiefe an dieser Stelle interpretieren
-        // (siehe VM.DescribeLocals). Bewusst ein Best-Effort-Register, keine
-        // perfekte 1:1-Abbildung für jeden denkbaren Verschachtelungsfall -
-        // reicht aber für die allermeisten Fälle (Parameter, top-level lokale
-        // Variablen einer Funktion/Methode/eines Lambdas).
+        // Debug names for local variables: (depth relative to the respective
+        // declaration site at COMPILE TIME, slot) -> name. "Depth" here
+        // uses the same counting as the LoadLocal opcode (0 = the scope
+        // in which the variable was declared) - a debugger that, at
+        // runtime, pauses at a particular location must therefore interpret this depth
+        // relative to the CURRENT scope depth at that location
+        // (see VM.DescribeLocals). Deliberately a best-effort register, not a
+        // perfect 1:1 mapping for every conceivable nesting case -
+        // but sufficient for the vast majority of cases (parameters, top-level local
+        // variables of a function/method/lambda).
         public Dictionary<(int Depth, int Slot), string> DebugLocalNames { get; }
 
-        /// <summary>Normale Verwendung (Compiler baut den Chunk schrittweise
-        /// per EmitByte/AddConstant/... auf) - alle Sammlungen leer.</summary>
+        /// <summary>Normal use (the compiler builds up the chunk step by step
+        /// via EmitByte/AddConstant/...) - all collections empty.</summary>
         public Chunk()
         {
             Code = new();
@@ -128,16 +128,16 @@ namespace fire.Bytecode
             DebugLocalNames = new();
         }
 
-        /// <summary>Für MemoryPack (siehe Klassendoku "SERIALISIERUNG") - OHNE
-        /// eigenen Konstruktor mit diesen Parametern hätte der generierte
-        /// Deserialisierer keine Möglichkeit, die aus dem Stream gelesenen
-        /// Werte irgendwo unterzubringen (die Properties haben bewusst KEINEN
-        /// Setter, siehe oben) - er würde sie schlicht VERWERFEN und
-        /// stattdessen `new Chunk()` mit lauter leeren Sammlungen anlegen,
-        /// ohne jede Fehlermeldung. Namen der Parameter müssen (Groß-/
-        /// Kleinschreibung ignoriert) zu den Property-Namen passen, das ist
-        /// die Konvention, an der MemoryPack Konstruktor-Parameter zu
-        /// Properties zuordnet.</summary>
+        /// <summary>For MemoryPack (see class docs "SERIALIZATION") - WITHOUT a
+        /// constructor of its own with these parameters the generated
+        /// deserialiser would have no way to put the values read from the stream
+        /// anywhere (the properties deliberately have NO
+        /// setter, see above) - it would simply DISCARD them and
+        /// instead create `new Chunk()` with only empty collections,
+        /// without any error message. Parameter names must (ignoring
+        /// case) match the property names, which is
+        /// the convention by which MemoryPack maps constructor parameters to
+        /// properties.</summary>
         [MemoryPackConstructor]
         public Chunk(List<byte> code, List<Value> constants, List<Unit> units, List<FunctionProto> functions,
             List<HandlerTemplate> handlers, Dictionary<(int Depth, int Slot), string> debugLocalNames)
@@ -152,18 +152,18 @@ namespace fire.Bytecode
 
         public void MarkLocalName(int depth, int slot, string name) => DebugLocalNames[(depth, slot)] = name;
 
-        // Array-Kopien von Code und Konstanten für die VM (siehe VM.ReadByte/LoadConst): ein Array-Zugriff ist
-        // deutlich billiger als der Indexer einer List<T>, und der Code wird pro Instruktion 1-3 Mal gelesen.
-        // Beim Bauen (Emit*/Patch*/AddConstant) wird die Kopie verworfen und beim nächsten Lesen neu angelegt;
-        // nach dem Kompilieren ändert sich nichts mehr. Zwei Threads dürfen gleichzeitig anlegen (gleicher Inhalt).
+        // Array copies of code and constants for the VM (see VM.ReadByte/LoadConst): an array access is
+        // considerably cheaper than the indexer of a List<T>, and the code is read 1-3 times per instruction.
+        // On building (Emit*/Patch*/AddConstant) the copy is discarded and recreated on the next read;
+        // after compiling nothing changes any more. Two threads may create it at the same time (same content).
         [MemoryPackIgnore] private byte[]? _codeArray;
         [MemoryPackIgnore] private Value[]? _constantsArray;
 
         [MemoryPackIgnore]
         public byte[] CodeArray => _codeArray ??= Code.ToArray();
 
-        /// <summary>Inline-Caches der Aufrufstellen dieses Chunks, indiziert mit dem Byte-Offset des Opcodes
-        /// (siehe SiteCache). Erst beim ersten Bedarf angelegt (nach dem Kompilieren ist die Codelänge fest).</summary>
+        /// <summary>Inline caches of the call sites of this chunk, indexed by the byte offset of the opcode
+        /// (see SiteCache). Created only on first need (after compiling the code length is fixed).</summary>
         [MemoryPackIgnore]
         public SiteCache?[]? SiteCaches;
 
@@ -215,18 +215,18 @@ namespace fire.Bytecode
             EmitByte((byte)op);
         }
 
-        // Für das Verschmelzen von Instruktionen beim Übersetzen (siehe EndsWithOp): wo der zuletzt emittierte Opcode beginnt
-        // und an welcher Stelle zuletzt ein Sprungziel/Patch-Punkt abgefragt wurde (jede Marke entsteht über `Here`).
+        // For merging instructions during translation (see EndsWithOp): where the most recently emitted opcode begins
+        // and at which position a jump target/patch point was most recently queried (every mark arises via `Here`).
         [MemoryPackIgnore] private int _lastOpStart = -1;
         [MemoryPackIgnore] private int _lastHere = -1;
 
-        /// <summary>Ist `op` (mit `operandBytes` Operandenbytes) die zuletzt emittierte Instruktion, und zeigt KEIN Sprungziel hinter sie?
-        /// Nur dann darf der Compiler sie zusammen mit der nächsten zu einer verschmolzenen Instruktion machen: eine Marke hinter ihr
-        /// würde nach dem Verschmelzen mitten in die neue Instruktion zeigen.</summary>
+        /// <summary>Is `op` (with `operandBytes` operand bytes) the most recently emitted instruction, and does NO jump target point behind it?
+        /// Only then may the compiler merge it with the next one into a fused instruction: a mark behind it
+        /// would, after merging, point into the middle of the new instruction.</summary>
         public bool EndsWithOp(OpCode op, int operandBytes) =>
             _lastOpStart >= 0 && _lastOpStart == Code.Count - 1 - operandBytes && Code[_lastOpStart] == (byte)op && _lastHere != Code.Count;
 
-        /// <summary>Ersetzt den Opcode der zuletzt emittierten Instruktion (gleiche Operanden) - nach einem erfolgreichen EndsWithOp.</summary>
+        /// <summary>Replaces the opcode of the most recently emitted instruction (same operands) - after a successful EndsWithOp.</summary>
         public void ReplaceLastOp(OpCode op)
         {
             _codeArray = null;
@@ -240,9 +240,9 @@ namespace fire.Bytecode
             Code.Add((byte)((value >> 8) & 0xFF));
         }
 
-        /// <summary>Schreibt einen u16-Wert an eine bereits emittierte Stelle
-        /// zurück (Backpatching für Sprungziele, die erst nach dem Kompilieren
-        /// des übersprungenen Codes bekannt sind).</summary>
+        /// <summary>Writes a u16 value back to an already emitted location
+        /// (backpatching for jump targets that are only known after compiling
+        /// the skipped code).</summary>
         public void PatchU16(int at, int value)
         {
             _codeArray = null;
@@ -250,8 +250,8 @@ namespace fire.Bytecode
             Code[at + 1] = (byte)((value >> 8) & 0xFF);
         }
 
-        /// <summary>Aktuelle Schreibposition - als Sprungziel oder als Ausgangspunkt
-        /// für ein späteres PatchU16 nützlich.</summary>
+        /// <summary>Current write position - useful as a jump target or as a starting point
+        /// for a later PatchU16.</summary>
         [MemoryPackIgnore]
         public int Here
         {

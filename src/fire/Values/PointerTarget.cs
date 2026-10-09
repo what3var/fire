@@ -1,33 +1,33 @@
 namespace fire.Values
 {
     /// <summary>
-    /// Abstraktes Ziel eines Pointers. Konkrete Implementierungen (Scope-Slot,
-    /// Objekt-Feld) leben in der Runtime-Schicht, da sie auf deren Typen (Scope,
-    /// ObjectInstance) angewiesen sind - Values selbst bleibt davon unabhängig
-    /// (dieselbe Schichtung wie bei Value.MakeClassRef/MakeLambda, die
-    /// Runtime-Typen auch nur lose über 'object' referenzieren).
+    /// Abstract target of a pointer. Concrete implementations (scope slot,
+    /// object field) live in the runtime layer, since they depend on its types (Scope,
+    /// ObjectInstance) - Values itself stays independent of them
+    /// (the same layering as with Value.MakeClassRef/MakeLambda, which
+    /// also reference runtime types only loosely via 'object').
     ///
-    /// Bewusste Design-Entscheidung (SPEC "Pointer/unsafe"): statt eines rohen
-    /// Byte-Puffers zeigt ein Pointer hier auf einen EXISTIERENDEN, verwalteten
-    /// Speicherort (Scope-Slot oder Objekt-Feld) - echtes Aliasing (`*p = x`
-    /// verändert wirklich die Variable, auf die `p` zeigt), ohne die Scope-/
-    /// Ownership-Infrastruktur zu duplizieren. "Pointer-Arithmetik" bedeutet
-    /// dementsprechend "N Slots weiter" statt "N Bytes weiter". Für echte native
-    /// Adressen (z.B. um sie an eine 'extern'-Funktion zu übergeben) wird das
-    /// später beim tatsächlichen 'extern'-Linking in einen echten,
-    /// gepinnten/unmanaged Puffer marshalt - das ist bewusst nicht Teil dieser
-    /// Ausbaustufe.
+    /// Deliberate design decision (SPEC "Pointer/unsafe"): instead of a raw
+    /// byte buffer, a pointer here points to an EXISTING, managed
+    /// storage location (scope slot or object field) - real aliasing (`*p = x`
+    /// really changes the variable `p` points to), without duplicating the scope/
+    /// ownership infrastructure. "Pointer arithmetic" accordingly means
+    /// "N slots further" instead of "N bytes further". For real native
+    /// addresses (e.g. to pass them to an 'extern' function) this is
+    /// later, at the actual 'extern' linking, marshalled into a real,
+    /// pinned/unmanaged buffer - that is deliberately not part of this
+    /// stage.
     /// </summary>
     public abstract class PointerTarget
     {
         public abstract Value Read();
         public abstract void Write(Value v);
 
-        /// <summary>Liefert ein neues PointerTarget, das um `elementOffset` logische Elemente verschoben ist. Die Verschiebung ist immer erlaubt (auch ueber das Ende hinaus, wie in C);
-        /// erst das Lesen/Schreiben ausserhalb des Bereichs wirft eine <c>PointerRangeException</c>. Ein Zeiger auf eine Variable oder ein Feld ist ein "Array" mit einem Element.</summary>
+        /// <summary>Returns a new PointerTarget shifted by `elementOffset` logical elements. The shift is always allowed (even beyond the end, as in C);
+        /// only reading/writing out of range throws a <c>PointerRangeException</c>. A pointer to a variable or a field is an "array" with one element.</summary>
         public abstract PointerTarget Advance(long elementOffset);
 
-        /// <summary>`this - other` in Elementen, wenn beide in dasselbe Array/dieselbe Variable zeigen, sonst null.</summary>
+        /// <summary>`this - other` in elements, if both point into the same array/the same variable, otherwise null.</summary>
         public abstract long? DistanceTo(PointerTarget other);
     }
 }

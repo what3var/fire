@@ -1,6 +1,6 @@
 namespace fire.IO.Bridge
 {
-    /// <summary>Was ein Skript an einem Pfad tun will.</summary>
+    /// <summary>What a script wants to do on a path.</summary>
     [Flags]
     public enum IoAccess
     {
@@ -11,32 +11,32 @@ namespace fire.IO.Bridge
     }
 
     /// <summary>
-    /// Die Sicherheitsrichtlinie des HOSTS (Editor, Runtime, ein eingebettetes
-    /// Programm) für Dateisystemzugriffe von Skripten: jede Operation auf einem
-    /// Pfad fragt vorher <see cref="IsAllowed"/> mit dem VOLLSTÄNDIGEN, schon
-    /// normalisierten Pfad (`Path.GetFullPath`, also ohne `..`). Das Skript
-    /// selbst kann die Richtlinie weder sehen noch ändern - ein abgelehnter
-    /// Zugriff wird in fire zu einer fangbaren `IO.PermissionException`.
+    /// The security policy of the HOST (editor, runtime, an embedded
+    /// program) for file system accesses by scripts: every operation on a
+    /// path first asks <see cref="IsAllowed"/> with the COMPLETE, already
+    /// normalised path (`Path.GetFullPath`, i.e. without `..`). The script
+    /// itself can neither see nor change the policy - a denied
+    /// access becomes a catchable `IO.PermissionException` in fire.
     ///
-    /// Grenze: es werden KEINE symbolischen Links aufgelöst - ein Link INNERHALB
-    /// eines erlaubten Verzeichnisses, der nach außen zeigt, führt heraus.
-    /// Wer das ausschließen muss, implementiert eine eigene Richtlinie.
+    /// Limit: NO symbolic links are resolved - a link INSIDE
+    /// an allowed directory that points outward leads out.
+    /// Whoever has to rule that out implements a policy of their own.
     /// </summary>
     public abstract class IoPolicy
     {
-        /// <summary>`true`, wenn `access` auf `fullPath` erlaubt ist; sonst
-        /// `false` und (optional) ein Grund für die Fehlermeldung.</summary>
+        /// <summary>`true` if `access` is allowed on `fullPath`; otherwise
+        /// `false` and (optionally) a reason for the error message.</summary>
         public abstract bool IsAllowed(string fullPath, IoAccess access, out string? reason);
 
-        /// <summary>Alles erlaubt - Vorgabe, wenn der Host nichts anderes
-        /// festlegt (wie ein normales Programm).</summary>
+        /// <summary>Everything allowed - the default if the host
+        /// specifies nothing else (like a normal program).</summary>
         public static IoPolicy AllowAll { get; } = new AllowAllPolicy();
 
         /// <summary>Nichts erlaubt.</summary>
         public static IoPolicy DenyAll { get; } = new DenyAllPolicy();
 
-        /// <summary>Nur innerhalb von `root` (samt allen Unterverzeichnissen);
-        /// mit `readOnly` nur Lesen/Auflisten.</summary>
+        /// <summary>Only within `root` (including all subdirectories);
+        /// with `readOnly` only reading/listing.</summary>
         public static IoPolicy Rooted(string root, bool readOnly = false) => new RootedPolicy(root, readOnly);
 
         private sealed class AllowAllPolicy : IoPolicy

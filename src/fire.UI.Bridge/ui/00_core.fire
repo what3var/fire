@@ -1,5 +1,5 @@
 namespace UI {
-    // Farben sind rohe 32-Bit-Werte: r + g*256 + b*65536 + a*16777216 (a = 255: deckend).
+    // Colours are raw 32-bit values: r + g*256 + b*65536 + a*16777216 (a = 255: opaque).
     class Color {
         static int Rgb(int r, int g, int b) { return r + g * 256 + b * 65536 + 0xFF000000 }
         static int Transparent() { return 256 }
@@ -42,7 +42,7 @@ namespace UI {
         int Vertical() { return this.top + this.bottom }
     }
 
-    // Ein Rechteck (zum Beschneiden).
+    // A rectangle (for clipping).
     class Rect {
         int x
         int y
@@ -56,7 +56,7 @@ namespace UI {
             this.h = h
         }
 
-        // Schneidet dieses Rechteck mit `other` (leer: Breite und Hoehe 0).
+        // Intersects this rectangle with `other` (empty: width and height 0).
         IntersectWith(other) {
             var left = UI.M.Max(this.x, other.x)
             var top = UI.M.Max(this.y, other.y)
@@ -84,14 +84,14 @@ namespace UI {
             return v
         }
 
-        // `value` (ein Brush, Pen, Style, ...) gehoert ab jetzt `owner`; einfache Werte (Zahl, Text, ...) und undefined gehoeren niemandem.
+        // `value` (a Brush, Pen, Style, ...) belongs to `owner` from now on; simple values (number, text, ...) and undefined belong to nobody.
         static Own(owner, value) {
             if (value == undefined) { return }
             if (value is of int || value is of float || value is of bool || value is of string || value is of char) { return }
             value.TakeTo(owner)
         }
 
-        // Sinus eines Winkels in Grad, mal 1000 (ganzzahlig, Taylor-Reihe im ersten Quadranten).
+        // Sine of an angle in degrees, times 1000 (integer, Taylor series in the first quadrant).
         static int Sin(int degrees) {
             var d = degrees % 360
             if (d < 0) { d = d + 360 }
@@ -112,20 +112,20 @@ namespace UI {
 
         static int Cos(int degrees) { return UI.M.Sin(degrees + 90) }
 
-        // Ist der Wert ein einfacher Wert (Zahl, Text, Zeichen, Wahrheitswert) oder nichts - also kein Objekt mit Feldern?
+        // Is the value a simple value (number, text, character, truth value) or nothing - i.e. not an object with fields?
         static bool IsPlain(value) {
             if (value == undefined) { return true }
             return value is of int || value is of float || value is of bool || value is of string || value is of char
         }
 
-        // Die Eigenschaft `name` des Objekts `item`; bei einem einfachen Wert oder ohne Namen der Wert selbst, undefined, wenn es sie nicht gibt.
+        // The property `name` of the object `item`; for a simple value or without a name the value itself, undefined if it does not exist.
         static Member(item, string name) {
             if (name == "" || UI.M.IsPlain(item)) { return item }
             if (Reflect.Has(item, name)) { return Reflect.Get(item, name) }
             return undefined
         }
 
-        // Der Wert hinter einem Pfad "a.b.c" (jeder Teil eine Eigenschaft); ein leerer Pfad ist das Objekt selbst, undefined, wenn unterwegs etwas fehlt.
+        // The value behind a path "a.b.c" (each part a property); an empty path is the object itself, undefined if something is missing on the way.
         static PathGet(item, string path) {
             if (path == "") { return item }
             var current = item
@@ -140,7 +140,7 @@ namespace UI {
             return current
         }
 
-        // Gibt es den Pfad (alle Teile bis zum letzten sind Objekte, der letzte Teil eine Eigenschaft)?
+        // Does the path exist (all parts up to the last are objects, the last part a property)?
         static bool PathHas(item, string path) {
             if (path == "") { return item != undefined }
             var current = item
@@ -157,7 +157,7 @@ namespace UI {
             return true
         }
 
-        // Setzt den Wert hinter dem Pfad (der Pfad muss mit PathHas vorhanden sein und darf nicht leer sein).
+        // Sets the value behind the path (the path must exist per PathHas and must not be empty).
         static PathSet(item, string path, value) {
             var current = item
             var start = 0
@@ -171,13 +171,13 @@ namespace UI {
             }
         }
 
-        // Der Wert als Text ("" fuer undefined).
+        // The value as text ("" for undefined).
         static string Text(value) {
             if (value == undefined) { return "" }
             return "" + value
         }
 
-        // Vergleicht zwei Texte nach Zeichencodes: negativ, 0, positiv.
+        // Compares two texts by character codes: negative, 0, positive.
         static int CompareText(string a, string b) {
             var n = UI.M.Min(a.Length, b.Length)
             for (var i = 0; i < n; i = i + 1) {
@@ -187,7 +187,7 @@ namespace UI {
             return a.Length - b.Length
         }
 
-        // Vergleicht zwei Werte gleicher Art (Zahlen, Texte, Wahrheitswerte): negativ, 0, positiv. undefined ist kleiner als alles.
+        // Compares two values of the same kind (numbers, texts, truth values): negative, 0, positive. undefined is smaller than everything.
         static int Compare(a, b) {
             if (a == undefined && b == undefined) { return 0 }
             if (a == undefined) { return -1 }
@@ -215,7 +215,7 @@ namespace UI {
         }
     }
 
-    // Tastencodes, wie sie KeyDown liefert (SDL3-Keycodes).
+    // Key codes as KeyDown delivers them (SDL3 keycodes).
     class Keys {
         static int Backspace() { return 8 }
         static int Tab() { return 9 }

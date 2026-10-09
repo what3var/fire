@@ -1,11 +1,11 @@
 namespace fire.Bytecode
 {
     /// <summary>
-    /// Stack-basierte Bytecode-Instruktionen. Bewusst klein und orthogonal
-    /// gehalten - jede Instruktion soll sich später ohne größere Umwege in eine
-    /// kurze Sequenz nativer Instruktionen übersetzen lassen (Registermaschine).
+    /// Stack-based bytecode instructions. Deliberately kept small and orthogonal
+    /// - each instruction should later be translatable without major detours into a
+    /// short sequence of native instructions (register machine).
     ///
-    /// Operanden-Kodierung direkt im Code-Stream nach dem Opcode-Byte:
+    /// Operand encoding directly in the code stream after the opcode byte:
     /// u16 = 2 Bytes little-endian, u8 = 1 Byte.
     /// </summary>
     public enum OpCode : byte
@@ -13,23 +13,23 @@ namespace fire.Bytecode
         LoadConst,          // u16 constIdx        : push Constants[constIdx]
         Pop,                //                       : pop
         Dup,                //                       : push Peek()
-        Swap,               //                       : vertauscht die obersten zwei Werte
-        RotateUnderTop,     //                       : [A,B,C] (unten->oben) -> [B,A,C] - vertauscht die
-                            //                         beiden Werte UNTER dem obersten, lässt ihn selbst
-                            //                         unangetastet (siehe Compiler.CompileIncDec für
-                            //                         `++`/`--` auf einem Feld-/Index-Ziel: obj/Index
-                            //                         müssen für Lesen UND Schreiben erhalten bleiben,
-                            //                         während der alte Wert für das Postfix-Ergebnis
-                            //                         separat aufgehoben wird - mit Swap allein (nur
-                            //                         die ABSOLUTEN obersten zwei) nicht erreichbar,
-                            //                         ohne den Zielausdruck ein zweites Mal auszuwerten)
-        IncDecIndex,        // arr,idx -> wert        : `++`/`--` auf einem Index-Ziel (arr[i]++ usw.) -
-                            //                         Lesen+Rechnen+Schreiben ATOMAR in der VM statt über
-                            //                         Stack-Umsortierung, da hier ZWEI "Adress"-Teile
-                            //                         (Array UND Index) erhalten bleiben müssen - mit
-                            //                         RotateUnderTop (nur 3 Werte) allein nicht sauber
-                            //                         lösbar. Operanden: 1 Byte isIncrement, 1 Byte
-                            //                         isPrefix (siehe Compiler.CompileIncDec)
+        Swap,               //                       : swaps the top two values
+        RotateUnderTop,     //                       : [A,B,C] (bottom->top) -> [B,A,C] - swaps the
+                            //                         both values UNDER the top one, leaves it itself
+                            //                         untouched (see Compiler.CompileIncDec for
+                            //                         `++`/`--` on a field/index target: obj/index
+                            //                         must be kept for reading AND writing,
+                            //                         while the old value for the postfix result
+                            //                         is kept separately - not achievable with Swap alone (only
+                            //                         the ABSOLUTE top two),
+                            //                         without evaluating the target expression a second time)
+        IncDecIndex,        // arr,idx -> value       : `++`/`--` on an index target (arr[i]++ etc.) -
+                            //                         read+compute+write ATOMICALLY in the VM instead of via
+                            //                         stack reordering, since here TWO "address" parts
+                            //                         (array AND index) must be kept - with
+                            //                         RotateUnderTop (only 3 values) alone not cleanly
+                            //                         solvable. Operands: 1 byte isIncrement, 1 byte
+                            //                         isPrefix (see Compiler.CompileIncDec)
 
         LoadLocal,          // u16 depth, u16 slot  : push GetAncestor(depth).GetSlot(slot)
         StoreLocal,         // u16 depth, u16 slot  : GetAncestor(depth).SetSlot(slot, Peek())
@@ -38,9 +38,9 @@ namespace fire.Bytecode
         DeclareLocal,       //                       : pop v; CurrentScope.DefineSlot(v)
 
         Add, Sub, Mul, Div, Mod,
-        BitAnd, BitOr, BitXor, ShiftLeft, ShiftRight, // '&' '|' '#' '<<' '>>' - jeweils nur auf int, siehe Values.Value
-        Power, // '^' (Potenz, NICHT bitweises XOR - das ist BitXor/'#')
-        FormatValue, // u16 Konstante (Format-Spezifizierer-String) - siehe Value.Format, für $"...{x:F2}..."
+        BitAnd, BitOr, BitXor, ShiftLeft, ShiftRight, // '&' '|' '#' '<<' '>>' - each only on int, see Values.Value
+        Power, // '^' (power, NOT bitwise XOR - that is BitXor/'#')
+        FormatValue, // u16 constant (format specifier string) - see Value.Format, for $"...{x:F2}..."
         Neg, LogicalNot, BitNot,
         Eq, NotEq, Lt, LtEq, Gt, GtEq,
 
@@ -51,150 +51,150 @@ namespace fire.Bytecode
 
         Jump,               // u16 addr             : ip = addr
         JumpIfFalse,        // u16 addr             : cond=pop; if (!cond) ip = addr
-        JumpIfFalsePeek,    // u16 addr             : cond=peek; if (!cond) ip = addr (kein Pop - für &&)
-        JumpIfTruePeek,     // u16 addr             : cond=peek; if (cond) ip = addr (kein Pop - für ||)
+        JumpIfFalsePeek,    // u16 addr             : cond=peek; if (!cond) ip = addr (no pop - for &&)
+        JumpIfTruePeek,     // u16 addr             : cond=peek; if (cond) ip = addr (no pop - for ||)
 
         EnterScope,         //                       : CurrentScope = new Scope(CurrentScope)
         ExitScope,          //                       : CurrentScope.Release(...); CurrentScope = Parent
 
-        CallNative,         // u16 nativeIdx, u8 argCount : ruft eine registrierte native Funktion auf
-        CallTryableNative,  // u16 tryableIdx, u8 argCount : ruft eine "tryable" native Funktion auf - Erfolg -> Ergebniswert, Fehlschlag/Timeout -> undefined (siehe NativeRegistry.RegisterTryable)
-        CallExtern,         // u16 nameIdx, u8 argCount   : ruft eine per Host per ExternRegistry verlinkte Funktion auf (siehe VM.MarshalArgsOut)
+        CallNative,         // u16 nativeIdx, u8 argCount : calls a registered native function
+        CallTryableNative,  // u16 tryableIdx, u8 argCount : calls a "tryable" native function - success -> result value, failure/timeout -> undefined (see NativeRegistry.RegisterTryable)
+        CallExtern,         // u16 nameIdx, u8 argCount   : calls a function linked by the host via ExternRegistry (see VM.MarshalArgsOut)
 
-        MakeLambda,         // u16 protoIdx, u8 hasOnTarget : erzeugt einen LambdaValue aus Functions[protoIdx]
-                            //                                 (pop On-Target-Wert falls hasOnTarget != 0)
-        Call,               // u8 argCount          : ruft den Lambda-Wert unterhalb der Argumente auf
-        Return,             //                       : pop Rückgabewert; Scope/Chunk/ip/this des Aufrufers wiederherstellen
+        MakeLambda,         // u16 protoIdx, u8 hasOnTarget : creates a LambdaValue from Functions[protoIdx]
+                            //                                 (pop on-target value if hasOnTarget != 0)
+        Call,               // u8 argCount          : calls the lambda value below the arguments
+        Return,             //                       : pop return value; restore scope/chunk/ip/this of the caller
 
-        NewObject,          // u16 classNameIdx, u8 argCount : erzeugt eine Instanz (Owner = aktueller Scope) + durchläuft die Konstruktor-Kette
-        NewObjectOwned,     // u16 classNameIdx, u8 argCount : wie NewObject, aber Owner = Objekt unterhalb der Argumente (direkte Feldzuweisung, SPEC 2.1)
+        NewObject,          // u16 classNameIdx, u8 argCount : creates an instance (owner = current scope) + runs through the constructor chain
+        NewObjectOwned,     // u16 classNameIdx, u8 argCount : like NewObject, but owner = object below the arguments (direct field assignment, SPEC 2.1)
         GetField,           // u16 fieldNameIdx     : pop obj; push obj.Fields[name]
         SetField,           // u16 fieldNameIdx     : pop value, pop obj; obj.Fields[name] = value; push value
-        LoadThis,           //                       : push aktuell gebundenes 'this'
-        SetFieldOnThis,     // u16 fieldNameIdx     : pop value; aktuelles 'this'.Fields[name] = value (für Feld-Initialisierer)
-        CallMethod,         // u16 methodNameIdx, u8 argCount : virtueller Methodenaufruf (Laufzeit-Klasse von 'obj' unterhalb der Argumente)
-        CallBaseMethod,     // u16 baseClassNameIdx, u16 methodNameIdx, u8 argCount : `base.Method(...)`, this bleibt das aktuelle 'this'
-        ConstructBase,      // u16 baseClassNameIdx, u8 argCount : ruft den Basis-Konstruktor für das aktuelle 'this' auf
-        CallProtoWithThis,  // u16 protoIdx, u8 argCount : ruft Functions[protoIdx] mit 'this' = TOS-unterhalb-der-Args auf (Feld-Initialisierer)
+        LoadThis,           //                       : push currently bound 'this'
+        SetFieldOnThis,     // u16 fieldNameIdx     : pop value; current 'this'.Fields[name] = value (for field initialisers)
+        CallMethod,         // u16 methodNameIdx, u8 argCount : virtual method call (runtime class of 'obj' below the arguments)
+        CallBaseMethod,     // u16 baseClassNameIdx, u16 methodNameIdx, u8 argCount : `base.Method(...)`, this remains the current 'this'
+        ConstructBase,      // u16 baseClassNameIdx, u8 argCount : calls the base constructor for the current 'this'
+        CallProtoWithThis,  // u16 protoIdx, u8 argCount : calls Functions[protoIdx] with 'this' = TOS-below-the-args (field initialiser)
 
-        // Statische Mitglieder (SPEC "Statische Mitglieder") - eine geteilte
-        // Speicherstelle pro KLASSE statt pro Instanz (siehe RuntimeClass.
-        // StaticFieldValues), KEIN Objekt auf dem Stack (anders als
-        // GetField/SetField/CallMethod) - stattdessen der Klassenname direkt
-        // als Konstante im Bytecode, da 'ClassName.Member' schon zur
-        // Compile-Zeit eindeutig aufgelöst wird (siehe Resolver.
+        // Static members (SPEC "Static members") - one shared
+        // storage location per CLASS instead of per instance (see RuntimeClass.
+        // StaticFieldValues), NO object on the stack (unlike
+        // GetField/SetField/CallMethod) - instead the class name directly
+        // as a constant in the bytecode, since 'ClassName.Member' is already
+        // resolved unambiguously at compile time (see Resolver.
         // TryResolveStaticMemberAccess).
-        GetStaticField,   // u16 classNameConstIdx, u16 fieldNameConstIdx : pusht den aktuellen Wert
-        SetStaticField,   // u16 classNameConstIdx, u16 fieldNameConstIdx : poppt Wert, speichert, pusht ihn erneut (wie SetField)
-        SetStaticFieldOnInit, // u16 classNameConstIdx, u16 fieldNameConstIdx : wie SetStaticField, aber OHNE Zugriffsmodifikator-
-                              //   Prüfung (wie SetFieldOnThis vs. SetField) - NUR für die einmalige Initialisierung eines
-                              //   statischen Feldes beim Programmstart (siehe Compiler.Compile), die läuft als Top-Level-Code
-                              //   ohne passenden OwnerClass-Kontext, ist aber die eigene Initialisierung der Klasse selbst und
-                              //   soll deshalb IMMER dürfen, auch für ein privates Feld - genau wie ein Instanzfeld-Initialisierer
-        CallStaticMethod, // u16 classNameConstIdx, u16 methodNameConstIdx, u8 argCount : ruft OHNE gebundenes 'this' auf
+        GetStaticField,   // u16 classNameConstIdx, u16 fieldNameConstIdx : pushes the current value
+        SetStaticField,   // u16 classNameConstIdx, u16 fieldNameConstIdx : pops value, stores it, pushes it again (like SetField)
+        SetStaticFieldOnInit, // u16 classNameConstIdx, u16 fieldNameConstIdx : like SetStaticField, but WITHOUT access-modifier
+                              //   check (like SetFieldOnThis vs. SetField) - ONLY for the one-time initialisation of a
+                              //   static field at program start (see Compiler.Compile), which runs as top-level code
+                              //   without a matching OwnerClass context, but is the class's own initialisation and
+                              //   should therefore ALWAYS be allowed, even for a private field - just like an instance-field initialiser
+        CallStaticMethod, // u16 classNameConstIdx, u16 methodNameConstIdx, u8 argCount : calls WITHOUT a bound 'this'
 
-        AddressOfLocal,     // u16 depth, u16 slot  : push Pointer auf GetAncestor(depth)-Slot(slot)
-        AddressOfGlobal,    // u16 slot             : push Pointer auf GlobalScope-Slot(slot)
-        AddressOfField,     // u16 fieldNameIdx      : pop obj; push Pointer auf obj.Fields[name]
+        AddressOfLocal,     // u16 depth, u16 slot  : push pointer to GetAncestor(depth) slot(slot)
+        AddressOfGlobal,    // u16 slot             : push pointer to GlobalScope slot(slot)
+        AddressOfField,     // u16 fieldNameIdx      : pop obj; push pointer to obj.Fields[name]
         PtrRead,            //                       : pop ptr; push ptr.Read()
         PtrWrite,           //                       : pop value, pop ptr; ptr.Write(value); push value
 
-        NewArray,           //                       : pop size (int); push neues Array der Länge size
-        MakeArrayLiteral,   // u16 count             : pop count Werte (in Reihenfolge); push neues Array daraus
-        MakeBuffer,         // pop Größe (int), push neuer ByteBuffer (Host-Byte-Order, alle Bytes 0)
+        NewArray,           //                       : pop size (int); push new array of length size
+        MakeArrayLiteral,   // u16 count             : pop count values (in order); push new array from them
+        MakeBuffer,         // pop size (int), push new ByteBuffer (host byte order, all bytes 0)
         ArrayGet,           //                       : pop index, pop array; push array[index]
         ArraySet,           //                       : pop value, pop index, pop array; array[index]=value; push value
 
-        RegisterHandler,    // u16 handlerTemplateIdx : registriert einen try-Handler (siehe Chunk.Handlers)
-        UnregisterHandler,  //                       : entfernt den zuletzt registrierten Handler (try erfolgreich durchlaufen)
+        RegisterHandler,    // u16 handlerTemplateIdx : registers a try handler (see Chunk.Handlers)
+        UnregisterHandler,  //                       : removes the most recently registered handler (try passed through successfully)
         Throw,              //                       : pop value; wirft (siehe VM.ThrowException)
 
         IsInUnit,           // u16 unitIdx          : pop value; push (value.Unit dimensional kompatibel zu Units[unitIdx])
         IsOfType,           // u16 typeNameIdx      : pop value; push (value "is of" Typname, siehe VM.IsOfType)
         IsFrom,             // u8 transitive        : pop ownerVal, pop operandVal; push Ownership-Check-Ergebnis
 
-        ResumeException,    //                       : pop resumeValue, pop excValue; setzt die eingefrorene Wurfstelle fort
-        ClearPendingResume, //                       : pop excValue; verwirft eine nie fortgesetzte eingefrorene Wurfstelle sauber
+        ResumeException,    //                       : pop resumeValue, pop excValue; resumes the frozen throw site
+        ClearPendingResume, //                       : pop excValue; cleanly discards a frozen throw site that is never resumed
 
-        CheckLambdaSignature, // u8 expectedParamCount : prüft Peek() ist Lambda mit genau dieser Parameterzahl, wirft sonst (siehe VM)
-        CheckUnit,            // u16 constIdx (erwartete Einheit als String) : prüft Peek().Unit == Unit.Parse(erwartet) exakt
-                              //   (Values.Unit.Equals - Dimension UND Skalierung, "mm" != "m"), wirft sonst UnitMismatchException
-                              //   (siehe VM.ThrowUnitMismatch) - konsumiert NICHT (wie CheckLambdaSignature), Aufrufer poppt bei
-                              //   Bedarf selbst (siehe Compiler.EmitLambdaParamChecks/CompileAssign/VarDeclStmt-Kompilierung)
+        CheckLambdaSignature, // u8 expectedParamCount : checks that Peek() is a lambda with exactly this parameter count, otherwise throws (see VM)
+        CheckUnit,            // u16 constIdx (expected unit as string) : checks Peek().Unit == Unit.Parse(expected) exactly
+                              //   (Values.Unit.Equals - dimension AND scaling, "mm" != "m"), otherwise throws UnitMismatchException
+                              //   (see VM.ThrowUnitMismatch) - does NOT consume (like CheckLambdaSignature), the caller pops if
+                              //   needed (see Compiler.EmitLambdaParamChecks/CompileAssign/VarDeclStmt compilation)
 
-        Fire, // u16 functionProtoIdx, u16 globalSlotCount, u8 takingCount, u8 hasWith : spawnt einen echten Thread (siehe Runtime.FireRuntime) mit Read-only-Globals-Snapshot, takingCount gepoppten taking-Werten und optional einem with-Wert
-        Sync, // u8 flags (bit0=isTry, bit1=isFlat) : pop target; ruft SyncEngine.Sync/SyncFlat auf; push true/false/undefined
-        Leave, // ruft VM.RequestLeave() auf dieser VM-Instanz auf (Abwicklung passiert am nächsten Prüfpunkt)
-        Terminate, // pop value; ruft VM.RequestTerminate(value) auf (statisch, global)
-        RegisterThreadsCatch, // u16 protoIdx, u8 hasType, [u16 typeNameConstIdx] : registriert einen globalen 'catch threads(...)'-Handler
-        RegisterTerminateCatch, // u16 protoIdx : registriert den globalen 'catch terminate(...)'-Handler
-        Process, // pop target; blockierend eine Actor-Nachricht abarbeiten (siehe Runtime.ActorMailbox)
-        TryProcess, // pop target; nicht-blockierend; push true/false
+        Fire, // u16 functionProtoIdx, u16 globalSlotCount, u8 takingCount, u8 hasWith : spawns a real thread (see Runtime.FireRuntime) with a read-only globals snapshot, takingCount popped taking values and optionally a with value
+        Sync, // u8 flags (bit0=isTry, bit1=isFlat) : pop target; calls SyncEngine.Sync/SyncFlat; push true/false/undefined
+        Leave, // calls VM.RequestLeave() on this VM instance (handling happens at the next check point)
+        Terminate, // pop value; calls VM.RequestTerminate(value) (static, global)
+        RegisterThreadsCatch, // u16 protoIdx, u8 hasType, [u16 typeNameConstIdx] : registers a global 'catch threads(...)' handler
+        RegisterTerminateCatch, // u16 protoIdx : registers the global 'catch terminate(...)' handler
+        Process, // pop target; process an actor message, blocking (see Runtime.ActorMailbox)
+        TryProcess, // pop target; non-blocking; push true/false
 
         Halt,
 
-        // Bewusst NACH Halt angehängt, damit die Zahlenwerte aller bisherigen Opcodes (auch die von Halt) stabil bleiben.
-        CopyValue,      // u8 flags (bit0 = tief) : pop Quelle; push Kopie (`flat x` / `copy x`), Owner = aktueller Scope
-        CopyValueOwned, // u8 flags (bit0 = tief) : pop Quelle, pop Owner-Objekt; push Kopie, Owner = das Objekt (wie NewObjectOwned, SPEC 2.1)
-        CopyArgs,       // u16 x4 (64 Bit: 4 Bit je Argument, 1 flach kopieren, 2 tief kopieren, 3 Adresse fuer `ref`, 4 frischer Rueckgabewert geht an die aufgerufene Funktion, 5 `take x`: der Wert geht an die aufgerufene Funktion, egal wem er gehoerte) : Präfix DIREKT vor einem Aufruf-Opcode (Call/CallMethod/CallStaticMethod/CallBaseMethod/NewObject/
-                        //   NewObjectOwned/ConstructBase) - 2 Bit je Argument (Bit 2i = flach kopieren, Bit 2i+1 = tief kopieren): der Aufruf
-                        //   kopiert diese Argumente selbst, sobald die Scope der aufgerufenen Funktion steht, und die Kopie gehört dieser Scope
-                        //   (SPEC 2.4). Höchstens 16 Argumente.
+        // Deliberately appended AFTER Halt so that the numeric values of all previous opcodes (including Halt's) stay stable.
+        CopyValue,      // u8 flags (bit0 = deep) : pop source; push copy (`flat x` / `copy x`), owner = current scope
+        CopyValueOwned, // u8 flags (bit0 = deep) : pop source, pop owner object; push copy, owner = the object (like NewObjectOwned, SPEC 2.1)
+        CopyArgs,       // u16 x4 (64 bits: 4 bits per argument, 1 copy flat, 2 copy deep, 3 address for `ref`, 4 fresh return value goes to the called function, 5 `take x`: the value goes to the called function, no matter who owned it) : prefix DIRECTLY before a call opcode (Call/CallMethod/CallStaticMethod/CallBaseMethod/NewObject/
+                        //   NewObjectOwned/ConstructBase) - 2 bits per argument (bit 2i = copy flat, bit 2i+1 = copy deep): the call
+                        //   copies these arguments itself as soon as the scope of the called function exists, and the copy belongs to this scope
+                        //   (SPEC 2.4). At most 16 arguments.
 
-        // Globale Variablen und Fire-Threads (docs/THREADING_DESIGN.md Abschnitt 7) - wieder NACH allen bisherigen angehängt.
-        SyncGlobals,    //                : `sync globals`: das Hauptprogramm arbeitet die Warteschlange seiner Fire-Threads ab; push Anzahl (int)
-        SectionEnter,   //                : `sync global { ` - ein Fire-Thread meldet sich an und wartet, bis das Hauptprogramm die Sektion erteilt
-                        //                  (im Hauptprogramm wirkungslos); Gegenstück SectionExit steht im `finally` des Blocks
-        SectionExit,    //                : beendet die Sektion
-        SetAutoSync,    // u8 on        : `#nosync` (on = 0) schaltet das automatische Abarbeiten der Warteschlange an sicheren Punkten ab (wird am Programmanfang emittiert)
-        PostGlobal,     // u8 argCount   : `fire global { ... }`: pop Lambda, pop argCount Argumente; reiht das Lambda (Objekt-Argumente als Kopie)
-                        //                  als Auftrag für das Hauptprogramm ein, der bei dessen nächstem `sync globals` läuft; der Aufrufer wartet nicht
-        EnterFinallyNormal, //            : pusht den Abschluss "normal" (undefined, 0) - davor steht der normale Eintritt in einen finally-Block
-        PushJump,       // u16 addr      : pusht den Abschluss "Sprung" (addr, 3): `break`/`continue` aus einem try mit finally - nach dem finally geht es zu addr
-        EndFinally,     //               : pop Art, pop Nutzlast: 0 normal (weiter), 1 Exception erneut werfen, 2 `return` fortsetzen, 3 Sprung zu Nutzlast,
-                        //                 4 Rückkehr aus einem verschachtelt gestarteten finally (leave/terminate)
-        Probe,          // u16 nameConstIdx, u8 flags (1 = changing, 2 = alle Mitglieder) : pop Handler, pop Objekt; legt die Probe an, pusht ihr Handle (int)
-        SilenceMember,  // u16 nameConstIdx, u8 wildcard : pop Objekt; entfernt die Proben dieses Mitglieds (wildcard: alle des Objekts)
-        SilenceValue,   //                : pop Wert; ein Probe-Handle (int) entfernt diese Probe, ein Objekt alle seine Proben
-        MakeLambdaCapturing, // u16 protoIdx, u8 hasOnTarget, u8 captureCount : wie MakeLambda; darunter liegen captureCount KOPIERTE Werte (Stack: c0..cn-1, [onTarget]),
-                        //                  die der Lambda-Aufruf als Slots hinter den Parametern in den neuen Scope legt (Lambda-Captures, SPEC 4.2)
+        // Global variables and fire threads (docs/THREADING_DESIGN.md section 7) - again appended AFTER all previous ones.
+        SyncGlobals,    //                : `sync globals`: the main program works off the queue of its fire threads; push count (int)
+        SectionEnter,   //                : `sync global { ` - a fire thread registers and waits until the main program grants the section
+                        //                  (no effect in the main program); counterpart SectionExit sits in the `finally` of the block
+        SectionExit,    //                : ends the section
+        SetAutoSync,    // u8 on        : `#nosync` (on = 0) turns off the automatic processing of the queue at safe points (emitted at program start)
+        PostGlobal,     // u8 argCount   : `fire global { ... }`: pop lambda, pop argCount arguments; enqueues the lambda (object arguments as a copy)
+                        //                  as a job for the main program that runs at its next `sync globals`; the caller does not wait
+        EnterFinallyNormal, //            : pushes the completion "normal" (undefined, 0) - the normal entry into a finally block precedes it
+        PushJump,       // u16 addr      : pushes the completion "jump" (addr, 3): `break`/`continue` out of a try with finally - after the finally execution continues at addr
+        EndFinally,     //               : pop kind, pop payload: 0 normal (continue), 1 rethrow exception, 2 continue `return`, 3 jump to payload,
+                        //                 4 return from a nested-started finally (leave/terminate)
+        Probe,          // u16 nameConstIdx, u8 flags (1 = changing, 2 = all members) : pop handler, pop object; creates the probe, pushes its handle (int)
+        SilenceMember,  // u16 nameConstIdx, u8 wildcard : pop object; removes the probes of this member (wildcard: all of the object)
+        SilenceValue,   //                : pop value; a probe handle (int) removes this probe, an object all its probes
+        MakeLambdaCapturing, // u16 protoIdx, u8 hasOnTarget, u8 captureCount : like MakeLambda; below it lie captureCount COPIED values (stack: c0..cn-1, [onTarget]),
+                        //                  which the lambda call places as slots after the parameters in the new scope (lambda captures, SPEC 4.2)
 
         // ------------------------------------------------------------------------------------------------
-        // Verschmolzene Instruktionen (Compiler: Chunk.EndsWithOp/ReplaceLastOp und die Ausdrucksanweisungen) - jede ersetzt eine
-        // feste Folge gewöhnlicher Instruktionen mit exakt demselben Ergebnis, spart aber den mehrfachen Dispatch.
+        // Fused instructions (compiler: Chunk.EndsWithOp/ReplaceLastOp and the expression statements) - each replaces a
+        // fixed sequence of ordinary instructions with exactly the same result, but saves the repeated dispatch.
         // ------------------------------------------------------------------------------------------------
-        StoreLocalPop,  // u16 depth, u16 slot : StoreLocal + Pop (Ausdrucksanweisung `x = ...`): schreibt den obersten Wert und nimmt ihn vom Stack
+        StoreLocalPop,  // u16 depth, u16 slot : StoreLocal + Pop (expression statement `x = ...`): writes the top value and removes it from the stack
         StoreGlobalPop, // u16 slot            : StoreGlobal + Pop
-        JumpIfNotLt,    // u16 addr            : Lt + JumpIfFalse - vergleicht die zwei obersten Werte, springt wenn NICHT a < b (beide werden verbraucht)
+        JumpIfNotLt,    // u16 addr            : Lt + JumpIfFalse - compares the top two values, jumps if NOT a < b (both are consumed)
         JumpIfNotLtEq,  // u16 addr            : LtEq + JumpIfFalse
         JumpIfNotGt,    // u16 addr            : Gt + JumpIfFalse
         JumpIfNotGtEq,  // u16 addr            : GtEq + JumpIfFalse
         JumpIfNotEq,    // u16 addr            : Eq + JumpIfFalse
         JumpIfNotNotEq, // u16 addr            : NotEq + JumpIfFalse
-        ArithLocalConstPop,  // u16 depth, u16 slot, u16 constIdx, u8 sub : `x = x + c` / `x++` (sub = 0) bzw. `x = x - c` / `x--` (sub = 1) auf einer lokalen Variable als Anweisung
-        ArithGlobalConstPop, // u16 slot, u16 constIdx, u8 sub            : dasselbe für eine globale Variable
+        ArithLocalConstPop,  // u16 depth, u16 slot, u16 constIdx, u8 sub : `x = x + c` / `x++` (sub = 0) or `x = x - c` / `x--` (sub = 1) on a local variable as a statement
+        ArithGlobalConstPop, // u16 slot, u16 constIdx, u8 sub            : the same for a global variable
 
-        SetTimeout,          //                     : pop v; `#timeout wert` setzt die Standard-Wartezeit der Warte-Funktionen (wird am Programmanfang emittiert)
+        SetTimeout,          //                     : pop v; `#timeout value` sets the default wait time of the wait functions (emitted at program start)
 
-        // Bewusst am Ende angehaengt (stabile Zahlenwerte).
-        NewJagged,           // u8 rankCount : pop rankCount Groessen (aeusserste zuerst gepusht); push das mehrdimensionale Array (`new int[3][4]`), die inneren gehoeren dem aeusseren
-        MakeArrayLiteralParts, // u16 count, u16 maskLo, u16 maskHi : wie MakeArrayLiteral; Bit i der Maske: Element i ist ein im Literal selbst erzeugtes Array/Puffer und gehoert dem neuen Array
-        OwnValue,            //                     : pop Wert (Array/Puffer), pop Owner-Objekt; der Owner uebernimmt den Wert (frisch erzeugt, direkt einem Feld zugewiesen, SPEC 2.1); push den Wert
-        HoistValue,          //                     : Peek (Zuweisung an eine Variable eines aeusseren Scopes): gehoert der Wert einem inneren Block der laufenden Funktion, wandert er in deren Funktions-Scope (SPEC 2.1)
-        Delete,              //                     : pop Wert; zerstoert ein Objekt, ein Array oder einen Puffer sofort (`delete x`, SPEC 2.5)
-        RequireRefParam,     // u16 slot, u16 nameConstIdx : prueft, dass der `ref`-Parameter im Slot (Tiefe 0) einen Zeiger haelt (der Aufrufer hat eine Variable uebergeben), sonst Fehler
-        AddressOfIndex,      //                     : pop index, pop Array/Puffer; push Pointer auf das Element (Argument fuer einen `ref`-Parameter, SPEC 5.4.2)
+        // Deliberately appended at the end (stable numeric values).
+        NewJagged,           // u8 rankCount : pop rankCount sizes (outermost pushed first); push the multi-dimensional array (`new int[3][4]`), the inner ones belong to the outer one
+        MakeArrayLiteralParts, // u16 count, u16 maskLo, u16 maskHi : like MakeArrayLiteral; bit i of the mask: element i is an array/buffer created in the literal itself and belongs to the new array
+        OwnValue,            //                     : pop value (array/buffer), pop owner object; the owner takes over the value (freshly created, assigned directly to a field, SPEC 2.1); push the value
+        HoistValue,          //                     : Peek (assignment to a variable of an outer scope): if the value belongs to an inner block of the running function, it moves to that function's scope (SPEC 2.1)
+        Delete,              //                     : pop value; destroys an object, an array or a buffer immediately (`delete x`, SPEC 2.5)
+        RequireRefParam,     // u16 slot, u16 nameConstIdx : checks that the `ref` parameter in the slot (depth 0) holds a pointer (the caller passed a variable), otherwise error
+        AddressOfIndex,      //                     : pop index, pop array/buffer; push pointer to the element (argument for a `ref` parameter, SPEC 5.4.2)
 
-        // `take x` (SPEC 2.2): der Wert (oben auf dem Stack, bleibt dort) gehoert ab jetzt dem Halter - unbedingt.
-        TakeToScope,         // u16 depth            : der Scope `depth` Ebenen ueber dem aktuellen (0xFFFF = der globale Scope): `var a = take x`, `v = take x`
-        TakeToObject,        //                     : Stack [obj, wert]: das Objekt `obj` uebernimmt den Wert (`obj.feld = take x`)
-        TakeToArray,         //                     : Stack [array, index, wert]: das Array uebernimmt den Wert (`a[i] = take x`)
-        TakeCheck,           //                     : Peek: ein zerstoertes Objekt/Array/Puffer oben auf dem Stack wirft die DestroyedException (vor dem Aufruf mit `f(take x)`)
+        // `take x` (SPEC 2.2): the value (on top of the stack, stays there) now belongs to the holder - unconditionally.
+        TakeToScope,         // u16 depth            : the scope `depth` levels above the current one (0xFFFF = the global scope): `var a = take x`, `v = take x`
+        TakeToObject,        //                     : Stack [obj, value]: the object `obj` takes over the value (`obj.field = take x`)
+        TakeToArray,         //                     : Stack [array, index, value]: the array takes over the value (`a[i] = take x`)
+        TakeCheck,           //                     : Peek: a destroyed object/array/buffer on top of the stack throws the DestroyedException (before the call with `f(take x)`)
     }
 
-    /// <summary>Zieltyp für CoerceType/CoerceTypeDynamic - entspricht genau den
-    /// Basistypen, die der Parser als optionales Postfix-'!'-Ziel zulässt
-    /// (bool/int/float/char/string; 'class'/'undefined' sind dort bewusst
-    /// ausgeschlossen, siehe SPEC 3.1).</summary>
+    /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the
+    /// base types the parser permits as the optional postfix '!' target
+    /// (bool/int/float/char/string; 'class'/'undefined' are deliberately
+    /// excluded there, see SPEC 3.1).</summary>
     public enum TypeTag : byte { Bool, Int, Float, Char, String }
 }

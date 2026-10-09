@@ -7,40 +7,40 @@ using fire.Terminal.Event;
 
 namespace fire.Terminal.Sdl
 {
-    /// <summary>IFramebufferRenderer über das SDL3-CS-NuGet-Paket (siehe
-    /// .csproj) - bewusst KEINE eigenen [DllImport]-Deklarationen, nur
-    /// Aufrufe der bereits fertigen SDL-Bindings dieses Pakets.
+    /// <summary>IFramebufferRenderer via the SDL3-CS NuGet package (see
+    /// .csproj) - deliberately NO [DllImport] declarations of its own, only
+    /// calls of the ready-made SDL bindings of this package.
     ///
-    /// SDL3-CS benennt seine Bindings NICHT mehr 1:1 wie die native C-API
-    /// (kein doppeltes "SDL_"-Präfix): aus `SDL_Init` wird `SDL.Init`, aus
-    /// `SDL_EVENT_QUIT` wird `SDL.EventType.Quit`, aus `SDL_INIT_VIDEO` wird
-    /// `SDL.InitFlags.Video`, usw. - Konstanten-Gruppen sind jeweils zu
-    /// einem echten C#-Enum zusammengefasst (siehe die einzelnen Aufrufe
-    /// unten), keine losen Ganzzahl-Konstanten mehr.
+    /// SDL3-CS no longer names its bindings 1:1 like the
+    /// native C API (no doubled "SDL_" prefix): `SDL_Init` becomes `SDL.Init`,
+    /// `SDL_EVENT_QUIT` becomes `SDL.EventType.Quit`, `SDL_INIT_VIDEO` becomes
+    /// `SDL.InitFlags.Video`, and so on - constant groups are each combined into
+    /// a real C# enum (see the individual calls
+    /// below), no more loose integer constants.
     ///
-    /// Zeichnet den Framebuffer als STREAMING-Textur (SDL.TextureAccess.
-    /// Streaming, jeden Frame per SDL.UpdateTexture neu hochgeladen) im
-    /// Format SDL.PixelFormat.ABGR8888: SDL benennt die gepackten Formate nach der Bit-Reihenfolge des 32-Bit-WORTS (höchstes Byte zuerst),
-    /// auf Little-Endian liegen die Bytes also umgekehrt im Speicher. PixelColor.Packed hat R im niedrigsten Byte (Speicherreihenfolge
-    /// R,G,B,A) - das ist ABGR8888 (= SDL_PIXELFORMAT_RGBA32 auf Little-Endian). Mit ARGB8888 waren Rot und Blau vertauscht; der Framebuffer-Inhalt
-    /// wird ohne Umrechnung hochgeladen.
+    /// Draws the framebuffer as a STREAMING texture (SDL.TextureAccess.
+    /// Streaming, uploaded anew every frame via SDL.UpdateTexture) in the
+    /// format SDL.PixelFormat.ABGR8888: SDL names the packed formats after the bit order of the 32-bit WORD (highest byte first),
+    /// so on little-endian the bytes are reversed in memory. PixelColor.Packed has R in the lowest byte (memory order
+    /// R,G,B,A) - that is ABGR8888 (= SDL_PIXELFORMAT_RGBA32 on little-endian). With ARGB8888 red and blue were swapped; the framebuffer content
+    /// is uploaded without conversion.
     ///
-    /// Kopiert die Textur per SDL.RenderTexture (in SDL3 der Nachfolger von
-    /// SDL2s SDL_RenderCopy) mit `dstrect = NULL` auf das gesamte aktuelle
-    /// Render-Ziel - SDL streckt/staucht dabei automatisch auf die
-    /// tatsächliche (möglicherweise vom Nutzer per Fenster-Resize
-    /// veränderte) Fenstergröße, ganz ohne dass diese Klasse Resize-Events
-    /// selbst auswerten müsste (siehe docs/CONSOLE.md "darf einfach auf die
-    /// passende Größe skaliert werden").
+    /// Copies the texture via SDL.RenderTexture (in SDL3 the successor of
+    /// SDL2's SDL_RenderCopy) with `dstrect = NULL` onto the entire current
+    /// render target - SDL automatically stretches/squeezes it to the
+    /// actual window size (possibly changed by the user via window resize),
+    /// without this class having to evaluate resize events
+    /// itself (see docs/CONSOLE.md "may simply be scaled to the
+    /// fitting size").
     ///
-    /// HINWEIS: aus dieser Sandbox heraus kein Paket-Restore/Kompilieren
-    /// möglich (kein Netzwerkzugriff) - diese Datei ist nach bestem Wissen
-    /// gegen die offiziellen SDL3-CS-Beispiele (github.com/edwardgushchin/
-    /// SDL3-CS, README/Wiki) geschrieben, aber noch NICHT selbst gegen das
-    /// tatsächliche Paket kompiliert worden. Am unsichersten: die genaue
-    /// Schreibweise von SDL.TextureAccess.Streaming (Groß-/Kleinschreibung)
-    /// - bitte beim ersten lokalen Build gegenprüfen (IntelliSense auf
-    /// `SDL.TextureAccess.` zeigt die tatsächlichen Namen).</summary>
+    /// NOTE: package restore/compiling was not possible from this sandbox
+    /// (no network access) - this file is written to the best of knowledge
+    /// against the official SDL3-CS examples (github.com/edwardgushchin/
+    /// SDL3-CS, README/wiki), but has NOT yet been compiled against the
+    /// actual package itself. Least certain: the exact
+    /// spelling of SDL.TextureAccess.Streaming (capitalization)
+    /// - please double-check on the first local build (IntelliSense on
+    /// `SDL.TextureAccess.` shows the actual names).</summary>
     public sealed class SdlFramebufferRenderer : IFramebufferRenderer
     {
         private IntPtr _window;
@@ -52,7 +52,7 @@ namespace fire.Terminal.Sdl
         private bool _disposed;
         private bool _vsync = true;
         private bool _touchMouse = true;
-        // die geöffneten Joysticks (Instanz-ID -> Handle); ein Joystick sendet erst Ereignisse, wenn er geöffnet ist
+        // the opened joysticks (instance ID -> handle); a joystick only sends events once it is opened
         private readonly Dictionary<uint, IntPtr> _joysticks = new();
 
         /// <inheritdoc/>
@@ -79,8 +79,8 @@ namespace fire.Terminal.Sdl
 
         private int _internalHandle;
 
-        // Größe des dargestellten Framebuffers: Mausposition kommt von SDL in FENSTER-Koordinaten, das Fenster darf aber frei skaliert
-        // werden (der Framebuffer wird gestreckt) - Skripte bekommen die Position deshalb in Framebuffer-Pixeln.
+        // Size of the framebuffer being shown: the mouse position comes from SDL in WINDOW coordinates, but the window may be freely scaled
+        // (the framebuffer is stretched) - scripts therefore get the position in framebuffer pixels.
         private int _fbWidth;
         private int _fbHeight;
 
@@ -106,14 +106,14 @@ namespace fire.Terminal.Sdl
 
             if (!SDL.Init(SDL.InitFlags.Video))
                 throw new InvalidOperationException($"SDL.Init failed: {SDL.GetError()}");
-            // Joysticks sind ein Zugabe: ohne Treiber geht das Fenster trotzdem auf. Die schon angesteckten Geräte melden sich danach als JoystickAdded.
+            // Joysticks are a bonus: without a driver the window opens anyway. The devices that are already plugged in report themselves afterwards as JoystickAdded.
             SDL.InitSubSystem(SDL.InitFlags.Joystick);
             SDL.SetHint(SDL.Hints.TouchMouseEvents, _touchMouse ? "1" : "0");
 
-            // SDL3-CS bietet CreateWindowAndRenderer als EINEN Aufruf (statt
-            // getrennt CreateWindow + CreateRenderer wie in SDL2) - laut
-            // offizieller Doku der empfohlene Weg, um Fenster-Flackern beim
-            // ersten Rendern zu vermeiden.
+            // SDL3-CS offers CreateWindowAndRenderer as ONE call (instead of
+            // separate CreateWindow + CreateRenderer as in SDL2) - according to the
+            // official documentation the recommended way to avoid window flicker on the
+            // first render.
             if (!SDL.CreateWindowAndRenderer(
                     title, initialWidth, initialHeight,
                     SDL.WindowFlags.Resizable, out _window, out _renderer))
@@ -121,7 +121,7 @@ namespace fire.Terminal.Sdl
 
             SDL.SetRenderVSync(_renderer, _vsync ? 1 : 0);
 
-            // SDL3 liefert Texteingabe-Ereignisse (EventType.TextInput) erst, wenn sie für das Fenster eingeschaltet sind.
+            // SDL3 delivers text input events (EventType.TextInput) only once they are enabled for the window.
             SDL.StartTextInput(_window);
         }
 
@@ -130,11 +130,11 @@ namespace fire.Terminal.Sdl
             var resultEvents = new List<IEvent>();
             while (SDL.PollEvent(out SDL.Event ev))
             {
-                // Zwei leicht unterschiedliche Schreibweisen kursieren in
-                // den offiziellen SDL3-CS-Beispielen (mit und ohne
-                // expliziten Cast) - der Cast hier ist die sichere Variante,
-                // die in BEIDEN Fällen kompiliert (ob 'Type' bereits das
-                // Enum ist, oder ein roher uint-Wert).
+                // Two slightly different spellings circulate in
+                // the official SDL3-CS examples (with and without an
+                // explicit cast) - the cast here is the safe variant,
+                // which compiles in BOTH cases (whether 'Type' is already the
+                // enum, or a raw uint value).
 
                 var eventType = Event.EventType.Unknown;
 
@@ -146,7 +146,7 @@ namespace fire.Terminal.Sdl
                         _quit = true;
                         break;
                     case SDL.EventType.WindowResized:
-                        // die neue Größe des Fensters (in den Einheiten, in denen es angelegt wurde: so wie die Mauspositionen)
+                        // the new size of the window (in the units in which it was created: like the mouse positions)
                         resultEvents.Add(new ResizeEvent() { SourceHandle = _internalHandle, Type = Event.EventType.Resize, Width = ev.Window.Data1, Height = ev.Window.Data2 });
                         break;
                     case SDL.EventType.WindowCloseRequested:
@@ -241,7 +241,7 @@ namespace fire.Terminal.Sdl
                     case SDL.EventType.FingerDown:
                     case SDL.EventType.FingerMotion:
                     case SDL.EventType.FingerUp:
-                        // die Position kommt von SDL normiert (0 bis 1 über das Fenster): in Framebuffer-Pixeln ist sie einfach x * Breite
+                        // the position comes from SDL normalised (0 to 1 across the window): in framebuffer pixels it is simply x * width
                         resultEvents.Add(new TouchEvent()
                         {
                             Type = ((SDL.EventType)ev.Type) switch { SDL.EventType.FingerDown => Event.EventType.TouchDown, SDL.EventType.FingerUp => Event.EventType.TouchUp, _ => Event.EventType.TouchMove },
@@ -271,7 +271,7 @@ namespace fire.Terminal.Sdl
                         }
                         break;
                     case SDL.EventType.JoystickAxisMotion:
-                        // 16-Bit-Wert von -32768 bis 32767 -> -1 bis 1
+                        // 16-bit value from -32768 to 32767 -> -1 to 1
                         resultEvents.Add(new JoystickEvent() { Type = Event.EventType.JoystickAxis, Joystick = (int)ev.JAxis.Which, Index = ev.JAxis.Axis, Value = Math.Max(-1f, ev.JAxis.Value / 32767f), SourceHandle = _internalHandle });
                         break;
                     case SDL.EventType.JoystickButtonDown:
@@ -310,7 +310,7 @@ namespace fire.Terminal.Sdl
 
         public void Present(Framebuffer framebuffer)
         {
-            framebuffer.Resolve(); // Palette-Framebuffer: Pixels aus Indizes und Palette berechnen (im RGBA-Modus ein No-op)
+            framebuffer.Resolve(); // Palette framebuffer: compute pixels from indices and palette (a no-op in RGBA mode)
             EnsureTexture(framebuffer.Width, framebuffer.Height);
 
             unsafe
@@ -322,9 +322,9 @@ namespace fire.Terminal.Sdl
             }
 
             SDL.RenderClear(_renderer);
-            // dstrect = NULL -> das GESAMTE aktuelle Render-Ziel (die
-            // tatsächliche Fenstergröße), nicht die Textur-Originalgröße -
-            // das IST die automatische Skalierung.
+            // dstrect = NULL -> the ENTIRE current render target (the
+            // actual window size), not the original texture size -
+            // that IS the automatic scaling.
             SDL.RenderTexture(_renderer, _texture, IntPtr.Zero, IntPtr.Zero);
             SDL.RenderPresent(_renderer);
         }
@@ -336,7 +336,7 @@ namespace fire.Terminal.Sdl
 
             _texture = SDL.CreateTexture(
                 _renderer,
-                SDL.PixelFormat.ABGR8888, // Speicherreihenfolge R,G,B,A (PixelColor.Packed): auf Little-Endian ABGR8888, nicht ARGB8888 (das vertauschte Rot und Blau)
+                SDL.PixelFormat.ABGR8888, // memory order R,G,B,A (PixelColor.Packed): on little-endian ABGR8888, not ARGB8888 (that swapped red and blue)
                 SDL.TextureAccess.Streaming,
                 width, height);
             if (_texture == IntPtr.Zero)

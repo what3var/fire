@@ -3,9 +3,9 @@ using System.IO;
 
 namespace fire.Terminal
 {
-    /// <summary>GIF: das ERSTE Bild einer Datei (eine Animation liefert ihr erstes Einzelbild), immer indiziert - mit der lokalen oder globalen Palette,
-    /// dem Transparenz-Index der Grafiksteuerung und auch verschränkt. Das Bild hat die Größe des logischen Bildschirms; liegt das erste Teilbild
-    /// kleiner oder versetzt darin, füllt der Hintergrundindex (bzw. der durchsichtige Index) den Rest.</summary>
+    /// <summary>GIF: the FIRST image of a file (an animation yields its first frame), always indexed - with the local or global palette,
+    /// the transparency index of the graphic control and also interlaced. The image has the size of the logical screen; if the first sub-image lies
+    /// smaller or offset inside it, the background index (or the transparent index) fills the rest.</summary>
     internal static class GifDecoder
     {
         public static ImageData Decode(byte[] d)
@@ -28,8 +28,8 @@ namespace fire.Terminal
             while (pos < d.Length)
             {
                 int block = d[pos++];
-                if (block == 0x3B) break; // Ende der Datei, ohne dass ein Bild kam
-                if (block == 0x21)        // Erweiterung
+                if (block == 0x3B) break; // end of the file without an image having come
+                if (block == 0x21)        // extension
                 {
                     if (pos >= d.Length) break;
                     int label = d[pos++];
@@ -55,7 +55,7 @@ namespace fire.Terminal
                 int minCode = d[pos++];
                 if (minCode < 2 || minCode > 11) throw new ImageFormatException("GIF: invalid LZW code size.");
 
-                // die Teilblöcke der Bilddaten zusammensetzen
+                // assemble the sub-blocks of the image data
                 var packed = new MemoryStream();
                 while (true)
                 {
@@ -69,7 +69,7 @@ namespace fire.Terminal
 
                 var frame = LzwDecode(packed.ToArray(), minCode, checked(w * h));
 
-                // auf den logischen Bildschirm setzen
+                // place on the logical screen
                 int fill = transparent >= 0 ? transparent : Math.Min(backgroundIndex, 255);
                 var indices = new byte[screenW * screenH];
                 Array.Fill(indices, (byte)fill);
@@ -113,7 +113,7 @@ namespace fire.Terminal
             }
         }
 
-        /// <summary>Welche Bildzeile die r-te gespeicherte ist (bei verschränkten Bildern in vier Durchgängen: 0,8,16.. / 4,12.. / 2,6.. / 1,3,5..).</summary>
+        /// <summary>Which image row the r-th stored one is (for interlaced images in four passes: 0,8,16.. / 4,12.. / 2,6.. / 1,3,5..).</summary>
         private static int[] RowOrder(int height, bool interlaced)
         {
             var rows = new int[height];
@@ -128,7 +128,7 @@ namespace fire.Terminal
             return rows;
         }
 
-        /// <summary>Der LZW-Strom des GIF (Codes LSB-zuerst, wachsende Codebreite 3-12 Bit, Clear- und Ende-Code). Fehlende Pixel am Ende bleiben 0.</summary>
+        /// <summary>The LZW stream of the GIF (codes LSB first, growing code width 3-12 bit, clear and end code). Missing pixels at the end stay 0.</summary>
         private static byte[] LzwDecode(byte[] data, int minCodeSize, int pixelCount)
         {
             var output = new byte[pixelCount];
@@ -147,7 +147,7 @@ namespace fire.Terminal
             {
                 while (bitCount < codeSize)
                 {
-                    if (dataPos >= data.Length) return output; // Datenende ohne End-Code: lenient
+                    if (dataPos >= data.Length) return output; // end of data without an end code: lenient
                     bitBuffer |= data[dataPos++] << bitCount;
                     bitCount += 8;
                 }
@@ -178,7 +178,7 @@ namespace fire.Terminal
                 if (code >= next)
                 {
                     if (code > next) throw new ImageFormatException("GIF: corrupt LZW data (code outside of the dictionary).");
-                    stack[sp++] = first;   // der Sonderfall K-w-K
+                    stack[sp++] = first;   // the special case K-w-K
                     cur = prev;
                 }
                 while (cur >= clear)

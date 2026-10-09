@@ -4,8 +4,8 @@ using fire.Values;
 
 namespace fire.Standard
 {
-    /// <summary>Die Methoden von `char` (SPEC 8.12) - IDs für <see cref="CharMethods.NativeName"/>,
-    /// feste Werte wie bei <see cref="StringMethod"/>.</summary>
+    /// <summary>The methods of `char` (SPEC 8.12) - IDs for <see cref="CharMethods.NativeName"/>,
+    /// fixed values as with <see cref="StringMethod"/>.</summary>
     public enum CharMethod
     {
         IsDigit = 1,
@@ -21,10 +21,10 @@ namespace fire.Standard
     }
 
     /// <summary>
-    /// `char`-Methoden als Erweiterung des Basistyps (`class extends char`, SPEC 5.5.1) im Prelude, alle
-    /// über EINE native Funktion: `__CharCall(id, char)`. Die Klassifizierung folgt Unicode (wie
-    /// .NETs `char.IsLetter` usw., auf der einzelnen 16-Bit-Codeeinheit), Groß-/Kleinschreibung ist
-    /// invariant. (`ToByte()`/`ToUnicode(n)` bleiben die eingebauten Konvertierungen, SPEC 8.10.)
+    /// `char` methods as an extension of the base type (`class extends char`, SPEC 5.5.1) in the prelude, all
+    /// via ONE native function: `__CharCall(id, char)`. Classification follows Unicode (like
+    /// .NET's `char.IsLetter` etc., on the single 16-bit code unit), upper/lower case is
+    /// invariant. (`ToByte()`/`ToUnicode(n)` remain the built-in conversions, SPEC 8.10.)
     /// </summary>
     public static class CharMethods
     {
@@ -58,7 +58,7 @@ namespace fire.Standard
             return sb.ToString();
         }
 
-        /// <summary>Die native Funktion `__CharCall(id, char)`.</summary>
+        /// <summary>The native function `__CharCall(id, char)`.</summary>
         public static Value Call(Value[] args)
         {
             if (args.Length != 2 || args[1].Kind != ValueKind.Char)

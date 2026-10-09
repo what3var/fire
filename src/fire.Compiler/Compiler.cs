@@ -11,14 +11,14 @@ using MemoryPack;
 
 namespace fire.Compiler
 {
-    /// <summary>Ein Fehler des Bytecode-Compilers (ein `NotSupportedException`,
-    /// damit bestehender Code, der diese fängt, weiter funktioniert) - anders
-    /// als eine nackte NotSupportedException MIT Zeile im Quelltext. Wie beim
-    /// Resolver (siehe ResolverException) bricht der Compiler beim ersten
-    /// Fehler NICHT ab, sondern sammelt alle weiteren: `Compiler.Compile`
-    /// wirft am Ende EINE CompilerException, deren `Message`/`Line` die des
-    /// ersten Fehlers sind und deren <see cref="Errors"/> alle Fehler
-    /// enthält (den ersten eingeschlossen).</summary>
+    /// <summary>An error of the bytecode compiler (a `NotSupportedException`,
+    /// so that existing code that catches these keeps working) - unlike
+    /// a bare NotSupportedException WITH a line in the source. As with the
+    /// resolver (see ResolverException) the compiler does NOT stop at the first
+    /// error, but collects all further ones: `Compiler.Compile`
+    /// throws at the end ONE CompilerException whose `Message`/`Line` are those of the
+    /// first error and whose <see cref="Errors"/> contains all errors
+    /// (the first included).</summary>
     public sealed class CompilerException : NotSupportedException
     {
         public int Line { get; }
@@ -32,7 +32,7 @@ namespace fire.Compiler
             Errors = new[] { this };
         }
 
-        /// <summary>Fasst mehrere gesammelte Fehler zusammen (mindestens einer).</summary>
+        /// <summary>Combines several collected errors (at least one).</summary>
         public CompilerException(IReadOnlyList<CompilerException> errors)
             : base(errors[0].Message)
         {
@@ -42,18 +42,18 @@ namespace fire.Compiler
     }
 
     /// <summary>
-    /// Übersetzt den AST (nach Resolver-Lauf) in einen Chunk. Deckt aktuell ab:
-    /// Literale, Variablen (Global/Local passend zu den Resolver-Slots),
-    /// Arithmetik inkl. der Anker-Regel für Einheiten/Typen (SPEC 3.2),
-    /// Vergleiche, Kurzschluss-'&amp;&amp;'/'||', unäre Operatoren, if/while/for,
-    /// Blöcke mit echtem Ownership-Scope, Native-Calls, Lambdas (Funktions-/
-    /// Call-Frames), Klassen/Objekte (`new`, Felder, Methoden inkl. virtueller
-    /// Auflösung, `this`/`base`, Konstruktor-Verkettung).
+    /// Translates the AST (after the resolver run) into a chunk. Currently covers:
+    /// literals, variables (global/local matching the resolver slots),
+    /// arithmetic incl. the anchor rule for units/types (SPEC 3.2),
+    /// comparisons, short-circuit '&amp;&amp;'/'||', unary operators, if/while/for,
+    /// blocks with a real ownership scope, native calls, lambdas (function/
+    /// call frames), classes/objects (`new`, fields, methods incl. virtual
+    /// resolution, `this`/`base`, constructor chaining).
     ///
-    /// Noch NICHT abgedeckt (wirft NotSupportedException mit klarer Meldung):
-    /// try/catch/throw/resume, foreach (Collections sind noch gar nicht
-    /// entworfen), Destruktor-AUSFÜHRUNG (Deklaration/Kompilierung schon, siehe
-    /// RuntimeClass-Kommentar) - das sind die nächsten Ausbaustufen.
+    /// Still NOT covered (throws NotSupportedException with a clear message):
+    /// try/catch/throw/resume, foreach (collections are not designed at all yet),
+    /// destructor EXECUTION (declaration/compilation already, see
+    /// RuntimeClass comment) - those are the next development stages.
     /// </summary>
     public sealed class Compiler
     {
@@ -62,37 +62,37 @@ namespace fire.Compiler
         private readonly NativeRegistry _natives;
 
         // -----------------------------------------------------------
-        // break/continue: Scope-Tiefe und aktive Schleifen(n)
+        // break/continue: scope depth and active loops
         // -----------------------------------------------------------
 
-        /// <summary>Wie viele EnterScope-Opcodes seit Beginn DIESES
-        /// Funktionskörpers ohne passendes ExitScope emittiert wurden -
-        /// NICHT über Funktionsgrenzen hinweg gezählt, da jede Methode/jeder
-        /// Konstruktor/jede Lambda mit einem FRISCHEN Compiler-Objekt
-        /// kompiliert wird (siehe CompileMethodProto/CompileLambda: `new
-        /// Compiler(_refs, _natives, ...)`) - dieses Feld startet also für
-        /// jeden Funktionskörper automatisch wieder bei 0, ganz ohne
-        /// manuelles Sichern/Zurücksetzen wie beim Resolver-Gegenstück
-        /// (`Resolver._loopDepth`). Ausschließlich über EmitEnterScope/
-        /// EmitExitScope verändert - NIE direkt `_chunk.EmitOp(OpCode.
-        /// Enter/ExitScope)` aufrufen, sonst verliert `break`/`continue` die
-        /// korrekte Anzahl an Scopes, die sie beim Sprung schließen müssen.</summary>
+        /// <summary>How many EnterScope opcodes have been emitted since the start of THIS
+        /// function body without a matching ExitScope -
+        /// NOT counted across function boundaries, since every method/every
+        /// constructor/every lambda is compiled with a FRESH compiler object
+        /// (see CompileMethodProto/CompileLambda: `new
+        /// Compiler(_refs, _natives, ...)`) - this field therefore starts again at 0 for
+        /// every function body automatically, without
+        /// manual saving/resetting as with the resolver counterpart
+        /// (`Resolver._loopDepth`). Changed exclusively via EmitEnterScope/
+        /// EmitExitScope - NEVER call `_chunk.EmitOp(OpCode.
+        /// Enter/ExitScope)` directly, otherwise `break`/`continue` lose the
+        /// correct number of scopes that they have to close on the jump.</summary>
         private int _currentScopeDepth;
 
-        /// <summary>Kompiliert das Hauptprogramm (nicht den Koerper einer Funktion, Methode oder Lambda).</summary>
+        /// <summary>Compiles the main program (not the body of a function, method or lambda).</summary>
         private bool IsTopLevelCode { get; set; }
 
-        /// <summary>Pro aktiver Schleife (verschachtelbar, daher ein Stack):
-        /// die Scope-Tiefe GENAU beim Betreten des Schleifenkörpers (für die
-        /// Anzahl nötiger ExitScope-Opcodes bei einem break/continue, siehe
-        /// EmitScopeUnwindForJump) sowie die noch zu patchenden Sprungziele.
-        /// `continue` und `break` sammeln ihre Sprungadressen hier, bis das
-        /// jeweilige Ziel (Schleifenanfang/-ende) beim Fertigkompilieren der
-        /// Schleife feststeht.</summary>
+        /// <summary>Per active loop (nestable, hence a stack):
+        /// the scope depth EXACTLY on entering the loop body (for the
+        /// number of ExitScope opcodes needed on a break/continue, see
+        /// EmitScopeUnwindForJump) as well as the jump targets still to be patched.
+        /// `continue` and `break` collect their jump addresses here until the
+        /// respective target (loop start/end) is fixed when the
+        /// loop has been compiled completely.</summary>
         private sealed class LoopCompileContext
         {
             public int ScopeDepthAtLoopBodyStart;
-            /// <summary>`foreach` hält seinen Enumerator auf dem Operanden-Stack: ein `return` mitten darin muss ihn mit entfernen.</summary>
+            /// <summary>`foreach` keeps its enumerator on the operand stack: a `return` in the middle of it has to remove it as well.</summary>
             public bool IsForeach;
             public readonly List<int> BreakJumpPatchAddrs = new();
             public readonly List<int> ContinueJumpPatchAddrs = new();
@@ -112,16 +112,16 @@ namespace fire.Compiler
             _currentScopeDepth--;
         }
 
-        /// <summary>Emittiert vor einem break/continue-Sprung so viele
-        /// ExitScope-Opcodes wie nötig, um von der AKTUELLEN Scope-Tiefe
-        /// zurück auf die Tiefe beim Betreten des Schleifenkörpers zu
-        /// kommen - bewusst OHNE EmitExitScope (das würde `_currentScopeDepth`
-        /// mitverändern): das sind rein "temporäre" Closes NUR für diesen
-        /// einen Sprungpfad, die NORMALE sequentielle Kompilierung (z.B.
-        /// das eigene ExitScope des Blocks, der das break/continue enthält)
-        /// läuft danach unverändert weiter, als wäre nichts gewesen - der
-        /// Bytecode direkt nach dem Sprung ist ohnehin unerreichbar (Jump
-        /// ist unbedingt), genau wie bei `return` mitten in einem Block.</summary>
+        /// <summary>Before a break/continue jump emits as many
+        /// ExitScope opcodes as necessary to get from the CURRENT scope depth
+        /// back to the depth on entering the loop body -
+        /// deliberately WITHOUT EmitExitScope (that would change `_currentScopeDepth`
+        /// along with it): these are purely "temporary" closes ONLY for this
+        /// one jump path, the NORMAL sequential compilation (e.g.
+        /// the block's own ExitScope that contains the break/continue)
+        /// afterwards continues unchanged as if nothing had happened - the
+        /// bytecode directly after the jump is unreachable anyway (jump
+        /// is unconditional), just as with `return` in the middle of a block.</summary>
         private void EmitScopeUnwindForJump(LoopCompileContext ctx)
         {
             int toClose = _currentScopeDepth - ctx.ScopeDepthAtLoopBodyStart;
@@ -131,47 +131,47 @@ namespace fire.Compiler
 
         private enum TryPhase { Try, Catch }
 
-        /// <summary>Ein gerade kompiliertes `try` (Try- oder Catch-Teil) - Grundlage dafür, dass `break`/`continue` den Handler abräumen und über das
-        /// `finally` laufen. `OuterDepth` = Scope-Tiefe außerhalb des `try`, `LoopCount` = Schleifen, die beim Betreten schon offen waren.</summary>
+        /// <summary>A `try` currently being compiled (try or catch part) - basis for `break`/`continue` clearing away the handler and running through the
+        /// `finally`. `OuterDepth` = scope depth outside the `try`, `LoopCount` = loops that were already open on entering.</summary>
         private sealed class TryCompileContext
         {
             public TryStmt Stmt = null!;
             public TryPhase Phase;
             public int OuterDepth;
             public int LoopCount;
-            /// <summary>Anzahl der Stack-Bewohner (siehe _residents) beim Betreten des `try`: sie liegen unter dem Stand, auf den der Handler den Stack zurücksetzt.</summary>
+            /// <summary>Number of stack residents (see _residents) on entering the `try`: they lie below the state to which the handler resets the stack.</summary>
             public int ResidentsAtStart;
 
-            /// <summary>Stellen (Operanden von `Jump`), die in den `finally`-Block springen und noch auf seine Adresse warten.</summary>
+            /// <summary>Places (operands of `Jump`) that jump into the `finally` block and are still waiting for its address.</summary>
             public readonly List<int> FinallyJumpPatches = new();
 
-            /// <summary>Je Sprung-Art (`break`/`continue`), die den `try` verlässt: die Stellen (Operanden von `PushJump`), die auf die Adresse des Ausgangs-Stücks
-            /// hinter dem `finally` warten (siehe CompileTry).</summary>
+            /// <summary>Per jump kind (`break`/`continue`) that leaves the `try`: the places (operands of `PushJump`) waiting for the address of the exit piece
+            /// behind the `finally` (see CompileTry).</summary>
             public readonly List<int> BreakStubPatches = new();
             public readonly List<int> ContinueStubPatches = new();
         }
 
         private readonly List<TryCompileContext> _tryStack = new();
 
-        /// <summary>Alles, was ein Block auf dem Operanden-Stack liegen lässt, solange er läuft (von unten nach oben): ein `foreach` seinen Enumerator (1),
-        /// ein `finally`-Block seinen Abschluss (2). Ein `return` darin nimmt sie vor der Rückkehr weg (Swap + Pop je Eintrag), sonst blieben sie
-        /// unter dem Rückgabewert liegen und verschöben die Operanden des Aufrufers.</summary>
+        /// <summary>Everything a block leaves on the operand stack while it runs (from bottom to top): a `foreach` its enumerator (1),
+        /// a `finally` block its completion (2). A `return` in it removes them before returning (swap + pop per entry), otherwise they would stay
+        /// below the return value and shift the caller's operands.</summary>
         private readonly List<int> _residents = new();
 
-        /// <summary>Gemeinsame Kompilierung für `break`/`continue`: verlässt von innen nach außen alle `try`/`catch`-Blöcke, die seit dem Schleifenkörper offen
-        /// sind (Scopes schließen, Handler abmelden bzw. Catch-Zustand verwerfen). Trifft es dabei auf ein `try` MIT `finally`, springt es nicht selbst
-        /// weiter, sondern in dessen `finally` (Abschluss "Sprung"); nach dem `finally` setzt ein Ausgangs-Stück hinter dem `try` die Reise fort (es ist
-        /// derselbe `break`/`continue`, nur von außerhalb des `try` übersetzt, siehe CompileTry). Sonst schließt es die restlichen Scopes und springt - die
-        /// Adresse kommt in die passende Liste (Break-/ContinueJumpPatchAddrs) und wird beim Fertigkompilieren der Schleife aufgelöst.</summary>
+        /// <summary>Common compilation for `break`/`continue`: leaves from the inside out all `try`/`catch` blocks that have been open since the loop body
+        /// (close scopes, unregister handlers or discard the catch state). If it meets a `try` WITH `finally` on the way, it does not jump on by itself,
+        /// but into its `finally` (completion "jump"); after the `finally` an exit piece behind the `try` continues the journey (it is
+        /// the same `break`/`continue`, only translated from outside the `try`, see CompileTry). Otherwise it closes the remaining scopes and jumps - the
+        /// address goes into the matching list (Break-/ContinueJumpPatchAddrs) and is resolved when the loop is compiled completely.</summary>
         private void CompileBreakOrContinue(bool isBreak)
         {
             var ctx = _loopStack.Peek();
-            int depth = _currentScopeDepth;      // tatsächliche Tiefe am Sprung; `_currentScopeDepth` selbst bleibt unverändert
+            int depth = _currentScopeDepth;      // actual depth at the jump; `_currentScopeDepth` itself stays unchanged
 
             for (int k = _tryStack.Count - 1; k >= 0 && _tryStack[k].LoopCount == _loopStack.Count; k--)
             {
                 var t = _tryStack[k];
-                int innerTarget = t.Phase == TryPhase.Catch ? t.OuterDepth + 1 : t.OuterDepth; // im Catch-Teil zuerst bis zur Catch-Scope
+                int innerTarget = t.Phase == TryPhase.Catch ? t.OuterDepth + 1 : t.OuterDepth; // in the catch part first up to the catch scope
                 for (; depth > innerTarget; depth--) _chunk.EmitOp(OpCode.ExitScope);
 
                 if (t.Phase == TryPhase.Try)
@@ -180,7 +180,7 @@ namespace fire.Compiler
                 }
                 else
                 {
-                    // wie am normalen Ende des catch-Blocks: Wurfstellen-Zustand verwerfen, Catch-Scope schließen, das finally-only-Handler abmelden
+                    // as at the normal end of the catch block: discard the throw-site state, close the catch scope, unregister the finally-only handler
                     _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(0);
                     _chunk.EmitOp(OpCode.ClearPendingResume);
                     _chunk.EmitOp(OpCode.ExitScope);
@@ -190,7 +190,7 @@ namespace fire.Compiler
 
                 if (t.Stmt.Finally != null)
                 {
-                    // in das finally dieses `try`: danach geht es am Ausgangs-Stück hinter dem `try` weiter
+                    // into the finally of this `try`: afterwards it continues at the exit piece behind the `try`
                     _chunk.EmitOp(OpCode.PushJump);
                     (isBreak ? t.BreakStubPatches : t.ContinueStubPatches).Add(_chunk.Here);
                     _chunk.EmitU16(0);
@@ -207,58 +207,58 @@ namespace fire.Compiler
             _chunk.EmitU16(0);
         }
 
-        // Nur gesetzt, während ein Feld-Initialisierer/Methoden-/Konstruktor-Body
-        // dieser Klasse kompiliert wird - Grundlage dafür, `base.Method(...)`
-        // statisch auf DIE Basisklasse aufzulösen, die zur deklarierenden Klasse
-        // gehört (nicht zur tatsächlichen Laufzeit-Instanz, die bei mehrstufiger
-        // Vererbung eine andere sein kann).
+        // Only set while a field initialiser/method/constructor body
+        // of this class is being compiled - basis for resolving `base.Method(...)`
+        // statically to THE base class that belongs to the declaring class
+        // (not to the actual runtime instance, which with multi-level
+        // inheritance can be a different one).
         private readonly RuntimeClass? _enclosingClass;
 
-        /// <summary>Anzahl globaler Slots des HAUPTPROGRAMMS (siehe Resolving.
-        /// Resolver.ResolveResult.GlobalSlotCount) - Grundlage für
-        /// CompileFireStmt: der Fire-Block-Body läuft auf einer FRISCHEN
-        /// VM-Instanz, deren global-Scope zur Laufzeit zuerst mit einem
-        /// Snapshot ALLER Hauptprogramm-Globals an DEREN ORIGINAL-Slots
-        /// befüllt wird (siehe Bytecode.VM.OpCode.Fire/Runtime.FireRuntime.
-        /// FireVmTaking) - taking/with-Erfassungen bekommen deshalb ihre
-        /// EIGENEN Slots erst AB diesem Wert, nicht ab 0 (siehe Resolving.
-        /// Resolver.ResolveFireStmt für die passende Slot-Vergabe). MUSS
-        /// durch JEDEN inneren Compiler weitergereicht werden (nicht nur den
-        /// von CompileFireStmt selbst) - ein `fire {}` kann ja auch tief
-        /// verschachtelt innerhalb einer Methode/Lambda/eines weiteren
-        /// Fire-Blocks stehen.</summary>
+        /// <summary>Number of global slots of the MAIN PROGRAM (see Resolving.
+        /// Resolver.ResolveResult.GlobalSlotCount) - basis for
+        /// CompileFireStmt: the fire block body runs on a FRESH
+        /// VM instance whose global scope is first filled at runtime with a
+        /// snapshot of ALL main-program globals at THEIR ORIGINAL slots
+        /// (see Bytecode.VM.OpCode.Fire/Runtime.FireRuntime.
+        /// FireVmTaking) - taking/with captures therefore get their
+        /// OWN slots only FROM this value on, not from 0 (see Resolving.
+        /// Resolver.ResolveFireStmt for the matching slot assignment). MUST
+        /// be passed on through EVERY inner compiler (not only the one
+        /// of CompileFireStmt itself) - a `fire {}` can after all also stand deeply
+        /// nested inside a method/lambda/a further
+        /// fire block.</summary>
         private readonly int _globalSlotCount;
 
-        /// <summary>Quell-Index (Position in der `sources`-Liste, die an
-        /// Parser.ParseMultiple ging) für TOP-LEVEL-Code (also AUSSERHALB
-        /// jeder Klasse, inkl. einer dort direkt definierten Lambda - siehe
-        /// CompileLambda) - innerhalb einer Klasse gilt stattdessen deren
-        /// EIGENER `Ast.ClassDecl.SourceIndex` (siehe CurrentSourceIndex).
-        /// Wird in der Top-Level-Schleife von Compile() VOR jeder Anweisung
-        /// aus `sourceIndexByStmt` neu gesetzt (analog zum früheren
-        /// `_topLevelUsings`-Muster) - wichtig, wenn MEHRERE der kombinierten
-        /// Quellen eigenen Top-Level-Code haben.</summary>
+        /// <summary>Source index (position in the `sources` list that went to
+        /// Parser.ParseMultiple) for TOP-LEVEL code (that is, OUTSIDE
+        /// any class, incl. a lambda defined directly there - see
+        /// CompileLambda) - inside a class its
+        /// OWN `Ast.ClassDecl.SourceIndex` applies instead (see CurrentSourceIndex).
+        /// Set anew in the top-level loop of Compile() BEFORE every statement
+        /// from `sourceIndexByStmt` (analogous to the earlier
+        /// `_topLevelUsings` pattern) - important when SEVERAL of the combined
+        /// sources have top-level code of their own.</summary>
         private int _topLevelSourceIndex;
 
-        /// <summary>Der für die AKTUELL kompilierte Stelle geltende Quell-Index
-        /// (SPEC "Mehrere Quelldateien") - innerhalb einer Klasse deren EIGENER
-        /// `Ast.ClassDecl.SourceIndex`, außerhalb jeder Klasse
-        /// `_topLevelSourceIndex` (siehe dort). An Chunk.MarkLine übergeben,
-        /// damit ein Debugger (siehe Editor-Unterprojekt) bei mehreren
-        /// Quelldateien weiß, in welcher Datei eine gegebene Zeile liegt.</summary>
+        /// <summary>The source index applying to the place CURRENTLY being compiled
+        /// (SPEC "Multiple source files") - inside a class its OWN
+        /// `Ast.ClassDecl.SourceIndex`, outside any class
+        /// `_topLevelSourceIndex` (see there). Passed to Chunk.MarkLine,
+        /// so that a debugger (see editor sub-project) knows, with several
+        /// source files, in which file a given line lies.</summary>
         private int CurrentSourceIndex => _enclosingClass?.Decl.Source ?? _topLevelSourceIndex;
 
-        /// <summary>Alle bekannten (vollqualifizierten) Klassennamen - Grundlage
-        /// für ResolveTypeRef (SPEC "Namespaces"). Nicht readonly: der
-        /// Top-Level-Compiler bekommt sie erst MITTEN in CompileClasses
-        /// zugewiesen (nach dem Sammeln ALLER Klassennamen, aber VOR dem
-        /// eigentlichen Kompilieren der Klassenkörper - ein Henne-Ei-Problem,
-        /// wenn man sie erst NACH CompileClasses zuweisen würde, da
-        /// CompileClasses selbst schon Klassenkörper kompiliert, die sie
-        /// brauchen); jeder INNERE Compiler (Methoden-/Konstruktor-/Lambda-
-        /// Body) bekommt sie dagegen direkt über den Konstruktor vom äußeren
-        /// Compiler mit (zu DEM Zeitpunkt längst gesetzt). `null` nur in
-        /// Testszenarien, die nie einen Namen auflösen müssten.</summary>
+        /// <summary>All known (fully qualified) class names - basis
+        /// for ResolveTypeRef (SPEC "Namespaces"). Not readonly: the
+        /// top-level compiler only gets it IN THE MIDDLE of CompileClasses
+        /// assigned (after collecting ALL class names, but BEFORE
+        /// actually compiling the class bodies - a chicken-and-egg problem
+        /// if one were to assign it only AFTER CompileClasses, since
+        /// CompileClasses itself already compiles class bodies that
+        /// need it); every INNER compiler (method/constructor/lambda
+        /// body), by contrast, gets it directly via the constructor from the outer
+        /// compiler (by THAT time long set). `null` only in
+        /// test scenarios that would never have to resolve a name.</summary>
         private HashSet<string>? _knownClassNames;
 
         private Compiler(ResolveResult resolveResult, NativeRegistry natives)
@@ -267,18 +267,18 @@ namespace fire.Compiler
             IsTopLevelCode = true;
         }
 
-        /// <summary>Alle bisher gefundenen Fehler (siehe CompilerException) -
-        /// EINE Liste für den äußeren Compiler UND alle inneren (Methoden-/
-        /// Lambda-/Konstruktor-Bodys), wird von Compile() am Ende
-        /// ausgewertet.</summary>
+        /// <summary>All errors found so far (see CompilerException) -
+        /// ONE list for the outer compiler AND all inner ones (method/
+        /// lambda/constructor bodies), evaluated by Compile() at the
+        /// end.</summary>
         private readonly List<CompilerException> _errors;
 
-        /// <summary>Welche Parameter welcher Methoden/Konstruktoren `ref` sind (SPEC 5.4.2) - der Aufrufer muss wissen, wo er eine Adresse statt eines Werts uebergibt.</summary>
+        /// <summary>Which parameters of which methods/constructors are `ref` (SPEC 5.4.2) - the caller must know where to pass an address instead of a value.</summary>
         private readonly RefParamTable _refParams;
 
-        /// <summary>Die `ref`-Parameter aller Methoden und Konstruktoren des Programms. Ein Aufruf (`obj.M(a, b)`) wird erst zur Laufzeit an eine Klasse
-        /// gebunden - der Aufrufer uebergibt deshalb die Adresse, wenn IRGENDEINE Methode dieses Namens (und dieser Argumentanzahl) dort `ref` hat; die VM
-        /// gibt einem gewoehnlichen Parameter beim Binden den Wert.</summary>
+        /// <summary>The `ref` parameters of all methods and constructors of the program. A call (`obj.M(a, b)`) is only bound to a class at runtime
+        /// - the caller therefore passes the address if ANY method of this name (and this argument count) has `ref` there; the VM
+        /// gives an ordinary parameter the value when binding.</summary>
         private sealed class RefParamTable
         {
             private readonly Dictionary<(string Name, int Argc), bool[]> _methods = new();
@@ -287,7 +287,7 @@ namespace fire.Compiler
             public static RefParamTable Build(IEnumerable<ClassDecl> classes)
             {
                 var table = new RefParamTable();
-                // ALLE Methoden nehmen teil (auch die ohne `ref`), damit ein Widerspruch zwischen Klassen auffaellt
+                // ALL methods take part (also those without `ref`), so that a contradiction between classes becomes apparent
                 foreach (var cls in classes)
                     foreach (var member in cls.Members)
                     {
@@ -309,19 +309,19 @@ namespace fire.Compiler
                 }
             }
 
-            /// <summary>Die `ref`-Maske einer Methode (null: kein Parameter ist `ref`).</summary>
+            /// <summary>The `ref` mask of a method (null: no parameter is `ref`).</summary>
             public bool[]? ForMethod(string name, int argc) => _methods.TryGetValue((name, argc), out var m) && m.Any(x => x) ? m : null;
             public bool[]? ForConstructor(string cls, int argc) => _constructors.TryGetValue((cls, argc), out var m) && m.Any(x => x) ? m : null;
         }
 
-        /// <summary>Nutzt das Programm die Reflection-Bibliothek (`#import "reflection"`)? Dann schreibt der Compiler die deklarierten Typen als
-        /// <see cref="ClassMeta"/> mit und markiert die Klassen der Bibliothek.</summary>
+        /// <summary>Does the program use the reflection library (`#import "reflection"`)? Then the compiler writes the declared types along as
+        /// <see cref="ClassMeta"/> and marks the classes of the library.</summary>
         private bool Reflection => _natives.Has(fire.Standard.ReflectionPrelude.MembersNative);
 
-        /// <summary>Für die Kompilierung eines Lambda-/Methoden-/Konstruktor-Bodys
-        /// in einen eigenen Chunk (FunctionProto): teilt sich die Resolver-
-        /// Referenzen und die Native-Registry mit dem äußeren Compiler, baut aber
-        /// einen eigenen, frischen Chunk.</summary>
+        /// <summary>For compiling a lambda/method/constructor body
+        /// into a chunk of its own (FunctionProto): shares the resolver
+        /// references and the native registry with the outer compiler, but builds
+        /// a fresh chunk of its own.</summary>
         private Compiler(IReadOnlyDictionary<Expr, ResolvedRef> refs, NativeRegistry natives, RuntimeClass? enclosingClass, int globalSlotCount, HashSet<string>? knownClassNames, List<CompilerException> errors, RefParamTable refParams)
         {
             _refParams = refParams;
@@ -333,20 +333,20 @@ namespace fire.Compiler
             _knownClassNames = knownClassNames;
         }
 
-        /// <summary>Löst `tr` auf seinen vollqualifizierten Namen auf, WENN
-        /// nötig (SPEC "Namespaces") - siehe TypeRef.ResolveBaseName für die
-        /// genaue Regel. `tr.Namespaces` trägt den Kontext (aktueller
-        /// Namespace + `#using`) schon direkt an sich selbst, gesetzt vom
-        /// Parser GENAU an der Stelle, an der `tr` geparst wurde - der
-        /// Compiler braucht dafür keinen eigenen "aktuelle Klasse"/"aktive
-        /// Usings"-Zustand mehr.</summary>
+        /// <summary>Resolves `tr` to its fully qualified name IF
+        /// necessary (SPEC "Namespaces") - see TypeRef.ResolveBaseName for the
+        /// exact rule. `tr.Namespaces` carries the context (current
+        /// namespace + `#using`) already directly on itself, set by the
+        /// parser EXACTLY at the place where `tr` was parsed - the
+        /// compiler needs no "current class"/"active
+        /// usings" state of its own for that any more.</summary>
         private string ResolveTypeRef(TypeRef tr) =>
             _knownClassNames != null ? tr.ResolveBaseName(_knownClassNames.Contains) : tr.BaseName;
 
-        /// <summary>Der Klassenname, den `new Name&lt;...&gt;(...)` instanziiert - die
-        /// Anzahl der Typ-Argumente wählt zwischen einer nicht-generischen und
-        /// einer gleichnamigen generischen Klasse (siehe GenericClassNames;
-        /// gleiche Wahl wie im Resolver).</summary>
+        /// <summary>The class name that `new Name&lt;...&gt;(...)` instantiates - the
+        /// number of type arguments chooses between a non-generic and
+        /// a generic class of the same name (see GenericClassNames;
+        /// same choice as in the resolver).</summary>
         private string ResolveNewClassName(NewExpr ne) =>
             _knownClassNames != null
                 ? GenericClassNames.ResolveNewTarget(ne.ClassRef, ne.TypeArgs?.Count ?? 0, _knownClassNames.Contains)
@@ -358,32 +358,32 @@ namespace fire.Compiler
             var compiler = new Compiler(resolveResult, natives);
             var classes = compiler.CompileClasses(program);
 
-            // `#nosync` (egal, wo im Top-Level-Code es steht): gleich am Anfang, bevor irgendein Code läuft
+            // `#nosync` (no matter where in the top-level code it stands): right at the start, before any code runs
             if (program.Any(s => s is NoSyncDirective))
             {
                 compiler._chunk.EmitOp(OpCode.SetAutoSync);
                 compiler._chunk.EmitByte(0);
             }
 
-            // `#timeout wert`: ebenfalls gleich am Anfang (der Wert ist ein Ausdruck ohne Bezug auf Variablen, z.B. `10s`)
+            // `#timeout value`: likewise right at the start (the value is an expression without reference to variables, e.g. `10s`)
             foreach (var timeout in program.OfType<TimeoutDirective>())
             {
                 compiler.CompileExpr(timeout.Value);
                 compiler._chunk.EmitOp(OpCode.SetTimeout);
             }
 
-            // SPEC "Statische Mitglieder": statische Feld-Initialisierer
-            // laufen GENAU EINMAL, vor dem eigentlichen Programm (anders als
-            // Instanzfelder, die bei JEDER `new`-Konstruktion neu laufen) -
-            // direkt hier an den ANFANG des TopLevel-Chunks emittiert, damit
-            // sie exakt einmal laufen, in Klassen-/Felddeklarations-
-            // reihenfolge, bevor der eigentliche Nutzer-Code beginnt.
-            // Dummy-'this' (undefined): der Resolver verbietet 'this'/'super'
-            // in einem statischen Feld-Initialisierer (siehe ResolveExpr/
-            // ThisExpr), das Dummy wird also nie tatsächlich gelesen -
-            // gebraucht nur, weil CallProtoWithThis (derselbe Opcode wie für
-            // Instanzfeld-Initialisierer) IMMER ein 'this' auf dem Stack
-            // erwartet.
+            // SPEC "Static members": static field initialisers
+            // run EXACTLY ONCE, before the actual program (unlike
+            // instance fields, which run anew on EVERY `new` construction) -
+            // emitted directly here at the START of the TopLevel chunk, so that
+            // they run exactly once, in class/field-declaration
+            // order, before the actual user code begins.
+            // Dummy 'this' (undefined): the resolver forbids 'this'/'super'
+            // in a static field initialiser (see ResolveExpr/
+            // ThisExpr), so the dummy is never actually read -
+            // needed only because CallProtoWithThis (the same opcode as for
+            // instance field initialisers) ALWAYS expects a 'this'
+            // on the stack.
             foreach (var rc in classes.Values)
             {
                 foreach (var (fieldName, initProto) in rc.StaticFields)
@@ -393,13 +393,13 @@ namespace fire.Compiler
                     compiler._chunk.EmitOp(OpCode.CallProtoWithThis);
                     compiler._chunk.EmitU16(protoIdx);
                     compiler._chunk.EmitByte(0);
-                    // SetStaticFieldOnInit statt SetStaticField - KEINE
-                    // Zugriffsmodifikator-Prüfung (siehe dortige Doku), sonst
-                    // würde ein PRIVATES statisches Feld schon bei seiner
-                    // eigenen Initialisierung abgelehnt (diese läuft als
-                    // Top-Level-Code, ohne zur eigenen Klasse passenden
-                    // OwnerClass-Kontext). Pusht (anders als SetStaticField)
-                    // auch nichts zurück, kein Pop nötig.
+                    // SetStaticFieldOnInit instead of SetStaticField - NO
+                    // access modifier check (see the documentation there), otherwise
+                    // a PRIVATE static field would be rejected already on its
+                    // own initialisation (which runs as
+                    // top-level code, without an OwnerClass context
+                    // matching its own class). Unlike SetStaticField it also pushes
+                    // nothing back, no pop needed.
                     compiler._chunk.EmitOp(OpCode.SetStaticFieldOnInit);
                     compiler._chunk.EmitU16(compiler._chunk.AddConstant(Value.MakeString(rc.Name)));
                     compiler._chunk.EmitU16(compiler._chunk.AddConstant(Value.MakeString(fieldName)));
@@ -413,9 +413,9 @@ namespace fire.Compiler
             }
             compiler._chunk.EmitOp(OpCode.Halt);
 
-            // Ab dem ersten Fehler steht fest, dass es kein Ergebnis gibt -
-            // aber erst HIER, nachdem alles kompiliert wurde, damit der
-            // Aufrufer ALLE Fehler auf einmal bekommt (siehe CompilerException).
+            // From the first error on it is certain that there is no result -
+            // but only HERE, after everything has been compiled, so that the
+            // caller gets ALL errors at once (see CompilerException).
             if (compiler._errors.Count > 0)
                 throw new CompilerException(compiler._errors);
 
@@ -434,9 +434,9 @@ namespace fire.Compiler
         }
 
         // -----------------------------------------------------------
-        // Klassen (Vorab-Pass: Name -> RuntimeClass, analog zum Resolver)
+        // Classes (pre-pass: name -> RuntimeClass, analogous to the resolver)
         // -----------------------------------------------------------
-        /// <summary>Der Typ so, wie er im Quelltext stand (`int`, `Circle`, `lambda<int>`, `float[]`), "" ohne Angabe.</summary>
+        /// <summary>The type as it stood in the source (`int`, `Circle`, `lambda<int>`, `float[]`), "" if not given.</summary>
         private static string TypeText(TypeRef? type, int extraArrayRank = 0)
         {
             if (type == null || type.IsInferred) return "";
@@ -451,7 +451,7 @@ namespace fire.Compiler
             _ => "public",
         };
 
-        /// <summary>Die Reflection-Metadaten einer Klasse: was die Laufzeit sonst nicht behält (Typnamen, Parameternamen, `readonly`, Property-Form).</summary>
+        /// <summary>The reflection metadata of a class: what the runtime otherwise does not keep (type names, parameter names, `readonly`, property form).</summary>
         private static ClassMeta BuildClassMeta(ClassDecl cd)
         {
             var meta = new ClassMeta();
@@ -518,18 +518,18 @@ namespace fire.Compiler
                     }
                 }
 
-            // Basis-Verknüpfung getrennt, da Basisklassen im Quelltext später
-            // stehen können als die abgeleitete Klasse (Vorwärtsreferenz). Der
-            // Resolver hat schon geprüft, dass höchstens ein Name in BaseRefs
-            // eine echte Klasse ist - hier also einfach den ersten solchen Namen
-            // suchen. 'Exception' (eingebaute Basisklasse, SPEC 7.1) hat bewusst
-            // keine eigene RuntimeClass - Klassen mit ': Exception' bekommen
-            // hier schlicht Base = null (ihre eigenen Felder/Methoden/
-            // Konstruktoren funktionieren trotzdem; beim Werfen/Fangen matcht
-            // der Typname "Exception" ohnehin immer, siehe VM.ExceptionMatchesType).
-            // Interface-Namen in BaseRefs werden hier ignoriert - Interfaces
-            // brauchen keine eigene Laufzeit-Repräsentation (rein dynamischer
-            // Methodenaufruf per Name), die Erfüllung hat schon der Resolver geprüft.
+            // Base linking separately, since base classes can stand in the source
+            // later than the derived class (forward reference). The
+            // resolver has already checked that at most one name in BaseRefs
+            // is a real class - so here simply search for the first such name.
+            // 'Exception' (built-in base class, SPEC 7.1) deliberately has
+            // no RuntimeClass of its own - classes with ': Exception' get
+            // simply Base = null here (their own fields/methods/
+            // constructors work nevertheless; on throwing/catching
+            // the type name "Exception" always matches anyway, see VM.ExceptionMatchesType).
+            // Interface names in BaseRefs are ignored here - interfaces
+            // need no runtime representation of their own (purely dynamic
+            // method call by name), the resolver has already checked fulfilment.
             var interfaceNames = new HashSet<string>(program.OfType<InterfaceDecl>().Select(i => i.Name));
             foreach (var rc in classes.Values)
             {
@@ -539,20 +539,20 @@ namespace fire.Compiler
                     string n = baseRef.TypeArgCount == 0 ? baseRef.ResolveBaseName(Known) : GenericClassNames.ResolveNewTarget(baseRef, baseRef.TypeArgCount, Known);
                     if (interfaceNames.Contains(n)) { rc.Interfaces.Add(n); continue; }
                     if (n != "Exception" && !classes.TryGetValue(n, out _)) continue;
-                    if (n == "Exception") break; // keine RuntimeClass verfügbar -> Base bleibt null
+                    if (n == "Exception") break; // no RuntimeClass available -> Base stays null
                     rc.Base = classes[n];
                     break;
                 }
             }
 
-            // RuntimeClass.IsActor ist jetzt ein echtes Feld statt einer
-            // berechneten Property (siehe dortige Doku - wegen Decl.
-            // [MemoryPackIgnore] für die geplante Serialisierung), hier
-            // EINMALIG nach der Basisklassen-Verknüpfung oben berechnet -
-            // dieselbe Logik wie die frühere Property, nur als expliziter
-            // Kettenwalk statt rekursivem Property-Zugriff (unabhängig von
-            // der Iterationsreihenfolge oben: jede Klasse geht ihre EIGENE
-            // Kette ab, braucht also nicht, dass Base schon vorverarbeitet ist).
+            // RuntimeClass.IsActor is now a real field instead of a
+            // computed property (see the documentation there - because of Decl.
+            // [MemoryPackIgnore] for the planned serialisation), computed here
+            // ONCE after the base-class linking above -
+            // the same logic as the former property, only as an explicit
+            // chain walk instead of recursive property access (independent of
+            // the iteration order above: every class walks its OWN
+            // chain, so it does not need Base to have been preprocessed already).
             foreach (var rc in classes.Values)
             {
                 bool isActor = false;
@@ -561,14 +561,14 @@ namespace fire.Compiler
                 rc.IsActor = isActor;
             }
 
-            // ERST jetzt (nach dem Sammeln ALLER Klassennamen, aber VOR dem
-            // eigentlichen Kompilieren der Klassenkörper unten) - ResolveTypeRef
-            // braucht die Menge ALLER Klassennamen, die genau HIER zum ersten
-            // Mal vollständig feststeht. Ein Henne-Ei-Problem, wenn man sie
-            // stattdessen NACH dieser ganzen Methode zuweisen würde: die
-            // Körper-Kompilierung unten (CompileClassBody, u.a. `new X()`
-            // INNERHALB von Methoden) braucht sie ja schon WÄHREND dieser
-            // Methode noch läuft, nicht erst danach.
+            // Only NOW (after collecting ALL class names, but BEFORE
+            // actually compiling the class bodies below) - ResolveTypeRef
+            // needs the set of ALL class names, which is complete for the first
+            // time exactly HERE. A chicken-and-egg problem if one were to assign it
+            // instead AFTER this whole method: the
+            // body compilation below (CompileClassBody, among others `new X()`
+            // INSIDE methods) needs it after all WHILE this
+            // method is still running, not only afterwards.
             _knownClassNames = new HashSet<string>(classes.Keys);
 
             foreach (var rc in classes.Values)
@@ -583,9 +583,9 @@ namespace fire.Compiler
 
             foreach (var member in rc.Decl.Members)
             {
-                // Jedes Mitglied ist ein eigener Wiederaufsetzpunkt (siehe
-                // CompileStmt) - ein Fehler in einem Feld/einer Methode hindert
-                // nicht das Kompilieren der übrigen Mitglieder.
+                // Every member is a restart point of its own (see
+                // CompileStmt) - an error in one field/method does
+                // not prevent the compilation of the other members.
                 try
                 {
                     switch (member)
@@ -599,25 +599,25 @@ namespace fire.Compiler
                                 RequiredUnit = fd.Type?.Unit,
                                 IsStatic = fd.IsStatic,
                             };
-                            // SPEC "Statische Mitglieder": statische Felder landen
-                            // NICHT in Fields (der Instanz-Init-Liste, die JEDE
-                            // `new`-Konstruktion erneut durchläuft) - stattdessen
-                            // in StaticFields, EINMALIG beim Programmstart
-                            // ausgewertet (siehe RunStaticInitializers, aufgerufen
-                            // direkt nach CompileClasses in Compile()).
+                            // SPEC "Static members": static fields end up
+                            // NOT in Fields (the instance init list that EVERY
+                            // `new` construction runs through again) - instead
+                            // in StaticFields, evaluated ONCE at program start
+                            // (see RunStaticInitializers, called
+                            // directly after CompileClasses in Compile()).
                             if (fd.IsStatic)
                                 rc.StaticFields.Add((fd.Name, fieldInit));
                             else
                                 rc.Fields.Add((fd.Name, fieldInit));
-                            // SPEC "Einheiten-Deklarationen": geprüft wird das
-                            // NICHT hier beim Initialisieren (siehe
-                            // CompileFieldInitProto - unverändert), sondern
-                            // direkt in der VM bei JEDEM SetField-/SetStaticField-
-                            // Aufruf - Feldzuweisungen sind (anders als lokale/
-                            // globale Variablen) grundsätzlich dynamisch
-                            // aufgelöst, die VM kennt zur Laufzeit die
-                            // tatsächliche Klasse des Zielobjekts, der Compiler
-                            // an dieser Stelle nicht.
+                            // SPEC "Unit declarations": this is checked
+                            // NOT here on initialising (see
+                            // CompileFieldInitProto - unchanged), but
+                            // directly in the VM on EVERY SetField/SetStaticField
+                            // call - field assignments are (unlike local/
+                            // global variables) fundamentally resolved
+                            // dynamically, the VM knows the
+                            // actual class of the target object at runtime, the compiler
+                            // at this point does not.
                             break;
                         }
 
@@ -634,14 +634,14 @@ namespace fire.Compiler
                             break;
 
                         case PropertyDecl pd:
-                            // Namenskonvention 'get_'/'set_' (siehe Ast.PropertyDecl-
-                            // Doku) - registriert als ganz normale Methoden, VM.
-                            // GetField/SetField rufen sie per Namenskonvention auf,
-                            // wenn kein gleichnamiges Feld existiert. Beide Accessoren
-                            // teilen sich den EINEN Modifikator der Property selbst
-                            // (SPEC kennt keine getrennten get/set-Modifikatoren) -
-                            // genauso teilen sie sich das EINE IsStatic (SPEC kennt
-                            // keine gemischt statisch/nicht-statischen Accessoren).
+                            // Naming convention 'get_'/'set_' (see Ast.PropertyDecl
+                            // documentation) - registered as quite ordinary methods, VM.
+                            // GetField/SetField call them by naming convention
+                            // if no field of the same name exists. Both accessors
+                            // share the ONE modifier of the property itself
+                            // (SPEC knows no separate get/set modifiers) -
+                            // likewise they share the ONE IsStatic (SPEC knows
+                            // no mixed static/non-static accessors).
                             if (pd.Getter != null)
                                 rc.AddMethod("get_" + pd.Name, CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic));
                             if (pd.Setter != null)
@@ -658,12 +658,12 @@ namespace fire.Compiler
                 }
             }
 
-            // Keine eigene Deklaration -> genau EIN synthetisierter 0-Arg-public-
-            // Konstruktor (Basis-Aufruf + Feld-Inits, sonst leer) - `new`
-            // funktioniert dadurch immer einheitlich über denselben
-            // Mechanismus. Mit eigenen Deklarationen: EINE Überladung pro
-            // `construct(...)` (der Resolver hat schon geprüft, dass keine
-            // zwei dieselbe Parameteranzahl haben).
+            // No declaration of its own -> exactly ONE synthesised 0-arg public
+            // constructor (base call + field inits, otherwise empty) - `new`
+            // therefore always works uniformly through the same
+            // mechanism. With declarations of their own: ONE overload per
+            // `construct(...)` (the resolver has already checked that no
+            // two have the same parameter count).
             if (ctorDecls.Count == 0)
             {
                 rc.AddConstructor(CompileConstructorProto(rc, null, AccessModifier.Public));
@@ -684,12 +684,12 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Kompiliert für jeden Parameter mit Standardwert einen
-        /// eigenen 0-Arg-Proto, der dessen DefaultValue-Ausdruck auswertet
-        /// (siehe FunctionProto.ParamDefaults-Doku) - null an der Stelle für
-        /// Pflichtparameter. Läuft im selben Compiler-Kontext (`rc`) wie die
-        /// eigentliche Methode/der Konstruktor, damit z.B. `this.feld` als
-        /// Standardwert funktioniert.</summary>
+        /// <summary>Compiles for every parameter with a default value an
+        /// 0-arg proto of its own that evaluates its DefaultValue expression
+        /// (see FunctionProto.ParamDefaults documentation) - null at that place for
+        /// mandatory parameters. Runs in the same compiler context (`rc`) as the
+        /// actual method/the constructor, so that e.g. `this.field` works as a
+        /// default value.</summary>
         private FunctionProto?[] CompileParamDefaults(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms)
         {
             var defaults = new FunctionProto?[parms.Count];
@@ -704,8 +704,8 @@ namespace fire.Compiler
             return defaults;
         }
 
-        /// <summary>Besteht der Initialisierer-Proto nur aus `LoadConst c; Return` (ein Literal oder kein Initialisierer: `undefined`)?
-        /// Dann liefert er `c` ohne jede Nebenwirkung, und der Konstruktor kann `c` direkt setzen, statt ihn aufzurufen.</summary>
+        /// <summary>Does the initialiser proto consist only of `LoadConst c; Return` (a literal or no initialiser: `undefined`)?
+        /// Then it returns `c` without any side effect, and the constructor can set `c` directly instead of calling it.</summary>
         private static bool TryGetConstantInitializer(FunctionProto proto, out Value constant)
         {
             constant = default;
@@ -723,9 +723,9 @@ namespace fire.Compiler
             inner._chunk.OwnerClass = rc;
             if (initializer != null)
             {
-                // Ein Instanzfeld mit `new X()`/`flat x`/`copy x` als Initialisierer: das neue Objekt gehört der Instanz
-                // (`this` ist beim Auswerten gebunden, siehe CallProtoWithThis), nicht der Initialisierer-Scope - sonst
-                // würde es nach dem Konstruktor zerstört, während das Feld darauf zeigt (SPEC 2.1).
+                // An instance field with `new X()`/`flat x`/`copy x` as initialiser: the new object belongs to the instance
+                // (`this` is bound during evaluation, see CallProtoWithThis), not the initialiser scope - otherwise
+                // it would be destroyed after the constructor while the field points to it (SPEC 2.1).
                 if (!isStatic && IsOwnedCreation(initializer))
                 {
                     inner._chunk.EmitOp(OpCode.LoadThis);
@@ -742,16 +742,16 @@ namespace fire.Compiler
             return new FunctionProto(inner._chunk, 0, AccessModifier.Private);
         }
 
-        /// <summary>Emittiert für jeden Parameter mit einer Lambda-Signatur-
-        /// Typannotation (`lambda&lt;P1,...,Pn&gt;`, siehe Ast.TypeRef.
-        /// LambdaSignature) eine Laufzeit-Prüfung GANZ AM ANFANG des
-        /// Funktionskörpers (`inner`) - die Parameter-Slots sind zu diesem
-        /// Zeitpunkt schon vom AUFRUFER befüllt (siehe VM.CallMethod/
-        /// NewObject/Call - Parameterbindung passiert dort VOR dem Sprung in
-        /// diesen Chunk, nicht innerhalb von dessen eigenem Bytecode), die
-        /// Prüfung liest den Wert also einfach per LoadLocal zurück, prüft
-        /// ihn (CheckLambdaSignature) und verwirft die Kopie wieder (Pop) -
-        /// der eigentliche Slot-Wert bleibt unangetastet.</summary>
+        /// <summary>Emits for every parameter with a lambda-signature
+        /// type annotation (`lambda&lt;P1,...,Pn&gt;`, see Ast.TypeRef.
+        /// LambdaSignature) a runtime check RIGHT AT THE START of the
+        /// function body (`inner`) - the parameter slots are at this
+        /// point already filled by the CALLER (see VM.CallMethod/
+        /// NewObject/Call - parameter binding happens there BEFORE the jump into
+        /// this chunk, not inside its own bytecode), so the
+        /// check simply reads the value back via LoadLocal, checks
+        /// it (CheckLambdaSignature) and discards the copy again (Pop) -
+        /// the actual slot value stays untouched.</summary>
         private static uint RefMaskOf(IReadOnlyList<LambdaParam> parms)
         {
             uint mask = 0;
@@ -780,8 +780,8 @@ namespace fire.Compiler
                 if (sig == null) continue;
                 if (sig.IsSelector)
                 {
-                    // `lambda member<T> name` (und field/property/selector): der Parameter wird durch die Reflection des gewählten Mitglieds
-                    // ersetzt: name = Reflect.SelectorOf(name, "member")
+                    // `lambda member<T> name` (and field/property/selector): the parameter is replaced by the reflection of the chosen member
+                    // replaced: name = Reflect.SelectorOf(name, "member")
                     inner._chunk.EmitOp(OpCode.LoadLocal);
                     inner._chunk.EmitU16(0);
                     inner._chunk.EmitU16((ushort)i);
@@ -805,11 +805,11 @@ namespace fire.Compiler
                 inner._chunk.EmitOp(OpCode.Pop);
             }
 
-            // SPEC "Einheiten-Deklarationen": ein Parameter mit explizitem
-            // `: einheit` (siehe TypeRef.Unit) verlangt beim tatsächlichen
-            // Aufruf GENAU diese Einheit im übergebenen Wert - dieselbe
-            // LoadLocal+Prüfen+Pop-Technik wie oben für die Lambda-Signatur,
-            // nur mit CheckUnit statt CheckLambdaSignature (siehe
+            // SPEC "Unit declarations": a parameter with an explicit
+            // `: unit` (see TypeRef.Unit) demands on the actual
+            // call EXACTLY this unit in the passed value - the same
+            // LoadLocal+check+pop technique as above for the lambda signature,
+            // only with CheckUnit instead of CheckLambdaSignature (see
             // EmitCheckUnitIfNeeded).
             for (int i = 0; i < parms.Count; i++)
             {
@@ -824,13 +824,13 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Emittiert (falls `unit` != null) einen CheckUnit-Opcode für
-        /// den Wert, der GERADE OBEN auf dem Stack liegt (SPEC "Einheiten-
-        /// Deklarationen") - prüft (in der VM), ob dessen Einheit exakt
-        /// `unit` entspricht, wirft sonst eine `UnitMismatchException`
-        /// (siehe VM.ThrowUnitMismatch). Peekt nur (siehe OpCode.CheckUnit-
-        /// Doku) - der Aufrufer entscheidet selbst, ob/wann er den Wert
-        /// danach noch braucht oder poppt.</summary>
+        /// <summary>Emits (if `unit` != null) a CheckUnit opcode for
+        /// the value that lies CURRENTLY on top of the stack (SPEC "Unit
+        /// declarations") - checks (in the VM) whether its unit exactly
+        /// matches `unit`, otherwise throws a `UnitMismatchException`
+        /// (see VM.ThrowUnitMismatch). Only peeks (see OpCode.CheckUnit
+        /// documentation) - the caller itself decides whether/when it
+        /// still needs the value afterwards or pops it.</summary>
         private static void EmitCheckUnitIfNeeded(Compiler target, string? unit)
         {
             if (unit == null) return;
@@ -838,31 +838,31 @@ namespace fire.Compiler
             target._chunk.EmitU16(target._chunk.AddConstant(Value.MakeString(unit)));
         }
 
-        /// <summary>`fire { ... }`/`fire taking X { ... }` (siehe Ast.FireStmt-
-        /// Doku) - kompiliert den Body als EIGENEN, isolierten Chunk (0 oder 1
-        /// Parameter, je nachdem ob `taking` verwendet wird - der Parameter
-        /// wird aber NICHT über die normale Aufruf-Konvention gefüllt,
-        /// sondern direkt von Runtime.FireRuntime.FireVmTaking per
-        /// `scope.DefineSlot(...)`, BEVOR der Chunk zu laufen beginnt - siehe
-        /// dort). Am Fire-Statement selbst wird (falls `taking` verwendet
-        /// wird) der AKTUELLE Wert der Quellvariable im AUFRUFENDEN Kontext
-        /// ausgewertet und auf den Stack gelegt, dann der neue `Fire`-Opcode
-        /// emittiert, der ihn poppt und einen echten Thread startet.</summary>
-        /// <summary>Reihenfolge MUSS mit Resolver.ResolveFireStmt (Slot-
-        /// Vergabe) und dem VM.OpCode.Fire-Handler (Pop-Reihenfolge, dort
-        /// umgekehrt, da Stack) übereinstimmen: alle TakingCaptures zuerst
-        /// (in Listenreihenfolge), dann with.</summary>
-        /// <summary>Reihenfolge MUSS mit Resolver.ResolveFireStmt (Slot-
-        /// Vergabe: erst Hauptprogramm-Globals-Schatten, dann taking, dann
-        /// with) und dem VM.OpCode.Fire-Handler (Pop-Reihenfolge, dort
-        /// umgekehrt, da Stack) übereinstimmen. Der Chunk-Body selbst
-        /// referenziert die Hauptprogramm-Globals (aufgelöst als normale
-        /// `Global(slot)`-Referenzen an DEREN ORIGINAL-Slots, siehe
-        /// ResolveFireStmt) ganz genauso wie jede taking/with-Erfassung -
-        /// hier also nichts Besonderes zu kompilieren, nur die
-        /// TakingCaptures/With-Slots müssen ab `_globalSlotCount` (statt ab
-        /// 0) vergeben werden, damit sie nicht mit den Schatten-Slots
-        /// kollidieren.</summary>
+        /// <summary>`fire { ... }`/`fire taking X { ... }` (see Ast.FireStmt
+        /// documentation) - compiles the body as an OWN, isolated chunk (0 or 1
+        /// parameter, depending on whether `taking` is used - the parameter
+        /// is however NOT filled via the normal call convention,
+        /// but directly by Runtime.FireRuntime.FireVmTaking via
+        /// `scope.DefineSlot(...)`, BEFORE the chunk starts to run - see
+        /// there). At the fire statement itself (if `taking` is used)
+        /// the CURRENT value of the source variable in the CALLING context
+        /// is evaluated and put on the stack, then the new `Fire` opcode
+        /// is emitted, which pops it and starts a real thread.</summary>
+        /// <summary>The order MUST agree with Resolver.ResolveFireStmt (slot
+        /// assignment) and the VM.OpCode.Fire handler (pop order, there
+        /// reversed, because of the stack): all TakingCaptures first
+        /// (in list order), then with.</summary>
+        /// <summary>The order MUST agree with Resolver.ResolveFireStmt (slot
+        /// assignment: first main-program globals shadows, then taking, then
+        /// with) and the VM.OpCode.Fire handler (pop order, there
+        /// reversed, because of the stack). The chunk body itself
+        /// references the main-program globals (resolved as ordinary
+        /// `Global(slot)` references at THEIR ORIGINAL slots, see
+        /// ResolveFireStmt) just like every taking/with capture -
+        /// so nothing special to compile here, only the
+        /// TakingCaptures/with slots must be assigned from `_globalSlotCount` (instead of from
+        /// 0), so that they do not
+        /// collide with the shadow slots.</summary>
         private void CompileFireStmt(FireStmt fs)
         {
             var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams);
@@ -872,23 +872,23 @@ namespace fire.Compiler
             if (fs.WithVarName != null)
                 inner._chunk.MarkLocalName(0, slot++, fs.WithVarName);
             foreach (var stmt in fs.Body.Statements) inner.CompileStmt(stmt);
-            // BUGFIX: NICHT 'LoadConst Undefined; Return' wie bei einer
-            // echten Methode (CompileMethodProto) - ein Fire-Block läuft als
-            // eigene, oberste Ebene einer FRISCHEN VM-Instanz (siehe Runtime.
+            // BUGFIX: NOT 'LoadConst Undefined; Return' as with a
+            // real method (CompileMethodProto) - a fire block runs as the
+            // own, topmost level of a FRESH VM instance (see Runtime.
             // FireRuntime.FireVmTaking: `new VM(fireProto.Chunk, ...)`,
-            // direkt als deren _currentChunk, NICHT über CallMethod
-            // aufgerufen) - es existiert dort zu KEINEM Zeitpunkt ein
-            // CallFrame. `Return`s Handler poppt aber ungeprüft von
-            // _frames (einem Stack<CallFrame>) - bei einem leeren Stack
-            // wirft das eine "Stack empty."-Exception GENAU beim Erreichen
-            // des Chunk-Endes. Das blieb lange unbemerkt, weil
-            // FireRuntime.Fire jede Exception aus dem Thread-Body selbst
-            // abfängt (in FireThreadHandle.Error) und in der Sprachsyntax
-            // niemand dieses Handle je prüft - der Fire-Thread "funktionierte"
-            // äußerlich (alles VOR dem Chunk-Ende lief ja normal), starb
-            // aber am Ende jedes Mal still mit dieser Exception. `Halt`
-            // (wie beim Top-Level-Programm selbst, siehe Compiler.Compile)
-            // beendet die VM dagegen korrekt ohne jede Frame-Erwartung.
+            // directly as its _currentChunk, NOT called via CallMethod)
+            // - there is at NO time a
+            // CallFrame there. `Return`'s handler, however, pops unchecked from
+            // _frames (a Stack<CallFrame>) - with an empty stack
+            // that throws a "Stack empty." exception EXACTLY on reaching
+            // the end of the chunk. That stayed unnoticed for a long time, because
+            // FireRuntime.Fire catches every exception from the thread body itself
+            // (in FireThreadHandle.Error) and in the language syntax
+            // nobody ever checks this handle - the fire thread "worked"
+            // outwardly (everything BEFORE the end of the chunk ran normally after all), but
+            // died silently with this exception at the end every time. `Halt`
+            // (as with the top-level program itself, see Compiler.Compile)
+            // ends the VM correctly, by contrast, without any frame expectation.
             inner._chunk.EmitOp(OpCode.Halt);
 
             var proto = new FunctionProto(inner._chunk, slot, AccessModifier.Private);
@@ -907,12 +907,12 @@ namespace fire.Compiler
         }
 
         /// <summary>`catch threads(ExceptionType e) { ... }` / `catch threads() { ... }`
-        /// (siehe Ast.CatchThreadsDecl-Doku) - kompiliert den Body als
-        /// eigenen, isolierten Chunk (0 oder 1 Parameter, je nachdem ob eine
-        /// Variable gebunden wird), registriert ihn dann per neuem Opcode
-        /// GLOBAL (Bytecode.GlobalHandlers) - läuft später genestet in der
-        /// jeweils zustellenden VM-Instanz (siehe VM.
-        /// HandleDeliveredThreadException), nicht hier an dieser Stelle.</summary>
+        /// (see Ast.CatchThreadsDecl documentation) - compiles the body as an
+        /// own, isolated chunk (0 or 1 parameter, depending on whether a
+        /// variable is bound), then registers it via the new opcode
+        /// GLOBAL (Bytecode.GlobalHandlers) - runs later nested in the
+        /// respective delivering VM instance (see VM.
+        /// HandleDeliveredThreadException), not here at this place.</summary>
         private void CompileCatchThreadsDecl(CatchThreadsDecl decl)
         {
             var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams);
@@ -932,9 +932,9 @@ namespace fire.Compiler
             if (hasType) _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeRef(decl.TypeRef!))));
         }
 
-        /// <summary>`catch terminate(v) { ... }` (siehe Ast.CatchTerminateDecl-
-        /// Doku) - wie CompileCatchThreadsDecl, aber ohne Typname (es gibt ja
-        /// keine "Art" von terminate) und mit dem anderen Register-Opcode.</summary>
+        /// <summary>`catch terminate(v) { ... }` (see Ast.CatchTerminateDecl
+        /// documentation) - like CompileCatchThreadsDecl, but without a type name (there is after all
+        /// no "kind" of terminate) and with the other register opcode.</summary>
         private void CompileCatchTerminateDecl(CatchTerminateDecl decl)
         {
             var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams);
@@ -955,12 +955,12 @@ namespace fire.Compiler
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
             inner._chunk.OwnerClass = rc;
-            // SPEC "Statische Mitglieder": eine statische Methode hat kein
-            // gebundenes 'this' - der innere Compiler merkt sich das, um
-            // 'this'/'super' im Körper abzulehnen (siehe Resolver statt
-            // Compiler: die Prüfung selbst läuft im Resolver, VOR dem
-            // Kompilieren, über ResolveResult - hier nur zur Vollständigkeit
-            // erwähnt, keine eigene Prüfung an dieser Stelle nötig).
+            // SPEC "Static members": a static method has no
+            // bound 'this' - the inner compiler remembers that in order to
+            // reject 'this'/'super' in the body (see resolver instead of
+            // compiler: the check itself runs in the resolver, BEFORE
+            // compiling, via ResolveResult - mentioned here only for
+            // completeness, no check of its own needed at this point).
             for (int i = 0; i < parms.Count; i++)
                 inner._chunk.MarkLocalName(0, i, parms[i].Name);
             EmitLambdaParamChecks(inner, parms);
@@ -970,13 +970,13 @@ namespace fire.Compiler
             return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic) { RefMask = RefMaskOf(parms) };
         }
 
-        /// <summary>Konstruktor-Proto: [Basis-Konstruktor-Aufruf (explizit mit
-        /// `: base(...)` oder implizit ohne Argumente, falls eine Basisklasse
-        /// existiert)] -> [eigene Feld-Initialisierer] -> [eigener Body] ->
-        /// implizites `return undefined`. Wird auch synthetisiert, wenn die
-        /// Klasse keinen eigenen `construct` deklariert (dann nur Basis-Aufruf +
-        /// Feld-Inits, 0 Parameter) - `new` funktioniert dadurch immer
-        /// einheitlich über denselben Mechanismus.</summary>
+        /// <summary>Constructor proto: [base constructor call (explicit with
+        /// `: base(...)` or implicit without arguments, if a base class
+        /// exists)] -> [own field initialisers] -> [own body] ->
+        /// implicit `return undefined`. Also synthesised if the
+        /// class declares no `construct` of its own (then only base call +
+        /// field inits, 0 parameters) - `new` therefore always works
+        /// uniformly through the same mechanism.</summary>
         private FunctionProto CompileConstructorProto(RuntimeClass rc, ConstructorDecl? ctor, AccessModifier access)
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
@@ -998,13 +998,13 @@ namespace fire.Compiler
                 inner._chunk.EmitOp(OpCode.ConstructBase);
                 inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(rc.Base.Name)));
                 inner._chunk.EmitByte((byte)(baseArgs?.Count ?? 0));
-                inner._chunk.EmitOp(OpCode.Pop); // Platzhalter-Rückgabewert des Basis-Konstruktors verwerfen
+                inner._chunk.EmitOp(OpCode.Pop); // discard the placeholder return value of the base constructor
             }
 
-            // Ein Feld mit konstantem (oder fehlendem) Initialisierer braucht keinen Aufruf des Initialisierer-Protos: der Wert wird direkt
-            // geladen. Ein Feld ohne Initialisierer steht nach dem Anlegen ohnehin auf `undefined` und braucht gar nichts - es sei denn, davor
-            // konnte schon etwas auf `this` zugreifen (der Konstruktor einer Basisklasse, der Initialisierer eines früheren Felds mit Aufruf):
-            // dann setzt das explizite `undefined` ein dort geschriebenes Feld wie bisher zurück.
+            // A field with a constant (or missing) initialiser needs no call of the initialiser proto: the value is loaded directly.
+            // A field without an initialiser is `undefined` after allocation anyway and needs nothing at all - unless something could already
+            // access `this` beforehand (the constructor of a base class, the initialiser of an earlier field with a call):
+            // then the explicit `undefined` resets a field written there as before.
             bool fieldsMayBeTouched = rc.Base != null;
             foreach (var (fieldName, initProto) in rc.Fields)
             {
@@ -1040,15 +1040,15 @@ namespace fire.Compiler
         // -----------------------------------------------------------
         // Statements
         // -----------------------------------------------------------
-        /// <summary>Kompiliert ein Statement; ein dabei auftretender Fehler wird
-        /// GESAMMELT (siehe CompilerException), und die Kompilierung macht mit
-        /// dem NÄCHSTEN Statement weiter - jedes Statement, auch in
-        /// verschachtelten Blöcken/Methodenkörpern, ist ein eigener
-        /// Wiederaufsetzpunkt. Der Scope-/Schleifen-Zustand des Compilers
-        /// wird dafür auf den Stand VOR dem Statement zurückgesetzt (der
-        /// erzeugte Bytecode ist nach einem Fehler ohnehin wertlos und wird
-        /// verworfen, nur die Zähler müssen für die Folge-Statements
-        /// stimmen).</summary>
+        /// <summary>Compiles a statement; an error occurring in the process is
+        /// COLLECTED (see CompilerException), and the compilation carries on with
+        /// the NEXT statement - every statement, also in
+        /// nested blocks/method bodies, is a restart
+        /// point of its own. The scope/loop state of the compiler
+        /// is reset for that to the state BEFORE the statement (the
+        /// generated bytecode is worthless after an error anyway and is
+        /// discarded, only the counters have to be right for the following
+        /// statements).
         private void CompileStmt(Stmt stmt)
         {
             int scopeDepth = _currentScopeDepth;
@@ -1067,9 +1067,9 @@ namespace fire.Compiler
 
         private void CompileStmtCore(Stmt stmt)
         {
-            // Für den Step-Debugger im Editor-Unterprojekt (Bytecode.Chunk.
-            // MarkLine) - markiert, an welcher Code-Position die aktuelle
-            // Quelltextzeile beginnt. Rein additiv, keine Laufzeit-Wirkung.
+            // For the step debugger in the editor sub-project (Bytecode.Chunk.
+            // MarkLine) - marks at which code position the current
+            // source line begins. Purely additive, no runtime effect.
             _chunk.MarkLine(CurrentSourceIndex, stmt.Line);
 
             switch (stmt)
@@ -1086,20 +1086,20 @@ namespace fire.Compiler
                     break;
 
                 case NoSyncDirective:
-                    break; // siehe Compile: `SetAutoSync 0` steht schon am Programmanfang
+                    break; // see Compile: `SetAutoSync 0` already stands at the program start
 
                 case TimeoutDirective:
-                    break; // siehe Compile: `SetTimeout` steht schon am Programmanfang
+                    break; // see Compile: `SetTimeout` already stands at the program start
 
                 case NoShadowDirective:
-                    // Wie NoOpStmt - bereits vom Resolver in einem Vorab-Pass
-                    // eingesammelt (siehe ResolveResult.NoShadowGlobals), hier
-                    // nichts mehr zu tun. Ohne diesen Fall würde JEDES Programm
-                    // mit einer '#noshadow'-Zeile mit einer NotSupportedException
-                    // scheitern (siehe CompileStmt's default-Fall) - die Direktive
-                    // landet als ganz normales Stmt in der Top-Level-Statement-
-                    // Liste und wird deshalb hier, wie jedes andere Statement
-                    // auch, kompiliert.
+                    // Like NoOpStmt - already collected by the resolver in a pre-pass
+                    // (see ResolveResult.NoShadowGlobals), nothing more to do
+                    // here. Without this case EVERY program
+                    // with a '#noshadow' line would fail with a NotSupportedException
+                    // (see CompileStmt's default case) - the directive
+                    // ends up as a quite ordinary Stmt in the top-level statement
+                    // list and is therefore compiled here like every other statement
+                    // as well.
                     break;
 
                 case VarDeclStmt vd:
@@ -1112,26 +1112,26 @@ namespace fire.Compiler
                         EmitCheckLambdaSignatureIfNeeded(vd.Type);
                     }
                     else if (autoArrayAlloc)
-                        // `int arr[10]` / `int matrix[3][4]` ohne Initializer ->
-                        // implizit `new int[10]` bzw. ein verschachteltes
-                        // ("jagged") Array, jede Dimension per Laufzeit-Schleife
-                        // befüllt (SPEC 8.4: mehrere `[...]`-Gruppen = Array von
-                        // Arrays, keine echte rechteckige Matrix). Ein Rang ohne
-                        // Größe (z.B. `int arr[3][]`) bricht die Rekursion ab -
-                        // ab dort bleiben die Slots 'undefined', wie bisher bei
-                        // einem komplett unbestimmt-großen Deklarator.
+                        // `int arr[10]` / `int matrix[3][4]` without an initialiser ->
+                        // implicitly `new int[10]` or a nested
+                        // ("jagged") array, each dimension filled
+                        // by a runtime loop (SPEC 8.4: several `[...]` groups = array of
+                        // arrays, no real rectangular matrix). A rank without a
+                        // size (e.g. `int arr[3][]`) ends the recursion -
+                        // from there on the slots stay 'undefined', as before with
+                        // a completely undetermined-size declarator.
                         CompileArrayAlloc(vd.ArrayRanks, 0);
                     else
                         EmitLoadConst(Value.MakeUndefined());
 
-                    // SPEC "Einheiten-Deklarationen": `var a : mm = ...`/
-                    // `int a : mm = ...` - der Wert, der GERADE initial in
-                    // den Slot geschrieben wird, muss die geforderte Einheit
-                    // schon tragen (KEINE automatische Koersion, siehe
-                    // Resolver-Antwort/SPEC - bewusst dieselbe Prüfung wie
-                    // bei jeder SPÄTEREN Zuweisung an denselben Slot, siehe
-                    // CompileAssign, sonst könnte man die Prüfung durch eine
-                    // "unpassende" Erstzuweisung umgehen).
+                    // SPEC "Unit declarations": `var a : mm = ...`/
+                    // `int a : mm = ...` - the value that is CURRENTLY initially written into
+                    // the slot must already carry the required unit
+                    // (NO automatic coercion, see
+                    // resolver answer/SPEC - deliberately the same check as
+                    // with every LATER assignment to the same slot, see
+                    // CompileAssign, otherwise one could bypass the check through an
+                    // "unsuitable" first assignment).
                     EmitCheckUnitIfNeeded(this, vd.Type?.Unit);
 
                     _chunk.EmitOp(OpCode.DeclareLocal);
@@ -1157,8 +1157,8 @@ namespace fire.Compiler
                 case ReturnStmt rs:
                     if (rs.Value != null) CompileExpr(rs.Value);
                     else EmitLoadConst(Value.MakeUndefined());
-                    // Ein `return` im `catch`: die beim Werfen eingefrorene Wurfstelle (siehe ClearPendingResume) wird verworfen, wie am normalen Ende
-                    // des catch-Blocks - sonst bliebe sie samt ihrer Scopes liegen. Die Exception-Variable liegt im catch-Scope (Slot 0).
+                    // A `return` in the `catch`: the throw site frozen on throwing (see ClearPendingResume) is discarded, as at the normal end
+                    // of the catch block - otherwise it would stay lying around together with its scopes. The exception variable lies in the catch scope (slot 0).
                     for (int k = _tryStack.Count - 1; k >= 0; k--)
                         if (_tryStack[k].Phase == TryPhase.Catch)
                         {
@@ -1167,11 +1167,11 @@ namespace fire.Compiler
                             _chunk.EmitU16(0);
                             _chunk.EmitOp(OpCode.ClearPendingResume);
                         }
-                    // Bewohner des Stacks (die Enumeratoren der umgebenden `foreach`, die Abschlüsse der umgebenden `finally`-Blöcke) liegen unter dem
-                    // Rückgabewert: sonst blieben sie dort liegen und verschöben die Operanden des Aufrufers (`1 + f()` mit einem `return` im `foreach` von `f`).
-                    // Liegt ein `try` mit `finally` offen, fängt `DoReturn` das `return` dort ab und setzt den Stack auf den Stand zurück, den dessen Handler beim Betreten
-                    // hatte: die Bewohner darunter (z.B. der Abschluss eines umgebenden `finally`) gehören dem `finally`-Block, der gleich läuft, und bleiben liegen -
-                    // erst das `return` ohne offenes `try` nimmt alle weg.
+                    // Residents of the stack (the enumerators of the surrounding `foreach`, the completions of the surrounding `finally` blocks) lie below the
+                    // return value: otherwise they would stay lying there and shift the caller's operands (`1 + f()` with a `return` in the `foreach` of `f`).
+                    // If a `try` with `finally` is open, `DoReturn` intercepts the `return` there and resets the stack to the state that its handler had on entering:
+                    // the residents below it (e.g. the completion of a surrounding `finally`) belong to the `finally` block that is about to run, and stay lying -
+                    // only the `return` without an open `try` removes all of them.
                     int keepResidents = 0;
                     for (int k = _tryStack.Count - 1; k >= 0; k--)
                         if (_tryStack[k].Stmt.Finally != null) { keepResidents = _tryStack[k].ResidentsAtStart; break; }
@@ -1192,11 +1192,11 @@ namespace fire.Compiler
                 case ThrowStmt th:
                     CompileExpr(th.Value);
                     _chunk.EmitOp(OpCode.Throw);
-                    // Falls diese Exception später per resume() fortgesetzt wird,
-                    // landet der resume-Wert genau hier auf dem Stack (siehe
-                    // OpCode.ResumeException) - als Statement wird er nicht
-                    // gebraucht, also wie jeder andere ExprStmt verwerfen. Ohne
-                    // dieses Pop würde ein resume() hier den Stack verschieben.
+                    // If this exception is later continued via resume(),
+                    // the resume value lands exactly here on the stack (see
+                    // OpCode.ResumeException) - as a statement it is not
+                    // needed, so discard it like any other ExprStmt. Without
+                    // this pop a resume() would shift the stack here.
                     _chunk.EmitOp(OpCode.Pop);
                     break;
 
@@ -1205,9 +1205,9 @@ namespace fire.Compiler
                     break;
 
                 case BreakStmt:
-                    // Resolver hat schon geprüft, dass wir in einer Schleife
-                    // sind und keine try/catch/finally-Grenze überschritten
-                    // wird - _loopStack.Peek() ist deshalb hier immer sicher.
+                    // The resolver has already checked that we are in a loop
+                    // and that no try/catch/finally boundary
+                    // is crossed - _loopStack.Peek() is therefore always safe here.
                     CompileBreakOrContinue(isBreak: true);
                     break;
 
@@ -1269,40 +1269,40 @@ namespace fire.Compiler
                     break;
 
                 case ClassDecl:
-                    // Bereits im Vorab-Pass (CompileClasses) behandelt - hier nichts zu tun.
+                    // Already handled in the pre-pass (CompileClasses) - nothing to do here.
                     break;
 
                 case InterfaceDecl:
-                    // Interfaces brauchen keine eigene Laufzeit-Repräsentation
-                    // (rein dynamischer Methodenaufruf per Name) - die Erfüllung
-                    // hat schon der Resolver geprüft.
+                    // Interfaces need no runtime representation of their own
+                    // (purely dynamic method call by name) - the resolver has
+                    // already checked fulfilment.
                     break;
 
                 case EnumDecl:
-                    // enum-Mitglieder werden vom Compiler bei jedem Zugriff
-                    // ('EnumName.Mitglied') direkt zu einem Int-Literal
-                    // aufgelöst (siehe MemberExpr-Fall unten) - die Deklaration
-                    // selbst erzeugt keinen eigenen Code.
+                    // enum members are resolved by the compiler on every access
+                    // ('EnumName.Member') directly to an int literal
+                    // (see MemberExpr case below) - the declaration
+                    // itself generates no code of its own.
                     break;
 
                 case ClassExtensionDecl cx:
-                    // Sollte NIE hier ankommen - siehe derselbe Fall im
-                    // Resolver (ResolveStmt) für die Erklärung.
+                    // Should NEVER arrive here - see the same case in the
+                    // resolver (ResolveStmt) for the explanation.
                     throw new NotSupportedException(
                         $"Internal error: 'class extends {cx.TargetRef.BaseName}' was not merged " +
                         "(the program must be produced by Parser.Parse()/ParseMultiple()).");
 
                 case ExternDecl:
-                    // Reine Signatur-Deklaration, erzeugt selbst keinen Code (nur
-                    // der Resolver braucht sie, um Aufrufe validieren zu können).
-                    // Ein Aufruf `name(...)` kompiliert normal über CompileCall,
-                    // sobald für 'name' eine native Implementierung registriert ist.
+                    // Pure signature declaration, generates no code itself (only
+                    // the resolver needs it, in order to be able to validate calls).
+                    // A call `name(...)` compiles normally via CompileCall
+                    // as soon as a native implementation is registered for 'name'.
                     break;
 
                 case UnsafeStmt us:
-                    // 'unsafe' selbst erzeugt keinen eigenen Code - die
-                    // Berechtigungsprüfung (Dereferenzierung/Address-of nur
-                    // innerhalb eines solchen Blocks) macht schon der Resolver.
+                    // 'unsafe' itself generates no code of its own - the
+                    // permission check (dereferencing/address-of only
+                    // inside such a block) is already done by the resolver.
                     CompileBlockNewScope(us.Body);
                     break;
 
@@ -1311,15 +1311,15 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Emittiert - falls `type` ein Lambda-Typ mit Signatur ist
-        /// (`lambda&lt;P1,...,Pn&gt;`, siehe Ast.TypeRef.LambdaSignature) - eine
-        /// CheckLambdaSignature-Prüfung für den WERT, der gerade oben auf dem
-        /// Stack liegt (wird dabei nur GEPEEKT, nicht verbraucht - der Aufrufer
-        /// nutzt ihn direkt danach normal weiter, z.B. per DeclareLocal). Ein
-        /// `lambda`-Typ OHNE `&lt;...&gt;` (also ohne ParamTypeNames-Einträge)
-        /// bedeutet "0 Parameter" (siehe SPEC "Lambda-Typen mit Signatur") und
-        /// wird deshalb GENAUSO geprüft wie `lambda&lt;&gt;` - nicht "ungeprüft".
-        /// Für jeden anderen Typ (auch gar keinen) ein No-Op.</summary>
+        /// <summary>Emits - if `type` is a lambda type with a signature
+        /// (`lambda&lt;P1,...,Pn&gt;`, see Ast.TypeRef.LambdaSignature) - a
+        /// CheckLambdaSignature check for the VALUE that currently lies on top of the
+        /// stack (it is only PEEKED in the process, not consumed - the caller
+        /// uses it directly afterwards as normal, e.g. via DeclareLocal). A
+        /// `lambda` type WITHOUT `&lt;...&gt;` (i.e. without ParamTypeNames entries)
+        /// means "0 parameters" (see SPEC "Lambda types with signature") and
+        /// is therefore checked EXACTLY like `lambda&lt;&gt;` - not "unchecked".
+        /// For every other type (also none at all) a no-op.</summary>
         private void EmitCheckLambdaSignatureIfNeeded(TypeRef? type)
         {
             if (type?.LambdaSignature == null) return;
@@ -1335,15 +1335,15 @@ namespace fire.Compiler
             EmitExitScope();
         }
 
-        /// <summary>Kompiliert ein Statement als eigenen Scope - egal ob es schon
-        /// ein Block ist oder ein einzelnes Statement (if/while/for-Body ohne
-        /// '{}'). Muss exakt spiegeln, was Resolver.ResolveStmtAsScope tut, sonst
-        /// stimmen Slot-/Tiefen-Nummern nicht mehr überein.</summary>
+        /// <summary>Compiles a statement as a scope of its own - no matter whether it is already
+        /// a block or a single statement (if/while/for body without
+        /// '{}'). Must mirror exactly what Resolver.ResolveStmtAsScope does, otherwise
+        /// slot/depth numbers no longer match.</summary>
         private void CompileScopedBody(Stmt body)
         {
-            // Ein leerer Block `{ }` deklariert nichts und führt nichts aus: sein EnterScope/ExitScope-Paar wäre reine Zeitverschwendung
-            // (bei einer Schleife je Durchlauf). Der Resolver legt für ihn zwar eine Scope an, aber ohne Variablen - die Tiefen der
-            // übrigen Zugriffe ändern sich dadurch nicht.
+            // An empty block `{ }` declares nothing and executes nothing: its EnterScope/ExitScope pair would be a pure waste of time
+            // (with a loop on every pass). The resolver does create a scope for it, but without variables - the depths of the
+            // remaining accesses do not change as a result.
             if (body is Stmt.BlockStmt { Statements.Count: 0 }) return;
             EmitEnterScope();
             if (body is Stmt.BlockStmt block)
@@ -1353,9 +1353,9 @@ namespace fire.Compiler
             EmitExitScope();
         }
 
-        /// <summary>Emittiert `JumpIfFalse` mit Platzhalter-Adresse und liefert die Stelle der Adresse zum späteren Patchen. Steht davor
-        /// ein Vergleich (`Lt`, `LtEq`, `Gt`, `GtEq`, `Eq`, `NotEq`) ohne Sprungziel dahinter, werden beide zu EINER Instruktion
-        /// (`JumpIfNotLt` usw.) verschmolzen: dasselbe Ergebnis, ein Dispatch und kein Bool auf dem Stack.</summary>
+        /// <summary>Emits `JumpIfFalse` with a placeholder address and returns the place of the address for later patching. If it is preceded by
+        /// a comparison (`Lt`, `LtEq`, `Gt`, `GtEq`, `Eq`, `NotEq`) without a jump target behind it, both are fused into ONE instruction
+        /// (`JumpIfNotLt` etc.): the same result, one dispatch and no bool on the stack.</summary>
         private int EmitJumpIfFalse()
         {
             foreach (var (compare, fused) in new[]
@@ -1377,9 +1377,9 @@ namespace fire.Compiler
             return at;
         }
 
-        /// <summary>Ein Ausdruck, dessen Wert verworfen wird (Ausdrucksanweisung, `for`-Increment). Häufige Fälle werden zu EINER
-        /// Instruktion: `x++`/`x--`/`x = x + c`/`x = x - c` auf einer Variable ohne geforderte Einheit, und eine Zuweisung an eine
-        /// Variable (`StoreLocal`/`StoreGlobal` + `Pop` = `StoreLocalPop`/`StoreGlobalPop`).</summary>
+        /// <summary>An expression whose value is discarded (expression statement, `for` increment). Common cases become ONE
+        /// instruction: `x++`/`x--`/`x = x + c`/`x = x - c` on a variable without a required unit, and an assignment to a
+        /// variable (`StoreLocal`/`StoreGlobal` + `Pop` = `StoreLocalPop`/`StoreGlobalPop`).</summary>
         private void CompileDiscardedExpr(Expr expr)
         {
             if (TryCompileArithOnVariable(expr)) return;
@@ -1391,8 +1391,8 @@ namespace fire.Compiler
             _chunk.EmitOp(OpCode.Pop);
         }
 
-        /// <summary>`x++`, `x--`, `x = x + c`, `x = x - c` (c ein Zahlenliteral) auf einer lokalen oder globalen Variable ohne geforderte
-        /// Einheit, deren Ergebnis niemand braucht: ArithLocalConstPop/ArithGlobalConstPop.</summary>
+        /// <summary>`x++`, `x--`, `x = x + c`, `x = x - c` (c a number literal) on a local or global variable without a required
+        /// unit, whose result nobody needs: ArithLocalConstPop/ArithGlobalConstPop.</summary>
         private bool TryCompileArithOnVariable(Expr expr)
         {
             IdentifierExpr? target;
@@ -1443,7 +1443,7 @@ namespace fire.Compiler
         private void CompileIf(IfStmt s)
         {
             CompileExpr(s.Condition);
-            int elseJumpAt = EmitJumpIfFalse(); // Platzhalter, wird unten gepatcht
+            int elseJumpAt = EmitJumpIfFalse(); // placeholder, patched below
 
             CompileScopedBody(s.Then);
 
@@ -1474,16 +1474,16 @@ namespace fire.Compiler
 
             CompileScopedBody(s.Body);
 
-            // Rücksprung und Schleifenende gehören zur Zeile des `while` (nicht zur letzten Zeile des Bodys) - sonst hielte der
-            // Debugger nach dem Verlassen der Schleife noch einmal in der letzten Zeile des Bodys an (Haltepunkt dort!).
+            // Back jump and loop end belong to the line of the `while` (not to the last line of the body) - otherwise the
+            // debugger would stop again in the last line of the body after leaving the loop (breakpoint there!).
             _chunk.MarkLine(CurrentSourceIndex, s.Line);
 
-            // 'continue' springt hierher - direkt vor den Rücksprung zur
-            // Condition-Prüfung (für 'while' inhaltlich dasselbe wie
-            // 'Jump loopStart' direkt, aber als eigene Adresse gehalten, damit
-            // CompileFor/CompileForeach denselben Mechanismus mit einem
-            // ANDEREN Ziel (Increment-Schritt bzw. vor dem Rücksprung) nutzen
-            // können, ohne eine eigene Fallunterscheidung zu brauchen).
+            // 'continue' jumps here - directly in front of the jump back to the
+            // condition check (for 'while' the same in content as
+            // 'Jump loopStart' directly, but held as an address of its own, so that
+            // CompileFor/CompileForeach can use the same mechanism with a
+            // DIFFERENT target (increment step or before the back jump)
+            // without needing a case distinction of their own).
             int continueTarget = _chunk.Here;
             foreach (var addr in ctx.ContinueJumpPatchAddrs) _chunk.PatchU16(addr, continueTarget);
 
@@ -1499,8 +1499,8 @@ namespace fire.Compiler
 
         private void CompileFor(ForStmt s)
         {
-            // Umschließender Scope für Init (SPEC/Resolver: Init/Condition/
-            // Increment/Body teilen sich einen gemeinsamen Scope).
+            // Enclosing scope for init (SPEC/resolver: init/condition/
+            // increment/body share a common scope).
             EmitEnterScope();
             if (s.Init != null) CompileStmt(s.Init);
 
@@ -1517,15 +1517,15 @@ namespace fire.Compiler
 
             CompileScopedBody(s.Body);
 
-            // Increment, Rücksprung und Schleifenende gehören zur Zeile des `for` (nicht zur letzten Zeile des Bodys): so zeigt der
-            // Debugger beim Schritt über das Ende des Bodys die `for`-Zeile, und nach dem Verlassen der Schleife hält ein Haltepunkt
-            // im Body nicht noch einmal an.
+            // Increment, back jump and loop end belong to the line of the `for` (not to the last line of the body): this way the
+            // debugger shows the `for` line when stepping over the end of the body, and after leaving the loop a breakpoint
+            // in the body does not stop again.
             _chunk.MarkLine(CurrentSourceIndex, s.Line);
 
-            // 'continue' springt HIERHER - VOR das Increment, damit das bei
-            // einem 'continue' trotzdem noch läuft (sonst würde z.B.
-            // 'for (i=0; i<10; i=i+1) { if (x) continue }' nie i erhöhen -
-            // eine Endlosschleife).
+            // 'continue' jumps HERE - BEFORE the increment, so that it
+            // still runs on a 'continue' (otherwise e.g.
+            // 'for (i=0; i<10; i=i+1) { if (x) continue }' would never increase i -
+            // an endless loop).
             int continueTarget = _chunk.Here;
             foreach (var addr in ctx.ContinueJumpPatchAddrs) _chunk.PatchU16(addr, continueTarget);
 
@@ -1543,21 +1543,21 @@ namespace fire.Compiler
             EmitExitScope();
         }
 
-        /// <summary>`foreach (x in iterable) { body }` - rein dynamisch über
-        /// Methodenaufrufe nach Namen (`GetEnumerator`/`MoveNext`/`GetCurrent`),
-        /// funktioniert also auf allem, das diese drei Methoden hat, nicht nur
-        /// auf offiziell 'IEnumerable'-deklarierten Klassen (Duck-Typing, wie
-        /// Methodenaufruf hier ohnehin überall funktioniert). Der Enumerator
-        /// selbst lebt bewusst nur auf dem Werte-Stack (per Dup dupliziert),
-        /// nicht in einem Scope-Slot - der Resolver kennt für `foreach` nur EINEN
-        /// Scope (den für die Schleifenvariable, siehe Resolver.ResolveForeach),
-        /// ein zusätzlicher Slot für den Enumerator hätte dessen Tiefen-
-        /// Berechnungen inkonsistent gemacht. Für break/continue bedeutet das:
-        /// der Enumerator braucht KEINE eigene Sonderbehandlung beim Sprung -
-        /// 'break' zu `loopEnd` läuft ohnehin in das gemeinsame, abschließende
-        /// Pop (siehe unten), 'continue' zu `continueTarget` rührt den
-        /// Enumerator gar nicht an (bleibt einfach auf dem Stack liegen, wie
-        /// bei jeder normalen Iteration auch).</summary>
+        /// <summary>`foreach (x in iterable) { body }` - purely dynamic via
+        /// method calls by name (`GetEnumerator`/`MoveNext`/`GetCurrent`),
+        /// so it works on everything that has these three methods, not only
+        /// on classes officially declared 'IEnumerable' (duck typing, as
+        /// method calls work everywhere here anyway). The enumerator
+        /// itself deliberately lives only on the value stack (duplicated via Dup),
+        /// not in a scope slot - for `foreach` the resolver knows only ONE
+        /// scope (the one for the loop variable, see Resolver.ResolveForeach),
+        /// an additional slot for the enumerator would have made its depth
+        /// calculations inconsistent. For break/continue that means:
+        /// the enumerator needs NO special treatment on the jump -
+        /// 'break' to `loopEnd` runs into the common, final
+        /// pop anyway (see below), 'continue' to `continueTarget` does not touch the
+        /// enumerator at all (simply stays lying on the stack, as
+        /// with every normal iteration too).</summary>
         private void CompileForeach(ForeachStmt fs)
         {
             CompileExpr(fs.Iterable);
@@ -1566,7 +1566,7 @@ namespace fire.Compiler
 
             var ctx = new LoopCompileContext { ScopeDepthAtLoopBodyStart = _currentScopeDepth, IsForeach = true };
             _loopStack.Push(ctx);
-            _residents.Add(1); // der Enumerator liegt, solange die Schleife läuft, auf dem Stack
+            _residents.Add(1); // the enumerator lies on the stack as long as the loop runs
 
             int loopStart = _chunk.Here;
             _chunk.EmitOp(OpCode.Dup);
@@ -1576,14 +1576,14 @@ namespace fire.Compiler
             _chunk.EmitOp(OpCode.JumpIfFalse); // pop bool
             int endJumpAt = _chunk.Here;
             _chunk.EmitU16(0);
-            // Stack (bei true): [enumerator]
+            // Stack (on true): [enumerator]
 
             _chunk.EmitOp(OpCode.Dup);
             EmitCallMethodByName("GetCurrent", 0);
             // Stack: [enumerator, current]
 
-            EmitEnterScope(); // entspricht Resolver.PushScope() für die Schleifenvariable
-            _chunk.EmitOp(OpCode.DeclareLocal); // pop 'current', Slot 0 dieser neuen Scope
+            EmitEnterScope(); // corresponds to Resolver.PushScope() for the loop variable
+            _chunk.EmitOp(OpCode.DeclareLocal); // pop 'current', slot 0 of this new scope
             // Stack: [enumerator]
 
             CompileScopedBody(fs.Body); // entspricht Resolver.ResolveStmtAsScope(body)
@@ -1595,7 +1595,7 @@ namespace fire.Compiler
             _chunk.EmitOp(OpCode.Jump);
             _chunk.EmitU16(loopStart);
 
-            _chunk.MarkLine(CurrentSourceIndex, fs.Line); // das Schleifenende gehört zur Zeile des `foreach` (siehe CompileFor)
+            _chunk.MarkLine(CurrentSourceIndex, fs.Line); // the loop end belongs to the line of the `foreach` (see CompileFor)
             int loopEnd = _chunk.Here;
             _chunk.PatchU16(endJumpAt, loopEnd);
             foreach (var addr in ctx.BreakJumpPatchAddrs) _chunk.PatchU16(addr, loopEnd);
@@ -1622,33 +1622,33 @@ namespace fire.Compiler
         /// addrB2: &lt;B2&gt;  ExitScope  Jump finallyOrEnd
         /// finallyOrEnd: &lt;C inline, falls vorhanden&gt;
         ///
-        /// Ein passender `throw` springt direkt zu addrB1/addrB2 (nachdem die VM
-        /// bis zum registrierten Ziel-Scope/-Frame abgewickelt hat), mit einer
-        /// von der VM frisch angelegten Scope, die die Exception-Variable schon
-        /// an Slot 0 enthält - die Catch-Bodies selbst brauchen deshalb kein
-        /// eigenes EnterScope/DeclareLocal, nur ein abschließendes ExitScope.
-        /// FinallyProtoIdx (separat kompiliert) wird nur gebraucht, wenn eine
-        /// Exception an DIESEM Handler vorbei nach außen weiterpropagiert (siehe
-        /// HandlerTemplate-Kommentar).</summary>
-        /// <summary>Kompiliert die Allokation eines (ggf. mehrdimensionalen/
-        /// "jagged") Arrays für einen Deklarator wie `int matrix[3][4]`:
-        /// äußeres Array allozieren, und falls der NÄCHSTE Rang ebenfalls eine
-        /// Größe hat, jedes Element per Laufzeit-Schleife (die Größen sind
-        /// Ausdrücke, keine Compile-Zeit-Konstanten - deshalb echte Bytecode-
-        /// Schleife statt Unrolling) mit einem rekursiv allozierten inneren
-        /// Array befüllen. Lässt am Ende genau EINEN Wert (das fertige äußere
-        /// Array) auf dem Stack. Ein Rang ohne Größe (z.B. das zweite `[]` in
-        /// `int arr[3][]`) beendet die Rekursion - ab dort bleiben die Slots
-        /// 'undefined', wie ein komplett unbestimmt-großer Deklarator das
-        /// schon immer war. `EnterScope`/`ExitScope` hier sind unbedenklich,
-        /// obwohl der fertige Wert am Ende noch gebraucht wird: Arrays hängen
-        /// (anders als class-Instanzen) NICHT am Ownership-System, `Release()`
-        /// beim `ExitScope` betrifft also nur die temporären Slots selbst,
-        /// nicht den Array-WERT, auf den sie gerade noch gezeigt haben.</summary>
+        /// A matching `throw` jumps directly to addrB1/addrB2 (after the VM
+        /// has unwound to the registered target scope/frame), with a
+        /// scope freshly created by the VM that already contains the exception variable
+        /// at slot 0 - the catch bodies themselves therefore need no
+        /// EnterScope/DeclareLocal of their own, only a final ExitScope.
+        /// FinallyProtoIdx (compiled separately) is only needed if an
+        /// exception propagates on outwards past THIS handler (see
+        /// HandlerTemplate comment).</summary>
+        /// <summary>Compiles the allocation of a (possibly multi-dimensional/
+        /// "jagged") array for a declarator like `int matrix[3][4]`:
+        /// allocate the outer array, and if the NEXT rank likewise has a
+        /// size, fill each element by a runtime loop (the sizes are
+        /// expressions, no compile-time constants - hence a real bytecode
+        /// loop instead of unrolling) with a recursively allocated inner
+        /// array. At the end leaves exactly ONE value (the finished outer
+        /// array) on the stack. A rank without a size (e.g. the second `[]` in
+        /// `int arr[3][]`) ends the recursion - from there on the slots stay
+        /// 'undefined', as a completely undetermined-size declarator always
+        /// was. `EnterScope`/`ExitScope` here are harmless,
+        /// although the finished value is still needed at the end: arrays do NOT hang
+        /// (unlike class instances) on the ownership system, `Release()`
+        /// at `ExitScope` therefore only concerns the temporary slots themselves,
+        /// not the array VALUE that they had just pointed to.</summary>
         private void CompileArrayAlloc(IReadOnlyList<Expr?> ranks, int rankIndex)
         {
-            // Alle Raenge mit Groesse (bis zum ersten ohne): jede Groesse wird EINMAL ausgewertet, NewJagged legt das ganze Gebilde an.
-            // Die inneren Arrays gehoeren dem aeusseren (SPEC 2.5) - sie leben und sterben mit ihm.
+            // All ranks with a size (up to the first one without): every size is evaluated ONCE, NewJagged creates the whole structure.
+            // The inner arrays belong to the outer one (SPEC 2.5) - they live and die with it.
             int sized = 0;
             while (rankIndex + sized < ranks.Count && ranks[rankIndex + sized] != null) sized++;
             for (int i = 0; i < sized; i++) CompileExpr(ranks[rankIndex + i]!);
@@ -1683,7 +1683,7 @@ namespace fire.Compiler
                 int catchAddr = _chunk.Here;
                 template.Catches.Add((c.TypeRef == null ? null : ResolveTypeRef(c.TypeRef), catchAddr));
 
-                // Die von der VM erzeugte Catch-Scope zählt für ein `break`/`continue` im Block mit (siehe CompileBreakOrContinue).
+                // The catch scope created by the VM counts along for a `break`/`continue` in the block (see CompileBreakOrContinue).
                 tryContext.Phase = TryPhase.Catch;
                 _tryStack.Add(tryContext);
                 _currentScopeDepth++;
@@ -1691,20 +1691,20 @@ namespace fire.Compiler
                 _currentScopeDepth--;
                 _tryStack.RemoveAt(_tryStack.Count - 1);
 
-                // Falls diese Exception nie per resume() fortgesetzt wurde (der
-                // catch-Block also ganz normal hier ankommt), muss der beim
-                // Werfen eingefrorene Wurfstellen-Zustand jetzt nachträglich
-                // sauber verworfen werden (siehe VM.ClearPendingResume) - die
-                // Exception-Variable liegt an dieser Stelle immer an Depth 0/
-                // Slot 0 der von der VM frisch erzeugten catch-Scope.
+                // If this exception was never continued via resume() (the
+                // catch block thus arrives here quite normally), the
+                // throw-site state frozen on throwing now has to be
+                // discarded cleanly after the fact (see VM.ClearPendingResume) - the
+                // exception variable lies at this point always at depth 0/
+                // slot 0 of the catch scope freshly created by the VM.
                 _chunk.EmitOp(OpCode.LoadLocal);
                 _chunk.EmitU16(0);
                 _chunk.EmitU16(0);
                 _chunk.EmitOp(OpCode.ClearPendingResume);
 
-                _chunk.EmitOp(OpCode.ExitScope); // gibt die von der VM erzeugte Exception-Scope wieder frei
+                _chunk.EmitOp(OpCode.ExitScope); // releases the exception scope created by the VM again
 
-                // Mit finally war während des catch-Blocks ein finally-only-Handler aktiv (siehe VM.ThrowException): jetzt abmelden
+                // With finally, a finally-only handler was active during the catch block (see VM.ThrowException): unregister it now
                 if (hasFinally)
                 {
                     _chunk.EmitOp(OpCode.UnregisterHandler);
@@ -1720,8 +1720,8 @@ namespace fire.Compiler
             foreach (var addr in jumpsToFinallyOrEnd) _chunk.PatchU16(addr, finallyOrEndAddr);
             if (!hasFinally) return;
 
-            // EIN finally-Block für alle Wege hinein (normal, break/continue, return, Exception, leave/terminate): oben auf dem Stack liegt der
-            // Abschluss (Nutzlast, Art), den EndFinally am Ende auswertet. Im Block selbst ist er ein Bewohner des Stacks (siehe _residents).
+            // ONE finally block for all ways in (normal, break/continue, return, exception, leave/terminate): on top of the stack lies the
+            // completion (payload, kind) that EndFinally evaluates at the end. Inside the block itself it is a resident of the stack (see _residents).
             template.FinallyAddr = finallyOrEndAddr;
             foreach (var addr in tryContext.FinallyJumpPatches) _chunk.PatchU16(addr, finallyOrEndAddr);
 
@@ -1730,8 +1730,8 @@ namespace fire.Compiler
             _residents.RemoveAt(_residents.Count - 1);
             _chunk.EmitOp(OpCode.EndFinally);
 
-            // Ausgangs-Stücke für ein `break`/`continue`, das über dieses finally lief: hier, hinter dem `try` (Scope-Tiefe und `_tryStack` stimmen
-            // schon), geht derselbe Sprung von außen weiter - über ein weiteres `finally` oder direkt zum Ziel. Die normale Ausführung überspringt sie.
+            // Exit pieces for a `break`/`continue` that ran through this finally: here, behind the `try` (scope depth and `_tryStack` are already
+            // right), the same jump continues from outside - via a further `finally` or directly to the target. Normal execution skips them.
             if (tryContext.BreakStubPatches.Count > 0 || tryContext.ContinueStubPatches.Count > 0)
             {
                 _chunk.EmitOp(OpCode.Jump);
@@ -1748,12 +1748,12 @@ namespace fire.Compiler
         }
 
         // -----------------------------------------------------------
-        // Ausdrücke
+        // Expressions
         // -----------------------------------------------------------
-        /// <summary>Kompiliert einen Ausdruck; ein Fehler darin bekommt hier die
-        /// Zeile des INNERSTEN betroffenen Ausdrucks (die Wurfstellen selbst
-        /// kennen keine Zeile) - gesammelt wird erst auf Statement-Ebene
-        /// (siehe CompileStmt).</summary>
+        /// <summary>Compiles an expression; an error in it gets here the
+        /// line of the INNERMOST affected expression (the throw sites themselves
+        /// know no line) - collecting only happens at statement level
+        /// (see CompileStmt).</summary>
         private void CompileExpr(Expr expr)
         {
             try
@@ -1847,7 +1847,7 @@ namespace fire.Compiler
 
                 case ArrayLiteralExpr al:
                     foreach (var el in al.Elements) CompileExpr(el);
-                    // ein im Literal selbst erzeugtes Array/Puffer (`[[1, 2], [3]]`) gehoert dem aeusseren (SPEC 2.5)
+                    // an array/buffer created in the literal itself (`[[1, 2], [3]]`) belongs to the outer one (SPEC 2.5)
                     uint partMask = 0;
                     if (al.Elements.Count <= 32)
                         for (int i = 0; i < al.Elements.Count; i++)
@@ -1868,15 +1868,15 @@ namespace fire.Compiler
 
                 case InterpolatedStringExpr ise:
                 {
-                    // Baut das Ergebnis als Kette von String-Konkatenationen
-                    // über den ganz normalen '+'-Opcode auf (der bereits
-                    // JEDEN Wert über ToString() anhängt, sobald eine Seite
-                    // ein String ist, siehe Value.Add) - kein eigener
-                    // "String-Aufbau"-Mechanismus nötig. Ein Format-
-                    // Spezifizierer (':X' etc.) wandelt den Ausdruckswert
-                    // VOR der Konkatenation über OpCode.FormatValue explizit
-                    // in einen (formatierten) String um, statt ToString()
-                    // dafür zu verwenden.
+                    // Builds the result as a chain of string concatenations
+                    // via the quite ordinary '+' opcode (which already
+                    // appends EVERY value via ToString() as soon as one side
+                    // is a string, see Value.Add) - no separate
+                    // "string building" mechanism needed. A format
+                    // specifier (':X' etc.) converts the expression value
+                    // BEFORE the concatenation explicitly via OpCode.FormatValue
+                    // into a (formatted) string, instead of using ToString()
+                    // for that.
                     EmitLoadConst(Value.MakeString(""));
                     foreach (var part in ise.Parts)
                     {
@@ -1899,21 +1899,21 @@ namespace fire.Compiler
                 }
 
                 case MemberExpr me:
-                    // 'EnumName.Mitglied' wurde vom Resolver schon zu einem
-                    // festen Int-Wert aufgelöst (ResolvedRef.EnumMember) - dann
-                    // direkt als Konstante laden, keine Laufzeit-Feldzugriff-
-                    // Logik nötig (der Compiler versucht in diesem Fall auch
-                    // NICHT, me.Target als Bezeichner zu kompilieren - es gibt
-                    // ja gar keine Variable dieses Namens).
+                    // 'EnumName.Member' was already resolved by the resolver to a
+                    // fixed int value (ResolvedRef.EnumMember) - then
+                    // load directly as a constant, no runtime field-access
+                    // logic needed (the compiler in this case also does
+                    // NOT try to compile me.Target as an identifier - there is
+                    // after all no variable of this name at all).
                     if (_refs.TryGetValue(me, out var memberRef) && memberRef is ResolvedRef.EnumMember em)
                     {
                         EmitLoadConst(Value.MakeInt(em.Value));
                         break;
                     }
-                    // 'ClassName.Member' (SPEC "Statische Mitglieder") - kein
-                    // Objekt auf dem Stack nötig (anders als GetField), der
-                    // Klassenname steht schon als Konstante im Bytecode (der
-                    // Resolver hat ihn schon eindeutig aufgelöst, siehe
+                    // 'ClassName.Member' (SPEC "Static members") - no
+                    // object needed on the stack (unlike GetField), the
+                    // class name already stands as a constant in the bytecode (the
+                    // resolver has already resolved it unambiguously, see
                     // ResolvedRef.StaticMember).
                     if (memberRef is ResolvedRef.StaticMember sm)
                     {
@@ -1972,14 +1972,14 @@ namespace fire.Compiler
 
                 case TryCallExpr tryCallExpr:
                 {
-                    // Der Callee selbst wird bewusst NICHT kompiliert (siehe
-                    // Resolver.ResolveTryCallExpr - er hat keinen normalen
-                    // ResolvedRef, nur der TryCallExpr-Knoten selbst hat
-                    // ResolvedRef.TryableNative) - nur die Argumente.
+                    // The callee itself is deliberately NOT compiled (see
+                    // Resolver.ResolveTryCallExpr - it has no ordinary
+                    // ResolvedRef, only the TryCallExpr node itself has
+                    // ResolvedRef.TryableNative) - only the arguments.
                     var innerCall = (CallExpr)tryCallExpr.Call;
                     if (_refs.TryGetValue(tryCallExpr, out var takeRef) && takeRef is ResolvedRef.TryTake tryTake)
                     {
-                        // `try obj.Take...(...)`: dieselbe Aufrufform wie die Ownership-Methode, unter dem Namen `try<Name>` (die VM liefert den bool)
+                        // `try obj.Take...(...)`: the same call form as the ownership method, under the name `try<Name>` (the VM returns the bool)
                         var takeMember = (MemberExpr)innerCall.Callee;
                         CompileCall(new CallExpr(innerCall.Line, new MemberExpr(takeMember.Line, takeMember.Target, "try" + tryTake.Name), innerCall.Args));
                         break;
@@ -2008,14 +2008,14 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Kompiliert den Lambda-Body EINMAL in einen eigenen Chunk
-        /// (FunctionProto) - kein eingefangener umgebender Scope nötig, da
-        /// Lambdas ohnehin nur ihren eigenen Scope + global sehen (SPEC 4.2),
-        /// das hat der Resolver schon beim Auflösen berücksichtigt. Jede
-        /// Auswertung DIESER LambdaExpr zur Laufzeit (MakeLambda) erzeugt einen
-        /// neuen LambdaValue, der denselben Proto wiederverwendet - nur das
-        /// 'on'-Target kann sich pro Auswertung unterscheiden.</summary>
-        /// <summary>`c => c.radius` / `p => p.address.city`: ein Parameter, der Körper nur eine Mitgliedskette darauf - die Namen von außen nach innen.</summary>
+        /// <summary>Compiles the lambda body ONCE into a chunk of its own
+        /// (FunctionProto) - no captured enclosing scope needed, since
+        /// lambdas see only their own scope + global anyway (SPEC 4.2),
+        /// the resolver already took that into account when resolving. Every
+        /// evaluation of THIS LambdaExpr at runtime (MakeLambda) creates a
+        /// new LambdaValue that reuses the same proto - only the
+        /// 'on' target can differ per evaluation.</summary>
+        /// <summary>`c => c.radius` / `p => p.address.city`: one parameter, the body only a member chain on it - the names from the outside in.</summary>
         private static string[]? TrySelectorPath(LambdaExpr lambda)
         {
             if (lambda.Params.Count != 1 || lambda.Body.Statements.Count != 1 || lambda.Body.Statements[0] is not ReturnStmt { Value: { } value })
@@ -2043,8 +2043,8 @@ namespace fire.Compiler
             EmitLambdaParamChecks(inner, lambda.Params);
             foreach (var stmt in lambda.Body.Statements)
                 inner.CompileStmt(stmt);
-            // Implizites "return undefined", falls der Body ohne explizites
-            // return durchläuft.
+            // Implicit "return undefined" if the body runs through without an explicit
+            // return.
             inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
 
@@ -2052,7 +2052,7 @@ namespace fire.Compiler
             if (Reflection) proto.SelectorPath = TrySelectorPath(lambda);
             int protoIdx = _chunk.AddFunctionProto(proto);
 
-            // Lambda-Captures (SPEC 4.2): die Werte der benutzten äußeren Locals werden JETZT geladen (Kopie), im umschließenden Scope.
+            // Lambda captures (SPEC 4.2): the values of the used outer locals are loaded NOW (copy), in the enclosing scope.
             var captures = _refs.TryGetValue(lambda, out var captureRef) && captureRef is ResolvedRef.LambdaCaptures lc ? lc.Variables : null;
             if (captures != null)
             {
@@ -2062,7 +2062,7 @@ namespace fire.Compiler
 
             bool hasOnTarget = lambda.OnTarget != null;
             if (hasOnTarget)
-                CompileExpr(lambda.OnTarget!); // im UMSCHLIESSENDEN (aktuellen) Scope, nicht im Lambda-Scope
+                CompileExpr(lambda.OnTarget!); // in the ENCLOSING (current) scope, not in the lambda scope
 
             if (captures != null)
             {
@@ -2079,16 +2079,16 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Aufrufe registrierter nativer Funktionen (`print(...)` usw.)
-        /// laufen über CALL_NATIVE, `obj.Method(...)` über virtuelle Auflösung
-        /// (CallMethod), `base.Method(...)` über direkte Basis-Auflösung
-        /// (CallBaseMethod), alles andere als allgemeiner Lambda-Aufruf (Callee
-        /// muss zur Laufzeit zu einem Lambda-Wert auswerten).</summary>
-        /// <summary>Kompiliert die Argumente eines Aufrufs. Ist ein Argument `flat x`/`copy x` und der Aufruf erzeugt eine Scope
-        /// für die aufgerufene Funktion (`scopeCreating`), wird nur `x` ausgewertet und das Kopieren dem Aufruf überlassen
-        /// (Präfix <see cref="OpCode.CopyArgs"/>, siehe <see cref="EmitCopyArgsPrefix"/>): die Kopie gehört dann der Scope der
-        /// aufgerufenen Funktion (SPEC 2.4). Bei nativen Funktionen gibt es diese Scope nicht - dort bleibt es eine gewöhnliche
-        /// Kopie (Owner: aktueller Scope). Liefert die Kopier-Maske (2 Bit je Argument, 0 = keine).</summary>
+        /// <summary>Calls of registered native functions (`print(...)` etc.)
+        /// run via CALL_NATIVE, `obj.Method(...)` via virtual resolution
+        /// (CallMethod), `base.Method(...)` via direct base resolution
+        /// (CallBaseMethod), everything else as a general lambda call (the callee
+        /// must evaluate to a lambda value at runtime).</summary>
+        /// <summary>Compiles the arguments of a call. If an argument is `flat x`/`copy x` and the call creates a scope
+        /// for the called function (`scopeCreating`), only `x` is evaluated and the copying is left to the call
+        /// (prefix <see cref="OpCode.CopyArgs"/>, see <see cref="EmitCopyArgsPrefix"/>): the copy then belongs to the scope of the
+        /// called function (SPEC 2.4). For native functions this scope does not exist - there it stays an ordinary
+        /// copy (owner: current scope). Returns the copy mask (2 bits per argument, 0 = none).</summary>
         private ulong CompileArgs(IReadOnlyList<Expr> args, bool scopeCreating, bool[]? refs = null)
         {
             ulong mask = 0;
@@ -2124,9 +2124,9 @@ namespace fire.Compiler
             return mask;
         }
 
-        /// <summary>Ein Argument fuer einen `ref`-Parameter: statt des Werts die Adresse einer Variable, eines Felds oder eines Array-Elements (SPEC 5.4.2).</summary>
-        /// <summary>Hat der Ausdruck eine Adresse (Variable, Feld, Array-Element)? Nur dann wird sie fuer einen `ref`-Parameter uebergeben; sonst der Wert -
-        /// bindet der Aufruf dann an einen `ref`-Parameter, meldet die VM, dass dort eine Variable stehen muss.</summary>
+        /// <summary>An argument for a `ref` parameter: instead of the value the address of a variable, a field or an array element (SPEC 5.4.2).</summary>
+        /// <summary>Does the expression have an address (variable, field, array element)? Only then is it passed for a `ref` parameter; otherwise the value -
+        /// if the call then binds to a `ref` parameter, the VM reports that a variable must stand there.</summary>
         private bool IsAddressable(Expr arg) => arg switch
         {
             IdentifierExpr id => _refs.TryGetValue(id, out var r) && r is ResolvedRef.Local or ResolvedRef.Global or ResolvedRef.ImplicitThisMember,
@@ -2176,7 +2176,7 @@ namespace fire.Compiler
             _chunk.EmitU16(depth);
         }
 
-        /// <summary>Emittiert das Präfix `CopyArgs` (nur wenn eine Maske da ist) - direkt VOR den Aufruf-Opcode.</summary>
+        /// <summary>Emits the prefix `CopyArgs` (only if a mask is present) - directly BEFORE the call opcode.</summary>
         private void EmitCopyArgsPrefix(ulong mask)
         {
             if (mask == 0) return;
@@ -2184,9 +2184,9 @@ namespace fire.Compiler
             for (int part = 0; part < 4; part++) _chunk.EmitU16((int)((mask >> (16 * part)) & 0xFFFF));
         }
 
-        /// <summary>Kompiliert `new X(...)` bzw. `flat x`/`copy x` für den Fall, dass der künftige OWNER (ein Objekt) schon
-        /// auf dem Stack liegt (SPEC 2.1/2.4: direkt einem Feld zugewiesen). Liefert false, wenn `value` keins von beiden ist
-        /// (dann ist nichts emittiert).</summary>
+        /// <summary>Compiles `new X(...)` or `flat x`/`copy x` for the case that the future OWNER (an object) already
+        /// lies on the stack (SPEC 2.1/2.4: assigned directly to a field). Returns false if `value` is neither of the two
+        /// (then nothing was emitted).</summary>
         private static bool IsOwnedCreation(Expr value) =>
             value is NewExpr or NewArrayExpr or ArrayLiteralExpr or NewBufferExpr or CallExpr or UnaryExpr { Op: UnaryOp.FlatCopy or UnaryOp.DeepCopy };
 
@@ -2203,7 +2203,7 @@ namespace fire.Compiler
             }
             if (value is NewArrayExpr or ArrayLiteralExpr or NewBufferExpr or CallExpr)
             {
-                // [owner] -> [owner, array] -> [array]: ein direkt einem Feld zugewiesenes Array/ein Puffer gehoert dem Objekt (SPEC 2.1)
+                // [owner] -> [owner, array] -> [array]: an array/a buffer assigned directly to a field belongs to the object (SPEC 2.1)
                 CompileExpr(value);
                 _chunk.EmitOp(OpCode.OwnValue);
                 return true;
@@ -2233,14 +2233,14 @@ namespace fire.Compiler
 
                 if (resolved is ResolvedRef.Extern ext)
                 {
-                    // Anders als bei einem unbekannten Bezeichner ist das hier
-                    // KEIN Kompilierfehler - 'extern' deklariert nur die
-                    // Signatur, die tatsächliche Implementierung verlinkt der
-                    // Host erst zur Laufzeit (ExternRegistry, siehe
-                    // VM.CallExtern) - ein Skript kann also kompilieren, auch
-                    // wenn (noch) nichts verlinkt ist, und schlägt erst beim
-                    // TATSÄCHLICHEN Aufruf fehl, falls dann immer noch nichts
-                    // registriert ist.
+                    // Unlike with an unknown identifier this is here
+                    // NO compile error - 'extern' only declares the
+                    // signature, the actual implementation is only linked by the
+                    // host at runtime (ExternRegistry, see
+                    // VM.CallExtern) - a script can therefore compile even
+                    // if nothing is linked (yet), and only fails on the
+                    // ACTUAL call, if nothing is
+                    // registered by then.
                     foreach (var arg in call.Args) CompileExpr(arg);
                     _chunk.EmitOp(OpCode.CallExtern);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ext.Name)));
@@ -2250,7 +2250,7 @@ namespace fire.Compiler
 
                 if (resolved is ResolvedRef.StaticMember callSm)
                 {
-                    // SPEC "Statische Mitglieder" - bloßer Name statt
+                    // SPEC "Static members" - bare name instead of
                     // 'ClassName.Method(...)'.
                     EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(calleeId.Name, call.Args.Count)));
                     _chunk.EmitOp(OpCode.CallStaticMethod);
@@ -2262,11 +2262,11 @@ namespace fire.Compiler
 
                 if (resolved is ResolvedRef.ImplicitThisMember)
                 {
-                    // SPEC "Implizite Mitglieder-Referenzen" - bloßer Name
-                    // statt 'this.Method(...)'. CallMethod erwartet das
-                    // Zielobjekt UNTERHALB der Argumente auf dem Stack (siehe
-                    // VM.CallMethod: Args zuerst gepoppt, dann erst 'target')
-                    // - 'this' also VOR den Argumenten pushen.
+                    // SPEC "Implicit member references" - bare name
+                    // instead of 'this.Method(...)'. CallMethod expects the
+                    // target object BELOW the arguments on the stack (see
+                    // VM.CallMethod: args popped first, only then 'target')
+                    // - so push 'this' BEFORE the arguments.
                     _chunk.EmitOp(OpCode.LoadThis);
                     EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(calleeId.Name, call.Args.Count)));
                     _chunk.EmitOp(OpCode.CallMethod);
@@ -2280,10 +2280,10 @@ namespace fire.Compiler
             {
                 if (me.Name == "resume")
                 {
-                    // 'resume' ist ein reservierter Methodenname (wie GetIndex/
-                    // SetIndex/GetEnumerator) - kein echter Methodenaufruf,
-                    // sondern springt über einen eigenen Opcode direkt zur
-                    // eingefrorenen Wurfstelle zurück (siehe VM.ResumeException).
+                    // 'resume' is a reserved method name (like GetIndex/
+                    // SetIndex/GetEnumerator) - no real method call,
+                    // but jumps back directly to the frozen throw site via an opcode of its own
+                    // (see VM.ResumeException).
                     if (call.Args.Count > 1)
                         throw new NotSupportedException(
                             "'resume' expects at most one argument (the resume value).");
@@ -2295,17 +2295,17 @@ namespace fire.Compiler
                     }
                     else
                     {
-                        // resume() ohne Argument == resume(undefined)
+                        // resume() without an argument == resume(undefined)
                         EmitLoadConst(Value.MakeUndefined());
                     }
                     _chunk.EmitOp(OpCode.ResumeException);
                     return;
                 }
 
-                // 'ClassName.Method(...)' (SPEC "Statische Mitglieder") - kein
-                // Objekt auf dem Stack (anders als CallMethod), der
-                // Klassenname steht schon als Konstante im Bytecode (siehe
-                // ResolvedRef.StaticMember, vom Resolver aufgelöst).
+                // 'ClassName.Method(...)' (SPEC "Static members") - no
+                // object on the stack (unlike CallMethod), the
+                // class name already stands as a constant in the bytecode (see
+                // ResolvedRef.StaticMember, resolved by the resolver).
                 if (_refs.TryGetValue(me, out var calleeMemberRef) && calleeMemberRef is ResolvedRef.StaticMember sm)
                 {
                     EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count)));
@@ -2318,12 +2318,12 @@ namespace fire.Compiler
 
                 if (me.Target is BaseExpr)
                 {
-                    // 'base.Method(...)' - nicht-virtuell, this bleibt das aktuelle
-                    // 'this'. Die Basisklasse wird statisch aus der GERADE
-                    // KOMPILIERTEN Klasse (_enclosingClass) genommen, nicht aus der
-                    // tatsächlichen Laufzeit-Klasse von 'this' - sonst wäre das bei
-                    // mehrstufiger Vererbung falsch (B.base muss immer A sein, auch
-                    // wenn 'this' zur Laufzeit eine Instanz von C : B ist).
+                    // 'base.Method(...)' - non-virtual, this stays the current
+                    // 'this'. The base class is taken statically from the class
+                    // CURRENTLY BEING COMPILED (_enclosingClass), not from the
+                    // actual runtime class of 'this' - otherwise that would be
+                    // wrong with multi-level inheritance (B.base must always be A, even
+                    // if 'this' is an instance of C : B at runtime).
                     if (_enclosingClass?.Base == null)
                         throw new NotSupportedException(
                             "'base.Method(...)' outside of a class with a base class - the resolver should have caught this.");
@@ -2351,13 +2351,13 @@ namespace fire.Compiler
             _chunk.EmitByte((byte)call.Args.Count);
         }
 
-        /// <summary>Eigenständige (nicht in eine Anker-Entscheidung eingebettete)
-        /// Coercion, z.B. als Initializer `var y = undefined:km`. Wie im
-        /// Binär-Op-Fall: Typ VOR Einheit (Präzision bei int->float +
-        /// Einheitenumrechnung), und ohne Geschwister-Anker fällt eine
-        /// automatische ('!'/'::' ohne Argument) Einheiten-Anforderung auf
-        /// unitless zurück; eine automatische Typ-Anforderung bleibt mangels
-        /// Anker unverändert (keine explizite SPEC-Vorgabe für diesen Fall).</summary>
+        /// <summary>Standalone (not embedded in an anchor decision)
+        /// coercion, e.g. as an initialiser `var y = undefined:km`. As in the
+        /// binary-op case: type BEFORE unit (precision with int->float +
+        /// unit conversion), and without a sibling anchor an
+        /// automatic ('!'/'::' without an argument) unit request falls back to
+        /// unitless; an automatic type request stays unchanged for lack of an
+        /// anchor (no explicit SPEC requirement for this case).</summary>
         private void CompileStandaloneCoercion(Expr expr)
         {
             var info = AnalyzeCoercion(expr);
@@ -2372,7 +2372,7 @@ namespace fire.Compiler
                 EmitCoerceUnitStatic(fire.Values.Unit.Unitless);
         }
 
-        /// <summary>Liest eine lokale Variable; bei einem `ref`-Parameter haelt der Slot einen Zeiger auf die Variable des Aufrufers - dann wird dereferenziert.</summary>
+        /// <summary>Reads a local variable; for a `ref` parameter the slot holds a pointer to the caller's variable - then it is dereferenced.</summary>
         private void EmitLoadVariable(ResolvedRef.Local local)
         {
             _chunk.EmitOp(OpCode.LoadLocal);
@@ -2381,7 +2381,7 @@ namespace fire.Compiler
             if (local.ByRef) _chunk.EmitOp(OpCode.PtrRead);
         }
 
-        /// <summary>Schreibt den obersten Wert in eine lokale Variable und laesst ihn auf dem Stack (wie StoreLocal); bei einem `ref`-Parameter durch den Zeiger.</summary>
+        /// <summary>Writes the topmost value into a local variable and leaves it on the stack (like StoreLocal); for a `ref` parameter through the pointer.</summary>
         private void EmitStoreVariable(ResolvedRef.Local local)
         {
             if (!local.ByRef)
@@ -2391,14 +2391,14 @@ namespace fire.Compiler
                 _chunk.EmitU16(local.Slot);
                 return;
             }
-            _chunk.EmitOp(OpCode.LoadLocal);   // [wert, zeiger]
+            _chunk.EmitOp(OpCode.LoadLocal);   // [value, pointer]
             _chunk.EmitU16(local.Depth);
             _chunk.EmitU16(local.Slot);
-            _chunk.EmitOp(OpCode.Swap);        // [zeiger, wert]
-            _chunk.EmitOp(OpCode.PtrWrite);    // schreibt und liefert den Wert
+            _chunk.EmitOp(OpCode.Swap);        // [pointer, value]
+            _chunk.EmitOp(OpCode.PtrWrite);    // writes and returns the value
         }
 
-        /// <summary>Die Adresse einer lokalen Variable; ein `ref`-Parameter ist selbst schon ein Zeiger.</summary>
+        /// <summary>The address of a local variable; a `ref` parameter is itself already a pointer.</summary>
         private void EmitAddressOfLocal(ResolvedRef.Local local)
         {
             _chunk.EmitOp(local.ByRef ? OpCode.LoadLocal : OpCode.AddressOfLocal);
@@ -2426,15 +2426,15 @@ namespace fire.Compiler
                         $"'{ext.Name}' is a function declared extern and can only be called directly, " +
                         $"not used as a value.");
                 case ResolvedRef.StaticMember sm:
-                    // SPEC "Statische Mitglieder" - bloßer Name statt
-                    // 'ClassName.Name' (siehe Resolver.ResolveIdentifierRef).
+                    // SPEC "Static members" - bare name instead of
+                    // 'ClassName.Name' (see Resolver.ResolveIdentifierRef).
                     _chunk.EmitOp(OpCode.GetStaticField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
                 case ResolvedRef.ImplicitThisMember:
-                    // SPEC "Implizite Mitglieder-Referenzen" - bloßer Name
-                    // statt 'this.Name' (siehe Resolver.ResolveIdentifierRef).
+                    // SPEC "Implicit member references" - bare name
+                    // instead of 'this.Name' (see Resolver.ResolveIdentifierRef).
                     _chunk.EmitOp(OpCode.LoadThis);
                     _chunk.EmitOp(OpCode.GetField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
@@ -2446,15 +2446,15 @@ namespace fire.Compiler
         {
             if (a.Target is MemberExpr me)
             {
-                // 'ClassName.Member = ...' (SPEC "Statische Mitglieder") - kein
-                // Zielobjekt auf dem Stack (anders als bei einer Instanz-
-                // Feldzuweisung unten), der Klassenname steht schon als
-                // Konstante im Bytecode (siehe ResolvedRef.StaticMember).
-                // Bewusst OHNE die NewObjectOwned-Sonderbehandlung unten (SPEC
-                // 2.1, kaskadierendes Löschen) - die setzt die Eigentümerschaft
-                // eines frisch erzeugten Objekts auf die INSTANZ, die das Feld
-                // hält; ein statisches Feld gehört aber keiner Instanz, dafür
-                // gibt es hier kein sinnvolles Gegenstück.
+                // 'ClassName.Member = ...' (SPEC "Static members") - no
+                // target object on the stack (unlike with an instance
+                // field assignment below), the class name already stands as a
+                // constant in the bytecode (see ResolvedRef.StaticMember).
+                // Deliberately WITHOUT the NewObjectOwned special treatment below (SPEC
+                // 2.1, cascading deletion) - it sets the ownership
+                // of a freshly created object to the INSTANCE that holds
+                // the field; a static field, however, belongs to no instance, there is
+                // no sensible counterpart for that here.
                 if (_refs.TryGetValue(me, out var staticTargetRef) && staticTargetRef is ResolvedRef.StaticMember sm)
                 {
                     CompileExpr(a.Value);
@@ -2466,11 +2466,11 @@ namespace fire.Compiler
 
                 CompileExpr(me.Target);
 
-                // Direkte Feldzuweisung eines frisch erzeugten Objekts: Owner wird
-                // das Zielobjekt selbst, nicht der aktuelle Scope (SPEC 2.1). Dafür
-                // muss das Zielobjekt beim NewObjectOwned-Aufruf schon auf dem Stack
-                // liegen (unterhalb der Konstruktor-Argumente) - daher Dup, bevor die
-                // Argumente gepusht werden, und SetField am Ende nutzt die zweite Kopie.
+                // Direct field assignment of a freshly created object: the owner becomes
+                // the target object itself, not the current scope (SPEC 2.1). For that
+                // the target object must already lie on the stack at the NewObjectOwned call
+                // (below the constructor arguments) - hence Dup before the
+                // arguments are pushed, and SetField at the end uses the second copy.
                 if (IsOwnedCreation(a.Value))
                 {
                     _chunk.EmitOp(OpCode.Dup);
@@ -2478,7 +2478,7 @@ namespace fire.Compiler
                 }
                 else if (a.Value is UnaryExpr { Op: UnaryOp.Take } takeValue)
                 {
-                    CompileExpr(takeValue.Operand);          // [obj, wert]
+                    CompileExpr(takeValue.Operand);          // [obj, value]
                     _chunk.EmitOp(OpCode.TakeToObject);      // the object owns the value from now on (SPEC 2.2)
                 }
                 else
@@ -2494,7 +2494,7 @@ namespace fire.Compiler
             if (a.Target is UnaryExpr { Op: UnaryOp.Dereference } deref)
             {
                 CompileExpr(deref.Operand); // push Pointer
-                CompileExpr(a.Value);       // push Wert
+                CompileExpr(a.Value);       // push value
                 _chunk.EmitOp(OpCode.PtrWrite);
                 return;
             }
@@ -2517,9 +2517,9 @@ namespace fire.Compiler
                 throw new NotSupportedException(
                     "Invalid assignment target for the bytecode compiler.");
 
-            // Bloßer Feldname in einer Klasse (`feld = new X()` / `feld = copy x`): wie `this.feld = ...` gehört das neue
-            // Objekt dem Objekt, nicht der Scope (SPEC 2.1/2.4) - sonst würde es beim Verlassen der Methode zerstört,
-            // während das Feld noch darauf zeigt.
+            // Bare field name in a class (`field = new X()` / `field = copy x`): like `this.field = ...` the new
+            // object belongs to the object, not the scope (SPEC 2.1/2.4) - otherwise it would be destroyed on leaving the method,
+            // while the field still points to it.
             if (a.Value is UnaryExpr { Op: UnaryOp.Take } takeVar)
             {
                 CompileTakeAssign(id, takeVar);
@@ -2529,9 +2529,9 @@ namespace fire.Compiler
             if (_refs[id] is ResolvedRef.ImplicitThisMember && IsOwnedCreation(a.Value))
             {
                 _chunk.EmitOp(OpCode.LoadThis);
-                TryCompileOwnedCreation(a.Value);       // [neues Objekt]
-                _chunk.EmitOp(OpCode.LoadThis);         // [wert, obj]
-                _chunk.EmitOp(OpCode.Swap);             // [obj, wert]
+                TryCompileOwnedCreation(a.Value);       // [new object]
+                _chunk.EmitOp(OpCode.LoadThis);         // [value, obj]
+                _chunk.EmitOp(OpCode.Swap);             // [obj, value]
                 _chunk.EmitOp(OpCode.SetField);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                 return;
@@ -2542,11 +2542,11 @@ namespace fire.Compiler
             switch (_refs[id])
             {
                 case ResolvedRef.Local local:
-                    // SPEC "Einheiten-Deklarationen": JEDE Zuweisung an einen
-                    // Slot mit geforderter Einheit (nicht nur die erste, siehe
-                    // VarDeclStmt-Kompilierung) - sonst könnte man die
-                    // Anfangsprüfung einfach durch eine spätere, "falsche"
-                    // Zuweisung umgehen.
+                    // SPEC "Unit declarations": EVERY assignment to a
+                    // slot with a required unit (not only the first, see
+                    // VarDeclStmt compilation) - otherwise one could bypass the
+                    // initial check simply through a later, "wrong"
+                    // assignment.
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
                     // an assignment from an inner block to a variable of an outer one: the value must not die with the block (SPEC 2.1)
                     if (local.Depth > 0 && !local.ByRef) _chunk.EmitOp(OpCode.HoistValue);
@@ -2565,21 +2565,21 @@ namespace fire.Compiler
                     throw new NotSupportedException(
                         $"Cannot assign to '{ext.Name}' - it is a function declared extern.");
                 case ResolvedRef.StaticMember sm:
-                    // SPEC "Statische Mitglieder" - bloßer Name statt
-                    // 'ClassName.Name = ...' (siehe Resolver.
+                    // SPEC "Static members" - bare name instead of
+                    // 'ClassName.Name = ...' (see Resolver.
                     // ResolveIdentifierRef/ResolveAssignTarget).
                     _chunk.EmitOp(OpCode.SetStaticField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
                 case ResolvedRef.ImplicitThisMember:
-                    // SPEC "Implizite Mitglieder-Referenzen" - bloßer Name
-                    // statt 'this.Name = ...'. Der Wert liegt hier (anders
-                    // als beim MemberExpr-Zweig oben) schon OBEN auf dem
-                    // Stack (CompileExpr(a.Value) lief schon VOR diesem
-                    // switch) - 'this' erst JETZT nachladen und die beiden
-                    // vertauschen, damit SetField sein erwartetes [obj,
-                    // value] bekommt.
+                    // SPEC "Implicit member references" - bare name
+                    // instead of 'this.Name = ...'. The value here lies (unlike
+                    // in the MemberExpr branch above) already ON TOP of the
+                    // stack (CompileExpr(a.Value) already ran BEFORE this
+                    // switch) - only reload 'this' NOW and swap the two,
+                    // swap them, so that SetField gets its expected [obj,
+                    // value].
                     _chunk.EmitOp(OpCode.LoadThis); // [value, obj]
                     _chunk.EmitOp(OpCode.Swap);     // [obj, value]
                     _chunk.EmitOp(OpCode.SetField);
@@ -2606,8 +2606,8 @@ namespace fire.Compiler
                     _chunk.EmitU16(global.Slot);
                     break;
                 case ResolvedRef.ImplicitThisMember:
-                    _chunk.EmitOp(OpCode.LoadThis);         // [wert, this]
-                    _chunk.EmitOp(OpCode.Swap);             // [this, wert]
+                    _chunk.EmitOp(OpCode.LoadThis);         // [value, this]
+                    _chunk.EmitOp(OpCode.Swap);             // [this, value]
                     _chunk.EmitOp(OpCode.TakeToObject);
                     _chunk.EmitOp(OpCode.SetField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
@@ -2617,21 +2617,21 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>`++x`/`--x`/`x++`/`x--` (siehe Ast.IncDecExpr-Doku).
-        /// Vier Zielarten, je eigene Strategie:
-        /// - IdentifierExpr/Dereference/MemberExpr (EINE "Adresse" - Slot,
-        ///   Pointer bzw. Objektinstanz): per Dup+Lesen+Rechnen+Schreiben
-        ///   direkt im Bytecode, für Postfix zusätzlich RotateUnderTop, um
-        ///   den alten Wert unter der Adresse aufzuheben, während sowohl
-        ///   Adresse als auch neuer Wert für den Schreib-Opcode oben bleiben
-        ///   (siehe OpCode.RotateUnderTop-Doku) - OHNE die Zieladresse ein
-        ///   zweites Mal auszuwerten.
-        /// - IndexExpr (ZWEI "Adress"-Teile - Array UND Index): ein eigener
-        ///   Opcode (IncDecIndex) übernimmt Lesen+Rechnen+Schreiben ATOMAR
-        ///   in der VM - mit reinem Stack-Umsortieren (nur RotateUnderTop,
-        ///   das ja nur 3 Werte kennt) wäre das für VIER zu erhaltende Werte
-        ///   (Array, Index, alter Wert, neuer Wert) nicht sauber lösbar
-        ///   gewesen, ohne Array/Index ein zweites Mal auszuwerten.</summary>
+        /// <summary>`++x`/`--x`/`x++`/`x--` (see Ast.IncDecExpr documentation).
+        /// Four kinds of target, each with its own strategy:
+        /// - IdentifierExpr/Dereference/MemberExpr (ONE "address" - slot,
+        ///   pointer or object instance): via Dup+read+calculate+write
+        ///   directly in the bytecode, for postfix additionally RotateUnderTop, to
+        ///   keep the old value below the address, while both
+        ///   address and new value stay on top for the write opcode
+        ///   (see OpCode.RotateUnderTop documentation) - WITHOUT evaluating the target address
+        ///   a second time.
+        /// - IndexExpr (TWO "address" parts - array AND index): an opcode of its own
+        ///   (IncDecIndex) takes over read+calculate+write ATOMICALLY
+        ///   in the VM - with mere stack reordering (only RotateUnderTop,
+        ///   which after all knows only 3 values) this would not have been cleanly solvable for FOUR values to be kept
+        ///   (array, index, old value, new value)
+        ///   without evaluating array/index a second time.</summary>
         private void CompileIncDec(IncDecExpr e)
         {
             var addSubOp = e.IsIncrement ? OpCode.Add : OpCode.Sub;
@@ -2648,9 +2648,9 @@ namespace fire.Compiler
 
             if (e.Target is MemberExpr me)
             {
-                // 'ClassName.staticField++' (SPEC "Statische Mitglieder") -
-                // kein Objekt auf dem Stack, GetStaticField/SetStaticField
-                // statt GetField/SetField, sonst dieselbe Technik wie unten.
+                // 'ClassName.staticField++' (SPEC "Static members") -
+                // no object on the stack, GetStaticField/SetStaticField
+                // instead of GetField/SetField, otherwise the same technique as below.
                 if (_refs.TryGetValue(me, out var staticIncDecRef) && staticIncDecRef is ResolvedRef.StaticMember stm)
                 {
                     int classNameConstIdx = _chunk.AddConstant(Value.MakeString(stm.ClassName));
@@ -2664,11 +2664,11 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.SetStaticField);
                     _chunk.EmitU16(classNameConstIdx);
                     _chunk.EmitU16(fieldNameConstIdx);
-                    // SetStaticField poppt+pusht denselben Wert wieder (wie
-                    // SetField) - Stackgröße bleibt dabei UNVERÄNDERT. Prefix:
-                    // [newVal] ist also schon das gewünschte Ergebnis. Postfix:
-                    // [oldVal, newVal] - die obere (neue) Kopie noch weg, damit
-                    // oldVal als Ergebnis übrig bleibt.
+                    // SetStaticField pops+pushes the same value again (like
+                    // SetField) - stack size stays UNCHANGED. Prefix:
+                    // [newVal] is thus already the desired result. Postfix:
+                    // [oldVal, newVal] - the upper (new) copy still has to go, so that
+                    // oldVal remains as the result.
                     if (!e.IsPrefix) _chunk.EmitOp(OpCode.Pop);
                     return;
                 }
@@ -2706,12 +2706,12 @@ namespace fire.Compiler
 
             var refKind = _refs[id];
 
-            // SPEC "Statische Mitglieder"/"Implizite Mitglieder-Referenzen":
-            // ein bloßer Name, der auf ein statisches oder (implizit über
-            // 'this') Instanzfeld verweist - eigene, in sich geschlossene
-            // Bytecode-Sequenz statt der generischen EmitLoad/EmitStore
-            // unten (die sind auf Local/Global zugeschnitten, brauchen kein
-            // zusätzliches Objekt/Klassenname auf dem Stack).
+            // SPEC "Static members"/"Implicit member references":
+            // a bare name that refers to a static or (implicitly via
+            // 'this') instance field - a self-contained bytecode
+            // sequence of its own instead of the generic EmitLoad/EmitStore
+            // below (which are tailored to local/global, need no
+            // additional object/class name on the stack).
             if (refKind is ResolvedRef.StaticMember sm)
             {
                 int classNameConstIdx = _chunk.AddConstant(Value.MakeString(sm.ClassName));
@@ -2725,17 +2725,17 @@ namespace fire.Compiler
                 _chunk.EmitOp(OpCode.SetStaticField);
                 _chunk.EmitU16(classNameConstIdx);
                 _chunk.EmitU16(fieldNameConstIdx);
-                // SetStaticField poppt+pusht denselben Wert wieder (wie
-                // SetField) - Stackgröße bleibt UNVERÄNDERT (siehe dieselbe
-                // Herleitung beim MemberExpr-Fall oben).
+                // SetStaticField pops+pushes the same value again (like
+                // SetField) - stack size stays UNCHANGED (see the same
+                // derivation at the MemberExpr case above).
                 if (!e.IsPrefix) _chunk.EmitOp(OpCode.Pop);
                 return;
             }
 
             if (refKind is ResolvedRef.ImplicitThisMember)
             {
-                // Wie 'this.feld++' oben (MemberExpr-Fall), nur dass 'this'
-                // hier implizit ist statt ausgeschrieben.
+                // Like 'this.field++' above (MemberExpr case), only that 'this'
+                // is implicit here instead of written out.
                 _chunk.EmitOp(OpCode.LoadThis);   // [obj]
                 _chunk.EmitOp(OpCode.Dup);         // [obj, obj]
                 _chunk.EmitOp(OpCode.GetField);
@@ -2770,10 +2770,10 @@ namespace fire.Compiler
                 switch (refKind)
                 {
                     case ResolvedRef.Local local:
-                        // SPEC "Einheiten-Deklarationen" - dieselbe Prüfung wie
-                        // bei jeder normalen Zuweisung (siehe CompileAssign) -
-                        // `++`/`--` ist ja auch nur eine (kompakter geschriebene)
-                        // Zuweisung.
+                        // SPEC "Unit declarations" - the same check as
+                        // with every normal assignment (see CompileAssign) -
+                        // `++`/`--` is after all only an (more compactly written)
+                        // assignment.
                         EmitCheckUnitIfNeeded(this, local.RequiredUnit);
                         EmitStoreVariable(local);
                         break;
@@ -2788,8 +2788,8 @@ namespace fire.Compiler
             EmitLoad();                              // [oldVal]
             if (!e.IsPrefix) _chunk.EmitOp(OpCode.Dup); // Postfix: [oldVal, oldVal]
             EmitLoadConst(Value.MakeInt(1));
-            _chunk.EmitOp(addSubOp);                  // Prefix: [newVal] / Postfix: [oldVal, newVal]
-            EmitStore();                              // Store* lässt den Wert (Peek statt Pop) auf dem Stack
+            _chunk.EmitOp(addSubOp);                  // Prefix: [newVal] / postfix: [oldVal, newVal]
+            EmitStore();                              // Store* leaves the value (peek instead of pop) on the stack
             if (!e.IsPrefix) _chunk.EmitOp(OpCode.Pop); // [oldVal]
         }
 
@@ -2827,10 +2827,10 @@ namespace fire.Compiler
             });
         }
 
-        /// <summary>`&amp;ausdruck` - nur auf Variablen (lokal/global) oder
-        /// Objektfelder anwendbar (die einzigen "adressierbaren" Ausdrücke
-        /// dieser Sprache, analog zu lvalues in C#). Der Resolver hat bereits
-        /// geprüft, dass wir uns in einem 'unsafe'-Block befinden.</summary>
+        /// <summary>`&amp;expression` - applicable only to variables (local/global) or
+        /// object fields (the only "addressable" expressions
+        /// of this language, analogous to lvalues in C#). The resolver has already
+        /// checked that we are inside an 'unsafe' block.</summary>
         private void CompileAddressOf(Expr operand)
         {
             switch (operand)
@@ -2915,17 +2915,17 @@ namespace fire.Compiler
         }
 
         // -----------------------------------------------------------
-        // Die Anker-Regel (SPEC 3.2) - Kern des Compilers.
+        // The anchor rule (SPEC 3.2) - core of the compiler.
         //
-        // Für jeden Operanden wird per AnalyzeCoercion ermittelt, ob er ':' (Einheit)
-        // und/oder '!' (Typ) anfordert, und ob jeweils explizit (fester Wert) oder
-        // "automatisch" (kein Argument). Der Operand, der auf KEINER Achse
-        // "automatisch" anfordert, ist der Anker; der andere wird dynamisch (zur
-        // Laufzeit, da Variablen ihre Einheit/ihren Typ erst dann tragen) an ihn
-        // angeglichen. Fordern BEIDE "automatisch" an, fällt die Einheit auf
-        // unitless zurück (SPEC-Vorgabe); der Typ bleibt in diesem Fall unangetastet
-        // (keine explizite SPEC-Vorgabe - Add/Sub/etc. werten int+float ohnehin
-        // automatisch zu float auf, das deckt den praktischen Fall bereits ab).
+        // For every operand AnalyzeCoercion determines whether it requests ':' (unit)
+        // and/or '!' (type), and whether in each case explicitly (fixed value) or
+        // "automatically" (no argument). The operand that requests "automatically" on NEITHER axis
+        // is the anchor; the other is adjusted to it dynamically (at
+        // runtime, since variables only then carry their unit/type)
+        // adjusted to it. If BOTH request "automatically", the unit falls back to
+        // unitless (SPEC requirement); the type stays untouched in this case
+        // (no explicit SPEC requirement - Add/Sub/etc. promote int+float automatically
+        // to float anyway, which already covers the practical case).
         // -----------------------------------------------------------
         private void EmitCoercedOperands(Expr leftExpr, Expr rightExpr)
         {
@@ -2940,17 +2940,17 @@ namespace fire.Compiler
             if (right.ExplicitType != null) EmitCoerceTypeStatic(TokenTypeToTag(right.ExplicitType.Value));
             if (right.ExplicitUnit != null) EmitCoerceUnitStatic(fire.Values.Unit.Parse(right.ExplicitUnit));
 
-            // Stack jetzt: [..., left', right']
+            // Stack now: [..., left', right']
             bool leftAuto = left.RequestsAnyAuto;
             bool rightAuto = right.RequestsAnyAuto;
 
             if (leftAuto && !rightAuto)
             {
-                // rechts (TOS) ist Anker; links liegt darunter -> swap, angleichen, zurück-swap.
-                // Typ VOR Einheit angleichen: sonst geht bei int->float-Konvertierung
-                // in Kombination mit einer Einheitenumrechnung Präzision durch
-                // vorzeitige Ganzzahlrundung verloren (z.B. 500m -> 1km statt 0.5km,
-                // wenn erst auf km gerundet und danach erst zu float promoted würde).
+                // right (TOS) is the anchor; left lies below it -> swap, adjust, swap back.
+                // Adjust type BEFORE unit: otherwise with int->float conversion
+                // combined with a unit conversion precision is lost through
+                // premature integer rounding (e.g. 500m -> 1km instead of 0.5km,
+                // if it were first rounded to km and only then promoted to float).
                 _chunk.EmitOp(OpCode.Swap);
                 if (left.TypeIsAuto) _chunk.EmitOp(OpCode.CoerceTypeDynamic);
                 if (left.UnitIsAuto) _chunk.EmitOp(OpCode.CoerceUnitDynamic);
@@ -2958,13 +2958,13 @@ namespace fire.Compiler
             }
             else if (rightAuto && !leftAuto)
             {
-                // links (TOS-1) ist Anker; rechts (TOS) direkt angleichen (Typ vor Einheit, s.o.).
+                // left (TOS-1) is the anchor; adjust right (TOS) directly (type before unit, see above).
                 if (right.TypeIsAuto) _chunk.EmitOp(OpCode.CoerceTypeDynamic);
                 if (right.UnitIsAuto) _chunk.EmitOp(OpCode.CoerceUnitDynamic);
             }
             else if (leftAuto && rightAuto)
             {
-                // Kein Anker vorhanden -> Einheit fällt auf unitless zurück.
+                // No anchor present -> unit falls back to unitless.
                 if (left.UnitIsAuto)
                 {
                     _chunk.EmitOp(OpCode.Swap);
@@ -2973,8 +2973,8 @@ namespace fire.Compiler
                 }
                 if (right.UnitIsAuto) EmitCoerceUnitStatic(fire.Values.Unit.Unitless);
             }
-            // sonst: beide fix/explizit -> keine weitere Angleichung; die
-            // Arithmetik-Operation selbst prüft Kompatibilität zur Laufzeit.
+            // otherwise: both fixed/explicit -> no further adjustment; the
+            // arithmetic operation itself checks compatibility at runtime.
         }
 
         private readonly record struct CoercionInfo(
@@ -2985,9 +2985,9 @@ namespace fire.Compiler
             public bool RequestsAnyAuto => UnitIsAuto || TypeIsAuto;
         }
 
-        /// <summary>Schält ':'/'!'-Postfix-Wrapper (in beliebiger Reihenfolge, auch
-        /// beide) von einem Ausdruck ab und klassifiziert, was jeweils angefordert
-        /// wurde.</summary>
+        /// <summary>Peels ':'/'!' postfix wrappers (in any order, also
+        /// both) off an expression and classifies what was requested
+        /// in each case.</summary>
         private static CoercionInfo AnalyzeCoercion(Expr expr)
         {
             bool wantsUnit = false; string? explicitUnit = null;

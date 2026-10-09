@@ -1,20 +1,20 @@
 namespace fire.Runtime
 {
     /// <summary>
-    /// Die Ownership-Schicht weiß, WANN eine Objektinstanz zerstört wird
-    /// (Kaskade), aber nicht WIE ein destruct()-Methodenkörper ausgeführt wird
-    /// (das erfordert einen Statement-Interpreter). Der Evaluator implementiert
-    /// dieses Interface und wird von Scope.Release / ObjectInstance.Destroy
-    /// aufgerufen. Für Tests/vor Fertigstellung des Evaluators reicht eine
-    /// einfache Implementierung, die nur protokolliert oder nichts tut.
+    /// The ownership layer knows WHEN an object instance is destroyed
+    /// (cascade), but not HOW a destruct() method body is executed
+    /// (that requires a statement interpreter). The evaluator implements
+    /// this interface and is called from Scope.Release / ObjectInstance.Destroy.
+    /// For tests/before the evaluator is complete, a
+    /// simple implementation that only logs or does nothing suffices.
     /// </summary>
     public interface IDestructRunner
     {
         void RunDestructor(ObjectInstance instance);
     }
 
-    /// <summary>No-op-Implementierung für Kontexte ohne Destruktor-Semantik
-    /// (z.B. Unit-Tests, die nur den Ownership-Baum selbst prüfen wollen).</summary>
+    /// <summary>No-op implementation for contexts without destructor semantics
+    /// (e.g. unit tests that only want to check the ownership tree itself).</summary>
     public sealed class NullDestructRunner : IDestructRunner
     {
         public static readonly NullDestructRunner Instance = new();

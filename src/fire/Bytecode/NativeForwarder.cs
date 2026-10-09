@@ -4,29 +4,29 @@ using fire.Values;
 namespace fire.Bytecode
 {
     /// <summary>
-    /// Eine Methode, die nichts weiter tut, als eine native Funktion mit `this.feld` und ihren eigenen Parametern aufzurufen:
+    /// A method that does nothing more than call a native function with `this.field` and its own parameters:
     ///
     /// <code>Print(string text) { __GRPHRndPrint(this.id, text) }</code>
     ///
-    /// So sind alle Methoden der Brücken-Preludes (Grafik, Geräte, Dateien, ...) gebaut. Für solche Methoden spart die VM
-    /// den ganzen Aufruf-Apparat (Scope, Slots, Frame, Rückkehr) und ruft die native Funktion direkt auf (siehe VM.OpCallMethod:
-    /// Schnellpfad der Inline-Caches). Erkannt wird das einmal pro Methode am fertigen Bytecode:
+    /// This is how all methods of the bridge preludes (graphics, devices, files, ...) are built. For such methods the VM saves
+    /// the whole call apparatus (scope, slots, frame, return) and calls the native function directly (see VM.OpCallMethod:
+    /// fast path of the inline caches). This is detected once per method on the finished bytecode:
     ///
     /// <c>LoadThis; GetField f; LoadLocal 0,0 ... LoadLocal 0,n-1; CallNative i, n+1; (Return | Pop; LoadConst undefined; Return)</c>
     ///
-    /// Die native Funktion selbst wird - wie überall - über ihren INDEX angesprungen, der beim Übersetzen feststeht.
+    /// The native function itself is - as everywhere - jumped to via its INDEX, which is fixed at translation time.
     /// </summary>
     public sealed class NativeForwarder
     {
         public int NativeIndex { get; }
 
-        /// <summary>Das Feld, dessen Wert das erste Argument ist (`id`, `handle`).</summary>
+        /// <summary>The field whose value is the first argument (`id`, `handle`).</summary>
         public string FieldName { get; }
 
-        /// <summary>Anzahl der Parameter der Methode (die native Funktion bekommt ein Argument mehr: das Feld).</summary>
+        /// <summary>Number of parameters of the method (the native function gets one more argument: the field).</summary>
         public int ParamCount { get; }
 
-        /// <summary>Die Methode gibt das Ergebnis der nativen Funktion zurück (sonst `undefined`).</summary>
+        /// <summary>The method returns the result of the native function (otherwise `undefined`).</summary>
         public bool ReturnsResult { get; }
 
         private NativeForwarder(int nativeIndex, string fieldName, int paramCount, bool returnsResult)
@@ -37,7 +37,7 @@ namespace fire.Bytecode
             ReturnsResult = returnsResult;
         }
 
-        /// <summary>Prüft den Körper einer Methode; null, wenn er nicht genau dieses Muster hat.</summary>
+        /// <summary>Checks the body of a method; null if it does not have exactly this pattern.</summary>
         public static NativeForwarder? TryCreate(Chunk chunk, int paramCount)
         {
             var code = chunk.Code;

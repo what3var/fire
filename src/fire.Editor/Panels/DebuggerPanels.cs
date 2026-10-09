@@ -3,8 +3,8 @@ using System.Collections.Generic;
 
 namespace fire.Editor
 {
-    /// <summary>Bündelt die drei Debugger-Ansichten (Threads, Scope, Stack) für das Hauptfenster: eine DebugSession
-    /// anbinden, alle gemeinsam aktualisieren, die Thread-Auswahl weiterreichen.</summary>
+    /// <summary>Bundles the three debugger views (threads, scope, stack) for the main window: attach a DebugSession,
+    /// update all together, pass on the thread selection.</summary>
     internal sealed class DebuggerPanels
     {
         private readonly ThreadsPanelControl _threads;
@@ -28,7 +28,7 @@ namespace fire.Editor
             _stack.AttachSession(session);
         }
 
-        /// <summary>Baut alle drei Ansichten neu auf - nach JEDER Zustandsänderung (Kompilieren, Schritt, Stopp, Thread-Wechsel).</summary>
+        /// <summary>Rebuilds all three views - after EVERY state change (compile, step, stop, thread switch).</summary>
         public void Refresh(IEnumerable<string> breakpointDescriptions)
         {
             _threads.Refresh(breakpointDescriptions);

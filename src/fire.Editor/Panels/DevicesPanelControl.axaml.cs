@@ -17,13 +17,13 @@ using fire.Device.Manager.Drivers;
 
 namespace fire.Editor
 {
-    /// <summary>Die Geräte-Übersicht: ein Baum der gefundenen Geräte (je Treiber ein Knoten), mit Statussymbol am Gerät
-    /// (verbunden / verfügbar / ungeprüft / nicht verfügbar) und einem Stern am Standardgerät. Darüber eine Symbolleiste
-    /// zum Suchen, Verbinden/Trennen und Öffnen der Paketverfolgung; dieselben Aktionen im Kontextmenü.
+    /// <summary>The device overview: a tree of the devices found (one node per driver), with a status icon on the device
+    /// (connected / available / unchecked / unavailable) and a star on the default device. Above it a toolbar
+    /// for searching, connecting/disconnecting and opening the packet tracking; the same actions in the context menu.
     ///
-    /// Arbeitet auf dem geteilten DeviceManager des Editors (siehe EditorDeviceService); Ereignisse des Managers kommen
-    /// auf beliebigen Threads und werden hier gebündelt auf den UI-Thread geholt. Verbinden/Suchen laufen auf einem
-    /// Hintergrund-Thread (das Öffnen eines Anschlusses kann dauern).</summary>
+    /// Works on the shared DeviceManager of the editor (see EditorDeviceService); events of the manager arrive
+    /// on arbitrary threads and are brought here, bundled, to the UI thread. Connecting/searching run on a
+    /// background thread (opening a port can take a while).</summary>
     public partial class DevicesPanelControl : UserControl
     {
         private static readonly IBrush ConnectedBrush = new ImmutableSolidColorBrush(Color.FromRgb(0x10, 0x7C, 0x10));
@@ -37,10 +37,10 @@ namespace fire.Editor
         private readonly HashSet<string> _collapsedDrivers = new();
         private bool _searching;
 
-        /// <summary>Der Nutzer möchte die Paketverfolgung des Geräts mit dieser Kennung öffnen.</summary>
+        /// <summary>The user wants to open the packet tracking of the device with this identifier.</summary>
         public event Action<string>? OpenTraceRequested;
 
-        /// <summary>Eine Meldung für die Statusleiste des Hosts.</summary>
+        /// <summary>A message for the host's status bar.</summary>
         public event Action<string>? StatusMessage;
 
         public DevicesPanelControl()
@@ -62,7 +62,7 @@ namespace fire.Editor
             });
         }
 
-        /// <summary>Verbindet das Panel mit dem geteilten Manager des Editors.</summary>
+        /// <summary>Connects the panel to the editor's shared manager.</summary>
         public void Attach(EditorDeviceService service)
         {
             _service = service;
@@ -72,7 +72,7 @@ namespace fire.Editor
             Refresh();
         }
 
-        /// <summary>Das im Baum gewählte Gerät, null wenn keins (oder ein Treiber-Knoten) gewählt ist.</summary>
+        /// <summary>The device chosen in the tree, null if none (or a driver node) is chosen.</summary>
         public DeviceSlot? SelectedSlot =>
             DeviceTree.SelectedItem is TreeViewItem { Tag: string identifier } ? _service?.Manager.GetSlotByIdentifier(identifier) : null;
 
@@ -90,7 +90,7 @@ namespace fire.Editor
             }, DispatcherPriority.Background);
         }
 
-        /// <summary>Baut den Baum neu auf (Auswahl und aufgeklappte Treiber bleiben erhalten).</summary>
+        /// <summary>Rebuilds the tree (selection and expanded drivers are kept).</summary>
         public void Refresh()
         {
             if (_service == null) return;
@@ -196,14 +196,14 @@ namespace fire.Editor
 
         private void DeviceTree_DoubleTapped(object? sender, TappedEventArgs e)
         {
-            // Doppelklick auf ein Gerät: Paketverfolgung (der Doppelklick auf einen Treiber klappt ihn nur auf/zu).
+            // Double click on a device: packet tracking (the double click on a driver only expands/collapses it).
             if (SelectedSlot != null && (e.Source as Visual)?.FindAncestorOfType<TreeViewItem>(true) is { Tag: string })
                 OpenTraceForSelected();
         }
 
         private void DeviceTree_PointerPressed(object? sender, PointerPressedEventArgs e)
         {
-            // Ein Rechtsklick wählt das Element darunter aus (TreeView macht das von sich aus nicht).
+            // A right click selects the element beneath it (TreeView does not do that by itself).
             if (e.GetCurrentPoint(DeviceTree).Properties.IsRightButtonPressed && (e.Source as Visual)?.FindAncestorOfType<TreeViewItem>(true) is { } item)
             {
                 item.IsSelected = true;
@@ -212,7 +212,7 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Aktionen (auch vom Menü des Hosts aufgerufen)
+        // Actions (also called from the host's menu)
         // -----------------------------------------------------------
 
         private void Search_Click(object? sender, RoutedEventArgs e) => _ = SearchAsync();
@@ -220,7 +220,7 @@ namespace fire.Editor
         private void Disconnect_Click(object? sender, RoutedEventArgs e) => _ = DisconnectSelectedAsync();
         private void Trace_Click(object? sender, RoutedEventArgs e) => OpenTraceForSelected();
 
-        /// <summary>Sucht Geräte und prüft ihre Verfügbarkeit (Hintergrund-Thread).</summary>
+        /// <summary>Searches for devices and checks their availability (background thread).</summary>
         public async Task SearchAsync()
         {
             if (_service == null || _searching) return;

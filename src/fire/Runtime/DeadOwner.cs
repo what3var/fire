@@ -4,8 +4,8 @@ using System.Collections.Generic;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Der "Besitzer" eines zerstörten Objekts (siehe ObjectInstance.Destroy): damit eine wiederverwendbare Scope nach dem Verlassen nicht
-    /// von Objekten referenziert bleibt, die sie einmal besaßen. Besitzt selbst nie etwas.
+    /// The "owner" of a destroyed object (see ObjectInstance.Destroy): so that a reusable scope is not left referenced after being left
+    /// by objects it once owned. Itself never owns anything.
     /// </summary>
     internal sealed class DeadOwner : IOwner
     {

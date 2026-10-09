@@ -4,66 +4,66 @@ namespace fire.Ast
 {
     public abstract record Stmt(int Source, int Line)
     {
-        // Als eigener, benannter Typ referenziert (u.a. von LambdaExpr.Body),
-        // daher als nested type statt nur als sealed record auf Namespace-Ebene.
+        // Referenced as its own named type (among others by LambdaExpr.Body),
+        // hence as a nested type instead of just a sealed record at namespace level.
         public sealed record BlockStmt(int Source, int Line, IReadOnlyList<Stmt> Statements) : Stmt(Source, Line);
     }
 
     public sealed record ExprStmt(int Source, int Line, Expr Expression) : Stmt(Source, Line);
 
-    /// <summary>Eine Präprozessor-Direktive, die keine eigene Laufzeit-Wirkung
-    /// hat (z.B. `#extern "libName"` - wirkt nur beim Parsen, siehe
-    /// Parser._currentExternLib/ExternDecl.LibName). Resolver/Compiler
-    /// überspringen sie einfach.</summary>
+    /// <summary>A preprocessor directive that has no runtime effect of its own
+    /// (e.g. `#extern "libName"` - takes effect only when parsing, see
+    /// Parser._currentExternLib/ExternDecl.LibName). Resolver/compiler
+    /// simply skip it.</summary>
     public sealed record NoOpStmt(int Source, int Line) : Stmt(Source, Line);
 
-    /// <summary>`#noshadow` (siehe Parser.ParseDirective/Resolving.Resolver.
-    /// ResolveFireStmt) - schaltet den Read-only-Globals-Snapshot in JEDEM
-    /// `fire`-Block DES GANZEN PROGRAMMS ab (zurück auf das frühere
-    /// Verhalten: ein `fire`-Block sieht dann WIEDER nur seine expliziten
-    /// `taking`/`with`-Erfassungen, keine andere Hauptprogramm-Variable).
-    /// Erzeugt keinen eigenen, laufzeitrelevanten AST-Knoten-Effekt außerhalb
-    /// des Resolvers (der ihn in einem Vorab-Durchlauf einsammelt, wie
-    /// Klassen/Enums/Externs) - wirkt global fürs ganze Programm,
-    /// unabhängig davon, VOR oder NACH welchem `fire`-Block sie steht.
-    /// MUSS dafür allerdings eine TOP-LEVEL-Anweisung sein (direkt im
-    /// Programm, nicht verschachtelt innerhalb einer Klasse/Methode/eines
-    /// Blocks) - der Vorab-Durchlauf sucht nur dort, exakt wie bei
-    /// `#include`/`#extern` üblich (Direktiven stehen konventionell am
-    /// Dateianfang).</summary>
+    /// <summary>`#noshadow` (see Parser.ParseDirective/Resolving.Resolver.
+    /// ResolveFireStmt) - switches off the read-only globals snapshot in EVERY
+    /// `fire` block OF THE WHOLE PROGRAM (back to the earlier
+    /// behaviour: a `fire` block then AGAIN sees only its explicit
+    /// `taking`/`with` captures, no other main-program variable).
+    /// Produces no AST-node effect of its own relevant at runtime outside
+    /// the resolver (which collects it in a pre-pass, like
+    /// classes/enums/externs) - applies globally to the whole program,
+    /// regardless of BEFORE or AFTER which `fire` block it appears.
+    /// However, it MUST be a TOP-LEVEL statement (directly in the
+    /// program, not nested inside a class/method/
+    /// block) - the pre-pass looks only there, exactly as is
+    /// usual for `#include`/`#extern` (directives conventionally sit at
+    /// the top of the file).</summary>
     public sealed record NoShadowDirective(int Source, int Line) : Stmt(Source, Line);
 
-    /// <summary>`#nosync` (docs/THREADING_DESIGN.md Abschnitt 7): das Hauptprogramm arbeitet die Warteschlange seiner Fire-Threads (und eingehende
-    /// Host-Callbacks) NICHT mehr selbst an sicheren Punkten ab, sondern nur noch bei einem ausdrücklichen `sync globals`. Wirkt fürs ganze
-    /// Programm (der Compiler emittiert dafür ganz am Anfang `SetAutoSync 0`); muss eine Top-Level-Anweisung sein.</summary>
+    /// <summary>`#nosync` (docs/THREADING_DESIGN.md section 7): the main program NO LONGER processes the queue of its fire threads (and incoming
+    /// host callbacks) itself at safe points, but only at an explicit `sync globals`. Applies to the whole
+    /// program (the compiler emits `SetAutoSync 0` at the very start for this); must be a top-level statement.</summary>
     public sealed record NoSyncDirective(int Source, int Line) : Stmt(Source, Line);
 
-    /// <summary>`#timeout wert` (z.B. `#timeout 10s`, `#timeout 500ms`, `#timeout 2000`): die Wartezeit, die Warte-Funktionen ohne eigene Zeitangabe
-    /// verwenden (`Device.WaitFor`/`WaitForString`; ohne die Direktive 30 Sekunden). `wert`: ein Zeitwert (`10s`), eine `TimeSpan` ist hier nicht möglich (die
-    /// Direktive wird ganz am Programmanfang ausgewertet) oder eine Zahl in Millisekunden - wie bei `Sleep`. Der Compiler emittiert dafür ganz am Anfang
-    /// `SetTimeout`; muss eine Top-Level-Anweisung sein.</summary>
+    /// <summary>`#timeout value` (e.g. `#timeout 10s`, `#timeout 500ms`, `#timeout 2000`): the wait time that wait functions without their own duration
+    /// use (`Device.WaitFor`/`WaitForString`; 30 seconds without the directive). `value`: a time value (`10s`), a `TimeSpan` is not possible here (the
+    /// directive is evaluated at the very start of the program) or a number in milliseconds - as with `Sleep`. The compiler emits for this at the very start
+    /// `SetTimeout`; must be a top-level statement.</summary>
     public sealed record TimeoutDirective(int Source, int Line, Expr Value) : Stmt(Source, Line);
 
-    /// <summary>Ein einzelnes Enum-Mitglied. ValueExpr fehlt -> Wert ist der
-    /// des Vorgängers + 1 (0 beim ersten Mitglied) - klassisches C-artiges
-    /// Auto-Increment. Wenn gesetzt, MUSS ValueExpr ein Int-Literal sein (vom
-    /// Resolver geprüft) - beliebige Ausdrücke würden eine echte Compile-Zeit-
-    /// Konstantenauswertung brauchen, die diese Sprache (noch) nicht hat.</summary>
+    /// <summary>A single enum member. If ValueExpr is missing -> the value is that
+    /// of the predecessor + 1 (0 for the first member) - classic C-like
+    /// auto-increment. If set, ValueExpr MUST be an int literal (checked by the
+    /// resolver) - arbitrary expressions would need real compile-time
+    /// constant evaluation, which this language does not (yet) have.</summary>
     public sealed record EnumMember(string Name, Expr? ValueExpr);
 
-    /// <summary>`enum Name { A, B = 5, C }` - reine Compile-Zeit-Konstanten,
-    /// keine eigene Laufzeit-Repräsentation (kein eigener ValueKind, keine
-    /// Instanzen) - `Name.Mitglied` wird vom Compiler direkt zum passenden
-    /// Int-Literal aufgelöst (siehe Resolver.ResolveExpr/MemberExpr-Fall,
-    /// ResolvedRef.EnumMember). Bewusst so simpel gehalten statt z.B. jedes
-    /// Mitglied als eigene Objekt-Instanz einer generierten Klasse zu
-    /// modellieren - das bräuchte ein Konzept für STATISCHE/geteilte Instanzen,
-    /// das diese Sprache aktuell nicht hat.</summary>
+    /// <summary>`enum Name { A, B = 5, C }` - pure compile-time constants,
+    /// no runtime representation of their own (no ValueKind of their own, no
+    /// instances) - `Name.Member` is resolved by the compiler directly to the matching
+    /// int literal (see Resolver.ResolveExpr/MemberExpr case,
+    /// ResolvedRef.EnumMember). Deliberately kept this simple instead of e.g. modelling every
+    /// member as an object instance of a generated class of its own -
+    /// that would need a concept for STATIC/shared instances,
+    /// which this language does not currently have.</summary>
     public sealed record EnumDecl(int Source, int Line, string Name, IReadOnlyList<EnumMember> Members) : Stmt(Source, Line);
 
-    /// <summary>IsReadonly: per `readonly` deklariert - der Resolver verbietet
-    /// dann jede weitere Zuweisung an diese Variable nach der Deklaration
-    /// (siehe Resolver.ResolveAssignTarget).</summary>
+    /// <summary>IsReadonly: declared with `readonly` - the resolver then forbids
+    /// any further assignment to this variable after the declaration
+    /// (see Resolver.ResolveAssignTarget).</summary>
     public sealed record VarDeclStmt(
         int Source, int Line, string Name, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, Expr? Initializer, bool IsReadonly = false) : Stmt(Source, Line);
 
@@ -78,51 +78,51 @@ namespace fire.Ast
     public sealed record ReturnStmt(int Source, int Line, Expr? Value) : Stmt(Source, Line);
     public sealed record ThrowStmt(int Source, int Line, Expr Value) : Stmt(Source, Line);
 
-    /// <summary>`delete ausdruck` (SPEC 2.5): zerstoert das Objekt, das Array oder den Puffer sofort - Destruktor und Kaskade laufen wie beim Verlassen des Owners.</summary>
+    /// <summary>`delete expression` (SPEC 2.5): destroys the object, array or buffer immediately - destructor and cascade run as when the owner is left.</summary>
     public sealed record DeleteStmt(int Source, int Line, Expr Target) : Stmt(Source, Line);
 
-    /// <summary>`break`/`continue` - nur innerhalb einer Schleife (`while`/
-    /// `for`/`foreach`) gültig, geprüft vom Resolver (`_loopDepth`). Bricht
-    /// NICHT über eine `try`/`catch`/`finally`-Grenze hinweg (siehe
-    /// Resolver.ResolveStmt zu `_tryDepth`) - das wird als Fehler abgelehnt,
-    /// keine automatische Handler-Abmeldung. Innerhalb eines `switch`-case
-    /// ist `break` etwas GANZ ANDERES (reiner Parser-Zweigabschluss, kein
-    /// Sprung, siehe Parser.ParseSwitchCaseBody) - dieser Knoten hier
-    /// entsteht nur für ein `break` AUSSERHALB eines switch-case (z.B.
-    /// direkt in einer Schleife, auch einer, die selbst in einem switch-case
-    /// steckt).</summary>
+    /// <summary>`break`/`continue` - valid only inside a loop (`while`/
+    /// `for`/`foreach`), checked by the resolver (`_loopDepth`). Does
+    /// NOT break across a `try`/`catch`/`finally` boundary (see
+    /// Resolver.ResolveStmt on `_tryDepth`) - that is rejected as an error,
+    /// no automatic handler deregistration. Inside a `switch` case
+    /// `break` is something COMPLETELY DIFFERENT (a pure parser branch terminator, no
+    /// jump, see Parser.ParseSwitchCaseBody) - this node here
+    /// arises only for a `break` OUTSIDE a switch case (e.g.
+    /// directly in a loop, even one that is itself inside a switch
+    /// case).</summary>
     public sealed record BreakStmt(int Source, int Line) : Stmt(Source, Line);
     public sealed record ContinueStmt(int Source, int Line) : Stmt(Source, Line);
 
-    /// <summary>Eine einzelne `taking`-Erfassung in einem `fire`-Statement
-    /// (siehe Ast.FireStmt-Doku) - `VarName` ist der Name, unter dem der Wert
-    /// im isolierten Fire-Block-Scope sichtbar ist, `Source` der Ausdruck,
-    /// der ihn im AUFRUFENDEN Kontext liefert (typischerweise ein einfacher
-    /// Bezeichner, kann aber - siehe Parser.ParseFireCallForm - auch ein
-    /// synthetisches `this` oder ein Argumentausdruck der `fire MethodA(...)`-
-    /// Aufrufform sein).</summary>
+    /// <summary>A single `taking` capture in a `fire` statement
+    /// (see Ast.FireStmt docs) - `VarName` is the name under which the value is
+    /// visible in the isolated fire-block scope, `Source` the expression
+    /// that supplies it in the CALLING context (typically a simple
+    /// identifier, but - see Parser.ParseFireCallForm - it can also be a
+    /// synthetic `this` or an argument expression of the `fire MethodA(...)`
+    /// call form).</summary>
     public sealed record FireTakingCapture(string VarName, Expr Source);
 
     /// <summary>`fire { ... }` / `fire taking X { ... }` / `fire with actorA { ... }`
     /// / `fire MethodA(args) with actorA taking X` (docs/THREADING_DESIGN.md
-    /// Abschnitt 1/2/3). `TakingCaptures`: 0 bis n `taking`-Erfassungen
-    /// (Tiefenkopie bei Objekten, Werteweitergabe bei Primitiven - siehe
-    /// Runtime.FireRuntime.FireVmTaking), in der Reihenfolge, in der sie im
-    /// neuen globalen Scope des Fire-Threads landen (Resolver.
-    /// ResolveFireStmt/Compiler.CompileFireStmt MÜSSEN dieselbe Reihenfolge
-    /// verwenden). `WithVarName`/`WithSource`: höchstens eine Actor-Referenz,
-    /// DIREKT weitergegeben (keine Kopie, siehe Ast.ProcessStmt-Doku),
-    /// belegt IMMER den Slot NACH allen TakingCaptures.
+    /// section 1/2/3). `TakingCaptures`: 0 to n `taking` captures
+    /// (deep copy for objects, value passing for primitives - see
+    /// Runtime.FireRuntime.FireVmTaking), in the order in which they end up in the
+    /// new global scope of the fire thread (Resolver.
+    /// ResolveFireStmt/Compiler.CompileFireStmt MUST use the same
+    /// order). `WithVarName`/`WithSource`: at most one actor reference,
+    /// passed DIRECTLY (no copy, see Ast.ProcessStmt docs),
+    /// ALWAYS occupies the slot AFTER all TakingCaptures.
     ///
-    /// Die Aufrufform `fire MethodA(args)` (siehe Parser.ParseFireCallForm)
-    /// erzeugt GAR KEINEN eigenen AST-Knoten - sie wird beim Parsen direkt zu
-    /// diesem Knoten entzuckert: `this` und jedes Argument werden wie
-    /// zusätzliche `taking`-Erfassungen unter internen Namen gebunden, und
-    /// der Body besteht aus genau einem synthetischen Aufruf der genommenen
-    /// Methode auf der genommenen `this`-Kopie. Der Body wird dadurch für
-    /// Resolver/Compiler nicht von einem "echten" `fire { ... }`-Block
-    /// unterscheidbar - kompletter Code-Reuse ohne jede Sonderbehandlung
-    /// jenseits des Parsers.</summary>
+    /// The call form `fire MethodA(args)` (see Parser.ParseFireCallForm)
+    /// produces NO AST node of its own - it is desugared directly into
+    /// this node while parsing: `this` and each argument are bound like
+    /// additional `taking` captures under internal names, and
+    /// the body consists of exactly one synthetic call of the taken
+    /// method on the taken `this` copy. The body thereby becomes, for
+    /// the resolver/compiler, indistinguishable from a "real" `fire { ... }` block -
+    /// complete code reuse without any special handling
+    /// beyond the parser.</summary>
     public sealed record FireStmt(
         int Source,
         int Line,
@@ -131,68 +131,68 @@ namespace fire.Ast
         Expr? WithSource,
         Stmt.BlockStmt Body) : Stmt(Source, Line);
 
-    /// <summary>Beginn einer `sync global { ... }`-Sektion (docs/THREADING_DESIGN.md Abschnitt 7) - der Parser entzuckert den Block zu
-    /// `SectionEnterStmt; try { Body } finally { SectionExitStmt }`, damit die Sektion auch bei `throw` im Block wieder endet.</summary>
+    /// <summary>Start of a `sync global { ... }` section (docs/THREADING_DESIGN.md section 7) - the parser desugars the block into
+    /// `SectionEnterStmt; try { Body } finally { SectionExitStmt }`, so that the section also ends on `throw` in the block.</summary>
     public sealed record SectionEnterStmt(int Source, int Line) : Stmt(Source, Line);
 
-    /// <summary>Ende einer `sync global { ... }`-Sektion (siehe <see cref="SectionEnterStmt"/>).</summary>
+    /// <summary>End of a `sync global { ... }` section (see <see cref="SectionEnterStmt"/>).</summary>
     public sealed record SectionExitStmt(int Source, int Line) : Stmt(Source, Line);
 
-    /// <summary>`silence obj.member` / `silence obj.*` / `silence x`: entfernt Proben (siehe Ast.ProbeExpr). `MemberForm`: `Target` ist das Objekt und
-    /// `Member` das Mitglied (null = alle Proben des Objekts); sonst ist `Target` ein Ausdruck, der zu einem Probe-Handle oder einem Objekt auswertet.</summary>
+    /// <summary>`silence obj.member` / `silence obj.*` / `silence x`: removes probes (see Ast.ProbeExpr). `MemberForm`: `Target` is the object and
+    /// `Member` the member (null = all probes of the object); otherwise `Target` is an expression that evaluates to a probe handle or an object.</summary>
     public sealed record SilenceStmt(int Source, int Line, Expr Target, string? Member, bool MemberForm) : Stmt(Source, Line);
 
-    /// <summary>`fire global { ... } [taking X ...]` (docs/THREADING_DESIGN.md Abschnitt 7): ein Auftrag für das Hauptprogramm, der bei
-    /// dessen nächstem `sync globals` mit den echten Globals läuft, ohne dass der Aufrufer wartet. Der Parser macht den Block zu einem
-    /// Lambda, dessen Parameter die `taking`-Erfassungen sind (sie werden beim Einreihen als Wert/Kopie übergeben) - das Lambda sieht
-    /// wie jedes Lambda die Globals, aber keine Locals des Aufrufers.</summary>
+    /// <summary>`fire global { ... } [taking X ...]` (docs/THREADING_DESIGN.md section 7): a job for the main program that runs at
+    /// its next `sync globals` with the real globals, without the caller waiting. The parser turns the block into a
+    /// lambda whose parameters are the `taking` captures (they are passed as value/copy when enqueued) - like any lambda, the lambda sees
+    /// the globals, but no locals of the caller.</summary>
     public sealed record PostGlobalStmt(int Source, int Line, LambdaExpr Lambda, IReadOnlyList<Expr> Args) : Stmt(Source, Line);
 
     /// <summary>`process X` (docs/THREADING_DESIGN.md Abschnitt 2) -
-    /// blockierend: wartet, bis eine Nachricht in der Mailbox des
-    /// Actor-Ziels `X` eintrifft, und führt dann GENAU EINE davon aus (siehe
-    /// VM.ProcessOneMessage). Ein Statement (kein Ausdruck, kein sinnvoller
-    /// Wert - blockiert ja per Definition, bis etwas da ist). Die
-    /// nicht-blockierende Variante `try process X` ist dagegen ein AUSDRUCK
-    /// (liefert true/false, siehe Ast.TryProcessExpr) - wie beim
-    /// `sync`/`try sync`-Paar.</summary>
+    /// blocking: waits until a message arrives in the mailbox of the
+    /// actor target `X`, and then executes EXACTLY ONE of them (see
+    /// VM.ProcessOneMessage). A statement (not an expression, no meaningful
+    /// value - it blocks by definition until something is there). The
+    /// non-blocking variant `try process X`, by contrast, is an EXPRESSION
+    /// (yields true/false, see Ast.TryProcessExpr) - as with the
+    /// `sync`/`try sync` pair.</summary>
     public sealed record ProcessStmt(int Source, int Line, Expr Target) : Stmt(Source, Line);
 
-    /// <summary>`leave` (docs/THREADING_DESIGN.md Abschnitt 6.1) - verlässt
-    /// den aktuellen Fire-Thread (oder, wenn außerhalb eines Fire-Threads
-    /// verwendet, die aktuell laufende VM-Instanz allgemein - bewusst nicht
-    /// eigens auf "nur innerhalb von fire" eingeschränkt, siehe BYTECODE.md).
-    /// Kompiliert zu einem einzelnen Opcode (VM.RequestLeave), keine eigenen
-    /// Kinder/Operanden.</summary>
+    /// <summary>`leave` (docs/THREADING_DESIGN.md section 6.1) - leaves
+    /// the current fire thread (or, when used outside a fire thread,
+    /// the currently running VM instance in general - deliberately not
+    /// restricted specifically to "only inside fire", see BYTECODE.md).
+    /// Compiles to a single opcode (VM.RequestLeave), no
+    /// children/operands of its own.</summary>
     public sealed record LeaveStmt(int Source, int Line) : Stmt(Source, Line);
 
-    /// <summary>`terminate()` / `terminate(wert)` (docs/THREADING_DESIGN.md
-    /// Abschnitt 6.3) - globaler, endgültiger Not-Aus für ALLE Threads.
-    /// `Value` ist der optionale Exit-Wert (später über `VM.ExitValue`
-    /// auslesbar) - `null` bedeutet "kein Argument", nicht "undefined
-    /// explizit übergeben" (beides landet zwar zur Laufzeit gleich bei
-    /// `undefined`, aber die Unterscheidung ist für den Compiler relevant,
-    /// der sonst unnötig einen LoadConst-Undefined emittieren müsste).</summary>
+    /// <summary>`terminate()` / `terminate(value)` (docs/THREADING_DESIGN.md
+    /// section 6.3) - global, final emergency stop for ALL threads.
+    /// `Value` is the optional exit value (can later be read via `VM.ExitValue`);
+    /// `null` means "no argument", not "undefined
+    /// passed explicitly" (both do end up the same at runtime at
+    /// `undefined`, but the distinction is relevant to the compiler,
+    /// which would otherwise needlessly have to emit a LoadConst-Undefined).</summary>
     public sealed record TerminateStmt(int Source, int Line, Expr? Value) : Stmt(Source, Line);
 
     /// <summary>`catch threads(ExceptionType e) { ... }` / `catch threads() { ... }`
-    /// (docs/THREADING_DESIGN.md Abschnitt 6.2) - GLOBALE, programmweite
-    /// Registrierung (kein normaler try/catch-Handler!), nur an
-    /// Top-Level-Programmposition gültig (siehe Parser.ParseProgram).
-    /// Typ-dann-Name-Reihenfolge (`ExceptionType e`, wie ein Methoden-
-    /// parameter) - inzwischen dieselbe Reihenfolge wie beim normalen
-    /// `catch (TypeName varName)` (siehe Parser.ParseCatchClause).
-    /// `TypeName`/`VarName` beide `null` bei `catch threads()`
-    /// (fängt alles, ohne die Exception an eine Variable zu binden).</summary>
+    /// (docs/THREADING_DESIGN.md section 6.2) - GLOBAL, program-wide
+    /// registration (not a normal try/catch handler!), valid only at
+    /// top-level program position (see Parser.ParseProgram).
+    /// Type-then-name order (`ExceptionType e`, like a method
+    /// parameter) - by now the same order as for the normal
+    /// `catch (TypeName varName)` (see Parser.ParseCatchClause).
+    /// `TypeName`/`VarName` both `null` for `catch threads()`
+    /// (catches everything, without binding the exception to a variable).</summary>
     public sealed record CatchThreadsDecl(int Source, int Line, TypeRef? TypeRef, string? VarName, Stmt.BlockStmt Body) : Stmt(Source, Line);
 
     /// <summary>`catch terminate(v) { ... }` (docs/THREADING_DESIGN.md
-    /// Abschnitt 6.3) - GLOBALER Beobachtungs-Hook für `terminate`, läuft im
-    /// Main-Thread, kann das Beenden NICHT verhindern (siehe VM.
-    /// RunTerminateHandlerIfAny). Höchstens einmal im ganzen Programm
-    /// sinnvoll (spätere Registrierungen überschreiben frühere, siehe
-    /// Bytecode.GlobalHandlers). `VarName == null` bei `catch terminate()`
-    /// (Body ohne gebundenen Wert).</summary>
+    /// section 6.3) - GLOBAL observation hook for `terminate`, runs in the
+    /// main thread, can NOT prevent termination (see VM.
+    /// RunTerminateHandlerIfAny). Makes sense at most once in the whole program
+    /// (later registrations override earlier ones, see
+    /// Bytecode.GlobalHandlers). `VarName == null` for `catch terminate()`
+    /// (body without a bound value).</summary>
     public sealed record CatchTerminateDecl(int Source, int Line, string? VarName, Stmt.BlockStmt Body) : Stmt(Source, Line);
 
     public sealed record CatchClause(int Source, int Line, TypeRef? TypeRef, string VarName, Stmt.BlockStmt Body);
@@ -203,29 +203,29 @@ namespace fire.Ast
         Stmt.BlockStmt TryBlock,
         IReadOnlyList<CatchClause> Catches,
         Stmt.BlockStmt? Finally,
-        bool IsSyncSection = false) : Stmt(Source, Line); // IsSyncSection: vom Parser aus `sync global { }` erzeugt (nur für die Fehlermeldung)
+        bool IsSyncSection = false) : Stmt(Source, Line); // IsSyncSection: created by the parser from `sync global { }` (only for the error message)
 
     // ---------------------------------------------------------------
     // Klassen
     // ---------------------------------------------------------------
 
-    /// <summary>Zugriffsmodifikator eines Klassenmitglieds (Feld/Methode/
-    /// Property/Konstruktor) - SPEC "Zugriffsmodifikatoren". `Public`
-    /// (Default, wenn kein Modifikator angegeben wurde - bestehende Skripte/
-    /// die Prelude selbst bleiben dadurch unverändert gültig): von überall
-    /// zugreifbar. `Private`: nur innerhalb der DEKLARIERENDEN Klasse selbst
-    /// (nicht einmal von einer abgeleiteten Klasse aus). `Protected`: von
-    /// der deklarierenden Klasse UND jeder davon abgeleiteten Klasse aus
-    /// (rekursiv über die gesamte Vererbungskette) - siehe Resolver.
-    /// CheckMemberAccess für die genaue Prüfung.</summary>
+    /// <summary>Access modifier of a class member (field/method/
+    /// property/constructor) - SPEC "Access modifiers". `Public`
+    /// (default if no modifier was given - existing scripts/
+    /// the prelude itself thereby stay valid unchanged): accessible from
+    /// anywhere. `Private`: only inside the DECLARING class itself
+    /// (not even from a derived class). `Protected`: from
+    /// the declaring class AND every class derived from it
+    /// (recursively along the entire inheritance chain) - see Resolver.
+    /// CheckMemberAccess for the exact check.</summary>
     public enum AccessModifier { Public, Private, Protected }
 
-    /// <summary>IsReadonly: per `readonly` deklariert - nur innerhalb der
-    /// eigenen Konstruktoren der deklarierenden Klasse per `this.feld = ...`
-    /// zuweisbar (Resolver-Check, siehe ResolveAssignTarget); Zuweisungen an
-    /// ein dynamisch anderes Ziel (`obj.feld = ...` von außen) werden dagegen
-    /// NICHT statisch erfasst (dynamisches Typsystem) - bewusste Grenze
-    /// dieser Ausbaustufe.</summary>
+    /// <summary>IsReadonly: declared with `readonly` - assignable only inside the
+    /// declaring class's own constructors via `this.field = ...`
+    /// (resolver check, see ResolveAssignTarget); assignments to
+    /// a dynamically different target (`obj.field = ...` from outside), on the other hand, are
+    /// NOT captured statically (dynamic type system) - a deliberate limit
+    /// of this stage.</summary>
     public sealed record FieldDecl(
         int Source, int Line, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, string Name, Expr? Initializer, bool IsReadonly = false,
         AccessModifier Access = AccessModifier.Public, bool IsStatic = false) : Stmt(Source, Line);
@@ -234,21 +234,21 @@ namespace fire.Ast
     // Generics: Typ-Parameter mit Constraints ('where T is of X, is of Y')
     // ---------------------------------------------------------------
 
-    /// <summary>Eine einzelne Bedingung: entweder 'is of Name' (Name ist eine
-    /// Klasse/ein Interface) oder 'is in "unitName"' (dimensional
-    /// kompatibel mit dieser Einheit, siehe SPEC 3.4/6).</summary>
+    /// <summary>A single condition: either 'is of Name' (Name is a
+    /// class/an interface) or 'is in "unitName"' (dimensionally
+    /// compatible with this unit, see SPEC 3.4/6).</summary>
     public enum TypeConstraintKind { IsOf, IsIn }
     public sealed record TypeConstraint(TypeConstraintKind Kind, string Name);
 
-    /// <summary>Eine UND-Gruppe von Constraints, mit ':' verbunden - ALLE
-    /// müssen erfüllt sein (z.B. 'is of float : is in "mm"' - der Typ muss
-    /// BEIDES erfüllen).</summary>
+    /// <summary>An AND group of constraints, joined with ':' - ALL
+    /// must be satisfied (e.g. 'is of float : is in "mm"' - the type must
+    /// satisfy BOTH).</summary>
     public sealed record TypeConstraintGroup(IReadOnlyList<TypeConstraint> Constraints);
 
-    /// <summary>Ein Typ-Parameter mit seinen Constraint-Gruppen - mehrere
-    /// Gruppen, mit ',' verbunden, sind ODER-verknüpft: mindestens EINE
-    /// Gruppe muss vollständig erfüllt sein. Eine leere ConstraintGroups-
-    /// Liste bedeutet "keine Einschränkung" (nur `<T>`, kein `where`).</summary>
+    /// <summary>A type parameter with its constraint groups - several
+    /// groups, joined with ',', are OR-combined: at least ONE
+    /// group must be fully satisfied. An empty ConstraintGroups
+    /// list means "no restriction" (only `<T>`, no `where`).</summary>
     public sealed record TypeParam(string Name, IReadOnlyList<TypeConstraintGroup> ConstraintGroups);
 
     public sealed record MethodDecl(
@@ -272,13 +272,13 @@ namespace fire.Ast
 
     public sealed record DestructorDecl(int Source, int Line, Stmt.BlockStmt Body) : Stmt(Source, Line);
 
-    /// <summary>TypeParams: die Typ-Parameter dieser Klasse samt Constraints
-    /// (siehe TypeParam-Doku), leer für eine nicht-generische Klasse - siehe
-    /// SPEC "Generische Klassen". Nur bei der KLASSE selbst ausgewertet
-    /// (Resolver.ValidateTypeRef erlaubt Typ-Parameter-Namen als
-    /// "bekannten Typ" innerhalb der Klasse, siehe dort); die eigentliche
-    /// Constraint-PRÜFUNG passiert bei `new Name&lt;Arg1, ...&gt;(...)`
-    /// (siehe NewExpr.TypeArgs, VM.CheckTypeArgConstraints).</summary>
+    /// <summary>TypeParams: the type parameters of this class including constraints
+    /// (see TypeParam docs), empty for a non-generic class - see
+    /// SPEC "Generic classes". Evaluated only on the CLASS itself
+    /// (Resolver.ValidateTypeRef allows type-parameter names as a
+    /// "known type" inside the class, see there); the actual
+    /// constraint CHECK happens at `new Name&lt;Arg1, ...&gt;(...)`
+    /// (see NewExpr.TypeArgs, VM.CheckTypeArgConstraints).</summary>
     public sealed record ClassDecl(
         int Source,
         int Line,
@@ -289,11 +289,11 @@ namespace fire.Ast
         bool IsActor = false) : Stmt(Source, Line);
 
     // ---------------------------------------------------------------
-    // Interfaces (SPEC 8.5): reine Methodensignaturen, keine Felder/Bodies.
-    // Da Methodenaufruf immer ein dynamischer Namens-Lookup ist (kein
-    // statisches Typsystem), brauchen Interfaces KEINE eigene
-    // Laufzeit-Repräsentation - sie sind ein reiner Resolver-Check ("erfüllt
-    // diese Klasse alle Methoden des Interfaces").
+    // Interfaces (SPEC 8.5): pure method signatures, no fields/bodies.
+    // Since a method call is always a dynamic name lookup (no
+    // static type system), interfaces need NO runtime
+    // representation of their own - they are a pure resolver check ("does
+    // this class satisfy all methods of the interface").
     // ---------------------------------------------------------------
     public sealed record InterfaceMethodSig(
         int Line, TypeRef? ReturnType, string Name, IReadOnlyList<LambdaParam> Params);
@@ -306,66 +306,66 @@ namespace fire.Ast
     // Native Anbindung / unsafe (SPEC "APIs & Bitbreiten & Pointer")
     // ---------------------------------------------------------------
 
-    /// <summary>Deklariert eine native Funktionssignatur ohne Body - macht den
-    /// Namen als aufrufbar bekannt (wie eine registrierte native Funktion,
-    /// siehe Bytecode.NativeRegistry), die tatsächliche Implementierung kommt
-    /// später über ein Framework. ReturnType == null bedeutet "kein Rückgabewert"
-    /// (die Funktion liefert praktisch `undefined`). LibName kommt von der
-    /// nächsten vorangehenden `#extern "libName"`-Direktive im Quelltext (vom
-    /// Parser gestempelt, siehe Parser._currentExternLib) - null, wenn keine
-    /// solche Direktive vor dieser Deklaration stand, dann bleibt nur die
-    /// manuelle Host-Registrierung (Bytecode.ExternRegistry) als Weg zur
-    /// Implementierung.</summary>
+    /// <summary>Declares a native function signature without a body - makes the
+    /// name known as callable (like a registered native function,
+    /// see Bytecode.NativeRegistry), the actual implementation comes
+    /// later via a framework. ReturnType == null means "no return value"
+    /// (the function practically returns `undefined`). LibName comes from the
+    /// nearest preceding `#extern "libName"` directive in the source (stamped
+    /// by the parser, see Parser._currentExternLib) - null if no
+    /// such directive preceded this declaration, in which case only
+    /// manual host registration (Bytecode.ExternRegistry) remains as the way to
+    /// the implementation.</summary>
     public sealed record ExternDecl(
         int Source, int Line, TypeRef? ReturnType, string Name, IReadOnlyList<LambdaParam> Params, string? LibName) : Stmt(Source, Line);
 
-    /// <summary>`unsafe { ... }` - nur innerhalb eines solchen Blocks sind
-    /// Dereferenzierung ('*ausdruck') und Address-of ('&ausdruck') erlaubt.</summary>
+    /// <summary>`unsafe { ... }` - only inside such a block are
+    /// dereference ('*expression') and address-of ('&expression') allowed.</summary>
     public sealed record UnsafeStmt(int Source, int Line, Stmt.BlockStmt Body) : Stmt(Source, Line);
 
-    /// <summary>`Type Name { get { ... } set { ... } }` - C#-artige Property.
-    /// Mindestens eine der beiden (Getter/Setter) muss vorhanden sein (reine
-    /// Lese- oder reine Schreib-Property). Intern reine Namenskonvention
-    /// (wie GetIndex/SetIndex für '[]'): kompiliert zu zwei gewöhnlichen
-    /// Methoden 'get_Name'/'set_Name' (Setter mit implizitem Parameter
-    /// 'value') - `obj.Name`/`obj.Name = x` lösen die VM erst als normalen
-    /// Feldzugriff auf, und NUR wenn kein Feld dieses Namens existiert, als
-    /// Aufruf der passenden get_/set_-Methode (siehe VM.GetField/SetField).
-    /// Properties haben deshalb absichtlich NIE einen eigenen
-    /// ObjectInstance.Fields-Eintrag ihres eigenen Namens.</summary>
+    /// <summary>`Type Name { get { ... } set { ... } }` - C#-like property.
+    /// At least one of the two (getter/setter) must be present (pure
+    /// read or pure write property). Internally a pure naming convention
+    /// (like GetIndex/SetIndex for '[]'): compiles to two ordinary
+    /// methods 'get_Name'/'set_Name' (setter with the implicit parameter
+    /// 'value') - `obj.Name`/`obj.Name = x` are resolved by the VM first as a normal
+    /// field access, and ONLY if no field of this name exists, as a
+    /// call of the matching get_/set_ method (see VM.GetField/SetField).
+    /// Properties therefore deliberately NEVER have their own
+    /// ObjectInstance.Fields entry of their own name.</summary>
     public sealed record PropertyDecl(
         int Source, int Line, TypeRef? Type, string Name, Stmt.BlockStmt? Getter, Stmt.BlockStmt? Setter,
         AccessModifier Access = AccessModifier.Public, bool IsStatic = false) : Stmt(Source, Line);
 
-    /// <summary>`class extends Name { neue Mitglieder... }` - fügt die
-    /// Mitglieder direkt zur BESTEHENDEN Klasse `Name` hinzu (Ruby-artiges
-    /// "Reopening", keine Vererbung: die neuen Mitglieder landen 1:1 in der
-    /// ORIGINALEN ClassDecl, als hätten sie direkt dort gestanden). Wird
-    /// bereits VOR dem eigentlichen Resolven/Kompilieren komplett aufgelöst
-    /// (siehe Parser.MergeClassExtensions) - Resolver/Compiler sehen davon
-    /// nichts mehr, nur die bereits zusammengeführte ClassDecl. `TargetRef`
-    /// trägt (wie jeder andere TypeRef) den beim Parsen dieser Erweiterung
-    /// aktuellen Namespace + die aktiven `#using`-Namen mit sich (siehe
-    /// TypeRef.Namespaces) - dadurch findet MergeClassExtensions die
-    /// richtige Zielklasse auch dann, wenn `class extends X` den Namen NUR
-    /// unqualifiziert schreibt und `X` erst über den Namespace-Kontext DER
-    /// ERWEITERUNG selbst (nicht den der Zielklasse!) aufzulösen ist.</summary>
+    /// <summary>`class extends Name { new members... }` - adds the
+    /// members directly to the EXISTING class `Name` (Ruby-like
+    /// "reopening", no inheritance: the new members land 1:1 in the
+    /// ORIGINAL ClassDecl, as if they had been written there directly). Is
+    /// resolved completely BEFORE the actual resolving/compiling
+    /// (see Parser.MergeClassExtensions) - resolver/compiler see nothing
+    /// of it any more, only the already merged ClassDecl. `TargetRef`
+    /// carries (like every other TypeRef) the namespace current at
+    /// the parsing of this extension + the active `#using` names (see
+    /// TypeRef.Namespaces) - as a result MergeClassExtensions finds the
+    /// right target class even if `class extends X` writes the name ONLY
+    /// unqualified and `X` has to be resolved only via the namespace context OF THE
+    /// EXTENSION itself (not that of the target class!).</summary>
     public sealed record ClassExtensionDecl(int Source, int Line, TypeRef TargetRef, IReadOnlyList<Stmt> Members) : Stmt(Source, Line);
 
-    /// <summary>`namespace Name { Mitglieder... }` bzw. `namespace A.B { ... }`
-    /// (SPEC "Namespaces"). Anders als früher NICHT mehr durch einen
-    /// separaten Baumdurchlauf nach dem Parsen aufgelöst: der Parser
-    /// qualifiziert jede enthaltene Klassen-/Interface-/Enum-Deklaration
-    /// bereits WÄHREND des Parsens (siehe Parser._currentNamespace/
-    /// ParseNamespaceDecl), und jede Referenz (Basisklasse, `new`, `is of`,
-    /// `catch`, Feld-/Parameter-/Rückgabetypen) trägt ihren eigenen
-    /// Namespace-Kontext direkt an sich (siehe TypeRef.Namespaces). Dieser
-    /// Knoten selbst ist dadurch nur noch eine reine Gruppierung ohne eigene
-    /// Bedeutung für Resolver/Compiler - er wird direkt nach dem Parsen
-    /// trivial "flach geklopft" (Members wandern 1:1 an die Stelle des
-    /// NamespaceDecl-Knotens, siehe Parser.FlattenNamespaceWrappers), OHNE
-    /// dabei noch irgendetwas umzubenennen. `Name` ist rein informativ
-    /// (z.B. für Editor-Anzeige), spielt für die eigentliche Auflösung keine
-    /// Rolle mehr.</summary>
+    /// <summary>`namespace Name { members... }` or `namespace A.B { ... }`
+    /// (SPEC "Namespaces"). Unlike before, NO LONGER resolved by a
+    /// separate tree pass after parsing: the parser
+    /// qualifies every contained class/interface/enum declaration
+    /// already DURING parsing (see Parser._currentNamespace/
+    /// ParseNamespaceDecl), and every reference (base class, `new`, `is of`,
+    /// `catch`, field/parameter/return types) carries its own
+    /// namespace context directly (see TypeRef.Namespaces). This
+    /// node itself is thereby merely a pure grouping without meaning of its own
+    /// for resolver/compiler - it is trivially "flattened" right after parsing
+    /// (members move 1:1 into the place of the
+    /// NamespaceDecl node, see Parser.FlattenNamespaceWrappers), WITHOUT
+    /// renaming anything in the process. `Name` is purely informational
+    /// (e.g. for editor display), and plays no role in the actual
+    /// resolution any more.</summary>
     public sealed record NamespaceDecl(int Source, int Line, string Name, IReadOnlyList<Stmt> Members) : Stmt(Source, Line);
 }

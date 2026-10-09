@@ -34,21 +34,21 @@ namespace fire.Editor
     }
 
     /// <summary>
-    /// Tokenisiert Quelltext mit dem ECHTEN fire-Lexer für Syntax-
-    /// Highlighting - bewusst KEINE eigene, zweite (und potenziell vom echten
-    /// Verhalten abweichende) Tokenisierung. Der Lexer kennt Kommentare nicht
-    /// als eigenen Token-Typ (er überspringt sie beim Tokenisieren einfach) -
-    /// deshalb wird zusätzlich in den LÜCKEN zwischen echten Tokens nach
-    /// '//...'- und '/* ... */'-Läufen gesucht. Das ist sicher (kein
-    /// versehentliches Einfärben von "//" INNERHALB eines String-Literals),
-    /// weil String-/Char-Literale bereits vom echten Lexer als eigene Tokens
-    /// erkannt und damit aus den durchsuchten Lücken ausgeklammert sind.
+    /// Tokenises source text with the REAL fire lexer for syntax
+    /// highlighting - deliberately NO second tokenisation of its own (potentially deviating from the real
+    /// behaviour). The lexer does not know comments
+    /// as a token type of their own (it simply skips them when tokenising) -
+    /// therefore the GAPS between real tokens are additionally searched
+    /// for '//...' and '/* ... */' runs. This is safe (no
+    /// accidental colouring of "//" INSIDE a string literal),
+    /// because string/char literals have already been recognised by the real lexer as tokens of their own
+    /// and are thus excluded from the searched gaps.
     ///
-    /// Bei einer LexException (z.B. während des Tippens ein noch unbeendetes
-    /// String-Literal) wird GAR NICHT eingefärbt, statt nur bis zur
-    /// Fehlerstelle - der Rest würde sonst verwirrend "verwaist" aussehen. Der
-    /// nächste erfolgreiche Tokenisierungslauf (z.B. nach dem nächsten
-    /// Tastendruck) holt die Hervorhebung dann automatisch nach.
+    /// On a LexException (e.g. an as yet unterminated
+    /// string literal while typing) NOTHING is coloured at all, instead of only up to the
+    /// error position - the rest would otherwise look confusingly "orphaned". The
+    /// next successful tokenisation run (e.g. after the next
+    /// keypress) then catches up with the highlighting automatically.
     /// </summary>
     public static class SyntaxHighlighter
     {
@@ -166,8 +166,8 @@ namespace fire.Editor
             return starts.ToArray();
         }
 
-        /// <summary>1-basierte (Zeile, Spalte) -> absoluter Zeichen-Offset im
-        /// Quelltext.</summary>
+        /// <summary>1-based (line, column) -> absolute character offset in the
+        /// source text.</summary>
         private static int ToOffset(int[] lineStarts, int line, int column)
         {
             int idx = line - 1;

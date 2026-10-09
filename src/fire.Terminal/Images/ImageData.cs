@@ -2,15 +2,15 @@ using System;
 
 namespace fire.Terminal
 {
-    /// <summary>Ein Bild kann nicht gelesen werden (unbekanntes Format, beschädigt, abgeschnitten, zu groß, nicht unterstützte Variante).</summary>
+    /// <summary>An image cannot be read (unknown format, damaged, truncated, too large, unsupported variant).</summary>
     public sealed class ImageFormatException : Exception
     {
         public ImageFormatException(string message) : base(message) { }
     }
 
     /// <summary>
-    /// Ein dekodiertes Bild, unabhängig vom Dateiformat: entweder INDIZIERT (ein Palette-Index je Pixel plus bis zu 256 Palette-Farben - PNG mit
-    /// Palette, GIF, BMP mit höchstens 8 Bit) oder TRUECOLOR (ein RGBA-Wert je Pixel). <see cref="ToFramebuffer"/> macht daraus einen Framebuffer.
+    /// A decoded image, independent of the file format: either INDEXED (one palette index per pixel plus up to 256 palette colours - PNG with
+    /// palette, GIF, BMP with at most 8 bit) or TRUECOLOR (one RGBA value per pixel). <see cref="ToFramebuffer"/> turns it into a framebuffer.
     /// </summary>
     public sealed class ImageData
     {
@@ -19,22 +19,22 @@ namespace fire.Terminal
 
         public bool IsIndexed => Indices != null;
 
-        /// <summary>Indizierte Bilder: ein Index je Pixel, zeilenweise von oben nach unten.</summary>
+        /// <summary>Indexed images: one index per pixel, row by row from top to bottom.</summary>
         public byte[]? Indices { get; }
 
-        /// <summary>Indizierte Bilder: die Palette (gepackte R,G,B,A-Werte, siehe PixelColor); nicht belegte Einträge sind deckendes Schwarz.</summary>
+        /// <summary>Indexed images: the palette (packed R,G,B,A values, see PixelColor); unused entries are opaque black.</summary>
         public uint[]? Palette { get; }
 
-        /// <summary>Indizierte Bilder: der Index, der als durchsichtig gilt (GIF-Transparenz, PNG-Palette mit Alpha 0), oder -1.</summary>
+        /// <summary>Indexed images: the index that counts as transparent (GIF transparency, PNG palette with alpha 0), or -1.</summary>
         public int TransparentIndex { get; }
 
-        /// <summary>Truecolor-Bilder: ein gepackter R,G,B,A-Wert je Pixel, zeilenweise von oben nach unten.</summary>
+        /// <summary>Truecolor images: one packed R,G,B,A value per pixel, row by row from top to bottom.</summary>
         public uint[]? Pixels { get; }
 
-        /// <summary>Hat ein Truecolor-Bild durchsichtige oder halbdurchsichtige Pixel?</summary>
+        /// <summary>Does a truecolor image have transparent or semi-transparent pixels?</summary>
         public bool HasAlpha { get; }
 
-        /// <summary>Das Dateiformat, aus dem das Bild stammt ("PNG", "BMP", "GIF"), oder "Rohdaten".</summary>
+        /// <summary>The file format the image comes from ("PNG", "BMP", "GIF"), or "raw data".</summary>
         public string Format { get; }
 
         private ImageData(int width, int height, byte[]? indices, uint[]? palette, int transparentIndex, uint[]? pixels, bool hasAlpha, string format)
@@ -65,9 +65,9 @@ namespace fire.Terminal
             return new ImageData(width, height, null, null, -1, pixels, alpha, format);
         }
 
-        /// <summary>Baut einen Framebuffer aus dem Bild. `mode` null = wie das Bild (indiziert -> Palette-Framebuffer mit der Palette der Datei,
-        /// Truecolor -> RGBA). Erzwungen: ein indiziertes Bild in einen RGBA-Framebuffer wird über seine Palette in Farben aufgelöst; ein
-        /// Truecolor-Bild in einen Palette-Framebuffer auf die (Standard-)Palette abgebildet (je Pixel der nächste Eintrag, Alpha zählt nicht).</summary>
+        /// <summary>Builds a framebuffer from the image. `mode` null = like the image (indexed -> palette framebuffer with the palette of the file,
+        /// truecolor -> RGBA). Forced: an indexed image into an RGBA framebuffer is resolved to colours via its palette; a
+        /// truecolor image into a palette framebuffer is mapped to the (default) palette (per pixel the nearest entry, alpha does not count).</summary>
         public Framebuffer ToFramebuffer(ColorMode? mode = null)
         {
             var target = mode ?? (IsIndexed ? ColorMode.Indexed : ColorMode.Rgba);
@@ -103,10 +103,10 @@ namespace fire.Terminal
             return fb;
         }
 
-        /// <summary>Höchstzahl Pixel eines Bildes (Schutz vor absurden Größenangaben in beschädigten Dateien: 4 Byte je Pixel).</summary>
+        /// <summary>Maximum number of pixels of an image (protection against absurd size specifications in damaged files: 4 bytes per pixel).</summary>
         public const long MaxPixels = 64L * 1024 * 1024;
 
-        /// <summary>Prüft Breite und Höhe auf einen sinnvollen Bereich.</summary>
+        /// <summary>Checks width and height for a sensible range.</summary>
         public static void CheckSize(string format, long width, long height)
         {
             if (width <= 0 || height <= 0)

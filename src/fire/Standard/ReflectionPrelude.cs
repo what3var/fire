@@ -3,17 +3,17 @@
 namespace fire.Standard
 {
     /// <summary>
-    /// Die Reflection-Bibliothek (`#import "reflection"`): Klassen und Mitglieder zur Laufzeit abfragen und benutzen. Der Quelltext hier ist
-    /// die fire-Seite (`Type`, `Member`, `Reflect`, `Selector`); die eigentliche Arbeit machen native Funktionen der Laufzeit
-    /// (`fire.Runtime.ReflectionNatives`), damit Zugriffsprüfung, Einheiten und Locking wie im normalen Code gelten.
-    /// Siehe docs/DESIGN_LAMBDA_REFLECTION_PROBE.md und SPEC 8.13.
+    /// The reflection library (`#import "reflection"`): query and use classes and members at runtime. The source here is
+    /// the fire side (`Type`, `Member`, `Reflect`, `Selector`); the actual work is done by native functions of the runtime
+    /// (`fire.Runtime.ReflectionNatives`), so that access checks, units and locking apply as in normal code.
+    /// See docs/DESIGN_LAMBDA_REFLECTION_PROBE.md and SPEC 8.13.
     /// </summary>
     public static class ReflectionPrelude
     {
-        /// <summary>Ist diese native Funktion registriert, nutzt das Programm die Bibliothek (der Compiler schreibt dann Typ-Metadaten mit).</summary>
+        /// <summary>If this native function is registered, the program uses the library (the compiler then also writes type metadata).</summary>
         public const string MembersNative = "__refl_members";
 
-        /// <summary>Die Klassen der Bibliothek: bei einem Zugriff über sie zählt für private/protected der Code DAVOR.</summary>
+        /// <summary>The classes of the library: for an access through them, for private/protected the code BEFORE it counts.</summary>
         public static readonly HashSet<string> HelperClasses = new() { "Reflect", "Type", "Member", "Selector" };
 
         public const string Source = """
@@ -22,7 +22,7 @@ namespace fire.Standard
                 construct(string message) { this.message = message }
             }
 
-            // Ein deklariertes Feld, eine Property, Methode oder ein Konstruktor einer Klasse
+            // A declared field, property, method or constructor of a class
             class Member {
                 string Name
                 string Kind
@@ -57,16 +57,16 @@ namespace fire.Standard
                 IsProperty() { return this.Kind == "property" }
                 IsMethod() { return this.Kind == "method" }
 
-                // Mit einer Instanz benutzen (Zugriffsregeln wie im normalen Code)
+                // Use with an instance (access rules as in normal code)
                 Get(class obj) { return Reflect.Get(obj, this.Name) }
                 Set(class obj, class value) { Reflect.Set(obj, this.Name, value) }
                 Call(class obj, class args) { return Reflect.Call(obj, this.Name, args) }
 
-                // Wie `probe obj.name changed|changing handler` (liefert das Handle für Reflect.SilenceHandle)
+                // Like `probe obj.name changed|changing handler` (returns the handle for Reflect.SilenceHandle)
                 Probe(class obj, string kind, class handler) { return Reflect.Probe(obj, this.Name, kind, handler) }
             }
 
-            // Eine Klasse: Name, Basis, Interfaces und alle (auch geerbten) Mitglieder
+            // A class: name, base, interfaces and all (also inherited) members
             class Type {
                 string Name
                 class Base
@@ -87,20 +87,20 @@ namespace fire.Standard
                     for (var i = 0; i < raw.length; i = i + 1) { var member = new Member(raw[i]); member.TakeTo(this); this.All.Add(member) }
                 }
 
-                // Die Klasse eines Objekts (oder die mit diesem Namen, wenn ein string übergeben wird)
+                // The class of an object (or the one with this name if a string is passed)
                 static Of(class x) {
                     var name = __refl_class_name(x)
                     if (name == undefined) { throw new ReflectionException("Not an object and not a known class") }
                     return new Type(name)
                 }
 
-                // Die Klasse mit diesem Namen oder undefined
+                // The class with this name or undefined
                 static Named(string name) {
                     if (__refl_class_info(name) == undefined) { return undefined }
                     return new Type(name)
                 }
 
-                // Die Namen aller Klassen des Programms
+                // The names of all classes of the program
                 static Names() { return __refl_classes() }
 
                 Filter(string kind) {
@@ -113,7 +113,7 @@ namespace fire.Standard
                 Methods() { return this.Filter("method") }
                 Constructors() { return this.Filter("constructor") }
 
-                // Das erste Mitglied dieses Namens (Feld, Property oder Methode) oder undefined
+                // The first member of this name (field, property or method) or undefined
                 Find(string name) {
                     foreach (m in this.All) { if (m.Kind != "constructor" && m.Name == name) { return m } }
                     return undefined
@@ -124,8 +124,8 @@ namespace fire.Standard
                 New(class args) { return Reflect.New(this.Name, args) }
             }
 
-            // Ein Selektor: die Reflection des Mitglieds, das eine Lambda `c => c.radius` auswählt (Parametertyp `lambda member<T>`; `Kind` ist die
-            // Art des Parametertyps: "field", "property", "member" (Feld oder Property), "method" oder "selector" (alles))
+            // A selector: the reflection of the member that a lambda `c => c.radius` selects (parameter type `lambda member<T>`; `Kind` is the
+            // kind of the parameter type: "field", "property", "member" (field or property), "method" or "selector" (everything))
             class Selector {
                 class Path
                 string Name
@@ -137,24 +137,24 @@ namespace fire.Standard
                     this.Kind = kind
                 }
 
-                // Die Art des gewählten Mitglieds auf `obj`: "field", "property", "method" oder undefined
+                // The kind of the selected member on `obj`: "field", "property", "method" or undefined
                 ActualKind(class obj) { return __refl_member_kind(this.Parent(obj), this.Name) }
 
-                // Prüft, dass das gewählte Mitglied zur Art des Selektors passt (sobald es ein Objekt gibt); liefert das Objekt, dem es gehört
+                // Checks that the selected member matches the kind of the selector (as soon as there is an object); returns the object it belongs to
                 CheckKind(class parent) {
                     var actual = __refl_member_kind(parent, this.Name)
                     if (!Reflect.KindAllowed(actual, this.Kind)) { throw new ReflectionException(Reflect.KindMessage(this.Name, actual, this.Kind)) }
                     return parent
                 }
 
-                // Das Objekt, dem das gewählte Mitglied gehört (bei `p => p.address.city` ist das `p.address`)
+                // The object to which the selected member belongs (for `p => p.address.city` that is `p.address`)
                 Parent(class obj) {
                     var o = obj
                     for (var i = 0; i < this.Path.length - 1; i = i + 1) { o = Reflect.Get(o, this.Path[i]) }
                     return o
                 }
 
-                // Feld oder Property lesen/schreiben (eine Methode: Call)
+                // Read/write field or property (a method: Call)
                 Get(class obj) {
                     var parent = this.CheckKind(this.Parent(obj))
                     if (__refl_member_kind(parent, this.Name) == "method") { throw new ReflectionException("'" + this.Name + "' is a method - Call(obj, args) calls it") }
@@ -166,7 +166,7 @@ namespace fire.Standard
                     Reflect.Set(parent, this.Name, value)
                 }
 
-                // Eine Methode aufrufen (nur bei `lambda selector<T>`, das Methoden zulässt)
+                // Call a method (only for `lambda selector<T>`, which permits methods)
                 Call(class obj, class args) {
                     var parent = this.CheckKind(this.Parent(obj))
                     if (__refl_member_kind(parent, this.Name) != "method") { throw new ReflectionException("'" + this.Name + "' is not a method") }
@@ -175,7 +175,7 @@ namespace fire.Standard
 
                 Describe(class obj) { return Type.Of(this.CheckKind(this.Parent(obj))).Find(this.Name) }
 
-                // Probe auf das gewählte Feld/die Property (kind: "changed" oder "changing"); Silence entfernt sie wieder
+                // Probe on the selected field/property (kind: "changed" or "changing"); Silence removes it again
                 Probe(class obj, string kind, class handler) {
                     var parent = this.CheckKind(this.Parent(obj))
                     if (__refl_member_kind(parent, this.Name) == "method") { throw new ReflectionException("A probe cannot be registered on a method ('" + this.Name + "')") }
@@ -191,22 +191,22 @@ namespace fire.Standard
                 static New(string className, class args) { return __refl_new(className, args) }
                 static Has(class obj, string name) { return __refl_has(obj, name) }
 
-                // Proben (siehe `probe`/`silence`): kind ist "changed" oder "changing"; der Handler bekommt je nach Parameterzahl
-                // (neu), (alt, neu), (Objekt, alt, neu) oder (Objekt, Name, alt, neu). Liefert das Handle.
+                // Probes (see `probe`/`silence`): kind is "changed" or "changing"; depending on the parameter count the handler gets
+                // (new), (old, new), (object, old, new) or (object, name, old, new). Returns the handle.
                 static Probe(class obj, string name, string kind, class handler) { return __refl_probe(obj, name, kind, handler) }
                 static ProbeAll(class obj, string kind, class handler) { return __refl_probe(obj, undefined, kind, handler) }
                 static Silence(class obj, string name) { __refl_silence(obj, name) }
                 static SilenceAll(class obj) { __refl_silence(obj, undefined) }
                 static SilenceHandle(class handle) { __refl_silence_handle(handle) }
 
-                // Wandelt die Lambda eines Selektor-Parameters (`lambda field|property|member|selector<T>`) in einen Selector (vom Compiler am
-                // Funktionsanfang aufgerufen); `kind` ist die Art des Parametertyps
+                // Converts the lambda of a selector parameter (`lambda field|property|member|selector<T>`) into a Selector (called by the compiler at the
+                // start of the function); `kind` is the kind of the parameter type
                 static SelectorOf(class l, string kind) {
                     if (l is of Selector) { return l }
                     return new Selector(__refl_selector_path(l), kind)
                 }
 
-                // Darf ein Mitglied dieser Art (actual: "field", "property", "method" oder undefined) von einem Selektor dieser Art gewählt werden?
+                // May a member of this kind (actual: "field", "property", "method" or undefined) be chosen by a selector of this kind?
                 static KindAllowed(class actual, string kind) {
                     if (actual == undefined) { return false }
                     if (kind == "selector") { return true }
@@ -220,7 +220,7 @@ namespace fire.Standard
                     return "a method"
                 }
 
-                // Meldung für ein Mitglied, das zum Selektor nicht passt
+                // Message for a member that does not match the selector
                 static KindMessage(string name, class actual, string kind) {
                     if (actual == undefined) { return "'" + name + "' is not a member" }
                     var expected = "a field"

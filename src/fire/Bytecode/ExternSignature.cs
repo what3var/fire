@@ -8,11 +8,11 @@ using MemoryPack;
 
 namespace fire.Bytecode
 {
-    /// <summary>Die Signatur einer `extern`-Deklaration, wie sie für
-    /// dynamisches Linking gebraucht wird (siehe VM.CallExtern) - LibName ist
-    /// null, wenn keine `#extern "libName"`-Direktive vor der Deklaration
-    /// stand (dann bleibt nur manuelle Host-Registrierung über
-    /// Bytecode.ExternRegistry möglich).</summary>
+    /// <summary>The signature of an `extern` declaration as needed for
+    /// dynamic linking (see VM.CallExtern) - LibName is
+    /// null if no `#extern "libName"` directive preceded the declaration
+    /// (then only manual host registration via
+    /// Bytecode.ExternRegistry remains possible).</summary>
     [MemoryPackable]
     public sealed partial class ExternSignature
     {

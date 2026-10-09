@@ -8,18 +8,18 @@ using System.Text;
 namespace fire.Utilities
 {
     /// <summary>
-    /// Ändert Icon und Versions-Metadaten (Produktname, Firma, Version, ...)
-    /// einer bereits gebauten Windows-PE-Datei (.exe/.dll) NACHTRÄGLICH.
+    /// Changes icon and version metadata (product name, company, version, ...)
+    /// of an already built Windows PE file (.exe/.dll) AFTERWARDS.
     ///
-    /// Nutzt dieselben Win32-Resource-Update-APIs (BeginUpdateResource /
-    /// UpdateResource / EndUpdateResource), die auch Resource Hacker oder
-    /// rcedit verwenden, statt den PE-Header selbst zu parsen - deutlich
-    /// robuster als eigenes Byte-Patchen des Dateiformats.
+    /// Uses the same Win32 resource update APIs (BeginUpdateResource /
+    /// UpdateResource / EndUpdateResource) that Resource Hacker or
+    /// rcedit also use, instead of parsing the PE header itself - considerably
+    /// more robust than byte-patching the file format yourself.
     ///
-    /// Läuft NUR unter Windows (reines P/Invoke, keine Cross-Platform-
-    /// Alternative dafür). Die Zieldatei darf währenddessen nicht von einem
-    /// anderen Prozess geöffnet/gesperrt sein (bei einer laufenden .exe geht
-    /// das i.d.R. nicht - dann vorher schließen oder eine Kopie bearbeiten).
+    /// Runs ONLY on Windows (pure P/Invoke, no cross-platform
+    /// alternative for it). The target file must not be opened/locked by
+    /// another process meanwhile (for a running .exe this usually
+    /// does not work - close it beforehand or edit a copy).
     /// </summary>
     public static class PeResourceEditor
     {
@@ -59,10 +59,10 @@ namespace fire.Utilities
 
         private const ushort LANG_NEUTRAL = 0;
 
-        // Sprache/Codepage für die StringTable der Versionsinfo - "Englisch
-        // (USA) / Unicode" ist die weitaus gebräuchlichste Kombination und
-        // wird von jedem Anzeigeprogramm (Explorer-Eigenschaften, etc.)
-        // sicher erkannt, unabhängig von der Systemsprache.
+        // Language/codepage for the StringTable of the version info - "English
+        // (USA) / Unicode" is by far the most common combination and
+        // is reliably recognised by every display program (Explorer properties, etc.),
+        // regardless of the system language.
         private const ushort LANG_EN_US = 0x0409;
         private const ushort CODEPAGE_UNICODE = 0x04B0;
 
@@ -71,13 +71,13 @@ namespace fire.Utilities
         // ------------------------------------------------------------
 
         /// <summary>
-        /// Ersetzt das/die Icon(s) von <paramref name="exePath"/> durch den
-        /// Inhalt von <paramref name="icoPath"/> (eine gewöhnliche .ico-Datei,
-        /// kann mehrere Auflösungen/Farbtiefen enthalten - alle werden
-        /// übernommen). Ersetzt dabei GEZIELT die Icon-Gruppe(n), die die Datei
-        /// schon hat (per Enumeration herausgefunden, üblicherweise genau
-        /// eine) - legt nur dann eine neue mit ID 1 an, wenn die Datei bisher
-        /// gar kein Icon hatte.
+        /// Replaces the icon(s) of <paramref name="exePath"/> with the
+        /// content of <paramref name="icoPath"/> (an ordinary .ico file,
+        /// may contain several resolutions/colour depths - all are
+        /// taken over). In doing so it replaces SPECIFICALLY the icon group(s) that the file
+        /// already has (found out by enumeration, usually exactly
+        /// one) - creates a new one with ID 1 only if the file previously
+        /// had no icon at all.
         /// </summary>
         public static void SetIcon(string exePath, string icoPath)
         {
@@ -91,16 +91,16 @@ namespace fire.Utilities
 
             try
             {
-                // Alte einzelne Icon-Bilder zuerst entfernen - sonst blieben
-                // Bilder eines vorherigen, GRÖSSEREN Icon-Satzes (z.B. mehr
-                // Auflösungen) als Datenleichen in der Datei liegen, auch wenn
-                // keine Gruppe mehr darauf zeigt.
+                // Remove old individual icon images first - otherwise images
+                // of a previous, LARGER icon set (e.g. more
+                // resolutions) would remain in the file as data corpses,
+                // even if no group points to them any more.
                 foreach (var id in existingIconIds)
                     Update(handle, RT_ICON, id, null);
 
-                // Neue Bilder unter frischen IDs 1..N schreiben - die alten
-                // Bild-IDs sind irrelevant, nur die Gruppe unten muss auf die
-                // NEUEN IDs zeigen.
+                // Write new images under fresh IDs 1..N - the old
+                // image IDs are irrelevant, only the group below must point to the
+                // NEW IDs.
                 var newImageIds = new List<ushort>();
                 for (int i = 0; i < images.Count; i++)
                 {
@@ -119,7 +119,7 @@ namespace fire.Utilities
             }
             catch
             {
-                EndUpdateResource(handle, fDiscard: true); // Änderungen verwerfen, Datei bleibt unangetastet
+                EndUpdateResource(handle, fDiscard: true); // Discard changes, file stays untouched
                 throw;
             }
         }
@@ -129,10 +129,10 @@ namespace fire.Utilities
         // ------------------------------------------------------------
 
         /// <summary>
-        /// Setzt/ersetzt die Versions-Metadaten (Dateiversion, Produktname,
-        /// Firma, Copyright, Beschreibung, ...) von <paramref name="exePath"/> -
-        /// überschreibt eine vorhandene VERSIONINFO-Ressource komplett, legt bei
-        /// Bedarf eine neue an.
+        /// Sets/replaces the version metadata (file version, product name,
+        /// company, copyright, description, ...) of <paramref name="exePath"/> -
+        /// overwrites an existing VERSIONINFO resource completely, creates a new one
+        /// if needed.
         /// </summary>
         public static void SetVersionInfo(string exePath, PeVersionInfo info)
         {
@@ -166,16 +166,16 @@ namespace fire.Utilities
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "UpdateResource failed.");
         }
 
-        /// <summary>Listet alle Ressourcen-IDs eines bestimmten Typs, die
-        /// <paramref name="exePath"/> JETZT schon hat (z.B. vorhandene
-        /// Icon-Gruppen) - lädt die Datei dafür separat, NUR zum Lesen, als
-        /// Daten-Modul (LOAD_LIBRARY_AS_DATAFILE führt keinen Code aus und
-        /// bindet keine Imports).</summary>
+        /// <summary>Lists all resource IDs of a certain type that
+        /// <paramref name="exePath"/> ALREADY has (e.g. existing
+        /// icon groups) - loads the file separately for that, for READING ONLY, as a
+        /// data module (LOAD_LIBRARY_AS_DATAFILE executes no code
+        /// and binds no imports).</summary>
         private static List<IntPtr> FindResourceNames(string exePath, IntPtr resourceType)
         {
             var names = new List<IntPtr>();
             IntPtr hModule = LoadLibraryEx(exePath, IntPtr.Zero, LOAD_LIBRARY_AS_DATAFILE);
-            if (hModule == IntPtr.Zero) return names; // Datei evtl. noch ganz ohne Ressourcen - kein Fehler
+            if (hModule == IntPtr.Zero) return names; // File possibly without any resources at all - no error
 
             try
             {
@@ -193,13 +193,13 @@ namespace fire.Utilities
         }
 
         // ------------------------------------------------------------
-        // .ico-Datei einlesen und ins PE-Ressourcenformat umwandeln
+        // Read the .ico file and convert it to PE resource format
         //
-        // Der Unterschied zum rohen .ico-Dateiformat: dort verweist jeder
-        // ICONDIRENTRY per Byte-OFFSET auf sein Bild INNERHALB derselben
-        // Datei. In einer PE-Ressource gibt es das nicht - stattdessen
-        // liegt jedes Bild als EIGENE RT_ICON-Ressource vor, und der
-        // "GRPICONDIRENTRY" verweist per Ressourcen-ID darauf.
+        // The difference from the raw .ico file format: there every
+        // ICONDIRENTRY refers to its image by byte OFFSET WITHIN the same
+        // file. In a PE resource that does not exist - instead
+        // every image is present as its OWN RT_ICON resource, and the
+        // "GRPICONDIRENTRY" refers to it by resource ID.
         // ------------------------------------------------------------
 
         private sealed record IconImage(byte Width, byte Height, byte ColorCount, ushort Planes, ushort BitCount, byte[] Data);
@@ -209,7 +209,7 @@ namespace fire.Utilities
             using var stream = File.OpenRead(icoPath);
             using var reader = new BinaryReader(stream);
 
-            reader.ReadUInt16(); // reserved, immer 0
+            reader.ReadUInt16(); // reserved, always 0
             ushort type = reader.ReadUInt16();
             if (type != 1)
                 throw new InvalidDataException($"'{icoPath}' is not a valid .ico file (type {type}, expected 1).");
@@ -258,7 +258,7 @@ namespace fire.Utilities
                 writer.Write(img.Planes);
                 writer.Write(img.BitCount);
                 writer.Write((uint)img.Data.Length);
-                writer.Write(imageIds[i]); // ID statt Datei-Offset - der Unterschied zum .ico-Format
+                writer.Write(imageIds[i]); // ID instead of file offset - the difference from the .ico format
             }
 
             return stream.ToArray();
@@ -267,16 +267,16 @@ namespace fire.Utilities
         // ------------------------------------------------------------
         // VS_VERSIONINFO-Ressource bauen (RT_VERSION)
         //
-        // Verschachteltes Binärformat: VS_VERSIONINFO enthält die feste
-        // VS_FIXEDFILEINFO-Struktur (die binäre Versionsnummer, die Windows
-        // z.B. im "Details"-Dialog oben zeigt) plus zwei Kind-Blöcke,
-        // StringFileInfo (freier Text wie Produktname/Firma) und
-        // VarFileInfo (welche Sprache/Codepage die StringTable hat).
-        // Jeder Block trägt seine eigene Gesamtlänge VORNE im Header -
-        // die steht erst fest, NACHDEM alle Kind-Elemente geschrieben
-        // sind, deshalb BeginBlock/EndBlock: erst ein Platzhalter, nach
-        // dem Schreiben der Kinder wird die echte Länge nachgetragen
-        // (Seek zurück, schreiben, wieder vor).
+        // Nested binary format: VS_VERSIONINFO contains the fixed
+        // VS_FIXEDFILEINFO structure (the binary version number that Windows
+        // shows e.g. at the top of the "Details" dialog) plus two child blocks,
+        // StringFileInfo (free text such as product name/company) and
+        // VarFileInfo (which language/codepage the StringTable has).
+        // Every block carries its own total length at the FRONT of the header -
+        // it is only fixed AFTER all child elements have been written,
+        // hence BeginBlock/EndBlock: first a placeholder, after
+        // writing the children the real length is filled in
+        // (seek back, write, forward again).
         // ------------------------------------------------------------
 
         private static byte[] BuildVersionInfoResource(PeVersionInfo info)
@@ -286,12 +286,12 @@ namespace fire.Utilities
 
             long rootLengthPos = BeginBlock(writer, "VS_VERSION_INFO", valueIsText: false);
 
-            // VS_FIXEDFILEINFO - BeginBlock hat direkt davor schon per
-            // Align4() auf eine 4er-Grenze aufgefüllt (der Name
-            // "VS_VERSION_INFO" selbst reicht dafür NICHT aus: 15 Zeichen +
-            // Nullterminator = 32 Byte, plus 6 Byte für die drei
-            // vorangehenden WORDs = 38 Byte, erst das Align4() rundet auf
-            // 40 auf) - ab hier ist also garantiert 4-Byte-ausgerichtet.
+            // VS_FIXEDFILEINFO - BeginBlock has already padded directly before via
+            // Align4() to a 4-byte boundary (the name
+            // "VS_VERSION_INFO" itself is NOT enough for that: 15 characters +
+            // null terminator = 32 bytes, plus 6 bytes for the three
+            // preceding WORDs = 38 bytes, only Align4() rounds up to
+            // 40) - so from here on it is guaranteed 4-byte aligned.
             writer.Write(0xFEEF04BDu);                        // dwSignature
             writer.Write(0x00010000u);                        // dwStrucVersion (1.0)
             writer.Write(PackVersion(info.FileVersion, high: true));
@@ -305,14 +305,14 @@ namespace fire.Utilities
             writer.Write((uint) info.Subsystem);                                // dwFileSubtype
             writer.Write(0x0u);                                // dwFileDateMS
             writer.Write(0x0u);                                // dwFileDateLS
-            // wValueLength von VS_VERSIONINFO selbst (Größe von VS_FIXEDFILEINFO
-            // in Byte) wird erst hier, nachträglich, ins schon geschriebene
-            // Feld eingetragen (siehe BeginBlock/EndBlock-Kommentar).
+            // wValueLength of VS_VERSIONINFO itself (size of VS_FIXEDFILEINFO
+            // in bytes) is entered only here, afterwards, into the already written
+            // field (see BeginBlock/EndBlock comment).
             PatchValueLength(writer, rootLengthPos, 13 * 4);
             Align4(writer);
 
-            // StringFileInfo -> genau EINE StringTable (Sprache/Codepage als
-            // 8-stelliger Hex-Schlüssel) -> beliebig viele String-Einträge.
+            // StringFileInfo -> exactly ONE StringTable (language/codepage as an
+            // 8-digit hex key) -> any number of string entries.
             long stringFileInfoPos = BeginBlock(writer, "StringFileInfo", valueIsText: true);
             string langKey = $"{LANG_EN_US:X4}{CODEPAGE_UNICODE:X4}";
             long stringTablePos = BeginBlock(writer, langKey, valueIsText: true);
@@ -321,8 +321,8 @@ namespace fire.Utilities
             EndBlock(writer, stringTablePos);
             EndBlock(writer, stringFileInfoPos);
 
-            // VarFileInfo/Translation - sagt Anzeigeprogrammen, unter
-            // welcher Sprache/Codepage sie die StringTable oben finden.
+            // VarFileInfo/Translation - tells display programs
+            // under which language/codepage they find the StringTable above.
             long varFileInfoPos = BeginBlock(writer, "VarFileInfo", valueIsText: false);
             long translationPos = BeginBlock(writer, "Translation", valueIsText: false);
             writer.Write(LANG_EN_US);
@@ -335,15 +335,15 @@ namespace fire.Utilities
             return stream.ToArray();
         }
 
-        /// <summary>Schreibt Länge(Platzhalter)/wValueLength(0)/wType/Namen
-        /// eines verschachtelten VERSIONINFO-Blocks und richtet danach auf
-        /// 4 Byte aus. Liefert die Position des Längenfelds für EndBlock/
-        /// PatchValueLength zurück.</summary>
+        /// <summary>Writes length (placeholder)/wValueLength(0)/wType/name
+        /// of a nested VERSIONINFO block and then aligns to
+        /// 4 bytes. Returns the position of the length field for EndBlock/
+        /// PatchValueLength.</summary>
         private static long BeginBlock(BinaryWriter writer, string key, bool valueIsText)
         {
             long lengthPos = writer.BaseStream.Position;
-            writer.Write((ushort)0); // wLength - Platzhalter, siehe EndBlock
-            writer.Write((ushort)0); // wValueLength - meist 0 (reiner Container), siehe PatchValueLength für Ausnahmen
+            writer.Write((ushort)0); // wLength - placeholder, see EndBlock
+            writer.Write((ushort)0); // wValueLength - usually 0 (pure container), see PatchValueLength for exceptions
             writer.Write((ushort)(valueIsText ? 1 : 0)); // wType
             WriteUnicodeZ(writer, key);
             Align4(writer);
@@ -353,7 +353,7 @@ namespace fire.Utilities
         private static void PatchValueLength(BinaryWriter writer, long blockStartPos, int valueLengthBytes)
         {
             long current = writer.BaseStream.Position;
-            writer.Seek((int)blockStartPos + 2, SeekOrigin.Begin); // wValueLength liegt direkt nach wLength
+            writer.Seek((int)blockStartPos + 2, SeekOrigin.Begin); // wValueLength sits directly after wLength
             writer.Write((ushort)valueLengthBytes);
             writer.Seek((int)current, SeekOrigin.Begin);
         }
@@ -371,8 +371,8 @@ namespace fire.Utilities
         private static void WriteStringEntry(BinaryWriter writer, string key, string value)
         {
             long start = writer.BaseStream.Position;
-            writer.Write((ushort)0); // wLength - Platzhalter
-            writer.Write((ushort)(value.Length + 1)); // wValueLength zählt in WCHARs inkl. Nullterminator
+            writer.Write((ushort)0); // wLength - placeholder
+            writer.Write((ushort)(value.Length + 1)); // wValueLength counts in WCHARs including the null terminator
             writer.Write((ushort)1); // wType = Text
             WriteUnicodeZ(writer, key);
             Align4(writer);
@@ -411,11 +411,11 @@ namespace fire.Utilities
     }
 
     /// <summary>
-    /// Die gebräuchlichen VS_VERSION_INFO-Felder. FileVersion/ProductVersion
-    /// sind die BINÄREN 4x16-Bit-Werte, die Windows-Dialoge (Explorer-
-    /// Eigenschaften -&gt; Details) strukturiert anzeigen; die restlichen
-    /// Felder landen als freier Text in der StringTable (ebenfalls im
-    /// "Details"-Reiter sichtbar).
+    /// The common VS_VERSION_INFO fields. FileVersion/ProductVersion
+    /// are the BINARY 4x16-bit values that Windows dialogs (Explorer
+    /// properties -&gt; Details) display in structured form; the remaining
+    /// fields end up as free text in the StringTable (likewise
+    /// visible in the "Details" tab).
     /// </summary>
     public sealed class PeVersionInfo
     {

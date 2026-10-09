@@ -15,96 +15,96 @@ using AvaloniaEdit.Rendering;
 
 namespace fire.Editor
 {
-    /// <summary>Ein eigenständiges, wiederverwendbares Editor-Control:
-    /// AvalonEdit-TextEditor + Syntax-Highlighting + Autovervollständigung +
-    /// Strg+Klick-Navigation + klickbarer Haltepunkt-Rand + Live-Diagnostik -
-    /// GENAU EIN Quelltext pro Instanz. Sowohl vom alten Einzeldatei-Fenster
-    /// (MainWindow, eine Instanz) als auch vom Tabbed-Projekt-Fenster
-    /// (ProjectWindow, eine Instanz PRO offenem Tab) genutzt, damit Editing-
-    /// Logik nicht zweimal gepflegt werden muss.
+    /// <summary>A self-contained, reusable editor control:
+    /// AvalonEdit TextEditor + syntax highlighting + auto-completion +
+    /// Ctrl+click navigation + clickable breakpoint margin + live diagnostics -
+    /// EXACTLY ONE source text per instance. Used both by the old single-file window
+    /// (MainWindow, one instance) and by the tabbed project window
+    /// (ProjectWindow, one instance PER open tab), so that editing
+    /// logic does not have to be maintained twice.
     ///
-    /// Auf AvaloniaEdit (die Avalonia-Fassung von AvalonEdit; siehe EditorRendering.cs für
-    /// die neuen Render-Bausteine): der alte Ansatz (Highlighting = beim
-    /// Tippen debounced das KOMPLETTE FlowDocument neu bauen und austauschen)
-    /// war die Wurzel so gut wie aller Bugs mehrerer Debug-Runden - Auswahl/
-    /// Cursor kollabierte beim Austausch, Wettlauf zwischen Tippen und
-    /// Hintergrund-Highlighting, eine echte Rückkopplungsschleife, Scroll-
-    /// Position sprang bei langen Dateien. AvalonEdit hat ein eigenes
-    /// TextDocument-Modell mit ECHTEN Zeichen-Offsets (GetOffset/GetLocation)
-    /// statt WPFs TextPointer/Paragraph-Klassenhierarchie, und Highlighting
-    /// läuft rein beim ZEICHNEN (DocumentColorizingTransformer) - das
-    /// Dokument selbst wird dafür nie angefasst, das eliminiert diese ganze
-    /// Bug-Klasse strukturell, statt sie Fall für Fall zu flicken.
+    /// On AvaloniaEdit (the Avalonia version of AvalonEdit; see EditorRendering.cs for
+    /// the new rendering building blocks): the old approach (highlighting = rebuilding and swapping
+    /// the COMPLETE FlowDocument debounced while
+    /// typing) was the root of almost all bugs of several debug rounds - selection/
+    /// cursor collapsed on the swap, race between typing and
+    /// background highlighting, a genuine feedback loop, scroll
+    /// position jumped for long files. AvalonEdit has its own
+    /// TextDocument model with REAL character offsets (GetOffset/GetLocation)
+    /// instead of WPF's TextPointer/Paragraph class hierarchy, and highlighting
+    /// runs purely when DRAWING (DocumentColorizingTransformer) - the
+    /// document itself is never touched for it, which eliminates this whole
+    /// class of bugs structurally, instead of patching it case by case.
     ///
-    /// Bewusst KEINE eigene Kenntnis von DebugSession/Kompilieren/Ausführen -
-    /// das bleibt Sache des jeweiligen Host-Fensters (siehe MainWindow/
-    /// ProjectWindow), das diese Instanz orchestriert (Breakpoints abfragen,
-    /// HighlightedLine setzen, GetText() beim Kompilieren aufrufen, ...).
+    /// Deliberately NO knowledge of its own about DebugSession/compiling/running -
+    /// that remains the business of the respective host window (see MainWindow/
+    /// ProjectWindow), which orchestrates this instance (query breakpoints,
+    /// set HighlightedLine, call GetText() when compiling, ...).
     ///
-    /// ZEILENZÄHLUNG: nach außen (öffentliche Schnittstelle) UNVERÄNDERT wie
-    /// bei der alten RichTextBox-Fassung - SetCaretByLineColumn nimmt eine
-    /// 0-basierte Zeile, ScrollToLine/HighlightedLine/Breakpoints/
-    /// GetCaretLine sind 1-basiert (deckungsgleich mit Chunk.MarkLine/
-    /// GetLocation) - damit bleibt MainWindow/ProjectWindow unverändert
-    /// benutzbar. AvalonEdit selbst zählt INTERN überall 1-basiert
-    /// (Caret.Line, DocumentLine.LineNumber, ...) - die Umrechnung an der
-    /// 0-basierten SetCaretByLineColumn-Grenze ist die einzige Stelle, die
-    /// das berücksichtigen muss.</summary>
+    /// LINE COUNTING: outwardly (public interface) UNCHANGED as
+    /// with the old RichTextBox version - SetCaretByLineColumn takes a
+    /// 0-based line, ScrollToLine/HighlightedLine/Breakpoints/
+    /// GetCaretLine are 1-based (matching Chunk.MarkLine/
+    /// GetLocation) - so MainWindow/ProjectWindow remain usable
+    /// unchanged. AvalonEdit itself counts INTERNALLY everywhere 1-based
+    /// (Caret.Line, DocumentLine.LineNumber, ...) - the conversion at the
+    /// 0-based SetCaretByLineColumn boundary is the only place that
+    /// has to take that into account.</summary>
     public partial class ScriptEditorControl : UserControl, IDocumentView
     {
-        /// <summary>Der Dateipfad dieses Editors, falls schon einmal
-        /// gespeichert/geöffnet - `null` für ein neues, ungespeichertes
-        /// Dokument. Nur für relative `#include`-Pfadauflösung bei der
-        /// Strg+Klick-Navigation gebraucht (siehe TryResolveAcrossIncludes/
-        /// OpenFileViewer) - das Control selbst liest/schreibt NIE
-        /// eigenständig von/auf die Platte, das bleibt Sache des Host-
-        /// Fensters (siehe GetText/SetText).</summary>
+        /// <summary>The file path of this editor, if it has been
+        /// saved/opened once - `null` for a new, unsaved
+        /// document. Only needed for relative `#include` path resolution in
+        /// Ctrl+click navigation (see TryResolveAcrossIncludes/
+        /// OpenFileViewer) - the control itself NEVER reads/writes
+        /// from/to the disk on its own, that remains the business of the host
+        /// window (see GetText/SetText).</summary>
         private string? _filePath;
         public string? FilePath { get => _filePath; set { _filePath = value; _conditionalSymbols = null; } }
 
         private readonly HashSet<int> _breakpoints = new();
 
-        /// <summary>Die aktuellen Haltepunkt-Zeilen (1-basiert, wie im
-        /// restlichen Editor) - nur LESEND; zum Ändern ToggleBreakpointAtCaret/
-        /// ClearBreakpoints nutzen (löst dabei automatisch BreakpointsChanged
-        /// aus und aktualisiert Rand + Zeilen-Hintergrund).</summary>
+        /// <summary>The current breakpoint lines (1-based, as in the
+        /// rest of the editor) - READ-ONLY; to change use ToggleBreakpointAtCaret/
+        /// ClearBreakpoints (which automatically raises BreakpointsChanged
+        /// and updates margin + line background).</summary>
         public IReadOnlySet<int> Breakpoints => _breakpoints;
 
-        /// <summary>Feuert, wann immer sich die Haltepunkt-Menge geändert hat
-        /// (Rand-Klick/ToggleBreakpointAtCaret/ClearBreakpoints) - der Host
-        /// muss darauf i.d.R. mit DebugSession.UpdateBreakpoints reagieren.</summary>
+        /// <summary>Fires whenever the breakpoint set has changed
+        /// (margin click/ToggleBreakpointAtCaret/ClearBreakpoints) - the host
+        /// usually has to react to it with DebugSession.UpdateBreakpoints.</summary>
         public event Action? BreakpointsChanged;
 
-        /// <summary>Die aktuell im Editor angezeigten Live-Diagnostik-Fehler
-        /// (siehe LiveDiagnostics) - nur LESEND, wird intern debounced nach
-        /// jeder Textänderung neu berechnet (siehe RunDiagnostics).</summary>
+        /// <summary>The live diagnostics errors currently shown in the editor
+        /// (see LiveDiagnostics) - READ-ONLY, recomputed internally, debounced, after
+        /// every text change (see RunDiagnostics).</summary>
         public IReadOnlyList<Diagnostic> Diagnostics => _diagnostics;
 
-        /// <summary>Wie die Diagnostik berechnet wird (siehe RunDiagnostics) -
-        /// Default: einfache Einzeldatei-Analyse (LiveDiagnostics.Analyze),
-        /// passend für ein einzelnes, freistehendes Dokument (siehe
-        /// MainWindow). Ein Host mit mehreren zusammengehörigen Dateien
-        /// (siehe ProjectWindow) setzt hier stattdessen eine projektweite
-        /// Variante (LiveDiagnostics.AnalyzeInProject), damit eine gültige
-        /// Referenz auf eine Klasse aus einer ANDEREN Projektdatei nicht
-        /// fälschlich als Fehler markiert wird.</summary>
+        /// <summary>How the diagnostics are computed (see RunDiagnostics) -
+        /// default: simple single-file analysis (LiveDiagnostics.Analyze),
+        /// suitable for a single, free-standing document (see
+        /// MainWindow). A host with several related files
+        /// (see ProjectWindow) sets a project-wide variant
+        /// (LiveDiagnostics.AnalyzeInProject) here instead, so that a valid
+        /// reference to a class from ANOTHER project file is not
+        /// wrongly marked as an error.</summary>
         public Func<string, List<Diagnostic>> DiagnosticsProvider { get; set; }
 
-        /// <summary>Verzeichnis dieses Dokuments (für relative `#include`-
-        /// Pfade) - `null` solange noch nie gespeichert/geöffnet (dann gilt
-        /// das Arbeitsverzeichnis).</summary>
+        /// <summary>Directory of this document (for relative `#include`
+        /// paths) - `null` as long as it has never been saved/opened (then the
+        /// working directory applies).</summary>
         public string? BaseDirectory => FilePath == null ? null : Path.GetDirectoryName(Path.GetFullPath(FilePath));
 
-        /// <summary>Wahr, sobald der Text seit dem Laden/letzten Speichern
-        /// geändert wurde (für den Stern im Tab-Titel und die Rückfrage beim
-        /// Schließen).</summary>
+        /// <summary>True as soon as the text has been changed since loading/the last save
+        /// (for the asterisk in the tab title and the prompt when
+        /// closing).</summary>
         public bool IsModified { get; private set; }
         public bool IsReadOnly => false;
 
-        /// <summary>Feuert, wenn sich IsModified geändert hat.</summary>
+        /// <summary>Fires when IsModified has changed.</summary>
         public event Action? ModifiedChanged;
 
-        /// <summary>Der Host hat den aktuellen Text gespeichert.</summary>
+        /// <summary>The host has saved the current text.</summary>
         public void MarkSaved() => SetModified(false);
 
         private void SetModified(bool value)
@@ -116,20 +116,20 @@ namespace fire.Editor
 
         private bool _loading;
 
-        /// <summary>Feuert, wann immer sich Diagnostics geändert hat - der
-        /// Host zeigt das i.d.R. in einer eigenen Fehlerliste an.</summary>
+        /// <summary>Fires whenever Diagnostics has changed - the
+        /// host usually shows that in a list of its own.</summary>
         public event Action? DiagnosticsChanged;
 
-        /// <summary>Feuert bei JEDER Cursor-Bewegung mit der neuen 1-basierten
-        /// Zeile - für eine Statusleisten-Anzeige im Host.</summary>
+        /// <summary>Fires on EVERY cursor movement with the new 1-based
+        /// line - for a status bar display in the host.</summary>
         public event Action<int>? CaretLineChanged;
 
-        /// <summary>Die aktuell per Debugger angehaltene Zeile (gelb
-        /// hervorgehoben), `null` wenn keine - vom Host gesetzt (siehe
-        /// MainWindow/ProjectWindow nach jedem Schritt/Stop). Setzt anders
-        /// als früher NUR NOCH den Hintergrund-Renderer und löst ein
-        /// Neuzeichnen aus (TextView.Redraw) - KEIN Dokument-Neuaufbau mehr
-        /// nötig, siehe Klassendoku.</summary>
+        /// <summary>The line currently halted by the debugger (highlighted
+        /// yellow), `null` if none - set by the host (see
+        /// MainWindow/ProjectWindow after every step/stop). Unlike
+        /// before, ONLY sets the background renderer and triggers
+        /// a repaint (TextView.Redraw) - NO document rebuild
+        /// needed any more, see the class documentation.</summary>
         public int? HighlightedLine
         {
             get => _highlightedLine;
@@ -142,17 +142,17 @@ namespace fire.Editor
         }
         private int? _highlightedLine;
 
-        // Highlighting läuft debounced (statt bei jedem Tastendruck neu
-        // gelext) - reines Lexen ist zwar schnell, aber bei sehr schnellem
-        // Tippen soll trotzdem nicht bei JEDEM Zwischenzustand neu gelext
-        // werden.
+        // Highlighting runs debounced (instead of lexing anew on every
+        // keystroke) - pure lexing is fast, but with very fast
+        // typing it should still not be lexed anew for EVERY
+        // intermediate state.
         private readonly DispatcherTimer _highlightTimer;
 
-        // Live-Fehleranalyse (siehe LiveDiagnostics) - läuft debounced wie
-        // das Highlighting, aber mit einer LÄNGEREN Verzögerung (Parser +
-        // Resolver + Compiler sind spürbar teurer als reines Lexen) und
-        // GETRENNT davon, damit schnelles Tippen nicht bei jedem Zwischen-
-        // zustand einen vollständigen Kompilierversuch auslöst.
+        // Live error analysis (see LiveDiagnostics) - runs debounced like
+        // the highlighting, but with a LONGER delay (parser +
+        // resolver + compiler are noticeably more expensive than pure lexing) and
+        // SEPARATE from it, so that fast typing does not trigger a complete
+        // compile attempt on every intermediate state.
         private readonly DispatcherTimer _diagnosticsTimer;
         private List<Diagnostic> _diagnostics = new();
 
@@ -172,9 +172,9 @@ namespace fire.Editor
             Editor.TextArea.TextView.LineTransformers.Add(_colorizer);
             Editor.TextArea.TextView.BackgroundRenderers.Add(_lineBackground);
             Editor.TextArea.TextView.BackgroundRenderers.Add(_errorSquiggles);
-            // Index 0 = ganz links, also vor der (von ShowLineNumbers="True"
-            // automatisch eingefügten) Zeilennummer-Spalte - Haltepunkt-Punkt,
-            // dann Zeilennummer, dann Text, wie in den meisten IDEs üblich.
+            // Index 0 = far left, thus before the line-number column
+            // (inserted automatically by ShowLineNumbers="True") - breakpoint dot,
+            // then line number, then text, as is common in most IDEs.
             Editor.TextArea.LeftMargins.Insert(0, _breakpointMargin);
             _breakpointMargin.LineClicked += ToggleBreakpoint;
 
@@ -417,10 +417,10 @@ namespace fire.Editor
             _diagnosticsTimer.Start();
         }
 
-        /// <summary>Setzt den Editor-Text zurück und verwirft dabei auch
-        /// Haltepunkte/Diagnostik/Hervorhebung - für "neue Datei"/"andere
-        /// Datei geöffnet" im Host (anders als SetText, das bewusst NICHTS
-        /// von alldem verwirft).</summary>
+        /// <summary>Resets the editor text and also discards
+        /// breakpoints/diagnostics/highlighting - for "new file"/"another
+        /// file opened" in the host (unlike SetText, which deliberately discards NOTHING
+        /// of that).</summary>
         public void ResetTo(string text, string? filePath)
         {
             FilePath = filePath;
@@ -448,36 +448,36 @@ namespace fire.Editor
             _highlightTimer.Stop();
             _highlightTimer.Start();
 
-            // Läuft bei JEDER Textänderung, auch Löschen (Backspace/Entf) -
-            // TextEntered (siehe unten) feuert NUR bei tatsächlich
-            // eingefügtem Text, sieht Löschungen also gar nicht. Ein bereits
-            // offenes Popup hier EXPLIZIT neu berechnen und bei Bedarf
-            // schließen, statt uns auf AvalonEdits eigene interne "beim
-            // Weitertippen filtern"-Logik zu verlassen - genau DAS war
-            // vermutlich die Ursache dafür, dass die Liste oft weder
-            // zuverlässig aufging noch zuverlässig wieder zuging.
+            // Runs on EVERY text change, also deletion (Backspace/Del) -
+            // TextEntered (see below) fires ONLY for text
+            // actually inserted, so it does not see deletions at all. Recompute an already
+            // open popup here EXPLICITLY and close it if necessary,
+            // instead of relying on AvalonEdit's own internal "filter while
+            // typing on" logic - exactly THAT was
+            // presumably the cause of the list often neither opening
+            // reliably nor closing reliably again.
             if (_completionWindow != null)
                 ShowOrUpdateCompletion(closeIfEmpty: true);
         }
 
         // -----------------------------------------------------------
-        // Autovervollständigung (IntelliSense) - siehe ScriptSymbolIndex/
-        // CompletionEngine für die eigentliche Logik, hier nur die UI-
-        // Anbindung an AvalonEdits CompletionWindow. Tastatursteuerung
-        // (Pfeiltasten/Enter/Tab/Escape) im offenen Fenster übernimmt
-        // AvalonEdit vollständig selbst - das fortlaufende Eingrenzen der
-        // Liste beim Weitertippen dagegen NICHT verlässlich genug (siehe
-        // Editor_TextChanged), deshalb wird bei jeder Änderung explizit neu
-        // gerechnet: Editor_TextEntered öffnet (nur am Anfang eines
-        // Bezeichners bzw. nach '.'), Editor_TextChanged hält ein bereits
-        // offenes Popup synchron zum aktuellen Text und schließt es, sobald
-        // nichts mehr passt.
+        // Auto-completion (IntelliSense) - see ScriptSymbolIndex/
+        // CompletionEngine for the actual logic, here only the UI
+        // connection to AvalonEdit's CompletionWindow. Keyboard control
+        // (arrow keys/Enter/Tab/Escape) in the open window is handled
+        // entirely by AvalonEdit itself - the continuous narrowing of the
+        // list while typing on, however, NOT reliably enough (see
+        // Editor_TextChanged), which is why everything is explicitly
+        // recomputed on every change: Editor_TextEntered opens (only at the start of an
+        // identifier or after '.'), Editor_TextChanged keeps an already
+        // open popup in sync with the current text and closes it as soon as
+        // nothing matches any more.
         // -----------------------------------------------------------
 
         private void Editor_KeyDown(object? sender, KeyEventArgs e)
         {
-            // Strg+Leertaste: Vervollständigung manuell anstoßen, auch ohne
-            // vorangehenden '.' (allgemeine Bezeichner-Vervollständigung).
+            // Ctrl+Space: trigger completion manually, also without a
+            // preceding '.' (general identifier completion).
             if (e.Key == Key.Escape) CloseDocTip();
             if (e.Key == Key.Space && e.KeyModifiers == KeyModifiers.Control)
             {
@@ -489,7 +489,7 @@ namespace fire.Editor
                 GoToDefinition();
                 e.Handled = true;
             }
-            else if (e.Key == Key.C && e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift)) // layoutunabhängig (Strg+/ gibt es auf deutschen Tastaturen nicht)
+            else if (e.Key == Key.C && e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift)) // layout-independent (Ctrl+/ does not exist on German keyboards)
             {
                 ToggleComment();
                 e.Handled = true;
@@ -498,10 +498,10 @@ namespace fire.Editor
 
         private void Editor_TextEntered(object? sender, TextInputEventArgs e)
         {
-            // Ein bereits offenes Popup wird von Editor_TextChanged
-            // aktualisiert (das feuert für JEDE Änderung, auch diese
-            // Einfügung hier - doppeltes Berechnen für dasselbe Zeichen wird
-            // dadurch vermieden).
+            // An already open popup is updated by Editor_TextChanged
+            // (which fires for EVERY change, also this
+            // insertion here - computing twice for the same character is
+            // thereby avoided).
             if (_completionWindow != null) return;
             if (string.IsNullOrEmpty(e.Text)) return;
 
@@ -511,10 +511,10 @@ namespace fire.Editor
 
             if (isIdentifierChar)
             {
-                // Nur am ANFANG eines Bezeichners auslösen (das Zeichen davor
-                // ist selbst kein Bezeichner-Zeichen) - sonst würde jeder
-                // weitere Buchstabe mitten in einem bereits fertig getippten
-                // Wort erneut ein Popup aufreißen.
+                // Trigger only at the START of an identifier (the character before it
+                // is itself not an identifier character) - otherwise every
+                // further letter in the middle of an already fully typed
+                // word would tear open a popup again.
                 int before = Editor.CaretOffset - 2;
                 if (before >= 0)
                 {
@@ -542,9 +542,9 @@ namespace fire.Editor
 
             items = items.OrderByDescending(i => i.Score).ToList();
 
-            // Bereits getipptes Präfix (Bezeichner-Zeichen unmittelbar vor
-            // dem Cursor) - AvalonEdit soll das ERSETZEN, nicht nur dahinter
-            // einfügen (dieselbe Präfix-Logik wie vorher in AcceptCompletion).
+            // Already typed prefix (identifier characters immediately before
+            // the cursor) - AvalonEdit is to REPLACE that, not only
+            // insert behind it (the same prefix logic as before in AcceptCompletion).
             int start = offset - 1;
             while (start >= 0 && (char.IsLetterOrDigit(source[start]) || source[start] == '_')) start--;
             start++;
@@ -568,9 +568,9 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Syntax-Highlighting/Fehler-Unterkringelung - siehe
-        // EditorRendering.HighlightingColorizer für die eigentliche
-        // Zeichen-Logik, hier nur Neuberechnen + Neuzeichnen anstoßen.
+        // Syntax highlighting/error squiggles - see
+        // EditorRendering.HighlightingColorizer for the actual
+        // character logic, here only trigger recomputing + redrawing.
         // -----------------------------------------------------------
 
         private ISet<string>? _conditionalSymbols;
@@ -622,11 +622,11 @@ namespace fire.Editor
             Editor.TextArea.TextView.Redraw();
         }
 
-        /// <summary>Läuft debounced nach Textänderungen (siehe
-        /// Editor_TextChanged/_diagnosticsTimer): Parser+Resolver+Compiler
-        /// auf dem aktuellen Editor-Inhalt (siehe LiveDiagnostics.Analyze),
-        /// aktualisiert Diagnostics (löst DiagnosticsChanged aus) und die
-        /// unterkringelten Zeilen im Editor selbst.</summary>
+        /// <summary>Runs debounced after text changes (see
+        /// Editor_TextChanged/_diagnosticsTimer): parser+resolver+compiler
+        /// on the current editor content (see LiveDiagnostics.Analyze),
+        /// updates Diagnostics (raises DiagnosticsChanged) and the
+        /// squiggled lines in the editor itself.</summary>
         private void RunDiagnostics()
         {
             string source = Editor.Text;
@@ -636,12 +636,12 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Strg+Klick-Navigation zu Definitionen/Includes (siehe
-        // NavigationEngine für die eigentliche Auflösung, FileViewerWindow
-        // für die Anzeige einer ANDEREN Datei) - unverändert gegenüber der
-        // alten Fassung, nur die Offset-Ermittlung nutzt jetzt AvalonEdits
-        // eigene, zuverlässige GetPositionFromPoint/GetOffset statt
-        // TextPointer-Klimmzüge.
+        // Ctrl+click navigation to definitions/includes (see
+        // NavigationEngine for the actual resolution, FileViewerWindow
+        // for showing ANOTHER file) - unchanged compared to the
+        // old version, only the offset determination now uses AvalonEdit's
+        // own, reliable GetPositionFromPoint/GetOffset instead of
+        // TextPointer contortions.
         // -----------------------------------------------------------
 
         private void Editor_PointerPressed(object? sender, PointerPressedEventArgs e)
@@ -650,9 +650,9 @@ namespace fire.Editor
             // a right click puts the caret under the mouse for the context menu
             if (point.Properties.IsRightButtonPressed) { _contextOffset = Editor.PlaceCaretForContextMenu(e); return; }
 
-            // Nur Strg+Klick navigiert - ein normaler Klick muss weiterhin
-            // ganz gewöhnlich den Cursor setzen/Text markieren können, ohne
-            // versehentlich wegzuspringen.
+            // Only Ctrl+click navigates - a normal click must still be able
+            // to set the cursor/select text quite normally, without
+            // accidentally jumping away.
             if (!point.Properties.IsLeftButtonPressed || (e.KeyModifiers & KeyModifiers.Control) == 0) return;
 
             var pos = Editor.GetPositionFromPoint(e.GetPosition(Editor));
@@ -662,7 +662,7 @@ namespace fire.Editor
             if (GoToDefinitionAt(offset)) e.Handled = true;
         }
 
-        /// <summary>Wohin ein Sprung zur Definition an `offset` führen würde, null = nirgends.</summary>
+        /// <summary>Where a jump to the definition at `offset` would lead, null = nowhere.</summary>
         private NavigationTarget? FindDefinitionAt(int offset)
         {
             string source = Editor.Text;
@@ -671,10 +671,10 @@ namespace fire.Editor
                 ?? TryResolveAcrossIncludes(source, offset, index);
         }
 
-        /// <summary>Springt zur Definition des Symbols unter dem Cursor (F12, Menü "Zu Definition springen").</summary>
+        /// <summary>Jumps to the definition of the symbol under the cursor (F12, menu "Go to definition").</summary>
         public void GoToDefinition() => GoToDefinitionAt(Editor.CaretOffset);
 
-        /// <summary>Gibt es zum Symbol unter dem Cursor eine Definition? (für das Menü)</summary>
+        /// <summary>Is there a definition for the symbol under the cursor? (for the menu)</summary>
         public bool CanGoToDefinition() => FindDefinitionAt(Editor.CaretOffset) != null;
 
         private bool GoToDefinitionAt(int offset)
@@ -701,7 +701,7 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Kontextmenü (Rechtsklick)
+        // Context menu (right click)
         // -----------------------------------------------------------
 
         private int _contextOffset;
@@ -720,7 +720,7 @@ namespace fire.Editor
             return EditorCommands.BuildMenu(entries);
         }
 
-        /// <summary>Schaltet `//` vor den Zeilen der Auswahl (bzw. der Cursor-Zeile) ein oder aus.</summary>
+        /// <summary>Toggles `//` in front of the lines of the selection (or the cursor line) on or off.</summary>
         public void ToggleComment()
         {
             var doc = Editor.Document;
@@ -754,20 +754,20 @@ namespace fire.Editor
             Editor.Focus();
         }
 
-        /// <summary>Zeigt eine eingebaute Prelude (Standardbibliothek oder die einer per
-        /// `#import` zugeschalteten Erweiterung, siehe ScriptSymbolIndex.PreludeSourceOf) in einem
-        /// schreibgeschützten Fenster, zu `line` gescrollt - für "zu Definition springen" auf
-        /// `List`/`Framebuffer`/etc., die NICHT im aktuellen Dokument selbst stehen. Pro Prelude
-        /// gibt es nur EIN Fenster, weitere Sprünge benutzen es wieder.</summary>
+        /// <summary>Shows a built-in prelude (standard library or that of an extension switched on via
+        /// `#import`, see ScriptSymbolIndex.PreludeSourceOf) in a
+        /// read-only window, scrolled to `line` - for "go to definition" on
+        /// `List`/`Framebuffer`/etc., which are NOT in the current document itself. There is
+        /// only ONE window per prelude, further jumps reuse it.</summary>
         private void ShowPreludeSource(string preludeName, int line) =>
             FileViewerWindow.ShowPrelude(preludeName, line, Dialogs.WindowOf(this));
 
-        /// <summary>Fällt auf jede per `#include` in DIESEM Dokument
-        /// eingebundene Datei zurück, wenn NavigationEngine.TryResolve im
-        /// Dokument selbst nichts gefunden hat - braucht einen gespeicherten
-        /// Dateipfad (siehe FilePath), um relative Include-Pfade überhaupt
-        /// auflösen zu können (ein noch nie gespeichertes Dokument hat kein
-        /// Verzeichnis, relativ zu dem das Sinn ergäbe).</summary>
+        /// <summary>Falls back to every file included via `#include` in THIS document
+        /// if NavigationEngine.TryResolve found nothing in the
+        /// document itself - needs a saved
+        /// file path (see FilePath) to be able to resolve relative include paths at all
+        /// (a document never saved has no
+        /// directory relative to which that would make sense).</summary>
         private NavigationTarget? TryResolveAcrossIncludes(string source, int offset, ScriptSymbolIndex index)
         {
             if (FilePath == null || index.IncludeDirectives.Count == 0) return null;
@@ -796,13 +796,13 @@ namespace fire.Editor
             return null;
         }
 
-        /// <summary>Öffnet `pathFromTarget` (entweder schon absolut - vom
-        /// includes-Rückfall oben - oder noch der ROHE relative Pfad direkt
-        /// aus einer `#include`-Zeile, siehe NavigationTarget-Doku) in einem
-        /// neuen FileViewerWindow-Popup, zu `line` gescrollt.</summary>
-        /// <summary>Ein Sprung führt in eine ANDERE Datei (z.B. per `#include`): der Host öffnet sie
-        /// in einem Tab und springt zur Zeile (Parameter: vollständiger Pfad, 1-basierte Zeile).
-        /// Ohne Abonnent zeigt ein schreibgeschütztes Fenster die Datei.</summary>
+        /// <summary>Opens `pathFromTarget` (either already absolute - from the
+        /// includes fallback above - or still the RAW relative path directly
+        /// from an `#include` line, see NavigationTarget documentation) in a
+        /// new FileViewerWindow popup, scrolled to `line`.</summary>
+        /// <summary>A jump leads into ANOTHER file (e.g. via `#include`): the host opens it
+        /// in a tab and jumps to the line (parameters: full path, 1-based line).
+        /// Without a subscriber a read-only window shows the file.</summary>
         public event Action<string, int>? OpenFileRequested;
 
         private void OpenFileViewer(string pathFromTarget, int line)
@@ -831,10 +831,10 @@ namespace fire.Editor
         }
 
         // -----------------------------------------------------------
-        // Cursor/Scroll - AvalonEdit zählt intern überall 1-basiert
-        // (Caret.Line, DocumentLine.LineNumber); die 0-basierte Zeile bei
-        // SetCaretByLineColumn ist die einzige Umrechnungsstelle (siehe
-        // Klassendoku ganz oben).
+        // Cursor/scroll - AvalonEdit counts internally everywhere 1-based
+        // (Caret.Line, DocumentLine.LineNumber); the 0-based line at
+        // SetCaretByLineColumn is the only conversion point (see
+        // the class documentation at the very top).
         // -----------------------------------------------------------
 
         public int GetCaretLine() => Editor.TextArea.Caret.Line;
@@ -847,7 +847,7 @@ namespace fire.Editor
             int col = Math.Max(0, Math.Min(column, lineObj.Length));
 
             Editor.TextArea.Caret.Line = docLine;
-            Editor.TextArea.Caret.Column = col + 1; // AvalonEdit-Spalten sind 1-basiert
+            Editor.TextArea.Caret.Column = col + 1; // AvalonEdit columns are 1-based
             Editor.TextArea.Caret.BringCaretToView();
         }
 
@@ -856,7 +856,7 @@ namespace fire.Editor
         public void FocusEditor() => Editor.Focus();
 
         // -----------------------------------------------------------
-        // Bearbeiten (Menü des Hauptfensters, Kontextmenü)
+        // Edit (menu of the main window, context menu)
         // -----------------------------------------------------------
 
         private AvaloniaEdit.Search.SearchPanel? _searchPanel;
@@ -885,7 +885,7 @@ namespace fire.Editor
         public void FindPrevious() => _searchPanel?.FindPrevious();
 
         // -----------------------------------------------------------
-        // Haltepunkte (Rand-Klick oder F9 im Host, siehe
+        // Breakpoints (margin click or F9 in the host, see
         // ToggleBreakpointAtCaret)
         // -----------------------------------------------------------
 

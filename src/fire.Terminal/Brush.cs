@@ -4,24 +4,24 @@ using System.Collections.Generic;
 namespace fire.Terminal
 {
     /// <summary>
-    /// Ein Pinsel: sagt, wie eine Fläche gefüllt wird. Er bietet die Füllfunktionen an (Rechteck, Kreis, Ellipse, Dreieck, Polygon, Flächenfüllung); der <see cref="Renderer"/> reicht nur seine
-    /// Fläche (<see cref="Surface"/>) hinein. Die Farbe ist eine Farbangabe (<see cref="Paint"/>: Palette-Index 0-255 oder direkter RGBA-Wert); ihr Alpha wird gemischt, wenn die Surface
-    /// Blending hat (siehe dort).
+    /// A brush: says how an area is filled. It offers the fill functions (rectangle, circle, ellipse, triangle, polygon, area fill); the <see cref="Renderer"/> only hands in its
+    /// surface (<see cref="Surface"/>). The colour is a colour specification (<see cref="Paint"/>: palette index 0-255 or direct RGBA value); its alpha is blended if the surface
+    /// has blending (see there).
     ///
-    /// Der Pinsel ist abstrakt, damit weitere Arten (Muster, Bild) dazukommen können; vorerst gibt es den einfarbigen <see cref="SolidBrush"/>.
+    /// The brush is abstract so that further kinds (pattern, image) can be added; for now there is the single-colour <see cref="SolidBrush"/>.
     /// </summary>
     public abstract class Brush
     {
-        /// <summary>Die Farbe des Pixels (x, y) für diese Fläche; für einfarbige Pinsel immer dieselbe.</summary>
+        /// <summary>The colour of the pixel (x, y) for this area; always the same for single-colour brushes.</summary>
         public abstract Pixel PixelAt(in Surface surface, int x, int y);
 
-        /// <summary>Hat der Pinsel überall dieselbe Farbe (dann sind Spans und Zeichen mit Schnellwegen möglich)?</summary>
+        /// <summary>Does the brush have the same colour everywhere (then spans and characters can use fast paths)?</summary>
         public virtual bool IsUniform => true;
 
-        /// <summary>Die Farbangabe eines einfarbigen Pinsels (sonst null).</summary>
+        /// <summary>The colour specification of a single-colour brush (otherwise null).</summary>
         public virtual Paint? SolidPaint => null;
 
-        // ---- die Senke, die einen Pinsel anwendet ----
+        // ---- the sink that applies a brush ----
 
         private struct FillSink : IPixelSink
         {
@@ -46,7 +46,7 @@ namespace fire.Terminal
             return new FillSink { Surface = surface, Brush = this, IsUniform = uniform, Uniform = uniform ? PixelAt(surface, 0, 0) : default };
         }
 
-        // ---- Füllfunktionen ----
+        // ---- fill functions ----
 
         public void FillSpan(in Surface surface, int y, int x0, int x1) { var s = Sink(surface); s.Span(y, x0, x1); }
 
@@ -71,21 +71,21 @@ namespace fire.Terminal
             Shapes.FillTriangle(ref s, x0, y0, x1, y1, x2, y2, surface.Height);
         }
 
-        /// <summary>`points` = x0, y0, x1, y1, ... (Even-Odd-Regel, die Randpixel gehören dazu).</summary>
+        /// <summary>`points` = x0, y0, x1, y1, ... (even-odd rule, the edge pixels belong to it).</summary>
         public void FillPolygon(in Surface surface, int[] points)
         {
             var s = Sink(surface);
             Shapes.FillPolygon(ref s, points, surface.Height);
         }
 
-        // ---- Flächenfüllung ----
+        // ---- area fill ----
 
-        /// <summary>Füllt die zusammenhängende Fläche (4er-Nachbarschaft) um (x, y), die denselben Pixelwert hat wie der Startpunkt. Liegt der Startpunkt außerhalb
-        /// oder hat er schon die Füllfarbe (deckend gefüllt), geschieht nichts.</summary>
+        /// <summary>Fills the connected area (4-neighbourhood) around (x, y) that has the same pixel value as the starting point. If the starting point is outside
+        /// or already has the fill colour (opaque fill), nothing happens.</summary>
         public void FloodFill(in Surface surface, int x, int y) => Flood(surface, x, y, hasBorder: false, border: default);
 
-        /// <summary>Wie <see cref="FloodFill"/>, aber die Fläche wird von Pixeln der Farbe `border` begrenzt (wie `PAINT x, y, farbe, rand` in QBasic): gefüllt wird alles,
-        /// was nicht Rand- und nicht Füllfarbe ist.</summary>
+        /// <summary>Like <see cref="FloodFill"/>, but the area is bounded by pixels of the colour `border` (like `PAINT x, y, colour, border` in QBasic): everything is filled
+        /// that is neither border nor fill colour.</summary>
         public void FloodFillBorder(in Surface surface, int x, int y, Paint border) => Flood(surface, x, y, hasBorder: true, border: surface.Resolve(border));
 
         private void Flood(in Surface surface, int x, int y, bool hasBorder, Pixel border)
@@ -101,8 +101,8 @@ namespace fire.Terminal
             if (!hasBorder && target == fill && copy) return;
             if (hasBorder && (target == borderRaw || (target == fill && copy))) return;
 
-            // Zuerst die Fläche bestimmen (die Pixel bleiben dabei unberührt), dann füllen: so ändert das Füllen - auch das Mischen einer
-            // halbdurchsichtigen Farbe - nicht, was zur Fläche gehört.
+            // First determine the area (the pixels stay untouched meanwhile), then fill: this way filling - also blending a
+            // semi-transparent colour - does not change what belongs to the area.
             int w = surface.Width, h = surface.Height;
             var sf = surface;
             var seen = new bool[w * h];
@@ -145,10 +145,10 @@ namespace fire.Terminal
         }
     }
 
-    /// <summary>Ein einfarbiger Pinsel.</summary>
+    /// <summary>A single-colour brush.</summary>
     public sealed class SolidBrush : Brush
     {
-        /// <summary>Die Farbe (Palette-Index 0-255 oder direkter RGBA-Wert, siehe <see cref="Paint"/>).</summary>
+        /// <summary>The colour (palette index 0-255 or direct RGBA value, see <see cref="Paint"/>).</summary>
         public Paint Color { get; set; }
 
         public SolidBrush(Paint color) => Color = color;

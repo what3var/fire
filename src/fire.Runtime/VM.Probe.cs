@@ -6,14 +6,14 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>
-    /// `probe`/`silence` (docs/DESIGN_LAMBDA_REFLECTION_PROBE.md, SPEC 8.14): Handler für Schreibzugriffe auf Mitglieder eines Objekts. Ein Objekt mit
-    /// Proben trägt eine <see cref="ProbeTable"/> und damit einen <see cref="ObjectInstance.AccessGuard"/>: seine Schreibzugriffe laufen über den
-    /// langsamen Pfad (<see cref="SetFieldSlow"/>), alle anderen Objekte behalten die Inline-Cache-Schnellpfade.
+    /// `probe`/`silence` (docs/DESIGN_LAMBDA_REFLECTION_PROBE.md, SPEC 8.14): handlers for write accesses to members of an object. An object with
+    /// probes carries a <see cref="ProbeTable"/> and thus an <see cref="ObjectInstance.AccessGuard"/>: its write accesses go via the
+    /// slow path (<see cref="SetFieldSlow"/>), all other objects keep the inline-cache fast paths.
     /// </summary>
     public sealed partial class VM
     {
-        /// <summary>Ruft eine Lambda verschachtelt auf (wie <see cref="CallMethodNested"/>): eine Exception darin läuft zu den Handlern des Aufrufers.
-        /// null, wenn sie dorthin umgeleitet wurde (kein Ergebnis).</summary>
+        /// <summary>Calls a lambda nested (like <see cref="CallMethodNested"/>): an exception in it runs to the handlers of the caller.
+        /// null if it was redirected there (no result).</summary>
         private Value? CallLambdaNested(LambdaValue lambda, Value[] args)
         {
             CheckArity(lambda.Proto, args.Length);
@@ -42,7 +42,7 @@ namespace fire.Runtime
             return completedNormally ? Pop() : (Value?)null;
         }
 
-        /// <summary>Handler-Argumente nach Parameterzahl: 0 keine, 1 (neu), 2 (alt, neu), 3 (Objekt, alt, neu), 4 (Objekt, Name, alt, neu).</summary>
+        /// <summary>Handler arguments by parameter count: 0 none, 1 (new), 2 (old, new), 3 (object, old, new), 4 (object, name, old, new).</summary>
         private Value? RunProbeHandler(ProbeEntry entry, ObjectInstance obj, string member, Value oldValue, Value newValue)
         {
             var handler = entry.Handler;
@@ -57,9 +57,9 @@ namespace fire.Runtime
             return CallLambdaNested(handler, args);
         }
 
-        /// <summary>`obj.member = value` auf einem Objekt mit Proben für `member` (Stack: obj, value): `changing`-Handler (einer, der `false`
-        /// liefert, bricht das Schreiben ab - der Ausdruck wertet trotzdem zum zugewiesenen Wert aus), dann das Schreiben, dann - nur bei geändertem
-        /// Wert - die `changed`-Handler. Schreibt ein Handler dasselbe Mitglied, feuert dafür nichts erneut.</summary>
+        /// <summary>`obj.member = value` on an object with probes for `member` (stack: obj, value): `changing` handlers (one that returns `false`
+        /// aborts the write - the expression still evaluates to the assigned value), then the write, then - only if the
+        /// value changed - the `changed` handlers. If a handler writes the same member, nothing fires again for it.</summary>
         private bool SetFieldProbed(string name, ProbeTable probes)
         {
             var obj = (ObjectInstance)_stack[_sp - 2].AsObjectRef();
@@ -99,8 +99,8 @@ namespace fire.Runtime
             finally { probes.EndRunning(name); }
         }
 
-        /// <summary>Meldet eine Probe an. `member == null`: alle Mitglieder. false mit Meldung, wenn das Ziel kein Objekt, das Mitglied unbekannt oder
-        /// der Handler keine Lambda mit 0 bis 4 Parametern ist.</summary>
+        /// <summary>Registers a probe. `member == null`: all members. false with a message if the target is not an object, the member is unknown or
+        /// the handler is not a lambda with 0 to 4 parameters.</summary>
         public bool TryProbeAdd(Value target, string? member, bool changing, Value handler, out long id, out string error)
         {
             id = 0;
@@ -118,7 +118,7 @@ namespace fire.Runtime
             return true;
         }
 
-        /// <summary>`silence obj.member` bzw. `silence obj.*` (`member == null`: alle Proben des Objekts).</summary>
+        /// <summary>`silence obj.member` or `silence obj.*` (`member == null`: all probes of the object).</summary>
         public bool TrySilenceMember(Value target, string? member, out string error)
         {
             error = "";
@@ -128,7 +128,7 @@ namespace fire.Runtime
             return true;
         }
 
-        /// <summary>`silence x`: ein Probe-Handle (int) entfernt genau diese Probe, ein Objekt alle seine Proben.</summary>
+        /// <summary>`silence x`: a probe handle (int) removes exactly this probe, an object all its probes.</summary>
         public bool TrySilenceValue(Value value, out string error)
         {
             error = "";
@@ -138,7 +138,7 @@ namespace fire.Runtime
                 long id = value.AsInt();
                 var owner = ProbeRegistry.OwnerOf(id);
                 if (owner?.Probes != null && owner.Probes.Remove(id)) ProbeRegistry.Forget(new[] { id });
-                return true; // ein schon entferntes Handle ist kein Fehler
+                return true; // an already removed handle is not an error
             }
             error = $"'silence' expects a probe handle or an object, got: {value.Kind}.";
             return false;

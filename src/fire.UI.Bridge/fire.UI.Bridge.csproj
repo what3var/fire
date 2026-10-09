@@ -1,10 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Eine kleine Oberflächen-Bibliothek, die in einem Framebuffer läuft (Schaltflächen, Beschriftungen, Kontrollkästchen,
-    Textfelder, Panels). Komplett in fire geschrieben (UiBridge.PreludeSource, `namespace UI`) und aufgebaut auf den
-    Klassen der Grafik-Brücke (Framebuffer, Console, Window) - enthält deshalb keine nativen Funktionen und
-    keine eigene DLL-Abhängigkeit. Aktiviert per `#import "ui"` (schaltet `graphics` automatisch mit zu).
+    A small UI library that runs in a framebuffer (buttons, labels, check boxes,
+    text fields, panels). Written entirely in fire (UiBridge.PreludeSource, `namespace UI`) and built on the
+    classes of the graphics bridge (Framebuffer, Console, Window) - therefore contains no native functions and
+    no DLL dependency of its own. Activated via `#import "ui"` (automatically switches on `graphics` as well).
   -->
   <PropertyGroup>
     <OutputType>Library</OutputType>

@@ -3,36 +3,36 @@ using System.Threading;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Ein Lock, der einem GANZEN ausgecheckten Ownership-Baum zugeordnet ist
-    /// (siehe docs/THREADING_DESIGN.md Abschnitt 4.5 "Locking") - nicht einem
-    /// einzelnen Knoten. Sobald ein Objekt zum ersten Mal Ziel von `taking`
-    /// wird, bekommt es (und rekursiv alle von ihm besessenen Objekte, siehe
-    /// ObjectInstance.ActivateThreadSharing) eine gemeinsame Instanz hiervon
-    /// zugewiesen - JEDER Zugriff auf JEDEN Knoten in diesem Baum (auch ganz
-    /// normale Lese-/Schreibzugriffe vom besitzenden Thread selbst, nicht nur
-    /// `sync`) muss diesen Lock respektieren. Objekte, die nie mit `taking` in
-    /// Berührung kommen, haben `ObjectInstance.ThreadLock == null` und zahlen
-    /// dadurch keinerlei Locking-Overhead - das ist die im Design bewusst
-    /// gewählte Kosten-Optimierung.
+    /// A lock assigned to an ENTIRE checked-out ownership tree
+    /// (see docs/THREADING_DESIGN.md section 4.5 "Locking") - not to a
+    /// single node. As soon as an object becomes the target of `taking` for the first time,
+    /// it (and recursively all objects owned by it, see
+    /// ObjectInstance.ActivateThreadSharing) is assigned a common instance of this
+    /// - EVERY access to EVERY node in this tree (even perfectly
+    /// normal read/write accesses by the owning thread itself, not only
+    /// `sync`) must respect this lock. Objects that never come into
+    /// contact with `taking` have `ObjectInstance.ThreadLock == null` and pay
+    /// thereby no locking overhead at all - that is the cost
+    /// optimisation deliberately chosen in the design.
     ///
-    /// Bewusst EIN Lock pro Baum statt pro Knoten: eine `sync`/`taking`-
-    /// Operation berührt ohnehin nie mehr als einen Baum gleichzeitig (siehe
-    /// Fall A/B/C in THREADING_DESIGN.md - Objektreferenzen werden bei einem
-    /// flachen Sync als atomare Knoten behandelt, nie rekursiv in einen
-    /// FREMDEN Baum hinein synchronisiert), ein feingranulareres Modell hätte
-    /// also keinen Sicherheitsgewinn, nur zusätzliche Deadlock-Komplexität
-    /// durch mögliche Lock-Reihenfolgen zwischen mehreren Knoten-Locks.
+    /// Deliberately ONE lock per tree instead of per node: a `sync`/`taking`
+    /// operation never touches more than one tree at a time anyway (see
+    /// case A/B/C in THREADING_DESIGN.md - object references are treated as atomic nodes in a
+    /// flat sync, never synchronised recursively into a
+    /// FOREIGN tree), so a finer-grained model would
+    /// bring no safety gain, only additional deadlock complexity
+    /// through possible lock orders between several node locks.
     /// </summary>
     public sealed class ThreadShareLock
     {
         private readonly object _gate = new();
 
-        /// <summary>Eindeutige, monoton steigende Erzeugungsreihenfolge -
-        /// Grundlage für eine global konsistente Lock-Reihenfolge, falls doch
-        /// einmal mehr als ein Baum-Lock gleichzeitig gehalten werden muss
-        /// (aktuell kommt das in keiner der implementierten Operationen vor,
-        /// aber zukünftige Erweiterungen sollten IMMER in aufsteigender
-        /// Order-Reihenfolge sperren, um AB-BA-Deadlocks zu vermeiden).</summary>
+        /// <summary>Unique, monotonically increasing creation order -
+        /// basis for a globally consistent lock order, should
+        /// more than one tree lock ever have to be held at the same time
+        /// (currently this occurs in none of the implemented operations,
+        /// but future extensions should ALWAYS lock in ascending
+        /// Order sequence, to avoid AB-BA deadlocks).</summary>
         public long Order { get; }
 
         private static long _nextOrder;
@@ -42,13 +42,13 @@ namespace fire.Runtime
             Order = Interlocked.Increment(ref _nextOrder);
         }
 
-        /// <summary>Blockierender Eintritt (für `sync`/normale Feldzugriffe
-        /// auf einem geteilten Baum) - wartet, bis der Lock frei ist.</summary>
+        /// <summary>Blocking entry (for `sync`/normal field accesses
+        /// on a shared tree) - waits until the lock is free.</summary>
         public void Enter() => Monitor.Enter(_gate);
 
-        /// <summary>Nicht-blockierender Eintritt (für `try sync`/`try sync flat`)
-        /// - liefert sofort `false`, wenn der Lock gerade belegt ist, statt zu
-        /// warten.</summary>
+        /// <summary>Non-blocking entry (for `try sync`/`try sync flat`)
+        /// - returns `false` immediately if the lock is currently held, instead of
+        /// waiting.</summary>
         public bool TryEnter() => Monitor.TryEnter(_gate);
 
         public void Exit() => Monitor.Exit(_gate);

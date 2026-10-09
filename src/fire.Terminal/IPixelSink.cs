@@ -1,9 +1,9 @@
 namespace fire.Terminal
 {
     /// <summary>
-    /// Wohin die Formen von <see cref="Shapes"/> ihre Pixel schicken: einzelne Pixel und waagerechte Spans (beide Enden eingeschlossen, beliebige Reihenfolge, die Senke beschneidet).
-    /// Ein Pinsel (<see cref="Brush"/>) füllt sie mit seiner Farbe, ein Stift (<see cref="Pen"/>) stempelt an jedem Pixel seine Spitze. Implementiert wird sie von Strukturen,
-    /// damit die generischen Formen ohne Schnittstellenaufruf je Pixel laufen.
+    /// Where the shapes of <see cref="Shapes"/> send their pixels: single pixels and horizontal spans (both ends included, any order, the sink clips).
+    /// A brush (<see cref="Brush"/>) fills them with its colour, a pen (<see cref="Pen"/>) stamps its tip at every pixel. It is implemented by structs,
+    /// so that the generic shapes run without an interface call per pixel.
     /// </summary>
     public interface IPixelSink
     {

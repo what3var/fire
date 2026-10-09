@@ -1,39 +1,39 @@
 namespace fire.Values
 {
-    /// <summary>Little- oder Big-Endian. Beeinflusst NUR die Interpretation
-    /// von ToLittleEndian()/ToBigEndian() auf einem ByteBuffer (siehe dort) -
-    /// die tatsächlich gespeicherten Bytes ändern sich nie implizit von
-    /// selbst, nur durch einen EXPLIZITEN Aufruf einer dieser beiden
-    /// Methoden.</summary>
+    /// <summary>Little or big endian. Affects ONLY the interpretation
+    /// of ToLittleEndian()/ToBigEndian() on a ByteBuffer (see there) -
+    /// the bytes actually stored never change implicitly
+    /// by themselves, only through an EXPLICIT call of one of these two
+    /// methods.</summary>
     public enum ByteOrder { Little, Big }
 
     /// <summary>
-    /// Ein roher Byte-Puffer fester Größe - bewusst GETRENNT von ScriptArray
-    /// (das boxte Value[]-Elemente hält, ein Overhead von mehreren Bytes pro
-    /// Element): ein ByteBuffer ist ein echtes, kompaktes byte[], gedacht für
-    /// Binärdaten aus IO (seriell, Netzwerk, Dateien). Absichtlich auf
-    /// einfachste C#-Bausteine (Array, einfache Schleifen) beschränkt, KEINE
-    /// LINQ/Reflection/High-Level-.NET-Features - diese Klasse soll sich
-    /// später 1:1 in eine C++-VM übertragen lassen.
+    /// A raw byte buffer of fixed size - deliberately SEPARATE from ScriptArray
+    /// (which holds boxed Value[] elements, an overhead of several bytes per
+    /// element): a ByteBuffer is a real, compact byte[], intended for
+    /// binary data from IO (serial, network, files). Deliberately restricted to
+    /// the simplest C# building blocks (array, simple loops), NO
+    /// LINQ/reflection/high-level .NET features - this class is meant to
+    /// be transferable 1:1 into a C++ VM later.
     ///
-    /// Trägt eine ByteOrder als veränderliche Eigenschaft: bei der
-    /// Erzeugung entweder explizit gesetzt oder (Default) von der
-    /// Host-Architektur übernommen (siehe VM.HostByteOrder - zur Laufzeit
-    /// per Bit-Trick ermittelt, kein Compile-Flag).
+    /// Carries a ByteOrder as a mutable property: set explicitly on
+    /// creation or (default) taken over from the
+    /// host architecture (see VM.HostByteOrder - determined at runtime
+    /// via a bit trick, no compile flag).
     /// </summary>
     public sealed class ByteBuffer : fire.Runtime.IOwnedLeaf
     {
         public byte[] Bytes { get; }
 
-        /// <summary>Der Owner (SPEC 2), siehe <see cref="ScriptArray.LeafOwner"/>.</summary>
+        /// <summary>The owner (SPEC 2), see <see cref="ScriptArray.LeafOwner"/>.</summary>
         public fire.Runtime.IOwner? LeafOwner { get; set; }
         public bool IsDestroyed { get; private set; }
         public void MarkDestroyed(fire.Runtime.IDestructRunner runner) { IsDestroyed = true; LeafOwner = null; }
         public ByteOrder Order { get; set; }
         public int Length => Bytes.Length;
 
-        /// <summary>Ab dieser Länge liegt ein Puffer auf dem Pinned Object Heap: der GC verschiebt ihn nie, ein Framebuffer behält seine Adresse und Natives
-        /// bekommen ihn ohne Kopie (siehe PackageNativeBinding).</summary>
+        /// <summary>From this length on a buffer lies on the Pinned Object Heap: the GC never moves it, a framebuffer keeps its address and natives
+        /// get it without a copy (see PackageNativeBinding).</summary>
         public const int PinnedThreshold = 16 * 1024;
 
         public ByteBuffer(int length, ByteOrder order)
@@ -48,9 +48,9 @@ namespace fire.Values
             Order = order;
         }
 
-        /// <summary>Liefert `false` bei ungültigem Index (`value` dann 0),
-        /// statt zu werfen - siehe ScriptArray.TryGet für dieselbe
-        /// Begründung (C++-Portierbarkeit ohne Exceptions im Hot Path).</summary>
+        /// <summary>Returns `false` for an invalid index (`value` then 0),
+        /// instead of throwing - see ScriptArray.TryGet for the same
+        /// reasoning (C++ portability without exceptions in the hot path).</summary>
         public bool TryGet(long index, out byte value)
         {
             if (index < 0 || index >= Bytes.Length)
@@ -69,19 +69,19 @@ namespace fire.Values
             return true;
         }
 
-        /// <summary>Wie TryGet/TrySet, aber OHNE die Bounds-Prüfung (siehe
-        /// Bytecode.VmExecutionMode.Performance) - ein ungültiger Index führt
-        /// zu einer rohen, UNGEFANGENEN .NET-IndexOutOfRangeException. Nur
-        /// von VM-Opcode-Handlern im Performance-Modus aufgerufen, nie
-        /// direkt aus Skript-Code heraus wählbar.</summary>
+        /// <summary>Like TryGet/TrySet, but WITHOUT the bounds check (see
+        /// Bytecode.VmExecutionMode.Performance) - an invalid index leads
+        /// to a raw, UNCAUGHT .NET IndexOutOfRangeException. Called only
+        /// by VM opcode handlers in performance mode, never
+        /// selectable directly from script code.</summary>
         public byte GetUnchecked(long index) => Bytes[(int)index];
 
         public void SetUnchecked(long index, byte value) => Bytes[(int)index] = value;
 
-        /// <summary>Kopie mit denselben Bytes, aber eigenständigem
-        /// Backing-Array (Mutationen der Kopie wirken sich nicht auf das
-        /// Original aus, wie bei jeder anderen "Wert wird kopiert"-Stelle
-        /// dieser Sprache).</summary>
+        /// <summary>Copy with the same bytes, but an independent
+        /// backing array (mutations of the copy do not affect the
+        /// original, as with every other "value is copied" place
+        /// of this language).</summary>
         public ByteBuffer Clone()
         {
             var copy = new byte[Bytes.Length];
@@ -89,14 +89,14 @@ namespace fire.Values
             return new ByteBuffer(copy, Order);
         }
 
-        /// <summary>Liefert eine Kopie mit vertauschter Byte-Reihenfolge -
-        /// GESAMTER Puffer als EIN zusammenhängender Block gespiegelt (nicht
-        /// etwa Element für Element in fester Breite), da ein ByteBuffer
-        /// selbst keine Elementbreite kennt - für ein einzelnes Mehrbyte-Feld
-        /// (z.B. ein 4-Byte int) IST das exakt die gewünschte Bedeutung;
-        /// für einen Puffer mit mehreren gleich breiten Feldern muss die
-        /// Spiegelung pro Feld selbst vorgenommen werden (z.B. über
-        /// ReadU32/WriteU32 mit expliziter Order, siehe Prelude).</summary>
+        /// <summary>Returns a copy with reversed byte order -
+        /// the ENTIRE buffer mirrored as ONE contiguous block (not
+        /// element by element at a fixed width), since a ByteBuffer
+        /// itself knows no element width - for a single multi-byte field
+        /// (e.g. a 4-byte int) that IS exactly the desired meaning;
+        /// for a buffer with several equally wide fields the
+        /// mirroring has to be done per field yourself (e.g. via
+        /// ReadU32/WriteU32 with explicit order, see prelude).</summary>
         public ByteBuffer Reversed(ByteOrder newOrder)
         {
             var copy = new byte[Bytes.Length];

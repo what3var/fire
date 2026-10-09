@@ -1,5 +1,5 @@
 namespace UI {
-    // Ein Linienzug aus Punkten (ein Teil einer Geometry): `points` ist [x0, y0, x1, y1, ...] als Liste, `closed` verbindet Ende und Anfang.
+    // A polyline of points (part of a Geometry): `points` is [x0, y0, x1, y1, ...] as a list, `closed` connects end and start.
     class Figure {
         List points
         bool closed = false
@@ -8,7 +8,7 @@ namespace UI {
 
         int Count() { return this.points.count / 2 }
 
-        // Die Punkte als Array fuer den Renderer.
+        // The points as an array for the renderer.
         ToArray() {
             var a = new int[this.points.count]
             for (var i = 0; i < this.points.count; i = i + 1) { a[i] = this.points[i] }
@@ -16,17 +16,17 @@ namespace UI {
         }
     }
 
-    // Eine Form aus Linienzuegen: MoveTo/LineTo/QuadTo/CubicTo/Close wie bei einem Pfad (Kurven werden in Strecken zerlegt), AddEllipse/AddArc/AddRect, oder
-    // `Geometry.Parse("M 10 10 L 50 10 L 50 40 Z")` mit der Schreibweise von SVG-Pfaden (M L H V C Q Z, klein = relativ; Zahlen ganzzahlig, Nachkommastellen entfallen).
+    // A shape made of polylines: MoveTo/LineTo/QuadTo/CubicTo/Close as with a path (curves are broken into segments), AddEllipse/AddArc/AddRect, or
+    // `Geometry.Parse("M 10 10 L 50 10 L 50 40 Z")` with the notation of SVG paths (M L H V C Q Z, lower case = relative; numbers are integers, decimal places are dropped).
     class Geometry {
         List figures
-        // der aktuelle Punkt (Anfang der naechsten Strecke) und der Anfang der aktuellen Figur
+        // the current point (start of the next segment) and the start of the current figure
         int cx = 0
         int cy = 0
         int startX = 0
         int startY = 0
         Figure current
-        // Anzahl der Strecken je Kurve
+        // number of segments per curve
         int segments = 16
 
         construct() { this.figures = new List() }
@@ -55,7 +55,7 @@ namespace UI {
             this.cy = y
         }
 
-        // Quadratische Kurve zum Punkt (x, y) mit dem Steuerpunkt (qx, qy).
+        // Quadratic curve to the point (x, y) with the control point (qx, qy).
         QuadTo(int qx, int qy, int x, int y) {
             var x0 = this.cx
             var y0 = this.cy
@@ -68,7 +68,7 @@ namespace UI {
             }
         }
 
-        // Kubische Kurve zum Punkt (x, y) mit den Steuerpunkten (c1x, c1y) und (c2x, c2y).
+        // Cubic curve to the point (x, y) with the control points (c1x, c1y) and (c2x, c2y).
         CubicTo(int c1x, int c1y, int c2x, int c2y, int x, int y) {
             var x0 = this.cx
             var y0 = this.cy
@@ -85,7 +85,7 @@ namespace UI {
             }
         }
 
-        // Schliesst die aktuelle Figur (das Ende wird mit dem Anfang verbunden).
+        // Closes the current figure (the end is connected to the start).
         Close() {
             if (this.current == undefined) { return }
             this.current.closed = true
@@ -94,7 +94,7 @@ namespace UI {
             this.current = undefined
         }
 
-        // Ein Bogen einer Ellipse um (mx, my) mit den Halbachsen rx und ry, von `start` Grad (0 = rechts, nach unten wachsend) um `sweep` Grad.
+        // An arc of an ellipse around (mx, my) with the semi-axes rx and ry, from `start` degrees (0 = right, growing downwards) by `sweep` degrees.
         AddArc(int mx, int my, int rx, int ry, int start, int sweep) {
             var steps = UI.M.Max(2, this.segments * UI.M.Max(1, sweep / 90))
             if (sweep < 0) { steps = UI.M.Max(2, this.segments * UI.M.Max(1, -sweep / 90)) }
@@ -121,7 +121,7 @@ namespace UI {
             this.Close()
         }
 
-        // Die Groesse des Rechtecks um alle Punkte (rechts unten = groesste Koordinaten).
+        // The size of the rectangle around all points (bottom right = largest coordinates).
         int Width() {
             var w = 0
             for (var i = 0; i < this.figures.count; i = i + 1) {
@@ -140,7 +140,7 @@ namespace UI {
             return h
         }
 
-        // Liest Pfaddaten (Befehle M L H V C Q Z, Kleinbuchstaben relativ zum aktuellen Punkt).
+        // Reads path data (commands M L H V C Q Z, lower case relative to the current point).
         static Parse(string data) {
             var g = new Geometry()
             var pos = 0
@@ -160,7 +160,7 @@ namespace UI {
                     if (c == 90 || c == 122) { g.Close() }
                     continue
                 }
-                // eine Zahl
+                // a number
                 var sign = 1
                 if (c == 45) {
                     sign = -1
@@ -220,7 +220,7 @@ namespace UI {
         }
     }
 
-    // Die gemeinsamen Eigenschaften der Formen: Fuellung (`fill`, ein Brush; undefined: nicht fuellen) und Umriss (`stroke`, ein Pen; undefined: kein Umriss).
+    // The common properties of the shapes: fill (`fill`, a Brush; undefined: do not fill) and outline (`stroke`, a Pen; undefined: no outline).
     class Shape : Element {
         Brush fill
         Pen stroke
@@ -230,7 +230,7 @@ namespace UI {
         string StyleKey() { return "Shape" }
     }
 
-    // Ein Rechteck der Groesse des Elements.
+    // A rectangle of the size of the element.
     class Rectangle : Shape {
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) { }
 
@@ -243,7 +243,7 @@ namespace UI {
         }
     }
 
-    // Eine Ellipse, die das Rechteck des Elements ausfuellt.
+    // An ellipse that fills the rectangle of the element.
     class Ellipse : Shape {
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) { }
 
@@ -255,13 +255,13 @@ namespace UI {
             var ry = this.actualHeight / 2
             var mx = ax + rx
             var my = ay + ry
-            // bei ungerader Groesse bleibt die Ellipse im Rechteck
+            // with an odd size the ellipse stays within the rectangle
             if (this.fill != undefined) { root.renderer.FillEllipse(mx, my, UI.M.Max(0, rx - 1), UI.M.Max(0, ry - 1), this.fill) }
             if (this.stroke != undefined) { root.renderer.DrawEllipse(mx, my, UI.M.Max(0, rx - 1), UI.M.Max(0, ry - 1), this.stroke) }
         }
     }
 
-    // Eine Strecke von (x1, y1) nach (x2, y2) im Element (Koordinaten relativ zu seiner linken oberen Ecke).
+    // A segment from (x1, y1) to (x2, y2) in the element (coordinates relative to its top left corner).
     class Line : Shape {
         int x1 = 0
         int y1 = 0
@@ -288,8 +288,8 @@ namespace UI {
         }
     }
 
-    // Eine Form aus einer Geometry (siehe oben): geschlossene Figuren werden gefuellt (Even-Odd) und umrissen, offene nur gezeichnet. Die Punkte liegen
-    // relativ zur linken oberen Ecke des Elements; es ist so gross wie die Geometry.
+    // A shape from a Geometry (see above): closed figures are filled (even-odd) and outlined, open ones only drawn. The points are
+    // relative to the top left corner of the element; it is as big as the Geometry.
     class Path : Shape {
         Geometry data
 
@@ -299,7 +299,7 @@ namespace UI {
 
         string StyleKey() { return "Path" }
 
-        // Setzt die Geometry aus Pfaddaten (siehe Geometry.Parse).
+        // Sets the Geometry from path data (see Geometry.Parse).
         SetData(string text) {
             this.data = UI.Geometry.Parse(text)
         }
@@ -331,10 +331,10 @@ namespace UI {
         }
     }
 
-    // Eine Zeichenflaeche: hat einen eigenen Framebuffer (so gross wie das Element), in den der Code mit `renderer` zeichnet, und zeigt ihn an. `onPaint` ist ein Lambda mit
-    // der Zeichenflaeche als Parameter; es laeuft, wenn der Puffer neu angelegt wurde (Groessenaenderung), nach `Invalidate()` und - mit `continuous` - in jedem Bild. Mit `SetSource`
-    // zeigt sie stattdessen einen fremden Framebuffer (ein Bild, die Ausgabe eines anderen Programmteils). Mausereignisse melden `onMouseDown/onMouseMove/onMouseUp` (Lambda mit x, y
-    // relativ zur Flaeche und - bei Klicks - der Taste).
+    // A drawing surface: has its own framebuffer (as big as the element) into which the code draws with `renderer`, and shows it. `onPaint` is a lambda with
+    // the drawing surface as parameter; it runs when the buffer was created anew (size change), after `Invalidate()` and - with `continuous` - in every frame. With `SetSource`
+    // it instead shows a foreign framebuffer (an image, the output of another part of the program). Mouse events are reported by `onMouseDown/onMouseMove/onMouseUp` (lambda with x, y
+    // relative to the surface and - for clicks - the button).
     class DrawingCanvas : Element {
         Framebuffer framebuffer
         Renderer renderer
@@ -345,27 +345,27 @@ namespace UI {
         bool continuous = false
         bool dirty = true
         bool external = false
-        // wie das Bild auf die Flaeche kommt: UI.BlitMode (Copy, Transparent, Blend)
+        // how the image gets onto the surface: UI.BlitMode (Copy, Transparent, Blend)
         int blendMode = 0
 
         construct(int x = 0, int y = 0, int width = 200, int height = 150) : base(x, y, width, height) { }
 
         string StyleKey() { return "DrawingCanvas" }
 
-        // Beim naechsten Zyklus laeuft onPaint wieder und die Flaeche wird neu gezeigt (auch nach einem Zeichnen mit `renderer` von aussen).
+        // At the next cycle onPaint runs again and the surface is shown anew (also after drawing with `renderer` from outside).
         Invalidate() {
             this.dirty = true
             base.Invalidate()
         }
 
-        // onPaint laeuft hier (nicht beim Malen): was es an den Elementen aendert, meldet sich dann wie jede andere Aenderung.
+        // onPaint runs here (not while painting): what it changes on the elements then reports itself like any other change.
         Poll(root) {
             base.Poll(root)
             if (this.continuous) { this.dirty = true }
-            // das Element hat eine andere Groesse als die Flaeche: sie wird neu angelegt und neu gemalt
+            // the element has a different size than the surface: it is created anew and repainted
             if (!this.external && this.framebuffer != undefined && (this.framebuffer.Width() != this.actualWidth || this.framebuffer.Height() != this.actualHeight)) { this.dirty = true }
             if (this.external || !this.dirty || this.actualWidth <= 0 || this.actualHeight <= 0) { return }
-            // die eigenen Felder aendern sich hier, das ist keine Aenderung der Oberflaeche
+            // the own fields change here, that is no change of the interface
             root.painting = true
             this.Ensure(this.actualWidth, this.actualHeight)
             this.dirty = false
@@ -375,7 +375,7 @@ namespace UI {
             base.Invalidate()
         }
 
-        // Zeigt `source` (einen Framebuffer, den man selbst besitzt) statt der eigenen Flaeche.
+        // Shows `source` (a framebuffer that you own yourself) instead of the own surface.
         SetSource(source) {
             this.DropOwn()
             this.framebuffer = source
@@ -392,7 +392,7 @@ namespace UI {
             this.external = false
         }
 
-        // Stellt sicher, dass der eigene Puffer so gross wie das Element ist.
+        // Makes sure that the own buffer is as big as the element.
         Ensure(int w, int h) {
             if (this.external || w <= 0 || h <= 0) { return }
             if (this.framebuffer != undefined && this.framebuffer.Width() == w && this.framebuffer.Height() == h) { return }

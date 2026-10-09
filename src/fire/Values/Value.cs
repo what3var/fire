@@ -5,30 +5,30 @@ using System.Runtime.CompilerServices;
 namespace fire.Values
 {
     /// <summary>
-    /// Ein Laufzeitwert. bool/char/string sind reine Value-Types ohne Einheit.
-    /// int/float/undefined tragen zusätzlich eine Unit (Default: Unitless).
-    /// class ist eine Referenz auf eine Objektinstanz (Ownership-Modell,
-    /// siehe Runtime-Schicht - noch nicht Teil dieses Meilensteins).
+    /// A runtime value. bool/char/string are pure value types without a unit.
+    /// int/float/undefined additionally carry a Unit (default: Unitless).
+    /// class is a reference to an object instance (ownership model,
+    /// see runtime layer - not yet part of this milestone).
     /// </summary>
     public readonly struct Value : IEquatable<Value>
     {
-        // Speicherlayout: 24 Byte (Kind 4 + Width 4 + Bits 8 + Referenz 8) - ein Value wird bei JEDEM
-        // Stack-Zugriff kopiert, die frühere Fassung mit je einem eigenen Feld pro Werteart (long, double,
-        // bool, char, string, object + Unit) war 64 Byte groß.
-        //   _bits: Int = der Wert, Float = die IEEE-754-Bits des double, Bool = 0/1, Char = der Zeichencode.
-        //   _ref:  String = die Zeichenkette, Class/Lambda/Pointer/Array/Buffer = das Objekt,
-        //          Int/Float/Undefined = die Unit (nie beides gleichzeitig - eine Zahl hat keine Objekt-
-        //          referenz und ein Objekt keine Einheit).
+        // Memory layout: 24 bytes (kind 4 + width 4 + bits 8 + reference 8) - a Value is copied on EVERY
+        // stack access, the earlier version with a separate field per kind of value (long, double,
+        // bool, char, string, object + Unit) was 64 bytes big.
+        //   _bits: Int = the value, Float = the IEEE-754 bits of the double, Bool = 0/1, Char = the character code.
+        //   _ref:  String = the string, Class/Lambda/Pointer/Array/Buffer = the object,
+        //          Int/Float/Undefined = the Unit (never both at once - a number has no object
+        //          reference and an object has no unit).
         public ValueKind Kind { get; }
 
-        /// <summary>Nur für Int/Float relevant (SPEC "APIs & Bitbreiten"). Default
-        /// ist immer die höchste Genauigkeit (W64).</summary>
+        /// <summary>Relevant only for Int/Float (SPEC "APIs & bit widths"). Default
+        /// is always the highest precision (W64).</summary>
         public NumericWidth Width { get; }
 
         private readonly long _bits;
         private readonly object? _ref;
 
-        /// <summary>Die Einheit - nur Int/Float/Undefined tragen eine (sonst <c>null</c>).</summary>
+        /// <summary>The unit - only Int/Float/Undefined carry one (otherwise <c>null</c>).</summary>
         public Unit? Unit => Kind is ValueKind.Int or ValueKind.Float or ValueKind.Undefined
             ? Unsafe.As<Unit?>(_ref)
             : null;
@@ -81,9 +81,9 @@ namespace fire.Values
         public static Value MakeClassRef(object objectInstance) =>
             new(ValueKind.Class, 0, objectInstance);
 
-        // Lose typisiert (object) aus demselben Grund wie MakeClassRef: Values
-        // bleibt unabhängig von der Runtime-Schicht (Runtime.LambdaValue), die
-        // Runtime-Schicht hängt von Values ab, nicht umgekehrt.
+        // Loosely typed (object) for the same reason as MakeClassRef: Values
+        // stays independent of the runtime layer (Runtime.LambdaValue); the
+        // runtime layer depends on Values, not the other way round.
         public static Value MakeLambda(object lambdaValue) =>
             new(ValueKind.Lambda, 0, lambdaValue);
 
@@ -97,7 +97,7 @@ namespace fire.Values
             new(ValueKind.Buffer, 0, buffer);
 
         // ---------------------------------------------------------------
-        // Accessors (werfen bei falschem Kind)
+        // Accessors (throw on wrong kind)
         // ---------------------------------------------------------------
         public bool AsBool()
         {
@@ -159,10 +159,10 @@ namespace fire.Values
             return Unsafe.As<ByteBuffer>(_ref)!;
         }
 
-        /// <summary>Interne Invariante, keine behandelbare Laufzeitbedingung
-        /// (siehe VmInvariantViolationException-Doku - Zugriff mit falschem
-        /// Kind bedeutet "der Compiler/Resolver hat einen Bug", nicht
-        /// "das Skript hat einen ungültigen Zustand erreicht").</summary>
+        /// <summary>Internal invariant, not a handleable runtime condition
+        /// (see VmInvariantViolationException docs - access with the wrong
+        /// kind means "the compiler/resolver has a bug", not
+        /// "the script reached an invalid state").</summary>
         private void RequireKind(ValueKind expected)
         {
             if (Kind != expected)
@@ -173,8 +173,8 @@ namespace fire.Values
         // Coercion
         // ---------------------------------------------------------------
 
-        /// <summary>Rechnet einen Int/Float/Undefined-Wert in eine andere (kompatible)
-        /// Einheit um. Wirft UnitMismatchException bei inkompatibler Dimension.</summary>
+        /// <summary>Converts an Int/Float/Undefined value into another (compatible)
+        /// unit. Throws UnitMismatchException on incompatible dimension.</summary>
         public Value CoerceUnit(Unit targetUnit)
         {
             if (Kind != ValueKind.Int && Kind != ValueKind.Float && Kind != ValueKind.Undefined)
@@ -195,8 +195,8 @@ namespace fire.Values
             };
         }
 
-        /// <summary>Erzwingt den Zieltyp (aktuell: int/float untereinander, sowie
-        /// triviale Identität). Weitere Typkombinationen folgen mit dem Evaluator.</summary>
+        /// <summary>Enforces the target type (currently: int/float among themselves, and
+        /// trivial identity). Further type combinations follow with the evaluator.</summary>
         public Value CoerceType(ValueKind targetKind)
         {
             if (Kind == targetKind) return this;
@@ -218,23 +218,23 @@ namespace fire.Values
         }
 
         // ---------------------------------------------------------------
-        // Arithmetik (einfache Fälle mit exakt gleicher Einheit; die
-        // "Anker-Regel" für automatische Ziel-Einheiten bei gemischten
-        // Operanden lebt im Evaluator, da sie Syntax-Info (":"/"!" im
-        // Ausdruck) benötigt, die dem Value selbst nicht vorliegt.)
+        // Arithmetic (simple cases with exactly the same unit; the
+        // "anchor rule" for automatic target units with mixed
+        // operands lives in the evaluator, since it needs syntax info (":"/"!" in the
+        // expression) that the Value itself does not have.)
         // ---------------------------------------------------------------
-        // Schnellpfad der Grundrechenarten: beide Operanden Zahlen mit DERSELBEN Einheit-Instanz (der Normalfall:
-        // `Unit.Unitless`) - dann entfallen Einheitenvergleich und Kindprüfungen, das Ergebnis ist mit dem des
-        // allgemeinen Pfads identisch (Einheit des linken Operanden, Breite W64).
+        // Fast path of the basic arithmetic: both operands numbers with the SAME Unit instance (the normal case:
+        // `Unit.Unitless`) - then unit comparison and kind checks are dropped, the result is identical to that of the
+        // general path (unit of the left operand, width W64).
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool BothNumericSameUnit(in Value a, in Value b) =>
             a.Kind is ValueKind.Int or ValueKind.Float && b.Kind is ValueKind.Int or ValueKind.Float
             && ReferenceEquals(a._ref, b._ref);
 
-        // "In place"-Varianten der Schnellpfade für die VM (siehe VM.Step): das Ergebnis überschreibt den linken
-        // Operanden direkt im Stack, ohne Value-Kopien durch Argumente und Rückgabewert. Liefern false, wenn der
-        // Schnellpfad nicht zutrifft (andere Einheit/Art, Division durch 0, ...) - dann rechnet der Aufrufer über
-        // den allgemeinen Weg und bekommt dessen Ergebnis bzw. dessen Ausnahme.
+        // "In place" variants of the fast paths for the VM (see VM.Step): the result overwrites the left
+        // operand directly in the stack, without Value copies through arguments and return value. They return false if the
+        // fast path does not apply (other unit/kind, division by 0, ...) - then the caller computes via
+        // the general way and gets its result or its exception.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool TryAddInPlace(ref Value a, in Value b)
         {
@@ -255,7 +255,7 @@ namespace fire.Values
             return true;
         }
 
-        /// <summary>Nur für zwei Werte OHNE Einheit (dieselbe `Unitless`-Instanz) - sonst entsteht eine Produkt-Einheit.</summary>
+        /// <summary>Only for two values WITHOUT a unit (the same `Unitless` instance) - otherwise a product unit arises.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool TryMultiplyInPlace(ref Value a, in Value b)
         {
@@ -266,7 +266,7 @@ namespace fire.Values
             return true;
         }
 
-        /// <summary>Nur int % int mit Divisor != 0 (sonst wirft der allgemeine Weg wie bisher).</summary>
+        /// <summary>Only int % int with divisor != 0 (otherwise the general way throws as before).</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool TryModuloInPlace(ref Value a, in Value b)
         {
@@ -276,8 +276,8 @@ namespace fire.Values
             return true;
         }
 
-        /// <summary>Vergleich zweier Zahlen mit derselben Einheit-Instanz: `kind` 0 = `&lt;`, 1 = `&lt;=`, 2 = `&gt;`, 3 = `&gt;=`.
-        /// Verglichen wird wie Compare() als double.</summary>
+        /// <summary>Comparison of two numbers with the same Unit instance: `kind` 0 = `&lt;`, 1 = `&lt;=`, 2 = `&gt;`, 3 = `&gt;=`.
+        /// Compared as with Compare() as double.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool TryCompareInPlace(ref Value a, in Value b, int kind)
         {
@@ -288,9 +288,9 @@ namespace fire.Values
             return true;
         }
 
-        /// <summary>Schnellpfad der verschmolzenen Vergleichssprünge (VM: JumpIfNotLt usw.): vergleicht zwei Zahlen gleicher Einheit
-        /// (`kind`: 0 &lt;, 1 &lt;=, 2 &gt;, 3 &gt;=) und liefert false, wenn der Schnellpfad nicht zutrifft. Zwei Ganzzahlen werden als
-        /// Ganzzahlen verglichen, alles andere wie <see cref="Compare"/> als double.</summary>
+        /// <summary>Fast path of the fused comparison jumps (VM: JumpIfNotLt etc.): compares two numbers of the same unit
+        /// (`kind`: 0 &lt;, 1 &lt;=, 2 &gt;, 3 &gt;=) and returns false if the fast path does not apply. Two integers are compared as
+        /// integers, everything else like <see cref="Compare"/> as double.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool TryCompareFast(in Value a, in Value b, int kind, out bool result)
         {
@@ -314,12 +314,12 @@ namespace fire.Values
             if (a.Kind == ValueKind.Pointer && b.Kind == ValueKind.Int)
                 return a.OffsetPointer(b._intValue);
 
-            // String-Konkatenation: sobald EINE Seite ein String ist, wird die
-            // ANDERE Seite über ihre normale ToString()-Darstellung angehängt
-            // (deckt also auch "text " + 42 oder 42 + " text" ab, nicht nur
-            // String + String) - das ist das erwartete Verhalten für '+' in
-            // einer Skriptsprache und entspricht ToString()'s bereits
-            // vorhandener Kind-übergreifender Darstellung.
+            // String concatenation: as soon as ONE side is a string, the
+            // OTHER side is appended via its normal ToString() representation
+            // (so this also covers "text " + 42 or 42 + " text", not only
+            // string + string) - this is the expected behaviour for '+' in
+            // a scripting language and corresponds to ToString()'s already
+            // existing cross-kind representation.
             if (a.Kind == ValueKind.String || b.Kind == ValueKind.String)
                 return MakeString(a.ToString() + b.ToString());
 
@@ -354,10 +354,10 @@ namespace fire.Values
             return MakeInt(a._intValue - b._intValue, a.Unit);
         }
 
-        /// <summary>Pointer-Arithmetik: "N Elemente weiter" - siehe
-        /// PointerTarget.Advance (bei Scope-Slots ein logischer Schritt in der
-        /// zusammenhängenden Slot-Liste, bei Objekt-Feldern nur bei Offset 0
-        /// gültig).</summary>
+        /// <summary>Pointer arithmetic: "N elements further" - see
+        /// PointerTarget.Advance (for scope slots a logical step in the
+        /// contiguous slot list, for object fields valid only at
+        /// offset 0).</summary>
         private Value OffsetPointer(long elementOffset)
         {
             return MakePointer(AsPointer().Advance(elementOffset));
@@ -382,7 +382,7 @@ namespace fire.Values
 
         public static Value Divide(Value a, Value b)
         {
-            // Beide ohne Einheit (dieselbe `Unitless`-Instanz): Ergebnis ohne Einheit, wie Unit.Divide.
+            // Both without a unit (the same `Unitless` instance): result without a unit, like Unit.Divide.
             if (BothNumericSameUnit(a, b) && ReferenceEquals(a._ref, Values.Unit.Unitless))
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
@@ -400,7 +400,7 @@ namespace fire.Values
 
         public static Value Multiply(Value a, Value b)
         {
-            // Beide ohne Einheit (dieselbe `Unitless`-Instanz): Ergebnis ohne Einheit, wie Unit.Multiply.
+            // Both without a unit (the same `Unitless` instance): result without a unit, like Unit.Multiply.
             if (BothNumericSameUnit(a, b) && ReferenceEquals(a._ref, Values.Unit.Unitless))
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
@@ -465,12 +465,12 @@ namespace fire.Values
             return MakeInt(a._intValue ^ b._intValue, a.Unit);
         }
 
-        /// <summary>`<<`/`>>` - der RECHTE Operand (die Schiebeweite) ist bewusst
-        /// von JEDER Einheiten-Prüfung ausgenommen (anders als bei `&`/`|`/`#`,
-        /// die `RequireSameUnit` durchsetzen): eine Schiebeweite ist eine reine
-        /// Zählgröße ("um wie viele Bits"), keine Größe, die sinnvoll eine
-        /// eigene Einheit tragen könnte - das Ergebnis übernimmt die Einheit
-        /// des LINKEN Operanden unverändert, wie bei `~`.</summary>
+        /// <summary>`<<`/`>>` - the RIGHT operand (the shift amount) is deliberately
+        /// exempt from ANY unit check (unlike `&`/`|`/`#`,
+        /// which enforce `RequireSameUnit`): a shift amount is a pure
+        /// count ("by how many bits"), not a quantity that could sensibly
+        /// carry a unit of its own - the result takes over the unit
+        /// of the LEFT operand unchanged, as with `~`.</summary>
         public static Value ShiftLeft(Value a, Value b)
         {
             RequireInt(a, "<<"); RequireInt(b, "<<");
@@ -483,13 +483,13 @@ namespace fire.Values
             return MakeInt(a._intValue >> (int)b._intValue, a.Unit);
         }
 
-        /// <summary>`^` (Potenz, NICHT bitweises XOR - das ist `#`, siehe BitXor).
-        /// Ganzzahlig-schnelle Exponentiation (wiederholte Multiplikation) für
-        /// `int^int` mit nicht-negativem Exponenten (Ergebnis bleibt `int`,
-        /// wie bei `+`/`-`/`*`); sobald EIN Operand `float` ist oder der
-        /// Exponent negativ ist, wird über `Math.Pow` (float-Ergebnis)
-        /// gerechnet - ein negativer Exponent ergibt bei `int^int` sonst nur
-        /// 0 (Ganzzahl-Rundung von Werten &lt;1), was kaum je gemeint ist.</summary>
+        /// <summary>`^` (power, NOT bitwise XOR - that is `#`, see BitXor).
+        /// Integer-fast exponentiation (repeated multiplication) for
+        /// `int^int` with a non-negative exponent (result stays `int`,
+        /// as with `+`/`-`/`*`); as soon as ONE operand is `float` or the
+        /// exponent is negative, it is computed via `Math.Pow` (float result)
+        /// - a negative exponent for `int^int` would otherwise yield only
+        /// 0 (integer rounding of values &lt;1), which is hardly ever meant.</summary>
         public static Value Power(Value a, Value b)
         {
             RequireNumeric(a); RequireNumeric(b);
@@ -508,11 +508,11 @@ namespace fire.Values
             return MakeInt(result, a.Unit);
         }
 
-        /// <summary>Schneidet einen Int/Float-Wert auf die angegebene Bitbreite
-        /// zu ("beim Kopieren von groß nach klein abgeschnitten"). Der interne
-        /// Speicher bleibt immer long/double (volle Breite); TruncateTo wendet
-        /// nur den durch die Zielbreite erzwungenen Wertebereich/die Präzision
-        /// an und markiert das Ergebnis mit der neuen Width.</summary>
+        /// <summary>Truncates an Int/Float value to the given bit width
+        /// ("truncated when copying from large to small"). The internal
+        /// storage always stays long/double (full width); TruncateTo applies
+        /// only the value range/precision enforced by the target width
+        /// and marks the result with the new Width.</summary>
         public Value TruncateTo(NumericWidth width)
         {
             if (Kind == ValueKind.Int)
@@ -555,8 +555,8 @@ namespace fire.Values
             int exp = (int)Math.Floor(Math.Log2(abs));
             double mantissaF = abs / Math.Pow(2, exp) - 1.0;
             exp += 7; // Bias
-            if (exp <= 0) return (byte)(sign << 7); // Unterlauf -> 0
-            if (exp >= 15) return (byte)((sign << 7) | (0xF << 3) | 0x7); // Überlauf -> größter Wert
+            if (exp <= 0) return (byte)(sign << 7); // Underflow -> 0
+            if (exp >= 15) return (byte)((sign << 7) | (0xF << 3) | 0x7); // Overflow -> largest value
 
             int mantissa = (int)Math.Round(mantissaF * 8) & 0x7;
             return (byte)((sign << 7) | (exp << 3) | mantissa);
@@ -572,12 +572,12 @@ namespace fire.Values
             return sign == 1 ? -value : value;
         }
 
-        /// <summary>Strukturelle Gleichheit für '=='/'!=' - funktioniert kindübergreifend
-        /// (z.B. Bool vs Int liefert einfach false, kein Fehler).</summary>
+        /// <summary>Structural equality for '=='/'!=' - works across kinds
+        /// (e.g. Bool vs Int simply yields false, no error).</summary>
         public static bool ValuesEqual(Value a, Value b) => a.Equals(b);
 
-        /// <summary>Für '&lt;'/'&lt;='/'&gt;'/'&gt;=' - nur für numerische Werte mit
-        /// übereinstimmender Einheit (wie Add/Subtract).</summary>
+        /// <summary>For '&lt;'/'&lt;='/'&gt;'/'&gt;=' - only for numeric values with
+        /// matching unit (like Add/Subtract).</summary>
         public static int Compare(Value a, Value b)
         {
             if (BothNumericSameUnit(a, b))
@@ -643,8 +643,8 @@ namespace fire.Values
         }
 
         // ---------------------------------------------------------------
-        // Gleichheit ignoriert Einheit und Bitbreite (wie bisher) und vergleicht je Werteart nur das, was
-        // sie tatsächlich hält.
+        // Equality ignores unit and bit width (as before) and compares, per kind of value, only what
+        // it actually holds.
         public bool Equals(Value other)
         {
             if (Kind != other.Kind) return false;
@@ -694,23 +694,23 @@ namespace fire.Values
             _ => "?",
         };
 
-        /// <summary>Format-Spezifizierer für `$"...{ausdruck:SPEC}..."` (siehe
-        /// Compiler/OpCode.FormatValue). Ein leerer Spezifizierer verhält
-        /// sich wie ToString(). Der ERSTE Buchstabe wählt das Format (Groß-/
-        /// Kleinschreibung bei X/x unterschieden, sonst wie geschrieben
-        /// übernommen), alles danach ist eine optionale Nachkommastellen-/
-        /// Breitenangabe - bis auf 'B' 1:1 an .NETs eingebaute
-        /// Zahlenformat-Strings durchgereicht (Standard Numeric Format
-        /// Strings, z.B. "X4", "F2", "D5"):
-        ///   X/x - hexadezimal, nur int. 'X4' padded auf mind. 4 Stellen.
-        ///   D   - dezimal, nullgepolstert, nur int. 'D5' padded auf mind. 5.
-        ///   F   - Festkomma, int/float. 'F2' = 2 Nachkommastellen.
-        ///   E   - wissenschaftliche Notation, int/float.
-        ///   B   - binär, nur int. 'B8' padded auf mind. 8 Stellen (von Hand
-        ///         gebaut, da .NET kein natives 'B'-Zahlenformat kennt).
-        /// Ein unbekannter erster Buchstabe oder ein Typ-Mismatch (z.B. 'X'
-        /// auf einem float) wirft eine klare Exception statt still einen
-        /// falschen/verwirrenden String zu produzieren.</summary>
+        /// <summary>Format specifier for `$"...{expression:SPEC}..."` (see
+        /// Compiler/OpCode.FormatValue). An empty specifier behaves
+        /// like ToString(). The FIRST letter selects the format (upper/lower
+        /// case distinguished for X/x, otherwise taken over as written), everything
+        /// after it is an optional decimal-places/
+        /// width specification - except for 'B' passed through 1:1 to .NET's built-in
+        /// numeric format strings (Standard Numeric Format
+        /// Strings, e.g. "X4", "F2", "D5"):
+        ///   X/x - hexadecimal, int only. 'X4' padded to at least 4 digits.
+        ///   D   - decimal, zero-padded, int only. 'D5' padded to at least 5.
+        ///   F   - fixed-point, int/float. 'F2' = 2 decimal places.
+        ///   E   - scientific notation, int/float.
+        ///   B   - binary, int only. 'B8' padded to at least 8 digits (built
+        ///         by hand, since .NET has no native 'B' number format).
+        /// An unknown first letter or a type mismatch (e.g. 'X'
+        /// on a float) throws a clear exception instead of silently producing a
+        /// wrong/confusing string.</summary>
         public string Format(string spec)
         {
             if (string.IsNullOrEmpty(spec)) return ToString();

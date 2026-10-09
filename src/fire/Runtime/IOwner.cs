@@ -3,10 +3,10 @@ using System.Collections.Generic;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Alles, das Owner einer Objektinstanz sein kann: ein Scope oder eine andere
-    /// Objektinstanz (SPEC 2). Hält die Liste der aktuell besessenen Objekte, damit
-    /// Kaskadenlöschung (beim Verlassen eines Scopes bzw. beim Zerstören eines
-    /// Objekts) und Zyklenschutz bei TakeTo darauf zugreifen können.
+    /// Everything that can be the owner of an object instance: a scope or another
+    /// object instance (SPEC 2). Holds the list of currently owned objects, so that
+    /// cascade deletion (on leaving a scope or on destroying an
+    /// object) and cycle protection in TakeTo can access it.
     /// </summary>
     public interface IOwner
     {
@@ -14,7 +14,7 @@ namespace fire.Runtime
         void AddOwned(ObjectInstance obj);
         void RemoveOwned(ObjectInstance obj);
 
-        /// <summary>Arrays und Puffer, die diesem Owner gehoeren (siehe <see cref="IOwnedLeaf"/>).</summary>
+        /// <summary>Arrays and buffers that belong to this owner (see <see cref="IOwnedLeaf"/>).</summary>
         void AddLeaf(IOwnedLeaf leaf);
         void RemoveLeaf(IOwnedLeaf leaf);
     }

@@ -3,26 +3,26 @@ using System.Runtime.InteropServices;
 namespace fire.Terminal
 {
     /// <summary>
-    /// Eine einzelne Farbe, 4 Byte: R, G, B, A - IMMER in genau dieser
-    /// Byte-Reihenfolge im Speicher (R zuerst, dann G, B, A), UNABHÄNGIG von
-    /// der Endianness der Host-Architektur. Das ist bewusst KEIN gepackter
-    /// 32-Bit-Ganzzahlwert im klassischen "ARGB"-Sinn (dessen Bit-Anordnung
-    /// von der Host-Endianness abhinge) - Packed hier ist die reine
-    /// Speicher-Reinterpretation derselben 4 Bytes als eine Zahl, nur für
-    /// SCHNELLE Ganzwert-Operationen in C# selbst (Vergleich, Hashing,
-    /// Kopieren) gedacht, nicht als portabler "Farbwert".
+    /// A single colour, 4 bytes: R, G, B, A - ALWAYS in exactly this
+    /// byte order in memory (R first, then G, B, A), INDEPENDENT of
+    /// the endianness of the host architecture. This is deliberately NOT a packed
+    /// 32-bit integer value in the classic "ARGB" sense (whose bit layout
+    /// would depend on the host endianness) - Packed here is the pure
+    /// memory reinterpretation of the same 4 bytes as one number, intended only for
+    /// FAST whole-value operations in C# itself (comparing, hashing,
+    /// copying), not as a portable "colour value".
     ///
-    /// Für die spätere Skriptsprachen-Anbindung ist das der Punkt: eine
-    /// PixelColor lässt sich als 4 zusammenhängende Bytes lesen (R,G,B,A,
-    /// exakt in dieser Reihenfolge, z.B. über einen Byte-Puffer-Blick auf
-    /// diesen Speicher) OHNE jede Bit-Schiebe-/Masken-Rechnung - "R" ist
-    /// einfach Byte 0, "G" Byte 1, usw., ganz gleich ob man einzelne Bytes
-    /// oder den ganzen 32-Bit-Block liest.
+    /// For the later scripting-language binding this is the point: a
+    /// PixelColor can be read as 4 contiguous bytes (R,G,B,A,
+    /// exactly in this order, e.g. through a byte-buffer view of
+    /// this memory) WITHOUT any bit-shifting/masking arithmetic - "R" is
+    /// simply byte 0, "G" byte 1, and so on, no matter whether you read single bytes
+    /// or the whole 32-bit block.
     ///
-    /// [StructLayout(LayoutKind.Explicit)] überlagert Packed UND die vier
-    /// Byte-Felder auf DENSELBEN Speicherbereich (FieldOffset 0-3) - beide
-    /// Sichten sind buchstäblich dieselben 4 Bytes, keine Umrechnung, kein
-    /// zusätzlicher Speicher, kein Overhead.
+    /// [StructLayout(LayoutKind.Explicit)] overlays Packed AND the four
+    /// byte fields on the SAME memory area (FieldOffset 0-3) - both
+    /// views are literally the same 4 bytes, no conversion, no
+    /// additional memory, no overhead.
     /// </summary>
     [StructLayout(LayoutKind.Explicit)]
     public readonly struct PixelColor
@@ -32,9 +32,9 @@ namespace fire.Terminal
         [FieldOffset(2)] public readonly byte B;
         [FieldOffset(3)] public readonly byte A;
 
-        /// <summary>Dieselben 4 Bytes als EIN 32-Bit-Wert (R im niedrigsten
-        /// Byte, siehe Klassen-Doku) - für schnelle Vergleiche/Hashing/
-        /// Kopieren, ohne die einzelnen Kanäle einzeln anzufassen.</summary>
+        /// <summary>The same 4 bytes as ONE 32-bit value (R in the lowest
+        /// byte, see the class documentation) - for fast comparisons/hashing/
+        /// copying, without touching the individual channels one by one.</summary>
         [FieldOffset(0)] public readonly uint Packed;
 
         public PixelColor(byte r, byte g, byte b, byte a = 255) : this()
@@ -50,29 +50,29 @@ namespace fire.Terminal
             Packed = packed;
         }
 
-        /// <summary>Implizite Konvertierung zu einem 32-Bit-Farbwert (siehe
-        /// Klassen-Doku) - macht `SetColor(index, farbe)`/Grafikfunktionen
-        /// möglich, die wahlweise eine PixelColor ODER direkt einen rohen
-        /// int-Farbwert entgegennehmen, ohne zwei separate Aufrufstellen im
-        /// aufrufenden Code zu brauchen (siehe Renderer/Palette).</summary>
+        /// <summary>Implicit conversion to a 32-bit colour value (see the
+        /// class documentation) - makes `SetColor(index, color)`/graphics functions
+        /// possible that accept either a PixelColor OR directly a raw
+        /// int colour value, without needing two separate call sites
+        /// in the calling code (see Renderer/Palette).</summary>
         public static implicit operator int(PixelColor color) => unchecked((int)color.Packed);
 
-        /// <summary>Vollständig durchsichtig, als (0, 1, 0, 0) und nicht (0, 0, 0, 0): als Zahl (256) wird sie nicht für den Palette-Index 0 gehalten
-        /// (siehe <see cref="Paint.ToArgument"/>). Siehe Renderer.
-        /// Background-Doku ("optional transparent") und Framebuffer.SetPixel
-        /// (schreibt den Alpha-Wert unverändert ins Zielpixel, MISCHT NICHT
-        /// - ein Framebuffer dieser Bibliothek führt selbst kein Alpha-
-        /// Blending durch, siehe dortige Doku).</summary>
+        /// <summary>Completely transparent, as (0, 1, 0, 0) and not (0, 0, 0, 0): as a number (256) it is not taken for palette index 0
+        /// (see <see cref="Paint.ToArgument"/>). See Renderer.
+        /// Background documentation ("optionally transparent") and Framebuffer.SetPixel
+        /// (writes the alpha value unchanged into the destination pixel, does NOT BLEND
+        /// - a framebuffer of this library does no alpha
+        /// blending itself, see the documentation there).</summary>
         public static readonly PixelColor Transparent = new(0, 1, 0, 0);
 
         public static PixelColor FromRgb(byte r, byte g, byte b) => new(r, g, b, 255);
 
         // ---------------------------------------------------------------
-        // Klassische 16-Farben-CGA-/QBasic-Palette (COLOR-Anweisung,
-        // Farbnummern 0-15) - als benannte Konstanten, damit eine spätere
-        // fire-Anbindung (z.B. "color(QBColor.LightBlue, ...)") nicht
-        // erst eigene Farbwerte definieren/recherchieren muss. Werte
-        // entsprechen der Standard-CGA-Palette.
+        // Classic 16-colour CGA/QBasic palette (COLOR statement,
+        // colour numbers 0-15) - as named constants, so that a later
+        // fire binding (e.g. "color(QBColor.LightBlue, ...)") does not
+        // first have to define/research its own colour values. Values
+        // correspond to the standard CGA palette.
         // ---------------------------------------------------------------
         public static readonly PixelColor Black = FromRgb(0, 0, 0);
         public static readonly PixelColor Blue = FromRgb(0, 0, 170);
@@ -92,8 +92,8 @@ namespace fire.Terminal
         public static readonly PixelColor White = FromRgb(255, 255, 255);
 
         /// <summary>Die 16 QBasic-Farben in ihrer klassischen Nummerierung
-        /// (Index 0-15, wie bei der `COLOR`-Anweisung) - für eine spätere
-        /// Anbindung, die Farben per Ganzzahl statt per Name wählen will.</summary>
+        /// (index 0-15, as with the `COLOR` statement) - for a later
+        /// binding that wants to choose colours by integer instead of by name.</summary>
         public static readonly PixelColor[] QBasicPalette =
         {
             Black, Blue, Green, Cyan, Red, Magenta, Brown, LightGray,

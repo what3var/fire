@@ -4,26 +4,26 @@ using System.Collections.Generic;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Ein Wert, der wie ein Objekt genau einen Owner hat (SPEC 2), aber selbst nichts besitzt: ein Array oder ein Byte-Puffer. Ein Owner
-    /// (Scope oder Objekt) zerstoert seine Blaetter beim Verlassen bzw. Zerstoeren; ein zerstoertes Blatt darf nicht mehr benutzt werden
-    /// (in den Ausfuehrungsmodi Debug und Release ist das eine fangbare Ausnahme, im Performance-Modus ungeprueft).
+    /// A value that, like an object, has exactly one owner (SPEC 2), but owns nothing itself: an array or a byte buffer. An owner
+    /// (scope or object) destroys its leaves when it is left or destroyed; a destroyed leaf must not be used any more
+    /// (in the Debug and Release execution modes this is a catchable exception, unchecked in performance mode).
     ///
-    /// `Owner == null`: das Blatt wurde ausserhalb der VM erzeugt und hat keinen Owner - es wird nie zerstoert (die Speicherverwaltung
-    /// uebernimmt .NET).
+    /// `Owner == null`: the leaf was created outside the VM and has no owner - it is never destroyed (memory management
+    /// is taken over by .NET).
     /// </summary>
     public interface IOwnedLeaf
     {
         IOwner? LeafOwner { get; set; }
         bool IsDestroyed { get; }
 
-        /// <summary>Markiert das Blatt als zerstoert (und laesst seine Teile mit zerstoeren). Nur vom Owner und von <see cref="LeafOwnership"/> aufzurufen.</summary>
+        /// <summary>Marks the leaf as destroyed (and also destroys its parts). To be called only by the owner and by <see cref="LeafOwnership"/>.</summary>
         void MarkDestroyed(IDestructRunner runner);
     }
 
-    /// <summary>Besitzwechsel und Zerstoerung der Blaetter (Arrays, Puffer) - das Gegenstueck zu den Methoden von <see cref="ObjectInstance"/>.</summary>
+    /// <summary>Ownership change and destruction of leaves (arrays, buffers) - the counterpart to the methods of <see cref="ObjectInstance"/>.</summary>
     public static class LeafOwnership
     {
-        /// <summary>Das Blatt bekommt seinen ersten Owner (frisch erzeugt).</summary>
+        /// <summary>The leaf gets its first owner (freshly created).</summary>
         public static void Adopt(IOwnedLeaf leaf, IOwner owner)
         {
             if (leaf.LeafOwner != null) { Reparent(leaf, owner); return; }
@@ -39,7 +39,7 @@ namespace fire.Runtime
             newOwner.AddLeaf(leaf);
         }
 
-        /// <summary>`x.TakeUpwards()`: der Owner wird der Parent-Scope des bisherigen Owner-Scopes.</summary>
+        /// <summary>`x.TakeUpwards()`: the owner becomes the parent scope of the previous owner scope.</summary>
         public static void TakeUpwards(IOwnedLeaf leaf)
         {
             if (leaf.LeafOwner is not Scope scope)
@@ -49,14 +49,14 @@ namespace fire.Runtime
             Reparent(leaf, scope.Parent);
         }
 
-        /// <summary>`x.TakeTo(objekt)`: ist das Ziel schon in der Kaskadenloeschung, wird das Blatt sofort mit zerstoert (wie bei Objekten, SPEC 2.2).</summary>
+        /// <summary>`x.TakeTo(object)`: if the target is already in cascade deletion, the leaf is destroyed immediately as well (as with objects, SPEC 2.2).</summary>
         public static void TakeTo(IOwnedLeaf leaf, ObjectInstance target, IDestructRunner runner)
         {
             if (target.IsDestroyed) { Destroy(leaf, runner); return; }
             Reparent(leaf, target);
         }
 
-        /// <summary>Ein im selben Ausdruck erzeugtes inneres Array gehoert dem aeusseren: es verlaesst seinen Scope und wird mit dem aeusseren zerstoert.</summary>
+        /// <summary>An inner array created in the same expression belongs to the outer one: it leaves its scope and is destroyed together with the outer one.</summary>
         public static void AttachPart(fire.Values.ScriptArray outer, IOwnedLeaf part)
         {
             part.LeafOwner?.RemoveLeaf(part);
@@ -64,7 +64,7 @@ namespace fire.Runtime
             (outer.Parts ??= new List<IOwnedLeaf>()).Add(part);
         }
 
-        /// <summary>`delete x` / Ende des Owners: das Blatt gehoert niemandem mehr und ist zerstoert.</summary>
+        /// <summary>`delete x` / end of the owner: the leaf belongs to no one any more and is destroyed.</summary>
         public static void Destroy(IOwnedLeaf leaf, IDestructRunner runner)
         {
             if (leaf.IsDestroyed) return;
@@ -72,7 +72,7 @@ namespace fire.Runtime
             leaf.MarkDestroyed(runner);
         }
 
-        /// <summary>Zerstoert alle Blaetter einer Liste (der Owner raeumt sie danach selbst auf).</summary>
+        /// <summary>Destroys all leaves of a list (the owner cleans them up itself afterwards).</summary>
         internal static void DestroyAll(List<IOwnedLeaf>? leaves, IDestructRunner runner)
         {
             if (leaves == null || leaves.Count == 0) return;

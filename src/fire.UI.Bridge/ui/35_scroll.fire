@@ -1,20 +1,20 @@
 namespace UI {
-    // Wie eine Bildlaufleiste verschwindet oder erscheint (ScrollViewer.hmode/vmode).
+    // How a scroll bar disappears or appears (ScrollViewer.hmode/vmode).
     enum ScrollMode { Disabled = 0, Auto = 1, Visible = 2 }
 
-    // Die Rechnung hinter einer Bildlaufleiste in EINER Richtung: Inhaltsgroesse (`extent`), sichtbarer Ausschnitt (`viewport`), Verschiebung (`offset`).
-    // Zeichnet die Leiste und verarbeitet das Ziehen am Griff; ScrollViewer und die Listen nutzen sie.
+    // The calculation behind a scroll bar in ONE direction: content size (`extent`), visible section (`viewport`), shift (`offset`).
+    // Draws the bar and handles dragging the thumb; ScrollViewer and the lists use it.
     class Scroller {
         bool horizontal = false
         int offset = 0
         int extent = 0
         int viewport = 0
-        // Breite der Leiste in Pixeln
+        // Width of the bar in pixels
         int size = 12
         bool dragging = false
         int grab = 0
         bool hover = false
-        // das Element, das die Leiste zeigt: es wird neu gemalt, wenn sich etwas an der Leiste aendert
+        // the element that shows the bar: it is repainted when something about the bar changes
         var owner
 
         construct(bool horizontal = false) { this.horizontal = horizontal }
@@ -43,7 +43,7 @@ namespace UI {
 
         By(int delta) { this.Set(this.offset + delta) }
 
-        // Laenge und Anfang des Griffs in einer Leiste der Laenge `track`
+        // Length and start of the thumb in a bar of length `track`
         int ThumbLength(int track) {
             if (this.extent <= 0) { return track }
             var length = track * this.viewport / this.extent
@@ -57,7 +57,7 @@ namespace UI {
             return room * this.offset / max
         }
 
-        // Zeichnet die Leiste in das Rechteck (x, y, Laenge `track` in Laufrichtung, `size` quer).
+        // Draws the bar into the rectangle (x, y, length `track` in the running direction, `size` across).
         Draw(root, int x, int y, int track) {
             var theme = root.theme
             var start = this.ThumbStart(track)
@@ -73,7 +73,7 @@ namespace UI {
             }
         }
 
-        // Ein Klick bei der Position `pos` (Laufrichtung, vom Anfang der Leiste): am Griff beginnt das Ziehen, daneben blaettert eine Seite.
+        // A click at the position `pos` (running direction, from the start of the bar): at the thumb dragging begins, next to it a page is scrolled.
         Press(int pos, int track) {
             var start = this.ThumbStart(track)
             var length = this.ThumbLength(track)
@@ -88,7 +88,7 @@ namespace UI {
             }
         }
 
-        // Der Zeiger bewegt sich beim Ziehen zur Position `pos`.
+        // The pointer moves to the position `pos` while dragging.
         Drag(int pos, int track) {
             if (!this.dragging) { return }
             var room = track - this.ThumbLength(track)
@@ -104,16 +104,16 @@ namespace UI {
         }
     }
 
-    // Zeigt EIN Kind (`content`) in einem Ausschnitt und blendet Bildlaufleisten ein, wenn es nicht hineinpasst. Mit `hmode`/`vmode`
-    // (UI.ScrollMode: Disabled, Auto, Visible) einstellbar; Disabled heisst: in dieser Richtung bekommt das Kind genau den Platz des Ausschnitts
-    // (ein WrapPanel bricht dann um). Das Mausrad blaettert senkrecht (mit Umschalt waagerecht).
+    // Shows ONE child (`content`) in a section and fades in scroll bars if it does not fit. Adjustable with `hmode`/`vmode`
+    // (UI.ScrollMode: Disabled, Auto, Visible); Disabled means: in this direction the child gets exactly the space of the section
+    // (a WrapPanel then wraps). The mouse wheel scrolls vertically (horizontally with Shift).
     class ScrollViewer : Element {
         Element content
         Scroller vbar
         Scroller hbar
         int vmode = UI.ScrollMode.Auto
         int hmode = UI.ScrollMode.Disabled
-        // beim letzten Layout: sichtbare Leisten und Groesse des Ausschnitts
+        // at the last layout: visible bars and size of the section
         bool showV = false
         bool showH = false
         int viewW = 0
@@ -133,7 +133,7 @@ namespace UI {
 
         string StyleKey() { return "ScrollViewer" }
 
-        // Das Kind gehoert ab jetzt dem ScrollViewer.
+        // The child belongs to the ScrollViewer from now on.
         SetContent(element) {
             if (this.content != undefined) { this.content.parent = undefined }
             this.content = element
@@ -150,7 +150,7 @@ namespace UI {
                 return
             }
             var bar = this.vbar.size
-            // Erst ohne Leisten messen: bei Disabled mit dem vollen Platz, sonst unbegrenzt.
+            // First measure without bars: with Disabled with the full space, otherwise unbounded.
             var mw = -1
             var mh = -1
             if (this.hmode == UI.ScrollMode.Disabled) { mw = aw }
@@ -160,7 +160,7 @@ namespace UI {
             if (this.showV && mw >= 0) { mw = UI.M.Max(0, mw - bar) }
             if (this.showH && mh >= 0) { mh = UI.M.Max(0, mh - bar) }
             c.Measure(root, mw, mh)
-            // braucht das Kind mehr Platz als da ist, kommen Leisten dazu (und nehmen Platz weg)
+            // if the child needs more space than is available, bars are added (and take away space)
             if (!this.showV && this.vmode == UI.ScrollMode.Auto && ah >= 0 && c.dh > ah - (this.ShownBar(this.showH)) ) { this.showV = true }
             if (!this.showH && this.hmode == UI.ScrollMode.Auto && aw >= 0 && c.dw > aw - (this.ShownBar(this.showV))) { this.showH = true }
             if (this.showV && !this.showH && this.hmode == UI.ScrollMode.Auto && aw >= 0 && c.dw > aw - bar) { this.showH = true }
@@ -168,7 +168,7 @@ namespace UI {
                 if (this.hmode == UI.ScrollMode.Disabled && mw >= 0) { mw = UI.M.Max(0, aw - this.ShownBar(this.showV)) }
                 if (this.vmode == UI.ScrollMode.Disabled && mh >= 0) { mh = UI.M.Max(0, ah - this.ShownBar(this.showH)) }
                 c.Measure(root, mw, mh)
-                // mit der Leiste kann die andere noetig geworden sein
+                // with the bar the other may have become necessary
                 if (!this.showH && this.hmode == UI.ScrollMode.Auto && aw >= 0 && c.dw > aw - this.ShownBar(this.showV)) { this.showH = true }
                 if (!this.showV && this.vmode == UI.ScrollMode.Auto && ah >= 0 && c.dh > ah - this.ShownBar(this.showH)) { this.showV = true }
             }
@@ -180,7 +180,7 @@ namespace UI {
             this.ch = h
         }
 
-        // Die Breite, die eine Leiste wegnimmt (0, wenn sie nicht gezeigt wird).
+        // The width that a bar takes away (0 if it is not shown).
         int ShownBar(bool shown) {
             if (shown) { return this.vbar.size }
             return 0
@@ -197,7 +197,7 @@ namespace UI {
             this.hbar.viewport = this.viewW
             this.vbar.Set(this.vbar.offset)
             this.hbar.Set(this.hbar.offset)
-            // das Kind bekommt mindestens den Ausschnitt, damit es dort strecken kann
+            // the child gets at least the section, so that it can stretch there
             c.Arrange(root, -this.hbar.offset, -this.vbar.offset, UI.M.Max(c.dw, this.viewW), UI.M.Max(c.dh, this.viewH))
         }
 
@@ -216,7 +216,7 @@ namespace UI {
             if (this.showV && this.showH) { root.renderer.FillRect(ax + this.viewW, ay + this.viewH, this.vbar.size, this.hbar.size, root.theme.scrollTrack) }
         }
 
-        // Im Ausschnitt das Kind, auf den Leisten der ScrollViewer selbst.
+        // In the section the child, on the bars the ScrollViewer itself.
         HitTest(int px, int py) {
             if (!this.visible) { return undefined }
             if (!this.Contains(px, py)) { return undefined }
@@ -283,7 +283,7 @@ namespace UI {
             this.hbar.Release()
         }
 
-        // Verschiebt den Ausschnitt so, dass das Rechteck (x, y, w, h) des Inhalts (in Inhalts-Koordinaten) sichtbar ist.
+        // Moves the section so that the rectangle (x, y, w, h) of the content (in content coordinates) is visible.
         ScrollIntoView(int x, int y, int w, int h) {
             if (y < this.vbar.offset) { this.vbar.Set(y) }
             else if (y + h > this.vbar.offset + this.viewH) { this.vbar.Set(y + h - this.viewH) }

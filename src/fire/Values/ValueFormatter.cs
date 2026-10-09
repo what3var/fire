@@ -5,33 +5,33 @@ using MemoryPack;
 namespace fire.Values
 {
     /// <summary>
-    /// Manueller MemoryPack-Formatter für Value (SPEC "Programm-Serialisierung").
-    /// Value ist ein `readonly struct` mit privatem Konstruktor und einem
-    /// untypisierten `object?`-Feld für Klasseninstanzen/Lambdas/Arrays/Puffer
-    /// (siehe Value-Klassendoku) - das kann MemoryPacks Standard-Quellgenerator
-    /// nicht automatisch ableiten, deshalb von Hand.
+    /// Manual MemoryPack formatter for Value (SPEC "Program serialisation").
+    /// Value is a `readonly struct` with a private constructor and an
+    /// untyped `object?` field for class instances/lambdas/arrays/buffers
+    /// (see Value class docs) - MemoryPack's default source generator
+    /// cannot derive that automatically, hence by hand.
     ///
-    /// Serialisiert bewusst NUR die "reinen" Werte (Bool/Int/Float/Char/String/
-    /// Undefined) - jede Objektreferenz (Class/Lambda/Pointer/Array/Buffer)
-    /// wirft beim Serialisieren. Das ist eine bewusste Einschränkung, kein
-    /// Versehen: diese Serialisierung ist für einen KOMPILIERUNGS-Cache gedacht
+    /// Deliberately serialises ONLY the "pure" values (bool/int/float/char/string/
+    /// undefined) - every object reference (class/lambda/pointer/array/buffer)
+    /// throws on serialisation. That is a deliberate restriction, not an
+    /// oversight: this serialisation is intended for a COMPILATION cache
     /// (Bytecode.Chunk.Constants, FunctionProto.ParamDefaults, RuntimeClass.
-    /// StaticFieldValues DIREKT nach dem Kompilieren, VOR jeder Ausführung) -
-    /// zu diesem Zeitpunkt kann ein Value gar keine Objektreferenz enthalten
-    /// (die entstehen erst zur Laufzeit, durch 'new'/Lambda-Ausdrücke/Array-
-    /// Literale, nie als reine Compiler-Konstante). Taucht eine trotzdem auf,
-    /// ist das ein Zeichen, dass entweder zum falschen Zeitpunkt (nach
-    /// Programmstart statt direkt nach dem Kompilieren) serialisiert wird,
-    /// oder der Cache für etwas anderes als seinen vorgesehenen Zweck benutzt
-    /// wird - eine klare Exception ist hier besser als ein still falsch
-    /// rekonstruierter Wert.
+    /// StaticFieldValues DIRECTLY after compiling, BEFORE any execution) -
+    /// at that point a Value cannot contain an object reference at all
+    /// (those arise only at runtime, through 'new'/lambda expressions/array
+    /// literals, never as a pure compiler constant). If one shows up anyway,
+    /// that is a sign that either serialisation happens at the wrong time (after
+    /// program start instead of right after compiling),
+    /// or the cache is used for something other than its intended purpose
+    /// - a clear exception is better here than a silently wrongly
+    /// reconstructed value.
     /// </summary>
     public sealed class ValueFormatter : MemoryPackFormatter<Value>
     {
-        /// <summary>Registriert sich selbst automatisch beim Laden dieser
-        /// Assembly (ModuleInitializer, läuft vor jedem Nutzercode) - kein
-        /// manueller Aufruf beim Programmstart nötig, der leicht vergessen
-        /// werden könnte.</summary>
+        /// <summary>Registers itself automatically when this
+        /// assembly is loaded (ModuleInitializer, runs before any user code) - no
+        /// manual call at program start needed, which could easily
+        /// be forgotten.</summary>
         [ModuleInitializer]
         internal static void RegisterSelf()
         {

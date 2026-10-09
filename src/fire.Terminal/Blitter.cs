@@ -3,37 +3,37 @@ using System.Collections.Generic;
 
 namespace fire.Terminal
 {
-    /// <summary>Wie <see cref="Blitter.Blit"/> mit durchsichtigen Pixeln der Quelle umgeht.</summary>
+    /// <summary>How <see cref="Blitter.Blit"/> deals with transparent pixels of the source.</summary>
     public enum BlitMode
     {
-        /// <summary>Alle Pixel werden kopiert.</summary>
+        /// <summary>All pixels are copied.</summary>
         Copy = 0,
 
-        /// <summary>Durchsichtige Pixel der Quelle bleiben unberührt: bei einer RGBA-Quelle die mit Alpha 0, bei einer Palette-Quelle die mit dem
-        /// Farbschlüssel (sonst dem <see cref="Framebuffer.TransparentIndex"/> der Quelle).</summary>
+        /// <summary>Transparent pixels of the source are left untouched: for an RGBA source those with alpha 0, for a palette source those with the
+        /// colour key (otherwise the <see cref="Framebuffer.TransparentIndex"/> of the source).</summary>
         Transparent = 1,
 
-        /// <summary>Wie Transparent, aber teilweise durchsichtige Pixel einer RGBA-Quelle werden nach ihrem Alpha-Wert mit dem Ziel gemischt
-        /// (nur in einem RGBA-Ziel; in einem Palette-Ziel zählt ein Pixel ab Alpha 128 als deckend).</summary>
+        /// <summary>Like Transparent, but partially transparent pixels of an RGBA source are blended with the destination according to their alpha value
+        /// (only in an RGBA destination; in a palette destination a pixel counts as opaque from alpha 128 up).</summary>
         Blend = 2,
     }
 
     /// <summary>
-    /// Kopiert Ausschnitte zwischen Framebuffern (Sprites, geladene Bilder), wahlweise skaliert (nächster Nachbar) und gespiegelt, über die
-    /// Farbmodi hinweg: Palette-Quelle in RGBA-Ziel über die Palette der Quelle, RGBA-Quelle in Palette-Ziel auf den nächsten Eintrag der
-    /// Ziel-Palette, Palette in Palette über die Paletten (direkt, wenn sie gleich sind).
+    /// Copies sections between framebuffers (sprites, loaded images), optionally scaled (nearest neighbour) and mirrored, across the
+    /// colour modes: palette source into RGBA destination via the palette of the source, RGBA source into palette destination to the nearest entry of the
+    /// destination palette, palette to palette via the palettes (directly if they are equal).
     /// </summary>
     public static class Blitter
     {
-        /// <summary>Kopiert den Ausschnitt (sx, sy, sw, sh) von `src` in das Rechteck (dx, dy, dw, dh) von `dst`.
-        /// Ist `dw` oder `dh` negativ, wird in der jeweiligen Richtung gespiegelt (|dw| x |dh| Pixel ab (dx, dy)); sind sie 0, geschieht nichts.
-        /// Quell- und Zielgröße dürfen verschieden sein (Skalierung durch den nächsten Nachbarn). Ausschnitt und Ziel werden beschnitten.
-        /// `colorKey` (nur Palette-Quelle, Modus Transparent/Blend): der Index, der durchsichtig ist; -1 = der TransparentIndex der Quelle.
-        /// `clipLeft`..`clipBottom`: nur in dieses Rechteck des Ziels wird gezeichnet (rechts und unten ausgeschlossen).</summary>
+        /// <summary>Copies the section (sx, sy, sw, sh) of `src` into the rectangle (dx, dy, dw, dh) of `dst`.
+        /// If `dw` or `dh` is negative, it is mirrored in the respective direction (|dw| x |dh| pixels from (dx, dy)); if they are 0, nothing happens.
+        /// Source and destination size may differ (scaling by nearest neighbour). Section and destination are clipped.
+        /// `colorKey` (palette source only, mode Transparent/Blend): the index that is transparent; -1 = the TransparentIndex of the source.
+        /// `clipLeft`..`clipBottom`: drawing happens only within this rectangle of the destination (right and bottom excluded).</summary>
         public static void Blit(IRenderTarget dst, IRenderTarget src, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh,
             BlitMode mode = BlitMode.Copy, int colorKey = -1, bool blend = true, int clipLeft = 0, int clipTop = 0, int clipRight = int.MaxValue, int clipBottom = int.MaxValue)
         {
-            // ohne Alpha-Blending (Renderer.AlphaBlending) mischt auch der Modus Blend nicht: er verhält sich wie Transparent
+            // without alpha blending (Renderer.AlphaBlending) mode Blend does not blend either: it behaves like Transparent
             if (!blend && mode == BlitMode.Blend) mode = BlitMode.Transparent;
             bool srcIndexed = src.Indices != null, dstIndexed = dst.Indices != null;
             if (sw <= 0 || sh <= 0 || dw == 0 || dh == 0) return;
@@ -41,10 +41,10 @@ namespace fire.Terminal
             long absDw = Math.Abs((long)dw), absDh = Math.Abs((long)dh);
             bool flipX = dw < 0, flipY = dh < 0;
 
-            // Quelle und Ziel sind derselbe Puffer: von einer Kopie lesen, damit sich überlappende Bereiche nicht selbst überschreiben
+            // source and destination are the same buffer: read from a copy so that overlapping areas do not overwrite themselves
             if (ReferenceEquals(dst, src)) src = Snapshot(src);
 
-            // Quell-Pixel eines Ziel-Pixels: sxp = sx + floor((i + 0.5) * sw / absDw) - die Mitte des Zielpixels bestimmt das Quellpixel
+            // source pixel of a destination pixel: sxp = sx + floor((i + 0.5) * sw / absDw) - the centre of the destination pixel determines the source pixel
             Span<uint> srcTable = stackalloc uint[256];
             if (srcIndexed) src.Palette.CopyPacked(srcTable);
 
@@ -55,12 +55,12 @@ namespace fire.Terminal
 
             int key = srcIndexed ? (colorKey >= 0 ? colorKey : src.TransparentIndex) : -1;
 
-            // nur die sichtbaren Zielzeilen/-spalten durchlaufen
+            // only run through the visible destination rows/columns
             long dxStart = Math.Max(Math.Max(0, clipLeft) - (long)dx, 0), dxEnd = Math.Min(absDw, Math.Min(dst.Width, clipRight) - (long)dx);
             long dyStart = Math.Max(Math.Max(0, clipTop) - (long)dy, 0), dyEnd = Math.Min(absDh, Math.Min(dst.Height, clipBottom) - (long)dy);
             if (dxEnd <= dxStart || dyEnd <= dyStart) return;
 
-            // ein Zwischenspeicher für Nachschlagen im Palette-Ziel bei RGBA-Quelle (viele gleiche Farben, die Suche kostet 256 Vergleiche)
+            // a cache for lookups in the palette destination with an RGBA source (many identical colours, the search costs 256 comparisons)
             Dictionary<uint, byte>? nearest = !srcIndexed && dstIndexed ? new() : null;
 
             for (long j = dyStart; j < dyEnd; j++)
@@ -112,7 +112,7 @@ namespace fire.Terminal
             if (dstIndexed) dst.MarkDirty();
         }
 
-        /// <summary>Der ganze Inhalt von `src` mit der linken oberen Ecke bei (dx, dy), ohne Skalierung.</summary>
+        /// <summary>The entire content of `src` with its top left corner at (dx, dy), without scaling.</summary>
         public static void Blit(IRenderTarget dst, IRenderTarget src, int dx, int dy, BlitMode mode = BlitMode.Copy, int colorKey = -1, bool blend = true) =>
             Blit(dst, src, 0, 0, src.Width, src.Height, dx, dy, src.Width, src.Height, mode, colorKey, blend);
 

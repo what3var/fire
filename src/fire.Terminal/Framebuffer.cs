@@ -3,66 +3,66 @@ using System;
 namespace fire.Terminal
 {
     /// <summary>
-    /// Ein roher, direkt zugreifbarer Pixel-Puffer (R,G,B,A pro Pixel, siehe
-    /// PixelColor - zeilenweise) - das zentrale Objekt dieser Bibliothek: Renderer (Terminal-
-    /// Emulation UND rohe Grafikoperationen) schreibt IMMER hierhin, nie
-    /// direkt in ein Fenster; ein IFramebufferRenderer (z.B. SDL) liest den
-    /// fertigen Inhalt nur noch aus, um ihn darzustellen. Dadurch bleibt der
-    /// Puffer selbst komplett unabhängig vom Rendering-Backend UND
-    /// direkt aus Code adressierbar (Pixels-Array), z.B. um ihn zu
-    /// speichern, zu vergleichen oder in einen anderen Puffer zu kopieren.
+    /// A raw, directly accessible pixel buffer (R,G,B,A per pixel, see
+    /// PixelColor - row by row) - the central object of this library: the renderer (terminal
+    /// emulation AND raw graphics operations) ALWAYS writes here, never
+    /// directly into a window; an IFramebufferRenderer (e.g. SDL) only reads the
+    /// finished content out in order to display it. This keeps the
+    /// buffer itself completely independent of the rendering backend AND
+    /// directly addressable from code (Pixels array), e.g. to
+    /// save it, compare it or copy it into another buffer.
     ///
-    /// Bewusst KEIN Alpha-Blending beim Schreiben (SetPixel/FillRect/...
-    /// überschreiben ein Zielpixel immer vollständig, inklusive seines
-    /// Alpha-Werts) - "optional transparent" (siehe Renderer.
-    /// Background-Doku) bedeutet hier "eine Zelle NICHT mit Hintergrund
-    /// überschreiben", nicht "mit Transparenz vermischen". Ein Renderer, der
-    /// den Framebuffer seinerseits über eine bereits vorhandene Szene legt
-    /// (z.B. Alpha-Compositing mehrerer Fenster), kann den Alpha-Kanal
-    /// trotzdem auswerten - er wird hier nur nicht selbst verrechnet.
+    /// Deliberately NO alpha blending when writing (SetPixel/FillRect/...
+    /// always overwrite a destination pixel completely, including its
+    /// alpha value) - "optionally transparent" (see Renderer.
+    /// Background documentation) here means "do NOT overwrite a cell with
+    /// background", not "blend with transparency". A renderer that
+    /// itself lays the framebuffer over an already existing scene
+    /// (e.g. alpha compositing of several windows) can
+    /// still evaluate the alpha channel - it is just not applied here.
     /// </summary>
     public sealed class Framebuffer : IRenderTarget
     {
         public int Width { get; private set; }
         public int Height { get; private set; }
 
-        /// <summary>Die größte Seitenlänge eines Framebuffers bei <see cref="Resize"/> (und die größte Pixelzahl: <see cref="MaxPixels"/>).</summary>
+        /// <summary>The largest side length of a framebuffer for <see cref="Resize"/> (and the largest pixel count: <see cref="MaxPixels"/>).</summary>
         public const int MaxSide = 16384;
         public const long MaxPixels = 64L * 1024 * 1024;
 
-        /// <summary>Ist das eine Größe, auf die <see cref="Resize"/> den Framebuffer bringt: beide Seiten von 1 bis <see cref="MaxSide"/>, höchstens <see cref="MaxPixels"/> Pixel?
-        /// (Ein minimiertes Fenster meldet die Größe 0, ein absurd großes die Grenzen.)</summary>
+        /// <summary>Is this a size that <see cref="Resize"/> brings the framebuffer to: both sides from 1 to <see cref="MaxSide"/>, at most <see cref="MaxPixels"/> pixels?
+        /// (A minimised window reports size 0, an absurdly large one the limits.)</summary>
         public static bool IsValidSize(long width, long height) => width >= 1 && height >= 1 && width <= MaxSide && height <= MaxSide && width * height <= MaxPixels;
 
-        /// <summary>Wie die Pixel gespeichert werden (siehe <see cref="ColorMode"/>).</summary>
+        /// <summary>How the pixels are stored (see <see cref="ColorMode"/>).</summary>
         public ColorMode Mode { get; }
 
         public bool IsIndexed => Mode == ColorMode.Indexed;
 
-        /// <summary>Ein uint pro Pixel, zeilenweise (Index = y * Width + x) -
-        /// jedes uint sind exakt PixelColor.Packed dieses Pixels (R,G,B,A in
-        /// genau dieser Byte-Reihenfolge, siehe PixelColor-Doku) - direkt
-        /// zugreifbar für alles, was mehr braucht als die Methoden dieser
-        /// Klasse (Serialisierung, Diffing, Kopieren in einen zweiten Puffer
-        /// per Array.Copy, oder ein späterer Byte-genauer Blick aus der
-        /// Skriptsprache heraus).
+        /// <summary>One uint per pixel, row by row (index = y * Width + x) -
+        /// each uint is exactly PixelColor.Packed of this pixel (R,G,B,A in
+        /// exactly this byte order, see the PixelColor documentation) - directly
+        /// accessible for everything that needs more than the methods of this
+        /// class (serialisation, diffing, copying into a second buffer
+        /// via Array.Copy, or a later byte-exact look from the
+        /// scripting language).
         ///
-        /// Im Palette-Modus (<see cref="ColorMode.Indexed"/>) ist das nur das ABBILD der Indizes (für Renderer und alles, was Farben
-        /// liest): es wird bei Bedarf aus <see cref="Indices"/> und der Palette berechnet (<see cref="Resolve"/>) und ist zwischen
-        /// zwei Zeichenoperationen NICHT aktuell. Schreiben hat dort keine Wirkung (der nächste Resolve überschreibt es).</summary>
+        /// In palette mode (<see cref="ColorMode.Indexed"/>) this is only the IMAGE of the indices (for the renderer and everything that
+        /// reads colours): it is computed from <see cref="Indices"/> and the palette when needed (<see cref="Resolve"/>) and is NOT current between
+        /// two drawing operations. Writing has no effect there (the next Resolve overwrites it).</summary>
         public uint[] Pixels { get; private set; }
 
-        /// <summary>Nur im Palette-Modus: ein Byte je Pixel, der Index in <see cref="Palette"/> (zeilenweise wie <see cref="Pixels"/>); sonst null.
-        /// Wer es direkt beschreibt, ruft danach <see cref="MarkDirty"/> auf.</summary>
+        /// <summary>Palette mode only: one byte per pixel, the index into <see cref="Palette"/> (row by row like <see cref="Pixels"/>); otherwise null.
+        /// Whoever writes it directly calls <see cref="MarkDirty"/> afterwards.</summary>
         public byte[]? Indices { get; private set; }
 
-        /// <summary>Die 256-Farben-Palette dieses Framebuffers. Im Palette-Modus bestimmt sie die sichtbaren Farben; im RGBA-Modus löst sie
-        /// Palette-Indizes auf, die Zeichenfunktionen als Farbe erhalten (siehe <see cref="Paint"/>). Mehrere Konsolen auf demselben
-        /// Framebuffer teilen sie.</summary>
+        /// <summary>The 256-colour palette of this framebuffer. In palette mode it determines the visible colours; in RGBA mode it resolves
+        /// palette indices that the drawing functions receive as a colour (see <see cref="Paint"/>). Several consoles on the same
+        /// framebuffer share it.</summary>
         public Palette Palette { get; } = new();
 
-        /// <summary>Palette-Modus: der Index, der in einem Bild als durchsichtig gilt (GIF-Transparenz, PNG-Palette mit Alpha 0), oder -1.
-        /// <see cref="Blitter"/> überspringt im Modus "Transparent" Pixel mit diesem Index.</summary>
+        /// <summary>Palette mode: the index that counts as transparent in an image (GIF transparency, PNG palette with alpha 0), or -1.
+        /// <see cref="Blitter"/> skips pixels with this index in "Transparent" mode.</summary>
         public int TransparentIndex { get; set; } = -1;
 
 
@@ -82,9 +82,9 @@ namespace fire.Terminal
             if (mode == ColorMode.Indexed) Indices = new byte[width * height];
         }
 
-        /// <summary>Bringt den Framebuffer auf eine neue Größe (siehe <see cref="IsValidSize"/>; eine ungültige Größe lässt ihn unverändert und liefert false). Der Inhalt bleibt oben links
-        /// erhalten, was dazukommt ist durchsichtig (RGBA) bzw. Index 0 (Palette); Modus, Palette und durchsichtiger Index bleiben. Danach sind <see cref="Pixels"/> und <see cref="Indices"/>
-        /// ANDERE Arrays - wer sich eine Referenz gemerkt hat (ein Zeiger auf die Pixel), holt sie neu.</summary>
+        /// <summary>Brings the framebuffer to a new size (see <see cref="IsValidSize"/>; an invalid size leaves it unchanged and returns false). The content is kept at the top left,
+        /// what is added is transparent (RGBA) or index 0 (palette); mode, palette and transparent index stay. Afterwards <see cref="Pixels"/> and <see cref="Indices"/> are
+        /// DIFFERENT arrays - whoever has remembered a reference (a pointer to the pixels) fetches it anew.</summary>
         public bool Resize(int width, int height)
         {
             if (!IsValidSize(width, height)) return false;
@@ -109,11 +109,11 @@ namespace fire.Terminal
         // Palette-Modus: Indizes -> sichtbare Farben
         // -----------------------------------------------------------
 
-        /// <summary>Palette-Modus: vermerkt, dass sich <see cref="Indices"/> von außen geändert haben (das nächste <see cref="Resolve"/> rechnet neu).</summary>
+        /// <summary>Palette mode: notes that <see cref="Indices"/> were changed from outside (the next <see cref="Resolve"/> recomputes).</summary>
         public void MarkDirty() => _dirty = true;
 
-        /// <summary>Palette-Modus: bringt <see cref="Pixels"/> auf den Stand der Indizes und der Palette - nur wenn sich seit dem letzten Mal
-        /// etwas geändert hat. Renderer rufen das vor dem Anzeigen auf; im RGBA-Modus tut es nichts.</summary>
+        /// <summary>Palette mode: brings <see cref="Pixels"/> up to date with the indices and the palette - only if something has changed
+        /// since the last time. Renderers call this before displaying; in RGBA mode it does nothing.</summary>
         public void Resolve()
         {
             var indices = Indices;
@@ -130,11 +130,11 @@ namespace fire.Terminal
             _resolvedPaletteVersion = Palette.Version;
         }
 
-        /// <summary>Macht aus einer Farbangabe die Farbe für DIESEN Framebuffer (siehe <see cref="Paint"/>).</summary>
+        /// <summary>Turns a colour specification into the colour for THIS framebuffer (see <see cref="Paint"/>).</summary>
         public Pixel ResolvePixel(Paint paint) => Surface.ResolvePixel(this, paint);
 
-        /// <summary>Der rohe Pixelwert an (x, y) - im Palette-Modus der Index, sonst der gepackte RGBA-Wert; 0 außerhalb. Zum Vergleichen
-        /// von Pixeln (Flood-Fill), nicht als Farbe gedacht.</summary>
+        /// <summary>The raw pixel value at (x, y) - in palette mode the index, otherwise the packed RGBA value; 0 outside. For comparing
+        /// pixels (flood fill), not meant as a colour.</summary>
         public uint GetRaw(int x, int y)
         {
             if ((uint)x >= (uint)Width || (uint)y >= (uint)Height) return 0;
@@ -142,7 +142,7 @@ namespace fire.Terminal
             return Indices != null ? Indices[i] : Pixels[i];
         }
 
-        /// <summary>Der Palette-Index an (x, y): im Palette-Modus der gespeicherte, sonst der Eintrag, der der Pixelfarbe am nächsten kommt. 0 außerhalb.</summary>
+        /// <summary>The palette index at (x, y): in palette mode the stored one, otherwise the entry that comes closest to the pixel colour. 0 outside.</summary>
         public byte GetIndex(int x, int y)
         {
             if ((uint)x >= (uint)Width || (uint)y >= (uint)Height) return 0;
@@ -151,13 +151,13 @@ namespace fire.Terminal
         }
 
         // -----------------------------------------------------------
-        // Maske für den ImageSlicer
+        // Mask for the ImageSlicer
         // -----------------------------------------------------------
 
-        /// <summary>Ein NEUER Palette-Framebuffer gleicher Größe, der die Maske dieses Bildes enthält: Index 1 (weiß) = dieses Pixel soll ausgefräst werden,
-        /// Index 0 (schwarz, zugleich <see cref="TransparentIndex"/>) = nicht. Ein Pixel mit geringerer Deckkraft als `alphaThreshold` zählt nie;
-        /// sonst entscheidet die Helligkeit (0,299 R + 0,587 G + 0,114 B) gegen `threshold`: `darkIsRemoved` = dunkle Pixel werden ausgefräst, sonst helle.
-        /// Bei einem Palette-Bild wird die Palette je Eintrag nur einmal bewertet.</summary>
+        /// <summary>A NEW palette framebuffer of the same size that contains the mask of this image: index 1 (white) = this pixel is to be milled out,
+        /// index 0 (black, also <see cref="TransparentIndex"/>) = not. A pixel with a lower opacity than `alphaThreshold` never counts;
+        /// otherwise the brightness (0.299 R + 0.587 G + 0.114 B) against `threshold` decides: `darkIsRemoved` = dark pixels are milled out, otherwise bright ones.
+        /// For a palette image the palette is evaluated only once per entry.</summary>
         public Framebuffer ToMask(byte threshold = 128, bool darkIsRemoved = true, byte alphaThreshold = 128)
         {
             var mask = new Framebuffer(Width, Height, ColorMode.Indexed);
@@ -187,10 +187,10 @@ namespace fire.Terminal
         }
 
         // -----------------------------------------------------------
-        // Zeichnen mit einer aufgelösten Farbe (siehe ResolvePixel)
+        // Drawing with a resolved colour (see ResolvePixel)
         // -----------------------------------------------------------
 
-        /// <summary>Ein Pixel, außerhalb des Puffers still beschnitten.</summary>
+        /// <summary>A pixel, silently clipped outside the buffer.</summary>
         public void Plot(int x, int y, in Pixel brush)
         {
             if ((uint)x >= (uint)Width || (uint)y >= (uint)Height) return;
@@ -203,7 +203,7 @@ namespace fire.Terminal
             else Pixels[i] = brush.Rgba;
         }
 
-        /// <summary>Eine waagerechte Linie von `x0` bis `x1` (beide eingeschlossen, in beliebiger Reihenfolge) in Zeile `y`, beschnitten.</summary>
+        /// <summary>A horizontal line from `x0` to `x1` (both included, in any order) in row `y`, clipped.</summary>
         public void HLine(int x0, int x1, int y, in Pixel brush)
         {
             if ((uint)y >= (uint)Height) return;
@@ -245,12 +245,12 @@ namespace fire.Terminal
             else Array.Fill(Pixels, brush.Rgba);
         }
 
-        /// <summary>Schreibt außerhalb des Puffers liegende Koordinaten
-        /// bewusst NICHT (stilles Clipping statt Exception) - eine
-        /// Grafikoperation, die teilweise über den Rand hinausragt (z.B.
-        /// eine Linie, ein Rechteck am Bildschirmrand), soll den sichtbaren
-        /// Teil trotzdem zeichnen, nicht komplett fehlschlagen. Im
-        /// Palette-Modus wird die Farbe auf den nächsten Palette-Eintrag abgebildet.</summary>
+        /// <summary>Deliberately does NOT write coordinates lying outside
+        /// the buffer (silent clipping instead of an exception) - a
+        /// graphics operation that partly extends beyond the edge (e.g.
+        /// a line, a rectangle at the screen edge) should
+        /// still draw the visible part, not fail completely. In
+        /// palette mode the colour is mapped to the nearest palette entry.</summary>
         public void SetPixel(int x, int y, PixelColor color)
         {
             if ((uint)x >= (uint)Width || (uint)y >= (uint)Height) return;
@@ -262,7 +262,7 @@ namespace fire.Terminal
             Plot(x, y, ResolvePixel(Paint.FromRgba(color)));
         }
 
-        /// <summary>Die Farbe des Pixels (im Palette-Modus über die Palette); außerhalb: durchsichtig.</summary>
+        /// <summary>The colour of the pixel (in palette mode via the palette); outside: transparent.</summary>
         public PixelColor GetPixel(int x, int y)
         {
             if ((uint)x >= (uint)Width || (uint)y >= (uint)Height) return PixelColor.Transparent;
@@ -275,12 +275,12 @@ namespace fire.Terminal
         public void FillRect(int x, int y, int w, int h, PixelColor color) =>
             FillRect(x, y, w, h, ResolvePixel(Paint.FromRgba(color)));
 
-        /// <summary>Verschiebt den GESAMTEN Inhalt um `pixelRows` Pixel-
-        /// zeilen nach OBEN (Grundlage für Terminal-Scrolling, siehe
-        /// Renderer.NewLine) - die untersten `pixelRows` Zeilen werden
-        /// mit `fill` aufgefüllt. Was oben herausfällt, ist UNWIDERRUFLICH
-        /// verloren (kein Scrollback-Puffer, wie in SPEC/CONSOLE.md
-        /// gefordert) - diese Methode hält absichtlich keine Historie vor.</summary>
+        /// <summary>Shifts the ENTIRE content up by `pixelRows` pixel
+        /// rows (basis for terminal scrolling, see
+        /// Renderer.NewLine) - the bottom `pixelRows` rows are filled
+        /// with `fill`. What falls out at the top is IRREVOCABLY
+        /// lost (no scrollback buffer, as required in SPEC/CONSOLE.md)
+        /// - this method deliberately keeps no history.</summary>
         public void ScrollUp(int pixelRows, PixelColor fill) => ScrollUp(pixelRows, ResolvePixel(Paint.FromRgba(fill)));
 
         public void ScrollUp(int pixelRows, in Pixel fill)

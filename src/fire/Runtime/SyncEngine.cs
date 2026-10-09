@@ -3,11 +3,11 @@ using fire.Values;
 
 namespace fire.Runtime
 {
-    /// <summary>Ergebnis von sync/try sync/sync flat/try sync flat (siehe
-    /// docs/THREADING_DESIGN.md Abschnitt 4.1) - `LockBusy` kann nur bei den
-    /// `try`-Varianten auftreten (die blockierenden Varianten warten
-    /// stattdessen, bis der Lock frei ist). Wird bei der späteren Anbindung
-    /// an die Sprache 1:1 zu true/false/undefined.</summary>
+    /// <summary>Result of sync/try sync/sync flat/try sync flat (see
+    /// docs/THREADING_DESIGN.md section 4.1) - `LockBusy` can occur only with the
+    /// `try` variants (the blocking variants wait
+    /// instead until the lock is free). With the later connection
+    /// to the language it becomes 1:1 true/false/undefined.</summary>
     public enum SyncResult
     {
         Success,
@@ -16,11 +16,11 @@ namespace fire.Runtime
     }
 
     /// <summary>
-    /// Implementiert `sync`/`try sync`/`sync flat`/`try sync flat` (siehe
-    /// docs/THREADING_DESIGN.md Abschnitt 4). `copy` muss eine über
-    /// ObjectCopier.Take erzeugte Kopie sein (SyncOrigin gesetzt) - `sync`
-    /// schreibt IMMER von der Kopie (Quelle) zum Original (Ziel), nie
-    /// umgekehrt, Last-Writer-Wins, keine Konfliktauflösung.
+    /// Implements `sync`/`try sync`/`sync flat`/`try sync flat` (see
+    /// docs/THREADING_DESIGN.md section 4). `copy` must be a copy created via
+    /// ObjectCopier.Take (SyncOrigin set) - `sync`
+    /// ALWAYS writes from the copy (source) to the original (target), never
+    /// the other way round, last-writer-wins, no conflict resolution.
     /// </summary>
     public static class SyncEngine
     {
@@ -44,9 +44,9 @@ namespace fire.Runtime
 
             try
             {
-                // Erst NACH dem Lock-Erwerb prüfen (nicht vorher) - ein
-                // gleichzeitiges Destroy könnte sonst genau zwischen Check und
-                // Lock-Erwerb passieren.
+                // Check only AFTER acquiring the lock (not before) - a
+                // concurrent Destroy could otherwise happen exactly between the check and
+                // acquiring the lock.
                 if (target.IsDestroyed) return SyncResult.TargetGone;
 
                 SyncFields(copy, target, flat, runner);
@@ -58,17 +58,17 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Überträgt alle Felder von `source` (der Kopie/dem
-        /// jeweiligen Teilbaum-Knoten der Kopie) nach `target` (Original) -
-        /// wird bei `flat: false` (vollem sync) rekursiv für Fall C erneut
-        /// aufgerufen, bei `flat: true` (sync flat) genau einmal, ohne in
-        /// bestehende Objektreferenzen hineinzusteigen.</summary>
+        /// <summary>Transfers all fields from `source` (the copy/the
+        /// respective subtree node of the copy) to `target` (original) -
+        /// with `flat: false` (full sync) called again recursively for case C,
+        /// with `flat: true` (sync flat) exactly once, without descending into
+        /// existing object references.</summary>
         private static void SyncFields(ObjectInstance source, ObjectInstance target, bool flat, IDestructRunner runner)
         {
-            // Snapshot der Quell-Felder - source gehört dem aufrufenden Thread
-            // exklusiv (es ist SEINE eigene taking-Kopie), eine Kopie der
-            // Enumeration ist hier nur nötig, falls source selbst später (bei
-            // einem verschachtelten taking) doch geteilt würde.
+            // Snapshot of the source fields - source belongs exclusively
+            // to the calling thread (it is ITS OWN taking copy), a copy of the
+            // enumeration is only necessary here if source itself should later (with
+            // a nested taking) be shared after all.
             foreach (var (name, srcVal) in new List<KeyValuePair<string, Value>>(source.Fields))
             {
                 target.Fields.TryGetValue(name, out var tgtVal);
@@ -76,10 +76,10 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Ein einzelner Feld-/Array-Element-Wert, nach Fall A/B/C
-        /// (siehe docs/THREADING_DESIGN.md 4.3) für Objektreferenzen, mit
-        /// Sonderbehandlung für Arrays (4.4) und primitive Werte (direkt
-        /// übernommen).</summary>
+        /// <summary>A single field/array-element value, according to case A/B/C
+        /// (see docs/THREADING_DESIGN.md 4.3) for object references, with
+        /// special handling for arrays (4.4) and primitive values (taken
+        /// over directly).</summary>
         private static Value SyncSingleValue(
             Value srcVal, Value tgtVal, ObjectInstance containingTarget, bool flat, IDestructRunner runner)
         {
@@ -88,12 +88,12 @@ namespace fire.Runtime
 
             if (srcIsObj && tgtIsObj)
             {
-                // Fall C: beide vorhanden - Referenz bleibt bestehen. Beim
-                // vollen (nicht-flachen) sync steigt die Synchronisation
-                // TROTZDEM rekursiv in beide hinein (das ist der einzige
-                // Unterschied zwischen 'sync' und 'sync flat' - flat lässt
-                // Fall C komplett unangetastet, voller sync synct auch hier
-                // weiter).
+                // Case C: both present - reference stays in place. With a
+                // full (non-flat) sync the synchronisation
+                // NEVERTHELESS descends recursively into both (that is the only
+                // difference between 'sync' and 'sync flat' - flat leaves
+                // case C completely untouched, full sync keeps syncing here
+                // too).
                 var srcChild = (ObjectInstance)srcVal.AsObjectRef();
                 var tgtChild = (ObjectInstance)tgtVal.AsObjectRef();
                 if (!flat)
@@ -103,16 +103,16 @@ namespace fire.Runtime
 
             if (srcIsObj && !tgtIsObj)
             {
-                // Fall A: Quelle vorhanden, Ziel nicht - komplette,
-                // unabhängige Kopie erzeugen (KEINE Referenzverknüpfung mit
-                // der Quelle - ab jetzt divergieren beide wieder, bis zum
-                // nächsten sync). Owner der neuen Kopie ist das Objekt, in
-                // dessen Feld sie landet. Muss dem gemeinsamen Baum-Lock
-                // beitreten (ActivateThreadSharing) - sie ist ab sofort Teil
-                // des bereits geteilten Ziel-Baums, jeder künftige Zugriff
-                // muss also denselben Lock respektieren wie der Rest des
-                // Baums, sonst entstünde genau an dieser Stelle eine
-                // ungesicherte Lücke.
+                // Case A: source present, target not - create a complete,
+                // independent copy (NO reference link to
+                // the source - from now on the two diverge again, until the
+                // next sync). The owner of the new copy is the object in
+                // whose field it lands. It must join the shared tree lock
+                // (ActivateThreadSharing) - it is from now on part of
+                // the already shared target tree, every future access
+                // must therefore respect the same lock as the rest of the
+                // tree, otherwise exactly at this point an
+                // unguarded gap would arise.
                 var srcChild = (ObjectInstance)srcVal.AsObjectRef();
                 var newCopy = PlainDeepCopy(srcChild, containingTarget);
                 newCopy.ActivateThreadSharing(containingTarget.ThreadLock!);
@@ -121,10 +121,10 @@ namespace fire.Runtime
 
             if (!srcIsObj && tgtIsObj)
             {
-                // Fall B: Quelle leer, Ziel hatte ein Objekt - Ziel wird
-                // geleert (übernimmt srcVal, i.d.R. 'undefined'). Verliert das
-                // referenzierte Objekt dadurch seinen (einzigen) Owner, läuft
-                // die Destruct-Kaskade.
+                // Case B: source empty, target had an object - target is
+                // emptied (takes over srcVal, usually 'undefined'). If the
+                // referenced object thereby loses its (only) owner, the
+                // destruct cascade runs.
                 var tgtChild = (ObjectInstance)tgtVal.AsObjectRef();
                 if (ReferenceEquals(tgtChild.Owner, containingTarget))
                 {
@@ -139,10 +139,10 @@ namespace fire.Runtime
                 var srcArr = (ScriptArray)srcVal.AsArray();
                 var oldArr = tgtVal.Kind == ValueKind.Array ? (ScriptArray)tgtVal.AsArray() : null;
 
-                // Ziel wird eine möglichst exakte 1:1-Kopie der Quelle -
-                // neues Array in Quell-Länge, danach elementweise dieselben
-                // Fall-A/B/C-Regeln wie bei normalen Feldern (Array-Elemente
-                // sind die "direkten Kinder" eines Arrays, siehe SPEC/
+                // Target becomes as exact a 1:1 copy of the source as possible -
+                // new array of the source length, then element by element the same
+                // case A/B/C rules as for normal fields (array elements
+                // are the "direct children" of an array, see SPEC/
                 // THREADING_DESIGN.md 4.4).
                 var newArr = new ScriptArray(srcArr.Length);
                 for (int i = 0; i < srcArr.Length; i++)
@@ -158,19 +158,19 @@ namespace fire.Runtime
                     "'sync' rejected: lambda/pointer values are not supported at this stage " +
                     "(the same limitation as for 'taking', see the ObjectCopier class comment).");
 
-            // Primitive Werte (bool/int/float/char/string/undefined) - wertartig, direkt übernommen.
+            // Primitive values (bool/int/float/char/string/undefined) - value-like, taken over directly.
             return srcVal;
         }
 
-        /// <summary>Reine, unabhängige Tiefenkopie (ohne SyncOrigin/Locking -
-        /// das übernimmt der Aufrufer, siehe Fall A oben) für frisch bei einem
-        /// sync entstehende Objekte. Bewusst eine EIGENE, einfachere Kopie
-        /// als ObjectCopier.Take (die für 'taking' gedacht ist und zusätzlich
-        /// Baum-Fremd-Referenzen ablehnt/Thread-Sharing aktiviert) - hier ist
-        /// das Ziel bereits Teil eines etablierten, geteilten Baums, die
-        /// Baum-Zugehörigkeits-Prüfung von ObjectCopier wäre hier nicht
-        /// sinnvoll anwendbar (die Quelle lebt ja im KIND-Thread, nicht im
-        /// Zielbaum selbst).</summary>
+        /// <summary>Pure, independent deep copy (without SyncOrigin/locking -
+        /// the caller handles that, see case A above) for objects freshly arising in a
+        /// sync. Deliberately a SEPARATE, simpler copy
+        /// than ObjectCopier.Take (which is meant for 'taking' and additionally
+        /// rejects tree-foreign references/activates thread sharing) - here the
+        /// target is already part of an established, shared tree, the
+        /// tree-membership check of ObjectCopier would not be
+        /// sensibly applicable here (the source lives in the CHILD thread, not in the
+        /// target tree itself).</summary>
         private static ObjectInstance PlainDeepCopy(ObjectInstance node, IOwner owner)
         {
             var copy = new ObjectInstance(node.ClassName, owner, node.RtClass);

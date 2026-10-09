@@ -8,8 +8,8 @@ using AvaloniaEdit.Document;
 
 namespace fire.Editor
 {
-    /// <summary>Bearbeiten-Funktionen, die ScriptEditorControl und MarkdownEditorControl gleichermaßen brauchen (Bearbeiten-Menü des Hauptfensters und Kontextmenüs), einmal für den
-    /// AvaloniaEdit-TextEditor.</summary>
+    /// <summary>Edit functions that ScriptEditorControl and MarkdownEditorControl need equally (Edit menu of the main window and context menus), implemented once for the
+    /// AvaloniaEdit TextEditor.</summary>
     internal static class EditorCommands
     {
         /// <summary>Is there text on the clipboard (enables Paste)?</summary>
@@ -19,7 +19,7 @@ namespace fire.Editor
             catch (Exception) { return false; }
         }
 
-        /// <summary>Springt in Zeile `line` (1-basiert, wird auf den gültigen Bereich begrenzt), Cursor an den Zeilenanfang.</summary>
+        /// <summary>Jumps to line `line` (1-based, limited to the valid range), cursor to the start of the line.</summary>
         public static void GoToLine(this TextEditor editor, int line)
         {
             int target = Math.Max(1, Math.Min(line, editor.Document.LineCount));
@@ -30,7 +30,7 @@ namespace fire.Editor
             editor.Focus();
         }
 
-        /// <summary>Die vom Cursor/der Auswahl berührten Zeilen (eine Auswahl, die genau am Anfang einer Folgezeile endet, zählt diese nicht mit).</summary>
+        /// <summary>The lines touched by the cursor/selection (a selection that ends exactly at the start of a following line does not count that one).</summary>
         public static List<DocumentLine> SelectedLines(this TextEditor editor)
         {
             var doc = editor.Document;
@@ -48,8 +48,8 @@ namespace fire.Editor
             return lines;
         }
 
-        /// <summary>Beim Rechtsklick den Cursor unter die Maus setzen - außer, der Klick liegt in einer bestehenden Auswahl (dann soll sie für Kopieren/Ausschneiden erhalten bleiben).
-        /// Liefert den Textoffset unter der Maus (oder den Cursor, wenn dort kein Text liegt).</summary>
+        /// <summary>On a right click place the cursor under the mouse - unless the click lies within an existing selection (then it should stay for copy/cut).
+        /// Returns the text offset under the mouse (or the cursor if there is no text there).</summary>
         public static int PlaceCaretForContextMenu(this TextEditor editor, PointerPressedEventArgs e)
         {
             var pos = editor.GetPositionFromPoint(e.GetPosition(editor));
@@ -61,7 +61,7 @@ namespace fire.Editor
             return offset;
         }
 
-        /// <summary>Ein Eintrag eines Kontextmenüs; `enabled` wird bei jedem Öffnen neu ausgewertet.</summary>
+        /// <summary>An entry of a context menu; `enabled` is re-evaluated on every opening.</summary>
         public sealed class Entry
         {
             public required string Header { get; init; }
@@ -71,7 +71,7 @@ namespace fire.Editor
             internal MenuItem? Item;
         }
 
-        /// <summary>Baut ein Kontextmenü aus Gruppen von Einträgen (null = Trennlinie); Standard-Bearbeiten-Einträge hängt <see cref="StandardEntries"/> an.</summary>
+        /// <summary>Builds a context menu from groups of entries (null = separator line); <see cref="StandardEntries"/> appends the standard edit entries.</summary>
         public static ContextMenu BuildMenu(IEnumerable<Entry?> entries)
         {
             var menu = new ContextMenu();
@@ -102,7 +102,7 @@ namespace fire.Editor
             return menu;
         }
 
-        /// <summary>Rückgängig/Wiederholen, Ausschneiden/Kopieren/Einfügen/Löschen, Alles auswählen, Suchen.</summary>
+        /// <summary>Undo/redo, cut/copy/paste/delete, select all, find.</summary>
         public static IEnumerable<Entry?> StandardEntries(TextEditor editor, Action find)
         {
             yield return new Entry { Header = "_Undo", Gesture = "Ctrl+Z", Execute = () => editor.Undo(), Enabled = () => !editor.IsReadOnly && editor.Document.UndoStack.CanUndo };

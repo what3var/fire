@@ -10,15 +10,15 @@ using System.Runtime.CompilerServices;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Ausführungsumgebung der gepackten Runtime (die Variante mit Editor/Debugger liegt in fire.Compiler).
+    /// Execution environment of the packed runtime (the variant with editor/debugger lies in fire.Compiler).
     ///
-    /// WICHTIG für die schlanke Ausgabedatei: Die Bridges (Terminal/SDL, Geräte, IO) sind NICHT mehr in jede
-    /// gepackte Datei eingebettet, sondern nur, wenn das Programm sie per `#import` braucht (siehe Packer,
-    /// PackagePlan). Fehlt eine Bridge-DLL, darf sie deshalb auch nie geladen werden - der JIT löst einen Typ
-    /// aber schon beim Übersetzen einer Methode auf, die ihn in Signatur, lokaler Variable oder Aufruf erwähnt.
-    /// Darum steht jeder Zugriff auf eine Bridge in einer eigenen [NoInlining]-Methode (RegisterGraphics/
-    /// RegisterDevices/RegisterIo), die nur betreten wird, wenn der Import da ist; `Build`, `Session` und alles
-    /// davor erwähnen keinen Bridge-Typ (auch nicht in Feldern, Properties oder Parametern).
+    /// IMPORTANT for the lean output file: the bridges (terminal/SDL, devices, IO) are NO longer embedded in every
+    /// packed file, but only if the program needs them via `#import` (see Packer,
+    /// PackagePlan). If a bridge DLL is missing, it must therefore never be loaded either - the JIT resolves a type
+    /// already when compiling a method that mentions it in a signature, local variable or call.
+    /// That is why every access to a bridge sits in a [NoInlining] method of its own (RegisterGraphics/
+    /// RegisterDevices/RegisterIo), which is only entered if the import is there; `Build`, `Session` and everything
+    /// before it mention no bridge type (not even in fields, properties or parameters).
     /// </summary>
     public class Session
     {
@@ -38,11 +38,11 @@ namespace fire.Runtime
             // Private constructor to prevent direct instantiation
         }
 
-        /// <summary>Policy und Konsole des Hosts für die Natives von Paketen (siehe PackageHost); am Ende des Laufs schließt es, was das Skript offen gelassen hat.
-        /// Der Destruktor von `IO.FileStream` &amp; Co. schließt Streams normalerweise schon.</summary>
+        /// <summary>Policy and console of the host for the natives of packages (see PackageHost); at the end of the run it closes what the script left open.
+        /// The destructor of `IO.FileStream` &amp; co. normally closes streams already.</summary>
         protected IDisposable? IoResources { get; set; }
 
-        /// <summary>Räumt die Geräte-Brücke nach dem Lauf auf (siehe DeviceBridge.RegisterAll).</summary>
+        /// <summary>Cleans up the device bridge after the run (see DeviceBridge.RegisterAll).</summary>
         protected IDisposable? DeviceResources { get; set; }
 
         public void Run()
@@ -84,11 +84,11 @@ namespace fire.Runtime
 
             var session = new Session(linkedProgram.Program);
 
-            // WICHTIG: native Funktionen werden über ihren INDEX angesprungen - die Reihenfolge der Registrierung muss
-            // exakt der beim Übersetzen entsprechen (siehe ImportedPreludes.Insert): graphics, reflection, time, devices, io.
+            // IMPORTANT: native functions are jumped to via their INDEX - the order of registration must
+            // exactly match that when translating (see ImportedPreludes.Insert): graphics, reflection, time, devices, io.
             if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
             {
-                // der Manager reist als object: jede Methode, die den Typ nennt, laedt beim JIT-Kompilieren fire.Terminal (siehe Klassen-Doku)
+                // the manager travels as object: every method that names the type loads fire.Terminal when JIT-compiling (see class documentation)
                 object fbManager = RegisterGraphics(natives);
                 if (linkedProgram.NativeImports.Contains(NativeImports.Windows))
                     RegisterWindows(session, natives, fbManager);
@@ -97,8 +97,8 @@ namespace fire.Runtime
             if (linkedProgram.NativeImports.Contains(NativeImports.Reflection))
                 ReflectionNatives.Register(natives);
 
-            // Dateisystem-/Stdio-Policy: die gepackte Runtime nutzt die Vorgabe (alles erlaubt, echte Konsole) -
-            // Hosts mit eigener Policy (Editor) bauen ihre Session über fire.Compiler.RuntimeSession.
+            // File system/stdio policy: the packed runtime uses the default (everything allowed, real console) -
+            // hosts with their own policy (editor) build their session via fire.Compiler.RuntimeSession.
             // what the natives of packages (the io package) ask of the host: the real console, everything allowed - the packed runtime has no other host
             if (linkedProgram.PackageNatives is { Count: > 0 })
                 session.IoResources = PackageHost.Begin(null, null, linkedProgram.NativeImports.Contains("pkg:devices"));
@@ -116,7 +116,7 @@ namespace fire.Runtime
             return session;
         }
 
-        // Jede dieser Methoden ist die EINZIGE Stelle, die ihre Bridge-Typen erwähnt (siehe Klassen-Doku).
+        // Each of these methods is the ONLY place that mentions its bridge types (see class documentation).
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static object RegisterGraphics(NativeRegistry natives)
@@ -129,7 +129,7 @@ namespace fire.Runtime
             return fbManager;
         }
 
-        /// <summary>`#import "windows"`: das SDL-Fenster (eigene Assembly samt SDL - ein Programm nur mit `graphics` laedt sie nie).</summary>
+        /// <summary>`#import "windows"`: the SDL window (own assembly together with SDL - a program with only `graphics` never loads it).</summary>
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void RegisterWindows(Session session, NativeRegistry natives, object framebuffers)
         {

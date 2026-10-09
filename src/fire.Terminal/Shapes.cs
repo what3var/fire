@@ -4,21 +4,21 @@ using System.Collections.Generic;
 namespace fire.Terminal
 {
     /// <summary>
-    /// Die Zeichenalgorithmen (Linie, Kreis, Ellipse, Dreieck, Polygon, Flächenfüllung) an eine <see cref="IPixelSink"/> - gleich für beide Farbmodi, denn geliefert werden nur einzelne Pixel und waagerechte Spans. Alles wird still am Rand beschnitten (eine Form, die teilweise außerhalb liegt, zeigt ihren sichtbaren
-    /// Teil). Reine Ganzzahl-Arithmetik, ohne Fließkomma: dieselben Pixel auf jeder Plattform.
+    /// The drawing algorithms (line, circle, ellipse, triangle, polygon, area fill) on an <see cref="IPixelSink"/> - the same for both colour modes, because only single pixels and horizontal spans are delivered. Everything is silently clipped at the edge (a shape that lies partly outside shows its visible
+    /// part). Pure integer arithmetic, without floating point: the same pixels on every platform.
     /// </summary>
     public static class Shapes
     {
-        // Die Algorithmen liefern nur Pixel und Spans an eine Senke (<see cref="IPixelSink"/>): ein Pinsel füllt sie, ein Stift stempelt sie. Die Senken sind Strukturen und die Methoden
-        // generisch - der JIT erzeugt je Senke einen eigenen Code ohne Schnittstellenaufruf je Pixel.
+        // The algorithms deliver only pixels and spans to a sink (<see cref="IPixelSink"/>): a brush fills them, a pen stamps them. The sinks are structs and the methods
+        // generic - the JIT generates its own code per sink without an interface call per pixel.
 
-        /// <summary>Bresenham-Linienalgorithmus - keine externe Abhängigkeit, funktioniert identisch unabhängig vom Rendering-Backend.</summary>
+        /// <summary>Bresenham line algorithm - no external dependency, works identically regardless of the rendering backend.</summary>
         public static void Line<TSink>(ref TSink sink, int x0, int y0, int x1, int y1) where TSink : IPixelSink
         {
             long dxl = Math.Abs((long)x1 - x0), dyl = Math.Abs((long)y1 - y0);
-            // Eine waagerechte Linie ist ein einziger Span (der häufigste Fall bei Rahmen und Füllungen).
+            // A horizontal line is a single span (the most common case for frames and fills).
             if (y0 == y1) { sink.Span(y0, x0, x1); return; }
-            if (dxl > int.MaxValue / 2 || dyl > int.MaxValue / 2) return; // absurde Koordinaten: nichts zeichnen statt überlaufen
+            if (dxl > int.MaxValue / 2 || dyl > int.MaxValue / 2) return; // absurd coordinates: draw nothing instead of overflowing
 
             int dx = (int)dxl, sx = x0 < x1 ? 1 : -1;
             int dy = -(int)dyl, sy = y0 < y1 ? 1 : -1;
@@ -46,23 +46,23 @@ namespace fire.Terminal
         }
 
         // -----------------------------------------------------------
-        // Kreis und Ellipse
+        // Circle and ellipse
         //
-        // Die Fläche ist die Menge der Pixel (dx, dy) um die Mitte mit (2dx)^2/a^2 + (2dy)^2/b^2 <= 1, a = 2rx+1, b = 2ry+1 (die Ausdehnung
-        // in Pixeln: ein Pixel der Mitte hat die Breite 1). Für einen Kreis ist das dx^2 + dy^2 <= r^2 + r - die bekannte runde Form.
-        // Linie und Füllung kommen aus denselben Spans, die Linie sind die Pixel der Fläche am Rand (mit einem äußeren Nachbarn).
+        // The area is the set of pixels (dx, dy) around the centre with (2dx)^2/a^2 + (2dy)^2/b^2 <= 1, a = 2rx+1, b = 2ry+1 (the extent
+        // in pixels: a pixel of the centre has width 1). For a circle this is dx^2 + dy^2 <= r^2 + r - the well-known round shape.
+        // Line and fill come from the same spans, the line is the pixels of the area at the edge (with an outer neighbour).
         // -----------------------------------------------------------
 
-        /// <summary>Größter erlaubter Radius (größere werden darauf begrenzt): die Rechnung braucht (2r+1)^4 in 64 Bit.</summary>
+        /// <summary>Largest permitted radius (larger ones are limited to it): the calculation needs (2r+1)^4 in 64 bit.</summary>
         public const int MaxRadius = 1 << 14;
 
-        /// <summary>Kreislinie um (cx, cy) mit Radius `r` (r = 0: ein Pixel; negativ: nichts).</summary>
+        /// <summary>Circle line around (cx, cy) with radius `r` (r = 0: one pixel; negative: nothing).</summary>
         public static void Circle<TSink>(ref TSink sink, int cx, int cy, int r) where TSink : IPixelSink => Ellipse(ref sink, cx, cy, r, r);
 
-        /// <summary>Gefüllter Kreis (deckt genau die Fläche, die <see cref="Circle"/> umschließt, samt Linie).</summary>
+        /// <summary>Filled circle (covers exactly the area that <see cref="Circle"/> encloses, including the line).</summary>
         public static void FillCircle<TSink>(ref TSink sink, int cx, int cy, int r) where TSink : IPixelSink => FillEllipse(ref sink, cx, cy, r, r);
 
-        /// <summary>Halbbreite der Ellipse je Zeile `dy` = 0..ry (Index = dy): das größte `dx`, das noch zur Fläche gehört.</summary>
+        /// <summary>Half width of the ellipse per row `dy` = 0..ry (index = dy): the largest `dx` that still belongs to the area.</summary>
         private static int[] EllipseSpans(int rx, int ry)
         {
             long a = 2L * rx + 1, b = 2L * ry + 1;
@@ -70,7 +70,7 @@ namespace fire.Terminal
             var spans = new int[ry + 1];
             for (int dy = 0; dy <= ry; dy++)
             {
-                // größtes dx mit 4*dx^2*b^2 <= a^2 * (b^2 - 4*dy^2)
+                // largest dx with 4*dx^2*b^2 <= a^2 * (b^2 - 4*dy^2)
                 long rhs = a2 * (b2 - 4L * dy * dy);
                 long dx = (long)Math.Sqrt((double)rhs / (4.0 * b2));
                 while (dx > 0 && 4 * dx * dx * b2 > rhs) dx--;
@@ -80,7 +80,7 @@ namespace fire.Terminal
             return spans;
         }
 
-        /// <summary>Ellipsenlinie um (cx, cy) mit den Halbachsen `rx` (waagerecht) und `ry` (senkrecht); ein negativer Radius zeichnet nichts.</summary>
+        /// <summary>Ellipse line around (cx, cy) with the semi-axes `rx` (horizontal) and `ry` (vertical); a negative radius draws nothing.</summary>
         public static void Ellipse<TSink>(ref TSink sink, int cx, int cy, int rx, int ry) where TSink : IPixelSink
         {
             if (rx < 0 || ry < 0) return;
@@ -90,16 +90,16 @@ namespace fire.Terminal
             for (int dy = 0; dy <= ry; dy++)
             {
                 int dx = spans[dy];
-                // der äußere Nachbar in Richtung Spitze: die Zeile darüber/darunter; außerhalb der Ellipse (-1) ist alles Rand
+                // the outer neighbour towards the tip: the row above/below; outside the ellipse (-1) everything is edge
                 int neighbor = dy < ry ? spans[dy + 1] : -1;
                 if (dy == 0) neighbor = ry >= 1 ? Math.Min(neighbor, spans[1]) : -1;
                 int from = Math.Min(neighbor + 1, dx);
                 for (int sign = -1; sign <= 1; sign += 2)       // links/rechts
                     for (int rowSign = -1; rowSign <= 1; rowSign += 2)   // oben/unten
                     {
-                        if (dy == 0 && rowSign == 1) continue;  // die Mittelzeile nur einmal
+                        if (dy == 0 && rowSign == 1) continue;  // the middle row only once
                         int y = cy + rowSign * dy;
-                        // die Pixel von `from` bis `dx` Abstand zur Mitte (auf dieser Seite)
+                        // the pixels from `from` to `dx` distance from the centre (on this side)
                         sink.Span(y, cx + sign * from, cx + sign * dx);
                     }
             }
@@ -119,7 +119,7 @@ namespace fire.Terminal
         }
 
         // -----------------------------------------------------------
-        // Dreieck und Polygon
+        // Triangle and polygon
         // -----------------------------------------------------------
 
         public static void Triangle<TSink>(ref TSink sink, int x0, int y0, int x1, int y1, int x2, int y2) where TSink : IPixelSink
@@ -132,7 +132,7 @@ namespace fire.Terminal
         public static void FillTriangle<TSink>(ref TSink sink, int x0, int y0, int x1, int y1, int x2, int y2, int clipHeight) where TSink : IPixelSink =>
             FillPolygon(ref sink, new[] { x0, y0, x1, y1, x2, y2 }, clipHeight);
 
-        /// <summary>Umriss durch die Punkte `points` (x0, y0, x1, y1, ...); `closed` verbindet den letzten mit dem ersten. Weniger als zwei Punkte: nichts.</summary>
+        /// <summary>Outline through the points `points` (x0, y0, x1, y1, ...); `closed` connects the last to the first. Fewer than two points: nothing.</summary>
         public static void Polygon<TSink>(ref TSink sink, int[] points, bool closed = true) where TSink : IPixelSink
         {
             int n = points.Length / 2;
@@ -143,8 +143,8 @@ namespace fire.Terminal
                 Line(ref sink, points[2 * (n - 1)], points[2 * (n - 1) + 1], points[0], points[1]);
         }
 
-        /// <summary>Füllt das Polygon durch `points` (Even-Odd-Regel, wie bei einem Stift ohne Windungszahl: sich überschneidende Teile bleiben leer).
-        /// Die Randpixel gehören dazu (der Umriss wird mitgezeichnet). Weniger als drei Punkte: nur ein Strich/Punkt.</summary>
+        /// <summary>Fills the polygon through `points` (even-odd rule, as with a pen without winding number: overlapping parts stay empty).
+        /// The edge pixels belong to it (the outline is drawn as well). Fewer than three points: only a stroke/point.</summary>
         public static void FillPolygon<TSink>(ref TSink sink, int[] points, int clipHeight) where TSink : IPixelSink
         {
             int n = points.Length / 2;
@@ -166,10 +166,10 @@ namespace fire.Terminal
                 {
                     int ax = points[2 * i], ay = points[2 * i + 1];
                     int bx = points[2 * ((i + 1) % n)], by = points[2 * ((i + 1) % n) + 1];
-                    if (ay == by) continue;                       // waagerechte Kanten schneiden keine Zeile
+                    if (ay == by) continue;                       // horizontal edges do not cut a row
                     if (ay > by) { (ax, bx) = (bx, ax); (ay, by) = (by, ay); }
-                    if (y < ay || y >= by) continue;              // halboffen [ay, by): ein Eckpunkt zählt nicht doppelt
-                    // x der Kante in Zeile y, auf das nächste Pixel gerundet
+                    if (y < ay || y >= by) continue;              // half-open [ay, by): a vertex does not count twice
+                    // x of the edge in row y, rounded to the nearest pixel
                     long num = (long)(bx - ax) * (y - ay);
                     long den = by - ay;
                     long x = ax + (num >= 0 ? (2 * num + den) / (2 * den) : -((2 * -num + den) / (2 * den)));
@@ -180,7 +180,7 @@ namespace fire.Terminal
                     sink.Span(y, crossings[i], crossings[i + 1]);
             }
 
-            Polygon(ref sink, points, closed: true); // der Umriss gehört zur Fläche (und schließt Lücken durch die Rundung)
+            Polygon(ref sink, points, closed: true); // the outline belongs to the area (and closes gaps caused by the rounding)
         }
     }
 }

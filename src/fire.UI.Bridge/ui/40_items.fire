@@ -1,7 +1,7 @@
 namespace UI {
-    // Eine Sicht auf eine Liste: gefiltert (`filter`: Lambda mit einem Parameter, true behaelt das Element), sortiert (nach der Eigenschaft `sortMember` oder mit `comparer`: Lambda
-    // mit zwei Parametern, negativ/0/positiv) und mit einem aktuellen Element (`current`). Die Listen-Steuerelemente zeigen `items`. Aendert sich die Quelle, aktualisiert sich die Sicht
-    // beim naechsten Zeichnen (bei gleicher Anzahl nach einer Aenderung im Element selbst: Refresh()).
+    // A view of a list: filtered (`filter`: lambda with one parameter, true keeps the element), sorted (by the property `sortMember` or with `comparer`: lambda
+    // with two parameters, negative/0/positive) and with a current element (`current`). The list controls show `items`. If the source changes, the view updates itself
+    // at the next drawing (with the same count after a change in the element itself: Refresh()).
     class CollectionView {
         List source
         List items
@@ -9,13 +9,13 @@ namespace UI {
         string sortMember = ""
         bool descending = false
         var comparer
-        // Index des aktuellen Elements in `items`, -1: keins
+        // Index of the current element in `items`, -1: none
         int current = -1
         int sourceCount = -1
-        // die Quelle, aus der `items` zuletzt gebaut wurde (wird `source` ausgetauscht, baut Update neu)
+        // the source `items` was last built from (if `source` is replaced, Update rebuilds)
         var seenSource
         bool dirty = true
-        // zaehlt die Neuberechnungen: wer die Sicht zeigt, merkt daran, dass sich `items` geaendert hat
+        // counts the recomputations: whoever shows the view notices from it that `items` has changed
         int revision = 0
 
         construct(source) {
@@ -27,10 +27,10 @@ namespace UI {
 
         operator[](int index) { return this.items[index] }
 
-        // Wirkt beim naechsten Zeichnen (oder sofort mit Refresh).
+        // Takes effect at the next drawing (or immediately with Refresh).
         Invalidate() { this.dirty = true }
 
-        // Baut `items` neu: filtern, dann stabil sortieren; das aktuelle Element bleibt aktuell, wenn es noch da ist.
+        // Rebuilds `items`: filter, then sort stably; the current element stays current if it is still there.
         Refresh() {
             var keep = this.CurrentItem()
             this.items = new List()
@@ -49,7 +49,7 @@ namespace UI {
             if (keep != undefined) { this.current = this.items.IndexOf(keep) }
         }
 
-        // Aktualisiert die Sicht, wenn sich die Quelle (ihre Anzahl) oder die Einstellungen geaendert haben.
+        // Updates the view if the source (its count) or the settings have changed.
         Update() {
             if (this.source == undefined) { return }
             if (this.dirty || this.source != this.seenSource || this.source.count != this.sourceCount) { this.Refresh() }
@@ -64,7 +64,7 @@ namespace UI {
             return result
         }
 
-        // Stabiles Sortieren durch Mischen (merge sort).
+        // Stable sorting by merging (merge sort).
         Sorted(list) {
             if (list.count < 2) { return list }
             var middle = list.count / 2
@@ -114,7 +114,7 @@ namespace UI {
         bool MoveCurrentToNext() { return this.MoveCurrentTo(this.current + 1) }
         bool MoveCurrentToPrevious() { return this.MoveCurrentTo(this.current - 1) }
 
-        // Sortiert nach der Eigenschaft (waehrend `descending` die Richtung gibt).
+        // Sorts by the property (while `descending` gives the direction).
         SortBy(string member, bool descending = false) {
             this.sortMember = member
             this.descending = descending
@@ -123,7 +123,7 @@ namespace UI {
         }
     }
 
-    // Eine Spalte einer ListView: Titel, die Eigenschaft der Elemente, die sie zeigt, und die Breite in Pixeln (-1: der Rest).
+    // A column of a ListView: title, the property of the elements that it shows, and the width in pixels (-1: the rest).
     class GridColumn {
         string header
         string member
@@ -136,15 +136,15 @@ namespace UI {
         }
     }
 
-    // Die gemeinsame Grundlage der Listen (ListBox, ListView): Elemente (`items`: eine Liste beliebiger Werte, oder `SetView` mit einer CollectionView), Auswahl, Bildlauf, Tastatur und Maus.
-    // Der Text einer Zeile ist die Eigenschaft `displayMember` des Elements (ohne Namen: das Element selbst als Text); mit `itemTemplate` (DataTemplate) baut jede Zeile
-    // ein eigenes Element (nur zum Anzeigen, nicht bedienbar), das die Zeilenhoehe bekommt.
+    // The common basis of the lists (ListBox, ListView): elements (`items`: a list of arbitrary values, or `SetView` with a CollectionView), selection, scrolling, keyboard and mouse.
+    // The text of a row is the property `displayMember` of the element (without a name: the element itself as text); with `itemTemplate` (DataTemplate) every row builds
+    // an element of its own (for display only, not operable) that gets the row height.
     class ItemsControl : Element {
         List items
         CollectionView view
         string displayMember = ""
         var itemTemplate
-        // -1: eine Zeichenhoehe plus Rand
+        // -1: one character height plus margin
         int rowHeight = -1
         Scroller scroller
         int selectedIndex = -1
@@ -153,10 +153,10 @@ namespace UI {
         var onActivate
         bool changed = false
         bool activated = false
-        // die gebauten Zeilen-Elemente der Vorlage (nach Index)
+        // the built row elements of the template (by index)
         List rowElements
         int builtCount = -1
-        // was Poll zuletzt gesehen hat: Zeilenzahl der Liste und Stand der Sicht
+        // what Poll saw last: row count of the list and state of the view
         int seenCount = -1
         int seenRevision = -1
         int seenSelected = -1
@@ -171,7 +171,7 @@ namespace UI {
             this.rowElements = new List()
         }
 
-        // Die Zeilen: die der Sicht, sonst die eigene Liste.
+        // The rows: those of the view, otherwise the own list.
         List Rows() {
             if (this.view != undefined) { return this.view.items }
             return this.items
@@ -181,7 +181,7 @@ namespace UI {
 
         bool Focusable() { return true }
 
-        // Haengt ein Element an; ein Objekt gehoert ab jetzt der Liste (Zahlen und Text gehoeren niemandem).
+        // Appends an element; an object belongs to the list from now on (numbers and text belong to nobody).
         Add(item) {
             UI.M.Own(this, item)
             this.items.Add(item)
@@ -206,14 +206,14 @@ namespace UI {
             this.Refresh()
         }
 
-        // Die Liste der Elemente; sie zuzuweisen zeigt die Liste, ohne sie zu besitzen (sie gehoert dem, der sie hat, z.B. dem Fenster; Aenderungen darin
-        // zeigt die Liste von selbst).
+        // The list of elements; assigning it shows the list without owning it (it belongs to whoever has it, e.g. the window; changes in it
+        // are shown by the list by itself).
         itemsSource {
             get { return this.items }
             set { this.SetItems(value, false) }
         }
 
-        // Ersetzt die Elemente durch `list`; `own`: die Liste gehoert ab jetzt diesem Steuerelement.
+        // Replaces the elements by `list`; `own`: the list belongs to this control from now on.
         SetItems(list, bool own = true) {
             if (own) { list.TakeTo(this) }
             this.view = undefined
@@ -224,7 +224,7 @@ namespace UI {
             this.Refresh()
         }
 
-        // Zeigt die Elemente einer CollectionView (die Auswahl folgt ihrem `current`).
+        // Shows the elements of a CollectionView (the selection follows its `current`).
         SetView(source, bool own = true) {
             if (own) { source.TakeTo(this) }
             this.view = source
@@ -234,18 +234,18 @@ namespace UI {
             this.Refresh()
         }
 
-        // Nach einer Aenderung in den Elementen selbst: die Vorlagen-Zeilen neu bauen.
+        // After a change in the elements themselves: rebuild the template rows.
         Refresh() {
             this.DropRows()
             if (this.view != undefined) { this.view.Update() }
             this.Invalidate()
         }
 
-        // Aendert sich die Liste von aussen (list.Add) oder die Sicht, wird neu gemalt.
+        // If the list changes from outside (list.Add) or the view, it is repainted.
         Poll(root) {
             base.Poll(root)
             if (this.selectedIndex != this.seenSelected) {
-                // von aussen gesetzt (z.B. durch eine Bindung): wie eine Auswahl behandeln
+                // set from outside (e.g. by a binding): treat like a selection
                 var want = this.selectedIndex
                 this.selectedIndex = this.seenSelected
                 this.Select(want)
@@ -280,7 +280,7 @@ namespace UI {
 
         string ItemText(item) { return UI.M.Text(UI.M.Member(item, this.displayMember)) }
 
-        // Das ausgewaehlte Element (undefined: keins).
+        // The selected element (undefined: none).
         selectedItem {
             get {
                 var rows = this.Rows()
@@ -297,7 +297,7 @@ namespace UI {
             return root.ch + 6
         }
 
-        // Waehlt die Zeile (-1: keine), blaettert sie ins Bild und meldet die Aenderung.
+        // Selects the row (-1: none), scrolls it into view and reports the change.
         Select(int index) {
             var rows = this.Rows()
             if (index >= rows.count) { index = rows.count - 1 }
@@ -329,7 +329,7 @@ namespace UI {
             if (callback != undefined) { callback() }
         }
 
-        // Blaettert, bis die Zeile sichtbar ist.
+        // Scrolls until the row is visible.
         EnsureVisible(root, int index) {
             var h = this.RowHeight(root)
             if (index * h < this.scroller.offset) { this.scroller.Set(index * h) }
@@ -357,7 +357,7 @@ namespace UI {
             if (this.itemTemplate != undefined) { this.BuildRows(root, rows) }
         }
 
-        // Baut die Elemente der Zeilen (nur die sichtbaren, bei Bedarf).
+        // Builds the elements of the rows (only the visible ones, as needed).
         BuildRows(root, rows) {
             if (this.builtCount != rows.count) {
                 this.DropRows()
@@ -382,7 +382,7 @@ namespace UI {
             }
         }
 
-        // Eine Zeile zeichnen: (x, y) ist ihre linke obere Ecke, w x h die Groesse; `text` die Schriftfarbe (Brush).
+        // Draw a row: (x, y) is its top left corner, w x h the size; `text` the font colour (Brush).
         DrawRow(root, int index, item, int x, int y, int w, int h, text) {
             if (this.itemTemplate != undefined) {
                 var row = this.rowElements[index]
@@ -430,7 +430,7 @@ namespace UI {
             r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
         }
 
-        // Der Index der Zeile bei der Bildschirmposition, -1 ausserhalb der Zeilen.
+        // The index of the row at the screen position, -1 outside the rows.
         int RowAt(root, int px, int py) {
             var top = this.ay + 1 + this.headerHeight
             if (py < top || py >= top + this.viewH || px < this.ax + 1 || px >= this.ax + 1 + this.viewW) { return -1 }
@@ -483,7 +483,7 @@ namespace UI {
             return true
         }
 
-        // Auf und Ab wählt eine andere Zeile - am ersten bzw. letzten Eintrag gibt die Liste die Taste frei (der Fokus wandert weiter)
+        // Up and Down select another row - at the first or last entry the list releases the key (the focus moves on)
         bool WantsKey(int key) {
             var last = this.Rows().count - 1
             if (key == UI.Keys.Down()) { return this.selectedIndex < last }
@@ -521,18 +521,18 @@ namespace UI {
         }
     }
 
-    // Eine einfache Auswahlliste: `items` (Zeilen), `selectedIndex`/`selectedItem`, `onSelect`/`TakeChanged()`, Enter oder `Activate()` meldet `onActivate`/`TakeActivated()`.
+    // A simple selection list: `items` (rows), `selectedIndex`/`selectedItem`, `onSelect`/`TakeChanged()`, Enter or `Activate()` reports `onActivate`/`TakeActivated()`.
     class ListBox : ItemsControl {
         construct(int x = 0, int y = 0, int width = 160, int height = 120) : base(x, y, width, height) { }
 
         string StyleKey() { return "ListBox" }
     }
 
-    // Wie die ListBox, aber mit Spalten und einer Kopfzeile: `AddColumn("Name", "name", 120)` zeigt die Eigenschaft `name` der Elemente.
-    // Ein Klick auf einen Spaltentitel sortiert die Zeilen danach (mit einer CollectionView per `SortBy`, sonst die eigene Liste).
+    // Like the ListBox, but with columns and a header row: `AddColumn("Name", "name", 120)` shows the property `name` of the elements.
+    // A click on a column title sorts the rows by it (with a CollectionView via `SortBy`, otherwise the own list).
     class ListView : ItemsControl {
         List columns
-        // die Spalte, nach der zuletzt sortiert wurde, und die Richtung
+        // the column last sorted by, and the direction
         string sortedBy = ""
         bool sortDescending = false
 
@@ -557,7 +557,7 @@ namespace UI {
             this.cw = UI.M.Max(this.cw, w + 2)
         }
 
-        // Die Breite der Spalte `index` (die letzte mit -1 nimmt den Rest).
+        // The width of the column `index` (the last one with -1 takes the rest).
         int ColumnWidth(int index, int total) {
             var w = this.columns[index].width
             if (w >= 0) { return w }
@@ -579,7 +579,7 @@ namespace UI {
                 var tcolor = theme.text
                 r.DrawText(cx + 4, y + (h - root.ch) / 2, column.header, tcolor)
                 if (column.member != "" && column.member == this.sortedBy) {
-                    // ein Pfeil fuer die Sortierrichtung
+                    // an arrow for the sort direction
                     var ax2 = cx + cwid - 12
                     var my = y + h / 2
                     if (this.sortDescending) { r.FillTriangle(ax2, my - 2, ax2 + 6, my - 2, ax2 + 3, my + 2, tcolor) }
@@ -608,7 +608,7 @@ namespace UI {
             }
         }
 
-        // Ein Klick auf einen Titel sortiert nach der Spalte (noch einmal: umgekehrt).
+        // A click on a title sorts by the column (once more: reversed).
         HeaderClick(root, int px, int py) {
             if (py < this.ay + 1 || py >= this.ay + 1 + this.headerHeight) { return }
             var x = this.ax + 1
@@ -630,7 +630,7 @@ namespace UI {
                 this.sortDescending = false
             }
             if (this.view == undefined) {
-                // die eigene Liste: ueber eine Sicht sortieren
+                // the own list: sort via a view
                 this.SetView(new CollectionView(this.items))
             }
             this.view.SortBy(member, this.sortDescending)

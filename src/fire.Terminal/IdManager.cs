@@ -3,17 +3,17 @@ using System.Collections.Generic;
 namespace fire.Terminal
 {
     /// <summary>
-    /// Generischer ID-basierter Objekt-Manager - gemeinsame Grundlage für
-    /// FramebufferManager/RendererManager (hier) und WindowManager (siehe
-    /// fire.Terminal.Windows). Vergibt AUFSTEIGENDE, innerhalb dieser
-    /// EINEN Instanz eindeutige IDs, beginnend bei 1 - 0 bleibt bewusst als
-    /// "ungültige/keine ID" reserviert, damit ein vergessenes oder falsch
-    /// initialisiertes Id-Feld (Standardwert 0 in C#) nicht zufällig auf ein
-    /// echtes Objekt zeigt. IDs werden nach Destroy() NIE wiederverwendet
-    /// (der Zähler läuft nur vorwärts) - ein "zu spät" durch die
-    /// Skriptsprache weitergereichter, bereits zerstörter Handle zeigt
-    /// dadurch verlässlich ins Leere statt versehentlich auf ein NEUES,
-    /// andersartiges Objekt derselben ID.
+    /// Generic ID-based object manager - common basis for
+    /// FramebufferManager/RendererManager (here) and WindowManager (see
+    /// fire.Terminal.Windows). Assigns ASCENDING IDs that are unique within this
+    /// ONE instance, starting at 1 - 0 deliberately stays reserved as
+    /// "invalid/no ID", so that a forgotten or wrongly
+    /// initialised id field (default value 0 in C#) does not by chance point to a
+    /// real object. IDs are NEVER reused after Destroy()
+    /// (the counter only runs forwards) - a handle that is passed on "too late" by the
+    /// scripting language and has already been destroyed
+    /// thus reliably points to nothing instead of accidentally to a NEW,
+    /// different object of the same ID.
     /// </summary>
     public sealed class IdManager<T> where T : class
     {
@@ -27,10 +27,10 @@ namespace fire.Terminal
             return id;
         }
 
-        /// <summary>Wirft KeyNotFoundException bei unbekannter/bereits
-        /// zerstörter ID - für die meisten Aufrufstellen die richtige Wahl
-        /// (ein Aufruf mit ungültiger ID ist ein Programmierfehler des
-        /// Aufrufers, kein normaler, leise zu tolerierender Fall).</summary>
+        /// <summary>Throws KeyNotFoundException for an unknown/already
+        /// destroyed ID - the right choice for most call sites
+        /// (a call with an invalid ID is a programming error of the
+        /// caller, not a normal case to be tolerated silently).</summary>
         public T Get(int id) =>
             _items.TryGetValue(id, out var item)
                 ? item
@@ -38,9 +38,9 @@ namespace fire.Terminal
 
         public bool TryGet(int id, out T? item) => _items.TryGetValue(id, out item);
 
-        /// <summary>Liefert false (statt zu werfen), wenn `id` nicht (mehr)
-        /// existiert - Zerstören einer bereits zerstörten/unbekannten ID ist
-        /// bewusst KEIN Fehler (erleichtert idempotentes Aufräumen).</summary>
+        /// <summary>Returns false (instead of throwing) if `id` does not (any longer)
+        /// exist - destroying an already destroyed/unknown ID is
+        /// deliberately NOT an error (makes idempotent clean-up easier).</summary>
         public bool Destroy(int id) => _items.Remove(id);
 
         public IEnumerable<int> Ids => _items.Keys;

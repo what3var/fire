@@ -2,19 +2,19 @@ using System.Collections.Generic;
 
 namespace fire.Editor
 {
-    /// <summary>Ein eingebautes Mitglied eines einfachen Werttyps (`string`, Array,
-    /// Byte-Puffer, ...): kein Klasseninhalt im Quelltext, sondern von der VM
-    /// bereitgestellt (siehe SPEC 8.10/8.12). `ReturnType`: `int`, `string`, `bool`,
-    /// `char`, `buffer` (Byte-Puffer), oder `X[]` (Array von X) - null: kein Ergebnis.</summary>
+    /// <summary>A built-in member of a simple value type (`string`, array,
+    /// byte buffer, ...): no class content in the source, but provided by the VM
+    /// (see SPEC 8.10/8.12). `ReturnType`: `int`, `string`, `bool`,
+    /// `char`, `buffer` (byte buffer), or `X[]` (array of X) - null: no result.</summary>
     public sealed record BuiltinMember(string Name, bool IsProperty, string Signature, string? ReturnType);
 
-    /// <summary>Die von der VM SELBST bereitgestellten Mitglieder der Werttypen (Properties wie
-    /// `Length`, feste Konvertierungen wie `ToBytes()`) - Grundlage für Vorschläge nach `text.`
-    /// (siehe CompletionEngine) UND für die Typ-Herleitung von Ketten (siehe
-    /// ScriptSymbolIndex.MemberType). Die Methoden von `string`/`char` (`IndexOf`, `Trim`, ...) stehen
-    /// NICHT hier, sondern als `class extends string { ... }` im Prelude (SPEC 5.5.1/8.12) - der Index
-    /// liest sie von dort (auch die eigenen Erweiterungen des Nutzers), siehe
-    /// <see cref="ExtensionClassOf"/>. Muss mit VM.GetField/VM.TryCallBuiltinMethod übereinstimmen.</summary>
+    /// <summary>The members of the value types provided by the VM ITSELF (properties like
+    /// `Length`, fixed conversions like `ToBytes()`) - basis for suggestions after `text.`
+    /// (see CompletionEngine) AND for the type derivation of chains (see
+    /// ScriptSymbolIndex.MemberType). The methods of `string`/`char` (`IndexOf`, `Trim`, ...) are
+    /// NOT here, but as `class extends string { ... }` in the prelude (SPEC 5.5.1/8.12) - the index
+    /// reads them from there (also the user's own extensions), see
+    /// <see cref="ExtensionClassOf"/>. Must match VM.GetField/VM.TryCallBuiltinMethod.</summary>
     public static class BuiltinMembers
     {
         private static BuiltinMember P(string name, string type) => new(name, true, string.Empty, type);
@@ -48,8 +48,8 @@ namespace fire.Editor
 
         private static readonly BuiltinMember[] IntMembers = { M("ToChar", "", "char") };
 
-        /// <summary>Die eingebauten Mitglieder des Typs `type` (leer für alles ohne
-        /// eingebaute Mitglieder).</summary>
+        /// <summary>The built-in members of the type `type` (empty for everything without
+        /// built-in members).</summary>
         public static IReadOnlyList<BuiltinMember> For(ExprType type)
         {
             switch (type.Kind)
@@ -63,17 +63,17 @@ namespace fire.Editor
                         _ => System.Array.Empty<BuiltinMember>(),
                     };
                 case TypeKind.Array:
-                    // Ein `byte`-Array ist ein Byte-Puffer (`new byte[n]`, SPEC 8.10).
+                    // A `byte` array is a byte buffer (`new byte[n]`, SPEC 8.10).
                     return type.Name == "byte" ? BufferMembers : ArrayMembers;
                 default:
                     return System.Array.Empty<BuiltinMember>();
             }
         }
 
-        /// <summary>Der Schlüssel der Sammelklasse, in die der Index die Basistyp-Erweiterungen
-        /// (`class extends string`) legt (siehe fire.Standard.BaseTypeExtensions) - für Werte dieses
-        /// Typs; null für Arrays und Typen ohne erweiterbaren Basistyp. Ein `byte` ist zur Laufzeit ein
-        /// `int`.</summary>
+        /// <summary>The key of the collective class into which the index puts the base-type extensions
+        /// (`class extends string`) (see fire.Standard.BaseTypeExtensions) - for values of this
+        /// type; null for arrays and types without an extensible base type. A `byte` is an
+        /// `int` at runtime.</summary>
         public static string? ExtensionClassOf(ExprType type)
         {
             if (type.Kind != TypeKind.Primitive) return null;
@@ -88,7 +88,7 @@ namespace fire.Editor
             };
         }
 
-        /// <summary>Der Typ, den `returnType` (siehe BuiltinMember) meint.</summary>
+        /// <summary>The type that `returnType` (see BuiltinMember) means.</summary>
         public static ExprType ToExprType(string? returnType)
         {
             if (returnType == null) return ExprType.Unknown;

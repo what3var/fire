@@ -5,70 +5,70 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Laufzeit-Instanz einer Klasse. Trägt genau einen Owner (Scope oder eine
-    /// andere ObjectInstance, SPEC 2) und ist selbst wieder ein IOwner (Felder
-    /// können weitere Objektinstanzen besitzen).
+    /// Runtime instance of a class. Carries exactly one owner (scope or another
+    /// ObjectInstance, SPEC 2) and is itself an IOwner again (fields
+    /// can own further object instances).
     ///
-    /// Felder liegen in einem Runtime.FieldStore (siehe dort) - für ZUR
-    /// KOMPILIERZEIT bekannte, deklarierte Felder (der Normalfall für jeden
-    /// vom Compiler erzeugten Feldzugriff) ein fester Array-Slot statt eines
-    /// Dictionary-Lookups pro Zugriff (siehe RtClass/RuntimeClass.FieldIndex),
-    /// mit Dictionary-Fallback für alles andere (z.B. Testcode ohne
-    /// RuntimeClass). Member-Zugriff (`obj.feld`) bleibt zur Laufzeit
-    /// namentlich (MemberExpr.Name bleibt ein String, siehe Resolver-
-    /// Kommentar dazu - der statische Typ von `obj` ist nicht immer bekannt),
-    /// die Namensauflösung selbst ist aber über RuntimeClass.FieldIndex
-    /// gecacht statt bei jedem Zugriff neu berechnet zu werden.
+    /// Fields live in a Runtime.FieldStore (see there) - for declared fields KNOWN AT
+    /// COMPILE TIME (the normal case for every field access generated
+    /// by the compiler) a fixed array slot instead of a
+    /// dictionary lookup per access (see RtClass/RuntimeClass.FieldIndex),
+    /// with a dictionary fallback for everything else (e.g. test code without
+    /// a RuntimeClass). Member access (`obj.field`) stays by name
+    /// at runtime (MemberExpr.Name remains a string, see the resolver
+    /// comment on that - the static type of `obj` is not always known),
+    /// but the name resolution itself is cached via RuntimeClass.FieldIndex
+    /// instead of being recomputed on every access.
     /// </summary>
     public sealed class ObjectInstance : IOwner
     {
-        /// <summary>Name der Klasse (SPEC 2) - bewusst NUR der Name, nicht
-        /// der volle AST (ClassDecl) wie früher: die VM liest zur Laufzeit
-        /// ausschließlich diesen Namen (für RuntimeClass-Lookups, Fehler-
-        /// meldungen), nie Felder/Methodenkörper direkt aus dem AST - die
-        /// sind ja längst zu RuntimeClass.Fields/Methods/Chunks kompiliert.
-        /// Wichtig für die geplante Programm-Serialisierung: damit hängt an
-        /// jeder ObjectInstance (und damit potenziell an jedem gespeicherten
-        /// Programmzustand) nicht die komplette Stmt/Expr-AST-Hierarchie.</summary>
+        /// <summary>Name of the class (SPEC 2) - deliberately ONLY the name, not
+        /// the full AST (ClassDecl) as before: at runtime the VM reads
+        /// only this name (for RuntimeClass lookups, error
+        /// messages), never fields/method bodies directly from the AST - those
+        /// have long since been compiled to RuntimeClass.Fields/Methods/Chunks.
+        /// Important for the planned program serialisation: as a result,
+        /// every ObjectInstance (and thus potentially every saved
+        /// program state) does not carry the complete Stmt/Expr AST hierarchy.</summary>
         public string ClassName { get; }
 
-        /// <summary>Das kompilierte Gegenstück zu ClassDef (siehe Bytecode.
-        /// RuntimeClass) - Grundlage für den schnellen, Slot-indizierten
-        /// Feldzugriff (siehe Fields/FieldStore-Doku). Null nur für
-        /// ObjectInstances, die AUSSERHALB der normalen Compiler/VM-Pipeline
-        /// direkt konstruiert werden (z.B. reine Ownership-Modell-Tests in
-        /// Program.cs) - Fields fällt dann komplett auf den Dictionary-
-        /// Fallback zurück, funktional unverändert, nur ohne den
-        /// Geschwindigkeitsvorteil.</summary>
+        /// <summary>The compiled counterpart to ClassDef (see Bytecode.
+        /// RuntimeClass) - basis for the fast, slot-indexed
+        /// field access (see Fields/FieldStore docs). Null only for
+        /// ObjectInstances that are constructed OUTSIDE the normal compiler/VM pipeline
+        /// directly (e.g. pure ownership-model tests in
+        /// Program.cs) - Fields then falls back completely to the dictionary
+        /// fallback, functionally unchanged, just without the
+        /// speed advantage.</summary>
         public RuntimeClass? RtClass { get; private set; }
 
         public IOwner Owner { get; private set; }
         public FieldStore Fields { get; }
 
-        // Die besessenen Kinder (siehe OwnedSet): die meisten Objekte besitzen keins, die übrigen meist genau eins.
+        // The owned children (see OwnedSet): most objects own none, the rest mostly exactly one.
         private OwnedSet _owned;
-        private List<IOwnedLeaf>? _leaves; // besessene Arrays und Puffer
+        private List<IOwnedLeaf>? _leaves; // owned arrays and buffers
         private bool _destroyed;
 
         public bool IsDestroyed => _destroyed;
 
-        /// <summary>Zerstört UND der Zerstörungsstapel ist zu Ende (siehe <see cref="DestroyBatch"/>): ab jetzt ist jede Benutzung ein Fehler (SPEC 2.5).
-        /// Bis dahin darf ein Destruktor die anderen Objekte seines Scopes noch benutzen, auch die schon zerstörten.</summary>
+        /// <summary>Destroyed AND the destruction batch has ended (see <see cref="DestroyBatch"/>): from now on any use is an error (SPEC 2.5).
+        /// Until then a destructor may still use the other objects of its scope, including those already destroyed.</summary>
         public bool IsDead => _dead;
         private bool _dead;
 
-        /// <summary>Der Zerstörungsstapel ist zu Ende: das Objekt ist tot. Seine Klasse wird vergessen, damit die Inline-Caches der VM (sie vergleichen die
-        /// Klasse) es nicht mehr treffen - der langsame Pfad meldet die Benutzung.</summary>
+        /// <summary>The destruction batch has ended: the object is dead. Its class is forgotten so that the VM's inline caches (they compare the
+        /// class) no longer hit it - the slow path reports the use.</summary>
         internal void Kill()
         {
             _dead = true;
             RtClass = null;
         }
 
-        /// <summary>Eindeutige, monoton steigende ID - siehe ThreadShareLock.Order-Doku (Grundlage einer künftigen globalen
-        /// Lock-Reihenfolge über mehrere Bäume hinweg). Wird erst beim ERSTEN Lesen vergeben (die atomare Zählung bei jedem
-        /// `new` wäre für ein Feld, das kaum jemand liest, ein spürbarer Posten der Objekterzeugung): die Reihenfolge der IDs
-        /// ist die des ersten Zugriffs, nicht die der Erzeugung.</summary>
+        /// <summary>Unique, monotonically increasing ID - see ThreadShareLock.Order docs (basis of a future global
+        /// lock order across multiple trees). Assigned only on the FIRST read (atomic counting on every
+        /// `new` would be a noticeable item in object creation for a field that hardly anyone reads): the order of the IDs
+        /// is that of first access, not of creation.</summary>
         public long Id
         {
             get
@@ -83,23 +83,23 @@ namespace fire.Runtime
         private long _id;
         private static long _nextId;
 
-        /// <summary>Null, solange dieses Objekt nie (direkt oder als
-        /// Nachfahre eines ausgecheckten Vorfahren) Ziel von `taking` war -
-        /// dann läuft jeder Feldzugriff ganz ohne Locking-Overhead (siehe
-        /// TryGetFieldLocked/SetFieldLocked). Gesetzt über
-        /// ActivateThreadSharing, siehe dort für die genaue Semantik.</summary>
+        /// <summary>Null as long as this object was never (directly or as a
+        /// descendant of a checked-out ancestor) the target of `taking` -
+        /// then every field access runs entirely without locking overhead (see
+        /// TryGetFieldLocked/SetFieldLocked). Set via
+        /// ActivateThreadSharing, see there for the exact semantics.</summary>
         public ThreadShareLock? ThreadLock { get; private set; }
 
-        /// <summary>Die Proben dieses Objekts (`probe obj.member changed ...`) oder null - der Normalfall.</summary>
+        /// <summary>The probes of this object (`probe obj.member changed ...`) or null - the normal case.</summary>
         public ProbeTable? Probes { get; private set; }
 
-        /// <summary>Ist dieses Feld ungleich null (Baum-Lock oder Proben), laufen Schreibzugriffe nicht über die Inline-Cache-Schnellpfade
-        /// der VM, sondern über den langsamen Pfad, der Lock und Proben beachtet. Ein einziger Vergleich im heißen Pfad.</summary>
+        /// <summary>If this field is non-null (tree lock or probes), writes do not take the VM's inline-cache fast paths,
+        /// but the slow path that respects locks and probes. A single comparison on the hot path.</summary>
         public object? AccessGuard { get; private set; }
 
         private void RefreshGuard() => AccessGuard = (object?)ThreadLock ?? Probes;
 
-        /// <summary>Die Proben-Tabelle des Objekts, bei Bedarf angelegt (schaltet die Schnellpfade für dieses Objekt ab).</summary>
+        /// <summary>The probe table of the object, created on demand (turns off the fast paths for this object).</summary>
         public ProbeTable GetOrCreateProbes()
         {
             if (Probes == null)
@@ -110,14 +110,14 @@ namespace fire.Runtime
             return Probes;
         }
 
-        /// <summary>Gehört dieses Objekt zum geteilten Bereich der GLOBALEN Variablen (siehe GlobalsBroker/docs/THREADING_DESIGN.md
-        /// Abschnitt 7)? Das sind alle Objekte, die dem globalen Scope des Hauptprogramms (direkt oder über andere Objekte) gehören,
-        /// sobald ein `fire`-Thread läuft. Fire-Threads lesen sie direkt (unter dem Baum-Lock), ändern sie aber nur innerhalb einer
-        /// Sektion, die das Hauptprogramm bei `sync globals` erteilt.</summary>
+        /// <summary>Does this object belong to the shared area of the GLOBAL variables (see GlobalsBroker/docs/THREADING_DESIGN.md
+        /// section 7)? These are all objects owned (directly or via other objects) by the main program's global scope
+        /// as soon as a `fire` thread is running. Fire threads read them directly (under the tree lock), but change them only inside a
+        /// section that the main program grants at `sync globals`.</summary>
         public bool InGlobalsDomain { get; private set; }
 
-        /// <summary>Nimmt diesen Baum (sich und alle besessenen Objekte) in den geteilten Bereich der Globals auf und aktiviert dafür
-        /// das Locking (ein schon vorhandener Baum-Lock, z.B. von `taking`, bleibt bestehen). Idempotent.</summary>
+        /// <summary>Takes this tree (itself and all owned objects) into the shared area of the globals and activates locking for it
+        /// (an already existing tree lock, e.g. from `taking`, stays in place). Idempotent.</summary>
         public void MarkGlobalsDomain(ThreadShareLock treeLock)
         {
             if (InGlobalsDomain) return;
@@ -128,27 +128,27 @@ namespace fire.Runtime
                 _owned[i].MarkGlobalsDomain(ThreadLock);
         }
 
-        /// <summary>Versteckte Rückverknüpfung zum Original, falls DIESES
-        /// Objekt selbst eine `taking`-Kopie ist (siehe
-        /// docs/THREADING_DESIGN.md Abschnitt 3) - Grundlage für `sync`/
-        /// `sync flat`, die ja wissen müssen, wohin zurückgeschrieben wird.
-        /// Null für ein Objekt, das keine Kopie ist (der Normalfall).</summary>
+        /// <summary>Hidden back-link to the original, if THIS
+        /// object itself is a `taking` copy (see
+        /// docs/THREADING_DESIGN.md section 3) - basis for `sync`/
+        /// `sync flat`, which of course need to know where to write back to.
+        /// Null for an object that is not a copy (the normal case).</summary>
         public ObjectInstance? SyncOrigin { get; set; }
 
-        /// <summary>Jeder Knoten einer `taking`-Kopie (nicht nur die Wurzel, die `SyncOrigin` trägt): am Ende des Fire-Threads bleiben
-        /// diese Objekte unberührt - sie sind Kopien von Objekten des Hauptprogramms und lösen dort keine Destruktoren aus.</summary>
+        /// <summary>Every node of a `taking` copy (not only the root, which carries `SyncOrigin`): at the end of the fire thread
+        /// these objects stay untouched - they are copies of objects of the main program and trigger no destructors there.</summary>
         public bool IsTakingCopy { get; set; }
 
-        /// <summary>Gesetzt (bei `new`, siehe VM.NewObject), wenn diese
-        /// Instanz von einer `actor`-Deklaration stammt (docs/
-        /// THREADING_DESIGN.md Abschnitt 2) - null für ganz normale Objekte.
-        /// Diese Instanz selbst ist der eigentliche "ist es ein Actor?"-
-        /// Marker im ganzen Rest der VM (statt eines eigenen bool-Felds):
-        /// jeder Methodenaufruf auf einem Objekt mit gesetzter Mailbox wird
-        /// zu einer Nachricht (VM.CallMethod), statt direkt auszuführen -
-        /// unabhängig davon, von welchem Thread aus der Aufruf kommt (auch
-        /// vom "Heimat"-Thread des Actors selbst, siehe THREADING_DESIGN.md
-        /// für die bewusste Vereinfachung dieser Ausbaustufe).</summary>
+        /// <summary>Set (on `new`, see VM.NewObject) if this
+        /// instance comes from an `actor` declaration (docs/
+        /// THREADING_DESIGN.md section 2) - null for perfectly normal objects.
+        /// This instance itself is the actual "is it an actor?"
+        /// marker in the whole rest of the VM (instead of a bool field of its own):
+        /// every method call on an object with a mailbox set
+        /// becomes a message (VM.CallMethod) instead of executing directly -
+        /// regardless of which thread the call comes from (also
+        /// from the actor's own "home" thread, see THREADING_DESIGN.md
+        /// for the deliberate simplification of this stage).</summary>
         public ActorMailbox? Mailbox { get; set; }
 
         public ObjectInstance(string className, IOwner initialOwner, RuntimeClass? rtClass = null)
@@ -164,14 +164,14 @@ namespace fire.Runtime
         // Multithreading: Baum-weites Locking (docs/THREADING_DESIGN.md 4.5)
         // -----------------------------------------------------------
 
-        /// <summary>Aktiviert Thread-Sharing für DIESEN gesamten Ownership-
-        /// Baum (sich selbst und rekursiv alle besessenen Objekte) mit dem
-        /// gegebenen, gemeinsamen Baum-Lock - idempotent: bricht die
-        /// Rekursion ab, sobald ein Knoten schon denselben oder einen
-        /// (theoretisch) anderen Lock trägt, läuft also bei wiederholtem
-        /// `taking` desselben (Teil-)Baums nicht erneut komplett durch.
-        /// Zyklen sind hier unproblematisch, da der Ownership-Graph per
-        /// Konstruktion zyklenfrei ist (siehe TakeTo/IsAncestorOf).</summary>
+        /// <summary>Activates thread sharing for THIS entire ownership
+        /// tree (itself and recursively all owned objects) with the
+        /// given, shared tree lock - idempotent: stops the
+        /// recursion as soon as a node already carries the same or a
+        /// (theoretically) different lock, so it does not run through completely again on repeated
+        /// `taking` of the same (sub)tree.
+        /// Cycles are unproblematic here, since the ownership graph is by
+        /// construction free of cycles (see TakeTo/IsAncestorOf).</summary>
         public void ActivateThreadSharing(ThreadShareLock treeLock)
         {
             if (ThreadLock != null) return;
@@ -181,9 +181,9 @@ namespace fire.Runtime
                 _owned[i].ActivateThreadSharing(treeLock);
         }
 
-        /// <summary>Liest ein Feld unter dem Baum-Lock, falls dieses Objekt
-        /// jemals Ziel von `taking` war (sonst ungesichert, siehe
-        /// ThreadLock-Doku - der Normalfall, kein Overhead).</summary>
+        /// <summary>Reads a field under the tree lock if this object
+        /// was ever the target of `taking` (otherwise unguarded, see
+        /// ThreadLock docs - the normal case, no overhead).</summary>
         public bool TryGetFieldLocked(string name, out Value value)
         {
             if (ThreadLock == null) return Fields.TryGetValue(name, out value);
@@ -200,16 +200,16 @@ namespace fire.Runtime
             finally { ThreadLock.Exit(); }
         }
 
-        /// <summary>Schreibt ein Feld unter dem Baum-Lock. Bewusst als KURZE,
-        /// auf genau diese eine Dictionary-Operation beschränkte Sperre
-        /// gehalten (nicht über eine ganze Property-Fallback-Kette hinweg,
-        /// siehe VM.SetField) - eine minimale Racemöglichkeit zwischen einem
-        /// vorherigen HasFieldLocked-Check und diesem Set ist hier bewusst in
-        /// Kauf genommen (Last-Writer-Wins ist ohnehin die Grundphilosophie
-        /// des gesamten Sync-Modells), eine über mehrere Schritte gehaltene
-        /// Sperre würde dagegen beliebigen, potenziell langsamen Nutzer-Code
-        /// (Property-Setter-Aufrufe) mit gehaltenem Lock ausführen - das
-        /// würde andere Threads unnötig lange blockieren.</summary>
+        /// <summary>Writes a field under the tree lock. Deliberately held as a SHORT
+        /// lock restricted to exactly this one dictionary operation
+        /// (not across a whole property fallback chain,
+        /// see VM.SetField) - a minimal race possibility between a
+        /// preceding HasFieldLocked check and this Set is deliberately
+        /// accepted here (last-writer-wins is the basic philosophy
+        /// of the entire sync model anyway), whereas a lock held over several steps
+        /// would execute arbitrary, potentially slow user code
+        /// (property setter calls) with the lock held - that
+        /// would block other threads for unnecessarily long.</summary>
         public void SetFieldLocked(string name, Value value)
         {
             if (ThreadLock == null) { Fields[name] = value; return; }
@@ -219,13 +219,13 @@ namespace fire.Runtime
         }
 
         // -----------------------------------------------------------
-        // IOwner (Felder dieser Instanz können selbst wieder Objekte besitzen)
+        // IOwner (fields of this instance can themselves own objects again)
         // -----------------------------------------------------------
         public IReadOnlyList<ObjectInstance> OwnedObjects => _owned.AsList();
         public void AddOwned(ObjectInstance obj)
         {
             _owned.Add(obj);
-            // Ein neuer Besitz in einem geteilten Baum gehört sofort dazu (sonst wäre er ohne Sperre lesbar).
+            // A newly owned item in a shared tree becomes part of it immediately (otherwise it would be readable without a lock).
             if (InGlobalsDomain) obj.MarkGlobalsDomain(ThreadLock!);
             else if (ThreadLock != null) obj.ActivateThreadSharing(ThreadLock);
         }
@@ -237,9 +237,9 @@ namespace fire.Runtime
         // Ownership-Transfer: TakeUpwards / TakeGlobal / TakeTo (SPEC 2.2)
         // -----------------------------------------------------------
 
-        /// <summary>Owner wird der Parent-Scope des aktuellen Owner-Scopes. Nur
-        /// gültig, wenn der aktuelle Owner ein Scope ist (nicht ein Objekt) und
-        /// dieser Scope einen Parent hat (der globale Scope hat keinen).</summary>
+        /// <summary>The owner becomes the parent scope of the current owner scope. Valid only
+        /// if the current owner is a scope (not an object) and
+        /// this scope has a parent (the global scope has none).</summary>
         public void TakeUpwards()
         {
             if (Owner is not Scope currentScope)
@@ -251,15 +251,15 @@ namespace fire.Runtime
             Reparent(currentScope.Parent);
         }
 
-        /// <summary>Owner wird der globale Scope.</summary>
+        /// <summary>The owner becomes the global scope.</summary>
         public void TakeGlobal(Scope globalScope) => Reparent(globalScope);
 
-        /// <summary>Owner wird <paramref name="target"/>. Prüft auf Zyklen
-        /// (Zielobjekt darf nicht bereits transitiv im Besitz dieses Objekts sein)
-        /// und auf eine laufende Kaskadenlöschung des Ziels: befindet sich das Ziel
-        /// bereits in Zerstörung, wird dieses Objekt so behandelt, als wäre die
-        /// Übergabe eine Sekunde VOR Beginn der Löschung erfolgt - es wird sofort
-        /// mit zerstört (SPEC 2.2, "Race mit laufender Löschung").</summary>
+        /// <summary>The owner becomes <paramref name="target"/>. Checks for cycles
+        /// (the target object must not already be transitively owned by this object)
+        /// and for an ongoing cascade deletion of the target: if the target is
+        /// already being destroyed, this object is treated as if the
+        /// handover had occurred one second BEFORE the deletion began - it is destroyed
+        /// immediately along with it (SPEC 2.2, "race with ongoing deletion").</summary>
         public void TakeTo(ObjectInstance target, IDestructRunner runner)
         {
             if (target._destroyed)
@@ -283,13 +283,13 @@ namespace fire.Runtime
             newOwner.AddOwned(this);
         }
 
-        /// <summary>Verallgemeinerte Variante von TakeUpwards/TakeGlobal für
-        /// einen beliebigen Ziel-Scope - intern für die VM gedacht (SPEC 2.3:
-        /// "return übergibt Ownership an den aufrufenden Scope"), nicht Teil der
-        /// öffentlichen Skript-API (dafür bleiben TakeUpwards/TakeGlobal/TakeTo).</summary>
+        /// <summary>Generalised variant of TakeUpwards/TakeGlobal for
+        /// an arbitrary target scope - intended internally for the VM (SPEC 2.3:
+        /// "return hands ownership to the calling scope"), not part of the
+        /// public script API (TakeUpwards/TakeGlobal/TakeTo remain for that).</summary>
         public void ReparentTo(Scope newOwner) => Reparent(newOwner);
 
-        /// <summary>Das Objekt wird zum Argument des Aufrufs von <paramref name="scope"/> (siehe Scope.AddArgument): es stirbt als letztes.</summary>
+        /// <summary>The object becomes an argument of the call of <paramref name="scope"/> (see Scope.AddArgument): it dies last.</summary>
         public void ReparentToArgument(Scope scope)
         {
             if (_destroyed) return;
@@ -298,16 +298,16 @@ namespace fire.Runtime
             scope.AddArgument(this);
         }
 
-        /// <summary>Wie <see cref="ReparentTo"/> für einen beliebigen Owner (Scope oder Objekt) - für OwnershipWalk. Ein zerstörtes Objekt bleibt, wo es ist.</summary>
+        /// <summary>Like <see cref="ReparentTo"/> for an arbitrary owner (scope or object) - for OwnershipWalk. A destroyed object stays where it is.</summary>
         internal void ReparentToOwner(IOwner newOwner)
         {
             if (_destroyed) return;
             Reparent(newOwner);
         }
 
-        /// <summary>true, wenn <paramref name="candidate"/> irgendwo unterhalb von
-        /// diesem Objekt im Ownership-Baum hängt (direkt oder transitiv) -
-        /// Grundlage des Zyklenschutzes bei TakeTo.</summary>
+        /// <summary>true if <paramref name="candidate"/> hangs anywhere below
+        /// this object in the ownership tree (directly or transitively) -
+        /// basis of the cycle protection in TakeTo.</summary>
         private bool IsAncestorOf(ObjectInstance candidate)
         {
             for (int i = 0; i < _owned.Count; i++)
@@ -326,12 +326,12 @@ namespace fire.Runtime
         /// <summary>`objekt is from ownerKandidat` - direkter Owner-Vergleich.</summary>
         public bool IsOwnedBy(object ownerCandidate) => ReferenceEquals(Owner, ownerCandidate);
 
-        /// <summary>`objekt is under ownerKandidat` - transitiv über die
-        /// Ownership-Kette (nicht die lexikalische Scope-Elternkette!): der
-        /// unmittelbare Owner, dessen Owner (falls wieder ein Objekt), usw. Die
-        /// Kette endet, sobald ein Scope erreicht wird (Scopes haben keinen
-        /// "Owner", nur einen lexikalischen Parent - das ist bewusst eine andere
-        /// Relation und wird hier nicht mit einbezogen).</summary>
+        /// <summary>`object is under ownerCandidate` - transitively along the
+        /// ownership chain (not the lexical scope parent chain!): the
+        /// immediate owner, its owner (if again an object), etc. The
+        /// chain ends as soon as a scope is reached (scopes have no
+        /// "owner", only a lexical parent - that is deliberately a different
+        /// relation and is not included here).</summary>
         public bool IsTransitivelyOwnedBy(object ownerCandidate)
         {
             IOwner current = Owner;
@@ -345,11 +345,11 @@ namespace fire.Runtime
         }
 
         // -----------------------------------------------------------
-        // Kaskadenlöschung (SPEC 2.3)
+        // Cascade deletion (SPEC 2.3)
         // -----------------------------------------------------------
 
-        /// <summary>Ende eines Fire-Threads für eine `taking`-Kopie (sie bleibt unberührt, sie löst keinen Destruktor aus): was der Thread selbst darin
-        /// angelegt hat, wird zerstört; Kopien darin werden genauso behandelt.</summary>
+        /// <summary>End of a fire thread for a `taking` copy (it stays untouched, it triggers no destructor): what the thread itself created
+        /// in it is destroyed; copies in it are treated the same way.</summary>
         public void DestroyOwnedNonCopies(IDestructRunner runner)
         {
             var children = new List<ObjectInstance>(_owned.AsList());
@@ -360,11 +360,11 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Zerstört dieses Objekt: ruft zuerst destruct() auf (über den
-        /// vom Evaluator bereitgestellten Runner), dann kaskadierend alle noch von
-        /// diesem Objekt besessenen Objekte. Idempotent (mehrfacher Aufruf ist
-        /// ungefährlich, z.B. wenn ein Objekt sowohl regulär als auch über die
-        /// TakeTo-Race-Behandlung in dieselbe Kaskade gerät).</summary>
+        /// <summary>Destroys this object: first calls destruct() (via the
+        /// runner provided by the evaluator), then cascades to all objects still
+        /// owned by this object. Idempotent (calling multiple times is
+        /// harmless, e.g. if an object ends up in the same cascade both regularly and via the
+        /// TakeTo race handling).</summary>
         public void Destroy(IDestructRunner runner)
         {
             if (_destroyed) return;
@@ -377,26 +377,26 @@ namespace fire.Runtime
         private void DestroyCore(IDestructRunner runner)
         {
 
-            // Proben leben mit dem Objekt
+            // Probes live with the object
             if (Probes != null) ProbeRegistry.Forget(Probes.RemoveAll());
 
-            // Ohne Destruktor in der Klassenkette gibt es nichts auszuführen (ein Objekt ohne RuntimeClass kennt die Kette nicht: der Runner entscheidet)
+            // Without a destructor in the class chain there is nothing to execute (an object without a RuntimeClass does not know the chain: the runner decides)
             if (RtClass == null || RtClass.HasDestructorInChain())
                 runner.RunDestructor(this);
 
             _owned.DestroyAll(runner);
             LeafOwnership.DestroyAll(_leaves, runner);
 
-            // Ein zerstörtes Objekt gehört niemandem mehr: sein bisheriger Owner (meist eine Scope, die gleich wiederverwendet wird)
-            // darf nicht länger auf es zeigen. `Owner` bleibt nie null - ein Platzhalter nimmt Anfragen an den toten Besitzer entgegen.
+            // A destroyed object belongs to no one any more: its former owner (usually a scope that is about to be reused)
+            // must no longer point at it. `Owner` is never null - a placeholder accepts requests to the dead owner.
             Owner = DeadOwner.Instance;
         }
     }
 
-    /// <summary>Der Zerstörungsstapel: das Verlassen eines Scopes, ein `delete`, das Ende des Programms zerstören mehrere Objekte nacheinander (in der Reihenfolge der
-    /// Erzeugung). Ein Destruktor sieht die anderen Objekte des Stapels noch - auch die schon zerstörten (der Destruktor eines Writers leert einen Stream, der vor
-    /// ihm zerstört wurde). Erst wenn der äußerste Stapel endet, sind sie tot (<see cref="ObjectInstance.IsDead"/>): danach wirft ihre Benutzung eine DestroyedException.
-    /// Pro Thread, weil jeder Thread seine eigenen Scopes verlässt.</summary>
+    /// <summary>The destruction batch: leaving a scope, a `delete`, the end of the program destroy several objects one after another (in order of
+    /// creation). A destructor still sees the other objects of the batch - including those already destroyed (the destructor of a writer flushes a stream that was destroyed before
+    /// it). Only when the outermost batch ends are they dead (<see cref="ObjectInstance.IsDead"/>): after that, using them throws a DestroyedException.
+    /// Per thread, because every thread leaves its own scopes.</summary>
     internal static class DestroyBatch
     {
         [System.ThreadStatic] private static int _depth;
@@ -404,7 +404,7 @@ namespace fire.Runtime
 
         public static void Enter() => _depth++;
 
-        /// <summary>Verlässt den Stapel; <paramref name="destroyed"/> (ein Objekt, das im Stapel zerstört wurde) stirbt, sobald der äußerste endet.</summary>
+        /// <summary>Leaves the batch; <paramref name="destroyed"/> (an object destroyed in the batch) dies as soon as the outermost one ends.</summary>
         public static void Exit(ObjectInstance? destroyed = null)
         {
             if (destroyed != null) (_zombies ??= new List<ObjectInstance>()).Add(destroyed);

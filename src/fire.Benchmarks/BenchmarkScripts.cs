@@ -1,7 +1,7 @@
 namespace fire.Benchmarks
 {
-    /// <summary>Ein Benchmark: ein fire-Programm, das genau EINE Zeile ausgibt (sein Ergebnis).
-    /// Das Ergebnis dient als Regressionsprüfung: eine Optimierung darf es nie verändern (siehe
+    /// <summary>A benchmark: a fire program that prints exactly ONE line (its result).
+    /// The result serves as a regression check: an optimization must never change it (see
     /// `--check`/`--save` in Program.cs).</summary>
     public sealed record BenchmarkScript(string Name, string Description, string Source);
 

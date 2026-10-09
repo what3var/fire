@@ -3,21 +3,21 @@ using System.Reflection;
 namespace fire.UI.Bridge
 {
     /// <summary>
-    /// Die Oberflächen-Bibliothek `#import "ui"`: rein in fire geschriebene Elemente, die in einen Framebuffer zeichnen und ihre
-    /// Ereignisse vom Fenster der Grafik-Brücke bekommen. Es gibt keine nativen Funktionen, nur den Quelltext
-    /// <see cref="PreludeSource"/>; `ui` setzt `graphics` voraus und schaltet es selbst mit zu (siehe ImportedPreludes).
+    /// The user interface library `#import "ui"`: elements written purely in fire that draw into a framebuffer and receive their
+    /// events from the window of the graphics bridge. There are no native functions, only the source
+    /// <see cref="PreludeSource"/>; `ui` requires `graphics` and switches it on itself (see ImportedPreludes).
     ///
-    /// Aufbau: `UI.Root` ist das oberste Element. Sein Konstruktor nimmt den Framebuffer, in den gezeichnet wird, und das Fenster, von dem die Ereignisse
-    /// (Maus, Tastatur, Text) kommen; er legt selbst den Renderer zum Zeichnen an und schaltet dort die Ereignis-Warteschlange ein (`Window.EnableEvents`).
-    /// `Root.Tick()` ordnet die Oberfläche an und zeichnet sie, lässt das Fenster einen Zyklus laufen (Ereignisse abholen, Framebuffer anzeigen) und
-    /// verarbeitet die angekommenen Ereignisse - jede Schleife ruft es einmal auf.
+    /// Structure: `UI.Root` is the topmost element. Its constructor takes the framebuffer to draw into and the window the events
+    /// (mouse, keyboard, text) come from; it creates the renderer for drawing itself and switches the event queue on there (`Window.EnableEvents`).
+    /// `Root.Tick()` arranges the interface and draws it, lets the window run one cycle (fetch events, show the framebuffer) and
+    /// processes the events that have arrived - every loop calls it once.
     ///
-    /// Elemente liegen in Containern (siehe docs/UI.md). Ein Element gehört seinem Container (`Add` ruft `TakeTo`): die Oberfläche lebt so, solange ihr Root
-    /// lebt, auch wenn sie in einer Hilfsfunktion aufgebaut wurde. Auf Klicks reagiert man mit einem Lambda (`button.onClick = func () => { ... }`; es läuft im
-    /// Hauptprogramm und sieht die echten globalen Variablen) oder durch Abfragen in der eigenen Schleife (`if (button.TakeClicked()) { ... }`). Gezeichnet wird mit dem
-    /// `Renderer` der Grafik-Brücke: Flächen mit einem `Brush`, Rahmen und Linien mit einem `Pen`, Text mit einem Brush.
+    /// Elements live in containers (see docs/UI.md). An element belongs to its container (`Add` calls `TakeTo`): the interface thus lives as long as its root
+    /// lives, even if it was built in a helper function. You react to clicks with a lambda (`button.onClick = func () => { ... }`; it runs in the
+    /// main program and sees the real global variables) or by polling in your own loop (`if (button.TakeClicked()) { ... }`). Drawing is done with the
+    /// `Renderer` of the graphics bridge: areas with a `Brush`, frames and lines with a `Pen`, text with a brush.
     ///
-    /// Der Quelltext steht in <c>ui/*.fire</c> (eingebettet, nach Dateinamen geordnet): so lässt er sich mit dem Editor bearbeiten und prüfen.
+    /// The source is in <c>ui/*.fire</c> (embedded, ordered by file name): so it can be edited and checked with the editor.
     /// </summary>
     public static partial class UiBridge
     {

@@ -10,17 +10,17 @@ using System.Collections.Generic;
 namespace fire.Windows.Bridge
 {
     /// <summary>
-    /// Die Fenster-Brücke (`#import "windows"`): das SDL-Fenster, in dem ein Framebuffer der Grafik-Brücke (`#import "graphics"`) angezeigt wird -
-    /// getrennt von `graphics`, damit ein Programm für eine Plattform ohne Fenster (Embedded) nur `graphics` importiert und stattdessen ein anderes
-    /// Ausgabegerät (z.B. ein Display) einbindet. Registriert den <see cref="WindowManager"/> als native Funktionen (Präfix <see cref="WindowPrefix"/>)
-    /// und liefert die Klassen `Window` und `EventType` als fire-Quelltext (<see cref="PreludeSource"/>). Setzt `graphics` voraus
-    /// (<c>HandleUnavailableException</c> und `Framebuffer` stammen von dort).
+    /// The window bridge (`#import "windows"`): the SDL window in which a framebuffer of the graphics bridge (`#import "graphics"`) is shown -
+    /// separate from `graphics`, so that a program for a platform without a window (embedded) imports only `graphics` and plugs in another
+    /// output device (e.g. a display) instead. Registers the <see cref="WindowManager"/> as native functions (prefix <see cref="WindowPrefix"/>)
+    /// and supplies the classes `Window` and `EventType` as fire source (<see cref="PreludeSource"/>). Requires `graphics`
+    /// (<c>HandleUnavailableException</c> and `Framebuffer` come from there).
     /// </summary>
     public static class WindowsBridge
     {
         public const string WindowPrefix = "__GRPHWin";
 
-        /// <summary>Ungültige/fehlgeschlagene Erzeugung (wie <c>GraphicsBridge.InvalidHandle</c>).</summary>
+        /// <summary>Invalid/failed creation (like <c>GraphicsBridge.InvalidHandle</c>).</summary>
         public const int InvalidHandle = -1;
 
         public static void RegisterAll(NativeRegistry natives, WindowManager windows) =>
@@ -62,7 +62,7 @@ namespace fire.Windows.Bridge
 
                     return Value.MakeBool(true);
                 },
-                // WICHTIG: neue Funktionen immer ANS ENDE, in BuildWindowFunctionStubs in derselben Reihenfolge (Index = Position).
+                // IMPORTANT: always add new functions AT THE END, in BuildWindowFunctionStubs in the same order (index = position).
                 ["SetVSync"] = args =>
                 {
                     mgr.SetVSync((int)args[0].AsInt(), args[1].AsBool());
@@ -103,7 +103,7 @@ namespace fire.Windows.Bridge
             };
         }
 
-        /// <summary>fire-Quelltext der Klassen `Window` und `EventType` - hinter die Prelude von `graphics` zu setzen (siehe ImportedPreludes).</summary>
+        /// <summary>fire source of the classes `Window` and `EventType` - to be placed behind the prelude of `graphics` (see ImportedPreludes).</summary>
         public const string PreludeSource = """
             class Window {
                 int id
@@ -119,10 +119,10 @@ namespace fire.Windows.Bridge
                     __GRPHWinDestroy(this.id)
                 }
 
-                // Holt die Ereignisse ab und zeigt den aktuellen Inhalt des Framebuffers. Mit VSync (Vorgabe) wartet jedes Tick auf die
-                // Bildwiederholung des Monitors (60 Hz = 16,7 ms): ideal für Animationen und Warteschleifen (`while (win.Tick()) { ... }`),
-                // aber eine Zeichenschleife mit einem Tick je Durchlauf braucht dann 256 x 16,7 ms = 4,3 s. Wer viel zeichnet und nur
-                // gelegentlich anzeigen will, ruft Tick seltener auf oder setzt `win.VSync = false` (Tick kehrt dann sofort zurück).
+                // Fetches the events and shows the current content of the framebuffer. With VSync (the default) every tick waits for the
+                // monitor's refresh (60 Hz = 16.7 ms): ideal for animations and wait loops (`while (win.Tick()) { ... }`),
+                // but a drawing loop with one tick per pass then takes 256 x 16.7 ms = 4.3 s. Whoever draws a lot and only wants to
+                // show now and then calls Tick less often or sets `win.VSync = false` (Tick then returns immediately).
                 bool Tick() { return __GRPHWinTick(this.id) }
 
                 bool VSync {
@@ -130,30 +130,30 @@ namespace fire.Windows.Bridge
                     set { __GRPHWinSetVSync(this.id, value) }
                 }
 
-                // true: zieht der Nutzer das Fenster auf eine andere Größe, bekommt der Framebuffer genau diese Größe (sofern sie gültig ist, siehe Framebuffer.Resize) - statt dass sein Inhalt
-                // auf das Fenster gestreckt wird (Vorgabe: false, wie bisher). Das Programm bekommt das Ereignis EventType.Resize und zeichnet in der neuen Größe neu; die Mauspositionen
-                // sind dann Pixel des Framebuffers 1:1. (Ein UI.Root schaltet es ein: `root.autoResize`.)
+                // true: if the user drags the window to another size, the framebuffer gets exactly that size (as long as it is valid, see Framebuffer.Resize) - instead of its content
+                // being stretched to the window (default: false, as before). The program receives the event EventType.Resize and redraws at the new size; the mouse positions
+                // are then pixels of the framebuffer 1:1. (A UI.Root switches it on: `root.autoResize`.)
                 bool AutoResize {
                     get { return __GRPHWinGetAutoResize(this.id) }
                     set { __GRPHWinSetAutoResize(this.id, value) }
                 }
 
-                // true (Vorgabe): ein Finger auf dem Touchscreen löst AUCH Mausereignisse aus (wie SDL es von sich aus tut), ein Programm, das nur auf die Maus hört, ist dann mit dem Finger bedienbar.
-                // false: nur die Touch-Ereignisse (EventType.TouchDown/TouchMove/TouchUp). Ein UI.Root schaltet es aus und wertet die Finger selbst aus.
+                // true (default): a finger on the touchscreen ALSO triggers mouse events (as SDL does by itself), so a program that only listens to the mouse can be operated with a finger.
+                // false: only the touch events (EventType.TouchDown/TouchMove/TouchUp). A UI.Root switches it off and evaluates the fingers itself.
                 bool TouchMouse {
                     get { return __GRPHWinGetTouchMouse(this.id) }
                     set { __GRPHWinSetTouchMouse(this.id, value) }
                 }
 
-                // Abfrage-Stil statt Callbacks: EnableEvents() schaltet eine Warteschlange ein, danach holt man nach jedem Tick
-                // mit NextEvent() ein Ereignis nach dem anderen ab (undefined, wenn keins mehr ansteht). Das Ereignis ist ein
-                // Array: e[0] ist der Typ (siehe EventType), der Rest hängt vom Typ ab, Positionen sind ganze Pixel des
-                // Framebuffers: MouseDown/MouseUp [typ, taste, x, y], MouseMove [typ, x, y, tasten], MouseScroll [typ, scrollX,
-                // scrollY, x, y], KeyDown/KeyUp [typ, keycode, scancode, modifier, wiederholt], TextInput [typ, text], Resize [typ, breite, höhe] (die Größe des Fensters; mit AutoResize hat der
-                // Framebuffer sie schon, wenn sie gültig ist), Close [typ]. Touchscreen: TouchDown/TouchMove/TouchUp [typ, finger, x, y, druck] (Pixel des Framebuffers; finger
-                // unterscheidet mehrere Finger; druck 0 bis 1). Joystick: JoystickAxis [typ, joystick, achse, stellung] (-1 bis 1), JoystickButtonDown/JoystickButtonUp [typ, joystick, knopf],
-                // JoystickHat [typ, joystick, hat, richtungen] (Bitmaske: 1 oben, 2 rechts, 4 unten, 8 links; 0 Mitte), JoystickAdded/JoystickRemoved [typ, joystick] (angesteckt/abgezogen).
-                // Die Verarbeitung läuft so im Hauptprogramm - mit den echten globalen Variablen, nicht der isolierten Kopie eines
+                // Polling style instead of callbacks: EnableEvents() switches a queue on, after which, following each tick,
+                // NextEvent() fetches one event after the other (undefined when none is left). The event is an
+                // array: e[0] is the type (see EventType), the rest depends on the type, positions are whole pixels of the
+                // framebuffer: MouseDown/MouseUp [type, button, x, y], MouseMove [type, x, y, buttons], MouseScroll [type, scrollX,
+                // scrollY, x, y], KeyDown/KeyUp [type, keycode, scancode, modifier, repeated], TextInput [type, text], Resize [type, width, height] (the size of the window; with AutoResize the
+                // framebuffer already has it if it is valid), Close [type]. Touchscreen: TouchDown/TouchMove/TouchUp [type, finger, x, y, pressure] (pixels of the framebuffer; finger
+                // distinguishes several fingers; pressure 0 to 1). Joystick: JoystickAxis [type, joystick, axis, position] (-1 to 1), JoystickButtonDown/JoystickButtonUp [type, joystick, button],
+                // JoystickHat [type, joystick, hat, directions] (bit mask: 1 up, 2 right, 4 down, 8 left; 0 centre), JoystickAdded/JoystickRemoved [type, joystick] (plugged in/unplugged).
+                // Processing thus happens in the main program - with the real global variables, not the isolated copy of a
                 // Callbacks.
                 bool EnableEvents() { return __GRPHWinEnableEvents(this.id) }
                 NextEvent() { return __GRPHWinNextEvent(this.id) }
@@ -204,7 +204,7 @@ namespace fire.Windows.Bridge
                 bool RegisterTouchMove(lambda<int,float,float,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.TouchMove!, fn); }
                 bool RegisterTouchUp(lambda<int,float,float,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.TouchUp!, fn); }
 
-                // Joystick: (joystick, achse, stellung), (joystick, knopf), (joystick, hat, richtungen), (joystick)
+                // Joystick: (joystick, axis, position), (joystick, button), (joystick, hat, directions), (joystick)
                 bool RegisterJoystickAxis(lambda<int,int,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickAxis!, fn); }
                 bool RegisterJoystickButtonDown(lambda<int,int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickButtonDown!, fn); }
                 bool RegisterJoystickButtonUp(lambda<int,int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickButtonUp!, fn); }

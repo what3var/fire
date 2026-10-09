@@ -4,17 +4,17 @@ using System.Collections.Generic;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Die Objekte, die ein Owner (Scope oder Objektinstanz) gerade besitzt - in der Reihenfolge, in der sie dazukamen (in dieser
-    /// Reihenfolge werden sie beim Verlassen auch zerstört).
+    /// The objects an owner (scope or object instance) currently owns - in the order in which they were added (in this
+    /// order they are also destroyed on leaving).
     ///
-    /// Das erste Objekt steht direkt in der Struktur, erst ab dem zweiten gibt es eine Liste: der allerhäufigste Fall ist genau EIN
-    /// besessenes Objekt (`var q = new P()` in einem Block), und dafür sollen weder eine `List&lt;T&gt;` samt Array noch beim Zerstören
-    /// eine Kopie (`ToArray`) angelegt werden. Eine veränderliche Struktur: nur als privates, nicht-readonly Feld verwenden.
+    /// The first object sits directly in the struct, only from the second on is there a list: by far the most common case is exactly ONE
+    /// owned object (`var q = new P()` in a block), and for that neither a `List&lt;T&gt;` with its array nor, on destroying,
+    /// a copy (`ToArray`) should be allocated. A mutable struct: use only as a private, non-readonly field.
     /// </summary>
     internal struct OwnedSet
     {
         private ObjectInstance? _first;
-        private List<ObjectInstance>? _rest; // bleibt nach dem Leeren bestehen (ein wiederverwendeter Owner braucht sie wieder)
+        private List<ObjectInstance>? _rest; // remains after being emptied (a reused owner needs it again)
 
         public readonly bool IsEmpty => _first == null;
         public readonly int Count => _first == null ? 0 : 1 + (_rest?.Count ?? 0);
@@ -49,7 +49,7 @@ namespace fire.Runtime
             _rest?.Clear();
         }
 
-        /// <summary>Entfernt alle schon zerstörten Objekte (die übrigen behalten ihre Reihenfolge).</summary>
+        /// <summary>Removes all already destroyed objects (the others keep their order).</summary>
         public void RemoveDestroyed()
         {
             var all = ToArray();
@@ -69,8 +69,8 @@ namespace fire.Runtime
 
         public readonly IReadOnlyList<ObjectInstance> AsList() => _first == null ? Array.Empty<ObjectInstance>() : ToArray();
 
-        /// <summary>Zerstört alle Objekte (in der Reihenfolge des Hinzukommens) und leert danach den Satz. Während der Zerstörung (Destruktoren)
-        /// darf sich der Besitz ändern, deshalb wird bei mehreren Objekten mit einer Kopie gearbeitet; der Einzelfall braucht keine.</summary>
+        /// <summary>Destroys all objects (in the order they were added) and then empties the set. During destruction (destructors)
+        /// ownership may change, therefore with several objects a copy is worked on; the single case needs none.</summary>
         public void DestroyAll(IDestructRunner runner)
         {
             var first = _first;

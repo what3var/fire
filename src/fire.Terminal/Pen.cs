@@ -3,27 +3,27 @@ using System.Collections.Generic;
 
 namespace fire.Terminal
 {
-    /// <summary>Die Form der Stiftspitze.</summary>
+    /// <summary>The shape of the pen tip.</summary>
     public enum PenShape
     {
-        /// <summary>Rund: die Pixel, die zur Kreisscheibe mit dem Durchmesser der Stiftbreite gehören (Breite 1 und 2: ein Pixel/vier Pixel, wie ein Quadrat).</summary>
+        /// <summary>Round: the pixels that belong to the disc with the diameter of the pen width (width 1 and 2: one pixel/four pixels, like a square).</summary>
         Round = 0,
 
-        /// <summary>Quadratisch: ein Quadrat der Stiftbreite.</summary>
+        /// <summary>Square: a square of the pen width.</summary>
         Square = 1,
     }
 
     /// <summary>
-    /// Ein Stift: zeichnet Punkte, Linien und Pfade (und damit die Umrisse der Formen) mit einer Spitze von `Width` Pixeln. Die Spitze ist EINMAL vorgerendert (die Zeilen
-    /// der Stempelfläche); gezeichnet wird, indem sie an jedem Pixel der Linie kopiert wird - mit Alpha-Blending gemischt, wenn die Farbe halbdurchsichtig und die
-    /// Surface ein 32-Bit-Ziel mit Blending ist. Damit sich die überlappenden Stempel einer halbdurchsichtigen Linie nicht mehrfach mischen (die Linie würde dunkler),
-    /// wird dann erst die Vereinigung aller Stempel bestimmt und diese EINMAL gemischt.
+    /// A pen: draws points, lines and paths (and thus the outlines of the shapes) with a tip of `Width` pixels. The tip is rendered ONCE beforehand (the rows
+    /// of the stamp area); drawing is done by copying it at every pixel of the line - blended with alpha blending if the colour is semi-transparent and the
+    /// surface is a 32-bit target with blending. So that the overlapping stamps of a semi-transparent line are not blended several times (the line would get darker),
+    /// the union of all stamps is determined first and this is blended ONCE.
     ///
-    /// Die Farbe ist eine Farbangabe (<see cref="Paint"/>). Breite 1 zeichnet genau die Pixel von <see cref="Shapes"/>.
+    /// The colour is a colour specification (<see cref="Paint"/>). Width 1 draws exactly the pixels of <see cref="Shapes"/>.
     /// </summary>
     public sealed class Pen
     {
-        /// <summary>Größte Breite (größere werden darauf begrenzt).</summary>
+        /// <summary>Largest width (larger ones are limited to it).</summary>
         public const int MaxWidth = 512;
 
         private readonly struct StampRow
@@ -58,7 +58,7 @@ namespace fire.Terminal
             Render();
         }
 
-        /// <summary>Rendert die Spitze vor: je Zeile die Spanne der Pixel relativ zum gezeichneten Punkt.</summary>
+        /// <summary>Renders the tip beforehand: per row the span of pixels relative to the drawn point.</summary>
         private void Render()
         {
             int w = _width, half = (w - 1) / 2;
@@ -79,9 +79,9 @@ namespace fire.Terminal
             _stamp = rows.ToArray();
         }
 
-        // ---- die Senken ----
+        // ---- the sinks ----
 
-        /// <summary>Stempelt die Spitze an jedes Pixel (kopieren bzw. je Pixel mischen).</summary>
+        /// <summary>Stamps the tip at every pixel (copying or blending per pixel).</summary>
         private struct StampSink : IPixelSink
         {
             public Surface Surface;
@@ -101,7 +101,7 @@ namespace fire.Terminal
             }
         }
 
-        /// <summary>Sammelt die Spans aller Stempel; <see cref="Flush"/> mischt ihre Vereinigung einmal.</summary>
+        /// <summary>Collects the spans of all stamps; <see cref="Flush"/> blends their union once.</summary>
         private struct UnionSink : IPixelSink
         {
             public Surface Surface;
@@ -204,16 +204,16 @@ namespace fire.Terminal
 
         // ---- Zeichnen ----
 
-        /// <summary>Ein Punkt: die Spitze, mittig auf (x, y).</summary>
+        /// <summary>A point: the tip, centred on (x, y).</summary>
         public void DrawPoint(in Surface surface, int x, int y) => Stroke(surface, new PointShape(x, y));
 
-        /// <summary>Eine Linie (Bresenham) von (x0, y0) bis (x1, y1), beide Endpunkte eingeschlossen.</summary>
+        /// <summary>A line (Bresenham) from (x0, y0) to (x1, y1), both end points included.</summary>
         public void DrawLine(in Surface surface, int x0, int y0, int x1, int y1) => Stroke(surface, new LineShape(x0, y0, x1, y1));
 
-        /// <summary>Ein Pfad durch die Punkte `points` (x0, y0, x1, y1, ...); `closed` verbindet den letzten mit dem ersten. Weniger als zwei Punkte: nichts.</summary>
+        /// <summary>A path through the points `points` (x0, y0, x1, y1, ...); `closed` connects the last to the first. Fewer than two points: nothing.</summary>
         public void DrawPath(in Surface surface, int[] points, bool closed = false) => Stroke(surface, new PathShape(points, closed));
 
-        // Die Umrisse der Formen sind Pfade aus den Pixeln von Shapes.
+        // The outlines of the shapes are paths made of the pixels of Shapes.
         public void DrawRect(in Surface surface, int x, int y, int w, int h) => Stroke(surface, new RectShape(x, y, w, h));
         public void DrawCircle(in Surface surface, int cx, int cy, int r) => Stroke(surface, new EllipseShape(cx, cy, r, r));
         public void DrawEllipse(in Surface surface, int cx, int cy, int rx, int ry) => Stroke(surface, new EllipseShape(cx, cy, rx, ry));

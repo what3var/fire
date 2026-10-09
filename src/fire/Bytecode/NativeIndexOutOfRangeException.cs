@@ -3,11 +3,11 @@ using System;
 namespace fire.Bytecode
 {
     /// <summary>
-    /// Eine native Funktion (siehe <see cref="NativeFunction"/>) meldet damit einen ungültigen Index
-    /// bzw. eine ungültige Länge. Die VM fängt sie direkt am Aufruf ab und macht daraus eine ganz
-    /// normale, per `try`/`catch` fangbare `IndexOutOfBoundsException` des Skripts - eine native
-    /// Funktion hat sonst keinen Zugriff auf die Skript-Exceptions (sie kennt die VM nicht).
-    /// `What` steht am Anfang der Meldung ("String-Index", "Array-Index", ...).
+    /// A native function (see <see cref="NativeFunction"/>) uses this to report an invalid index
+    /// or an invalid length. The VM catches it right at the call and turns it into a completely
+    /// normal `IndexOutOfBoundsException` of the script that can be caught via `try`/`catch` - a native
+    /// function otherwise has no access to the script exceptions (it does not know the VM).
+    /// `What` is at the start of the message ("String index", "Array index", ...).
     /// </summary>
     public sealed class NativeIndexOutOfRangeException : Exception
     {

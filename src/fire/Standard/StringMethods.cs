@@ -6,10 +6,10 @@ using fire.Values;
 
 namespace fire.Standard
 {
-    /// <summary>Die Methoden von `string` (SPEC 8.12). Die Zahlen sind die IDs, über die der Prelude
-    /// die native Funktion <see cref="StringMethods.NativeName"/> anspricht - bewusst feste Werte
-    /// (nie umnummerieren) und KEINE Namen: das Dispatchen über Zeichenkettenvergleiche wäre in der
-    /// VM zu langsam.</summary>
+    /// <summary>The methods of `string` (SPEC 8.12). The numbers are the IDs through which the prelude
+    /// addresses the native function <see cref="StringMethods.NativeName"/> - deliberately fixed values
+    /// (never renumber) and NO names: dispatching via string comparisons would be too slow in the
+    /// VM.</summary>
     public enum StringMethod
     {
         IndexOf = 1,
@@ -31,21 +31,21 @@ namespace fire.Standard
     }
 
     /// <summary>
-    /// `string`-Methoden als Erweiterung des Basistyps (`class extends string`, SPEC 5.5.1) im Prelude,
-    /// alle über EINE native Funktion: `__StringCall(id, text, argumente...)`. Alle Vergleiche sind
-    /// ORDINAL (Zeichen für Zeichen, ohne Kultur), Indizes zählen `char`s (16-Bit-Codeeinheiten).
-    /// Ein Wert, der eine Zeichenkette ODER ein Zeichen sein darf (`IndexOf("ab")`, `IndexOf('a')`),
-    /// wird über <see cref="Text"/> gelesen. Ein ungültiger Index wirft
-    /// <see cref="NativeIndexOutOfRangeException"/> (die VM macht daraus eine fangbare
+    /// `string` methods as an extension of the base type (`class extends string`, SPEC 5.5.1) in the prelude,
+    /// all via ONE native function: `__StringCall(id, text, arguments...)`. All comparisons are
+    /// ORDINAL (character by character, without culture), indices count `char`s (16-bit code units).
+    /// A value that may be a string OR a character (`IndexOf("ab")`, `IndexOf('a')`),
+    /// is read via <see cref="Text"/>. An invalid index throws
+    /// <see cref="NativeIndexOutOfRangeException"/> (the VM turns this into a catchable
     /// `IndexOutOfBoundsException`).
     /// </summary>
     public static class StringMethods
     {
         public const string NativeName = "__StringCall";
 
-        /// <summary>Signaturen des Prelude: (Id, Rückgabetyp, Name, Parameter). Pro Überladung eine Zeile -
-        /// der Prelude reicht die Parameter unverändert an die native Funktion durch, deren Argumentzahl
-        /// dann die Überladung bestimmt.</summary>
+        /// <summary>Prelude signatures: (Id, return type, name, parameters). One line per overload -
+        /// the prelude passes the parameters through unchanged to the native function, whose argument count
+        /// then determines the overload.</summary>
         private static readonly (StringMethod Id, string Returns, string Name, string Params)[] Signatures =
         {
             (StringMethod.IndexOf, "int", "IndexOf", "value"),
@@ -71,16 +71,16 @@ namespace fire.Standard
             (StringMethod.PadRight, "string", "PadRight", "width, fill"),
         };
 
-        /// <summary>Der fire-Quelltext `class extends string { ... }` für den Prelude, aus
-        /// <see cref="Signatures"/> erzeugt - die IDs stehen so nur an EINER Stelle.</summary>
+        /// <summary>The fire source `class extends string { ... }` for the prelude, generated from
+        /// <see cref="Signatures"/> - so the IDs appear in only ONE place.</summary>
         public static string PreludeSource { get; } = BuildPreludeSource();
 
         private static string BuildPreludeSource()
         {
             var sb = new StringBuilder();
             sb.AppendLine();
-            sb.AppendLine("// string als Basistyp erweitert (SPEC 5.5.1, 8.12): jede Methode ruft die EINE native Funktion");
-            sb.AppendLine("// " + NativeName + "(id, text, argumente...) - die Methode wird über ihre ID gewählt, nicht über den Namen.");
+            sb.AppendLine("// string extended as a base type (SPEC 5.5.1, 8.12): each method calls the ONE native function");
+            sb.AppendLine("// " + NativeName + "(id, text, arguments...) - the method is selected by its ID, not by its name.");
             sb.AppendLine("class extends string {");
             foreach (var (id, returns, name, parms) in Signatures)
             {
@@ -91,7 +91,7 @@ namespace fire.Standard
             return sb.ToString();
         }
 
-        /// <summary>Die native Funktion `__StringCall(id, text, argumente...)`.</summary>
+        /// <summary>The native function `__StringCall(id, text, arguments...)`.</summary>
         public static Value Call(Value[] args)
         {
             if (args.Length < 2 || args[1].Kind != ValueKind.String)
@@ -113,8 +113,8 @@ namespace fire.Standard
                     return Value.MakeInt(s.IndexOf(Text(a0), (int)start, StringComparison.Ordinal));
                 }
 
-                // Sucht RÜCKWÄRTS ab `start` (Vorgabe: dem letzten Zeichen) - ein Treffer muss
-                // ganz im Bereich [0 .. start] liegen (wie string.LastIndexOf in .NET).
+                // Searches BACKWARDS from `start` (default: the last character) - a hit must lie
+                // entirely within the range [0 .. start] (like string.LastIndexOf in .NET).
                 case StringMethod.LastIndexOf:
                 {
                     Arity(method, argc, 1, 2);
@@ -170,7 +170,7 @@ namespace fire.Standard
                     Arity(method, argc, 0, 0);
                     return Value.MakeString(s.TrimEnd());
 
-                // Ersetzt ALLE Vorkommen; ein leeres `old` ändert nichts.
+                // Replaces ALL occurrences; an empty `old` changes nothing.
                 case StringMethod.Replace:
                 {
                     Arity(method, argc, 2, 2);
@@ -178,8 +178,8 @@ namespace fire.Standard
                     return Value.MakeString(old.Length == 0 ? s : s.Replace(old, Text(a1), StringComparison.Ordinal));
                 }
 
-                // Zerlegt an jedem Vorkommen des Trenners (leere Teile bleiben erhalten);
-                // ein leerer Trenner liefert die ganze Zeichenkette als einziges Element.
+                // Splits at every occurrence of the separator (empty parts are kept);
+                // an empty separator returns the whole string as the single element.
                 case StringMethod.Split:
                 {
                     Arity(method, argc, 1, 1);
@@ -206,7 +206,7 @@ namespace fire.Standard
             }
         }
 
-        /// <summary>Zeichenkette oder Zeichen als Zeichenkette.</summary>
+        /// <summary>String or character as a string.</summary>
         private static string Text(Value v) => v.Kind == ValueKind.Char ? v.AsChar().ToString() : v.AsString();
 
         private static NativeIndexOutOfRangeException Out(long index, int length) => new(index, length, "String index");

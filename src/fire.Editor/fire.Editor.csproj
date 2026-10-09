@@ -31,7 +31,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Greift per Projektreferenz direkt auf Lexer/Parser/Resolver/Compiler/VM zu. -->
+    <!-- Accesses Lexer/Parser/Resolver/Compiler/VM directly via project reference. -->
     <ProjectReference Include="..\fire.Compiler\fire.Compiler.csproj" />
     <ProjectReference Include="..\fire.Project\fire.Project.csproj" />
     <ProjectReference Include="..\fire.Git\fire.Git.csproj" />

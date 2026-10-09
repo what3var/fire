@@ -4,31 +4,31 @@ using fire.Values;
 
 namespace fire.Bytecode
 {
-    /// <summary>Eine native (in C# implementierte) Funktion, aufrufbar per
-    /// CALL_NATIVE-Opcode über ihren Index in der Registry.</summary>
+    /// <summary>A native function (implemented in C#), callable via the
+    /// CALL_NATIVE opcode through its index in the registry.</summary>
     public delegate Value NativeFunction(Value[] args);
 
-    /// <summary>Eine "tryable" native Funktion - registriert für APIs, deren
-    /// Erfolg nicht garantiert ist (Timeouts, nicht verfügbare Hardware,
-    /// o.ä. - typischerweise IO: serielle Schnittstellen, Netzwerk, Dateien).
-    /// NUR über `try Name(...)` aufrufbar (siehe SPEC 8.1.3) - liefert bei
-    /// Erfolg `true` und den Ergebniswert in `result`, bei Fehlschlag/
-    /// Timeout `false` (dann wird `result` verworfen, das Skript sieht
-    /// `undefined`). BEWUSST kein Exception-Mechanismus (wie C#s eigenes
-    /// `TryParse`-Muster) - die eigentliche Timeout-/Fehler-Logik liegt
-    /// komplett beim registrierenden Host/Framework, nicht in der Sprache
-    /// selbst. Ein etwaiger Timeout-Parameter ist ein ganz normales Value-
-    /// Argument mit Einheit (`Value.Unit` ist bereits öffentlich lesbar -
-    /// die Host-Implementierung liest sie selbst aus, z.B. um "500ms" von
-    /// "2s" zu unterscheiden).</summary>
+    /// <summary>A "tryable" native function - registered for APIs whose
+    /// success is not guaranteed (timeouts, unavailable hardware,
+    /// etc. - typically IO: serial ports, network, files).
+    /// Callable ONLY via `try Name(...)` (see SPEC 8.1.3) - returns on
+    /// success `true` and the result value in `result`, on failure/
+    /// timeout `false` (then `result` is discarded, the script sees
+    /// `undefined`). DELIBERATELY not an exception mechanism (like C#'s own
+    /// `TryParse` pattern) - the actual timeout/error logic lies
+    /// entirely with the registering host/framework, not in the language
+    /// itself. Any timeout parameter is a perfectly normal Value
+    /// argument with a unit (`Value.Unit` is already publicly readable -
+    /// the host implementation reads it itself, e.g. to tell "500ms" from
+    /// "2s").</summary>
     public delegate bool TryableNativeFunction(Value[] args, out Value result);
 
     /// <summary>
-    /// Registry nativer Funktionen. Das ist bewusst die einzige Stelle, über die
-    /// der Bytecode mit der "Außenwelt" spricht - der reservierte Erweiterungspunkt
-    /// für spätere Betriebssystem-/Host-APIs (Dateizugriff, Konsole, Netzwerk, ...),
-    /// ohne dass sich am Bytecode-Format dafür noch etwas ändern müsste. Aktuell
-    /// nur mit "print" befüllt, zum Testen der VM.
+    /// Registry of native functions. This is deliberately the only place through which
+    /// the bytecode talks to the "outside world" - the reserved extension point
+    /// for later operating-system/host APIs (file access, console, network, ...),
+    /// without anything in the bytecode format having to change for that. Currently
+    /// filled only with "print", for testing the VM.
     /// </summary>
     public sealed class NativeRegistry
     {
@@ -59,17 +59,17 @@ namespace fire.Bytecode
             return idx;
         }
 
-        /// <summary>Registriert mehrere zusammengehörige native Funktionen auf
-        /// einmal, alle unter demselben Namens-PRÄFIX (z.B. für eine
-        /// abgeschlossene API-Gruppe wie eine Grafik-/Konsolen-Brücke) - der
-        /// tatsächlich registrierte Name jedes Eintrags ist
-        /// `prefix + suffix` (Beispiel: `RegisterGroup("__GRPH", new()
-        /// { ["set"] = ..., ["get"] = ... })` registriert `__GRPHset` und
-        /// `__GRPHget`). Liefert die Liste der so erzeugten Namen zurück (in
-        /// der Iterationsreihenfolge von `functions`) - nützlich zum Prüfen/
-        /// Loggen, welche Namen dabei entstanden sind, oder um sie z.B. in
-        /// einem generierten Präprozessor-/Prelude-Quelltext direkt
-        /// wiederzuverwenden.</summary>
+        /// <summary>Registers several related native functions at
+        /// once, all under the same name PREFIX (e.g. for a
+        /// self-contained API group such as a graphics/console bridge) - the
+        /// name actually registered for each entry is
+        /// `prefix + suffix` (example: `RegisterGroup("__GRPH", new()
+        /// { ["set"] = ..., ["get"] = ... })` registers `__GRPHset` and
+        /// `__GRPHget`). Returns the list of names created this way (in
+        /// the iteration order of `functions`) - useful for checking/
+        /// logging which names were created, or for reusing them e.g. in
+        /// a generated preprocessor/prelude source text
+        /// directly.</summary>
         public IReadOnlyList<string> RegisterGroup(string prefix, IReadOnlyDictionary<string, NativeFunction> functions)
         {
             var names = new List<string>(functions.Count);
@@ -82,11 +82,11 @@ namespace fire.Bytecode
             return names;
         }
 
-        /// <summary>Registriert eine NUR über `try Name(...)` aufrufbare
-        /// Funktion (siehe TryableNativeFunction-Doku) - ein normaler Aufruf
-        /// `Name(...)` OHNE 'try' ist für diesen Namen ein Compile-Fehler
-        /// (siehe Resolver), kein automatischer Fallback auf "wirft bei
-        /// Fehlschlag".</summary>
+        /// <summary>Registers a function callable ONLY via `try Name(...)`
+        /// (see TryableNativeFunction docs) - a normal call
+        /// `Name(...)` WITHOUT 'try' is a compile error for this name
+        /// (see Resolver), no automatic fallback to "throws on
+        /// failure".</summary>
         public int RegisterTryable(string name, TryableNativeFunction fn)
         {
             int idx = _tryableFunctions.Count;
@@ -127,12 +127,12 @@ namespace fire.Bytecode
             return registry;
         }
 
-        /// <summary>Registriert die nativen Funktionen, auf die der Prelude die Methoden der
-        /// Basistyp-Erweiterungen (`class extends string/char`, SPEC 5.5.1, 8.12) abbildet - je EINE
-        /// Funktion pro Basistyp, die Methode wählt ihr erstes Argument (eine ID). MUSS in jeder
-        /// Registry stehen, mit der ein Programm samt Prelude kompiliert/ausgeführt wird, und zwar
-        /// an derselben Stelle der Reihenfolge wie beim Kompilieren (native Funktionen werden über ihren
-        /// Index angesprungen) - deshalb überall direkt hinter `print`.</summary>
+        /// <summary>Registers the native functions to which the prelude maps the methods of the
+        /// base-type extensions (`class extends string/char`, SPEC 5.5.1, 8.12) - ONE
+        /// function per base type, the method passes its first argument (an ID). MUST be in every
+        /// registry with which a program including the prelude is compiled/executed, and at
+        /// the same position in the order as when compiling (native functions are jumped to via their
+        /// index) - hence everywhere directly after `print`.</summary>
         /// <param name="resources">The files embedded in the program that runs (<c>CompiledProgram.Resources</c>); null while compiling.</param>
         public void RegisterBaseTypeNatives(System.Collections.Generic.IReadOnlyList<fire.Runtime.ResourceEntry>? resources = null)
         {

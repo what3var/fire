@@ -12,21 +12,21 @@ namespace fire.Terminal
         public override string ToString() => $"({X:0.###}; {Y:0.###})";
     }
 
-    /// <summary>Art einer Bahn: Ausräumen der Fläche oder Schlichtkontur am Rand.</summary>
+    /// <summary>Kind of a path: clearing the area or finishing contour at the edge.</summary>
     public enum PathKind { Fill, Outline }
 
-    /// <summary>Wie das Innere einer Fläche ausgeräumt wird.</summary>
+    /// <summary>How the inside of an area is cleared.</summary>
     public enum FillStrategy
     {
-        /// <summary>Konzentrische, konturparallele Bahnen (von innen nach außen).</summary>
+        /// <summary>Concentric, contour-parallel paths (from the inside out).</summary>
         Contour,
         /// <summary>Horizontale Zickzack-Bahnen plus Randkontur.</summary>
         ZigZag,
-        /// <summary>Nur die Randkontur, kein Ausräumen.</summary>
+        /// <summary>Only the edge contour, no clearing.</summary>
         OutlineOnly
     }
 
-    /// <summary>Eine einzelne Werkzeugbahn (Linienzug der Werkzeugmitte).</summary>
+    /// <summary>A single tool path (polyline of the tool centre).</summary>
     public sealed class ToolPath
     {
         public ToolPath(List<PointD> points, bool closed, PathKind kind)
@@ -42,28 +42,28 @@ namespace fire.Terminal
     }
 
     /// <summary>
-    /// Zerlegt ein 2D-Binärbild in Linien (Werkzeugbahnen) mit fester Linienstärke.
+    /// Splits a 2D binary image into lines (tool paths) with a fixed line width.
     ///
-    /// Vorgehen:
-    ///  1. Euklidische Distanztransformation: Für jedes Pixel der zu fräsenden Fläche
-    ///     wird der Abstand zum nächsten Rand berechnet.
-    ///  2. Die Werkzeugmitte darf nur dort liegen, wo der Abstand >= Linienradius ist.
-    ///     Die Isolinie auf genau diesem Niveau ist die Randkontur (subpixelgenau
-    ///     per Marching Squares).
-    ///  3. Das Innere wird mit Bahnen im Abstand "StepOver" gefüllt. Da StepOver kleiner
-    ///     als die Linienstärke ist, überlappen sich benachbarte Bahnen.
+    /// Procedure:
+    ///  1. Euclidean distance transform: for every pixel of the area to be milled
+    ///     the distance to the nearest edge is computed.
+    ///  2. The tool centre may only lie where the distance is >= the line radius.
+    ///     The isoline at exactly this level is the edge contour (subpixel-accurate
+    ///     via marching squares).
+    ///  3. The inside is filled with paths at the distance "StepOver". Since StepOver is smaller
+    ///     than the line width, neighbouring paths overlap.
     ///
-    /// Alle Ausgabekoordinaten sind in Millimetern und beschreiben die Werkzeugmitte.
+    /// All output coordinates are in millimetres and describe the tool centre.
     ///
-    /// Die Maske kommt aus einem Framebuffer (<see cref="Framebuffer.ToMask"/>), die Bahnen gehen als Liste von <see cref="ToolPath"/> zurück
-    /// (in fire: `Slicer.Slice(maske)`).
+    /// The mask comes from a framebuffer (<see cref="Framebuffer.ToMask"/>), the paths are returned as a list of <see cref="ToolPath"/>
+    /// (in fire: `Slicer.Slice(mask)`).
     /// </summary>
     public sealed class ImageSlicer
     {
         private double _overlap = 0.5;
 
-        /// <param name="lineWidth">Linienstärke bzw. Werkzeugdurchmesser in mm.</param>
-        /// <param name="pixelSize">Größe eines Pixels in mm (z. B. 25.4 / dpi).</param>
+        /// <param name="lineWidth">Line width or tool diameter in mm.</param>
+        /// <param name="pixelSize">Size of a pixel in mm (e.g. 25.4 / dpi).</param>
         public ImageSlicer(double lineWidth, double pixelSize)
         {
             if (lineWidth <= 0) throw new ArgumentOutOfRangeException(nameof(lineWidth));
@@ -72,16 +72,16 @@ namespace fire.Terminal
             PixelSize = pixelSize;
         }
 
-        /// <summary>Linienstärke / Werkzeugdurchmesser in mm.</summary>
+        /// <summary>Line width / tool diameter in mm.</summary>
         public double LineWidth { get; }
 
-        /// <summary>Kantenlänge eines Pixels in mm.</summary>
+        /// <summary>Edge length of a pixel in mm.</summary>
         public double PixelSize { get; }
 
         /// <summary>
-        /// Überlappung benachbarter Bahnen als Anteil der Linienstärke (0 … 0.95).
-        /// 0.5 = jede Bahn überdeckt die vorherige zur Hälfte. Bei der Strategie
-        /// Contour garantieren Werte >= 0.5, dass keine Restinseln in der Flächenmitte bleiben.
+        /// Overlap of neighbouring paths as a fraction of the line width (0 … 0.95).
+        /// 0.5 = each path covers the previous one by half. With the strategy
+        /// Contour, values >= 0.5 guarantee that no residual islands remain in the middle of the area.
         /// </summary>
         public double Overlap
         {
@@ -93,25 +93,25 @@ namespace fire.Terminal
             }
         }
 
-        /// <summary>Strategie zum Ausräumen der Flächen.</summary>
+        /// <summary>Strategy for clearing the areas.</summary>
         public FillStrategy Strategy { get; set; } = FillStrategy.Contour;
 
         /// <summary>
-        /// Toleranz in mm für die Punktreduktion (Douglas-Peucker).
-        /// NaN = automatisch (1/4 Pixel), 0 = keine Reduktion.
+        /// Tolerance in mm for the point reduction (Douglas-Peucker).
+        /// NaN = automatic (1/4 pixel), 0 = no reduction.
         /// </summary>
         public double SimplifyTolerance { get; set; } = double.NaN;
 
-        /// <summary>true: Y-Achse zeigt nach oben (Maschinenkoordinaten), false: Bildkoordinaten.</summary>
+        /// <summary>true: Y axis points up (machine coordinates), false: image coordinates.</summary>
         public bool FlipY { get; set; } = true;
 
-        /// <summary>Abstand zwischen benachbarten Bahnen in mm.</summary>
+        /// <summary>Distance between adjacent tracks in mm.</summary>
         public double StepOver => LineWidth * (1.0 - Overlap);
 
         /// <summary>
-        /// Erzeugt die Bahnen.
+        /// Generates the paths.
         /// </summary>
-        /// <param name="mask">mask[x, y] == true bedeutet: dieses Pixel soll ausgefräst werden.</param>
+        /// <param name="mask">mask[x, y] == true means: this pixel is to be milled out.</param>
         public List<ToolPath> Slice(bool[,] mask)
         {
             if (mask == null) throw new ArgumentNullException(nameof(mask));
@@ -122,14 +122,14 @@ namespace fire.Terminal
 
             double radiusPx = LineWidth / 2.0 / PixelSize;
             double stepPx = StepOver / PixelSize;
-            // Distanzen werden von Pixelmitte zu Pixelmitte gemessen; der echte Rand liegt
-            // eine halbe Pixelbreite weiter außen.
+            // Distances are measured from pixel centre to pixel centre; the real edge lies
+            // half a pixel width further out.
             double baseLevel = radiusPx + 0.5;
             double maxDist = Max(dist);
 
             var result = new List<ToolPath>();
             if (baseLevel > maxDist)
-                return result; // Keine Stelle ist breit genug für die Linienstärke.
+                return result; // No place is wide enough for the line width.
 
             List<ToolPath> outline = ToPaths(TraceContours(dist, baseLevel), h, PathKind.Outline);
 
@@ -139,7 +139,7 @@ namespace fire.Terminal
                     var rings = new List<ToolPath>();
                     for (double level = baseLevel + stepPx; level < maxDist; level += stepPx)
                         rings.AddRange(ToPaths(TraceContours(dist, level), h, PathKind.Fill));
-                    rings.Reverse(); // innen beginnen, nach außen arbeiten
+                    rings.Reverse(); // start on the inside, work towards the outside
                     result.AddRange(rings);
                     break;
 
@@ -152,15 +152,15 @@ namespace fire.Terminal
             return result;
         }
 
-        /// <summary>Erzeugt die Bahnen aus einem Framebuffer, der die Maske enthält (siehe <see cref="Framebuffer.ToMask"/>): jedes gesetzte Pixel
-        /// soll ausgefräst werden (Palette-Framebuffer: Index ungleich 0; RGBA: eine nicht-schwarze, nicht durchsichtige Farbe).</summary>
+        /// <summary>Generates the paths from a framebuffer that contains the mask (see <see cref="Framebuffer.ToMask"/>): every set pixel
+        /// is to be milled out (palette framebuffer: index not 0; RGBA: a non-black, non-transparent colour).</summary>
         public List<ToolPath> Slice(Framebuffer mask)
         {
             if (mask == null) throw new ArgumentNullException(nameof(mask));
             return Slice(MaskFromFramebuffer(mask));
         }
 
-        /// <summary>Die Maske `mask[x, y]` aus einem Framebuffer: gesetzt ist ein Pixel mit Index ungleich 0 (Palette) bzw. mit sichtbarer, nicht-schwarzer Farbe (RGBA).</summary>
+        /// <summary>The mask `mask[x, y]` from a framebuffer: a pixel with index not 0 (palette) or with a visible, non-black colour (RGBA) is set.</summary>
         public static bool[,] MaskFromFramebuffer(Framebuffer fb)
         {
             int w = fb.Width, h = fb.Height;
@@ -176,7 +176,7 @@ namespace fire.Terminal
             return mask;
         }
 
-        /// <summary>Hilfsfunktion: Graustufenbild (Zeile für Zeile) in eine Maske umwandeln.</summary>
+        /// <summary>Helper function: convert a greyscale image (row by row) into a mask.</summary>
         public static bool[,] MaskFromGrayscale(byte[] gray, int width, int height,
                                                 byte threshold = 128, bool darkIsRemoved = true)
         {
@@ -199,12 +199,12 @@ namespace fire.Terminal
 
         /// <summary>
         /// Exakte euklidische Distanztransformation (Felzenszwalb/Huttenlocher).
-        /// Das Ergebnis hat einen Rand von 1 Pixel (Wert 0), damit alle Konturen geschlossen sind.
+        /// The result has a border of 1 pixel (value 0), so that all contours are closed.
         /// </summary>
         private static double[,] ComputeDistanceField(bool[,] mask, int w, int h)
         {
             int W = w + 2, H = h + 2;
-            double inf = (double)(W + H) * (W + H); // größer als jede mögliche quadrierte Distanz
+            double inf = (double)(W + H) * (W + H); // larger than any possible squared distance
             var d = new double[W, H];
 
             for (int y = 0; y < H; y++)
@@ -279,7 +279,7 @@ namespace fire.Terminal
         // Konturen (Marching Squares)
         // ------------------------------------------------------------------
 
-        /// <summary>Liefert geschlossene Isolinien des Distanzfelds auf dem angegebenen Niveau (Gitterkoordinaten).</summary>
+        /// <summary>Returns closed isolines of the distance field at the given level (grid coordinates).</summary>
         private static List<List<(double X, double Y)>> TraceContours(double[,] d, double level)
         {
             int W = d.GetLength(0), H = d.GetLength(1);
@@ -318,11 +318,11 @@ namespace fire.Terminal
                         case 4: case 11: Link(T, R); break;
                         case 6: case 9: Link(T, B); break;
                         case 7: case 8: Link(L, T); break;
-                        case 5: // b und d innen (Sattelpunkt)
+                        case 5: // b and d inside (saddle point)
                             if (centerIn) { Link(L, T); Link(B, R); }
                             else { Link(T, R); Link(L, B); }
                             break;
-                        case 10: // a und c innen (Sattelpunkt)
+                        case 10: // a and c inside (saddle point)
                             if (centerIn) { Link(L, B); Link(T, R); }
                             else { Link(L, T); Link(B, R); }
                             break;
@@ -375,7 +375,7 @@ namespace fire.Terminal
         }
 
         // ------------------------------------------------------------------
-        // Zickzack-Füllung
+        // Zigzag fill
         // ------------------------------------------------------------------
 
         private List<ToolPath> Hatch(double[,] d, double level, double stepPx, int h)
@@ -442,7 +442,7 @@ namespace fire.Terminal
             return result;
         }
 
-        /// <summary>Gitterkoordinaten (mit 1-Pixel-Rand) in mm umrechnen.</summary>
+        /// <summary>Convert grid coordinates (with 1-pixel margin) to mm.</summary>
         private PointD ToMm(double gx, double gy, int h)
         {
             double x = (gx - 0.5) * PixelSize;

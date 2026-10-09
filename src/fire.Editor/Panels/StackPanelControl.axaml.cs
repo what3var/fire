@@ -3,10 +3,10 @@ using Avalonia.Controls;
 
 namespace fire.Editor
 {
-    /// <summary>Eine Zeile des Wert-Stacks.</summary>
+    /// <summary>A row of the value stack.</summary>
     public sealed record StackRow(int Position, string Type, string Text);
 
-    /// <summary>Der Wert-Stack des aktiven Threads, oberster Wert zuerst.</summary>
+    /// <summary>The value stack of the active thread, topmost value first.</summary>
     public partial class StackPanelControl : UserControl
     {
         private DebugSession? _session;

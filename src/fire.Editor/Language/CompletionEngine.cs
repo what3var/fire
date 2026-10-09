@@ -28,13 +28,13 @@ namespace fire.Editor
     }
 
     /// <summary>
-    /// Ermittelt Vervollständigungs-Vorschläge an einer Cursor-Position, auf
-    /// Basis von ScriptSymbolIndex. Zwei Modi: nach einem '.' (Member-
-    /// Vervollständigung, siehe Klassen-Kommentar dort für die Grenzen der
-    /// Typ-Erkennung bei dynamischer Typisierung) oder allgemeine Bezeichner-
-    /// Vervollständigung (Keywords, Typ-Keywords, Klassen-/Enum-Namen,
-    /// Parameter/lokale Variablen der umschließenden Funktion, Mitglieder der
-    /// umschließenden Klasse, alle sonst bekannten Namen als Fallback).
+    /// Determines completion suggestions at a cursor position, on the
+    /// basis of ScriptSymbolIndex. Two modes: after a '.' (member
+    /// completion, see the class comment there for the limits of
+    /// type recognition with dynamic typing) or general identifier
+    /// completion (keywords, type keywords, class/enum names,
+    /// parameters/local variables of the enclosing function, members of the
+    /// enclosing class, all otherwise known names as a fallback).
     /// </summary>
     public static class CompletionEngine
     {
@@ -78,27 +78,27 @@ namespace fire.Editor
             return baseScore + matchOffset + ((1.0f - matchOffset - baseScore) * (float)current.Length / (float)candidate.Length);
         }
 
-        /// <summary>Vorschläge für die Cursor-Position `offset` in `source`.
-        /// `index` muss für DASSELBE `source` gebaut worden sein.</summary>
+        /// <summary>Suggestions for the cursor position `offset` in `source`.
+        /// `index` must have been built for the SAME `source`.</summary>
         public static List<CompletionItem> GetSuggestions(string source, int offset, ScriptSymbolIndex index)
         {
             if (offset < 0 || offset > source.Length) return new List<CompletionItem>();
 
             int i = offset - 1;
 
-            // '#using Namespace' - hier kommen nur Namespaces in Frage.
+            // '#using Namespace' - only namespaces come into question here.
             var usingLine = UsingLinePrefix.Match(source.Substring(LineStart(source, offset), offset - LineStart(source, offset)));
             if (usingLine.Success)
                 return GetUsingSuggestions(index, usingLine.Groups[1].Value);
 
-            // Direkt nach einem '.' (noch nichts vom Mitgliedsnamen getippt).
+            // Directly after a '.' (nothing of the member name typed yet).
             if (i >= 0 && source[i] == '.')
                 return GetMemberSuggestions(source, offset, index, dotOffset: i, string.Empty);
 
             int start = i;
             while (start >= 0 && (char.IsLetterOrDigit(source[start]) || source[start] == '_')) start--;
 
-            // Rückwärts bis zum Anfang des aktuell getippten Bezeichners.
+            // Backwards to the start of the identifier currently being typed.
             if (start >= 0 && source[start] == '.')
             {
                 string prefix = source.Substring(start + 1, offset - start - 1);
@@ -107,15 +107,15 @@ namespace fire.Editor
 
             string idPrefix = start + 1 <= offset ? source.Substring(start + 1, offset - start - 1) : string.Empty;
 
-            // Nach 'new ' kommt ein Klassenname, sonst nichts.
+            // After 'new ' comes a class name, nothing else.
             if (IsAfterNew(source, start))
                 return GetClassNameSuggestions(offset, index, idPrefix);
 
             return GetIdentifierSuggestions(offset, index, idPrefix);
         }
 
-        // Der Text VOR dem Cursor in einer '#using'-Zeile (Gruppe 1: schon Getipptes
-        // hinter '#using ', evtl. mit Punkten).
+        // The text BEFORE the cursor in a '#using' line (group 1: what has already been typed
+        // behind '#using ', possibly with dots).
         private static readonly System.Text.RegularExpressions.Regex UsingLinePrefix =
             new(@"^[ \t]*#using[ \t]+([A-Za-z0-9_.]*)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
@@ -126,11 +126,11 @@ namespace fire.Editor
             return j;
         }
 
-        /// <summary>`#using |`: der nächste Namespace-Abschnitt hinter dem, was
-        /// schon dasteht (`Geo` -> Namespaces auf oberster Ebene mit diesem
-        /// Anfang, `Geometry.` -> deren Unter-Namespaces) - jeweils nur EIN
-        /// Abschnitt, weil der Editor beim Einfügen nur den Text hinter dem
-        /// letzten '.' ersetzt.</summary>
+        /// <summary>`#using |`: the next namespace section behind what
+        /// is already there (`Geo` -> top-level namespaces with this
+        /// beginning, `Geometry.` -> their sub-namespaces) - always only ONE
+        /// section, because the editor on insertion only replaces the text behind the
+        /// last '.'.</summary>
         private static List<CompletionItem> GetUsingSuggestions(ScriptSymbolIndex index, string typed)
         {
             int dot = typed.LastIndexOf('.');
@@ -144,10 +144,10 @@ namespace fire.Editor
             return Dedupe(results);
         }
 
-        /// <summary>Steht vor dem Bezeichner, der bei `identifierStart - 1`
-        /// endet (`start` = Index des Zeichens DAVOR), das Wort `new`?</summary>
-        /// <summary>Steht vor dem (evtl. qualifizierten) Namen `A.B.`, dessen
-        /// letzter Punkt bei `dotOffset` liegt, das Wort `new`?</summary>
+        /// <summary>Is the word `new` in front of the identifier that
+        /// ends at `identifierStart - 1` (`start` = index of the character BEFORE it)?</summary>
+        /// <summary>Is the word `new` in front of the (possibly qualified) name `A.B.` whose
+        /// last dot lies at `dotOffset`?</summary>
         private static bool IsQualifiedNameAfterNew(string source, int dotOffset)
         {
             int j = dotOffset - 1;
@@ -159,16 +159,16 @@ namespace fire.Editor
         {
             int j = start;
             while (j >= 0 && (source[j] == ' ' || source[j] == '\t')) j--;
-            if (j == start) return false; // kein Leerraum zwischen 'new' und dem Bezeichner
+            if (j == start) return false; // no whitespace between 'new' and the identifier
             int wordEnd = j;
             while (j >= 0 && (char.IsLetterOrDigit(source[j]) || source[j] == '_')) j--;
             return source.Substring(j + 1, wordEnd - j) == "new";
         }
 
-        /// <summary>Nach `new `: die Klassen, die an `offset` ohne Qualifizierung
-        /// ansprechbar sind (im aktuellen Namespace, per `#using` oder ohne
-        /// Namespace - keine Interfaces), dazu die Namespaces oberster Ebene,
-        /// um `new Namespace.Klasse(...)` fortzusetzen.</summary>
+        /// <summary>After `new `: the classes that are addressable at `offset` without qualification
+        /// (in the current namespace, via `#using` or without
+        /// namespace - no interfaces), plus the top-level namespaces,
+        /// to continue `new Namespace.Class(...)`.</summary>
         private static List<CompletionItem> GetClassNameSuggestions(int offset, ScriptSymbolIndex index, string prefix)
         {
             var results = new List<CompletionItem>();
@@ -177,18 +177,18 @@ namespace fire.Editor
             return Dedupe(results);
         }
 
-        /// <summary>Fügt die Klassen (und ggf. Interfaces/Enums) hinzu, deren
-        /// EINFACHER Name an `offset` genau sie meint - also nicht von einer
-        /// gleichnamigen Klasse in einem anderen Namespace verdeckt und über
-        /// den aktuellen Namespace oder ein `#using` erreichbar. Klassen in
-        /// anderen Namespaces erscheinen so erst nach `Namespace.`.</summary>
+        /// <summary>Adds the classes (and, if applicable, interfaces/enums) whose
+        /// SIMPLE name at `offset` means exactly them - i.e. not hidden by a
+        /// class of the same name in another namespace and reachable via
+        /// the current namespace or a `#using`. Classes in
+        /// other namespaces thus appear only after `Namespace.`.</summary>
         private static void AddVisibleTypes(
             List<CompletionItem> results, int offset, ScriptSymbolIndex index, string prefix, bool includeInterfaces, bool includeEnums)
         {
             var context = index.ContextAt(offset);
             foreach (var cls in index.Classes.Values)
             {
-                // `$string` & Co.: die Sammelklassen der Basistyp-Erweiterungen sind keine Typen zum Hinschreiben.
+                // `$string` & co.: the collective classes of the base-type extensions are not types to write down.
                 if (cls.Name.StartsWith('$')) continue;
                 if ((cls.IsInterface && !includeInterfaces) || !MatchesPrefix(cls.SimpleName, prefix)) continue;
                 if (index.ResolveClassKey(cls.SimpleName, context, lenient: false) != cls.Name) continue;
@@ -213,9 +213,9 @@ namespace fire.Editor
                     results.Add(new CompletionItem(member.Name, CompletionKind.Namespace, CompareKeywords(prefix, member.Name), "Namespace"));
         }
 
-        /// <summary>Darf Code in der Klasse `fromClass` (null = außerhalb jeder
-        /// Klasse) auf `m` zugreifen? `private`: nur die deklarierende
-        /// Klasse, `protected`: auch ihre Ableitungen.</summary>
+        /// <summary>May code in the class `fromClass` (null = outside any
+        /// class) access `m`? `private`: only the declaring
+        /// class, `protected`: also its derived classes.</summary>
         private static bool IsVisible(MemberInfo m, string? fromClass, ScriptSymbolIndex index) => m.Access switch
         {
             MemberAccess.Private => fromClass == m.Owner,
@@ -226,13 +226,13 @@ namespace fire.Editor
         private static bool IsListable(MemberInfo m) =>
             m.Kind != MemberKind.Constructor && !m.Name.StartsWith("operator", StringComparison.Ordinal);
 
-        /// <summary>Vorschläge nach `Ausdruck.` - der Typ des Ausdrucks wird
-        /// hergeleitet (siehe ScriptSymbolIndex.ResolveReceiver) und dann NUR
-        /// dessen Mitglieder angeboten (inkl. geerbter, ohne nicht
-        /// zugreifbare `private`/`protected`, bei einer Klasse `Name.` nur
-        /// statische, bei einer Instanz nur nicht-statische). Nur wenn sich
-        /// der Typ gar nicht bestimmen lässt (dynamische Typisierung), fällt
-        /// das auf Mitglieder ALLER bekannten Klassen zurück.</summary>
+        /// <summary>Suggestions after `expression.` - the type of the expression is
+        /// derived (see ScriptSymbolIndex.ResolveReceiver) and then ONLY
+        /// its members are offered (incl. inherited, without inaccessible
+        /// `private`/`protected`, for a class `Name.` only
+        /// static ones, for an instance only non-static ones). Only if
+        /// the type cannot be determined at all (dynamic typing) does
+        /// this fall back to members of ALL known classes.</summary>
         private static List<CompletionItem> GetMemberSuggestions(
             string source, int offset, ScriptSymbolIndex index, int dotOffset, string prefix)
         {
@@ -244,9 +244,9 @@ namespace fire.Editor
             {
                 case TypeKind.Namespace:
                     {
-                        // 'Namespace.' - Unter-Namespaces, Klassen, Interfaces und
-                        // Enums darin; hinter 'new Namespace.' nur, was sich
-                        // instanziieren lässt (Klassen) bzw. weiterführt (Namespaces).
+                        // 'Namespace.' - sub-namespaces, classes, interfaces and
+                        // enums in it; behind 'new Namespace.' only what can be
+                        // instantiated (classes) or leads further (namespaces).
                         bool afterNew = IsQualifiedNameAfterNew(source, dotOffset);
                         foreach (var member in index.MembersOfNamespace(receiver.Name!))
                         {
@@ -278,7 +278,7 @@ namespace fire.Editor
                         if (!IsListable(m) || !MatchesPrefix(m.Name, prefix) || !IsVisible(m, fromClass, index)) continue;
                         bool staticOk = receiver.Kind == TypeKind.Static ? m.IsStatic : (!m.IsStatic || receiver.ViaThis);
                         if (!staticOk) continue;
-                        // Eigene Mitglieder vor geerbten, nähere Basis vor fernerer.
+                        // Own members before inherited ones, nearer base before more distant.
                         float baseScore = Math.Max(0.1f, 0.3f - 0.05f * depth);
                         results.Add(ToItem(m, prefix, baseScore, showOwner: depth > 0));
                     }
@@ -286,8 +286,8 @@ namespace fire.Editor
 
                 case TypeKind.Primitive:
                 case TypeKind.Array:
-                    // Einfache Werte/Arrays haben keine Klassen-Mitglieder, aber eingebaute
-                    // (`text.Length`, `text.IndexOf(...)`, siehe BuiltinMembers).
+                    // Simple values/arrays have no class members, but built-in ones
+                    // (`text.Length`, `text.IndexOf(...)`, see BuiltinMembers).
                     foreach (var member in BuiltinMembers.For(receiver))
                     {
                         if (!MatchesPrefix(member.Name, prefix)) continue;
@@ -300,7 +300,7 @@ namespace fire.Editor
                             CompareKeywords(prefix, member.Name, 0.3f), detail));
                     }
 
-                    // Methoden aus `class extends string { ... }` (Prelude und eigene Erweiterungen).
+                    // Methods from `class extends string { ... }` (prelude and own extensions).
                     if (BuiltinMembers.ExtensionClassOf(receiver) is { } extensionKey && index.Classes.ContainsKey(extensionKey))
                         foreach (var (m, _) in index.MembersOfWithDepth(extensionKey))
                             if (m.Kind == MemberKind.Method && IsListable(m) && MatchesPrefix(m.Name, prefix) && IsVisible(m, fromClass, index))
@@ -308,10 +308,10 @@ namespace fire.Editor
                     return Dedupe(results);
 
                 default:
-                    // Typ nicht bestimmbar - als bestmöglicher Fallback zugreifbare
-                    // Mitglieder ALLER bekannten Klassen anbieten (mit Klassenname
-                    // dahinter, damit man sieht, woher ein Vorschlag stammt),
-                    // statt gar nichts vorzuschlagen.
+                    // Type not determinable - as the best possible fallback offer accessible
+                    // members of ALL known classes (with the class name
+                    // behind it, so that you can see where a suggestion comes from),
+                    // instead of suggesting nothing at all.
                     foreach (var cls in index.Classes.Values)
                         foreach (var m in cls.Members)
                             if (IsListable(m) && MatchesPrefix(m.Name, prefix) && IsVisible(m, fromClass, index))
@@ -329,8 +329,8 @@ namespace fire.Editor
             foreach (var kw in TypeKeywords)
                 if (MatchesPrefix(kw, prefix)) results.Add(new CompletionItem(kw, CompletionKind.TypeKeyword, CompareKeywords(prefix, kw)));
 
-            // Typen, die hier ohne Qualifizierung ansprechbar sind, und die
-            // Namespaces oberster Ebene (für 'Namespace.Klasse').
+            // Types that are addressable here without qualification, and the
+            // top-level namespaces (for 'Namespace.Class').
             AddVisibleTypes(results, offset, index, prefix, includeInterfaces: true, includeEnums: true);
             AddTopLevelNamespaces(results, index, prefix);
 

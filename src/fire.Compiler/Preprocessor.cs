@@ -8,23 +8,23 @@ using fire.Values;
 
 namespace fire.Compiler
 {
-    /// <summary>Kontext, den eine Präprozessor-Direktiven-Implementierung
-    /// bei ihrem Aufruf bekommt (siehe DirectiveHandler/DirectiveRegistry) -
-    /// erlaubt ihr, rekursiv weitere Dateien einzuschleusen (ProcessFile)
-    /// UND auf die GLOBAL geteilte "bereits eingefügt"-Menge zuzugreifen.</summary>
-    /// <summary>Ergebnis von Preprocessor.Process: der fertig vorverarbeitete
-    /// Quelltext (alle `#include`s eingesetzt, alle erkannten Direktiven-
-    /// Zeilen entfernt) UND die in ihm per `#using Name` gesammelten
-    /// Namespace-Namen (SPEC "Namespaces") - ab jetzt eine reine
-    /// Preprocessor-Angelegenheit, nicht mehr Aufgabe des Parsers (siehe
-    /// Parser._usingNamespaces/ParseMultiple): `#using`-Zeilen werden schon
-    /// HIER erkannt und aus dem Text entfernt (wie jede andere erkannte
-    /// Direktive), der Lexer/Parser sieht sie nie. Eine `#using`-Zeile
-    /// INNERHALB einer per `#include` eingefügten Datei landet in
-    /// DENSELBEN `Usings` wie die einschließende Datei - konsistent mit der
-    /// "reines Text-Splicing"-Semantik von `#include` (SPEC 8.1.5): nach
-    /// dem Einsetzen ist nicht mehr unterscheidbar, ob eine Zeile ursprünglich
-    /// aus der Wurzel-Datei oder einer eingefügten Datei stammt.</summary>
+    /// <summary>Context that a preprocessor directive implementation
+    /// gets when it is called (see DirectiveHandler/DirectiveRegistry) -
+    /// allows it to recursively smuggle in further files (ProcessFile)
+    /// AND to access the GLOBALLY shared "already included" set.</summary>
+    /// <summary>Result of Preprocessor.Process: the finished preprocessed
+    /// source text (all `#include`s inserted, all recognised directive
+    /// lines removed) AND the namespace names collected in it via
+    /// `#using Name` (SPEC "Namespaces") - from now on a pure
+    /// preprocessor matter, no longer a task of the parser (see
+    /// Parser._usingNamespaces/ParseMultiple): `#using` lines are already
+    /// recognised HERE and removed from the text (like any other recognised
+    /// directive), the lexer/parser never sees them. A `#using` line
+    /// INSIDE a file inserted via `#include` ends up in
+    /// THE SAME `Usings` as the including file - consistent with the
+    /// "pure text splicing" semantics of `#include` (SPEC 8.1.5): after
+    /// insertion it can no longer be distinguished whether a line originally
+    /// came from the root file or an inserted file.</summary>
     public sealed record ProcessedSource(string Source, IReadOnlyList<string> Usings, string? Name = null);
 
     /// <summary>The files embedded in a program while it is preprocessed: the same file is stored once (the id of a resource is its index).</summary>
@@ -47,23 +47,23 @@ namespace fire.Compiler
 
     public sealed class DirectiveContext
     {
-        /// <summary>Verzeichnis, relativ zu dem Pfad-Argumente DIESER
-        /// Direktiven-Zeile aufzulösen sind (das Verzeichnis der gerade
-        /// verarbeiteten Datei).</summary>
+        /// <summary>Directory relative to which path arguments of THIS
+        /// directive line are to be resolved (the directory of the file
+        /// currently being processed).</summary>
         public string BasePath { get; }
 
-        /// <summary>GLOBAL geteilte Menge bereits eingefügter (absoluter)
-        /// Dateipfade - bewusst NICHT pro Preprocessor.Process()-Aufruf neu
-        /// angelegt, sondern vom AUFRUFER bereitgestellt und damit
-        /// zwischen mehreren Process()-Aufrufen TEILBAR: verarbeitet ein
-        /// Host mehrere Wurzel-Dateien zusammen (z.B. Prelude + Nutzer-
-        /// Skript, siehe Runtime.RuntimeSession.Build/Parser.ParseMultiple),
-        /// sorgt eine GEMEINSAME
-        /// Instanz dafür, dass eine von BEIDEN Seiten (transitiv)
-        /// includierte Datei insgesamt nur EIN einziges Mal in der
-        /// kombinierten Ausgabe landet - eine globale Code-Komposition,
-        /// statt separater, pro Wurzel-Datei eigenständiger Einfüge-Bäume
-        /// mit jeweils eigenem "schon gesehen"-Gedächtnis.</summary>
+        /// <summary>GLOBALLY shared set of already inserted (absolute)
+        /// file paths - deliberately NOT created anew per Preprocessor.Process() call,
+        /// but provided by the CALLER and thus
+        /// SHAREABLE between several Process() calls: if a
+        /// host processes several root files together (e.g. prelude + user
+        /// script, see Runtime.RuntimeSession.Build/Parser.ParseMultiple),
+        /// a COMMON
+        /// instance ensures that a file (transitively) included from BOTH
+        /// sides ends up only ONCE in total in the
+        /// combined output - a global code composition,
+        /// instead of separate insertion trees, independent per root file,
+        /// each with its own "already seen" memory.</summary>
         public HashSet<string> AlreadyIncluded { get; }
 
         private readonly Preprocessor _owner;
@@ -75,24 +75,24 @@ namespace fire.Compiler
             _owner = owner;
         }
 
-        /// <summary>Liest `fullPath` und verarbeitet dessen Inhalt REKURSIV
-        /// (inkl. darin evtl. enthaltener eigener Direktiven, mit demselben
-        /// Verzeichnis von `fullPath` als neuem BasePath für relative
-        /// Pfade darin) - für Direktiven-Implementierungen wie "include",
-        /// die fremden Dateiinhalt einschleusen wollen. Nutzt dieselbe
-        /// `AlreadyIncluded`-Menge und Direktiven-Registry wie der äußere
-        /// Aufruf; erkennt zirkuläre Einschleusungen (A schleust B ein,
-        /// B schleust wieder A ein) und bricht dafür mit einem klaren
-        /// Fehler ab, statt endlos zu rekursieren.</summary>
+        /// <summary>Reads `fullPath` and processes its content RECURSIVELY
+        /// (incl. any own directives contained in it, with the same
+        /// directory of `fullPath` as the new BasePath for relative
+        /// paths in it) - for directive implementations like "include"
+        /// that want to smuggle in foreign file content. Uses the same
+        /// `AlreadyIncluded` set and directive registry as the outer
+        /// call; recognises circular inclusions (A includes B,
+        /// B includes A again) and aborts with a clear
+        /// error instead of recursing endlessly.</summary>
         public string ProcessFile(string fullPath) => _owner.ProcessFileRecursive(fullPath, AlreadyIncluded);
     }
 
-    /// <summary>Eine Präprozessor-Direktiven-Implementierung: bekommt den
-    /// Aufruf-Kontext, die bereits auf ihre deklarierte Anzahl geprüften
-    /// Argumentwerte (siehe DirectiveRegistry.Register) und die Zeilennummer
-    /// der Direktiven-Zeile. Liefert den Text, der die Direktiven-Zeile in
-    /// der vorverarbeiteten Ausgabe ersetzt (leer/null für "nichts
-    /// einfügen").</summary>
+    /// <summary>A preprocessor directive implementation: gets the
+    /// call context, the argument values already checked against their declared count
+    /// (see DirectiveRegistry.Register) and the line number
+    /// of the directive line. Returns the text that replaces the directive line in
+    /// the preprocessed output (empty/null for "insert
+    /// nothing").</summary>
     public delegate string? DirectiveHandler(DirectiveContext ctx, IReadOnlyList<Value> args, int line);
 
     public sealed class DirectiveDefinition
@@ -110,32 +110,32 @@ namespace fire.Compiler
     }
 
     /// <summary>
-    /// Registry frei definierbarer Präprozessor-Direktiven (SPEC 8.1.5):
-    /// Host-C#-Code registriert per <see cref="Register"/> eine neue
-    /// `#name wert1, wert2, ...`-Direktive mit einer FEST deklarierten
-    /// erwarteten Parameteranzahl (Fehler bei Abweichung, siehe Preprocessor.
-    /// ParseDirectiveArgs) und einem Handler, der die geparsten Werte
-    /// bekommt. Jeder Parameter ist ein reines LITERAL (String/Zahl mit
-    /// optionalem Einheiten-Suffix/Zeichen/bool/undefined) - Präprozessor-
-    /// Direktiven laufen VOR dem Lexer/Parser, zu diesem Zeitpunkt gibt es
-    /// noch keine Variablen/Ausdrücke, deshalb bewusst keine volle
-    /// Ausdrucks-Grammatik.
+    /// Registry of freely definable preprocessor directives (SPEC 8.1.5):
+    /// host C# code registers via <see cref="Register"/> a new
+    /// `#name value1, value2, ...` directive with a FIXED declared
+    /// expected parameter count (error on deviation, see Preprocessor.
+    /// ParseDirectiveArgs) and a handler that receives the parsed
+    /// values. Every parameter is a pure LITERAL (string/number with
+    /// optional unit suffix/character/bool/undefined) - preprocessor
+    /// directives run BEFORE the lexer/parser, at that point there are
+    /// no variables/expressions yet, therefore deliberately no full
+    /// expression grammar.
     ///
-    /// `#include` ist ab jetzt NUR NOCH die eingebaute Default-Registrierung
-    /// dieses Mechanismus (siehe <see cref="CreateDefault"/>), keine
-    /// Sonderbehandlung mehr im restlichen Preprocessor-Code - jede weitere,
-    /// selbst registrierte Direktive funktioniert nach demselben Muster.
-    /// `#extern "libName"`/`#noshadow` bleiben dagegen bewusst AUSSERHALB
-    /// dieser Registry (siehe Preprocessor-Klassendoku: unbekannte `#...`-
-    /// Zeilen werden unverändert durchgereicht) - sie haben eine STICKY,
-    /// über mehrere nachfolgende Statements hinweg wirkende Bedeutung für
-    /// den PARSER selbst (welche Bibliothek nachfolgende `extern`-
-    /// Deklarationen verlinken, ob Globals-Shadowing gilt), keine reine
-    /// "ersetze diese eine Zeile durch Text"-Semantik wie `#include` - ein
-    /// Umbau dorthin wäre möglich, aber ein andersartiger Eingriff (der
-    /// Parser müsste dann Zustand aus dem Preprocessor abfragen, statt wie
-    /// bisher beides selbst zu verwalten) und deshalb bewusst nicht Teil
-    /// dieser Änderung.
+    /// `#include` is from now on ONLY the built-in default registration
+    /// of this mechanism (see <see cref="CreateDefault"/>), no
+    /// special treatment any more in the rest of the preprocessor code - every further,
+    /// self-registered directive works by the same pattern.
+    /// `#extern "libName"`/`#noshadow`, on the other hand, deliberately stay OUTSIDE
+    /// this registry (see Preprocessor class documentation: unknown `#...`
+    /// lines are passed through unchanged) - they have a STICKY meaning,
+    /// acting across several following statements,
+    /// for the PARSER itself (which library following `extern`
+    /// declarations link, whether globals shadowing applies), not a pure
+    /// "replace this one line with text" semantics like `#include` - a
+    /// conversion there would be possible, but a different kind of intervention (the
+    /// parser would then have to query state from the preprocessor instead of
+    /// managing both itself as before) and is therefore deliberately not part of
+    /// this change.
     /// </summary>
     public sealed class DirectiveRegistry
     {
@@ -174,9 +174,9 @@ namespace fire.Compiler
             Annouce("fileversion");
         }
 
-        /// <summary>Registriert (oder ersetzt) die Direktive `name` - ein
-        /// Aufruf `#name ...` mit einer ANDEREN Anzahl Argumente als
-        /// `paramCount` ist danach ein klarer Compile-Fehler (siehe
+        /// <summary>Registers (or replaces) the directive `name` - a
+        /// call `#name ...` with a DIFFERENT number of arguments than
+        /// `paramCount` is afterwards a clear compile error (see
         /// Preprocessor.ParseDirectiveArgs).</summary>
         public void Register(string name, int paramCount, DirectiveHandler handler)
         {
@@ -190,12 +190,12 @@ namespace fire.Compiler
         public bool TryGet(string name, out DirectiveDefinition definition) =>
             _directives.TryGetValue(name, out definition!);
 
-        /// <summary>`#include "pfad"` als einzige eingebaute Direktive (1
-        /// Parameter: der Pfad als String) - "Include once" GLOBAL über die
-        /// gesamte Komposition (siehe DirectiveContext.AlreadyIncluded-Doku),
-        /// nicht wie C's rohes mehrfaches Einfügen. Ein Host, der gar kein
-        /// `#include` will/braucht, kann stattdessen eine leere
-        /// `new DirectiveRegistry()` verwenden.</summary>
+        /// <summary>`#include "path"` as the only built-in directive (1
+        /// parameter: the path as a string) - "include once" GLOBALLY across the
+        /// whole composition (see DirectiveContext.AlreadyIncluded documentation),
+        /// not like C's raw multiple inclusion. A host that wants/needs no
+        /// `#include` at all can use an empty
+        /// `new DirectiveRegistry()` instead.</summary>
         public static DirectiveRegistry CreateDefault()
         {
             var registry = new DirectiveRegistry();
@@ -209,7 +209,7 @@ namespace fire.Compiler
                 string fullPath = Path.GetFullPath(Path.Combine(ctx.BasePath, relativePath));
 
                 if (!ctx.AlreadyIncluded.Add(fullPath))
-                    return ""; // schon (irgendwo in der GESAMTEN Komposition) eingefügt - überspringen
+                    return ""; // already inserted (anywhere in the WHOLE composition) - skip
 
                 if (!File.Exists(fullPath))
                     throw new PreprocessorException(
@@ -222,21 +222,21 @@ namespace fire.Compiler
     }
 
     /// <summary>
-    /// Reine Textvorverarbeitung VOR dem Lexer: Zeilen der Form
-    /// `#name wert1, wert2, ...` werden über eine <see cref="DirectiveRegistry"/>
-    /// verarbeitet (Default: nur `#include`, siehe DirectiveRegistry.
-    /// CreateDefault) - bewusst simpel gehalten (kein eigener Lexer-/Parser-
-    /// Durchlauf für den REST der Datei nötig, nur für die Argumentliste
-    /// EINER Direktiven-Zeile). Eine `#...`-Zeile, deren Name NICHT in der
-    /// Registry steht (z.B. `#extern "libName"`, `#noshadow` - siehe
-    /// DirectiveRegistry-Klassendoku), wird UNVERÄNDERT durchgereicht - der
-    /// Preprocessor mischt sich nur in Direktiven ein, die er tatsächlich
-    /// kennt.
+    /// Pure text preprocessing BEFORE the lexer: lines of the form
+    /// `#name value1, value2, ...` are processed via a <see cref="DirectiveRegistry"/>
+    /// (default: only `#include`, see DirectiveRegistry.
+    /// CreateDefault) - deliberately kept simple (no lexer/parser
+    /// pass of its own needed for the REST of the file, only for the argument list
+    /// of ONE directive line). A `#...` line whose name is NOT in the
+    /// registry (e.g. `#extern "libName"`, `#noshadow` - see
+    /// DirectiveRegistry class documentation) is passed through UNCHANGED - the
+    /// preprocessor only interferes with directives that it actually
+    /// knows.
     ///
-    /// Zeilennummern in Fehlermeldungen werden für eingefügten Text
-    /// ungenau (wie bei jedem einfachen Text-Präprozessor, inkl. C ohne
-    /// `#line`) - eine bekannte, akzeptierte Grenze dieser einfachen
-    /// Umsetzung.
+    /// Line numbers in error messages become
+    /// imprecise for inserted text (as with any simple text preprocessor, incl. C without
+    /// `#line`) - a known, accepted limit of this simple
+    /// implementation.
     /// </summary>
     public sealed class Preprocessor
     {
@@ -245,21 +245,21 @@ namespace fire.Compiler
 
         internal static Regex DirectiveLineRegex => DirectiveLine;
 
-        /// <summary>Ein gültiger (evtl. punktierter) Namespace-Name nach
-        /// `#using` - dieselbe Namensgrammatik wie Parser.ParseDottedName
-        /// (`A` oder `A.B.C`), hier aber als reine Text-Prüfung statt über
-        /// den echten Lexer/Parser (siehe Klassendoku: bewusst simpel).</summary>
+        /// <summary>A valid (possibly dotted) namespace name after
+        /// `#using` - the same name grammar as Parser.ParseDottedName
+        /// (`A` or `A.B.C`), but here as a pure text check instead of via
+        /// the real lexer/parser (see class documentation: deliberately simple).</summary>
         private static readonly Regex UsingName =
             new(@"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$", RegexOptions.Compiled);
 
         private readonly DirectiveRegistry _registry;
         private readonly List<string> _includeChain = new();
 
-        /// <summary>Alle per `#using Name` gesammelten Namespace-Namen - EINE
-        /// gemeinsame Liste für den GESAMTEN Process()-Aufruf inkl. aller
-        /// rekursiv per `#include` eingefügten Dateien (siehe ProcessedSource-
-        /// Doku für die Begründung), deshalb ein Instanzfeld statt eines
-        /// Rückgabewerts von ProcessInner (das rekursiv für `#include` läuft).</summary>
+        /// <summary>All namespace names collected via `#using Name` - ONE
+        /// common list for the WHOLE Process() call incl. all
+        /// files inserted recursively via `#include` (see ProcessedSource
+        /// documentation for the reasoning), hence an instance field instead of a
+        /// return value of ProcessInner (which runs recursively for `#include`).</summary>
         private readonly List<string> _usings = new();
 
         private Preprocessor(DirectiveRegistry registry)
@@ -267,19 +267,19 @@ namespace fire.Compiler
             _registry = registry;
         }
 
-        /// <summary>Verarbeitet EINEN Quelltext für sich, mit einer
-        /// FRISCHEN "bereits eingefügt"-Menge - für den einfachen Fall,
-        /// dass nur EINE Wurzel-Datei kompiliert wird. `registry`: Default
-        /// `DirectiveRegistry.CreateDefault()` (nur `#include`).</summary>
+        /// <summary>Processes ONE source text on its own, with a
+        /// FRESH "already included" set - for the simple case
+        /// that only ONE root file is compiled. `registry`: default
+        /// `DirectiveRegistry.CreateDefault()` (only `#include`).</summary>
         public static ProcessedSource Process(string source, string basePath, DirectiveRegistry? registry = null) =>
             Process(source, basePath, new HashSet<string>(StringComparer.OrdinalIgnoreCase), registry);
 
-        /// <summary>Wie Process(source, basePath), aber mit einer VOM
-        /// AUFRUFER bereitgestellten (und damit zwischen mehreren Process()-
-        /// Aufrufen TEILBAREN) "bereits eingefügt"-Menge - siehe
-        /// DirectiveContext.AlreadyIncluded-Doku für den Grund (globale
-        /// statt pro-Wurzeldatei-Komposition, z.B. Prelude + mehrere
-        /// Nutzer-Dateien zusammen, siehe Parser.ParseMultiple).</summary>
+        /// <summary>Like Process(source, basePath), but with an "already included" set PROVIDED BY THE
+        /// CALLER (and thus SHAREABLE between several Process()
+        /// calls) - see
+        /// DirectiveContext.AlreadyIncluded documentation for the reason (global
+        /// instead of per-root-file composition, e.g. prelude + several
+        /// user files together, see Parser.ParseMultiple).</summary>
         public static ProcessedSource Process(
             string source, string basePath, HashSet<string> alreadyIncluded, DirectiveRegistry? registry = null)
         {
@@ -355,23 +355,23 @@ namespace fire.Compiler
                         throw new PreprocessorException(
                             $"'#using' expects a (possibly dotted) namespace name, not '{usingArg}' (line {lineNo + 1}).");
                     _usings.Add(usingArg);
-                    sb.Append('\n'); // Zeile "verschwindet" wie jede andere erkannte Direktive.
+                    sb.Append('\n'); // Line "disappears" like any other recognised directive.
                     continue;
                 }
 
                 if (!_registry.TryGet(name, out var def))
                 {
-                    // Nicht bei DIESEM Preprocessor registriert - z.B.
-                    // '#extern "lib"' oder '#noshadow', die der PARSER
-                    // selbst behandelt (siehe DirectiveRegistry-Klassendoku) -
-                    // unverändert durchreichen, KEIN Fehler.
+                    // Not registered with THIS preprocessor - e.g.
+                    // '#extern "lib"' or '#noshadow', which the PARSER
+                    // handles itself (see DirectiveRegistry class documentation) -
+                    // pass through unchanged, NOT an error.
                     sb.Append(line).Append('\n');
                     continue;
                 }
 
                 if (def == null)
                 {
-                    sb.Append('\n'); // Zeile "verschwindet", Zeilenzahl bleibt trotzdem erhalten (siehe Klassendoku).
+                    sb.Append('\n'); // Line "disappears", line count is nevertheless preserved (see class docs).
                 }
                 else
                 {
@@ -388,7 +388,7 @@ namespace fire.Compiler
                     }
                     else
                     {
-                        sb.Append('\n'); // Zeile "verschwindet", Zeilenzahl bleibt trotzdem erhalten (siehe Klassendoku).
+                        sb.Append('\n'); // Line "disappears", line count is nevertheless preserved (see class docs).
                     }
                 }
             }
@@ -433,12 +433,12 @@ namespace fire.Compiler
             return !inString;
         }
 
-        /// <summary>Liest die Argumentliste EINER Direktiven-Zeile - über
-        /// den ECHTEN Lexer tokenisiert (korrekt für Strings/Zahlen mit
-        /// Einheiten-Suffix/etc.), dann als kommagetrennte Liste reiner
-        /// Literal-Werte gelesen (siehe ReadDirectiveLiteral) - KEINE
-        /// allgemeine Ausdrucks-Grammatik (siehe Klassendoku). Prüft danach
-        /// die tatsächliche gegen die deklarierte Parameteranzahl.</summary>
+        /// <summary>Reads the argument list of ONE directive line - tokenised
+        /// via the REAL lexer (correct for strings/numbers with
+        /// unit suffix/etc.), then read as a comma-separated list of pure
+        /// literal values (see ReadDirectiveLiteral) - NO
+        /// general expression grammar (see class documentation). Afterwards checks
+        /// the actual against the declared parameter count.</summary>
         private static IReadOnlyList<Value> ParseDirectiveArgs(string argText, DirectiveDefinition def, int line)
         {
             if (def.ParamCount == 0)
@@ -482,9 +482,9 @@ namespace fire.Compiler
             return values;
         }
 
-        /// <summary>Liest EIN Literal (String/Int/Float/Char/bool/undefined,
-        /// Zahlen mit optionalem führendem '-' und optionalem Einheiten-
-        /// Suffix wie '74mm') ab Token-Index `i`, rückt `i` dabei weiter.</summary>
+        /// <summary>Reads ONE literal (string/int/float/char/bool/undefined,
+        /// numbers with optional leading '-' and optional unit
+        /// suffix like '74mm') from token index `i`, advancing `i` in the process.</summary>
         private static Value ReadDirectiveLiteral(List<Token> tokens, ref int i, string directiveName, int line)
         {
             var tok = tokens[i];
@@ -520,11 +520,11 @@ namespace fire.Compiler
 
                 case TokenType.Minus:
                 {
-                    // Vorzeichen direkt vor einer Zahl ('-5', '-3.2mm') -
-                    // Direktiven-Argumente sind reine Literale, kein
-                    // allgemeiner Ausdruck (siehe Klassendoku), deshalb hier
-                    // als expliziter Sonderfall statt über die volle
-                    // Ausdrucks-Präzedenzkette des normalen Parsers.
+                    // Sign directly before a number ('-5', '-3.2mm') -
+                    // directive arguments are pure literals, no
+                    // general expression (see class documentation), therefore here
+                    // as an explicit special case instead of via the full
+                    // expression precedence chain of the normal parser.
                     i++;
                     if (i >= tokens.Count || (tokens[i].Type != TokenType.IntLiteral && tokens[i].Type != TokenType.FloatLiteral))
                         throw new PreprocessorException(

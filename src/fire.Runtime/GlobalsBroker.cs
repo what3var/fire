@@ -6,30 +6,30 @@ using fire.Values;
 namespace fire.Runtime
 {
     /// <summary>
-    /// Die Vermittlung zwischen dem Hauptprogramm (dem die globalen Variablen gehören) und seinen `fire`-Threads
-    /// (docs/THREADING_DESIGN.md Abschnitt 7):
+    /// The mediation between the main program (which owns the global variables) and its `fire` threads
+    /// (docs/THREADING_DESIGN.md section 7):
     ///
-    /// - Fire-Threads LESEN Globals direkt (kein Snapshot), geschützt durch einen gemeinsamen Lock (<see cref="Lock"/>, derselbe für
-    ///   die Werte der Globals und für alle Objekte, die dem globalen Scope gehören).
-    /// - ÄNDERN dürfen sie den geteilten Bereich nur innerhalb einer SEKTION: der Thread meldet sich an (<see cref="EnterSection"/>) und
-    ///   wartet; das Hauptprogramm erteilt die Sektionen der Reihe nach, wenn es `sync globals` aufruft (<see cref="Drain"/>) - immer nur
-    ///   eine zugleich, während es selbst wartet. Der Zustand der Globals ist damit für das Hauptprogramm jederzeit klar, und es gibt
-    ///   genau einen Schreiber.
-    /// - `fire global { ... }` reiht stattdessen einen Auftrag ein (<see cref="PostJob"/>), den das Hauptprogramm beim nächsten
-    ///   `sync globals` ausführt; der Thread wartet nicht.
+    /// - Fire threads READ globals directly (no snapshot), protected by a shared lock (<see cref="Lock"/>, the same for
+    ///   the values of the globals and for all objects that belong to the global scope).
+    /// - They may CHANGE the shared area only within a SECTION: the thread registers (<see cref="EnterSection"/>) and
+    ///   waits; the main program grants the sections one after the other when it calls `sync globals` (<see cref="Drain"/>) - only
+    ///   one at a time, while it itself waits. The state of the globals is thus clear to the main program at all times, and there is
+    ///   exactly one writer.
+    /// - `fire global { ... }` instead queues a job (<see cref="PostJob"/>) which the main program executes at the next
+    ///   `sync globals`; the thread does not wait.
     ///
-    /// Die Reihenfolge ist FIFO. Endet das Hauptprogramm (<see cref="Close"/>), werden wartende und künftige Sektionen sofort gewährt
-    /// - niemand hängt an einem Besitzer, der nicht mehr antwortet.
+    /// The order is FIFO. When the main program ends (<see cref="Close"/>), waiting and future sections are granted immediately
+    /// - nobody hangs on an owner that no longer answers.
     /// </summary>
     public sealed class GlobalsBroker
     {
-        /// <summary>Der globale Scope des Hauptprogramms.</summary>
+        /// <summary>The global scope of the main program.</summary>
         public Scope Scope { get; }
 
-        /// <summary>Schützt Globals-Werte und alle Objekte des geteilten Bereichs.</summary>
+        /// <summary>Protects globals values and all objects of the shared area.</summary>
         public ThreadShareLock Lock { get; }
 
-        /// <summary>Das Hauptprogramm: nur seine VM führt `sync globals` aus.</summary>
+        /// <summary>The main program: only its VM executes `sync globals`.</summary>
         public VM Owner { get; }
 
         private abstract class Request { }
@@ -59,7 +59,7 @@ namespace fire.Runtime
             scope.SharingLock = Lock;
         }
 
-        /// <summary>Liegt etwas in der Warteschlange?</summary>
+        /// <summary>Is anything in the queue?</summary>
         public bool HasPending
         {
             get { lock (_gate) return _queue.Count > 0; }
@@ -74,9 +74,9 @@ namespace fire.Runtime
         // Thread-Seite
         // -------------------------------------------------------------
 
-        /// <summary>Meldet den aufrufenden Thread an und wartet, bis das Hauptprogramm die Sektion erteilt. Danach darf er den geteilten
-        /// Bereich ändern, bis er <see cref="ExitSection"/> aufruft. Liefert ein Handle für den Abschluss (oder null, wenn das
-        /// Hauptprogramm schon beendet ist - dann wird sofort gewährt und es gibt nichts abzuschließen).</summary>
+        /// <summary>Registers the calling thread and waits until the main program grants the section. Afterwards it may change the shared
+        /// area until it calls <see cref="ExitSection"/>. Returns a handle for the completion (or null if the
+        /// main program has already ended - then it is granted immediately and there is nothing to complete).</summary>
         public object? EnterSection()
         {
             var request = new SectionRequest();
@@ -85,20 +85,20 @@ namespace fire.Runtime
                 if (_closed) return null;
                 _queue.Enqueue(request);
             }
-            VM.RaiseSignal(); // das Hauptprogramm bemerkt es an seinem naechsten sicheren Punkt (siehe VM.AutoSyncNow)
+            VM.RaiseSignal(); // the main program notices it at its next safe point (see VM.AutoSyncNow)
             FireRuntime.WakeWaitingOwner();
             request.Granted.Wait();
             return request;
         }
 
-        /// <summary>Beendet die Sektion, die <see cref="EnterSection"/> erteilt hat.</summary>
+        /// <summary>Ends the section that <see cref="EnterSection"/> granted.</summary>
         public void ExitSection(object? handle)
         {
             if (handle is SectionRequest request) request.Done.Set();
         }
 
-        /// <summary>`fire global { ... }`: reiht den Auftrag ein und kehrt sofort zurück. `holder` besitzt die für den Auftrag kopierten
-        /// Objekte und wird freigegeben, sobald er gelaufen ist.</summary>
+        /// <summary>`fire global { ... }`: queues the job and returns immediately. `holder` owns the objects copied for the job
+        /// and is released as soon as it has run.</summary>
         public void PostJob(LambdaValue lambda, Value[] args, Scope holder)
         {
             lock (_gate)
@@ -106,16 +106,16 @@ namespace fire.Runtime
                 if (_closed) { holder.Release(NullDestructRunner.Instance); return; }
                 _queue.Enqueue(new JobRequest { Lambda = lambda, Args = args, Holder = holder });
             }
-            VM.RaiseSignal(); // das Hauptprogramm bemerkt es an seinem naechsten sicheren Punkt (siehe VM.AutoSyncNow)
+            VM.RaiseSignal(); // the main program notices it at its next safe point (see VM.AutoSyncNow)
             FireRuntime.WakeWaitingOwner();
         }
 
         // -------------------------------------------------------------
-        // Besitzer-Seite
+        // Owner side
         // -------------------------------------------------------------
 
-        /// <summary>`sync globals`: arbeitet alles ab, was bis jetzt in der Warteschlange liegt (auch das, was währenddessen
-        /// dazukommt), der Reihe nach. Liefert die Anzahl der bearbeiteten Einträge. Nur auf dem Thread des Besitzers aufrufen.</summary>
+        /// <summary>`sync globals`: processes everything that is in the queue up to now (also what is added
+        /// meanwhile), in order. Returns the number of processed entries. Call only on the owner's thread.</summary>
         public int Drain()
         {
             int handled = 0;
@@ -132,7 +132,7 @@ namespace fire.Runtime
                 {
                     case SectionRequest section:
                         section.Granted.Set();
-                        section.Done.Wait(); // der Thread arbeitet, das Hauptprogramm wartet
+                        section.Done.Wait(); // the thread works, the main program waits
                         break;
                     case JobRequest job:
                         Owner.RunGlobalsJob(job.Lambda, job.Args);
@@ -142,8 +142,8 @@ namespace fire.Runtime
             }
         }
 
-        /// <summary>Das Hauptprogramm ist beendet: wartende Sektionen werden sofort gewährt (ohne auf ihr Ende zu warten), künftige
-        /// ebenso, eingereihte Aufträge verfallen.</summary>
+        /// <summary>The main program has ended: waiting sections are granted immediately (without waiting for their end), future ones
+        /// likewise, queued jobs lapse.</summary>
         public void Close()
         {
             List<Request> pending;

@@ -12,9 +12,9 @@ namespace fire.Terminal.Event
         Close = 1,
         CloseRequest = 2,
         TextInput = 3,
-        /// <summary>Die Größe des Fensters hat sich geändert (der Nutzer zieht am Rand, Maximieren).</summary>
+        /// <summary>The size of the window has changed (the user drags the edge, maximise).</summary>
         Resize = 4,
-        /// <summary>Ein Finger berührt den Touchscreen / bewegt sich / hebt ab (Position in Framebuffer-Pixeln, siehe <see cref="TouchEvent"/>).</summary>
+        /// <summary>A finger touches the touchscreen / moves / lifts off (position in framebuffer pixels, see <see cref="TouchEvent"/>).</summary>
         TouchDown = 16,
         TouchMove = 17,
         TouchUp = 18,
@@ -27,7 +27,7 @@ namespace fire.Terminal.Event
         //MouseLeave = 14,
         KeyDown = 24,
         KeyUp = 25,
-        /// <summary>Joystick (Steuerknüppel, Gamepad): eine Achse bewegt sich, ein Knopf wird gedrückt/losgelassen, ein Coolie-Hat (Steuerkreuz) ändert sich, ein Gerät wird angesteckt/abgezogen (siehe <see cref="JoystickEvent"/>).</summary>
+        /// <summary>Joystick (control stick, gamepad): an axis moves, a button is pressed/released, a hat (D-pad) changes, a device is plugged in/unplugged (see <see cref="JoystickEvent"/>).</summary>
         JoystickAxis = 32,
         JoystickButtonDown = 33,
         JoystickButtonUp = 34,

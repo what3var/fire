@@ -2,35 +2,35 @@
 
 namespace fire.Terminal
 {
-    /// <summary>Abstraktion über die tatsächliche Herkunft der Zeichen-
-    /// Bitmaps einer Monospace-Schrift - austauschbar (siehe GdiGlyphFont
-    /// für die aktuelle, GDI+-basierte Implementierung), damit später z.B.
-    /// eine eingebettete Bitmap-Schrift (für Plattformunabhängigkeit) oder
-    /// SDL_ttf eingesetzt werden kann, ohne Renderer anzufassen -
-    /// Renderer kennt nur diese Schnittstelle, nie eine konkrete
-    /// Implementierung.</summary>
+    /// <summary>Abstraction over the actual origin of the character
+    /// bitmaps of a monospace font - exchangeable (see GdiGlyphFont
+    /// for the current, GDI+-based implementation), so that later e.g.
+    /// an embedded bitmap font (for platform independence) or
+    /// SDL_ttf can be used without touching the renderer -
+    /// the renderer only knows this interface, never a concrete
+    /// implementation.</summary>
     public interface IGlyphFont
     {
-        /// <summary>Breite einer Zelle in Pixeln - bestimmt zusammen mit
-        /// GlyphHeight, wie viele Spalten/Zeilen auf einen gegebenen
-        /// Framebuffer passen (siehe Renderer.Columns/Rows).</summary>
+        /// <summary>Width of a cell in pixels - together with
+        /// GlyphHeight it determines how many columns/rows fit on a given
+        /// framebuffer (see Renderer.Columns/Rows).</summary>
         int GlyphWidth { get; }
         int GlyphHeight { get; }
 
-        /// <summary>Ist das Pixel an Position (px, py) INNERHALB der Zelle
-        /// für Zeichen `c` Teil des Glyphen (Vordergrund) oder nicht
-        /// (Hintergrund/leer)? (px, py) liegen im Bereich
+        /// <summary>Is the pixel at position (px, py) INSIDE the cell
+        /// for character `c` part of the glyph (foreground) or not
+        /// (background/empty)? (px, py) lie in the range
         /// [0, GlyphWidth) x [0, GlyphHeight).</summary>
         bool IsPixelSet(char c, int px, int py);
     }
 
-    /// <summary>Eine Schrift, deren Zeichen als Bitmaps aus Zeilen zu je höchstens 8 Bits vorliegen (Bit 7 = linkes Pixel,
-    /// 8 Pixel Breite oder weniger): Renderer liest dann pro Zeichen einmal die Zeilen und schreibt die Pixel
-    /// direkt in den Framebuffer, statt für jedes Pixel <see cref="IGlyphFont.IsPixelSet"/> zu fragen (Faktor ~10
-    /// schneller). Jede andere Schrift funktioniert weiter über IsPixelSet.</summary>
+    /// <summary>A font whose characters exist as bitmaps made of rows of at most 8 bits each (bit 7 = left pixel,
+    /// 8 pixels wide or less): the renderer then reads the rows once per character and writes the pixels
+    /// directly into the framebuffer, instead of asking <see cref="IGlyphFont.IsPixelSet"/> for every pixel (a factor of ~10
+    /// faster). Every other font keeps working via IsPixelSet.</summary>
     public interface IBitmapGlyphFont : IGlyphFont
     {
-        /// <summary>Die `GlyphHeight` Zeilen von Zeichen `c`, je Zeile ein Byte (Bit 7 = Pixel 0).</summary>
+        /// <summary>The `GlyphHeight` rows of character `c`, one byte per row (bit 7 = pixel 0).</summary>
         ReadOnlySpan<byte> GetGlyphRows(char c);
     }
 }

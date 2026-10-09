@@ -103,8 +103,8 @@ namespace fire.Compiler
         {
             var tokens = new List<Token>();
 
-            // Dateianfang zählt als "Zeilenanfang" - es gibt kein Vorgänger-Statement,
-            // das fälschlich weitergelesen werden könnte.
+            // The start of the file counts as "start of line" - there is no preceding statement
+            // that could wrongly be read on.
             bool pendingNewline = true;
 
             while (true)
@@ -141,7 +141,7 @@ namespace fire.Compiler
         }
 
         // -----------------------------------------------------------
-        // Whitespace & Kommentare. Rückgabe: wurde mind. ein '\n' übersprungen?
+        // Whitespace & comments. Return value: was at least one '\n' skipped?
         // -----------------------------------------------------------
         private bool SkipWhitespaceAndComments()
         {
@@ -175,9 +175,9 @@ namespace fire.Compiler
                 }
                 else if (c == '_' && TryConsumeLineContinuation())
                 {
-                    // Bewusst KEIN sawNewline = true: der ganze Zweck von '_' als
-                    // explizite Zeilenfortsetzung ist es, den überschrittenen
-                    // Zeilenumbruch NICHT als Statement-Trenner zählen zu lassen.
+                    // Deliberately NO sawNewline = true: the whole purpose of '_' as an
+                    // explicit line continuation is to NOT let the crossed
+                    // line break count as a statement separator.
                 }
                 else
                 {
@@ -188,20 +188,20 @@ namespace fire.Compiler
         }
 
         /// <summary>
-        /// Prüft auf ein alleinstehendes '_' als explizite Zeilenfortsetzung: das
-        /// letzte "Wort" der Zeile, optional gefolgt von einem Zeilenkommentar,
-        /// dann Zeilenende (oder Dateiende). Trifft das zu, wird alles bis
-        /// inklusive des Zeilenumbruchs konsumiert und true zurückgegeben - dieser
-        /// Zeilenumbruch darf dann keinen Statement-Trenner darstellen.
-        /// Andernfalls wird nichts konsumiert (false); '_' bleibt für die normale
-        /// Identifier-Tokenisierung stehen (z.B. als gültiger Variablenname).
+        /// Checks for a standalone '_' as an explicit line continuation: the
+        /// last "word" of the line, optionally followed by a line comment,
+        /// then end of line (or end of file). If that applies, everything up to
+        /// and including the line break is consumed and true is returned - this
+        /// line break then must not represent a statement separator.
+        /// Otherwise nothing is consumed (false); '_' stays for the normal
+        /// identifier tokenisation (e.g. as a valid variable name).
         /// </summary>
         private bool TryConsumeLineContinuation()
         {
             if (IsIdentifierPart(PeekNext()))
-                return false; // Teil eines längeren Bezeichners, z.B. "_foo" oder "foo_bar"
+                return false; // part of a longer identifier, e.g. "_foo" or "foo_bar"
 
-            int offset = 1; // hinter dem '_'
+            int offset = 1; // behind the '_'
             while (PeekAt(offset) is ' ' or '\t' or '\r') offset++;
 
             if (PeekAt(offset) == '/' && PeekAt(offset + 1) == '/')
@@ -211,7 +211,7 @@ namespace fire.Compiler
             }
 
             if (PeekAt(offset) != '\n' && PeekAt(offset) != '\0')
-                return false; // in der Zeile folgt noch echter Code -> '_' ist ein normaler Bezeichner
+                return false; // real code still follows in the line -> '_' is an ordinary identifier
 
             for (int i = 0; i < offset; i++) Advance();
             if (Peek() == '\n') Advance();
@@ -225,16 +225,16 @@ namespace fire.Compiler
         {
             int start = _pos;
 
-            // '0x'/'0X' (hex) bzw. '0b'/'0B' (binär) - reine Ganzzahl-Sonderformen,
-            // kein Bruchteil/Exponent. Erkannt an einer führenden '0' direkt
-            // gefolgt von 'x'/'b' UND direkt danach mindestens einer für den
-            // jeweiligen Radix gültigen Ziffer (Lookahead, OHNE schon zu
-            // committen) - die Sprache hat eine Basiseinheit 'b'/'B' (Bit,
-            // siehe Values.Unit.PrefixableBaseUnits), '0b' allein (bzw. '0b'
-            // gefolgt von etwas, das keine gültige Binärziffer ist, z.B.
-            // Leerraum oder ein Operator) MUSS deshalb weiterhin "null Bit"
-            // bedeuten können (normale Zahl '0' mit Einheiten-Suffix 'b'),
-            // nicht als kaputtes Binärliteral abgelehnt werden.
+            // '0x'/'0X' (hex) or '0b'/'0B' (binary) - pure integer special forms,
+            // no fraction/exponent. Recognised by a leading '0' directly
+            // followed by 'x'/'b' AND directly after it at least one digit
+            // valid for the respective radix (lookahead, WITHOUT
+            // committing yet) - the language has a base unit 'b'/'B' (bit,
+            // see Values.Unit.PrefixableBaseUnits), '0b' alone (or '0b'
+            // followed by something that is not a valid binary digit, e.g.
+            // whitespace or an operator) therefore MUST still be able to mean "zero bit"
+            // (an ordinary number '0' with the unit suffix 'b'),
+            // not be rejected as a broken binary literal.
             if (Peek() == '0' && (PeekNext() is 'x' or 'X') && IsHexDigit(PeekAt(2)))
                 return ReadRadixNumber(line, col, newlineBefore, start, radix: 16, IsHexDigit);
             if (Peek() == '0' && (PeekNext() is 'b' or 'B') && IsBinaryDigit(PeekAt(2)))
@@ -252,7 +252,7 @@ namespace fire.Compiler
 
             string numberText = _source.Substring(start, _pos - start);
 
-            // Einheiten-Suffix: direkt anschließende Buchstaben/µ, ohne Whitespace dazwischen.
+            // Unit suffix: letters/µ directly following, without whitespace in between.
             int unitStart = _pos;
             while (!IsAtEnd && IsUnitSuffixChar(Peek())) Advance();
             string unitSuffix = _source.Substring(unitStart, _pos - unitStart);
@@ -276,14 +276,14 @@ namespace fire.Compiler
 
         private static bool IsBinaryDigit(char c) => c == '0' || c == '1';
 
-        /// <summary>`0x`/`0b`-Literale (siehe ReadNumber) - liest den Präfix,
-        /// dann so viele für `radix` gültige Ziffern wie möglich (bricht bei
-        /// der ersten ungültigen Ziffer ab, wie bei jedem anderen Lexer-Scan
-        /// auch - `0b012` ergäbe also das Literal `0b01` gefolgt von einem
-        /// separaten `2`-Token, keinen Fehler). Ergibt IMMER ein
-        /// `IntLiteral` (nie `FloatLiteral` - Bruchteile ergeben für eine
-        /// Bitmuster-Schreibweise keinen Sinn), unterstützt aber denselben
-        /// Einheiten-Suffix wie ein normales Zahlen-Literal.</summary>
+        /// <summary>`0x`/`0b` literals (see ReadNumber) - reads the prefix,
+        /// then as many digits valid for `radix` as possible (stops at
+        /// the first invalid digit, as with any other lexer scan
+        /// - so `0b012` would yield the literal `0b01` followed by a
+        /// separate `2` token, no error). ALWAYS yields an
+        /// `IntLiteral` (never `FloatLiteral` - fractions make no sense
+        /// for a bit-pattern notation), but supports the same
+        /// unit suffix as an ordinary number literal.</summary>
         private Token ReadRadixNumber(int line, int col, bool newlineBefore, int start, int radix, Func<char, bool> isDigit)
         {
             Advance(); Advance(); // '0x'/'0X'/'0b'/'0B'
@@ -358,20 +358,20 @@ namespace fire.Compiler
             return new Token(TokenType.StringLiteral, value, line, col, null, value, newlineBefore);
         }
 
-        /// <summary>`$"literal {ausdruck} literal {ausdruck:Format} ..."` -
-        /// Format-Strings. Zerlegt hier bereits in Segmente (siehe
-        /// InterpolationSegment-Doku); die eigentliche Neu-Lexung/-Parsung
-        /// jedes `{...}`-Ausdrucks passiert erst im Parser (ParsePrimary),
-        /// dieser Lexer-Durchlauf sammelt nur die ROHEN Ausdrucks-Teilstrings
-        /// ein - er müsste sonst selbst eine vollständige Ausdrucks-Grammatik
-        /// kennen. `{{`/`}}` sind escapte literale Klammern (wie bei C#/
-        /// Python-Format-Strings), ein normaler Escape (`\n` etc.) wird wie
-        /// bei ReadString behandelt. Zeilenumbrüche sind - wie bei einem
-        /// normalen String-Literal - nicht erlaubt.</summary>
+        /// <summary>`$"literal {expression} literal {expression:format} ..."` -
+        /// format strings. Already split here into segments (see
+        /// InterpolationSegment documentation); the actual re-lexing/parsing
+        /// of each `{...}` expression only happens in the parser (ParsePrimary),
+        /// this lexer pass only collects the RAW expression substrings
+        /// - otherwise it would itself have to know a complete expression grammar.
+        /// `{{`/`}}` are escaped literal braces (as with C#/
+        /// Python format strings), a normal escape (`\\n` etc.) is treated as
+        /// with ReadString. Line breaks are - as with a
+        /// normal string literal - not allowed.</summary>
         private Token ReadInterpolatedString(int line, int col, bool newlineBefore)
         {
             Advance(); // '$'
-            Advance(); // öffnendes '"'
+            Advance(); // opening '"'
 
             var segments = new List<InterpolationSegment>();
             var text = new StringBuilder();
@@ -433,23 +433,23 @@ namespace fire.Compiler
             return new Token(TokenType.InterpolatedStringLiteral, "$\"...\"", line, col, null, segments, newlineBefore);
         }
 
-        /// <summary>Liest EINEN `{ausdruck[:format]}`-Abschnitt einer
-        /// Format-String-Interpolation (siehe ReadInterpolatedString), direkt
-        /// NACH der bereits konsumierten öffnenden '{'. Sammelt den
-        /// Ausdruckstext ROH ein (keine eigene Ausdrucks-Grammatik hier),
-        /// muss dafür aber '(', '[', '{' (z.B. eine Lambda mit Block-Body
-        /// INNERHALB der Interpolation) UND verschachtelte String-Literale
-        /// (deren eigene '{'/'}'/':' NICHT mitzählen dürfen) korrekt
-        /// überspringen, um die schließende '}' der Interpolation selbst
-        /// nicht mit einer der verschachtelten zu verwechseln. Ein ':' NUR
-        /// auf oberster Klammerungsebene trennt Ausdruck und Format-
-        /// Spezifizierer (siehe SPEC: braucht die Ausdruck selbst einen
-        /// Doppelpunkt, z.B. die Einheiten-Koersion, muss er geklammert
-        /// werden - '{(x : km)}' statt '{x : km}').</summary>
+        /// <summary>Reads ONE `{expression[:format]}` section of a
+        /// format-string interpolation (see ReadInterpolatedString), directly
+        /// AFTER the already consumed opening '{'. Collects the
+        /// expression text RAW (no expression grammar of its own here),
+        /// but for that has to skip '(', '[', '{' (e.g. a lambda with a block body
+        /// INSIDE the interpolation) AND nested string literals
+        /// (whose own '{'/'}'/':' must NOT count) correctly
+        /// so as not to confuse the closing '}' of the interpolation itself
+        /// with one of the nested ones. A ':' ONLY
+        /// at the topmost bracket level separates expression and format
+        /// specifier (see SPEC: if the expression itself needs a
+        /// colon, e.g. the unit coercion, it has to be parenthesised
+        /// - '{(x : km)}' instead of '{x : km}').</summary>
         private InterpolationSegment ReadInterpolationExprSegment(int line, int col)
         {
             var expr = new StringBuilder();
-            int depth = 0; // '(' + '[' + '{' zusammen - nur die Interpolationsklammer selbst zählt separat
+            int depth = 0; // '(' + '[' + '{' together - only the interpolation brace itself counts separately
 
             while (true)
             {
@@ -460,11 +460,11 @@ namespace fire.Compiler
 
                 if (c == '"')
                 {
-                    // Verschachteltes String-Literal ROH mitkopieren (inkl.
-                    // seiner eigenen Escapes) - dessen '{'/'}'/':' dürfen die
-                    // Klammerungstiefe/Format-Erkennung hier nicht berühren,
-                    // die eigentliche Interpretation passiert erst bei der
-                    // Neu-Lexung dieses Ausdruckstexts im Parser.
+                    // Copy a nested string literal RAW (incl.
+                    // its own escapes) - its '{'/'}'/':' must not touch the
+                    // bracket depth/format detection here,
+                    // the actual interpretation only happens when this expression text
+                    // is re-lexed in the parser.
                     expr.Append(c);
                     Advance();
                     while (!IsAtEnd && Peek() != '"')
@@ -479,7 +479,7 @@ namespace fire.Compiler
                         expr.Append(Peek());
                         Advance();
                     }
-                    if (!IsAtEnd) { expr.Append(Peek()); Advance(); } // schließendes '"'
+                    if (!IsAtEnd) { expr.Append(Peek()); Advance(); } // closing '"'
                     continue;
                 }
 
@@ -489,7 +489,7 @@ namespace fire.Compiler
                 if (c == '}')
                 {
                     if (depth > 0) { depth--; expr.Append(c); Advance(); continue; }
-                    Advance(); // schließende '}' der Interpolation
+                    Advance(); // closing '}' of the interpolation
                     return new InterpolationSegment(true, expr.ToString(), null);
                 }
 
@@ -504,7 +504,7 @@ namespace fire.Compiler
                     }
                     if (IsAtEnd)
                         throw new LexException("Unterminated format specifier in a format string", line, col);
-                    Advance(); // schließende '}'
+                    Advance(); // closing '}'
                     return new InterpolationSegment(true, expr.ToString(), format.ToString());
                 }
 
@@ -579,7 +579,7 @@ namespace fire.Compiler
                 case '[': return Tok(TokenType.LBracket, "[", line, col, newlineBefore);
                 case ']': return Tok(TokenType.RBracket, "]", line, col, newlineBefore);
                 case '#':
-                    // `##` ist ein Synonym für `!=` (`#` allein ist das bitweise Xor bzw. der Anfang einer Direktive)
+                    // `##` is a synonym for `!=` (`#` alone is the bitwise xor or the start of a directive)
                     if (Match('#')) return Tok(TokenType.NotEq, "##", line, col, newlineBefore);
                     return Tok(TokenType.Hash, "#", line, col, newlineBefore);
 
@@ -633,7 +633,7 @@ namespace fire.Compiler
             new(type, lexeme, line, col, newlineBefore: newlineBefore);
 
         // -----------------------------------------------------------
-        // Low-level Zeichen-Handling mit Zeilen-/Spaltenzählung
+        // Low-level character handling with line/column counting
         // -----------------------------------------------------------
         private bool IsAtEnd => _pos >= _source.Length;
 

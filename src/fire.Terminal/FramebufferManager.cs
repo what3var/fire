@@ -4,13 +4,13 @@ using System.Collections.Generic;
 namespace fire.Terminal
 {
     /// <summary>
-    /// Verwaltet Framebuffer-Instanzen über aufsteigende, eindeutige IDs
-    /// (siehe IdManager) - der Einstiegspunkt für ein rein funktionales,
-    /// ID-basiertes API (z.B. für eine spätere Skriptsprachen-Anbindung):
-    /// jede Methode nimmt/liefert nur Ints/Bytes, nie eine Objektreferenz.
-    /// Für C#-seitige Weiterverwendung (RendererManager, WindowManager) gibt
-    /// es zusätzlich <see cref="GetFramebuffer"/>, das die echte Instanz
-    /// liefert.
+    /// Manages framebuffer instances via ascending, unique IDs
+    /// (see IdManager) - the entry point for a purely functional,
+    /// ID-based API (e.g. for a later scripting-language binding):
+    /// every method only takes/returns ints/bytes, never an object reference.
+    /// For continued use on the C# side (RendererManager, WindowManager) there is
+    /// additionally <see cref="GetFramebuffer"/>, which returns the real
+    /// instance.
     /// </summary>
     public sealed class FramebufferManager
     {
@@ -19,25 +19,25 @@ namespace fire.Terminal
         public int CreateFramebuffer(int width, int height, ColorMode mode = ColorMode.Rgba) =>
             _framebuffers.Create(new Framebuffer(width, height, mode));
 
-        /// <summary>Nimmt einen fertig aufgebauten Framebuffer entgegen (z.B. aus einer Bilddatei, siehe ImageDecoder) und liefert seine ID.</summary>
+        /// <summary>Accepts a fully built framebuffer (e.g. from an image file, see ImageDecoder) and returns its ID.</summary>
         public int AddFramebuffer(Framebuffer framebuffer) => _framebuffers.Create(framebuffer);
 
         public ColorMode GetMode(int id) => _framebuffers.Get(id).Mode;
 
-        /// <summary>Bringt den Framebuffer auf eine neue Größe (siehe Framebuffer.Resize); false bei einer ungültigen Größe (er bleibt dann, wie er war).</summary>
+        /// <summary>Brings the framebuffer to a new size (see Framebuffer.Resize); false for an invalid size (it then stays as it was).</summary>
         public bool Resize(int id, int width, int height) => _framebuffers.Get(id).Resize(width, height);
 
         // -----------------------------------------------------------
-        // Bilder laden (siehe ImageDecoder): als Dateiinhalt oder als rohe Pixel
+        // Loading images (see ImageDecoder): as file content or as raw pixels
         // -----------------------------------------------------------
 
-        /// <summary>Dekodiert eine Bilddatei aus Bytes (PNG, BMP, GIF) in einen NEUEN Framebuffer und liefert seine ID. `mode` null = wie das Bild
-        /// (indiziert -> Palette-Framebuffer, Truecolor -> RGBA), sonst erzwungen (siehe ImageData.ToFramebuffer). Wirft ImageFormatException.</summary>
+        /// <summary>Decodes an image file from bytes (PNG, BMP, GIF) into a NEW framebuffer and returns its ID. `mode` null = like the image
+        /// (indexed -> palette framebuffer, true colour -> RGBA), otherwise forced (see ImageData.ToFramebuffer). Throws ImageFormatException.</summary>
         public int LoadImage(byte[] data, ColorMode? mode = null) =>
             _framebuffers.Create(ImageDecoder.Decode(data).ToFramebuffer(mode));
 
-        /// <summary>Ein neuer Framebuffer aus rohen Pixeln: RGBA-Modus `width*height*4` Byte (R, G, B, A je Pixel), Palette-Modus `width*height` Byte
-        /// (ein Index je Pixel) und optional eine Palette (768 Byte RGB oder 1024 Byte RGBA, wie WritePalette). Zeilenweise von oben nach unten.</summary>
+        /// <summary>A new framebuffer from raw pixels: RGBA mode `width*height*4` bytes (R, G, B, A per pixel), palette mode `width*height` bytes
+        /// (one index per pixel) and optionally a palette (768 bytes RGB or 1024 bytes RGBA, like WritePalette). Row by row from top to bottom.</summary>
         public int CreateFromPixels(int width, int height, byte[] pixels, ColorMode mode, byte[]? palette = null)
         {
             var fb = new Framebuffer(width, height, mode);
@@ -56,7 +56,7 @@ namespace fire.Terminal
             return id;
         }
 
-        /// <summary>Ein neuer Palette-Framebuffer mit der Maske des Bildes `id` (siehe Framebuffer.ToMask); liefert seine ID.</summary>
+        /// <summary>A new palette framebuffer with the mask of the image `id` (see Framebuffer.ToMask); returns its ID.</summary>
         public int CreateMask(int id, int threshold, bool darkIsRemoved, int alphaThreshold) =>
             _framebuffers.Create(_framebuffers.Get(id).ToMask((byte)Math.Clamp(threshold, 0, 255), darkIsRemoved, (byte)Math.Clamp(alphaThreshold, 0, 255)));
 
@@ -69,23 +69,23 @@ namespace fire.Terminal
 
         public bool DestroyFramebuffer(int id) => _framebuffers.Destroy(id);
 
-        /// <summary>Für C#-seitige Weiterverwendung (z.B. RendererManager/
-        /// WindowManager, die eine echte Framebuffer-Instanz brauchen) -
-        /// kein Teil des rein-ID-basierten Oberflächen-APIs.</summary>
+        /// <summary>For continued use on the C# side (e.g. RendererManager/
+        /// WindowManager, which need a real framebuffer instance) -
+        /// not part of the purely ID-based surface API.</summary>
         public Framebuffer GetFramebuffer(int id) => _framebuffers.Get(id);
 
         public int GetWidth(int id) => _framebuffers.Get(id).Width;
         public int GetHeight(int id) => _framebuffers.Get(id).Height;
 
         // -----------------------------------------------------------
-        // Byteweiser Zugriff auf die Framebuffer-Rohdaten (lesend/
-        // schreibend, siehe CONSOLE.md) - im RGBA-Modus: Byte-Offset 0 = R des
-        // ersten Pixels, 1 = G, 2 = B, 3 = A, 4 = R des zweiten Pixels usw. (feste
-        // Reihenfolge, siehe PixelColor-Doku - UNABHÄNGIG von der
-        // Host-Endianness, da hier bewusst manuell pro Kanal geschoben/
-        // maskiert wird statt sich auf eine rohe Speicher-Reinterpretation
-        // zu verlassen). Das ist der "immer korrekte" Basisweg. Im Palette-
-        // Modus ist ein Byte ein Pixel: der Palette-Index (Offset = y * Breite + x).
+        // Byte-wise access to the raw framebuffer data (reading/
+        // writing, see CONSOLE.md) - in RGBA mode: byte offset 0 = R of the
+        // first pixel, 1 = G, 2 = B, 3 = A, 4 = R of the second pixel etc. (fixed
+        // order, see the PixelColor documentation - INDEPENDENT of the
+        // host endianness, since here each channel is deliberately shifted/
+        // masked manually instead of relying on a raw memory
+        // reinterpretation). This is the "always correct" basic way. In palette
+        // mode a byte is a pixel: the palette index (offset = y * width + x).
         // -----------------------------------------------------------
 
         public byte ReadByte(int id, int byteOffset)
@@ -115,7 +115,7 @@ namespace fire.Terminal
             fb.Pixels[pixelIndex] = (fb.Pixels[pixelIndex] & mask) | ((uint)value << shift);
         }
 
-        /// <summary>Größe der Rohdaten in Byte: 4 je Pixel (RGBA) bzw. 1 je Pixel (Palette).</summary>
+        /// <summary>Size of the raw data in bytes: 4 per pixel (RGBA) or 1 per pixel (palette).</summary>
         public int GetByteCount(int id) => ByteCount(_framebuffers.Get(id));
 
         private static int ByteCount(Framebuffer fb) => fb.Indices != null ? fb.Indices.Length : fb.Pixels.Length * 4;
@@ -129,16 +129,16 @@ namespace fire.Terminal
         }
 
         // -----------------------------------------------------------
-        // Blockweiser Zugriff - NICHT zwingend, aber aus Convenience-
-        // Gründen (siehe CONSOLE.md): schneller als Byte-für-Byte, wenn der
-        // GESAMTE Inhalt auf einmal gebraucht wird. Nutzt Buffer.BlockCopy
-        // (rohe Speicherkopie) - das gibt exakt die R,G,B,A-Byte-Reihenfolge
-        // wieder, WEIL .NET auf allen realistischen Zielplattformen (x86/
-        // x64/ARM im Normalbetrieb) little-endian ist UND PixelColors Byte-
-        // Layout genau dafür ausgelegt ist (siehe PixelColor-Doku) - anders
-        // als ReadByte/WriteByte oben verlässt sich das hier also bewusst
-        // auf die Host-Endianness, für den Geschwindigkeitsgewinn eines
-        // rohen Speicher-Kopierens statt einer Schleife mit Bit-Operationen.
+        // Block-wise access - NOT mandatory, but for convenience
+        // (see CONSOLE.md): faster than byte by byte when the
+        // ENTIRE content is needed at once. Uses Buffer.BlockCopy
+        // (raw memory copy) - this reproduces exactly the R,G,B,A byte order,
+        // BECAUSE .NET is little-endian on all realistic target platforms (x86/
+        // x64/ARM in normal operation) AND the byte layout of PixelColor is designed
+        // for exactly that (see the PixelColor documentation) - unlike
+        // ReadByte/WriteByte above, this deliberately relies
+        // on the host endianness, for the speed gain of a
+        // raw memory copy instead of a loop with bit operations.
         // -----------------------------------------------------------
 
         public byte[] ReadBytes(int id)
@@ -165,7 +165,7 @@ namespace fire.Terminal
         }
 
         // -----------------------------------------------------------
-        // Palette (jeder Framebuffer hat eine, siehe Framebuffer.Palette)
+        // Palette (every framebuffer has one, see Framebuffer.Palette)
         // -----------------------------------------------------------
 
         public int GetPaletteColor(int id, int index)
@@ -180,7 +180,7 @@ namespace fire.Terminal
             _framebuffers.Get(id).Palette.SetColor((byte)index, color);
         }
 
-        /// <summary>Die Palette als Bytes: 768 (R, G, B je Eintrag) oder mit `withAlpha` 1024 (R, G, B, A).</summary>
+        /// <summary>The palette as bytes: 768 (R, G, B per entry) or, with `withAlpha`, 1024 (R, G, B, A).</summary>
         public byte[] ReadPalette(int id, bool withAlpha = false)
         {
             var palette = _framebuffers.Get(id).Palette;
@@ -197,7 +197,7 @@ namespace fire.Terminal
             return bytes;
         }
 
-        /// <summary>Setzt die ganze Palette aus Bytes: 768 (R, G, B; Alpha 255) oder 1024 (R, G, B, A).</summary>
+        /// <summary>Sets the whole palette from bytes: 768 (R, G, B; alpha 255) or 1024 (R, G, B, A).</summary>
         public void WritePalette(int id, byte[] data)
         {
             if (data.Length != 768 && data.Length != 1024)

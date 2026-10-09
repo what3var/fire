@@ -3,27 +3,27 @@ using System;
 namespace fire.Terminal
 {
     /// <summary>
-    /// Eine anpassbare 256-Farben-Palette (Index 0-255) - jeder Eintrag ist
-    /// ein 32-Bit-Farbwert, per <see cref="SetColor"/> jederzeit frei
-    /// überschreibbar (klassisches VGA-Palettenregister-Verhalten: der
-    /// Index bleibt gleich, welche tatsächliche Farbe dahinter steckt, kann
-    /// sich ändern). Die Default-Belegung ist strukturiert wie die
-    /// verbreitete xterm-256-Farbpalette:
+    /// An adjustable 256-colour palette (index 0-255) - each entry is
+    /// a 32-bit colour value, freely overwritable at any time via <see cref="SetColor"/>
+    /// (classic VGA palette register behaviour: the
+    /// index stays the same, the actual colour behind it can
+    /// change). The default assignment is structured like the
+    /// widespread xterm 256-colour palette:
     ///
-    /// - Index 0-15: die klassischen 16 CGA/QBasic-Farben (siehe
-    ///   <see cref="PixelColor.QBasicPalette"/>) - für Rückwärtskompatibilität
-    ///   mit einfachem `COLOR 0-15`-artigem Gebrauch.
-    /// - Index 16-231: ein 6x6x6-Farbwürfel (216 Farben, Stufen 0/51/102/
-    ///   153/204/255 je Kanal) - dieselbe, weithin bekannte Struktur wie die
-    ///   "websichere" 216-Farben-Palette.
-    /// - Index 232-255: ein 24-stufiger Graukeil.
+    /// - Index 0-15: the classic 16 CGA/QBasic colours (see
+    ///   <see cref="PixelColor.QBasicPalette"/>) - for backward compatibility
+    ///   with simple `COLOR 0-15`-style usage.
+    /// - Index 16-231: a 6x6x6 colour cube (216 colours, levels 0/51/102/
+    ///   153/204/255 per channel) - the same, widely known structure as the
+    ///   "web-safe" 216-colour palette.
+    /// - Index 232-255: a 24-step grey ramp.
     ///
-    /// Das ist BEWUSST nicht der exakte historische VGA-Standard-DAC (dessen
-    /// genaue Werte sich ohne Möglichkeit, sie hier tatsächlich zu rendern
-    /// und zu prüfen, nicht verlässlich aus dem Gedächtnis reproduzieren
-    /// ließen) - da die Palette ohnehin vollständig per SetColor überschreibbar
-    /// ist, zählt für die Defaults vor allem eine nachvollziehbare, garantiert
-    /// korrekte Formel mit guter Farbabdeckung.
+    /// This is DELIBERATELY not the exact historical VGA standard DAC (whose
+    /// exact values could not be reliably reproduced from memory without a way
+    /// to actually render and check them here) - since the palette is anyway
+    /// fully overwritable via SetColor,
+    /// what matters for the defaults is above all a comprehensible, guaranteed
+    /// correct formula with good colour coverage.
     /// </summary>
     public sealed class Palette
     {
@@ -34,17 +34,17 @@ namespace fire.Terminal
             FillDefaults();
         }
 
-        /// <summary>Wird bei JEDER Änderung der Palette erhöht - ein Framebuffer im Palette-Modus erkennt daran, dass sein sichtbares Abbild
-        /// neu berechnet werden muss (siehe Framebuffer.Resolve), auch wenn sich kein einziger Index geändert hat.</summary>
+        /// <summary>Is incremented on EVERY change of the palette - a framebuffer in palette mode recognises from it that its visible image
+        /// has to be recomputed (see Framebuffer.Resolve), even if not a single index has changed.</summary>
         public int Version { get; private set; }
 
-        /// <summary>Überschreibt Palette-Index `index` mit einem neuen
-        /// 32-Bit-Farbwert - wirkt sich sofort auf alles aus, was diesen
-        /// Index danach per <see cref="GetColor"/> nachschlägt (z.B. bereits
-        /// gezeichnete Pixel NICHT rückwirkend, da ein Framebuffer-Pixel
-        /// selbst keinen Palette-Index speichert, sondern schon beim
-        /// Zeichnen zu einer konkreten PixelColor aufgelöst wurde - siehe
-        /// Renderer.SetPixel(byte)-Überladungen).</summary>
+        /// <summary>Overwrites palette index `index` with a new
+        /// 32-bit colour value - takes effect immediately on everything that looks up this
+        /// index afterwards via <see cref="GetColor"/> (e.g. already
+        /// drawn pixels NOT retroactively, since a framebuffer pixel
+        /// itself stores no palette index, but was already resolved to a concrete
+        /// PixelColor when drawing - see the
+        /// Renderer.SetPixel(byte) overloads).</summary>
         public void SetColor(byte index, int color)
         {
             _entries[index] = color;
@@ -53,16 +53,16 @@ namespace fire.Terminal
 
         public PixelColor GetColor(byte index) => new PixelColor(unchecked((uint)_entries[index]));
 
-        /// <summary>Der Eintrag als gepackter Wert (R im niedrigsten Byte), ohne den Umweg über PixelColor.</summary>
+        /// <summary>The entry as a packed value (R in the lowest byte), without the detour via PixelColor.</summary>
         public uint GetPacked(byte index) => unchecked((uint)_entries[index]);
 
-        /// <summary>Kopiert alle 256 Einträge (gepackt) nach `destination` (mindestens 256 Plätze).</summary>
+        /// <summary>Copies all 256 entries (packed) to `destination` (at least 256 slots).</summary>
         public void CopyPacked(Span<uint> destination)
         {
             for (int i = 0; i < 256; i++) destination[i] = unchecked((uint)_entries[i]);
         }
 
-        /// <summary>Setzt die ersten `colors.Length` Einträge (höchstens 256) auf einmal; die übrigen bleiben unverändert.</summary>
+        /// <summary>Sets the first `colors.Length` entries (at most 256) at once; the others stay unchanged.</summary>
         public void SetAll(ReadOnlySpan<uint> colors)
         {
             int n = Math.Min(colors.Length, 256);
@@ -70,15 +70,15 @@ namespace fire.Terminal
             Version++;
         }
 
-        /// <summary>Stellt die Standard-Belegung wieder her (siehe Klassen-Doku).</summary>
+        /// <summary>Restores the default assignment (see the class documentation).</summary>
         public void ResetToDefaults()
         {
             FillDefaults();
             Version++;
         }
 
-        /// <summary>Der Index der Farbe, die `color` am nächsten kommt (kleinster Abstand der Kanäle R, G, B im Quadrat; der Alpha-Wert zählt
-        /// nicht). Bei gleichem Abstand gewinnt der kleinere Index; eine exakt vorhandene Farbe wird sofort gefunden.</summary>
+        /// <summary>The index of the colour that comes closest to `color` (smallest distance of the channels R, G, B squared; the alpha value does
+        /// not count). With equal distance the smaller index wins; an exactly present colour is found immediately.</summary>
         public byte FindNearest(PixelColor color)
         {
             int r = color.R, g = color.G, b = color.B;
@@ -116,7 +116,7 @@ namespace fire.Terminal
                     }
                 }
             }
-            // idx steht jetzt bei 16 + 216 = 232.
+            // idx now stands at 16 + 216 = 232.
 
             for (int i = 0; i < 24; i++)
             {

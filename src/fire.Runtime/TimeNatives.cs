@@ -16,7 +16,7 @@ namespace fire.Runtime
 
         private static double Num(Value v) => v.Kind == ValueKind.Float ? v.AsFloat() : v.AsInt();
 
-        /// <summary>Ein Wert mit Zeiteinheit (`500ms`, `2s`, `1.5min`) in Ticks, sonst undefined.</summary>
+        /// <summary>A value with a time unit (`500ms`, `2s`, `1.5min`) in ticks, otherwise undefined.</summary>
         internal static Value UnitTicks(Value[] a)
         {
             var v = a[0];
@@ -27,8 +27,8 @@ namespace fire.Runtime
             return Value.MakeInt((long)Math.Round(Num(v) * perSecond * TicksPerSecond));
         }
 
-        /// <summary>Eine Zeitangabe als Ticks, wie sie `Sleep` versteht: eine `TimeSpan`, ein Wert mit Zeiteinheit (`500ms`, `2s`) oder eine Zahl in Millisekunden.
-        /// `false` mit Fehlertext, wenn es nichts davon ist.</summary>
+        /// <summary>A time specification as ticks, as `Sleep` understands it: a `TimeSpan`, a value with a time unit (`500ms`, `2s`) or a number in milliseconds.
+        /// `false` with an error text if it is none of these.</summary>
         internal static bool TryTimeTicks(Value arg, out long ticks, out string error)
         {
             ticks = 0;
@@ -47,14 +47,14 @@ namespace fire.Runtime
                     try { ticks = (long)Math.Round(Num(arg) * unit.ConversionFactorTo(Unit.Parse("s")) * TicksPerSecond); return true; }
                     catch (Exception) { error = $"'{unit}' is not a unit of time."; return false; }
                 }
-                ticks = (long)Math.Round(Num(arg) * TicksPerMillisecond); // eine Zahl ohne Einheit: Millisekunden
+                ticks = (long)Math.Round(Num(arg) * TicksPerMillisecond); // a number without a unit: milliseconds
                 return true;
             }
             error = $"expects a TimeSpan, a time value or milliseconds, got: {arg.Kind}.";
             return false;
         }
 
-        /// <summary>`Sleep(zeit)`: `zeit` ist eine `TimeSpan`, ein Wert mit Zeiteinheit (`Sleep(500ms)`) oder eine Zahl (Millisekunden).</summary>
+        /// <summary>`Sleep(time)`: `time` is a `TimeSpan`, a value with a time unit (`Sleep(500ms)`) or a number (milliseconds).</summary>
         internal static Value Sleep(Value[] a)
         {
             string? problem = null;
