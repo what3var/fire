@@ -22,5 +22,7 @@ You should study the other documentation available if youre interested in detail
 
 Or just download it, compile it and have a look.
 
+## Screenshots
 
+![Welcome dialog](https://github.com/what3var/fire/blob/master/screenshots/1.png?raw=true)
 
