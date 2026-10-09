@@ -13,7 +13,7 @@ namespace fire.Editor
         /// <summary>The icon `name` (e.g. "Material-Play"), null if there is none.</summary>
         public static Bitmap? Load(string name) => Cache.GetOrAdd(name, n =>
         {
-            try { return new Bitmap(AssetLoader.Open(new Uri($"avares://spark/icons/{n}.png"))); }
+            try { return new Bitmap(AssetLoader.Open(new Uri($"avares://spark/Assets/icons/{n}.png"))); }
             catch (Exception) { return null; }
         });
     }

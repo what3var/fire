@@ -3,7 +3,7 @@
         xmlns:dock="using:Dock.Avalonia.Controls"
         xmlns:local="using:fire.Editor"
         x:Class="fire.Editor.MainWindow"
-        Title="spark" Width="1300" Height="820" Icon="/Logo-64.png"
+        Title="spark" Width="1300" Height="820" Icon="/Assets/Logo-64.png"
         DragDrop.AllowDrop="True"
 		TransparencyLevelHint="AcrylicBlur"
         Background="#1B181E"
@@ -55,13 +55,13 @@
 						<Separator/>
 						<MenuItem Header="S_cript..." Click="NewScriptDialog_Click" InputGesture="Ctrl+N">
 							<MenuItem.Icon>
-								<Image Source="/icons/Material-ScriptOutline.png"/>
+								<Image Source="/Assets/icons/Material-ScriptOutline.png"/>
 							</MenuItem.Icon>
 						</MenuItem>
 						<Separator/>
 						<MenuItem Header="_Markdown" Click="NewMarkdown_Click" InputGesture="Ctrl+Shift+N">
 							<MenuItem.Icon>
-								<Image Source="/icons/Material-FileDocumentOutline.png"/>
+								<Image Source="/Assets/icons/Material-FileDocumentOutline.png"/>
 							</MenuItem.Icon>
 						</MenuItem>
 						<MenuItem Header="_Raster Image" Click="NewPixelImage_Click"/>
@@ -210,14 +210,14 @@
 				<local:ToolStripTray x:Name="trayTop" Side="Top" Margin="2,0,0,2">
 					<local:ToolStrip Id="file" Title="File" Band="0" BandIndex="0">
 						<SplitButton Click="NewScriptDialog_Click" ToolTip.Tip="New script (Ctrl+N)" Padding="2" Background="Transparent" VerticalAlignment="Center">
-							<Image Source="/icons/Material-ScriptOutline.png"/>
+							<Image Source="/Assets/icons/Material-ScriptOutline.png"/>
 							<SplitButton.Flyout>
 								<MenuFlyout>
 									<MenuItem Header="_Script..." Click="NewScriptDialog_Click" InputGesture="Ctrl+N">
-										<MenuItem.Icon><Image Source="/icons/Material-ScriptOutline.png"/></MenuItem.Icon>
+										<MenuItem.Icon><Image Source="/Assets/icons/Material-ScriptOutline.png"/></MenuItem.Icon>
 									</MenuItem>
 									<MenuItem Header="_Markdown" Click="NewMarkdown_Click" InputGesture="Ctrl+Shift+N">
-										<MenuItem.Icon><Image Source="/icons/Material-FileDocumentOutline.png"/></MenuItem.Icon>
+										<MenuItem.Icon><Image Source="/Assets/icons/Material-FileDocumentOutline.png"/></MenuItem.Icon>
 									</MenuItem>
 									<MenuItem Header="_Raster Image" Click="NewPixelImage_Click"/>
 									<Separator/>
@@ -230,16 +230,16 @@
 						<CommandBarButton x:Name="btnSave" Click="Save_Click" ToolTip.Tip="Save (Ctrl+S)"><CommandBarButton.Icon><PathIcon Data="{StaticResource IconSave}"/></CommandBarButton.Icon></CommandBarButton>
 					</local:ToolStrip>
 					<local:ToolStrip Id="run" Title="Run" Band="0" BandIndex="1">
-						<CommandBarButton Label="Start" Click="Run_Click" ToolTip.Tip="Start / continue to the next breakpoint (F5) - compiles if necessary and restarts after the program has ended"><CommandBarButton.Icon><Image Source="/icons/Material-Play.png"/></CommandBarButton.Icon></CommandBarButton>
-						<CommandBarButton Click="Restart_Click" ToolTip.Tip="Recompile and start (Ctrl+F5)"><CommandBarButton.Icon><Image Source="/icons/Material-Restart.png"/></CommandBarButton.Icon></CommandBarButton>
-						<CommandBarButton Click="RunToEnd_Click" ToolTip.Tip="Run to the end without stopping at breakpoints"><CommandBarButton.Icon><Image Source="/icons/Material-PlayOutline.png"/></CommandBarButton.Icon></CommandBarButton>
-						<CommandBarButton Click="Stop_Click" ToolTip.Tip="Stop (Shift+F5)"><CommandBarButton.Icon><Image Source="/icons/Material-Stop.png"/></CommandBarButton.Icon></CommandBarButton>
+						<CommandBarButton Label="Start" Click="Run_Click" ToolTip.Tip="Start / continue to the next breakpoint (F5) - compiles if necessary and restarts after the program has ended"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-Play.png"/></CommandBarButton.Icon></CommandBarButton>
+						<CommandBarButton Click="Restart_Click" ToolTip.Tip="Recompile and start (Ctrl+F5)"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-Restart.png"/></CommandBarButton.Icon></CommandBarButton>
+						<CommandBarButton Click="RunToEnd_Click" ToolTip.Tip="Run to the end without stopping at breakpoints"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-PlayOutline.png"/></CommandBarButton.Icon></CommandBarButton>
+						<CommandBarButton Click="Stop_Click" ToolTip.Tip="Stop (Shift+F5)"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-Stop.png"/></CommandBarButton.Icon></CommandBarButton>
 					</local:ToolStrip>
 					<local:ToolStrip Id="debug" Title="Debug" Band="0" BandIndex="2">
-						<CommandBarButton Click="Step_Click" ToolTip.Tip="Step over (F10)"><CommandBarButton.Icon><Image Source="/icons/Material-DebugStepOver.png"/></CommandBarButton.Icon></CommandBarButton>
-						<CommandBarButton Click="StepInto_Click" ToolTip.Tip="Step into (F11)"><CommandBarButton.Icon><Image Source="/icons/Material-DebugStepInto.png"/></CommandBarButton.Icon></CommandBarButton>
-						<CommandBarButton Click="StepOut_Click" ToolTip.Tip="Step out of the current function (Shift+F11)"><CommandBarButton.Icon><Image Source="/icons/Material-DebugStepOut.png"/></CommandBarButton.Icon></CommandBarButton>
-						<CommandBarButton Label="Breakpoint" Click="ToggleBreakpoint_Click" ToolTip.Tip="Toggle breakpoint (F9)"><CommandBarButton.Icon><Image Source="/icons/Material-PauseCircle.png"/></CommandBarButton.Icon></CommandBarButton>
+						<CommandBarButton Click="Step_Click" ToolTip.Tip="Step over (F10)"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-DebugStepOver.png"/></CommandBarButton.Icon></CommandBarButton>
+						<CommandBarButton Click="StepInto_Click" ToolTip.Tip="Step into (F11)"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-DebugStepInto.png"/></CommandBarButton.Icon></CommandBarButton>
+						<CommandBarButton Click="StepOut_Click" ToolTip.Tip="Step out of the current function (Shift+F11)"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-DebugStepOut.png"/></CommandBarButton.Icon></CommandBarButton>
+						<CommandBarButton Label="Breakpoint" Click="ToggleBreakpoint_Click" ToolTip.Tip="Toggle breakpoint (F9)"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-PauseCircle.png"/></CommandBarButton.Icon></CommandBarButton>
 					</local:ToolStrip>
 					<local:ToolStrip Id="device" Title="Default device" Band="0" BandIndex="3">
 						<TextBlock local:ToolStrip.HorizontalOnly="True" Text="Default device:" VerticalAlignment="Center" Margin="2,0,6,0"/>
