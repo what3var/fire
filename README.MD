@@ -6,9 +6,11 @@ I think that i can say, this has grown to a programming language now. It's compi
 
 As things go with vibe coding, everything escaleted quickly. But that's fine 🔥🔥. At this point its kinda half baked, but as time goes by, things evolve.
 
+![Welcome dialog](https://github.com/what3var/fire/blob/master/screenshots/1.png?raw=true)
+
 # fire 🔥
 
-A multi-platform scripting- *and* programming language with its very own character.
+A multi-platform scripting- *and* programming language with its very own character. 
 
 Its syntax is heavily leaned towards C#, but there are things I deliberately designed differently. Some are weird, others are beautiful or simply dangerous.
 
@@ -22,7 +24,12 @@ You should study the other documentation available if youre interested in detail
 
 Or just download it, compile it and have a look.
 
+[First Steps](https://github.com/what3var/fire/blob/master/src/fire.Editor/Help/First%20Steps.md)
+[Embedding](https://github.com/what3var/fire/blob/master/src/fire.Editor/Help/Embedding.md)
+
 ## Screenshots
 
-![Welcome dialog](https://github.com/what3var/fire/blob/master/screenshots/1.png?raw=true)
-
+![an old test script](https://github.com/what3var/fire/blob/master/screenshots/2.png?raw=true)
+![fxml designer](https://github.com/what3var/fire/blob/master/screenshots/3.png?raw=true)
+![md editor](https://github.com/what3var/fire/blob/master/screenshots/4.png?raw=true)
+![raster editor](https://github.com/what3var/fire/blob/master/screenshots/5.png?raw=true)
