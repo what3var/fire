@@ -29,12 +29,12 @@ namespace fire.Compiler
     }
 
     /// <summary>
-    /// Klassischer rekursiver-Abstieg-Parser. Operator-Präzedenz (niedrig -> hoch):
+    /// Classic recursive-descent parser. Operator precedence (low -> high):
     /// Assignment -> Or -> And -> Equality -> Relational/Is -> Additive ->
-    /// Multiplicative -> Unary (-, !, ~) -> Postfix (Call/Member/Index/Coercion) -> Primary.
+    /// Multiplicative -> Unary (-, !, ~) -> Postfix (call/member/index/coercion) -> Primary.
     ///
-    /// Semikolons sind optionale Statement-Trenner (kein ASI-Regelwerk nötig,
-    /// da jedes Statement anhand seines Start-Tokens eindeutig erkennbar ist).
+    /// Semicolons are optional statement separators (no ASI rule set needed,
+    /// since every statement is unambiguously recognisable by its start token).
     /// </summary>
     public sealed class Parser
     {
@@ -47,81 +47,81 @@ namespace fire.Compiler
         private readonly List<Token> _tokens;
         private int _pos;
 
-        /// <summary>Die zuletzt per `#extern "libName"` gesetzte Bibliothek -
-        /// wird jeder nachfolgenden `extern`-Deklaration mitgegeben (siehe
-        /// ExternDecl.LibName), bis eine weitere `#extern`-Direktive sie
-        /// ändert. Rein Parser-intern, keine Laufzeit-Bedeutung.</summary>
+        /// <summary>The library last set via `#extern "libName"` -
+        /// is passed to every following `extern` declaration (see
+        /// ExternDecl.LibName) until a further `#extern` directive
+        /// changes it. Purely parser-internal, no runtime meaning.</summary>
         private string? _currentExternLib;
 
-        /// <summary>Die `#using`-Namen DIESER Quelle (SPEC "Namespaces") -
-        /// kommen fertig vom Preprocessor (siehe Parsing.ProcessedSource),
-        /// werden hier VOR ParseProgram() einmal übernommen und ändern sich
-        /// während des Parsens nicht mehr (anders als _currentNamespace).
-        /// Jeder TypeRef, den dieser Parser konstruiert, bekommt sie in sein
-        /// eigenes Namespaces-Feld kopiert (siehe CurrentNamespaces) -
-        /// dadurch tragen Resolver/Compiler später gar keinen eigenen
-        /// Usings-Zustand mehr mit sich herum, jede Referenz weiß selbst,
-        /// wo sie herkommt.</summary>
+        /// <summary>The `#using` names of THIS source (SPEC "Namespaces") -
+        /// come ready from the preprocessor (see Parsing.ProcessedSource),
+        /// are taken over here once BEFORE ParseProgram() and no longer change
+        /// during parsing (unlike _currentNamespace).
+        /// Every TypeRef that this parser constructs gets them copied into its
+        /// own Namespaces field (see CurrentNamespaces) -
+        /// thus resolver/compiler later carry no usings state of their own around at all,
+        /// every reference knows by itself
+        /// where it comes from.</summary>
         private IReadOnlyList<string> _usingNamespaces = Array.Empty<string>();
 
-        /// <summary>Der Namespace, in dem GERADE geparst wird (SPEC
-        /// "Namespaces") - `null` außerhalb jedes `namespace`-Blocks.
-        /// Verschachtelte Blöcke hängen sich mit '.' an (siehe
-        /// ParseNamespaceDecl: sichert den alten Wert, setzt den neuen,
-        /// schreibt beim Verlassen des Blocks den alten Wert zurück - so
-        /// weiß der Parser beim Bauen JEDES TypeRef/JEDER Deklaration genau,
-        /// "wo" im Programm gerade geparst wird, ohne einen separaten
-        /// Baumdurchlauf danach zu brauchen).</summary>
+        /// <summary>The namespace in which parsing is CURRENTLY taking place (SPEC
+        /// "Namespaces") - `null` outside any `namespace` block.
+        /// Nested blocks append with '.' (see
+        /// ParseNamespaceDecl: saves the old value, sets the new one,
+        /// writes the old value back on leaving the block - so
+        /// the parser knows, when building EVERY TypeRef/EVERY declaration, exactly
+        /// "where" in the program parsing is currently taking place, without needing a separate
+        /// tree pass afterwards).</summary>
         private string? _currentNamespace;
         private string? _currentClassName;
 
-        /// <summary>`true`, während der Körper einer GENERISCHEN Klasse
-        /// geparst wird (siehe ParsePropertyBody: statische Auto-Property).</summary>
+        /// <summary>`true` while the body of a GENERIC class
+        /// is being parsed (see ParsePropertyBody: static auto-property).</summary>
         private bool _currentClassIsGeneric;
 
-        /// <summary>Index dieser Quelle in der `sources`-Liste, die an
-        /// ParseMultiple ging (0 = üblicherweise die Prelude) - EINMAL pro
-        /// Parser-Instanz gesetzt (siehe ParseMultiple, jede Quelle bekommt
-        /// ihre EIGENE, frische Parser-Instanz), ändert sich während des
-        /// Parsens NICHT mehr (anders als `_currentNamespace`). Landet direkt
-        /// in `Ast.ClassDecl.SourceIndex` - Grundlage für Compiler.
-        /// CurrentSourceIndex/Bytecode.Chunk.MarkLine: ein Debugger (siehe
-        /// Editor-Unterprojekt) braucht das, um bei mehreren Quelldateien zu
-        /// wissen, in WELCHER Datei eine gegebene Zeilennummer liegt - eine
-        /// nackte Zeile allein ist dann mehrdeutig.</summary>
+        /// <summary>Index of this source in the `sources` list that went to
+        /// ParseMultiple (0 = usually the prelude) - set ONCE per
+        /// parser instance (see ParseMultiple, every source gets
+        /// its OWN, fresh parser instance), no longer changes during
+        /// parsing (unlike `_currentNamespace`). Lands directly
+        /// in `Ast.ClassDecl.SourceIndex` - basis for Compiler.
+        /// CurrentSourceIndex/Bytecode.Chunk.MarkLine: a debugger (see
+        /// editor sub-project) needs that in order to know, with several source files,
+        /// in WHICH file a given line number lies - a
+        /// bare line alone is then ambiguous.</summary>
         private int _sourceIndex;
 
-        /// <summary>Stack der synthetischen Zielvariablen-Namen aktiver
-        /// `with`-Blöcke (innerster zuletzt) - siehe ParseWithStmt. Ein
-        /// bloßes '.' am Anfang eines Ausdrucks (siehe ParsePrimary) bezieht
-        /// sich immer auf den INNERSTEN umschließenden `with`-Block.</summary>
+        /// <summary>Stack of the synthetic target-variable names of active
+        /// `with` blocks (innermost last) - see ParseWithStmt. A
+        /// bare '.' at the start of an expression (see ParsePrimary) always refers
+        /// to the INNERMOST enclosing `with` block.</summary>
         private readonly Stack<string> _withVarStack = new();
         private int _withCounter;
 
-        /// <summary>Zähler für die synthetische Zielvariable eines `switch`
-        /// (siehe ParseSwitchStmt) - anders als bei `with` braucht switch
-        /// KEINEN Stack (kein '.'-artiges implizites Ziel, das sich auf den
-        /// innersten umschließenden switch bezieht), nur eindeutige Namen für
-        /// verschachtelte switches.</summary>
+        /// <summary>Counter for the synthetic target variable of a `switch`
+        /// (see ParseSwitchStmt) - unlike with `with`, switch needs
+        /// NO stack (no '.'-like implicit target that refers to the
+        /// innermost enclosing switch), only unique names for
+        /// nested switches.</summary>
         private int _switchCounter;
 
-        // Zählt offene '(' / '[' . Innerhalb einer offenen Klammer soll ein
-        // Zeilenumbruch NICHT als Statement-Trenner wirken (mehrzeilige
-        // Funktionsaufrufe/Argumentlisten/Bedingungen müssen weiterhin
-        // funktionieren) - nur '{'/'}' zählen bewusst nicht mit, da innerhalb
-        // eines Blocks Zeilenumbrüche ja genau die Statement-Grenzen markieren.
+        // Counts open '(' / '['. Inside an open bracket a
+        // line break is NOT to act as a statement separator (multi-line
+        // function calls/argument lists/conditions must continue to
+        // work) - only '{'/'}' deliberately do not count, since inside
+        // a block line breaks mark exactly the statement boundaries.
         private int _bracketDepth;
 
-        /// <summary>Ungleich null, solange der TOP-LEVEL-Wertausdruck einer
-        /// switch-case-Bedingung geparst wird (siehe ParseSwitchStmt) -
-        /// unterdrückt dabei GENAU auf dieser Klammerungstiefe (`_bracketDepth`)
-        /// die normale ':'-Postfix-Behandlung (Einheiten-Koersion, siehe
-        /// ParsePostfix), da 'case 2:' sonst das ':' fälschlich als
-        /// Koersions-Operator verschluckt, bevor ParseSwitchStmt es selbst
-        /// als Zweig-Trenner konsumieren kann. Sobald eine verschachtelte
-        /// '('/'[' betreten wird, steigt `_bracketDepth` über diesen Wert -
-        /// ':' funktioniert dort also ganz normal weiter (z.B.
-        /// 'case (x : mm):' - der INNERE ':' ist gewollte Koersion).</summary>
+        /// <summary>Non-zero while the TOP-LEVEL value expression of a
+        /// switch case condition is being parsed (see ParseSwitchStmt) -
+        /// suppresses EXACTLY at this bracket depth (`_bracketDepth`)
+        /// the normal ':' postfix handling (unit coercion, see
+        /// ParsePostfix), since 'case 2:' would otherwise wrongly swallow the ':' as a
+        /// coercion operator before ParseSwitchStmt can consume it itself
+        /// as a branch separator. As soon as a nested
+        /// '('/'[' is entered, `_bracketDepth` rises above this value -
+        /// ':' therefore keeps working quite normally there (e.g.
+        /// 'case (x : mm):' - the INNER ':' is intended coercion).</summary>
         private int? _suppressColonPostfixAtDepth;
 
         public Parser(List<Token> tokens)
@@ -129,39 +129,39 @@ namespace fire.Compiler
             _tokens = tokens;
         }
 
-        /// <summary>Einfacher Redirect auf ParseMultiple für Tests/Aufrufer,
-        /// die keine Namespaces/Usings brauchen - KEINE eigene Parse-Logik
-        /// (ein einzelnes ProcessedSource mit leeren Usings ist nur der
-        /// Sonderfall "eine Quelle, kein `#using`"). `source` läuft NICHT
-        /// durch den Preprocessor - wer `#include`/`#using` braucht, ruft
-        /// Preprocessor.Process selbst auf und übergibt dessen Ergebnis an
+        /// <summary>Simple redirect to ParseMultiple for tests/callers
+        /// that need no namespaces/usings - NO parse logic of its own
+        /// (a single ProcessedSource with empty usings is only the
+        /// special case "one source, no `#using`"). `source` does NOT run
+        /// through the preprocessor - whoever needs `#include`/`#using` calls
+        /// Preprocessor.Process themselves and passes its result on to
         /// ParseMultiple.</summary>
         public static List<Stmt> Parse(string source) =>
             ParseMultiple(new[] { new ProcessedSource(source, Array.Empty<string>()) });
 
-        /// <summary>Parst BELIEBIG VIELE bereits vorverarbeitete Quelltext-
-        /// Stücke (siehe Preprocessing.ProcessedSource - jedes trägt seine
-        /// EIGENEN, vom Preprocessor gesammelten `#using`-Namen) zu EINEM
-        /// kombinierten Programm. `#using` gilt dabei NUR LOKAL für
-        /// Deklarationen UND Referenzen aus GENAU DEM ProcessedSource, das
-        /// die Direktive selbst enthielt (SPEC "Mehrere Quelldateien") - bei
-        /// mehreren, potenziell von verschiedenen Autoren stammenden
-        /// Dateien wäre eine programmweite Wirkung überraschend.
+        /// <summary>Parses ANY NUMBER of already preprocessed source text
+        /// pieces (see Preprocessing.ProcessedSource - each carries its
+        /// OWN `#using` names collected by the preprocessor) into ONE
+        /// combined program. `#using` applies here ONLY LOCALLY to
+        /// declarations AND references from EXACTLY THE ProcessedSource that
+        /// contained the directive itself (SPEC "Multiple source files") - with
+        /// several files, potentially from different authors,
+        /// a program-wide effect would be surprising.
         ///
-        /// `sources` in der Reihenfolge, in der sie kombiniert werden sollen
-        /// (üblich: Prelude zuerst, dann Bibliotheks-/Hilfsdateien, das
-        /// eigentliche Hauptskript zuletzt - die Reihenfolge selbst hat für
-        /// die Klassenauflösung keine Bedeutung, nur zur Übersicht).
+        /// `sources` in the order in which they are to be combined
+        /// (usual: prelude first, then library/helper files, the
+        /// actual main script last - the order itself has no meaning for
+        /// class resolution, only for overview).
         ///
-        /// JEDE Typ-Referenz (TypeRef, `new X()`, `is of X`, `catch (X e)`,
-        /// Basisklassen, `class extends X`) trägt ihren eigenen Namespace-
-        /// Kontext direkt an sich selbst, gesetzt GENAU dann, wenn sie
-        /// geparst wird (siehe CurrentNamespaces) - Resolver/Compiler
-        /// brauchen dadurch gar keinen eigenen Usings-Zustand mehr, jede
-        /// Referenz weiß selbst, wie sie sich auflösen soll. Das gilt auch
-        /// für `class extends X`, selbst wenn Erweiterung und Zielklasse aus
-        /// unterschiedlichen Dateien/Namespaces stammen (siehe
-        /// Ast.ClassExtensionDecl.TargetRef-Doku).</summary>
+        /// EVERY type reference (TypeRef, `new X()`, `is of X`, `catch (X e)`,
+        /// base classes, `class extends X`) carries its own namespace
+        /// context directly on itself, set EXACTLY when it is
+        /// parsed (see CurrentNamespaces) - resolver/compiler
+        /// thus need no usings state of their own any more, every
+        /// reference knows itself how to resolve. This also applies
+        /// to `class extends X`, even if extension and target class come from
+        /// different files/namespaces (see
+        /// Ast.ClassExtensionDecl.TargetRef documentation).</summary>
         public static List<Stmt> ParseMultiple(IReadOnlyList<ProcessedSource> sources)
         {
             var combined = new List<Stmt>();
@@ -187,26 +187,26 @@ namespace fire.Compiler
                 combined.AddRange(stmts);
             }
             //sourceIndexByStmt = byStmt;
-            // Disambiguierung VOR den Erweiterungen: `class extends Box` meint
-            // (wie jede Referenz ohne Typ-Argumente) die nicht-generische
-            // Klasse, siehe GenericClassNames.
+            // Disambiguation BEFORE the extensions: `class extends Box` means
+            // (like every reference without type arguments) the non-generic
+            // class, see GenericClassNames.
             return MergeClassExtensions(DisambiguateGenericClasses(FlattenNamespaceWrappers(combined)));
         }
 
-        /// <summary>Gibt jeder GENERISCHEN Klasse, neben der eine
-        /// NICHT-generische Klasse mit demselben (vollqualifizierten) Namen
-        /// existiert, ihren internen Namen `Name`N` (siehe
-        /// GenericClassNames) - erst hier, nach dem Parsen ALLER Quellen,
-        /// weiß man ja, ob es so eine Kollision gibt (jede Quelle wird von
-        /// einer eigenen Parser-Instanz gelesen). Ohne Kollision bleibt das
-        /// Programm unverändert. Zwei generische Klassen mit gleichem Namen
-        /// UND gleicher Typ-Parameter-Anzahl bleiben eine Doppeldefinition
-        /// (der Resolver meldet sie), gleicher Name mit unterschiedlicher
-        /// Anzahl ohne nicht-generische Klasse ebenso - nur "generisch
-        /// neben nicht-generisch" ist bewusst erlaubt.</summary>
+        /// <summary>Gives every GENERIC class next to which a
+        /// NON-generic class with the same (fully qualified) name
+        /// exists, its internal name `Name`N` (see
+        /// GenericClassNames) - only here, after parsing ALL sources,
+        /// does one know whether such a collision exists (every source is read by
+        /// a parser instance of its own). Without a collision the
+        /// program stays unchanged. Two generic classes with the same name
+        /// AND the same number of type parameters remain a double definition
+        /// (the resolver reports it), same name with a different
+        /// count without a non-generic class likewise - only "generic
+        /// next to non-generic" is deliberately allowed.</summary>
         private static List<Stmt> DisambiguateGenericClasses(List<Stmt> program)
         {
-            // Klassen und Interfaces haben getrennte Namenstabellen: `Command` und `Command<T>` kollidieren, `ICommand` und `ICommand<T>` ebenso
+            // Classes and interfaces have separate name tables: `Command` and `Command<T>` collide, `ICommand` and `ICommand<T>` likewise
             var nonGenericNames = new HashSet<string>();
             var nonGenericInterfaces = new HashSet<string>();
             foreach (var stmt in program)
@@ -229,36 +229,36 @@ namespace fire.Compiler
             return result;
         }
 
-        /// <summary>Die für ein JETZT geparstes TypeRef/eine JETZT geparste
-        /// Referenz geltenden Namespaces (SPEC "Namespaces") - an erster
-        /// Stelle der aktuelle Namespace (_currentNamespace, falls einer),
-        /// danach die `#using`-Namen dieser Quelle (_usingNamespaces). Ohne
-        /// umschließenden Namespace (Top-Level) enthält die Liste nur die
-        /// Usings. Die Reihenfolge kodiert bereits die Priorität (aktueller
-        /// Namespace vor `#using`) - siehe TypeRef.ResolveBaseName.</summary>
+        /// <summary>The namespaces applying to a NOW parsed TypeRef/a NOW parsed
+        /// reference (SPEC "Namespaces") - in first
+        /// place the current namespace (_currentNamespace, if there is one),
+        /// then the `#using` names of this source (_usingNamespaces). Without an
+        /// enclosing namespace (top level) the list contains only the
+        /// usings. The order already encodes the priority (current
+        /// namespace before `#using`) - see TypeRef.ResolveBaseName.</summary>
         private IReadOnlyList<string> CurrentNamespaces() =>
             _currentNamespace == null
                 ? _usingNamespaces
                 : new[] { _currentNamespace }.Concat(_usingNamespaces).ToList();
 
-        /// <summary>Hängt `simpleName` an den aktuellen Namespace an (SPEC
-        /// "Namespaces") - `_currentNamespace + "." + simpleName`, oder
-        /// `simpleName` unverändert außerhalb jedes `namespace`-Blocks. Für
-        /// Klassen-/Interface-/Enum-NAMEN SELBST (nicht für Referenzen
-        /// darauf, siehe TypeRef.ResolveBaseName), direkt beim Parsen der
-        /// jeweiligen Deklaration angewendet.</summary>
+        /// <summary>Appends `simpleName` to the current namespace (SPEC
+        /// "Namespaces") - `_currentNamespace + "." + simpleName`, or
+        /// `simpleName` unchanged outside any `namespace` block. For
+        /// class/interface/enum NAMES THEMSELVES (not for references
+        /// to them, see TypeRef.ResolveBaseName), applied directly when parsing the
+        /// respective declaration.</summary>
         private string QualifyDeclName(string simpleName) =>
             _currentNamespace == null ? simpleName : _currentNamespace + "." + simpleName;
 
-        /// <summary>Führt alle `class extends X { ... }`-Erweiterungen (siehe
-        /// Ast.ClassExtensionDecl) in ihre jeweilige Zielklasse zusammen, BEVOR
-        /// Resolver/Compiler das Programm überhaupt sehen - die neuen
-        /// Mitglieder landen 1:1 in der ORIGINALEN ClassDecl.Members-Liste,
-        /// als hätten sie dort von Anfang an gestanden (Ruby-artiges
-        /// "Reopening"). Mehrere Erweiterungen derselben Zielklasse werden
-        /// alle zusammengeführt, in der Reihenfolge, in der sie im Programm
-        /// vorkommen. Wirft, wenn eine Erweiterung eine Klasse nennt, die
-        /// NICHT im selben (übergebenen) Programm gefunden wird.</summary>
+        /// <summary>Merges all `class extends X { ... }` extensions (see
+        /// Ast.ClassExtensionDecl) into their respective target class, BEFORE
+        /// resolver/compiler see the program at all - the new
+        /// members land 1:1 in the ORIGINAL ClassDecl.Members list,
+        /// as if they had stood there from the beginning (Ruby-like
+        /// "reopening"). Several extensions of the same target class are
+        /// all merged, in the order in which they
+        /// occur in the program. Throws if an extension names a class that is
+        /// NOT found in the same (passed) program.</summary>
         public static List<Stmt> MergeClassExtensions(IReadOnlyList<Stmt> program)
         {
             var extensions = new List<ClassExtensionDecl>();
@@ -266,8 +266,8 @@ namespace fire.Compiler
             var rest = new List<Stmt>();
             foreach (var stmt in program)
             {
-                // `class extends string { ... }`: kein ClassDecl, in das man mergen könnte - alle
-                // Erweiterungen desselben Basistyps werden unten zu EINER Sammelklasse (siehe
+                // `class extends string { ... }`: no ClassDecl to merge into - all
+                // extensions of the same base type are turned below into ONE collective class (see
                 // BaseTypeExtensions).
                 if (stmt is ClassExtensionDecl baseExt
                     && BaseTypeExtensions.IsExtendable(baseExt.TargetRef.BaseName))
@@ -284,12 +284,12 @@ namespace fire.Compiler
                     list.SelectMany(e => e.Members).ToList()));
             if (extensions.Count == 0) return rest;
 
-            // TargetRef.ResolveBaseName (SPEC "Namespaces") braucht die Menge
-            // ALLER Klassennamen im (schon namespace-flachen) Programm -
-            // TargetRef trägt seinen EIGENEN Namespace-Kontext (den der
-            // Erweiterung selbst, nicht den der Zielklasse, siehe
-            // Ast.ClassExtensionDecl-Doku), dadurch findet eine Erweiterung
-            // ihre Zielklasse auch über Datei-/Namespace-Grenzen hinweg.
+            // TargetRef.ResolveBaseName (SPEC "Namespaces") needs the set of
+            // ALL class names in the (already namespace-flat) program -
+            // TargetRef carries its OWN namespace context (that of the
+            // extension itself, not that of the target class, see
+            // Ast.ClassExtensionDecl documentation), so an extension finds
+            // its target class also across file/namespace boundaries.
             var knownNames = new HashSet<string>(rest.OfType<ClassDecl>().Select(cd => cd.Name));
             bool IsKnown(string n) => knownNames.Contains(n);
 
@@ -305,12 +305,12 @@ namespace fire.Compiler
                         .ToList();
                     if (extraMembers.Count > 0)
                     {
-                        // WICHTIG: ClassDecl ist ein record - 'with' erzeugt
-                        // eine NEUE, unveränderliche Kopie, ändert 'cd' nicht
-                        // in-place. Die gemergte Kopie muss deshalb explizit
-                        // in die Ergebnisliste - ein einfaches 'result.Add(stmt)'
-                        // hier würde wieder die alte, unveränderte ClassDecl
-                        // einfügen und die Zusatz-Mitglieder verwerfen.
+                        // IMPORTANT: ClassDecl is a record - 'with' creates
+                        // a NEW, immutable copy, does not change 'cd'
+                        // in place. The merged copy must therefore go explicitly
+                        // into the result list - a simple 'result.Add(stmt)'
+                        // here would again insert the old, unchanged ClassDecl
+                        // and discard the additional members.
                         cd = cd with { Members = cd.Members.Concat(extraMembers).ToList() };
                         extendedNames.Add(cd.Name);
                     }
@@ -333,12 +333,12 @@ namespace fire.Compiler
             return result;
         }
 
-        /// <summary>Klopft alle NamespaceDecl-Knoten trivial platt (siehe
-        /// Ast.NamespaceDecl-Doku) - KEINE Umbenennung/Qualifizierung mehr
-        /// nötig (das ist beim Parsen selbst schon passiert, siehe
-        /// ParseNamespaceDecl/QualifyDeclName/CurrentNamespaces), nur noch
-        /// simples rekursives Auspacken der Members an die Stelle des
-        /// Wrapper-Knotens.</summary>
+        /// <summary>Flattens all NamespaceDecl nodes trivially (see
+        /// Ast.NamespaceDecl documentation) - NO renaming/qualification any more
+        /// needed (that already happened when parsing itself, see
+        /// ParseNamespaceDecl/QualifyDeclName/CurrentNamespaces), only
+        /// simple recursive unpacking of the members in place of the
+        /// wrapper node.</summary>
         private static List<Stmt> FlattenNamespaceWrappers(List<Stmt> program)
         {
             var result = new List<Stmt>();
@@ -357,11 +357,11 @@ namespace fire.Compiler
             var statements = new List<Stmt>();
             while (!Check(TokenType.Eof))
             {
-                // 'catch threads(...)'/'catch terminate(...)' sind GLOBALE
-                // Deklarationen (siehe ParseGlobalHandlerDecl), keine
-                // normalen Statements - nur hier auf Top-Level-Ebene erkannt,
-                // damit sie nicht mit dem "catch ohne try"-Feature innerhalb
-                // von Blöcken kollidieren (siehe dortige Doku).
+                // 'catch threads(...)'/'catch terminate(...)' are GLOBAL
+                // declarations (see ParseGlobalHandlerDecl), no
+                // normal statements - recognised only here at top-level,
+                // so that they do not collide with the "catch without try" feature inside
+                // blocks (see the documentation there).
                 if (Check(TokenType.Catch) && NextLooksLikeGlobalHandler())
                     statements.Add(ParseGlobalHandlerDecl());
                 else
@@ -370,10 +370,10 @@ namespace fire.Compiler
             return statements;
         }
 
-        /// <summary>Nach 'catch' folgt entweder 'terminate' (echtes Keyword)
-        /// oder der kontextabhängige Bezeichner 'threads' - beides eindeutig
-        /// von einem normalen 'catch (...)' unterscheidbar, das IMMER direkt
-        /// mit '(' weitergeht.</summary>
+        /// <summary>After 'catch' follows either 'terminate' (real keyword)
+        /// or the context-dependent identifier 'threads' - both unambiguously
+        /// distinguishable from a normal 'catch (...)', which ALWAYS continues directly
+        /// with '('.</summary>
         private bool NextLooksLikeGlobalHandler() =>
             PeekAt(1).Type == TokenType.Terminate ||
             (PeekAt(1).Type == TokenType.Identifier && PeekAt(1).Lexeme == "threads");
@@ -383,8 +383,8 @@ namespace fire.Compiler
         // -----------------------------------------------------------
         private Stmt ParseStatement()
         {
-            // `probe a.b changed ...` / `silence a.b`: kontextabhängige Schlüsselwörter - nur wenn direkt ein Bezeichner/`this` folgt (zwei Namen
-            // hintereinander sind sonst nie ein gültiger Ausdruck), so bleiben `probe`/`silence` als Variablennamen nutzbar
+            // `probe a.b changed ...` / `silence a.b`: context-dependent keywords - only if an identifier/`this` follows directly (two names
+            // in a row are otherwise never a valid expression), so `probe`/`silence` stay usable as variable names
             if (Check(TokenType.Identifier) && Peek().Lexeme == "silence" && IsProbeOperandNext()) return ParseSilence();
             if (Check(TokenType.Identifier) && Peek().Lexeme == "probe" && IsProbeOperandNext())
             {
@@ -393,7 +393,7 @@ namespace fire.Compiler
                 ExpectStatementTerminator();
                 return new ExprStmt(_sourceIndex, probeLine, probe);
             }
-            // `delete x`: kontextabhaengig wie `probe`/`silence` - nur wenn direkt (auf derselben Zeile) ein Name/`this` folgt
+            // `delete x`: context-dependent like `probe`/`silence` - only if a name/`this` follows directly (on the same line)
             if (Check(TokenType.Identifier) && Peek().Lexeme == "delete" && PeekAt(1) is { NewlineBefore: false, Type: TokenType.Identifier or TokenType.This or TokenType.Star })
                 return ParseDelete();
             if (Check(TokenType.Var)) return ParseVarDecl();
@@ -410,13 +410,13 @@ namespace fire.Compiler
             if (Check(TokenType.Foreach)) return ParseForeach();
             if (Check(TokenType.Return)) return ParseReturn();
             if (Check(TokenType.Throw)) return ParseThrowStmt();
-            // 'try sync'/'try sync flat'/'try process'/'try Name(...)' sind
-            // AUSDRÜCKE (siehe ParseSyncExpr/ParsePrimary), kein try/catch-
-            // Block - ein try/catch-Block hat IMMER direkt eine '{' nach
-            // 'try' (siehe ParseTry: ParseBlock() unmittelbar danach), jede
-            // andere Ausdrucksform NIE - deshalb reicht diese EINE positive
-            // Prüfung, um beide sauber zu trennen (statt jede einzelne
-            // Ausdrucksform hier aufzählen zu müssen).
+            // 'try sync'/'try sync flat'/'try process'/'try Name(...)' are
+            // EXPRESSIONS (see ParseSyncExpr/ParsePrimary), no try/catch
+            // block - a try/catch block ALWAYS has a '{' directly after
+            // 'try' (see ParseTry: ParseBlock() immediately after), every
+            // other expression form NEVER - therefore this ONE positive
+            // check suffices to separate the two cleanly (instead of having to
+            // enumerate every single expression form here).
             if (Check(TokenType.Try) && PeekAt(1).Type == TokenType.LBrace) return ParseTry();
             if (Check(TokenType.Hash)) return ParseDirective();
             if (Check(TokenType.Extern)) return ParseExternDecl();
@@ -454,11 +454,11 @@ namespace fire.Compiler
         }
 
         /// <summary>
-        /// Parst einen Block. Trifft der Block auf ein "nacktes" `catch` (ohne
-        /// vorangehendes `try`), gilt ab dort implizit ein try-Bereich bis zum
-        /// Blockende: die restlichen Statements werden rekursiv als geschützter
-        /// Block geparst und zusammen mit den davor gesammelten catch-Klauseln
-        /// (und optionalem finally) in ein TryStmt gewrappt, das den Block abschließt.
+        /// Parses a block. If the block meets a "bare" `catch` (without a
+        /// preceding `try`), a try region implicitly applies from there to the
+        /// end of the block: the remaining statements are parsed recursively as a protected
+        /// block and wrapped, together with the catch clauses collected before
+        /// (and optional finally), into a TryStmt that closes the block.
         /// </summary>
         private Stmt.BlockStmt ParseBlock()
         {
@@ -471,7 +471,7 @@ namespace fire.Compiler
                 if (Check(TokenType.Catch))
                 {
                     statements.Add(ParseImplicitCatchTail());
-                    break; // ParseImplicitCatchTail hat den Rest des Blocks bereits konsumiert.
+                    break; // ParseImplicitCatchTail has already consumed the rest of the block.
                 }
                 statements.Add(ParseStatement());
             }
@@ -480,8 +480,8 @@ namespace fire.Compiler
             return new Stmt.BlockStmt(_sourceIndex, line, statements);
         }
 
-        /// <summary>Parst ein oder mehrere `catch`-Klauseln ohne vorangehendes `try`
-        /// und behandelt den Rest des aktuellen Blocks als geschützten Bereich.</summary>
+        /// <summary>Parses one or more `catch` clauses without a preceding `try`
+        /// and treats the rest of the current block as a protected region.</summary>
         private Stmt ParseImplicitCatchTail()
         {
             int line = Peek().Line;
@@ -515,14 +515,14 @@ namespace fire.Compiler
             Expect(TokenType.Catch, "Expected 'catch'");
             Expect(TokenType.LParen, "Expected '(' after 'catch'");
 
-            // `catch (TypeName varName)` bzw. ungetypt `catch (varName)` -
-            // SEIT SPEC "Einheiten-Deklarationen" dieselbe Reihenfolge wie
-            // überall sonst (Typ/`var` zuerst, Name danach), NICHT mehr die
-            // alte "Name zuerst, Typ per ':' danach"-Schreibweise (die genau
-            // die Mehrdeutigkeit war, die der ':' jetzt überall einheitlich
-            // nur noch für Einheiten löst). NextLooksLikeTypeThenName()
-            // erkennt dabei auch einen punktierten Typnamen wie
-            // 'Geometry.MyException e' korrekt (siehe dortige Doku).
+            // `catch (TypeName varName)` or untyped `catch (varName)` -
+            // SINCE SPEC "Unit declarations" the same order as
+            // everywhere else (type/`var` first, name afterwards), NO longer the
+            // old "name first, type via ':' afterwards" notation (which was exactly
+            // the ambiguity that the ':' now resolves uniformly everywhere
+            // only for units). NextLooksLikeTypeThenName()
+            // also recognises a dotted type name like
+            // 'Geometry.MyException e' correctly (see the documentation there).
             TypeRef? typeRef = null;
             if (NextLooksLikeTypeThenName())
                 typeRef = new TypeRef(ParseDottedName("type name in catch(...)"), null, 0, Namespaces: CurrentNamespaces());
@@ -561,10 +561,10 @@ namespace fire.Compiler
             return decl;
         }
 
-        /// <summary>`readonly var ...` bzw. `readonly Type name ...` - der
-        /// Resolver verbietet danach jede weitere Zuweisung (siehe
-        /// Resolver.ResolveAssignTarget). Reine Parser-seitige Weiche, welche
-        /// der beiden Deklarationsformen mit dem Flag gestempelt wird.</summary>
+        /// <summary>`readonly var ...` or `readonly Type name ...` - the
+        /// resolver afterwards forbids any further assignment (see
+        /// Resolver.ResolveAssignTarget). A purely parser-side switch for which
+        /// of the two declaration forms is stamped with the flag.</summary>
         private Stmt ParseReadonlyDecl()
         {
             Expect(TokenType.Readonly, "Expected 'readonly'");
@@ -581,29 +581,29 @@ namespace fire.Compiler
             throw Error("Expected 'var' or a type declaration after 'readonly'", Peek());
         }
 
-        /// <summary>var-Deklaration ohne eigenen Terminator-Konsum - für Stellen
-        /// wie den for-Init, wo der Aufrufer das trennende ';' selbst erwartet
-        /// (sonst würde hier schon eines "verschluckt" und der Aufrufer danach
-        /// fälschlich ein zweites erwarten).</summary>
+        /// <summary>var declaration without consuming its own terminator - for places
+        /// like the for-init, where the caller expects the separating ';' itself
+        /// (otherwise one would already be "swallowed" here and the caller afterwards
+        /// wrongly expect a second one).</summary>
         private VarDeclStmt ParseVarDeclCore(bool isReadonly)
         {
             int line = Peek().Line;
             Expect(TokenType.Var, "Expected 'var'");
             string name = Expect(TokenType.Identifier, "Expected a variable name").Lexeme;
 
-            // Array-Klammern VOR dem Typ parsen (direkt hinter dem Bezeichner) -
-            // sonst würde `var arr : int[]` fälschlich versuchen, "[]" als
-            // Bitbreiten-Klammer hinter 'int' zu lesen (Kollision, siehe 'new').
+            // Parse array brackets BEFORE the type (directly behind the identifier) -
+            // otherwise `var arr : int[]` would wrongly try to read "[]" as a
+            // bit-width bracket behind 'int' (collision, see 'new').
             var arrayRanks = ParseArrayRanks();
 
-            // Der ':' nach dem Namen legt IMMER nur eine EINHEIT fest, NIE
-            // einen Typ (SPEC "Einheiten-Deklarationen") - `var a : mm` heißt
-            // "Typ wie gewöhnlich aus dem Initialisierer hergeleitet, Einheit
-            // ist FEST mm", nicht "Typ ist mm". Der eigentliche Typ bleibt bei
-            // `var` also weiterhin `null` (Inferenz durch den Resolver), außer
-            // eine Einheit ist angegeben - dann trägt ein TypeRef mit
-            // TypeRef.InferredMarker als BaseName NUR die Einheit (siehe
-            // TypeRef.IsInferred-Doku).
+            // The ':' after the name ALWAYS fixes only a UNIT, NEVER
+            // a type (SPEC "Unit declarations") - `var a : mm` means
+            // "type derived from the initialiser as usual, unit
+            // is FIXED mm", not "type is mm". The actual type thus stays
+            // `null` for `var` (inference by the resolver), unless
+            // a unit is given - then a TypeRef with
+            // TypeRef.InferredMarker as BaseName carries ONLY the unit (see
+            // TypeRef.IsInferred documentation).
             TypeRef? type = null;
             if (Match(TokenType.Colon))
                 type = new TypeRef(TypeRef.InferredMarker, null, 0, Unit: ParseUnitName());
@@ -615,25 +615,25 @@ namespace fire.Compiler
             return new VarDeclStmt(_sourceIndex, line, name, type, arrayRanks, initializer, isReadonly);
         }
 
-        /// <summary>Liest eine Einheit nach ':' (SPEC "Einheiten-Deklarationen") -
-        /// bewusst NUR ein einzelner Bezeichner (z.B. "mm"), NIE ein voller
-        /// TypeRef (keine Bitbreite, kein Pointer, kein Namespace-Pfad) - genau
-        /// das war die vorherige Unklarheit: der ':' wurde bisher über
-        /// ParseTypeRef() aufgelöst, konnte also (fälschlich) wie eine
-        /// zweite, alternative Art der TYP-Angabe aussehen. Die Einheit selbst
-        /// wird hier NICHT gegen eine bekannte Liste geprüft (Values.Unit.Parse
-        /// akzeptiert jeden Bezeichner als atomare, frei erfundene Einheit,
-        /// siehe dortige Doku) - eine etwaige Prüfung "ist mm wirklich schon
-        /// bekannt" wäre ohnehin gegenstandslos.</summary>
+        /// <summary>Reads a unit after ':' (SPEC "Unit declarations") -
+        /// deliberately ONLY a single identifier (e.g. "mm"), NEVER a full
+        /// TypeRef (no bit width, no pointer, no namespace path) - exactly
+        /// that was the earlier ambiguity: the ':' used to be resolved via
+        /// ParseTypeRef(), so it could (wrongly) look like a
+        /// second, alternative way of specifying the TYPE. The unit itself
+        /// is NOT checked here against a known list (Values.Unit.Parse
+        /// accepts every identifier as an atomic, freely invented unit,
+        /// see the documentation there) - a possible check "is mm really
+        /// known yet" would be moot anyway.</summary>
         private string ParseUnitName() => Expect(TokenType.Identifier, "Expected a unit name after ':'").Lexeme;
 
-        /// <summary>"Nackte" Deklaration ohne `var` (C-artig): `Type name[ranks]
-        /// [: einheit] [= init]`. Semantisch identisch zu `var name : Type`
-        /// (bis auf die zusätzliche, optionale Einheit), nur andere
-        /// Oberflächensyntax - wird als dasselbe VarDeclStmt repräsentiert. Nur
-        /// erreichbar, wenn NextLooksLikeTypeThenName() bereits bestätigt hat,
-        /// dass hier wirklich ein Typ folgt (und nicht z.B. ein Ausdrucks-
-        /// Statement).</summary>
+        /// <summary>"Bare" declaration without `var` (C-like): `Type name[ranks]
+        /// [: unit] [= init]`. Semantically identical to `var name : Type`
+        /// (except for the additional, optional unit), only a different
+        /// surface syntax - represented as the same VarDeclStmt. Only
+        /// reachable if NextLooksLikeTypeThenName() has already confirmed
+        /// that a type really follows here (and not e.g. an expression
+        /// statement).</summary>
         private Stmt ParseBareTypedDecl(bool isReadonly = false)
         {
             int line = Peek().Line;
@@ -641,10 +641,10 @@ namespace fire.Compiler
             string name = Expect(TokenType.Identifier, "Expected an identifier").Lexeme;
             var arrayRanks = ParseArrayRanks();
 
-            // Wie bei ParseVarDeclCore: ':' legt IMMER nur eine Einheit fest
-            // (SPEC "Einheiten-Deklarationen") - hier ist der Typ (anders als
-            // bei `var`) schon explizit da, `int a : mm` hat also BEIDES
-            // gleichzeitig: einen festen Typ UND eine feste Einheit.
+            // As with ParseVarDeclCore: ':' ALWAYS fixes only a unit
+            // (SPEC "Unit declarations") - here the type is (unlike
+            // with `var`) already explicitly there, so `int a : mm` has BOTH
+            // at once: a fixed type AND a fixed unit.
             if (Match(TokenType.Colon))
                 type = type with { Unit = ParseUnitName() };
 
@@ -656,19 +656,19 @@ namespace fire.Compiler
             return new VarDeclStmt(_sourceIndex, line, name, type, arrayRanks, initializer, isReadonly);
         }
 
-        /// <summary>Typname nach einem ':' – entweder eines der Basistyp-Keywords
-        /// oder ein Bezeichner (Klassenname). Nur der Name, ohne Bitbreite/Pointer -
-        /// für Kontexte, die (bisher) nur einen reinen Namen brauchen (`is of`,
-        /// Basisklasse, catch-Typ).</summary>
-        /// <summary>Liest einen Typnamen - entweder ein Typ-Keyword (int/
-        /// float/...) oder einen Bezeichner, optional gefolgt von einem oder
-        /// mehreren '.'-getrennten weiteren Bezeichnern (Namespace-
-        /// qualifizierter Name, z.B. 'Foo.Bar' - siehe Ast.NamespaceDecl/
-        /// SPEC "Namespaces"). Ein '.' wird hier NUR konsumiert, wenn direkt
-        /// danach ein Bezeichner folgt - diese Sprache kennt sonst keine
-        /// Position, an der ein Typname selbst (nicht ein Ausdruck) von
-        /// einem '.' gefolgt sein könnte, der lookahead ist also rein
-        /// defensiv.</summary>
+        /// <summary>Type name after a ':' – either one of the base-type keywords
+        /// or an identifier (class name). Only the name, without bit width/pointer -
+        /// for contexts that (so far) need only a pure name (`is of`,
+        /// base class, catch type).</summary>
+        /// <summary>Reads a type name - either a type keyword (int/
+        /// float/...) or an identifier, optionally followed by one or
+        /// several '.'-separated further identifiers (namespace-
+        /// qualified name, e.g. 'Foo.Bar' - see Ast.NamespaceDecl/
+        /// SPEC "Namespaces"). A '.' is consumed here ONLY if an identifier
+        /// follows directly after it - this language otherwise knows no
+        /// position at which a type name itself (not an expression) could be
+        /// followed by a '.', so the lookahead is purely
+        /// defensive.</summary>
         private string ParseTypeAnnotationName()
         {
             if (TypeKeywords.Contains(Peek().Type))
@@ -682,19 +682,19 @@ namespace fire.Compiler
             return name;
         }
 
-        /// <summary>Vollständiger Typ-Verweis: Basisname, optional `[Bitbreite]`
-        /// direkt dahinter (nur für int/float sinnvoll, vom Resolver geprüft),
-        /// optional gefolgt von einem oder mehreren '*' für Pointer-Tiefe.</summary>
-        /// <summary>Vollständiger Typ-Verweis: Basisname, optional `[Bitbreite]`
-        /// direkt dahinter (nur für int/float sinnvoll, vom Resolver geprüft),
-        /// optional gefolgt von einem oder mehreren '*' für Pointer-Tiefe -
-        /// ODER, wenn der Name (bzw. der Name direkt danach) 'lambda' ist,
-        /// ein Lambda-Typ mit optionaler Signatur (siehe ParseLambdaSignature/
-        /// Ast.TypeRef.LambdaSignature-Doku): `[RückgabeTyp] lambda[&lt;P1,...,Pn&gt;]`
-        /// - der RückgabeTyp steht dabei VOR 'lambda', nicht in den spitzen
-        /// Klammern (die enthalten nur die Parametertypen), das macht die
-        /// Grammatik unzweideutig ohne Trennzeichen zwischen Rückgabe- und
-        /// Parametertypen zu brauchen.</summary>
+        /// <summary>Complete type reference: base name, optionally `[bit width]`
+        /// directly behind it (only sensible for int/float, checked by the resolver),
+        /// optionally followed by one or more '*' for pointer depth.</summary>
+        /// <summary>Complete type reference: base name, optionally `[bit width]`
+        /// directly behind it (only sensible for int/float, checked by the resolver),
+        /// optionally followed by one or more '*' for pointer depth -
+        /// OR, if the name (or the name directly after it) is 'lambda',
+        /// a lambda type with an optional signature (see ParseLambdaSignature/
+        /// Ast.TypeRef.LambdaSignature documentation): `[ReturnType] lambda[&lt;P1,...,Pn&gt;]`
+        /// - the return type stands BEFORE 'lambda', not in the angle
+        /// brackets (which contain only the parameter types), that makes the
+        /// grammar unambiguous without needing a separator between return and
+        /// parameter types.</summary>
         private TypeRef ParseTypeRef(bool allowArray = false)
         {
             string baseName = ParseTypeAnnotationName();
@@ -702,29 +702,29 @@ namespace fire.Compiler
 
             if (baseName != "lambda" && Check(TokenType.Identifier) && Peek().Lexeme == "lambda")
             {
-                Advance(); // 'lambda' konsumieren - 'baseName' war in Wahrheit der Rückgabetyp
+                Advance(); // consume 'lambda' - 'baseName' was in truth the return type
                 return new TypeRef("lambda", null, 0, ParseLambdaSignature(returnTypeName: baseName), namespaces);
             }
 
             if (baseName == "lambda")
             {
-                // `lambda field|property|member|selector<T>`: ein Selektor (siehe LambdaSignature.IsSelector)
+                // `lambda field|property|member|selector<T>`: a selector (see LambdaSignature.IsSelector)
                 if (Check(TokenType.Identifier) && Peek().Lexeme is "field" or "property" or "member" or "method" or "selector" && PeekAt(1).Type == TokenType.Lt)
                 {
-                    string selectorKind = Advance().Lexeme; // 'field', 'property', 'member', 'method' oder 'selector'
+                    string selectorKind = Advance().Lexeme; // 'field', 'property', 'member', 'method' or 'selector'
                     Advance(); // '<'
                     var targetTypes = new List<string>();
-                    if (!Check(TokenType.Gt)) targetTypes.Add(ParseTypeAnnotationName()); // `lambda selector<>`: ohne Typ
+                    if (!Check(TokenType.Gt)) targetTypes.Add(ParseTypeAnnotationName()); // `lambda selector<>`: without a type
                     Expect(TokenType.Gt, $"Expected '>' after the type of 'lambda {selectorKind}<...>'");
                     return new TypeRef("lambda", null, 0, new LambdaSignature(null, targetTypes, IsSelector: true, SelectorKind: selectorKind), namespaces);
                 }
                 return new TypeRef("lambda", null, 0, ParseLambdaSignature(returnTypeName: null), namespaces);
             }
 
-            // 'byte' ist reines Sugar für 'int[8]' (siehe SPEC 8.10) - eine
-            // explizite Bitbreite DANACH wäre widersprüchlich/redundant und
-            // wird deshalb abgelehnt, statt sie stillschweigend zu ignorieren
-            // oder zu überschreiben.
+            // 'byte' is pure sugar for 'int[8]' (see SPEC 8.10) - an
+            // explicit bit width AFTER it would be contradictory/redundant and
+            // is therefore rejected, instead of silently ignoring
+            // or overriding it.
             if (baseName == "byte")
             {
                 if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
@@ -734,7 +734,7 @@ namespace fire.Compiler
                 return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
             }
 
-            // `[8]` = Bitbreite; leere Klammern `[]` gehören zum Array-Rückgabetyp (siehe unten).
+            // `[8]` = bit width; empty brackets `[]` belong to the array return type (see below).
             int? width = null;
             if (Check(TokenType.LBracket) && !NextIsEmptyBrackets())
             {
@@ -750,14 +750,14 @@ namespace fire.Compiler
             return new TypeRef(baseName, width, pointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
         }
 
-        /// <summary>Steht als nächstes `[` `]` (leere Klammern)? Das ist ein Array-Typ
-        /// (`int[]`), keine Bitbreite (`int[8]`).</summary>
+        /// <summary>Does `[` `]` (empty brackets) come next? That is an array type
+        /// (`int[]`), not a bit width (`int[8]`).</summary>
         private bool NextIsEmptyBrackets() =>
             Check(TokenType.LBracket) && PeekAt(1).Type == TokenType.RBracket;
 
-        /// <summary>Liest die leeren Klammerpaare eines Array-TYPS (`int[]`, `Dog[][]`) und liefert ihre
-        /// Anzahl. Nur dort erlaubt, wo der Typ keinen Bezeichner hat, hinter dem die Klammern stünden
-        /// (Rückgabetypen) - überall sonst gilt `Typ name[]`, und der Fehler sagt das.</summary>
+        /// <summary>Reads the empty bracket pairs of an array TYPE (`int[]`, `Dog[][]`) and returns their
+        /// count. Only allowed where the type has no identifier behind which the brackets would stand
+        /// (return types) - everywhere else `Type name[]` applies, and the error says so.</summary>
         private int ParseArrayTypeSuffix(bool allowArray)
         {
             int rank = 0;
@@ -774,10 +774,10 @@ namespace fire.Compiler
             return rank;
         }
 
-        /// <summary>Optionale `&lt;Param1,...,ParamN&gt;`-Parameterliste nach
-        /// 'lambda' - leer (parameterlos), wenn kein '&lt;' folgt. Jeder
-        /// Eintrag ist ein reiner Typname (siehe TypeRef.LambdaSignature-Doku
-        /// für die Begründung, warum keine rekursiven TypeRefs).</summary>
+        /// <summary>Optional `&lt;Param1,...,ParamN&gt;` parameter list after
+        /// 'lambda' - empty (parameterless) if no '&lt;' follows. Every
+        /// entry is a pure type name (see TypeRef.LambdaSignature documentation
+        /// for the reason why no recursive TypeRefs).</summary>
         private LambdaSignature ParseLambdaSignature(string? returnTypeName)
         {
             var paramTypes = new List<string>();
@@ -795,9 +795,9 @@ namespace fire.Compiler
             return new LambdaSignature(returnTypeName, paramTypes);
         }
 
-        /// <summary>Array-Deklarator NACH dem Bezeichner: eine oder mehrere
-        /// `[...]`-Gruppen, je mit optionalem Größen-Ausdruck (`[5]`) oder leer
-        /// (`[]`, unbestimmte Größe). Leere Liste = kein Array.</summary>
+        /// <summary>Array declarator AFTER the identifier: one or more
+        /// `[...]` groups, each with an optional size expression (`[5]`) or empty
+        /// (`[]`, undetermined size). Empty list = no array.</summary>
         private List<Expr?> ParseArrayRanks()
         {
             var ranks = new List<Expr?>();
@@ -811,47 +811,47 @@ namespace fire.Compiler
             return ranks;
         }
 
-        /// <summary>Heuristik, ob an dieser Stelle "Typ dann Name" folgt (für
-        /// Felder/Methoden/Parameter, wo der Typ optional ist): entweder ein
-        /// Basistyp-Keyword (danach kann noch Bitbreite/Pointer/Array folgen),
-        /// oder zwei aufeinanderfolgende Bezeichner (Klassenname + Membername).
-        /// Ein Klassenname als Zeiger-/Array-Typ in dieser Position ist damit
-        /// bewusst (noch) nicht abgedeckt - ein seltener/fortgeschrittener Fall,
-        /// der sich bei Bedarf nachrüsten lässt.</summary>
-        /// <summary>Erkennt "hier startet ein Typname (evtl. punktiert), gefolgt
-        /// von einem weiteren Bezeichner" - für die Entscheidung "Deklaration
-        /// oder etwas anderes" an JEDER Stelle, an der beides syntaktisch in
-        /// Frage käme (Top-Level/lokale Anweisung, Feld, Parameter, Methoden-/
-        /// extern-Rückgabetyp).
+        /// <summary>Heuristic whether "type then name" follows at this point (for
+        /// fields/methods/parameters, where the type is optional): either a
+        /// base-type keyword (afterwards bit width/pointer/array can still follow),
+        /// or two consecutive identifiers (class name + member name).
+        /// A class name as a pointer/array type in this position is thus
+        /// deliberately not (yet) covered - a rare/advanced case
+        /// that can be retrofitted if needed.</summary>
+        /// <summary>Recognises "a type name (possibly dotted) starts here, followed
+        /// by a further identifier" - for the decision "declaration
+        /// or something else" at EVERY place where both would come into
+        /// question syntactically (top-level/local statement, field, parameter, method/
+        /// extern return type).
         ///
-        /// Überspringt dafür die GESAMTE punktierte Kette (Geometry.Sub.Circle
-        /// ...) und schaut, was DANACH kommt - nur wenn DAS wieder ein
-        /// Bezeichner ist, war die Kette ein TYPNAME gefolgt vom eigentlichen
-        /// Deklarationsnamen. Das ist keine bloße Heuristik, sondern eindeutig:
-        /// zwei Bezeichner UNMITTELBAR hintereinander kommen in KEINEM
-        /// gültigen Ausdruck vor (dafür bräuchte es immer einen Operator/eine
-        /// Klammer/einen Punkt dazwischen) - 'Geometry.Funktion()' hat nach
-        /// der Kette ein '(', keinen Bezeichner (Ausdrucks-Aufruf), 'Geometry.
-        /// Circle x' dagegen schon (Deklaration). Klassenmitglieder-Zugriffe
-        /// wie 'Geometry.Circle.Radius' sind davon unabhängig - die laufen
-        /// über die normale Postfix-Kette ('.'-Zugriffe), sobald der erste
-        /// Teil als gewöhnlicher Ausdruck (nicht als Deklaration) erkannt
-        /// wurde.</summary>
+        /// For that it skips the ENTIRE dotted chain (Geometry.Sub.Circle
+        /// ...) and looks at what comes AFTER - only if THAT is again an
+        /// identifier was the chain a TYPE NAME followed by the actual
+        /// declaration name. This is no mere heuristic, but unambiguous:
+        /// two identifiers IMMEDIATELY in a row occur in NO
+        /// valid expression (that would always need an operator/a
+        /// bracket/a dot in between) - 'Geometry.Function()' has a '(' after
+        /// the chain, no identifier (expression call), 'Geometry.
+        /// Circle x', by contrast, does (declaration). Class-member accesses
+        /// like 'Geometry.Circle.Radius' are independent of that - they run
+        /// via the normal postfix chain ('.' accesses), as soon as the first
+        /// part was recognised as an ordinary expression (not as a
+        /// declaration).</summary>
         private bool NextLooksLikeTypeThenName()
         {
             if (TypeKeywords.Contains(Peek().Type)) return true;
-            // 'lambda' als Typname (siehe ParseTypeRef) kann - anders als ein
-            // Klassenname - auch von '<' statt einem weiteren Bezeichner
-            // gefolgt werden ('lambda<int> x'), das würde die Ketten-Prüfung
-            // unten verpassen.
+            // 'lambda' as a type name (see ParseTypeRef) can - unlike a
+            // class name - also be followed by '<' instead of a further
+            // identifier ('lambda<int> x'), which the chain check
+            // below would miss.
             if (Check(TokenType.Identifier) && Peek().Lexeme == "lambda") return true;
             if (!Check(TokenType.Identifier)) return false;
 
             int offset = 1;
             while (PeekAt(offset).Type == TokenType.Dot && PeekAt(offset + 1).Type == TokenType.Identifier)
                 offset += 2;
-            // `Dog[] Name`: leere Klammern hinter dem Typnamen (Array-Rückgabetyp) - wie zwei Bezeichner
-            // hintereinander kommt `Name[] Name` in keinem gültigen Ausdruck vor.
+            // `Dog[] Name`: empty brackets behind the type name (array return type) - like two identifiers
+            // in a row, `Name[] Name` occurs in no valid expression.
             while (PeekAt(offset).Type == TokenType.LBracket && PeekAt(offset + 1).Type == TokenType.RBracket)
                 offset += 2;
             return PeekAt(offset).Type == TokenType.Identifier;
@@ -947,11 +947,11 @@ namespace fire.Compiler
             return new ThrowStmt(_sourceIndex, line, value);
         }
 
-        /// <summary>`extern [ReturnType] Name(params)` - deklariert eine native
-        /// Funktionssignatur ohne Body. ReturnType fehlt -> kein Rückgabewert.
-        /// Bekommt die zuletzt per `#extern "libName"` gesetzte Bibliothek
-        /// gestempelt (siehe ParseDirective/_currentExternLib) - null, wenn
-        /// keine solche Direktive vor dieser Deklaration stand.</summary>
+        /// <summary>`extern [ReturnType] Name(params)` - declares a native
+        /// function signature without a body. ReturnType missing -> no return value.
+        /// Gets stamped with the library last set via `#extern "libName"`
+        /// (see ParseDirective/_currentExternLib) - null if
+        /// no such directive stood before this declaration.</summary>
         private Stmt ParseExternDecl()
         {
             int line = Peek().Line;
@@ -967,16 +967,16 @@ namespace fire.Compiler
             return new ExternDecl(_sourceIndex, line, returnType, name, parms, _currentExternLib);
         }
 
-        /// <summary>Präprozessor-Direktiven, aktuell `#extern "libName"` und
-        /// `#noshadow` - setzt entweder die Bibliothek, gegen die
-        /// NACHFOLGENDE `extern`-Deklarationen im Quelltext gestempelt
-        /// werden (bis zur nächsten `#extern`-Direktive oder Dateiende),
-        /// oder (siehe Ast.NoShadowDirective-Doku) schaltet den
-        /// Read-only-Globals-Snapshot in `fire`-Blöcken ab. `#extern`
-        /// erzeugt keinen eigenen, laufzeitrelevanten AST-Knoten (NoOpStmt) -
-        /// wirkt rein beim Parsen; `#noshadow` dagegen erzeugt einen
-        /// eigenen Knoten, den der Resolver in einem Vorab-Durchlauf
-        /// einsammelt (siehe dort).</summary>
+        /// <summary>Preprocessor directives, currently `#extern "libName"` and
+        /// `#noshadow` - sets either the library against which
+        /// FOLLOWING `extern` declarations in the source are stamped
+        /// (until the next `#extern` directive or end of file),
+        /// or (see Ast.NoShadowDirective documentation) switches off the
+        /// read-only globals snapshot in `fire` blocks. `#extern`
+        /// generates no AST node of its own relevant at runtime (NoOpStmt) -
+        /// acts purely when parsing; `#noshadow`, by contrast, generates an
+        /// own node that the resolver collects in a pre-pass
+        /// (see there).</summary>
         private Stmt ParseDirective()
         {
             int line = Peek().Line;
@@ -1012,10 +1012,10 @@ namespace fire.Compiler
                 return new TimeoutDirective(_sourceIndex, line, value);
             }
 
-            // '#using' ist ab jetzt reine Preprocessor-Angelegenheit (siehe
-            // Preprocessing.Preprocessor.ProcessInner/ProcessedSource) - eine
-            // '#using'-Zeile wird dort schon erkannt und aus dem Text entfernt,
-            // der Parser sieht sie nie mehr. Kein Fall dafür hier mehr nötig.
+            // '#using' is from now on purely a preprocessor matter (see
+            // Preprocessing.Preprocessor.ProcessInner/ProcessedSource) - a
+            // '#using' line is already recognised there and removed from the text,
+            // the parser never sees it any more. No case for it needed here any more.
             throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#timeout value')", Peek());
         }
 
@@ -1027,20 +1027,20 @@ namespace fire.Compiler
             return new UnsafeStmt(_sourceIndex, line, body);
         }
 
-        /// <summary>`with ausdruck { .Feld = x; .Methode() }` (BASIC-artig) -
-        /// reines Zucker, das der Parser vollständig auflöst: der `with`-
-        /// Ausdruck wird EINMAL in eine synthetische, blockweit gültige
-        /// Variable geschrieben, und jedes '.' am Anfang eines Ausdrucks
-        /// INNERHALB des Blocks (siehe ParsePrimary, TokenType.Dot-Fall)
-        /// bezieht sich implizit auf genau diese Variable. Resolver/Compiler
-        /// sehen danach nur noch ganz normale `IdentifierExpr`/`MemberExpr`-
-        /// Knoten - keine eigene Runtime-Unterstützung nötig. Als eigener
-        /// `Stmt.BlockStmt` kompiliert, damit die synthetische Variable einen
-        /// isolierten Scope bekommt (kollidiert nicht mit gleichnamigen
-        /// Variablen davor/danach, wird beim Verlassen des Blocks wieder
-        /// freigegeben) - `_withVarStack` erlaubt dabei beliebige
-        /// Verschachtelung (ein '.' bezieht sich immer auf den INNERSTEN
-        /// umschließenden `with`-Block).</summary>
+        /// <summary>`with expression { .Field = x; .Method() }` (BASIC-like) -
+        /// pure sugar that the parser resolves completely: the `with`
+        /// expression is written ONCE into a synthetic, block-wide valid
+        /// variable, and every '.' at the start of an expression
+        /// INSIDE the block (see ParsePrimary, TokenType.Dot case)
+        /// refers implicitly to exactly this variable. Resolver/compiler
+        /// afterwards see only quite ordinary `IdentifierExpr`/`MemberExpr`
+        /// nodes - no runtime support of its own needed. Compiled as a `Stmt.BlockStmt` of its own,
+        /// so that the synthetic variable gets an
+        /// isolated scope (does not collide with variables
+        /// of the same name before/after, is released again when leaving the block
+        /// ) - `_withVarStack` allows arbitrary
+        /// nesting here (a '.' always refers to the INNERMOST
+        /// enclosing `with` block).</summary>
         private Stmt ParseWithStmt()
         {
             int line = Peek().Line;
@@ -1062,31 +1062,31 @@ namespace fire.Compiler
                 if (Check(TokenType.Catch))
                 {
                     statements.Add(ParseImplicitCatchTail());
-                    break; // ParseImplicitCatchTail hat den Rest des Blocks bereits konsumiert.
+                    break; // ParseImplicitCatchTail has already consumed the rest of the block.
                 }
                 statements.Add(ParseStatement());
             }
             Expect(TokenType.RBrace, "Expected '}' at the end of the with block");
 
-            // Erst NACH dem Parsen des Bodies wieder abbauen - Verschachtelung
-            // (with a { with b { ... } }) braucht den äußeren Eintrag ja noch,
-            // während der innere Body geparst wird, aber nicht mehr danach.
+            // Only tear down AFTER parsing the body - nesting
+            // (with a { with b { ... } }) still needs the outer entry
+            // while the inner body is parsed, but not afterwards.
             _withVarStack.Pop();
 
             return new Stmt.BlockStmt(_sourceIndex, line, statements);
         }
 
-        /// <summary>`switch(ausdruck) { case OP wert: ... break; case default: ... }`
-        /// - reiner Zucker wie `with`, komplett zu einer If/Else-if-Kette
-        /// desugarn: der switch-Ausdruck wird EINMAL in eine synthetische
-        /// Variable geschrieben, jeder `case`-Zweig wird zu einer Bedingung
-        /// `__switchN__ OP wert` (OP fehlt -> `==`, wie bei einem klassischen
-        /// switch), `case default` wird zum abschließenden `else`. Resolver/
-        /// Compiler/VM sehen davon nichts - normale If/BinaryExpr-Knoten.
-        /// Anders als ein klassisches C-switch: KEIN Fallthrough (jeder Zweig
-        /// ist eine eigene, exklusive If-Bedingung, kein Sprung ins Nächste),
-        /// `break` ist deshalb rein syntaktischer Zweig-Abschluss (siehe
-        /// ParseSwitchCaseBody), keine echte Sprunganweisung.</summary>
+        /// <summary>`switch(expression) { case OP value: ... break; case default: ... }`
+        /// - pure sugar like `with`, completely desugared
+        /// into an if/else-if chain: the switch expression is written ONCE into a synthetic
+        /// variable, every `case` branch becomes a condition
+        /// `__switchN__ OP value` (OP missing -> `==`, as with a classic
+        /// switch), `case default` becomes the final `else`. Resolver/
+        /// compiler/VM see nothing of it - normal If/BinaryExpr nodes.
+        /// Unlike a classic C switch: NO fallthrough (every branch
+        /// is an own, exclusive if condition, no jump into the next one),
+        /// `break` is therefore a purely syntactic branch end (see
+        /// ParseSwitchCaseBody), no real jump statement.</summary>
         private Stmt ParseSwitchStmt()
         {
             int line = Peek().Line;
@@ -1137,9 +1137,9 @@ namespace fire.Compiler
             }
             Expect(TokenType.RBrace, "Expected '}' at the end of the switch");
 
-            // If/Else-if-Kette von HINTEN nach VORNE aufbauen - 'case default'
-            // (falls vorhanden) wird das innerste 'else', sonst bleibt es null
-            // (keiner der Fälle trifft zu -> switch tut einfach nichts).
+            // Build the if/else-if chain from BACK to FRONT - 'case default'
+            // (if present) becomes the innermost 'else', otherwise it stays null
+            // (none of the cases applies -> switch simply does nothing).
             Stmt? chain = defaultBody != null ? new Stmt.BlockStmt(_sourceIndex, line, defaultBody) : null;
             for (int i = cases.Count - 1; i >= 0; i--)
                 chain = new IfStmt(_sourceIndex, line, cases[i].Condition, new Stmt.BlockStmt(_sourceIndex, line, cases[i].Body), chain);
@@ -1153,11 +1153,11 @@ namespace fire.Compiler
             return new Stmt.BlockStmt(_sourceIndex, line, outerStatements);
         }
 
-        /// <summary>Parst den Wertausdruck einer case-Bedingung mit
-        /// unterdrückter ':'-Postfix-Behandlung auf DIESER Klammerungstiefe
-        /// (siehe _suppressColonPostfixAtDepth-Doku) - sonst würde z.B.
-        /// 'case 2:' das ':' fälschlich als Einheiten-Koersion an den Wert
-        /// '2' hängen, statt es dem switch als Zweig-Trenner zu überlassen.</summary>
+        /// <summary>Parses the value expression of a case condition with
+        /// suppressed ':' postfix handling at THIS bracket depth
+        /// (see _suppressColonPostfixAtDepth documentation) - otherwise e.g.
+        /// 'case 2:' would wrongly attach the ':' as a unit coercion to the value
+        /// '2', instead of leaving it to the switch as the branch separator.</summary>
         private Expr ParseSwitchCaseValue()
         {
             var saved = _suppressColonPostfixAtDepth;
@@ -1172,17 +1172,17 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Statements EINES case/default-Zweigs - bis zum nächsten
-        /// 'case', '}', ODER einem 'break' auf oberster Ebene DIESES Zweigs.
-        /// 'break' wird dabei als Zweig-ABSCHLUSS konsumiert (keine eigene
-        /// Anweisung, keine echte Sprunganweisung - siehe ParseSwitchStmt-
-        /// Doku) und muss deshalb, falls verwendet, die LETZTE Anweisung des
-        /// Zweigs sein; alles danach würde nicht mehr zu diesem Zweig gehören.
-        /// Ein 'break' INNERHALB einer verschachtelten Schleife/eines
-        /// verschachtelten Blocks in diesem Zweig wird davon nicht berührt -
-        /// das wird schon beim rekursiven ParseStatement()-Aufruf für die
-        /// Schleife/den Block mitkonsumiert, bevor diese Schleife hier
-        /// überhaupt wieder zum Zug kommt.</summary>
+        /// <summary>Statements of ONE case/default branch - up to the next
+        /// 'case', '}', OR a 'break' at the top level of THIS branch.
+        /// 'break' is consumed as the branch END (no statement of its own,
+        /// no real jump statement - see ParseSwitchStmt
+        /// documentation) and must therefore, if used, be the LAST statement of the
+        /// branch; everything after it would no longer belong to this branch.
+        /// A 'break' INSIDE a nested loop/a
+        /// nested block in this branch is not touched by that -
+        /// it is already consumed along with the recursive ParseStatement() call for the
+        /// loop/the block, before this loop here
+        /// gets a turn at all.</summary>
         private List<Stmt> ParseSwitchCaseBody()
         {
             var body = new List<Stmt>();
@@ -1199,18 +1199,18 @@ namespace fire.Compiler
         }
 
         // -----------------------------------------------------------
-        // Multithreading (docs/THREADING_DESIGN.md) - erste Ausbaustufe:
-        // nur `fire { ... }` / `fire taking X { ... }`.
+        // Multithreading (docs/THREADING_DESIGN.md) - first development stage:
+        // only `fire { ... }` / `fire taking X { ... }`.
         // -----------------------------------------------------------
 
-        /// <summary>`fire { ... }` / `fire taking X { ... }` - siehe
-        /// Ast.FireStmt-Doku für den Umfang dieser Ausbaustufe (bewusst noch
-        /// ohne `fire MethodA()`-Aufrufform, ohne `with actorA`).</summary>
+        /// <summary>`fire { ... }` / `fire taking X { ... }` - see
+        /// Ast.FireStmt documentation for the scope of this development stage (deliberately still
+        /// without the `fire MethodA()` call form, without `with actorA`).</summary>
         /// <summary>`fire { ... }` / `fire taking X { ... }` / `fire with actorA { ... }`
-        /// / `fire MethodA(args) ...` - siehe Ast.FireStmt-Doku für den vollen
-        /// Umfang. Die Aufrufform (Identifier direkt gefolgt von '(') wird
-        /// VOR den taking/with-Klauseln erkannt, weil sie selbst KEINE
-        /// öffnende '{' danach hat (siehe ParseFireCallForm).</summary>
+        /// / `fire MethodA(args) ...` - see Ast.FireStmt documentation for the full
+        /// scope. The call form (identifier directly followed by '(') is recognised
+        /// BEFORE the taking/with clauses, because it itself has NO
+        /// opening '{' after it (see ParseFireCallForm).</summary>
         private Stmt ParseFireStmt()
         {
             int line = Peek().Line;
@@ -1219,7 +1219,7 @@ namespace fire.Compiler
             if (Check(TokenType.Identifier) && PeekAt(1).Type == TokenType.LParen)
                 return ParseFireCallForm(line);
 
-            // `fire global { ... }`: Auftrag für das Hauptprogramm statt eines neuen Threads (docs/THREADING_DESIGN.md Abschnitt 7)
+            // `fire global { ... }`: job for the main program instead of a new thread (docs/THREADING_DESIGN.md section 7)
             if (Check(TokenType.Identifier) && Peek().Lexeme == "global" && (PeekAt(1).Type == TokenType.LBrace || PeekAt(1).Type == TokenType.Taking))
                 return ParseFireGlobal(line);
 
@@ -1228,8 +1228,8 @@ namespace fire.Compiler
             return new FireStmt(_sourceIndex, line, takingCaptures, withVarName, withSource, body);
         }
 
-        /// <summary>`sync global { ... }` (docs/THREADING_DESIGN.md Abschnitt 7): ein Block, der mit exklusivem Zugriff auf die Globals läuft.
-        /// Entzuckert zu `SectionEnter; try { Body } finally { SectionExit }` - die Sektion endet so auch bei `throw` im Block.</summary>
+        /// <summary>`sync global { ... }` (docs/THREADING_DESIGN.md section 7): a block that runs with exclusive access to the globals.
+        /// Desugared to `SectionEnter; try { Body } finally { SectionExit }` - the section thus also ends on a `throw` in the block.</summary>
         private Stmt ParseSyncGlobalBlock()
         {
             int line = Peek().Line;
@@ -1257,9 +1257,9 @@ namespace fire.Compiler
             return new PostGlobalStmt(_sourceIndex, line, lambda, captures.Select(c => c.Source).ToList());
         }
 
-        /// <summary>`taking X`/`with actorA`, in beliebiger Reihenfolge, `with`
-        /// höchstens einmal, `taking` beliebig oft wiederholbar (siehe
-        /// Ast.FireStmt.TakingCaptures-Doku für die Slot-Reihenfolge).</summary>
+        /// <summary>`taking X`/`with actorA`, in any order, `with`
+        /// at most once, `taking` repeatable any number of times (see
+        /// Ast.FireStmt.TakingCaptures documentation for the slot order).</summary>
         private (List<FireTakingCapture> Taking, string? WithVarName, Expr? WithSource) ParseFireTakingWithClauses()
         {
             var takingCaptures = new List<FireTakingCapture>();
@@ -1272,10 +1272,10 @@ namespace fire.Compiler
                 {
                     Advance();
                     var nameTok = Expect(TokenType.Identifier, "Expected an identifier after 'taking'");
-                    // Referenziert die BEREITS im umgebenden Scope deklarierte
-                    // Variable gleichen Namens - ganz normale Identifier-
-                    // Auflösung im AUFRUFENDEN Kontext (nicht im isolierten
-                    // Fire-Block-Scope, siehe Resolver.ResolveFireStmt).
+                    // References the variable of the same name ALREADY declared
+                    // in the enclosing scope - quite normal identifier
+                    // resolution in the CALLING context (not in the isolated
+                    // fire block scope, see Resolver.ResolveFireStmt).
                     takingCaptures.Add(new FireTakingCapture(nameTok.Lexeme, new IdentifierExpr(nameTok.Line, nameTok.Lexeme)));
                 }
                 else
@@ -1292,18 +1292,18 @@ namespace fire.Compiler
             return (takingCaptures, withVarName, withSource);
         }
 
-        /// <summary>`fire MethodA(args) [taking/with-Klauseln]` (siehe
-        /// Ast.FireStmt-Doku für die genaue Entzuckerung) - reines
-        /// Parser-Sugar: `this` und jedes Argument werden wie zusätzliche
-        /// `taking`-Ziele behandelt (unter internen, für Nutzer-Code nicht
-        /// schreibbaren Namen, siehe ThisAndArgCaptureNamePrefix), der Body
-        /// besteht aus genau einem Aufruf der genommenen Methode auf der
-        /// genommenen `this`-Kopie mit den genommenen Argument-Kopien. Kein
-        /// eigener Resolver-/Compiler-/VM-Code nötig - der entstehende Knoten
-        /// ist für den Rest des Compilers ein ganz normales FireStmt.
-        /// Erfordert 'this' im aufrufenden Kontext (nur innerhalb einer
-        /// Methode/eines Konstruktors gültig - wird vom Resolver wie jedes
-        /// andere 'this' geprüft, keine Sonderprüfung hier nötig).</summary>
+        /// <summary>`fire MethodA(args) [taking/with clauses]` (see
+        /// Ast.FireStmt documentation for the exact desugaring) - pure
+        /// parser sugar: `this` and every argument are treated like additional
+        /// `taking` targets (under internal names that cannot be
+        /// written in user code, see ThisAndArgCaptureNamePrefix), the body
+        /// consists of exactly one call of the taken method on the
+        /// taken `this` copy with the taken argument copies. No
+        /// resolver/compiler/VM code of its own needed - the resulting node
+        /// is for the rest of the compiler an entirely normal FireStmt.
+        /// Requires 'this' in the calling context (only valid inside a
+        /// method/a constructor - checked by the resolver like any
+        /// other 'this', no special check needed here).</summary>
         private Stmt ParseFireCallForm(int line)
         {
             string methodName = Advance().Lexeme;
@@ -1335,10 +1335,10 @@ namespace fire.Compiler
             return new FireStmt(_sourceIndex, line, allCaptures, withVarName, withSource, body);
         }
 
-        /// <summary>`terminate()` / `terminate(wert)` - siehe Ast.TerminateStmt-
-        /// Doku. Syntaktisch wie ein Funktionsaufruf, aber ein eigenes
-        /// Statement (kein Ausdruck) - `terminate` hat keinen sinnvollen
-        /// "Ergebniswert", der weiterverwendet werden könnte.</summary>
+        /// <summary>`terminate()` / `terminate(value)` - see Ast.TerminateStmt
+        /// documentation. Syntactically like a function call, but a statement of its own
+        /// (not an expression) - `terminate` has no sensible
+        /// "result value" that could be used further.</summary>
         private Stmt ParseTerminateStmt()
         {
             int line = Peek().Line;
@@ -1352,9 +1352,9 @@ namespace fire.Compiler
             return new TerminateStmt(_sourceIndex, line, value);
         }
 
-        /// <summary>`process X` (blockierend, siehe Ast.ProcessStmt-Doku).
-        /// Die nicht-blockierende Variante `try process X` ist dagegen ein
-        /// AUSDRUCK und wird in ParsePrimary behandelt.</summary>
+        /// <summary>`process X` (blocking, see Ast.ProcessStmt documentation).
+        /// The non-blocking variant `try process X`, by contrast, is an
+        /// EXPRESSION and is handled in ParsePrimary.</summary>
         private Stmt ParseProcessStmt()
         {
             int line = Peek().Line;
@@ -1365,15 +1365,15 @@ namespace fire.Compiler
         }
 
         /// <summary>`catch threads(ExceptionType e) { ... }` / `catch threads() { ... }`
-        /// / `catch terminate(v) { ... }` (siehe Ast.CatchThreadsDecl/
-        /// CatchTerminateDecl-Doku) - GLOBALE Registrierung, nur an
-        /// Top-Level-Programmposition erkannt (siehe ParseProgram), damit sie
-        /// nicht mit dem bestehenden "catch ohne try erweitert den Block"-
-        /// Feature (ParseBlock/ParseImplicitCatchTail) kollidiert - beide
-        /// beginnen mit demselben 'catch'-Token, sind aber an dieser Stelle
-        /// bereits per Vorausschau (folgt 'threads'/'terminate'?)
-        /// unterschieden, bevor überhaupt entschieden wird, welcher der
-        /// beiden Wege geparst wird.</summary>
+        /// / `catch terminate(v) { ... }` (see Ast.CatchThreadsDecl/
+        /// CatchTerminateDecl documentation) - GLOBAL registration, only
+        /// recognised at top-level program position (see ParseProgram), so that it does
+        /// not collide with the existing "catch without try extends the block"
+        /// feature (ParseBlock/ParseImplicitCatchTail) - both
+        /// begin with the same 'catch' token, but are at this point
+        /// already told apart by lookahead (does 'threads'/'terminate' follow?)
+        /// before it is decided at all which of the
+        /// two ways is parsed.</summary>
         private Stmt ParseGlobalHandlerDecl()
         {
             int line = Peek().Line;
@@ -1390,8 +1390,8 @@ namespace fire.Compiler
                 return new CatchTerminateDecl(_sourceIndex, line, paramName, terminateBody);
             }
 
-            // 'threads' ist - wie 'get'/'set'/'value' bei Properties - ein rein
-            // kontextabhängiger Bezeichner, kein reserviertes Schlüsselwort.
+            // 'threads' is - like 'get'/'set'/'value' with properties - a purely
+            // context-dependent identifier, no reserved keyword.
             Expect(TokenType.Identifier, "Expected 'threads' or 'terminate' after 'catch'");
             Expect(TokenType.LParen, "Expected '(' after 'catch threads'");
 
@@ -1399,9 +1399,9 @@ namespace fire.Compiler
             string? varName = null;
             if (!Check(TokenType.RParen))
             {
-                // 'catch threads(ExceptionType e)' - Typ-dann-Name, wie ein
-                // normaler Methodenparameter (und inzwischen auch wie beim
-                // normalen 'catch (TypeName varName)' - siehe ParseCatchClause).
+                // 'catch threads(ExceptionType e)' - type then name, like an
+                // ordinary method parameter (and meanwhile also like with the
+                // normal 'catch (TypeName varName)' - see ParseCatchClause).
                 string typeName = Expect(TokenType.Identifier, "Expected a type name in 'catch threads(...)'").Lexeme;
                 typeRef = new TypeRef(typeName, null, 0, Namespaces: CurrentNamespaces());
                 varName = Expect(TokenType.Identifier, "Expected a parameter name in 'catch threads(...)'").Lexeme;
@@ -1417,18 +1417,18 @@ namespace fire.Compiler
         private Stmt ParseClassDecl() => ParseClassOrActorDecl(isActor: false);
         private Stmt ParseActorDecl() => ParseClassOrActorDecl(isActor: true);
 
-        /// <summary>Gemeinsame Grammatik für `class Name { ... }` und
-        /// `actor Name { ... }` (siehe Ast.ClassDecl.IsActor-Doku) - beide
-        /// teilen sich Felder/Methoden/Konstruktor/Vererbung 1:1, nur das
-        /// `IsActor`-Flag am Ergebnis unterscheidet sie. `extends` (Klassen-
-        /// Erweiterung, siehe ParseClassExtensionDecl/MergeClassExtensions)
-        /// funktioniert für BEIDE identisch - `class extends AktorName { ... }`
-        /// UND `actor extends AktorName { ... }` erweitern dieselbe
-        /// Zielklasse gleichermaßen, da die Erweiterung rein nach NAMEN
-        /// zusammengeführt wird und das `IsActor`-Flag der bereits
-        /// bestehenden, ORIGINALEN Deklaration unangetastet lässt - welches
-        /// Schlüsselwort man bei der Erweiterung selbst schreibt, spielt
-        /// deshalb keine Rolle.</summary>
+        /// <summary>Common grammar for `class Name { ... }` and
+        /// `actor Name { ... }` (see Ast.ClassDecl.IsActor documentation) - both
+        /// share fields/methods/constructor/inheritance 1:1, only the
+        /// `IsActor` flag on the result distinguishes them. `extends` (class
+        /// extension, see ParseClassExtensionDecl/MergeClassExtensions)
+        /// works identically for BOTH - `class extends ActorName { ... }`
+        /// AND `actor extends ActorName { ... }` extend the same
+        /// target class equally, since the extension is merged purely by NAME
+        /// and leaves the `IsActor` flag of the already
+        /// existing, ORIGINAL declaration untouched - which
+        /// keyword one writes for the extension itself therefore
+        /// plays no role.</summary>
         private Stmt ParseClassOrActorDecl(bool isActor)
         {
             int line = Peek().Line;
@@ -1440,49 +1440,49 @@ namespace fire.Compiler
 
             string name = Expect(TokenType.Identifier, "Expected a class name").Lexeme;
 
-            // Generische Typ-Parameter: 'class Name<T1, T2>' - siehe
-            // ParseTypeParamList. Leer (kein '<' vorhanden) für eine
-            // nicht-generische Klasse.
+            // Generic type parameters: 'class Name<T1, T2>' - see
+            // ParseTypeParamList. Empty (no '<' present) for a
+            // non-generic class.
             var typeParamNames = ParseOptionalTypeParamNames();
 
-            // Rohe Namensliste nach ':' - welcher Name (max. einer) die
-            // Basisklasse ist und welche Interfaces sind, entscheidet der
-            // Resolver (der Parser kennt die Klassen-/Interface-Tabelle noch
-            // nicht). `class Foo : Bar, IBaz, IQux` oder in beliebiger
-            // Reihenfolge, solange höchstens ein Name eine echte Klasse ist.
-            // Jeder Name trägt (wie jeder TypeRef) den HIER, beim Parsen des
-            // Klassenkopfs aktuellen Namespace-Kontext (SPEC "Namespaces").
+            // Raw name list after ':' - which name (at most one) is the
+            // base class and which are interfaces is decided by the
+            // resolver (the parser does not yet know the class/interface table
+            // ). `class Foo : Bar, IBaz, IQux` or in any
+            // order, as long as at most one name is a real class.
+            // Every name carries (like every TypeRef) the namespace context
+            // current HERE, when parsing the class head (SPEC "Namespaces").
             var namespaces = CurrentNamespaces();
             var baseRefs = new List<TypeRef>();
             if (Match(TokenType.Colon))
             {
                 do
                 {
-                    // Auch qualifiziert ('Geometry.Shape' - eine Basisklasse in einem
-                    // anderen Namespace, siehe SPEC "Namespaces").
+                    // Also qualified ('Geometry.Shape' - a base class in another
+                    // namespace, see SPEC "Namespaces").
                     string baseName = ParseDottedName("base class/interface names");
-                    // `class Home : Command<IDevice>`: die Typ-Argumente werden (wie überall) nicht ausgewertet, nur ihre ANZAHL wählt die generische
-                    // Klasse bzw. das generische Interface dieses Namens (siehe GenericClassNames.ResolveNewTarget).
+                    // `class Home : Command<IDevice>`: the type arguments are (as everywhere) not evaluated, only their COUNT chooses the generic
+                    // class or the generic interface of this name (see GenericClassNames.ResolveNewTarget).
                     int typeArgCount = ParseOptionalTypeParamNames().Count;
                     baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces, TypeArgCount: typeArgCount));
                 } while (Match(TokenType.Comma));
             }
 
-            // 'where'-Klauseln: EINE pro Typ-Parameter (C#-artig), in
-            // beliebiger Reihenfolge, alle VOR der öffnenden '{'. Siehe
-            // ParseWhereClause für die Constraint-Grammatik selbst.
+            // 'where' clauses: ONE per type parameter (C#-like), in
+            // any order, all BEFORE the opening '{'. See
+            // ParseWhereClause for the constraint grammar itself.
             var typeParams = ParseWhereClauses(typeParamNames, line);
 
             Expect(TokenType.LBrace, "Expected '{' after the class head");
             var members = new List<Stmt>();
-            // Für statische Auto-Properties (siehe ParsePropertyBody) - das
-            // synthetisierte Backing-Field ist dort ein Zugriff über
-            // 'ClassName.feld' statt 'this.feld' (keine Instanz gebunden),
-            // braucht also den QUALIFIZIERTEN Klassennamen, GENAU wie er
-            // gleich unten in ClassDecl selbst landet. Gespeichert/
-            // wiederhergestellt statt direkt zugewiesen, falls eine Klasse
-            // jemals verschachtelt vorkäme (aktuell nicht möglich, aber
-            // robust für den Fall).
+            // For static auto-properties (see ParsePropertyBody) - the
+            // synthesised backing field there is an access via
+            // 'ClassName.field' instead of 'this.field' (no instance bound),
+            // so it needs the QUALIFIED class name, EXACTLY as it
+            // lands in ClassDecl itself right below. Saved/
+            // restored instead of assigned directly, in case a class
+            // were ever nested (currently not possible, but
+            // robust for that case).
             string? savedClassName = _currentClassName;
             bool savedClassIsGeneric = _currentClassIsGeneric;
             _currentClassName = QualifyDeclName(name);
@@ -1502,53 +1502,53 @@ namespace fire.Compiler
             return new ClassDecl(_sourceIndex, line, QualifyDeclName(name), baseRefs, members, typeParams, IsActor: isActor);
         }
 
-        /// <summary>`&lt;T1, T2, ...&gt;` direkt nach einem Klassen-/Methodennamen -
-        /// liefert nur die reinen NAMEN (leere Liste, falls kein '&lt;'
-        /// vorhanden), die Constraints selbst kommen separat über
-        /// 'where'-Klauseln (siehe ParseWhereClauses). Getrennt von den
-        /// Constraints geparst, weil 'class Name&lt;T&gt; : Base' die Basisklasse
-        /// dazwischen braucht (C#-artige Reihenfolge: Typ-Parameter, dann
-        /// Basisklasse(n), dann 'where'-Klauseln, dann Body).</summary>
+        /// <summary>`&lt;T1, T2, ...&gt;` directly after a class/method name -
+        /// returns only the pure NAMES (empty list if no '&lt;'
+        /// present), the constraints themselves come separately via
+        /// 'where' clauses (see ParseWhereClauses). Parsed separately from the
+        /// constraints, because 'class Name&lt;T&gt; : Base' needs the base class
+        /// in between (C#-like order: type parameters, then
+        /// base class(es), then 'where' clauses, then body).</summary>
         private List<string> ParseOptionalTypeParamNames()
         {
             var names = new List<string>();
             if (!Match(TokenType.Lt)) return names;
             do
             {
-                // ParseTypeAnnotationName() statt Expect(Identifier) - ein
-                // Typ-ARGUMENT (bei 'new Name<Arg>') kann ein primitiver Typ
-                // wie 'int'/'float' sein, der als EIGENES Keyword-Token
-                // gelexed wird, kein TokenType.Identifier (siehe
-                // ParseTypeAnnotationName-Doku an anderer Stelle). Für
-                // Typ-PARAMETER-Namen (bei der Deklaration, immer normale
-                // Bezeichner wie 'T') ist das ein Aufruf ohne Unterschied.
+                // ParseTypeAnnotationName() instead of Expect(Identifier) - a
+                // type ARGUMENT (with 'new Name<Arg>') can be a primitive type
+                // like 'int'/'float' that is lexed as a KEYWORD token of its own,
+                // not a TokenType.Identifier (see
+                // ParseTypeAnnotationName documentation elsewhere). For
+                // type PARAMETER names (at the declaration, always ordinary
+                // identifiers like 'T') this is a call without difference.
                 names.Add(ParseTypeAnnotationName());
-                // Verschachtelte Typ-ARGUMENTE ('Box<int>' als EIN Argument
-                // von z.B. 'new Container<Box<int>>()') rein SYNTAKTISCH
-                // überspringen, OHNE sie strukturell abzubilden - es gibt
-                // keine echte generische Spezialisierung (SPEC 5.8), die
-                // Constraint-Prüfung (CheckTypeArgs) arbeitet ohnehin nur
-                // mit dem ÄUSSEREN Namen ('Box', nicht 'Box<int>'), das
-                // Wegwerfen der inneren Argumente ist deshalb unschädlich.
-                // Bei einer Typ-PARAMETER-Deklaration ('class Box<T>') ist
-                // dieser Aufruf ein reines No-op (T hat nie ein '<' danach).
+                // Skip nested type ARGUMENTS ('Box<int>' as ONE argument
+                // of e.g. 'new Container<Box<int>>()') purely SYNTACTICALLY,
+                // WITHOUT representing them structurally - there is
+                // no real generic specialisation (SPEC 5.8), the
+                // constraint check (CheckTypeArgs) works anyway only
+                // with the OUTER name ('Box', not 'Box<int>'), so
+                // discarding the inner arguments is harmless.
+                // With a type PARAMETER declaration ('class Box<T>')
+                // this call is a pure no-op (T never has a '<' after it).
                 SkipOptionalNestedTypeArgs();
             } while (Match(TokenType.Comma));
             Expect(TokenType.Gt, "Expected '>' after the type parameter list");
             return names;
         }
 
-        /// <summary>Siehe ParseOptionalTypeParamNames - konsumiert eine
-        /// optionale, beliebig tief verschachtelte `&lt;...&gt;`-Typ-Argumentliste
-        /// (`Box&lt;Box&lt;int&gt;&gt;`, `Box&lt;A, B&lt;C&gt;&gt;`, ...) rein syntaktisch, wirft
-        /// den Inhalt komplett weg. Rekursiv für beliebige Verschachtelungs-
-        /// tiefe. Jedes '&gt;' wird einzeln über Expect(Gt) gelesen (NIE über
-        /// die Ausdrucks-Präzedenzkette/ParseShift) - deshalb kein Konflikt
-        /// mit `&gt;&gt;` als Schiebeoperator: der Lexer liefert für `&lt;`/`&gt;`
-        /// ohnehin immer nur Einzelzeichen-Tokens (außer `&lt;=`/`&gt;=`), ein
-        /// `Box&lt;Box&lt;int&gt;&gt;` endet also mit zwei EINZELNEN `&gt;`-Tokens, die
-        /// hier ganz normal nacheinander (einmal pro Verschachtelungsebene)
-        /// konsumiert werden.</summary>
+        /// <summary>See ParseOptionalTypeParamNames - consumes an
+        /// optional, arbitrarily deeply nested `&lt;...&gt;` type argument list
+        /// (`Box&lt;Box&lt;int&gt;&gt;`, `Box&lt;A, B&lt;C&gt;&gt;`, ...) purely syntactically, throws
+        /// the content away completely. Recursive for arbitrary nesting
+        /// depth. Every '&gt;' is read individually via Expect(Gt) (NEVER via
+        /// the expression precedence chain/ParseShift) - hence no conflict
+        /// with `&gt;&gt;` as a shift operator: for `&lt;`/`&gt;` the lexer
+        /// anyway always delivers only single-character tokens (except `&lt;=`/`&gt;=`), so a
+        /// `Box&lt;Box&lt;int&gt;&gt;` ends with two SINGLE `&gt;` tokens, which
+        /// here quite normally one after the other (once per
+        /// nesting level).</summary>
         private void SkipOptionalNestedTypeArgs()
         {
             if (!Match(TokenType.Lt)) return;
@@ -1560,14 +1560,14 @@ namespace fire.Compiler
             Expect(TokenType.Gt, "Expected '>' after the nested type argument list");
         }
 
-        /// <summary>Null oder mehr `where Name constraint-group (',' constraint-group)*`
-        /// -Klauseln, EINE pro Typ-Parameter - jede referenziert einen der in
-        /// `typeParamNames` deklarierten Namen (Fehler bei unbekanntem/
-        /// doppeltem Namen). Liefert für JEDEN deklarierten Typ-Parameter
-        /// einen TypeParam-Eintrag, auch wenn er KEIN 'where' hat (dann mit
-        /// leeren ConstraintGroups - uneingeschränkt). Reine Deklarations-
-        /// Syntax; ob überhaupt Typ-Parameter vorhanden sind, entscheidet
-        /// `typeParamNames` (leer -> auch kein 'where' erlaubt).</summary>
+        /// <summary>Zero or more `where Name constraint-group (',' constraint-group)*`
+        /// clauses, ONE per type parameter - each references one of the names
+        /// declared in `typeParamNames` (error on unknown/
+        /// duplicate name). Returns for EVERY declared type parameter
+        /// a TypeParam entry, even if it has NO 'where' (then with
+        /// empty ConstraintGroups - unrestricted). Pure declaration
+        /// syntax; whether type parameters exist at all is decided by
+        /// `typeParamNames` (empty -> no 'where' allowed either).</summary>
         private List<TypeParam> ParseWhereClauses(List<string> typeParamNames, int declLine)
         {
             var constraintsByName = new Dictionary<string, List<TypeConstraintGroup>>();
@@ -1602,19 +1602,19 @@ namespace fire.Compiler
                 .ToList();
         }
 
-        /// <summary>Eine einzelne Bedingung: `is of Name` oder `is in "unitName"`
-        /// (Einheitenname als String-Literal, wie im Beispiel `is in "mm"` -
-        /// nicht als Bezeichner, da Einheitennamen wie `mm`/`kg` sonst mit
-        /// Typnamen kollidieren könnten).</summary>
+        /// <summary>A single condition: `is of Name` or `is in "unitName"`
+        /// (unit name as a string literal, as in the example `is in "mm"` -
+        /// not as an identifier, since unit names like `mm`/`kg` could otherwise collide with
+        /// type names).</summary>
         private TypeConstraint ParseOneTypeConstraint()
         {
             Expect(TokenType.Is, "Expected 'is' in a where condition");
             if (Match(TokenType.Of))
             {
-                // ParseTypeAnnotationName() statt Expect(Identifier) - das
-                // Ziel von 'is of' kann ein primitiver Typ wie 'float' sein,
-                // der als EIGENES Keyword-Token gelexed wird (siehe
-                // ParseOptionalTypeParamNames-Kommentar für dieselbe Falle).
+                // ParseTypeAnnotationName() instead of Expect(Identifier) - the
+                // target of 'is of' can be a primitive type like 'float'
+                // that is lexed as a KEYWORD token of its own (see
+                // ParseOptionalTypeParamNames comment for the same trap).
                 string typeName = ParseTypeAnnotationName();
                 return new TypeConstraint(TypeConstraintKind.IsOf, typeName);
             }
@@ -1626,18 +1626,18 @@ namespace fire.Compiler
             throw Error("Expected 'of' or 'in' after 'is' in a where condition", Peek());
         }
 
-        /// <summary>`class extends Name { neue Mitglieder... }` - siehe
-        /// Ast.ClassExtensionDecl-Doku. Members werden mit demselben
-        /// ParseClassMember() geparst wie in einer normalen Klasse (Felder,
-        /// Methoden, Properties, sogar ein weiterer Konstruktor/Destruktor -
-        /// ob das beim Zusammenführen sinnvoll ist, prüft erst der Merge-
-        /// Schritt, siehe Parser.MergeClassExtensions).</summary>
+        /// <summary>`class extends Name { new members... }` - see
+        /// Ast.ClassExtensionDecl documentation. Members are parsed with the same
+        /// ParseClassMember() as in a normal class (fields,
+        /// methods, properties, even a further constructor/destructor -
+        /// whether that makes sense on merging is only checked by the merge
+        /// step, see Parser.MergeClassExtensions).</summary>
         private Stmt ParseClassExtensionDecl(int line)
         {
             Expect(TokenType.Extends, "Expected 'extends'");
 
-            // Ein Basistyp (`string`, `char`, ...) ist ein Schlüsselwort, kein Bezeichner - die
-            // Erweiterung eines Basistyps (SPEC 5.5.1) darf NUR Methoden enthalten.
+            // A base type (`string`, `char`, ...) is a keyword, not an identifier - the
+            // extension of a base type (SPEC 5.5.1) may contain ONLY methods.
             bool isBaseType = TypeKeywords.Contains(Peek().Type) && Peek().Type != TokenType.Class && Peek().Type != TokenType.Undefined;
             string targetName = isBaseType
                 ? Advance().Lexeme
@@ -1661,10 +1661,10 @@ namespace fire.Compiler
             return new ClassExtensionDecl(_sourceIndex, line, targetRef, members);
         }
 
-        /// <summary>Eine Erweiterung eines Basistyps (`class extends string { ... }`) darf nur
-        /// gewöhnliche Instanzmethoden enthalten: ein Basiswert hat keinen Speicher für Felder/Properties,
-        /// keinen Konstruktor/Destruktor und (VM.BinaryNumericOrOperator prüft nur Objekte) keine
-        /// Operator-Überladung; `static` hätte keinen Aufrufweg (`string.Foo()` gibt es nicht).</summary>
+        /// <summary>An extension of a base type (`class extends string { ... }`) may contain only
+        /// ordinary instance methods: a base value has no storage for fields/properties,
+        /// no constructor/destructor and (VM.BinaryNumericOrOperator checks only objects) no
+        /// operator overloading; `static` would have no way of being called (`string.Foo()` does not exist).</summary>
         private static void ValidateBaseTypeExtensionMember(string typeName, Stmt member)
         {
             string prefix = $"'class extends {typeName}': ";
@@ -1689,17 +1689,17 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>`namespace Name { Mitglieder... }` bzw. `namespace A.B { ... }`
-        /// - siehe Ast.NamespaceDecl-Doku. Mitglieder werden mit dem normalen
-        /// ParseStatement() geparst (Klassen/Interfaces/Enums, auch
-        /// verschachtelte weitere `namespace`-Blöcke), WÄHREND `_currentNamespace`
-        /// auf diesen (ggf. verschachtelten) Namespace zeigt - jede Deklaration/
-        /// jeder TypeRef darin qualifiziert/verknüpft sich dadurch schon beim
-        /// Parsen selbst korrekt (siehe QualifyDeclName/CurrentNamespaces).
-        /// Der alte Namespace-Name wird beim Verlassen des Blocks IMMER
-        /// zurückgeschrieben (auch wenn er `null` war), damit verschachtelte
-        /// UND aufeinanderfolgende `namespace`-Blöcke sich nicht gegenseitig
-        /// beeinflussen.</summary>
+        /// <summary>`namespace Name { members... }` or `namespace A.B { ... }`
+        /// - see Ast.NamespaceDecl documentation. Members are parsed with the normal
+        /// ParseStatement() (classes/interfaces/enums, also
+        /// nested further `namespace` blocks), WHILE `_currentNamespace`
+        /// points to this (possibly nested) namespace - every declaration/
+        /// every TypeRef in it thereby qualifies/links itself correctly already when
+        /// parsing itself (see QualifyDeclName/CurrentNamespaces).
+        /// The old namespace name is ALWAYS written back on leaving the block
+        /// (even if it was `null`), so that nested
+        /// AND consecutive `namespace` blocks do not influence
+        /// each other.</summary>
         private Stmt ParseNamespaceDecl()
         {
             int line = Peek().Line;
@@ -1720,11 +1720,11 @@ namespace fire.Compiler
             return new NamespaceDecl(_sourceIndex, line, name, members);
         }
 
-        /// <summary>Liest einen (möglicherweise mehrteiligen, per '.' getrennten)
-        /// Namen wie 'A' oder 'A.B.C' - für Namespace-Namen (Deklaration UND
-        /// `#using`) an genau den beiden Stellen genutzt, wo diese Sprache
-        /// sonst nirgendwo einen '.' als Teil eines NAMENS selbst erlaubt
-        /// (überall sonst ist '.' der Elementzugriffs-Operator).</summary>
+        /// <summary>Reads a (possibly multi-part, '.'-separated)
+        /// name like 'A' or 'A.B.C' - for namespace names (declaration AND
+        /// `#using`) used at exactly the two places where this language
+        /// otherwise nowhere allows a '.' as part of a NAME itself
+        /// (everywhere else '.' is the element-access operator).</summary>
         private string ParseDottedName(string what)
         {
             string name = Expect(TokenType.Identifier, $"Expected {what}").Lexeme;
@@ -1733,14 +1733,14 @@ namespace fire.Compiler
             return name;
         }
 
-        /// <summary>`interface Name { [ReturnType] Method(params) ... }` - reine
-        /// Methodensignaturen, keine Felder/Konstruktor/Bodies.</summary>
+        /// <summary>`interface Name { [ReturnType] Method(params) ... }` - pure
+        /// method signatures, no fields/constructor/bodies.</summary>
         private Stmt ParseInterfaceDecl()
         {
             int line = Peek().Line;
             Expect(TokenType.Interface, "Expected 'interface'");
             string name = Expect(TokenType.Identifier, "Expected an interface name").Lexeme;
-            // `interface ICommand<T> { ... }`: generisch wie eine Klasse (siehe ParseClassOrActorDecl); wie dort zählt nur Name und Anzahl der Typ-Parameter
+            // `interface ICommand<T> { ... }`: generic like a class (see ParseClassOrActorDecl); as there only name and number of type parameters count
             var typeParamNames = ParseOptionalTypeParamNames();
             var typeParams = typeParamNames.Count > 0 ? ParseWhereClauses(typeParamNames, line) : null;
             Expect(TokenType.LBrace, "Expected '{' after the interface head");
@@ -1762,12 +1762,12 @@ namespace fire.Compiler
             return new InterfaceDecl(_sourceIndex, line, QualifyDeclName(name), methods, typeParams);
         }
 
-        /// <summary>`enum Name { A, B = 5, C }` - siehe Ast.EnumDecl-Doku für die
-        /// Semantik (reine Compile-Zeit-Konstanten). Werte werden hier nur
-        /// GEPARST (roher Ausdruck oder fehlend) - die eigentliche Berechnung
-        /// (Auto-Increment, Validierung "muss Int-Literal sein") passiert erst
-        /// im Resolver, der dafür alle Mitglieder in Deklarationsreihenfolge
-        /// braucht.</summary>
+        /// <summary>`enum Name { A, B = 5, C }` - see Ast.EnumDecl documentation for the
+        /// semantics (pure compile-time constants). Values are only
+        /// PARSED here (raw expression or missing) - the actual calculation
+        /// (auto-increment, validation "must be an int literal") only happens
+        /// in the resolver, which needs all members in declaration order
+        /// for that.</summary>
         private Stmt ParseEnumDecl()
         {
             int line = Peek().Line;
@@ -1792,22 +1792,22 @@ namespace fire.Compiler
             return new EnumDecl(_sourceIndex, line, QualifyDeclName(name), members);
         }
 
-        /// <summary>`Type Name { get { ... } set { ... } }` - siehe
-        /// Ast.PropertyDecl-Doku. 'get'/'set' sind bewusst KEINE reservierten
-        /// Schlüsselwörter (wie 'value' im Setter-Body auch nicht) - reine
-        /// kontextabhängige Bezeichner, nur innerhalb eines Property-Bodies
-        /// mit Sonderbedeutung, genau wie in C#. Reihenfolge/Anzahl: 'get'
-        /// und 'set' dürfen in beliebiger Reihenfolge stehen, jedes höchstens
-        /// einmal, mindestens eines von beiden muss vorhanden sein.</summary>
-        /// <summary>Property-Body: `{ get ... set ... }` mit explizitem Body je
-        /// Accessor (`get { ... }`/`set { ... }`, wie bisher) ODER als
-        /// Auto-Property-Kurzform (`get;`/`set;`, ohne eigenen Body) - siehe
-        /// SPEC "Auto-Properties". Mischen ist erlaubt (z.B. `get { ... }
-        /// set;`). Mindestens EIN Accessor (explizit oder Auto) ist Pflicht.
-        /// Liefert eine LISTE von Members (nicht nur die PropertyDecl selbst),
-        /// da eine Auto-Property zusätzlich ein synthetisches Backing-Field
-        /// braucht (siehe unten) - der Aufrufer (ParseClassMember) hängt
-        /// beides an die Mitgliederliste der Klasse an.</summary>
+        /// <summary>`Type Name { get { ... } set { ... } }` - see
+        /// Ast.PropertyDecl documentation. 'get'/'set' are deliberately NOT reserved
+        /// keywords (neither is 'value' in the setter body) - pure
+        /// context-dependent identifiers, with special meaning only inside a property body,
+        /// just as in C#. Order/count: 'get'
+        /// and 'set' may stand in any order, each at most
+        /// once, at least one of the two must be present.</summary>
+        /// <summary>Property body: `{ get ... set ... }` with an explicit body per
+        /// accessor (`get { ... }`/`set { ... }`, as before) OR as the
+        /// auto-property short form (`get;`/`set;`, without a body of its own) - see
+        /// SPEC "Auto-properties". Mixing is allowed (e.g. `get { ... }
+        /// set;`). At least ONE accessor (explicit or auto) is mandatory.
+        /// Returns a LIST of members (not only the PropertyDecl itself),
+        /// since an auto-property additionally needs a synthetic backing field
+        /// (see below) - the caller (ParseClassMember) appends
+        /// both to the member list of the class.</summary>
         private List<Stmt> ParsePropertyBody(int line, TypeRef? type, string name, AccessModifier access, bool isStatic = false)
         {
             Expect(TokenType.LBrace, "Expected '{' after the property name");
@@ -1860,39 +1860,39 @@ namespace fire.Compiler
 
             if (getterIsAuto || setterIsAuto)
             {
-                // Auto-Property: mindestens ein Accessor ist reines 'get;'/
-                // 'set;' ohne eigenen Body - synthetisiert ein Backing-Field
-                // mit vorhersagbarem Namen ('_AutoName', siehe SPEC-Doku für die
-                // Namenskonvention und ihre Grenzen: Kollision mit einem
-                // gleichnamigen, vom Nutzer selbst deklarierten Feld ist
-                // theoretisch möglich, wird hier bewusst nicht extra
-                // geprüft) sowie triviale get_/set_-Bodies dafür. Das
-                // Backing-Field ist ein GANZ NORMALES Feld (kein
-                // Sonderstatus) - Code INNERHALB der Klasse (Konstruktor
-                // eingeschlossen) kann jederzeit direkt darauf zugreifen
-                // ('this._AutoName'), z.B. um ein get-only Property trotzdem im
-                // Konstruktor zu initialisieren (dafür gibt es ja keinen
-                // Setter über die Property selbst).
-                // Backing-Field ist IMMER private, unabhängig vom Modifikator
-                // der Property selbst - reines Implementierungsdetail, das
-                // nur über die Property (get_Name/set_Name) erreichbar sein
-                // soll, niemals direkt von außen ('this._AutoName' bleibt
-                // INNERHALB der Klasse weiterhin normal erlaubt).
+                // Auto-property: at least one accessor is a pure 'get;'/
+                // 'set;' without a body of its own - synthesises a backing field
+                // with a predictable name ('_AutoName', see SPEC documentation for the
+                // naming convention and its limits: a collision with a
+                // field of the same name declared by the user themselves is
+                // theoretically possible, deliberately not checked
+                // separately here) as well as trivial get_/set_ bodies for it. The
+                // backing field is a QUITE NORMAL field (no
+                // special status) - code INSIDE the class (constructor
+                // included) can access it directly at any time
+                // ('this._AutoName'), e.g. to initialise a get-only property anyway in the
+                // constructor (there is no setter via the property itself
+                // for that).
+                // The backing field is ALWAYS private, independent of the modifier
+                // of the property itself - a pure implementation detail that is
+                // meant to be reachable only via the property (get_Name/set_Name),
+                // never directly from outside ('this._AutoName' stays
+                // still normally allowed INSIDE the class).
                 string backingName = "_Auto" + name;
                 result.Add(new FieldDecl(_sourceIndex, line, type, Array.Empty<Expr?>(), backingName, null, IsReadonly: false,
                     Access: AccessModifier.Private, IsStatic: isStatic));
 
-                // Statisch: Backing-Field über 'ClassName.feld' statt
-                // 'this.feld' (keine Instanz gebunden, siehe
-                // ParseClassOrActorDecl für _currentClassName) - beides läuft
-                // über denselben MemberExpr-Knoten, nur das Ziel
-                // unterscheidet sich (ThisExpr vs. ein Bezeichner mit dem
-                // Klassennamen, den der Resolver als statischen Zugriff
-                // erkennt, siehe Resolver.TryResolveStaticMemberAccess).
+                // Static: backing field via 'ClassName.field' instead of
+                // 'this.field' (no instance bound, see
+                // ParseClassOrActorDecl for _currentClassName) - both run
+                // via the same MemberExpr node, only the target
+                // differs (ThisExpr vs. an identifier with the
+                // class name, which the resolver recognises as a static access,
+                // see Resolver.TryResolveStaticMemberAccess).
                 //
-                // In einer GENERISCHEN Klasse stattdessen SelfClassExpr: der
-                // Klassenname allein könnte dort auf eine gleichnamige
-                // NICHT-generische Klasse zeigen (siehe GenericClassNames).
+                // In a GENERIC class SelfClassExpr instead: the
+                // class name alone could point there to a non-generic class of the
+                // same name (see GenericClassNames).
                 Expr backingTarget = !isStatic
                     ? new ThisExpr(line)
                     : _currentClassIsGeneric
@@ -1918,13 +1918,13 @@ namespace fire.Compiler
             return result;
         }
 
-        /// <summary>Liest einen optionalen Zugriffsmodifikator (`public`/
-        /// `private`/`protected`) direkt vor einem Klassenmitglied - Default
-        /// `Public`, wenn keiner angegeben wurde (SPEC "Zugriffsmodifikatoren",
-        /// siehe AccessModifier-Doku). Höchstens EINER erlaubt (kein
-        /// `public private ...`) - ein zweiter Modifikator würde einfach als
-        /// nächstes Token (Typname/Methodenname) fehlschlagen, kein
-        /// gesonderter Fehlerfall nötig.</summary>
+        /// <summary>Reads an optional access modifier (`public`/
+        /// `private`/`protected`) directly before a class member - default
+        /// `Public` if none was given (SPEC "Access modifiers",
+        /// see AccessModifier documentation). At most ONE allowed (no
+        /// `public private ...`) - a second modifier would simply fail as the
+        /// next token (type name/method name), no
+        /// separate error case needed.</summary>
         private AccessModifier ParseOptionalAccessModifier()
         {
             if (Match(TokenType.Public)) return AccessModifier.Public;
@@ -1945,19 +1945,19 @@ namespace fire.Compiler
             if (Check(TokenType.Operator))
                 return new List<Stmt> { ParseOperatorMember(line) };
 
-            // 'static' bei Feldern/Methoden/Properties (SPEC "Statische
-            // Mitglieder") - EINE geteilte Speicherstelle pro Klasse statt
-            // pro Instanz, aufrufbar als 'ClassName.Member' statt
-            // 'instanz.Member' (siehe Resolver/VM.GetStaticField etc.).
-            // Reihenfolge fest [access] [static] [readonly] - üblichste
-            // Schreibweise ('public static readonly'), keine anderen
-            // Reihenfolgen extra unterstützt (Einfachheit).
+            // 'static' on fields/methods/properties (SPEC "Static
+            // members") - ONE shared storage location per class instead of
+            // per instance, callable as 'ClassName.Member' instead of
+            // 'instance.Member' (see Resolver/VM.GetStaticField etc.).
+            // Order fixed [access] [static] [readonly] - the most usual
+            // notation ('public static readonly'), no other
+            // orders specially supported (simplicity).
             bool isStatic = Match(TokenType.Static);
             bool isReadonly = Match(TokenType.Readonly);
 
-            // SPEC "Einheiten-Deklarationen": `var` ist wie bei lokalen
-            // Variablen/Parametern gültig - `var` allein (Typ + evtl. Einheit
-            // aus Initialisierer/':' hergeleitet) ODER ein expliziter Typ.
+            // SPEC "Unit declarations": `var` is valid as with local
+            // variables/parameters - `var` alone (type + possibly unit
+            // derived from the initialiser/':') OR an explicit type.
             TypeRef? type = null;
             if (Check(TokenType.Var))
             {
@@ -1966,20 +1966,20 @@ namespace fire.Compiler
             }
             else if (NextLooksLikeTypeThenName())
             {
-                // `int[] Name()`: ein Array-Rückgabetyp (Methode/Property) - bei einem FELD fängt das der
-                // Check unten ab (dort stehen die Klammern hinter dem Namen).
+                // `int[] Name()`: an array return type (method/property) - for a FIELD the
+                // check below catches that (there the brackets stand behind the name).
                 type = ParseTypeRef(allowArray: true);
             }
 
             string name = Expect(TokenType.Identifier, "Expected a field or method name").Lexeme;
 
-            // Generische Methode: 'Name<T>(...) where T constraint { ... }' -
-            // ein '<' direkt nach dem Namen ist hier unzweideutig NUR als
-            // Typ-Parameterliste gültig (ein Feld könnte an dieser Stelle nie
-            // sinnvoll ein '<' haben - siehe FieldDecl-Pfad unten, der nur
-            // '[' (Array) oder '=' erwartet), daher hier ohne Rückschau-Risiko
-            // geparst. Nur bei EXPLIZITER Verwendung: keine Auswirkung auf
-            // normale, nicht-generische Methoden.
+            // Generic method: 'Name<T>(...) where T constraint { ... }' -
+            // a '<' directly after the name is unambiguously valid here ONLY as a
+            // type parameter list (a field could never sensibly have a '<'
+            // at this point - see the FieldDecl path below, which expects only
+            // '[' (array) or '='), therefore parsed here without look-back risk.
+            // Only with EXPLICIT use: no effect on
+            // normal, non-generic methods.
             var methodTypeParamNames = Check(TokenType.Lt) ? ParseOptionalTypeParamNames() : new List<string>();
 
             if (Check(TokenType.LParen))
@@ -2012,10 +2012,10 @@ namespace fire.Compiler
 
             var arrayRanks = ParseArrayRanks();
 
-            // Wie bei var-/Parameter-Deklarationen: ':' legt IMMER nur eine
-            // Einheit fest, nie einen Typ (SPEC "Einheiten-Deklarationen").
-            // Wie bei Parametern: fehlt ein expliziter Typ/`var` davor, aber
-            // eine Einheit steht da, gilt das implizit wie `var`.
+            // As with var/parameter declarations: ':' ALWAYS fixes only a
+            // unit, never a type (SPEC "Unit declarations").
+            // As with parameters: if an explicit type/`var` is missing before it, but
+            // a unit is there, it counts implicitly like `var`.
             if (Match(TokenType.Colon))
             {
                 string unitName = ParseUnitName();
@@ -2031,21 +2031,21 @@ namespace fire.Compiler
             return new List<Stmt> { new FieldDecl(_sourceIndex, line, type, arrayRanks, name, initializer, isReadonly, access, isStatic) };
         }
 
-        /// <summary>`operator SYMBOL(params) { body }` - Operator-Überladung
-        /// (siehe RuntimeClass-Konvention: intern ganz normale Methoden mit
-        /// einem speziellen, für Skript-Code selbst nicht direkt aufrufbaren
-        /// Namen, siehe ParseOperatorSymbol). `operator[]` ist dabei reines
-        /// Parser-Sugar für die BEREITS BESTEHENDE `GetIndex`/`SetIndex`-
-        /// Namenskonvention (siehe VM.OpCode.ArrayGet/ArraySet) - unterschieden
-        /// rein über die Parameteranzahl (1 = lesend, 2 = schreibend: Index,
-        /// Wert), exakt wie jede andere Methodenüberladung nach Arity in
-        /// dieser Sprache. Alle anderen Operatoren (`+`/`-`/etc.) erwarten
-        /// GENAU EINEN Parameter (der rechte Operand - `this` ist implizit
-        /// der linke) und werden von den jeweiligen VM-Opcode-Handlern
-        /// (BinaryNumericOrOperator) aufgerufen, wenn der LINKE Operand ein
-        /// Objekt mit passender Methode ist - eine Überladung nur für den
-        /// RECHTEN Operanden (wie C#s `operator+` bei vertauschten Operanden-
-        /// Typen, oder Pythons `__radd__`) ist bewusst NICHT unterstützt.</summary>
+        /// <summary>`operator SYMBOL(params) { body }` - operator overloading
+        /// (see RuntimeClass convention: internally quite ordinary methods with
+        /// a special name not directly callable from script code itself,
+        /// see ParseOperatorSymbol). `operator[]` is purely
+        /// parser sugar for the ALREADY EXISTING `GetIndex`/`SetIndex`
+        /// naming convention (see VM.OpCode.ArrayGet/ArraySet) - distinguished
+        /// purely by the parameter count (1 = reading, 2 = writing: index,
+        /// value), exactly like any other method overload by arity in
+        /// this language. All other operators (`+`/`-`/etc.) expect
+        /// EXACTLY ONE parameter (the right operand - `this` is implicitly
+        /// the left one) and are called by the respective VM opcode handlers
+        /// (BinaryNumericOrOperator) when the LEFT operand is an
+        /// object with a matching method - an overload only for the
+        /// RIGHT operand (like C#'s `operator+` with swapped operand
+        /// types, or Python's `__radd__`) is deliberately NOT supported.</summary>
         private Stmt ParseOperatorMember(int line)
         {
             Expect(TokenType.Operator, "Expected 'operator'");
@@ -2070,12 +2070,12 @@ namespace fire.Compiler
             return new MethodDecl(_sourceIndex, line, null, internalName, parms, body, null);
         }
 
-        /// <summary>Liest ein einzelnes, überladbares Operator-Symbol direkt
-        /// nach 'operator'. `<<`/`>>` wie bei ParseShift: zwei aufeinander-
-        /// folgende Einzelzeichen-Tokens (der Lexer kennt sie nicht als
-        /// eigene Zwei-Zeichen-Tokens, siehe dortige Doku) - hier VOR den
-        /// einzelnen `<`/`>`-Fällen geprüft, sonst würde `operator<<` fälschlich
-        /// schon nach dem ERSTEN `<` als `operator<` gelesen.</summary>
+        /// <summary>Reads a single, overloadable operator symbol directly
+        /// after 'operator'. `<<`/`>>` as with ParseShift: two consecutive
+        /// single-character tokens (the lexer does not know them as
+        /// two-character tokens of their own, see the documentation there) - checked here BEFORE the
+        /// individual `<`/`>` cases, otherwise `operator<<` would wrongly
+        /// be read as `operator<` already after the FIRST `<`.</summary>
         private string ParseOperatorSymbol()
         {
             if (Match(TokenType.LBracket))
@@ -2133,24 +2133,24 @@ namespace fire.Compiler
             return new DestructorDecl(_sourceIndex, line, body);
         }
 
-        /// <summary>Ein einzelner Parameter, in beiden Schreibweisen (wie bei
-        /// `var`): `[Typ] Name` (Typ zuerst, bestehende Reihenfolge) ODER
-        /// `Name [: Typ]` (var-artige Reihenfolge) - jeweils optional gefolgt
-        /// von `= Standardwert`. Welche Reihenfolge vorliegt, entscheidet
-        /// NextLooksLikeTypeThenName() genau wie bei Variablen-Deklarationen.</summary>
-        /// <summary>Ein Parameter: `[Typ|var] name[ranks] [: einheit] [= default]`
-        /// (SPEC "Einheiten-Deklarationen") - dieselbe feste Reihenfolge wie bei
-        /// var-/Feld-Deklarationen, KEINE alternative "Name zuerst, Typ per ':'
-        /// danach"-Schreibweise mehr (die es vorher gab - genau die
-        /// Mehrdeutigkeit, die der ':' jetzt einheitlich NUR noch als Einheit
-        /// löst). Weder `var` noch ein Typ ist Pflicht (ein Parameter ohne
-        /// beides bleibt wie bisher ungetypt) - IST aber eine Einheit ohne
-        /// vorangestelltes `var`/Typ angegeben (`func f(a:mm)`), wird das
-        /// implizit wie `var a:mm` behandelt (Typ aus dem Argument beim Aufruf
-        /// übernommen, Einheit fest mm).</summary>
+        /// <summary>A single parameter, in both notations (as with
+        /// `var`): `[Type] Name` (type first, existing order) OR
+        /// `Name [: Type]` (var-like order) - in each case optionally followed
+        /// by `= default value`. Which order is present is decided by
+        /// NextLooksLikeTypeThenName() exactly as with variable declarations.</summary>
+        /// <summary>A parameter: `[Type|var] name[ranks] [: unit] [= default]`
+        /// (SPEC "Unit declarations") - the same fixed order as with
+        /// var/field declarations, NO alternative "name first, type via ':'
+        /// afterwards" notation any more (which existed before - exactly the
+        /// ambiguity that the ':' now resolves uniformly ONLY as a unit).
+        /// Neither `var` nor a type is mandatory (a parameter without
+        /// both stays untyped as before) - BUT if a unit is given without
+        /// a preceding `var`/type (`func f(a:mm)`), it is treated
+        /// implicitly like `var a:mm` (type taken from the argument at the call,
+        /// unit fixed mm).</summary>
         private LambdaParam ParseOneParam(bool allowRef)
         {
-            // `ref` vor dem Parameter (contextual: `ref` bleibt als Name/Typ nutzbar, solange kein weiterer Name darauf folgt)
+            // `ref` before the parameter (contextual: `ref` stays usable as a name/type as long as no further name follows)
             bool byRef = false;
             if (Check(TokenType.Identifier) && Peek().Lexeme == "ref"
                 && PeekAt(1).Type is not (TokenType.Comma or TokenType.RParen or TokenType.Assign or TokenType.Colon or TokenType.LBracket))
@@ -2224,7 +2224,7 @@ namespace fire.Compiler
         }
 
         // -----------------------------------------------------------
-        // Ausdrücke (Präzedenz von niedrig nach hoch)
+        // Expressions (precedence from low to high)
         // -----------------------------------------------------------
         private Expr ParseExpression() => ParseAssignment();
 
@@ -2265,13 +2265,13 @@ namespace fire.Compiler
             return left;
         }
 
-        /// <summary>`|` (bitweises Oder), `#` (bitweises Exklusiv-Oder - NICHT
-        /// `^`, das ist Potenz, siehe ParsePower) und `&amp;` (bitweises Und) -
-        /// dieselbe Präzedenz-Reihenfolge wie in den meisten C-artigen
-        /// Sprachen (Oder bindet am schwächsten, Und am stärksten dieser
-        /// drei), eingeordnet zwischen den logischen Operatoren `&&`/`||`
-        /// und dem Vergleich `==`/`!=`/`&lt;`/etc. Alle drei nur auf `int`
-        /// anwendbar (siehe Values.Value.BitAnd/BitOr/BitXor).</summary>
+        /// <summary>`|` (bitwise or), `#` (bitwise exclusive or - NOT
+        /// `^`, that is power, see ParsePower) and `&amp;` (bitwise and) -
+        /// the same precedence order as in most C-like
+        /// languages (or binds weakest, and strongest of these
+        /// three), placed between the logical operators `&&`/`||`
+        /// and the comparison `==`/`!=`/`&lt;`/etc. All three applicable only to `int`
+        /// (see Values.Value.BitAnd/BitOr/BitXor).</summary>
         private Expr ParseBitwiseOr()
         {
             var left = ParseBitwiseXor();
@@ -2369,21 +2369,21 @@ namespace fire.Compiler
             return left;
         }
 
-        /// <summary>`&lt;&lt;`/`&gt;&gt;` (Bit-Schiebeoperatoren) - werden bewusst
-        /// NICHT vom Lexer als eigene Zwei-Zeichen-Tokens erkannt (anders als
-        /// z.B. `==`/`&amp;&amp;`), sondern hier rein auf Parser-Ebene als zwei
-        /// AUFEINANDERFOLGENDE `&lt;`/`&gt;`-Tokens: der Lexer liefert für `&lt;`/`&gt;`
-        /// IMMER nur Einzelzeichen-Tokens (außer `&lt;=`/`&gt;=`), weil `&gt;` auch zum
-        /// Schließen einer generischen Typ-Argumentliste dient (`new Box&lt;int&gt;()`,
-        /// auch beliebig tief VERSCHACHTELT: `new Box&lt;Box&lt;int&gt;&gt;()`, siehe
-        /// ParseOptionalTypeParamNames/SkipOptionalNestedTypeArgs) - ein Lexer,
-        /// der `&gt;&gt;` gierig zu einem einzigen Schiebeoperator-Token zusammenzöge,
-        /// würde das an dieser Stelle zerstören. Da Typ-Argumentlisten über
-        /// eigene, komplett getrennte Parser-Methoden laufen (nie über diese
-        /// Ausdrucks-Präzedenzkette), gibt es hier ohnehin keinen Konflikt: zwei
+        /// <summary>`&lt;&lt;`/`&gt;&gt;` (bit shift operators) - deliberately
+        /// NOT recognised by the lexer as two-character tokens of their own (unlike
+        /// e.g. `==`/`&amp;&amp;`), but here purely at parser level as two
+        /// CONSECUTIVE `&lt;`/`&gt;` tokens: for `&lt;`/`&gt;` the lexer
+        /// ALWAYS delivers only single-character tokens (except `&lt;=`/`&gt;=`), because `&gt;` also serves to
+        /// close a generic type argument list (`new Box&lt;int&gt;()`,
+        /// also arbitrarily deeply NESTED: `new Box&lt;Box&lt;int&gt;&gt;()`, see
+        /// ParseOptionalTypeParamNames/SkipOptionalNestedTypeArgs) - a lexer
+        /// that greedily merged `&gt;&gt;` into a single shift-operator token
+        /// would destroy that at this point. Since type argument lists run via
+        /// separate, completely distinct parser methods (never via this
+        /// expression precedence chain), there is no conflict here anyway: two
         /// `&gt;`/`&lt;`
-        /// in Folge bedeuten INNERHALB eines Ausdrucks immer einen
-        /// Schiebeoperator.</summary>
+        /// in a row INSIDE an expression always mean a
+        /// shift operator.</summary>
         private Expr ParseShift()
         {
             var left = ParseAdditive();
@@ -2438,21 +2438,21 @@ namespace fire.Compiler
             return left;
         }
 
-        /// <summary>`^` (Potenz - NICHT bitweises XOR, das ist `#`, siehe
-        /// ParseBitwiseXor) - bindet stärker als `*`/`/`/`%` (`2 * 3^2` ist
-        /// `2 * 9 = 18`, nicht `(2*3)^2`). RECHTS-assoziativ (`2^3^2` ist
-        /// `2^(3^2) = 2^9`, nicht `(2^3)^2`).
+        /// <summary>`^` (power - NOT bitwise XOR, that is `#`, see
+        /// ParseBitwiseXor) - binds stronger than `*`/`/`/`%` (`2 * 3^2` is
+        /// `2 * 9 = 18`, not `(2*3)^2`). RIGHT-associative (`2^3^2` is
+        /// `2^(3^2) = 2^9`, not `(2^3)^2`).
         ///
-        /// Das Zusammenspiel mit unären Präfix-Operatoren folgt bewusst
-        /// Pythons `**`-Konvention (nicht "unär bindet immer am stärksten"):
-        /// die BASIS (links von `^`) ist hier bewusst nur `ParsePostfix()`,
-        /// KEIN `ParseUnary()` - ein Vorzeichen VOR der ganzen Potenz bindet
-        /// dadurch SCHWÄCHER als `^` selbst (`-2^2` ist `-(2^2) = -4`, nicht
-        /// `(-2)^2 = 4` - siehe ParseUnary, das bei einem Präfix-Operator
-        /// erst hierher zurückkommt, NACHDEM `^` schon ausgewertet wurde).
-        /// Der EXPONENT (rechts von `^`) dagegen ist ein volles
-        /// `ParseUnary()`, damit `2^-2` (negativer Exponent) trotzdem direkt
-        /// funktioniert, ohne Klammern setzen zu müssen.</summary>
+        /// The interplay with unary prefix operators deliberately follows
+        /// Python's `**` convention (not "unary always binds strongest"):
+        /// the BASE (left of `^`) is here deliberately only `ParsePostfix()`,
+        /// NOT `ParseUnary()` - a sign BEFORE the whole power thereby binds
+        /// WEAKER than `^` itself (`-2^2` is `-(2^2) = -4`, not
+        /// `(-2)^2 = 4` - see ParseUnary, which on a prefix operator
+        /// only comes back here AFTER `^` has already been evaluated).
+        /// The EXPONENT (right of `^`), by contrast, is a full
+        /// `ParseUnary()`, so that `2^-2` (negative exponent) still works
+        /// directly, without having to set parentheses.</summary>
         private Expr ParsePower()
         {
             var left = ParsePostfix();
@@ -2465,38 +2465,38 @@ namespace fire.Compiler
             return left;
         }
 
-        /// <summary>Präfix-Operatoren: '-' (Vorzeichen), '!' (logische Negation),
-        /// '~' (bitweise Inversion), '*' (Dereferenzierung, nur in 'unsafe'),
-        /// '&amp;' (Address-of, nur in 'unsafe'). Rechts-assoziativ verkettbar.
-        /// Kein eigener Präfix hier -> ParsePower() (siehe dort für die
-        /// bewusste Reihenfolge relativ zu `^`), NICHT direkt ParsePostfix().</summary>
+        /// <summary>Prefix operators: '-' (sign), '!' (logical negation),
+        /// '~' (bitwise inversion), '*' (dereference, only in 'unsafe'),
+        /// '&amp;' (address-of, only in 'unsafe'). Right-associatively chainable.
+        /// No prefix of its own here -> ParsePower() (see there for the
+        /// deliberate order relative to `^`), NOT directly ParsePostfix().</summary>
         private Expr ParseUnary()
         {
             if (Check(TokenType.PlusPlus) || Check(TokenType.MinusMinus))
             {
                 var opTok = Advance();
                 bool isIncrement = opTok.Type == TokenType.PlusPlus;
-                // Bewusst ParsePostfix() statt rekursiv ParseUnary() - das
-                // Operanden-Ziel von Präfix '++'/'--' MUSS ein zuweisbarer
-                // Ausdruck sein (Variable/Feld/Index), nie ein weiterer
-                // unärer Ausdruck (`++!x`/`++-x` wären sinnlos, da deren
-                // Ergebnis kein gültiges Zuweisungsziel ist) - ParsePostfix
-                // deckt genau Bezeichner/Member-/Index-Zugriffsketten ab,
-                // dieselbe Ebene, die auch AssignExpr.Target zulässt.
+                // Deliberately ParsePostfix() instead of recursively ParseUnary() - the
+                // operand target of prefix '++'/'--' MUST be an assignable
+                // expression (variable/field/index), never a further
+                // unary expression (`++!x`/`++-x` would be meaningless, since their
+                // result is no valid assignment target) - ParsePostfix
+                // covers exactly identifier/member/index access chains,
+                // the same level that AssignExpr.Target allows too.
                 var target = ParsePostfix();
                 return new IncDecExpr(opTok.Line, target, isIncrement, IsPrefix: true);
             }
 
-            // `flat x` / `copy x` (SPEC 2.4): Kopier-Präfixe - der Operand ist wieder ein Unary-Ausdruck,
-            // `copy a.b` kopiert also `a.b`, `copy a + b` ist `(copy a) + b`. (`sync flat x` liest sein `flat`
-            // selbst, siehe ParseSync - es kommt hier nie an.)
+            // `flat x` / `copy x` (SPEC 2.4): copy prefixes - the operand is again a unary expression,
+            // so `copy a.b` copies `a.b`, `copy a + b` is `(copy a) + b`. (`sync flat x` reads its `flat`
+            // itself, see ParseSync - it never arrives here.)
             if (Check(TokenType.Flat) || Check(TokenType.Copy))
             {
                 var copyTok = Advance();
                 return new UnaryExpr(copyTok.Line, copyTok.Type == TokenType.Flat ? UnaryOp.FlatCopy : UnaryOp.DeepCopy, ParseUnary());
             }
 
-            // `take x` (SPEC 2.2): als Argument oder rechts von `=`/`var x =` - der Besitz geht an den Aufruf bzw. an den Besitzer des Ziels
+            // `take x` (SPEC 2.2): as an argument or right of `=`/`var x =` - the ownership goes to the call or to the owner of the target
             if (Check(TokenType.Take))
             {
                 var takeTok = Advance();
@@ -2520,12 +2520,12 @@ namespace fire.Compiler
             return ParsePower();
         }
 
-        /// <summary>Postfix-Kette: Aufruf, Member-Zugriff, Index, sowie die
-        /// Coercion-Suffixe ':' (Einheit) und '!' (Typ) in beliebiger Reihenfolge,
-        /// zuletzt optional '++'/'--' (siehe Ast.IncDecExpr) - bewusst NICHT
-        /// Teil der Schleife oben (kann selbst nicht weiter Ziel eines '.'/
-        /// '['/... sein, `x++.feld` wäre sinnlos, da `x++` ein reiner Wert
-        /// ist, kein Objekt).</summary>
+        /// <summary>Postfix chain: call, member access, index, as well as the
+        /// coercion suffixes ':' (unit) and '!' (type) in any order,
+        /// lastly optionally '++'/'--' (see Ast.IncDecExpr) - deliberately NOT
+        /// part of the loop above (cannot itself be the target of a further '.'/
+        /// '['/... either, `x++.field` would be meaningless, since `x++` is a pure value,
+        /// not an object).</summary>
         private Expr ParsePostfix()
         {
             var expr = ParsePrimary();
@@ -2553,10 +2553,10 @@ namespace fire.Compiler
                 else if (Check(TokenType.Colon) && _suppressColonPostfixAtDepth != _bracketDepth)
                 {
                     int line = Advance().Line;
-                    // Optionales Lookahead-Argument (Einheitenname) nur auf derselben
-                    // Zeile konsumieren - sonst genau der ursprüngliche Bug: ein
-                    // Bezeichner, der eigentlich zur nächsten Zeile/Anweisung gehört,
-                    // würde fälschlich hier mit verschluckt.
+                    // Consume the optional lookahead argument (unit name) only on the same
+                    // line - otherwise exactly the original bug: an
+                    // identifier that actually belongs to the next line/statement
+                    // would wrongly be swallowed here along with it.
                     string? unitName = LineContinues() && Check(TokenType.Identifier)
                         ? Advance().Lexeme : null;
                     expr = new UnitCoerceExpr(line, expr, unitName);
@@ -2582,16 +2582,16 @@ namespace fire.Compiler
         }
 
         /// <summary>`sync X` / `try sync X` / `sync flat X` / `try sync flat X`
-        /// (siehe Ast.SyncExpr-Doku). `Target` wird bewusst nur bis
-        /// Postfix-Ebene geparst (Bezeichner, Member-/Index-Zugriff) - nicht
-        /// als volle Ausdrucks-Ebene, damit z.B. `sync a == b` unzweideutig
-        /// als `(sync a) == b` gelesen wird, nicht als `sync (a == b)`.</summary>
+        /// (see Ast.SyncExpr documentation). `Target` is deliberately parsed only up to
+        /// postfix level (identifier, member/index access) - not
+        /// as a full expression level, so that e.g. `sync a == b` is unambiguously
+        /// read as `(sync a) == b`, not as `sync (a == b)`.</summary>
         private Expr ParseSyncExpr()
         {
             int line = Peek().Line;
             bool isTry = Match(TokenType.Try);
             Expect(TokenType.Sync, "Expected 'sync'");
-            // `sync globals`: das Hauptprogramm arbeitet die Warteschlange seiner Fire-Threads ab
+            // `sync globals`: the main program processes the queue of its fire threads
             if (Check(TokenType.Identifier) && Peek().Lexeme == "globals")
             {
                 if (isTry) throw Error("'try sync globals' does not exist", Peek());
@@ -2603,9 +2603,9 @@ namespace fire.Compiler
             return new SyncExpr(line, isTry, isFlat, target);
         }
 
-        /// <summary>Gesetzt, solange das ZIEL von `on` einer `func`-Lambda gelesen wird (`func (x) on win => ...`): ein Bezeichner oder eine geklammerte
-        /// Angabe direkt davor darf dort nicht als Kurzform-Lambda (`win => ...`, `(win) => ...`) gelesen werden - das `=>` gehört zur `func`-Lambda.
-        /// ParsePrimary verbraucht das Flag mit dem ersten Primärausdruck.</summary>
+        /// <summary>Set as long as the TARGET of `on` of a `func` lambda is being read (`func (x) on win => ...`): an identifier or a parenthesised
+        /// specification directly before it must not be read there as a short-form lambda (`win => ...`, `(win) => ...`) - the `=>` belongs to the `func` lambda.
+        /// ParsePrimary consumes the flag with the first primary expression.</summary>
         private bool _suppressShortLambda;
 
         private Expr ParsePrimary()
@@ -2621,10 +2621,10 @@ namespace fire.Compiler
 
                 case TokenType.Try:
                 {
-                    // Siehe ParseStatement-Vorausschau: 'try' ist als
-                    // Ausdrucksanfang nur zusammen mit 'sync'/'process' oder
-                    // einem direkten Funktionsaufruf gültig ('try {' wäre
-                    // schon dort als try/catch-Block abgefangen worden).
+                    // See ParseStatement lookahead: 'try' is valid as an
+                    // expression start only together with 'sync'/'process' or
+                    // a direct function call ('try {' would already have been caught
+                    // there as a try/catch block).
                     if (PeekAt(1).Type == TokenType.Process)
                     {
                         Advance(); // 'try'
@@ -2635,9 +2635,9 @@ namespace fire.Compiler
                     if (PeekAt(1).Type == TokenType.Sync)
                         return ParseSyncExpr();
 
-                    // 'try Name(args)' - Aufruf einer "tryable" nativen
-                    // Funktion (siehe TryCallExpr-Doku, Resolver prüft, ob
-                    // 'Name' tatsächlich so registriert ist).
+                    // 'try Name(args)' - call of a "tryable" native
+                    // function (see TryCallExpr documentation, the resolver checks whether
+                    // 'Name' is actually registered that way).
                     Advance(); // 'try'
                     var innerCall = ParsePostfix();
                     if (innerCall is not CallExpr)
@@ -2647,17 +2647,17 @@ namespace fire.Compiler
 
                 case TokenType.Dot:
                 {
-                    // Nur innerhalb eines 'with'-Blocks gültig (siehe
-                    // ParseWithStmt). WICHTIG: '.' UND der Mitgliedsname
-                    // werden HIER direkt konsumiert, nicht der allgemeinen
-                    // Postfix-Schleife (ParsePostfix) überlassen - die bricht
-                    // sofort ab, wenn der AKTUELLE Token einen Zeilenumbruch
-                    // davor hat (LineContinues() prüft genau das), und ein
-                    // '.' als allererstes Token einer neuen with-Zeile hat
-                    // IMMER einen Zeilenumbruch davor. Ohne diesen Fix bliebe
-                    // der '.' unkonsumiert stehen - eine Endlosschleife beim
-                    // Parsen des with-Blocks (jede weitere Runde landet
-                    // wieder exakt hier, ohne je voranzukommen).
+                    // Valid only inside a 'with' block (see
+                    // ParseWithStmt). IMPORTANT: '.' AND the member name
+                    // are consumed HERE directly, not left to the general
+                    // postfix loop (ParsePostfix) - which stops
+                    // immediately if the CURRENT token has a line break
+                    // before it (LineContinues() checks exactly that), and a
+                    // '.' as the very first token of a new with line
+                    // ALWAYS has a line break before it. Without this fix
+                    // the '.' would stay unconsumed - an endless loop when
+                    // parsing the with block (every further round lands
+                    // again exactly here, without ever making progress).
                     if (_withVarStack.Count == 0)
                         throw Error(
                             "'.' at the start of an expression is only valid inside a 'with' block", tok);
@@ -2737,20 +2737,20 @@ namespace fire.Compiler
                 case TokenType.New:
                 {
                     Advance();
-                    // 'new Type[sizeExpr]' (Array-Allokation) vs. 'new ClassName(args)'.
-                    // Der Elementtyp hier bewusst nur als Basisname (ohne Bitbreite/
-                    // Pointer) - eine Bitbreiten-Klammer direkt hinterm Typ würde sonst
-                    // mit der Array-Größen-Klammer kollidieren (beide stehen unmittelbar
-                    // hinter dem Typnamen). Eine bestimmte Elementbreite legt man über
-                    // den deklarierten Variablentyp fest (`var a : int[16] = new int[10]`).
+                    // 'new Type[sizeExpr]' (array allocation) vs. 'new ClassName(args)'.
+                    // The element type here deliberately only as a base name (without bit width/
+                    // pointer) - a bit-width bracket directly behind the type would otherwise
+                    // collide with the array-size bracket (both stand immediately
+                    // behind the type name). A particular element width is fixed via
+                    // the declared variable type (`var a : int[16] = new int[10]`).
                     if (TypeKeywords.Contains(Peek().Type)
                         || (Check(TokenType.Identifier) && PeekAt(1).Type == TokenType.LBracket))
                     {
-                        // 'new byte[n]' - Sonderfall: erzeugt einen rohen
-                        // Values.ByteBuffer statt eines ScriptArray (siehe
-                        // NewBufferExpr-Doku), bewusst nur eindimensional -
-                        // 'new byte[n][m]' (mehrere Ränge) ist deshalb ein
-                        // Fehler statt eines "Arrays von Buffern".
+                        // 'new byte[n]' - special case: creates a raw
+                        // Values.ByteBuffer instead of a ScriptArray (see
+                        // NewBufferExpr documentation), deliberately only one-dimensional -
+                        // 'new byte[n][m]' (several ranks) is therefore an
+                        // error instead of an "array of buffers".
                         if (Check(TokenType.KwByte))
                         {
                             Advance(); // 'byte'
@@ -2771,11 +2771,11 @@ namespace fire.Compiler
                     }
 
                     string className = ParseTypeAnnotationName();
-                    // 'new Name<Arg1, Arg2>(...)' für eine generische Klasse -
-                    // unzweideutig, da nach 'new Name' ohnehin zwingend eine
-                    // Argumentliste '(...)' folgen MUSS (nie ein Vergleich),
-                    // ParseOptionalTypeParamNames() passt hier 1:1 (dieselbe
-                    // '<name, name>'-Grammatik wie bei der Deklaration).
+                    // 'new Name<Arg1, Arg2>(...)' for a generic class -
+                    // unambiguous, since after 'new Name' an
+                    // argument list '(...)' MUST follow anyway (never a comparison),
+                    // ParseOptionalTypeParamNames() fits here 1:1 (the same
+                    // '<name, name>' grammar as with the declaration).
                     var typeArgs = ParseOptionalTypeParamNames();
                     var args = ParseArgList();
                     return new NewExpr(tok.Line, new TypeRef(className, null, 0, Namespaces: CurrentNamespaces()), args, typeArgs);
@@ -2810,16 +2810,16 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>Baut aus den bereits vom Lexer gesammelten
-        /// InterpolationSegments (siehe dortige Doku) einen
-        /// InterpolatedStringExpr: Text-Segmente werden direkt übernommen,
-        /// jedes Ausdrucks-Segment wird EIGENSTÄNDIG neu gelext und geparst
-        /// (eine neue Lexer/Parser-Instanz auf nur diesem Teilstring) - so
-        /// entsteht die volle Ausdrucks-Grammatik innerhalb von `{...}` ganz
-        /// ohne einen zweiten, parallelen Grammatik-Pfad im Haupt-Parser
-        /// pflegen zu müssen. Nach dem geparsten Ausdruck darf nur noch EOF
-        /// folgen - alles andere (z.B. ein zweiter, nicht durch einen
-        /// Operator verbundener Ausdruck) ist ein Fehler im Format-String.</summary>
+        /// <summary>Builds from the InterpolationSegments already collected by the lexer
+        /// (see the documentation there) an
+        /// InterpolatedStringExpr: text segments are taken over directly,
+        /// every expression segment is re-lexed and parsed INDEPENDENTLY
+        /// (a new lexer/parser instance on only this substring) - this way
+        /// the full expression grammar inside `{...}` arises without
+        /// having to maintain a second, parallel grammar path in the main parser.
+        /// After the parsed expression only EOF may follow -
+        /// anything else (e.g. a second expression not connected by an
+        /// operator) is an error in the format string.</summary>
         private Expr ParseInterpolatedString(Token tok)
         {
             var segments = (List<InterpolationSegment>)tok.LiteralValue!;
@@ -2881,11 +2881,11 @@ namespace fire.Compiler
             return ParseLambdaTail(line, parms, onTarget);
         }
 
-        /// <summary>Folgt auf das aktuelle Wort (`probe`/`silence`) ein Bezeichner oder `this`?</summary>
+        /// <summary>Does an identifier or `this` follow the current word (`probe`/`silence`)?</summary>
         private bool IsProbeOperandNext() => PeekAt(1).Type is TokenType.Identifier or TokenType.This;
 
-        /// <summary>Liest `a.b.c` (auch `a.b.*`, `a`): liefert das Objekt-Ausdruck, das Mitglied (null bei `.*` und ohne Punkt) und ob ein Mitglied
-        /// angegeben war (`.name` oder `.*`).</summary>
+        /// <summary>Reads `a.b.c` (also `a.b.*`, `a`): returns the object expression, the member (null for `.*` and without a dot) and whether a member
+        /// was given (`.name` or `.*`).</summary>
         private (Expr Target, string? Member, bool HasMember) ParseProbePath()
         {
             Expr target = ParsePrimary();
@@ -2908,8 +2908,8 @@ namespace fire.Compiler
             return (target, member, true);
         }
 
-        /// <summary>`probe ziel changed|changing handler` - der Handler ist ein Block `{ ... }`, `=> ausdruck`, `(a, b) => ...` oder ein beliebiger
-        /// Lambda-Ausdruck. Block und `=> ausdruck` bekommen die impliziten Namen `sender`, `name`, `old`, `value` (4 Parameter, siehe VM.RunProbeHandler).</summary>
+        /// <summary>`probe target changed|changing handler` - the handler is a block `{ ... }`, `=> expression`, `(a, b) => ...` or any
+        /// lambda expression. Block and `=> expression` get the implicit names `sender`, `name`, `old`, `value` (4 parameters, see VM.RunProbeHandler).</summary>
         private Expr ParseProbe()
         {
             int line = Peek().Line;
@@ -2939,7 +2939,7 @@ namespace fire.Compiler
         private static List<LambdaParam> ImplicitProbeParams() =>
             new[] { "sender", "name", "old", "value" }.Select(n => new LambdaParam(n, null, new List<Expr?>(), null)).ToList();
 
-        /// <summary>`silence a.b` / `silence a.*` (Mitglied bzw. alle Proben des Objekts `a`) oder `silence x` (Probe-Handle bzw. Objekt).</summary>
+        /// <summary>`silence a.b` / `silence a.*` (member or all probes of the object `a`) or `silence x` (probe handle or object).</summary>
         private Stmt ParseSilence()
         {
             int line = Peek().Line;
@@ -2949,7 +2949,7 @@ namespace fire.Compiler
             return new SilenceStmt(_sourceIndex, line, target, member, hasMember);
         }
 
-        /// <summary>Steht der aktuelle `(` am Anfang einer Kurzform-Lambda `(...) =>`? (Lookahead bis zur passenden `)`.)</summary>
+        /// <summary>Does the current `(` stand at the start of a short-form lambda `(...) =>`? (Lookahead up to the matching `)`.)</summary>
         private bool IsParenLambda()
         {
             int depth = 0;
@@ -2962,7 +2962,7 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>`=> ausdruck` bzw. `=> { ... }` einer Lambda (nach Parameterliste und optionalem `on`).</summary>
+        /// <summary>`=> expression` or `=> { ... }` of a lambda (after the parameter list and optional `on`).</summary>
         private Expr ParseLambdaTail(int line, List<LambdaParam> parms, Expr? onTarget = null)
         {
             Expect(TokenType.Arrow, "Expected '=>' in the lambda");
@@ -2974,7 +2974,7 @@ namespace fire.Compiler
             }
             else
             {
-                // Kurzform: `=> ausdruck` wird implizit zu `{ return ausdruck; }`.
+                // Short form: `=> expression` implicitly becomes `{ return expression; }`.
                 var exprLine = Peek().Line;
                 var value = ParseExpression();
                 body = new Stmt.BlockStmt(_sourceIndex, exprLine, new List<Stmt> { new ReturnStmt(_sourceIndex, exprLine, value) });
@@ -2990,8 +2990,8 @@ namespace fire.Compiler
         private Token Previous() => _tokens[_pos - 1];
         private bool Check(TokenType type) => Peek().Type == type;
 
-        /// <summary>Lookahead ohne zu konsumieren - `PeekAt(0)` == `Peek()`.
-        /// Fällt am Dateiende sicher auf das letzte Token (Eof) zurück.</summary>
+        /// <summary>Lookahead without consuming - `PeekAt(0)` == `Peek()`.
+        /// Falls back safely to the last token (EOF) at the end of the file.</summary>
         private Token PeekAt(int offset)
         {
             int idx = _pos + offset;
@@ -3022,16 +3022,16 @@ namespace fire.Compiler
             throw Error(message, Peek());
         }
 
-        /// <summary>true, wenn der nächste Token in derselben Zeile liegt wie der
-        /// zuletzt konsumierte (kein Zeilenumbruch dazwischen) – Grundlage dafür,
-        /// dass Binär-Operatoren, Zuweisung und die Postfix-Kette nicht
-        /// versehentlich über eine neue Anweisung in der nächsten Zeile hinweg
-        /// weiterlesen.</summary>
+        /// <summary>true if the next token lies on the same line as the
+        /// last consumed one (no line break in between) – basis for ensuring
+        /// that binary operators, assignment and the postfix chain do not
+        /// accidentally read on across a new statement in the next line
+        /// (it must not).</summary>
         private bool LineContinues() => _bracketDepth > 0 || !Peek().NewlineBefore;
 
-        /// <summary>Erzwingt die Statement-Trennungsregel: zwischen zwei Statements
-        /// muss ein ';' oder ein Zeilenumbruch stehen. Blockende ('}') und Dateiende
-        /// zählen ebenfalls als gültiger Abschluss (z.B. für einzeilige Blöcke wie
+        /// <summary>Enforces the statement separation rule: between two statements
+        /// there must be a ';' or a line break. End of block ('}') and end of file
+        /// also count as a valid termination (e.g. for single-line blocks like
         /// `{ return x }`).</summary>
         private void ExpectStatementTerminator()
         {

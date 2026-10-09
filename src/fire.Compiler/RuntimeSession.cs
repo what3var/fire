@@ -92,7 +92,7 @@ namespace fire.Compiler
 
         /// <summary>Builds the DirectiveRegistry that real programs (see
         /// Build) AND the live diagnostics (see Editor.LiveDiagnostics)
-        /// gleichermaßen nutzen - genau EINE Stelle, die weiß, welche
+        /// use alike - exactly ONE place that knows which
         /// user-defined preprocessor directives exist (currently:
         /// `#import "extension"`, see ImportedPreludes), so that both ALWAYS
         /// stay in step. Without that, a directive recognised here would
