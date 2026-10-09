@@ -1,14 +1,14 @@
 namespace UI {
-    // Basis aller Elemente.
+    // Base of all elements.
     //
-    // Layout (wie WPF/Avalonia, in ganzen Pixeln): Root ruft Measure und Arrange auf, danach Draw.
-    //   Measure(root, aw, ah)   fragt, wie gross das Element sein will, wenn hoechstens aw x ah da sind (-1: unbegrenzt); das Ergebnis steht in dw/dh (mit Rand).
-    //   Arrange(root, px, py, pw, ph)   gibt ihm den Platz (px, py, pw, ph) im Container (mit Rand); danach stehen rx/ry (Lage im Container) und
-    //                           actualWidth/actualHeight (Groesse) fest.
-    // width/height sind die ANGEFORDERTE Groesse (-1: nach dem Inhalt bzw. dem Platz), minWidth/maxWidth/minHeight/maxHeight begrenzen sie, margin ist der Abstand
-    // nach aussen, halign/valign sagen, wo das Element in seinem Platz sitzt (Stretch: es fuellt ihn aus, ausser es hat eine feste Groesse - dann steht es links/oben).
-    // x/y gelten nur in einem Canvas (und im Panel, das wie ein Canvas anordnet). ax/ay ist die Position auf dem Bildschirm beim letzten Zeichnen
-    // (damit Treffertest und Zeichnen immer dasselbe meinen).
+    // Layout (like WPF/Avalonia, in whole pixels): Root calls Measure and Arrange, then Draw.
+    //   Measure(root, aw, ah)   asks how big the element wants to be if at most aw x ah are available (-1: unbounded); the result is in dw/dh (with margin).
+    //   Arrange(root, px, py, pw, ph)   gives it the space (px, py, pw, ph) in the container (with margin); afterwards rx/ry (position in the container) and
+    //                           actualWidth/actualHeight (size) are fixed.
+    // width/height are the REQUESTED size (-1: by the content or the space), minWidth/maxWidth/minHeight/maxHeight limit it, margin is the distance
+    // to the outside, halign/valign say where the element sits in its space (Stretch: it fills it, unless it has a fixed size - then it sits at the left/top).
+    // x/y only apply in a Canvas (and in the Panel, which arranges like a Canvas). ax/ay is the position on the screen at the last drawing
+    // (so that hit testing and drawing always mean the same).
     class Element {
         int x
         int y
@@ -21,7 +21,7 @@ namespace UI {
         Thickness margin
         int halign = UI.HAlign.Stretch
         int valign = UI.VAlign.Stretch
-        // Angehaengte Eigenschaften der Container: DockPanel (dock), Grid (gridRow, gridColumn, gridRowSpan, gridColumnSpan)
+        // Attached properties of the containers: DockPanel (dock), Grid (gridRow, gridColumn, gridRowSpan, gridColumnSpan)
         int dock = UI.Dock.Left
         int gridRow = 0
         int gridColumn = 0
@@ -33,22 +33,22 @@ namespace UI {
         bool pressed = false
         bool focused = false
         Element parent
-        // Aussehen: undefined = das Steuerelement nimmt die Farben des Themes (Zustaende wie hover aendern sie dann selbst)
+        // Appearance: undefined = the control takes the colours of the theme (states like hover then change them themselves)
         Brush background
         Brush foreground
         Pen pen
-        // Name (fuer die Teile einer Vorlage, siehe FindPart)
+        // Name (for the parts of a template, see FindPart)
         string name = ""
-        // Eigene Ressourcen (undefined, bis man ein ResourceDictionary zuweist) und Style (undefined: der implizite Style, siehe StyleKey)
+        // Own resources (undefined until you assign a ResourceDictionary) and style (undefined: the implicit style, see StyleKey)
         ResourceDictionary resources
         Style style
-        // Vorlage fuer das Aussehen von Steuerelementen (ControlTemplate); templateRoot ist der daraus gebaute Teilbaum
+        // Template for the appearance of controls (ControlTemplate); templateRoot is the subtree built from it
         ControlTemplate template
         Element templateRoot
         Root host
-        // Zustand von Style, Vorlage, Bindungen
+        // State of style, template, bindings
         bool styled = false
-        // der Root beobachtet die Felder dieses Elements (Probe), und es wurde schon einmal angeordnet
+        // the root observes the fields of this element (probe), and it has already been arranged once
         bool watched = false
         bool laid = false
         Style appliedStyle
@@ -57,25 +57,25 @@ namespace UI {
         List templateParts
         List bindings
 
-        // Kontextmenue (Liste von MenuItem), das ein Rechtsklick auf das Element oder einen Nachfahren zeigt (siehe Root.ShowMenu)
+        // Context menu (list of MenuItem) that a right click on the element or a descendant shows (see Root.ShowMenu)
         List contextMenu
-        // Schwebendes Element (siehe Root.ShowPopup): wird beim Schliessen zerstoert / hat es geoeffnet / will die Tasten, solange es oben liegt
+        // Floating element (see Root.ShowPopup): is destroyed when closed / has opened it / wants the keys as long as it is on top
         bool transient = false
         Element owner
         bool grabsKeys = false
 
-        // Ergebnis des Layouts
-        // cw/ch: Inhaltsgroesse (ohne Rand), dw/dh: gewuenschte Groesse (mit Rand)
+        // Result of the layout
+        // cw/ch: content size (without margin), dw/dh: desired size (with margin)
         int cw = 0
         int ch = 0
         int dw = 0
         int dh = 0
-        // Lage im Container und Groesse nach Arrange
+        // Position in the container and size after Arrange
         int rx = 0
         int ry = 0
         int actualWidth = 0
         int actualHeight = 0
-        // Position auf dem Bildschirm beim letzten Zeichnen
+        // Position on the screen at the last drawing
         int ax = 0
         int ay = 0
 
@@ -87,23 +87,23 @@ namespace UI {
             this.margin = new Thickness(0)
         }
 
-        // Der Schluessel, unter dem implizite Styles fuer diese Art Element stehen (ResourceDictionary.AddStyle); abgeleitete Klassen erben ihn.
+        // The key under which implicit styles for this kind of element are stored (ResourceDictionary.AddStyle); derived classes inherit it.
         string StyleKey() { return "Element" }
 
-        // Das Element (oder ein Nachfahre) mit diesem Namen, sonst undefined.
+        // The element (or a descendant) with this name, otherwise undefined.
         FindName(string name) {
             if (this.name == name) { return this }
             return undefined
         }
 
-        // Ein Teil der Vorlage dieses Elements (oder das Element selbst bei "").
+        // A part of the template of this element (or the element itself for "").
         FindPart(string part) {
             if (part == "") { return this }
             if (this.templateRoot != undefined) { return this.templateRoot.FindName(part) }
             return this.FindName(part)
         }
 
-        // Der erste Style fuer `key` ab diesem Element nach oben (zuletzt die Ressourcen des Roots), sonst undefined.
+        // The first style for `key` from this element upwards (lastly the resources of the root), otherwise undefined.
         FindStyle(string key) {
             var e = this
             while (e != undefined) {
@@ -117,7 +117,7 @@ namespace UI {
             return undefined
         }
 
-        // Die Ressource zu `key` ab diesem Element nach oben (zuletzt die des Roots), sonst undefined. Vor dem ersten Layout gibt es nur die der Vorfahren.
+        // The resource for `key` from this element upwards (lastly that of the root), otherwise undefined. Before the first layout there are only those of the ancestors.
         FindResource(string key) {
             var e = this
             while (e != undefined) {
@@ -128,13 +128,13 @@ namespace UI {
             return undefined
         }
 
-        // Legt die Ressourcen dieses Elements an, falls es noch keine hat, und liefert sie.
+        // Creates the resources of this element if it has none yet, and returns them.
         Resources() {
             if (this.resources == undefined) { this.resources = new ResourceDictionary() }
             return this.resources
         }
 
-        // Einen Trigger des Styles bei diesem Element anmelden.
+        // Register a trigger of the style with this element.
         AddTrigger(trigger) {
             if (this.styleStates == undefined) { this.styleStates = new List() }
             var state = new TriggerState(trigger)
@@ -142,7 +142,7 @@ namespace UI {
             this.styleStates.Add(state)
         }
 
-        // Verbindet eine Eigenschaft dieses Elements mit der eines anderen Objekts (siehe Binding).
+        // Connects a property of this element with that of another object (see Binding).
         Bind(string property, source, string sourceProperty, bool twoWay = false, converter = undefined, bool once = false) {
             if (this.bindings == undefined) { this.bindings = new List() }
             var binding = new Binding(this, property, source, sourceProperty, twoWay, converter, once)
@@ -161,7 +161,7 @@ namespace UI {
             this.styleStates = new List()
         }
 
-        // Baut die Teile aus der Vorlage.
+        // Builds the parts from the template.
         BuildTemplate() {
             var make = this.template.factory
             var tree = make(this)
@@ -180,21 +180,21 @@ namespace UI {
             }
         }
 
-        // Das Element hat sich geaendert: sein Bereich wird beim naechsten Update neu gemalt (Aenderungen an den Feldern des Elements melden sich selbst; fuer Aenderungen
-        // IN einem Objekt, das es benutzt - ein Brush, eine Liste, eine Geometrie -, ruft man das selbst auf).
+        // The element has changed: its area will be repainted at the next update (changes to the fields of the element report themselves; for changes
+        // IN an object it uses - a brush, a list, a geometry - you call this yourself).
         Invalidate() {
             var r = this.host
             if (r != undefined) { r.InvalidateRect(this.ax, this.ay, this.actualWidth, this.actualHeight) }
         }
 
-        // Vor jedem Anordnen und Malen (Root.Update): Style anwenden (beim ersten Mal), Vorlage bauen, Bindungen abgleichen, Trigger pruefen, und die Nachfahren abfragen.
-        // Aenderungen, die dabei entstehen, melden sich bei der Oberflaeche wie jede andere.
+        // Before every arranging and painting (Root.Update): apply the style (the first time), build the template, reconcile bindings, check triggers, and poll the descendants.
+        // Changes that arise in the process report themselves to the interface like any other.
         Poll(root) {
             this.Prepare(root)
             if (this.templateRoot != undefined) { this.templateRoot.Poll(root) }
         }
 
-        // Muss das Element (an der Bildschirmposition ax, ay) gemalt werden - liegt es im Bereich, der gerade neu gemalt wird? Setzt dabei ax und ay.
+        // Must the element (at screen position ax, ay) be painted - does it lie in the area that is currently being repainted? Sets ax and ay while doing so.
         bool NeedsDraw(root, int ax, int ay) {
             this.ax = ax
             this.ay = ay
@@ -239,10 +239,10 @@ namespace UI {
             }
         }
 
-        // Kann das Element den Tastaturfokus bekommen (Tab, Klick)?
+        // Can the element receive keyboard focus (Tab, click)?
         bool Focusable() { return false }
 
-        // Der Inhalt (ohne Rand): setzt cw/ch. aw/ah: hoechstens so viel Platz (-1: unbegrenzt). Ein Element ohne Inhalt will nichts.
+        // The content (without margin): sets cw/ch. aw/ah: at most this much space (-1: unbounded). An element without content wants nothing.
         MeasureCore(root, int aw, int ah) {
             this.cw = 0
             this.ch = 0
@@ -260,7 +260,7 @@ namespace UI {
             var ih = ah
             if (iw >= 0) { iw = UI.M.Max(0, iw - mw) }
             if (ih >= 0) { ih = UI.M.Max(0, ih - mh) }
-            // eine feste Groesse gilt, egal wie viel Platz da ist
+            // a fixed size applies, no matter how much space is available
             if (this.width >= 0) { iw = this.width }
             if (this.height >= 0) { ih = this.height }
             if (this.maxWidth >= 0 && (iw < 0 || iw > this.maxWidth)) { iw = this.maxWidth }
@@ -278,10 +278,10 @@ namespace UI {
             this.dh = h + mh
         }
 
-        // Ordnet die Kinder an (ihr Platz ist w x h gross). Ein Element ohne Kinder tut nichts.
+        // Arranges the children (their space is w x h). An element without children does nothing.
         ArrangeCore(root, int w, int h) { }
 
-        // Der Platz im Container ist (px, py, pw, ph), der Rand eingeschlossen.
+        // The space in the container is (px, py, pw, ph), margin included.
         Arrange(root, int px, int py, int pw, int ph) {
             if (!this.visible) {
                 if (this.actualWidth != 0 || this.actualHeight != 0) { root.layoutMoved = true }
@@ -307,7 +307,7 @@ namespace UI {
             else if (this.valign == UI.VAlign.Bottom) { oy = eh - h }
             var nx = px + ml + ox
             var ny = py + mt + oy
-            // hat sich die Lage oder Groesse geaendert (oder ist es das erste Mal), muss alles neu gemalt werden: was daneben liegt, kann mitgerutscht sein
+            // if the position or size has changed (or it is the first time), everything must be repainted: what lies next to it may have moved along
             if (!this.laid || this.rx != nx || this.ry != ny || this.actualWidth != w || this.actualHeight != h) {
                 root.layoutMoved = true
                 this.laid = true
@@ -319,7 +319,7 @@ namespace UI {
             this.ArrangeContent(root, w, h)
         }
 
-        // Mit Vorlage bestimmt ihr Baum die Groesse, sonst der Inhalt des Elements selbst.
+        // With a template its tree determines the size, otherwise the content of the element itself.
         MeasureContent(root, int iw, int ih) {
             var t = this.templateRoot
             if (t == undefined) {
@@ -340,7 +340,7 @@ namespace UI {
             t.Arrange(root, 0, 0, w, h)
         }
 
-        // Zeichnet die Vorlage; false, wenn es keine gibt (dann zeichnet sich das Steuerelement selbst).
+        // Draws the template; false if there is none (then the control draws itself).
         bool DrawTemplate(root, int ax, int ay) {
             var t = this.templateRoot
             this.ax = ax
@@ -355,7 +355,7 @@ namespace UI {
             this.ay = ay
         }
 
-        // Das Element (oder ein Nachfahre) unter der Bildschirmposition (px, py), sonst undefined.
+        // The element (or a descendant) under the screen position (px, py), otherwise undefined.
         HitTest(int px, int py) {
             if (!this.visible) { return undefined }
             if (px >= this.ax && px < this.ax + this.actualWidth && py >= this.ay && py < this.ay + this.actualHeight) { return this }
@@ -371,17 +371,17 @@ namespace UI {
             return px >= this.ax && px < this.ax + this.actualWidth && py >= this.ay && py < this.ay + this.actualHeight
         }
 
-        // Das Mausrad: dy > 0 heisst nach oben. Liefert true, wenn das Element es verbraucht hat (sonst fragt der Root den Container).
+        // The mouse wheel: dy > 0 means up. Returns true if the element consumed it (otherwise the root asks the container).
         bool MouseWheel(root, int dx, int dy) { return false }
 
-        // Fuer ein schwebendes Element: ein Klick ausserhalb. Es schliesst sich (und verbraucht den Klick, wenn er sein Besitzer `owner` traf).
+        // For a floating element: a click outside. It closes (and consumes the click if it hit its owner `owner`).
         bool PopupOutside(root, int px, int py) {
             var consumed = this.owner != undefined && this.owner.Contains(px, py)
             root.ClosePopup(this)
             return consumed
         }
 
-        // Der Zeiger bewegt sich ueber dem Element (ohne gedrueckte Maustaste auf ihm).
+        // The pointer moves over the element (without a pressed mouse button on it).
         Hover(root, int px, int py) { }
 
         MouseDown(root, int button, int px, int py) { }
@@ -390,31 +390,31 @@ namespace UI {
         KeyDown(root, int key, int mod) { }
         TextInput(root, string text) { }
 
-        // Will das Element diese Pfeil-/Navigationstaste selbst (zum Beispiel ein Textfeld Links/Rechts, eine Liste Auf/Ab)? Sonst bewegt der Root damit den Fokus zum naechsten Element in der Richtung
-        // (Tastatur-, Joystick-Bedienung). Eine Liste gibt die Taste am Rand frei, damit man aus ihr herauskommt.
+        // Does the element want this arrow/navigation key itself (for example a text field Left/Right, a list Up/Down)? Otherwise the root uses it to move the focus to the next element in the direction
+        // (keyboard, joystick operation). A list releases the key at its edge so that you can get out of it.
         bool WantsKey(int key) { return false }
 
-        // Berührung (Finger): Kann das Element durch Wischen verschoben werden (eine Liste, ein ScrollViewer), und wird gerade an einem seiner Griffe gezogen? PanBy verschiebt den Inhalt um (dx, dy) Pixel
-        // in Richtung des Fingers und liefert true, wenn das Element das Wischen übernommen hat.
+        // Touch (finger): can the element be moved by swiping (a list, a ScrollViewer), and is one of its handles being dragged right now? PanBy moves the content by (dx, dy) pixels
+        // in the direction of the finger and returns true if the element has taken over the swipe.
         bool CanPan() { return false }
         bool Dragging() { return false }
         bool PanBy(root, int dx, int dy) { return false }
     }
 
-    // Container mit Kindern. Dieses Panel ordnet sie an ihrem x/y an (wie ein Canvas) und kann Hintergrund und Rahmen zeichnen; die anderen Container
-    // (StackPanel, DockPanel, WrapPanel, Grid) leiten davon ab und ordnen anders an.
+    // Container with children. This panel arranges them at their x/y (like a Canvas) and can draw background and frame; the other containers
+    // (StackPanel, DockPanel, WrapPanel, Grid) derive from it and arrange differently.
     class Panel : Element {
         List children
         bool showBorder = false
-        // Hintergrund (`background`, siehe Element): undefined = der Brush `panel` des Themes; mit filled = false gibt es keinen (durchsichtig)
-        // Rahmen (showBorder, `pen`): undefined = der Pen `border` des Themes
+        // Background (`background`, see Element): undefined = the brush `panel` of the theme; with filled = false there is none (transparent)
+        // Frame (showBorder, `pen`): undefined = the pen `border` of the theme
         bool filled = true
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
             this.children = new List()
         }
 
-        // Das Kind gehoert ab jetzt diesem Panel (es lebt so lange wie dieses).
+        // The child belongs to this panel from now on (it lives as long as this one).
         Add(child) {
             child.TakeTo(this)
             child.parent = this
@@ -422,7 +422,7 @@ namespace UI {
             this.Invalidate()
         }
 
-        // Nimmt das Kind aus dem Panel (es wird nicht zerstoert, gehoert aber weiter dem Panel).
+        // Takes the child out of the panel (it is not destroyed, but still belongs to the panel).
         Remove(child) {
             for (var i = 0; i < this.children.count; i = i + 1) {
                 if (this.children[i] == child) {
@@ -434,7 +434,7 @@ namespace UI {
             }
         }
 
-        // Alle Kinder zerstoeren.
+        // Destroy all children.
         Clear() {
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
@@ -450,7 +450,7 @@ namespace UI {
             for (var i = 0; i < this.children.count; i = i + 1) { this.children[i].Poll(root) }
         }
 
-        // Canvas-Anordnung: jedes Kind will so gross sein, wie es ist; die Groesse des Panels ist die der Kinder, soweit es keine feste hat.
+        // Canvas arrangement: every child wants to be as big as it is; the size of the panel is that of the children, as far as it has no fixed one.
         MeasureCore(root, int aw, int ah) {
             var w = 0
             var h = 0
@@ -527,7 +527,7 @@ namespace UI {
         }
     }
 
-    // Wie Panel, aber durchsichtig und ohne Rahmen: Kinder an festen Positionen (x/y).
+    // Like Panel, but transparent and without a frame: children at fixed positions (x/y).
     class Canvas : Panel {
         string StyleKey() { return "Canvas" }
 
@@ -536,9 +536,9 @@ namespace UI {
         }
     }
 
-    // Ordnet die Kinder nacheinander an (untereinander oder, mit horizontal, nebeneinander): jedes bekommt in der Laufrichtung seine
-    // gewuenschte Groesse, quer dazu den ganzen Platz (halign/valign wirken dort). `spacing` ist der Abstand zwischen den Kindern, `padding` der
-    // Rand innen.
+    // Arranges the children one after the other (below one another or, with horizontal, side by side): each gets its
+    // desired size in the running direction, the whole space across it (halign/valign act there). `spacing` is the distance between the children, `padding` the
+    // inner margin.
     class StackPanel : Panel {
         string StyleKey() { return "StackPanel" }
 
@@ -603,15 +603,15 @@ namespace UI {
         }
     }
 
-    // Wie StackPanel, aber wie die Elemente bisher: mit Hintergrund und den alten Vorgaben (spacing und padding 4).
+    // Like StackPanel, but like the elements used to be: with background and the old defaults (spacing and padding 4).
     class Stack : StackPanel {
         construct(int x = 0, int y = 0, int width = -1, int height = -1, bool horizontal = false, int spacing = 4, int padding = 4) : base(x, y, width, height, horizontal, spacing, padding) {
             this.filled = true
         }
     }
 
-    // Die Kinder liegen an den Raendern (`dock`: Left, Top, Right, Bottom) in der Reihenfolge, in der sie hinzugefuegt wurden; was uebrig bleibt, fuellt das
-    // letzte Kind (lastChildFill).
+    // The children lie at the edges (`dock`: Left, Top, Right, Bottom) in the order in which they were added; what is left over fills the
+    // last child (lastChildFill).
     class DockPanel : Panel {
         string StyleKey() { return "DockPanel" }
 
@@ -621,14 +621,14 @@ namespace UI {
             this.filled = false
         }
 
-        // Ein Kind mit der Seite, an der es liegt: `dock.AddDocked(element, UI.Dock.Top)`.
+        // A child with the side it lies on: `dock.AddDocked(element, UI.Dock.Top)`.
         AddDocked(child, int side) {
             child.dock = side
             this.Add(child)
         }
 
         MeasureCore(root, int aw, int ah) {
-            // Von innen nach aussen: was links/rechts liegt, nimmt Breite, was oben/unten liegt, nimmt Hoehe; der Rest bleibt fuer die uebrigen Kinder.
+            // From the inside out: what lies left/right takes width, what lies top/bottom takes height; the rest remains for the other children.
             var usedW = 0
             var usedH = 0
             var maxW = 0
@@ -695,8 +695,8 @@ namespace UI {
         }
     }
 
-    // Reiht die Kinder auf und beginnt eine neue Zeile (Spalte, wenn vertikal), wenn der Platz nicht reicht. itemWidth/itemHeight (>= 0) geben jedem Kind
-    // diese Groesse.
+    // Lines up the children and starts a new row (column, if vertical) when the space is not enough. itemWidth/itemHeight (>= 0) give every child
+    // this size.
     class WrapPanel : Panel {
         string StyleKey() { return "WrapPanel" }
 
@@ -755,7 +755,7 @@ namespace UI {
             var lineLen = 0
             var lineThick = 0
             var offset = 0
-            // eine Zeile wird erst angeordnet, wenn sie voll ist (ihre Dicke ist vorher nicht bekannt)
+            // a row is only arranged when it is full (its thickness is not known beforehand)
             var start = 0
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
@@ -783,7 +783,7 @@ namespace UI {
             this.ArrangeLine(root, start, this.children.count, offset, lineThick)
         }
 
-        // Die Kinder first..last-1 liegen in einer Zeile (Spalte), die bei `offset` beginnt und `thick` dick ist.
+        // The children first..last-1 lie in a row (column) that begins at `offset` and is `thick` thick.
         ArrangeLine(root, int first, int last, int offset, int thick) {
             var pos = 0
             for (var i = first; i < last; i = i + 1) {
@@ -804,7 +804,7 @@ namespace UI {
         }
     }
 
-    // Eine Zeile oder Spalte eines Grids: mode 0 = Auto (so gross wie der Inhalt), 1 = feste Pixel, 2 = Stern (ein Anteil vom Rest, `value` ist das Gewicht).
+    // A row or column of a Grid: mode 0 = Auto (as big as the content), 1 = fixed pixels, 2 = star (a share of the rest, `value` is the weight).
     class Track {
         int mode
         int value
@@ -816,12 +816,12 @@ namespace UI {
         construct(int mode, int value) {
             this.mode = mode
             this.value = value
-            // eine feste Spur hat ihre Groesse schon, bevor das Layout die Spuren der anderen Achse braucht
+            // a fixed track already has its size before the layout needs the tracks of the other axis
             this.size = 0
             if (mode == 1) { this.size = value }
         }
 
-        // "auto", "*", "2*" oder eine Zahl (Pixel)
+        // "auto", "*", "2*" or a number (pixels)
         static Track Parse(string text) {
             var t = text.Trim().ToLower()
             if (t == "auto" || t == "") { return new Track(0, 0) }
@@ -834,8 +834,8 @@ namespace UI {
         }
     }
 
-    // Zeilen und Spalten: `grid.SetColumns("100, auto, *, 2*")`, `grid.SetRows("auto, *")`; ein Kind sitzt in der Zelle (gridRow, gridColumn) und kann ueber
-    // gridRowSpan/gridColumnSpan mehrere belegen. Ohne Angabe gibt es eine Zeile und eine Spalte mit `*`.
+    // Rows and columns: `grid.SetColumns("100, auto, *, 2*")`, `grid.SetRows("auto, *")`; a child sits in the cell (gridRow, gridColumn) and can occupy several via
+    // gridRowSpan/gridColumnSpan. Without any specification there is one row and one column with `*`.
     class Grid : Panel {
         string StyleKey() { return "Grid" }
 
@@ -871,7 +871,7 @@ namespace UI {
             this.columns.Add(track)
         }
 
-        // Ein Kind in eine Zelle setzen.
+        // Put a child into a cell.
         AddAt(child, int row, int column, int rowSpan = 1, int columnSpan = 1) {
             child.gridRow = row
             child.gridColumn = column
@@ -880,27 +880,27 @@ namespace UI {
             this.Add(child)
         }
 
-        // Die Spuren (ohne Angabe: eine Stern-Spur), deren Groessen noch nicht feststehen.
+        // The tracks (without specification: one star track) whose sizes are not yet fixed.
         List Tracks(list) {
             if (list.count == 0) { list.Add(new Track(2, 1)) }
             return list
         }
 
-        // Die Summe der Groessen der Spuren start..start+span-1
+        // The sum of the sizes of the tracks start..start+span-1
         int SpanSize(list, int start, int span) {
             var total = 0
             for (var i = start; i < start + span && i < list.count; i = i + 1) { total = total + list[i].size }
             return total
         }
 
-        // Die Spur `index` (an die Grenzen des Grids geklemmt)
+        // The track `index` (clamped to the bounds of the grid)
         int Fit(list, int index) {
             if (index < 0) { return 0 }
             if (index >= list.count) { return list.count - 1 }
             return index
         }
 
-        // Verteilt `avail` (oder, bei -1, so viel wie der Inhalt will) auf die Stern-Spuren.
+        // Distributes `avail` (or, for -1, as much as the content wants) to the star tracks.
         ResolveStars(list, int avail, int used) {
             var weights = 0
             for (var i = 0; i < list.count; i = i + 1) {
@@ -914,7 +914,7 @@ namespace UI {
                 var t = list[i]
                 if (t.mode != 2) { continue }
                 seen = seen + t.value
-                // der Rest geht auf: die Summe der bisherigen Anteile, gerundet, minus dem schon Vergebenen
+                // the remainder is used up: the sum of the shares so far, rounded, minus what has already been given out
                 var upto = rest * seen / weights
                 t.size = UI.M.Clamp(upto - given, t.min, t.max)
                 given = given + t.size
@@ -926,7 +926,7 @@ namespace UI {
             var cols = this.Tracks(this.columns)
             this.ResolveAxis(root, rows, cols, ah, false)
             this.ResolveAxis(root, cols, rows, aw, true)
-            // jedes Kind mit der endgueltigen Groesse seiner Zelle messen (auch die, die eine Spur nicht bestimmt haben)
+            // measure every child with the final size of its cell (also those that did not determine a track)
             for (var c = 0; c < this.children.count; c = c + 1) {
                 var child = this.children[c]
                 if (!child.visible) {
@@ -947,8 +947,8 @@ namespace UI {
             this.ch = h
         }
 
-        // Legt die Groessen der Spuren einer Achse fest: erst feste, dann die vom Inhalt (Auto), dann die Sterne.
-        // along: die Spuren dieser Achse, other: die der anderen; avail: der Platz in dieser Achse; isColumn: along sind die Spalten.
+        // Determines the sizes of the tracks of one axis: first fixed ones, then those from the content (Auto), then the stars.
+        // along: the tracks of this axis, other: those of the other axis; avail: the space in this axis; isColumn: along are the columns.
         ResolveAxis(root, along, other, int avail, bool isColumn) {
             var used = 0
             for (var i = 0; i < along.count; i = i + 1) {
@@ -956,7 +956,7 @@ namespace UI {
                 t.size = 0
                 if (t.mode == 1) { t.size = UI.M.Clamp(t.value, t.min, t.max) }
             }
-            // Auto-Spuren (und, wenn der Platz unbegrenzt ist, Sterne) richten sich nach dem Inhalt der Kinder, die genau eine Spur belegen
+            // Auto tracks (and, if the space is unbounded, stars) depend on the content of the children that occupy exactly one track
             var starsByContent = avail < 0
             for (var pass = 0; pass < 2; pass = pass + 1) {
                 for (var c = 0; c < this.children.count; c = c + 1) {
@@ -978,9 +978,9 @@ namespace UI {
                         if (along[k].mode == 0 || (along[k].mode == 2 && starsByContent)) { contentTracks = contentTracks + 1 }
                         if (along[k].mode == 2 && !starsByContent) { hasStar = true }
                     }
-                    // eine Zelle, die eine Stern-Spur einschliesst, bekommt ihren Platz von dort und macht keine Auto-Spur breiter
+                    // a cell that includes a star track gets its space from there and does not make an auto track wider
                     if (contentTracks == 0 || (span > 1 && hasStar)) { continue }
-                    // erste Runde: Kinder mit einer Spur, zweite: die ueber mehrere
+                    // first round: children with one track, second: those spanning several
                     if (pass == 0 && span > 1) { continue }
                     if (pass == 1 && span == 1) { continue }
                     var cellW = -1
@@ -993,7 +993,7 @@ namespace UI {
                     child.Measure(root, cellW, cellH)
                     var want = child.dh
                     if (isColumn) { want = child.dw }
-                    // was schon feststeht (feste Spuren im Bereich), muss der Inhalt nicht mehr tragen
+                    // what is already fixed (fixed tracks in the range) does not have to be carried by the content any more
                     var have = 0
                     for (var k = begin; k < begin + span && k < along.count; k = k + 1) { have = have + along[k].size }
                     var missing = want - have
@@ -1021,7 +1021,7 @@ namespace UI {
             if (!starsByContent) { this.ResolveStars(along, avail, used) }
         }
 
-        // Die Groesse der Zelle des Kindes in der anderen Achse, soweit schon bekannt (feste Spuren), sonst -1.
+        // The size of the child's cell in the other axis, as far as already known (fixed tracks), otherwise -1.
         int CellSizeOther(other, child, bool isColumnAxis) {
             var begin = 0
             var span = 1
@@ -1043,7 +1043,7 @@ namespace UI {
         ArrangeCore(root, int w, int h) {
             var rows = this.Tracks(this.rows)
             var cols = this.Tracks(this.columns)
-            // mit der endgueltigen Groesse: die Sterne neu verteilen
+            // with the final size: redistribute the stars
             this.Restar(rows, h)
             this.Restar(cols, w)
             for (var c = 0; c < this.children.count; c = c + 1) {
@@ -1063,7 +1063,7 @@ namespace UI {
             }
         }
 
-        // Verteilt den Platz auf die Sterne der Achse neu (die anderen Spuren behalten ihre Groesse).
+        // Redistributes the space to the stars of the axis (the other tracks keep their size).
         Restar(list, int avail) {
             var used = 0
             var stars = 0
@@ -1074,7 +1074,7 @@ namespace UI {
         }
     }
 
-    // Ein Kind mit Rahmen, Hintergrund und Innenabstand (padding). thickness ist die Breite des Rahmens in Pixeln (0: keiner).
+    // A child with frame, background and inner margin (padding). thickness is the width of the frame in pixels (0: none).
     class Border : Element {
         Element child
         int thickness = 1
@@ -1084,7 +1084,7 @@ namespace UI {
             this.padding = new Thickness(0)
         }
 
-        // Das Kind gehoert ab jetzt dem Border.
+        // The child belongs to the Border from now on.
         SetChild(element) {
             if (this.child != undefined) { this.child.parent = undefined }
             this.child = element

@@ -1,5 +1,5 @@
 namespace UI {
-    // Ein Knoten eines TreeView: Text, ein beliebiger Wert (`value`), Kinder (Add), aufgeklappt oder nicht.
+    // A node of a TreeView: text, an arbitrary value (`value`), children (Add), expanded or not.
     class TreeNode {
         string text = ""
         var value
@@ -37,8 +37,8 @@ namespace UI {
         Collapse() { this.expanded = false }
     }
 
-    // Ein Baum: `AddNode` haengt Knoten der obersten Ebene an. Klick auf das Kaestchen klappt auf und zu, Klick auf die Zeile waehlt, Tasten: Auf/Ab wandern, Rechts klappt auf
-    // (oder geht zum ersten Kind), Links klappt zu (oder geht zum Elternknoten), Enter klappt um.
+    // A tree: `AddNode` appends nodes of the top level. A click on the box expands and collapses, a click on the row selects, keys: Up/Down move, Right expands
+    // (or goes to the first child), Left collapses (or goes to the parent node), Enter toggles.
     class TreeView : Element {
         List nodes
         TreeNode selected
@@ -47,7 +47,7 @@ namespace UI {
         Scroller scroller
         var onSelect
         bool changed = false
-        // die sichtbaren Knoten der letzten Anordnung, von oben nach unten
+        // the visible nodes of the last arrangement, from top to bottom
         List visibleNodes
         int hotIndex = -1
         int seenSignature = -1
@@ -79,7 +79,7 @@ namespace UI {
             this.Invalidate()
         }
 
-        // Ein Merkmal der sichtbaren Knoten (Anzahl, Texte, Aufgeklapptes): aendert es sich - zum Beispiel durch `node.expanded = true` -, wird neu gemalt.
+        // A feature of the visible nodes (count, texts, expanded state): if it changes - for example by `node.expanded = true` - it is repainted.
         int Signature() {
             var list = new List()
             for (var i = 0; i < this.nodes.count; i = i + 1) { this.Collect_(list, this.nodes[i]) }
@@ -113,7 +113,7 @@ namespace UI {
             }
         }
 
-        // Baut die Liste der sichtbaren Knoten neu.
+        // Rebuilds the list of visible nodes.
         Flatten() {
             this.visibleNodes = new List()
             for (var i = 0; i < this.nodes.count; i = i + 1) { this.Collect_(this.visibleNodes, this.nodes[i]) }
@@ -181,7 +181,7 @@ namespace UI {
             r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
         }
 
-        // Das Kaestchen mit Plus (zu) oder Minus (auf).
+        // The box with plus (collapsed) or minus (expanded).
         DrawBox(root, int x, int y, bool open, color) {
             var pen = new Pen(color.Color)
             root.renderer.DrawRect(x, y, 9, 9, pen)
@@ -215,7 +215,7 @@ namespace UI {
             return was
         }
 
-        // Blaettert, bis der Knoten sichtbar ist (er muss sichtbar, also sein Elternpfad aufgeklappt sein).
+        // Scrolls until the node is visible (it must be visible, i.e. its parent path expanded).
         EnsureVisible(root, node) {
             var index = this.visibleNodes.IndexOf(node)
             if (index < 0) { return }
@@ -268,7 +268,7 @@ namespace UI {
             return true
         }
 
-        // Auf und Ab wählt einen anderen Knoten (am Rand gibt der Baum die Taste frei), Links und Rechts klappen zu/auf
+        // Up and Down select another node (at the edge the tree releases the key), Left and Right collapse/expand
         bool WantsKey(int key) {
             var last = this.visibleNodes.count - 1
             var index = this.IndexOfSelected()

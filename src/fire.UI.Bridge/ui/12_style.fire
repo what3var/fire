@@ -1,9 +1,9 @@
 namespace UI {
-    // Wertesammlungen und Aussehen: Setter, Trigger, Style, Vorlagen (ControlTemplate/DataTemplate), Bindungen zwischen Elementen und das
-    // ResourceDictionary. Eigenschaften sind die Felder der Elemente; sie werden ueber ihren Namen gesetzt (Reflect.Get/Set), deshalb braucht
-    // `ui` die Bibliothek `reflection`. Nichts hier malt selbst - die Elemente (siehe Element.Prepare) holen sich Styles, Trigger, Vorlagen und Bindungen.
+    // Collections of values and appearance: setters, triggers, style, templates (ControlTemplate/DataTemplate), bindings between elements and the
+    // ResourceDictionary. Properties are the fields of the elements; they are set via their names (Reflect.Get/Set), which is why
+    // `ui` needs the library `reflection`. Nothing here paints by itself - the elements (see Element.Prepare) fetch styles, triggers, templates and bindings.
 
-    // Gibt einer Eigenschaft einen Wert. `target`: Name eines Teils der Vorlage des Elements (leer: das Element selbst).
+    // Gives a property a value. `target`: name of a part of the element's template (empty: the element itself).
     class Setter {
         string property
         var value
@@ -16,7 +16,7 @@ namespace UI {
             UI.M.Own(this, value)
         }
 
-        // Das Element, auf das der Setter wirkt (undefined, wenn es den Teil nicht gibt).
+        // The element the setter acts on (undefined if the part does not exist).
         Find(owner) {
             if (this.target == "") { return owner }
             return owner.FindPart(this.target)
@@ -29,7 +29,7 @@ namespace UI {
         }
     }
 
-    // Eine Bedingung eines Triggers: die Eigenschaft hat den Wert. `source`: Name eines Teils der Vorlage (leer: das Element selbst).
+    // A condition of a trigger: the property has the value. `source`: name of a part of the template (empty: the element itself).
     class Condition {
         string property
         var value
@@ -50,8 +50,8 @@ namespace UI {
         }
     }
 
-    // Solange alle Bedingungen gelten, setzen die Setter ihre Werte; danach kommen die alten wieder.
-    // `new Trigger("hover", true)` - weitere Bedingungen mit And(...), die Werte mit Set(...).
+    // As long as all conditions hold, the setters set their values; afterwards the old ones return.
+    // `new Trigger("hover", true)` - further conditions with And(...), the values with Set(...).
     class Trigger {
         List conditions
         List setters
@@ -82,14 +82,14 @@ namespace UI {
         }
     }
 
-    // Ein Wert, der beim Ende eines Triggers zurueckgesetzt wird.
+    // A value that is reset when a trigger ends.
     class Saved {
         Element element
         string property
         var value
     }
 
-    // Der Zustand eines Triggers an EINEM Element (Style und Vorlage werden von vielen Elementen geteilt).
+    // The state of a trigger on ONE element (style and template are shared by many elements).
     class TriggerState {
         Trigger trigger
         bool active = false
@@ -136,10 +136,10 @@ namespace UI {
         }
     }
 
-    // Eine Sammlung von Settern und Triggern fuer eine Art Element. `target` ist der Stil-Schluessel (siehe Element.StyleKey, z.B. "Button");
-    // in einem ResourceDictionary mit AddStyle gilt er fuer alle Elemente dieser Art darunter ("impliziter Style"), sonst weist man ihn
-    // mit `element.style = ...` zu. `basedOn`: ein Style, auf dem dieser aufbaut.
-    // Ein Style gilt beim ersten Layout des Elements und ueberschreibt dort, was Konstruktor oder Code vorher gesetzt haben.
+    // A collection of setters and triggers for a kind of element. `target` is the style key (see Element.StyleKey, e.g. "Button");
+    // in a ResourceDictionary with AddStyle it applies to all elements of this kind below it ("implicit style"), otherwise you assign it
+    // with `element.style = ...`. `basedOn`: a style this one builds on.
+    // A style applies at the first layout of the element and overrides there what the constructor or code set beforehand.
     class Style {
         string target
         Style basedOn
@@ -163,7 +163,7 @@ namespace UI {
             this.triggers.Add(trigger)
         }
 
-        // Die Setter anwenden und die Trigger beim Element anmelden (zuerst die des Basis-Styles).
+        // Apply the setters and register the triggers with the element (first those of the base style).
         Apply(owner) {
             if (this.basedOn != undefined) { this.basedOn.Apply(owner) }
             for (var i = 0; i < this.setters.count; i = i + 1) { this.setters[i].Apply(owner) }
@@ -171,7 +171,7 @@ namespace UI {
         }
     }
 
-    // Bindet die Eigenschaft eines Teils der Vorlage an eine Eigenschaft des Elements, dem die Vorlage gehoert.
+    // Binds the property of a part of the template to a property of the element that owns the template.
     class TemplateBinding {
         string part
         string partProperty
@@ -184,10 +184,10 @@ namespace UI {
         }
     }
 
-    // Das Aussehen eines Steuerelements: `factory` ist ein Lambda mit einem Parameter (dem Element), das den Baum der Teile baut und seine
-    // Wurzel liefert. Teile mit Namen (`element.name = "..."`) lassen sich ansprechen: Bind(...) bindet eine ihrer Eigenschaften an eine des Elements,
-    // AddTrigger(...) aendert sie unter einer Bedingung (Setter mit `target` = Name des Teils).
-    // Ohne Vorlage zeichnet sich das Steuerelement selbst.
+    // The appearance of a control: `factory` is a lambda with one parameter (the element) that builds the tree of the parts and returns its
+    // root. Parts with names (`element.name = "..."`) can be addressed: Bind(...) binds one of their properties to one of the element,
+    // AddTrigger(...) changes it under a condition (setters with `target` = name of the part).
+    // Without a template the control draws itself.
     class ControlTemplate {
         var factory
         List bindings
@@ -211,7 +211,7 @@ namespace UI {
         }
     }
 
-    // Baut zu einem Datenelement (einer Zeile einer Liste, eines Baums) das Element, das es zeigt: `factory` ist ein Lambda mit einem Parameter (dem Datenelement).
+    // Builds the element that shows a data item (a row of a list, a tree): `factory` is a lambda with one parameter (the data item).
     class DataTemplate {
         var factory
 
@@ -223,9 +223,9 @@ namespace UI {
         }
     }
 
-    // Verbindet eine Eigenschaft eines Elements mit der eines anderen Objekts. Es wird bei jedem Layout abgeglichen (ohne Ereignisse): aendert sich die Quelle,
-    // folgt das Ziel; mit `twoWay` folgt auch die Quelle dem Ziel; mit `once` wird nur ein Mal uebertragen. `sourceProperty` ist ein Pfad ("name", "address.city");
-    // leer ist die Quelle selbst (z.B. das Datenelement einer DataTemplate-Zeile, nur lesend). Eine Text-Eigenschaft zeigt jeden Wert als Text. `converter`: ein UI.Converter (undefined: Werte unveraendert).
+    // Connects a property of an element with that of another object. It is reconciled on every layout (without events): if the source changes,
+    // the target follows; with `twoWay` the source follows the target too; with `once` it is transferred only one time. `sourceProperty` is a path ("name", "address.city");
+    // empty is the source itself (e.g. the data item of a DataTemplate row, read-only). A text property shows every value as text. `converter`: a UI.Converter (undefined: values unchanged).
     class Binding {
         Element target
         string targetProperty
@@ -234,7 +234,7 @@ namespace UI {
         bool twoWay = false
         var converter
         bool once = false
-        // Stand beim letzten Abgleich
+        // state at the last reconciliation
         bool synced = false
         var lastSource
         var lastTarget
@@ -255,7 +255,7 @@ namespace UI {
             var s = UI.M.PathGet(this.source, this.sourceProperty)
             var t = Reflect.Get(this.target, this.targetProperty)
             if (this.twoWay && this.sourceProperty != "" && this.synced && t != this.lastTarget) {
-                // das Ziel hat sich geaendert: zurueck in die Quelle
+                // the target has changed: back into the source
                 var back = t
                 if (this.converter != undefined) { back = this.converter.ConvertBack(t) }
                 if (back != s) { UI.M.PathSet(this.source, this.sourceProperty, back) }
@@ -276,8 +276,8 @@ namespace UI {
         }
     }
 
-    // Benannte Werte (Pinsel, Stifte, Zahlen, Styles, ...) und implizite Styles. Jedes Element und der Root haben eines (`resources`, am Anfang undefined
-    // beim Element); gesucht wird vom Element aus nach oben (Element.FindResource, Element.FindStyle).
+    // Named values (brushes, pens, numbers, styles, ...) and implicit styles. Every element and the root has one (`resources`, initially undefined
+    // on the element); the search goes upwards from the element (Element.FindResource, Element.FindStyle).
     class ResourceDictionary {
         List keys
         List values
@@ -298,14 +298,14 @@ namespace UI {
 
         bool Has(string key) { return this.IndexOf(key) >= 0 }
 
-        // Der Wert zum Schluessel, sonst undefined.
+        // The value for the key, otherwise undefined.
         Get(string key) {
             var i = this.IndexOf(key)
             if (i < 0) { return undefined }
             return this.values[i]
         }
 
-        // Legt den Wert ab (ein vorhandener Schluessel wird ueberschrieben); das Verzeichnis besitzt ihn.
+        // Stores the value (an existing key is overwritten); the dictionary owns it.
         Set(string key, value) {
             UI.M.Own(this, value)
             var i = this.IndexOf(key)
@@ -317,7 +317,7 @@ namespace UI {
             this.values.Add(value)
         }
 
-        // Ein impliziter Style: gilt fuer alle Elemente mit dem Stil-Schluessel `style.target` darunter.
+        // An implicit style: applies to all elements with the style key `style.target` below it.
         AddStyle(style) {
             style.TakeTo(this)
             for (var i = 0; i < this.styles.count; i = i + 1) {
@@ -336,7 +336,7 @@ namespace UI {
             return undefined
         }
 
-        // Uebernimmt die Eintraege und Styles eines anderen Verzeichnisses (es muss so lange leben wie dieses).
+        // Takes over the entries and styles of another dictionary (it must live as long as this one).
         Merge(other) {
             for (var i = 0; i < other.keys.count; i = i + 1) {
                 var key = other.keys[i]

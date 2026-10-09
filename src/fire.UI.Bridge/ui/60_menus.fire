@@ -1,15 +1,15 @@
 namespace UI {
-    // Eine Zeile eines Menues: Beschriftung, Aktion (Lambda ohne Parameter), Untermenue (Add), Trenner, Haken, Kuerzel als Text.
+    // A row of a menu: caption, action (lambda without parameters), submenu (Add), separator, check mark, shortcut as text.
     class MenuItem {
         string header = ""
         var onClick
         List items
         bool separator = false
-        // Mit checkable schaltet ein Klick den Haken um (isChecked), bevor onClick laeuft.
+        // With checkable a click toggles the check mark (isChecked) before onClick runs.
         bool checkable = false
         bool isChecked = false
         bool enabled = true
-        // Nur ein Text rechts in der Zeile (zum Beispiel "Strg+S"), die Tastenbelegung selbst ist Sache des Programms
+        // Only a text on the right of the row (for example "Ctrl+S"), the key assignment itself is the program's business
         string shortcut = ""
 
         construct(string header = "", onClick = undefined) {
@@ -18,7 +18,7 @@ namespace UI {
             this.items = new List()
         }
 
-        // Ein Trenner.
+        // A separator.
         static Separator() {
             var m = new MenuItem()
             m.separator = true
@@ -34,7 +34,7 @@ namespace UI {
 
         bool HasSubmenu() { return this.items.count > 0 }
 
-        // Fuehrt die Aktion aus (Haken umschalten, Lambda aufrufen).
+        // Executes the action (toggle the check mark, call the lambda).
         Activate() {
             if (this.checkable) { this.isChecked = !this.isChecked }
             var callback = this.onClick
@@ -42,7 +42,7 @@ namespace UI {
         }
     }
 
-    // Die aufgeklappte Liste eines Menues (schwebend, siehe Root.ShowMenu); ein Untermenue ist ein weiteres MenuPopup daneben.
+    // The expanded list of a menu (floating, see Root.ShowMenu); a submenu is a further MenuPopup next to it.
     class MenuPopup : Element {
         List entries
         int hot = -1
@@ -80,7 +80,7 @@ namespace UI {
             this.ch = h
         }
 
-        // Der Index der Zeile bei der Bildschirmhoehe `py`, oder -1.
+        // The index of the row at the screen height `py`, or -1.
         int RowAt(root, int py) {
             var y = this.ay + 2
             for (var i = 0; i < this.entries.count; i = i + 1) {
@@ -124,7 +124,7 @@ namespace UI {
                     text = theme.selectionText
                 }
                 if (item.isChecked) {
-                    // ein Haken
+                    // a check mark
                     var cx = ax + 8
                     var cy = y + h / 2
                     var tick = new Pen(text.Color, 2)
@@ -135,7 +135,7 @@ namespace UI {
                 r.DrawText(ax + 28, ty, item.header, text)
                 var right = ax + this.actualWidth - 12
                 if (item.HasSubmenu()) {
-                    // ein Pfeil nach rechts
+                    // an arrow to the right
                     var my = y + h / 2
                     r.FillTriangle(right - 4, my - 4, right - 4, my + 4, right + 1, my, text)
                     right = right - 12
@@ -145,13 +145,13 @@ namespace UI {
             }
         }
 
-        // Das Untermenue schliessen, wenn es offen ist.
+        // Close the submenu if it is open.
         CloseSub(root) {
             if (this.sub != undefined) {
                 var inner = this.sub
                 this.sub = undefined
                 this.subIndex = -1
-                // zuerst die Untermenues des Untermenues, dann es selbst
+                // first the submenus of the submenu, then itself
                 inner.CloseSub(root)
                 root.ClosePopup(inner)
             }
@@ -169,7 +169,7 @@ namespace UI {
             this.subIndex = index
         }
 
-        // Waehlt die Zeile: ein Untermenue oeffnet sich, sonst laeuft die Aktion und alles schliesst sich.
+        // Selects the row: a submenu opens, otherwise the action runs and everything closes.
         Choose(root, int index) {
             var item = this.entries[index]
             if (item.separator || !item.enabled) { return }
@@ -188,7 +188,7 @@ namespace UI {
             if (this.subIndex != index) { this.OpenSub(root, index) }
         }
 
-        // Ein Klick ausserhalb aller Menues schliesst alles; die Menues eines Untermenues schliesst der Root ohnehin der Reihe nach.
+        // A click outside of all menus closes everything; the menus of a submenu are closed by the root one after the other anyway.
         bool PopupOutside(root, int px, int py) {
             var consumed = this.owner != undefined && this.owner.Contains(px, py)
             root.ClosePopup(this)
@@ -202,7 +202,7 @@ namespace UI {
         }
 
         KeyDown(root, int key, int mod) {
-            // die Tasten gehen an das oberste Menue
+            // the keys go to the topmost menu
             if (key == UI.Keys.Escape()) {
                 if (this.parentMenu != undefined) {
                     this.parentMenu.CloseSub(root)
@@ -232,7 +232,7 @@ namespace UI {
             return -1
         }
 
-        // Die naechste waehlbare Zeile in Richtung `direction` (1 oder -1), kreisend.
+        // The next selectable row in the direction `direction` (1 or -1), wrapping around.
         Step(int direction) {
             var n = this.entries.count
             if (n == 0) { return }
@@ -250,11 +250,11 @@ namespace UI {
         }
     }
 
-    // Die Menueleiste: die Titel der obersten Ebene nebeneinander; ein Klick klappt das Menue auf, bei offenem Menue wechselt der Zeiger darueber das Menue.
+    // The menu bar: the titles of the top level side by side; a click opens the menu, with a menu open the pointer moving over another title switches the menu.
     class MenuBar : Element {
         List menus
         int openIndex = -1
-        // der Titel unter dem Zeiger (-1: keiner)
+        // the title under the pointer (-1: none)
         int hotIndex = -1
         MenuPopup open
 
@@ -264,7 +264,7 @@ namespace UI {
 
         string StyleKey() { return "MenuBar" }
 
-        // Haengt ein Menue der obersten Ebene an (ein MenuItem mit Untermenue-Zeilen); es gehoert der Leiste.
+        // Appends a menu of the top level (a MenuItem with submenu rows); it belongs to the bar.
         Add(item) {
             item.TakeTo(this)
             this.menus.Add(item)
@@ -280,7 +280,7 @@ namespace UI {
             this.ch = root.ch + 8
         }
 
-        // Der Index des Titels bei der Bildschirmposition px, oder -1.
+        // The index of the title at the screen position px, or -1.
         int IndexAt(root, int px) {
             var x = this.ax
             for (var i = 0; i < this.menus.count; i = i + 1) {
@@ -297,7 +297,7 @@ namespace UI {
             return x
         }
 
-        // Ein Menue, das sich geschlossen hat, ist nicht mehr offen.
+        // A menu that has closed is no longer open.
         Poll(root) {
             base.Poll(root)
             if (this.open != undefined && !root.IsPopup(this.open)) {
@@ -351,7 +351,7 @@ namespace UI {
             if (index >= 0) { this.Open(root, index) }
         }
 
-        // Bei offenem Menue oeffnet der Zeiger ueber einem anderen Titel dessen Menue.
+        // With a menu open, the pointer over another title opens its menu.
         Hover(root, int px, int py) {
             this.hotIndex = this.IndexAt(root, px)
             if (this.open == undefined) { return }

@@ -1,5 +1,5 @@
 namespace UI {
-    // Die Brushes und Pens der Oberfläche (Root.theme) - einzelne Felder lassen sich nach dem Anlegen des Roots ändern (z.B. `root.theme.back = new SolidBrush(...)`).
+    // The brushes and pens of the interface (Root.theme) - individual fields can be changed after the root has been created (e.g. `root.theme.back = new SolidBrush(...)`).
     class Theme {
         Brush back
         Brush panel
@@ -20,7 +20,7 @@ namespace UI {
         Brush menuBack
         Pen border
         Pen borderFocus
-        // die Einfügemarke des Textfelds
+        // the caret of the text field
         Pen caret
 
         construct() {

@@ -2,8 +2,8 @@ namespace UI {
     // Wie ein Bild in seine Flaeche passt (Image.stretch).
     enum Stretch { None = 0, Fill = 1, Uniform = 2, UniformToFill = 3 }
 
-    // Eine Gruppe von Optionen, von denen genau eine gewaehlt ist (hoechstens eine; -1: keine): `Add("text")` (oder beliebige Objekte mit `displayMember`),
-    // `selectedIndex`/`selectedItem`, `onChange`/`TakeChanged()`; Pfeiltasten wechseln die Wahl. `horizontal` stellt die Optionen nebeneinander, `header` ist eine Ueberschrift.
+    // A group of options of which exactly one is chosen (at most one; -1: none): `Add("text")` (or arbitrary objects with `displayMember`),
+    // `selectedIndex`/`selectedItem`, `onChange`/`TakeChanged()`; arrow keys change the choice. `horizontal` places the options side by side, `header` is a heading.
     class RadioButtons : Element {
         List items
         string displayMember = ""
@@ -63,7 +63,7 @@ namespace UI {
             return root.ch + this.spacing
         }
 
-        // Die Breite einer Option: Kreis, Abstand, Text.
+        // The width of an option: circle, spacing, text.
         int OptionWidth(root, int index) { return 14 + 6 + root.cw * this.ItemText(this.items[index]).Length }
 
         MeasureCore(root, int aw, int ah) {
@@ -87,7 +87,7 @@ namespace UI {
             this.ch = h + this.HeaderHeight(root)
         }
 
-        // Das Rechteck der Option `index` auf dem Bildschirm, als (x, y, w, h) in einem Rect.
+        // The rectangle of the option `index` on the screen, as (x, y, w, h) in a Rect.
         OptionRect(root, int index) {
             var x = this.ax
             var y = this.ay + this.HeaderHeight(root)
@@ -147,7 +147,7 @@ namespace UI {
 
         Hover(root, int px, int py) { this.hotIndex = this.OptionAt(root, px, py) }
 
-        // Die Pfeiltasten wechseln die Option - an der ersten und letzten gibt die Gruppe sie frei (der Fokus wandert weiter)
+        // The arrow keys change the option - at the first and last the group releases them (the focus moves on)
         bool WantsKey(int key) {
             var last = this.items.count - 1
             if (key == UI.Keys.Down() || key == UI.Keys.Right()) { return this.selectedIndex < last }
@@ -166,7 +166,7 @@ namespace UI {
         }
     }
 
-    // Die Vorschlagsliste eines AutoSuggestBox: ein Klick ins Textfeld schliesst sie nicht.
+    // The suggestion list of an AutoSuggestBox: a click into the text field does not close it.
     class SuggestList : ListBox {
         construct(int x = 0, int y = 0, int width = 160, int height = 120) : base(x, y, width, height) { }
 
@@ -176,9 +176,9 @@ namespace UI {
         }
     }
 
-    // Ein Textfeld, das beim Tippen eine Liste von Vorschlaegen zeigt: aus `suggestions` (beliebige Werte, `displayMember` wie bei ListBox; vorgeschlagen wird, was den Text
-    // enthaelt, ohne Beachtung der Gross-/Kleinschreibung) oder aus `provider` (ein Lambda mit dem Text als Parameter, das eine Liste liefert). Auf/Ab waehlt, Enter oder Klick uebernimmt
-    // (`onChosen`/`TakeChosen()`, `chosenItem`), Escape schliesst.
+    // A text field that shows a list of suggestions while typing: from `suggestions` (arbitrary values, `displayMember` as with ListBox; what is suggested is whatever contains the text,
+    // ignoring upper/lower case) or from `provider` (a lambda with the text as parameter that returns a list). Up/Down selects, Enter or click accepts
+    // (`onChosen`/`TakeChosen()`, `chosenItem`), Escape closes.
     class AutoSuggestBox : TextBox {
         List suggestions
         string displayMember = ""
@@ -211,7 +211,7 @@ namespace UI {
 
         string TextOf(item) { return UI.M.Text(UI.M.Member(item, this.displayMember)) }
 
-        // Die passenden Vorschlaege zum Text.
+        // The suggestions matching the text.
         List Matches() {
             var found = new List()
             var make = this.provider
@@ -228,7 +228,7 @@ namespace UI {
             return found
         }
 
-        // Aktualisiert und zeigt (oder schliesst) die Liste.
+        // Updates and shows (or closes) the list.
         Suggest() {
             var root = this.host
             if (root == undefined) { return }
@@ -267,7 +267,7 @@ namespace UI {
             if (!this.suppress) { this.Suggest() }
         }
 
-        // Uebernimmt einen Vorschlag.
+        // Accepts a suggestion.
         Choose(item) {
             this.suppress = true
             this.SetText(this.TextOf(item))
@@ -282,12 +282,12 @@ namespace UI {
 
         Poll(root) {
             base.Poll(root)
-            // ein Klick in der Liste hat gewaehlt
+            // a click in the list has chosen
             if (this.popupList.TakeChanged() && this.popupList.selectedIndex >= 0 && this.ListOpen()) { this.Choose(this.popupList.selectedItem) }
             if (!this.focused && this.ListOpen()) { this.CloseList() }
         }
 
-        // Bei offener Liste wählen Auf/Ab einen Vorschlag
+        // With the list open, Up/Down select a suggestion
         bool WantsKey(int key) {
             if (this.ListOpen() && (key == UI.Keys.Down() || key == UI.Keys.Up())) { return true }
             return base.WantsKey(key)
@@ -319,7 +319,7 @@ namespace UI {
         }
     }
 
-    // Ein senkrechter (in einer waagerechten Leiste) oder waagerechter Strich zwischen Elementen.
+    // A vertical (in a horizontal bar) or horizontal line between elements.
     class Separator : Element {
         construct() : base(0, 0, -1, -1) { }
 
@@ -342,7 +342,7 @@ namespace UI {
         }
     }
 
-    // Eine Leiste mit Schaltflaechen und Trennern nebeneinander (oder untereinander mit `horizontal = false`): `AddButton("Text", func () => { ... })`, `AddSeparator()`.
+    // A bar with buttons and separators side by side (or below one another with `horizontal = false`): `AddButton("Text", func () => { ... })`, `AddSeparator()`.
     class ToolBar : StackPanel {
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height, true, 2, 3) {
             this.filled = true
@@ -366,14 +366,14 @@ namespace UI {
 
         Draw(root, int ax, int ay) {
             base.Draw(root, ax, ay)
-            // eine Linie unter der Leiste
+            // a line below the bar
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
                 root.renderer.DrawLine(ax, ay + this.actualHeight - 1, ax + this.actualWidth - 1, ay + this.actualHeight - 1, root.theme.border)
             }
         }
     }
 
-    // Zeigt einen Framebuffer (ein geladenes Bild: `Framebuffer.FromResource(new Resource("logo.png"))`) mit Alpha. `stretch` (UI.Stretch): None, Fill, Uniform (Standard), UniformToFill.
+    // Shows a framebuffer (a loaded image: `Framebuffer.FromResource(new Resource("logo.png"))`) with alpha. `stretch` (UI.Stretch): None, Fill, Uniform (default), UniformToFill.
     class Image : Element {
         Framebuffer source
         int stretch = UI.Stretch.Uniform
@@ -420,7 +420,7 @@ namespace UI {
                 dh = UI.M.Max(1, dh)
                 root.renderer.BlitScaled(this.source, 0, 0, sw, sh, ax + (w - dw) / 2, ay + (h - dh) / 2, dw, dh, 2)
             } else {
-                // die Flaeche fuellen, ueberstehende Teile der Quelle weglassen (mittig)
+                // fill the area, leave out overhanging parts of the source (centred)
                 var cropW = sw
                 var cropH = sw * h / w
                 if (cropH > sh) {

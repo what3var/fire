@@ -1,7 +1,7 @@
 namespace UI {
     class Label : Element {
         string text
-        // Textfarbe: undefined = `foreground`, dann der Brush `text` des Themes
+        // Text colour: undefined = `foreground`, then the brush `text` of the theme
         Brush brush
 
         construct(string text, int x = 0, int y = 0) : base(x, y, -1, -1) {
@@ -39,13 +39,13 @@ namespace UI {
 
         string StyleKey() { return "Button" }
 
-        // Ohne feste Groesse (width/height = -1) so gross wie der Text plus Rand
+        // Without a fixed size (width/height = -1) as big as the text plus margin
         MeasureCore(root, int aw, int ah) {
             this.cw = root.cw * this.text.Length + 24
             this.ch = root.ch + 12
         }
 
-        // Wurde die Schaltfläche seit dem letzten Abfragen geklickt? (setzt den Merker zurück)
+        // Has the button been clicked since the last query? (resets the flag)
         bool TakeClicked() {
             var was = this.clicked
             this.clicked = false
@@ -111,7 +111,7 @@ namespace UI {
 
         string StyleKey() { return "CheckBox" }
 
-        // Wurde der Zustand seit dem letzten Abfragen geändert? (setzt den Merker zurück)
+        // Has the state changed since the last query? (resets the flag)
         bool TakeChanged() {
             var was = this.changed
             this.changed = false
@@ -125,7 +125,7 @@ namespace UI {
             if (callback != undefined) { callback() }
         }
 
-        // das Kaestchen, 6 Pixel Abstand, der Text
+        // the box, 6 pixels of spacing, the text
         MeasureCore(root, int aw, int ah) {
             this.cw = 14 + 6 + root.cw * this.text.Length
             this.ch = UI.M.Max(root.ch, 14)
@@ -173,8 +173,8 @@ namespace UI {
         }
     }
 
-    // Einzeiliges Textfeld mit Einfügemarke (Pfeiltasten, Pos1/Ende, Rücktaste/Entf, Mausklick). Enter löst `onEnter`
-    // bzw. `TakeEntered()` aus, jede Änderung des Textes `onChange`/`TakeChanged()`.
+    // Single-line text field with caret (arrow keys, Home/End, Backspace/Del, mouse click). Enter triggers `onEnter`
+    // or `TakeEntered()`, every change of the text `onChange`/`TakeChanged()`.
     class TextBox : Element {
         string text
         int caret = 0
@@ -233,7 +233,7 @@ namespace UI {
             if (this.focused) { border = theme.borderFocus }
             root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
 
-            // die Einfügemarke bleibt sichtbar: der sichtbare Ausschnitt wandert mit
+            // the caret stays visible: the visible section moves along
             var fit = this.Fit(root)
             if (this.caret < this.scroll) { this.scroll = this.caret }
             if (this.caret > this.scroll + fit) { this.scroll = this.caret - fit }
@@ -257,7 +257,7 @@ namespace UI {
 
         MouseDown(root, int button, int px, int py) {
             if (button != 1) { return }
-            // auf die nächste Zeichengrenze runden (ganzzahlig: halbe Zellbreite dazu, dann teilen)
+            // round to the next character boundary (integer: add half a cell width, then divide)
             var column = (px - (this.ax + 4) + root.cw / 2) / root.cw
             if (px < this.ax + 4) { column = 0 }
             this.caret = this.scroll + column
@@ -265,7 +265,7 @@ namespace UI {
             if (this.caret > this.text.Length) { this.caret = this.text.Length }
         }
 
-        // Links/Rechts bewegen die Einfügemarke, Pos1/Ende springen; Auf/Ab gehören dem Fokus (zum Element darüber/darunter)
+        // Left/Right move the caret, Home/End jump; Up/Down belong to the focus (to the element above/below)
         bool WantsKey(int key) {
             return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Home() || key == UI.Keys.End()
         }
