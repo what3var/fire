@@ -320,11 +320,14 @@ namespace fire.Editor
                 while (itemLines.Count > 0 && IsBlank(itemLines[^1])) itemLines.RemoveAt(itemLines.Count - 1);
 
                 bool? check = null;
-                var tb = TaskBox.Match(itemLines[0]);
-                if (tb.Success)
+                if (itemLines.Count > 0)
                 {
-                    check = tb.Groups[1].Value != " ";
-                    itemLines[0] = itemLines[0].Substring(tb.Length);
+                    var tb = TaskBox.Match(itemLines[0]);
+                    if (tb.Success)
+                    {
+                        check = tb.Groups[1].Value != " ";
+                        itemLines[0] = itemLines[0].Substring(tb.Length);
+                    }
                 }
                 items.Add(new MdListItem(ParseBlocks(itemLines), check));
 
