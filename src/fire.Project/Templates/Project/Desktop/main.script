@@ -1,0 +1,15 @@
+// $name$: a program with a window.
+#import "ui"
+
+var fb = new Framebuffer(480, 320)
+var win = new Window(fb, "$name$")
+var ui = new UI.Root(fb, win)
+
+var label = new UI.Label("Hello, World!", 20, 20)
+var button = new UI.Button("Click me", 20, 60)
+var clicks = 0
+button.onClick = func () => { clicks++; label.text = "Clicked " + clicks + " times" }
+ui.Add(label)
+ui.Add(button)
+
+while (ui.Tick()) { }

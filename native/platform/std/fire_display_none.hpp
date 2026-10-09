@@ -12,10 +12,12 @@ public:
     bool open(const std::string&, int, int, bool) { return false; }
     void setVSync(bool v) { vsync_ = v; }
     bool vsync() const { return vsync_; }
+    void setTouchMouse(bool v) { touchMouse_ = v; }
+    bool touchMouse() const { return touchMouse_; }
     bool pump(std::vector<Event>&, int, int) { return false; }
     void present(const uint32_t*, int, int) {}
 private:
-    bool vsync_ = true;
+    bool vsync_ = true, touchMouse_ = true;
 };
 
 }}}

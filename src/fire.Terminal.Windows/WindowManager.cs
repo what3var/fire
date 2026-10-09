@@ -63,7 +63,10 @@ namespace fire.Terminal.Windows
         /// ganze Pixel (nach unten gerundet, in Framebuffer-Koordinaten):
         /// MouseDown/MouseUp [typ, taste, x, y]; MouseMove [typ, x, y, tastenzustand]; MouseMoveRelative [typ, dx, dy, tastenzustand];
         /// MouseScroll [typ, scrollX, scrollY, x, y] (Scrollwerte als Fließkommazahl); KeyDown/KeyUp [typ, keycode, scancode, modifier,
-        /// wiederholt]; TextInput [typ, text]; Close/CloseRequest [typ].</summary>
+        /// wiederholt]; TextInput [typ, text]; Resize [typ, breite, höhe] (die Größe des Fensters); Close/CloseRequest [typ];
+        /// TouchDown/TouchMove/TouchUp [typ, finger, x, y, druck] (Pixel des Framebuffers, Druck 0 bis 1 als Fließkommazahl);
+        /// JoystickAxis [typ, joystick, achse, stellung] (Stellung -1 bis 1 als Fließkommazahl); JoystickButtonDown/Up [typ, joystick, knopf];
+        /// JoystickHat [typ, joystick, hat, richtungen] (Bitmaske: 1 oben, 2 rechts, 4 unten, 8 links; 0 Mitte); JoystickAdded/Removed [typ, joystick].</summary>
         public static Value EncodeEvent(IEvent evnt)
         {
             static long Px(float v) => (long)Math.Floor(v);
@@ -87,6 +90,24 @@ namespace fire.Terminal.Windows
                     break;
                 case TextEvent text:
                     items = new[] { Value.MakeInt((int)text.Type), text.Text == null ? Value.MakeUndefined() : Value.MakeString(text.Text) };
+                    break;
+                case ResizeEvent resize:
+                    items = new[] { Value.MakeInt((int)resize.Type), Value.MakeInt(resize.Width), Value.MakeInt(resize.Height) };
+                    break;
+                case TouchEvent touch:
+                    items = new[] { Value.MakeInt((int)touch.Type), Value.MakeInt(touch.Finger), Value.MakeInt(Px(touch.X)), Value.MakeInt(Px(touch.Y)), Value.MakeFloat(touch.Pressure) };
+                    break;
+                case JoystickEvent joy when joy.Type == Event.EventType.JoystickAxis:
+                    items = new[] { Value.MakeInt((int)joy.Type), Value.MakeInt(joy.Joystick), Value.MakeInt(joy.Index), Value.MakeFloat(joy.Value) };
+                    break;
+                case JoystickEvent joy when joy.Type == Event.EventType.JoystickHat:
+                    items = new[] { Value.MakeInt((int)joy.Type), Value.MakeInt(joy.Joystick), Value.MakeInt(joy.Index), Value.MakeInt((long)joy.Value) };
+                    break;
+                case JoystickEvent joy when joy.Type is Event.EventType.JoystickButtonDown or Event.EventType.JoystickButtonUp:
+                    items = new[] { Value.MakeInt((int)joy.Type), Value.MakeInt(joy.Joystick), Value.MakeInt(joy.Index) };
+                    break;
+                case JoystickEvent joy:
+                    items = new[] { Value.MakeInt((int)joy.Type), Value.MakeInt(joy.Joystick) };
                     break;
                 default:
                     items = new[] { Value.MakeInt((int)evnt.Type) };
@@ -143,6 +164,14 @@ namespace fire.Terminal.Windows
         /// <summary>Für C#-seitige Weiterverwendung - kein Teil des rein-
         /// ID-basierten Oberflächen-APIs.</summary>
         public ConsoleWindow GetWindow(int id) => _windows.Get(id);
+
+        public bool GetAutoResize(int id) => _windows.Get(id).AutoResize;
+
+        public void SetAutoResize(int id, bool enabled) => _windows.Get(id).AutoResize = enabled;
+
+        public bool GetTouchMouse(int id) => _windows.Get(id).TouchMouse;
+
+        public void SetTouchMouse(int id, bool enabled) => _windows.Get(id).TouchMouse = enabled;
 
         public bool GetVSync(int id) => _windows.Get(id).VSync;
 
@@ -250,6 +279,33 @@ namespace fire.Terminal.Windows
                                         Value.MakeFloat(scrollevent.X),
                                         Value.MakeFloat(scrollevent.Y)
                                     });
+                                break;
+                            case Event.EventType.Resize:
+                                var resizeevent = (ResizeEvent)evnt;
+                                Callback(hndlr.Callback, new[] { Value.MakeInt(resizeevent.Width), Value.MakeInt(resizeevent.Height) });
+                                break;
+                            case Event.EventType.TouchDown:
+                            case Event.EventType.TouchMove:
+                            case Event.EventType.TouchUp:
+                                var touchevent = (TouchEvent)evnt;
+                                Callback(hndlr.Callback, new[] { Value.MakeInt(touchevent.Finger), Value.MakeFloat(touchevent.X), Value.MakeFloat(touchevent.Y), Value.MakeFloat(touchevent.Pressure) });
+                                break;
+                            case Event.EventType.JoystickAxis:
+                                var axisevent = (JoystickEvent)evnt;
+                                Callback(hndlr.Callback, new[] { Value.MakeInt(axisevent.Joystick), Value.MakeInt(axisevent.Index), Value.MakeFloat(axisevent.Value) });
+                                break;
+                            case Event.EventType.JoystickHat:
+                                var hatevent = (JoystickEvent)evnt;
+                                Callback(hndlr.Callback, new[] { Value.MakeInt(hatevent.Joystick), Value.MakeInt(hatevent.Index), Value.MakeInt((long)hatevent.Value) });
+                                break;
+                            case Event.EventType.JoystickButtonDown:
+                            case Event.EventType.JoystickButtonUp:
+                                var buttonevent = (JoystickEvent)evnt;
+                                Callback(hndlr.Callback, new[] { Value.MakeInt(buttonevent.Joystick), Value.MakeInt(buttonevent.Index) });
+                                break;
+                            case Event.EventType.JoystickAdded:
+                            case Event.EventType.JoystickRemoved:
+                                Callback(hndlr.Callback, new[] { Value.MakeInt(((JoystickEvent)evnt).Joystick) });
                                 break;
                             case Event.EventType.TextInput:
                                 var textevent = (TextEvent)evnt;

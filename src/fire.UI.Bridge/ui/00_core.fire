@@ -1,0 +1,270 @@
+namespace UI {
+    // Farben sind rohe 32-Bit-Werte: r + g*256 + b*65536 + a*16777216 (a = 255: deckend).
+    class Color {
+        static int Rgb(int r, int g, int b) { return r + g * 256 + b * 65536 + 0xFF000000 }
+        static int Transparent() { return 256 }
+    }
+
+    // Layout: how an element sits in the slot its container gives it (docs/UI.md). Enums are plain ints.
+    enum HAlign { Stretch = 0, Left = 1, Center = 2, Right = 3 }
+    enum VAlign { Stretch = 0, Top = 1, Center = 2, Bottom = 3 }
+    // Where a child of a DockPanel sits (the last child fills what is left, unless lastChildFill is off)
+    enum Dock { Left = 0, Top = 1, Right = 2, Bottom = 3 }
+
+    // The space around an element (margin) or inside it (padding): `new UI.Thickness(4)`, `new UI.Thickness(8, 4)` (horizontal, vertical) or all four sides.
+    class Thickness {
+        int left
+        int top
+        int right
+        int bottom
+
+        construct(int left = 0, int top = -1, int right = -1, int bottom = -1) {
+            if (top < 0) {
+                // one value: all sides; two values (the second given, the third not): horizontal and vertical
+                this.left = left
+                this.top = left
+                this.right = left
+                this.bottom = left
+            } else if (right < 0) {
+                this.left = left
+                this.top = top
+                this.right = left
+                this.bottom = top
+            } else {
+                this.left = left
+                this.top = top
+                this.right = right
+                this.bottom = bottom
+            }
+        }
+
+        int Horizontal() { return this.left + this.right }
+        int Vertical() { return this.top + this.bottom }
+    }
+
+    // Ein Rechteck (zum Beschneiden).
+    class Rect {
+        int x
+        int y
+        int w
+        int h
+
+        construct(int x = 0, int y = 0, int w = 0, int h = 0) {
+            this.x = x
+            this.y = y
+            this.w = w
+            this.h = h
+        }
+
+        // Schneidet dieses Rechteck mit `other` (leer: Breite und Hoehe 0).
+        IntersectWith(other) {
+            var left = UI.M.Max(this.x, other.x)
+            var top = UI.M.Max(this.y, other.y)
+            var right = UI.M.Min(this.x + this.w, other.x + other.w)
+            var bottom = UI.M.Min(this.y + this.h, other.y + other.h)
+            this.x = left
+            this.y = top
+            this.w = UI.M.Max(0, right - left)
+            this.h = UI.M.Max(0, bottom - top)
+        }
+
+        bool Contains(int px, int py) { return px >= this.x && px < this.x + this.w && py >= this.y && py < this.y + this.h }
+    }
+
+    // Small helpers: the language has no Math class
+    class M {
+        static int Max(int a, int b) { if (a > b) { return a } return b }
+        static int Min(int a, int b) { if (a < b) { return a } return b }
+        static int Abs(int a) { if (a < 0) { return -a } return a }
+
+        // v within [low, high]; high < 0: no upper limit
+        static int Clamp(int v, int low, int high) {
+            if (high >= 0 && v > high) { v = high }
+            if (v < low) { v = low }
+            return v
+        }
+
+        // `value` (ein Brush, Pen, Style, ...) gehoert ab jetzt `owner`; einfache Werte (Zahl, Text, ...) und undefined gehoeren niemandem.
+        static Own(owner, value) {
+            if (value == undefined) { return }
+            if (value is of int || value is of float || value is of bool || value is of string || value is of char) { return }
+            value.TakeTo(owner)
+        }
+
+        // Sinus eines Winkels in Grad, mal 1000 (ganzzahlig, Taylor-Reihe im ersten Quadranten).
+        static int Sin(int degrees) {
+            var d = degrees % 360
+            if (d < 0) { d = d + 360 }
+            var sign = 1
+            if (d >= 180) {
+                d = d - 180
+                sign = -1
+            }
+            if (d > 90) { d = 180 - d }
+            var x = d * 3142 / 180
+            var x2 = x * x / 1000
+            var x3 = x2 * x / 1000
+            var x5 = x3 * x2 / 1000
+            var x7 = x5 * x2 / 1000
+            var s = x - x3 / 6 + x5 / 120 - x7 / 5040
+            return sign * s
+        }
+
+        static int Cos(int degrees) { return UI.M.Sin(degrees + 90) }
+
+        // Ist der Wert ein einfacher Wert (Zahl, Text, Zeichen, Wahrheitswert) oder nichts - also kein Objekt mit Feldern?
+        static bool IsPlain(value) {
+            if (value == undefined) { return true }
+            return value is of int || value is of float || value is of bool || value is of string || value is of char
+        }
+
+        // Die Eigenschaft `name` des Objekts `item`; bei einem einfachen Wert oder ohne Namen der Wert selbst, undefined, wenn es sie nicht gibt.
+        static Member(item, string name) {
+            if (name == "" || UI.M.IsPlain(item)) { return item }
+            if (Reflect.Has(item, name)) { return Reflect.Get(item, name) }
+            return undefined
+        }
+
+        // Der Wert hinter einem Pfad "a.b.c" (jeder Teil eine Eigenschaft); ein leerer Pfad ist das Objekt selbst, undefined, wenn unterwegs etwas fehlt.
+        static PathGet(item, string path) {
+            if (path == "") { return item }
+            var current = item
+            var start = 0
+            for (var i = 0; i <= path.Length; i = i + 1) {
+                if (i == path.Length || path.CharAt(i).ToInt() == 46) {
+                    if (current == undefined || UI.M.IsPlain(current)) { return undefined }
+                    current = UI.M.Member(current, path.Substring(start, i - start))
+                    start = i + 1
+                }
+            }
+            return current
+        }
+
+        // Gibt es den Pfad (alle Teile bis zum letzten sind Objekte, der letzte Teil eine Eigenschaft)?
+        static bool PathHas(item, string path) {
+            if (path == "") { return item != undefined }
+            var current = item
+            var start = 0
+            for (var i = 0; i <= path.Length; i = i + 1) {
+                if (i == path.Length || path.CharAt(i).ToInt() == 46) {
+                    if (current == undefined || UI.M.IsPlain(current)) { return false }
+                    var name = path.Substring(start, i - start)
+                    if (!Reflect.Has(current, name)) { return false }
+                    if (i < path.Length) { current = Reflect.Get(current, name) }
+                    start = i + 1
+                }
+            }
+            return true
+        }
+
+        // Setzt den Wert hinter dem Pfad (der Pfad muss mit PathHas vorhanden sein und darf nicht leer sein).
+        static PathSet(item, string path, value) {
+            var current = item
+            var start = 0
+            for (var i = 0; i <= path.Length; i = i + 1) {
+                if (i == path.Length || path.CharAt(i).ToInt() == 46) {
+                    var name = path.Substring(start, i - start)
+                    if (i == path.Length) { Reflect.Set(current, name, value) }
+                    else { current = Reflect.Get(current, name) }
+                    start = i + 1
+                }
+            }
+        }
+
+        // Der Wert als Text ("" fuer undefined).
+        static string Text(value) {
+            if (value == undefined) { return "" }
+            return "" + value
+        }
+
+        // Vergleicht zwei Texte nach Zeichencodes: negativ, 0, positiv.
+        static int CompareText(string a, string b) {
+            var n = UI.M.Min(a.Length, b.Length)
+            for (var i = 0; i < n; i = i + 1) {
+                var d = a.CharAt(i).ToInt() - b.CharAt(i).ToInt()
+                if (d != 0) { return d }
+            }
+            return a.Length - b.Length
+        }
+
+        // Vergleicht zwei Werte gleicher Art (Zahlen, Texte, Wahrheitswerte): negativ, 0, positiv. undefined ist kleiner als alles.
+        static int Compare(a, b) {
+            if (a == undefined && b == undefined) { return 0 }
+            if (a == undefined) { return -1 }
+            if (b == undefined) { return 1 }
+            if (a is of string || b is of string) { return UI.M.CompareText("" + a, "" + b) }
+            if (a is of bool) {
+                if (a == b) { return 0 }
+                if (a) { return 1 }
+                return -1
+            }
+            if (a < b) { return -1 }
+            if (a > b) { return 1 }
+            return 0
+        }
+
+        // "42" -> 42 (digits only; anything else ends the number)
+        static int ToInt(string text) {
+            var value = 0
+            for (var i = 0; i < text.Length; i = i + 1) {
+                var d = text.CharAt(i).ToInt() - 48
+                if (d < 0 || d > 9) { break }
+                value = value * 10 + d
+            }
+            return value
+        }
+    }
+
+    // Tastencodes, wie sie KeyDown liefert (SDL3-Keycodes).
+    class Keys {
+        static int Backspace() { return 8 }
+        static int Tab() { return 9 }
+        static int Enter() { return 13 }
+        static int Escape() { return 27 }
+        static int Space() { return 32 }
+        static int Delete() { return 127 }
+        static int Right() { return 1073741903 }
+        static int Left() { return 1073741904 }
+        static int Down() { return 1073741905 }
+        static int Up() { return 1073741906 }
+        static int Home() { return 1073741898 }
+        static int PageUp() { return 1073741899 }
+        static int PageDown() { return 1073741902 }
+        static int End() { return 1073741901 }
+    }
+
+    // Converters of the data bindings of the markup (docs/UI_MARKUP.md): Convert goes from the source to the property of the element, ConvertBack the other
+    // way (TwoWay). Derive from Converter for your own and override what you need.
+    class Converter {
+        Convert(value) { return value }
+        ConvertBack(value) { return value }
+    }
+
+    class NotConverter : Converter {
+        Convert(value) { return !value }
+        ConvertBack(value) { return !value }
+    }
+
+    class IsEmptyConverter : Converter {
+        Convert(value) {
+            if (value == undefined) { return true }
+            var text = "" + value
+            return text == ""
+        }
+    }
+
+    class NotEmptyConverter : Converter {
+        Convert(value) {
+            if (value == undefined) { return false }
+            var text = "" + value
+            return text != ""
+        }
+    }
+
+    class TextConverter : Converter {
+        Convert(value) {
+            if (value == undefined) { return "" }
+            return "" + value
+        }
+    }
+}

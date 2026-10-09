@@ -32,8 +32,14 @@ namespace fire.Compiler
         private static IEnumerable<string> RequiresOf(string bridge) => bridge switch
         {
             "windows" => new[] { "graphics" },
-            "ui" => new[] { "graphics", "windows" },
+            "ui" => new[] { "graphics", "windows", "reflection" },
             "linq" => new[] { "reflection" },
+            "random" => new[] { "time" },
+            "gpio" => new[] { "time" },
+            "wifi" => new[] { "time" },
+            "http" => new[] { "net", "tls", "io", "time" },
+            "tls" => new[] { "net", "io", "time" },
+            "net" => new[] { "io", "time" },   // a connection is an IO.Stream; the time limits need the clock
             _ => Array.Empty<string>(),
         };
 
@@ -41,6 +47,14 @@ namespace fire.Compiler
         private static string? PreludeOf(string bridge) => bridge switch
         {
             "time" => fire.Standard.TimePrelude.Source,
+            "random" => fire.Standard.RandomPrelude.Source,
+            "net" => fire.Standard.NetPrelude.Source,
+            "http" => fire.Standard.HttpPrelude.Source,
+            "tls" => fire.Standard.TlsPrelude.Source,
+            "gpio" => fire.Standard.GpioPrelude.Source,
+            "i2c" => fire.Standard.I2cPrelude.Source,
+            "spi" => fire.Standard.SpiPrelude.Source,
+            "wifi" => fire.Standard.WifiPrelude.Source,
             "io" => fire.Standard.IoPrelude.Source,
             "devices" => fire.Standard.DevicesPrelude.Source,
             _ => ImportedPreludes.TrySourceFor(bridge),
@@ -90,6 +104,82 @@ namespace fire.Compiler
                     F("__IOStdReadAll", 0, "io::StdReadAll", list: true), F("__IOBufferIndexOf", 4, "io::BufferIndexOf"),
                     F("__IOUtf8Encode", 1, "io::Utf8Encode", list: true), F("__IOUtf8Decode", 3, "io::Utf8Decode", list: true),
                     F("__IOSplitLines", 1, "io::SplitLines", list: true),
+                })
+                    yield return f;
+            }
+            if (bridge == "net")
+            {
+                foreach (var f in new[]
+                {
+                    F("__NetLastError", 0, "net::LastError"), F("__NetLastErrorMessage", 0, "net::LastErrorMessage", list: true), F("__NetOpenCount", 0, "net::OpenCount"),
+                    F("__NetSupported", 0, "net::Supported"), F("__NetNativeHandle", 1, "net::NativeHandle"), F("__NetConnectBegin", 2, "net::ConnectBegin"), F("__NetConnectStep", 1, "net::ConnectStep"), F("__NetTcpListen", 3, "net::TcpListen"), F("__NetAccept", 2, "net::Accept"),
+                    F("__NetSend", 5, "net::Send"), F("__NetRecv", 5, "net::Recv"), F("__NetUdpOpen", 2, "net::UdpOpen"), F("__NetSendTo", 6, "net::SendTo"),
+                    F("__NetRecvFrom", 5, "net::RecvFrom"), F("__NetPeerHost", 1, "net::PeerHost", list: true), F("__NetPeerPort", 1, "net::PeerPort"),
+                    F("__NetLocalHost", 1, "net::LocalHost", list: true), F("__NetLocalPort", 1, "net::LocalPort"), F("__NetAvailable", 1, "net::Available"),
+                    F("__NetPoll", 4, "net::Poll"), F("__NetSetOption", 3, "net::SetOption"), F("__NetShutdown", 2, "net::Shutdown"), F("__NetClose", 1, "net::Close"),
+                    F("__NetResolve", 1, "net::Resolve", list: true),
+                })
+                    yield return f;
+            }
+            if (bridge == "gpio")
+            {
+                foreach (var f in new[]
+                {
+                    F("__GpioLastError", 0, "gpio::LastError"), F("__GpioLastErrorMessage", 0, "gpio::LastErrorMessage", list: true), F("__GpioOpenCount", 0, "gpio::OpenCount"),
+                    F("__GpioSupported", 0, "gpio::Supported"), F("__GpioChips", 0, "gpio::Chips", list: true), F("__GpioOpen", 2, "gpio::Open"), F("__GpioConfigure", 5, "gpio::Configure"),
+                    F("__GpioRead", 1, "gpio::Read"), F("__GpioWrite", 2, "gpio::Write"), F("__GpioPollEdge", 1, "gpio::PollEdge"), F("__GpioEdgeTime", 1, "gpio::EdgeTime"), F("__GpioClose", 1, "gpio::Close"),
+                    F("__GpioSimWire", 2, "gpio::SimWire"), F("__GpioSimUnwire", 2, "gpio::SimUnwire"), F("__GpioSimDrive", 2, "gpio::SimDrive"), F("__GpioSimLevel", 1, "gpio::SimLevel"), F("__GpioSimReset", 0, "gpio::SimReset"),
+                })
+                    yield return f;
+            }
+            if (bridge == "i2c")
+            {
+                foreach (var f in new[]
+                {
+                    F("__I2cLastError", 0, "i2c::LastError"), F("__I2cLastErrorMessage", 0, "i2c::LastErrorMessage", list: true), F("__I2cOpenCount", 0, "i2c::OpenCount"),
+                    F("__I2cSupported", 0, "i2c::Supported"), F("__I2cBuses", 0, "i2c::Buses", list: true), F("__I2cOpen", 2, "i2c::Open"), F("__I2cSetSpeed", 2, "i2c::SetSpeed"),
+                    F("__I2cWrite", 5, "i2c::Write"), F("__I2cRead", 5, "i2c::Read"), F("__I2cWriteRead", 8, "i2c::WriteRead"), F("__I2cProbe", 2, "i2c::Probe"), F("__I2cClose", 1, "i2c::Close"),
+                    F("__I2cSimAdd", 1, "i2c::SimAdd"), F("__I2cSimRemove", 1, "i2c::SimRemove"), F("__I2cSimSetRegister", 3, "i2c::SimSetRegister"), F("__I2cSimGetRegister", 2, "i2c::SimGetRegister"),
+                    F("__I2cSimReset", 0, "i2c::SimReset"),
+                })
+                    yield return f;
+            }
+            if (bridge == "spi")
+            {
+                foreach (var f in new[]
+                {
+                    F("__SpiLastError", 0, "spi::LastError"), F("__SpiLastErrorMessage", 0, "spi::LastErrorMessage", list: true), F("__SpiOpenCount", 0, "spi::OpenCount"),
+                    F("__SpiSupported", 0, "spi::Supported"), F("__SpiDevices", 0, "spi::Devices", list: true), F("__SpiOpen", 4, "spi::Open"), F("__SpiConfigure", 4, "spi::Configure"),
+                    F("__SpiTransfer", 6, "spi::Transfer"), F("__SpiWrite", 4, "spi::Write"), F("__SpiRead", 4, "spi::Read"), F("__SpiClose", 1, "spi::Close"),
+                    F("__SpiSimReply", 3, "spi::SimReply"), F("__SpiSimLoopback", 0, "spi::SimLoopback"), F("__SpiSimSentCount", 0, "spi::SimSentCount"), F("__SpiSimSentByte", 1, "spi::SimSentByte"),
+                    F("__SpiSimInfo", 1, "spi::SimInfo"), F("__SpiSimClear", 0, "spi::SimClear"),
+                })
+                    yield return f;
+            }
+            if (bridge == "wifi")
+            {
+                foreach (var f in new[]
+                {
+                    F("__WiFiLastError", 0, "wifi::LastError"), F("__WiFiLastErrorMessage", 0, "wifi::LastErrorMessage", list: true), F("__WiFiOpenCount", 0, "wifi::OpenCount"),
+                    F("__WiFiSupported", 0, "wifi::Supported"), F("__WiFiInterfaces", 0, "wifi::Interfaces", list: true), F("__WiFiOpen", 1, "wifi::Open"), F("__WiFiClose", 1, "wifi::Close"),
+                    F("__WiFiScanBegin", 1, "wifi::ScanBegin"), F("__WiFiScanStep", 1, "wifi::ScanStep"), F("__WiFiScanCount", 1, "wifi::ScanCount"), F("__WiFiScanSsid", 2, "wifi::ScanSsid", list: true),
+                    F("__WiFiScanBssid", 2, "wifi::ScanBssid", list: true), F("__WiFiScanInfo", 3, "wifi::ScanInfo"),
+                    F("__WiFiConnectBegin", 3, "wifi::ConnectBegin"), F("__WiFiConnectState", 1, "wifi::ConnectState"), F("__WiFiDisconnect", 1, "wifi::Disconnect"),
+                    F("__WiFiStationText", 2, "wifi::StationText", list: true), F("__WiFiStationRssi", 1, "wifi::StationRssi"),
+                    F("__WiFiApStart", 5, "wifi::ApStart"), F("__WiFiApStop", 1, "wifi::ApStop"), F("__WiFiApRunning", 1, "wifi::ApRunning"), F("__WiFiApText", 2, "wifi::ApText", list: true), F("__WiFiApClients", 1, "wifi::ApClients"),
+                    F("__WiFiSimAddNetwork", 4, "wifi::SimAddNetwork"), F("__WiFiSimRemoveNetwork", 1, "wifi::SimRemoveNetwork"), F("__WiFiSimDrop", 0, "wifi::SimDrop"), F("__WiFiSimDelays", 2, "wifi::SimDelays"),
+                    F("__WiFiSimApClients", 1, "wifi::SimApClients"), F("__WiFiSimReset", 0, "wifi::SimReset"),
+                })
+                    yield return f;
+            }
+            if (bridge == "tls")
+            {
+                foreach (var f in new[]
+                {
+                    F("__TlsLastError", 0, "tls::LastError"), F("__TlsLastErrorMessage", 0, "tls::LastErrorMessage", list: true), F("__TlsSupported", 0, "tls::Supported"),
+                    F("__TlsOpen", 7, "tls::Open"), F("__TlsHandshake", 1, "tls::Handshake"), F("__TlsServerContext", 2, "tls::ServerContext"), F("__TlsFreeContext", 1, "tls::FreeContext"), F("__TlsAccept", 2, "tls::Accept"),
+                    F("__TlsRead", 5, "tls::Read"), F("__TlsWrite", 5, "tls::Write"), F("__TlsPending", 1, "tls::Pending"), F("__TlsInfo", 1, "tls::Info", list: true),
+                    F("__TlsClose", 1, "tls::Close"),
                 })
                     yield return f;
             }
@@ -172,6 +262,21 @@ namespace fire.Compiler
                     native.Functions.AddRange(FunctionsOf(bridge));
                     native.Exceptions.AddRange(ExceptionsOf(bridge));
                     if (bridge == "io") native.Reset = "io::reset";
+                    if (bridge == "tls")
+                    {
+                        native.Reset = "tls::reset";
+                        native.LinkLibraries["posix"] = new List<string> { "ssl", "crypto" };   // OpenSSL (an ESP32 gets mbedTLS from ESP-IDF; define FIRE_TLS_MBEDTLS / FIRE_NO_TLS to choose otherwise)
+                        native.LinkLibraries["windows"] = new List<string> { "ws2_32", "secur32", "crypt32", "ncrypt" };   // SChannel (with FIRE_TLS_OPENSSL: add ssl and crypto to the libs of the target)
+                    }
+                    if (bridge == "gpio") native.Reset = "gpio::reset";
+                    if (bridge == "i2c") native.Reset = "i2c::reset";
+                    if (bridge == "spi") native.Reset = "spi::reset";
+                    if (bridge == "wifi") native.Reset = "wifi::reset";
+                    if (bridge == "net")
+                    {
+                        native.Reset = "net::reset";
+                        native.LinkLibraries["windows"] = new List<string> { "ws2_32" };
+                    }
                     if (native.Sources.Count > 0) import.Native = native;
                     var manifest = new PackageManifest
                     {

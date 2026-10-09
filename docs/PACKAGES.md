@@ -79,7 +79,7 @@ A `.fpk` is a zip file with a `package.json` in its root and the files that it n
 }
 ```
 
-* `imports`: the names for `#import "name"` (letters, digits, `_`; not case sensitive; not one of the compiler: `print graphics windows devices io ui linq reflection time`).
+* `imports`: the names for `#import "name"` (letters, digits, `_`; not case sensitive; not one of the compiler: `print graphics windows devices io ui linq reflection time random net`).
   A package can bring several. An import can have a **prelude**, **natives**, or both. A package that is only a prelude is allowed.
 * `requires`: other imports (of the compiler or of packages) that this one switches on, like `ui` switches on `graphics`.
 * `dependencies`: other *packages* that `ember install` installs too.
@@ -100,11 +100,11 @@ How to write a native, what crosses to the VM, prebuilt libraries and packed pro
 
 ## The standard packages (the bridges)
 
-The standard bridges of fire - `graphics`, `windows`, `devices`, `io`, `ui`, `linq`, `reflection`, `time` - are also available as packages (`fire-graphics`, `fire-io`, ...), each with its prelude
+The standard bridges of fire - `graphics`, `windows`, `devices`, `io`, `ui`, `linq`, `reflection`, `time`, `random`, `net`, `tls`, `http` - are also available as packages (`fire-graphics`, `fire-io`, ...), each with its prelude
 and its C++ sources (`native/bridges/`). They are marked `"standard": true`, which is the only way for an import to have the name of an import of the compiler. They are built with the solution:
 after the build, `fire.Compiler bridge-packages <folder>` (an MSBuild target in `src/BridgePackages.targets`, imported by the compiler and the editor) writes them into the folder `PackageSource` of the
 output. When **spark**, **forge** (the compiler) or **ember** start, they check that the standard packages are installed and install the missing or older ones from `PackageSource` (a time stamp in
-`Packages\.standard-stamp` keeps the check quick; a package file newer than the stamp is installed again). The move to C++ only is under way, bridge by bridge: **`time`, `io` and `devices` already exist
+`Packages\.standard-stamp` keeps the check quick; a package file newer than the stamp is installed again). The move to C++ only is under way, bridge by bridge: **`time`, `io`, `devices` and `random` (a prelude only) already exist
 only as packages** (`#import "time"` needs `fire-time` to be installed; its functions are the C++ of `native/bridges/fire_bridge_time.hpp`, which the VM runs in a library through the package ABI,
 except `Sleep` and `__time_unit_ticks`, which the VM runs itself: `host` functions; `io` and `devices` ask the host for its path policy, console and device manager through the callbacks of the ABI). For the others the compiler still resolves
 `#import "graphics"` and the rest to its built-in C# bridges first.

@@ -20,6 +20,9 @@ namespace fire.Runtime
         public required IReadOnlyDictionary<string, RuntimeClass> Classes { get; init; }
         public required IReadOnlyDictionary<string, ExternSignature> ExternSignatures { get; init; }
 
+        /// <summary>The files embedded by `new Resource("path")` (docs/RESOURCES.md); the id of a resource is its index. Set by the linker after compiling.</summary>
+        public List<ResourceEntry> Resources { get; set; } = new();
+
         /// <summary>MUSS nach jedem Deserialisieren EINMAL aufgerufen werden,
         /// bevor das Programm ausgeführt wird (siehe SPEC "Programm-
         /// Serialisierung") - MemoryPack verfolgt anders als z.B.

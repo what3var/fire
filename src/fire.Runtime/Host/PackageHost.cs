@@ -19,20 +19,25 @@ namespace fire.Runtime
             // the devices of the host (see PackageHost.Devices.cs)
             public IntPtr DevRefresh, DevCount, DevHandleAt, DevIdentifier, DevDefault, DevManagerShared, DevShared, DevAvailability, DevTestAvailability, DevConnected, DevPortName, DevConnect,
                 DevDisconnect, DevWrite, DevSendCommand, DevPoll;
+            // the network (see NetPolicy)
+            public IntPtr NetAllow;
         }
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int IoAllowFn(IntPtr pathUtf8, int access, IntPtr reason, int reasonSize);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int NetAllowFn(IntPtr hostUtf8, int port, int access, IntPtr reason, int reasonSize);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int StdReadFn(int stream, IntPtr buffer, int count);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int StdWriteFn(int stream, IntPtr buffer, int count);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int StdFlushFn(int stream);
 
         private static readonly object Lock = new();
         private static IoPolicy _policy = IoPolicy.AllowAll;
+        private static NetPolicy _netPolicy = NetPolicy.AllowAll;
         private static IoStdio _stdio = IoStdio.SystemConsole;
         private static readonly Stream?[] StdStreams = new Stream?[3];
         private static IntPtr _block;
         // the delegates stay referenced: the native side holds their function pointers
         private static IoAllowFn? _ioAllow;
+        private static NetAllowFn? _netAllow;
         private static StdReadFn? _stdRead;
         private static StdWriteFn? _stdWrite;
         private static StdFlushFn? _stdFlush;
@@ -45,11 +50,12 @@ namespace fire.Runtime
                 lock (Lock)
                 {
                     if (_block != IntPtr.Zero) return _block;
-                    _ioAllow = IoAllow; _stdRead = StdRead; _stdWrite = StdWrite; _stdFlush = StdFlush;
+                    _ioAllow = IoAllow; _netAllow = NetAllow; _stdRead = StdRead; _stdWrite = StdWrite; _stdFlush = StdFlush;
                     var host = new FireHost
                     {
                         Size = Marshal.SizeOf<FireHost>(),
                         IoAllow = Marshal.GetFunctionPointerForDelegate(_ioAllow),
+                        NetAllow = Marshal.GetFunctionPointerForDelegate(_netAllow),
                         StdRead = Marshal.GetFunctionPointerForDelegate(_stdRead),
                         StdWrite = Marshal.GetFunctionPointerForDelegate(_stdWrite),
                         StdFlush = Marshal.GetFunctionPointerForDelegate(_stdFlush),
@@ -63,21 +69,24 @@ namespace fire.Runtime
         }
 
         /// <summary>A session starts: the policy and the console of the host for the natives of packages (null: everything is allowed, the real console). Dispose at its end.</summary>
-        public static IDisposable Begin(IoPolicy? policy, IoStdio? stdio, bool usesDevices = false, object? deviceManager = null)
+        public static IDisposable Begin(IoPolicy? policy, IoStdio? stdio, bool usesDevices = false, object? deviceManager = null, NetPolicy? netPolicy = null)
         {
             IoPolicy previousPolicy;
             IoStdio previousStdio;
+            NetPolicy previousNetPolicy;
             lock (Lock)
             {
                 previousPolicy = _policy;
                 previousStdio = _stdio;
+                previousNetPolicy = _netPolicy;
+                _netPolicy = netPolicy ?? NetPolicy.AllowAll;
                 _policy = policy ?? IoPolicy.AllowAll;
                 _stdio = stdio ?? IoStdio.SystemConsole;
                 Array.Clear(StdStreams);
             }
             // the devices of the host are only touched (and their assembly loaded) by a program that imports the devices package
             object? previousDevices = usesDevices ? DeviceHost.Begin(deviceManager, Block) : null;
-            return new Scope(previousPolicy, previousStdio, previousDevices);
+            return new Scope(previousPolicy, previousStdio, previousDevices, previousNetPolicy);
         }
 
         private sealed class Scope : IDisposable
@@ -85,9 +94,10 @@ namespace fire.Runtime
             private readonly IoPolicy _previousPolicy;
             private readonly IoStdio _previousStdio;
             private readonly object? _previousDevices;
+            private readonly NetPolicy _previousNetPolicy;
             private bool _done;
 
-            public Scope(IoPolicy policy, IoStdio stdio, object? previousDevices) { _previousPolicy = policy; _previousStdio = stdio; _previousDevices = previousDevices; }
+            public Scope(IoPolicy policy, IoStdio stdio, object? previousDevices, NetPolicy netPolicy) { _previousPolicy = policy; _previousStdio = stdio; _previousDevices = previousDevices; _previousNetPolicy = netPolicy; }
 
             public void Dispose()
             {
@@ -98,6 +108,7 @@ namespace fire.Runtime
                 lock (Lock)
                 {
                     _policy = _previousPolicy;
+                    _netPolicy = _previousNetPolicy;
                     _stdio = _previousStdio;
                     Array.Clear(StdStreams);
                 }
@@ -120,6 +131,26 @@ namespace fire.Runtime
                 IoPolicy policy;
                 lock (Lock) policy = _policy;
                 if (policy.IsAllowed(path, (IoAccess)access, out string? why)) return 1;
+                if (reason != IntPtr.Zero && reasonSize > 0)
+                {
+                    byte[] bytes = Encoding.UTF8.GetBytes(why ?? "");
+                    int n = Math.Min(bytes.Length, reasonSize - 1);
+                    Marshal.Copy(bytes, 0, reason, n);
+                    Marshal.WriteByte(reason, n, 0);
+                }
+                return 0;
+            }
+            catch (Exception) { return 0; }
+        }
+
+        private static int NetAllow(IntPtr hostUtf8, int port, int access, IntPtr reason, int reasonSize)
+        {
+            try
+            {
+                string host = Marshal.PtrToStringUTF8(hostUtf8) ?? "";
+                NetPolicy policy;
+                lock (Lock) policy = _netPolicy;
+                if (policy.IsAllowed(host, port, (NetAccess)access, out string? why)) return 1;
                 if (reason != IntPtr.Zero && reasonSize > 0)
                 {
                     byte[] bytes = Encoding.UTF8.GetBytes(why ?? "");

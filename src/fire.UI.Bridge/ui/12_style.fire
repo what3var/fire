@@ -1,0 +1,363 @@
+namespace UI {
+    // Wertesammlungen und Aussehen: Setter, Trigger, Style, Vorlagen (ControlTemplate/DataTemplate), Bindungen zwischen Elementen und das
+    // ResourceDictionary. Eigenschaften sind die Felder der Elemente; sie werden ueber ihren Namen gesetzt (Reflect.Get/Set), deshalb braucht
+    // `ui` die Bibliothek `reflection`. Nichts hier malt selbst - die Elemente (siehe Element.Prepare) holen sich Styles, Trigger, Vorlagen und Bindungen.
+
+    // Gibt einer Eigenschaft einen Wert. `target`: Name eines Teils der Vorlage des Elements (leer: das Element selbst).
+    class Setter {
+        string property
+        var value
+        string target = ""
+
+        construct(string property, value, string target = "") {
+            this.property = property
+            this.value = value
+            this.target = target
+            UI.M.Own(this, value)
+        }
+
+        // Das Element, auf das der Setter wirkt (undefined, wenn es den Teil nicht gibt).
+        Find(owner) {
+            if (this.target == "") { return owner }
+            return owner.FindPart(this.target)
+        }
+
+        Apply(owner) {
+            var element = this.Find(owner)
+            if (element == undefined) { return }
+            if (Reflect.Has(element, this.property)) { Reflect.Set(element, this.property, this.value) }
+        }
+    }
+
+    // Eine Bedingung eines Triggers: die Eigenschaft hat den Wert. `source`: Name eines Teils der Vorlage (leer: das Element selbst).
+    class Condition {
+        string property
+        var value
+        string source = ""
+
+        construct(string property, value, string source = "") {
+            this.property = property
+            this.value = value
+            this.source = source
+        }
+
+        bool Holds(owner) {
+            var element = owner
+            if (this.source != "") { element = owner.FindPart(this.source) }
+            if (element == undefined) { return false }
+            if (!Reflect.Has(element, this.property)) { return false }
+            return Reflect.Get(element, this.property) == this.value
+        }
+    }
+
+    // Solange alle Bedingungen gelten, setzen die Setter ihre Werte; danach kommen die alten wieder.
+    // `new Trigger("hover", true)` - weitere Bedingungen mit And(...), die Werte mit Set(...).
+    class Trigger {
+        List conditions
+        List setters
+
+        construct(string property, value, string source = "") {
+            this.conditions = new List()
+            this.setters = new List()
+            this.And(property, value, source)
+        }
+
+        And(string property, value, string source = "") {
+            var condition = new Condition(property, value, source)
+            condition.TakeTo(this)
+            this.conditions.Add(condition)
+        }
+
+        Set(string property, value, string target = "") {
+            var setter = new Setter(property, value, target)
+            setter.TakeTo(this)
+            this.setters.Add(setter)
+        }
+
+        bool Holds(owner) {
+            for (var i = 0; i < this.conditions.count; i = i + 1) {
+                if (!this.conditions[i].Holds(owner)) { return false }
+            }
+            return true
+        }
+    }
+
+    // Ein Wert, der beim Ende eines Triggers zurueckgesetzt wird.
+    class Saved {
+        Element element
+        string property
+        var value
+    }
+
+    // Der Zustand eines Triggers an EINEM Element (Style und Vorlage werden von vielen Elementen geteilt).
+    class TriggerState {
+        Trigger trigger
+        bool active = false
+        List saved
+
+        construct(trigger) {
+            this.trigger = trigger
+            this.saved = new List()
+        }
+
+        Update(owner) {
+            var holds = this.trigger.Holds(owner)
+            if (holds && !this.active) { this.Activate(owner) }
+            else if (!holds && this.active) { this.Deactivate() }
+        }
+
+        Activate(owner) {
+            this.active = true
+            for (var i = 0; i < this.trigger.setters.count; i = i + 1) {
+                var setter = this.trigger.setters[i]
+                var element = setter.Find(owner)
+                if (element == undefined) { continue }
+                if (!Reflect.Has(element, setter.property)) { continue }
+                var s = new Saved()
+                s.element = element
+                s.property = setter.property
+                s.value = Reflect.Get(element, setter.property)
+                s.TakeTo(this)
+                this.saved.Add(s)
+                Reflect.Set(element, setter.property, setter.value)
+            }
+        }
+
+        Deactivate() {
+            var i = this.saved.count - 1
+            while (i >= 0) {
+                var s = this.saved[i]
+                Reflect.Set(s.element, s.property, s.value)
+                i = i - 1
+            }
+            for (var j = 0; j < this.saved.count; j = j + 1) { delete this.saved[j] }
+            this.saved.Clear()
+            this.active = false
+        }
+    }
+
+    // Eine Sammlung von Settern und Triggern fuer eine Art Element. `target` ist der Stil-Schluessel (siehe Element.StyleKey, z.B. "Button");
+    // in einem ResourceDictionary mit AddStyle gilt er fuer alle Elemente dieser Art darunter ("impliziter Style"), sonst weist man ihn
+    // mit `element.style = ...` zu. `basedOn`: ein Style, auf dem dieser aufbaut.
+    // Ein Style gilt beim ersten Layout des Elements und ueberschreibt dort, was Konstruktor oder Code vorher gesetzt haben.
+    class Style {
+        string target
+        Style basedOn
+        List setters
+        List triggers
+
+        construct(string target = "") {
+            this.target = target
+            this.setters = new List()
+            this.triggers = new List()
+        }
+
+        Set(string property, value) {
+            var setter = new Setter(property, value)
+            setter.TakeTo(this)
+            this.setters.Add(setter)
+        }
+
+        AddTrigger(trigger) {
+            trigger.TakeTo(this)
+            this.triggers.Add(trigger)
+        }
+
+        // Die Setter anwenden und die Trigger beim Element anmelden (zuerst die des Basis-Styles).
+        Apply(owner) {
+            if (this.basedOn != undefined) { this.basedOn.Apply(owner) }
+            for (var i = 0; i < this.setters.count; i = i + 1) { this.setters[i].Apply(owner) }
+            for (var j = 0; j < this.triggers.count; j = j + 1) { owner.AddTrigger(this.triggers[j]) }
+        }
+    }
+
+    // Bindet die Eigenschaft eines Teils der Vorlage an eine Eigenschaft des Elements, dem die Vorlage gehoert.
+    class TemplateBinding {
+        string part
+        string partProperty
+        string ownerProperty
+
+        construct(string part, string partProperty, string ownerProperty) {
+            this.part = part
+            this.partProperty = partProperty
+            this.ownerProperty = ownerProperty
+        }
+    }
+
+    // Das Aussehen eines Steuerelements: `factory` ist ein Lambda mit einem Parameter (dem Element), das den Baum der Teile baut und seine
+    // Wurzel liefert. Teile mit Namen (`element.name = "..."`) lassen sich ansprechen: Bind(...) bindet eine ihrer Eigenschaften an eine des Elements,
+    // AddTrigger(...) aendert sie unter einer Bedingung (Setter mit `target` = Name des Teils).
+    // Ohne Vorlage zeichnet sich das Steuerelement selbst.
+    class ControlTemplate {
+        var factory
+        List bindings
+        List triggers
+
+        construct(factory) {
+            this.factory = factory
+            this.bindings = new List()
+            this.triggers = new List()
+        }
+
+        Bind(string part, string partProperty, string ownerProperty) {
+            var binding = new TemplateBinding(part, partProperty, ownerProperty)
+            binding.TakeTo(this)
+            this.bindings.Add(binding)
+        }
+
+        AddTrigger(trigger) {
+            trigger.TakeTo(this)
+            this.triggers.Add(trigger)
+        }
+    }
+
+    // Baut zu einem Datenelement (einer Zeile einer Liste, eines Baums) das Element, das es zeigt: `factory` ist ein Lambda mit einem Parameter (dem Datenelement).
+    class DataTemplate {
+        var factory
+
+        construct(factory) { this.factory = factory }
+
+        Build(item) {
+            var make = this.factory
+            return make(item)
+        }
+    }
+
+    // Verbindet eine Eigenschaft eines Elements mit der eines anderen Objekts. Es wird bei jedem Layout abgeglichen (ohne Ereignisse): aendert sich die Quelle,
+    // folgt das Ziel; mit `twoWay` folgt auch die Quelle dem Ziel; mit `once` wird nur ein Mal uebertragen. `sourceProperty` ist ein Pfad ("name", "address.city");
+    // leer ist die Quelle selbst (z.B. das Datenelement einer DataTemplate-Zeile, nur lesend). Eine Text-Eigenschaft zeigt jeden Wert als Text. `converter`: ein UI.Converter (undefined: Werte unveraendert).
+    class Binding {
+        Element target
+        string targetProperty
+        var source
+        string sourceProperty
+        bool twoWay = false
+        var converter
+        bool once = false
+        // Stand beim letzten Abgleich
+        bool synced = false
+        var lastSource
+        var lastTarget
+
+        construct(Element target, string targetProperty, source, string sourceProperty, bool twoWay = false, converter = undefined, bool once = false) {
+            this.target = target
+            this.targetProperty = targetProperty
+            this.source = source
+            this.sourceProperty = sourceProperty
+            this.twoWay = twoWay
+            this.converter = converter
+            this.once = once
+        }
+
+        Sync() {
+            if (this.once && this.synced) { return }
+            if (!UI.M.PathHas(this.source, this.sourceProperty) || !Reflect.Has(this.target, this.targetProperty)) { return }
+            var s = UI.M.PathGet(this.source, this.sourceProperty)
+            var t = Reflect.Get(this.target, this.targetProperty)
+            if (this.twoWay && this.sourceProperty != "" && this.synced && t != this.lastTarget) {
+                // das Ziel hat sich geaendert: zurueck in die Quelle
+                var back = t
+                if (this.converter != undefined) { back = this.converter.ConvertBack(t) }
+                if (back != s) { UI.M.PathSet(this.source, this.sourceProperty, back) }
+                this.lastSource = UI.M.PathGet(this.source, this.sourceProperty)
+                this.lastTarget = t
+                return
+            }
+            if (!this.synced || s != this.lastSource) {
+                var forward = s
+                if (this.converter != undefined) { forward = this.converter.Convert(s) }
+                // a text property shows any other value as its text
+                if (t is of string && forward != undefined && !(forward is of string)) { forward = UI.M.Text(forward) }
+                if (forward != t) { Reflect.Set(this.target, this.targetProperty, forward) }
+                this.lastSource = s
+                this.lastTarget = Reflect.Get(this.target, this.targetProperty)
+                this.synced = true
+            }
+        }
+    }
+
+    // Benannte Werte (Pinsel, Stifte, Zahlen, Styles, ...) und implizite Styles. Jedes Element und der Root haben eines (`resources`, am Anfang undefined
+    // beim Element); gesucht wird vom Element aus nach oben (Element.FindResource, Element.FindStyle).
+    class ResourceDictionary {
+        List keys
+        List values
+        List styles
+
+        construct() {
+            this.keys = new List()
+            this.values = new List()
+            this.styles = new List()
+        }
+
+        int IndexOf(string key) {
+            for (var i = 0; i < this.keys.count; i = i + 1) {
+                if (this.keys[i] == key) { return i }
+            }
+            return -1
+        }
+
+        bool Has(string key) { return this.IndexOf(key) >= 0 }
+
+        // Der Wert zum Schluessel, sonst undefined.
+        Get(string key) {
+            var i = this.IndexOf(key)
+            if (i < 0) { return undefined }
+            return this.values[i]
+        }
+
+        // Legt den Wert ab (ein vorhandener Schluessel wird ueberschrieben); das Verzeichnis besitzt ihn.
+        Set(string key, value) {
+            UI.M.Own(this, value)
+            var i = this.IndexOf(key)
+            if (i >= 0) {
+                this.values[i] = value
+                return
+            }
+            this.keys.Add(key)
+            this.values.Add(value)
+        }
+
+        // Ein impliziter Style: gilt fuer alle Elemente mit dem Stil-Schluessel `style.target` darunter.
+        AddStyle(style) {
+            style.TakeTo(this)
+            for (var i = 0; i < this.styles.count; i = i + 1) {
+                if (this.styles[i].target == style.target) {
+                    this.styles[i] = style
+                    return
+                }
+            }
+            this.styles.Add(style)
+        }
+
+        FindStyle(string key) {
+            for (var i = 0; i < this.styles.count; i = i + 1) {
+                if (this.styles[i].target == key) { return this.styles[i] }
+            }
+            return undefined
+        }
+
+        // Uebernimmt die Eintraege und Styles eines anderen Verzeichnisses (es muss so lange leben wie dieses).
+        Merge(other) {
+            for (var i = 0; i < other.keys.count; i = i + 1) {
+                var key = other.keys[i]
+                var at = this.IndexOf(key)
+                if (at >= 0) { this.values[at] = other.values[i] }
+                else {
+                    this.keys.Add(key)
+                    this.values.Add(other.values[i])
+                }
+            }
+            for (var j = 0; j < other.styles.count; j = j + 1) {
+                var style = other.styles[j]
+                var found = false
+                for (var k = 0; k < this.styles.count; k = k + 1) {
+                    if (this.styles[k].target == style.target) {
+                        this.styles[k] = style
+                        found = true
+                    }
+                }
+                if (!found) { this.styles.Add(style) }
+            }
+        }
+    }
+}

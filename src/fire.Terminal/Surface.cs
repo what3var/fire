@@ -22,7 +22,12 @@ namespace fire.Terminal
         /// <summary>Alpha-Blending eingeschaltet (siehe Klassen-Doku).</summary>
         public readonly bool Blend;
 
-        public Surface(IRenderTarget target, bool blend)
+        /// <summary>Das Beschneidungsrechteck: gezeichnet wird nur in x von ClipLeft bis ClipRight - 1 und y von ClipTop bis ClipBottom - 1 (innerhalb des Ziels; ohne Angabe das ganze Ziel).</summary>
+        public readonly int ClipLeft, ClipTop, ClipRight, ClipBottom;
+
+        public Surface(IRenderTarget target, bool blend) : this(target, blend, 0, 0, target.Width, target.Height) { }
+
+        public Surface(IRenderTarget target, bool blend, int clipLeft, int clipTop, int clipRight, int clipBottom)
         {
             Target = target;
             Pixels = target.Pixels;
@@ -30,6 +35,10 @@ namespace fire.Terminal
             Width = target.Width;
             Height = target.Height;
             Blend = blend;
+            ClipLeft = Math.Max(0, clipLeft);
+            ClipTop = Math.Max(0, clipTop);
+            ClipRight = Math.Min(Width, clipRight);
+            ClipBottom = Math.Min(Height, clipBottom);
         }
 
         public bool IsIndexed => Indices != null;
@@ -81,7 +90,7 @@ namespace fire.Terminal
         /// <summary>Ein Pixel, außerhalb des Ziels still beschnitten.</summary>
         public void Put(int x, int y, in Pixel p)
         {
-            if ((uint)x >= (uint)Width || (uint)y >= (uint)Height) return;
+            if (x < ClipLeft || x >= ClipRight || y < ClipTop || y >= ClipBottom) return;
             if (!Visible(p)) return;
             int i = y * Width + x;
             if (Indices != null)
@@ -96,10 +105,10 @@ namespace fire.Terminal
         /// <summary>Eine waagerechte Linie von `x0` bis `x1` (beide eingeschlossen, beliebige Reihenfolge) in Zeile `y`, beschnitten.</summary>
         public void Span(int y, int x0, int x1, in Pixel p)
         {
-            if ((uint)y >= (uint)Height) return;
+            if (y < ClipTop || y >= ClipBottom) return;
             if (x1 < x0) (x0, x1) = (x1, x0);
-            x0 = Math.Max(0, x0);
-            x1 = Math.Min(Width - 1, x1);
+            x0 = Math.Max(ClipLeft, x0);
+            x1 = Math.Min(ClipRight - 1, x1);
             if (x1 < x0 || !Visible(p)) return;
             int start = y * Width + x0, count = x1 - x0 + 1;
             if (Indices != null)
@@ -118,7 +127,7 @@ namespace fire.Terminal
         public void Rect(int x, int y, int w, int h, in Pixel p)
         {
             if (w <= 0 || h <= 0) return;
-            int y0 = Math.Max(0, y), y1 = (int)Math.Min((long)Height, (long)y + h);
+            int y0 = Math.Max(ClipTop, y), y1 = (int)Math.Min((long)ClipBottom, (long)y + h);
             long xr = (long)x + w - 1;
             for (int yy = y0; yy < y1; yy++) Span(yy, x, (int)Math.Min(xr, int.MaxValue), p);
         }

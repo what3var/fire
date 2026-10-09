@@ -46,7 +46,8 @@ namespace fire.Compiler
 
         private static IEnumerable<string> BuiltDirectories(InstalledImport import)
         {
-            yield return Path.Combine(import.Package.Directory, "lib", Rid);
+            if (import.Package.BuildDirectory != null) yield return Path.Combine(import.Package.BuildDirectory, Rid);
+            else yield return Path.Combine(import.Package.Directory, "lib", Rid);
             yield return Path.Combine(Path.GetTempPath(), "fire-packages", Safe(import.Package.Name) + "-" + Safe(import.Package.Version), Rid);
         }
 
@@ -72,6 +73,7 @@ namespace fire.Compiler
         {
             if (import.Import.Native == null) throw new PackageException($"The import '{import.Name}' has no natives.");
             if (Locate(import) is { } done) return done;
+            if (RecentFailure(import) is { } earlier) throw new PackageException(earlier);
             if (!import.Import.Native.SupportsAny(HostPlatformKeys))
                 throw new PackageException($"The package '{import.Package.Name}' (import '{import.Name}') has native code for {string.Join(", ", import.Import.Native.Platforms)}, not for this machine ({string.Join(", ", HostPlatformKeys)}).");
             log?.Invoke($"Building the native part of the package '{import.Package.Name}' (import '{import.Name}') for {Rid}...");
@@ -95,7 +97,11 @@ namespace fire.Compiler
                 var (exe, args) = NativeBuilder.CompilerCommand(toolchain, target, cpp, work, outFile, sharedLibrary: true, extraIncludeDirs: new[] { Path.Combine(work, "abi") });
                 var (ok, text) = NativeBuilder.Run(exe, args, work);
                 if (!ok || !File.Exists(outFile))
-                    throw new PackageException($"Building the native part of the package '{import.Package.Name}' failed:\n{exe} {args}\n{text}");
+                {
+                    string message = $"Building the native part of the package '{import.Package.Name}' failed:\n{exe} {args}\n{text}";
+                    RememberFailure(import, message);
+                    throw new PackageException(message);
+                }
                 foreach (string dir in BuiltDirectories(import))
                 {
                     try
@@ -103,6 +109,7 @@ namespace fire.Compiler
                         Directory.CreateDirectory(dir);
                         string dest = Path.Combine(dir, FileNameFor(import));
                         File.Copy(outFile, dest, overwrite: true);
+                        try { File.Delete(FailureFile(import, dir)); } catch (IOException) { }
                         return dest;
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* not writable: the next place */ }
@@ -115,6 +122,42 @@ namespace fire.Compiler
             }
         }
 
+        // A package whose library cannot be built on this machine (a missing development library, say) would be tried again by every program that imports it - a compiler run of some seconds
+        // that fails again. The failure is remembered for a few minutes (next to where the library would be); after installing what was missing wait that long or delete the `.failed` file.
+        private static readonly TimeSpan FailureMemory = TimeSpan.FromMinutes(5);
+
+        private static string FailureFile(InstalledImport import, string dir) => Path.Combine(dir, FileNameFor(import) + ".failed");
+
+        private static string? RecentFailure(InstalledImport import)
+        {
+            foreach (string dir in BuiltDirectories(import))
+            {
+                try
+                {
+                    string file = FailureFile(import, dir);
+                    if (!File.Exists(file)) continue;
+                    if (DateTime.UtcNow - File.GetLastWriteTimeUtc(file) > FailureMemory || File.GetLastWriteTimeUtc(file) < NewestSource(import)) continue;
+                    return File.ReadAllText(file) + $"\n(This was the result of an earlier attempt, less than {FailureMemory.TotalMinutes:0} minutes ago; delete '{file}' to try again.)";
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+            return null;
+        }
+
+        private static void RememberFailure(InstalledImport import, string message)
+        {
+            foreach (string dir in BuiltDirectories(import))
+            {
+                try
+                {
+                    Directory.CreateDirectory(dir);
+                    File.WriteAllText(FailureFile(import, dir), message);
+                    return;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+        }
+
         /// <summary>The C++ of the wrapper: the runtime in library mode, the sources of the import for this machine, and the entry points of the ABI around its functions.</summary>
         public static string GenerateWrapper(InstalledImport import)
         {
@@ -122,6 +165,7 @@ namespace fire.Compiler
             var target = TargetProfile.Host;
             var sb = new StringBuilder();
             sb.AppendLine($"// Generated by fire.Compiler: the C ABI (native/abi/fire_pkg_abi.h) around the natives of the package {import.Package.Name} {import.Package.Version}, import \"{import.Name}\".");
+            foreach (string lib in native.LinkLibrariesFor(HostPlatformKeys)) sb.AppendLine($"// fire-link: {lib}");   // (`linkLibraries` of the package: the build links them)
             sb.AppendLine("#define FIRE_LIBRARY 1");
             sb.AppendLine($"#define FIRE_TARGET \"{target.Name}\"");
             sb.AppendLine($"#define FIRE_TARGET_{target.Name.ToUpperInvariant()} 1");
@@ -130,6 +174,12 @@ namespace fire.Compiler
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{target.Native.Platform}/fire_fs.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{target.Native.Platform}/fire_dev.hpp\"");
+            sb.AppendLine($"#define FIRE_PLATFORM_NET_HEADER \"platform/{target.Native.Platform}/fire_net.hpp\"");
+            sb.AppendLine($"#define FIRE_PLATFORM_TLS_HEADER \"platform/{target.Native.Platform}/fire_tls.hpp\"");
+            sb.AppendLine($"#define FIRE_PLATFORM_GPIO_HEADER \"platform/{target.Native.Platform}/fire_gpio.hpp\"");
+            sb.AppendLine($"#define FIRE_PLATFORM_I2C_HEADER \"platform/{target.Native.Platform}/fire_i2c.hpp\"");
+            sb.AppendLine($"#define FIRE_PLATFORM_SPI_HEADER \"platform/{target.Native.Platform}/fire_spi.hpp\"");
+            sb.AppendLine($"#define FIRE_PLATFORM_WIFI_HEADER \"platform/{target.Native.Platform}/fire_wifi.hpp\"");
             sb.AppendLine("#include \"fire_rt.hpp\"");
             foreach (var (name, text) in import.ReadNativeSources(HostPlatformKeys))
             {

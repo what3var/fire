@@ -218,6 +218,10 @@ Pixel-/Index-Array, `MarkDirty`); der `Framebuffer` implementiert es, ein eigene
 - Aus: jedes Pixel wird kopiert (alle Pixel ohne Alpha-Prüfung; `BlitMode.Blend` verhält sich wie `Transparent`).
 - `Clear`, `Clear(farbe)` und das Scrollen setzen Pixel immer roh (ohne Blending).
 
+**Beschneidungsrechteck:** `renderer.SetClip(x, y, w, h)` beschränkt alle Zeichenfunktionen (Füllungen, Formen, Text, `Print`, `Blit...`) auf das Rechteck (geschnitten mit dem Framebuffer); `renderer.ResetClip()` hebt es auf
+(C#: `Renderer.SetClip/ResetClip/GetClip`, `Surface.ClipLeft/ClipTop/ClipRight/ClipBottom`, `Blitter.Blit(..., clipLeft, clipTop, clipRight, clipBottom)`). `Clear`, `Clear(farbe)` und das Scrollen des Terminals gelten immer für den ganzen Framebuffer. Die UI-Bibliothek
+nutzt es für Bildlauf-Ausschnitte und Listen (`Root.PushClip/PopClip`).
+
 C++-Spiegel: `native/bridges/graphics/fire_gfx.hpp` (`Surface`, `Brush`, `Pen`, `Renderer`) liefert dieselben Pixel; die nativen Funktionen heißen `__GRPHRnd...`, `__GRPHBsh...`, `__GRPHPen...`. Nur der Software-Renderer ist umgesetzt; eine Beschleunigung
 (GPU) bleibt hinter derselben Schnittstelle möglich.
 
@@ -343,6 +347,41 @@ auf die rohen Pixel-Daten:
 gezeichnet wurde. Das ist gewollt für Animationen (ein Durchlauf = ein Bild) und Warteschleifen (`while (win.Tick()) { ... }` belastet den Prozessor kaum), hat aber eine Falle: eine Zeichenschleife mit EINEM Tick je
 Durchlauf braucht bei 256 Durchläufen 256 x 16,7 ms = 4,3 s, obwohl das Zeichnen selbst nur wenige Millisekunden dauert (gemessen: 256 x `Print` + `Tick` ohne VSync in ~10 ms). Abhilfe: seltener `Tick` rufen (zum Beispiel
 einmal nach der Schleife) oder `win.VSync = false` setzen, dann kehrt `Tick` sofort zurück - bei einer Schleife, die dann ungebremst läuft; wer animiert, bremst sie selbst (`Sleep`) oder lässt VSync an.
+
+## Fenstergröße ändern (`AutoResize`)
+
+Ein Fenster darf vom Nutzer in der Größe geändert werden. Ohne weiteres (Vorgabe) wird der Framebuffer dann auf das Fenster **gestreckt**. Mit `window.AutoResize = true` bekommt der Framebuffer stattdessen genau die neue
+Größe des Fensters - das Bild wird nicht gestreckt, die Mauspositionen sind Pixel des Framebuffers 1:1, und das Programm zeichnet in der neuen Größe neu. Dazu:
+
+- `framebuffer.Resize(breite, höhe)` (auch von Hand zu rufen) liefert `true`, wenn die Größe **gültig** ist: beide Seiten von 1 bis 16384 und höchstens 64 Millionen Pixel. Eine ungültige Größe lässt den Framebuffer
+  unverändert und liefert `false` - ein minimiertes Fenster meldet zum Beispiel die Größe 0 und wird einfach übergangen. Der Inhalt bleibt oben links erhalten, was dazukommt ist durchsichtig (RGBA) bzw. Index 0 (Palette);
+  Modus, Palette und durchsichtiger Index bleiben. Ein `Renderer` auf dem Framebuffer folgt der neuen Größe (Zeilen/Spalten für `Print`, der Cursor wird ins Raster zurückgeholt). Wer sich Zeiger auf die Pixel
+  gemerkt hat (`unsafe`), holt sie nach einem Resize neu.
+- Das Ereignis `EventType.Resize` (4) meldet die neue Größe des Fensters: in der Warteschlange `[4, breite, höhe]`, als Callback `window.RegisterResize(func (int w, int h) => { ... })`. Bei `AutoResize` hat der
+  Framebuffer die Größe schon, wenn das Ereignis ankommt (und ist sie ungültig, behält er die alte).
+- VM und natives Backend verhalten sich gleich (`__GRPHFbResize`, `__GRPHWinSetAutoResize`/`GetAutoResize`; die Plattform liefert `EV_RESIZE` mit `width`/`height`).
+
+Die UI-Bibliothek schaltet `AutoResize` selbst ein (siehe docs/UI.md, "Fenstergröße").
+
+## Touchscreen und Joystick
+
+Das Fenster meldet neben Maus und Tastatur auch Finger und Joysticks (SDL; VM und natives Backend gleich). Die Ereignisse kommen wie die anderen über die Warteschlange (`window.EnableEvents()`, `NextEvent()`) oder als Callback
+(`RegisterTouchDown(...)` usw.):
+
+| Ereignis | `EventType` | Warteschlange | Callback |
+|---|---|---|---|
+| Finger setzt auf / bewegt sich / hebt ab | `TouchDown` 16, `TouchMove` 17, `TouchUp` 18 | `[typ, finger, x, y, druck]` | `(int finger, float x, float y, float druck)` |
+| Achse | `JoystickAxis` 32 | `[typ, joystick, achse, stellung]` | `(int joystick, int achse, float stellung)` |
+| Knopf gedrückt / losgelassen | `JoystickButtonDown` 33, `JoystickButtonUp` 34 | `[typ, joystick, knopf]` | `(int joystick, int knopf)` |
+| Kreuz (Hat) | `JoystickHat` 35 | `[typ, joystick, hat, richtungen]` | `(int joystick, int hat, int richtungen)` |
+| angesteckt / abgezogen | `JoystickAdded` 36, `JoystickRemoved` 37 | `[typ, joystick]` | `(int joystick)` |
+
+- Fingerpositionen sind Pixel des Framebuffers (wie die Maus); `finger` unterscheidet mehrere gleichzeitige Finger, `druck` geht von 0 bis 1 (Geräte ohne Druckmessung melden 1).
+- Eine Achse steht von -1 bis 1 (0 ist die Mitte; die Ruhelage kann um ein paar Prozent daneben liegen - eine Totzone ist Sache des Programms). `richtungen` beim Kreuz ist eine Bitmaske: 1 oben, 2 rechts, 4 unten, 8 links, 0 Mitte.
+- `joystick` ist die Nummer des Geräts, solange es angesteckt ist. Alle Geräte, die schon beim Start da sind (und später angesteckte), werden geöffnet und melden `JoystickAdded`. Ohne Joystick-Treiber öffnet sich das Fenster trotzdem.
+- `window.TouchMouse` (Vorgabe `true`): SDL macht aus einem Finger zusätzlich Mausereignisse, ein Programm, das nur auf die Maus hört, ist so auch mit dem Finger bedienbar. Mit `false` kommen nur die Touch-Ereignisse
+  (die UI-Bibliothek schaltet es aus und wertet die Finger selbst aus, siehe docs/UI.md "Bedienung").
+- Im nativen Backend liefert die Anzeige `EV_TOUCH_*` und `EV_JOY_*` (Felder `finger`, `pressure`, `joystick`, `index`, `value`, `x`, `y`); ein Board-Paket ohne Touchscreen oder Joystick meldet sie einfach nicht.
 
 ## Bewusst noch NICHT Teil dieser Ausbaustufe
 

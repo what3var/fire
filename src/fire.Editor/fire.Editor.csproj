@@ -13,7 +13,7 @@
     <AssemblyName>spark</AssemblyName>
     <LangVersion>latest</LangVersion>
     <AssemblyTitle>fire spark</AssemblyTitle>
-    <ApplicationIcon>Logo.ico</ApplicationIcon>
+    <ApplicationIcon>Assets\Logo.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
     <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
   </PropertyGroup>
@@ -33,6 +33,8 @@
   <ItemGroup>
     <!-- Greift per Projektreferenz direkt auf Lexer/Parser/Resolver/Compiler/VM zu. -->
     <ProjectReference Include="..\fire.Compiler\fire.Compiler.csproj" />
+    <ProjectReference Include="..\fire.Project\fire.Project.csproj" />
+    <ProjectReference Include="..\fire.Git\fire.Git.csproj" />
     <ProjectReference Include="..\fire.Runtime\fire.Runtime.csproj" />
     <ProjectReference Include="..\fire.UI.Markup\fire.UI.Markup.csproj" />
   </ItemGroup>
@@ -40,8 +42,8 @@
   <ItemGroup>
     <!-- The help pages behind the "?" menu (Help folder): copied to Help\ next to the executable and opened from there (see MainWindow.OpenHelp). -->
     <None Include="Help\**\*.md" CopyToOutputDirectory="PreserveNewest" />
-    <AvaloniaResource Include="icons\*.png" />
-    <AvaloniaResource Include="Logo-64.png" />
+    <AvaloniaResource Include="Assets\icons\*.png" />
+    <AvaloniaResource Include="Assets\Logo-64.png" />
   </ItemGroup>
 
   <Import Project="..\BridgePackages.targets" />

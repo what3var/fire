@@ -20,6 +20,8 @@ struct WindowState {
     std::vector<plat::disp::Event> queue;   // the events for NextEvent (only once EnableEvents was called)
     size_t queueHead = 0;
     bool queueOn = false;
+    bool touchMouse = true;    // Window.TouchMouse
+    bool autoResize = false;   // a resize of the window resizes the framebuffer (Window.AutoResize)
     ~WindowState() {
         for (Callback& c : callbacks) release(c.lam);
         if (fb) gfx::fbRelease(fb);
@@ -76,6 +78,10 @@ inline uint32_t callbackParams(int type) {
         case plat::disp::EV_KEY_DOWN: case plat::disp::EV_KEY_UP: case plat::disp::EV_MOUSE_SCROLL: return 4;
         case plat::disp::EV_MOUSE_MOVE_REL: case plat::disp::EV_MOUSE_MOVE: case plat::disp::EV_MOUSE_UP: case plat::disp::EV_MOUSE_DOWN: return 3;
         case plat::disp::EV_TEXT_INPUT: return 1;
+        case plat::disp::EV_RESIZE: case plat::disp::EV_JOY_BUTTON_DOWN: case plat::disp::EV_JOY_BUTTON_UP: return 2;
+        case plat::disp::EV_JOY_AXIS: case plat::disp::EV_JOY_HAT: return 3;
+        case plat::disp::EV_TOUCH_DOWN: case plat::disp::EV_TOUCH_MOVE: case plat::disp::EV_TOUCH_UP: return 4;
+        case plat::disp::EV_JOY_ADDED: case plat::disp::EV_JOY_REMOVED: return 1;
         default: return 0;
     }
 }
@@ -110,6 +116,12 @@ inline void dispatch(WindowState* w, const plat::disp::Event& e) {
             case EV_MOUSE_MOVE_REL: a[0] = Float(e.xrel); a[1] = Float(e.yrel); a[2] = Int(e.buttonState); n = 3; break;
             case EV_MOUSE_SCROLL: a[0] = Float(e.scrollX); a[1] = Float(e.scrollY); a[2] = Float(e.x); a[3] = Float(e.y); n = 4; break;
             case EV_TEXT_INPUT: a[0] = utf8Str(e.text, &scratch); n = 1; break;
+            case EV_RESIZE: a[0] = Int(e.width); a[1] = Int(e.height); n = 2; break;
+            case EV_TOUCH_DOWN: case EV_TOUCH_MOVE: case EV_TOUCH_UP: a[0] = Int(e.finger); a[1] = Float(e.x); a[2] = Float(e.y); a[3] = Float(e.pressure); n = 4; break;
+            case EV_JOY_AXIS: a[0] = Int(e.joystick); a[1] = Int(e.index); a[2] = Float(e.value); n = 3; break;
+            case EV_JOY_HAT: a[0] = Int(e.joystick); a[1] = Int(e.index); a[2] = Int((int64_t)e.value); n = 3; break;
+            case EV_JOY_BUTTON_DOWN: case EV_JOY_BUTTON_UP: a[0] = Int(e.joystick); a[1] = Int(e.index); n = 2; break;
+            case EV_JOY_ADDED: case EV_JOY_REMOVED: a[0] = Int(e.joystick); n = 1; break;
             default: break;
         }
         runCallback(c.lam, n, a);
@@ -138,6 +150,9 @@ inline Value WinTick(Value id) {
     WindowState* w = windowOf(id);
     std::vector<plat::disp::Event> events;
     bool open = w->display.pump(events, w->fb->width, w->fb->height);
+    if (w->autoResize)
+        for (const plat::disp::Event& e : events)
+            if (e.type == plat::disp::EV_RESIZE && gfx::Framebuffer::validSize(e.width, e.height)) w->fb->resize(e.width, e.height);
     std::vector<uint32_t> pixels(w->fb->pixelCount());
     w->fb->resolveTo(pixels.data());
     w->display.present(pixels.data(), w->fb->width, w->fb->height);
@@ -167,6 +182,12 @@ inline Value WinNextEvent(Value id, OwnList* list) {
         case EV_MOUSE_MOVE_REL: items[n++] = px(e.xrel); items[n++] = px(e.yrel); items[n++] = Int(e.buttonState); break;
         case EV_MOUSE_SCROLL: items[n++] = Float(e.scrollX); items[n++] = Float(e.scrollY); items[n++] = px(e.x); items[n++] = px(e.y); break;
         case EV_TEXT_INPUT: items[n++] = utf8Str(e.text, list); break;
+        case EV_RESIZE: items[n++] = Int(e.width); items[n++] = Int(e.height); break;
+        case EV_TOUCH_DOWN: case EV_TOUCH_MOVE: case EV_TOUCH_UP: items[n++] = Int(e.finger); items[n++] = px(e.x); items[n++] = px(e.y); items[n++] = Float(e.pressure); break;
+        case EV_JOY_AXIS: items[n++] = Int(e.joystick); items[n++] = Int(e.index); items[n++] = Float(e.value); break;
+        case EV_JOY_HAT: items[n++] = Int(e.joystick); items[n++] = Int(e.index); items[n++] = Int((int64_t)e.value); break;
+        case EV_JOY_BUTTON_DOWN: case EV_JOY_BUTTON_UP: items[n++] = Int(e.joystick); items[n++] = Int(e.index); break;
+        case EV_JOY_ADDED: case EV_JOY_REMOVED: items[n++] = Int(e.joystick); break;
         default: break;
     }
     Arr* a = allocArr(n, list);
@@ -184,6 +205,10 @@ inline Value WinRegisterEvent(Value id, Value type, Value lam) {
 }
 inline Value WinSetVSync(Value id, Value on) { windowOf(id)->display.setVSync(on.i != 0); return Undef(); }
 inline Value WinGetVSync(Value id) { return Bool(windowOf(id)->display.vsync()); }
+inline Value WinSetTouchMouse(Value id, Value on) { WindowState* w = windowOf(id); w->touchMouse = on.i != 0; w->display.setTouchMouse(w->touchMouse); return Undef(); }
+inline Value WinGetTouchMouse(Value id) { return Bool(windowOf(id)->touchMouse); }
+inline Value WinSetAutoResize(Value id, Value on) { windowOf(id)->autoResize = on.i != 0; return Undef(); }
+inline Value WinGetAutoResize(Value id) { return Bool(windowOf(id)->autoResize); }
 
 }  // namespace win
 }  // namespace fire

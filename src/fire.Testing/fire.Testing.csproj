@@ -9,18 +9,21 @@
 
   <ItemGroup>
     <!-- The logic of the editor that has no user interface (completion, navigation, Markdown), linked in directly for the tests. -->
-    <Compile Include="..\fire.Editor\ScriptSymbolIndex.cs" Link="Editor\ScriptSymbolIndex.cs" />
-    <Compile Include="..\fire.Editor\ScriptSymbolIndex.Types.cs" Link="Editor\ScriptSymbolIndex.Types.cs" />
-    <Compile Include="..\fire.Editor\CompletionEngine.cs" Link="Editor\CompletionEngine.cs" />
-    <Compile Include="..\fire.Editor\NavigationEngine.cs" Link="Editor\NavigationEngine.cs" />
-    <Compile Include="..\fire.Editor\BuiltinMembers.cs" Link="Editor\BuiltinMembers.cs" />
-    <Compile Include="..\fire.Editor\MarkdownParser.cs" Link="Editor\MarkdownParser.cs" />
-    <Compile Include="..\fire.Editor\DocComments.cs" Link="Editor\DocComments.cs" />
+    <Compile Include="..\fire.Editor\Language\ScriptSymbolIndex.cs" Link="Editor\ScriptSymbolIndex.cs" />
+    <Compile Include="..\fire.Editor\Language\ScriptSymbolIndex.Types.cs" Link="Editor\ScriptSymbolIndex.Types.cs" />
+    <Compile Include="..\fire.Editor\Language\CompletionEngine.cs" Link="Editor\CompletionEngine.cs" />
+    <Compile Include="..\fire.Editor\Language\NavigationEngine.cs" Link="Editor\NavigationEngine.cs" />
+    <Compile Include="..\fire.Editor\Language\BuiltinMembers.cs" Link="Editor\BuiltinMembers.cs" />
+    <Compile Include="..\fire.Editor\Markdown\MarkdownParser.cs" Link="Editor\MarkdownParser.cs" />
+    <Compile Include="..\fire.Editor\Language\DocComments.cs" Link="Editor\DocComments.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\fire.Compiler\fire.Compiler.csproj" />
     <ProjectReference Include="..\fire.Runtime\fire.Runtime.csproj" />
+    <ProjectReference Include="..\fire.Project\fire.Project.csproj" />
+    <ProjectReference Include="..\fire.Git\fire.Git.csproj" />
+    <ProjectReference Include="..\fire.Package.Manager\fire.Package.Manager.csproj" />
   </ItemGroup>
 
 </Project>

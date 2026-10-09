@@ -45,6 +45,17 @@ namespace fire.Terminal.Windows
             _renderer = renderer ?? new SdlFramebufferRenderer();
         }
 
+        /// <summary>true: ändert der Nutzer die Größe des Fensters, bekommt der Framebuffer genau diese Größe (sofern sie gültig ist, siehe Framebuffer.IsValidSize) - statt dass sein Inhalt auf
+        /// das Fenster gestreckt wird. Das Programm bekommt das Ereignis <see cref="Event.EventType.Resize"/> und zeichnet neu.</summary>
+        public bool AutoResize { get; set; }
+
+        /// <summary>Löst ein Finger auf dem Touchscreen auch Mausereignisse aus? (siehe IFramebufferRenderer.TouchMouse)</summary>
+        public bool TouchMouse
+        {
+            get => _renderer.TouchMouse;
+            set => _renderer.TouchMouse = value;
+        }
+
         /// <summary>Wartet jedes Tick auf die Bildwiederholung des Monitors? (siehe IFramebufferRenderer.VSync)</summary>
         public bool VSync
         {
@@ -74,6 +85,10 @@ namespace fire.Terminal.Windows
         {
             if (!_opened) return null;
             var result = _renderer.PumpEvents();
+            if (AutoResize && result?.Events != null)
+                foreach (var e in result.Events)
+                    if (e is Event.ResizeEvent resize && Framebuffer.IsValidSize(resize.Width, resize.Height))
+                        Framebuffer.Resize(resize.Width, resize.Height);
             Framebuffer.Resolve(); // Palette-Framebuffer: Indizes -> sichtbare Farben (im RGBA-Modus ein No-op)
             _renderer.Present(Framebuffer);
             return result;

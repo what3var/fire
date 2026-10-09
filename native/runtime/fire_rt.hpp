@@ -1572,6 +1572,58 @@ inline Value charCall(int64_t method, Value ch, OwnList* list) {
     }
 }
 
+// ---- embedded files: `new Resource("path")` (docs/RESOURCES.md) -------------------------------------------------------------------------------------------------
+/// The files the compiler embedded in the program: the generated file points these at its table (a library without resources has none).
+struct ResEntry { const char* name; const uint8_t* data; uint32_t length; };
+inline const ResEntry* g_resources = nullptr;
+inline int g_resourceCount = 0;
+
+/// The UTF-16 units of UTF-8 bytes (invalid sequences become U+FFFD, characters above U+FFFF two surrogates - like the VM): `emit` is called per unit.
+template <class Emit> inline void decodeUtf8(const uint8_t* p, size_t n, Emit emit) {
+    for (size_t i = 0; i < n;) {
+        uint32_t c = p[i], extra = 0;
+        if (c < 0x80) { extra = 0; }
+        else if (c >= 0xC2 && c < 0xE0) { c &= 0x1F; extra = 1; }
+        else if (c >= 0xE0 && c < 0xF0) { c &= 0x0F; extra = 2; }
+        else if (c >= 0xF0 && c < 0xF5) { c &= 0x07; extra = 3; }
+        else { emit((char16_t)0xFFFD); i++; continue; }
+        bool ok = true;
+        for (uint32_t k = 1; k <= extra; k++) {
+            if (i + k >= n || (p[i + k] & 0xC0) != 0x80) { ok = false; break; }
+            c = (c << 6) | (p[i + k] & 0x3F);
+        }
+        if (!ok) { emit((char16_t)0xFFFD); i++; continue; }
+        i += extra + 1;
+        if (c >= 0x10000) { c -= 0x10000; emit((char16_t)(0xD800 + (c >> 10))); emit((char16_t)(0xDC00 + (c & 0x3FF))); }
+        else emit((char16_t)c);
+    }
+}
+
+inline Value newStrFromUtf8(const uint8_t* p, size_t n, OwnList* list) {
+    uint32_t count = 0;
+    decodeUtf8(p, n, [&](char16_t) { count++; });
+    Str* s = allocStr(count, list);
+    char16_t* out = strChars(s);
+    uint32_t at = 0;
+    decodeUtf8(p, n, [&](char16_t u) { out[at++] = u; });
+    return StrV(s);
+}
+
+/// `__ResourceCall(op, id)`: 0 count, 1 length, 2 bytes (a buffer), 3 name, 4 text (UTF-8).
+inline Value resourceCall(int64_t op, Value id, OwnList* list) {
+    if (op == 0) return Int(g_resourceCount);
+    if (id.kind != K_Int) fatal("A Resource needs a path that is a string literal: new Resource(\"images/logo.png\") - the compiler embeds the file.");
+    if (id.i < 0 || id.i >= g_resourceCount) fatal("No resource with that number.");
+    const ResEntry& r = g_resources[id.i];
+    switch (op) {
+        case 1: return Int((int64_t)r.length);
+        case 2: { Buf* b = allocBuf(r.length, list); if (r.length) std::memcpy(b->data, r.data, r.length); return BufV(b); }
+        case 3: return newStrFromUtf8(reinterpret_cast<const uint8_t*>(r.name), std::strlen(r.name), list);
+        case 4: return newStrFromUtf8(r.data, r.length, list);
+        default: fatal("Unknown resource operation.");
+    }
+}
+
 // ---- Number formats of `$"{x:F2}"` (Value.Format): X/x, D, B, F ------------------------------------------------------
 inline Value formatValue(Value v, Value specV, OwnList* list) {
     const Str* spec = strOf(specV);

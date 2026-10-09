@@ -23,8 +23,16 @@ namespace fire.Terminal
     /// </summary>
     public sealed class Framebuffer : IRenderTarget
     {
-        public int Width { get; }
-        public int Height { get; }
+        public int Width { get; private set; }
+        public int Height { get; private set; }
+
+        /// <summary>Die größte Seitenlänge eines Framebuffers bei <see cref="Resize"/> (und die größte Pixelzahl: <see cref="MaxPixels"/>).</summary>
+        public const int MaxSide = 16384;
+        public const long MaxPixels = 64L * 1024 * 1024;
+
+        /// <summary>Ist das eine Größe, auf die <see cref="Resize"/> den Framebuffer bringt: beide Seiten von 1 bis <see cref="MaxSide"/>, höchstens <see cref="MaxPixels"/> Pixel?
+        /// (Ein minimiertes Fenster meldet die Größe 0, ein absurd großes die Grenzen.)</summary>
+        public static bool IsValidSize(long width, long height) => width >= 1 && height >= 1 && width <= MaxSide && height <= MaxSide && width * height <= MaxPixels;
 
         /// <summary>Wie die Pixel gespeichert werden (siehe <see cref="ColorMode"/>).</summary>
         public ColorMode Mode { get; }
@@ -42,11 +50,11 @@ namespace fire.Terminal
         /// Im Palette-Modus (<see cref="ColorMode.Indexed"/>) ist das nur das ABBILD der Indizes (für Renderer und alles, was Farben
         /// liest): es wird bei Bedarf aus <see cref="Indices"/> und der Palette berechnet (<see cref="Resolve"/>) und ist zwischen
         /// zwei Zeichenoperationen NICHT aktuell. Schreiben hat dort keine Wirkung (der nächste Resolve überschreibt es).</summary>
-        public uint[] Pixels { get; }
+        public uint[] Pixels { get; private set; }
 
         /// <summary>Nur im Palette-Modus: ein Byte je Pixel, der Index in <see cref="Palette"/> (zeilenweise wie <see cref="Pixels"/>); sonst null.
         /// Wer es direkt beschreibt, ruft danach <see cref="MarkDirty"/> auf.</summary>
-        public byte[]? Indices { get; }
+        public byte[]? Indices { get; private set; }
 
         /// <summary>Die 256-Farben-Palette dieses Framebuffers. Im Palette-Modus bestimmt sie die sichtbaren Farben; im RGBA-Modus löst sie
         /// Palette-Indizes auf, die Zeichenfunktionen als Farbe erhalten (siehe <see cref="Paint"/>). Mehrere Konsolen auf demselben
@@ -72,6 +80,29 @@ namespace fire.Terminal
             Mode = mode;
             Pixels = new uint[width * height];
             if (mode == ColorMode.Indexed) Indices = new byte[width * height];
+        }
+
+        /// <summary>Bringt den Framebuffer auf eine neue Größe (siehe <see cref="IsValidSize"/>; eine ungültige Größe lässt ihn unverändert und liefert false). Der Inhalt bleibt oben links
+        /// erhalten, was dazukommt ist durchsichtig (RGBA) bzw. Index 0 (Palette); Modus, Palette und durchsichtiger Index bleiben. Danach sind <see cref="Pixels"/> und <see cref="Indices"/>
+        /// ANDERE Arrays - wer sich eine Referenz gemerkt hat (ein Zeiger auf die Pixel), holt sie neu.</summary>
+        public bool Resize(int width, int height)
+        {
+            if (!IsValidSize(width, height)) return false;
+            if (width == Width && height == Height) return true;
+            int copyW = Math.Min(width, Width), copyH = Math.Min(height, Height);
+            var newPixels = new uint[width * height];
+            var newIndices = Indices != null ? new byte[width * height] : null;
+            for (int y = 0; y < copyH; y++)
+            {
+                Array.Copy(Pixels, y * Width, newPixels, y * width, copyW);
+                if (newIndices != null) Array.Copy(Indices!, y * Width, newIndices, y * width, copyW);
+            }
+            Pixels = newPixels;
+            Indices = newIndices;
+            Width = width;
+            Height = height;
+            _dirty = true;
+            return true;
         }
 
         // -----------------------------------------------------------

@@ -1,0 +1,7 @@
+{
+  "title": "Fire Class",
+  "description": "A script with an empty class that is named like the file.",
+  "icon": "class",
+  "defaultName": "MyClass",
+  "order": 20
+}

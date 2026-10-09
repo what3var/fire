@@ -28,9 +28,10 @@ namespace fire.Terminal
         /// <summary>Kopiert den Ausschnitt (sx, sy, sw, sh) von `src` in das Rechteck (dx, dy, dw, dh) von `dst`.
         /// Ist `dw` oder `dh` negativ, wird in der jeweiligen Richtung gespiegelt (|dw| x |dh| Pixel ab (dx, dy)); sind sie 0, geschieht nichts.
         /// Quell- und Zielgröße dürfen verschieden sein (Skalierung durch den nächsten Nachbarn). Ausschnitt und Ziel werden beschnitten.
-        /// `colorKey` (nur Palette-Quelle, Modus Transparent/Blend): der Index, der durchsichtig ist; -1 = der TransparentIndex der Quelle.</summary>
+        /// `colorKey` (nur Palette-Quelle, Modus Transparent/Blend): der Index, der durchsichtig ist; -1 = der TransparentIndex der Quelle.
+        /// `clipLeft`..`clipBottom`: nur in dieses Rechteck des Ziels wird gezeichnet (rechts und unten ausgeschlossen).</summary>
         public static void Blit(IRenderTarget dst, IRenderTarget src, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh,
-            BlitMode mode = BlitMode.Copy, int colorKey = -1, bool blend = true)
+            BlitMode mode = BlitMode.Copy, int colorKey = -1, bool blend = true, int clipLeft = 0, int clipTop = 0, int clipRight = int.MaxValue, int clipBottom = int.MaxValue)
         {
             // ohne Alpha-Blending (Renderer.AlphaBlending) mischt auch der Modus Blend nicht: er verhält sich wie Transparent
             if (!blend && mode == BlitMode.Blend) mode = BlitMode.Transparent;
@@ -55,8 +56,8 @@ namespace fire.Terminal
             int key = srcIndexed ? (colorKey >= 0 ? colorKey : src.TransparentIndex) : -1;
 
             // nur die sichtbaren Zielzeilen/-spalten durchlaufen
-            long dxStart = Math.Max(0, -(long)dx), dxEnd = Math.Min(absDw, dst.Width - (long)dx);
-            long dyStart = Math.Max(0, -(long)dy), dyEnd = Math.Min(absDh, dst.Height - (long)dy);
+            long dxStart = Math.Max(Math.Max(0, clipLeft) - (long)dx, 0), dxEnd = Math.Min(absDw, Math.Min(dst.Width, clipRight) - (long)dx);
+            long dyStart = Math.Max(Math.Max(0, clipTop) - (long)dy, 0), dyEnd = Math.Min(absDh, Math.Min(dst.Height, clipBottom) - (long)dy);
             if (dxEnd <= dxStart || dyEnd <= dyStart) return;
 
             // ein Zwischenspeicher für Nachschlagen im Palette-Ziel bei RGBA-Quelle (viele gleiche Farben, die Suche kostet 256 Vergleiche)

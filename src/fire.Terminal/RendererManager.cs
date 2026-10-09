@@ -41,6 +41,9 @@ namespace fire.Terminal
         public void SetTargetFramebuffer(int rendererId, int framebufferId) =>
             _renderers.Get(rendererId).Target = _framebuffers.GetFramebuffer(framebufferId);
 
+        public void SetClip(int id, int x, int y, int w, int h) => _renderers.Get(id).SetClip(x, y, w, h);
+        public void ResetClip(int id) => _renderers.Get(id).ResetClip();
+
         public bool GetAlphaBlending(int id) => _renderers.Get(id).AlphaBlending;
         public void SetAlphaBlending(int id, bool on) => _renderers.Get(id).AlphaBlending = on;
 

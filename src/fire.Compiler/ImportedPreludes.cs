@@ -37,9 +37,9 @@ namespace fire.Compiler
             "linq" => NativeImports.Linq,
             "reflection" => NativeImports.Reflection,
             _ => PackageStore.Default.FindImport(name)?.Key
-                 ?? throw new Exception(StandardPackages.Bridges.Contains(name.ToLowerInvariant())
+                 ?? throw new PreprocessorException(StandardPackages.Bridges.Contains(name.ToLowerInvariant())
                      ? $"The standard package '{StandardPackages.PackageNameOf(name.ToLowerInvariant())}' for `#import \"{name}\"` is not installed (start ember or spark once, or `ember install {StandardPackages.PackageNameOf(name.ToLowerInvariant())}`)."
-                     : $"'{name}' is not a known extension (installed packages: `ember list`, available ones: `ember find`)."),
+                     : $"'{name}' is not a known extension (installed packages: `ember list`, available ones: `ember find`; a library project of the solution needs a reference in the project file)."),
         };
 
         /// <summary>Der fire-Quelltext der Prelude der Erweiterung `importName`
@@ -62,7 +62,7 @@ namespace fire.Compiler
                 yield break;
             }
             if (importKey == NativeImports.Windows) yield return NativeImports.Graphics; // Window zeigt einen Framebuffer
-            if (importKey == NativeImports.Ui) { yield return NativeImports.Graphics; yield return NativeImports.Windows; }
+            if (importKey == NativeImports.Ui) { yield return NativeImports.Graphics; yield return NativeImports.Windows; yield return NativeImports.Reflection; } // Styles und Trigger setzen Eigenschaften per Name
             if (importKey == NativeImports.Linq) yield return NativeImports.Reflection; // SelectProperty/SelectField arbeiten mit Selektoren
             yield return importKey;
         }

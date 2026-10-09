@@ -1,0 +1,309 @@
+namespace UI {
+    class Label : Element {
+        string text
+        // Textfarbe: undefined = `foreground`, dann der Brush `text` des Themes
+        Brush brush
+
+        construct(string text, int x = 0, int y = 0) : base(x, y, -1, -1) {
+            this.text = text
+        }
+
+        MeasureCore(root, int aw, int ah) {
+            this.cw = root.cw * this.text.Length
+            this.ch = root.ch
+        }
+
+        string StyleKey() { return "Label" }
+
+        Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.DrawTemplate(root, ax, ay)) { return }
+            var c = this.brush
+            if (c == undefined) { c = this.foreground }
+            if (c == undefined) { c = root.theme.text }
+            if (!this.enabled) { c = root.theme.textDisabled }
+            root.renderer.DrawText(ax, ay, this.text, c)
+        }
+    }
+
+    class Button : Element {
+        string text
+        lambda onClick
+        bool clicked = false
+
+        construct(string text, int x = 0, int y = 0, int width = 90, int height = 26) : base(x, y, width, height) {
+            this.text = text
+        }
+
+        bool Focusable() { return true }
+
+        string StyleKey() { return "Button" }
+
+        // Ohne feste Groesse (width/height = -1) so gross wie der Text plus Rand
+        MeasureCore(root, int aw, int ah) {
+            this.cw = root.cw * this.text.Length + 24
+            this.ch = root.ch + 12
+        }
+
+        // Wurde die Schaltfläche seit dem letzten Abfragen geklickt? (setzt den Merker zurück)
+        bool TakeClicked() {
+            var was = this.clicked
+            this.clicked = false
+            return was
+        }
+
+        Click() {
+            this.clicked = true
+            var callback = this.onClick
+            if (callback != undefined) { callback() }
+        }
+
+        Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.DrawTemplate(root, ax, ay)) { return }
+            var theme = root.theme
+            var face = theme.face
+            if (!this.enabled) { face = theme.faceDisabled }
+            else if (this.background != undefined) { face = this.background }
+            else if (this.pressed && this.hover) { face = theme.facePressed }
+            else if (this.hover) { face = theme.faceHover }
+            root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, face)
+            var border = theme.border
+            if (this.pen != undefined) { border = this.pen }
+            if (this.focused) { border = theme.borderFocus }
+            root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+
+            var color = theme.text
+            if (this.foreground != undefined) { color = this.foreground }
+            if (!this.enabled) { color = theme.textDisabled }
+            var tx = ax + (this.actualWidth - root.cw * this.text.Length) / 2
+            var ty = ay + (this.actualHeight - root.ch) / 2
+            root.renderer.DrawText(tx, ty, this.text, color)
+        }
+
+        MouseDown(root, int button, int px, int py) {
+            if (button == 1) { this.pressed = true }
+        }
+
+        MouseUp(root, int button, int px, int py) {
+            var was = this.pressed
+            this.pressed = false
+            if (was && button == 1 && this.Contains(px, py)) { this.Click() }
+        }
+
+        KeyDown(root, int key, int mod) {
+            if (key == UI.Keys.Enter() || key == UI.Keys.Space()) { this.Click() }
+        }
+    }
+
+    class CheckBox : Element {
+        string text
+        bool isChecked = false
+        lambda onChange
+        bool changed = false
+
+        construct(string text, int x = 0, int y = 0, bool isChecked = false) : base(x, y, -1, -1) {
+            this.text = text
+            this.isChecked = isChecked
+        }
+
+        bool Focusable() { return true }
+
+        string StyleKey() { return "CheckBox" }
+
+        // Wurde der Zustand seit dem letzten Abfragen geändert? (setzt den Merker zurück)
+        bool TakeChanged() {
+            var was = this.changed
+            this.changed = false
+            return was
+        }
+
+        Toggle() {
+            this.isChecked = !this.isChecked
+            this.changed = true
+            var callback = this.onChange
+            if (callback != undefined) { callback() }
+        }
+
+        // das Kaestchen, 6 Pixel Abstand, der Text
+        MeasureCore(root, int aw, int ah) {
+            this.cw = 14 + 6 + root.cw * this.text.Length
+            this.ch = UI.M.Max(root.ch, 14)
+        }
+
+        Draw(root, int ax, int ay) {
+            var box = 14
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.DrawTemplate(root, ax, ay)) { return }
+
+            var theme = root.theme
+            var by = ay + (this.actualHeight - box) / 2
+            var back = theme.inputBack
+            if (!this.enabled) { back = theme.faceDisabled }
+            else if (this.background != undefined) { back = this.background }
+            else if (this.hover) { back = theme.faceHover }
+            root.renderer.FillRect(ax, by, box, box, back)
+            var border = theme.border
+            if (this.pen != undefined) { border = this.pen }
+            if (this.focused) { border = theme.borderFocus }
+            root.renderer.DrawRect(ax, by, box, box, border)
+            if (this.isChecked) {
+                var mark = theme.accent
+                if (!this.enabled) { mark = theme.textDisabled }
+                root.renderer.FillRect(ax + 3, by + 3, box - 6, box - 6, mark)
+            }
+            var color = theme.text
+            if (this.foreground != undefined) { color = this.foreground }
+            if (!this.enabled) { color = theme.textDisabled }
+            root.renderer.DrawText(ax + box + 6, ay + (this.actualHeight - root.ch) / 2, this.text, color)
+        }
+
+        MouseDown(root, int button, int px, int py) {
+            if (button == 1) { this.pressed = true }
+        }
+
+        MouseUp(root, int button, int px, int py) {
+            var was = this.pressed
+            this.pressed = false
+            if (was && button == 1 && this.Contains(px, py)) { this.Toggle() }
+        }
+
+        KeyDown(root, int key, int mod) {
+            if (key == UI.Keys.Space() || key == UI.Keys.Enter()) { this.Toggle() }
+        }
+    }
+
+    // Einzeiliges Textfeld mit Einfügemarke (Pfeiltasten, Pos1/Ende, Rücktaste/Entf, Mausklick). Enter löst `onEnter`
+    // bzw. `TakeEntered()` aus, jede Änderung des Textes `onChange`/`TakeChanged()`.
+    class TextBox : Element {
+        string text
+        int caret = 0
+        int scroll = 0
+        int maxLength = 0
+        lambda onChange
+        lambda onEnter
+        bool changed = false
+        bool entered = false
+
+        construct(string text, int x = 0, int y = 0, int width = 160, int height = 24) : base(x, y, width, height) {
+            this.text = text
+            this.caret = text.Length
+        }
+
+        bool Focusable() { return true }
+
+        string StyleKey() { return "TextBox" }
+
+        bool TakeChanged() {
+            var was = this.changed
+            this.changed = false
+            return was
+        }
+
+        bool TakeEntered() {
+            var was = this.entered
+            this.entered = false
+            return was
+        }
+
+        SetText(string value) {
+            this.text = value
+            this.caret = value.Length
+            this.scroll = 0
+        }
+
+        Changed() {
+            this.changed = true
+            var callback = this.onChange
+            if (callback != undefined) { callback() }
+        }
+
+        // Wie viele Zeichen passen in das Feld?
+        int Fit(root) { return (this.actualWidth - 8) / root.cw }
+
+        Draw(root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            var theme = root.theme
+            var back = theme.inputBack
+            if (!this.enabled) { back = theme.faceDisabled }
+            else if (this.background != undefined) { back = this.background }
+            root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
+            var border = theme.border
+            if (this.pen != undefined) { border = this.pen }
+            if (this.focused) { border = theme.borderFocus }
+            root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+
+            // die Einfügemarke bleibt sichtbar: der sichtbare Ausschnitt wandert mit
+            var fit = this.Fit(root)
+            if (this.caret < this.scroll) { this.scroll = this.caret }
+            if (this.caret > this.scroll + fit) { this.scroll = this.caret - fit }
+            if (this.scroll < 0) { this.scroll = 0 }
+
+            var count = this.text.Length - this.scroll
+            if (count > fit) { count = fit }
+            if (count < 0) { count = 0 }
+            var color = theme.text
+            if (this.foreground != undefined) { color = this.foreground }
+            if (!this.enabled) { color = theme.textDisabled }
+            var ty = ay + (this.actualHeight - root.ch) / 2
+            if (count > 0) {
+                root.renderer.DrawText(ax + 4, ty, this.text.Substring(this.scroll, count), color)
+            }
+            if (this.focused) {
+                var cx = ax + 4 + (this.caret - this.scroll) * root.cw
+                root.renderer.DrawLine(cx, ay + 3, cx, ay + this.actualHeight - 4, theme.caret)
+            }
+        }
+
+        MouseDown(root, int button, int px, int py) {
+            if (button != 1) { return }
+            // auf die nächste Zeichengrenze runden (ganzzahlig: halbe Zellbreite dazu, dann teilen)
+            var column = (px - (this.ax + 4) + root.cw / 2) / root.cw
+            if (px < this.ax + 4) { column = 0 }
+            this.caret = this.scroll + column
+            if (this.caret < 0) { this.caret = 0 }
+            if (this.caret > this.text.Length) { this.caret = this.text.Length }
+        }
+
+        // Links/Rechts bewegen die Einfügemarke, Pos1/Ende springen; Auf/Ab gehören dem Fokus (zum Element darüber/darunter)
+        bool WantsKey(int key) {
+            return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Home() || key == UI.Keys.End()
+        }
+
+        KeyDown(root, int key, int mod) {
+            var length = this.text.Length
+            if (key == UI.Keys.Left()) {
+                if (this.caret > 0) { this.caret = this.caret - 1 }
+            } else if (key == UI.Keys.Right()) {
+                if (this.caret < length) { this.caret = this.caret + 1 }
+            } else if (key == UI.Keys.Home()) {
+                this.caret = 0
+            } else if (key == UI.Keys.End()) {
+                this.caret = length
+            } else if (key == UI.Keys.Backspace()) {
+                if (this.caret > 0) {
+                    this.text = this.text.Substring(0, this.caret - 1) + this.text.Substring(this.caret, length - this.caret)
+                    this.caret = this.caret - 1
+                    this.Changed()
+                }
+            } else if (key == UI.Keys.Delete()) {
+                if (this.caret < length) {
+                    this.text = this.text.Substring(0, this.caret) + this.text.Substring(this.caret + 1, length - this.caret - 1)
+                    this.Changed()
+                }
+            } else if (key == UI.Keys.Enter()) {
+                this.entered = true
+                var callback = this.onEnter
+                if (callback != undefined) { callback() }
+            }
+        }
+
+        TextInput(root, string value) {
+            var length = this.text.Length
+            if (this.maxLength > 0 && length + value.Length > this.maxLength) { return }
+            this.text = this.text.Substring(0, this.caret) + value + this.text.Substring(this.caret, length - this.caret)
+            this.caret = this.caret + value.Length
+            this.Changed()
+        }
+    }
+}

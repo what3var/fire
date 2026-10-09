@@ -153,14 +153,14 @@ namespace fire.Native
             ["FbCreate"] = (3, false), ["FbDestroy"] = (1, false), ["FbWidth"] = (1, false), ["FbHeight"] = (1, false), ["FbReadByte"] = (2, false), ["FbWriteByte"] = (3, false),
             ["FbMode"] = (1, false), ["FbByteCount"] = (1, false), ["FbReadBytes"] = (1, true), ["FbWriteBytes"] = (2, false), ["FbGetPaletteColor"] = (2, false), ["FbSetPaletteColor"] = (3, false),
             ["FbReadPalette"] = (2, true), ["FbWritePalette"] = (2, false), ["FbLoadImage"] = (2, false), ["FbLoadFile"] = (2, false), ["FbFromPixels"] = (5, false), ["FbLastError"] = (0, true),
-            ["FbGetTransparentIndex"] = (1, false), ["FbSetTransparentIndex"] = (2, false), ["FbToMask"] = (4, false),
+            ["FbResize"] = (3, false), ["FbGetTransparentIndex"] = (1, false), ["FbSetTransparentIndex"] = (2, false), ["FbToMask"] = (4, false),
             ["RndCreate"] = (1, false), ["RndDestroy"] = (1, false), ["RndPrint"] = (2, false), ["RndLocate"] = (3, false), ["RndClear"] = (1, false),
             ["RndClearTo"] = (2, false), ["RndSetColor"] = (3, false), ["RndSetPixel"] = (4, false), ["RndGetPixel"] = (3, false), ["RndGetPixelIndex"] = (3, false),
             ["RndCellWidth"] = (1, false), ["RndCellHeight"] = (1, false), ["RndGetAlphaBlending"] = (1, false), ["RndSetAlphaBlending"] = (2, false),
             ["RndDrawText"] = (6, false), ["RndFillRect"] = (6, false), ["RndFill"] = (2, false), ["RndFillCircle"] = (5, false), ["RndFillEllipse"] = (6, false),
             ["RndFillTriangle"] = (8, false), ["RndFillPolygon"] = (3, false), ["RndFloodFill"] = (4, false), ["RndFloodFillBorder"] = (5, false),
             ["RndDrawPoint"] = (4, false), ["RndDrawLine"] = (6, false), ["RndDrawPath"] = (4, false), ["RndDrawRect"] = (6, false), ["RndDrawCircle"] = (5, false),
-            ["RndDrawEllipse"] = (6, false), ["RndDrawTriangle"] = (8, false), ["RndDrawPolygon"] = (4, false), ["RndBlit"] = (12, false), ["BshCreateSolid"] = (1, false),
+            ["RndDrawEllipse"] = (6, false), ["RndDrawTriangle"] = (8, false), ["RndDrawPolygon"] = (4, false), ["RndBlit"] = (12, false), ["RndSetClip"] = (5, false), ["RndResetClip"] = (1, false), ["BshCreateSolid"] = (1, false),
             ["BshDestroy"] = (1, false), ["BshGetColor"] = (1, false), ["BshSetColor"] = (2, false), ["PenCreate"] = (3, false), ["PenDestroy"] = (1, false),
             ["PenGetColor"] = (1, false), ["PenSetColor"] = (2, false), ["PenGetWidth"] = (1, false), ["PenSetWidth"] = (2, false), ["PenGetShape"] = (1, false),
             ["PenSetShape"] = (2, false),
@@ -170,7 +170,7 @@ namespace fire.Native
         private static readonly Dictionary<string, (int Argc, bool Reference)> WindowsBridgeNatives = new()
         {
             ["Create"] = (2, false), ["Destroy"] = (1, false), ["Tick"] = (1, false), ["EnableEvents"] = (1, false), ["NextEvent"] = (1, true), ["RegisterEvent"] = (3, false),
-            ["SetVSync"] = (2, false), ["GetVSync"] = (1, false),
+            ["SetVSync"] = (2, false), ["GetVSync"] = (1, false), ["SetAutoResize"] = (2, false), ["GetAutoResize"] = (1, false), ["SetTouchMouse"] = (2, false), ["GetTouchMouse"] = (1, false),
         };
 
         private static readonly HashSet<string> GraphicsNeedsList = new() { "FbReadBytes", "FbReadPalette", "FbLastError", "SlcSlice" };
@@ -207,11 +207,20 @@ namespace fire.Native
         // -------------------------------------------------------------------------------------------------------------
         // Registries
         // -------------------------------------------------------------------------------------------------------------
+        // `Klasse.Methode` zu einer Funktion (fuer Fehlermeldungen), sonst "a lambda or a function of the script"
+        private string Describe(FunctionProto proto)
+        {
+            foreach (var rc in _program.Program.Classes.Values)
+                foreach (var m in rc.Methods)
+                    if (m.Value.Contains(proto)) return $"'{rc.Name}.{m.Key}'";
+            return "a lambda or a function of the script";
+        }
+
         private Func GetFunc(FunctionProto proto, FuncKind kind, int captureCount = 0)
         {
             if (_funcByProto.TryGetValue(proto, out var existing))
             {
-                if (existing.Kind != kind) throw new NativeNotSupportedException($"a function is used both as {existing.Kind} and as {kind}");
+                if (existing.Kind != kind) throw new NativeNotSupportedException($"a function is used both as {existing.Kind} and as {kind}: {Describe(proto)}");
                 if (existing.CaptureCount != captureCount) throw new NativeNotSupportedException("a lambda is created with different numbers of captures");
                 return existing;
             }
@@ -447,10 +456,20 @@ namespace fire.Native
             var dimNames = _units.SelectMany(u => u.Dimensions.Keys).Distinct().OrderBy(k => k).ToList();
             sb.AppendLine($"#define FIRE_NDIMS {Math.Max(1, dimNames.Count)}");
             foreach (var include in _target.Native.Includes) sb.AppendLine($"#include <{include}>");
+            // the system libraries that packages need on this platform (`linkLibraries`): the build links them
+            foreach (var (import, _) in _packageImports)
+                if (import.Import.Native is { } packageNative)
+                    foreach (string lib in packageNative.LinkLibrariesFor(new[] { _target.Native.Platform, _target.Name })) sb.AppendLine($"// fire-link: {lib}");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.hpp\"");
             sb.AppendLine("#include \"fire_rt.hpp\"");
             if (_packageImports.Count > 0 || _usesGraphics) sb.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{_target.Native.Platform}/fire_fs.hpp\"");   // (the io package, graphics)
             if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{_target.Native.Platform}/fire_dev.hpp\"");   // (the devices package)
+            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_NET_HEADER \"platform/{_target.Native.Platform}/fire_net.hpp\"");   // (the net package)
+            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_TLS_HEADER \"platform/{_target.Native.Platform}/fire_tls.hpp\"");   // (the tls package)
+            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_GPIO_HEADER \"platform/{_target.Native.Platform}/fire_gpio.hpp\"");   // (the gpio package)
+            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_I2C_HEADER \"platform/{_target.Native.Platform}/fire_i2c.hpp\"");   // (the i2c package)
+            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_SPI_HEADER \"platform/{_target.Native.Platform}/fire_spi.hpp\"");   // (the spi package)
+            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_WIFI_HEADER \"platform/{_target.Native.Platform}/fire_wifi.hpp\"");   // (the wifi package)
             if (_usesGraphics) sb.AppendLine("#include \"bridges/fire_bridge_graphics.hpp\"");
             if (_usesWindows)
             {
@@ -480,6 +499,28 @@ namespace fire.Native
             }
             sb.AppendLine("};");
             sb.AppendLine("static const bool kUnitsReady = (unitsInit(kUnitInit, " + _units.Count + "), true);");
+            // the files of `new Resource("path")` are part of the binary (docs/RESOURCES.md)
+            var resources = _program.Program.Resources;
+            if (resources.Count > 0)
+            {
+                for (int r = 0; r < resources.Count; r++)
+                {
+                    var data = resources[r].Data;
+                    sb.Append($"static const uint8_t kRes{r}[] = {{");
+                    if (data.Length == 0) sb.Append('0');
+                    for (int b = 0; b < data.Length; b++)
+                    {
+                        if (b % 32 == 0) sb.Append("\n    ");
+                        sb.Append(data[b]).Append(',');
+                    }
+                    sb.AppendLine("};");
+                }
+                sb.AppendLine("static const ResEntry kResources[] = {");
+                for (int r = 0; r < resources.Count; r++)
+                    sb.AppendLine($"    {{{CString(resources[r].Name)}, kRes{r}, {resources[r].Data.Length}u}},");
+                sb.AppendLine("};");
+                sb.AppendLine($"static const bool kResourcesReady = (g_resources = kResources, g_resourceCount = {resources.Count}, true);");
+            }
             if (_externDecls.Count > 0)
             {
                 sb.AppendLine("#ifdef __APPLE__");
@@ -660,7 +701,7 @@ namespace fire.Native
             foreach (var (name, argc) in _dispatchers.ToList())
             {
                 foreach (var cls in _classList.ToList())
-                    if (cls.Rc.FindMethodWithAccess(name, argc).Proto is { } method)
+                    if (cls.Rc.FindMethodWithAccess(name, argc).Proto is { IsStatic: false } method)   // a static method of the same name (`Reflect.Set`) is not what a call on an object means
                     {
                         GetFunc(method, FuncKind.Method);
                         DefaultArgs(method, argc, "self", "list");   // registers the functions of the default values
@@ -772,7 +813,7 @@ namespace fire.Native
         {
             var byFunc = new Dictionary<Func, List<int>>();
             foreach (var cls in _classList)
-                if (cls.Rc.FindMethodWithAccess(name, argc).Proto is { } method)
+                if (cls.Rc.FindMethodWithAccess(name, argc).Proto is { IsStatic: false } method)
                 {
                     var f = _funcByProto[method];
                     if (!byFunc.TryGetValue(f, out var ids)) byFunc[f] = ids = new List<int>();
@@ -805,6 +846,7 @@ namespace fire.Native
             var sb = new StringBuilder();
             sb.AppendLine(DispatcherSignature(name, argc, WrapDispatchers ? "direct_" : "call_"));
             sb.AppendLine("{");
+            if (DispatchNeedsList(name, argc)) sb.AppendLine("    (void)list;   // (a method that only works on numbers or text allocates nothing)");
             sb.AppendLine("    switch (self.kind) {");
             foreach (var (cpp, proto, extensionRc) in extensions)
                 sb.AppendLine($"        case {cpp}: {CallImpl(_funcByProto[proto].Name, proto, extensionRc, true)}");
@@ -2034,6 +2076,13 @@ namespace fire.Native
                         int first = d - argc;
                         string a0 = argc > 2 ? S(first + 2) : "Undef()", a1 = argc > 3 ? S(first + 3) : "Undef()";
                         E($"{S(first)} = stringCall({S(first)}.i, {S(first + 1)}, {argc - 2}, {a0}, {a1}, &{OwnerList()});");
+                        Check();
+                        d = first + 1; SetR(first, true); return Next();
+                    }
+                    if (native == ResourceMethods.NativeName && argc == 2)
+                    {
+                        int first = d - 2;
+                        E($"{S(first)} = resourceCall({S(first)}.i, {S(first + 1)}, &{OwnerList()});");
                         Check();
                         d = first + 1; SetR(first, true); return Next();
                     }

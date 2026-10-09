@@ -101,6 +101,7 @@ inline Value FbDestroy(Value id) {
 }
 inline Value FbWidth(Value id) { return Int(fbOf(id)->width); }
 inline Value FbHeight(Value id) { return Int(fbOf(id)->height); }
+inline Value FbResize(Value id, Value w, Value h) { return Bool(fbOf(id)->resize(I(w), I(h))); }
 inline Value FbMode(Value id) { return Int(fbOf(id)->mode); }
 inline Value FbByteCount(Value id) { return Int((int64_t)fbOf(id)->byteCount()); }
 
@@ -338,6 +339,8 @@ inline Value RndGetPixelIndex(Value id, Value x, Value y) { return Int(rendererO
 inline Value RndCellWidth(Value id) { return Int(rendererOf(id)->cellWidth); }
 inline Value RndCellHeight(Value id) { return Int(rendererOf(id)->cellHeight); }
 inline Value RndGetAlphaBlending(Value id) { return Bool(rendererOf(id)->alphaBlending); }
+inline Value RndSetClip(Value id, Value x, Value y, Value w, Value h) { rendererOf(id)->setClip(I(x), I(y), I(w), I(h)); return Undef(); }
+inline Value RndResetClip(Value id) { rendererOf(id)->resetClip(); return Undef(); }
 inline Value RndSetAlphaBlending(Value id, Value on) { rendererOf(id)->alphaBlending = on.i != 0; return Undef(); }
 inline Value RndDrawText(Value id, Value x, Value y, Value text, Value fg, Value bg) {
     Renderer* r = rendererOf(id);
@@ -407,7 +410,7 @@ inline Value RndDrawPolygon(Value id, Value points, Value pen, Value closed) {
 }
 inline Value RndBlit(Value id, Value src, Value sx, Value sy, Value sw, Value sh, Value dx, Value dy, Value dw, Value dh, Value mode, Value key) {
     Renderer* r = rendererOf(id);
-    blit(*r->target, *fbOf(src), I(sx), I(sy), I(sw), I(sh), I(dx), I(dy), I(dw), I(dh), I(mode), I(key), r->alphaBlending);
+    blit(*r->target, *fbOf(src), I(sx), I(sy), I(sw), I(sh), I(dx), I(dy), I(dw), I(dh), I(mode), I(key), r->alphaBlending, r->clipLeft, r->clipTop, r->clipRight, r->clipBottom);
     return Undef();
 }
 

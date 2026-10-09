@@ -103,6 +103,29 @@ struct Framebuffer {
         return pixels != nullptr;
     }
 
+    static constexpr int64_t MaxSide = 16384, MaxPixels = 64LL * 1024 * 1024;
+    static bool validSize(int64_t w, int64_t h) { return w >= 1 && h >= 1 && w <= MaxSide && h <= MaxSide && w * h <= MaxPixels; }
+
+    /// A new size (see validSize; an invalid size leaves it as it is, false): the content stays at the upper left, the new area is transparent (RGBA) or index 0. The pixel arrays are new ones.
+    bool resize(int64_t w, int64_t h) {
+        if (!validSize(w, h)) return false;
+        if (w == width && h == height) return true;
+        size_t n = (size_t)(w * h);
+        int copyW = (int)std::min<int64_t>(w, width), copyH = (int)std::min<int64_t>(h, height);
+        uint8_t* newIndices = nullptr;
+        uint32_t* newPixels = nullptr;
+        if (indices) { newIndices = static_cast<uint8_t*>(std::calloc(n, 1)); if (!newIndices) return false; }
+        else { newPixels = static_cast<uint32_t*>(std::calloc(n, 4)); if (!newPixels) return false; }
+        for (int y = 0; y < copyH; y++) {
+            if (indices) std::memcpy(newIndices + (size_t)y * (size_t)w, indices + (size_t)y * (size_t)width, (size_t)copyW);
+            else std::memcpy(newPixels + (size_t)y * (size_t)w, pixels + (size_t)y * (size_t)width, (size_t)copyW * 4);
+        }
+        std::free(pixels); std::free(indices);
+        pixels = newPixels; indices = newIndices;
+        width = (int)w; height = (int)h;
+        return true;
+    }
+
     bool isIndexed() const { return indices != nullptr; }
     size_t pixelCount() const { return (size_t)width * (size_t)height; }
     size_t byteCount() const { return indices ? pixelCount() : pixelCount() * 4; }
@@ -177,8 +200,11 @@ struct Surface {
     uint8_t* indices;
     int width, height;
     bool blend;
+    int clipLeft, clipTop, clipRight, clipBottom;   // drawing is limited to x in [clipLeft, clipRight) and y in [clipTop, clipBottom), inside the target
 
-    Surface(Framebuffer* f, bool b) : fb(f), pixels(f->pixels), indices(f->indices), width(f->width), height(f->height), blend(b) {}
+    Surface(Framebuffer* f, bool b, int cl = 0, int ct = 0, int cr = 0x7FFFFFFF, int cb = 0x7FFFFFFF)
+        : fb(f), pixels(f->pixels), indices(f->indices), width(f->width), height(f->height), blend(b),
+          clipLeft(std::max(0, cl)), clipTop(std::max(0, ct)), clipRight(std::min(f->width, cr)), clipBottom(std::min(f->height, cb)) {}
 
     bool isIndexed() const { return indices != nullptr; }
 
@@ -204,7 +230,7 @@ struct Surface {
     bool isCopy(const Pixel& p) const { return !blend || indices || (p.rgba >> 24) == 255; }
 
     void put(int x, int y, const Pixel& p) {
-        if ((unsigned)x >= (unsigned)width || (unsigned)y >= (unsigned)height) return;
+        if (x < clipLeft || x >= clipRight || y < clipTop || y >= clipBottom) return;
         if (!visible(p)) return;
         size_t i = (size_t)y * width + x;
         if (indices) indices[i] = p.index;
@@ -214,10 +240,10 @@ struct Surface {
 
     /// A horizontal line from x0 to x1 (both included, any order) in row y, clipped.
     void span(int y, int x0, int x1, const Pixel& p) {
-        if ((unsigned)y >= (unsigned)height) return;
+        if (y < clipTop || y >= clipBottom) return;
         if (x1 < x0) std::swap(x0, x1);
-        x0 = std::max(0, x0);
-        x1 = std::min(width - 1, x1);
+        x0 = std::max(clipLeft, x0);
+        x1 = std::min(clipRight - 1, x1);
         if (x1 < x0 || !visible(p)) return;
         size_t at = (size_t)y * width + x0, n = (size_t)(x1 - x0 + 1);
         if (indices) std::memset(indices + at, p.index, n);
@@ -227,7 +253,7 @@ struct Surface {
 
     void rect(int x, int y, int w, int h, const Pixel& p) {
         if (w <= 0 || h <= 0) return;
-        int y0 = std::max(0, y), y1 = (int)std::min<int64_t>(height, (int64_t)y + h);
+        int y0 = std::max(clipTop, y), y1 = (int)std::min<int64_t>(clipBottom, (int64_t)y + h);
         int xr = (int)std::min<int64_t>((int64_t)x + w - 1, 0x7FFFFFFF);
         for (int yy = y0; yy < y1; yy++) span(yy, x, xr, p);
     }
@@ -380,7 +406,7 @@ struct Brush {
     void fillRect(Surface& s, int x, int y, int w, int h) const {
         if (w <= 0 || h <= 0) return;
         FillSink k{s, s.resolve(color)};
-        int y0 = std::max(0, y), y1 = (int)std::min<int64_t>(s.height, (int64_t)y + h);
+        int y0 = std::max(s.clipTop, y), y1 = (int)std::min<int64_t>(s.clipBottom, (int64_t)y + h);
         int xr = (int)std::min<int64_t>((int64_t)x + w - 1, 0x7FFFFFFF);
         for (int yy = y0; yy < y1; yy++) k.span(yy, x, xr);
     }
@@ -536,7 +562,8 @@ struct Pen {
 enum BlitMode { BLIT_COPY = 0, BLIT_TRANSPARENT = 1, BLIT_BLEND = 2 };
 
 /// Copies a region (scaled with nearest neighbor, flipped for a negative size) between framebuffers of any color mode. Without alpha blending the mode Blend acts like Transparent.
-inline void blit(Framebuffer& dst, const Framebuffer& srcIn, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode, int colorKey, bool blend) {
+inline void blit(Framebuffer& dst, const Framebuffer& srcIn, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode, int colorKey, bool blend,
+                 int clipLeft = 0, int clipTop = 0, int clipRight = 0x7FFFFFFF, int clipBottom = 0x7FFFFFFF) {
     if (!blend && mode == BLIT_BLEND) mode = BLIT_TRANSPARENT;
     if (sw <= 0 || sh <= 0 || dw == 0 || dh == 0) return;
     int64_t absDw = std::llabs((int64_t)dw), absDh = std::llabs((int64_t)dh);
@@ -564,8 +591,8 @@ inline void blit(Framebuffer& dst, const Framebuffer& srcIn, int sx, int sy, int
         for (int i = 0; i < 256; i++) map[i] = dst.palette.findNearest(srcTable[i]);
     int key = src.isIndexed() ? (colorKey >= 0 ? colorKey : src.transparentIndex) : -1;
 
-    int64_t dxStart = std::max<int64_t>(0, -(int64_t)dx), dxEnd = std::min<int64_t>(absDw, dst.width - (int64_t)dx);
-    int64_t dyStart = std::max<int64_t>(0, -(int64_t)dy), dyEnd = std::min<int64_t>(absDh, dst.height - (int64_t)dy);
+    int64_t dxStart = std::max<int64_t>(std::max<int64_t>(0, clipLeft) - (int64_t)dx, 0), dxEnd = std::min<int64_t>(absDw, std::min<int64_t>(dst.width, clipRight) - (int64_t)dx);
+    int64_t dyStart = std::max<int64_t>(std::max<int64_t>(0, clipTop) - (int64_t)dy, 0), dyEnd = std::min<int64_t>(absDh, std::min<int64_t>(dst.height, clipBottom) - (int64_t)dy);
     if (dxEnd <= dxStart || dyEnd <= dyStart) return;
 
     // a small cache for the palette lookup of RGBA sources (many equal colors, and a search costs 256 comparisons)
@@ -613,23 +640,36 @@ struct Renderer {
     Framebuffer* target = nullptr;
     bool smallFont = false;      // the built-in font is 8x14 (the default) or 8x8
     bool alphaBlending = true;
-    int cellWidth = 8, cellHeight = 14, columns = 0, rows = 0, cursorRow = 0, cursorColumn = 0;
+    int cellWidth = 8, cellHeight = 14, cursorRow = 0, cursorColumn = 0;
     Paint foreground = Paint::fromRgba(rgb(255, 255, 255));
     Paint background = Paint::fromRgba(rgb(0, 0, 0));
     bool hasBackground = true;
+    int clipLeft = 0, clipTop = 0, clipRight = 0x7FFFFFFF, clipBottom = 0x7FFFFFFF;
 
-    explicit Renderer(Framebuffer* fb, bool small = false) : target(fb), smallFont(small), cellHeight(small ? 8 : 14) { fbRetain(fb); updateGrid(); }
+    explicit Renderer(Framebuffer* fb, bool small = false) : target(fb), smallFont(small), cellHeight(small ? 8 : 14) { fbRetain(fb); }
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
     ~Renderer() { fbRelease(target); }
 
-    Surface surface() const { return Surface(target, alphaBlending); }
-    void updateGrid() { columns = target->width / cellWidth; rows = target->height / cellHeight; }
+    Surface surface() const { return Surface(target, alphaBlending, clipLeft, clipTop, clipRight, clipBottom); }
+    void setClip(int x, int y, int w, int h) {
+        clipLeft = x; clipTop = y;
+        clipRight = (int)std::min<int64_t>((int64_t)x + std::max(0, w), 0x7FFFFFFF);
+        clipBottom = (int)std::min<int64_t>((int64_t)y + std::max(0, h), 0x7FFFFFFF);
+    }
+    void resetClip() { clipLeft = 0; clipTop = 0; clipRight = 0x7FFFFFFF; clipBottom = 0x7FFFFFFF; }
+    // the grid follows the size of the target (a framebuffer may change its size, see Framebuffer::resize); the cursor is kept inside it
+    int columns() const { return target->width / cellWidth; }
+    int rows() const { return target->height / cellHeight; }
+    void clampCursor() {
+        cursorRow = std::max(0, std::min(cursorRow, std::max(0, rows() - 1)));
+        cursorColumn = std::max(0, std::min(cursorColumn, std::max(0, columns() - 1)));
+    }
     const uint8_t* glyph(char16_t c) const { uint32_t i = c < 256 ? c : '?'; return smallFont ? kGlyphs8x8[i] : kGlyphs8x14[i]; }
 
     void locate(int row, int column) {
-        cursorRow = std::max(0, std::min(row, std::max(0, rows - 1)));
-        cursorColumn = std::max(0, std::min(column, std::max(0, columns - 1)));
+        cursorRow = std::max(0, std::min(row, std::max(0, rows() - 1)));
+        cursorColumn = std::max(0, std::min(column, std::max(0, columns() - 1)));
     }
 
     // Clear and scrolling set pixels as they are (no blending)
@@ -672,11 +712,12 @@ struct Renderer {
     void newLine() {
         cursorColumn = 0;
         cursorRow++;
-        if (cursorRow >= rows) { scrollUp(cellHeight, clearPixel()); cursorRow = rows - 1; }
+        if (cursorRow >= rows()) { scrollUp(cellHeight, clearPixel()); cursorRow = rows() - 1; }
     }
-    void advance() { cursorColumn++; if (cursorColumn >= columns) newLine(); }
+    void advance() { cursorColumn++; if (cursorColumn >= columns()) newLine(); }
 
     void print(const char16_t* text, uint32_t n) {
+        clampCursor();
         Surface s = surface();
         Pixel fg = s.resolve(foreground);
         Pixel bg = hasBackground ? s.resolve(background) : Pixel();

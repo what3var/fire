@@ -8,6 +8,8 @@ namespace fire.Package.Manager
         public PackageManifest Manifest { get; }
         public string Directory { get; }
         public InstalledPackage(PackageManifest manifest, string directory) { Manifest = manifest; Directory = directory; }
+        /// <summary>Where the libraries that are built from the natives of the package are kept (instead of `lib/` in <see cref="Directory"/>): a package that stands for a project.</summary>
+        public string? BuildDirectory { get; init; }
         public string Name => Manifest.Name;
         public string Version => Manifest.Version;
     }
@@ -73,8 +75,31 @@ namespace fire.Package.Manager
             return stamp;
         }
 
-        /// <summary>All installed packages (packages that cannot be read are left out).</summary>
+        private readonly List<InstalledPackage> _overlay = new();
+
+        /// <summary>Packages that stand for the projects of the open solution (their natives, see ProjectNatives): they are not installed on the machine, but a build sees them like installed ones -
+        /// and before them. A package of the same name replaces the one that was there.</summary>
+        public void AddOverlay(InstalledPackage package)
+        {
+            lock (_overlay)
+            {
+                _overlay.RemoveAll(p => string.Equals(p.Name, package.Name, StringComparison.OrdinalIgnoreCase));
+                _overlay.Add(package);
+            }
+        }
+
+        public void ClearOverlay() { lock (_overlay) _overlay.Clear(); }
+
+        /// <summary>All installed packages (packages that cannot be read are left out), after the overlay.</summary>
         public IReadOnlyList<InstalledPackage> Installed()
+        {
+            InstalledPackage[] overlay;
+            lock (_overlay) overlay = _overlay.ToArray();
+            var disk = InstalledOnDisk();
+            return overlay.Length == 0 ? disk : overlay.Concat(disk.Where(d => !overlay.Any(o => string.Equals(o.Name, d.Name, StringComparison.OrdinalIgnoreCase)))).ToList();
+        }
+
+        private IReadOnlyList<InstalledPackage> InstalledOnDisk()
         {
             var stamp = Stamp();
             if (_cache != null && stamp == _cacheStamp) return _cache;
