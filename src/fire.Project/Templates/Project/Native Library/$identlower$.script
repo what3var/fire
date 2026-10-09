@@ -1,0 +1,7 @@
+// The library $name$ with C++ natives (native/$identlower$.hpp): the fire side wraps them in a class.
+// A program that references it writes #import "$ident$" and calls $ident$.Native.Add(1, 2).
+namespace $ident$ {
+    class Native {
+        static int Add(int a, int b) { return __$identlower$_add(a, b) }
+    }
+}

@@ -235,27 +235,30 @@ static class ProjectTests
 
         // ---- templates: a solution of its own folder, the project in a folder of its own ------------------------------------------------
         string t = Path.Combine(root, "templates");
+        // the templates that ship with fire (the Templates folder next to the program), without the user's own and without installed packages
+        var catalog = TemplateCatalog.Load(userRoot: Path.Combine(root, "no-user-templates"), store: new fire.Package.Manager.PackageStore(Path.Combine(root, "no-packages")));
+        FireTemplate Tpl(TemplateScope scope, string title) => catalog.Find(scope, title) ?? throw new InvalidOperationException("no template " + title);
         Check("Vorlagen: Namen werden geprueft", ProjectTemplates.CheckName("Ok Name") == null && ProjectTemplates.CheckName("") != null && ProjectTemplates.CheckName("a/b") != null && ProjectTemplates.CheckName(".x") != null);
         Check("Vorlagen: der vorgeschlagene Ordner ist $HOME/spark/{Name}", ProjectTemplates.DefaultSolutionFolder("Demo") == Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "spark", "Demo"));
-        Check("Vorlagen: fuer die Mappe mit 'Leer', fuer ein Projekt ohne", ProjectTemplates.ForSolution.Count == 5 && ProjectTemplates.ForSolution[0].Kind == TemplateKind.Empty && ProjectTemplates.ForProject.Count == 4);
+        Check("Vorlagen: fuer die Mappe mit 'Empty', fuer ein Projekt ohne", catalog.Projects().Count() == 5 && catalog.Projects().First().Empty && catalog.Projects(includeEmpty: false).Count() == 4 && catalog.Projects().All(x => x.Source == "Local"), string.Join(",", catalog.Projects().Select(x => x.Display)));
 
-        var empty = Workspace.CreateSolution(ProjectTemplates.Find("empty")!, Path.Combine(t, "E"), "E");
+        var empty = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Empty"), Path.Combine(t, "E"), "E");
         Check("Vorlagen: leer = eine Mappe ohne Projekt", empty.Solution != null && empty.Projects.Count == 0 && File.Exists(Path.Combine(t, "E", "E.firesln")) && !Directory.Exists(Path.Combine(t, "E", "E")));
 
-        var terminal = Workspace.CreateSolution(ProjectTemplates.Find("terminal")!, Path.Combine(t, "T"), "T");
+        var terminal = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Terminal"), Path.Combine(t, "T"), "T");
         Check("Vorlagen: Terminal = Mappe im eigenen Ordner, das Projekt im Unterordner gleichen Namens",
             File.Exists(Path.Combine(t, "T", "T.firesln")) && File.Exists(Path.Combine(t, "T", "T", "T.fireproj")) && File.Exists(Path.Combine(t, "T", "T", "main.script")) && terminal.Projects.Count == 1 && terminal.Projects[0].Name == "T");
         Check("Vorlagen: Terminal gibt Hello, World! aus", RunPlan(BuildPlan.Create(terminal, terminal.Projects[0])).Trim() == "Hello, World!");
 
-        var desktop = Workspace.CreateSolution(ProjectTemplates.Find("desktop")!, Path.Combine(t, "D"), "D");
+        var desktop = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Desktop"), Path.Combine(t, "D"), "D");
         var desktopPlan = BuildPlan.Create(desktop, desktop.Projects[0]);
         Check("Vorlagen: Desktop ist ein Programm ohne Konsole und uebersetzt", desktop.Projects[0].Project.Settings.Subsystem == "gui" && desktopPlan.IsValid && Ok(() => ProjectBuilder.Check(desktopPlan)), string.Join("\n", desktopPlan.Errors) + Catch(() => ProjectBuilder.Check(desktopPlan)));
 
-        var library = Workspace.CreateSolution(ProjectTemplates.Find("library")!, Path.Combine(t, "L"), "L");
+        var library = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Library"), Path.Combine(t, "L"), "L");
         var libraryPlan = BuildPlan.Create(library, library.Projects[0]);
         Check("Vorlagen: Library ist eine Bibliothek ohne Einsprung und uebersetzt", library.Projects[0].Project.Type == OutputType.Library && libraryPlan.IsValid && Ok(() => ProjectBuilder.Check(libraryPlan)), Catch(() => ProjectBuilder.Check(libraryPlan)));
 
-        var nativeLib = Workspace.CreateSolution(ProjectTemplates.Find("native-library")!, Path.Combine(t, "N"), "N");
+        var nativeLib = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Native Library"), Path.Combine(t, "N"), "N");
         Check("Vorlagen: Native Library legt das C++ in den Ordner native/", nativeLib.Projects[0].Project.Native != null && File.Exists(Path.Combine(t, "N", "N", "native", "n.hpp")) && File.ReadAllText(Path.Combine(t, "N", "N", "N.fireproj")).Contains("\"native\""));
 
         // natives: the functions are found in the C++, an application uses them through the library, in the virtual machine (a shared library is built from the C++ now)
@@ -302,18 +305,113 @@ static class ProjectTests
         Check("Natives: ohne C++-Dateien meldet der Plan es", BuildPlan.Create(emptyWs, emptyWs.Projects[0]).Errors.Any(e => e.Contains("no C++ files")));
 
         // a project made in a folder of the solution lives in a subfolder of it; the folder is kept in the solution file
-        var inFolder = Workspace.CreateSolution(ProjectTemplates.Find("terminal")!, Path.Combine(t, "F"), "F");
+        var inFolder = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Terminal"), Path.Combine(t, "F"), "F");
         string libsFolder = inFolder.AddFolder(Path.Combine(t, "F", "libs"));
-        var made = inFolder.CreateProject(ProjectTemplates.Find("library")!, libsFolder, "Util");
+        var made = inFolder.CreateProject(Tpl(TemplateScope.Project, "Library"), libsFolder, "Util");
         Check("Vorlagen: ein Projekt in einem Ordner der Mappe liegt in dessen Unterordner", made.FilePath == Path.Combine(t, "F", "libs", "Util", "Util.fireproj") && inFolder.Projects.Count == 2 && File.Exists(made.FilePath));
         var reopened = Workspace.Open(Path.Combine(t, "F", "F.firesln"));
         Check("Vorlagen: Ordner und Projekte stehen in der Mappendatei", reopened.Solution!.Folders.Count == 1 && reopened.Solution.Folders[0] == "libs" && reopened.Projects.Count == 2 && reopened.FindByName("Util") != null);
         Check("Vorlagen: ein Ordner ausserhalb der Mappe wird abgelehnt", Throws(() => inFolder.AddFolder(Path.Combine(t, "elsewhere"))));
-        Check("Vorlagen: ein vorhandenes Projekt wird nicht ueberschrieben", Throws(() => ProjectTemplates.CreateProject(ProjectTemplates.Find("terminal")!, Path.Combine(t, "T"), "T")));
+        Check("Vorlagen: ein vorhandenes Projekt wird nicht ueberschrieben", Throws(() => TemplateInstaller.CreateProject(Tpl(TemplateScope.Project, "Terminal"), Path.Combine(t, "T"), "T")));
         var standalone = new Workspace();
-        string alone = ProjectTemplates.CreateProject(ProjectTemplates.Find("terminal")!, Path.Combine(t, "alone"), "Solo");
+        string alone = TemplateInstaller.CreateProject(Tpl(TemplateScope.Project, "Terminal"), Path.Combine(t, "alone"), "Solo");
         standalone.Load(alone);
         Check("Vorlagen: ein Projekt ohne Mappe bekommt ebenfalls seinen Ordner", alone == Path.Combine(t, "alone", "Solo", "Solo.fireproj") && standalone.Solution == null && standalone.Projects.Count == 1);
+
+        // ---- templates as folders (docs/TEMPLATES.md): code templates, placeholders in names and text, the user's folder, packages ---------------------------
+        var codeTitles = catalog.Code.Select(x => x.Title).ToList();
+        Check("Vorlagen: die eingebauten Code-Vorlagen", codeTitles.SequenceEqual(new[] { "Script", "Fire Class", "FXML Window", "FXML View" }) && catalog.Code.All(x => x.Source == "Local" && x.Description != null && x.Scope == TemplateScope.Code), string.Join(",", codeTitles));
+        Check("Vorlagen: die Erweiterung kommt aus der Datei mit $name$ im Namen", Tpl(TemplateScope.Code, "Script").Extension == ".script" && Tpl(TemplateScope.Code, "Fire Class").Extension == ".script" && Tpl(TemplateScope.Code, "FXML Window").Extension == ".fxml" && Tpl(TemplateScope.Code, "FXML View").Extension == ".fxml");
+        Check("Vorlagen: ein vorgeschlagener Name", Tpl(TemplateScope.Code, "Fire Class").DefaultName == "MyClass" && Tpl(TemplateScope.Code, "FXML Window").DefaultName == "MainWindow");
+
+        string codeDir = Path.Combine(t, "code");
+        var made1 = TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "Fire Class"), codeDir, new TemplateValues("Greeter", "Demo"));
+        Check("Vorlagen: eine Klasse folgt dem Dateinamen", made1.Count == 1 && Path.GetFileName(made1[0]) == "Greeter.script" && File.ReadAllText(made1[0]).Contains("class Greeter {"), made1.Count > 0 ? File.ReadAllText(made1[0]) : "");
+        var made2 = TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "Fire Class"), codeDir, new TemplateValues("my-thing"));
+        Check("Vorlagen: ein Name wird fuer die Klasse zum Namen mit Grossbuchstaben", File.ReadAllText(made2[0]).Contains("class My_thing {") && Path.GetFileName(made2[0]) == "my-thing.script");
+        Check("Vorlagen: eine vorhandene Datei wird nicht ueberschrieben", Throws(() => TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "Fire Class"), codeDir, new TemplateValues("Greeter"))));
+        Check("Vorlagen: ein Name, der den Ordner verlaesst, wird abgelehnt", Throws(() => TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "Script"), codeDir, new TemplateValues("../escape"))) && !File.Exists(Path.Combine(t, "escape.script")));
+
+        // the markup windows and views compile inside a project
+        var winProject = terminal.Projects[0];
+        var winFiles = TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "FXML Window"), winProject.Directory, new TemplateValues("Main", winProject.Name));
+        var viewFiles = TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "FXML View"), winProject.Directory, new TemplateValues("SettingsView", winProject.Name));
+        terminal.AddFile(winProject, winFiles[0]);
+        terminal.AddFile(winProject, viewFiles[0]);
+        var winPlan = BuildPlan.Create(terminal, terminal.Projects[0]);
+        Check("Vorlagen: ein FXML-Fenster und eine FXML-View uebersetzen im Projekt", winPlan.IsValid && Ok(() => ProjectBuilder.Check(winPlan)) && File.ReadAllText(winFiles[0]).Contains("<Window class=\"Main\"") && File.ReadAllText(viewFiles[0]).Contains("<View class=\"SettingsView\""), string.Join("\n", winPlan.Errors) + Catch(() => ProjectBuilder.Check(winPlan)));
+
+        // the user's folder: with and without template.json, placeholders in paths (in both spellings) and in the text, binary files as they are
+        string userRoot = Path.Combine(t, "user-templates");
+        Write(userRoot, "Code/Plain Thing/$name$.txt", "hello");                                                   // no template.json
+        Write(userRoot, "Code/Many/template.json", """{ "title": "Many Files", "description": "Two files in a folder", "icon": "class", "defaultName": "Thing", "extension": ".mine", "order": 5, "open": [ "$name$/main.txt" ] }""");
+        Write(userRoot, "Code/Many/$name$/main.txt", "name=$name$ ident=$ident$ class=$class$ lower=$identlower$ project=$project$ pi=$projectident$ unknown=$unknown$ init=__init__ again=__name__");
+        Write(userRoot, "Code/Many/__name___notes.txt", "second");
+        File.WriteAllBytes(Path.Combine(userRoot, "Code", "Many", "$name$", "blob.bin"), new byte[] { 0, 1, 2, 36, 110, 97, 109, 101, 36, 255 });   // $name$ inside, but binary
+        Write(userRoot, "Code/Hidden/template.json", """{ "title": "Nope", "hidden": true }""");
+        Write(userRoot, "Code/Hidden/$name$.txt", "x");
+        Write(userRoot, "Project/Bare/main.script", "print(\"$name$\")\n");                                       // a project template without a project file
+        Write(userRoot, "Project/Lib/template.json", """{ "type": "library" }""");
+        Write(userRoot, "Project/Lib/lib.script", "namespace $ident$ { class A { } }\n");
+        var userCatalog = TemplateCatalog.Load(userRoot: userRoot, store: new fire.Package.Manager.PackageStore(Path.Combine(root, "no-packages")));
+        var plain = userCatalog.Find(TemplateScope.Code, "Plain Thing")!;
+        Check("Vorlagen: ohne template.json gilt der Ordnername, ein Standardsymbol, kein Text", plain.Description == null && plain.IconPath == null && plain.IconKey == "file" && plain.Extension == ".txt" && plain.DefaultName == "PlainThing" && plain.Source == "Local");
+        var many = userCatalog.Find(TemplateScope.Code, "Many Files")!;
+        Check("Vorlagen: template.json gibt Titel, Beschreibung, Symbol, Name und Erweiterung", many.Description == "Two files in a folder" && many.IconKey == "class" && many.DefaultName == "Thing" && many.Extension == ".mine" && many.Order == 5 && many.Files.Count == 3 && !many.Files.Contains("template.json"), string.Join(",", many.Files));
+        Check("Vorlagen: ein verborgenes Template erscheint nicht, die eingebauten bleiben daneben", userCatalog.Find(TemplateScope.Code, "Nope") == null && userCatalog.Find(TemplateScope.Code, "Fire Class") != null && userCatalog.Code.Count() == codeTitles.Count + 2);
+        string manyDir = Path.Combine(t, "many");
+        var manyValues = new TemplateValues("Big Name", "My-Proj");
+        var manyMade = TemplateInstaller.Instantiate(many, manyDir, manyValues);
+        string mainTxt = Path.Combine(manyDir, "Big Name", "main.txt");
+        Check("Vorlagen: $name$ und __name__ im Pfad, Platzhalter im Text, Unbekanntes bleibt", manyMade.Count == 3 && File.Exists(mainTxt) && File.Exists(Path.Combine(manyDir, "Big Name_notes.txt")) &&
+            File.ReadAllText(mainTxt) == "name=Big Name ident=Big_Name class=Big_Name lower=big_name project=My-Proj pi=My_Proj unknown=$unknown$ init=__init__ again=Big Name", File.ReadAllText(mainTxt));
+        Check("Vorlagen: eine Binaerdatei wird unveraendert kopiert", File.ReadAllBytes(Path.Combine(manyDir, "Big Name", "blob.bin")).SequenceEqual(new byte[] { 0, 1, 2, 36, 110, 97, 109, 101, 36, 255 }));
+        Check("Vorlagen: die Dateien, die danach geoeffnet werden", TemplateInstaller.FilesToOpen(many, manyDir, manyValues, manyMade).SequenceEqual(new[] { mainTxt }) && TemplateInstaller.FilesToOpen(plain, manyDir, manyValues, new[] { "x" }).SequenceEqual(new[] { "x" }));
+        string barePath = TemplateInstaller.CreateProject(userCatalog.Find(TemplateScope.Project, "Bare")!, Path.Combine(t, "bare"), "Bare1");
+        var bare = FireProject.Load(barePath);
+        Check("Vorlagen: ohne Projektdatei im Template wird eine gemacht", barePath == Path.Combine(t, "bare", "Bare1", "Bare1.fireproj") && bare.Name == "Bare1" && bare.Type == OutputType.Exe && File.ReadAllText(Path.Combine(t, "bare", "Bare1", "main.script")).Contains("print(\"Bare1\")"));
+        var libPath = TemplateInstaller.CreateProject(userCatalog.Find(TemplateScope.Project, "Lib")!, Path.Combine(t, "bare"), "Lib1");
+        Check("Vorlagen: \"type\": \"library\" macht eine Bibliothek", FireProject.Load(libPath).Type == OutputType.Library);
+
+        // folders `Templates/Package/Name_1.2.3.4/{Code,Project|Projekt}` and the same with `Projekt`; names of folders are found without regard to case
+        string pkgRoot = Path.Combine(t, "pkg-root");
+        Write(pkgRoot, "package/Demo_1.2.3.4/code/Gadget/$name$.script", "class $class$ { }\n");             // the case of the folder names does not matter
+        Write(pkgRoot, "package/Demo_1.2.3.4/Projekt/Starter/main.script", "print(1)\n");
+        var pkgCatalog = TemplateCatalog.Load(builtinRoot: pkgRoot, userRoot: Path.Combine(root, "nope"), store: new fire.Package.Manager.PackageStore(Path.Combine(root, "no-packages")));
+        var gadget = pkgCatalog.Find(TemplateScope.Code, "Gadget");
+        var starter = pkgCatalog.Find(TemplateScope.Project, "Starter");
+        Check("Vorlagen: Templates/Package/Name_Version/... - Quelle und Version stehen am Template", gadget != null && gadget.Source == "From Demo 1.2.3.4" && gadget.PackageName == "Demo" && gadget.PackageVersion == "1.2.3.4" && starter != null && starter.Source == "From Demo 1.2.3.4" && pkgCatalog.All.Count == 2, string.Join(",", pkgCatalog.All.Select(x => x.Display)));
+        Check("Vorlagen: die Suche findet nach Titel, Beschreibung und Quelle", gadget!.Matches("gad") && gadget.Matches("demo 1.2") && gadget.Matches("") && !gadget.Matches("nothing") && Tpl(TemplateScope.Code, "FXML Window").Matches("label button") && !Tpl(TemplateScope.Code, "Script").Matches("window"));
+        Check("Vorlagen: Name_Version wird zerlegt", TemplateCatalog.ParsePackageFolder("My_Pkg_2.0.1") == ("My_Pkg", "2.0.1") && TemplateCatalog.ParsePackageFolder("plain") == ("plain", null) && TemplateCatalog.ParsePackageFolder("a_b") == ("a_b", null));
+
+        // a package that is forged with a templates/ folder brings it along; an installed package's templates are in the list, and a project made from one references the package
+        string forgeDir = Path.Combine(t, "forge");
+        Write(forgeDir, "tpkg.fire", "class TpkgThing { }\n");
+        Write(forgeDir, "package.json", """{ "name": "tpkg", "version": "1.0.0", "imports": [ { "name": "tpkg", "prelude": "tpkg.fire" } ] }""");
+        Write(forgeDir, "templates/Project/Starter App/template.json", """{ "title": "Starter App", "description": "From the package", "open": [ "main.script" ] }""");
+        Write(forgeDir, "templates/Project/Starter App/main.script", "print(\"$name$ starts\")\n");
+        Write(forgeDir, "templates/Code/Tpkg Thing/$name$.script", "class $class$ : TpkgThing { }\n");
+        var forged = fire.Package.Manager.Fpk.Forge(Path.Combine(forgeDir, "package.json"), Path.Combine(forgeDir, "out"));
+        Check("Vorlagen: ein Paket nimmt den Ordner templates/ mit", forged.Manifest.Templates == "templates" && System.IO.Compression.ZipFile.OpenRead(forged.PackagePath).Entries.Select(e => e.FullName).Contains("templates/Project/Starter App/main.script"));
+        var store = new fire.Package.Manager.PackageStore(Path.Combine(t, "store"));
+        store.Install(forged.PackagePath);
+        var installedCatalog = TemplateCatalog.Load(builtinRoot: Path.Combine(root, "nope1"), userRoot: Path.Combine(root, "nope2"), store: store);
+        var starterApp = installedCatalog.Find(TemplateScope.Project, "Starter App");
+        Check("Vorlagen: die Templates eines installierten Pakets stehen in der Liste", starterApp != null && starterApp.Source == "From tpkg 1.0.0" && starterApp.AddPackageReference && installedCatalog.Find(TemplateScope.Code, "Tpkg Thing") != null && installedCatalog.All.Count == 2, string.Join(",", installedCatalog.All.Select(x => x.Display)));
+        string starterProject = TemplateInstaller.CreateProject(starterApp!, Path.Combine(t, "from-package"), "Fresh");
+        var fresh = FireProject.Load(starterProject);
+        Check("Vorlagen: ein Projekt aus dem Template eines Pakets verweist auf das Paket", fresh.References.Count == 1 && fresh.References[0].Package == "tpkg" && fresh.References[0].Version == "1.0.0" && File.ReadAllText(Path.Combine(t, "from-package", "Fresh", "main.script")).Contains("Fresh starts"));
+
+        // a library project that has the folder templates/ packs it, and the templates are no code of the library
+        string tlibDir = Path.Combine(t, "tlib");
+        Write(tlibDir, "TLib/TLib.fireproj", """{ "name": "TLib", "type": "library", "settings": { "version": "2.0.0" } }""");
+        Write(tlibDir, "TLib/tlib.script", "namespace TLib { class A { } }\n");
+        Write(tlibDir, "TLib/templates/Code/Tl Class/$name$.script", "class $class$ { not valid fire code at all }\n");
+        var tlibWs = Workspace.Open(Path.Combine(tlibDir, "TLib", "TLib.fireproj"));
+        var tlibPlan = BuildPlan.Create(tlibWs, tlibWs.Projects[0]);
+        Check("Vorlagen: der Ordner templates/ eines Projekts ist kein Code des Projekts", tlibPlan.SourcePaths.Count == 1 && Ok(() => ProjectBuilder.Check(tlibPlan)) && tlibWs.Projects[0].ContentFiles.Any(f => f.EndsWith("$name$.script")), Catch(() => ProjectBuilder.Check(tlibPlan)));
+        string tlibPack = ProjectBuilder.PackLibrary(tlibPlan, Path.Combine(tlibDir, "out"));
+        Check("Vorlagen: das gepackte Projekt bringt seine Templates mit", fire.Package.Manager.Fpk.ReadManifest(tlibPack).Templates == "templates" && System.IO.Compression.ZipFile.OpenRead(tlibPack).Entries.Select(e => e.FullName).Contains("templates/Code/Tl Class/$name$.script"));
 
         // content of a project: resources are copied into a folder of it, natives get the folder native/
         string pic = Write(root, "outside/logo.png", "not really a picture");

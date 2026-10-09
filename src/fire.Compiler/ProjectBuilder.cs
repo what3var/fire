@@ -63,6 +63,9 @@ namespace fire.Compiler
                 foreach (var l in lib) { packageImport.Requires.Add(l.ImportName); manifest.Dependencies.Add(l.Name); }
                 foreach (var pkg in plan.Packages) if (!manifest.Dependencies.Contains(pkg.Package!)) manifest.Dependencies.Add(pkg.Package!);
                 manifest.Imports.Add(packageImport);
+                // the folder `templates/` of the project goes into the package: the templates it offers to whoever installs it
+                string templates = Path.Combine(project.Directory, Fpk.TemplatesEntry);
+                if (Directory.Exists(templates)) manifest.Templates = templates;
 
                 string forge = Path.Combine(workDir, "package.json");
                 manifest.Save(forge);

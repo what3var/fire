@@ -1,0 +1,7 @@
+{
+  "title": "Empty",
+  "description": "A solution without a project: add projects (or existing ones) later.",
+  "icon": "empty",
+  "empty": true,
+  "order": 0
+}

@@ -908,7 +908,7 @@ namespace fire.Editor
                 case Key.N when ctrl && shift:
                     NewMarkdown_Click(this, e); e.Handled = true; break;
                 case Key.N when ctrl:
-                    New_Click(this, e); e.Handled = true; break;
+                    NewScriptDialog_Click(this, e); e.Handled = true; break;
                 case Key.O when ctrl:
                     Open_Click(this, e); e.Handled = true; break;
                 case Key.S when ctrl && shift:

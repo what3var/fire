@@ -167,17 +167,17 @@ namespace fire.Projects
             return Open(full);
         }
 
-        /// <summary>Makes a solution from a template (see <see cref="ProjectTemplates"/>): the solution file in `folder`, and for a template that makes a project the project `name` in `folder/name`. Opens it.</summary>
-        public static Workspace CreateSolution(ProjectTemplate template, string folder, string name)
+        /// <summary>Makes a solution from a template (see <see cref="TemplateCatalog"/>): the solution file in `folder`, and for a template that makes a project the project `name` in `folder/name`. Opens it.</summary>
+        public static Workspace CreateSolution(FireTemplate template, string folder, string name)
         {
-            string path = ProjectTemplates.CreateSolution(template, folder, name);
+            string path = TemplateInstaller.CreateSolution(template, folder, name);
             return Open(path);
         }
 
         /// <summary>Makes a project from a template in the folder `parentFolder/name` (saved) and adds it to the solution, or - without a solution - opens it on its own.</summary>
-        public LoadedProject CreateProject(ProjectTemplate template, string parentFolder, string name)
+        public LoadedProject CreateProject(FireTemplate template, string parentFolder, string name)
         {
-            string path = ProjectTemplates.CreateProject(template, parentFolder, name);
+            string path = TemplateInstaller.CreateProject(template, parentFolder, name);
             if (Solution == null) { Load(path); return _members[0]; }
             var loaded = LoadProject(path, inSolution: true);
             AddToSolution(loaded);

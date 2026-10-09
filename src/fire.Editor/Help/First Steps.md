@@ -41,7 +41,7 @@ Handy shortcuts in the code editor:
 
 ## Your first program
 
-Create a new script with **File → New Script** (`Ctrl+N`), type
+Create a new script with **File → New → Script...** (`Ctrl+N`), type
 
 ```fire
 print("Hello, fire!")

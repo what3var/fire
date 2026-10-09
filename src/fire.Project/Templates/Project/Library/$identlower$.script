@@ -1,0 +1,7 @@
+// The library $name$: classes and functions, no statements at the top level.
+// A program that references it writes #import "$ident$" and calls $ident$.Greeter.Hello("World").
+namespace $ident$ {
+    class Greeter {
+        static string Hello(string name) { return "Hello, " + name + "!" }
+    }
+}

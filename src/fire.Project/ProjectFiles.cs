@@ -93,6 +93,8 @@ namespace fire.Projects
                     foreach (var rel in walked.Where(r => regex.IsMatch(r)).OrderBy(r => FireProject.IsMarkupFile(r) ? 0 : 1).ThenBy(r => r, StringComparer.OrdinalIgnoreCase).ThenBy(r => r, StringComparer.Ordinal))
                     {
                         if (Excluded(rel)) continue;
+                        // the folder `templates/` holds what the project offers as templates (docs/TEMPLATES.md): files with placeholders, not code of the project - unless the files are named
+                        if (project.Files.Count == 0 && rel.StartsWith("templates/", StringComparison.OrdinalIgnoreCase)) continue;
                         string full = Path.GetFullPath(rel, dir);
                         if (seen.Add(full)) result.Add(full);
                     }

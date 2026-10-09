@@ -117,7 +117,7 @@ fire.Compiler build Core/Core.fireproj          # a library: bin/Core-1.2.0.fpk 
 
 ## New solutions and projects
 
-*File > New Solution* asks for a **name**, a **folder** and a **template** (a list). A solution lives in a folder of its own - proposed: `$HOME/spark/{name}` - and a template other than
+*File > New > Solution...* asks for a **name**, a **folder** and a **template** (a searchable list, see [TEMPLATES.md](TEMPLATES.md)); the solution that is open is closed before the new one is loaded. A solution lives in a folder of its own - proposed: `$HOME/spark/{name}` - and a template other than
 *Empty* makes a project of the same name in a folder of its own below it:
 
 ```
@@ -125,6 +125,8 @@ $HOME/spark/Demo/Demo.firesln
 $HOME/spark/Demo/Demo/Demo.fireproj
 $HOME/spark/Demo/Demo/main.script
 ```
+
+The templates that ship with fire (folders in `Templates/Project`; yours and those of packages are in the same list):
 
 | template | makes |
 |---|---|
@@ -134,7 +136,7 @@ $HOME/spark/Demo/Demo/main.script
 | Library | a library with a class `Greeter` in `namespace {Name}`; no entry point |
 | Native Library | a library with C++ natives: `native/{name}.hpp` with an example function, wrapped by a class |
 
-*New Project* (Project menu, context menu of the solution) asks for the same, with the **location** instead of a solution folder: the project gets a folder `{location}/{name}`. The location is
+*File > New > Project...* (and *New Project...* in the context menu of the solution) asks for the same, with the **location** instead of a solution folder: the project gets a folder `{location}/{name}`. The location is
 proposed as the solution folder; a folder of the solution (*New Folder* on the solution or on a folder; folders that hold projects are shown, empty ones are kept in the solution file as
 `folders`) puts the project into a subfolder of it. Without a solution a project is made on its own (proposed location `$HOME/spark`).
 
@@ -147,13 +149,13 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
   picture - in the *pixel editor*.
 * **Viewer for pictures**: any size and colour depth the platform decodes (PNG, BMP, GIF, JPEG), zoom with sharp pixels (Ctrl+wheel), a grid of pixels, a chequerboard that shows what is
   transparent; *Edit pixels* opens the picture in the pixel editor.
-* **Pixel editor** (File > New Pixel Image, or *Edit pixels*): a palette of 256 colours - the palette of fire with entry 0 transparent - or true colour; pencil, eraser, line, rectangle (filled or
+* **Pixel editor** (File > New > Raster Image, or *Edit pixels*): a palette of 256 colours - the palette of fire with entry 0 transparent - or true colour; pencil, eraser, line, rectangle (filled or
   not), fill, colour picker; the left button draws with the first colour, the right button with the second (transparent at the start); double-click a palette entry to change its colour
   (`#RRGGBB` or `#RRGGBBAA`); size, conversion between palette and true colour, zoom, grid, undo. It reads PNG, BMP and GIF and saves PNG (an indexed picture stays indexed, with the transparent
   entry) and BMP (no transparent entry).
 * **Hex editor**: offset, 16 bytes in hex and as text; typing overwrites (hex digits or, in the text column, characters), Insert puts in a zero byte, Delete takes a byte out, Ctrl+G jumps to an
   offset, Find looks for bytes (`DE AD BE EF`) or text (`"abc"`); files up to 128 MB; undo.
-* **File menu**: New Project / New Solution / Open Project or Solution / Close. **Project menu**: add a new or existing project to the solution, set the startup project, reload the project (read its folder
+* **File menu**: New (Solution, Project, Script, Markdown, Raster Image; see [TEMPLATES.md](TEMPLATES.md)) / Open Project or Solution / Close. **Project menu**: add a new or existing project to the solution, set the startup project, reload the project (read its folder
   again), **Project properties** (tabs *Project*, *Build settings*, *References*, *Solution*; the settings of the solution are the ones that every project without its own value gets).
 * The documents stay documents: files of the project open in tabs like any other file, files outside open next to them, and every command that builds looks at the active tab. The status bar
   and the Build/Run commands say what they act on (`Build: App (project)`, `Build: single.script (single file)`). Unsaved buffers of the project's files go into the build.

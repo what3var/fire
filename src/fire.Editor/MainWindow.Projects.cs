@@ -218,26 +218,30 @@ namespace fire.Editor
             UpdateStatus("Solution closed (the open files stay open).");
         }
 
+        /// <summary>File > New > Solution: a solution with a project after a template; the one that is open is closed before the new one is loaded.</summary>
         private async void NewSolution_Click(object? sender, RoutedEventArgs e)
         {
-            var dialog = new NewProjectDialog(solution: true);
+            var dialog = new TemplateDialog(TemplateDialogMode.Solution, TemplateCatalog.Load());
             if (await dialog.ShowDialog<bool?>(this) != true || dialog.Template == null) return;
             try
             {
                 // the dialog's location is the folder of the solution itself: `{location}/{name}.firesln`, the project in `{location}/{name}`
-                _workspace.Load(ProjectTemplates.CreateSolution(dialog.Template, dialog.Location, dialog.Name));
+                string path = TemplateInstaller.CreateSolution(dialog.Template, dialog.Location, dialog.Name);
+                _workspace.Close();
+                _workspace.Load(path);
             }
             catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "New Solution"); return; }
             ShowSolutionExplorer();
-            if (_workspace.Projects.FirstOrDefault()?.Files.FirstOrDefault() is { } first) OpenFile(first);
-            UpdateStatus(dialog.Template.MakesProject ? $"Solution {_workspace.Name} created with the project {_workspace.Name}." : $"Solution {_workspace.Name} created: add projects with Project > Add New Project.");
+            if (_workspace.Projects.FirstOrDefault() is { } project)
+                foreach (var file in TemplateInstaller.ProjectFilesToOpen(dialog.Template, project.FilePath, project.Name)) OpenFile(file);
+            UpdateStatus(!dialog.Template.Empty ? $"Solution {_workspace.Name} created with the project {_workspace.Name}." : $"Solution {_workspace.Name} created: add projects with a right click on the solution > New Project.");
         }
 
         private async void NewProject_Click(object? sender, RoutedEventArgs e) => await NewProject(addToSolution: _workspace.Solution != null, null);
 
         private async void AddNewProject_Click(object? sender, RoutedEventArgs e)
         {
-            if (_workspace.Solution == null) { await Dialogs.Message(this, "There is no solution: create one with File > New Solution.", "Add Project"); return; }
+            if (_workspace.Solution == null) { await Dialogs.Message(this, "There is no solution: create one with File > New > Solution.", "Add Project"); return; }
             await NewProject(addToSolution: true, null);
         }
 
@@ -246,7 +250,7 @@ namespace fire.Editor
         private async Task NewProject(bool addToSolution, string? folder)
         {
             string? location = addToSolution && _workspace.Solution != null ? folder ?? _workspace.Solution.Directory : null;
-            var dialog = new NewProjectDialog(solution: false, location);
+            var dialog = new TemplateDialog(TemplateDialogMode.Project, TemplateCatalog.Load(), location);
             if (await dialog.ShowDialog<bool?>(this) != true || dialog.Template == null) return;
             try
             {
@@ -254,11 +258,11 @@ namespace fire.Editor
                 if (addToSolution && _workspace.Solution != null) created = _workspace.CreateProject(dialog.Template, dialog.Location, dialog.Name);
                 else
                 {
-                    _workspace.Load(ProjectTemplates.CreateProject(dialog.Template, dialog.Location, dialog.Name));
+                    _workspace.Load(TemplateInstaller.CreateProject(dialog.Template, dialog.Location, dialog.Name));
                     created = _workspace.Projects[0];
                 }
                 ShowSolutionExplorer();
-                if (created.Files.FirstOrDefault() is { } first) OpenFile(first);
+                foreach (var file in TemplateInstaller.ProjectFilesToOpen(dialog.Template, created.FilePath, created.Name)) OpenFile(file);
                 UpdateStatus($"Project {created.Name} created in {created.Directory}.");
             }
             catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "New Project"); }
@@ -275,7 +279,7 @@ namespace fire.Editor
 
         private async void AddExistingProject_Click(object? sender, RoutedEventArgs e)
         {
-            if (_workspace.Solution == null) { await Dialogs.Message(this, "There is no solution: create one with File > New Solution.", "Add Project"); return; }
+            if (_workspace.Solution == null) { await Dialogs.Message(this, "There is no solution: create one with File > New > Solution.", "Add Project"); return; }
             var files = await PickFiles("Add Existing Project", ProjectOnlyType);
             foreach (var file in files)
             {
@@ -307,37 +311,72 @@ namespace fire.Editor
         private void ReloadProject_Click(object? sender, RoutedEventArgs e) { CommandProject()?.Refresh(); _workspace.Refresh(); }
         private async void ProjectProperties_Click(object? sender, RoutedEventArgs e) => await ShowProjectProperties(CommandProject());
 
-        /// <summary>Makes a new file in the project (in `folder`, else the project folder) and opens it. `kind`: script, fxml, markdown, image (asks for the size) or file (any name).</summary>
+        /// <summary>File > New > Script...: the list of the code templates (Script first) and a name; in the project of the active document, or - without one - as a new document.</summary>
+        private void NewScriptDialog_Click(object? sender, RoutedEventArgs e) => _ = NewFileFromTemplate(CommandProject(), null, null, "Script");
+
+        /// <summary>Makes a new file after a code template and opens it: with `fixedTemplate` only the name is asked, else the list of templates is shown (`preselect`: the title that is selected at first).
+        /// The files go into `folder`, else the folder of the project; without a project a template of one file becomes a new document (unsaved).</summary>
+        private async Task NewFileFromTemplate(LoadedProject? project, string? folder, FireTemplate? fixedTemplate, string? preselect)
+        {
+            var catalog = TemplateCatalog.Load();
+            var dialog = fixedTemplate != null ? new TemplateDialog(TemplateDialogMode.Named, catalog, template: fixedTemplate) : new TemplateDialog(TemplateDialogMode.Code, catalog, preselect: preselect);
+            if (await dialog.ShowDialog<bool?>(this) != true || dialog.Template == null) return;
+            var template = dialog.Template;
+            var values = new TemplateValues(dialog.Name, project?.Name);
+            const string title = "New File";
+            try
+            {
+                if (project != null)
+                {
+                    string target = folder ?? project.Directory;
+                    var made = TemplateInstaller.Instantiate(template, target, values);
+                    foreach (var file in made) _workspace.AddFile(project, file);
+                    foreach (var file in TemplateInstaller.FilesToOpen(template, target, values, made)) OpenFile(file);
+                    UpdateStatus($"{template.Title} {dialog.Name} added to {project.Name}.");
+                    return;
+                }
+                if (template.Files.Count != 1) { await Dialogs.Message(this, $"'{template.Title}' makes several files: open or create a project first, and add it there.", title); return; }
+                string name = values.Expand(template.Files[0]);
+                string text = values.Expand(File.ReadAllText(Path.Combine(template.Directory, template.Files[0].Replace('/', Path.DirectorySeparatorChar))));
+                string ext = Path.GetExtension(name).ToLowerInvariant();
+                var kind = ext switch { ".script" or ".fi" or ".fic" => DocumentKind.Script, ".fxml" => DocumentKind.UiMarkup, ".md" or ".markdown" => DocumentKind.Markdown, _ => DocumentKind.Text };
+                CreateDocument(kind, text, null, untitledName: name);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { await Dialogs.Message(this, ex.Message, title); }
+        }
+
+        /// <summary>Makes a new file in the project (in `folder`, else the project folder) and opens it. `kind`: `dialog` (the list of the code templates), `t:Title` (one code template: only the name is asked),
+        /// markdown, image (asks for the size) or file (any name).</summary>
         private async Task AddNewFile(LoadedProject? project, string? folder, string kind = "file")
         {
             if (project == null) return;
             const string title = "Add New File";
+            if (kind == "dialog") { await NewFileFromTemplate(project, folder, null, "Script"); return; }
+            if (kind.StartsWith("t:", StringComparison.Ordinal))
+            {
+                var template = TemplateCatalog.Load().Find(TemplateScope.Code, kind.Substring(2));
+                if (template == null) { await Dialogs.Message(this, $"The template '{kind.Substring(2)}' was not found in the Templates folder.", title); return; }
+                await NewFileFromTemplate(project, folder, template, null);
+                return;
+            }
             string name;
             byte[]? bytes = null;   // an image is written as bytes, everything else as text
-            switch (kind)
+            if (kind == "image")
             {
-                case "image":
-                    var dialog = new NewImageDialog();
-                    if (!await dialog.ShowDialog<bool>(this)) return;
-                    name = dialog.FileName;
-                    var pixels = new uint[dialog.ImageWidth * dialog.ImageHeight];
-                    if (dialog.Background != 0) Array.Fill(pixels, dialog.Background);
-                    bytes = fire.Terminal.ImageEncoder.Encode(fire.Terminal.ImageData.CreateTruecolor(dialog.ImageWidth, dialog.ImageHeight, pixels, "PNG"), Path.GetExtension(name).TrimStart('.'));
-                    break;
-                default:
-                    (string prompt, string initial, string extension) = kind switch
-                    {
-                        "script" => ("Name of the new script:", "newfile.script", ".script"),
-                        "fxml" => ("Name of the new user interface:", "newwindow.fxml", ".fxml"),
-                        "markdown" => ("Name of the new Markdown document:", "notes.md", ".md"),
-                        _ => ("Name of the new file:", "newfile.script", ".script"),
-                    };
-                    string? input = await Dialogs.Input(this, prompt, title, initial);
-                    if (string.IsNullOrWhiteSpace(input)) return;
-                    name = input.Trim();
-                    // a kind fixes the extension (a typed one of another kind is kept as typed: "Other File" is the way to name anything)
-                    if (Path.GetExtension(name).Length == 0) name += extension;
-                    break;
+                var dialog = new NewImageDialog();
+                if (!await dialog.ShowDialog<bool>(this)) return;
+                name = dialog.FileName;
+                var pixels = new uint[dialog.ImageWidth * dialog.ImageHeight];
+                if (dialog.Background != 0) Array.Fill(pixels, dialog.Background);
+                bytes = fire.Terminal.ImageEncoder.Encode(fire.Terminal.ImageData.CreateTruecolor(dialog.ImageWidth, dialog.ImageHeight, pixels, "PNG"), Path.GetExtension(name).TrimStart('.'));
+            }
+            else
+            {
+                (string prompt, string initial, string extension) = kind == "markdown" ? ("Name of the new Markdown document:", "notes.md", ".md") : ("Name of the new file:", "newfile.script", ".script");
+                string? input = await Dialogs.Input(this, prompt, title, initial);
+                if (string.IsNullOrWhiteSpace(input)) return;
+                name = input.Trim();
+                if (Path.GetExtension(name).Length == 0) name += extension;
             }
             string full = Path.GetFullPath(name, folder ?? project.Directory);
             try
@@ -345,12 +384,7 @@ namespace fire.Editor
                 if (File.Exists(full)) { await Dialogs.Message(this, $"'{name}' exists already; use Add Existing File.", title); return; }
                 Directory.CreateDirectory(Path.GetDirectoryName(full)!);
                 if (bytes != null) File.WriteAllBytes(full, bytes);
-                else
-                {
-                    string stem = Path.GetFileNameWithoutExtension(full);
-                    string ext = Path.GetExtension(full).ToLowerInvariant();
-                    File.WriteAllText(full, FireProject.IsMarkupFile(full) ? NewMarkupText(stem) : ext is ".md" or ".markdown" ? $"# {stem}\n\n" : "");
-                }
+                else File.WriteAllText(full, Path.GetExtension(full).ToLowerInvariant() is ".md" or ".markdown" ? $"# {Path.GetFileNameWithoutExtension(full)}\n\n" : "");
                 _workspace.AddFile(project, full);
                 // a new picture opens in the pixel editor, the rest in its editor
                 OpenFile(full, forceKind: bytes != null ? DocumentKind.Pixel : null);
@@ -358,14 +392,6 @@ namespace fire.Editor
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException or fire.Terminal.ImageFormatException) { await Dialogs.Message(this, ex.Message, title); }
         }
 
-        private static string NewMarkupText(string fileName)
-        {
-            var chars = fileName.Select(c => char.IsLetterOrDigit(c) && c < 128 || c == '_' ? c : '_').ToArray();
-            string name = new string(chars);
-            if (name.Length == 0 || !char.IsLetter(name[0])) name = "W" + name;
-            name = char.ToUpperInvariant(name[0]) + name.Substring(1);
-            return UiMarkupTemplate.Replace("class=\"MainWindow\"", $"class=\"{name}\"").Replace("title=\"My window\"", $"title=\"{name}\"");
-        }
 
         private async Task AddExistingFile(LoadedProject? project)
         {

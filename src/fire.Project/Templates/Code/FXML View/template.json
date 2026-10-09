@@ -1,0 +1,7 @@
+{
+  "title": "FXML View",
+  "description": "A part of an interface (.fxml): a panel that a window adds with Attach, so that a window can be composed of views.",
+  "icon": "view",
+  "defaultName": "SettingsView",
+  "order": 40
+}

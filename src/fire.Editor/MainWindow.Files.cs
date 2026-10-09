@@ -53,17 +53,6 @@ namespace fire.Editor
 
         private void NewMarkdown_Click(object? sender, RoutedEventArgs e) => NewMarkdown("");
 
-        private const string UiMarkupTemplate = """
-            <Window class="MainWindow" title="My window" width="400" height="300">
-              <Stack x="10" y="10" width="380" height="280" spacing="6">
-                <Label text="Hello"/>
-                <TextBox name="nameBox" width="200" text="{Binding Name, Mode=TwoWay}"/>
-                <Button name="ok" text="OK" onClick="Ok"/>
-              </Stack>
-            </Window>
-
-            """;
-
         /// <summary>File > New Pixel Image: asks for the size and the kind (palette of 256 colours, or true colour) and opens a new picture in the pixel editor.</summary>
         private async void NewPixelImage_Click(object? sender, RoutedEventArgs e)
         {
@@ -81,8 +70,6 @@ namespace fire.Editor
             var doc = CreateDocument(DocumentKind.Pixel, "", null, untitledName: "Untitled.png");
             ((PixelEditorControl)doc.View).NewPicture(w, h, kind == Dialogs.Answer.Yes);
         }
-
-        private void NewUiMarkup_Click(object? sender, RoutedEventArgs e) => CreateDocument(DocumentKind.UiMarkup, UiMarkupTemplate, null);
 
         private void OpenReadOnly_Click(object? sender, RoutedEventArgs e) => OpenMarkdownDialog(MarkdownViewMode.ReadOnly);
         private void OpenViewer_Click(object? sender, RoutedEventArgs e) => OpenMarkdownDialog(MarkdownViewMode.Viewer);

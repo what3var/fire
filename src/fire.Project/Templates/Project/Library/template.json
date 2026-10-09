@@ -1,0 +1,7 @@
+{
+  "title": "Library",
+  "description": "Classes and functions without an entry point, used by other projects (Add Reference) or packed as a package (.fpk).",
+  "icon": "library",
+  "open": [ "$identlower$.script" ],
+  "order": 30
+}

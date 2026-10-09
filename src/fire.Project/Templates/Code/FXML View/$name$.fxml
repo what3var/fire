@@ -1,0 +1,6 @@
+<View class="$class$" width="300" height="200">
+  <Stack x="10" y="10" width="280" height="180" spacing="6">
+    <Label text="$class$"/>
+    <CheckBox name="option" text="Option"/>
+  </Stack>
+</View>

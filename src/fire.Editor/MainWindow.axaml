@@ -49,22 +49,25 @@
 			<StackPanel>
 			<Menu>
 				<MenuItem Header="_File">
-					<MenuItem Header="_New Script" Click="New_Click" InputGesture="Ctrl+N">
-						<MenuItem.Icon>
-							<Image Source="/icons/Material-ScriptOutline.png"/>
-						</MenuItem.Icon>
+					<MenuItem Header="_New">
+						<MenuItem Header="_Solution..." Click="NewSolution_Click"/>
+						<MenuItem Header="_Project..." Click="NewProject_Click"/>
+						<Separator/>
+						<MenuItem Header="S_cript..." Click="NewScriptDialog_Click" InputGesture="Ctrl+N">
+							<MenuItem.Icon>
+								<Image Source="/icons/Material-ScriptOutline.png"/>
+							</MenuItem.Icon>
+						</MenuItem>
+						<Separator/>
+						<MenuItem Header="_Markdown" Click="NewMarkdown_Click" InputGesture="Ctrl+Shift+N">
+							<MenuItem.Icon>
+								<Image Source="/icons/Material-FileDocumentOutline.png"/>
+							</MenuItem.Icon>
+						</MenuItem>
+						<MenuItem Header="_Raster Image" Click="NewPixelImage_Click"/>
 					</MenuItem>
-					<MenuItem Header="New _Markdown Document" Click="NewMarkdown_Click" InputGesture="Ctrl+Shift+N">
-						<MenuItem.Icon>
-							<Image Source="/icons/Material-FileDocumentOutline.png"/>
-						</MenuItem.Icon>
-					</MenuItem>
-					<MenuItem Header="New _UI Markup" Click="NewUiMarkup_Click"/>
-					<MenuItem Header="New _Pixel Image..." Click="NewPixelImage_Click"/>
 					<MenuItem Header="_Open..." Click="Open_Click" InputGesture="Ctrl+O"/>
 					<Separator/>
-					<MenuItem Header="New _Project..." Click="NewProject_Click"/>
-					<MenuItem Header="New Solution..." Click="NewSolution_Click"/>
 					<MenuItem Header="Open Project or Solution..." Click="OpenWorkspace_Click" InputGesture="Ctrl+Shift+O"/>
 					<MenuItem Header="Close Solution / Project" x:Name="mnuCloseWorkspace" Click="CloseWorkspace_Click"/>
 					<Separator/>
@@ -104,16 +107,20 @@
 				<!-- acts on the project of the active document, else on the one selected in the solution explorer; switched on/off when it opens (ProjectMenu_SubmenuOpened) -->
 				<MenuItem Header="_Project" x:Name="mnuProject" SubmenuOpened="ProjectMenu_SubmenuOpened">
 					<MenuItem Header="Add _New" x:Name="mnuAddNewFile">
-						<MenuItem Header="_Script (.script)..." Tag="script" Click="AddNewFile_Click"/>
-						<MenuItem Header="_User Interface (.fxml)..." Tag="fxml" Click="AddNewFile_Click"/>
-						<MenuItem Header="_Markdown Document (.md)..." Tag="markdown" Click="AddNewFile_Click"/>
-						<MenuItem Header="_Raster Image (.png, .bmp)..." Tag="image" Click="AddNewFile_Click"/>
+						<MenuItem Header="_Script..." Tag="dialog" Click="AddNewFile_Click"/>
+						<Separator/>
+						<MenuItem Header="Fire _Class" Tag="t:Fire Class" Click="AddNewFile_Click"/>
+						<MenuItem Header="FXML _Window" Tag="t:FXML Window" Click="AddNewFile_Click"/>
+						<MenuItem Header="FXML _View" Tag="t:FXML View" Click="AddNewFile_Click"/>
+						<Separator/>
+						<MenuItem Header="_Markdown Document..." Tag="markdown" Click="AddNewFile_Click"/>
+						<MenuItem Header="_Raster Image..." Tag="image" Click="AddNewFile_Click"/>
 						<MenuItem Header="_Other File..." Tag="file" Click="AddNewFile_Click"/>
 					</MenuItem>
 					<MenuItem Header="Add _Existing File..." x:Name="mnuAddExistingFile" Click="AddExistingFile_Click"/>
 					<MenuItem Header="Add _Reference..." x:Name="mnuAddReference" Click="AddReference_Click"/>
 					<Separator/>
-					<MenuItem Header="Add New Pro_ject to Solution..." x:Name="mnuAddNewProject" Click="AddNewProject_Click"/>
+					<MenuItem Header="New Pro_ject in Solution..." x:Name="mnuAddNewProject" Click="AddNewProject_Click"/>
 					<MenuItem Header="Add Existing Project to Solution..." x:Name="mnuAddExistingProject" Click="AddExistingProject_Click"/>
 					<Separator/>
 					<MenuItem Header="Set as _Startup Project" x:Name="mnuSetStartup" Click="SetStartup_Click"/>
@@ -195,17 +202,20 @@
 				<!-- the tool strips (ToolStrips/): each can be dragged by its grip to another place in the tray, into another tray at a window edge or out of the window (floating) -->
 				<local:ToolStripTray x:Name="trayTop" Side="Top" Margin="2,0,0,2">
 					<local:ToolStrip Id="file" Title="File" Band="0" BandIndex="0">
-						<SplitButton Click="New_Click" ToolTip.Tip="New script (Ctrl+N)" Padding="2" Background="Transparent" VerticalAlignment="Center">
+						<SplitButton Click="NewScriptDialog_Click" ToolTip.Tip="New script (Ctrl+N)" Padding="2" Background="Transparent" VerticalAlignment="Center">
 							<Image Source="/icons/Material-ScriptOutline.png"/>
 							<SplitButton.Flyout>
 								<MenuFlyout>
-									<MenuItem Header="_New Script" Click="New_Click" InputGesture="Ctrl+N">
+									<MenuItem Header="_Script..." Click="NewScriptDialog_Click" InputGesture="Ctrl+N">
 										<MenuItem.Icon><Image Source="/icons/Material-ScriptOutline.png"/></MenuItem.Icon>
 									</MenuItem>
-									<MenuItem Header="New Markdown Document" Click="NewMarkdown_Click" InputGesture="Ctrl+Shift+N">
+									<MenuItem Header="_Markdown" Click="NewMarkdown_Click" InputGesture="Ctrl+Shift+N">
 										<MenuItem.Icon><Image Source="/icons/Material-FileDocumentOutline.png"/></MenuItem.Icon>
 									</MenuItem>
-									<MenuItem Header="New UI Markup" Click="NewUiMarkup_Click"/>
+									<MenuItem Header="_Raster Image" Click="NewPixelImage_Click"/>
+									<Separator/>
+									<MenuItem Header="_Project..." Click="NewProject_Click"/>
+									<MenuItem Header="_Solution..." Click="NewSolution_Click"/>
 								</MenuFlyout>
 							</SplitButton.Flyout>
 						</SplitButton>

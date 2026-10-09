@@ -1,0 +1,7 @@
+{
+  "title": "FXML Window",
+  "description": "A window described in markup (.fxml): a label, a text box and a button with a handler.",
+  "icon": "window",
+  "defaultName": "MainWindow",
+  "order": 30
+}
