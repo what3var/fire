@@ -190,7 +190,17 @@ namespace fire.Compiler
             // Disambiguation BEFORE the extensions: `class extends Box` means
             // (like every reference without type arguments) the non-generic
             // class, see GenericClassNames.
-            return MergeClassExtensions(DisambiguateGenericClasses(FlattenNamespaceWrappers(combined)));
+            return MergeClassExtensions(DisambiguateGenericClasses(LetOwnExceptionReplacePrelude(FlattenNamespaceWrappers(combined), sources)));
+        }
+
+        /// <summary>The prelude declares the base class `Exception` (SPEC 7.1). Programs written before that declare their own - it replaces the one of the
+        /// prelude instead of being a second definition. Two declarations in the program itself remain an error (the resolver reports it).</summary>
+        private static List<Stmt> LetOwnExceptionReplacePrelude(List<Stmt> program, IReadOnlyList<ProcessedSource> sources)
+        {
+            // (the prelude is the first source; it is recognised by its own classes)
+            if (sources.Count < 2 || !program.Any(s => s is ClassDecl { Name: "IndexOutOfBoundsException", Source: 0 })) return program;
+            if (!program.Any(s => s is ClassDecl { Name: "Exception", Source: > 0 })) return program;
+            return program.Where(s => s is not ClassDecl { Name: "Exception", Source: 0 }).ToList();
         }
 
         /// <summary>Gives every GENERIC class next to which a

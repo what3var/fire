@@ -855,13 +855,15 @@ method infrastructure therefore works automatically.
 
 ### 7.1 Base class
 
-There is a built-in base class `Exception` (at least with a `message` property) from which all exception classes inherit:
+There is a built-in base class `Exception` (a class of the prelude, with a `message`) from which all exception classes inherit. The errors of the runtime (`IndexOutOfBoundsException`, `DestroyedException`,
+`AccessDeniedException`, `UnitMismatchException`, `ReflectionException`) derive from it as well. Its constructor takes the message and has the default `""`, so a derived class that does not call `base(...)`
+simply has an empty message:
 
 ```
 class Exception {
     string message
 
-    construct(string message) {
+    construct(string message = "") {
         this.message = message
     }
 }
@@ -870,6 +872,8 @@ class InvalidUnitException : Exception {
     construct(string message) : base(message) { }
 }
 ```
+
+A program that declares a class `Exception` itself (as programs had to before the prelude brought one) replaces the one of the prelude; its derived classes get that one as their base.
 
 `throw` expects a value that derives (directly or indirectly) from `Exception` (checked like `is of`); otherwise a run-time error already at the `throw` itself.
 

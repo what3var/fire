@@ -39,7 +39,8 @@ namespace fire.Runtime
         public FieldStore(RuntimeClass? rtClass)
         {
             _rtClass = rtClass;
-            _known = new Value[rtClass?.FieldIndex.Count ?? 0];
+            // (one slot per declared field of the whole chain: a field that a derived class declares again keeps the slot of the base class unused, see RuntimeClass.FieldIndex)
+            _known = new Value[rtClass?.FlattenedFieldNames.Count ?? 0];
 
             // `default(Value)` is `false` (ValueKind.Bool = 0) - a declared field
             // that has not been assigned anything yet is, however, `undefined`. This becomes visible

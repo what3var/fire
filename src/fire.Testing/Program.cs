@@ -10708,7 +10708,7 @@ string[] uiDrawExpected = Array.Empty<string>();
     }
 
     const string cbHead = """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         var fb = new Framebuffer(64, 64)
         var win = new Window(fb, "t")
 
@@ -11000,7 +11000,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         """, new[] { "ende", "~G 9" });
 
     CheckGl("Eine Exception im Block beendet die Sektion (der Hauptthread haengt nicht)", """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         var total = 0
         var done = 0
         fire {
@@ -11044,7 +11044,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         """, new[] { "total 11" });
 
     CheckGl("Unbehandelte Exception im Hauptprogramm: ein auf eine Sektion wartender Thread haengt nicht", """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         class G { int v; construct() { this.v = 1 } }
         var g = new G()
         fire { g.v = 2 }
@@ -11081,7 +11081,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         """, new[] { "18" });
 
     CheckGl("break aus try meldet den Handler ab: eine spaetere Exception faengt der aeussere catch", """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         try {
             while (true) { try { break } catch (e) { print("innen") } }
             throw new Exception("aussen")
@@ -11089,7 +11089,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         """, new[] { "gefangen aussen" });
 
     CheckGl("break aus catch (mit finally und eigenen Locals im catch)", """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         var log = ""
         var i = 0
         while (i < 5) {
@@ -11102,7 +11102,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         """, new[] { "1f2fdreif 3" });
 
     CheckGl("continue aus catch", """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         var n = 0
         for (var i = 0; i < 4; i = i + 1) {
             try { throw new Exception("x") }
@@ -11749,7 +11749,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(plain(1))
         """, new[] { "x: 1 y: 2 b: 3 n: w c: 2", "hello a w", "2", "2" });
 
-    const string timeHead = "#import \"time\"\nclass Exception { string message; construct(string message) { this.message = message } }\n";
+    const string timeHead = "#import \"time\"\nclass Exception { string message; construct(string message = \"\") { this.message = message } }\n";
 
     CheckLq("TimeSpan: Fabriken, Komponenten, Summen, Vergleiche, Text", timeHead + """
         var a = TimeSpan.FromSeconds(90)
@@ -11987,7 +11987,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         """, new[] { "3 2 4 6 " });
 
     // ---- Operand stack and exceptions: what the throw site leaves on the stack must not shift the caller
-    const string excHead = "class Exception { string message; construct(string message) { this.message = message } }\n";
+    const string excHead = "class Exception { string message; construct(string message = \"\") { this.message = message } }\n";
 
     CheckLq("Exception aus einem foreach, im selben try gefangen: keine Operanden-Leichen (catch mit return, Aufrufer mitten im Ausdruck)", excHead + """
         class T {
@@ -12305,7 +12305,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         }, debugRelease);
 
     CheckRf("Fehler sind fangbare ReflectionExceptions; Exceptions aus Getter/Methode laufen zum aeusseren catch", """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         class P {
             int n
             int Age { get { throw new Exception("kein Alter") } }
@@ -12363,7 +12363,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
     // packed: metadata and try/catch must survive the serialisation (catch clauses used to be lost)
     CheckRf("Gepacktes Programm: Typ-Metadaten, Zugriffsregeln und try/catch ueberleben die Serialisierung", """
         #import "reflection"
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         class A { float r; private int s; construct() { this.r = 1.5; this.s = 3 } }
         var t = Type.Of(new A())
         foreach (m in t.All) { print(m.Access + " " + m.TypeName + " " + m.Name) }
@@ -12373,7 +12373,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     // ---- probe / silence
     const string probeHead = """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         class C {
             int v
             string name
@@ -12979,7 +12979,40 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(T.FindWhile())
         """, new[] { "~f0", "~f1", "~outer", "1", "~e1", "~e2", "2", "~w0", "~w1", "1" });
 
-    CheckSc("return im try/catch/finally in verschachtelten Bloecken: jedes Objekt genau einmal zerstoert", scHead + "class Exception { string message; construct(string message) { this.message = message } }\n" + """
+    CheckSc("Exception: die Basisklasse des Prelude (message, eigene Ableitungen mit und ohne base(...), Standardmeldung leer)", """
+        class NotFound : Exception {
+            construct(string what) : base(what + " not found") { }
+        }
+        class Quiet : Exception { }
+        try { throw new NotFound("key") } catch (NotFound e) { print(e.message) }
+        try { throw new Exception("plain") } catch (Exception e) { print(e.message) }
+        try { throw new Quiet() } catch (Quiet e) { print("[" + e.message + "]") }
+        var q = new Quiet()
+        print(q is of Exception)
+        """, new[] { "key not found", "plain", "[]", "True" });
+
+    CheckSc("Exception: eine eigene Klasse Exception des Programms ersetzt die des Prelude (die Ableitungen bekommen ihre Basis)", """
+        class Exception {
+            string message
+            construct(string message) { this.message = message + "!" }
+        }
+        class MyErr : Exception {
+            construct(string m) : base(m) { }
+        }
+        try { throw new MyErr("x") } catch (MyErr e) { print(e.message) }
+        """, new[] { "x!" });
+
+    CheckScChecked("Exception: die Fehler der Laufzeit sind Exceptions (IndexOutOfBounds, Zugriff auf Zerstoertes)", """
+        class Box { int v }
+        var a = [1]
+        try { print(a[5]) } catch (Exception e) { print(e.message) }
+        try { print(a[5]) } catch (IndexOutOfBoundsException e) { print(e.index + "/" + e.length) }
+        var b = new Box()
+        delete b
+        try { print(b.v) } catch (DestroyedException e) { print("destroyed: " + e.message) }
+        """, new[] { "Array index 5 out of range (length 1).", "5/1", "destroyed: Access to a destroyed object." });
+
+    CheckSc("return im try/catch/finally in verschachtelten Bloecken: jedes Objekt genau einmal zerstoert", scHead + "class Exception { string message; construct(string message = \"\") { this.message = message } }\n" + """
         class T {
             static F() {
                 var a = new D("a")
@@ -13051,7 +13084,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(T.Locals())
         """, new[] { "610", "True False", "55", "3 21", "5050", "undefined,undefined,3", "undefined,undefined,3" });
 
-    CheckSc("Exceptions durch viele Aufrufe/Bloecke: danach arbeiten die wiederverwendeten Scopes unveraendert weiter", "class Exception { string message; construct(string message) { this.message = message } }\n" + """
+    CheckSc("Exceptions durch viele Aufrufe/Bloecke: danach arbeiten die wiederverwendeten Scopes unveraendert weiter", "class Exception { string message; construct(string message = \"\") { this.message = message } }\n" + """
         class T {
             static Deep(int n) { var a = n * 2; if (n == 0) { throw new Exception("bottom") } var r = T.Deep(n - 1); return r + a }
             static Run() {
@@ -16054,7 +16087,7 @@ else
             print("ende")
             """),
         ("Threads: Globals: Ausnahme im Block beendet die Sektion", """
-            class Exception { string message; construct(string message) { this.message = message } }
+            class Exception { string message; construct(string message = "") { this.message = message } }
             var total = 0
             var done = 0
             fire {

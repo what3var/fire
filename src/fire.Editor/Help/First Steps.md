@@ -283,6 +283,28 @@ try {
 
 Errors are objects that you can catch with `catch`. Unlike in most languages, a handler can also **resume** the failed operation after fixing the problem.
 
+`Exception` is the base class of all errors. It has a `message`, you can throw it as it is, and you derive your own kinds of errors from it. A typed `catch` only takes the errors of that class (and its subclasses):
+
+```fire
+class NotFound : Exception {
+    construct(string what) : base(what + " not found") { }
+}
+
+try {
+    throw new NotFound("key")
+} catch (NotFound e) {
+    print(e.message)                    // key not found
+}
+
+try {
+    throw new Exception("something else")
+} catch (NotFound e) {
+    print("not reached")
+} catch (e) {
+    print("any other error: " + e.message)
+}
+```
+
 ## Threads
 
 fire has no shared memory between threads, so there are no data races on ordinary objects. Threads talk through **copies** that are synchronised on request, and through **actors** that receive messages.
@@ -366,18 +388,13 @@ The main program serves the waiting threads by itself at safe points, for exampl
 ```fire
 #import "time"
 
-class Failure {
-    string message
-    construct(string message) { this.message = message }
-}
-
-catch threads(Failure e)
+catch threads(Exception e)
 {
     print("a thread failed: " + e.message)
 }
 
 fire {
-    throw new Failure("boom")
+    throw new Exception("boom")
 }
 Sleep(200ms)
 print("main is fine")
