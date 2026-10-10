@@ -1,0 +1,32 @@
+#import "time"
+// An actor is a class whose state belongs to ONE thread, its home thread (the one that created it).
+// A call to one of its methods - from any thread, also the home thread - does not run at once: it becomes a MESSAGE in the actor's mailbox.
+// The home thread runs the messages in order with `process`. So there is no locking and no data race: only one thread ever touches the data.
+actor Logger {
+    int count
+    construct() { this.count = 0 }
+    log(string message) {
+        this.count = this.count + 1
+        print("log " + this.count + ": " + message)
+    }
+}
+
+var logger = new Logger()
+
+// fire with: the thread gets a handle to the actor (not a copy) and can only send messages
+fire with logger {
+    for (var i = 1; i <= 3; i++) { logger.log("from the worker, step " + i) }
+}
+fire with logger {
+    logger.log("from the second worker")
+}
+
+// the home thread (main) works off the mailbox; nothing printed yet because nothing has been processed
+var seen = 0
+var spins = 0
+while (logger.count < 4 && spins < 2000) {
+    process logger            // run the messages that have arrived
+    Sleep(5ms)
+    spins = spins + 1
+}
+print("main: the actor logged " + logger.count + " messages")

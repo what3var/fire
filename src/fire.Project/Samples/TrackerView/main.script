@@ -1,0 +1,72 @@
+#import "tracker"
+#import "windows"
+// A small tracker window: the score of the module around the playing row, a level bar per channel.
+// Keys 1-4 mute a channel, Space pauses, Escape ends.
+var song = Tracker.Song.Load(new Resource("tune.mod").Bytes())
+// the default sound device; a machine without one gets the simulated device "sim"
+var player = undefined
+try {
+    player = Tracker.Player.Open(song, "default")
+} catch (Audio.AudioException e) {
+    print("no sound output (" + e.message + ") - using the simulated device")
+    player = Tracker.Player.Open(song, "sim")
+}
+song.Loop = true
+
+var fb = new Framebuffer(520, 400)
+var win = new Window(fb, "Tracker view - " + song.Title)
+var r = new Renderer(fb)
+win.EnableEvents()
+var back = new SolidBrush(0xFF201810)
+var text = new SolidBrush(0xFFB0C0D0)
+var hot = new SolidBrush(0xFF40D0FF)
+var bar = new SolidBrush(0xFF40C060)
+var mark = new SolidBrush(0xFF503820)
+var paused = false
+
+while (win.Tick()) {
+    var e = win.NextEvent()
+    while (e != undefined) {
+        // key down events are [type, key, scancode, mods, repeat]: the keys 1-4 mute, the space bar pauses
+        if (e[0] == 24) {
+            if (e[1] >= 49 && e[1] <= 52) {
+                var c = e[1] - 49
+                song.Mute(c, !song.IsMuted(c))
+            }
+            if (e[1] == 32) { paused = !paused }
+            if (e[1] == 27) { break }
+        }
+        e = win.NextEvent()
+    }
+    if (!paused) { player.Pump() }
+
+    r.Fill(back)
+    r.DrawText(8, 6, song.Title + "   order " + song.Order + "   row " + song.Row, text)
+    // seven rows of the pattern above and below the current one
+    for (var k = -8; k <= 8; k++) {
+        var row = song.Row + k
+        if (row < 0 || row > 63) { continue }
+        var y = 40 + (k + 8) * 14
+        var line = ""
+        if (row < 10) { line = "0" }
+        line = line + row + "  "
+        for (var ch = 0; ch < song.Channels; ch++) {
+            line = line + song.CellText(song.Order, row, ch) + "  "
+        }
+        if (k == 0) {
+            r.FillRect(4, y - 1, 500, 14, mark)
+            r.DrawText(8, y, line, hot)
+        } else {
+            r.DrawText(8, y, line, text)
+        }
+    }
+    // the level of each channel
+    for (var ch = 0; ch < song.Channels; ch++) {
+        var level = 0
+        if (song.ChannelPlaying(ch) && !song.IsMuted(ch)) { level = song.ChannelVolume(ch) }
+        r.DrawText(8, 300 + ch * 20, "ch " + (ch + 1), text)
+        r.FillRect(60, 300 + ch * 20, level * 4, 12, bar)
+    }
+    r.DrawText(8, 385, "1-4 mute   space pause   esc end", text)
+}
+player.Stop()

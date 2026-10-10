@@ -139,4 +139,4 @@ mathkit/
 The sample projects that ship with fire live in `src/fire.Project/Samples/<Name>/` (copied to `Samples\` next to the editor): an ordinary project folder (`<Name>.fireproj`, the scripts) plus an optional `sample.json`
 (`title`, `description`, `open` = the files to open afterwards, `order`). **Help > Samples...** lists them; *Open* copies the chosen sample (without `sample.json`) into a folder of your choice - proposed:
 `~/spark/samples/<Name>`, which must not exist or be empty - and opens the copy as a project, so the shipped files stay untouched. `SampleCatalog` (fire.Project) does the finding and copying.
-To add a sample, add a folder with a project file; the tests (ProjectTests) run the console samples in the VM. Present: HelloWorld, Classes, Ownership, Threads (console), Graphics, UI (window).
+To add a sample, add a folder with a project file; the tests (ProjectTests) run the console samples in the VM. Present: HelloWorld, Classes, Ownership, Threads, Threads: taking and sync, Actors, Audio, Network, Http, Devices (console); Graphics, UI, FXML with data binding, Tracker: play a module, Tracker: pattern view (windows).

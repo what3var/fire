@@ -1,0 +1,40 @@
+#import "time"
+// `fire taking x { }` hands the thread a private, isolated COPY of x. The two sides cannot disturb each other:
+// the thread changes its copy, the main program keeps its original - until the thread says `sync x`.
+//
+// What is synchronised, and when:
+//   fire taking x { }     at the start: x is COPIED (deep) into the thread. Nothing flows back by itself.
+//   sync x                in the thread: the copy is written back over the original (the main program applies it at a safe point).
+//   sync global { }       in the thread: a block that runs in the MAIN program with the real globals (to set a flag, add to a total).
+//   sync globals          in the main program: apply everything the threads have queued right now (waiting loops and Sleep do it by themselves).
+class Item {
+    int n
+    construct(int n) { this.n = n }
+}
+class Player {
+    string name
+    Item item
+    construct(string name, int n) {
+        this.name = name
+        this.item = new Item(n)
+    }
+}
+
+var player = new Player("hero", 100)
+var finished = 0
+
+fire taking player {
+    // this is a copy: change it freely
+    player.item.n = player.item.n - 10
+    player.name = "hero (hurt)"
+    print("thread: its copy is " + player.name + " with " + player.item.n)
+    Sleep(50ms)
+    var ok = sync player                 // write the copy back to the original
+    print("thread: sync = " + ok)
+    sync global { finished = 1 }         // runs in the main program
+}
+
+Sleep(10ms)
+print("main:   still the original: " + player.name + " with " + player.item.n)
+while (finished == 0) { sync globals }   // apply what the thread queued (the Sleep in a loop would do the same)
+print("main:   after sync: " + player.name + " with " + player.item.n)

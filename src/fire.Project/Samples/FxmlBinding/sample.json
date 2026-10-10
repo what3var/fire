@@ -1,0 +1,6 @@
+{
+  "title": "FXML with data binding",
+  "description": "A window designed in markup: TwoWay bindings, a converter, a sorted list from a CollectionView and a data template.",
+  "open": [ "Main.fxml", "main.script" ],
+  "order": 61
+}

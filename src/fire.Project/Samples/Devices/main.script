@@ -1,0 +1,41 @@
+#import "devices"
+#import "time"
+// The devices extension talks to hardware at the command level: send text or bytes, wait for what comes back.
+// Identifiers are "serial:COM3" or "serial:/dev/ttyUSB0" for a serial port; "loopback:echo" is a simulated device that sends back everything it gets,
+// so this sample runs without hardware. Change the identifier to try a real printer, CNC machine or microcontroller.
+var identifier = "loopback:echo"
+
+var manager = new DeviceManagerFacade()
+manager.Refresh(true)
+print("known devices: " + manager.Count())
+var d = undefined
+try {
+    d = manager.GetByIdentifier(identifier)
+} catch (DeviceNotFoundException e) {
+    print("no device " + identifier + ": in the editor the loopback device is always there (Devices panel); standalone, list yours with manager.GetAt(i).")
+    leave
+}
+d.EnsureConnected()
+print("connected to " + d.Identifier())
+
+// 1) a line out, the reply in: the echo device answers with the same line
+d.DoCommand("M105")
+if (d.WaitForString("M105", 2s)) { print("reply seen") }
+d.ReadString()                       // throw away whatever else arrived
+
+// 2) wait for a marker inside the stream; what lies before it is consumed, what follows stays readable
+d.WriteString("header|payload")
+if (d.WaitForString("|", 2s)) {
+    Sleep(50ms)
+    print("after the marker: [" + d.ReadString() + "]")
+}
+
+// 3) a command is an object: DoCommand runs its Execute(device); DoCommands runs a list until one fails
+var home = new Command<IDevice>(dev => { return dev.WriteString("G28\n") })
+var status = new Command<IDevice>(dev => { return dev.WriteString("M114\n") })
+print("commands ok: " + d.DoCommands([home, status]))
+Sleep(300ms)
+print("received: " + d.ReadString())
+
+d.Disconnect()
+print("connected: " + d.IsConnected)

@@ -18425,6 +18425,8 @@ else
         // The VM runs sequentially: the precision of float is process-wide while a program runs.
         var vmResults = natCases.Select(c => { var text = vmOutput(c.Source); Value.SingleFloats = false; return text; }).ToArray();
 
+        // at most a few C++ compilations at a time: every case has its own compiler process (AddressSanitizer: hundreds of MB each), all at once would not fit in memory
+        var buildGate = new SemaphoreSlim(4);
         var compiled = natCases.Select((c, index) => Task.Run(() =>
         {
             string expected = vmResults[index];
@@ -18447,7 +18449,11 @@ else
 
             // the libraries that the program asks for (`// fire-link: ssl` from the `linkLibraries` of a package)
             string linkFlags = string.Concat(cpp.Split('\n').Take(400).Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
-            string build = RunTool(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"{linkFlags}", out int buildExit);
+            string build;
+            int buildExit;
+            buildGate.Wait();
+            try { build = RunTool(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"{linkFlags}", out buildExit); }
+            finally { buildGate.Release(); }
             if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C++-Compiler: " + build);
             if (c.Name.StartsWith("Abbruch:"))
             {

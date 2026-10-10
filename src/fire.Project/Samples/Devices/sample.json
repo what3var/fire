@@ -1,0 +1,6 @@
+{
+  "title": "Devices: commands and replies",
+  "description": "Talks to a device (a serial port such as serial:COM3, or the simulated loopback echo device): send lines, wait for replies, run command objects.",
+  "open": [ "main.script" ],
+  "order": 120
+}

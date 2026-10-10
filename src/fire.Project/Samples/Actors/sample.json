@@ -1,0 +1,6 @@
+{
+  "title": "Actors",
+  "description": "An actor owns its data and takes messages: calls from any thread are queued and run in the home thread.",
+  "open": [ "main.script" ],
+  "order": 42
+}

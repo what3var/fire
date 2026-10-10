@@ -50,7 +50,7 @@ static class ProjectTests
         {
             var samples = SampleCatalog.Load();
             Check("Beispiele: die mitgelieferten Beispielprojekte werden gefunden (Titel, Beschreibung, Projektdatei)",
-                samples.Count >= 6 && samples.All(x => x.Title.Length > 0 && x.Description.Length > 0 && x.ProjectFile.EndsWith(".fireproj") && x.Open.Count > 0 && File.Exists(Path.Combine(x.Folder, x.Open[0]))), string.Join(", ", samples.Select(x => x.Name)));
+                samples.Count >= 14 && samples.All(x => x.Title.Length > 0 && x.Description.Length > 0 && x.ProjectFile.EndsWith(".fireproj") && x.Open.Count > 0 && x.Open.All(f => File.Exists(Path.Combine(x.Folder, f)))), string.Join(", ", samples.Select(x => x.Name)));
             string target = Path.Combine(root, "samples", "copy");
             var hello = samples.First(x => x.Name == "HelloWorld");
             string projectFile = SampleCatalog.CopyTo(hello, target);
@@ -62,7 +62,7 @@ static class ProjectTests
             sampleWs.Load(projectFile);
             Check("Beispiele: die Kopie laesst sich als Projekt oeffnen", sampleWs.Projects.Count == 1, "");
             // the console samples run in the VM
-            foreach (var sample in samples.Where(x => x.Name is "HelloWorld" or "Classes" or "Ownership" or "Threads"))
+            foreach (var sample in samples.Where(x => x.Name is "HelloWorld" or "Classes" or "Ownership" or "Threads" or "ThreadsTaking" or "Actors" or "Audio" or "Network" or "Http"))
             {
                 var lines = new List<string>();
                 try

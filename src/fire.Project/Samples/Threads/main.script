@@ -1,5 +1,14 @@
 #import "time"
-// Two fire threads count in parallel; the main program waits until both are done.
+// Threads in fire: `fire { ... }` starts a thread. There is no shared memory between threads - what is shared, and when, is explicit:
+//
+//  * A thread sees the GLOBALS of the main program, but only as a snapshot of the moment it started.
+//  * A thread that CHANGES a global does not write into the main program's variable at once: the change is queued and the main program
+//    applies it at a safe point of its own (automatically while it waits in a loop or in Sleep, or at an explicit `sync globals`).
+//    So the main program never sees a half-finished change, and two threads never write the same memory at the same time.
+//  * `fire taking x { }` gives the thread its own private COPY of x (see the sample "Threads: taking and sync").
+//  * An `actor` takes messages instead (see the sample "Actors").
+//
+// Here two threads count with their own objects (nobody else touches them) and report by adding to the global `done`.
 class Counter {
     int n = 0
 }
@@ -9,12 +18,14 @@ var done = 0
 
 fire {
     for (var i = 0; i < 1000; i++) { a.n = a.n + 1 }
-    done = done + 1
+    done = done + 1            // queued: the main program applies it when it next processes its queue
 }
 fire {
     for (var i = 0; i < 2000; i++) { b.n = b.n + 1 }
     done = done + 1
 }
+
+// Waiting like this lets the main program process the queue (Sleep does it too); a loop that never waits would need `sync globals`.
 while (done < 2) { Sleep(5ms) }
 print("thread 1 counted " + a.n)
 print("thread 2 counted " + b.n)

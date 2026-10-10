@@ -1,0 +1,43 @@
+#include "Main.fxml"          // the script generated from the markup is included right here
+#import "ui"
+// The code-behind: the data the window is bound to, a converter, and the handler of the button.
+class UpperConverter : UI.Converter {
+    Convert(value) {
+        if (value == undefined) { return "" }        // nothing selected yet
+        return value.ToUpper()
+    }
+}
+
+class Person {
+    string name
+    bool member = false
+    construct(string name) { this.name = name }
+}
+
+// The data context: what the {Binding ...} paths in Main.fxml look up.
+class Model {
+    List people
+    construct() {
+        this.people = new List()
+        this.people.Add(new Person("Carol"))
+        this.people.Add(new Person("alice"))
+        this.people.Add(new Person("Bob"))
+        this.UpdateSummary()
+    }
+    // a field, not a property: a binding watches fields (probe), so writing it updates the label
+    string summary = ""
+    UpdateSummary() { this.summary = this.people.count + " people" }
+}
+
+class PeopleWindow : MainBase {            // the inheritance is declared here, in the code-behind
+    AddPerson(sender) {
+        var model = this.dataContext
+        model.people.Add(new Person("new person " + model.people.count))
+        model.UpdateSummary()           // the label {Binding summary} follows
+    }
+}
+
+var window = new PeopleWindow()
+window.SetDataContext(new Model())
+window.peopleList.Select(0)       // the elements with a name are fields of the window
+window.Run()
