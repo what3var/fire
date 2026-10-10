@@ -256,11 +256,8 @@ namespace fire.Native
             if (Directory.Exists(staging)) Directory.Delete(staging, true);
             Directory.CreateDirectory(staging);
 
-            var filesWritten = false;
-
             try
             {
-
                 using (var file = File.OpenRead(archive))
                 using (var gzip = new GZipStream(file, CompressionMode.Decompress))
                 using (var tar = new TarReader(gzip))
@@ -268,7 +265,6 @@ namespace fire.Native
                     TarEntry? entry;
                     while ((entry = tar.GetNextEntry()) != null)
                     {
-                        Debug.Print("tar: {0} ({1})\r\n", entry.Name, entry.EntryType);
                         if (entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile) || entry.DataStream == null) continue;
                         string name = entry.Name.Replace('\\', '/');
                         int at = name.IndexOf(Triplet + "/", StringComparison.Ordinal);
@@ -279,18 +275,15 @@ namespace fire.Native
                         string target = Path.GetFullPath(Path.Combine(staging, relative));
                         if (!target.StartsWith(Path.GetFullPath(staging) + Path.DirectorySeparatorChar, StringComparison.Ordinal)) continue;
                         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                    
                         using var output = File.Create(target);
                         entry.DataStream.CopyTo(output);
-                        filesWritten = true;
                     }
                 }
-
             }
-            catch(EndOfStreamException e)
+            catch (EndOfStreamException) when (HasHeader(staging) && File.Exists(Path.Combine(staging, "bin", "SDL2.dll")) && File.Exists(Path.Combine(staging, "lib", "libSDL2.dll.a")))
             {
-                if (!filesWritten)
-                    throw;
+                // The packages from SDL 2.30.11 on end without the two empty blocks that close a tar file (the last file, .git-hash, is not even padded to the end of its block): the reader
+                // reports the end of the stream in the middle of a header. The gzip stream itself was checked above; what we came for is all there.
             }
 
             if (Directory.Exists(destination)) Directory.Delete(destination, true);

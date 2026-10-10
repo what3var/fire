@@ -18944,6 +18944,29 @@ else
                         cutError != null && cutError.Contains("incomplete") && !Directory.Exists(cutTarget) && !Directory.Exists(cutTarget + ".new") && shortError != null, cutError ?? "no error");
                     fire.Native.SdlSetup.VerifyGzip(archive);
 
+                    // the packages from SDL 2.30.11 on end without the empty blocks that close a tar file, and the last file is not padded: the tar reader of .NET reports the end of the stream in the middle of a header
+                    string noEnd = Path.Combine(sdlDir, "noend.tar.gz");
+                    using (var tarBytes = new MemoryStream())
+                    {
+                        using (var writer = new System.Formats.Tar.TarWriter(tarBytes, leaveOpen: true))
+                        {
+                            void Add(string name, string text) => writer.WriteEntry(new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, name) { DataStream = new MemoryStream(System.Text.Encoding.ASCII.GetBytes(text)) });
+                            Add("SDL2-9.9.9/x86_64-w64-mingw32/include/SDL2/SDL.h", "// header");
+                            Add("SDL2-9.9.9/x86_64-w64-mingw32/bin/SDL2.dll", "dll");
+                            Add("SDL2-9.9.9/x86_64-w64-mingw32/lib/libSDL2.dll.a", "implib");
+                            Add("SDL2-9.9.9/.git-hash", "0123456789012345678901234567890123456789");
+                        }
+                        // (what the writer ends with: the rest of the block of the last file, and two empty blocks)
+                        long keep = tarBytes.Length - 1024 - (512 - 40);
+                        using var gz = new System.IO.Compression.GZipStream(File.Create(noEnd), System.IO.Compression.CompressionLevel.Fastest);
+                        gz.Write(tarBytes.GetBuffer(), 0, (int)keep);
+                    }
+                    string noEndTarget = Path.Combine(sdlDir, "SDL2noend");
+                    string? noEndError = null;
+                    try { fire.Native.SdlSetup.Unpack(noEnd, noEndTarget); } catch (Exception ex) { noEndError = ex.GetType().Name + ": " + ex.Message; }
+                    CheckNat("SDL2: ein Paket ohne die abschliessenden Bloecke (SDL 2.30.11 und neuer) wird ausgepackt",
+                        noEndError == null && File.Exists(Path.Combine(noEndTarget, "include", "SDL2", "SDL.h")) && File.Exists(Path.Combine(noEndTarget, "bin", "SDL2.dll")) && File.Exists(Path.Combine(noEndTarget, "lib", "libSDL2.dll.a")), noEndError ?? "");
+
                     Environment.SetEnvironmentVariable("SDL2_DIR", unpacked);
                     var location = fire.Native.SdlSetup.Locate();
                     CheckNat("SDL2: SDL2_DIR wird zuerst gefunden (Include- und Lib-Ordner, SDL2.dll)",
