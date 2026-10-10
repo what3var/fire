@@ -11,7 +11,7 @@ namespace fire.Runtime
     /// (format version 6, as `dotnet publish -p:PublishSingleFile=true` produces it for framework-dependent apps).
     /// The result is ONE file that the host starts directly - without a fire.Runtime.dll lying next to it.
     ///
-    /// Only the minimum is built here (fire.Runtime.dll + runtimeconfig.json); everything else comes as a payload behind it
+    /// Only the minimum is built here (runtime.dll + runtimeconfig.json); everything else comes as a payload behind it
     /// (see PayloadFile). The host reads only from the header offset entered in the apphost, data behind the
     /// bundle does not disturb it.
     ///

@@ -10,7 +10,7 @@ namespace fire.Runtime
 {
     /// <summary>
     /// Loads DLLs at runtime from its own file (replacement for Costura/Fody). The executable file contains only what
-    /// the program needs (see Packer/PackagePlan); everything except the tiny start piece (fire.Runtime.dll)
+    /// the program needs (see Packer/PackagePlan); everything except the tiny start piece (runtime.dll)
     /// lies as a payload behind the .NET bundle (see PayloadFile).
     ///
     /// - Managed DLLs (fire.dll, MemoryPack, the required bridges): <see cref="AssemblyLoadContext.Resolving"/>
