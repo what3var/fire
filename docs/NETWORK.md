@@ -1,6 +1,6 @@
 # Networking and hardware buses - design and steps
 
-Status: **networking (`fire-net`, `fire-http`, `fire-tls`) GPIO (`fire-gpio`), I2C (`fire-i2c`), SPI (`fire-spi`) and WiFi (`fire-wifi`) are built**, see the references below; nothing of the hardware is tried on a board yet. The steps are also kept as tasks (Net 1-3, GPIO, I2C, SPI, WiFi). Everything is a **package** (`ember`, docs/PACKAGES.md): the compiler and the
+Status: **networking (`fire-net`, `fire-http`, `fire-tls`) GPIO (`fire-gpio`), I2C (`fire-i2c`), SPI (`fire-spi`) and WiFi (`fire-wifi`) are built**, see the references below; nothing of the hardware is tried on a board yet. The steps are also kept as tasks (Net 1-3, GPIO, I2C, SPI, WiFi). Sound (`fire-audio`) has a document of its own: docs/AUDIO.md. Everything is a **package** (`ember`, docs/PACKAGES.md): the compiler and the
 runtime do not change, a program that does not `#import` it does not carry it. Like `time`, `io` and `devices`, each one is a prelude in fire plus C++ in `native/bridges/` over a thin
 platform layer in `native/platform/<name>/` (`plat::`), so the same code runs in the VM (through the package ABI, docs/PACKAGE_NATIVES.md) and in a native build, and a platform without the
 feature fails with a clear "not supported" error instead of not compiling.

@@ -470,6 +470,7 @@ namespace fire.Native
             if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_I2C_HEADER \"platform/{_target.Native.Platform}/fire_i2c.hpp\"");   // (the i2c package)
             if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_SPI_HEADER \"platform/{_target.Native.Platform}/fire_spi.hpp\"");   // (the spi package)
             if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_WIFI_HEADER \"platform/{_target.Native.Platform}/fire_wifi.hpp\"");   // (the wifi package)
+            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_AUDIO_HEADER \"platform/{_target.Native.Platform}/fire_audio.hpp\"");   // (the audio package)
             if (_usesGraphics) sb.AppendLine("#include \"bridges/fire_bridge_graphics.hpp\"");
             if (_usesWindows)
             {

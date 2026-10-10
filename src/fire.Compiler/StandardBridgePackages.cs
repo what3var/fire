@@ -37,6 +37,7 @@ namespace fire.Compiler
             "random" => new[] { "time" },
             "gpio" => new[] { "time" },
             "wifi" => new[] { "time" },
+            "audio" => new[] { "time" },
             "http" => new[] { "net", "tls", "io", "time" },
             "tls" => new[] { "net", "io", "time" },
             "net" => new[] { "io", "time" },   // a connection is an IO.Stream; the time limits need the clock
@@ -55,6 +56,7 @@ namespace fire.Compiler
             "i2c" => fire.Standard.I2cPrelude.Source,
             "spi" => fire.Standard.SpiPrelude.Source,
             "wifi" => fire.Standard.WifiPrelude.Source,
+            "audio" => fire.Standard.AudioPrelude.Source,
             "io" => fire.Standard.IoPrelude.Source,
             "devices" => fire.Standard.DevicesPrelude.Source,
             _ => ImportedPreludes.TrySourceFor(bridge),
@@ -172,6 +174,18 @@ namespace fire.Compiler
                 })
                     yield return f;
             }
+            if (bridge == "audio")
+            {
+                foreach (var f in new[]
+                {
+                    F("__AudioLastError", 0, "audio::LastError"), F("__AudioLastErrorMessage", 0, "audio::LastErrorMessage", list: true), F("__AudioOpenCount", 0, "audio::OpenCount"),
+                    F("__AudioSupported", 0, "audio::Supported"), F("__AudioDevices", 0, "audio::Devices", list: true), F("__AudioOpen", 3, "audio::Open"),
+                    F("__AudioWrite", 4, "audio::Write"), F("__AudioQueued", 1, "audio::Queued"), F("__AudioStop", 1, "audio::Stop"), F("__AudioSetVolume", 2, "audio::SetVolume"),
+                    F("__AudioClose", 1, "audio::Close"), F("__AudioWave", 9, "audio::Wave"),
+                    F("__AudioSimReset", 0, "audio::SimReset"), F("__AudioSimHold", 1, "audio::SimHold"), F("__AudioSimInfo", 1, "audio::SimInfo"), F("__AudioSimData", 0, "audio::SimData", list: true),
+                })
+                    yield return f;
+            }
             if (bridge == "tls")
             {
                 foreach (var f in new[]
@@ -279,6 +293,12 @@ namespace fire.Compiler
                     if (bridge == "i2c") native.Reset = "i2c::reset";
                     if (bridge == "spi") native.Reset = "spi::reset";
                     if (bridge == "wifi") native.Reset = "wifi::reset";
+                    if (bridge == "audio")
+                    {
+                        native.Reset = "audio::reset";
+                        native.LinkLibraries["posix"] = new List<string> { "dl" };       // (PulseAudio and ALSA are loaded at run time: nothing to install to build, nothing to link but dlopen)
+                        native.LinkLibraries["windows"] = new List<string> { "winmm" };   // waveOut
+                    }
                     if (bridge == "net")
                     {
                         native.Reset = "net::reset";

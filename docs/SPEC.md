@@ -2195,7 +2195,13 @@ queued answers, a log of what was sent); `/dev/spidevB.C` of Linux or the SPI ma
 The package `fire-wifi` (docs/NETWORK.md is the reference): `WiFi.Station` (scan, join, state, address), `WiFi.AccessPoint`, `WiFi.Board` (the radios of the machine) and `WiFi.Sim` (the simulated radio `"sim"` that every platform has); the WiFi driver of ESP-IDF underneath, "not
 supported" where the operating system owns the network. It needs `time`; scanning and joining poll the natives and sleep between the questions. Errors are `WiFi.WiFiException` (with a `code`) and subclasses (`AuthException`, `NotFoundException`, `TimeoutException`, ...).
 
-### 8.27 Projects and solutions
+### 8.27 Audio (`#import "audio"`)
+
+The package `fire-audio` (docs/AUDIO.md is the reference): `Audio.Output` (a sound device that plays 16 bit samples: `Write`/`Offer`, `Tone`, `Beep`, `Play(sound)`, `Drain`, `Stop`, volume), `Audio.Sound` (PCM in memory, read from a WAV file or generated), `Audio.Board` (the devices of the
+machine) and `Audio.Sim` (the simulated device `"sim"` that every platform has and that records what is played). PulseAudio or ALSA (whichever is there, loaded at run time) on Linux, winmm on Windows, PWM on a GPIO pin that the program chooses (`new Audio.Output(25)`) on an ESP32. It needs `time`:
+`Write` and `Drain` sleep between the questions, so a program stays abortable. Errors are `Audio.AudioException` (with a `code`) and subclasses.
+
+### 8.28 Projects and solutions
 
 A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files (docs/PROJECTS.md is the reference). A project names its files (default: all `*.script` of its
 folder), its type (`exe`, or `library` without an entry point - a statement at the top level is an error), its build settings, and its references (projects of the solution, installed packages). A reference makes a library available;

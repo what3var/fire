@@ -17314,6 +17314,138 @@ else
             """),
     }).ToArray();
 
+    // Audio (bridges/fire_bridge_audio.hpp): the simulated device "sim" records what is played - the same in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Audio: simuliertes Geraet - Schreiben, Wellen, Lautstaerke, WAV, Halten/Stop, Fehler", """
+            #import "audio"
+
+            print("devices " + Audio.Board.Devices()[0] + " " + (Audio.Board.Devices().count >= 1))
+            var out = new Audio.Output("sim", 8000, 1)
+            print("output " + out.Name + " " + out.Rate + " " + out.Channels + " " + out.Volume + " " + out.IsClosed)
+            print("sim " + Audio.Sim.Rate() + " " + Audio.Sim.Channels())
+            var pcm = new byte[8]
+            for (var i = 0; i < 8; i++) { pcm[i] = i + 1 }
+            out.Write(pcm)
+            print("played " + Audio.Sim.Played() + " queued " + out.Queued + " " + out.Playing)
+            var got = Audio.Sim.Data()
+            print("data " + got.length + " " + got[0] + " " + got[7])
+            out.Write(pcm, 2, 4)
+            got = Audio.Sim.Data()
+            print("part " + got.length + " " + got[8] + " " + got[11])
+
+            Audio.Sim.Reset()
+            out.Tone(2000, 5, Audio.Wave.Sine)
+            got = Audio.Sim.Data()
+            print("sine " + got.length + " " + got[0] + got[1] + " " + got[2] + "," + got[3] + " " + got[4] + got[5] + " " + got[6] + "," + got[7])
+            Audio.Sim.Reset()
+            out.Tone(1000, 10, Audio.Wave.Square, 50)
+            got = Audio.Sim.Data()
+            print("square " + got.length + " " + got[0] + "," + got[1] + " " + got[6] + "," + got[7] + " " + got[8] + "," + got[9] + " " + got[22] + "," + got[23])
+            Audio.Sim.Reset()
+            out.Tone(500, 4, Audio.Wave.Saw)
+            out.Tone(500, 4, Audio.Wave.Triangle, 10)
+            out.Tone(500, 4, Audio.Wave.Noise, 20)
+            print("kinds " + Audio.Sim.Played())
+            Audio.Sim.Reset()
+            out.Volume = 50
+            var loud = new byte[2]
+            loud[0] = 0xFF
+            loud[1] = 0x7F
+            out.Write(loud)
+            got = Audio.Sim.Data()
+            print("volume " + out.Volume + " " + got[0] + "," + got[1])
+            out.Volume = 100
+
+            var stereo = new Audio.Output("sim", 22050, 2)
+            print("stereo " + Audio.Sim.Rate() + " " + Audio.Sim.Channels())
+            Audio.Sim.Reset()
+            stereo.Tone(440, 2, Audio.Wave.Square)
+            print("stereo bytes " + Audio.Sim.Played() + " " + (22050 * 2 / 1000 * 4))
+            stereo.Close()
+
+            var w = new byte[47]
+            w[0] = 82
+            w[1] = 73
+            w[2] = 70
+            w[3] = 70
+            w[4] = 39
+            w[8] = 87
+            w[9] = 65
+            w[10] = 86
+            w[11] = 69
+            w[12] = 102
+            w[13] = 109
+            w[14] = 116
+            w[15] = 32
+            w[16] = 16
+            w[20] = 1
+            w[22] = 1
+            w[24] = 0x40
+            w[25] = 0x1F
+            w[28] = 0x40
+            w[29] = 0x1F
+            w[32] = 1
+            w[34] = 8
+            w[36] = 100
+            w[37] = 97
+            w[38] = 116
+            w[39] = 97
+            w[40] = 3
+            w[44] = 0
+            w[45] = 128
+            w[46] = 255
+            var snd = Audio.Sound.FromWav(w)
+            print("wav " + snd.Rate + " " + snd.Channels + " " + snd.Frames + " " + snd.Length + " " + snd.Milliseconds)
+            Audio.Sim.Reset()
+            var player = snd.Open("sim")
+            player.Play(snd)
+            got = Audio.Sim.Data()
+            print("wav data " + got.length + " " + got[0] + "," + got[1] + " " + got[2] + "," + got[3] + " " + got[4] + "," + got[5])
+            try { out.Play(snd) } catch (Audio.AudioException e) { print("rate " + e.code) }
+            var gen = Audio.Sound.Tone(440, 100)
+            print("tone sound " + gen.Rate + " " + gen.Frames + " " + gen.Length)
+            try { Audio.Sound.FromWav(pcm) } catch (Audio.AudioException e) { print("notwav " + e.code) }
+            w[34] = 24
+            try { Audio.Sound.FromWav(w) } catch (Audio.UnsupportedException e) { print("bits " + e.code) }
+
+            Audio.Sim.Reset()
+            Audio.Sim.Hold(true)
+            var big = new byte[10000]
+            var took = out.Offer(big)
+            print("held " + took + " " + out.Queued + " " + Audio.Sim.Waiting() + " " + out.Playing + " " + out.Drain(20))
+            out.Stop()
+            print("stopped " + out.Queued + " " + out.Drain(20))
+            took = out.Offer(big, 0, 100)
+            Audio.Sim.Hold(false)
+            print("released " + took + " " + Audio.Sim.Played() + " " + out.Queued)
+
+            try { new Audio.Output("sim", 5, 1) } catch (Audio.AudioException e) { print("rate error " + e.code) }
+            try { new Audio.Output("sim", 8000, 3) } catch (Audio.AudioException e) { print("channels error " + e.code) }
+            try { new Audio.Output("nodevice") } catch (Audio.NotFoundException e) { print("nodevice " + e.code) }
+            try { out.Write(pcm, 0, 3) } catch (Audio.AudioException e) { print("frame " + e.code) }
+            try { out.Write(pcm, 6, 4) } catch (Audio.AudioException e) { print("range " + e.code) }
+            try { out.Volume = 101 } catch (Audio.AudioException e) { print("volume error " + e.code) }
+            try { out.Tone(5000, 10) } catch (Audio.AudioException e) { print("freq " + e.code) }
+            try { new Audio.Output(25) } catch (Audio.NotFoundException e) { print("pwm pin " + e.code) }
+            var hasAlsa = false
+            var names = Audio.Board.Devices()
+            for (var i = 0; i < names.count; i++) { if (names[i] == "alsa") { hasAlsa = true } }
+            if (hasAlsa) {
+                // the PCM "null" of ALSA throws the sound away: the real code path of the Linux backend without a sound card
+                try {
+                    var nul = new Audio.Output("alsa:null", 44100, 2)
+                    nul.Tone(440, 100)
+                    print("alsa null " + nul.Drain(3000) + " " + nul.Queued)
+                    nul.Close()
+                } catch (Audio.AudioException e) { print("alsa null error " + e.code) }
+            }
+            out.Close()
+            try { var q = out.Queued } catch (Audio.AudioException e) { print("closed " + e.code) }
+            print("avail " + Audio.Board.Available() + " " + Audio.Sim.Played())
+            """),
+    }).ToArray();
+
     // I2C (bridges/fire_bridge_i2c.hpp): the simulated bus "sim" with register-file devices - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
