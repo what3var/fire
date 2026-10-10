@@ -41,6 +41,9 @@ namespace fire.Editor
         public bool IsFinished { get; private set; }
         public string? RuntimeError { get; private set; }
 
+        /// <summary>Throw-site locations (innermost first) of the unhandled script exception, if any.</summary>
+        public IReadOnlyList<(int SourceIndex, int Line)>? ErrorTrace => Vm.UnhandledTrace;
+
         /// <summary>Raised as soon as this thread has finished a requested
         /// step - fires on THIS thread's OWN
         /// background thread, NEVER on the UI thread; the subscriber must
@@ -57,6 +60,7 @@ namespace fire.Editor
         private DebugThreadContext(VM vm, string name, bool isMain)
         {
             Vm = vm;
+            vm.CaptureErrorTrace = true; // stack trace + line marking for unhandled script errors
             Name = name;
             IsMain = isMain;
 

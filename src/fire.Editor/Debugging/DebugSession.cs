@@ -54,6 +54,7 @@ namespace fire.Editor
         public bool IsFinished => ActiveThread?.IsFinished ?? false;
         public string? CompileError { get; private set; }
         public string? RuntimeError => ActiveThread?.RuntimeError;
+        public IReadOnlyList<(int SourceIndex, int Line)>? ErrorTrace => ActiveThread?.ErrorTrace;
 
         public VmExecutionMode ExecutionMode { get; set; } = VmExecutionMode.Debug;
 

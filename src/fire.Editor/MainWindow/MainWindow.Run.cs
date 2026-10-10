@@ -285,10 +285,24 @@ namespace fire.Editor
             FlushPendingOutput(); // visible at once, not only at the next timer tick
             if (!more)
             {
-                ShowDebugLocation(null);
-                UpdateStatus(_session.RuntimeError != null
-                    ? $"Runtime error: {_session.RuntimeError}"
-                    : "Program finished.");
+                if (_session.RuntimeError is { } error)
+                {
+                    // Stop at the failing line and show the stack trace (the VM has unwound by then, so the frames are not inspectable).
+                    var trace = _session.ErrorTrace;
+                    ShowDebugLocation(trace is { Count: > 0 } ? trace[0] : null);
+                    var text = new System.Text.StringBuilder($"Runtime error: {error}\n");
+                    if (trace != null)
+                        foreach (var loc in trace)
+                            text.Append($"   at {DocumentOfSourceName(loc.SourceIndex)}line {loc.Line}\n");
+                    _output.Append(text.ToString());
+                    string where = trace is { Count: > 0 } ? $" ({DocumentOfSourceName(trace[0].SourceIndex)}line {trace[0].Line})" : "";
+                    UpdateStatus($"Runtime error{where}: {error}");
+                }
+                else
+                {
+                    ShowDebugLocation(null);
+                    UpdateStatus("Program finished.");
+                }
             }
             else
             {

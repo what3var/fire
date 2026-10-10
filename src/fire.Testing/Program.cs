@@ -818,6 +818,42 @@ catch (Exception ex) when (ex is ParseException or ResolverException or NotSuppo
 }
 
 Console.WriteLine();
+Console.WriteLine("=== Bytecode-Test: Stacktrace einer unbehandelten Exception ===");
+
+string traceSample = """
+class Oops {
+    string message
+    construct(string message) { this.message = message }
+}
+class Worker {
+    Fail() {
+        throw new Oops("deep")
+    }
+    Run() {
+        this.Fail()
+    }
+}
+var w = new Worker()
+w.Run()
+""";
+
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(traceSample);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes) { CaptureErrorTrace = true };
+    vm.Run();
+    var trace = vm.UnhandledTrace;
+    if (vm.UnhandledException == null || trace == null)
+        Console.WriteLine("FEHLER: unbehandelte Exception ohne Stacktrace");
+    else if (trace.Count < 3 || trace[0].Line != 7 || trace[1].Line != 10 || trace[2].Line != 14)
+        Console.WriteLine("FEHLER: Stacktrace falsch: " + string.Join(", ", trace.Select(t => t.Line)));
+    else
+        Console.WriteLine("Stacktrace ok: " + string.Join(" <- ", trace.Select(t => t.Line)));
+}
+
+Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: Interfaces + List (Prelude) + foreach ===");
 
 string listSample = """
@@ -16399,6 +16435,28 @@ else
     }).ToArray();
 
     // Graphics (bridges/fire_bridge_graphics.hpp)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Threads: Sleep in einer Methode eines globalen Objekts gibt die Sektion frei (Hauptprogramm wird nicht ausgehungert)", """
+            #import "time"
+            class W {
+                int n = 0
+                Wait(int ms) {
+                    var start = DateTime.UtcNow()
+                    while ((DateTime.UtcNow() - start).TotalMilliseconds < ms) { Sleep(2) }
+                    this.n = this.n + 1
+                }
+            }
+            var w = new W()
+            fire {
+                for (var i = 0; i < 20; i++) { w.Wait(40) }
+            }
+            Sleep(150ms)
+            print("main woke")
+            print("n>0: " + (w.n > 0))
+        """),
+    }).ToArray();
+
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Grafik: Framebuffer, Zeichnen, Palette, Blit, Fehler, Slicer (Konsole)", """

@@ -313,6 +313,24 @@ namespace fire.Runtime
         /// `throw new UncaughtScriptException(vm.UnhandledException)`.</summary>
         public ObjectInstance? UnhandledException { get; private set; }
 
+        /// <summary>When set (the editor debugger does), every `throw` records the call stack at the throw site
+        /// (innermost first) so that an UNHANDLED exception can be shown with a stack trace and its line marked.</summary>
+        public bool CaptureErrorTrace { get; set; }
+
+        /// <summary>Source locations (innermost first) of the throw site of the unhandled exception - only filled if
+        /// <see cref="CaptureErrorTrace"/> was on; the first entry is the line that threw.</summary>
+        public IReadOnlyList<(int SourceIndex, int Line)>? UnhandledTrace { get; private set; }
+
+        private List<(int SourceIndex, int Line)>? _lastThrowTrace;
+
+        private void RecordThrowTrace()
+        {
+            var trace = new List<(int SourceIndex, int Line)> { _currentChunk.GetLocation(_ip) };
+            foreach (var frame in _frames) // Stack enumerates top (innermost) first
+                trace.Add(frame.ReturnChunk.GetLocation(Math.Max(0, frame.ReturnIp - 1)));
+            _lastThrowTrace = trace;
+        }
+
         /// <summary>Queue shared across ALL VM instances/threads
         /// for unhandled fire-thread exceptions (see ThrowException),
         /// processed by the main thread at its next check point (see
@@ -4776,6 +4794,7 @@ namespace fire.Runtime
         private void ThrowException(Value exceptionValue)
         {
             var excInstance = RequireObjectInstance(exceptionValue, "throw");
+            if (CaptureErrorTrace) RecordThrowTrace();
 
             // The exception object still belongs to the throwing scope - it is
             // resolved at the (later, possibly delayed) unwinding. Without
@@ -4855,6 +4874,7 @@ namespace fire.Runtime
                 UnwindTo(boundary.FrameDepth, boundary.Scope);
                 _sp = boundary.StackPointer;
                 _callbackError = excInstance;
+                UnhandledTrace = _lastThrowTrace;
                 return;
             }
 
@@ -4866,6 +4886,7 @@ namespace fire.Runtime
             // to the main thread" (docs/THREADING_DESIGN.md 6.2).
             if (IsFireThreadVm)
             {
+                UnhandledTrace = _lastThrowTrace;
                 _pendingThreadExceptions.Enqueue(excInstance);
                 RaiseSignal();
                 // The global scope stays: the exception belongs to it (TakeGlobal above) and is still delivered to the main thread.
@@ -4879,6 +4900,7 @@ namespace fire.Runtime
             // thrown, Run() returns quite normally right afterwards via the next
             // CheckShutdownSignals check point).
             UnhandledException = excInstance;
+            UnhandledTrace = _lastThrowTrace;
             StopExecution();
         }
 
