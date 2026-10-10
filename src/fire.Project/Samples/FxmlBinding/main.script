@@ -15,14 +15,14 @@ class Person {
 }
 
 // The data context: what the {Binding ...} paths in Main.fxml look up.
-// A fresh object handed to a call belongs to the surrounding scope and would die with it: `take` gives it to the list (List.Add takes it from there).
+// A fresh `new` handed to a call belongs to the called function, and List.Add keeps it (it takes it over).
 class Model {
     List people
     construct() {
         this.people = new List()
-        this.people.Add(take new Person("Carol"))
-        this.people.Add(take new Person("alice"))
-        this.people.Add(take new Person("Bob"))
+        this.people.Add(new Person("Carol"))
+        this.people.Add(new Person("alice"))
+        this.people.Add(new Person("Bob"))
         this.UpdateSummary()
     }
     // a field, not a property: a binding watches fields (probe), so writing it updates the label
@@ -33,7 +33,7 @@ class Model {
 class PeopleWindow : MainBase {            // the inheritance is declared here, in the code-behind
     AddPerson(sender) {
         var model = this.dataContext
-        model.people.Add(take new Person("new person " + model.people.count))
+        model.people.Add(new Person("new person " + model.people.count))
         model.UpdateSummary()           // the label {Binding summary} follows
     }
 }

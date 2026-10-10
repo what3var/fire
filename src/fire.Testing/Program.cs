@@ -854,6 +854,42 @@ w.Run()
 }
 
 Console.WriteLine();
+Console.WriteLine("=== Bytecode-Test: Debugger pausiert an einer unbehandelten Exception und ignoriert sie (resume) ===");
+
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse("""
+class Oops {
+    string message
+    construct(string message) { this.message = message }
+}
+print("before")
+throw new Oops("ignored")
+print("after")
+""");
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes) { CaptureErrorTrace = true, PauseOnUnhandled = true };
+    var prevOut = Console.Out;
+    var capture = new StringWriter();
+    Console.SetOut(capture);
+    bool paused, ended, resumed;
+    try
+    {
+        bool more = vm.RunUntilEnd(() => false);
+        paused = !more && vm.IsPausedOnUnhandled && vm.UnhandledException != null && !vm.IsHalted;
+        resumed = vm.TryResumeUnhandled();
+        ended = !vm.RunUntilEnd(() => false) && vm.IsHalted && vm.UnhandledException == null;
+    }
+    finally { Console.SetOut(prevOut); }
+    string text = capture.ToString().Replace("\r", "");
+    if (!paused || !resumed || !ended || text != "before\nafter\n")
+        Console.WriteLine($"FEHLER: paused={paused} resumed={resumed} ended={ended} output='{text}'");
+    else
+        Console.WriteLine("Pause + Ignorieren ok");
+}
+
+Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: Interfaces + List (Prelude) + foreach ===");
 
 string listSample = """
@@ -12447,7 +12483,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckRf("Selektor: lambda member<T> enthaelt die Reflection des gewaehlten Mitglieds (Get/Set/Describe, verschachtelt, durchgereicht)", """
         class Address { string city; construct(string c) { this.city = c } }
-        class Person { string name; Address address; construct(string n, Address a) { this.name = n; this.address = a } }
+        class Person { string name; Address address; construct(string n, Address a) { this.name = n; this.address = a; try a.TakeTo(this) } }
         class W {
             static Show(lambda member<Person> sel, Person p) {
                 print(sel.Name + "=" + sel.Get(p) + " " + sel.Describe(p).TypeName + " " + sel.Path.length)
@@ -12898,7 +12934,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         } }
         T.Run(items, arr)
         print("end")
-        """, new[] { "True", "False", "False", "~la", "~lb", "~a1", "~a2", "end", "~fresh", "~mine", "~tmp" });
+        """, new[] { "True", "False", "True", "~la", "~lb", "~a1", "~a2", "end", "~fresh", "~tmp", "~mine" });
 
     CheckScChecked("TakeTo(list, Takes), TakeLocal", """
         class Item { string n
@@ -16437,6 +16473,37 @@ else
     // Graphics (bridges/fire_bridge_graphics.hpp)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
+        ("Besitz: ein `new` als Argument gehoert dem aufgerufenen Scope (list.Add(new X()) behaelt es per try TakeTo)", """
+            class Person {
+                string name
+                construct(string name) { this.name = name }
+            }
+            class Keeper {
+                class items
+                int count
+                construct() { this.items = new class[4]; this.count = 0 }
+                Add(class value) {
+                    try value.TakeTo(this)
+                    this.items[this.count] = value
+                    this.count = this.count + 1
+                }
+            }
+            class Holder {
+                Keeper k
+                List people
+                construct() {
+                    this.k = new Keeper()
+                    this.people = new List()
+                    this.k.Add(new Person("A"))
+                    this.people.Add(new Person("B"))
+                    this.people.Add(new Person("C"))
+                }
+            }
+            var h = new Holder()
+            print(h.k.items[0].name)
+            print(h.people.count)
+            print(h.people[0].name + h.people[1].name)
+        """),
         ("Threads: Sleep in einer Methode eines globalen Objekts gibt die Sektion frei (Hauptprogramm wird nicht ausgehungert)", """
             #import "time"
             class W {

@@ -255,6 +255,19 @@ namespace fire.Editor
         /// <summary>F8: the same as F5 (continue to the next breakpoint).</summary>
         private void Continue_Click(object? sender, RoutedEventArgs e) => Run_Click(sender, e);
 
+        /// <summary>After an unhandled error stopped the program at its `throw`: ignore it and go on right after the `throw` (like `resume()` in a `catch`).</summary>
+        private void IgnoreError_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_isBusy) return;
+            if (!_session.CanIgnoreError || !_session.IgnoreError())
+            {
+                UpdateStatus("There is no stopped error to ignore.");
+                return;
+            }
+            BeginStep();
+            _session.Continue(BreakpointLocations());
+        }
+
         private void RunToEnd_Click(object? sender, RoutedEventArgs e)
         {
             if (_session.Vm == null) CompileAndPrepare(null);
@@ -294,9 +307,10 @@ namespace fire.Editor
                     if (trace != null)
                         foreach (var loc in trace)
                             text.Append($"   at {DocumentOfSourceName(loc.SourceIndex)}line {loc.Line}\n");
+                    if (_session.CanIgnoreError) text.Append("   (Run > Ignore Error and Continue, Shift+F8, goes on after the throw)\n");
                     _output.Append(text.ToString());
                     string where = trace is { Count: > 0 } ? $" ({DocumentOfSourceName(trace[0].SourceIndex)}line {trace[0].Line})" : "";
-                    UpdateStatus($"Runtime error{where}: {error}");
+                    UpdateStatus($"Runtime error{where}: {error}" + (_session.CanIgnoreError ? "  -  Shift+F8 ignores it and continues" : ""));
                 }
                 else
                 {

@@ -910,6 +910,8 @@ namespace fire.Editor
                     StepOut_Click(this, e); e.Handled = true; break;
                 case Key.F11:
                     StepInto_Click(this, e); e.Handled = true; break;
+                case Key.F8 when shift:
+                    IgnoreError_Click(this, e); e.Handled = true; break;
                 case Key.F8:
                     Continue_Click(this, e); e.Handled = true; break;
                 case Key.F9:

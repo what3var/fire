@@ -323,12 +323,51 @@ namespace fire.Runtime
 
         private List<(int SourceIndex, int Line)>? _lastThrowTrace;
 
-        private void RecordThrowTrace()
+        /// <summary>Debugger mode: a `throw` that no `catch` in this VM would take does not unwind but PAUSES at the throw site
+        /// (<see cref="UnhandledException"/> is set, the stepping loops return as for a program end, but nothing is destroyed). The debugger can then
+        /// end the program or call <see cref="TryResumeUnhandled"/> to ignore the error and go on after the `throw`, like `resume()` in a `catch`.</summary>
+        public bool PauseOnUnhandled { get; set; }
+
+        private bool _unhandledPaused;
+        private Chunk? _pausedChunk;
+        private int _pausedIp;
+
+        /// <summary>true while the VM stands at the throw site of an unhandled exception (<see cref="PauseOnUnhandled"/>).</summary>
+        public bool IsPausedOnUnhandled => _unhandledPaused;
+
+        /// <summary>Ignores the paused unhandled exception: execution goes on right after the `throw` (which evaluates to `undefined`).
+        /// false if the VM is not paused on one.</summary>
+        public bool TryResumeUnhandled()
+        {
+            if (!_unhandledPaused) return false;
+            _unhandledPaused = false;
+            _stopExecutionRequested = false;
+            UnhandledException = null;
+            UnhandledTrace = null;
+            _currentChunk = _pausedChunk!;
+            _ip = _pausedIp;
+            _pausedChunk = null;
+            Push(Value.MakeUndefined());
+            return true;
+        }
+
+        private bool WouldBeCaught(ObjectInstance exc)
+        {
+            int floor = _callbackBoundaries.Count > 0 ? _callbackBoundaries.Peek().HandlerFloor : 0;
+            for (int i = _handlers.Count - 1; i >= floor; i--)
+                if (!_handlers[i].FinallyOnly && FindMatchingCatch(_handlers[i].Template, exc) != null) return true;
+            return false;
+        }
+
+        private void RecordThrowTrace() => _lastThrowTrace = CurrentTrace();
+
+        /// <summary>The current call stack as source locations, innermost first (for error reports of the debugger).</summary>
+        public List<(int SourceIndex, int Line)> CurrentTrace()
         {
             var trace = new List<(int SourceIndex, int Line)> { _currentChunk.GetLocation(_ip) };
             foreach (var frame in _frames) // Stack enumerates top (innermost) first
                 trace.Add(frame.ReturnChunk.GetLocation(Math.Max(0, frame.ReturnIp - 1)));
-            _lastThrowTrace = trace;
+            return trace;
         }
 
         /// <summary>Queue shared across ALL VM instances/threads
@@ -1125,6 +1164,7 @@ namespace fire.Runtime
             // Run() notices that via CheckShutdownSignals (deliberately NOT called here, see field documentation), so during step-by-step debugging
             // it has to be checked explicitly HERE, otherwise StepLine/StepInto/StepOut/Continue (all build on this
             // method) would simply keep running as if nothing had happened, instead of stopping cleanly.
+            if (_unhandledPaused) return false; // paused at the throw site: not ended, the debugger decides (TryResumeUnhandled)
             if (_stopExecutionRequested)
             {
                 FinishDeferredShutdown();
@@ -4795,6 +4835,18 @@ namespace fire.Runtime
         {
             var excInstance = RequireObjectInstance(exceptionValue, "throw");
             if (CaptureErrorTrace) RecordThrowTrace();
+
+            if (PauseOnUnhandled && _nestedDepth == 0 && _callbackBoundaries.Count == 0 && !WouldBeCaught(excInstance))
+            {
+                excInstance.TakeGlobal(_globalScope);
+                _pausedChunk = _currentChunk;
+                _pausedIp = _ip;
+                _unhandledPaused = true;
+                UnhandledException = excInstance;
+                UnhandledTrace = _lastThrowTrace;
+                StopExecution();
+                return;
+            }
 
             // The exception object still belongs to the throwing scope - it is
             // resolved at the (later, possibly delayed) unwinding. Without
