@@ -10507,6 +10507,36 @@ string[] uiDrawExpected = Array.Empty<string>();
                     "other other", "other2", "p4", "T1||True", "p4",
                 });
 
+            File.WriteAllText(P("Prop.fxml"), """
+                <View class="Prop1" width="300" height="100">
+                  <Panel width="300" height="100">
+                    <Label name="vol" x="5" y="5" text="{Binding Volume, Converter=Text}"/>
+                    <TextBox name="ed" x="5" y="30" width="120" text="{Binding Label, Mode=TwoWay}"/>
+                    <Label name="sum" x="5" y="60" text="{Binding Summary}"/>
+                  </Panel>
+                </View>
+                """);
+            CheckUi("Markup: Bindings auf Properties (get/set) - Setter loest aus, TwoWay schreibt ueber den Setter, berechnete Property liest nur", $$"""
+                #include "{{P("Prop.fxml")}}"
+                class Model {
+                    int _v = 1
+                    string _l = "a"
+                    Volume { get { return this._v } set { this._v = value } }
+                    Label { get { return this._l } set { this._l = value + "!" } }
+                    Summary { get { return this._l + this._v } }
+                }
+                var d = new Prop1Base()
+                var m = new Model()
+                d.SetDataContext(m)
+                print(d.vol.text + " " + d.ed.text + " " + d.sum.text)
+                m.Volume = 7
+                print(d.vol.text)
+                d.ed.text = "x"
+                print(m.Label + " " + d.ed.text)
+                m.Label = "y"
+                print(d.ed.text + " " + d.sum.text)
+                """, new[] { "1 a a1", "7", "x! x", "y! a1" });
+
             File.WriteAllText(P("Rich.fxml"), """
                 <Window class="Rich" title="Rich" width="480" height="320">
                   <Resources>
