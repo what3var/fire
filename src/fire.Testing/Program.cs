@@ -18929,6 +18929,21 @@ else
                         File.Exists(Path.Combine(unpacked, "include", "SDL2", "SDL.h")) && File.Exists(Path.Combine(unpacked, "bin", "SDL2.dll")) && File.Exists(Path.Combine(unpacked, "lib", "libSDL2.dll.a"))
                         && !Directory.Exists(Path.Combine(unpacked, "lib", "cmake")) && !Directory.Exists(Path.Combine(unpacked, "test")) && File.ReadAllText(Path.Combine(unpacked, "include", "SDL2", "SDL.h")) == "// header");
 
+                    // a download that was cut off: noticed before anything is unpacked (the tar reader alone would fail in the middle of a header: "Unable to read beyond the end of the stream")
+                    string cutArchive = Path.Combine(sdlDir, "cut.tar.gz");
+                    byte[] whole = File.ReadAllBytes(archive);
+                    File.WriteAllBytes(cutArchive, whole.Take(whole.Length - 40).ToArray());
+                    string cutTarget = Path.Combine(sdlDir, "SDL2cut");
+                    string? cutError = null;
+                    try { fire.Native.SdlSetup.Unpack(cutArchive, cutTarget); } catch (InvalidDataException ex) { cutError = ex.Message; }
+                    string headOnly = Path.Combine(sdlDir, "head.tar.gz");
+                    File.WriteAllBytes(headOnly, whole.Take(10).ToArray());
+                    string? shortError = null;
+                    try { fire.Native.SdlSetup.VerifyGzip(headOnly); } catch (InvalidDataException ex) { shortError = ex.Message; }
+                    CheckNat("SDL2: ein abgeschnittener Download wird erkannt, bevor etwas ausgepackt wird (klare Meldung, nichts angelegt)",
+                        cutError != null && cutError.Contains("incomplete") && !Directory.Exists(cutTarget) && !Directory.Exists(cutTarget + ".new") && shortError != null, cutError ?? "no error");
+                    fire.Native.SdlSetup.VerifyGzip(archive);
+
                     Environment.SetEnvironmentVariable("SDL2_DIR", unpacked);
                     var location = fire.Native.SdlSetup.Locate();
                     CheckNat("SDL2: SDL2_DIR wird zuerst gefunden (Include- und Lib-Ordner, SDL2.dll)",

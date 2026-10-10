@@ -174,15 +174,20 @@ namespace fire.Native
             {
                 using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
                 var (url, version) = FindDownload(http);
-                log?.Invoke($"Downloading {url} ...");
-                using (var request = new HttpRequestMessage(HttpMethod.Get, url))
+                // A connection (or a proxy, or a virus scanner) can cut the download short without an error; a package that is not complete is noticed here and fetched again.
+                const int attempts = 3;
+                for (int attempt = 1; ; attempt++)
                 {
-                    request.Headers.UserAgent.ParseAdd("fire-sdl-setup");
-                    using var response = http.Send(request, HttpCompletionOption.ResponseHeadersRead);
-                    response.EnsureSuccessStatusCode();
-                    using var input = response.Content.ReadAsStream();
-                    using var output = File.Create(temp);
-                    input.CopyTo(output);
+                    try
+                    {
+                        log?.Invoke(attempt == 1 ? $"Downloading {url} ..." : $"Downloading {url} again (attempt {attempt} of {attempts}) ...");
+                        Download(http, url, temp);
+                        break;
+                    }
+                    catch (Exception ex) when (attempt < attempts && ex is HttpRequestException or TaskCanceledException or IOException or InvalidDataException)
+                    {
+                        log?.Invoke("The download failed: " + ex.Message);
+                    }
                 }
                 log?.Invoke($"Unpacking SDL2 {version} to {Root} ...");
                 Unpack(temp, Root);
@@ -193,7 +198,7 @@ namespace fire.Native
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException or InvalidDataException)
             {
-                throw new InvalidOperationException("Installing SDL2 failed: " + ex.Message, ex);
+                throw new InvalidOperationException("Installing SDL2 failed: " + ex.Message + "\n" + HelpText, ex);
             }
             finally
             {
@@ -201,9 +206,52 @@ namespace fire.Native
             }
         }
 
+        /// <summary>Downloads <paramref name="url"/> into <paramref name="file"/> and checks that all of it arrived: the length the server announced, and the end of the gzip stream (see <see cref="VerifyGzip"/>).</summary>
+        private static void Download(HttpClient http, string url, string file)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.UserAgent.ParseAdd("fire-sdl-setup");
+            using var response = http.Send(request, HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+            long? expected = response.Content.Headers.ContentLength;
+            using (var input = response.Content.ReadAsStream())
+            using (var output = File.Create(file))
+                input.CopyTo(output);
+            long received = new FileInfo(file).Length;
+            if (expected is { } announced && received != announced) throw new IOException($"The download is incomplete ({received} of {announced} bytes).");
+            VerifyGzip(file);
+        }
+
+        /// <summary>Checks that a .gz file is whole: decompresses it and compares the number of bytes with the length that the trailer of the file states. (A gzip stream that is cut off
+        /// ends without an error in <see cref="GZipStream"/>; the tar reader would then fail in the middle of a header with "Unable to read beyond the end of the stream".)</summary>
+        public static void VerifyGzip(string file)
+        {
+            using var stream = File.OpenRead(file);
+            if (stream.Length < 18) throw new InvalidDataException($"The archive is incomplete or damaged ({stream.Length} bytes).");
+            var trailer = new byte[4];
+            stream.Seek(-4, SeekOrigin.End);
+            stream.ReadExactly(trailer, 0, 4);
+            uint stated = BitConverter.ToUInt32(trailer, 0);   // the size of the data modulo 2^32, little endian
+            stream.Seek(0, SeekOrigin.Begin);
+            long total = 0;
+            try
+            {
+                using var gzip = new GZipStream(stream, CompressionMode.Decompress, leaveOpen: true);
+                var buffer = new byte[81920];
+                int n;
+                while ((n = gzip.Read(buffer, 0, buffer.Length)) > 0) total += n;
+            }
+            catch (InvalidDataException ex)
+            {
+                throw new InvalidDataException("The archive is damaged: " + ex.Message, ex);
+            }
+            if ((uint)total != stated) throw new InvalidDataException("The archive is incomplete (the download was cut off).");
+        }
+
         /// <summary>Takes include/, lib/*.dll.a and bin/SDL2.dll of the 64-bit part (<c>SDL2-x.y.z/x86_64-w64-mingw32/</c>) out of the package.</summary>
         public static void Unpack(string archive, string destination)
         {
+            VerifyGzip(archive);   // (before anything is touched)
             string staging = destination + ".new";
             if (Directory.Exists(staging)) Directory.Delete(staging, true);
             Directory.CreateDirectory(staging);

@@ -150,6 +150,7 @@ namespace fire.Native
                         int percent = total > 0 ? (int)(done * 100 / total) : -1;
                         if (percent != lastPercent && (percent % 5 == 0 || percent < 0)) { lastPercent = percent; log?.Invoke(total > 0 ? $"Downloading... {percent}% ({done / 1048576} MB)" : $"Downloading... {done / 1048576} MB"); }
                     }
+                    if (total > 0 && done != total) throw new IOException($"The download is incomplete ({done} of {total} bytes). Check the connection (or a proxy / virus scanner) and try again.");
                 }
                 log?.Invoke($"Unpacking to {Root} ...");
                 if (Directory.Exists(W64devkitDirectory)) Directory.Delete(W64devkitDirectory, recursive: true);
