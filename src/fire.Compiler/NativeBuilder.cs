@@ -25,10 +25,34 @@ namespace fire.Compiler
         }
 
         /// <summary>Like <see cref="Generate"/>, and whether the program asked for the GUI subsystem (`#noconsole`, the project's subsystem).</summary>
-        public static (string Cpp, bool Gui) GenerateLinked(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null)
+        public static NativeProgram GenerateLinked(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null)
         {
             var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() }.CompileAndLink(sources, null, null, mode, floatWidth, target);
-            return (CppGenerator.Generate(linked, target), linked.GuiSubsystem);
+            return new NativeProgram(CppGenerator.Generate(linked, target), linked.GuiSubsystem, linked.VersionInfo, linked.IconPath);
+        }
+
+        /// <summary>The generated C++ and what the executable needs besides: the subsystem, the version info and the icon.</summary>
+        public sealed record NativeProgram(string Cpp, bool Gui, fire.Utilities.PeVersionInfo? VersionInfo, string? IconPath);
+
+        /// <summary>Writes version info and icon into a Windows executable the toolchain has made (the Win32 resource API; any other platform leaves the file alone).
+        /// A missing icon file is reported in the log instead of failing the build.</summary>
+        public static void ApplyPeMetadata(string exe, NativeProgram program, TargetProfile target, StringBuilder log)
+        {
+            if (target.Name != "windows" || !OperatingSystem.IsWindows() || !File.Exists(exe)) return;
+            try
+            {
+                if (program.VersionInfo != null) fire.Utilities.PeResourceEditor.SetVersionInfo(exe, program.VersionInfo);
+                if (!string.IsNullOrEmpty(program.IconPath))
+                {
+                    if (File.Exists(program.IconPath)) fire.Utilities.PeResourceEditor.SetIcon(exe, program.IconPath);
+                    else log.AppendLine($"Icon '{program.IconPath}' not found: the program keeps the default icon.");
+                }
+                log.AppendLine("Version info and icon written into the program.");
+            }
+            catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
+            {
+                log.AppendLine("Could not write version info/icon into the program: " + ex.Message);
+            }
         }
 
         /// <summary>Writes <paramref name="cpp"/> as <paramref name="fileName"/> into <paramref name="directory"/> with everything it includes: the runtime and the platform package of
@@ -52,7 +76,9 @@ namespace fire.Compiler
         public static NativeBuildResult Build(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
             VmExecutionMode? mode = null, int? floatWidth = null, bool keepSources = false, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null)
         {
-            var (cpp, gui) = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan);
+            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan);
+            string cpp = program.Cpp;
+            bool gui = program.Gui;
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
             var log = new StringBuilder();
 
@@ -96,6 +122,7 @@ namespace fire.Compiler
                 var (ok, text) = Run(exeName, arguments, workDir);
                 log.Append(text);
                 bool built = ok && File.Exists(exe);
+                if (built) ApplyPeMetadata(exe, program, target, log);
                 // a Windows program with a window needs SDL2.dll next to it
                 if (built && SdlSetup.IsRequiredBy(cppFile) && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain))) log.AppendLine("SDL2.dll copied next to the program.");
                 return new NativeBuildResult(built, exe, log.ToString());

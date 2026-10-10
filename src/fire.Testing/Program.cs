@@ -7511,6 +7511,12 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         var msvcCmd = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["msvc"], winTarget!, "p.cpp", sfDir, "p.exe", gui: true).Arguments;
         SfCheck(gccCmd.Contains("-mwindows") && !gccConsole.Contains("-mwindows"), "nativer Build (gcc): #noconsole setzt -mwindows, sonst nicht");
         SfCheck(msvcCmd.Contains("/SUBSYSTEM:WINDOWS") && msvcCmd.Contains("/ENTRY:mainCRTStartup"), "nativer Build (msvc): #noconsole setzt /SUBSYSTEM:WINDOWS");
+        // the native build carries version info and icon to the executable
+        var nativeInfo = fire.Compiler.NativeBuilder.GenerateLinked(new[] { "#name \"Demo\"\n#author \"ACME\"\n#version \"1.2.3.4\"\n#icon \"x.ico\"\nprint(\"x\")" }, TargetProfile.Host);
+        SfCheck(nativeInfo.VersionInfo != null && nativeInfo.VersionInfo.ProductVersion.ToString() == "1.2.3.4" && nativeInfo.IconPath == "x.ico", "nativer Build: Versionsinfo und Icon der Direktiven kommen beim Build an");
+        var applyLog = new System.Text.StringBuilder();
+        fire.Compiler.NativeBuilder.ApplyPeMetadata(Path.Combine(sfDir, "none.exe"), nativeInfo, winTarget!, applyLog);
+        SfCheck(applyLog.Length == 0, "nativer Build: eine fehlende Datei oder ein anderes System laesst die Metadaten in Ruhe");
         var noconsole = new Linker().CompileAndLink(new[] { "#noconsole\nprint(\"x\")" }, null, null);
         SfCheck(noconsole.GuiSubsystem && !linkedSf.GuiSubsystem, "der Linker meldet das Subsystem (#noconsole) an das gelinkte Programm");
     }
