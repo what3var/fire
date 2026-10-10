@@ -16635,6 +16635,27 @@ else
             print(h.people.count)
             print(h.people[0].name + h.people[1].name)
         """),
+        ("Besitz: ein Konstruktor uebernimmt ein `new`-Argument per take, TakeTo oder try TakeTo", """
+            class Part {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("~" + this.n) }
+            }
+            class ViaTake { Part p
+                construct(Part p) { this.p = take p } }
+            class ViaTakeTo { Part p
+                construct(Part p) { p.TakeTo(this); this.p = p } }
+            class ViaTry { Part p
+                construct(Part p) { this.p = p; try p.TakeTo(this) } }
+            class Lost { Part p
+                construct(Part p) { this.p = p } }
+            var a = new ViaTake(new Part("take"))
+            var b = new ViaTakeTo(new Part("takeTo"))
+            var c = new ViaTry(new Part("try"))
+            print(a.p.n + " " + b.p.n + " " + c.p.n)
+            var d = new Lost(new Part("lost"))
+            print("end")
+        """),
         ("Threads: Sleep in einer Methode eines globalen Objekts gibt die Sektion frei (Hauptprogramm wird nicht ausgehungert)", """
             #import "time"
             class W {
