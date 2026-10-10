@@ -2198,7 +2198,7 @@ supported" where the operating system owns the network. It needs `time`; scannin
 ### 8.27 Audio (`#import "audio"`)
 
 The package `fire-audio` (docs/AUDIO.md is the reference): `Audio.Output` (a sound device that plays 16 bit samples: `Write`/`Offer`, `Tone`, `Beep`, `Play(sound)`, `Drain`, `Stop`, volume), `Audio.Sound` (PCM in memory, read from a WAV file or generated), `Audio.Board` (the devices of the
-machine) and `Audio.Sim` (the simulated device `"sim"` that every platform has and that records what is played). PulseAudio or ALSA (whichever is there, loaded at run time) on Linux, winmm on Windows, PWM on a GPIO pin that the program chooses (`new Audio.Output(25)`) on an ESP32. It needs `time`:
+machine) and `Audio.Sim` (the simulated device `"sim"` that every platform has and that records what is played). PulseAudio or ALSA (whichever is there, loaded at run time) on Linux, winmm on Windows, SDL2 on macOS, PWM on a GPIO pin that the program chooses (`new Audio.Output(25)`) on an ESP32. It needs `time`:
 `Write` and `Drain` sleep between the questions, so a program stays abortable. Errors are `Audio.AudioException` (with a `code`) and subclasses.
 
 ### 8.28 Projects and solutions

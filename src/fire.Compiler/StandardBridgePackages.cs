@@ -298,6 +298,7 @@ namespace fire.Compiler
                         native.Reset = "audio::reset";
                         native.LinkLibraries["posix"] = new List<string> { "dl" };       // (PulseAudio and ALSA are loaded at run time: nothing to install to build, nothing to link but dlopen)
                         native.LinkLibraries["windows"] = new List<string> { "winmm" };   // waveOut
+                        native.LinkLibraries["macos"] = new List<string> { "SDL2" };      // macOS plays through SDL2 (the sound of the window package is SDL2 there, too): brew install sdl2
                     }
                     if (bridge == "net")
                     {

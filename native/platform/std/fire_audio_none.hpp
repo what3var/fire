@@ -1,4 +1,4 @@
-// fire native platform layer, audio part for a platform without sound output (macOS, a board without a package of its own, a Linux whose sound libraries are not installed is NOT this case: the
+// fire native platform layer, audio part for a platform without sound output (a board without a package of its own, a Linux whose sound libraries are not installed is NOT this case: the
 // Linux part finds that out when it is asked): the list of devices is empty and every call fails with "not supported". The simulated device `sim` of the bridge works everywhere. A platform package
 // offers `fire_audio.hpp` (the generated file defines FIRE_PLATFORM_AUDIO_HEADER for it) that provides, in fire::plat::audio:
 //

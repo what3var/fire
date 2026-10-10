@@ -6,7 +6,7 @@ Sound output: play samples, generate tones, play WAV files. Like every bridge it
 ```
 program        #import "audio"        Audio.Output, Audio.Sound, Audio.Board, Audio.Sim          (fire, package fire-audio)
 bridge         fire_bridge_audio.hpp  handles, volume, waves, errors, the simulated device       (C++, shared by VM and native)
-platform       plat::audio            open / write / queued / stop / close                       (Linux: PulseAudio or ALSA, Windows: winmm, ESP32: PWM, else: stub)
+platform       plat::audio            open / write / queued / stop / close                       (Linux: PulseAudio or ALSA, Windows: winmm, macOS: SDL2, ESP32: PWM, else: stub)
 ```
 
 ## Quick start
@@ -37,13 +37,16 @@ var speaker = new Audio.Output(25, 8000)           // ESP32: PWM on GPIO 25 at 8
 | `"pulse"`, `"pulse:<sink>"` | Linux | PulseAudio, optionally a named sink |
 | `"alsa"`, `"alsa:<pcm>"` | Linux | ALSA, the default PCM or a named one (`"alsa:plughw:1,0"`) |
 | `"default"`, a device name, or its number | Windows | the default device of the user (the wave mapper), or one that `Audio.Board.Devices()` lists |
+| `"default"`, a device name, or its number | macOS | SDL2's audio (see below) |
 | `"pwm:<gpio>"`, or just the number | ESP32 | PWM on that GPIO pin: `new Audio.Output(25)` is `new Audio.Output("pwm:25")` |
 | `"sim"` | everywhere | the simulated device (see below) |
 
 `Audio.Board.Devices()` lists the names ("sim" first), `Audio.Board.Available()` says whether the machine has a sound output at all. An unknown name is `Audio.NotFoundException`.
 
 **Linux** needs nothing to *build* a program: PulseAudio (`libpulse-simple.so.0`) and ALSA (`libasound.so.2`) are loaded with `dlopen` when they are first needed, so one binary runs on a machine with either, both or none (then
-`Audio.UnsupportedException`). The package asks for `-ldl` only. **Windows** links `winmm` (part of Windows). **macOS** has no backend yet (only `"sim"`).
+`Audio.UnsupportedException`). The package asks for `-ldl` only. **Windows** links `winmm` (part of Windows). **macOS** plays through **SDL2** (`brew install sdl2`; it is the same library the windows of the `windows` package use there, found like for them: `SDL2_DIR`, Homebrew, pkg-config), in its queue mode: SDL converts to what the
+device wants, `Audio.Board.Devices()` lists what SDL reports. The package links `-lSDL2` on macOS. Any other platform can choose the SDL2 backend as well by defining `FIRE_AUDIO_SDL` (and linking SDL2) - that is how it was tried on
+Linux with SDL's `dummy` driver (`SDL_AUDIODRIVER=dummy`); it has not been tried on a Mac yet.
 
 **ESP32 (PWM):** a LEDC channel with a 78 kHz carrier and 8 bit resolution drives the pin; a timer interrupt sets the duty cycle once per sample (rates 2000..48000 Hz; 8000..22050 are plenty for beeps, speech and
 melodies). Connect the pin through a small RC low-pass filter (for example 1 kOhm + 100 nF) to an amplifier, or drive a piezo; a speaker needs a transistor or an amplifier - never connect it to the pin directly. One output
@@ -80,5 +83,5 @@ with the real device name; the test suite uses it (VM and native build must agre
 ## How the platform layers work
 
 `plat::audio` (`native/platform/std/fire_audio_none.hpp` describes the interface): `open(name, rate, channels)`, `write` (takes what fits, never blocks), `queued`, `stop`, `close`. The bridge keeps the handle table, applies
-the volume and generates the waves. Linux: ALSA runs non-blocking (`snd_pcm_writei`, `-EAGAIN` means full, an underrun is recovered); PulseAudio's simple API only blocks, so each output has a thread that plays a ring buffer
+the volume and generates the waves. SDL2 (macOS): `SDL_QueueAudio`, kept to half a second ahead, `SDL_GetQueuedAudioSize` for `queued`. Linux: ALSA runs non-blocking (`snd_pcm_writei`, `-EAGAIN` means full, an underrun is recovered); PulseAudio's simple API only blocks, so each output has a thread that plays a ring buffer
 (all calls into PulseAudio are made by that thread, with a 200 ms buffer on the server and playback starting at once). Windows: blocks of 50 ms handed to `waveOutWrite`, free again when the driver sets the DONE flag.
