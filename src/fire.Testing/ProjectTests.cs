@@ -46,6 +46,34 @@ static class ProjectTests
 
     private static void RunIn(string root)
     {
+        // ---- the samples of Help > Samples ----
+        {
+            var samples = SampleCatalog.Load();
+            Check("Beispiele: die mitgelieferten Beispielprojekte werden gefunden (Titel, Beschreibung, Projektdatei)",
+                samples.Count >= 6 && samples.All(x => x.Title.Length > 0 && x.Description.Length > 0 && x.ProjectFile.EndsWith(".fireproj") && x.Open.Count > 0 && File.Exists(Path.Combine(x.Folder, x.Open[0]))), string.Join(", ", samples.Select(x => x.Name)));
+            string target = Path.Combine(root, "samples", "copy");
+            var hello = samples.First(x => x.Name == "HelloWorld");
+            string projectFile = SampleCatalog.CopyTo(hello, target);
+            Check("Beispiele: eine Kopie enthaelt das Projekt, aber nicht sample.json", File.Exists(projectFile) && File.Exists(Path.Combine(target, "main.script")) && !File.Exists(Path.Combine(target, "sample.json")), projectFile);
+            string again = "";
+            try { SampleCatalog.CopyTo(hello, target); } catch (ProjectException ex) { again = ex.Message; }
+            Check("Beispiele: in einen Ordner mit Inhalt wird nicht kopiert", again.Contains("not empty"), again);
+            var sampleWs = new Workspace();
+            sampleWs.Load(projectFile);
+            Check("Beispiele: die Kopie laesst sich als Projekt oeffnen", sampleWs.Projects.Count == 1, "");
+            // the console samples run in the VM
+            foreach (var sample in samples.Where(x => x.Name is "HelloWorld" or "Classes" or "Ownership" or "Threads"))
+            {
+                var lines = new List<string>();
+                try
+                {
+                    RuntimeSession.Build(new[] { File.ReadAllText(Path.Combine(sample.Folder, sample.Open[0])) }, null, args => { lines.Add(args.Length > 0 ? args[0].ToString()! : ""); return Value.MakeUndefined(); }).Run();
+                }
+                catch (Exception ex) { lines.Add("AUSNAHME " + Describe(ex)); }
+                Check($"Beispiele: {sample.Title} laeuft und gibt etwas aus", lines.Count >= 2 && !lines.Any(l => l.StartsWith("AUSNAHME")), string.Join("\n", lines));
+            }
+        }
+
         // ---- settings: the order of precedence ------------------------------------------------------------------------------------------
         var high = new ProjectSettings { Mode = "debug", Name = "P", Defines = new() { "A", "B" } };
         var low = new ProjectSettings { Mode = "release", FloatWidth = 32, Name = "S", Author = "me", Defines = new() { "B", "C" } };

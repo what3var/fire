@@ -1,0 +1,6 @@
+{
+  "title": "Classes and Exceptions",
+  "description": "Classes, inheritance, a constructor, ToString and try/catch.",
+  "open": [ "main.script" ],
+  "order": 20
+}

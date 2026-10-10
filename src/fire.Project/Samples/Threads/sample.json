@@ -1,0 +1,6 @@
+{
+  "title": "Threads",
+  "description": "fire blocks run in parallel; sync protects shared data.",
+  "open": [ "main.script" ],
+  "order": 40
+}

@@ -1,0 +1,20 @@
+#import "time"
+// Two fire threads count in parallel; the main program waits until both are done.
+class Counter {
+    int n = 0
+}
+var a = new Counter()
+var b = new Counter()
+var done = 0
+
+fire {
+    for (var i = 0; i < 1000; i++) { a.n = a.n + 1 }
+    done = done + 1
+}
+fire {
+    for (var i = 0; i < 2000; i++) { b.n = b.n + 1 }
+    done = done + 1
+}
+while (done < 2) { Sleep(5ms) }
+print("thread 1 counted " + a.n)
+print("thread 2 counted " + b.n)

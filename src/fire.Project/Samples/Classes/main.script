@@ -1,0 +1,45 @@
+// Classes, inheritance and exceptions.
+class Animal {
+    string name
+
+    construct(string name) { this.name = name }
+
+    string Sound() { return "..." }
+
+    string ToString() { return this.name + " says " + this.Sound() }
+}
+
+class Dog : Animal {
+    construct(string name) : base(name) { }
+    string Sound() { return "Woof" }
+}
+
+class Cat : Animal {
+    construct(string name) : base(name) { }
+    string Sound() { return "Meow" }
+}
+
+var animals = new List()
+animals.Add(new Dog("Rex"))
+animals.Add(new Cat("Tom"))
+for (var i = 0; i < animals.count; i++) {
+    print(animals[i])
+}
+
+class BadInput : Exception {
+    construct(string message) : base(message) { }
+}
+
+class Maths {
+    static int Divide(int a, int b) {
+        if (b == 0) { throw new BadInput("division by zero") }
+        return a / b
+    }
+}
+
+try {
+    print(Maths.Divide(10, 2))
+    print(Maths.Divide(1, 0))
+} catch (BadInput e) {
+    print("caught: " + e.message)
+}

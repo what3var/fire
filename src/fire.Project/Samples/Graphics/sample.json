@@ -1,0 +1,6 @@
+{
+  "title": "Graphics",
+  "description": "A window with shapes, text in two fonts and a translucent overlay.",
+  "open": [ "main.script" ],
+  "order": 50
+}

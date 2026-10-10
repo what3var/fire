@@ -1,0 +1,36 @@
+#import "ui"
+// The ui library: elements with layout, events and fonts (font / fontSize on any element).
+var fb = new Framebuffer(420, 300)
+var win = new Window(fb, "UI sample")
+var ui = new UI.Root(fb, win)
+
+var title = new UI.Label("Hello, UI", 12, 10)
+title.fontSize = 24
+title.font = "DejaVu Sans"         // not installed? then the console font is used
+ui.Add(title)
+
+var box = new UI.TextBox("type here", 12, 50, 200, 24)
+ui.Add(box)
+
+var shout = new UI.CheckBox("shout", 230, 52)
+ui.Add(shout)
+
+var list = new UI.ListBox(12, 90, 200, 120)
+list.Add("apple")
+list.Add("banana")
+list.Add("cherry")
+list.Select(0)
+ui.Add(list)
+
+var answer = new UI.Label("", 12, 260)
+ui.Add(answer)
+
+var button = new UI.Button("Greet", 230, 90, 90, 28)
+button.onClick = func () => {
+    var text = "Hello " + box.text + ", you chose " + list.selectedItem
+    if (shout.isChecked) { text = text + "!" }
+    answer.text = text
+}
+ui.Add(button)
+
+ui.Run()

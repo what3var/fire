@@ -204,6 +204,7 @@
 					<MenuItem Header="_Welcome..." Click="Welcome_Click"/>
 					<MenuItem Header="_First Steps" Click="HelpFirstSteps_Click"/>
 					<MenuItem Header="_Embedding fire in your Application" Click="HelpEmbedding_Click"/>
+					<MenuItem Header="_Samples..." Click="HelpSamples_Click"/>
 				</MenuItem>
 			</Menu>
 				<!-- the tool strips (ToolStrips/): each can be dragged by its grip to another place in the tray, into another tray at a window edge or out of the window (floating) -->

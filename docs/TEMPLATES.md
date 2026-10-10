@@ -133,3 +133,10 @@ mathkit/
   apart in the list, and opens the copy. Change the title in the `template.json` when you are done.
 * **Open My Templates Folder** - the folder `~/spark/templates` in the file manager (made, with `Code` and `Project`, when it is not there yet). A template that you make there by hand shows up the
   next time a list is opened - there is nothing to register.
+
+## Samples (Help > Samples...)
+
+The sample projects that ship with fire live in `src/fire.Project/Samples/<Name>/` (copied to `Samples\` next to the editor): an ordinary project folder (`<Name>.fireproj`, the scripts) plus an optional `sample.json`
+(`title`, `description`, `open` = the files to open afterwards, `order`). **Help > Samples...** lists them; *Open* copies the chosen sample (without `sample.json`) into a folder of your choice - proposed:
+`~/spark/samples/<Name>`, which must not exist or be empty - and opens the copy as a project, so the shipped files stay untouched. `SampleCatalog` (fire.Project) does the finding and copying.
+To add a sample, add a folder with a project file; the tests (ProjectTests) run the console samples in the VM. Present: HelloWorld, Classes, Ownership, Threads (console), Graphics, UI (window).

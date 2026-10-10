@@ -82,6 +82,21 @@ namespace fire.Editor
 
         private void HelpFirstSteps_Click(object? sender, RoutedEventArgs e) => OpenHelp("First Steps.md");
 
+        /// <summary>Help > Samples: copies a sample project that ships with fire into a folder of the user's choice and opens it.</summary>
+        private async void HelpSamples_Click(object? sender, RoutedEventArgs e)
+        {
+            var samples = SampleCatalog.Load();
+            if (samples.Count == 0) { await Dialogs.Message(this, "No samples were found next to the program.", "Samples"); return; }
+            var dialog = new SamplesDialog(samples);
+            if (await dialog.ShowDialog<bool?>(this) != true || dialog.Sample == null) return;
+            string project;
+            try { project = SampleCatalog.CopyTo(dialog.Sample, dialog.Location); }
+            catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "Samples"); return; }
+            if (!OpenWorkspace(project)) return;
+            foreach (string file in dialog.Sample.Open) OpenFile(Path.Combine(dialog.Location, file));
+            UpdateStatus($"Sample {dialog.Sample.Title} copied to {dialog.Location}.");
+        }
+
         private void HelpEmbedding_Click(object? sender, RoutedEventArgs e) => OpenHelp("Embedding.md");
 
         /// <summary>Opens a page of the Help folder (next to the executable) as a viewer.</summary>
