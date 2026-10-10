@@ -255,27 +255,44 @@ namespace fire.Native
             string staging = destination + ".new";
             if (Directory.Exists(staging)) Directory.Delete(staging, true);
             Directory.CreateDirectory(staging);
-            using (var file = File.OpenRead(archive))
-            using (var gzip = new GZipStream(file, CompressionMode.Decompress))
-            using (var tar = new TarReader(gzip))
+
+            var filesWritten = false;
+
+            try
             {
-                TarEntry? entry;
-                while ((entry = tar.GetNextEntry()) != null)
+
+                using (var file = File.OpenRead(archive))
+                using (var gzip = new GZipStream(file, CompressionMode.Decompress))
+                using (var tar = new TarReader(gzip))
                 {
-                    if (entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile) || entry.DataStream == null) continue;
-                    string name = entry.Name.Replace('\\', '/');
-                    int at = name.IndexOf(Triplet + "/", StringComparison.Ordinal);
-                    if (at < 0) continue;
-                    string relative = name.Substring(at + Triplet.Length + 1);
-                    bool wanted = relative.StartsWith("include/", StringComparison.Ordinal) || relative == "bin/SDL2.dll" || relative == "lib/libSDL2.dll.a";
-                    if (!wanted) continue;
-                    string target = Path.GetFullPath(Path.Combine(staging, relative));
-                    if (!target.StartsWith(Path.GetFullPath(staging) + Path.DirectorySeparatorChar, StringComparison.Ordinal)) continue;
-                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                    using var output = File.Create(target);
-                    entry.DataStream.CopyTo(output);
+                    TarEntry? entry;
+                    while ((entry = tar.GetNextEntry()) != null)
+                    {
+                        Debug.Print("tar: {0} ({1})\r\n", entry.Name, entry.EntryType);
+                        if (entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile) || entry.DataStream == null) continue;
+                        string name = entry.Name.Replace('\\', '/');
+                        int at = name.IndexOf(Triplet + "/", StringComparison.Ordinal);
+                        if (at < 0) continue;
+                        string relative = name.Substring(at + Triplet.Length + 1);
+                        bool wanted = relative.StartsWith("include/", StringComparison.Ordinal) || relative == "bin/SDL2.dll" || relative == "lib/libSDL2.dll.a";
+                        if (!wanted) continue;
+                        string target = Path.GetFullPath(Path.Combine(staging, relative));
+                        if (!target.StartsWith(Path.GetFullPath(staging) + Path.DirectorySeparatorChar, StringComparison.Ordinal)) continue;
+                        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                    
+                        using var output = File.Create(target);
+                        entry.DataStream.CopyTo(output);
+                        filesWritten = true;
+                    }
                 }
+
             }
+            catch(EndOfStreamException e)
+            {
+                if (!filesWritten)
+                    throw;
+            }
+
             if (Directory.Exists(destination)) Directory.Delete(destination, true);
             Directory.Move(staging, destination);
         }
