@@ -18547,6 +18547,10 @@ else
                         && fire.Package.Manager.Fpk.ReadManifest(built.First(f => Path.GetFileName(f).StartsWith("fire-linq-"))).Dependencies.Contains("fire-reflection"));
                     CheckNat("Bruecken-Pakete: beim Start werden fehlende installiert (mit Abhaengigkeiten), danach nichts mehr",
                         first.Count > 0 && bridgeStore.Installed().Count == fire.Package.Manager.StandardPackages.Bridges.Count && second.Count == 0 && bridgeStore.Find("fire-time") != null && bridgeStore.Find("fire-reflection") != null);
+                    var windowsPackage = bridgeStore.Find("fire-windows");
+                    CheckNat("Bruecken-Pakete: fire-windows bringt die Vorlage Desktop mit; sie steht nach dem Installieren im Katalog",
+                        windowsPackage != null && File.Exists(Path.Combine(windowsPackage.Directory, "templates", "Project", "Desktop", "template.json"))
+                        && fire.Projects.TemplateCatalog.Load(builtinRoot: Path.Combine(pkgDir, "none"), userRoot: Path.Combine(pkgDir, "none"), store: bridgeStore).Find(fire.Projects.TemplateScope.Project, "Desktop") is { } desktopTemplate && desktopTemplate.Source.Contains("fire-windows"));
                     string builtIn = vmOutput("#import \"time\"\nprint(TimeSpan.FromSeconds(90).TotalSeconds)");
                     CheckNat("Bruecken-Pakete: #import \"time\" nimmt weiter die eingebaute Bridge (kein doppelter Import)", builtIn == "90\n", builtIn);
                 }
@@ -18589,6 +18593,60 @@ else
                 {
                     var test = fire.Compiler.NativeBuilder.TestToolchain(detected.Toolchain);
                     CheckNat("Toolchain: der Test uebersetzt und startet ein kleines Programm", test.Ok, test.Log);
+                }
+            }
+
+            // SDL2 for a window: unpacking the MinGW package, finding it (SDL2_DIR), the compiler arguments, SDL2.dll next to the program
+            {
+                string sdlDir = Path.Combine(Path.GetTempPath(), "fire-sdl-test-" + Guid.NewGuid().ToString("N"));
+                string? savedSdl = Environment.GetEnvironmentVariable("SDL2_DIR");
+                try
+                {
+                    Directory.CreateDirectory(sdlDir);
+                    string archive = Path.Combine(sdlDir, "sdl.tar.gz");
+                    using (var gz = new System.IO.Compression.GZipStream(File.Create(archive), System.IO.Compression.CompressionLevel.Fastest))
+                    using (var tar = new System.Formats.Tar.TarWriter(gz))
+                    {
+                        void Add(string name, string text) => tar.WriteEntry(new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, name) { DataStream = new MemoryStream(System.Text.Encoding.ASCII.GetBytes(text)) });
+                        Add("SDL2-9.9.9/x86_64-w64-mingw32/include/SDL2/SDL.h", "// header");
+                        Add("SDL2-9.9.9/x86_64-w64-mingw32/bin/SDL2.dll", "dll");
+                        Add("SDL2-9.9.9/x86_64-w64-mingw32/lib/libSDL2.dll.a", "implib");
+                        Add("SDL2-9.9.9/x86_64-w64-mingw32/lib/cmake/SDL2/x.cmake", "skipped");
+                        Add("SDL2-9.9.9/i686-w64-mingw32/include/SDL2/SDL.h", "32 bit");
+                        Add("SDL2-9.9.9/test/testsprite.c", "skipped");
+                    }
+                    string unpacked = Path.Combine(sdlDir, "SDL2");
+                    fire.Native.SdlSetup.Unpack(archive, unpacked);
+                    CheckNat("SDL2: das MinGW-Paket wird ausgepackt (include, SDL2.dll, Import-Bibliothek des 64-Bit-Teils; nichts sonst)",
+                        File.Exists(Path.Combine(unpacked, "include", "SDL2", "SDL.h")) && File.Exists(Path.Combine(unpacked, "bin", "SDL2.dll")) && File.Exists(Path.Combine(unpacked, "lib", "libSDL2.dll.a"))
+                        && !Directory.Exists(Path.Combine(unpacked, "lib", "cmake")) && !Directory.Exists(Path.Combine(unpacked, "test")) && File.ReadAllText(Path.Combine(unpacked, "include", "SDL2", "SDL.h")) == "// header");
+
+                    Environment.SetEnvironmentVariable("SDL2_DIR", unpacked);
+                    var location = fire.Native.SdlSetup.Locate();
+                    CheckNat("SDL2: SDL2_DIR wird zuerst gefunden (Include- und Lib-Ordner, SDL2.dll)",
+                        location != null && location.IncludeDirs.Contains(Path.Combine(unpacked, "include")) && location.IncludeDirs.Contains(Path.Combine(unpacked, "include", "SDL2"))
+                        && location.LibDirs.Contains(Path.Combine(unpacked, "lib")) && location.RuntimeDll == Path.Combine(unpacked, "bin", "SDL2.dll"));
+
+                    string cpp = Path.Combine(sdlDir, "p.cpp");
+                    File.WriteAllText(cpp, "// fire-link: SDL2\nint main() { return 0; }\n");
+                    CheckNat("SDL2: das Programm bittet mit `// fire-link: SDL2` darum", fire.Native.SdlSetup.IsRequiredBy(cpp) && !fire.Native.SdlSetup.IsRequiredBy(Path.Combine(sdlDir, "none.cpp")));
+                    var (exeName, arguments) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], fire.Runtime.TargetProfile.Host, cpp, sdlDir, Path.Combine(sdlDir, "p.exe"));
+                    CheckNat("SDL2: der Compiler bekommt -I, -L und -lSDL2",
+                        arguments.Contains($"-I\"{Path.Combine(unpacked, "include")}\"") && arguments.Contains($"-L\"{Path.Combine(unpacked, "lib")}\"") && arguments.Contains("-lSDL2"), arguments);
+
+                    string program = Path.Combine(sdlDir, "out", "p.exe");
+                    Directory.CreateDirectory(Path.GetDirectoryName(program)!);
+                    bool copied = fire.Native.SdlSetup.CopyRuntimeNextTo(program, location);
+                    CheckNat("SDL2: SDL2.dll wird neben ein Windows-Programm gelegt (nicht neben ein anderes)",
+                        copied && File.Exists(Path.Combine(sdlDir, "out", "SDL2.dll")) && !fire.Native.SdlSetup.CopyRuntimeNextTo(Path.Combine(sdlDir, "out", "p"), location));
+
+                    string missing = fire.Native.SdlSetup.HelpText;
+                    CheckNat("SDL2: die Hilfe sagt, was zu tun ist (Linux, macOS, Windows, SDL2_DIR)", missing.Contains("libsdl2-dev") && missing.Contains("brew install sdl2") && missing.Contains("SDL2_DIR"));
+                }
+                finally
+                {
+                    Environment.SetEnvironmentVariable("SDL2_DIR", savedSdl);
+                    try { Directory.Delete(sdlDir, true); } catch (IOException) { }
                 }
             }
         }

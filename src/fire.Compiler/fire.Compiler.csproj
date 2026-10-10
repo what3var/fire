@@ -24,6 +24,13 @@
     <ProjectReference Include="..\fire.Project\fire.Project.csproj" />
   </ItemGroup>
 
+  <!-- The templates that a standard bridge brings with its package (PackageTemplates\<bridge>\{Code,Project}\..., docs/TEMPLATES.md): copied next to the compiler, packed by bridge-packages. -->
+  <ItemGroup>
+    <None Update="PackageTemplates\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- (the SDK leaves *.*proj files out of its default items) -->
+    <None Include="PackageTemplates\**\*.fireproj" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <Import Project="..\BridgePackages.targets" />
 
 </Project>

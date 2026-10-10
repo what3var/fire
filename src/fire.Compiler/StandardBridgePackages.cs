@@ -232,6 +232,13 @@ namespace fire.Compiler
         }
 
         /// <summary>Writes the package files into <paramref name="outputFolder"/> (replacing older ones) and returns their paths.</summary>
+        private static void CopyDirectory(string source, string target)
+        {
+            Directory.CreateDirectory(target);
+            foreach (string file in Directory.GetFiles(source)) File.Copy(file, Path.Combine(target, Path.GetFileName(file)), true);
+            foreach (string sub in Directory.GetDirectories(source)) CopyDirectory(sub, Path.Combine(target, Path.GetFileName(sub)));
+        }
+
         public static IReadOnlyList<string> Build(string outputFolder)
         {
             Directory.CreateDirectory(outputFolder);
@@ -278,6 +285,9 @@ namespace fire.Compiler
                         native.LinkLibraries["windows"] = new List<string> { "ws2_32" };
                     }
                     if (native.Sources.Count > 0) import.Native = native;
+                    // the templates of the bridge (PackageTemplates/<bridge>/{Code,Project}/...): `templates/` next to the forge file goes into the package
+                    string templateSource = Path.Combine(AppContext.BaseDirectory, "PackageTemplates", bridge);
+                    if (Directory.Exists(templateSource)) CopyDirectory(templateSource, Path.Combine(dir, Fpk.TemplatesEntry));
                     var manifest = new PackageManifest
                     {
                         Name = StandardPackages.PackageNameOf(bridge), Version = Version, Author = "fire",

@@ -132,9 +132,14 @@ The templates that ship with fire (folders in `Templates/Project`; yours and tho
 |---|---|
 | Empty | the solution only |
 | Terminal | a program for the console: prints `Hello, World!` |
-| Desktop | a program with a window (`subsystem: gui`): a label and a button with `#import "ui"` |
 | Library | a library with a class `Greeter` in `namespace {Name}`; no entry point |
 | Native Library | a library with C++ natives: `native/{name}.hpp` with an example function, wrapped by a class |
+
+The package **fire-windows** (the standard bridge `windows`, installed with fire) brings one more, in the same list marked `From fire-windows ...`:
+
+| template | makes |
+|---|---|
+| Desktop | a program with a window (`subsystem: gui`): a label and a button with `#import "ui"` |
 
 *File > New > Project...* (and *New Project...* in the context menu of the solution) asks for the same, with the **location** instead of a solution folder: the project gets a folder `{location}/{name}`. The location is
 proposed as the solution folder; a folder of the solution (*New Folder* on the solution or on a folder; folders that hold projects are shown, empty ones are kept in the solution file as

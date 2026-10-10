@@ -8,7 +8,7 @@
 
         <Button x:Name="btnInstall" Click="Install_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,6" Margin="0,0,0,8" IsDefault="True">
             <StackPanel>
-                <TextBlock Text="Install the toolchain automatically" FontWeight="SemiBold"/>
+                <TextBlock x:Name="txtInstallTitle" Text="Install the toolchain automatically" FontWeight="SemiBold"/>
                 <TextBlock x:Name="txtInstallHint" TextWrapping="Wrap" Opacity="0.75"/>
             </StackPanel>
         </Button>

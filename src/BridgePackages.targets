@@ -3,7 +3,7 @@
     After the build: the standard bridges (graphics, io, time, ...) are packaged (prelude + C++ sources, docs/PACKAGES.md) into the folder PackageSource of the output.
     spark, forge and ember install them from there when they start and they are not installed yet. Imported by fire.Compiler and fire.Editor (their output folders hold the compiler).
   -->
-  <Target Name="BuildBridgePackages" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' And Exists('$(TargetDir)fire.Compiler.dll')">
-    <Exec Command="dotnet &quot;$(TargetDir)fire.Compiler.dll&quot; bridge-packages &quot;$(TargetDir)PackageSource&quot;" ContinueOnError="true" StandardOutputImportance="low" />
+  <Target Name="BuildBridgePackages" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' And Exists('$(TargetDir)forge.dll')">
+    <Exec Command="dotnet &quot;$(TargetDir)forge.dll&quot; bridge-packages &quot;$(TargetDir)PackageSource&quot;" ContinueOnError="true" StandardOutputImportance="low" />
   </Target>
 </Project>

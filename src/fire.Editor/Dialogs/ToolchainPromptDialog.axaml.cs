@@ -14,10 +14,11 @@ namespace fire.Editor
         {
             InitializeComponent();
             txtMessage.Text = request.Message;
+            Title = request.IsToolchain ? "C++ toolchain needed" : request.Component + " needed";
+            txtInstallTitle.Text = request.IsToolchain ? "Install the toolchain automatically" : $"Install {request.Component} automatically";
             btnInstall.IsEnabled = request.CanInstall;
-            txtInstallHint.Text = request.CanInstall
-                ? $"w64devkit is downloaded ({ToolchainSetup.DownloadSizeHint}) and kept locally in {request.InstallDirectory}. Nothing is installed on the system."
-                : "Only available on Windows. Install a C++ compiler with the package manager of your system.";
+            btnChange.IsEnabled = request.AllowChange;
+            txtInstallHint.Text = request.InstallHint;
         }
 
         private void Install_Click(object? sender, RoutedEventArgs e) { Choice = ToolchainChoice.Install; Close(true); }

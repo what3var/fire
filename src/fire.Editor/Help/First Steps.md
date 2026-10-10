@@ -7,7 +7,9 @@ Welcome to **spark**, the editor for the **fire** scripting language. This page 
 - [Variables, types and units](#variables-types-and-units)
 - [Control flow and functions](#control-flow-and-functions)
 - [Classes](#classes)
+- [Ownership in depth](#ownership-in-depth)
 - [Errors and exceptions](#errors-and-exceptions)
+- [Threads](#threads)
 - [Debugging](#debugging)
 - [Talking to devices](#talking-to-devices)
 - [Documenting your code](#documenting-your-code)
@@ -129,7 +131,7 @@ var d = new Dog("Rex")
 d.Speak()
 ```
 
-fire has no garbage collector. Instead every object has exactly **one owner** (the scope that created it, unless you hand it to someone else) and is destroyed together with its owner. A destructor runs when that happens:
+fire has no garbage collector. Instead every object has exactly **one owner** (the scope that created it, unless you hand it to someone else) and is destroyed together with its owner. A destructor runs when that happens ([more on ownership below](#ownership-in-depth)):
 
 ```fire
 class Resource {
@@ -142,6 +144,130 @@ class Resource {
 }                       // the block ends, so r is destroyed here
 print("after")          // prints: opened, closed, after
 ```
+
+## Ownership in depth
+
+The ownership model is the heart of fire, so it is worth a closer look. The rules are short:
+
+- Every object has **exactly one owner**: a *scope* (a block, a function call, the whole program) or *another object*.
+- When the owner goes away - the block ends, the function returns, the owning object is destroyed - everything it owns is destroyed with it: an object's `destruct()` runs, then what *it* owns is destroyed, and so on down the tree.
+- Arrays and byte buffers have an owner, too. Numbers, `bool`, `char` and strings are plain values and have none.
+
+**Who owns a new object?** An object that you assign **directly to a field** belongs to the object that has the field. Everywhere else - a local variable, an argument, a return value - it belongs to the **current scope**:
+
+```fire
+class Engine {
+    destruct() { print("engine destroyed") }
+}
+
+class Car {
+    Engine engine
+
+    construct() {
+        this.engine = new Engine()      // assigned to a field: the car owns it
+    }
+
+    destruct() { print("car destroyed") }
+}
+
+{
+    var car = new Car()
+    print("driving")
+}                                       // the block ends: the car, then its engine, are destroyed
+print("done")                           // prints: driving, car destroyed, engine destroyed, done
+```
+
+**Returning an object hands it to the caller.** A value that is returned does not die with the function that made it; it (and what hangs on it) passes to the scope that called the function. Everything else the function created is destroyed when it returns:
+
+```fire
+class Part {
+    string name
+    construct(string name) { this.name = name }
+    destruct() { print(this.name + " destroyed") }
+}
+
+var make = (string name) => {
+    var scratch = new Part("scratch")   // stays inside: destroyed at the return
+    var result = new Part(name)
+    return result                       // leaves the function: now owned by the caller
+}
+
+var part = make("gear")
+print("got " + part.name)               // prints: scratch destroyed, got gear (and gear destroyed at the end)
+```
+
+**Handing ownership over.** A *reference* never keeps an object alive - `this.part = p` only remembers where `p` is. If the object has to outlive the scope it belongs to, move it to an owner that lives on:
+
+| Call | The new owner is |
+| --- | --- |
+| `obj.TakeLocal()` | the current scope |
+| `obj.TakeUpwards()` | the parent of the scope that owns it now |
+| `obj.TakeGlobal()` | the global scope |
+| `obj.TakeTo(other)` | the object `other` |
+| `take obj` | whoever receives it: an argument `f(take obj)` belongs to the call, `field = take obj` to the object, `var a = take obj` to the current scope |
+
+```fire
+class Holder {
+    Part part
+
+    Keep(Part p) {
+        p.TakeTo(this)          // the holder owns p from now on
+        this.part = p
+    }
+
+    destruct() { print("holder destroyed") }
+}
+
+var holder = new Holder()
+{
+    var p = new Part("p")
+    holder.Keep(p)
+}                               // p's block ends, but p now belongs to the holder
+print("p is alive: " + holder.part.name)
+```
+
+At the end of the program this prints `holder destroyed` and then `p destroyed`. Moving an object below itself (`a.TakeTo(b)` where `b` already belongs to `a`) is an error instead of a cycle.
+
+By default only the object itself moves (what it owns goes along anyway). A second argument, the enum `Takes`, widens that: `TakeTo(other, Takes.Children)` also takes everything the object points to directly (for a list: its items), `Takes.Locals` everything reachable that belongs to the running call, `Takes.All` everything reachable. And `try obj.TakeTo(this)` moves the object **only if the caller is its owner** - so a library can keep what was just handed to it without stealing from somebody else.
+
+**Destroying on purpose.** `delete obj` destroys an object, array or buffer right away, exactly as if its owner had gone away: the destructor runs and everything it owns is destroyed. Using a destroyed object afterwards is a catchable error:
+
+```fire
+class Note {
+    string text
+    construct(string text) { this.text = text }
+}
+
+var note = new Note("hi")
+delete note
+try {
+    print(note.text)
+} catch (e) {
+    print("caught: " + e.message)       // caught: Access to a destroyed object.
+}
+```
+
+**Copies.** `flat x` makes a shallow copy (the object and its fields; objects it points to are shared), `copy x` a deep one (every reachable object once). The copy is a new object with an owner of its own, chosen by the same rules as for `new`:
+
+```fire
+class Item {
+    int value
+    construct(int value) { this.value = value }
+}
+class Box {
+    Item item
+    construct(int v) { this.item = new Item(v) }
+}
+
+var a = new Box(1)
+var shallow = flat a        // a new Box, but the same Item
+var deep = copy a           // a new Box and a new Item
+a.item.value = 99
+print(shallow.item.value)   // 99 - shared
+print(deep.item.value)      // 1  - independent
+```
+
+Careful with objects that hold something outside the program, like an open file: a copy shares the handle, and both close it when they are destroyed. The full rules are in the language specification, chapter 2.
 
 ## Errors and exceptions
 
@@ -156,6 +282,108 @@ try {
 ```
 
 Errors are objects that you can catch with `catch`. Unlike in most languages, a handler can also **resume** the failed operation after fixing the problem.
+
+## Threads
+
+fire has no shared memory between threads, so there are no data races on ordinary objects. Threads talk through **copies** that are synchronised on request, and through **actors** that receive messages.
+
+**`fire`** starts a new thread. It has no return value and ends at the end of its block (or earlier with `leave`). The program itself waits at its end for all running threads:
+
+```fire
+fire {
+    print("hello from a fire thread")
+}
+print("main goes on")           // which line comes first is up to the scheduler
+```
+
+**`taking`** gives the thread a private **deep copy** of an object (and everything that object owns). Changes made in the thread are invisible to the rest of the program - until the thread says `sync`, which writes the copy back to the original (the last writer wins):
+
+```fire
+#import "time"
+
+class Counter {
+    int value
+    construct() { this.value = 10 }
+}
+
+var counter = new Counter()
+fire taking counter {
+    counter.value = counter.value + 5       // changes the thread's own copy
+    print("thread: " + counter.value)       // thread: 15
+    sync counter                            // write the copy back to the original
+}
+Sleep(200ms)
+print("main: " + counter.value)             // main: 15 (without the sync it would stay 10)
+```
+
+`sync` is an expression: `true` when it worked, `undefined` if the original no longer exists (a good moment for the thread to `leave`). `try sync counter` does not wait for a busy lock and gives `false` instead, and `sync flat counter` writes back only the direct fields instead of the whole tree. A copy must not point to objects outside its own ownership tree - `taking` refuses with an error rather than silently sharing memory.
+
+**Actors** are the other way to communicate. An `actor` is declared like a class, but a method call on it is not run directly: it becomes a **message** in the actor's mailbox. The thread that created the actor (its *home thread*) runs the messages with `process`:
+
+```fire
+actor Logger {
+    int count
+
+    construct() { this.count = 0 }
+
+    log(string text) {
+        this.count++
+        print("log: " + text)
+    }
+}
+
+var logger = new Logger()
+fire with logger {
+    logger.log("one")                       // only posts a message
+    logger.log("two")
+}
+process logger                              // waits for a message and runs it
+process logger
+print("messages: " + logger.count)          // messages: 2
+```
+
+References to an actor can be passed around freely (`fire with logger`) - that is the one controlled exception to "no shared memory". `try process logger` does not wait: it gives `true` if it ran a message and `false` if the mailbox was empty, so the home thread can mix its own work with answering messages.
+
+**Global variables** belong to the main program. A thread can *read* them directly, but a *change* has to go through the main program: a thread that assigns a global waits until the main program lets it in, one writer at a time. A `sync global { ... }` block groups several changes into one atomic step:
+
+```fire
+#import "time"
+
+var total = 0
+for (var i = 0; i < 3; i++) {
+    fire taking i {
+        sync global { total = total + i }   // read-modify-write as one step
+    }
+}
+Sleep(300ms)
+print(total)                                // 3
+```
+
+The main program serves the waiting threads by itself at safe points, for example after `Sleep` or a window event. If you want to decide where globals may change, write `#nosync` at the top of the program; then only an explicit `sync globals` (and the end of the program) lets the threads in. `fire global { ... }` is the non-waiting variant: the thread queues a job that the main program runs at its next `sync globals`.
+
+**Ending threads.** `leave` ends the thread that executes it (its `finally` blocks and destructors still run); `terminate()` or `terminate(42)` ends **all** threads and the program, from anywhere. An exception that nobody catches in a thread does not vanish: it is delivered to the main program, where you can catch it with `catch threads(...)` (without it the program stops):
+
+```fire
+#import "time"
+
+class Failure {
+    string message
+    construct(string message) { this.message = message }
+}
+
+catch threads(Failure e)
+{
+    print("a thread failed: " + e.message)
+}
+
+fire {
+    throw new Failure("boom")
+}
+Sleep(200ms)
+print("main is fine")
+```
+
+The main program also has `catch terminate(v) { ... }`, a last hook that sees the value given to `terminate` and cannot stop the shutdown. The details are in the threading design document (`docs/THREADING_DESIGN.md`) and in the language specification.
 
 ## Debugging
 

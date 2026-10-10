@@ -82,11 +82,17 @@ namespace fire.Compiler
                         return new NativeBuildResult(false, exe, $"The compiler '{toolchain.EffectiveCompiler}' was not found. Install it, name another one in the toolchain of {NativeConfig.FileName}, or build with the toolchain 'files' and compile the sources yourself.");
                     toolchain = provided;
                 }
+                // a window needs the development files of SDL2: look for them, offer to download them (Windows)
+                if (ToolchainProvider.RequireLibraries(toolchain, cppFile) is { } missingLibrary)
+                    return new NativeBuildResult(false, exe, missingLibrary);
                 var (exeName, arguments) = CompilerCommand(toolchain, target, cppFile, workDir, exe);
                 log.AppendLine($"{exeName} {arguments}");
                 var (ok, text) = Run(exeName, arguments, workDir);
                 log.Append(text);
-                return new NativeBuildResult(ok && File.Exists(exe), exe, log.ToString());
+                bool built = ok && File.Exists(exe);
+                // a Windows program with a window needs SDL2.dll next to it
+                if (built && SdlSetup.IsRequiredBy(cppFile) && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain))) log.AppendLine("SDL2.dll copied next to the program.");
+                return new NativeBuildResult(built, exe, log.ToString());
             }
             finally
             {
@@ -119,6 +125,13 @@ namespace fire.Compiler
                         if (!libs.Contains(flag)) libs.Add(flag);
                     }
             var includes = (toolchain.IncludeDirs ?? new()).Concat(extraIncludeDirs ?? Array.Empty<string>()).ToList();
+            var libDirs = new List<string>();
+            // SDL2: where its headers and import library are (Toolchain\SDL2, SDL2_DIR, the prefix of the compiler, the system), see SdlSetup
+            if (kind != "custom" && libs.Any(l => l is "-lSDL2" or "SDL2.lib") && SdlSetup.Locate(toolchain) is { } sdl)
+            {
+                includes.AddRange(sdl.IncludeDirs.Where(d => !includes.Contains(d)));
+                libDirs.AddRange(sdl.LibDirs);
+            }
             if (kind == "custom")
             {
                 string template = toolchain.Command ?? throw new NativeConfigException("a custom toolchain needs a command");
@@ -139,6 +152,7 @@ namespace fire.Compiler
                 foreach (string d in includes) args.Append($"/I\"{d}\" ");
                 args.Append($"/Fe:\"{exe}\" /Fo:\"{Path.Combine(includeDir, "fire_program.obj")}\"");
                 foreach (string l in libs) args.Append(' ').Append(l);
+                if (libDirs.Count > 0) args.Append(" /link").Append(string.Concat(libDirs.Select(d => $" /LIBPATH:\"{d}\"")));
             }
             else
             {
@@ -150,6 +164,7 @@ namespace fire.Compiler
                 args.Append($"\"{cppFile}\" -I\"{includeDir}\" ");
                 foreach (string d in includes) args.Append($"-I\"{d}\" ");
                 args.Append($"-o \"{exe}\"");
+                foreach (string d in libDirs) args.Append($" -L\"{d}\"");
                 foreach (string l in libs) args.Append(' ').Append(l);
             }
             string exeName = ToolchainDetector.Find(toolchain) ?? toolchain.EffectiveCompiler;

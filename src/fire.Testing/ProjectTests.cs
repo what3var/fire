@@ -240,7 +240,7 @@ static class ProjectTests
         FireTemplate Tpl(TemplateScope scope, string title) => catalog.Find(scope, title) ?? throw new InvalidOperationException("no template " + title);
         Check("Vorlagen: Namen werden geprueft", ProjectTemplates.CheckName("Ok Name") == null && ProjectTemplates.CheckName("") != null && ProjectTemplates.CheckName("a/b") != null && ProjectTemplates.CheckName(".x") != null);
         Check("Vorlagen: der vorgeschlagene Ordner ist $HOME/spark/{Name}", ProjectTemplates.DefaultSolutionFolder("Demo") == Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "spark", "Demo"));
-        Check("Vorlagen: fuer die Mappe mit 'Empty', fuer ein Projekt ohne", catalog.Projects().Count() == 5 && catalog.Projects().First().Empty && catalog.Projects(includeEmpty: false).Count() == 4 && catalog.Projects().All(x => x.Source == "Local"), string.Join(",", catalog.Projects().Select(x => x.Display)));
+        Check("Vorlagen: fuer die Mappe mit 'Empty', fuer ein Projekt ohne", catalog.Projects().Count() == 4 && catalog.Projects().First().Empty && catalog.Projects(includeEmpty: false).Count() == 3 && catalog.Projects().All(x => x.Source == "Local"), string.Join(",", catalog.Projects().Select(x => x.Display)));
 
         var empty = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Empty"), Path.Combine(t, "E"), "E");
         Check("Vorlagen: leer = eine Mappe ohne Projekt", empty.Solution != null && empty.Projects.Count == 0 && File.Exists(Path.Combine(t, "E", "E.firesln")) && !Directory.Exists(Path.Combine(t, "E", "E")));
@@ -250,7 +250,10 @@ static class ProjectTests
             File.Exists(Path.Combine(t, "T", "T.firesln")) && File.Exists(Path.Combine(t, "T", "T", "T.fireproj")) && File.Exists(Path.Combine(t, "T", "T", "main.script")) && terminal.Projects.Count == 1 && terminal.Projects[0].Name == "T");
         Check("Vorlagen: Terminal gibt Hello, World! aus", RunPlan(BuildPlan.Create(terminal, terminal.Projects[0])).Trim() == "Hello, World!");
 
-        var desktop = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Desktop"), Path.Combine(t, "D"), "D");
+        // Desktop comes with the package fire-windows (PackageTemplates/windows, packed by bridge-packages); the folder has the same layout as a Templates folder
+        var windowsTemplates = TemplateCatalog.Load(builtinRoot: Path.Combine(AppContext.BaseDirectory, "PackageTemplates", "windows"), userRoot: Path.Combine(root, "no-user-templates"), store: new fire.Package.Manager.PackageStore(Path.Combine(root, "no-packages")));
+        Check("Vorlagen: Desktop gehoert zum Paket fire-windows, nicht zu den eingebauten", catalog.Find(TemplateScope.Project, "Desktop") == null && windowsTemplates.Find(TemplateScope.Project, "Desktop") != null);
+        var desktop = Workspace.CreateSolution(windowsTemplates.Find(TemplateScope.Project, "Desktop") ?? throw new InvalidOperationException("no template Desktop"), Path.Combine(t, "D"), "D");
         var desktopPlan = BuildPlan.Create(desktop, desktop.Projects[0]);
         Check("Vorlagen: Desktop ist ein Programm ohne Konsole und uebersetzt", desktop.Projects[0].Project.Settings.Subsystem == "gui" && desktopPlan.IsValid && Ok(() => ProjectBuilder.Check(desktopPlan)), string.Join("\n", desktopPlan.Errors) + Catch(() => ProjectBuilder.Check(desktopPlan)));
 

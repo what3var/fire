@@ -2,6 +2,10 @@
 // What it shows is the same as the VM's window (src/fire.Terminal.Sdl): the framebuffer as a streaming texture (R,G,B,A in memory = ABGR8888 on little endian),
 // stretched to the window, which can be resized; positions come back in framebuffer pixels; closing the window ends `Tick`.
 #pragma once
+// the program has its own main(): SDL must not rename it to SDL_main (that would need SDL2main and -lmingw32 on Windows)
+#ifndef SDL_MAIN_HANDLED
+#  define SDL_MAIN_HANDLED
+#endif
 #if defined(__has_include)
 #  if __has_include(<SDL2/SDL.h>)
 #    include <SDL2/SDL.h>
@@ -26,6 +30,7 @@ public:
     bool open(const std::string& title, int width, int height, bool vsync) {
         vsync_ = vsync;
         winW_ = width; winH_ = height;
+        SDL_SetMainReady();
         if (SDL_WasInit(SDL_INIT_VIDEO) == 0 && SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) return false;
         ownsVideo_ = true;
         window_ = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height, SDL_WINDOW_RESIZABLE);
