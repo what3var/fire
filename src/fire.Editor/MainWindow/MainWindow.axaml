@@ -163,6 +163,7 @@
 					<MenuItem Header="Step O_ut" Click="StepOut_Click" InputGesture="Shift+F11"/>
 					<MenuItem Header="C_ontinue (like F5)" Click="Continue_Click" InputGesture="F8"/>
 					<MenuItem Header="Run to _End (ignore breakpoints)" Click="RunToEnd_Click"/>
+					<MenuItem Header="_Ignore Error and Continue" Click="IgnoreError_Click" InputGesture="Shift+F8"/>
 					<MenuItem Header="S_top" Click="Stop_Click" InputGesture="Shift+F5"/>
 					<Separator/>
 					<MenuItem Header="Debug" ToggleType="CheckBox" x:Name="mnuRunDebug" Click="mnuRunDebug_Click"/>

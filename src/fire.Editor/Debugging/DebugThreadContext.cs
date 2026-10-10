@@ -41,6 +41,22 @@ namespace fire.Editor
         public bool IsFinished { get; private set; }
         public string? RuntimeError { get; private set; }
 
+        /// <summary>Throw-site locations (innermost first) of the unhandled script exception, if any.</summary>
+        public IReadOnlyList<(int SourceIndex, int Line)>? ErrorTrace => _internalErrorTrace ?? Vm.UnhandledTrace;
+        private IReadOnlyList<(int SourceIndex, int Line)>? _internalErrorTrace;
+
+        /// <summary>true while this thread stands at the throw site of an unhandled script exception and could ignore it.</summary>
+        public bool CanIgnoreError => Vm.IsPausedOnUnhandled;
+
+        /// <summary>Ignores the unhandled exception and makes the thread runnable again right after the `throw` (like `resume()`).</summary>
+        public bool IgnoreError()
+        {
+            if (!Vm.TryResumeUnhandled()) return false;
+            RuntimeError = null;
+            IsFinished = false;
+            return true;
+        }
+
         /// <summary>Raised as soon as this thread has finished a requested
         /// step - fires on THIS thread's OWN
         /// background thread, NEVER on the UI thread; the subscriber must
@@ -57,6 +73,8 @@ namespace fire.Editor
         private DebugThreadContext(VM vm, string name, bool isMain)
         {
             Vm = vm;
+            vm.CaptureErrorTrace = true;
+            vm.PauseOnUnhandled = true; // stack trace + line marking for unhandled script errors
             Name = name;
             IsMain = isMain;
 
@@ -181,6 +199,7 @@ namespace fire.Editor
                 // longer via this catch branch.
                 Debug.WriteLine($"{ex.Message}\r\n{ex.StackTrace}");
                 RuntimeError = ex.Message;
+                try { _internalErrorTrace = Vm.CurrentTrace(); } catch { }
                 IsFinished = true;
             }
             _pendingStep = null; // after this run: NOT automatically continue, but wait for the next explicit instruction

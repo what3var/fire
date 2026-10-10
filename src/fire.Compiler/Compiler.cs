@@ -2116,8 +2116,9 @@ namespace fire.Compiler
                 else
                 {
                     CompileExpr(args[i]);
-                    // `f(g())`: the returned value goes into the parameter, so it belongs to the called function (SPEC 2.1), not to the caller
-                    if (scopeCreating && i < 16 && args[i] is CallExpr) mask |= 4UL << (4 * i);
+                    // `f(g())`, `f(new X())`: the returned / freshly made value goes into the parameter (the caller holds no reference to it), so it belongs
+                    // to the called function (SPEC 2.1), not to the caller
+                    if (scopeCreating && i < 16 && args[i] is CallExpr or NewExpr or NewArrayExpr) mask |= 4UL << (4 * i);
                 }
             }
             return mask;

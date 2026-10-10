@@ -347,6 +347,9 @@ keinen Snapshot und keine Kopie mehr:
   genauso überschrieben wie Objekte.
 - **Methodenaufrufe** eines Fire-Threads auf ein Objekt des geteilten Bereichs laufen als Ganzes in einer Sektion (auch deren Lesen-Ändern-
   Schreiben ist damit atomar). Statische Methoden und Methoden von Objekten, die dem Thread selbst gehören, nicht.
+  **Ausnahme `Sleep`:** schläft der Thread innerhalb einer solchen Methode, gibt er seine Sektion für die Dauer des Schlafs frei und nimmt sie danach
+  wieder (sonst würde ein Thread, der in einer Methode pollt - z.B. `TryAccept` -, das Hauptprogramm aushungern, das Sektionen nur beim Warten
+  vergibt). Atomar ist die Methode also nur bis zum nächsten `Sleep`.
 - **`sync globals`** ist ein Ausdruck (liefert die Anzahl der bearbeiteten Einträge) und gilt im Hauptprogramm; in einem Fire-Thread liefert es 0.
   Wer es nie aufruft, lässt die Threads an ihrer ersten Änderung warten - das ist der Vertrag. Am **Programmende** (auch nach `leave`/`terminate`)
   bedient das Hauptprogramm die Warteschlange, solange Threads leben, und zerstört erst danach seine Globals; endet es, bevor ein Thread

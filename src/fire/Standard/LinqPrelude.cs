@@ -236,7 +236,9 @@ namespace fire.Standard
 
                 static From(class source) {
                     var s = source
-                    return new Query(() => Linq.Iter(s))
+                    var query = new Query(() => Linq.Iter(s))
+                    try source.TakeTo(query)   // `Linq.From(new Bag())`: a fresh argument belongs to this call - the query keeps it
+                    return query
                 }
 
                 // A query over a collection that was built for it (the result of an eager operator): the query owns the collection -

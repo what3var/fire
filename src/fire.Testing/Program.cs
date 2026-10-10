@@ -818,6 +818,78 @@ catch (Exception ex) when (ex is ParseException or ResolverException or NotSuppo
 }
 
 Console.WriteLine();
+Console.WriteLine("=== Bytecode-Test: Stacktrace einer unbehandelten Exception ===");
+
+string traceSample = """
+class Oops {
+    string message
+    construct(string message) { this.message = message }
+}
+class Worker {
+    Fail() {
+        throw new Oops("deep")
+    }
+    Run() {
+        this.Fail()
+    }
+}
+var w = new Worker()
+w.Run()
+""";
+
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(traceSample);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes) { CaptureErrorTrace = true };
+    vm.Run();
+    var trace = vm.UnhandledTrace;
+    if (vm.UnhandledException == null || trace == null)
+        Console.WriteLine("FEHLER: unbehandelte Exception ohne Stacktrace");
+    else if (trace.Count < 3 || trace[0].Line != 7 || trace[1].Line != 10 || trace[2].Line != 14)
+        Console.WriteLine("FEHLER: Stacktrace falsch: " + string.Join(", ", trace.Select(t => t.Line)));
+    else
+        Console.WriteLine("Stacktrace ok: " + string.Join(" <- ", trace.Select(t => t.Line)));
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Bytecode-Test: Debugger pausiert an einer unbehandelten Exception und ignoriert sie (resume) ===");
+
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse("""
+class Oops {
+    string message
+    construct(string message) { this.message = message }
+}
+print("before")
+throw new Oops("ignored")
+print("after")
+""");
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes) { CaptureErrorTrace = true, PauseOnUnhandled = true };
+    var prevOut = Console.Out;
+    var capture = new StringWriter();
+    Console.SetOut(capture);
+    bool paused, ended, resumed;
+    try
+    {
+        bool more = vm.RunUntilEnd(() => false);
+        paused = !more && vm.IsPausedOnUnhandled && vm.UnhandledException != null && !vm.IsHalted;
+        resumed = vm.TryResumeUnhandled();
+        ended = !vm.RunUntilEnd(() => false) && vm.IsHalted && vm.UnhandledException == null;
+    }
+    finally { Console.SetOut(prevOut); }
+    string text = capture.ToString().Replace("\r", "");
+    if (!paused || !resumed || !ended || text != "before\nafter\n")
+        Console.WriteLine($"FEHLER: paused={paused} resumed={resumed} ended={ended} output='{text}'");
+    else
+        Console.WriteLine("Pause + Ignorieren ok");
+}
+
+Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: Interfaces + List (Prelude) + foreach ===");
 
 string listSample = """
@@ -10435,6 +10507,36 @@ string[] uiDrawExpected = Array.Empty<string>();
                     "other other", "other2", "p4", "T1||True", "p4",
                 });
 
+            File.WriteAllText(P("Prop.fxml"), """
+                <View class="Prop1" width="300" height="100">
+                  <Panel width="300" height="100">
+                    <Label name="vol" x="5" y="5" text="{Binding Volume, Converter=Text}"/>
+                    <TextBox name="ed" x="5" y="30" width="120" text="{Binding Label, Mode=TwoWay}"/>
+                    <Label name="sum" x="5" y="60" text="{Binding Summary}"/>
+                  </Panel>
+                </View>
+                """);
+            CheckUi("Markup: Bindings auf Properties (get/set) - Setter loest aus, TwoWay schreibt ueber den Setter, berechnete Property liest nur", $$"""
+                #include "{{P("Prop.fxml")}}"
+                class Model {
+                    int _v = 1
+                    string _l = "a"
+                    Volume { get { return this._v } set { this._v = value } }
+                    Label { get { return this._l } set { this._l = value + "!" } }
+                    Summary { get { return this._l + this._v } }
+                }
+                var d = new Prop1Base()
+                var m = new Model()
+                d.SetDataContext(m)
+                print(d.vol.text + " " + d.ed.text + " " + d.sum.text)
+                m.Volume = 7
+                print(d.vol.text)
+                d.ed.text = "x"
+                print(m.Label + " " + d.ed.text)
+                m.Label = "y"
+                print(d.ed.text + " " + d.sum.text)
+                """, new[] { "1 a a1", "7", "x! x", "y! a1" });
+
             File.WriteAllText(P("Rich.fxml"), """
                 <Window class="Rich" title="Rich" width="480" height="320">
                   <Resources>
@@ -12411,7 +12513,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckRf("Selektor: lambda member<T> enthaelt die Reflection des gewaehlten Mitglieds (Get/Set/Describe, verschachtelt, durchgereicht)", """
         class Address { string city; construct(string c) { this.city = c } }
-        class Person { string name; Address address; construct(string n, Address a) { this.name = n; this.address = a } }
+        class Person { string name; Address address; construct(string n, Address a) { this.name = n; this.address = a; try a.TakeTo(this) } }
         class W {
             static Show(lambda member<Person> sel, Person p) {
                 print(sel.Name + "=" + sel.Get(p) + " " + sel.Describe(p).TypeName + " " + sel.Path.length)
@@ -12862,7 +12964,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         } }
         T.Run(items, arr)
         print("end")
-        """, new[] { "True", "False", "False", "~la", "~lb", "~a1", "~a2", "end", "~fresh", "~mine", "~tmp" });
+        """, new[] { "True", "False", "True", "~la", "~lb", "~a1", "~a2", "end", "~fresh", "~tmp", "~mine" });
 
     CheckScChecked("TakeTo(list, Takes), TakeLocal", """
         class Item { string n
@@ -16399,6 +16501,59 @@ else
     }).ToArray();
 
     // Graphics (bridges/fire_bridge_graphics.hpp)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Besitz: ein `new` als Argument gehoert dem aufgerufenen Scope (list.Add(new X()) behaelt es per try TakeTo)", """
+            class Person {
+                string name
+                construct(string name) { this.name = name }
+            }
+            class Keeper {
+                class items
+                int count
+                construct() { this.items = new class[4]; this.count = 0 }
+                Add(class value) {
+                    try value.TakeTo(this)
+                    this.items[this.count] = value
+                    this.count = this.count + 1
+                }
+            }
+            class Holder {
+                Keeper k
+                List people
+                construct() {
+                    this.k = new Keeper()
+                    this.people = new List()
+                    this.k.Add(new Person("A"))
+                    this.people.Add(new Person("B"))
+                    this.people.Add(new Person("C"))
+                }
+            }
+            var h = new Holder()
+            print(h.k.items[0].name)
+            print(h.people.count)
+            print(h.people[0].name + h.people[1].name)
+        """),
+        ("Threads: Sleep in einer Methode eines globalen Objekts gibt die Sektion frei (Hauptprogramm wird nicht ausgehungert)", """
+            #import "time"
+            class W {
+                int n = 0
+                Wait(int ms) {
+                    var start = DateTime.UtcNow()
+                    while ((DateTime.UtcNow() - start).TotalMilliseconds < ms) { Sleep(2) }
+                    this.n = this.n + 1
+                }
+            }
+            var w = new W()
+            fire {
+                for (var i = 0; i < 20; i++) { w.Wait(40) }
+            }
+            Sleep(150ms)
+            print("main woke")
+            print("n>0: " + (w.n > 0))
+        """),
+    }).ToArray();
+
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Grafik: Framebuffer, Zeichnen, Palette, Blit, Fehler, Slicer (Konsole)", """

@@ -15,6 +15,7 @@ class Person {
 }
 
 // The data context: what the {Binding ...} paths in Main.fxml look up.
+// A fresh `new` handed to a call belongs to the called function, and List.Add keeps it (it takes it over).
 class Model {
     List people
     construct() {
@@ -24,8 +25,12 @@ class Model {
         this.people.Add(new Person("Bob"))
         this.UpdateSummary()
     }
-    // a field, not a property: a binding watches fields (probe), so writing it updates the label
-    string summary = ""
+    // a property with a setter: writing it fires the binding (a probe watches the property, SPEC 8.14)
+    string summary {
+        get { return this.text }
+        set { this.text = value }
+    }
+    string text = ""
     UpdateSummary() { this.summary = this.people.count + " people" }
 }
 

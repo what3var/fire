@@ -81,6 +81,34 @@ namespace fire.Runtime
         /// An entry in the queue wakes the sleeping earlier.</summary>
         public void SleepTicks(long ticks)
         {
+            // A method of an object of the shared area runs as a whole while the thread holds the section of the globals, and the main program waits for it
+            // (docs/THREADING_DESIGN.md section 7). Sleeping is waiting for something else: the section is handed back for the time of the sleep, otherwise a
+            // method that waits (a socket accept, a retry loop) would hold the main program for as long as it waits. Afterwards the thread queues for it again.
+            int heldSections = YieldGlobalsSection();
+            try { SleepTicksCore(ticks); }
+            finally { RegainGlobalsSection(heldSections); }
+        }
+
+        private int YieldGlobalsSection()
+        {
+            if (_threadBroker == null || _sectionDepth == 0) return 0;
+            int depth = _sectionDepth;
+            var handle = _sectionHandle;
+            _sectionDepth = 0;
+            _sectionHandle = null;
+            _threadBroker.ExitSection(handle);
+            return depth;
+        }
+
+        private void RegainGlobalsSection(int depth)
+        {
+            if (depth == 0) return;
+            _sectionHandle = _threadBroker!.EnterSection();
+            _sectionDepth = depth;
+        }
+
+        private void SleepTicksCore(long ticks)
+        {
             long deadline = Stopwatch.GetTimestamp() + (long)(ticks * (Stopwatch.Frequency / 10_000_000.0));
             while (true)
             {
